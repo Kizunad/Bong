@@ -37,11 +37,12 @@ use std::marker::PhantomData;
 
 use valence::client::ClientMarker;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, Position, Query, Res, ResMut,
-    Resource, Update, With, Without,
+    bevy_ecs, App, Chunk, ChunkLayer, ChunkPos, Commands, Component, DVec3, Despawned, Entity,
+    Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
 use crate::fauna::mimic_spider::{return_spider_drained_qi_to_zone, MimicSpiderBlackboard};
+use crate::fauna::mundane::{mundane_pool_fn, MundaneFaunaMarker};
 use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
@@ -55,6 +56,7 @@ use crate::world::mob_spawn::{
     era_beast_spawn_gate, spawn_natural_mob_at, MobSpawnFilter, NaturalMobKind,
 };
 use crate::world::season::{Season, WorldSeasonState};
+use crate::world::terrain::{SurfaceProvider, TerrainProviders};
 use crate::world::zone::{Zone, ZoneRegistry};
 
 /// 调度核每次巡检的粗节流步长（对齐 heiwushi 的 `last_check_tick` 早退模式）。
@@ -434,6 +436,310 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 // 距离环采样 —— 复用 PoissonSpawnSampler 的自适应间距参数，环带范围为自研逻辑
 // ---------------------------------------------------------------------------
 
+/// Ambient-only outcome of scanning a loaded runtime column for a landing.
+///
+/// `Unsafe` is deliberately narrow: a standable support with liquid in its feet
+/// or head cell is authoritative runtime data that a stale raster must not
+/// override. Other columns without a safe support remain `Miss` so the ambient
+/// resolver may use its explicit fallback path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundLandingScan {
+    Safe(i32),
+    Unsafe,
+    Miss,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundLandingCheck {
+    Safe,
+    LiquidObstructed,
+    Miss,
+}
+
+/// Scan the standard ambient runtime window for the topmost safe footing.
+fn scan_ground_landing_from_chunk(
+    wx: i32,
+    wz: i32,
+    ref_y: i32,
+    layer: Option<&ChunkLayer>,
+) -> GroundLandingScan {
+    scan_ground_landing_from_chunk_range(wx, wz, ref_y - 16, ref_y + 4, layer)
+}
+
+fn scan_ground_landing_from_chunk_range(
+    wx: i32,
+    wz: i32,
+    bottom: i32,
+    top: i32,
+    layer: Option<&ChunkLayer>,
+) -> GroundLandingScan {
+    let Some(layer) = layer else {
+        return GroundLandingScan::Miss;
+    };
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    if layer.chunk(chunk_pos).is_none() {
+        return GroundLandingScan::Miss;
+    }
+
+    let scan_top = top.min(max_y);
+    let scan_bottom = bottom.max(min_y);
+    if scan_bottom > scan_top {
+        return GroundLandingScan::Miss;
+    }
+
+    let mut liquid_obstructed = false;
+    for ground_y in (scan_bottom..=scan_top).rev() {
+        match classify_ground_landing_at(wx, wz, ground_y, layer) {
+            GroundLandingCheck::Safe => return GroundLandingScan::Safe(ground_y),
+            GroundLandingCheck::LiquidObstructed => liquid_obstructed = true,
+            GroundLandingCheck::Miss => {}
+        }
+    }
+
+    if liquid_obstructed {
+        GroundLandingScan::Unsafe
+    } else {
+        GroundLandingScan::Miss
+    }
+}
+
+/// Whether `ground_y` is a safe ambient landing in a loaded layer.
+///
+/// Support must block motion and be neither liquid/waterlogged, passthrough, nor leaves.
+/// Feet and head must both be readable, clear, non-liquid/waterlogged, and non-leaves.
+fn is_safe_ground_landing_at(wx: i32, wz: i32, ground_y: i32, layer: &ChunkLayer) -> bool {
+    classify_ground_landing_at(wx, wz, ground_y, layer) == GroundLandingCheck::Safe
+}
+
+fn classify_ground_landing_at(
+    wx: i32,
+    wz: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> GroundLandingCheck {
+    let min_y = layer.min_y();
+    let max_y = min_y + layer.height() as i32 - 1;
+    let chunk_pos = ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16));
+    let Some(chunk) = layer.chunk(chunk_pos) else {
+        return GroundLandingCheck::Miss;
+    };
+    let local_x = wx.rem_euclid(16) as u32;
+    let local_z = wz.rem_euclid(16) as u32;
+    let block_at = |world_y: i32| {
+        (min_y..=max_y)
+            .contains(&world_y)
+            .then(|| chunk.block_state(local_x, (world_y - min_y) as u32, local_z))
+    };
+    let (Some(support), Some(feet), Some(head)) = (
+        block_at(ground_y),
+        block_at(ground_y + 1),
+        block_at(ground_y + 2),
+    ) else {
+        return GroundLandingCheck::Miss;
+    };
+
+    // A liquid/waterlogged structural support is not merely an invalid foothold:
+    // it is authoritative loaded data that must veto raster fallback. Preserve
+    // `Miss` for non-motion blocks, passthrough, and leaves, which are not
+    // structural landing candidates at all.
+    if support.blocks_motion()
+        && !is_ambient_passthrough_block(support)
+        && !is_ambient_leaf_block(support)
+        && contains_ambient_liquid(support)
+    {
+        return GroundLandingCheck::LiquidObstructed;
+    }
+    if !is_strict_ground_support(support) {
+        return GroundLandingCheck::Miss;
+    }
+    if contains_ambient_liquid(feet) || contains_ambient_liquid(head) {
+        return GroundLandingCheck::LiquidObstructed;
+    }
+    if is_clear_for_ground(feet) && is_clear_for_ground(head) {
+        GroundLandingCheck::Safe
+    } else {
+        GroundLandingCheck::Miss
+    }
+}
+
+/// Whether a block has a liquid kind or carries water through a waterlogged state.
+fn contains_ambient_liquid(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::{PropName, PropValue};
+
+    block.is_liquid() || block.get(PropName::Waterlogged) == Some(PropValue::True)
+}
+
+fn is_strict_ground_support(block: valence::prelude::BlockState) -> bool {
+    block.blocks_motion()
+        && !contains_ambient_liquid(block)
+        && !is_ambient_passthrough_block(block)
+        && !is_ambient_leaf_block(block)
+}
+
+fn is_clear_for_ground(block: valence::prelude::BlockState) -> bool {
+    !block.blocks_motion() && !contains_ambient_liquid(block) && !is_ambient_leaf_block(block)
+}
+
+// These explicit block sets intentionally mirror Navigator's legacy classifiers,
+// but remain private because this is an ambient admission contract, not navigation.
+fn is_ambient_passthrough_block(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::BlockState;
+
+    block == BlockState::GRASS
+        || block == BlockState::TALL_GRASS
+        || block == BlockState::FERN
+        || block == BlockState::LARGE_FERN
+        || block == BlockState::POPPY
+        || block == BlockState::DANDELION
+        || block == BlockState::DEAD_BUSH
+        || block == BlockState::LILY_PAD
+        || block == BlockState::SNOW
+        || block == BlockState::VINE
+        || block == BlockState::TORCH
+        || block == BlockState::WALL_TORCH
+        || block == BlockState::RAIL
+        || block == BlockState::REDSTONE_WIRE
+}
+
+fn is_ambient_leaf_block(block: valence::prelude::BlockState) -> bool {
+    use valence::prelude::BlockKind;
+
+    matches!(
+        block.to_kind(),
+        BlockKind::OakLeaves
+            | BlockKind::SpruceLeaves
+            | BlockKind::BirchLeaves
+            | BlockKind::JungleLeaves
+            | BlockKind::AcaciaLeaves
+            | BlockKind::DarkOakLeaves
+            | BlockKind::AzaleaLeaves
+            | BlockKind::FloweringAzaleaLeaves
+            | BlockKind::CherryLeaves
+            | BlockKind::MangroveLeaves
+    )
+}
+
+/// Result of consulting the live runtime column for an ambient spawn.
+///
+/// `NeedsRaster { loaded_chunk: false }` means no runtime column is available, so a passable raster
+/// may provide the fallback directly. A loaded chunk whose standard scan misses returns
+/// `NeedsRaster { loaded_chunk: true }`: after obtaining the raster Y, ambient must re-check that
+/// exact runtime landing before accepting it. `LoadedUnsafe` is an authoritative veto discovered
+/// by the standard scan and never consults stale raster data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AmbientRuntimeGround {
+    Safe(i32),
+    LoadedUnsafe,
+    NeedsRaster { loaded_chunk: bool },
+}
+
+fn loaded_ambient_landing_is_safe(
+    world_x: i32,
+    world_z: i32,
+    ground_y: i32,
+    layer: &ChunkLayer,
+) -> bool {
+    is_safe_ground_landing_at(world_x, world_z, ground_y, layer)
+}
+
+fn resolve_ambient_runtime_ground(
+    world_x: i32,
+    world_z: i32,
+    reference_y: i32,
+    layer: Option<&ChunkLayer>,
+) -> AmbientRuntimeGround {
+    let Some(layer) = layer else {
+        return AmbientRuntimeGround::NeedsRaster {
+            loaded_chunk: false,
+        };
+    };
+    let chunk_pos = ChunkPos::new(world_x.div_euclid(16), world_z.div_euclid(16));
+    if layer.chunk(chunk_pos).is_none() {
+        return AmbientRuntimeGround::NeedsRaster {
+            loaded_chunk: false,
+        };
+    }
+
+    match scan_ground_landing_from_chunk(world_x, world_z, reference_y, Some(layer)) {
+        GroundLandingScan::Safe(ground_y) => AmbientRuntimeGround::Safe(ground_y),
+        GroundLandingScan::Unsafe => AmbientRuntimeGround::LoadedUnsafe,
+        GroundLandingScan::Miss => AmbientRuntimeGround::NeedsRaster { loaded_chunk: true },
+    }
+}
+
+/// Validate a raster fallback against the exact landing cells of an already-loaded runtime chunk.
+///
+/// Raster surface Y is a baked hint, not authority over authored/player blocks. Its exact
+/// support/feet/head cells must be readable, standable, and non-liquid. Nearby supports do not
+/// override the raster landing; an out-of-height or unsafe landing fails closed.
+fn resolve_loaded_raster_landing(
+    world_x: i32,
+    world_z: i32,
+    surface_y: i32,
+    layer: &ChunkLayer,
+) -> AmbientRuntimeGround {
+    if !loaded_ambient_landing_is_safe(world_x, world_z, surface_y, layer) {
+        return AmbientRuntimeGround::LoadedUnsafe;
+    }
+
+    AmbientRuntimeGround::Safe(surface_y)
+}
+
+/// Resolve an ambient ground candidate from the live world first, then the terrain raster.
+///
+/// A loaded [`ChunkLayer`] is authoritative because it contains caves, floating islands,
+/// decorations, and player-built blocks that the baked raster cannot represent. The runtime
+/// scan deliberately reuses Navigator's standard `ref_y - 16 .. ref_y + 4` support/headroom
+/// contract. Missing runtime data may use a passable raster directly; a loaded standard-window
+/// miss may use it only after the exact runtime raster landing passes support/feet/head validation.
+/// A loaded support whose support/feet/head block is any water or lava state is an authoritative
+/// veto. Both sources missing or unsafe rejects the candidate; the sampled/player Y is never
+/// preserved.
+fn resolve_ambient_ground_position<P: SurfaceProvider + ?Sized>(
+    candidate: DVec3,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+) -> Option<DVec3> {
+    let world_x = candidate.x.floor() as i32;
+    let world_z = candidate.z.floor() as i32;
+    let reference_y = candidate.y.floor() as i32;
+
+    let loaded_chunk_needs_raster_validation =
+        match resolve_ambient_runtime_ground(world_x, world_z, reference_y, layer) {
+            AmbientRuntimeGround::Safe(ground_y) => {
+                return Some(DVec3::new(
+                    candidate.x,
+                    f64::from(ground_y + 1),
+                    candidate.z,
+                ));
+            }
+            AmbientRuntimeGround::LoadedUnsafe => return None,
+            AmbientRuntimeGround::NeedsRaster { loaded_chunk } => loaded_chunk,
+        };
+
+    let surface = terrain?.query_surface(world_x, world_z);
+    if !surface.passable {
+        return None;
+    }
+    if loaded_chunk_needs_raster_validation {
+        match resolve_loaded_raster_landing(world_x, world_z, surface.y, layer?) {
+            AmbientRuntimeGround::Safe(_) => {}
+            AmbientRuntimeGround::LoadedUnsafe | AmbientRuntimeGround::NeedsRaster { .. } => {
+                return None
+            }
+        }
+    }
+
+    Some(DVec3::new(
+        candidate.x,
+        f64::from(surface.y + 1),
+        candidate.z,
+    ))
+}
+
 /// 以 `anchor`（通常是触发巡检的玩家位置）为圆心，在
 /// [`AMBIENT_RING_MIN_RADIUS`, `AMBIENT_RING_MAX_RADIUS`] 环带内做 Mitchell's
 /// best-candidate 采样：`PoissonSpawnSampler::adaptive_for_zone` 只用来取自适应间距参数
@@ -441,8 +747,9 @@ pub fn should_recycle_ambient(nearest_player_planar_dist: f64) -> bool {
 /// 逻辑——`PoissonSpawnSampler::sample_position` 采的是整个 zone AABB 均匀候选点，不是
 /// "距玩家 24~64 格环带"，两者用途不同不可直接复用。
 ///
-/// 候选点会被钳制在 `zone_bounds` 内（超出 zone 边界的候选点丢弃）；若 `max_candidates`
-/// 次尝试全部越界或与既有点距离不足，返回 `None`（zone 太小/已饱和，本次跳过不刷）。
+/// 候选点会被钳制在 `zone_bounds` 内（超出 zone 边界的候选点丢弃）。在合法候选中优先
+/// 选择距既有点最远者；若它们都低于最小间距，仍保留最远候选作为既有 best-effort fallback。
+/// 只有所有候选均越界时才返回 `None`。
 pub fn sample_ambient_ring_position(
     zone_bounds: (DVec3, DVec3),
     anchor: DVec3,
@@ -483,11 +790,10 @@ pub fn sample_ambient_ring_position(
                 (dx * dx + dz * dz).sqrt()
             })
             .fold(f64::INFINITY, f64::min);
-        // existing_positions 为空时 min_dist == f64::INFINITY，score 恒最大，首个越界通过的
-        // 候选点即被采用——与 PoissonSpawnSampler 首个 NPC 直接落点的语义一致。
-        let score = min_dist - sampler.min_same_archetype_dist;
-        if score > best_score {
-            best_score = score;
+        // Keep the pre-fix sampler's best-effort fallback: density is a scoring
+        // preference, not an admission gate for an in-bounds ring candidate.
+        if min_dist > best_score {
+            best_score = min_dist;
             best = Some(candidate);
         }
     }
@@ -566,6 +872,133 @@ impl<M> Default for AmbientSchedulerState<M> {
 /// 类型时牵连另一侧实现。
 pub type AmbientPoolFn = fn(&mut Commands, Entity, &Zone, DVec3, DVec3, Season) -> Option<Entity>;
 
+/// Scheduler 候选提交所需的不可分割上下文。地表解析、真实 pool 调用、marker 挂载与
+/// pending 记账必须共用这一条提交路径，避免测试只覆盖 resolver、生产调用点却再次漏接。
+struct AmbientSpawnRequest<'a> {
+    layer: Entity,
+    zone: &'a Zone,
+    candidate: DVec3,
+    season: Season,
+    now: u64,
+}
+
+/// 把一个已通过 scheduler 预算门的环带候选提交给真实 pool。
+///
+/// 提交严格 fail-closed：runtime 标准窗口和 raster fallback 都无法给出安全脚点、或 pool
+/// 拒绝时均返回 `None`，既不挂 marker 也不占本 tick pending 预算；只有真实 pool 返回实体后
+/// 才依次挂载 marker 并增加 pending。
+fn submit_ambient_spawn_candidate<M, P>(
+    commands: &mut Commands,
+    layer: Option<&ChunkLayer>,
+    terrain: Option<&P>,
+    pool_fn: AmbientPoolFn,
+    pending_spawns_by_zone: &mut HashMap<String, u32>,
+    request: AmbientSpawnRequest<'_>,
+) -> Option<Entity>
+where
+    M: AmbientMarkerData,
+    P: SurfaceProvider + ?Sized,
+{
+    let spawn_position = resolve_ambient_ground_position(request.candidate, layer, terrain)?;
+    let spawned = pool_fn(
+        commands,
+        request.layer,
+        request.zone,
+        spawn_position,
+        spawn_position,
+        request.season,
+    )?;
+    commands
+        .entity(spawned)
+        .insert(M::new(request.now, request.zone.name.clone()));
+    *pending_spawns_by_zone
+        .entry(request.zone.name.clone())
+        .or_insert(0) += 1;
+    Some(spawned)
+}
+
+/// Dev-only one-shot ambient pool selector. This is crate-visible so the command layer can exercise
+/// the exact production submission boundary without exposing either concrete `spawn_*` function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AmbientDevSpawnKind {
+    Mundane,
+    Threat,
+}
+
+impl AmbientDevSpawnKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mundane => "mundane",
+            Self::Threat => "threat",
+        }
+    }
+}
+
+/// One-shot dev ambient input. It preserves the production resolver inputs while keeping the
+/// command seam from growing a flat argument list.
+pub(crate) struct AmbientDevSpawnRequest<'a, P: SurfaceProvider + ?Sized> {
+    pub kind: AmbientDevSpawnKind,
+    pub layer: Entity,
+    pub runtime_layer: Option<&'a ChunkLayer>,
+    pub terrain: Option<&'a P>,
+    pub zone: &'a Zone,
+    pub candidate: DVec3,
+    pub season: Season,
+    pub now: u64,
+}
+
+/// Submit exactly one dev ambient candidate through the production resolver, real species pool,
+/// marker insertion, and pending accounting path.
+///
+/// `request.layer` is the authoritative Overworld entity layer used by the real pool.
+/// `request.runtime_layer` and `request.terrain` deliberately remain independently optional: a
+/// loaded runtime layer works without a raster, while a passable raster can resolve an
+/// unloaded/missing runtime layer. The local pending map exists only to preserve the production
+/// submission contract; this one-shot bypasses scheduler cadence and budget by design and never
+/// leaks its resolved Y as a command oracle.
+pub(crate) fn submit_ambient_dev_spawn_once<P: SurfaceProvider + ?Sized>(
+    commands: &mut Commands,
+    request: AmbientDevSpawnRequest<'_, P>,
+) -> Option<Entity> {
+    let AmbientDevSpawnRequest {
+        kind,
+        layer,
+        runtime_layer,
+        terrain,
+        zone,
+        candidate,
+        season,
+        now,
+    } = request;
+    let request = AmbientSpawnRequest {
+        layer,
+        zone,
+        candidate,
+        season,
+        now,
+    };
+    let mut pending_spawns_by_zone = HashMap::new();
+
+    match kind {
+        AmbientDevSpawnKind::Mundane => submit_ambient_spawn_candidate::<MundaneFaunaMarker, P>(
+            commands,
+            runtime_layer,
+            terrain,
+            mundane_pool_fn,
+            &mut pending_spawns_by_zone,
+            request,
+        ),
+        AmbientDevSpawnKind::Threat => submit_ambient_spawn_candidate::<AmbientThreatMarker, P>(
+            commands,
+            runtime_layer,
+            terrain,
+            ambient_threat_pool_fn,
+            &mut pending_spawns_by_zone,
+            request,
+        ),
+    }
+}
+
 /// 每 marker_type 独立注入的调度配置：`budget_fn` 决定"刷多少/多久"，`pool_fn` 决定
 /// "刷什么"，`counts_against_threat_budget` 决定该 marker 类型的活体数是否计入
 /// `budget_fn` 返回的 `max_alive`（`plan-mundane-fauna-v1` 的被动 pool 传 `false`，
@@ -630,6 +1063,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
     dimension_layers: Option<Res<DimensionLayers>>,
     era_state: Option<Res<WorldEraState>>,
     world_season: Option<Res<WorldSeasonState>>,
+    terrain_providers: Option<Res<TerrainProviders>>,
+    chunk_layers: Query<&ChunkLayer, Without<Despawned>>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut commands: Commands,
 ) {
@@ -734,12 +1169,8 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         return;
     }
 
-    // §Verify blocker③(并发预算越界) — 本 tick 内逐玩家循环重复读同一份 tick 前 `alive`
-    // 快照，`Commands::spawn` 延迟应用到下一次 flush，后一个玩家看不到前一个玩家本 tick
-    // 已排队的 spawn。同一 zone 若有多名玩家各自独立通过预算门，各自都会刷出一只，合计
-    // 可越过 `max_alive`。用本地累加器记录"本 tick 已排队但未落地"的 spawn 数，并入
-    // `alive_count` 一起送进 `decide_ambient_check`，让同 zone 后续玩家的判定看得见前面
-    // 玩家本 tick 已经占用的预算。
+    // `Commands::spawn` is deferred, so pending count—not same-tick spatial
+    // occupancy—preserves the existing per-zone budget until the next tick.
     let mut pending_spawns_by_zone: HashMap<String, u32> = HashMap::new();
 
     // 2) 逐玩家找 zone，判定预算 + 间隔 + era 密度门，命中就在距该玩家 24~64 格环带内刷新。
@@ -774,31 +1205,44 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
         let AmbientCheckOutcome::ShouldSpawn { budget } = outcome else {
             continue;
         };
+        // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项；
+        // baseline（origin/main）同样从未消费该字段，本 plan 只改地表落点门禁与提交边界，
+        // 不改刷新数量语义。
+        let _ = budget.pack_size_range;
 
         let Some(spawn_pos) =
             sample_ambient_ring_position(zone.bounds, *player_pos, &alive_in_zone, spawn_seed)
         else {
             continue;
         };
-
-        let Some(spawned) = (config.pool_fn)(
-            &mut commands,
-            layers.overworld,
-            zone,
-            spawn_pos,
-            spawn_pos,
-            season,
-        ) else {
-            // 死域过滤后池为空 / 未来其它 pool_fn 实现判定本次不刷都会走这支——非 panic 分支。
-            // `budget.pack_size_range`（多只群体刷新）不在本 plan 范围内消费，留给后续若立项
-            // "群体刷新"再回填，当前调度核每次巡检命中只产 1 个实体。
-            let _ = budget.pack_size_range;
+        // Raster 只能替代有效 live layer 内未加载 chunk 的 surface 数据。把 live-layer
+        // 门禁限定在候选提交边界：stale、non-ChunkLayer 或 Despawned target 禁止新 spawn，
+        // 但不能截断本轮前面已经执行的既有 ambient 回收与 qi 归还。
+        let Ok(overworld_chunk_layer) = chunk_layers.get(layers.overworld) else {
             continue;
         };
-        commands
-            .entity(spawned)
-            .insert(M::new(now, zone.name.clone()));
-        *pending_spawns_by_zone.entry(zone.name.clone()).or_insert(0) += 1;
+        let spawned = submit_ambient_spawn_candidate::<M, _>(
+            &mut commands,
+            Some(overworld_chunk_layer),
+            terrain_providers
+                .as_deref()
+                .map(|providers| &providers.overworld),
+            config.pool_fn,
+            &mut pending_spawns_by_zone,
+            AmbientSpawnRequest {
+                layer: layers.overworld,
+                zone,
+                candidate: spawn_pos,
+                season,
+                now,
+            },
+        );
+        if spawned.is_none() {
+            // runtime 标准窗口与 raster fallback 都无法给出安全脚点、或 pool 拒绝时，
+            // 只丢弃本次候选；helper 保证失败分支不挂 marker、不占 pending，scheduler
+            // 下一轮自然重试。
+            continue;
+        }
     }
 }
 
@@ -806,7 +1250,1983 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
 mod tests {
     use super::*;
     use crate::npc::spawn::common::NpcMarker;
-    use valence::prelude::App;
+    use crate::world::terrain::{SurfaceInfo, TerrainProvider};
+    use valence::prelude::{App, BlockState, Chunk, PropName, PropValue, UnloadedChunk};
+    use valence::testing::ScenarioSingleClient;
+
+    struct FixtureSurface {
+        y: i32,
+        passable: bool,
+        queried: std::cell::Cell<Option<(i32, i32)>>,
+    }
+
+    impl FixtureSurface {
+        fn query_count(&self) -> u32 {
+            u32::from(self.queried.get().is_some())
+        }
+    }
+
+    impl SurfaceProvider for FixtureSurface {
+        fn query_surface(&self, world_x: i32, world_z: i32) -> SurfaceInfo {
+            self.queried.set(Some((world_x, world_z)));
+            SurfaceInfo {
+                y: self.y,
+                passable: self.passable,
+                water_y: i32::MIN,
+            }
+        }
+    }
+
+    fn make_runtime_layer(
+        loaded_chunks: &[(i32, i32)],
+        blocks: &[(i32, i32, i32, BlockState)],
+    ) -> (App, Entity) {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        let layer_entity = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<ChunkLayer>>();
+            query
+                .iter(world)
+                .next()
+                .expect("ScenarioSingleClient must provide one ChunkLayer")
+        };
+        let (min_y, height) = {
+            let layer = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("scenario layer must remain available");
+            (layer.min_y(), layer.height())
+        };
+        let mut chunks: HashMap<(i32, i32), UnloadedChunk> = loaded_chunks
+            .iter()
+            .copied()
+            .map(|chunk_pos| (chunk_pos, UnloadedChunk::with_height(height)))
+            .collect();
+        for &(world_x, world_y, world_z, block) in blocks {
+            let chunk_pos = (world_x.div_euclid(16), world_z.div_euclid(16));
+            let chunk = chunks
+                .entry(chunk_pos)
+                .or_insert_with(|| UnloadedChunk::with_height(height));
+            chunk.set_block_state(
+                world_x.rem_euclid(16) as u32,
+                (world_y - min_y) as u32,
+                world_z.rem_euclid(16) as u32,
+                block,
+            );
+        }
+        {
+            let mut layer = app
+                .world_mut()
+                .get_mut::<ChunkLayer>(layer_entity)
+                .expect("scenario layer must be mutable");
+            for ((chunk_x, chunk_z), chunk) in chunks {
+                layer.insert_chunk([chunk_x, chunk_z], chunk);
+            }
+        }
+        (app, layer_entity)
+    }
+
+    fn property_variant_leaf_fixtures() -> [(&'static str, BlockState); 4] {
+        let oak_natural = BlockState::OAK_LEAVES
+            .set(PropName::Distance, PropValue::_1)
+            .set(PropName::Persistent, PropValue::False)
+            .set(PropName::Waterlogged, PropValue::False);
+        let oak_persistent = oak_natural.set(PropName::Persistent, PropValue::True);
+        let oak_waterlogged = oak_natural.set(PropName::Waterlogged, PropValue::True);
+        let mangrove_natural = BlockState::MANGROVE_LEAVES
+            .set(PropName::Distance, PropValue::_1)
+            .set(PropName::Persistent, PropValue::False)
+            .set(PropName::Waterlogged, PropValue::False);
+
+        [
+            ("oak distance=1", oak_natural),
+            ("oak persistent=true", oak_persistent),
+            ("oak waterlogged=true", oak_waterlogged),
+            ("mangrove distance=1", mangrove_natural),
+        ]
+    }
+
+    #[test]
+    fn ambient_leaf_classifier_ignores_leaf_state_properties() {
+        let fixtures = property_variant_leaf_fixtures();
+        let oak_natural = fixtures[0].1;
+        let oak_persistent = fixtures[1].1;
+        let oak_waterlogged = fixtures[2].1;
+        let mangrove_natural = fixtures[3].1;
+
+        assert_ne!(
+            oak_natural,
+            BlockState::OAK_LEAVES,
+            "oak distance=1 must be a non-default state, not the old equality-only fixture"
+        );
+        assert!(
+            oak_natural.blocks_motion() && !oak_natural.is_liquid(),
+            "oak distance=1 must be motion-blocking and non-liquid so the leaf-kind gate is decisive"
+        );
+        assert_ne!(
+            oak_persistent, oak_natural,
+            "persistent=true must retain a distinct oak leaf state"
+        );
+        assert_ne!(
+            oak_waterlogged, oak_natural,
+            "waterlogged=true must retain a distinct oak leaf state"
+        );
+        assert!(
+            !oak_waterlogged.is_liquid(),
+            "waterlogged leaves are not liquid BlockStates; leaf-kind rejection must still veto them"
+        );
+        assert_ne!(
+            mangrove_natural,
+            BlockState::MANGROVE_LEAVES,
+            "mangrove distance=1 must cover a non-default listed leaf species"
+        );
+
+        assert!(
+            is_ambient_leaf_block(BlockState::OAK_LEAVES),
+            "default oak leaves must remain rejected"
+        );
+        for (case, leaf) in fixtures {
+            assert!(
+                is_ambient_leaf_block(leaf),
+                "{case}: all listed leaf kinds must be rejected independently of state properties"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_runtime_scan_rejects_property_variant_leaf_support() {
+        for (case, leaf) in property_variant_leaf_fixtures() {
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 66, 2, leaf)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                scan_ground_landing_from_chunk(1, 2, 80, Some(layer)),
+                GroundLandingScan::Miss,
+                "{case}: runtime scan must not treat a property-variant leaf as support"
+            );
+            assert_eq!(
+                resolve_ambient_ground_position::<FixtureSurface>(
+                    DVec3::new(1.5, 80.0, 2.5),
+                    Some(layer),
+                    None,
+                ),
+                None,
+                "{case}: runtime-only landing resolution must reject property-variant leaf support"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_raster_revalidation_rejects_property_variant_leaf_support() {
+        for (case, leaf) in property_variant_leaf_fixtures() {
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 70, 2, leaf)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 200.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: loaded exact raster revalidation must veto a passable raster leaf landing"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: the passable raster must be consulted before runtime exact landing rejection"
+            );
+        }
+    }
+
+    fn waterlogged_non_leaf_fixtures() -> (BlockState, BlockState, BlockState, BlockState) {
+        let dry_stairs = BlockState::OAK_STAIRS.set(PropName::Waterlogged, PropValue::False);
+        let wet_stairs = dry_stairs.set(PropName::Waterlogged, PropValue::True);
+        let dry_rail = BlockState::RAIL.set(PropName::Waterlogged, PropValue::False);
+        let wet_rail = dry_rail.set(PropName::Waterlogged, PropValue::True);
+        (dry_stairs, wet_stairs, dry_rail, wet_rail)
+    }
+
+    #[test]
+    fn ambient_waterlogged_predicate_pins_property_api_and_non_leaf_fixtures() {
+        let (dry_stairs, wet_stairs, dry_rail, wet_rail) = waterlogged_non_leaf_fixtures();
+
+        assert_eq!(
+            BlockState::STONE.get(PropName::Waterlogged),
+            None,
+            "ordinary blocks without waterlogged must safely report None"
+        );
+        assert_eq!(
+            wet_stairs.get(PropName::Waterlogged),
+            Some(PropValue::True),
+            "oak stairs must retain waterlogged=true"
+        );
+        assert_eq!(
+            wet_rail.get(PropName::Waterlogged),
+            Some(PropValue::True),
+            "rail must retain waterlogged=true"
+        );
+        assert!(
+            !wet_stairs.is_liquid() && !wet_rail.is_liquid(),
+            "waterlogged non-leaf blocks are not Water/Lava BlockState kinds"
+        );
+        assert!(
+            wet_stairs.blocks_motion() && !wet_rail.blocks_motion(),
+            "stairs must exercise support while rail exercises non-motion clearance"
+        );
+        assert!(
+            !contains_ambient_liquid(BlockState::STONE)
+                && !contains_ambient_liquid(dry_stairs)
+                && !contains_ambient_liquid(dry_rail),
+            "missing or false waterlogged properties must not reject ordinary or dry blocks"
+        );
+        assert!(
+            is_strict_ground_support(dry_stairs) && is_clear_for_ground(dry_rail),
+            "waterlogged=false non-leaf states must preserve their respective support and clearance roles"
+        );
+        assert!(
+            contains_ambient_liquid(wet_stairs) && contains_ambient_liquid(wet_rail),
+            "waterlogged=true must be treated as liquid independently of block kind"
+        );
+    }
+
+    #[test]
+    fn ambient_waterlogged_non_leaf_rejects_each_exact_landing_cell() {
+        let (_, wet_stairs, _, wet_rail) = waterlogged_non_leaf_fixtures();
+        for (case, extra_blocks) in [
+            ("waterlogged stairs support", vec![(66, wet_stairs)]),
+            ("waterlogged rail feet", vec![(67, wet_rail)]),
+            ("waterlogged rail head", vec![(68, wet_rail)]),
+        ] {
+            let mut blocks = vec![(1, 66, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert!(
+                !is_safe_ground_landing_at(1, 2, 66, layer),
+                "{case}: only the target landing cell differs; complete headroom prevents false-positive rejection"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_waterlogged_motion_support_is_authoritative_raster_veto() {
+        let (_, wet_stairs, _, _) = waterlogged_non_leaf_fixtures();
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[(1, 70, 2, wet_stairs), (1, 60, 2, BlockState::STONE)],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 60,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            classify_ground_landing_at(1, 2, 70, layer),
+            GroundLandingCheck::LiquidObstructed,
+            "a waterlogged, motion-blocking support must be classified as liquid obstruction before strict-support rejection"
+        );
+        assert_eq!(
+            resolve_ambient_runtime_ground(1, 2, 80, Some(layer)),
+            AmbientRuntimeGround::LoadedUnsafe,
+            "a scan-window waterlogged support must map to the authoritative loaded unsafe state"
+        );
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 80.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            None,
+            "loaded waterlogged support must reject the candidate instead of using a safe raster landing elsewhere in the column"
+        );
+        assert_eq!(
+            terrain.query_count(),
+            0,
+            "LoadedUnsafe must reject before querying SurfaceProvider"
+        );
+    }
+
+    #[test]
+    fn ambient_runtime_scan_and_resolution_veto_waterlogged_non_leaf_cells() {
+        let (_, wet_stairs, _, wet_rail) = waterlogged_non_leaf_fixtures();
+        for (case, extra_blocks, expected_scan) in [
+            (
+                "waterlogged stairs support",
+                vec![(66, wet_stairs)],
+                GroundLandingScan::Unsafe,
+            ),
+            (
+                "waterlogged rail feet",
+                vec![(67, wet_rail)],
+                GroundLandingScan::Unsafe,
+            ),
+            (
+                "waterlogged rail head",
+                vec![(68, wet_rail)],
+                GroundLandingScan::Unsafe,
+            ),
+        ] {
+            let mut blocks = vec![(1, 66, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                scan_ground_landing_from_chunk(1, 2, 80, Some(layer)),
+                expected_scan,
+                "{case}: y=66 lies inside the 64..=84 standard runtime scan window"
+            );
+            assert_eq!(
+                resolve_ambient_ground_position::<FixtureSurface>(
+                    DVec3::new(1.5, 80.0, 2.5),
+                    Some(layer),
+                    None,
+                ),
+                None,
+                "{case}: runtime-only resolution must reject the waterlogged landing"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_raster_exact_revalidation_vetoes_waterlogged_non_leaf_cells() {
+        let (_, wet_stairs, _, wet_rail) = waterlogged_non_leaf_fixtures();
+        for (case, extra_blocks) in [
+            ("waterlogged stairs support", vec![(70, wet_stairs)]),
+            ("waterlogged rail feet", vec![(71, wet_rail)]),
+            ("waterlogged rail head", vec![(72, wet_rail)]),
+        ] {
+            let mut blocks = vec![(1, 70, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 200.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: y=70 is outside the 184..=204 scan window, so exact loaded-raster revalidation must veto it"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: passable raster must be queried before exact runtime landing veto"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_ambient_landing_classifier_enforces_support_and_clearance_contract() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        for (case, extra_blocks, expected_safe) in [
+            ("solid support", vec![], true),
+            ("passthrough support", vec![(66, BlockState::GRASS)], false),
+            ("leaf support", vec![(66, BlockState::OAK_LEAVES)], false),
+            ("liquid support", vec![(66, water_level_one)], false),
+            ("solid feet", vec![(67, BlockState::STONE)], false),
+            ("solid head", vec![(68, BlockState::STONE)], false),
+            ("liquid feet", vec![(67, BlockState::WATER)], false),
+            ("liquid head", vec![(68, water_level_one)], false),
+            ("passthrough feet", vec![(67, BlockState::GRASS)], true),
+        ] {
+            let mut blocks = vec![(1, 66, 2, BlockState::STONE)];
+            for (y, block) in extra_blocks {
+                blocks.retain(|(_, existing_y, _, _)| *existing_y != y);
+                blocks.push((1, y, 2, block));
+            }
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            assert_eq!(
+                is_safe_ground_landing_at(1, 2, 66, layer),
+                expected_safe,
+                "{case}: ambient strict landing must classify support, feet, and head consistently"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_ambient_landing_scan_distinguishes_safe_liquid_veto_and_miss() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        for (case, body_y, liquid) in [
+            ("default water feet", 67, BlockState::WATER),
+            ("default lava head", 68, BlockState::LAVA),
+            ("property water feet", 67, water_level_one),
+            ("property lava head", 68, lava_level_one),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 66, 2, BlockState::STONE), (1, body_y, 2, liquid)],
+            );
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            assert_eq!(
+                scan_ground_landing_from_chunk(1, 2, 80, Some(layer)),
+                GroundLandingScan::Unsafe,
+                "{case}: liquid body cell must be an authoritative ambient raster veto"
+            );
+        }
+
+        let (safe_app, safe_layer_entity) =
+            make_runtime_layer(&[(0, 0)], &[(1, 66, 2, BlockState::STONE)]);
+        let safe_layer = safe_app
+            .world()
+            .get::<ChunkLayer>(safe_layer_entity)
+            .unwrap();
+        assert_eq!(
+            scan_ground_landing_from_chunk(1, 2, 80, Some(safe_layer)),
+            GroundLandingScan::Safe(66)
+        );
+
+        let (empty_app, empty_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let empty_layer = empty_app
+            .world()
+            .get::<ChunkLayer>(empty_layer_entity)
+            .unwrap();
+        assert_eq!(
+            scan_ground_landing_from_chunk(1, 2, 80, Some(empty_layer)),
+            GroundLandingScan::Miss,
+            "loaded empty column must remain eligible for the explicit raster path"
+        );
+        assert_eq!(
+            scan_ground_landing_from_chunk(32, 2, 80, Some(empty_layer)),
+            GroundLandingScan::Miss,
+            "missing chunk must report a scan miss"
+        );
+    }
+
+    #[test]
+    fn strict_ambient_landing_scan_keeps_lower_safe_support_after_liquid_veto() {
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[
+                (1, 60, 2, BlockState::STONE),
+                (1, 66, 2, BlockState::STONE),
+                (1, 67, 2, BlockState::WATER),
+            ],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        assert_eq!(
+            scan_ground_landing_from_chunk(1, 2, 76, Some(layer)),
+            GroundLandingScan::Safe(60),
+            "a liquid-obstructed upper support must not hide a lower safe ambient landing"
+        );
+    }
+
+    #[test]
+    fn strict_ambient_landing_rejects_layer_edges_and_missing_chunk() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 319, 2, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let max_y = layer.min_y() + layer.height() as i32 - 1;
+        assert!(!is_safe_ground_landing_at(1, 2, max_y, layer));
+        assert!(!is_safe_ground_landing_at(1, 2, max_y - 1, layer));
+        assert!(!is_safe_ground_landing_at(32, 2, 66, layer));
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_runtime_surface_beats_raster() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(2, 66, 3, BlockState::STONE)]);
+        let layer = app
+            .world()
+            .get::<ChunkLayer>(layer_entity)
+            .expect("runtime layer must exist");
+        let terrain = FixtureSurface {
+            y: 12,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(2.5, 80.0, 3.25),
+                Some(layer),
+                Some(&terrain),
+            ),
+            Some(DVec3::new(2.5, 67.0, 3.25)),
+            "loaded runtime support must override stale raster height"
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            None,
+            "runtime success must not consult the raster fallback"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_high_reference_uses_runtime_standard_window() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(2, 66, 3, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        assert_eq!(
+            resolve_ambient_ground_position::<FixtureSurface>(
+                DVec3::new(2.5, 80.0, 3.25),
+                Some(layer),
+                None,
+            ),
+            Some(DVec3::new(2.5, 67.0, 3.25)),
+            "support 14 blocks below ref_y must be found inside Navigator's standard window"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_low_reference_uses_runtime_standard_window() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(2, 42, 3, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        assert_eq!(
+            resolve_ambient_ground_position::<FixtureSurface>(
+                DVec3::new(2.5, 40.0, 3.25),
+                Some(layer),
+                None,
+            ),
+            Some(DVec3::new(2.5, 43.0, 3.25)),
+            "support two blocks above ref_y must be found inside Navigator's +4 window"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_chunk_without_raster_succeeds() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 66, 2, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        assert_eq!(
+            resolve_ambient_ground_position::<FixtureSurface>(
+                DVec3::new(1.5, 80.0, 2.5),
+                Some(layer),
+                None,
+            ),
+            Some(DVec3::new(1.5, 67.0, 2.5)),
+            "Flat/Anvil loaded chunks must spawn ambient fauna without TerrainProviders"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_unloaded_chunk_uses_passable_raster() {
+        let (app, layer_entity) = make_runtime_layer(&[], &[]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 66,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(33.5, 200.0, 33.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            Some(DVec3::new(33.5, 67.0, 33.5)),
+            "an unloaded runtime chunk may use a passable raster fallback"
+        );
+        assert_eq!(terrain.queried.get(), Some((33, 33)));
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_chunk_standard_window_miss_uses_passable_raster() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 70, 2, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 200.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            Some(DVec3::new(1.5, 71.0, 2.5)),
+            "a loaded chunk whose safe support is outside the standard ref_y window may use raster fallback"
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "standard runtime window miss must consult the raster fallback"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_standard_window_boundaries_are_inclusive() {
+        const REF_Y: i32 = 80;
+
+        for (case, support_y, expected_raster_query) in [
+            ("lower inclusive -16", REF_Y - 16, false),
+            ("lower outside -17", REF_Y - 17, true),
+            ("upper inclusive +4", REF_Y + 4, false),
+            ("upper outside +5", REF_Y + 5, true),
+        ] {
+            let (app, layer_entity) =
+                make_runtime_layer(&[(0, 0)], &[(2, support_y, 3, BlockState::STONE)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: support_y,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(2.5, f64::from(REF_Y), 3.25),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                Some(DVec3::new(2.5, f64::from(support_y + 1), 3.25)),
+                "{case}: support must resolve at the exact standard-window boundary contract"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                expected_raster_query.then_some((2, 3)),
+                "{case}: only -17/+5 may leave the inclusive -16..+4 runtime window"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_scan_miss_accepts_exact_raster_landing_with_higher_neighbor()
+    {
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[(1, 70, 2, BlockState::STONE), (1, 73, 2, BlockState::STONE)],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 200.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            Some(DVec3::new(1.5, 71.0, 2.5)),
+            "loaded scan miss must accept the exact safe raster landing even when a higher support exists"
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "loaded scan miss must query raster before validating its exact landing"
+        );
+
+        let mut output = App::new();
+        let entity_layer = output.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let mut pending = HashMap::new();
+        let spawned = {
+            let mut commands = output.world_mut().commands();
+            submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
+                &mut commands,
+                Some(layer),
+                Some(&terrain),
+                test_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer: entity_layer,
+                    zone: &zone,
+                    candidate: DVec3::new(1.5, 200.0, 2.5),
+                    season: Season::Summer,
+                    now: 77,
+                },
+            )
+        };
+        output.world_mut().flush();
+
+        let entity = spawned.expect("exact raster landing must reach the pool exactly once");
+        assert_eq!(
+            output
+                .world()
+                .get::<Position>(entity)
+                .expect("successful pool result must expose Position")
+                .get(),
+            DVec3::new(1.5, 71.0, 2.5)
+        );
+        assert_eq!(
+            output
+                .world()
+                .get::<TestFaunaMarker>(entity)
+                .unwrap()
+                .spawned_at,
+            77,
+            "successful fallback must attach one marker"
+        );
+        assert_eq!(
+            pending.get("test_zone"),
+            Some(&1),
+            "successful fallback must consume exactly one pending slot"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_scan_miss_revalidates_raster_landing() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        assert_ne!(water_level_one, BlockState::WATER);
+        assert_ne!(lava_level_one, BlockState::LAVA);
+
+        for (case, obstacle, obstacle_y) in [
+            ("solid at feet", BlockState::STONE, 71),
+            ("solid at head", BlockState::STONE, 72),
+            ("default water at feet", BlockState::WATER, 71),
+            ("default water at head", BlockState::WATER, 72),
+            ("default lava at feet", BlockState::LAVA, 71),
+            ("default lava at head", BlockState::LAVA, 72),
+            ("water level=1 at feet", water_level_one, 71),
+            ("water level=1 at head", water_level_one, 72),
+            ("lava level=1 at feet", lava_level_one, 71),
+            ("lava level=1 at head", lava_level_one, 72),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 70, 2, BlockState::STONE), (1, obstacle_y, 2, obstacle)],
+            );
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 200.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: loaded scan miss must veto an obstructed runtime raster landing"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: loaded scan miss must query raster before revalidating its exact Y"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_scan_miss_obstacle_skips_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("runtime raster landing veto must occur before either ambient pool is called");
+        }
+
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        for (case, obstacle, obstacle_y) in [
+            ("solid at feet", BlockState::STONE, 71),
+            ("solid at head", BlockState::STONE, 72),
+            ("default water at feet", BlockState::WATER, 71),
+            ("default water at head", BlockState::WATER, 72),
+            ("default lava at feet", BlockState::LAVA, 71),
+            ("default lava at head", BlockState::LAVA, 72),
+            ("water level=1 at feet", water_level_one, 71),
+            ("water level=1 at head", water_level_one, 72),
+            ("lava level=1 at feet", lava_level_one, 71),
+            ("lava level=1 at head", lava_level_one, 72),
+        ] {
+            let (runtime_app, runtime_layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 70, 2, BlockState::STONE), (1, obstacle_y, 2, obstacle)],
+            );
+            let runtime_layer = runtime_app
+                .world()
+                .get::<ChunkLayer>(runtime_layer_entity)
+                .unwrap();
+            let terrain = FixtureSurface {
+                y: 70,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+            let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+            for kind in ["mundane", "threat"] {
+                let mut output = App::new();
+                let entity_layer = output.world_mut().spawn_empty().id();
+                let mut pending = HashMap::new();
+                let spawned = {
+                    let mut commands = output.world_mut().commands();
+                    match kind {
+                        "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 200.0, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 200.0, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    }
+                };
+                output.world_mut().flush();
+
+                assert_eq!(
+                    spawned, None,
+                    "{case}/{kind}: obstacle must reject candidate"
+                );
+                assert!(
+                    pending.is_empty(),
+                    "{case}/{kind}: runtime raster veto must not consume pending budget"
+                );
+                let world = output.world_mut();
+                let mut mundane = world.query::<&MundaneFaunaMarker>();
+                assert_eq!(
+                    mundane.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no mundane marker"
+                );
+                let mut threat = world.query::<&AmbientThreatMarker>();
+                assert_eq!(
+                    threat.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no threat marker"
+                );
+                let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+                assert_eq!(
+                    spawned_by_pool.iter(world).count(),
+                    0,
+                    "{case}/{kind}: vetoed landing must not leave a pool entity"
+                );
+            }
+
+            assert_eq!(
+                terrain.queried.get(),
+                Some((1, 2)),
+                "{case}: both kinds must query the passable raster before runtime landing veto"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_scan_miss_rejects_air_support() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 200.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            None,
+            "loaded runtime data must reject a stale raster surface whose support is air"
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "loaded standard-window miss must query the raster before rejecting its air support"
+        );
+    }
+
+    #[test]
+    fn ambient_loaded_scan_miss_air_support_skips_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("air support veto must occur before either ambient pool is called");
+        }
+
+        let (runtime_app, runtime_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let runtime_layer = runtime_app
+            .world()
+            .get::<ChunkLayer>(runtime_layer_entity)
+            .unwrap();
+        let terrain = FixtureSurface {
+            y: 70,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+        for kind in ["mundane", "threat"] {
+            let mut output = App::new();
+            let entity_layer = output.world_mut().spawn_empty().id();
+            let mut pending = HashMap::new();
+            let spawned = {
+                let mut commands = output.world_mut().commands();
+                match kind {
+                    "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                        &mut commands,
+                        Some(runtime_layer),
+                        Some(&terrain),
+                        panic_pool_fn,
+                        &mut pending,
+                        AmbientSpawnRequest {
+                            layer: entity_layer,
+                            zone: &zone,
+                            candidate: DVec3::new(1.5, 200.0, 2.5),
+                            season: Season::Summer,
+                            now: 88,
+                        },
+                    ),
+                    "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                        &mut commands,
+                        Some(runtime_layer),
+                        Some(&terrain),
+                        panic_pool_fn,
+                        &mut pending,
+                        AmbientSpawnRequest {
+                            layer: entity_layer,
+                            zone: &zone,
+                            candidate: DVec3::new(1.5, 200.0, 2.5),
+                            season: Season::Summer,
+                            now: 88,
+                        },
+                    ),
+                    _ => unreachable!(),
+                }
+            };
+            output.world_mut().flush();
+
+            assert_eq!(spawned, None, "air support must reject {kind} candidate");
+            assert!(
+                pending.is_empty(),
+                "air support veto must not consume {kind} pending budget"
+            );
+            let world = output.world_mut();
+            let mut mundane = world.query::<&MundaneFaunaMarker>();
+            assert_eq!(
+                mundane.iter(world).count(),
+                0,
+                "no mundane marker for {kind}"
+            );
+            let mut threat = world.query::<&AmbientThreatMarker>();
+            assert_eq!(threat.iter(world).count(), 0, "no threat marker for {kind}");
+            let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+            assert_eq!(
+                spawned_by_pool.iter(world).count(),
+                0,
+                "air support veto must not leave a {kind} pool entity"
+            );
+        }
+
+        assert_eq!(
+            terrain.queried.get(),
+            Some((1, 2)),
+            "both kinds must query the passable raster before rejecting its air support"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_support_bounds_rejects_layer_edge_headroom() {
+        let (probe, probe_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let probe_layer = probe.world().get::<ChunkLayer>(probe_layer_entity).unwrap();
+        let max_y = probe_layer.min_y() + probe_layer.height() as i32 - 1;
+
+        for (case, support_y) in [
+            ("support at max_y puts both body cells outside", max_y),
+            ("support at max_y - 1 puts head outside", max_y - 1),
+        ] {
+            let (app, layer_entity) =
+                make_runtime_layer(&[(0, 0)], &[(1, support_y, 2, BlockState::STONE)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+            assert_eq!(
+                resolve_ambient_ground_position::<FixtureSurface>(
+                    DVec3::new(1.5, f64::from(support_y), 2.5),
+                    Some(layer),
+                    None,
+                ),
+                None,
+                "{case}: loaded runtime landing must reject unrepresentable feet/head cells"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_non_motion_support_rejects_standard_and_raster_paths() {
+        let sign = BlockState::REDSTONE_WIRE;
+        assert!(
+            !sign.blocks_motion() && !sign.is_liquid(),
+            "fixture must be non-liquid and non-motion-blocking"
+        );
+
+        for (case, candidate_y, support_y) in [
+            ("standard runtime", 80.0, 66),
+            ("loaded raster exact landing", 200.0, 70),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, support_y, 2, sign)]);
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: support_y,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, candidate_y, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: non-motion-blocking sign must not be an ambient support"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_support_vetoes_skip_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("invalid ambient support must veto before either pool is called");
+        }
+
+        let (probe, probe_layer_entity) = make_runtime_layer(&[(0, 0)], &[]);
+        let probe_layer = probe.world().get::<ChunkLayer>(probe_layer_entity).unwrap();
+        let max_y = probe_layer.min_y() + probe_layer.height() as i32 - 1;
+        let sign = BlockState::REDSTONE_WIRE;
+        assert!(!sign.blocks_motion() && !sign.is_liquid());
+
+        for (case, candidate_y, terrain_y, support_y, support) in [
+            (
+                "runtime support at max_y",
+                f64::from(max_y),
+                max_y,
+                max_y,
+                BlockState::STONE,
+            ),
+            ("standard non-motion sign", 80.0, 66, 66, sign),
+            ("raster exact non-motion sign", 200.0, 70, 70, sign),
+        ] {
+            let (runtime_app, runtime_layer_entity) =
+                make_runtime_layer(&[(0, 0)], &[(1, support_y, 2, support)]);
+            let runtime_layer = runtime_app
+                .world()
+                .get::<ChunkLayer>(runtime_layer_entity)
+                .unwrap();
+            let terrain = FixtureSurface {
+                y: terrain_y,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+            let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+            for kind in ["mundane", "threat"] {
+                let mut output = App::new();
+                let entity_layer = output.world_mut().spawn_empty().id();
+                let mut pending = HashMap::new();
+                let spawned = {
+                    let mut commands = output.world_mut().commands();
+                    match kind {
+                        "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, candidate_y, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, candidate_y, 2.5),
+                                season: Season::Summer,
+                                now: 88,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    }
+                };
+                output.world_mut().flush();
+
+                assert_eq!(
+                    spawned, None,
+                    "{case}/{kind}: invalid support rejects candidate"
+                );
+                assert!(
+                    pending.is_empty(),
+                    "{case}/{kind}: invalid support must not consume pending budget"
+                );
+                let world = output.world_mut();
+                let mut mundane = world.query::<&MundaneFaunaMarker>();
+                assert_eq!(
+                    mundane.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no mundane marker"
+                );
+                let mut threat = world.query::<&AmbientThreatMarker>();
+                assert_eq!(
+                    threat.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no threat marker"
+                );
+                let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+                assert_eq!(
+                    spawned_by_pool.iter(world).count(),
+                    0,
+                    "{case}/{kind}: invalid support leaves no pool entity"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_unloaded_chunk_without_raster_rejects_candidate() {
+        let (app, layer_entity) = make_runtime_layer(&[], &[]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        assert_eq!(
+            resolve_ambient_ground_position::<FixtureSurface>(
+                DVec3::new(33.5, 200.0, 33.5),
+                Some(layer),
+                None,
+            ),
+            None,
+            "unloaded chunk plus missing raster must fail closed, never preserve candidate.y"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_blocked_headroom_scans_farther_down() {
+        let mut blocks = vec![(0, 66, 0, BlockState::STONE)];
+        blocks.extend((70..=76).map(|y| (0, y, 0, BlockState::STONE)));
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &blocks);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        assert_eq!(
+            resolve_ambient_ground_position::<FixtureSurface>(
+                DVec3::new(0.5, 70.0, 0.5),
+                Some(layer),
+                None,
+            ),
+            Some(DVec3::new(0.5, 67.0, 0.5)),
+            "solid candidates whose two-block headroom is obstructed must be skipped for lower safe support"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_multi_layer_column_chooses_highest_safe_support() {
+        let (app, layer_entity) = make_runtime_layer(
+            &[(0, 0)],
+            &[(0, 66, 0, BlockState::STONE), (0, 72, 0, BlockState::STONE)],
+        );
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+
+        assert_eq!(
+            resolve_ambient_ground_position::<FixtureSurface>(
+                DVec3::new(0.5, 80.0, 0.5),
+                Some(layer),
+                None,
+            ),
+            Some(DVec3::new(0.5, 73.0, 0.5)),
+            "descending runtime scan must choose the highest safe support in its standard window"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_negative_fractional_xz_routes_runtime_chunk_euclidean() {
+        let (app, layer_entity) =
+            make_runtime_layer(&[(-1, -1)], &[(-3, 66, -4, BlockState::STONE)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 10,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(-2.25, 80.0, -3.75),
+                Some(layer),
+                Some(&terrain),
+            ),
+            Some(DVec3::new(-2.25, 67.0, -3.75)),
+        );
+        assert_eq!(
+            terrain.queried.get(),
+            None,
+            "floor(-2.25/-3.75) must route to world block -3/-4 in chunk -1/-1"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_position_loaded_liquid_headroom_vetoes_passable_raster() {
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        assert_ne!(
+            water_level_one,
+            BlockState::WATER,
+            "test fixture must use a non-default water level state"
+        );
+        assert_ne!(
+            lava_level_one,
+            BlockState::LAVA,
+            "test fixture must use a non-default lava level state"
+        );
+        assert!(water_level_one.is_liquid());
+        assert!(lava_level_one.is_liquid());
+
+        for (case, liquid, liquid_y) in [
+            ("water at feet", BlockState::WATER, 67),
+            ("water at head", BlockState::WATER, 68),
+            ("lava at feet", BlockState::LAVA, 67),
+            ("lava at head", BlockState::LAVA, 68),
+            ("water level=1 at feet", water_level_one, 67),
+            ("water level=1 at head", water_level_one, 68),
+            ("lava level=1 at feet", lava_level_one, 67),
+            ("lava level=1 at head", lava_level_one, 68),
+        ] {
+            let (app, layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 66, 2, BlockState::STONE), (1, liquid_y, 2, liquid)],
+            );
+            let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+            let terrain = FixtureSurface {
+                y: 12,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+
+            assert_eq!(
+                resolve_ambient_ground_position(
+                    DVec3::new(1.5, 80.0, 2.5),
+                    Some(layer),
+                    Some(&terrain),
+                ),
+                None,
+                "{case}: loaded runtime liquid must veto a stale passable raster"
+            );
+            assert_eq!(
+                terrain.queried.get(),
+                None,
+                "{case}: authoritative runtime veto must not query raster fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_loaded_liquid_veto_skips_both_pools_markers_and_pending() {
+        fn panic_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            panic!("runtime liquid veto must occur before either ambient pool is called");
+        }
+
+        let water_level_one = BlockState::WATER.set(PropName::Level, PropValue::_1);
+        let lava_level_one = BlockState::LAVA.set(PropName::Level, PropValue::_1);
+        assert_ne!(
+            water_level_one,
+            BlockState::WATER,
+            "test fixture must use a non-default water level state"
+        );
+        assert_ne!(
+            lava_level_one,
+            BlockState::LAVA,
+            "test fixture must use a non-default lava level state"
+        );
+        assert!(water_level_one.is_liquid());
+        assert!(lava_level_one.is_liquid());
+
+        for (case, liquid, liquid_y) in [
+            ("water at feet", BlockState::WATER, 67),
+            ("water at head", BlockState::WATER, 68),
+            ("lava at feet", BlockState::LAVA, 67),
+            ("lava at head", BlockState::LAVA, 68),
+            ("water level=1 at feet", water_level_one, 67),
+            ("water level=1 at head", water_level_one, 68),
+            ("lava level=1 at feet", lava_level_one, 67),
+            ("lava level=1 at head", lava_level_one, 68),
+        ] {
+            let (runtime_app, runtime_layer_entity) = make_runtime_layer(
+                &[(0, 0)],
+                &[(1, 66, 2, BlockState::STONE), (1, liquid_y, 2, liquid)],
+            );
+            let runtime_layer = runtime_app
+                .world()
+                .get::<ChunkLayer>(runtime_layer_entity)
+                .unwrap();
+            let terrain = FixtureSurface {
+                y: 12,
+                passable: true,
+                queried: std::cell::Cell::new(None),
+            };
+            let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+            for kind in ["mundane", "threat"] {
+                let mut output = App::new();
+                let entity_layer = output.world_mut().spawn_empty().id();
+                let mut pending = HashMap::new();
+                let spawned = {
+                    let mut commands = output.world_mut().commands();
+                    match kind {
+                        "mundane" => submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 80.0, 2.5),
+                                season: Season::Summer,
+                                now: 77,
+                            },
+                        ),
+                        "threat" => submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                            &mut commands,
+                            Some(runtime_layer),
+                            Some(&terrain),
+                            panic_pool_fn,
+                            &mut pending,
+                            AmbientSpawnRequest {
+                                layer: entity_layer,
+                                zone: &zone,
+                                candidate: DVec3::new(1.5, 80.0, 2.5),
+                                season: Season::Summer,
+                                now: 77,
+                            },
+                        ),
+                        _ => unreachable!(),
+                    }
+                };
+                output.world_mut().flush();
+
+                assert_eq!(spawned, None, "{case}/{kind}: liquid must reject candidate");
+                assert!(
+                    pending.is_empty(),
+                    "{case}/{kind}: liquid veto must not consume pending budget"
+                );
+                let world = output.world_mut();
+                let mut mundane = world.query::<&MundaneFaunaMarker>();
+                assert_eq!(
+                    mundane.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no mundane marker may remain"
+                );
+                let mut threat = world.query::<&AmbientThreatMarker>();
+                assert_eq!(
+                    threat.iter(world).count(),
+                    0,
+                    "{case}/{kind}: no threat marker may remain"
+                );
+                let mut spawned_by_pool = world.query_filtered::<(), With<NpcMarker>>();
+                assert_eq!(
+                    spawned_by_pool.iter(world).count(),
+                    0,
+                    "{case}/{kind}: pool must not leave a spawned entity"
+                );
+            }
+
+            assert_eq!(
+                terrain.queried.get(),
+                None,
+                "{case}: neither kind may override runtime veto with raster"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_ground_position_liquid_runtime_and_impassable_raster_reject() {
+        let (app, layer_entity) = make_runtime_layer(&[(0, 0)], &[(1, 66, 2, BlockState::WATER)]);
+        let layer = app.world().get::<ChunkLayer>(layer_entity).unwrap();
+        let terrain = FixtureSurface {
+            y: 66,
+            passable: false,
+            queried: std::cell::Cell::new(None),
+        };
+
+        assert_eq!(
+            resolve_ambient_ground_position(
+                DVec3::new(1.5, 80.0, 2.5),
+                Some(layer),
+                Some(&terrain),
+            ),
+            None,
+            "water is not runtime support and an impassable raster must remain fail closed"
+        );
+        assert_eq!(terrain.queried.get(), Some((1, 2)));
+    }
+
+    #[test]
+    fn ambient_scheduler_snaps_mundane_pool_before_spawn() {
+        use crate::fauna::mundane::{mundane_pool_fn, MundaneFaunaMarker};
+
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 66,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let mut pending = HashMap::new();
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_spawn_candidate::<MundaneFaunaMarker, _>(
+                &mut commands,
+                None,
+                Some(&terrain),
+                mundane_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer,
+                    zone: &zone,
+                    candidate: DVec3::new(10.25, 200.0, -8.5),
+                    season: Season::Summer,
+                    now: 123,
+                },
+            )
+        };
+        app.world_mut().flush();
+
+        let entity = spawned.expect("可走 surface + 真实 mundane pool 必须生成凡兽");
+        let position = app
+            .world()
+            .get::<Position>(entity)
+            .expect("真实 mundane pool 产出必须携带权威 Position")
+            .get();
+        assert_eq!(
+            position.y, 67.0,
+            "真实 mundane pool 最终 ECS Position.y 必须是 surface_y+1，不能继承 candidate Y=200"
+        );
+        let marker = app
+            .world()
+            .get::<MundaneFaunaMarker>(entity)
+            .expect("成功提交后必须由共用 seam 挂载真实 MundaneFaunaMarker");
+        assert_eq!(marker.spawned_at, 123);
+        assert_eq!(marker.home_zone, "test_zone");
+        assert_eq!(pending.get("test_zone"), Some(&1));
+    }
+
+    #[test]
+    fn ambient_scheduler_snaps_threat_pool_before_spawn() {
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 66,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let mut pending = HashMap::new();
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_spawn_candidate::<AmbientThreatMarker, _>(
+                &mut commands,
+                None,
+                Some(&terrain),
+                ambient_threat_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer,
+                    zone: &zone,
+                    candidate: DVec3::new(-12.5, 200.0, 7.25),
+                    season: Season::Summer,
+                    now: 456,
+                },
+            )
+        };
+        app.world_mut().flush();
+
+        let entity = spawned.expect("可走 surface + danger=1 真实 threat pool 必须生成 rat");
+        let position = app
+            .world()
+            .get::<Position>(entity)
+            .expect("真实 threat pool 产出必须携带权威 Position")
+            .get();
+        assert_eq!(
+            position.y, 67.0,
+            "真实 threat/rat pool 最终 ECS Position.y 必须是 surface_y+1，不能继承 candidate Y=200"
+        );
+        assert!(
+            app.world().get::<RatBlackboard>(entity).is_some(),
+            "danger=1 真实 ambient_threat_pool_fn 必须走 rat 生产链，而不是测试替身"
+        );
+        let marker = app
+            .world()
+            .get::<AmbientThreatMarker>(entity)
+            .expect("成功提交后必须由共用 seam 挂载真实 AmbientThreatMarker");
+        assert_eq!(marker.spawned_at, 456);
+        assert_eq!(marker.home_zone, "test_zone");
+        assert_eq!(pending.get("test_zone"), Some(&1));
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_mundane_dispatches_real_pool_on_runtime_without_raster() {
+        use crate::fauna::mundane::{MundaneFaunaKind, MundaneFaunaSpecies};
+
+        let (runtime_app, runtime_layer_entity) =
+            make_runtime_layer(&[(0, 0)], &[(5, 140, 3, BlockState::STONE)]);
+        let runtime_layer = runtime_app
+            .world()
+            .get::<ChunkLayer>(runtime_layer_entity)
+            .expect("runtime fixture must expose its loaded ChunkLayer");
+        let mut output = App::new();
+        let entity_layer = output.world_mut().spawn_empty().id();
+        let mut zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        zone.name = "spawn".to_string();
+
+        let spawned = {
+            let mut commands = output.world_mut().commands();
+            submit_ambient_dev_spawn_once::<FixtureSurface>(
+                &mut commands,
+                AmbientDevSpawnRequest {
+                    kind: AmbientDevSpawnKind::Mundane,
+                    layer: entity_layer,
+                    runtime_layer: Some(runtime_layer),
+                    terrain: None,
+                    zone: &zone,
+                    candidate: DVec3::new(5.0, 152.0, 3.0),
+                    season: Season::Summer,
+                    now: 901,
+                },
+            )
+        };
+        output.world_mut().flush();
+
+        let entity = spawned.expect("loaded runtime support + real mundane pool must spawn");
+        assert_eq!(
+            output
+                .world()
+                .get::<Position>(entity)
+                .expect("real mundane pool must attach Position")
+                .get(),
+            DVec3::new(5.0, 141.0, 3.0),
+            "one-shot mundane must use runtime ground_y+1, never executor/candidate y=152"
+        );
+        let marker = output
+            .world()
+            .get::<MundaneFaunaMarker>(entity)
+            .expect("Mundane dev kind must attach the production mundane marker");
+        assert_eq!(marker.spawned_at, 901);
+        assert_eq!(marker.home_zone, "spawn");
+        assert_eq!(
+            output
+                .world()
+                .get::<MundaneFaunaSpecies>(entity)
+                .expect("real mundane pool must attach its concrete species")
+                .0,
+            MundaneFaunaKind::Cow,
+            "the fixed (spawn,5,3,Summer) bot witness must dispatch to Cow"
+        );
+        assert!(
+            output.world().get::<AmbientThreatMarker>(entity).is_none(),
+            "Mundane dev kind must not cross-tag the entity as a threat"
+        );
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_threat_dispatches_real_rat_pool_through_raster_fallback() {
+        let mut app = App::new();
+        let entity_layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 72,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_dev_spawn_once(
+                &mut commands,
+                AmbientDevSpawnRequest {
+                    kind: AmbientDevSpawnKind::Threat,
+                    layer: entity_layer,
+                    runtime_layer: None,
+                    terrain: Some(&terrain),
+                    zone: &zone,
+                    candidate: DVec3::new(5.0, 152.0, 3.0),
+                    season: Season::Winter,
+                    now: 902,
+                },
+            )
+        };
+        app.world_mut().flush();
+
+        let entity = spawned.expect("passable raster + danger-one real threat pool must spawn Rat");
+        assert_eq!(terrain.queried.get(), Some((5, 3)));
+        assert_eq!(
+            app.world()
+                .get::<Position>(entity)
+                .expect("real Rat pool must attach Position")
+                .get(),
+            DVec3::new(5.0, 73.0, 3.0),
+            "one-shot threat must use raster surface_y+1, never executor/candidate y=152"
+        );
+        assert!(
+            app.world().get::<RatBlackboard>(entity).is_some(),
+            "Threat dev kind at danger one must dispatch to the real Rat production pool"
+        );
+        let marker = app
+            .world()
+            .get::<AmbientThreatMarker>(entity)
+            .expect("Threat dev kind must attach the production threat marker");
+        assert_eq!(marker.spawned_at, 902);
+        assert_eq!(marker.home_zone, "test_zone");
+        assert!(
+            app.world().get::<MundaneFaunaMarker>(entity).is_none(),
+            "Threat dev kind must not cross-tag the entity as mundane fauna"
+        );
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_rejects_when_runtime_and_raster_are_both_missing() {
+        let mut app = App::new();
+        let entity_layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_dev_spawn_once::<FixtureSurface>(
+                &mut commands,
+                AmbientDevSpawnRequest {
+                    kind: AmbientDevSpawnKind::Threat,
+                    layer: entity_layer,
+                    runtime_layer: None,
+                    terrain: None,
+                    zone: &zone,
+                    candidate: DVec3::new(5.0, 152.0, 3.0),
+                    season: Season::Summer,
+                    now: 903,
+                },
+            )
+        };
+        app.world_mut().flush();
+
+        assert_eq!(spawned, None, "dual-source miss must fail closed");
+        let world = app.world_mut();
+        let mut markers = world.query::<&AmbientThreatMarker>();
+        assert_eq!(
+            markers.iter(world).count(),
+            0,
+            "surface rejection must occur before the real threat pool and marker insertion"
+        );
+    }
+
+    #[test]
+    fn ambient_dev_spawn_once_surface_success_still_honors_mundane_habitat_rejection() {
+        use crate::fauna::mundane::MundaneFaunaSpecies;
+
+        let mut app = App::new();
+        let entity_layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.0, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 72,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_dev_spawn_once(
+                &mut commands,
+                AmbientDevSpawnRequest {
+                    kind: AmbientDevSpawnKind::Mundane,
+                    layer: entity_layer,
+                    runtime_layer: None,
+                    terrain: Some(&terrain),
+                    zone: &zone,
+                    candidate: DVec3::new(5.0, 152.0, 3.0),
+                    season: Season::Summer,
+                    now: 904,
+                },
+            )
+        };
+        app.world_mut().flush();
+
+        assert_eq!(
+            terrain.queried.get(),
+            Some((5, 3)),
+            "test precondition: raster surface must resolve before the real pool rejects"
+        );
+        assert_eq!(spawned, None, "dead-zone mundane pool must reject");
+        let world = app.world_mut();
+        let mut markers = world.query::<&MundaneFaunaMarker>();
+        assert_eq!(markers.iter(world).count(), 0);
+        let mut species = world.query::<&MundaneFaunaSpecies>();
+        assert_eq!(
+            species.iter(world).count(),
+            0,
+            "pool rejection must not leave a partially spawned mundane entity"
+        );
+    }
+
+    #[test]
+    fn ambient_scheduler_surface_rejection_does_not_call_pool() {
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+
+        for (case, terrain) in [
+            ("missing provider", None),
+            (
+                "impassable surface",
+                Some(FixtureSurface {
+                    y: 66,
+                    passable: false,
+                    queried: std::cell::Cell::new(None),
+                }),
+            ),
+        ] {
+            let mut app = App::new();
+            let layer = app.world_mut().spawn_empty().id();
+            let mut pending = HashMap::new();
+            let spawned = {
+                let mut commands = app.world_mut().commands();
+                submit_ambient_spawn_candidate::<TestFaunaMarker, FixtureSurface>(
+                    &mut commands,
+                    None,
+                    terrain.as_ref(),
+                    test_pool_fn,
+                    &mut pending,
+                    AmbientSpawnRequest {
+                        layer,
+                        zone: &zone,
+                        candidate: DVec3::new(4.0, 200.0, 5.0),
+                        season: Season::Summer,
+                        now: 0,
+                    },
+                )
+            };
+            app.world_mut().flush();
+
+            assert_eq!(spawned, None, "{case} 必须拒绝 ambient 候选");
+            let mut spawned_by_pool = app.world_mut().query_filtered::<(), With<NpcMarker>>();
+            assert_eq!(
+                spawned_by_pool.iter(app.world()).count(),
+                0,
+                "{case} 时不应调用会生成 NpcMarker 实体的 pool"
+            );
+            assert!(
+                pending.is_empty(),
+                "{case} 时不应产生任何 pending 记账副作用"
+            );
+        }
+    }
+
+    #[test]
+    fn ambient_scheduler_pool_none_does_not_tag_or_consume_pending_budget() {
+        fn rejecting_pool_fn(
+            _commands: &mut Commands,
+            _layer: Entity,
+            _zone: &Zone,
+            _spawn_position: DVec3,
+            _patrol_target: DVec3,
+            _season: Season,
+        ) -> Option<Entity> {
+            None
+        }
+
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let terrain = FixtureSurface {
+            y: 66,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let mut pending = HashMap::new();
+        let spawned = {
+            let mut commands = app.world_mut().commands();
+            submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
+                &mut commands,
+                None,
+                Some(&terrain),
+                rejecting_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer,
+                    zone: &zone,
+                    candidate: DVec3::new(4.0, 200.0, 5.0),
+                    season: Season::Summer,
+                    now: 0,
+                },
+            )
+        };
+        app.world_mut().flush();
+
+        assert_eq!(
+            terrain.queried.get(),
+            Some((4, 5)),
+            "test precondition: the passable surface must resolve before the pool rejects"
+        );
+        assert_eq!(spawned, None, "pool None must reject the submission");
+        assert!(
+            pending.is_empty(),
+            "pool None must not consume this tick's pending budget"
+        );
+        let mut markers = app.world_mut().query::<&TestFaunaMarker>();
+        assert_eq!(
+            markers.iter(app.world()).count(),
+            0,
+            "pool None produces no entity to tag, so no marker may appear"
+        );
+    }
+
+    #[test]
+    fn ambient_scheduler_surface_rejection_does_not_consume_pending_budget() {
+        let mut app = App::new();
+        let layer = app.world_mut().spawn_empty().id();
+        let zone = zone_with(1, 0.5, DimensionKind::Overworld);
+        let blocked = FixtureSurface {
+            y: 66,
+            passable: false,
+            queried: std::cell::Cell::new(None),
+        };
+        let passable = FixtureSurface {
+            y: 66,
+            passable: true,
+            queried: std::cell::Cell::new(None),
+        };
+        let mut pending = HashMap::new();
+        let (rejected, spawned) = {
+            let mut commands = app.world_mut().commands();
+            let rejected = submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
+                &mut commands,
+                None,
+                Some(&blocked),
+                test_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer,
+                    zone: &zone,
+                    candidate: DVec3::new(1.0, 200.0, 1.0),
+                    season: Season::Summer,
+                    now: 0,
+                },
+            );
+            assert_eq!(rejected, None, "不可走 surface 必须拒绝第一个候选");
+            assert_eq!(
+                pending.get("test_zone").copied().unwrap_or(0),
+                0,
+                "surface rejection 不得提前占用本 tick pending budget"
+            );
+
+            let spawned = submit_ambient_spawn_candidate::<TestFaunaMarker, _>(
+                &mut commands,
+                None,
+                Some(&passable),
+                test_pool_fn,
+                &mut pending,
+                AmbientSpawnRequest {
+                    layer,
+                    zone: &zone,
+                    candidate: DVec3::new(2.0, 200.0, 2.0),
+                    season: Season::Summer,
+                    now: 0,
+                },
+            );
+            (rejected, spawned)
+        };
+        app.world_mut().flush();
+
+        assert_eq!(rejected, None);
+        let entity = spawned.expect("拒绝候选未占预算后，同 tick 后续合法候选必须仍可生成");
+        assert_eq!(
+            pending.get("test_zone"),
+            Some(&1),
+            "仅成功的后续候选应占用一个 pending 名额"
+        );
+        assert_eq!(
+            app.world()
+                .get::<Position>(entity)
+                .expect("合法后续候选应走 pool 生成实体")
+                .get()
+                .y,
+            67.0,
+            "后续合法候选也必须使用 surface_y+1"
+        );
+        assert!(
+            app.world().get::<TestFaunaMarker>(entity).is_some(),
+            "合法后续候选必须在真实提交后挂 marker"
+        );
+    }
+
+    fn install_test_terrain(app: &mut App) {
+        app.insert_resource(TerrainProviders {
+            overworld: TerrainProvider::empty_for_tests(),
+            tsy: None,
+        });
+    }
 
     // -----------------------------------------------------------------
     // threat_budget —— 预算表边界
@@ -1661,8 +4081,23 @@ mod tests {
         )
     }
 
+    fn panic_scheduler_pool_fn(
+        _commands: &mut Commands,
+        _layer: Entity,
+        _zone: &Zone,
+        _spawn_position: DVec3,
+        _patrol_target: DVec3,
+        _season: Season,
+    ) -> Option<Entity> {
+        panic!("invalid live layer must reject before ambient pool submission");
+    }
+
     fn make_app() -> App {
-        let mut app = App::new();
+        let scenario = ScenarioSingleClient::new();
+        let client = scenario.client;
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut().despawn(client);
         app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
             .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
                 threat_budget,
@@ -1670,14 +4105,312 @@ mod tests {
                 true,
             ))
             .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+        install_test_terrain(&mut app);
         app
     }
 
     fn install_layers(app: &mut App) -> Entity {
-        let overworld = app.world_mut().spawn_empty().id();
+        let overworld = {
+            let world = app.world_mut();
+            let mut query =
+                world.query_filtered::<Entity, (With<ChunkLayer>, Without<Despawned>)>();
+            query
+                .iter(world)
+                .next()
+                .expect("scheduler test app must provide one live ChunkLayer")
+        };
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
         overworld
+    }
+
+    fn fill_runtime_ground_plane(
+        app: &mut App,
+        layer_entity: Entity,
+        ground_y: i32,
+        chunk_min: i32,
+        chunk_max: i32,
+    ) {
+        let (min_y, height) = {
+            let layer = app
+                .world()
+                .get::<ChunkLayer>(layer_entity)
+                .expect("scenario layer must contain ChunkLayer");
+            (layer.min_y(), layer.height())
+        };
+        let local_y = (ground_y - min_y) as u32;
+        let mut layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(layer_entity)
+            .expect("scenario layer must remain mutable");
+        for chunk_x in chunk_min..=chunk_max {
+            for chunk_z in chunk_min..=chunk_max {
+                let mut chunk = UnloadedChunk::with_height(height);
+                for local_x in 0..16u32 {
+                    for local_z in 0..16u32 {
+                        chunk.set_block_state(local_x, local_y, local_z, BlockState::STONE);
+                    }
+                }
+                layer.insert_chunk([chunk_x, chunk_z], chunk);
+            }
+        }
+    }
+
+    fn make_runtime_scheduler_app<M: AmbientMarkerData>(
+        budget_fn: fn(u8) -> ThreatBudget,
+        pool_fn: AmbientPoolFn,
+        counts_against_threat_budget: bool,
+        danger_level: u8,
+    ) -> App {
+        let scenario = ScenarioSingleClient::new();
+        let client = scenario.client;
+        let overworld = scenario.layer;
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.world_mut().entity_mut(client).insert((
+            Position::new([0.0, 80.0, 0.0]),
+            CurrentDimension(DimensionKind::Overworld),
+        ));
+        // The complete 24..64 ring around the player lies inside chunks -4..=3;
+        // keep one extra chunk of margin so a boundary-flooring regression cannot
+        // accidentally turn the test into an unloaded-chunk/raster case.
+        fill_runtime_ground_plane(&mut app, overworld, 66, -5, 4);
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        install_zone_registry(&mut app, danger_level);
+        app.insert_resource(GameTick(0))
+            .insert_resource(AmbientSchedulerState::<M>::default())
+            .insert_resource(AmbientSchedulerConfig::<M>::new(
+                budget_fn,
+                pool_fn,
+                counts_against_threat_budget,
+            ))
+            .add_systems(Update, ambient_scheduler_system::<M>);
+        assert!(
+            app.world().get_resource::<TerrainProviders>().is_none(),
+            "runtime scheduler fixture must not install raster providers"
+        );
+        app
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum InvalidOverworldLayer {
+        Missing,
+        NonChunk,
+        Despawning,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum RecycleQiCarrier {
+        Rat,
+        MimicSpider,
+    }
+
+    #[test]
+    fn ambient_scheduler_invalid_layer_rejects_spawn_but_preserves_recycle_and_qi_return() {
+        use valence::prelude::ChunkPos;
+
+        for invalid_layer in [
+            InvalidOverworldLayer::Missing,
+            InvalidOverworldLayer::NonChunk,
+            InvalidOverworldLayer::Despawning,
+        ] {
+            for carrier in [RecycleQiCarrier::Rat, RecycleQiCarrier::MimicSpider] {
+                let mut app = make_app();
+                let original = install_layers(&mut app);
+                install_zone_registry(&mut app, 1);
+                // danger=1 的 600 tick 周期在此恰好命中，若 live-layer 门禁失效，下面的
+                // panic pool 会证明 scheduler 确实进入了新 spawn 提交路径。
+                app.insert_resource(GameTick(600));
+                app.insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
+                    threat_budget,
+                    panic_scheduler_pool_fn,
+                    true,
+                ));
+                // 玩家仍在 test_zone 内，但与原点的待回收实体相距 >96 格；候选环也完整落在
+                // zone bounds 内，确保 invalid layer 是拒绝新 spawn 的唯一前置条件。
+                app.world_mut()
+                    .spawn((ClientMarker, Position::new([200.0, 64.0, 200.0])));
+
+                let (stray, rat_account, expected_zone_qi) = match carrier {
+                    RecycleQiCarrier::Rat => {
+                        let mut blackboard = RatBlackboard::new("test_zone", ChunkPos::new(0, 0));
+                        blackboard.drained_qi = 10.0;
+                        let stray = app
+                            .world_mut()
+                            .spawn((
+                                Position::new([0.0, 64.0, 0.0]),
+                                AmbientThreatMarker {
+                                    spawned_at: 0,
+                                    home_zone: "test_zone".to_string(),
+                                },
+                                blackboard,
+                            ))
+                            .id();
+                        let rat_account = QiAccountId::npc(format!("rat:{}", stray.index()));
+                        let mut ledger = WorldQiAccount::default();
+                        ledger
+                            .set_balance(rat_account.clone(), 10.0)
+                            .expect("seeding invalid-layer rat balance must succeed");
+                        app.insert_resource(ledger);
+                        let expected = (0.5
+                            + 10.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                            .clamp(-1.0, 1.0);
+                        (stray, Some(rat_account), expected)
+                    }
+                    RecycleQiCarrier::MimicSpider => {
+                        let mut blackboard =
+                            MimicSpiderBlackboard::new("test_zone", DVec3::new(0.0, 64.0, 0.0));
+                        blackboard.drained_qi = 50.0;
+                        let stray = app
+                            .world_mut()
+                            .spawn((
+                                Position::new([0.0, 64.0, 0.0]),
+                                AmbientThreatMarker {
+                                    spawned_at: 0,
+                                    home_zone: "test_zone".to_string(),
+                                },
+                                blackboard,
+                            ))
+                            .id();
+                        let expected = (0.5
+                            + (50.0
+                                * crate::fauna::mimic_spider::SPIDER_DRAINED_QI_DEATH_RETURN_RATIO)
+                                / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+                            .clamp(-1.0, 1.0);
+                        (stray, None, expected)
+                    }
+                };
+
+                match invalid_layer {
+                    InvalidOverworldLayer::Missing => {
+                        let stale = app.world_mut().spawn_empty().id();
+                        app.world_mut().despawn(stale);
+                        app.world_mut().resource_mut::<DimensionLayers>().overworld = stale;
+                    }
+                    InvalidOverworldLayer::NonChunk => {
+                        let non_chunk = app.world_mut().spawn_empty().id();
+                        app.world_mut().resource_mut::<DimensionLayers>().overworld = non_chunk;
+                    }
+                    InvalidOverworldLayer::Despawning => {
+                        app.world_mut().entity_mut(original).insert(Despawned);
+                    }
+                }
+
+                // 只跑 Update，避免 Last schedule 把带 Despawned 的测试实体真正移除后失去断言点。
+                app.world_mut().run_schedule(Update);
+
+                assert!(
+                    app.world().get::<Despawned>(stray).is_some(),
+                    "{invalid_layer:?}/{carrier:?}: invalid spawn layer must not block existing ambient recycle"
+                );
+                assert_eq!(
+                    app.world()
+                        .resource::<AmbientSchedulerState<AmbientThreatMarker>>()
+                        .last_check_tick,
+                    600,
+                    "{invalid_layer:?}/{carrier:?}: scheduler must keep its pre-existing cadence/recycle control flow"
+                );
+                let zone_after = app
+                    .world()
+                    .resource::<ZoneRegistry>()
+                    .find_zone_by_name("test_zone")
+                    .expect("test_zone must remain available")
+                    .spirit_qi;
+                assert!(
+                    (zone_after - expected_zone_qi).abs() < 1e-9,
+                    "{invalid_layer:?}/{carrier:?}: recycle must preserve the existing qi return contract; expected {expected_zone_qi}, actual {zone_after}"
+                );
+                if let Some(rat_account) = rat_account {
+                    assert_eq!(
+                        app.world().resource::<WorldQiAccount>().balance(&rat_account),
+                        0.0,
+                        "{invalid_layer:?}/{carrier:?}: rat recycle must still clear the npc ledger account"
+                    );
+                }
+                let spawned_pool_entities = app
+                    .world_mut()
+                    .query_filtered::<Entity, With<NpcMarker>>()
+                    .iter(app.world())
+                    .count();
+                assert_eq!(
+                    spawned_pool_entities, 0,
+                    "{invalid_layer:?}/{carrier:?}: invalid live layer must not submit a new pool entity"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ambient_scheduler_system_snaps_mundane_real_pool_on_loaded_chunk_without_raster() {
+        use crate::fauna::mundane::{
+            mundane_passive_budget_fn, mundane_pool_fn, MundaneFaunaMarker,
+        };
+
+        let mut app = make_runtime_scheduler_app::<MundaneFaunaMarker>(
+            mundane_passive_budget_fn,
+            mundane_pool_fn,
+            false,
+            1,
+        );
+        app.update();
+
+        let mut spawned = app
+            .world_mut()
+            .query_filtered::<(&Position, &MundaneFaunaMarker), With<NpcMarker>>();
+        let entities: Vec<_> = spawned.iter(app.world()).collect();
+        assert_eq!(
+            entities.len(),
+            1,
+            "full ambient scheduler must invoke the real mundane pool exactly once at tick zero"
+        );
+        let (position, marker) = entities[0];
+        assert_eq!(
+            position.get().y,
+            67.0,
+            "App -> ambient_scheduler_system -> mundane_pool_fn must place feet at runtime ground_y+1, not player Y=80"
+        );
+        assert_ne!(
+            position.get().y,
+            80.0,
+            "mundane spawn must not inherit player Y"
+        );
+        assert_eq!(marker.home_zone, "test_zone");
+        assert_eq!(marker.spawned_at, 0);
+    }
+
+    #[test]
+    fn ambient_scheduler_system_snaps_threat_real_pool_on_loaded_chunk_without_raster() {
+        let mut app = make_runtime_scheduler_app::<AmbientThreatMarker>(
+            threat_budget,
+            ambient_threat_pool_fn,
+            true,
+            1,
+        );
+        app.update();
+
+        let mut spawned = app
+            .world_mut()
+            .query_filtered::<(&Position, &AmbientThreatMarker, &RatBlackboard), With<NpcMarker>>();
+        let entities: Vec<_> = spawned.iter(app.world()).collect();
+        assert_eq!(
+            entities.len(),
+            1,
+            "full ambient scheduler must invoke danger-one's real threat/rat pool exactly once"
+        );
+        let (position, marker, _rat) = entities[0];
+        assert_eq!(
+            position.get().y,
+            67.0,
+            "App -> ambient_scheduler_system -> ambient_threat_pool_fn -> rat must use runtime ground_y+1, not player Y=80"
+        );
+        assert_ne!(
+            position.get().y,
+            80.0,
+            "threat spawn must not inherit player Y"
+        );
+        assert_eq!(marker.home_zone, "test_zone");
+        assert_eq!(marker.spawned_at, 0);
     }
 
     fn install_zone_registry(app: &mut App, danger_level: u8) {
@@ -1848,7 +4581,7 @@ mod tests {
                 },
             ))
             .id();
-        app.update();
+        app.world_mut().run_schedule(Update);
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
@@ -1897,7 +4630,7 @@ mod tests {
             .expect("seeding the rat ledger balance must succeed");
         app.insert_resource(ledger);
 
-        app.update();
+        app.world_mut().run_schedule(Update);
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
@@ -1971,7 +4704,7 @@ mod tests {
                 spider_blackboard,
             ))
             .id();
-        app.update();
+        app.world_mut().run_schedule(Update);
 
         assert!(
             app.world().get::<Despawned>(stray).is_some(),
@@ -2077,14 +4810,12 @@ mod tests {
         };
         use valence::prelude::Events;
 
-        let mut app = App::new();
-        app.insert_resource(AmbientSchedulerState::<AmbientThreatMarker>::default())
-            .insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
-                threat_budget,
-                ambient_threat_pool_fn,
-                true,
-            ))
-            .add_systems(Update, ambient_scheduler_system::<AmbientThreatMarker>);
+        let mut app = make_app();
+        app.insert_resource(AmbientSchedulerConfig::<AmbientThreatMarker>::new(
+            threat_budget,
+            ambient_threat_pool_fn,
+            true,
+        ));
         install_layers(&mut app);
         app.insert_resource(ZoneRegistry {
             zones: vec![

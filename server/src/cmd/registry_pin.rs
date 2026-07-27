@@ -1,4 +1,5 @@
 pub const COMMAND_NAMES: &[&str] = &[
+    "ambient_spawn",
     // plan-tribulation-balance-v1 P0：渡劫平衡监控看板 dev 命令
     "balance",
     // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
@@ -57,6 +58,8 @@ pub const COMMAND_NAMES: &[&str] = &[
 
 #[cfg(test)]
 pub const COMMAND_TREE_PATHS: &[&str] = &[
+    "ambient_spawn once mundane <x:double> <z:double>",
+    "ambient_spawn once threat <x:double> <z:double>",
     // plan-tribulation-balance-v1 P0：渡劫平衡监控看板
     "balance tribulation",
     // plan-dandao-runtime-wiring-v1 P4：暴龙王 BOSS dev spawn 命令
@@ -166,6 +169,7 @@ mod tests {
         assert_eq!(
             COMMAND_NAMES,
             &[
+                "ambient_spawn",
                 "balance",
                 "baolongwang",
                 "bong",
