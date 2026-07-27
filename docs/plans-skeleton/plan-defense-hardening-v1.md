@@ -28,7 +28,7 @@
 
 | 主题 | 归属 | 本 plan 的关系 |
 |------|------|----------------|
-| 破盾后 ShieldBlock/ShieldBlocking 状态泄漏（`resolve.rs:1262` `unwrap_or("wooden_shield")` 兜底继续 50% 减伤 + 扣体力至 Exhausted + 反受硬直） | `docs/plans-skeleton/plan-bughunt-r10-findings-v1.md` **P0 critical**（已立案未实施） | 不重复修；P3 的"被崩盾反馈"消费其修复后的干净状态机 |
+| 破盾后 ShieldBlock/ShieldBlocking 状态泄漏（`resolve.rs:1262` `unwrap_or("wooden_shield")` 兜底继续 50% 减伤 + 扣体力至 Exhausted + 反受硬直） | `docs/plans-skeleton/plan-bughunt-shield-break-state-cleanup-v1.md`（唯一 implementation owner） | 不重复修；P3 的"被崩盾反馈"消费其修复后的干净状态机 |
 | 广播体操 defense_profile 每 tick 累加至 85% | `docs/plans-skeleton/plan-bughunt-guangbo-defense-accum-v1.md`（同批立案） | P0 全局 cap 是其纵深防御层，不替代该修复 |
 | NPC 穿甲减伤恒 0（`armor_sync.rs:84-87` 要求 `PlayerInventory`，NPC 不挂；`npc/equipment.rs:66` `armor_profile_id` 写而不读） | `docs/plans-skeleton/plan-npc-combat-gear-v2.md`（§8.1 已拍板 B 路线 = NPC 挂真 `PlayerInventory`，P2 去"实体=玩家"假设） | 不另起炉灶；P1 收编 NPC 侧旁路时不触碰其 B 路线 |
 | 护甲 OBJ 渲染实装（`ArmorFeatureRenderer.java:41` `OBJ_RENDER_READY=false` 全程 early-return） | `docs/plans-skeleton/plan-module-wiring-gaps-v2.md` T13（视觉资产，真机 3 轮打磨） | P4 只修数据表，不碰渲染开关 |
@@ -136,7 +136,7 @@
 **现状（全部实核）**：
 
 - `DefenseKind`（`server/src/combat/events.rs:90-95`）只有 `JieMai / SwordParry / ShieldBlock` 三个**成功**变体——格挡失败在 wire 上没有对应语义，方向不对（FOV 外被击）与被崩盾（体力耗尽强制放盾）屏幕表现与"没举盾"完全一样
-- **破盾（耐久归零）单列**：已有独立事件链 `ShieldBroken` → `weapon_equipped_emit.rs:210` `emit_shield_broken_payloads` → client `shield_broken` payload（客户端碎盾三件套已闭环），其状态泄漏修复归 `plan-bughunt-r10-findings-v1` P0——**本阶段对破盾不新增 DefenseKind 变体、不新增 emit 点，显式委托既有链路**，只在回归测试里 pin 住它防误伤
+- **破盾（耐久归零）单列**：已有独立事件链 `ShieldBroken` → `weapon_equipped_emit.rs:210` `emit_shield_broken_payloads` → client `shield_broken` payload（客户端碎盾三件套已闭环），其状态泄漏修复归 `docs/plans-skeleton/plan-bughunt-shield-break-state-cleanup-v1.md`——**本阶段对破盾不新增 DefenseKind 变体、不新增 emit 点，显式委托既有链路**，只在回归测试里 pin 住它防误伤
 - `ParrySuccessEvent` 在**施法瞬间**就 emit（`zhenmai_v2.rs:533`，位于施法入口 `fn resolve_parry` @ `:505`，注释自认"弹反成功瞬态闪现"）——真实格挡成功标志 `jiemai_success = true`（`resolve.rs:1150`）却**不** emit 它，假反馈与真结算完全脱节。核验已见的链路：producer `zhenmai_v2.rs:533`、struct @ `:260`、桥接 `network/zhenmai_v2_event_bridge.rs:36` 推 client
 - 举盾期间玩家自己的截脉 DefenseIntent 被静默吞（`resolve.rs:263-266` 无差别 `continue`，注释 `:260-262` 说明本意只是拦盾格自身的动画 intent）——玩家举盾按截脉：完全失效且无提示
 

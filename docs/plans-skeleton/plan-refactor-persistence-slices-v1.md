@@ -23,18 +23,19 @@
 - ⬜ P0 设计收口 + 吸收清单验真：53 张表普查归域；冻结 Slice trait（载入守护语义：读失败 = 保留旧行 + 告警 + 只读降级，绝不写回空态；flush registry；tick rebase 协议）；等 #1288/#1289/#1261/#1259 merge 后定基线。
 - ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；Slice 框架上线，KnownTechniques/Lifecycle（在飞 PR 的成果）平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（SkillSet/Wounds/状态 buff/身份键……）收编，#1290 模式全量落地；身份主键统一（identity-persist-key-mismatch）。
-- ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部"节流落盘"域；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥（coffin-autosave-inflight-race 模式）。
+- ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部"节流落盘"域，包含 `mineral::ExhaustedMineralsLog` 的 600-tick 窗口与 `ZoneInfluenceMap` 的 300 秒窗口；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥（coffin-autosave-inflight-race 模式）。矿脉枯竭与 zone influence 的关服 flush 只在本轨实施，原 focused/round bundle 只保留审计史。
 - ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、状态效果、化虚冷却、灵眼、地表遗缴、散灵珠、可放置实体、dormant 往返身份完整性（heiwushi）等——逐个按 Slice 框架补表。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
-active：active-events-restart-loss、mineral-respawn-tick-restart-drift、realm-taint-restart-amnesia、recipe-unlock-shutdown-flush（若 #1261 已 merge 则只归档）、season-override-restart、spiritwood-shutdown-flush、status-effects-consumable-persistence、supply-coffin-cooldown-restart-rollback、tiandao-attention-persistence、zone-influence-shutdown-flush、dormant-redis-dirty-ack、heiwushi-dormant-identity-loss。
+active：active-events-restart-loss、mineral-respawn-tick-restart-drift、realm-taint-restart-amnesia、recipe-unlock-shutdown-flush（若 #1261 已 merge 则只归档）、season-override-restart、spiritwood-shutdown-flush、status-effects-consumable-persistence、supply-coffin-cooldown-restart-rollback、tiandao-attention-persistence、zone-influence-shutdown-flush、dormant-redis-dirty-ack、heiwushi-dormant-identity-loss；round-bundle 精确吸收：r10-findings #1 `mineral::record_exhausted_minerals` shutdown flush、#2 `ZoneInfluenceMap` shutdown flush（后者与 active `zone-influence-shutdown-flush` 为同一 finding，不形成第二 implementation owner）。
 skeleton：coffin-autosave-inflight-race、identity-persist-key-mismatch、mineral-exhausted-log-corrupt-revival、placeable-entity-restart-loss、scatter-bead-burial-restart-loss、spirit-eye-runtime-persistence、surface-stash-lifecycle-volatile、voidaction-cooldown-runtime-tick-restart、coffin-offline-reclaim-respawn-dup、stale-spirit-niche-lifecycle；在飞：wounds-relog-full-heal（#1282）、player-slice-load-failure-clears（#1290）、shelflife-clock-restart-freshness（#1294）。
 
 ## 文件所有权与边界
 
 - 独占：`server/src/persistence/**`、`player/state.rs`+`player/mod.rs` 的 autosave/载入区段、各域的持久化接线点（新增表定义）。
+- 上述独占的唯一例外是 master §4 的 pre-R3 P1 `npc-deceased-archive-db-open-rollback`：R3 P0 不改 `persist_npc_deceased_archive`；若 R3 P1 先触及该 symbol，则例外失效并由 R3 接管 focused 故障矩阵，不能并行实施。
 - 不碰：session 业务逻辑（R1 经钩子接入）、qi 语义（R5）、`client_request_handler.rs`（R4）。
 - 依赖：基线等 #1288/#1289/#1259/#1261 merge；R1 P2 依赖本轨 P1。**本轨是 Wave 0 的锚，最优先动工。**
 
