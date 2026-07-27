@@ -401,6 +401,46 @@ class ServerDataDecodeTest(unittest.TestCase):
         )
         self.assertAlmostEqual(decoded["intensity"], 0.35, places=6)
 
+    def test_breakthrough_decoder_contract_matches_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        cinematic = _proto_message_body(source, "BreakthroughCinematic")
+
+        self.assertEqual(
+            _proto_field_signature(envelope, "breakthrough_cinematic"),
+            ("BreakthroughCinematic", proto_min.SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD),
+            "Bot field 71 分发常量必须与权威 ServerDataEnvelope 对齐",
+        )
+        expected_fields = {
+            "actor_id": ("string", 1),
+            "phase": ("string", 2),
+            "phase_tick": ("uint32", 3),
+            "phase_duration_ticks": ("uint32", 4),
+            "realm_from": ("string", 5),
+            "realm_to": ("string", 6),
+            "result": ("string", 7),
+            "interrupted": ("bool", 8),
+            "world_pos_x": ("double", 9),
+            "world_pos_y": ("double", 10),
+            "world_pos_z": ("double", 11),
+            "visible_radius_blocks": ("double", 12),
+            "global": ("bool", 13),
+            "distant_billboard": ("bool", 14),
+            "particle_density": ("float", 15),
+            "intensity": ("float", 16),
+            "season_overlay": ("string", 17),
+            "style": ("string", 18),
+            "at_tick": ("uint64", 19),
+        }
+        for field_name, expected in expected_fields.items():
+            with self.subTest(field=field_name):
+                self.assertEqual(
+                    _proto_field_signature(cinematic, field_name),
+                    expected,
+                    f"Bot BreakthroughCinematic.{field_name} 解码字段必须与权威 proto 对齐",
+                )
+
     def test_bot_dispatch_emits_decoded_breakthrough_cinematic_event(self):
         bot = _bare_bot()
         body = (
