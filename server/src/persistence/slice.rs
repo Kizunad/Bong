@@ -949,6 +949,7 @@ impl PersistedRevisionFence {
     /// `Ok(())` callback into a durable receipt. Production adapters live inside
     /// the persistence crate boundary and remain responsible for reporting storage
     /// success only after the serialized write or revision CAS commits.
+    #[allow(dead_code)]
     pub(crate) fn commit<T, E>(
         &mut self,
         permit: SliceWritePermit<'_, T>,
