@@ -40,6 +40,8 @@ import com.bong.client.state.RealmCollapseHudState;
 import com.bong.client.state.RealmCollapseHudStateStore;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
+import com.bong.client.tiandao.TiandaoPresenceState;
+import com.bong.client.tiandao.TiandaoPresenceStore;
 import com.bong.client.tsy.TsyBossHealthState;
 import com.bong.client.tsy.TsyBossHealthStore;
 import com.bong.client.tsy.TsyDeathVfxState;
@@ -49,9 +51,13 @@ import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,6 +79,161 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     void tearDown() {
         ClientRequestSender.resetBackendForTests();
         resetTestOnlyState();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("productionAdapters")
+    void eachRegisteredHandleClearsOnlyItsDeclaredStore(ProductionAdapterCase adapter) {
+        List<SessionStoreHandle> handles = SessionScopedStoreRegistry.registeredHandlesForTests();
+        assertEquals(25, handles.size(), "P1 必须对生产 REGISTERED 的全部 25 个 handle 逐项验真");
+        SessionStoreHandle handle = handles.get(adapter.index());
+        assertSame(
+            adapter.storeType(),
+            handle.storeType(),
+            "测试 case 必须按生产声明顺序取得对应 Class handle，不能重建 cleaner 映射"
+        );
+
+        adapter.seed().run();
+        TiandaoPresenceState sentinel = activeTiandaoPresence();
+        if (adapter.storeType() != TiandaoPresenceStore.class) {
+            TiandaoPresenceStore.replace(sentinel);
+        }
+        assertFalse(adapter.isCleared().getAsBoolean(), "测试前必须建立目标 Store 的旧 session 状态：" + adapter);
+
+        handle.clearOnDisconnect();
+
+        assertTrue(adapter.isCleared().getAsBoolean(), "声明 handle 必须清掉其自身 Store：" + adapter);
+        if (adapter.storeType() != TiandaoPresenceStore.class) {
+            assertEquals(
+                sentinel,
+                TiandaoPresenceStore.snapshot(),
+                "单 handle 不得依赖整表执行补偿，也不得误清旁观 Store：" + adapter
+            );
+        }
+    }
+
+    private static Stream<ProductionAdapterCase> productionAdapters() {
+        return Stream.of(
+            adapter(0, RealmCollapseHudStateStore.class,
+                () -> RealmCollapseHudStateStore.replace(RealmCollapseHudState.create("old", "旧局", 1_000L, 100)),
+                () -> RealmCollapseHudStateStore.snapshot().isEmpty()),
+            adapter(1, NpcMetadataStore.class,
+                () -> NpcMetadataStore.upsert(metadata(101, "旧客")),
+                () -> NpcMetadataStore.get(101) == null),
+            adapter(2, NpcLodStore.class,
+                () -> NpcLodStore.upsert(new NpcLodSnapshot(102, "rogue", "引气", 0.8f, 1.0, 64.0, 2.0)),
+                () -> NpcLodStore.get(102) == null),
+            adapter(3, NpcMoodStore.class,
+                () -> NpcMoodStore.upsert(new NpcMoodState(103, "hostile", 0.9, "凝脉", "旧局", 1_000L)),
+                () -> NpcMoodStore.get(103) == null),
+            adapter(4, TsyBossHealthStore.class,
+                () -> TsyBossHealthStore.replace(new TsyBossHealthState(true, "旧守灵", "通灵", 0.66, 2, 4, 1_000L)),
+                () -> TsyBossHealthState.empty().equals(TsyBossHealthStore.snapshot())),
+            adapter(5, TsyDeathVfxStore.class,
+                () -> TsyDeathVfxStore.trigger(1_000L),
+                () -> TsyDeathVfxState.empty().equals(TsyDeathVfxStore.snapshot())),
+            adapter(6, CoffinStateStore.class,
+                () -> CoffinStateStore.replace(new CoffinStateStore.State(true, 0.7, "jade")),
+                () -> CoffinStateStore.OUT.equals(CoffinStateStore.snapshot())),
+            adapter(7, GatheringSessionStore.class,
+                () -> GatheringSessionStore.replace(gathering("old-gather", 1_000L)),
+                () -> GatheringSessionStore.snapshot().isEmpty()),
+            adapter(8, CrackReadingHudStateStore.class,
+                () -> CrackReadingHudStateStore.accept(108L, List.of(
+                    new CrackReadingHudStateStore.MeridianEntry("Lung", "MicroTear", true, false)), true, 1_000L),
+                () -> CrackReadingHudStateStore.snapshot() == CrackReadingHudStateStore.State.EMPTY),
+            adapter(9, ResonanceLockHudStateStore.class,
+                () -> ResonanceLockHudStateStore.onLockStarted("offline:old", 10L, 30L),
+                () -> ResonanceLockHudStateStore.snapshot() == ResonanceLockHudStateStore.State.UNLOCKED),
+            adapter(10, VoidErosionVisualStore.class,
+                () -> {
+                    VoidErosionVisualStore.replace("offline:old-a", 4, 420.0, true, 0.4f, true);
+                    VoidErosionVisualStore.replace("offline:old-b", 2, 90.0, false, 0.7f, false);
+                },
+                () -> VoidErosionVisualStore.allSnapshots().isEmpty()),
+            adapter(11, HallucinationLayerStore.class,
+                () -> HallucinationLayerStore.activate(200),
+                () -> !HallucinationLayerStore.isActive() && HallucinationLayerStore.getRemainingTicks() == 0),
+            adapter(12, DyingElderEncounterStore.class,
+                () -> DyingElderEncounterStore.activate("旧域", 112, 1_000L),
+                () -> !DyingElderEncounterStore.isActive() && DyingElderEncounterStore.getElderEntityId() == 0),
+            adapter(13, TiandaoPresenceStore.class,
+                () -> TiandaoPresenceStore.replace(activeTiandaoPresence()),
+                () -> !TiandaoPresenceStore.snapshot().active()),
+            adapter(14, BongHudStateStore.class,
+                () -> BongHudStateStore.replace(BongHudStateSnapshot.create(
+                    ZoneState.create("old", "旧域", 0.08, 6, 1_000L),
+                    NarrationState.empty(),
+                    VisualEffectState.none())),
+                () -> BongHudStateStore.snapshot().isEmpty()),
+            adapter(15, SearchHudStateStore.class,
+                () -> SearchHudStateStore.markStarted("旧石匣", 100),
+                () -> SearchHudState.idle().equals(SearchHudStateStore.snapshot())),
+            adapter(16, AgentUiStore.class,
+                () -> AgentUiStore.setActive(screen("old-active")),
+                () -> AgentUiStore.getActive() == null),
+            adapter(17, HalfStepRechallengeStore.class,
+                () -> HalfStepRechallengeStore.replace(
+                    new HalfStepRechallengeStore.State(true, "old-char", 300L, 200L, 1_000L)),
+                () -> HalfStepRechallengeStore.State.NONE.equals(HalfStepRechallengeStore.snapshot())),
+            adapter(18, TutorialCoffinPosStore.class,
+                () -> TutorialCoffinPosStore.set(new BlockPos(1, 64, 1)),
+                () -> TutorialCoffinPosStore.snapshot().isEmpty()),
+            adapter(19, RemainsStore.class,
+                () -> RemainsStore.putOrReplace(remains("old-remains", 1.0)),
+                () -> RemainsStore.snapshot().isEmpty()),
+            adapter(20, DroppedItemStore.class,
+                () -> DroppedItemStore.putOrReplace(drop(1L, "old-item", 1.0)),
+                () -> DroppedItemStore.snapshot().isEmpty()),
+            adapter(21, CraftStore.class,
+                () -> CraftStore.replaceRecipes(List.of(recipe("old-recipe"))),
+                () -> CraftStore.recipes().isEmpty()),
+            adapter(22, IdentityPanelStateStore.class,
+                () -> IdentityPanelStateStore.replace(identity(1, "旧身份")),
+                () -> IdentityPanelState.empty().equals(IdentityPanelStateStore.snapshot())),
+            adapter(23, FalseSkinHudStateStore.class,
+                () -> FalseSkinHudStateStore.replace(falseSkin("old-player")),
+                () -> FalseSkinHudStateStore.State.NONE.equals(FalseSkinHudStateStore.snapshot())),
+            adapter(24, DuguV2HudStateStore.class,
+                () -> DuguV2HudStateStore.replace(dugu("旧局中毒", true)),
+                () -> DuguV2HudStateStore.State.NONE.equals(DuguV2HudStateStore.snapshot()))
+        );
+    }
+
+    private static ProductionAdapterCase adapter(
+        int index,
+        Class<?> storeType,
+        Runnable seed,
+        BooleanSupplier isCleared
+    ) {
+        return new ProductionAdapterCase(index, storeType, seed, isCleared);
+    }
+
+    private static TiandaoPresenceState activeTiandaoPresence() {
+        return new TiandaoPresenceState(
+            true,
+            "pressure",
+            50.0,
+            "old_zone",
+            0.5,
+            0x400000,
+            0.2,
+            0.3,
+            0.9,
+            1_000L
+        );
+    }
+
+    private record ProductionAdapterCase(
+        int index,
+        Class<?> storeType,
+        Runnable seed,
+        BooleanSupplier isCleared
+    ) {
+        @Override
+        public String toString() {
+            return index + ":" + storeType.getSimpleName();
+        }
     }
 
     @Test
@@ -452,6 +613,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         VoidErosionVisualStore.reset();
         HallucinationLayerStore.clearOnDisconnect();
         DyingElderEncounterStore.clearOnDisconnect();
+        TiandaoPresenceStore.clear();
         BongHudStateStore.clear();
         SearchHudStateStore.resetForTests();
         AgentUiStore.clear();
