@@ -170,10 +170,12 @@ pub struct LoadedPlayerSlices {
     pub(crate) ui_prefs: PlayerUiPrefs,
 }
 
-/// 功法加载结果。`LoadFailed` 表示 DB 里**存在**该玩家的持久化行但读取/解析失败——
-/// 此时绝不允许用 `KnownTechniques::default()` 覆盖写回（会把玩家全部功法+熟练度
+/// 功法加载结果。`LoadFailed` 表示持久化状态无法可靠读取：行存在但读取/解析失败
+/// （JSON 损坏、SELECT 报错），或连接都打不开导致**行状态完全不可知**——两种情况都
+/// 绝不允许用 `KnownTechniques::default()` 覆盖写回（会把玩家全部功法+熟练度
 /// 永久清零）；消费侧必须挂 `KnownTechniquesLoadFailed` 写保护标记跳过所有落盘路径。
-/// DB 无行（真新玩家）不属于失败，归入 `Loaded(default)`，可正常写回。
+/// 唯一能确认「无数据」的是连接成功且查到无行（真新玩家），归入 `Loaded(default)`，
+/// 可正常写回。
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadedKnownTechniques {
     Loaded(KnownTechniques),
@@ -949,7 +951,7 @@ pub fn export_player_bundle(
     let loaded = load_player_slices(persistence, username);
     let LoadedKnownTechniques::Loaded(known_techniques) = loaded.known_techniques else {
         return Err(io::Error::other(format!(
-            "known techniques row for `{username}` exists but failed to load; refusing to export a default table in its place"
+            "known techniques for `{username}` could not be reliably loaded; refusing to export a default table in its place"
         )));
     };
     let connection = open_player_connection(persistence)?;
@@ -4249,6 +4251,35 @@ mod player_state_tests {
             LoadedKnownTechniques::LoadFailed,
             "sqlite 层错误（表缺失/锁竞争等）必须返回 LoadFailed 而非 default，\
              因为无法区分「无数据」与「有数据但读不到」"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn known_techniques_load_returns_load_failed_when_connection_cannot_open() {
+        // 锁定 load_player_slices 的连接失败早退分支（open_player_connection 报错）：
+        // 把 db_path 指向一个目录，sqlite 打开必定 SQLITE_CANTOPEN，稳定跨平台复现，
+        // 不依赖文件权限行为。此时行状态完全不可知，必须 LoadFailed 而非「新玩家」。
+        let data_dir = std::env::temp_dir().join(format!(
+            "bong-known-techniques-cantopen-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        let dir_as_db = data_dir.join("bong.db");
+        fs::create_dir_all(&dir_as_db).expect("creating directory placeholder should succeed");
+        let persistence = PlayerStatePersistence::with_db_path(&data_dir, &dir_as_db);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::LoadFailed,
+            "连接都打不开时行状态不可知，必须返回 LoadFailed 触发写保护，\
+             退化成 Loaded(default) 就会重新打开「空表覆盖真实存档」的丢档路径"
         );
 
         let _ = fs::remove_dir_all(&data_dir);

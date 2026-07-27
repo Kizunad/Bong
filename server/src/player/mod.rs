@@ -1573,6 +1573,103 @@ mod tests {
     }
 
     #[test]
+    fn join_with_unopenable_db_marks_load_failed_and_recovery_preserves_row() {
+        // 锁定「连接打不开」早退分支的全链路契约（review #1288 major finding）：
+        // db_path 指向目录 → open_player_connection 必 SQLITE_CANTOPEN（稳定跨平台，
+        // 不依赖权限行为）→ join 挂写保护标记；DB 恢复可访问后，带标记会话的
+        // Changed flush 仍不得把 default/会话内数据写回覆盖真实存档；
+        // 恢复后的新 join 则完整加载原行、不带标记。
+        let data_dir = unique_temp_dir("known-techniques-cantopen-join");
+        let healthy_db = data_dir.join("healthy.db");
+        bootstrap_sqlite(&healthy_db, "player-mod-cantopen-join")
+            .expect("sqlite bootstrap should succeed");
+        let seed_persistence = PlayerStatePersistence::with_db_path(&data_dir, &healthy_db);
+        crate::player::state::save_player_state(
+            &seed_persistence,
+            "Azure",
+            &PlayerState::default(),
+        )
+        .expect("baseline player state should persist");
+        crate::player::state::save_player_known_techniques_slice(
+            &seed_persistence,
+            "Azure",
+            &dash_known_techniques(0.42),
+        )
+        .expect("seeding known techniques row should persist");
+
+        // 运行时 persistence 指向 bong.db——先以同名目录占位，令连接打开必失败。
+        let db_path = data_dir.join("bong.db");
+        fs::create_dir_all(&db_path).expect("creating directory placeholder should succeed");
+        let persistence = PlayerStatePersistence::with_db_path(&data_dir, &db_path);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(
+            Update,
+            (
+                attach_player_state_to_joined_clients,
+                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<KnownTechniquesLoadFailed>(entity)
+                .is_some(),
+            "连接打不开（行状态不可知）的 join 应挂 KnownTechniquesLoadFailed 写保护标记"
+        );
+        assert_eq!(
+            app.world()
+                .get::<KnownTechniques>(entity)
+                .expect("join should still attach a KnownTechniques component"),
+            &KnownTechniques::default(),
+            "连接失败时会话内组件应为 default（本次会话降级，但不得反向污染存档）"
+        );
+
+        // 模拟 DB 恢复：目录占位撤掉，真实健康库落位到同一路径。
+        fs::remove_dir(&db_path).expect("removing directory placeholder should succeed");
+        fs::rename(&healthy_db, &db_path).expect("restoring healthy db should succeed");
+
+        // 带标记会话内的变更（0.99）不得写回：行必须保持恢复前的 0.42。
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(dash_known_techniques(0.99));
+        app.update();
+        assert!(
+            (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.42).abs() < 1e-6,
+            "DB 恢复后，加载失败会话的 Changed flush 仍必须被写保护标记拦住，\
+             期望行保持 0.42（真实存档），若被写成 0.99/空表即丢档回归"
+        );
+
+        // 恢复后的新 join（重连）应完整加载原行且不带标记——失败状态不粘滞。
+        let (client_bundle2, _helper2) = create_mock_client("Azure");
+        let entity2 = app.world_mut().spawn(client_bundle2).id();
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<KnownTechniquesLoadFailed>(entity2)
+                .is_none(),
+            "DB 恢复后的新 join 不得再挂写保护标记"
+        );
+        assert_eq!(
+            app.world()
+                .get::<KnownTechniques>(entity2)
+                .expect("recovered join should attach KnownTechniques"),
+            &dash_known_techniques(0.42),
+            "DB 恢复后的新 join 应完整加载原功法行（dash 0.42）"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn reconnecting_into_tsy_routes_layer_and_current_dimension() {
         use crate::world::dimension::{DimensionKind, DimensionLayers};
 
