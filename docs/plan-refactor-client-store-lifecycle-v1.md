@@ -1,6 +1,6 @@
 # plan-refactor-client-store-lifecycle-v1 — Client 状态 Store 统一断线生命周期（重构轨 R2）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：把 client 侧 108 个各自为政的静态 Store 收敛到统一 `SessionScopedStore` 契约 + 显式静态登记清理；P0 仅建立分类、框架与分阶段门禁，待 P3 全量登记、P4 重连验收完成后，系统性阻止“断线残留/跨会话串味”这一整类 bug（现存 14 份断线核心）。
+> 所属总纲：`plan-refactor-master-v1.md`。一句话：把 client 侧 108 个各自为政的静态 Store 收敛到统一 `SessionScopedStore` 契约 + 显式静态登记清理；P0 仅完成设计收口、分类 manifest 与源码验真门禁，待 P1 落地并接入框架、P3 全量登记、P4 重连验收完成后，系统性阻止“断线残留/跨会话串味”这一整类 bug（现存 14 份断线核心）。
 
 ## 现状证据（2026-07-27 侦察）
 
@@ -14,23 +14,30 @@
 
 - **进料**：`ClientPlayConnectionEvents.DISCONNECT`（既有唯一权威入口）、`ClientConnectionStatusStore` 会话状态机。
 - **出料**：所有 HUD planner / Screen / tooltip 读到的 store 快照保证是本会话的。
-- **共享类型**：新 `SessionScopedStore` 接口（单一 `clearOnDisconnect()` 生产语义）+ 显式静态 adapter registry / FQCN manifest；Store 继续保留既有静态业务 API，registry 不依赖构造器实例化、运行时反射或注解扫描。
+- **共享类型**：P0 冻结后由 P1 新增的 `SessionScopedStore` 接口（单一 `clearOnDisconnect()` 生产语义）+ 显式静态 adapter registry；P0 已落 FQCN manifest。Store 继续保留既有静态业务 API，registry 不依赖构造器实例化、运行时反射或注解扫描。
 - **跨仓库契约**：零 wire 改动；loop 音效清理对齐 `feedback_audio_loop_lifecycle`（硬停连延迟层一起哑）。
 - **worldview 锚点**：`docs/worldview.md §一 L17-L26` 的“匮乏、信息差、搜打撤”要求跨会话观察必须可信；Store 生命周期属于 client 基础设施，不新增玩法、境界、经济或真元物理规则。
 
 ## 阶段
 
-- ✅ 2026-07-27 **P0 设计收口 + 吸收清单验真**：以 FQCN manifest 对 108 个生产 `*Store.java` 做会话态 / 持久配置态 / 纯常量表分类；冻结 `SessionScopedStore`、显式静态 adapter registry 与源码扫描强制，不使用构造器自注册或运行时反射。P0 只落框架、分类和门禁，不改变既有 Store 的断线行为。
-  - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/{ClientStoreScopeManifest,SessionScopedStore,SessionStoreHandle,SessionScopedStoreRegistry}.java`；`SessionScopedStore.clearOnDisconnect()`；`SessionStoreHandle.forStore(...)`；`SessionScopedStoreRegistry.clearAllOnDisconnect()`。
-  - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin 108 个 Store 的三分类、106 个 session Store、`ClientConnectionStatusStore` 外部 token 管理与 P0 空 registry；`SessionScopedStoreRegistryTest` pin 声明顺序、重复 FQCN fail-fast、Store / reporter 异常隔离和 `Error` 透传。
-  - **跨仓库契约**：纯 client 生命周期基础设施；schema、Redis key、CustomPayload 均无新增或变更。
-- ⬜ **P1 在册 Store 平移**：把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。
-  - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/SessionScopedStoreRegistry.java` 的显式 `REGISTERED`；`client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `disconnectSession(...)` / `clearClientStateOnDisconnect()`。
-  - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin P1 已迁移 FQCN 集；`BongNetworkHandlerTest` pin token invalidation 先于 registry、迟到旧 handler 不清新 session、非 Store hook 仍保留；每个 adapter 以目标 Store 的状态级行为测试证明 method reference 未错绑。
+- ✅ 2026-07-28 **P0 设计收口 + 吸收清单验真**：以 FQCN manifest 对 108 个生产 `*Store.java` 做会话态 / 持久配置态 / 纯常量表分类；冻结 `SessionScopedStore`、显式静态 adapter registry 与源码扫描强制的设计决议，不使用构造器自注册或运行时反射。P0 只落分类 manifest、设计契约和源码验真门禁，不新增生产清理接口 / handle / registry，也不改变既有 Store 的断线行为。
+  - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/ClientStoreScopeManifest.java`；`sessionScopedStores()`、`externallyManagedSessionStores()`、`registryManagedSessionStores()`、`persistentConfigStores()`、`constantStores()`。
+  - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin 108 个 Store 的三分类、106 个 session Store、`ClientConnectionStatusStore` 外部 token 管理与 production source-tree 全集对拍；P1 再新增并验证 registry 行为。
+  - **跨仓库契约**：纯 client 分类与设计门禁；schema、Redis key、CustomPayload 均无新增或变更。
+- ⬜ **P1 框架落地 + 在册 Store 平移**：新增 `SessionScopedStore`、强类型 `SessionStoreHandle` 与显式静态 registry，把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。
+  - **模块 / symbol**：新增 `client/src/main/java/com/bong/client/lifecycle/{SessionScopedStore,SessionStoreHandle,SessionScopedStoreRegistry}.java`；`SessionScopedStore.clearOnDisconnect()`；`SessionStoreHandle.forStore(...)`；`SessionScopedStoreRegistry.clearAllOnDisconnect()` / 显式 `REGISTERED`；`client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `disconnectSession(...)` / `clearClientStateOnDisconnect()`。
+  - **测试抓手**：`SessionScopedStoreRegistryTest` pin 每轮声明顺序、跨 session 非 one-shot、重复 FQCN 在副作用前 fail-fast、Store / reporter 异常隔离和 `Error` 透传；`ClientStoreScopeManifestTest` 精确 pin P1 已迁移 FQCN 集；`BongNetworkHandlerTest` pin token invalidation 先于 registry、迟到旧 handler 不清新 session、非 Store hook 仍保留；每个 adapter 以目标 Store 的状态级行为测试证明 method reference 未错绑。
   - **跨仓库契约**：保持现有 wire、schema、Redis key 与 CustomPayload 不变。
 - ⬜ **P2 裸奔状态收编**：按 P0 manifest 显式接入 Freshness、`combat/store/`、炼丹 / 锻造 / 灵田 / 灵宝 / TSY / 医道等会话态 Store、玩家动画层缓存，并为灵田等循环音效提供“活动实例 + 延迟层 + 派生 flag”同边界硬停。
   - **模块 / symbol**：各目标 `*Store.clearOnDisconnect()`；`processing/state/FreshnessStore.java`；`combat/store/*.java`；`animation/BongAnimationPlayer.java`；generic audio / animation adjunct lifecycle handle（不得计入 108 Store manifest）。
-  - **测试抓手**：逐 Store pin data-only production clear 不删除 listener / dispatcher / built-in registry / test seam；动画 pin 旧 layer 不跨重连；循环音频 pin active instance、pending layer 与派生 flag 同时归零；`ClientStoreScopeManifestTest` 精确 pin P2 累积登记集。
+  - **玩家可感知反馈生命周期规格（本阶段只清理既有状态，不新增表现资产 / 玩法触发）**：
+    - **粒子 / VFX**：触发时机为 active handler 失活成功后的同一 client-thread cleanup task；清理既有 Store 内未过期 burst / continuous VFX、entity/world anchor、HUD tint / vignette / camera / FOV 派生状态及 adjunct VFX handle，旧 session 的粒子不得在重连后继续生成或沿用旧 anchor；保留粒子贴图、`VfxBootstrap` 注册、renderer / factory 和长期 dispatcher wiring，不新增 `bong:vfx_event` ID、粒子数量 / lifetime / 颜色规格。
+    - **SFX / 循环音频**：同一断线边界硬停活动 sound instance，取消 pending / delayed layer，并将用于去重或“正在播放”的派生 flag 一并归零；重连保持静音，直到新 session 的既有权威 payload / 位置状态重新触发；保留 audio recipe JSON、sound mapping、播放器注册和音量偏好，不修改 `EnvironmentAudioController.soundFor()` 映射数据。
+    - **HUD / Screen 派生状态**：清除 session payload、活动交互、warning / progress / target / overlay 快照和由其派生的 tint / vignette / shake 状态；重连后先保持无旧会话提示，等待新 session 首包重灌；保留 `HudLayoutPreferenceStore`、Screen 结构、长期 listener / dispatcher 和 test seam，炼丹 / 锻造 / 灵宝的 Screen 关闭、权威 hydration 与 current-session freshness gate 仍由各自计划处理。
+    - **环境状态**：只清理客户端缓存的旧 world/entity/zone anchor、ambience 活动实例与 pending layer；不改 terrain、方块、天空 / 雾参数或服务端环境规则。重连后由新 world / zone payload 重新建立 anchor；同一在线 session 内 anchor 去重键刷新不属于 R2。
+    - **玩家动画**：停止并移除 `BongAnimationPlayer` 中旧 session 的 active / queued layer 和 adjunct animation handle，重连时不得恢复旧姿态；保留 animation JSON、PlayerAnimator 注册、bendy-lib wiring 与长期 factory，不新增或改写关键帧 / endTick / easing。
+    - **narration / 事件流**：清除旧 session 的 narration / event-stream 快照、待显示队列及 sticky 派生 flag；重连后不重放旧文案，只接收新 session 既有首包 / 增量事件；保留 narration 模板、scope / style 定义及 router / dispatcher，不新增文案或 wire symbol。
+  - **测试抓手**：逐 Store pin data-only production clear 不删除 listener / dispatcher / built-in registry / test seam；动画 pin 旧 layer 不跨重连；循环音频 pin active instance、pending layer 与派生 flag 同时归零；VFX/HUD/environment/narration pin 旧快照、队列与 anchor 清空且长期注册保留；`ClientStoreScopeManifestTest` 精确 pin P2 累积登记集。
   - **跨仓库契约**：零 schema / Redis / wire 变更；既有 server 首包仍是重灌来源。
 - ⬜ **P3 全量强制 + 删旧**：统一**生产生命周期入口**为 `clearOnDisconnect()`（不把清 listener / test seam 的 `resetForTests` 当生产清理）；删除手工 Store 清单；源码扫描强制“生产 `*Store.java` 必须恰好有一种分类，session 类必须以强类型 handle 登记”，新增漏分类或漏登记即红。
   - **模块 / symbol**：`ClientStoreScopeManifest.registryManagedSessionStores()`；`SessionScopedStoreRegistry.registeredFqcnsForTests()`；`BongNetworkHandler.clearClientStateOnDisconnect()` 仅保留一次 registry 调用与非 Store hooks。
@@ -56,7 +63,7 @@
 ### #1 注册机制：显式静态 adapter registry
 
 **决议**：
-1. `SessionScopedStore` 只定义生产语义 `void clearOnDisconnect()`；中央 registry 保存显式、强类型 adapter（由目标 Store 的 `Class<?>` 派生 FQCN 身份，并绑定 method reference / 命名 handle），不要求现有静态 utility Store 被实例化。调用方不得手填与 clearer 相互独立的身份字符串；P1/P2 接入每个实际 adapter 时另以 Store 行为 pin 证明清的是对应 Store。
+1. `SessionScopedStore` 在 P0 只冻结生产语义 `void clearOnDisconnect()`；P1 再新增接口及中央 registry 的显式强类型 adapter（由目标 Store 的 `Class<?>` 派生 FQCN 身份，并绑定 method reference / 命名 handle），不要求现有静态 utility Store 被实例化。调用方不得手填与 clearer 相互独立的身份字符串；P1/P2 接入每个实际 adapter 时另以 Store 行为 pin 证明清的是对应 Store。
 2. 禁止构造器自注册、运行时反射和注解扫描。多数 Store 是 private constructor + static state，构造器路径并不会被业务触发；显式 manifest 才能稳定 grep、review 和源码扫描。
 3. `BongNetworkHandler.disconnectSession(...)` 的原子边界不变：先 `ClientConnectionStatusStore.invalidateSession(handler, disconnectedAtMs)`，仅 active token 失活成功才在同一 client-thread task 清 registry。旧 handler 的迟到 DISCONNECT 不得清新 session。
 
@@ -74,9 +81,9 @@
 ### #3 分类与强制边界
 
 **决议**：
-1. P0 manifest 以 production source root 下的 FQCN 为唯一键，覆盖 P0 基线的全部 108 个业务 `*Store.java`；每个业务文件必须恰好落入 session-scoped、persistent-config、constant 三类之一。新增的 `SessionScopedStore.java` 接口虽匹配文件后缀，但作为 lifecycle infrastructure 由 source guard 单独显式排除，不能被误计为第 109 个业务 Store；registry / catalog 类自身不以 `*Store.java` 命名。
+1. P0 manifest 以 production source root 下的 FQCN 为唯一键，覆盖 P0 基线的全部 108 个业务 `*Store.java`；每个业务文件必须恰好落入 session-scoped、persistent-config、constant 三类之一。P1 新增的 `SessionScopedStore.java` 接口虽匹配文件后缀，但作为 lifecycle infrastructure 由 source guard 单独显式排除，不能被误计为第 109 个业务 Store；registry / catalog 类自身不以 `*Store.java` 命名。
 2. 当前明确例外是 `HudLayoutPreferenceStore`（persistent-config，断线保留用户 HUD 偏好）和 `ArmorProfileStore`（constant，固定护甲 profile 表）。106 个 session-scoped Store 中，`ClientConnectionStatusStore` 是 token-gated 连接状态机：它由 `invalidateSession(handler, disconnectedAtMs)` 在 registry 之前按 handler 精确失活，不得再被无参全局 clear；其余业务 Store 必须在 P3 前全部有生产 clear 并登记。
-3. 测试以 `Files.walk` 扫描 `client/src/main/java/com/bong/client`，用排序后的相对路径 / FQCN 比较“发现集 = manifest 三类并集”，并断言分类互斥；登记强制分阶段启用：P0 明确 pin registry 为空且登记项只能属于 registry-managed session 集，P1/P2 对迁移清单做精确阶段 pin，P3 再断言“registry-managed session 集 = registry 集”。不只硬编码数量 108，也不扫描 test / gametest / build-generated。
+3. 测试以 `Files.walk` 扫描 `client/src/main/java/com/bong/client`，用排序后的相对路径 / FQCN 比较“发现集 = manifest 三类并集”，并断言分类互斥；登记强制分阶段启用：P0 只 pin 分类全集与外部 token-managed 子集，P1 新增 registry 后精确 pin 首批迁移集，P2 对累积迁移清单做精确阶段 pin，P3 再断言“registry-managed session 集 = registry 集”。不只硬编码数量 108，也不扫描 test / gametest / build-generated。
 
 **落点**：`client/src/main/java/com/bong/client/hud/HudLayoutPreferenceStore.java:15-51`；`client/src/main/java/com/bong/client/combat/ArmorProfileStore.java:45-86`；`client/src/test/java/com/bong/client/BongNetworkHandlerTest.java:560-575`；plan §P0 / §P3。
 
@@ -122,12 +129,12 @@ bot 是协议级客户端，测不了 client 内存——本轨主验收是 clie
 
 ### §10.1 适用边界
 
-本 plan 是纯 client 生命周期逻辑重构，不产出 NBT、worldgen layout、模型或贴图，因此不适用视觉资产 3 轮打磨与 `<PROMISE>`。每个逻辑单元必须使用中文 atomic commit，agent 产生的每个 commit 都必须包含真实执行模型 ID 的 `Model:` trailer；每个 PR 仍须饱和行为测试和精确最终 HEAD 证据。
+本 plan 是纯 client 生命周期逻辑重构，不产出 NBT、worldgen layout、模型或贴图，因此不适用视觉资产 3 轮打磨与 `<PROMISE>`。每个逻辑单元必须使用中文 atomic commit，agent 产生的每个 commit 都必须包含真实执行模型 ID 的 `Model:` trailer；每个 PR 必须执行对应阶段“测试抓手”列出的全部行为测试及 Java 17 完整 `./gradlew test build`，并保留精确最终 HEAD 证据。
 
 ### §10.2 多 PR 依赖顺序
 
-1. **PR-1 / P0 框架与分类**：冻结 108 Store manifest、`SessionScopedStore`、强类型 handle、空 registry 与 source-scan 门禁；不改变生产断线行为。
-2. **PR-2 / P1 在册平移**：仅在 PR-1 merge 后开始，将现有 25 个 Store 清理行为不变地迁入 registry，并保留全部非 Store hooks。
+1. **PR-1 / P0 设计与分类**：冻结 108 Store manifest、scope 设计、外部 token-managed 边界与 source-scan 门禁；不新增生产清理接口 / handle / registry，不改变生产断线行为。
+2. **PR-2 / P1 框架落地 + 在册平移**：仅在 PR-1 merge 后开始，新增 `SessionScopedStore`、强类型 handle 与显式 registry，将现有 25 个 Store 清理行为不变地迁入 registry，并保留全部非 Store hooks。
 3. **PR-3 / P2 裸 Store 与 adjunct resource**：仅在 PR-2 merge 后开始，补齐 data-only production clear、动画缓存与循环音频硬停。
 4. **PR-4 / P3 全集强制**：仅在 PR-3 merge 后开始，删除手工 Store 清单并将 source-scan 收紧为 registry-managed session 集与 registry 集精确相等。
 5. **PR-5 / P4 重连验收与归档**：仅在 PR-4 merge 后开始，完成旧 handler / 迟到 payload / 新首包重灌与 bot e2e；只归档被完整吸收的计划。

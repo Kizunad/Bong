@@ -5,8 +5,6 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -16,9 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientStoreScopeManifestTest {
-    private static final String LIFECYCLE_INTERFACE =
-        "com.bong.client.lifecycle.SessionScopedStore";
-
     @Test
     void everyProductionStoreHasExactlyOneExplicitScope() throws IOException {
         Set<String> discovered = discoverProductionStores();
@@ -33,8 +28,8 @@ class ClientStoreScopeManifestTest {
         assertEquals(
             discovered,
             new TreeSet<>(ClientStoreScopeManifest.allClassifiedStores()),
-            "每个 production *Store.java 必须恰好落入 manifest 的一种 scope；新增 Store 时必须显式判定"
-                + " session-scoped / persistent-config / constant，且 lifecycle interface 本身不能污染业务发现集"
+            "P0 每个 production *Store.java 必须恰好落入 manifest 的一种 scope；新增 Store 时必须显式判定"
+                + " session-scoped / persistent-config / constant；P1 新增 lifecycle interface 时必须同步增加基础设施排除"
         );
     }
 
@@ -99,27 +94,6 @@ class ClientStoreScopeManifestTest {
         );
     }
 
-    @Test
-    void p0RegistryIsEmptyAndWithinRegistryManagedSessionScope() {
-        assertEquals(
-            List.of(),
-            SessionScopedStoreRegistry.registeredFqcnsForTests(),
-            "P0 registry 必须为空，保证本阶段只冻结框架而不改变既有生产断线行为；P1 首次迁移时再显式更新此 pin"
-        );
-
-        Set<String> registered = new HashSet<>(SessionScopedStoreRegistry.registeredFqcnsForTests());
-        assertEquals(
-            registered.size(),
-            SessionScopedStoreRegistry.registeredFqcnsForTests().size(),
-            "registry 不得重复登记同一 FQCN，否则断线会重复清理同一 Store"
-        );
-        assertTrue(
-            ClientStoreScopeManifest.registryManagedSessionStores().containsAll(registered),
-            "P0 registry 只允许登记 manifest 中由全局 registry 管理的 session Store；P3 再收紧为全集相等，实际越界="
-                + difference(registered, ClientStoreScopeManifest.registryManagedSessionStores())
-        );
-    }
-
     private static Set<String> discoverProductionStores() throws IOException {
         Path javaRoot = ClientSourceTree.clientRoot().resolve("src/main/java");
         Path clientPackage = javaRoot.resolve("com/bong/client");
@@ -128,7 +102,6 @@ class ClientStoreScopeManifestTest {
             paths.filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().endsWith("Store.java"))
                 .map(path -> toFqcn(javaRoot.relativize(path)))
-                .filter(fqcn -> !LIFECYCLE_INTERFACE.equals(fqcn))
                 .forEach(discovered::add);
         }
         return discovered;
@@ -160,11 +133,5 @@ class ClientStoreScopeManifestTest {
             overlap.isEmpty(),
             "Store scope 必须互斥；" + leftLabel + " 与 " + rightLabel + " 重叠=" + overlap
         );
-    }
-
-    private static Set<String> difference(Set<String> left, Set<String> right) {
-        Set<String> difference = new TreeSet<>(left);
-        difference.removeAll(right);
-        return difference;
     }
 }
