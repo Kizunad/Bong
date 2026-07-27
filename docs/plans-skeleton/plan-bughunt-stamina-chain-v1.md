@@ -1,6 +1,6 @@
 # plan-bughunt-stamina-chain-v1（骨架）
 
-> **骨架（2026-07-26）**。一句话主题：体力（Stamina）全链路审计（组件 → stamina_tick → 12+ 扣费点 → emit → client HUD）确认的 **3 个高危**（ShieldBlocking 态被战斗结算覆写 / recover_per_sec 双写打架 / change-detection 被击穿成 5Hz 伪心跳且重连补水恰靠它兜底）+ 中危与附带项，**每项发现均有「阶段 → 处置 → 验收」闭环映射**（见 §处置总表）。
+> **骨架（2026-07-26）**。一句话主题：体力（Stamina）全链路审计（组件 → stamina_tick → 12+ 扣费点 → emit → client HUD）确认的 **3 个高危**（ShieldBlocking 态被战斗结算覆写 / recover_per_sec 双写打架 / change-detection 被击穿成 5Hz 伪心跳且重连补水恰靠它兜底）+ 中危与附带项，每项发现均有「阶段 → 处置 → 验收锚点」映射（见 §处置总表 与 §扣费路径清单）；**实现级符号钉定不在骨架层预钉**，集中登记在 §转 active 前收口清单，promotion 时收口。
 
 > 立项动机：与同日血条审计同系列的系统性链路审计。3 路只读调查（server 核心 / emit 契约 / client HUD）+ 主循环亲读决定性代码行复核全部高危。已对 bughunt r1-r10 与 bughunt-20260726 ×20 批次（#1280）去重：唯一邻近项 `plan-bughunt-r10-findings-v1` P0 是**破盾（耐久归零）路径**的状态清理缺失，本 plan P0 是**正常格挡受击/出手路径**的 StaminaState 覆写，点位与修法均不同，不重复；`plan-satiety-hydration-v1` 计划向体力恢复注入乘数，落地前**依赖本 plan P1 先收敛单写者**（乘数作为 P1 聚合函数的一个输入位）。
 
@@ -43,12 +43,29 @@
 
 体力流出只有两类，任何 spend 路径必须归入其一，**两类的余额不足语义不同且互不冲突**：
 
-- **`try_spend`（主动消费，可拒绝）**：普攻发起 gate、剑基础四招、剑道五招、气针、暗器、dash、举盾开始。契约：产生任何招式事件/效果**之前**预检余额，`current < cost` → 拒绝且零扣费、零事件、零效果；成功路径原子扣**恰好一次**。
-- **`force_drain`（被动/持续，不可拒绝）**：受击扣费（`resolve.rs:1062`）、`stamina_tick` 各状态 drain。契约：无预检、clamp 到 0（伤害/持续效果照常结算），扣至 `<= 0` 走 Exhausted 转换（见仲裁表）。
+- **`try_spend`（主动消费，可拒绝）**：普攻发起 gate、剑基础四招、剑道五招、气针、暗器、dash、举盾开始。契约：产生任何招式事件/效果**之前**预检余额，`current < cost` → 拒绝且零扣费、零事件、零效果；成功路径原子扣**恰好一次**；**成功扣至恰好 0 → 状态终值 Exhausted**（与 force_drain 归零口径一致，进 P0 矩阵单列）。
+- **`force_drain`（被动/持续，不可拒绝）**：受击扣费（`resolve.rs:1062`）、`stamina_tick` 各状态 drain。契约：无预检、clamp 到 0（伤害/持续效果照常结算），扣至 `<= 0` 走 Exhausted 转换（见仲裁表）。**与 P3-a 的解耦**：受击扣费的存废与数值以 P3-a 决议为准——若拍板移除，该路径退化为纯状态转换（受击仍进 Combat，不扣费），本契约其余部分与 P0 仲裁表不受影响；P0 锁的是状态机语义，P3-a 锁的是数值/存废，两者正交。
+
+### 扣费路径清单（“12+ 扣费点”的逐路径归类与验收映射）
+
+| # | 路径 | 数值 | 归类 | 现状预检 | 验收锚点 |
+|---|---|---|---|---|---|
+| 1 | 普攻攻方（gate `player_attack.rs:79-81`，扣费 `lifecycle.rs:149`） | 3.0 | try_spend | 有（<3.0 不发 intent） | P0 矩阵 + P3-c |
+| 2 | 受击方（`resolve.rs:1062`） | 12.0×decay | force_drain | 无（by design） | P0 矩阵 + P3-a 拍板 |
+| 3 | 剑基础四招（`sword_basics.rs:810`） | Cleave 8→5 / Thrust 4→2 / Parry 6→4 / Infuse 3 | try_spend | **缺**（本 plan 修复） | P3-c |
+| 4 | 剑道五招（`skill_register.rs:931`） | 8/12/15/20/0 | try_spend | 有（`:846-853`，基准范本） | P3-c 回归 |
+| 5 | 气针（`needle.rs:138`） | 2.0 | try_spend | 有（`can_shoot_needle`） | P3-c 回归 |
+| 6 | 暗器投掷（`carrier.rs:810`） | 5.0 | try_spend | 有 | P3-c 回归 |
+| 7 | 冲刺 dash（`movement/mod.rs:414,719`） | 15−prof×6 | try_spend | 有（reject_reason 回包） | P3-c（clamp 统一） |
+| 8 | 举盾开始（`shield_block.rs:283-290`） | 0（仅 gate） | try_spend gate | 有（拒 Exhausted） | P0 矩阵 |
+| 9 | 举盾持续 drain（`stamina_tick` ShieldBlocking） | 2~3/s | force_drain | — | P0 矩阵 |
+| 10 | Combat drain（`stamina_tick`） | 5/s | force_drain | — | P0 矩阵 |
+| 11 | Sprint/Jog drain（`stamina_tick`） | 10/2 每秒 | force_drain | — | **生产不可达**，随 P3-b 拍板 |
+| 12 | `/stamina set`（`debug.rs:91-104`）与 HuGuSan max 抬升 | — | dev/增益，非扣费 | — | 豁免（P5-c 覆盖 HuGuSan） |
 
 ### P0 状态仲裁表（修复的唯一权威语义，fix PR 不得偏离）
 
-保护 guard 的准确形状：**仅当扣费后 `current > 0` 时保护 ShieldBlocking/Exhausted 不被覆写成 Combat；扣费后 `current <= 0` 时照常写入 Exhausted**（即耗尽转换永不被保护阻断）。ShieldBlock/ShieldDrainOverride 组件的移除**唯一责任方**保持既有 `force_lower_shield_on_stamina_exhausted`（`shield_block.rs:455-495`，Physics set 内 `.after(stamina_tick)`，同 tick 闭合），扣费点不自行拆盾。
+保护 guard 的准确形状：**仅当扣费后 `current > 0` 时保护 ShieldBlocking/Exhausted 不被覆写成 Combat；扣费后 `current <= 0` 时照常写入 Exhausted**（即耗尽转换永不被保护阻断）。ShieldBlock/ShieldDrainOverride 组件的移除**唯一责任方**保持既有 `force_lower_shield_on_stamina_exhausted`（`shield_block.rs:455-495`），扣费点不自行拆盾。**拆盾排序契约**：force_lower 现仅 `.after(stamina_tick)`（Physics set 内），覆盖不到 Resolve set 内 `resolve.rs:1062` 与 `lifecycle` 出手扣费的耗尽写入——fix PR 须把 force_lower 注册到**全部耗尽写入方之后**（同 tick 内完成拆盾；具体注册位置的 symbol 钉定见 §转 active 前收口清单），验收断言三个耗尽来源（tick drain / 受击 / 出手）各自触发的拆盾都发生在写入同 tick。
 
 | 场景（扣费点：resolve 受击 / lifecycle 出手） | 扣费后 current | state 终值 | 转换执行方 |
 |---|---|---|---|
@@ -59,14 +76,18 @@
 | Exhausted 出手（gate `current >= 3.0` 允许时）/受击 | 任意 | **Exhausted（保持，30% 退出规则唯一出口）** | 覆写点补保护（本 plan 修复） |
 
 - 修法：resolve 被击分支与 lifecycle 攻击者分支按上表补齐保护（与 `lifecycle.rs:161-166` 同形），不引入新的状态写入方。
-- 测试矩阵（表驱动，走真实 resolve/lifecycle 调度而非抽出的 helper）：攻击者/受击者 × {Idle, Combat, ShieldBlocking, Exhausted} × 扣费后 {>0, ==0, 余额<成本} 全组合；外加：格挡中连续 N 次受击 state 恒 ShieldBlocking 且 drain 走 override、放盾回 Idle、Exhausted 强制放盾回归（对齐 r10-P0 不重叠：本表不含破盾耐久路径）、**普通非格挡攻防双方仍进 Combat 的反误伤回归**。
+- 测试矩阵（表驱动，走真实 resolve/lifecycle 调度而非抽出的 helper，**按两类扣费分开列，不混用**）：
+  - **try_spend 组**（攻击者路径）：{Idle, Combat, ShieldBlocking, Exhausted} × {余额>成本, 余额==成本（成功扣至 0 → Exhausted）, 余额<成本（拒绝零副作用）}；
+  - **force_drain 组**（受击路径）：{Idle, Combat, ShieldBlocking, Exhausted} × {扣后>0, 扣后<=0（clamp 至 0 + Exhausted + 同 tick 拆盾）}；
+  - Walking/Jogging/Sprinting 三态在 P3-b 拍板前生产不可达，矩阵标 N/A；若 P3-b 选接线分支，矩阵随仲裁表扩展版一并扩展；
+  - 外加：格挡中连续 N 次受击 state 恒 ShieldBlocking 且 drain 走 override、放盾回 Idle、Exhausted 强制放盾回归（对齐 r10-P0 不重叠：本表不含破盾耐久路径）、**普通非格挡攻防双方仍进 Combat 的反误伤回归**。
 
 ## P1 — 🔴 recover_per_sec 双写打架 → 唯一聚合写入者（高危，已亲验）
 
 - 写点 A：`movement/mod.rs:179-186` `sync_stamina_regen_from_realm`（每帧、`With<Client>`）按境界写 2.0~6.0（`:808-816`，醒灵/引气 2.0 → 化虚 6.0）。
 - 写点 B：`combat/status.rs:355-361` `combat_pill_stamina_status_tick`（每 4 tick、无 filter）无丹药 buff 时强制写回 5.0（`status.rs:149`）。
 - 两写点各有 epsilon 守卫但写不同值 → 每帧互相改写；写点 A 游离于 `CombatSystemSet` 之外（`movement/mod.rs:153`），与 B 和 `stamina_tick` 均无序 → 读值取决于调度器仲裁。
-- **修法（唯一方案，无备选）**：`recover_per_sec` 收敛为**唯一运行期写入者**——新聚合系统（工作名 `aggregate_stamina_recovery`）按 `stamina_regen_rate(realm) × pill_recov_mult × crash_mult ×（预留 satiety 乘数位）` 计算最终值并带 epsilon 守卫写入；`sync_stamina_regen_from_realm` **删除**；status 系统只维护自己的 modifier 数据（buff 增删），**不再直接写 recover_per_sec**。~~仅把写点 A 移进 CombatSystemSet 排序~~——**明确否决，不作为可选修法**。
+- **修法（唯一方案，无备选）**：`recover_per_sec` 收敛为**唯一运行期写入者**——新聚合系统（工作名 `aggregate_stamina_recovery`）按 `stamina_regen_rate(realm) × pill_recov_mult × crash_mult` 计算最终值并带 epsilon 守卫写入（聚合入口设计为**乘数列表形态**——`plan-satiety-hydration-v1` 落地时在自己的 PR 里追加输入项即可，**本 plan 不写任何 satiety 代码或占位 stub**）；`sync_stamina_regen_from_realm` **删除**；status 系统只维护自己的 modifier 数据（buff 增删），**不再直接写 recover_per_sec**。~~仅把写点 A 移进 CombatSystemSet 排序~~——**明确否决，不作为可选修法**。
 - **调度契约（运行接线交付物）**：聚合系统注册进 `CombatSystemSet::Physics` 且 `.before(lifecycle::stamina_tick)`（对齐既有 `combat/mod.rs:340-342` 约束模式）；status modifier 增删系统 `.before(聚合系统)`——modifier 变更、聚合、消费三步在同 tick 内定序完成。
 - **「唯一写入点」的 grep 验收口径**：指**运行期**写入点唯一（聚合系统一处）；初始化/重置类赋值不算运行期写入者，豁免清单显式枚举：`Stamina::default()` 构造、join bundle 插入（`combat/mod.rs:116-133`）、revive/new_character/`/reset`（`lifecycle.rs:1505-1508`、`:1819-1821`、`cmd/dev/reset.rs:202-204`）。豁免清单外新增写入点 = 验收失败。
 - **P1-d 拍板项（decision）**：NPC 的 baseline——进同一聚合函数按 NPC realm 分级，还是保持常数 5.0（写明设计依据）。
@@ -88,10 +109,9 @@
 ### P2 join 首帧权威契约
 
 - **触发源（显式，不隐含在 `Added<T>` 上）**：新增单一 join resync 系统，消费与 `network/mod.rs:978-988` 既有 join hydration（inventory/dropped_loot 的 emit_join_* 系列）**同一个 join 检测源**——该源在 valence 连接模型下对首连与重连一视同仁（每次连接都是新 client 实体），fix PR 须在 plan promotion 时把具体事件/组件 symbol 钉进本节。该系统**一次性显式推送全部三条通道**的权威首帧，均不经 `Changed` filter。
-- **三通道首帧各自的断言**（不只 combat_hud_state）：① `combat_hud_state` 全量帧（`hp/qi/stamina_percent + derived`，权威数值源）；② `movement_state` 全量帧（既有 `Added<MovementState>`（`movement/mod.rs:170-177`）已覆盖，e2e 仍须显式断言收到）；③ `status_snapshot` 当前 status 全集（并入 join resync 显式触发，不依赖 `Changed<StatusEffects>` 碰巧命中）。
-- **顺序无关化（而非锁顺序）**：client 侧 `CombatHudState.create()` 不再硬编码 `active=true`（`CombatHudState.java:39-52`），改为**继承当前 snapshot 的 active**——`derived_attrs_sync` 先到/后到都不能把清空态复活成 active+全满。
-- **幂等**：client store 为无条件覆盖语义，重复快照天然幂等；join resync 重复触发不产生额外可观察状态，测试锁死。
-- **e2e 场景钉死**：仅客户端断线重连（server 侧玩家 ECS 数据不发生任何体力变化）→ 分别断言三条通道各收到恰好一次权威首帧、HUD 渲染真值非 EMPTY 常量；该场景在伪心跳守卫（`lifecycle.rs:282-283` epsilon 化）**开启**状态下运行，证明首帧不再寄生伪心跳。
+- **三通道首帧语义 = at-least-once + 幂等（不是 exactly-once）**：client store 均为无条件覆盖，重复首帧无可观察副作用——故验收锁「每通道**至少一帧**权威真值 + 重复到达幂等」，不锁帧数。`movement_state` 既有 `Added<MovementState>` 触发（`movement/mod.rs:170-177`）与新 join resync 可能双发，**允许**；fix PR 可顺手收敛 producer 但不作为验收项。三通道断言：① `combat_hud_state` 全量帧（`hp/qi/stamina_percent + derived`，权威数值源）；② `movement_state` 全量帧；③ `status_snapshot` 当前 status 全集（并入 join resync 显式触发，不依赖 `Changed<StatusEffects>` 碰巧命中）。
+- **active 的权威激活方（false→true 有且仅有一条路）**：`CombatHudStateHandler` 收到 `combat_hud_state` 权威帧时置 `active=true`（现状 `create()` 即如此，保留）；**其余所有回写者**（`DerivedAttrsHandler` 等）改为继承当前 snapshot 的 active（`CombatHudState.java:39-52` 的硬编码只对非权威通道收回）。断线清空 → inactive；权威首帧到达 → active；`derived_attrs` 先到 → 保持 inactive 不复活、后到 → 保持 active 不降级。顺序无关。
+- **e2e 场景钉死**：客户端断线重连 → 断言三通道各收到至少一帧权威首帧、HUD 在 200ms 内渲染 **server 权威真值**并 active。「权威真值」的定义**参数化挂 P5-e 决议**：当前语义（重连重建实体）= `Stamina::default()` 满值；若 P5-e 拍板持久化 = 持久化值——e2e 断言「HUD 值 == server 组件实际值」而非任何固定数，两种决议下测试形状不变。该场景在伪心跳守卫（`lifecycle.rs:282-283` epsilon 化）**开启**状态下运行，证明首帧不再寄生伪心跳。
 - 伪心跳修复本体：`lifecycle.rs:282-283` 加 epsilon 守卫（对齐同文件 `status.rs:355-361` 风格），`Changed<Stamina>` 回归真变化驱动。
 
 ## P3 — 防御扣费拍板 + 三态拍板 + 扣费守恒（中）
@@ -124,6 +144,16 @@
 - **P5-e 拍板**：体力持久化 or 有意重连重置（`combat/mod.rs:116-133`），与血条审计持久化方案联动决议并记录。**两个分支都不豁免测试**：若持久化 → 往返测试 + 不出现未声明的体力增生；若有意重置 → pin 测试把重置钉成显式契约（重连后 `current == max`、`state == Idle`、无残留 stamina modifier），防未来引入持久化时行为静默漂移。
 - **P5-f**：验收 = P5-b 三项每项都有「接线 PR」或「删除 commit」着落，不留纯写不读。
 
+## 转 active 前收口清单（骨架层不预钉的实现级决议，promotion 时逐项钉死）
+
+骨架按仓库约定是草案；下列事项**有意留到 skeleton → active 提升时收口**（对齐 #1283 防御骨架先例），fix PR 不得在未钉死前动工对应部分：
+
+1. **join resync 触发源 symbol**：与 `network/mod.rs:978-988` join hydration 同源的具体事件/组件名（P2）。
+2. **force_lower 注册位置**：排到全部三个耗尽写入方（tick drain / resolve 受击 / lifecycle 出手）之后的具体 system set 与 `.after` 链（P0）。
+3. **P0 仲裁表三态扩展**：仅当 P3-b 拍板接线分支时生效，扩展格（移动中格挡/进战斗/Exhausted 移动输入/停止回落）逐格钉终值与执行方。
+4. **P2 e2e「权威真值」参数**：随 P5-e 持久化决议钉定（default 满值 or 持久化值）。
+5. **P1-d NPC baseline、P3-a 受击扣费存废、P4-a 阈值语义表、P4-b 字段去留、P5-b 三死字段、P5-e 持久化**：六个 decision 项的决议本体。
+
 ## 两轮反方裁决（高危三项）
 
 - **P0 反方 ①**：「resolve 的覆写会被 lifecycle 目标分支的保护恢复」。裁决：证伪——该保护（`lifecycle.rs:161-166`）只是不覆写，从不回写 ShieldBlocking；全仓唯一赋值点 `shield_block.rs:325` 在新举盾路径，幂等分支 `:293-310` 不重设。
@@ -134,9 +164,9 @@
 
 ## 验收口径
 
-- **P0**：状态仲裁表全场景表驱动测试绿（攻击者/受击者 × 4 态 × 3 余额边界，走真实调度）；格挡中连续受击 state 恒 ShieldBlocking 且 drain 恒走 override（2~3/s）；扣至 0 同 tick 进 Exhausted 并由 force_lower 拆盾；普通非格挡攻防双方仍进 Combat（反误伤回归）；放盾回 Idle；低体力叙事在格挡受击中正常触发。
+- **P0**：状态仲裁矩阵按 try_spend/force_drain 两组分列全绿（走真实调度；三态格在 P3-b 拍板前 N/A）；格挡中连续受击 state 恒 ShieldBlocking 且 drain 恒走 override（2~3/s）；三个耗尽来源各自触发的拆盾均发生在耗尽写入同 tick（排序契约）；普通非格挡攻防双方仍进 Combat（反误伤回归）；放盾回 Idle；低体力叙事在格挡受击中正常触发。
 - **P1**：`recover_per_sec` 运行期写入点全仓唯一（grep 可验，初始化/重置豁免清单外零新增写入点）；聚合系统按调度契约注册且顺序断言在测试内；6 境界 pin；真实 schedule 下 buff 加入/撤销/crash 切换当 tick 的值与恢复量正确、撤销回境界 baseline；稳态不标 Changed；NPC baseline 拍板结论 + 对应测试。
-- **P2**：满体力静止玩家的 `Stamina` 不再每 4 tick 标 Changed；「仅客户端断线重连、server 数据不变」e2e 在伪心跳守卫开启下**三条通道各收到恰好一次权威首帧**且 HUD 渲染真值；join resync 重复触发幂等；`derived_attrs` 先到/后到两种排列均不出现 active+全满假帧。
+- **P2**：满体力静止玩家的 `Stamina` 不再每 4 tick 标 Changed；断线重连 e2e 在伪心跳守卫开启下**三条通道各收到至少一帧权威首帧**、重复到达幂等、HUD 200ms 内渲染值 == server 组件实际值（真值定义随 P5-e 参数化）并 active；active 的 false→true 仅由 combat_hud_state 权威帧触发，`derived_attrs` 先到/后到两种排列均不出现 active+全满假帧、也不出现权威帧后仍 inactive。
 - **P3**：P3-a 拍板结论落档（常量改名或删除 + 测试随决议更新且失败信息写明依据）；P3-b 按分支落地——接线分支须先交付 P0 仲裁表扩展版 + 交叉转换 pin（移动中格挡/进战斗/Exhausted 移动输入/停止回落），删除分支须全链清单核销；furniture 门语义与注释一致；**P3-c 守恒测试按 try_spend / force_drain 两类分别绿**（try_spend：恰好等于成本成功、不足拒绝零副作用、只扣一次；force_drain：clamp 至 0 + 效果照常 + Exhausted 转换；共同：永不为负）。
 - **P4**：P4-a 阈值语义表拍板落档，共享的用权威常量、有意分级的具名并各自边界 pin（等于/略高/略低 × 不同 stamina_max）；P4-b 字段去留拍板后单方向落地（删则全链 + 反向 sample，留则唯一消费者 + 契约测试）；P4-c 缺失组件契约测试绿。
 - **P5**：P5-a 四件套齐且负样本在；P5-b 三项各有着落 commit；P5-c 不回跳 + 药效未丢双向断言（预期值/跨 tick 保持/叠加口径/过期回归）；P5-d 显式字段方案 pin 且 wire 名零变更（client 零改动可验）；P5-e 两分支均有测试（持久化→往返 + 无增生；有意重置→重置契约 pin），决策记录落档。
