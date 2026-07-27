@@ -54,13 +54,33 @@
 
 重连恢复必须是 **Lifecycle × Wounds 联合裁决**，在任何战斗系统 tick 之前完成（与 lifecycle slice 同一接线点 `attach_combat_bundle_to_joined_clients`，其 `.after(attach_cultivation_to_joined_clients)` 顺序已由前置 PR 建立）。裁决表（每行一个确定结果，无二选一）：
 
-**裁决的第一维是 Wounds slice 是否有效，而不是 Lifecycle 状态**——只要 wounds envelope 有效，无论 Lifecycle 是什么状态都恢复持久化血量（这是本 plan headline #1「残血重连不得满血」的正面实现）；`Wounds::default()` 只出现在「wounds 无效 **且** Lifecycle 允许满血」这一格。`LifecycleState` 的真实变体是 `Alive / NearDeath / AwaitingRevival / Terminated`（`server/src/combat/components.rs:195-200`，无 `Dead`），下表按全状态空间穷举：
+### 统一加载结果类型（先定义，裁决表才可执行）
 
-| Wounds slice 状态 | Lifecycle 恢复结果 | 注入的 Wounds | 附加动作 |
+两个 slice 的 load API 都返回**同一个显式三态**，不再用 `Ok(None)` 与 `MissingRow` 两种表示混着表达缺行：
+
+```rust
+enum SliceLoad<T> {
+    Missing,                 // 行不存在（首登 / 升级后尚未写过）
+    Valid(T),                // 反序列化成功且自身字段校验通过
+    Invalid(LoadFailure),    // MalformedJson / UnsupportedVersion / CharacterIdMismatch / NumericUnrecoverable
+}
+```
+
+**代次比较是联合裁决的一步，不是 `Valid` 的前置条件**——`SliceLoad::Valid` 只表示该 slice 自身可信。跨 slice 代次校验（`snapshot_combat_tick` 相等）**仅在 lifecycle 与 wounds 双方都是 `Valid` 时执行**；任一方 `Missing` 或 `Invalid` 时无可比对象，直接跳过该检查（这解决了「Lifecycle 缺行时 wounds 的代次跟谁比」的不可执行状态）。代次不等归入 `GenerationMismatch`，与 `Invalid` 走同一裁决出口。
+
+### 裁决表（联合，每格一个确定结果）
+
+**第一维是 wounds 是否可用，第二维是 lifecycle 恢复出的状态**——wounds 可用就恢复持久化血量（headline #1「残血重连不得满血」的正面实现）；`Wounds::default()` 只出现在「wounds 不可用 **且** lifecycle 允许满血」这一格。`LifecycleState` 的真实变体是 `Alive / NearDeath / AwaitingRevival / Terminated`（`server/src/combat/components.rs:195-200`，无 `Dead`）。
+
+「wounds 可用」定义：`wounds == Valid` **且**（lifecycle 非 `Valid` → 跳过代次比较；lifecycle 为 `Valid` → 代次相等）。
+
+| wounds 可用性 | Lifecycle 加载结果 | 注入的 Wounds | 附加动作 |
 |---|---|---|---|
-| **有效**（envelope 校验 + 代次匹配 + character_id 匹配 + 数值卫生可修复） | 任意（Alive / NearDeath / AwaitingRevival / Terminated / 缺行） | **持久化值**（经数值卫生表） | — |
-| 无效（缺行 / 坏 JSON / schema_version 不支持 / character_id 不匹配 / 代次不匹配 / 数值卫生不可修复） | Lifecycle 缺行 或 `Alive` | `Wounds::default()`（满血） | 非缺行原因一律 `warn!`；此格是唯一的满血入口 |
-| 无效（同上） | `NearDeath` / `AwaitingRevival` / `Terminated` | **fail-closed 安全血量**：`entries` 空、`health_max` = 运行时权威值、`health_current = health_max * NEAR_DEATH_HEALTH_FRACTION`（恰在阈值上；stabilized 分支是严格 `>` 判定，**不会**判活） | `warn!` 带失败原因枚举；**deadline 与 Lifecycle 状态原样保留**，死亡后果链照常推进 |
+| **可用** | `Missing` / `Valid(Alive)` / `Valid(NearDeath)` / `Valid(AwaitingRevival)` / `Valid(Terminated)` / `Invalid` | **持久化值**（经数值卫生表） | lifecycle 为 `Invalid` 时按前置 PR 既有规则回退其自身默认并 `warn!`，不影响本列血量恢复 |
+| 不可用（`Missing` / `Invalid` / `GenerationMismatch`） | `Missing` / `Valid(Alive)` / `Invalid` | `Wounds::default()`（满血） | 非 `Missing` 原因一律 `warn!`；**此格是全表唯一的满血入口** |
+| 不可用（同上） | `Valid(NearDeath)` / `Valid(AwaitingRevival)` / `Valid(Terminated)` | **fail-closed 安全血量**：`entries` 空、`health_max` = 运行时权威值、`health_current = health_max * NEAR_DEATH_HEALTH_FRACTION`（恰在阈值上；stabilized 分支是严格 `>` 判定，**不会**判活） | `warn!` 带失败原因枚举；**deadline 与 Lifecycle 状态原样保留**，死亡后果链照常推进 |
+
+「lifecycle `Invalid`」落在第二行而非第三行：此时无法可信地知道玩家处于何种死亡状态，前置 PR 的既有规则已是回退 `Lifecycle::default()`（即 `Alive`），与满血组合自洽、不产生「非 Alive + 满血」。
 
 - 第一行同时覆盖两条 headline：Alive 残血玩家重连拿回残血（不满血）；NearDeath 玩家重连拿回濒死血量（不判活）。
 - 第二、三行覆盖审查指出的全部撕裂场景：升级后已有 lifecycle 行但尚无 wounds 行、单表写入失败、坏 JSON、转世不匹配、代次不一致——任何一种都不得产出「非 Alive + 满血」。
@@ -80,11 +100,11 @@
 
 ## 一致性与时序（三条契约，均为强制，不可互相替代）
 
-1. **同事务提交**：disconnect / shutdown / autosave / 状态转换触发（下条）四条路径中，`player_lifecycle` 与 `player_wounds` 必须在**同一 SQLite transaction** 内、取自**同一 ECS 读取瞬间**的快照提交；任一写入失败整体回滚，禁止单表落盘。共享快照代次：两表 envelope 均含 `snapshot_combat_tick`（= 前置 PR 已有的 `combat_clock_tick_at_save` 同源锚点）；加载时两者不等 → 判「代次不匹配」→ 走裁决表第三行。**同事务只保证两表不撕裂，不保证新鲜度**（见下条与「风险」节）。
+1. **同事务提交**：disconnect / shutdown / autosave / 语义变更触发（下条）四条路径中，`player_lifecycle` 与 `player_wounds` 必须在**同一 SQLite transaction** 内、取自**同一 ECS 读取瞬间**的快照提交；任一写入失败整体回滚，禁止单表落盘。共享快照代次：两表 envelope 均含 `snapshot_combat_tick`（= 前置 PR 已有的 `combat_clock_tick_at_save` 同源锚点）；比较规则见「统一加载结果类型」——仅双方均 `Valid` 时比较，不等则该 wounds 判为不可用，按裁决表第二/三行按 lifecycle 状态分流。**同事务只保证两表不撕裂，不保证新鲜度**（见下条与「风险」节）。
 
 2. **致命转换先于快照（transition-before-save，本轮 review 新增的必修项）**：现状 `near_death_tick` 在 combat 的 Update 链（`server/src/combat/mod.rs:281-287`，`.after(death_arbiter_tick)`），`despawn_disconnected_clients` 在 player 链（`server/src/player/mod.rs:122`，`.after(flush_changed_player_inventories)`），两者**跨模块无任何相对顺序约束**。因此「同一 update 内挨致命一击 + 立刻断线」时，落盘可能是转换前的 `Alive + 残血`——重连后没有 NearDeath 状态，秒退依旧成功，headline #2 不闭环。必修两条：
    - 钉死 ordering：`despawn_disconnected_clients` 与 shutdown flush 显式 `.after(crate::combat::lifecycle::near_death_tick)`（并顺带 `.after(resolve::resolve_attack_intents)` / `.after(lifecycle::death_arbiter_tick)`，保证同 update 的伤害与状态转换都已落定）。实施时若 Bevy 0.14 的跨模块 set 依赖需要显式 `SystemSet`，一并引入并在 Finish Evidence 记录。
-   - **状态转换触发即时落盘**：Lifecycle 从 `Alive` 进入任何非 Alive 状态时立即触发一次同事务 lifecycle+wounds 落盘（不等 60s autosave、不等断线）。这同时把硬崩场景的陈旧窗口从 60s 压到 sub-tick。
+   - **语义变更触发即时落盘**：触发条件**不是**「`Alive` → 非 Alive」这一个转换，而是**任何影响恢复结果的 lifecycle 持久化字段发生语义变化**——`state`（含 `NearDeath → AwaitingRevival`、`NearDeath → Terminated`、`NearDeath → Alive`、`AwaitingRevival` 的各出口）、三个 deadline tick、`awaiting_decision`（含决策内容更新）、`fortune_remaining`、终结原因。任一变化即在**同 tick** 触发一次同事务 lifecycle+wounds 落盘（不等 60s autosave、不等断线）。只挡首个转换是不够的：`NearDeath → AwaitingRevival` 之后硬崩，恢复出的仍是旧的 `NearDeath` + 旧 deadline，死亡后果链被回滚重来。
 
 3. **断线提交先于同名重连加载（barrier，强制；session generation 只能补强不能替代）**：`despawn_disconnected_clients` 的**事务已提交**必须先于同 username 新实体的 join 恢复被观察到。实施时钉死系统 ordering / schedule 阶段边界形成真实 barrier；session generation 可以额外加上用来**检测**陈旧写入（检测到即拒绝该次写入），但它无法阻止新实体读到缺行后按裁决表回退，所以不构成 barrier 的替代方案。以「同一 update 内断线+重连」「下一 tick 重连」两条真实 App schedule 集成测试锁定：新实体读到的必须是刚提交的残血值，不得是缺行或陈旧行。
 
@@ -111,7 +131,7 @@
   ```
 
   envelope 与 wire 层 `WoundEntryV1`（`server/src/schema/combat_hud.rs`）是两套独立表示，本 plan 不合并、不互相派生。migration 版本号以实施时 `persistence/mod.rs` 最新版本递增，建表进生产 `apply_migrations` 递进链（fresh DB 同样建表）。
-- [ ] `server/src/player/state.rs` 新增 `load_player_wounds_slice` / `save_player_wounds_slice`；load 返回 `Result<Option<WoundsEnvelope>>`，失败分支带原因枚举（`MissingRow / MalformedJson / UnsupportedVersion / CharacterIdMismatch / GenerationMismatch / NumericUnrecoverable`）供裁决表消费；save 走同事务接口。
+- [ ] `server/src/player/state.rs` 新增 `load_player_wounds_slice` / `save_player_wounds_slice`；load 返回上文定义的 `SliceLoad<WoundsEnvelope>`（`Missing` / `Valid` / `Invalid(LoadFailure)`，`LoadFailure` = `MalformedJson / UnsupportedVersion / CharacterIdMismatch / NumericUnrecoverable`）——**缺行只由 `Missing` 表达，不再有 `MissingRow` 错误变体**；`GenerationMismatch` 不是 load 层结果，而是联合裁决层在双方均 `Valid` 时比较 `snapshot_combat_tick` 得出的判定。前置 PR 的 lifecycle load 同步改成同一 `SliceLoad` 形状（这是本 plan 对既有代码的唯一签名改动，需在实施时一并交付）。save 走同事务接口。
 - [ ] `attach_combat_bundle_to_joined_clients`（`server/src/combat/mod.rs:93-117`）：实现裁决表全部三行 × 全部 Lifecycle 状态。
 - [ ] `despawn_disconnected_clients` / `flush_connected_players_on_shutdown` / 前置 PR 的 60s autosave / 新增的转换触发落盘：query 加 `Option<&Wounds>`，与 lifecycle slice 同事务、同快照落盘。
 - [ ] 实现「一致性与时序」三条契约：同事务+代次、transition-before-save（ordering + 转换触发即时落盘）、save-commit-before-load barrier。
@@ -143,7 +163,7 @@
 - **原子性与时序（player/mod.rs + 真实 App schedule 集成）**：
   - 同事务：**disconnect / shutdown / autosave / 转换触发四条路径各一条回滚用例**——注入单表写失败（只读连接 / 表锁 / 中途 Err 注入）断言两表均未提交、DB 保持前一状态。
   - **transition-before-save**：同一 update 内构造「致命一击 → Lifecycle 转 NearDeath → 客户端断线」，断言落盘的 lifecycle 状态是 `NearDeath` 且 wounds 是濒死血量（不是转换前的 `Alive` + 残血）；配套断言 ordering 生效（`despawn_disconnected_clients` 在 `near_death_tick` 之后运行）。
-  - **转换触发即时落盘**：Lifecycle 进入非 Alive 的同 tick 断言 DB 已有对应两行（不等 60s autosave、不等断线）。
+  - **语义变更触发即时落盘（逐转换覆盖）**：对 `Alive→NearDeath`、`NearDeath→AwaitingRevival`、`NearDeath→Terminated`、`NearDeath→Alive`（合法治疗稳定）、`AwaitingRevival` 的各出口、以及 deadline / `awaiting_decision` / `fortune_remaining` 的更新，各一条用例：转换发生的**同 tick** 回读 DB，断言两表已提交且内容等于转换后的新值；再模拟进程重启（新建 App 从同一 DB 恢复）断言恢复出的是新状态而非被回滚的旧状态。
   - **barrier**：「同 update 断线+重连」与「下一 tick 重连」两条调度测试，新实体恢复到刚提交的残血值；另一条断言 session generation 检测到陈旧写入时拒绝该次写入（补强机制单独可测，但不作为 barrier 替代）。
 - **bot 场景（`scripts/bot/scenarios/`）**：bot 被打至残血 → 断线 → 重连 → 从真实 S2C 断言血量未回满。数据链（零协议改动）：server `emit_wounds_snapshot_payloads`（`server/src/network/wounds_snapshot_emit.rs:21`，`ServerDataPayloadV1::WoundsSnapshot`）+ combat HUD state 的血量比例（`server/src/network/combat_hud_state_emit.rs:56`）；bot 侧按既有 proto_min payload 解码范式消费，若 bot 解码器尚未覆盖这两个 payloadCase，则把 bot 侧解码支持纳入本 plan P2 范围（bot 属 `scripts/`，client/agent/schema 仍零改）。断言用比例阈值并容忍重连期间自然恢复 tick 浮动。
 - 完整门禁：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；bot 场景 + `bash scripts/smoke-test-e2e.sh`（headless 设 `BONG_SKIP_SKIN_PREFETCH=1`）。
@@ -151,7 +171,7 @@
 ## 风险
 
 - **离线期间自然愈合语义**：默认「原样恢复、不做离线愈合折算」——离线不是安全屋（符合末法基调）。若后续设计要求离线缓慢愈合，走 `player_lifespan.offline_pause_wall` 的 wall-clock 折算范式另立扩展。
-- **硬崩陈旧窗口（本轮 review 纠正了上一版的错误结论）**：同事务 + 同代次只保证两表**不撕裂**，**不保证新鲜**。硬崩（非 AppExit）后两表可能同时停留在同一份陈旧快照上——例如「`Alive` + 满血」这一致但过期的组合会被裁决表第一行正常恢复，玩家因此白嫖。上一版声称「NearDeath 场景不受硬崩影响」是错的：fail-closed 只挡撕裂，挡不住一致的陈旧。缓解＝「一致性与时序」§2 的**状态转换触发即时落盘**，把濒死场景的陈旧窗口从 60s autosave 周期压到 sub-tick（进入非 Alive 的同 tick 就已提交）；普通残血（Alive 状态内血量变化）仍受 autosave 周期约束，硬崩时可白嫖至多一个 autosave 周期的伤害——这是本 plan 明确接受的边界，若后续要收紧需另立「血量变化脏标记高频落盘」扩展，不在本 plan 抢跑。
+- **硬崩陈旧窗口（本轮 review 纠正了上一版的错误结论）**：同事务 + 同代次只保证两表**不撕裂**，**不保证新鲜**。硬崩（非 AppExit）后两表可能同时停留在同一份陈旧快照上——例如「`Alive` + 满血」这一致但过期的组合会被裁决表第一行正常恢复，玩家因此白嫖。上一版声称「NearDeath 场景不受硬崩影响」是错的：fail-closed 只挡撕裂，挡不住一致的陈旧。缓解＝「一致性与时序」§2 的**语义变更触发即时落盘**，把整条死亡后果链（首个转换 + 其后每一次状态/deadline/决策变化）的陈旧窗口都压到 sub-tick；普通残血（Alive 状态内血量变化）仍受 autosave 周期约束，硬崩时可白嫖至多一个 autosave 周期的伤害——这是本 plan 明确接受的边界，若后续要收紧需另立「血量变化脏标记高频落盘」扩展，不在本 plan 抢跑。
 - **与治疗系统的交互**：yidao / 丹药 / 卧棺写的是运行态 `Wounds`，本 plan 只加持久化边界，不改治疗公式；`health_max` 运行时权威规则保证治疗系统对上限的合法修改不被持久化旧值覆盖。
 - **不触碰 qi_physics**：血量/伤口不是真元，无守恒律接口；若实施中发现伤口条目携带真元字段（当前无），停下重评。
 
