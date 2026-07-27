@@ -19,6 +19,7 @@ import com.bong.client.network.VfxEventAnimationBridge;
 import com.bong.client.network.VfxEventRouter;
 import net.minecraft.util.Identifier;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.OptionalInt;
@@ -57,16 +58,28 @@ import org.junit.jupiter.api.Test;
 class CastFovControllerTest {
     private static final int HEAVY_SLOT = 3;
     private static final int LIGHT_SLOT = 5;    // 非重型招（无 profile）
-    // CastState 驱动的重型招（baomai 全力释放）。heaven_gate 已移到动画事件驱动，
-    // 走 onAnimPlayed（cast 条 4s 与引导窗 7s 错开），见 animDriven* 测试。
-    private static final String HEAVY_SKILL = "baomai.full_power_release";  // 强/20t 持续, FOV +9°/7t
+    /**
+     * CastState 驱动路径的**测试合成技能** id——PR #1249 三轮返工摘掉 baomai/woliu/anqi 三条
+     * 生产不可达的死注册项后（见 {@link CastJuiceProfiles} 类文档「服务端权威 CASTING 缺口」
+     * 段），{@code CastJuiceProfiles} 里唯一还登记的 CastState 驱动招只剩 zhenmai.sever_chain
+     * （无 FOV 分量）。本文件大量用例要同时观测 shake + FOV 两通道来验证
+     * {@link CastFovController} 的**通用**状态机（arm/release/interrupt/idle/supersession/
+     * terminal/teardown/multiplier）——这与「登记表是否生产可达」是两件事，后者由
+     * {@link #registrySetIsExactlyTheExpectedSkills()}/
+     * {@link #parkedSkillsAreNotRegisteredPendingServerAuthoritativeCasting()} 单独锁。故这里用
+     * {@link CastJuiceProfiles#setSyntheticEntryForTest} 注入一个不进生产注册集合的测试替身
+     * （{@code setUp} 注入 / {@code tearDown} 清空），数值沿用原 baomai 强档参数（强/20t/+9°/7t）
+     * 便于复用既有断言常量。heaven_gate 已移到动画事件驱动，走 onAnimPlayed（cast 条 4s 与
+     * 引导窗 7s 错开），见 animDriven* 测试。
+     */
+    private static final String HEAVY_SKILL = "test.synthetic_heavy_release";
     private static final String LIGHT_SKILL = "sword.cleave";            // 未登记 → 无 juice
     private static final int DURATION_MS = 2000;
     private static final long START = 1_700_000_000_000L;
-    /** baomai FOV punch：peak +9°、时长 7 tick = 350ms。 */
+    /** 测试合成重型招（{@link #HEAVY_SKILL}）FOV punch：peak +9°、时长 7 tick = 350ms。 */
     private static final double HEAVY_FOV_PEAK = 9.0;
     private static final int FOV_DURATION_MS = 7 * 50;
-    /** baomai 持续抖动时长：20 tick = 1000ms（SUSTAIN 包络）。 */
+    /** 测试合成重型招（{@link #HEAVY_SKILL}）持续抖动时长：20 tick = 1000ms（SUSTAIN 包络）。 */
     private static final int SHAKE_DURATION_MS = 20 * 50;
     /** 同相位采样点：tick 8 = 400ms（elapsedTick%4==0 = 满相位，落在 SUSTAIN 平台段内）。 */
     private static final int SUSTAIN_SAMPLE_MS = 8 * 50;
@@ -94,6 +107,9 @@ class CastFovControllerTest {
         DeathStateStore.resetForTests();
         CameraShakeController.resetForTests();
         JuiceConfig.resetForTests();
+        // 测试合成 profile（见 HEAVY_SKILL 字段文档）：不进 CastJuiceProfiles 的生产注册集合。
+        CastJuiceProfiles.setSyntheticEntryForTest(
+            HEAVY_SKILL, new CastJuiceProfile(HEAVY_SKILL, CastJuiceProfiles.STRONG, 20, 9.0f, 7));
         SkillBarStore.updateSlot(HEAVY_SLOT, SkillBarEntry.skill(HEAVY_SKILL, "全力", DURATION_MS, 0, ""));
         SkillBarStore.updateSlot(LIGHT_SLOT, SkillBarEntry.skill(LIGHT_SKILL, "竖劈", 1000, 0, ""));
         SkillBarStore.updateSlot(GATE_SLOT, SkillBarEntry.skill(GATE_SKILL, "天门开阖", 4000, 0, ""));
@@ -113,6 +129,7 @@ class CastFovControllerTest {
         DeathStateStore.resetForTests();
         CameraShakeController.resetForTests();
         JuiceConfig.resetForTests();
+        CastJuiceProfiles.clearSyntheticEntryForTest();
     }
 
     // ---- 驱动辅助（真实入口） ----
@@ -196,12 +213,25 @@ class CastFovControllerTest {
     ) {
     }
 
-    /** plan §P3 表「强/中/弱」三档的字面量。 */
+    /**
+     * plan §P3 表「强/中/弱」三档的字面量——**仅生产注册项**（CastState 驱动，非动画事件）。
+     * PR #1249 三轮返工摘掉 baomai/woliu/anqi 三条死注册项后，只剩 zhenmai 这一条：见
+     * {@link #PARKED_SKILL_IDS} 与 {@link #parkedSkillsAreNotRegisteredPendingServerAuthoritativeCasting()}。
+     */
     private static final List<ExpectedProfile> EXPECTED_PROFILES = List.of(
-        new ExpectedProfile("baomai.full_power_release", 1.2f, 20, 9.0f, 7),   // 强
-        new ExpectedProfile("woliu.turbulence_burst", 0.85f, 18, 6.0f, 6),     // 中
-        new ExpectedProfile("zhenmai.sever_chain", 0.85f, 14, 0f, 0),          // 中，无 FOV
-        new ExpectedProfile("anqi.echo_fractal", 0.5f, 12, 0f, 0));            // 弱，无 FOV
+        new ExpectedProfile("zhenmai.sever_chain", 0.85f, 14, 0f, 0));         // 中，无 FOV
+
+    /**
+     * 参数已在 plan §P3 定稿、但代码侧**未注册**的招（PR #1249 三轮返工摘掉，2026-07-27）——
+     * 服务端对应 resolver 全程不下发权威 {@code cast_sync{phase:casting}}（见
+     * {@link CastJuiceProfiles} 类文档「服务端权威 CASTING 缺口」段），在当前门控设计下这三条
+     * 注册项就是生产死代码；三轮 review reviewer C/D 判定：留着死注册项等于把「注册集合」和
+     * 「生产可达集合」混为一谈。三招完整调参数值（强度档位/时长/FOV）已原样搬进
+     * {@code docs/plan-fpv-cast-av-v1.md §P3 参数 amendment}，恢复条件是服务端补齐权威 CASTING
+     * （或迁到动画事件驱动路径，两条候选见 plan §P3「未完成欠账」）——不是永久放弃。
+     */
+    private static final Set<String> PARKED_SKILL_IDS = Set.of(
+        "baomai.full_power_release", "woliu.turbulence_burst", "anqi.echo_fractal");
 
     @Test
     void registryPinsEverySkillFieldByFieldWithLiteralExpectations() {
@@ -232,12 +262,12 @@ class CastFovControllerTest {
 
     @Test
     void registrySetIsExactlyTheExpectedSkills() {
-        // 精确相等（不是 containsAll）：多登记一招 = 沉浸式极简被破，少一招 = 交付缺失。
+        // 精确相等（不是 containsAll）：多登记一招 = 沉浸式极简被破/带回死注册项，少一招 = 交付缺失。
         assertEquals(
             EXPECTED_PROFILES.stream().map(ExpectedProfile::skillId)
                 .collect(Collectors.toCollection(LinkedHashSet::new)),
             new LinkedHashSet<>(CastJuiceProfiles.skillIds()),
-            "CastState 驱动的注册集合必须与 plan §P3 参数表精确相等");
+            "CastState 驱动的注册集合必须与 plan §P3 参数表精确相等（当前仅 zhenmai 生产可达）");
 
         // heaven_gate 已从 CastState 驱动移除（cast 条 4s 与引导窗 7s 错开）→ 改动画事件驱动。
         assertNull(CastJuiceProfiles.get(GATE_SKILL),
@@ -245,6 +275,22 @@ class CastFovControllerTest {
         // 沉浸式极简：普通招零 juice
         assertNull(CastJuiceProfiles.get("sword.cleave"), "普通招不登记 → 无 juice");
         assertNull(CastJuiceProfiles.get(null), "null skillId 不得炸，返回 null");
+    }
+
+    @Test
+    void parkedSkillsAreNotRegisteredPendingServerAuthoritativeCasting() {
+        // review C/D（PR #1249 三轮）逐条点名：三招在服务端 resolver 从不下发权威 CASTING 的
+        // 前提下若仍留正式注册项，就是把「注册集合」和「生产可达集合」混为一谈的假交付边界。
+        // 本用例反向锁住「已摘掉」这个事实——谁手滑把 register(...) 加回 CastJuiceProfiles.build()
+        // 都会在这里撞红，逼回去读类文档「服务端权威 CASTING 缺口」段；对应的完整参数值原样存在
+        // docs/plan-fpv-cast-av-v1.md §P3 参数表，不是被丢弃。
+        for (String parked : PARKED_SKILL_IDS) {
+            assertNull(CastJuiceProfiles.get(parked),
+                parked + " 服务端从不下发权威 CASTING（resolver 全程不插 Casting 组件）"
+                    + "→ 必须不在登记集合里，代码侧不留死注册项");
+        }
+        assertTrue(Collections.disjoint(PARKED_SKILL_IDS, CastJuiceProfiles.skillIds()),
+            "parked 集合与生产注册集合必须不相交");
     }
 
     @Test
@@ -1084,8 +1130,8 @@ class CastFovControllerTest {
 
     @Test
     void nonAnimDrivenAcceptedCastDoesNotAuthorizeGateAnims() {
-        // 令牌只由**动画事件驱动的那一招**的权威 CASTING 发：baomai 被 accepted 不等于
-        // heaven_gate 的动画可以挪用它。
+        // 令牌只由**动画事件驱动的那一招**的权威 CASTING 发：别的 CastState 驱动重型招被
+        // accepted 不等于 heaven_gate 的动画可以挪用它。
         predictAndAccept(HEAVY_SLOT, START);
         releaseAnim();
         advanceMs(GATE_FOV_DURATION_MS / 2);
@@ -1422,11 +1468,11 @@ class CastFovControllerTest {
         // 玩家放别的招会带来一条权威 CASTING——那**不是**天门被取消，不得顶掉天门的令牌，
         // 否则劈下那一刻静默丢 juice。
         acceptGateCast(START);
-        predictAndAccept(HEAVY_SLOT, START + 4000);   // 3s 窗口里插一发 baomai
+        predictAndAccept(HEAVY_SLOT, START + 4000);   // 3s 窗口里插一发别的重型招
         serverSync("complete", HEAVY_SLOT, START + 4000, "completed");
-        advanceMs(SHAKE_DURATION_MS + 50);            // 让 baomai 的两个通道走完
+        advanceMs(SHAKE_DURATION_MS + 50);            // 让插入的重型招两个通道走完
         CastFovController.tick();
-        assertBaseline("baomai 的脉冲已走完");
+        assertBaseline("插入的重型招脉冲已走完");
 
         releaseAnim();   // 天门劈下
         advanceMs(GATE_FOV_DURATION_MS / 2);

@@ -33,6 +33,15 @@ class JuiceControlsTest {
     /** 注入时钟：脉冲在 t=0 偏移天然为 0，需推进到半程才能证明取消前真有值。 */
     private final long[] now = {10_000_000L};
 
+    /**
+     * 接线证明用的测试合成技能 id——PR #1249 三轮返工摘掉 baomai.full_power_release 死注册项后
+     * （见 {@link CastJuiceProfiles} 类文档），CastJuiceProfiles 生产注册表里唯一剩下的
+     * zhenmai.sever_chain 无 FOV 分量，撑不起本文件「FOV + shake 都要有非零值」的接线断言。
+     * 故用 {@link CastJuiceProfiles#setSyntheticEntryForTest} 注入一个不进生产注册集合的替身，
+     * 与「CastJuiceProfiles 的真实内容是否生产可达」解耦。
+     */
+    private static final String WIRING_TEST_SKILL = "test.synthetic_heavy_release";
+
     @BeforeEach
     void setUp() {
         JuiceConfig.resetForTests();
@@ -41,6 +50,8 @@ class JuiceControlsTest {
         JuiceControls.resetControlsForTests();
         CastStateStore.resetForTests();
         SkillBarStore.resetForTests();
+        CastJuiceProfiles.setSyntheticEntryForTest(WIRING_TEST_SKILL,
+            new CastJuiceProfile(WIRING_TEST_SKILL, CastJuiceProfiles.STRONG, 20, 9.0f, 7));
         feedback.clear();
         CastFovController.setClockForTest(() -> now[0]);
         CastFovController.setLocalPlayerPredicateForTest(id -> true);
@@ -54,6 +65,7 @@ class JuiceControlsTest {
         JuiceControls.resetControlsForTests();
         CastStateStore.resetForTests();
         SkillBarStore.resetForTests();
+        CastJuiceProfiles.clearSyntheticEntryForTest();
     }
 
     /** server cast_sync 消费（真实 {@link CastSyncHandler} 入口）。 */
@@ -233,7 +245,7 @@ class JuiceControlsTest {
         int slot = 3;
         long startedAt = 1_700_000_000_000L;
         SkillBarStore.updateSlot(slot,
-            SkillBarEntry.skill("baomai.full_power_release", "全力", 2000, 0, ""));
+            SkillBarEntry.skill(WIRING_TEST_SKILL, "全力", 2000, 0, ""));
         CastStateStore.addTransitionListener(CastFovController::onCastState);
         CastStateStore.beginSkillBarCast(slot, 2000, startedAt);
         castSync("casting", slot, startedAt, "none");

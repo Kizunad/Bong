@@ -35,7 +35,7 @@
 | P0 | FPV 技术路线 POC（三选一拍板）+ 工具链增强 | ⏳ 路线 A 定形（§8.1 #1，2026-07-22 真机拍板）；PR-1 收口中 |
 | P1 | FPV 基础设施：per-anim 第一人称配置 + `_fpv` 变体查找链 | ⏳ 本地玩家 `_fpv` 查找链 + 路线 A config 已落 `BongAnimationPlayer.playOnStack`（opt-in per 变体）；POC harness 已收敛移除 |
 | P2 | 主力招 FPV 手臂动画批量产出（3 轮打磨 + PROMISE） | ⏳ `sword_cleave_fpv` round 3/3 定稿：双臂离线 IK 烘焙（右臂 yaw/roll 中线校正 + 左臂**逐 tick** IK 合握，加密防插值脱手），关键帧残差 ≤0.55、中间帧最差 2.43 模型单位，t0=t20 收势闭合。剩余招式 FPV 变体待续 |
-| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⏳ 基础设施已落（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 4 重型招注册表 + heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动（**授权仍是权威 CASTING 武装的 `AnimCastToken`**，动画只定触发时刻；令牌为按到达序的有界队列，连续同招施法不串用）+ `CastFovController` 生命周期状态机（**accepted 只认 `CastStateStore.Origin.SERVER_AUTHORITATIVE`**，本地预测降为候选；identity 门控 arming/按 identity 有界终态记录 `Terminal{FIRED,VOIDED}`/supersession·TTL·容量淘汰均落 VOIDED/IDLE 不清场/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消；动作栏回显走 `Text.translatable`）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 84 + `JuiceConfigTest` 11 + `JuiceControlsTest` 12。**三条 amendment 见下**（参数保留真机值 / 配置持久化不在范围 / P2 动画变更已 revert）。**阶段未完成——阻塞项见「§P3 未完成欠账」**：参数表 5 个 release 目标里 baomai/woliu/anqi 三招在生产中拿不到权威 CASTING，注册项不可达，P3 的主交付（重型招真实释放时有 shake/FOV）只兑现了 2 招 |
+| P3 | 施法瞬间 juice：重型招释放 shake/FOV 脉冲（按招参数化） | ⏳ 基础设施已落（纯 client，零 wire 变更；PR #1249）：`CastJuiceProfiles` 1 条生产可达重型招注册表（zhenmai；baomai/woliu/anqi 参数定稿存于 §P3 参数表，代码侧未注册，PR #1249 三轮返工摘除死注册项）+ heaven_gate 两段走 `CastFovController.onAnimPlayed` 动画事件驱动（**授权仍是权威 CASTING 武装的 `AnimCastToken`**，动画只定触发时刻；令牌为按到达序的有界队列，连续同招施法不串用）+ `CastFovController` 生命周期状态机（**accepted 只认 `CastStateStore.Origin.SERVER_AUTHORITATIVE`**，本地预测降为候选；identity 门控 arming/按 identity 有界终态记录 `Terminal{FIRED,VOIDED}`/supersession·TTL·容量淘汰均落 VOIDED/IDLE 不清场/死亡·断线·**切世界** teardown）+ `JuiceConfig` 配置持有者 & `JuiceControls` keybind 可调入口（默认 1.0，0=关闭且进行中调 0 双通道立即取消；动作栏回显走 `Text.translatable`）+ `MixinGameRenderer` 加法 FOV 合成；`CastFovControllerTest` 87 + `JuiceConfigTest` 11 + `JuiceControlsTest` 12。**四条 amendment 见下**（参数保留真机值 / 配置持久化不在范围 / P2 动画变更已 revert / 三轮死注册项摘除）。**阶段未完成——阻塞项见「§P3 未完成欠账」**：参数表 5 个 release 目标里 baomai/woliu/anqi 三招在生产中拿不到权威 CASTING（代码侧已不再注册，参数存于 §P3 参数表），P3 的主交付（重型招真实释放时有 shake/FOV）只兑现了 2 招 |
 | P4 | 签名音效资产化：每流派 1-2 条真 `.ogg` + 管线建立 | ✅ 2026-07-24（纯资产 + 管线，8 条 CC0 真 `.ogg` 落地；**9 条 server recipe 主层/前兆层换 `bong:` 事件**——8 招 signature + heaven_gate charge 前兆，heaven_gate release（`sword_manifest_strike`）+ charge（专属 `heaven_gate_charge`）均在 server 侧；resourcepack 纳入 `bong/sounds` + `bong/sounds.json` + sha1 同步；跨端契约测试 server 3 + client 12（heaven_gate signature pin 移到 server 侧后删了 client 对应用例），含**运行时消费 pin** 从生产映射取 recipe id + 经真实 registry 查找） |
 | P5 | 回归收口：双视角验收 + 听觉差异化回归 | ⬜ |
 
@@ -77,17 +77,20 @@
 > SUSTAIN 持续震动 + 放大 FOV punch。heaven_gate 两段另有结构性原因（见下方驱动契约条）。
 > **原始立项草稿数值原样保留在本块内供追溯**——不许直接把原表改掉当没发生过。
 
-**现行定稿**（代码单一真源：`CastJuiceProfiles` + `CastFovController.HEAVEN_GATE_CHARGE_JUICE` /
-`HEAVEN_GATE_RELEASE_JUICE`；测试侧字面量镜像 `CastFovControllerTest.EXPECTED_PROFILES` 逐字段 pin）：
+**现行定稿**（代码单一真源：已注册招走 `CastJuiceProfiles` + `CastFovController.HEAVEN_GATE_CHARGE_JUICE` /
+`HEAVEN_GATE_RELEASE_JUICE`；测试侧字面量镜像 `CastFovControllerTest.EXPECTED_PROFILES` 逐字段 pin。
+**baomai/woliu/anqi 三招参数已定稿但代码侧未注册**——PR #1249 三轮返工摘除死注册项（见下方
+「§P3 死注册项摘除 amendment」），本表是这三招参数值的**唯一权威来源**，`CastJuiceProfiles`
+不再持有）：
 
 | 招式 | shake 幅度/时长 | FOV 脉冲 | 备注 |
 |---|---|---|---|
 | sword_path.heaven_gate（charge） | 0.8 / 60 tick CRESCENDO | — | **动画事件驱动**（非 CastState）：跟随 `sword_heaven_gate_charge` 动画自身 endTick=60 渐强，动画淡出即止 |
 | sword_path.heaven_gate（release） | 1.5 / 24 tick SUSTAIN | +12° 收缩回弹 8 tick | **动画事件驱动**：cast 条 4s 与真实引导窗 7s 错开，只有动画事件能对准劈下那一刻 |
-| baomai.full_power_release | 强 / 20 tick SUSTAIN | +9° / 7 tick | 与力竭灰雾同步 |
-| woliu.turbulence_burst | 中 / 18 tick SUSTAIN | +6° / 6 tick | |
-| zhenmai.sever_chain | 中 / 14 tick SUSTAIN | — | 断链顿挫感 |
-| anqi.echo_fractal（release） | 弱 / 12 tick SUSTAIN | — | |
+| baomai.full_power_release | 强 / 20 tick SUSTAIN | +9° / 7 tick | 与力竭灰雾同步；**已定稿，代码侧未注册**（待服务端权威 CASTING 补齐后登记进 `CastJuiceProfiles`） |
+| woliu.turbulence_burst | 中 / 18 tick SUSTAIN | +6° / 6 tick | **已定稿，代码侧未注册**（同上） |
+| zhenmai.sever_chain | 中 / 14 tick SUSTAIN | — | 断链顿挫感；生产可达，`CastJuiceProfiles` 唯一登记项 |
+| anqi.echo_fractal（release） | 弱 / 12 tick SUSTAIN | — | **已定稿，代码侧未注册**（同上） |
 | 其余招式 | 无（默认零） | — | 沉浸式极简：juice 只给重型招 |
 
 强/中/弱 = `CastJuiceProfiles.STRONG/MEDIUM/WEAK` = 1.2 / 0.85 / 0.5。heaven_gate 两段不走三档，
@@ -113,6 +116,40 @@ release）错开 3s，走 CastState 会在举剑蓄力中途触发而非劈下�
 时刻。**令牌是按到达序的有界队列**（`CastFovController.animTokens`，上限 `ANIM_TOKEN_CAPACITY=4`）
 而非单枚——单枚会让「新施法顶掉旧令牌」后，前一次施法的迟到 release 动画消费掉后一次的令牌
 （后一次真正劈下时静默）；归属判据与残余局限见上方「📌 P3 已登记但不阻塞的边界」首条。
+
+### §P3 死注册项摘除 amendment（2026-07-27，三轮返工，回应 reviewer C/D）
+
+> **决策主体**：三轮 `/review`（PR #1249）reviewer C/D，confidence 99，判定成立；由返工 subagent
+> 在 owner 既定「加固路线、不动 wire」的授权范围内落地。
+> **决策**：从 `CastJuiceProfiles.build()` **摘掉** `baomai.full_power_release` /
+> `woliu.turbulence_burst` / `anqi.echo_fractal` 三条注册项（二轮返工时曾判「故意保留」，
+> 三轮 review 推翻该判定）。
+> **理由**：二轮的「保留」处置把「参数已定稿」等同于「可以留在生产注册表里」——但服务端对应
+> resolver 从不下发权威 CASTING（见下方「🚧 P3 未完成欠账」现状核查），这三条注册项在当前
+> accepted 门控设计下是**生产死代码**。本 PR 交付边界就是 P3，留着生产不可达的正式注册项等于
+> 把「注册集合」和「生产可达集合」混为一谈；测试也只能证明「客户端能正确消费一条服务端当前
+> 不会生产的报文」，锁不住跨端真实契约。
+> **参数值零丢失**：三招完整调参数（强度档位/时长/FOV）原样保留在上方 §P3 参数表——该表现在
+> 是这三招参数的**唯一权威来源**（`CastJuiceProfiles` 不再持有）。`CastJuiceProfiles` 类文档、
+> `CastFovControllerTest` 的注册集合测试同步更新：`registrySetIsExactlyTheExpectedSkills` 只
+> pin 生产可达的 `zhenmai.sever_chain`，新增
+> `parkedSkillsAreNotRegisteredPendingServerAuthoritativeCasting` 反向锁「三招确实不在登记
+> 集合里」。`CastFovControllerTest`/`JuiceConfigTest`/`JuiceControlsTest` 里原本依赖
+> `baomai.full_power_release` 已注册来驱动 `CastFovController` 通用状态机（arm/release/
+> interrupt/idle/supersession/terminal/teardown/multiplier）的用例，改经
+> `CastJuiceProfiles.setSyntheticEntryForTest` 注入一个**不进生产注册集合**的测试替身
+> （`test.synthetic_heavy_release`），与「注册表真实内容是否生产可达」解耦。
+> **恢复条件不变**：服务端补发权威 CASTING（或把这些瞬发招也接到动画事件驱动，两条候选路线
+> 仍待 owner 拍板，见下方「🚧 P3 未完成欠账」）后，照本表数值原样 `register(...)` 回
+> `CastJuiceProfiles.build()`——不是重新设计参数。
+> **连带加固**：`CastFovController.ANIM_DRIVEN_SKILLS` 目前仍是单元素集 `{heaven_gate}`，与本次
+> 摘除无直接交集（三招走 CastState 驱动而非动画事件驱动），但同一轮返工把「到达序匹配仅在
+> 至多一枚令牌在飞时等价于按身份匹配」这条隐含前提钉进代码注释（`ANIM_DRIVEN_SKILLS` 字段
+> 文档 + `onAnimPlayed` 匹配循环注释）与专属 pin 测试
+> `CastFovControllerTest#animDrivenSkillSetMustStayASingletonBecauseArrivalOrderMatchingRequiresAtMostOneSkillInFlight`
+> ——该前提当前成立还依赖 heaven_gate 是化虚禁招、一次性（server `cooldown_ticks = u32::MAX`，
+> 见 `server/src/cultivation/known_techniques.rs::sword_path_heaven_gate_marks_one_shot_cooldown`），
+> 任何人给该集合加第二招都会让这条 pin 测试撞红。
 
 ### §P3 交付物 amendment（2026-07-26，用户拍板）
 
@@ -177,8 +214,10 @@ resolver 内一次结算完，没有引导窗），故服务端**从不**为它�
 
 只有 `zhenmai.sever_chain`（`combat::zhenmai_v2::insert_casting_snapshot`）与走动画事件路径的
 `sword_path.heaven_gate`（`sword_path::skill_register::insert_casting`，经 `apply_cast_costs`）会下发。
-即：`CastJuiceProfiles` 的 4 条注册项里 3 条是**生产不可达的死注册项**，`CastFovControllerTest`
-里 baomai 那组用例锁的是「客户端能正确消费一条服务端当前不会生产的报文」，锁不住跨端真实契约。
+即：三招在当前 accepted 门控设计下没有任何生产可达的权威触发链。**代码现状（三轮返工后，见
+「§P3 死注册项摘除 amendment」）**：`CastJuiceProfiles` 只登记 `zhenmai.sever_chain` 这一条
+CastState 驱动项，baomai/woliu/anqi 已从注册表摘除（不再是「留着但生产不可达的死注册项」），
+完整参数值原样保留在上方 §P3 参数表。
 
 **还要落什么（P3 完成的必要条件）**：为这三招接通生产可达的权威触发链，并补**从真实生产
 映射/emit 路径到客户端消费**的跨端契约测试（不是手工构造 casting JSON）。两条候选路线互斥，
@@ -198,10 +237,13 @@ resolver 内一次结算完，没有引导窗），故服务端**从不**为它�
 - `CastJuiceProfiles.skillIds()` 的注册集合与「生产可达集合」精确相等（有死注册项即撞红）；
 - 真机回归：五招各自释放瞬间可感（P5 的 juice 回归条目）。
 
-**本 PR 的处置**：不放宽 accepted 门控去凑「看起来能用」——那是回退掉二轮修掉的 bug。
-`CastJuiceProfiles` 条目保留（参数是 plan 定稿，链路补齐后即刻生效）并在类文档诚实标注，
-本 PR 交付的是**正确性修复 + 缺口如实登记**，P3 保持 ⏳。补链属**服务端/跨端改动**，不在本
-纯 client PR 范围。
+**本 PR 的处置（三轮返工更新，见「§P3 死注册项摘除 amendment」）**：不放宽 accepted 门控去凑
+「看起来能用」——那是回退掉二轮修掉的 bug。二轮曾把 `CastJuiceProfiles` 条目保留为「故意保留」
+的正式注册项；三轮 review reviewer C/D 判定该处置把「注册集合」与「生产可达集合」混为一谈，
+本 PR **改为摘掉**这三条死注册项——参数值零丢失，原样搬进上方 §P3 参数表，代码侧对应 skillId
+查询返回 null。本 PR 交付的是**正确性修复 + 缺口如实登记 + 摘除死注册项**，P3 保持 ⏳（欠账
+未变——重型招在真实释放时仍只有 2/5 拿到 shake/FOV，只是代码侧不再假装另外 3 招「已注册待
+通电」）。补链属**服务端/跨端改动**，不在本纯 client PR 范围。
 
 ### 📌 P3 已登记但**不阻塞**的边界（三轮 review 逐条回应）
 
