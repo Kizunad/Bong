@@ -2,7 +2,7 @@
 
 > **一句话**：`load_player_slices` 对每个 slice 的读取失败都静默兜底默认值，随后各 flush/autosave 系统把默认值**写回 DB**——一次 sqlite busy/损坏行/连接打不开就永久抹掉玩家真实存档。KnownTechniques 一份已由 PR #1288 修复（`LoadedKnownTechniques` 三态 + `KnownTechniquesLoadFailed` 写保护标记），但 **SkillSet 同款漏洞仍敞着**，且连接早退路径会让 state/position/inventory/skill_set/ui_prefs **全体同时降级**。
 >
-> **不变量口径（本 plan 的验收总纲）**：对每个**已证实存在覆盖链**的持久化 slice，LoadFailed 会话中该 slice 的数据**不得触达任何持久化出口或导出出口**（即时 flush / 5s autosave / 60s autosave / 断线落盘 / 关服落盘 / player bundle 导出，下称「六类出口」；单个 slice 实际不经过的出口在矩阵中显式标「不适用」）；且**任何依赖失败 slice 落盘的跨 slice 消耗操作必须在消耗发生前被拒绝**（不允许"扣了库存、学的东西不落盘"的部分提交）。覆盖链未证实的 slice（当前：lifespan、craft_session）按 §4 调查项处理——证实即纳入同款门禁，证伪则记录「已核验排除」，**不预先计入漏洞清单**。
+> **不变量口径（本 plan 的验收总纲）**：对每个**已证实存在覆盖链**的持久化 slice，LoadFailed 会话中该 slice 的数据**不得触达任何持久化出口或导出出口**（即时 flush / 5s autosave / 60s autosave / 断线落盘 / 关服落盘 / player bundle 导出，下称「六类出口」；单个 slice 实际不经过的出口在矩阵中显式标「不适用」）；且**任何跨 slice 操作，只要其依赖集（读取侧 + 写入侧）中任一 slice 处于 LoadFailed，必须在首次副作用（内存或 DB 的任何 mutation，含库存/骨币扣减与 qi_physics ledger 变更）发生前被拒绝**——门禁判定消费依赖集内**全部** LoadFailed 标记，不是只查写入侧（否则出现"消耗 LoadFailed 库存里的卷轴、写进健康 SkillSet，重连后旧库存恢复=卷轴复制"的镜像部分提交）。覆盖链未证实的 slice（当前：lifespan、craft_session）按 §4 调查项处理——证实即纳入同款门禁，证伪则记录「已核验排除」，**不预先计入漏洞清单**。
 >
 > 来源：2026-07-26 technique 系统 C1 修复（PR #1288 `bugfix/technique-load-guard`）的无上下文 opus validator 移交发现；本骨架全部 file:line 锚点已在 origin/main `662609339` 逐一亲验。
 
@@ -24,7 +24,8 @@
 - **出料**（写保护标记消费端 = 六类出口，逐一挂门）：
   - 即时 flush：`flush_changed_player_skills`（mod.rs:804-816，Changed 含 join 时 Added，无任何门禁——P0 主目标）、`flush_changed_player_inventories`（mod.rs:780-802）
   - 定时 autosave：`autosave_player_core_slices`（mod.rs:622，5s 含 position）、`autosave_player_slow_and_ui_slices`（mod.rs:648，60s）、`autosave_player_lifespan_slices`（mod.rs:746）
-  - 断线落盘：`despawn_disconnected_clients` 链；关服落盘：`flush_connected_players_on_shutdown`（mod.rs:484）
+  - 断线落盘（真实 writer 链，亲验）：`despawn_disconnected_clients`（mod.rs:330）→ **聚合 writer** `save_player_slices_with_coffin`（调用 mod.rs:433，定义 state.rs:627，一次写 state/position/inventory/lifespan/skill_set/craft_session 六个 slice——**per-slice 门禁落点 = 拆聚合调用为逐 slice 或给聚合函数传 per-slice 跳过集，实施时二选一并配「真实断线调度路径（`RemovedComponents<Client>`）触发」的测试，不允许只测抽出的 helper**）+ `save_player_known_techniques_slice`（mod.rs:455，#1288 门已在）+ `persist_player_cultivation_bundle`（mod.rs:409，cultivation bundle 不在本 plan slice 集，矩阵记不适用）。另录一个断线专属默认写锚点：`skill_set.unwrap_or(&SkillSet::default())`（mod.rs:441）——组件缺失时断线也会写入默认 SkillSet，P0 一并封堵
+  - 关服落盘：`flush_connected_players_on_shutdown`（mod.rs:484，走同族 `save_player_slices`/`save_player_known_techniques_slice`，state.rs:598/:908——门禁落点与断线链同款处理）
   - 导出：player bundle 导出口（对齐 #1288 的 `export_player_bundle` 拒绝语义）——**通用消费端，所有 LoadFailed 标记都必须被它消费**（统一契约见 §4）
   - P2 玩家提示走既有 server_data 通知链——skeleton 不预写 payload symbol，但把「emit 系统落点 + 注册路径 + client 消费点 + bot 断言锚」四件套列为**升 active 硬门槛**（§8#3）
 - **共享类型 / event**：**复用 PR #1288 范式**——`LoadedKnownTechniques` 三态（NewPlayer / Loaded / LoadFailed）+ `KnownTechniquesLoadFailed` 标记组件 + `Without<KnownTechniquesLoadFailed>` 查询过滤 + 导出拒绝。本 plan 为各 slice 落同构组件（如 `SkillSetLoadFailed`），不重造 event，不动 #1288 已修的 KnownTechniques 路径。
@@ -65,17 +66,20 @@
 - `server/src/player/state.rs`：`load_player_skill_set_from_sqlite` 返回三态（「无行=新玩家」/「读取成功」/「读取失败」，命名对齐 `LoadedKnownTechniques` 风格，如 `enum LoadedSkillSet`）；连接早退路径同样映射为 LoadFailed。
 - 新标记组件 `SkillSetLoadFailed`，join 装配（mod.rs:286 附近）在 LoadFailed 时插入。
 - **全出口门禁**：`flush_changed_player_skills` 加 `Without<SkillSetLoadFailed>`；断线与关服路径按 `Has<SkillSetLoadFailed>` 跳过 skill slice；player bundle 导出口拒绝（对齐 #1288 语义）。SkillSet 不经过 5s/60s autosave（亲验 mod.rs:622/648 查询不含 SkillSet），矩阵记「不适用」而非留空。
-- **跨 slice 消耗前置拒绝**：`SkillSetLoadFailed`（含既有 `KnownTechniquesLoadFailed`）存在时，卷轴学习/技能升级等「消耗健康 slice、写入失败 slice」的操作在**任何库存扣减发生之前**返回确定性拒绝（reject reason 走既有 cast/interact 拒绝链，不新造 event）。「操作 → 依赖 slice」映射收敛为单一函数，禁止散点 if。
+- **跨 slice 操作盘点表（P0 第一交付物，先盘点后设计）**：实施期第一步产出「操作 → 读取 slice / 写入 slice → 首次副作用位置（真实 handler symbol + file:line + 扣减顺序）→ 门禁插入点 → 既有拒绝链消费点」的**封闭操作集合**盘点表（起点：卷轴学习、技能升级消耗；终点以全仓检索为准），写入 plan 正文作为验收锚。**盘点完成前不预设共享 helper 抽象**——判定逻辑收敛形态（单一函数 / trait / 查询组合）由盘点结果决定，避免为未知调用面预造抽象。
+- **跨 slice 消耗前置拒绝（按总纲依赖集语义）**：门禁判定消费操作依赖集内**全部** slice 的 LoadFailed 标记（读取侧 + 写入侧，P0 时点即 `SkillSetLoadFailed` + 既有 `KnownTechniquesLoadFailed`；P1 新增标记进入同一判定，不硬编码标记清单），在**首次内存或 DB mutation 之前**返回确定性拒绝（reject reason 走既有 cast/interact 拒绝链，不新造 event）。
 - 饱和测试：
   - 加载三态 × 行为：sqlite 注错 / 损坏 JSON 行 / 缺行新玩家 / 成功加载，各自 flush 行为正确；
-  - LoadFailed 后逐一触发全部适用出口（即时 flush、断线、关服、导出），断言 **DB 原文逐字不变**；
+  - LoadFailed 后逐一触发全部适用出口（即时 flush、断线、关服、导出），断言 **DB 原文逐字不变**；断线用例必须走真实 `RemovedComponents<Client>` 调度路径（§1 断线链锚点），并覆盖 mod.rs:441 组件缺失默认写分支；
   - 导出拒绝测试**在 P0 就交付**，不推给 P1；
-  - 跨 slice 原子性：LoadFailed 时学习请求被拒且 inventory、SkillSet、consumed_scrolls 的内存与 DB 均不变；Loaded 状态同一操作扣减与习得同时成功；重连成功加载后同一操作恢复可用。
+  - **双标记四态组合 pin 测试**（防"两标记总是同时存在"的假绿）：仅 SkillSet 失败 / 仅 KnownTechniques 失败 / 双失败 / 双健康——前三态断言拒绝发生在首次 mutation 前且 inventory、SkillSet、consumed_scrolls 的内存与 DB 均不变，第四态断言扣减与习得原子成功；再覆盖重连后两标记**分别单独消失**时的恢复行为；
+  - 盘点表内每个操作各配一条「拒绝在扣减前」用例，不只测卷轴学习一条。
 
 ## §4 P1 — 连接早退收口 + 已证实 slice 全出口门禁 + 待验证 slice 裁决
 
 - `load_player_slices` 早退路径重构：`LoadedPlayerSlices` 携带 per-slice load 结果（或统一 `PlayerSlicesLoadFailed` 粗标记，粒度取舍见 §8#1——**无论选哪种，§3 的跨 slice 消耗拒绝不变量与全出口门禁自 P0 起恒成立**，粒度只影响未失败 slice 是否连坐冻结）。
-- **inventory**：先写复现实证「load Err→None→补发默认背包（inventory/mod.rs:121）→flush 覆盖旧行」整链，然后 `InventoryLoadFailed` **无条件守住全部持久化+导出出口**（即时 flush / 断线 / 关服 / bundle 导出）；阻断默认背包补发**同时做**，但只作为会话体验措施（不给玩家假空背包），**不计入写保护验收**——写侧门禁是不变量，不因补发被阻而豁免。测试含「LoadFailed 后由其他路径人为插入/修改 `PlayerInventory`，逐一触发各出口，DB 原文不变」。与老库存 #249 布局迁移问题（memory `project_player_inventory_persist_migration_gap`）划界：那是 schema 迁移缺失，本项只管失败兜底写保护。
+- **P1 新增标记接入跨 slice 门禁（依赖集语义的落地面）**：每个 P1 新增的 LoadFailed 标记（inventory/state/position/ui_prefs）都必须进入 §3 的依赖集判定——为每个 slice 裁决「它参与哪些跨 slice 操作（作为读取侧或写入侧）」，有 → 列真实调用点并入 §3 盘点表 + 配前置拒绝测试；无 → 记录全仓检索范围与 file:line 排除证据。重点已知场景：`InventoryLoadFailed` 会话内新获得卷轴（拾取/交易）→ 尝试学习 → **必须在 inventory 与 SkillSet 任一内存修改前拒绝**（否则健康 SkillSet 落盘、inventory 写回被跳过，重连旧库存恢复 = 卷轴复制）；`PlayerState` 的 qi_current 参与的消耗操作在任何库存/骨币/ledger 变更前拒绝（守恒旁支，见 §1）。
+- **inventory**：先写复现实证「load Err→None→补发默认背包（inventory/mod.rs:121）→flush 覆盖旧行」整链，然后 `InventoryLoadFailed` **无条件守住全部持久化+导出出口**（即时 flush / 断线 / 关服 / bundle 导出）；阻断默认背包补发**同时做**，但只作为会话体验措施（不给玩家假空背包），**不计入写保护验收**——写侧门禁是不变量，不因补发被阻而豁免。测试含「LoadFailed 后由其他路径人为插入/修改 `PlayerInventory`，逐一触发各出口，DB 原文不变」（该场景同时是上一条依赖集门禁的输入：组件重新出现不解除操作拒绝）。与老库存 #249 布局迁移问题（memory `project_player_inventory_persist_migration_gap`）划界：那是 schema 迁移缺失，本项只管失败兜底写保护。
 - **position/dimension：正式纳入**三态加载 + 写侧门禁（autosave core / 断线 / 关服），不设"损失有限"豁免——风险大小不改变「存档不可被故障改写」的不变量条件。
 - **state / ui_prefs**：按 §2.1 表落全出口门禁。
 - **lifespan / craft_session 裁决**：给出「读失败→默认组件生产者→writer 覆盖旧行」完整 file:line 链 + 复现测试；证实 → 纳入同款三态+门禁；证伪 → 在 plan 内记录「已核验排除 + 证据」，**不为不存在的覆盖链落无消费者的标记组件**（防功能蔓延）。
@@ -93,7 +97,7 @@
 
 - e2e：DB 注错（连接层 + 单 slice 层各若干）→ join → 游玩写操作 → 断线/关服 → 重启核对 DB 原文未被覆盖；覆盖清单直接引用 §4 的 slice × 出口矩阵；卷轴场景断言「拒绝发生在库存扣减前」。
 - bot 场景（CI bot e2e 硬约定，memory `feedback_bot_client_e2e`）：`scripts/bot/scenarios/` 增加 LoadFailed 会话登录 + 提示可见（按 §8#3 钉死的断言锚）+ 重连恢复场景。
-- **编译期穷尽 wiring guard**（**不用手工映射表**——手工表会与生产代码同步漏改，无法兑现"新增 slice 忘配写保护时撞红"）：测试对 `LoadedPlayerSlices` 做**不带 `..` 的结构解构 / 穷举 match**，新增字段直接编译失败，逼迫作者为新 slice 显式登记写保护策略（保护 / 已核验排除，二选一，登记处即 §4 矩阵）。
+- **slice 保护策略注册表 = 生产代码单一事实源**（wiring guard 的真实机制；**不用手工映射表**，也**不把结构解构当 wiring 证明**——解构测试加一个 `_` 绑定即可绕过，只能发现字段新增）：生产代码定义穷尽的 slice 策略枚举/注册表，每个持久化 slice 显式声明 `Protected { 适用出口集 }` 或 `VerifiedExcluded { 证据引用 }`；join 装配（标记插入）、各 writer 门禁、bundle 导出与**参数化测试**共同消费该注册表的穷尽 match——新增 slice 未声明策略时无法编译，声明了 Protected 则参数化测试自动为其生成逐出口断言（漏挂出口=测试红）。`LoadedPlayerSlices` 无 `..` 解构测试**降级保留为字段漂移提醒**，不作为 wiring 验收。行为验收始终以 §4 slice × 出口矩阵测试为准。
 
 ## §7 边界划定（不在本 plan 范围）
 
