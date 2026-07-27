@@ -55,29 +55,37 @@
   - 新增 `qi_drain_skips_tick_atomically_when_zone_registry_resource_missing`：`ZoneRegistry` 资源整体缺失时玩家 qi / zone ledger / 审计记录均不变（修复要求 #3）。
   - 新增 `qi_drain_skips_tick_atomically_when_boss_home_zone_missing_from_registry`：`ZoneRegistry` 存在但未注册 `BOSS_HOME_ZONE` 时同样整 tick 跳过（修复要求 #3）。
   - 新增 `qi_drain_survives_heartbeat_zone_inflow_resync`：真实注册 `baolongwang_qi_drain_aura_system` + `heartbeat::zone_qi_inflow_tick` 两个 system 进同一 `App`，推进 `CultivationClock` 触发字段权威重同步，断言 BossDrain 入账不被陈旧 `zone.spirit_qi` 抹掉（修复要求 #5）。
+- `server/src/dandao/tests.rs`（`mod boss_spawn_integration`，PR #1296 回归修复）：`boss_spawn::register` 端到端集成测试早于 `ZoneRegistry` 接入就已存在，上一轮修复未同步给它插入 `ZoneRegistry` 资源，导致 `baolongwang_qi_drain_aura_system` 每 tick 在 `find_zone_mut` 处早退，`boss_spawn_register_drain_system_runs_end_to_end` 断言玩家真元减少撞红。补一份与 `boss_spawn.rs` 同款 `baolongwang_zone_fixture`，给两条集成测试都插入含 `BOSS_HOME_ZONE` 的 `ZoneRegistry`；顺带把 `boss_spawn_register_expel_phase_no_drain` 也接上真实 zone，让它锁住"Expel 阶段跳过吸取"分支本身，而非凑巧靠 zone 缺失早退得出同样结果。
+- `server/src/dandao/boss_spawn.rs`（`mod boss_spawn_tests`，PR #1296 加固）：新增 `boss_home_zone_exists_in_production_zones_json` pin 测试，直接用 `ZoneRegistry::load()` 读生产 `server/zones.json` 断言 `BOSS_HOME_ZONE` 存在——`find_zone_mut` 未命中时是静默早退（无报错），一旦有人改名/删掉这个 zone，BossDrain 会在无任何测试撞红的情况下失效，这条测试把该配置漂移钉在测试期。
 
 ### 关键 commit
 
 - `c79bc03eb` — 2026-07-27 — 修复暴龙王 BossDrain 只落 ledger 镜像不写 `ZoneRegistry.spirit_qi` 的吞真元漏洞（含全部代码修复 + 5 个新增/改造回归测试）。
+- `869ade73a` — 2026-07-27 — PR #1296：修复 `dandao::tests::boss_spawn_integration` 两条 App 级集成测试未插入 `ZoneRegistry` 导致的回归（`c79bc03eb` 引入）。
+- `e3bfd907e` — 2026-07-27 — PR #1296：加固，新增 `boss_home_zone_exists_in_production_zones_json` pin 测试锁死生产 `zones.json` 必须注册 `BOSS_HOME_ZONE`。
 
 ### 测试结果
 
-- 判据自检：把 `zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);` 临时注释掉后，`cargo test --lib dandao::boss_spawn::` 撞红 2 个（`qi_drain_aura_is_conserved_using_spirit_qi_total_const`、`qi_drain_survives_heartbeat_zone_inflow_resync`），恢复后 21 passed / 0 failed——确认测试真正锁住了行为，不是空转。
-- `cargo test --lib dandao::boss_spawn::` → `21 passed; 0 failed`（定向）。
+- 判据自检：把 `zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);` 临时注释掉后，`cargo test --lib dandao::boss_spawn::` 撞红 2 个（`qi_drain_aura_is_conserved_using_spirit_qi_total_const`、`qi_drain_survives_heartbeat_zone_inflow_resync`），恢复后全绿——确认测试真正锁住了行为，不是空转。
+- `cargo test --lib dandao::boss_spawn::` → `22 passed; 0 failed`（定向；含 PR #1296 新增的 pin 测试，较归档时的 21 passed 多 1）。
+- `cargo test --lib dandao::tests::boss_spawn_integration` → `2 passed; 0 failed`（PR #1296 修复的回归用例，此前撞红的 `boss_spawn_register_drain_system_runs_end_to_end` 现已转绿）。
 - `cargo test --lib qi_physics::release::` → `7 passed; 0 failed`；`cargo test --lib qi_physics::zone_inflow::` → `16 passed; 0 failed`；`cargo test --lib world::heartbeat` → `46 passed; 0 failed`（交叉验证复用的既有路径与覆盖链系统未受影响）。
-- `cargo fmt --check` → 干净（0 diff）。
-- `cargo clippy --all-targets -- -D warnings` → 干净（`Finished` + `CLIPPY_RC=0`，无 warning）。
+- `cargo fmt --check` → 干净（0 diff）；`cargo clippy --all-targets -- -D warnings` → 干净（`Finished`，无 warning）。
+- pin 测试实测：临时把 `server/zones.json` 里 `baolongwang_cavern_deep` 改名后 `boss_home_zone_exists_in_production_zones_json` 立刻撞红，改回后转绿，确认测试真能钉住配置漂移（非空转）。
+- `agent/` 侧 `network::tests::narration_tests::realm_gate_producer_consumer_selector_routes_only_target_player`：新建 worktree 环境缺口（缺 `agent/node_modules/.bin/tsx` 与 `@bong/schema` 构建产物），`npm ci` + `npm run build -w @bong/schema` 后转绿，与本轮 server 代码改动无关。
 - 未跑全量 `cargo test`（按任务约束，交后续全量门禁验证）。
 
 ### 对抗验证
 
 - 无上下文 read-only validator（`general-purpose` agent）对 HEAD `c79bc03eb187fe4a255950b2f25543b0070e6022` 独立复核：**PASS**。覆盖：① 判据自检复现（撞红 2 个测试，恢复后全绿）② 原子性逐行走查（`set_balance` 失败路径先于任何 mutation）③ 确认 `qi_drain_survives_heartbeat_zone_inflow_resync` 真实通过 `app.add_systems` 注册 `zone_qi_inflow_tick` 并靠 `app.update()` 触发，非手塞状态 ④ `git diff origin/main HEAD -- server/src/qi_physics/` 为空，未新增衰减/漂移类常数，写回口径与 `combat/carrier.rs:1382` / `npc/npc_skill.rs:173` / `npc/dormant/mod.rs:2045` 既有范式字节级一致 ⑤ 确认 `ZoneRegistry` 在生产 `Startup` 真实注册（非仅测试可达）。
+- PR #1296（回归修复 + 加固）：无上下文 read-only validator 对最终 HEAD 独立复核，见下方「PR #1296 对抗验证」占位——由本轮流程在 push 前补齐结论与 SHA。
 
 ### 跨仓库核验
 
-- 仅 `server` 栈改动（Rust ECS system + 单元测试）；`agent` / `client` 无接线面（BossDrain 是纯 server 侧真元流转 bug，无 IPC schema / CustomPayload 变更），不适用跨仓库 symbol 核验。
+- 仅 `server` 栈改动（Rust ECS system + 单元测试）；`agent` / `client` 无接线面（BossDrain 是纯 server 侧真元流转 bug，无 IPC schema / CustomPayload 变更），不适用跨仓库 symbol 核验。PR #1296 的两条 tsx/schema 环境修复动作（`npm ci` / `npm run build -w @bong/schema`）不产生任何 tracked diff，纯本地环境补全。
 
 ### 遗留 / 后续
 
 - `zone.spirit_qi` 为负值（当前 `baolongwang_cavern_deep` 实际配置为 `-0.729232`，负灵域）时，`qi_release_to_zone` 的 `zone_current` 入参沿用仓库既有 `.max(0.0)` 镜像口径（与 `release_dormant_qi_to_zone` / `zone_qi_inflow_tick` 同款），即从 0 开始重新累积，不会精确保留负值债务的连续性——这是仓库里"负灵域 ↔ ledger 非负余额"这条更深的既有架构特性（`WorldQiAccount::set_balance` 硬性拒绝负数），不属于本 plan 范围，未在此修复。
 - 本 plan 只修暴龙王 `BossDrain`；`docs/plans-skeleton/plan-bughunt-skull-fiend-drain-zone-shadow.md` 中同型 `SkullFiendDrain`（骨煞）仍待独立 plan/PR 处理，未在本次改动内。
+- PR #1296 未给 `baolongwang_qi_drain_aura_system` 的 zone 缺失早退分支加 `tracing::warn!`：该 system 挂在 `Update`，每 tick 都跑，若真触发早退会变成无限刷日志（与仓库里 `forge/mod.rs:596-599` / `client_request_handler.rs:18504` 那种事件驱动、单次触发的 `warn!` 场景不同）；且新增的 pin 测试已经把这条早退路径的现实触发条件（zone 改名/删除）钉在测试期，运行时再加日志对已经在生产失效的场景边际诊断价值有限。判断为不加。
