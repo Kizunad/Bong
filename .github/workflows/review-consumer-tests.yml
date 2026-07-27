@@ -29,15 +29,49 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
+      - name: Checkout pinned central review contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Kizunad/review
+          ref: 417e55e55737b8fe42803b97f85b59fce8bbfb2a
+          path: _central-contract
+          persist-credentials: false
+          fetch-depth: 1
       - name: Set up Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
           check-latest: false
+      - name: Install pinned Bubblewrap sandbox
+        shell: bash
+        env:
+          BWRAP_URL: https://security.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.1_amd64.deb
+          BWRAP_SHA256: 1b506492bd9c7fd0cdb4f02ac822f1d3e336b0aead5113c1239baf8db5db562a
+        run: |
+          set -euo pipefail
+          mkdir -p _sandbox-package
+          curl --fail-with-body --silent --show-error --location "$BWRAP_URL" -o _sandbox-package/bubblewrap.deb
+          printf '%s  %s\n' "$BWRAP_SHA256" '_sandbox-package/bubblewrap.deb' | sha256sum --check --strict
+          dpkg-deb --extract _sandbox-package/bubblewrap.deb _sandbox-package/root
+          bwrap_executable="$GITHUB_WORKSPACE/_sandbox-package/root/usr/bin/bwrap"
+          [[ -f "$bwrap_executable" && -x "$bwrap_executable" ]]
+          [[ "$($bwrap_executable --version)" == 'bubblewrap 0.9.0' ]]
+          sudo chown root:root "$bwrap_executable"
+          sudo chmod 4755 "$bwrap_executable"
+          [[ "$(stat -c '%U:%G %a' "$bwrap_executable")" == 'root:root 4755' ]]
+          "$bwrap_executable" --unshare-all --share-net --die-with-parent --new-session \
+            --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+            --dev /dev --proc /proc --tmpfs /tmp -- /bin/true
+          printf 'BWRAP_EXECUTABLE=%s\n' "$bwrap_executable" >> "$GITHUB_ENV"
       - name: Validate central review consumer contract
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$(git -C _central-contract rev-parse HEAD)" == '417e55e55737b8fe42803b97f85b59fce8bbfb2a' ]]
           node --check .github/scripts/review-consumer.test.mjs
-          node --test .github/scripts/review-consumer.test.mjs
+          CENTRAL_REVIEW_CONTRACT_DIR=_central-contract node --test .github/scripts/review-consumer.test.mjs
+          (
+            cd _central-contract
+            npm test
+          )
           git diff --check

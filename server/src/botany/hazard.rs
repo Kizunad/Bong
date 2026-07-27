@@ -146,6 +146,8 @@ pub fn tick_harvest_hazards(
     }
 }
 
+/// 返回本次调用是否有 `WoundOnBareHand` hazard 实际命中（即缺 required_tool 触发了伤）。
+/// plan-gathering-tool-bind-v1 P1：调用侧据此决定是否 emit 割手音效/粒子/HUD 事件流。
 pub fn apply_completion_hazards(
     kind_id: super::registry::BotanyPlantId,
     registry: &BotanyKindRegistry,
@@ -154,16 +156,17 @@ pub fn apply_completion_hazards(
     wounds: Option<&mut Wounds>,
     actual_tool: Option<ToolKind>,
     now_tick: u64,
-) {
+) -> bool {
     let Some(kind) = registry.get(kind_id) else {
-        return;
+        return false;
     };
     let Some(spec) = kind.v2_spec() else {
-        return;
+        return false;
     };
     let mut cultivation = cultivation;
     let mut contamination = contamination;
     let mut wounds = wounds;
+    let mut bare_hand_wound_applied = false;
     for hazard in spec.harvest_hazards {
         match hazard {
             HarvestHazard::ResonanceVision { composure_loss, .. } => {
@@ -177,6 +180,11 @@ pub fn apply_completion_hazards(
                 required_tool,
                 ..
             } if !has_required_tool(actual_tool, *required_tool) => {
+                // PR #1293 review 修正：只有真正写入 Wound 才算"实际命中"——之前
+                // `bare_hand_wound_applied = true` 写在 `wounds` 判空之前，`wounds=None`
+                // 时没有任何 Wound 落地，调用方却仍会收到"命中"信号并播放受伤音效/粒子/
+                // HUD 提示，与本函数注释和 `HarvestTerminalEvent::bare_hand_wound` 字段
+                // 文档所称"实际命中/触发了伤害"不一致。
                 if let Some(wounds) = wounds.as_deref_mut() {
                     wounds.entries.push(Wound {
                         // humanoid-only boundary（P0 决议，本轮不迁移）：徒手采集划伤没有
@@ -188,6 +196,7 @@ pub fn apply_completion_hazards(
                         created_at_tick: now_tick,
                         inflicted_by: Some("botany_v2_hazard".to_string()),
                     });
+                    bare_hand_wound_applied = true;
                 }
                 if let Some(contamination) = contamination.as_deref_mut() {
                     contamination.entries.push(ContamSource {
@@ -202,6 +211,7 @@ pub fn apply_completion_hazards(
             _ => {}
         }
     }
+    bare_hand_wound_applied
 }
 
 pub fn attracts_mobs_hazards_for_kind(
@@ -859,5 +869,56 @@ mod tests {
         let world = app.world_mut();
         let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
         assert_eq!(query.iter(world).count(), 0);
+    }
+
+    /// PR #1293 review 修正：`wounds=None` 时即使徒手命中割手株的 hazard 条件成立，
+    /// 也不应报告"实际命中"——之前 `bare_hand_wound_applied` 在判空前就被置 true，
+    /// 会让调用方（audio/vfx/HUD）在没有任何 Wound 落地的情况下仍播放受伤反馈。
+    #[test]
+    fn apply_completion_hazards_returns_false_when_wounds_component_missing() {
+        let registry = BotanyKindRegistry::default();
+        let mut contamination = Contamination::default();
+        let hit = apply_completion_hazards(
+            BotanyPlantId::DuanJiCi,
+            &registry,
+            None,
+            Some(&mut contamination),
+            None, // 玩家缺 Wounds 组件
+            None, // 徒手（无工具）
+            0,
+        );
+        assert!(
+            !hit,
+            "wounds=None 时不应报告「实际命中」，即使 hazard 条件（徒手采集割手株）成立"
+        );
+        assert_eq!(
+            contamination.entries.len(),
+            1,
+            "contamination 与 wounds 是独立的 Option 参数，不受 wounds 缺失影响，仍应正常写入"
+        );
+    }
+
+    /// 对照：`wounds=Some` 时正常写入 Wound 且报告命中（回归既有行为不变）。
+    #[test]
+    fn apply_completion_hazards_returns_true_when_wounds_component_present() {
+        let registry = BotanyKindRegistry::default();
+        let mut wounds = Wounds::default();
+        let mut contamination = Contamination::default();
+        let hit = apply_completion_hazards(
+            BotanyPlantId::DuanJiCi,
+            &registry,
+            None,
+            Some(&mut contamination),
+            Some(&mut wounds),
+            None,
+            0,
+        );
+        assert!(hit, "wounds=Some 时命中应正常报告 true");
+        assert_eq!(wounds.entries.len(), 1, "应写入恰好 1 条 Wound");
+        assert_eq!(
+            contamination.entries.len(),
+            1,
+            "应写入恰好 1 条 contamination"
+        );
     }
 }
