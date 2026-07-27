@@ -671,7 +671,7 @@ fn resolve_shoot_needle_skill(
     let now_tick = clock.tick;
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(QI_NEEDLE_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -723,7 +723,7 @@ fn resolve_infuse_dugu_poison_skill(
     let now_tick = clock.tick;
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(DUGU_INFUSE_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }

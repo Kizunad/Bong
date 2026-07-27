@@ -77,7 +77,15 @@ pub fn emit_skillbar_config_payloads(
                 }
             };
             slots.push(entry);
-            let cd_tick = bindings.cooldown_until_tick[i];
+            // bughunt skillbar-rebind-cooldown-reset：冷却按 skill_id 记账，不再是按槽位
+            // 索引的定长数组——只有 Skill 槽才可能有冷却 entry；Item/Empty 槽恒 0
+            // （与旧数组语义一致：这两类槽从未真正走过 SkillBarBindings 冷却）。
+            let cd_tick = match &bindings.slots[i] {
+                SkillSlot::Skill { skill_id } => {
+                    bindings.cooldowns.get(skill_id).copied().unwrap_or(0)
+                }
+                SkillSlot::Item { .. } | SkillSlot::Empty => 0,
+            };
             let cd_until_ms = if cd_tick > now_tick {
                 now_ms.saturating_add((cd_tick - now_tick).saturating_mul(TICK_MS))
             } else {

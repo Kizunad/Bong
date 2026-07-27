@@ -174,7 +174,7 @@ pub fn declare_meridian_dependencies(
 pub fn resolve_woliu_vortex_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = world
@@ -183,7 +183,7 @@ pub fn resolve_woliu_vortex_skill(
         .unwrap_or_default();
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(WOLIU_VORTEX_SKILL_ID, now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }
@@ -207,7 +207,10 @@ pub fn resolve_woliu_vortex_skill(
     match outcome {
         VortexResolveOutcome::Activated(_) | VortexResolveOutcome::Deactivated => {
             if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-                bindings.set_cooldown(slot, now_tick.saturating_add(VORTEX_COOLDOWN_TICKS));
+                bindings.set_cooldown(
+                    WOLIU_VORTEX_SKILL_ID,
+                    now_tick.saturating_add(VORTEX_COOLDOWN_TICKS),
+                );
             }
             CastResult::Started {
                 cooldown_ticks: VORTEX_COOLDOWN_TICKS,
@@ -217,7 +220,10 @@ pub fn resolve_woliu_vortex_skill(
         VortexResolveOutcome::Rejected(reason) => rejected(reason),
         VortexResolveOutcome::Backfired(_) => {
             if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-                bindings.set_cooldown(slot, now_tick.saturating_add(VORTEX_COOLDOWN_TICKS));
+                bindings.set_cooldown(
+                    WOLIU_VORTEX_SKILL_ID,
+                    now_tick.saturating_add(VORTEX_COOLDOWN_TICKS),
+                );
             }
             CastResult::Started {
                 cooldown_ticks: VORTEX_COOLDOWN_TICKS,

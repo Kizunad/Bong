@@ -296,7 +296,7 @@ pub fn register_skills(registry: &mut SkillRegistry) {
 pub fn resolve_anqi_charge_skill(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = world
@@ -305,7 +305,7 @@ pub fn resolve_anqi_charge_skill(
         .unwrap_or_default();
     if world
         .get::<crate::combat::components::SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(ANQI_CHARGE_SKILL_ID, now_tick))
     {
         return CastResult::Rejected {
             reason: CastRejectReason::OnCooldown,
@@ -358,7 +358,10 @@ pub fn resolve_anqi_charge_skill(
     });
     if let Some(mut bindings) = world.get_mut::<crate::combat::components::SkillBarBindings>(caster)
     {
-        bindings.set_cooldown(slot, now_tick.saturating_add(CHARGE_DURATION_TICKS));
+        bindings.set_cooldown(
+            ANQI_CHARGE_SKILL_ID,
+            now_tick.saturating_add(CHARGE_DURATION_TICKS),
+        );
     }
     CastResult::Started {
         cooldown_ticks: CHARGE_DURATION_TICKS,
@@ -3005,12 +3008,12 @@ mod tests {
             "期望 qi_current=0 被拒绝，实际 {result:?}"
         );
 
-        // 再验冷却未设置：slot 应仍处于 ready 状态（tick=10）
+        // 再验冷却未设置：anqi.charge_carrier 应仍处于 ready 状态（tick=10）。
         let bindings = world.get::<SkillBarBindings>(caster).unwrap();
         assert!(
-            !bindings.is_on_cooldown(slot, 10),
+            !bindings.is_on_cooldown(ANQI_CHARGE_SKILL_ID, 10),
             "期望真元不足拒绝时不设置冷却（slot={slot} 应 ready），\
-             实际 slot 被置为冷却中 — 冷却被烧掉了"
+             实际冷却被烧掉了"
         );
     }
 

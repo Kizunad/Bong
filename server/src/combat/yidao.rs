@@ -476,7 +476,7 @@ pub fn resolve_yidao_skill(
         .unwrap_or_default();
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill.skill_id(), now_tick))
     {
         return rejected(CastRejectReason::OnCooldown);
     }

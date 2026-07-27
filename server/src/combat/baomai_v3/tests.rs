@@ -239,7 +239,7 @@ fn overload_sends_meridian_severed_only_on_first_drop_to_zero() {
     app.world_mut()
         .get_mut::<SkillBarBindings>(caster)
         .unwrap()
-        .cooldown_until_tick = [0; SkillBarBindings::SLOT_COUNT];
+        .clear_all_cooldowns();
     cast_beng_quan(app.world_mut(), caster, 0, Some(target));
 
     assert_eq!(
@@ -478,7 +478,7 @@ fn three_void_disperses_emit_juebi_trigger() {
         app.world_mut()
             .get_mut::<SkillBarBindings>(caster)
             .unwrap()
-            .cooldown_until_tick = [0; 9];
+            .clear_all_cooldowns();
         cast_disperse(app.world_mut(), caster, 0, None);
     }
     assert_eq!(app.world().resource::<Events<JueBiTriggerEvent>>().len(), 1);

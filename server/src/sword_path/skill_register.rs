@@ -814,7 +814,7 @@ const HEAVEN_GATE_PROFILE: CastProfile = CastProfile {
 fn build_cast_context(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     profile: &CastProfile,
 ) -> Result<CastContext, CastRejectReason> {
     let skill_id = profile.skill_id;
@@ -823,10 +823,10 @@ fn build_cast_context(
         .map(|c| c.tick)
         .unwrap_or_default();
 
-    // 冷却（plan §SkillBarBindings）
+    // 冷却（plan §SkillBarBindings）——按 skill_id 记账，与槽位无关。
     if world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|b| b.is_on_cooldown(slot, now_tick))
+        .is_some_and(|b| b.is_on_cooldown(skill_id, now_tick))
     {
         return Err(CastRejectReason::OnCooldown);
     }
@@ -938,7 +938,10 @@ fn apply_cast_costs(
         stamina.last_drain_tick = Some(now_tick);
     }
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(profile.cooldown_ticks));
+        bindings.set_cooldown(
+            profile.skill_id,
+            now_tick.saturating_add(profile.cooldown_ticks),
+        );
     }
     insert_casting(world, caster, slot, profile, now_tick);
 }
