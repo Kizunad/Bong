@@ -28,7 +28,7 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@ae806a54d7c04dfcc4af34c1d79c90f14fcb00b9/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@8adce96a9fb8ec294baa81ba74ac742bcc6e35ea/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
