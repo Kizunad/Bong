@@ -1073,6 +1073,10 @@ class BongServerDataThreadingTest {
                     activeHandler,
                     12_050L,
                     () -> {
+                        assertFalse(
+                            ClientConnectionStatusStore.connectedForTests(),
+                            "active handler token 必须先失活，随后同一 client task 才能执行 registry cleanup"
+                        );
                         cleanups.incrementAndGet();
                         BongNetworkHandler.clearClientStateOnDisconnect();
                     },
