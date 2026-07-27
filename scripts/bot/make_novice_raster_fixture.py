@@ -75,7 +75,10 @@ def _tile_manifest(tile_x: int, tile_z: int) -> dict:
     }
 
 
-def generate(output_dir: Path) -> Path:
+def generate(output_dir: Path, fixture_token: str) -> Path:
+    if not fixture_token or fixture_token != fixture_token.strip():
+        raise ValueError("fixture_token must be non-empty and contain no surrounding whitespace")
+
     _write_flat_tile(output_dir, 0, 0, biome_id=0)
     # SpiritWood seed cell (0,0) resolves to (1292, 1519). Its production crown/root
     # bounds cross both the x=1280 and z=1536 tile edges, so the fixture must cover
@@ -108,6 +111,14 @@ def generate(output_dir: Path) -> Path:
     manifest = {
         "version": 2,
         "tile_size": TILE_SIZE,
+        "bot_fixture": {
+            "kind": "ambient-surface-v1",
+            "token": fixture_token,
+            "surface_y": SURFACE_Y,
+            "support": "grass_block",
+            "feet_y": SURFACE_Y + 1,
+            "head_y": SURFACE_Y + 2,
+        },
         "world_bounds": {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
         "surface_palette": ["grass_block", "stone"],
         "biome_palette": [
@@ -132,8 +143,9 @@ def generate(output_dir: Path) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", type=Path)
+    parser.add_argument("--fixture-token", required=True)
     args = parser.parse_args()
-    print(generate(args.output_dir))
+    print(generate(args.output_dir, args.fixture_token))
     return 0
 
 
