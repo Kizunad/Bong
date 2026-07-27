@@ -400,9 +400,12 @@ pub fn baolongwang_qi_drain_aura_system(
 
             // 复用既有 qi_release_to_zone（release_dormant_qi_to_zone / release_attrition_to_zone
             // 同款范式）算出本次可入账量与 zone 新值，不自造衰减/入账公式。
-            // zone_current 用 .max(0.0)：ledger balance 硬性要求非负（WorldQiAccount::set_balance
-            // 校验），与 heartbeat::zone_qi_inflow_tick / release_dormant_qi_to_zone 同一镜像口径。
-            let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+            // zone_current 用 .max(0.0)：这只是 ledger 镜像的输入基线，WorldQiAccount::set_balance
+            // 硬性要求非负（与 heartbeat::zone_qi_inflow_tick 同一镜像口径）。field authority
+            // （ZoneRegistry.spirit_qi）本身允许为负（负灵域债务）——保留原始有符号值到
+            // zone_spirit_qi_before，稍后写回时按它累加，不能拿这个 floor 过的镜像值反向覆盖字段。
+            let zone_spirit_qi_before = zone.spirit_qi;
+            let zone_current = zone_spirit_qi_before.max(0.0) * QI_ZONE_UNIT_CAPACITY;
             let Ok(outcome) = qi_release_to_zone(
                 actual_drain,
                 player_id.clone(),
@@ -431,7 +434,12 @@ pub fn baolongwang_qi_drain_aura_system(
             // 注意：玩家真元在 Cultivation.qi_current 中管理，不在 WorldQiAccount balances 里，
             // 所以不走 WorldQiAccount::transfer（后者会检查 from 账户余额，而 player 余额未在 ledger 中）。
             cultivation.qi_current -= outcome.accepted;
-            zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+            // field authority 按原始有符号 zone_spirit_qi_before 累加本次实际吸取量
+            // outcome.accepted，不能用 floor 过的 outcome.zone_after 覆盖：既有负灵域债务
+            // 在被填平前继续为负、只减少 accepted 那部分；填平后自然转正，全程不凭空
+            // 抹除或增加真元（守恒）。
+            zone.spirit_qi =
+                (zone_spirit_qi_before + outcome.accepted / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
 
             // 构造 QiTransfer 审计记录：reason 固定 BossDrain（不用 qi_release_to_zone 内部
             // 生成的 ReleaseToZone transfer），推入 transfers 向量 + emit event。
@@ -1074,6 +1082,173 @@ mod boss_spawn_tests {
             (transfers[0].amount - player_decrease).abs() < 1e-9,
             "审计记录 amount({:.6}) 必须与玩家实际减少量({player_decrease:.6}) 一致",
             transfers[0].amount
+        );
+    }
+
+    // ── 负灵域回归：field authority 不能被 floor 过的 ledger 镜像凭空覆盖 ──────
+
+    #[test]
+    fn qi_drain_aura_preserves_negative_zone_debt_when_debt_not_fully_repaid() {
+        // 生产 baolongwang_cavern_deep（BOSS_HOME_ZONE）当前 spirit_qi=-0.729232
+        // （server/zones.json 真实值，约 -36.4616 个绝对真元点债务）。
+        // 修复前实现把该负值先 `.max(0.0)` 归零参与 qi_release_to_zone 计算，
+        // 再用非负 outcome.zone_after 直接覆盖字段——一次约 0.35 的小额吸取就会
+        // 把字段从 -0.729232 跳到约 +0.007，凭空抹除整笔约 36.46 点负灵域债务。
+        // 本测试锁住：单 tick 吸取量远小于债务时，字段权威仍应为负，且债务减少量
+        // 精确等于玩家实际被吸取量——不多不少。
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::Position;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, baolongwang_qi_drain_aura_system);
+
+        let initial_spirit_qi = -0.729232f64;
+        // WorldQiAccount balance 非负（set_balance 会拒绝负值）：不预置该 zone 的 ledger
+        // 余额，与生产冷启动时 ledger 尚未记过该 zone 的状态一致（balance() 缺省 0.0）。
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
+        });
+
+        let _boss = app
+            .world_mut()
+            .spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Rage,
+                    hp_fraction: 0.5,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 0.0, 0.0]),
+            ))
+            .id();
+
+        let initial_player_qi = 50.0f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_player_qi,
+                    qi_max: initial_player_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 1.0, 0.0]),
+            ))
+            .id();
+
+        app.update();
+
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("player Cultivation missing")
+            .qi_current;
+        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
+        let player_decrease = initial_player_qi - player_qi_after;
+
+        assert!(
+            player_decrease > 0.0,
+            "期望吸取真实发生（boss Rage 阶段 + 玩家在光环内，距离 1.0 < {QI_DRAIN_AURA_RADIUS}），\
+             实际 player_decrease={player_decrease:.9}"
+        );
+
+        assert!(
+            zone_spirit_qi_after < 0.0,
+            "债务(-0.729232，约 -36.46 绝对真元点)远大于单 tick 吸取量(约 0.35)，\
+             填平前字段应仍为负；若字段被 floor 过的 ledger 镜像覆盖会直接跳成正值，\
+             实际 zone_spirit_qi_after={zone_spirit_qi_after:.9}"
+        );
+
+        let debt_reduction_absolute =
+            (zone_spirit_qi_after - initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (debt_reduction_absolute - player_decrease).abs() < 1e-9,
+            "守恒：负债减少量({debt_reduction_absolute:.9}) 必须精确等于玩家实际减少量\
+             ({player_decrease:.9})——差值={:.9}。退回 `.max(0.0)` 后用 outcome.zone_after \
+             覆盖字段的老写法会让字段从 {initial_spirit_qi} 跳到约 +{:.6}，凭空抹除约 \
+             {:.6} 个绝对真元点的债务，此断言应当撞红",
+            (debt_reduction_absolute - player_decrease).abs(),
+            player_decrease / QI_ZONE_UNIT_CAPACITY,
+            (-initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY,
+        );
+    }
+
+    #[test]
+    fn qi_drain_aura_crosses_zero_exactly_when_drain_exceeds_remaining_debt() {
+        // 负灵域回归的另一侧边界：债务很小（-0.001，约 -0.05 绝对真元点），单 tick
+        // 吸取量（约 0.35）足以填平并略有盈余。字段应精确越过 0 转正，且转正后的
+        // 增量必须仍然等于玩家实际减少量（守恒延续到跨零场景），而不是被 floor 过
+        // 的镜像值带偏。
+        use crate::cultivation::components::Cultivation;
+        use valence::prelude::Position;
+
+        let mut app = App::new();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, baolongwang_qi_drain_aura_system);
+
+        let initial_spirit_qi = -0.001f64;
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry {
+            zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
+        });
+
+        let _boss = app
+            .world_mut()
+            .spawn((
+                BaolongwangMarker,
+                BaolongwangBoss {
+                    phase: BossPhase::Rage,
+                    hp_fraction: 0.5,
+                    ..BaolongwangBoss::default()
+                },
+                Position::new([0.0, 0.0, 0.0]),
+            ))
+            .id();
+
+        let initial_player_qi = 50.0f64;
+        let player = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    qi_current: initial_player_qi,
+                    qi_max: initial_player_qi,
+                    ..Cultivation::default()
+                },
+                Position::new([0.0, 1.0, 0.0]),
+            ))
+            .id();
+
+        app.update();
+
+        let player_qi_after = app
+            .world()
+            .get::<Cultivation>(player)
+            .expect("player Cultivation missing")
+            .qi_current;
+        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
+        let player_decrease = initial_player_qi - player_qi_after;
+
+        assert!(
+            player_decrease > (-initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY,
+            "本用例要求单 tick 吸取量({:.9})超过初始债务绝对值({:.9})才能验证跨零场景，\
+             实际 player_decrease={player_decrease:.9}",
+            player_decrease,
+            (-initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY
+        );
+        assert!(
+            zone_spirit_qi_after > 0.0,
+            "债务(-0.001)远小于单 tick 吸取量，应被填平并转正，\
+             实际 zone_spirit_qi_after={zone_spirit_qi_after:.9}"
+        );
+
+        let field_increase_absolute =
+            (zone_spirit_qi_after - initial_spirit_qi) * QI_ZONE_UNIT_CAPACITY;
+        assert!(
+            (field_increase_absolute - player_decrease).abs() < 1e-9,
+            "守恒：跨零后字段增量({field_increase_absolute:.9}) 必须精确等于玩家实际减少量\
+             ({player_decrease:.9})，差值={:.9}",
+            (field_increase_absolute - player_decrease).abs()
         );
     }
 
