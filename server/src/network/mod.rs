@@ -1043,6 +1043,13 @@ pub(crate) fn register_app_wiring(app: &mut App) {
         event_stream_emit::emit_botany_harvest_overflow_to_event_stream
             .after(crate::botany::harvest::tick_harvest_sessions),
     );
+    // plan-gathering-tool-bind-v1 P1：徒手割手 event_stream 提示（同上先例，独立
+    // add_systems 避免 tuple 上限）。
+    app.add_systems(
+        Update,
+        event_stream_emit::emit_botany_harvest_wound_to_event_stream
+            .after(crate::botany::harvest::tick_harvest_sessions),
+    );
     // plan-shield-block-v1 P4：盾格挡命中推送（材质差异化粒子+音效）。
     app.add_systems(
         Update,
