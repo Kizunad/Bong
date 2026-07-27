@@ -16,10 +16,10 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-07-26 · 共 170 份 plan_
 
 ```text
-总进度  ██████████████████████████░░░░  88.2%
+总进度  ███████████████████████████░░░  88.8%
 ```
 
-**分布**：`merged` 139 · `wip` 16 · `design` 9 · `skeleton` 3 · `done` 3
+**分布**：`merged` 139 · `wip` 16 · `design` 8 · `skeleton` 3 · `done` 4
 
 ### 坍缩渊（TSY）
 
@@ -93,7 +93,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 �
 
 ### 玩法 / NPC / 世界
 
-_背包、NPC AI、感知、社交、技艺、死亡周期 · 36 份 · 组均 80%_
+_背包、NPC AI、感知、社交、技艺、死亡周期 · 35 份 · 组均 82%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -130,7 +130,6 @@ _背包、NPC AI、感知、社交、技艺、死亡周期 · 36 份 · 组均 8
 | `wip` | **一生记录·遗念碑刻** <br/><sub>`plan-life-record-epitaph-v1.md`</sub> | `███░░░░░░░░░`  25% | #538 | 2026-06-13 |
 | `wip` | **容器品类筛选 + 12 僵尸容器补全** <br/><sub>`plan-container-filter-and-completion-v1.md`</sub> | `██░░░░░░░░░░`  20% | #526 | 2026-06-13 |
 | `design` | **给丹 C2S 缺距离/维度权威校验** <br/><sub>`plan-bughunt-dying-elder-give-dan-server-gate-v1.md`</sub> | `░░░░░░░░░░░░`   0% | #1114 | 2026-07-09 |
-| `design` | **草药捆保鲜挂载 + 草镰采集接通** <br/><sub>`plan-gathering-tool-bind-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-06-14 |
 | `design` | **塔科夫式套包（物品内嵌子容器）** <br/><sub>`plan-nested-pack-base-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-06-10 |
 | `design` | **派系战争结果接入信誉传播链** <br/><sub>`plan-social-v2.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-06-08 |
 
@@ -193,7 +192,7 @@ _玩家旅程 / 经济 / 化虚等待开工骨架 · 4 份 · 组均 29%_
 
 ### 已完成归档
 
-_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 49 份 · 组均 100%_
+_M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 50 份 · 组均 100%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -213,6 +212,7 @@ _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 49 份 · 组均 10
 | `merged` | **死亡 / 运数 / 寿元 / 遗念 / 亡者博物馆** <br/><sub>`finished_plans/plan-death-lifecycle-v1.md`</sub> | `████████████` 100% | — | 2026-04-27 |
 | `done` | **时代状态机** <br/><sub>`finished_plans/plan-era-state-v1.md`</sub> | `████████████` 100% | — | 2026-06-08 |
 | `merged` | **炼器（武器）专项：四步状态机 + IPC Schema + 客户端占位** <br/><sub>`finished_plans/plan-forge-v1.md`</sub> | `████████████` 100% | #19 #61 | 2026-04-28 |
+| `done` | **草药捆保鲜挂载 + 草镰采集接通** <br/><sub>`finished_plans/plan-gathering-tool-bind-v1.md`</sub> | `████████████` 100% | #1293 | 2026-07-27 |
 | `merged` | **双行快捷栏：1-9 技能行 + F1-F9 物品行** <br/><sub>`finished_plans/plan-hotbar-modify-v1.md`</sub> | `████████████` 100% | #65 | 2026-04-29 |
 | `merged` | **Redis channel + TypeBox schema 双端对齐管理** <br/><sub>`finished_plans/plan-ipc-schema-v1.md`</sub> | `████████████` 100% | — | 2026-04-28 |
 | `merged` | **library-web 内容（已弃置）** <br/><sub>`finished_plans/plan-library-web-content-v1.md`</sub> | `████████████` 100% | — | 2026-05-03 |

@@ -18188,6 +18188,31 @@ cols = 4
         );
     }
 
+    // ── plan-gathering-tool-bind-v1 P0 — herb_bundle shelflife_profile 挂载测试 ──
+
+    #[test]
+    fn herb_bundle_item_template_has_shelflife_profile_set() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #2：workbench_materials.toml 中
+        // herb_bundle 应挂 shelflife_profile=fresh_herb_v1 + shelflife_track=spoil
+        // （复用既有 profile，不派生 bundled_herb_v1）。
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let tpl = registry
+            .get("herb_bundle")
+            .expect("herb_bundle must be in registry — check workbench_materials.toml");
+        assert_eq!(
+            tpl.shelflife_profile.as_deref(),
+            Some("fresh_herb_v1"),
+            "herb_bundle should have shelflife_profile=`fresh_herb_v1` because \
+             plan-gathering-tool-bind-v1 P0 挂载已存在的 profile，不新增 bundled_herb_v1"
+        );
+        assert_eq!(
+            tpl.shelflife_track,
+            Some(crate::shelflife::DecayTrack::Spoil),
+            "herb_bundle should have shelflife_track=Spoil（灵草束会腐败，不是衰减/陈化）"
+        );
+    }
+
     // ── plan-food-v1 P1 — 食物物品 shelflife_profile 初始化测试 ──
 
     #[test]
@@ -18313,6 +18338,295 @@ cols = 4
             freshness.frozen_since_tick.is_none(),
             "new item frozen_since_tick=None"
         );
+    }
+
+    #[test]
+    fn runtime_instance_from_template_attaches_freshness_for_herb_bundle() {
+        use crate::shelflife::{DecayProfileId, DecayTrack};
+        // plan-gathering-tool-bind-v1 P0：herb_bundle 挂 shelflife_profile 后，
+        // runtime_instance_from_template 应像 food 物品一样自动挂 Freshness。
+        let tpl = ItemTemplate {
+            id: "herb_bundle".to_string(),
+            display_name: "灵草束".to_string(),
+            category: ItemCategory::Herb,
+            placeable: None,
+            max_stack_count: 16,
+            grid_w: 1,
+            grid_h: 1,
+            base_weight: 0.5,
+            rarity: ItemRarity::Common,
+            spirit_quality_initial: 0.80,
+            description: "test".to_string(),
+            effect: None,
+            cast_duration_ms: DEFAULT_CAST_DURATION_MS,
+            cooldown_ms: DEFAULT_COOLDOWN_MS,
+            weapon_spec: None,
+            forge_station_spec: None,
+            blueprint_scroll_spec: None,
+            inscription_scroll_spec: None,
+            technique_scroll_spec: None,
+            readable_scroll_spec: None,
+            recipe_fragment_spec: None,
+            container_spec: None,
+            shield_spec: None,
+            shelflife_profile: Some("fresh_herb_v1".to_string()),
+            shelflife_track: Some(DecayTrack::Spoil),
+            wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+        };
+
+        let spawn_tick = 500_u64;
+        let instance = runtime_instance_from_template(&tpl, 1, 1, spawn_tick);
+        let freshness = instance.freshness.as_ref().expect(
+            "herb_bundle should have Freshness attached by runtime_instance_from_template \
+             because template declares shelflife_profile=fresh_herb_v1",
+        );
+        assert_eq!(
+            freshness.track,
+            DecayTrack::Spoil,
+            "freshness.track should be Spoil for herb_bundle"
+        );
+        assert_eq!(
+            freshness.profile,
+            DecayProfileId::new("fresh_herb_v1"),
+            "freshness.profile must be fresh_herb_v1 as declared in workbench_materials.toml"
+        );
+        assert_eq!(
+            freshness.created_at_tick, spawn_tick,
+            "freshness.created_at_tick must equal current_tick passed to runtime_instance_from_template"
+        );
+        assert!(
+            (freshness.initial_qi - 0.80_f32).abs() < 1e-4,
+            "freshness.initial_qi should equal spirit_quality_initial=0.80; got {}",
+            freshness.initial_qi
+        );
+    }
+
+    #[test]
+    fn herb_bundle_decays_identically_regardless_of_stack_count() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #2 复核（PR #1293 review 修正）：上一版
+        // 把"捆 vs 单株"两个样本都固定成同一份手写 `Freshness::new(0, 0.80, profile)`
+        // 再喂进同一个纯函数——这是同输入自比较，恒真、什么都没有测出来。
+        //
+        // 本仓库里"捆"与"单株"的真实区别不是 initial_qi（herb_bundle 模板的
+        // spirit_quality_initial 恒为 0.80，不管装了几株——见
+        // herb_bundle_freshness_ignores_stack_count），而是 `ItemInstance.stack_count`。
+        // 所以有判别力的对照必须固定 profile/initial_qi、只变 stack_count，并且要走生产
+        // `runtime_instance_from_template` 链路（不是手搓 Freshness）：如果未来有人在这条
+        // 链路上给批量物品加了"stack_count 越大衰减越慢"的折扣，这里必须撞红——
+        // 已用假实现验证过（临时给 initial_qi 加 stack_count 相关的加成，本测试确实失败；
+        // 验证后已还原，不留在正式代码里）。
+        use crate::shelflife::registry::build_default_registry;
+        use crate::shelflife::{compute::compute_current_qi, DecayProfileId};
+
+        let item_registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let profile_registry = build_default_registry();
+        let tpl = item_registry
+            .get("herb_bundle")
+            .expect("herb_bundle must be in registry — check workbench_materials.toml");
+        let profile = profile_registry
+            .get(&DecayProfileId::new("fresh_herb_v1"))
+            .expect("fresh_herb_v1 must exist in the production DecayProfileRegistry");
+
+        // "单株"：stack_count=1；"捆"：stack_count=50——两者都经真实生产入口构造。
+        let single = runtime_instance_from_template(tpl, 1, 1, 0);
+        let bundle = runtime_instance_from_template(tpl, 2, 50, 0);
+        let single_freshness = single
+            .freshness
+            .expect("herb_bundle instance must carry Freshness (shelflife_profile is set)");
+        let bundle_freshness = bundle
+            .freshness
+            .expect("herb_bundle instance must carry Freshness (shelflife_profile is set)");
+
+        for elapsed_ticks in [0_u64, 12_000, 36_000, 57_600, 200_000] {
+            let single_current = compute_current_qi(&single_freshness, profile, elapsed_ticks, 1.0);
+            let bundle_current = compute_current_qi(&bundle_freshness, profile, elapsed_ticks, 1.0);
+            assert_eq!(
+                single_current, bundle_current,
+                "在 tick={elapsed_ticks} 时，stack_count=1（单株）与 stack_count=50（捆）经由\
+                 生产 runtime_instance_from_template 构造的实例应输出完全相同的 current_qi；\
+                 若此处不等，说明有人给批量存放加了未经决议的衰减折扣"
+            );
+        }
+    }
+
+    #[test]
+    fn herb_bundle_freshness_ignores_stack_count() {
+        // plan-gathering-tool-bind-v1 §8.1 决议 #2 的另一面："捆"在本仓库是通过
+        // `stack_count`（一个 ItemInstance 里装了几株）承载数量的，不是通过新 profile。
+        // 这条测试直接锁住 runtime_instance_from_template 生成的 Freshness 与 stack_count
+        // 无关——如果未来有人在 runtime_instance_from_template 或别处加了
+        // "stack_count 越大衰减越慢"的批量折扣，这里会撞红。
+        let registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let tpl = registry
+            .get("herb_bundle")
+            .expect("herb_bundle must be in registry — check workbench_materials.toml");
+
+        let single_stack = runtime_instance_from_template(tpl, 1, 1, 500);
+        let bulk_stack = runtime_instance_from_template(tpl, 2, 99, 500);
+
+        assert_eq!(
+            single_stack.freshness, bulk_stack.freshness,
+            "stack_count=1 与 stack_count=99 生成的 Freshness 必须完全相等（逐字段）——\
+             批量存放不应该获得任何未经决议的衰减折扣。single={:?}, bulk={:?}",
+            single_stack.freshness, bulk_stack.freshness
+        );
+    }
+
+    #[test]
+    fn herb_bundle_decay_curve_reaches_spoiled_state_over_three_game_days() {
+        // plan-gathering-tool-bind-v1 P0："herb_bundle 实例随时间衰减曲线"——覆盖 happy
+        // path（刚做出来是 Fresh）、中段（Declining）、彻底腐败（Spoiled，current 触底 0）。
+        use crate::shelflife::compute::{compute_current_qi, compute_track_state};
+        use crate::shelflife::registry::build_default_registry;
+        use crate::shelflife::{DecayProfileId, Freshness, TrackState};
+
+        let profile_registry = build_default_registry();
+        let profile = profile_registry
+            .get(&DecayProfileId::new("fresh_herb_v1"))
+            .expect("fresh_herb_v1 must exist in the production DecayProfileRegistry");
+        let freshness = Freshness::new(0, 0.80, profile);
+
+        // t=0：刚扎束，应为满品质 Fresh。
+        let at_zero = compute_current_qi(&freshness, profile, 0, 1.0);
+        assert!(
+            (at_zero - 0.80).abs() < 1e-4,
+            "t=0 时 current_qi 应等于 initial_qi=0.80，实际 {at_zero}（懒计算不应在创建瞬间就衰减）"
+        );
+        assert_eq!(
+            compute_track_state(&freshness, profile, 0, 1.0),
+            TrackState::Fresh,
+            "t=0 时 TrackState 应为 Fresh"
+        );
+
+        // fresh_herb_v1 是 3 游戏日线性归零（FRESH_HERB_TOTAL_TICKS = GAME_DAY_TICKS*3）。
+        const GAME_DAY_TICKS: u64 = 24_000;
+        let total_ticks = GAME_DAY_TICKS * 3;
+
+        // 中点：仍有剩余但已过半，应处于 Declining（headroom 剩余 <= 50%）。
+        let midpoint = total_ticks / 2;
+        let at_mid = compute_current_qi(&freshness, profile, midpoint, 1.0);
+        assert!(
+            at_mid > 0.0 && at_mid < 0.80,
+            "半程 current_qi 应严格介于 0 和 initial_qi 之间，实际 {at_mid}"
+        );
+        assert_eq!(
+            compute_track_state(&freshness, profile, midpoint, 1.0),
+            TrackState::Declining,
+            "半程（headroom 剩余 50%）TrackState 应为 Declining"
+        );
+
+        // t >= total_ticks：完全腐败——current 触底 0（Spoil 路径 floor 是 0，不是 fauna 那种正 floor_qi），
+        // TrackState 应为 Spoiled。
+        let at_end = compute_current_qi(&freshness, profile, total_ticks, 1.0);
+        assert_eq!(
+            at_end, 0.0,
+            "t=total_ticks 时 current_qi 应触底为 0（Spoil 公式 max(0.0, ...)），实际 {at_end}"
+        );
+        assert_eq!(
+            compute_track_state(&freshness, profile, total_ticks, 1.0),
+            TrackState::Spoiled,
+            "腐败阈值以下 TrackState 应为 Spoiled"
+        );
+
+        // 过期之后继续推进时间：仍应是 0 / Spoiled，不会变负或回弹（过期行为/腐坏产物分支）。
+        let long_after = compute_current_qi(&freshness, profile, total_ticks * 10, 1.0);
+        assert_eq!(
+            long_after, 0.0,
+            "远超过期时间后 current_qi 仍应为 0，不应变负，实际 {long_after}"
+        );
+        assert_eq!(
+            compute_track_state(&freshness, profile, total_ticks * 10, 1.0),
+            TrackState::Spoiled,
+            "远超过期时间后 TrackState 仍应为 Spoiled"
+        );
+    }
+
+    #[test]
+    fn herb_bundle_expiry_drives_production_spoil_check_consumption_path() {
+        // plan-gathering-tool-bind-v1 P0："过期行为（腐坏产物）分支"（PR #1293 review 修正）：
+        // 上一版只调 compute_track_state 断言 Spoiled，没有走任何"过期之后会怎样"的生产分支。
+        //
+        // fresh_herb_v1 是 `DecayProfile::Spoil`。variant.rs 的生产 sweep
+        // （apply_variant_switch_with_season_and_container）对 Spoil 路径的 Spoiled 状态
+        // 明确"不切 item ID，走 NBT"——只有 Decay（ling_shi/bone_coin）和 Age→Spoil
+        // 迁移（chen_jiu→chen_cu）会切 item ID。herb_bundle 腐败后不会变成另一个 item
+        // template，所以"腐坏产物"在这个系统里的真实含义不是"变成另一件东西"，而是
+        // `shelflife::consume::spoil_check` 返回的消费判定（Safe/Warn 触发 contam
+        // 警告/CriticalBlock 拒绝消费）——这正是 food.rs::consume_food 的 Spoil 分支
+        // 已经在用的生产入口。这里直接用 herb_bundle 的真实 registry 模板 + 生产
+        // runtime_instance_from_template 构造实例，驱动 spoil_check 走过 Safe→Warn→
+        // CriticalBlock 三段，锁住这条真实存在的过期消费路径。
+        use crate::shelflife::consume::{spoil_check, SpoilCheckOutcome};
+        use crate::shelflife::registry::build_default_registry;
+        use crate::shelflife::DecayProfileId;
+
+        let item_registry =
+            load_item_registry().expect("item registry should load from assets/items/*.toml");
+        let profile_registry = build_default_registry();
+        let tpl = item_registry
+            .get("herb_bundle")
+            .expect("herb_bundle must be in registry — check workbench_materials.toml");
+        let profile = profile_registry
+            .get(&DecayProfileId::new("fresh_herb_v1"))
+            .expect("fresh_herb_v1 must exist in the production DecayProfileRegistry");
+        let instance = runtime_instance_from_template(tpl, 1, 1, 0);
+        let freshness = instance
+            .freshness
+            .expect("herb_bundle instance must carry Freshness (shelflife_profile is set)");
+
+        // current(t) = max(0, 0.80 - t/72000)（Linear，见 fresh_herb_profile()）。
+        // spoil_threshold=0.01 在 t=56880 处被跨越；0.1×threshold=0.001 在 t=57528 处
+        // 被跨越；current 在 t=57600 触底为 0。三个采样点都留了充足余量，不卡边界。
+
+        // t=0：current=0.80 ≥ threshold=0.01 → Safe。
+        match spoil_check(&freshness, profile, 0, 1.0) {
+            SpoilCheckOutcome::Safe { current_qi } => {
+                assert!(
+                    (current_qi - 0.80).abs() < 1e-4,
+                    "t=0 时 herb_bundle 应处于 Safe 且 current_qi=initial_qi=0.80，实际 {current_qi}"
+                );
+            }
+            other => panic!("t=0 时 herb_bundle 的 spoil_check 应为 Safe，实际 {other:?}"),
+        }
+
+        // t=57_200：current≈0.00556，介于 [0.001, 0.01) → Warn（触发 contam 警告，非拒绝消费）。
+        match spoil_check(&freshness, profile, 57_200, 1.0) {
+            SpoilCheckOutcome::Warn {
+                current_qi,
+                spoil_threshold,
+            } => {
+                assert!(
+                    (spoil_threshold - 0.01).abs() < 1e-4,
+                    "spoil_threshold 应为 fresh_herb_v1 注册的 0.01，实际 {spoil_threshold}"
+                );
+                assert!(
+                    current_qi < spoil_threshold && current_qi > 0.0,
+                    "Warn 分支 current_qi 应严格小于 threshold 且未触底，实际 {current_qi}"
+                );
+            }
+            other => panic!(
+                "t=57_200（跨过 spoil_threshold 但未到 0.1×threshold）herb_bundle 应进入 Warn，\
+                 实际 {other:?}"
+            ),
+        }
+
+        // t=60_000（已触底 current=0）：远低于 0.1×threshold=0.001 → CriticalBlock（拒绝自动消费）。
+        match spoil_check(&freshness, profile, 60_000, 1.0) {
+            SpoilCheckOutcome::CriticalBlock {
+                current_qi,
+                spoil_threshold,
+            } => {
+                assert!(
+                    current_qi < 0.1 * spoil_threshold,
+                    "CriticalBlock 分支 current_qi 应低于 0.1×threshold，实际 {current_qi}"
+                );
+            }
+            other => panic!(
+                "t=60_000（远超过期阈值）herb_bundle 应进入 CriticalBlock 拒绝消费，实际 {other:?}"
+            ),
+        }
     }
 
     #[test]
