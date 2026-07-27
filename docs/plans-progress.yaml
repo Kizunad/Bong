@@ -1644,18 +1644,18 @@ plans:
   - 1126
   blocking_on: []
   summary: server/src/world 无 anomaly_raster/AnomalyKind 任何痕迹；#1126 只落地问题报告，P0-P3 未开工。
-- file: plan-bughunt-craft-refund-full-inventory-loss-v1.md
+- file: finished_plans/plan-bughunt-craft-refund-full-inventory-loss-v1.md
   group: gameplay-npc
-  title: 满包退款吞材料修复，P4 回归缺口
-  state: active-implementing
-  percent: 90
-  last_updated: '2026-07-19'
+  title: 满包退款吞材料修复
+  state: merged
+  percent: 100
+  last_updated: '2026-07-27'
   pr_refs:
   - 1039
   - 1142
   - 1232
   blocking_on: []
-  summary: 入包/落地/回滚/持久化已落地且测试覆盖；P4 no_containers 定向回归确未写，归档门未满足。
+  summary: 入包/落地/回滚/持久化已落地；P4 no_containers 定向回归 refund_structural_error_does_not_mask_config_bug 已补齐，判别力经放宽 fallback 判据撞红验证，2026-07-27 归档。
 - file: plan-bughunt-dying-elder-give-dan-server-gate-v1.md
   group: gameplay-npc
   title: 给丹 C2S 缺距离/维度权威校验
