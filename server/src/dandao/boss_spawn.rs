@@ -1365,6 +1365,24 @@ mod boss_spawn_tests {
         );
     }
 
+    /// 配置漂移 pin 测试：上面两条 `..._missing_from_registry` / `..._resource_missing`
+    /// 回归证明了 `baolongwang_qi_drain_aura_system` 在 `BOSS_HOME_ZONE` 未注册时会
+    /// 静默整 tick 早退、不报错。真实生产 zone 名来自 `server/zones.json`，若某天有人
+    /// 把里面的 `baolongwang_cavern_deep` 改名或删掉，BossDrain 机制会在没有任何测试
+    /// 撞红、没有任何运行时报错的情况下彻底失效。这条测试直接读生产 `ZoneRegistry::load()`
+    /// （与 `crate::world::zone` 里同类 zones.json pin 测试同一范式），把这个配置漂移钉在
+    /// 测试期。
+    #[test]
+    fn boss_home_zone_exists_in_production_zones_json() {
+        let registry = ZoneRegistry::load();
+        assert!(
+            registry.zones.iter().any(|zone| zone.name == BOSS_HOME_ZONE),
+            "生产 server/zones.json 必须包含 name == BOSS_HOME_ZONE(\"{BOSS_HOME_ZONE}\") 的 zone，\
+             否则 baolongwang_qi_drain_aura_system 的 find_zone_mut 会静默早退，\
+             BossDrain 机制完全失效且没有任何报错"
+        );
+    }
+
     // ── heartbeat 覆盖链回归：字段权威重同步不能抹掉 BossDrain 入账 ────────────
 
     #[test]
