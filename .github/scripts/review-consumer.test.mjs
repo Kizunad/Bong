@@ -66,6 +66,11 @@ test('consumer CI checks out and tests the exact central workflow contract', asy
     yaml.includes(`[[ "$(git -C _central-contract rev-parse HEAD)" == '${centralSha}' ]]`),
     'consumer CI must verify the checked-out central OID',
   );
+  assert.match(yaml, /bubblewrap_0\.9\.0-1ubuntu0\.1_amd64\.deb/);
+  assert.match(yaml, /1b506492bd9c7fd0cdb4f02ac822f1d3e336b0aead5113c1239baf8db5db562a/);
+  assert.match(yaml, /sha256sum --check --strict/);
+  assert.match(yaml, /root:root 4755/);
+  assert.match(yaml, /BWRAP_EXECUTABLE=%s/);
   assert.match(yaml, /(?:\n\s+cd _central-contract\n\s+npm test\n)/);
   assert.doesNotMatch(yaml, /repository: Kizunad\/review[\s\S]*?ref: (?:main|master|v?\d|[0-9a-f]{1,39})\b/);
 });
