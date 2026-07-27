@@ -848,7 +848,21 @@ fn throw_carrier_intents(
             continue;
         };
         let dir = normalized_dir(intent.dir_unit);
-        if dir.length_squared() <= f64::EPSILON {
+        // bughunt-20260726 carrier-throw-dir-nan-leak：`intent.dir_unit` 来自
+        // C2S `ClientRequestV1::ThrowCarrier` 的 `[f32; 3]`，plain serde_json
+        // 反序列化对越界字面量（如 JSON `1e40`）会 `as f32` 饱和成
+        // `f32::INFINITY`，没有 parse 错误、没有范围校验。`normalized_dir` 对
+        // (inf,0,0) 算出 `length_squared()=inf`（不是 NaN，`inf<=EPSILON` 为
+        // false）从而跳过零向量早退，再 `normalize()` 内部 `inf * (1/inf)` =
+        // `inf * 0.0` = NaN——`dir` 变成 (NaN,0,0)。此时 `NaN <= EPSILON`
+        // 同样恒为 false（IEEE-754 NaN 比较全假），下面原有的零向量守卫被
+        // 绕过而非触发，NaN 就此流入 velocity/spawn_pos，产生一个永不消亡、
+        // 每 tick 写 NaN 位置的幽灵投射物（`projectile_tick_system` 里
+        // `traveled > max_distance`、`qi_payload <= EPSILON` 两个退出判定
+        // 全部因 NaN 比较恒假而失效）。显式拒绝非有限 `dir`，与零向量共用
+        // 同一条 `continue` 分支（沿用既有守卫的既有语义，两者是同一处
+        // "退化输入" 早退，不新引入行为分支）。
+        if !dir.is_finite() || dir.length_squared() <= f64::EPSILON {
             continue;
         }
         if let Some(mut stamina) = stamina {
@@ -956,6 +970,35 @@ fn projectile_tick_system(
         let current = position.get();
         let next = current + flight.velocity * dt;
         let traveled = next.distance(flight.spawn_pos) as f32;
+        // bughunt-20260726 carrier-throw-dir-nan-leak：防御性兜底。`dir` 现在
+        // 已在 `throw_carrier_intents` 里被拒绝非有限值，本分支正常情况下
+        // 不会触发；但保留它是为了防止任何未来直接构造
+        // `AnqiProjectileFlight`（绕开 throw_carrier_intents）的生产者重新
+        // 引入非有限 velocity/position 时，制造出同样的永生 NaN 实体——
+        // `traveled > flight.max_distance` 和上面的 `qi_payload <= EPSILON`
+        // 两个退出判定在 NaN 面前都会因 IEEE-754 比较恒假而失效，只有显式
+        // `is_finite()` 检查能兜底。用 `current`（本 tick 前最后一个已知
+        // 有限位置）而非 `next`/`traveled` 本身作为 despawn 的 `pos`：避免
+        // 把 NaN 传进 `emit_projectile_despawn` 的距离/衰减计算——NaN 落点
+        // 会让 `ZoneRegistry::find_zone` 的 AABB 比较恒假从而找不到任何
+        // zone，把真元错误地转入 overflow 账户（真元本身不会凭空消失，但
+        // 会丢失真实落点归属，且 NaN 还会被序列化进
+        // `ProjectileDespawnedEvent.pos` 传给下游 Redis 桥接消费者）。
+        if !next.is_finite() || !traveled.is_finite() {
+            emit_projectile_despawn(
+                &mut commands,
+                &mut despawned,
+                ProjectileDespawnArgs {
+                    projectile_entity,
+                    projectile: &projectile,
+                    flight: &flight,
+                    reason: ProjectileDespawnReason::OutOfRange,
+                    pos: current,
+                    tick: clock.tick,
+                },
+            );
+            continue;
+        }
         if traveled > flight.max_distance {
             emit_projectile_despawn(
                 &mut commands,
@@ -2968,6 +3011,359 @@ mod tests {
             !bindings.is_on_cooldown(slot, 10),
             "期望真元不足拒绝时不设置冷却（slot={slot} 应 ready），\
              实际 slot 被置为冷却中 — 冷却被烧掉了"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // bughunt-20260726 carrier-throw-dir-nan-leak — client `dir_unit` 溢出
+    // f32::INFINITY 时 normalize() 产生 (NaN,0,0)，旧的
+    // `dir.length_squared() <= f64::EPSILON` 零向量守卫因 IEEE-754 NaN 比较
+    // 恒假而被绕过（不是触发），NaN 流入 velocity/spawn_pos 产生永生投射物。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// 组装最小 `throw_carrier_intents` App：一个 `CombatClock` + 事件通道 + 系统。
+    fn throw_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 0 });
+        app.add_event::<ThrowCarrierIntent>();
+        app.add_systems(Update, throw_carrier_intents);
+        app
+    }
+
+    /// 生成一个持有已充能暗器（`instance_id=7`，与 `inventory_with_main_hand`
+    /// 硬编码的 `item(7, ..)` 对齐）+ 对应 `CarrierStore` 印记的投掷者实体。
+    fn spawn_throw_actor(app: &mut App, imprint_qi: f32) -> (Entity, u64) {
+        let instance_id = 7;
+        let mut store = CarrierStore::default();
+        store.imprints_by_instance.insert(
+            instance_id,
+            CarrierImprint {
+                carrier_kind: CarrierKind::YibianShougu,
+                qi_amount: imprint_qi,
+                qi_amount_initial: imprint_qi,
+                qi_color: ColorKind::Sharp,
+                source_realm: Realm::Condense,
+                half_life_min: 120.0,
+                decay_started_at_tick: 0,
+                bond_kind: BondKind::HandheldCarrier,
+                injection_kind: None,
+            },
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position::new([0.0, 66.0, 0.0]),
+                inventory_with_main_hand(ANQI_CHARGED_TEMPLATE_ID),
+                store,
+            ))
+            .id();
+        (entity, instance_id)
+    }
+
+    fn projectile_count(app: &mut App) -> usize {
+        let mut query = app.world_mut().query::<&AnqiProjectileFlight>();
+        query.iter(app.world()).count()
+    }
+
+    fn send_throw(app: &mut App, thrower: Entity, dir_unit: [f32; 3]) {
+        app.world_mut().send_event(ThrowCarrierIntent {
+            thrower,
+            slot: CarrierSlot::MainHand,
+            dir_unit,
+            power: 1.0,
+            issued_at_tick: 0,
+        });
+        app.update();
+    }
+
+    #[test]
+    fn throw_with_finite_unit_dir_spawns_projectile_happy_path() {
+        // happy path 前置：正常有限单位向量必须仍然正常出弹——防止本次新增
+        // 的 `!dir.is_finite()` 守卫误伤合法输入。
+        let mut app = throw_app();
+        let (actor, instance_id) = spawn_throw_actor(&mut app, 30.0);
+
+        send_throw(&mut app, actor, [1.0, 0.0, 0.0]);
+
+        assert_eq!(
+            projectile_count(&mut app),
+            1,
+            "合法有限方向向量应正常产生 1 个投射物，实测 {} 个 —— 说明本次新增的\
+             is_finite() 守卫把合法输入也误判成了非法输入",
+            projectile_count(&mut app)
+        );
+        assert!(
+            !app.world()
+                .get::<CarrierStore>(actor)
+                .unwrap()
+                .imprints_by_instance
+                .contains_key(&instance_id),
+            "正常投掷应消费掉印记（转移进投射物），此处只是确认 happy path 走的是\
+             真正的出弹分支而非某个提前 continue"
+        );
+    }
+
+    #[test]
+    fn throw_with_f32_infinity_axis_rejects_and_leaves_no_projectile() {
+        // bughunt-20260726 核心回归：dir_unit 溢出 f32::INFINITY（对应恶意/被
+        // 修改客户端发送 JSON `1e40` 这种合法 token，经 serde_json 反序列化
+        // `[f32;3]` 时 `as f32` 饱和成的产物）不应产生任何投射物实体。旧代码
+        // 里 normalize() 会把它变成 (NaN,0,0)，绕过零向量守卫，制造一个
+        // 永不消亡、每 tick 写 NaN 位置的幽灵实体（projectile_tick_system 的
+        // `traveled > max_distance` 和 `qi_payload <= EPSILON` 两个退出判定
+        // 都因 NaN 比较恒假而失效）。
+        let mut app = throw_app();
+        let (actor, _instance_id) = spawn_throw_actor(&mut app, 30.0);
+
+        send_throw(&mut app, actor, [f32::INFINITY, 0.0, 0.0]);
+
+        assert_eq!(
+            projectile_count(&mut app),
+            0,
+            "dir_unit=[INFINITY,0,0] normalize 后是 (NaN,0,0)，必须被 is_finite() \
+             守卫拒绝、不产生任何投射物实体；实测产生了 {} 个 —— 说明 NaN 泄漏\
+             守卫失效，永生 NaN 实体 bug 复发",
+            projectile_count(&mut app)
+        );
+    }
+
+    #[test]
+    fn throw_with_negative_infinity_axis_also_rejected() {
+        // 边界：负向溢出（对应 JSON `-1e40`）同样必须被拒绝，不止正向溢出。
+        let mut app = throw_app();
+        let (actor, _instance_id) = spawn_throw_actor(&mut app, 30.0);
+
+        send_throw(&mut app, actor, [0.0, f32::NEG_INFINITY, 0.0]);
+
+        assert_eq!(
+            projectile_count(&mut app),
+            0,
+            "dir_unit=[0,-INFINITY,0] 同样必须被拒绝，实测产生了 {} 个投射物",
+            projectile_count(&mut app)
+        );
+    }
+
+    #[test]
+    fn throw_with_nan_axis_directly_rejected() {
+        // 边界：即便 dir_unit 里直接含 NaN（标准 JSON 语法不允许裸 NaN token，
+        // 因此这条路径理论上不会被本 bug 的具体触发方式命中，但守卫本身应该
+        // 对任何非有限输入生效，不能依赖"NaN 只能来自 normalize 溢出"这个假设）。
+        let mut app = throw_app();
+        let (actor, _instance_id) = spawn_throw_actor(&mut app, 30.0);
+
+        send_throw(&mut app, actor, [f32::NAN, 0.0, 0.0]);
+
+        assert_eq!(
+            projectile_count(&mut app),
+            0,
+            "dir_unit 直接含 NaN 分量也必须被拒绝，实测产生了 {} 个投射物",
+            projectile_count(&mut app)
+        );
+    }
+
+    #[test]
+    fn throw_with_zero_vector_still_rejected_pre_existing_behavior_unchanged() {
+        // 回归：合法的零向量守卫（本次改动之前就存在）必须继续生效——新增的
+        // `!dir.is_finite() ||` 前缀不能改变这条既有 `<= EPSILON` 分支的行为
+        // （0.0 是有限数，不会被新增检查拦下，仍然落到旧的零向量分支）。
+        let mut app = throw_app();
+        let (actor, _instance_id) = spawn_throw_actor(&mut app, 30.0);
+
+        send_throw(&mut app, actor, [0.0, 0.0, 0.0]);
+
+        assert_eq!(
+            projectile_count(&mut app),
+            0,
+            "零向量必须继续被既有守卫拒绝，实测产生了 {} 个投射物 —— 说明本次\
+             改动意外改变了既有零向量分支的行为",
+            projectile_count(&mut app)
+        );
+    }
+
+    #[test]
+    fn normalized_dir_of_overflowed_axis_is_non_finite_root_cause_pin() {
+        // 锁住根因前提：normalize() 对 (inf,0,0) 算出 (NaN,0,0)，且这个 NaN
+        // 分量的 length_squared() 与 EPSILON 比较恒为 false —— 这正是旧守卫
+        // "被绕过而非触发" 的原因。这条测试独立于 throw_carrier_intents，
+        // 直接钉死 normalized_dir 本身的行为，防止未来重构（比如换 glam 版本）
+        // 悄悄改变这个前提，导致上面几条回归测试失去意义却仍然"碰巧"通过。
+        let dir = normalized_dir([f32::INFINITY, 0.0, 0.0]);
+        assert!(
+            !dir.is_finite(),
+            "根因前置条件：normalized_dir([INFINITY,0,0]) 必须产生非有限结果\
+             （NaN 分量），实测 {dir:?} 是有限的 —— 说明 glam 或本函数的行为\
+             变了，上面的 throw_carrier_intents 回归测试的前提假设需要重新评估"
+        );
+        // 有意保留 `<=` 后取反、而非改写成 `>`：本测试要钉死的正是 IEEE-754
+        // NaN 比较的"全假"语义（`NaN <= x` 和 `NaN > x` 同样为 false，二者不
+        // 是互补关系），先绑定到具名变量避免 clippy::neg_cmp_op_on_partial_ord
+        // 误判为"可简化成 `>`"——那样会悄悄改变本测试验证的语义。
+        let guard_would_bypass = dir.length_squared() <= f64::EPSILON;
+        assert!(
+            !guard_would_bypass,
+            "根因前置条件：NaN 分量的 length_squared() 与 EPSILON 比较必须恒为\
+             false（IEEE-754 NaN 比较语义），这正是旧守卫被绕过而非触发的原因；\
+             实测比较结果为 true，说明前提假设不成立，本次 bug 的因果链描述有误"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // bughunt-20260726 carrier-throw-dir-nan-leak — projectile_tick_system 防御性
+    // 兜底：即便未来某个绕开 throw_carrier_intents 的生产者重新引入非有限
+    // velocity/position，也不能制造出永生 NaN 实体。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    fn spawn_defensive_projectile(app: &mut App, spawn_pos: DVec3, velocity: DVec3) -> Entity {
+        app.world_mut()
+            .spawn((
+                Position::new(spawn_pos),
+                QiProjectile {
+                    owner: None,
+                    qi_payload: 20.0,
+                },
+                AnqiProjectileFlight {
+                    carrier_kind: CarrierKind::BoneChip,
+                    qi_color: ColorKind::Sharp,
+                    carrier_grade: CarrierKind::BoneChip.grade(),
+                    spawn_pos,
+                    prev_pos: spawn_pos,
+                    velocity,
+                    max_distance: ANQI_PROJECTILE_MAX_DISTANCE,
+                    hitbox_inflation: ANQI_HITBOX_INFLATION,
+                },
+            ))
+            .id()
+    }
+
+    fn defensive_tick_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 5 });
+        app.add_event::<CombatEvent>();
+        app.add_event::<CarrierImpactEvent>();
+        app.add_event::<ProjectileDespawnedEvent>();
+        app.add_systems(Update, projectile_tick_system);
+        app
+    }
+
+    fn drain_projectile_despawns(app: &mut App) -> Vec<ProjectileDespawnedEvent> {
+        app.world()
+            .resource::<Events<ProjectileDespawnedEvent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn projectile_tick_system_despawns_non_finite_velocity_without_writing_nan_position() {
+        // 核心防御性回归：非有限 velocity（模拟"未来某个生产者重新引入 NaN"
+        // 的场景，不经过 throw_carrier_intents）必须在本 tick 内立即被
+        // despawn，绝不允许 Position 被写入 NaN、绝不允许 NaN 流入
+        // qi_physics ledger。
+        let mut app = defensive_tick_app();
+        let spawn_pos = DVec3::new(1.0, 65.0, 2.0);
+        let projectile =
+            spawn_defensive_projectile(&mut app, spawn_pos, DVec3::new(f64::INFINITY, 0.0, 0.0));
+
+        app.update();
+
+        assert!(
+            app.world().get_entity(projectile).is_none(),
+            "非有限 velocity 必须在本 tick 内被防御性 despawn，实测实体仍存活 —— \
+             说明防御性兜底没生效，永生 NaN 实体 bug 会以另一条生产路径重演"
+        );
+
+        let despawns = drain_projectile_despawns(&mut app);
+        assert_eq!(
+            despawns.len(),
+            1,
+            "应恰好 despawn 一次，实测 {} 次",
+            despawns.len()
+        );
+        assert_eq!(
+            despawns[0].reason,
+            ProjectileDespawnReason::OutOfRange,
+            "非有限 velocity 应走新增的防御性 OutOfRange 分支，实测 {:?}",
+            despawns[0].reason
+        );
+        assert!(
+            despawns[0].pos.iter().all(|c| c.is_finite()),
+            "despawn 事件的 pos 必须全部有限——绝不能把 NaN/Infinity 序列化进 \
+             ProjectileDespawnedEvent 传给下游 Redis 桥接消费者，实测 {:?}",
+            despawns[0].pos
+        );
+        assert_eq!(
+            despawns[0].pos,
+            [spawn_pos.x, spawn_pos.y, spawn_pos.z],
+            "本 tick 前唯一已知的有限位置就是出生点，despawn 的 pos 应回退到它\
+             （而不是使用非有限的 next），实测 {:?}",
+            despawns[0].pos
+        );
+        assert!(
+            despawns[0].qi_evaporated.is_finite() && despawns[0].residual_qi.is_finite(),
+            "qi_evaporated/residual_qi 必须有限——绝不能把 NaN 灌进 qi_physics \
+             ledger 破坏全服灵气守恒律，实测 evaporated={} residual={}",
+            despawns[0].qi_evaporated,
+            despawns[0].residual_qi
+        );
+    }
+
+    #[test]
+    fn projectile_tick_system_despawns_single_nan_velocity_axis() {
+        // 边界：精确复现 bug 报告中的 dir 形状——只有一个轴是 NaN，其余轴是
+        // 合法有限值 0.0（对应 normalize((inf,0,0)) 产生的 (NaN,0.0,0.0)）。
+        // `DVec3::is_finite()` 要求全部分量有限，一个轴坏了整体就该判非有限。
+        let mut app = defensive_tick_app();
+        let spawn_pos = DVec3::new(0.0, 65.0, 0.0);
+        let projectile =
+            spawn_defensive_projectile(&mut app, spawn_pos, DVec3::new(f64::NAN, 0.0, 0.0));
+
+        app.update();
+
+        assert!(
+            app.world().get_entity(projectile).is_none(),
+            "单轴 NaN velocity（精确复现 bug 报告里的 (NaN,0,0) 形状）也必须被\
+             防御性 despawn，实测实体仍存活"
+        );
+        let despawns = drain_projectile_despawns(&mut app);
+        assert_eq!(
+            despawns.first().map(|d| d.reason),
+            Some(ProjectileDespawnReason::OutOfRange),
+            "实测 despawns={despawns:?}"
+        );
+    }
+
+    #[test]
+    fn projectile_tick_system_out_of_range_still_works_for_finite_overshoot() {
+        // 回归：新增的 `!next.is_finite() || !traveled.is_finite()` 检查不能
+        // 误伤合法的、纯粹因为飞太远而需要 OutOfRange despawn 的有限速度弹道
+        // ——防止本次防御性改动把正常的射程判定短路掉。
+        let mut app = defensive_tick_app();
+        let spawn_pos = DVec3::new(0.0, 65.0, 0.0);
+        // 速度足够大，一 tick 内位移就超过 ANQI_PROJECTILE_MAX_DISTANCE。
+        let velocity = DVec3::new(
+            f64::from(ANQI_PROJECTILE_MAX_DISTANCE) * 2.0 * TICKS_PER_SECOND as f64,
+            0.0,
+            0.0,
+        );
+        let projectile = spawn_defensive_projectile(&mut app, spawn_pos, velocity);
+
+        app.update();
+
+        assert!(
+            app.world().get_entity(projectile).is_none(),
+            "有限速度飞出射程应被既有 OutOfRange 分支 despawn，实测实体仍存活"
+        );
+        let despawns = drain_projectile_despawns(&mut app);
+        assert_eq!(
+            despawns.first().map(|d| d.reason),
+            Some(ProjectileDespawnReason::OutOfRange),
+            "有限速度飞出射程应走 OutOfRange，实测 {despawns:?} —— 说明本次\
+             新增的 is_finite() 防御检查误伤了合法的有限速度弹道"
+        );
+        assert!(
+            despawns[0].pos.iter().all(|c| c.is_finite()),
+            "有限速度场景下 despawn pos 理应有限，实测 {:?}",
+            despawns[0].pos
         );
     }
 }
