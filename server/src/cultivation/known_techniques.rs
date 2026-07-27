@@ -34,6 +34,14 @@ pub struct KnownTechnique {
     pub active: bool,
 }
 
+/// 写保护标记：join 时功法持久化状态无法可靠读取——行存在但读取/解析失败
+/// （sqlite 错误或 JSON 损坏），或连接打不开导致行状态完全不可知。
+/// 挂上后所有 `KnownTechniques` 落盘路径（Changed flush / 断线保存 / 停服 flush）
+/// 都必须跳过该玩家，防止会话内的 default 空表把可能存在的真实存档覆盖清零；
+/// 组件只活在本次会话的实体上，下次重连成功加载即自然恢复正常持久化。
+#[derive(Debug, Component)]
+pub struct KnownTechniquesLoadFailed;
+
 #[cfg(feature = "dev-techniques")]
 impl Default for KnownTechniques {
     fn default() -> Self {

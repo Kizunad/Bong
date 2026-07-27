@@ -95,7 +95,9 @@ pub mod qi_physics;
 pub mod preview;
 #[allow(dead_code)]
 pub mod schema;
+pub mod server_readiness;
 pub mod shader;
+pub mod shutdown;
 pub mod skin;
 pub mod social;
 pub mod spiritwood;

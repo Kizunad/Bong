@@ -60,8 +60,8 @@ jobs:
             client/gradle.properties
             client/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install system test dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tmux
 
       - name: Cache Rust target
         uses: actions/cache@v4
@@ -147,7 +147,7 @@ jobs:
       - name: Bot e2e stage (protocol-level player scenarios)
         env:
           BOT_E2E_RUN_TAG: ci
-          BOT_E2E_KILL_STALE: "1"
+          BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
         run: bash scripts/bot-e2e.sh
 
       - name: Bot chat timestamp → Tiandao window e2e

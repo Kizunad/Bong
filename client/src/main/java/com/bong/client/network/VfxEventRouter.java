@@ -73,6 +73,14 @@ public final class VfxEventRouter {
                     play.priority(),
                     play.fadeInTicks()
                 );
+                // 动画事件驱动的施法 juice（heaven_gate 蓄力渐强 / 释放最大震动）——只对本地
+                // 玩家自己的登记动画触发，非本地/非登记 = no-op，不影响动画派发结果。
+                // **必须 ok 才触发**：bridge 拒付（玩家不在线 / 动画未注册 / 层没停下来）时画面上
+                // 根本没有这段动画，此时震屏 + FOV punch 恰恰违背本条 juice「与画面严格对齐」的前提。
+                if (ok) {
+                    com.bong.client.combat.juice.CastFovController.onAnimPlayed(
+                        play.targetPlayer(), play.animId());
+                }
                 missContext = "bridge declined play_anim " + play.animId() + " on " + play.targetPlayer();
             } else if (payload instanceof VfxEventPayload.PlayAnimInline inline) {
                 ok = animationBridge.playAnimInline(

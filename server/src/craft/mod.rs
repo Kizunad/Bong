@@ -35,7 +35,7 @@ pub mod unlock;
 pub mod workbench;
 pub mod workbench_recipes;
 
-use valence::prelude::{App, Update};
+use valence::prelude::{App, Last, Update};
 
 #[allow(unused_imports)]
 pub use events::{
@@ -60,9 +60,9 @@ pub use session::{
 };
 #[allow(unused_imports)]
 pub use unlock::{
-    find_recipes_unlockable_by_material, load_recipe_unlock_log, tick_recipe_unlock_flush,
-    unlock_via_insight, unlock_via_material, unlock_via_mentor, unlock_via_scroll,
-    MaterialUnlockOutcome, RecipeUnlockFile, RecipeUnlockState, UnlockOutcome,
+    find_recipes_unlockable_by_material, flush_recipe_unlocks_on_shutdown, load_recipe_unlock_log,
+    tick_recipe_unlock_flush, unlock_via_insight, unlock_via_material, unlock_via_mentor,
+    unlock_via_scroll, MaterialUnlockOutcome, RecipeUnlockFile, RecipeUnlockState, UnlockOutcome,
 };
 #[allow(unused_imports)]
 pub use workbench::{
@@ -148,9 +148,10 @@ pub fn register(app: &mut App) {
     // `network/craft_emit::apply_unlock_intents` 系统消费
     app.add_event::<CraftUnlockIntent>();
 
-    // 孤岛修复 — 节流刷盘 RecipeUnlockState（unlock 三渠道 + 材料发现是直接函数
-    // 调用而非事件驱动，flush 系统只负责节流计时）。
+    // 孤岛修复 — 运行期保留 600 tick 节流刷盘；关服帧在 Last 绕过节流，
+    // 避免窗口内新解锁随进程退出丢失。
     app.add_systems(Update, tick_recipe_unlock_flush);
+    app.add_systems(Last, flush_recipe_unlocks_on_shutdown);
 }
 
 /// P1 验收基线：注册 5 个示例配方覆盖全 6 类（除 Misc 外）。
@@ -905,6 +906,37 @@ pub fn register_basic_processing_recipes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn schedule_contains_system(
+        app: &App,
+        schedule: impl valence::prelude::bevy_ecs::schedule::ScheduleLabel,
+        expected_name: &str,
+    ) -> bool {
+        app.get_schedule(schedule).is_some_and(|schedule| {
+            schedule
+                .graph()
+                .systems()
+                .any(|(_, system, _)| system.name().as_ref() == expected_name)
+        })
+    }
+
+    #[test]
+    fn register_wires_recipe_unlock_flushes_to_update_and_last() {
+        let mut app = App::new();
+        register(&mut app);
+
+        let runtime_flush = std::any::type_name_of_val(&tick_recipe_unlock_flush);
+        assert!(
+            schedule_contains_system(&app, Update, runtime_flush),
+            "craft::register must keep `{runtime_flush}` in Update for the 600-tick runtime throttle"
+        );
+
+        let shutdown_flush = std::any::type_name_of_val(&flush_recipe_unlocks_on_shutdown);
+        assert!(
+            schedule_contains_system(&app, Last, shutdown_flush),
+            "craft::register must wire `{shutdown_flush}` into Last so AppExit flushes dirty unlocks before shutdown"
+        );
+    }
 
     #[test]
     fn register_examples_succeeds() {

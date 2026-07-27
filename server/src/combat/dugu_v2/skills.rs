@@ -126,7 +126,7 @@ pub fn resolve_dugu_v2_skill(
     skill: DuguSkillId,
 ) -> CastResult {
     let now_tick = now_tick(world);
-    if is_on_cooldown(world, caster, slot, now_tick) {
+    if is_on_cooldown(world, caster, skill.as_str(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -745,7 +745,7 @@ fn insert_cast(
     now_tick: u64,
 ) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, now_tick.saturating_add(cooldown_ticks));
+        bindings.set_cooldown(skill.as_str(), now_tick.saturating_add(cooldown_ticks));
     }
     let start_position = world
         .get::<Position>(caster)
@@ -766,10 +766,15 @@ fn insert_cast(
     });
 }
 
-fn is_on_cooldown(world: &bevy_ecs::world::World, caster: Entity, slot: u8, now_tick: u64) -> bool {
+fn is_on_cooldown(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+    now_tick: u64,
+) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
 fn distance_between(world: &bevy_ecs::world::World, a: Entity, b: Entity) -> f64 {

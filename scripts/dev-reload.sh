@@ -8,6 +8,7 @@
 # from the cargo build/restart steps below — it just reads the same rasters. The
 # vite + three.js viewer is started separately:
 #   cd worldgen/console && npm install && npm run dev
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/bong-server-lifecycle.sh"
 detach_background_job() {
     local pid="${1:-}"
     local running_pid
@@ -216,8 +217,8 @@ launch_bong_server() {
         DETACHED_PID=""
         return 1
     fi
-    if ! background_process_is_running "$SERVER_PID"; then
-        echo "FAIL: bong server process $SERVER_PID exited during ${startup_grace}s startup grace; check ${BONG_SERVER_LOG:-/tmp/bong-server.log}" >&2
+    if ! bong_server_write_record "$SERVER_PID" "$resolved_expected_executable"; then
+        echo "FAIL: could not record managed bong server pid $SERVER_PID" >&2
         terminate_background_process "$SERVER_PID"
         SERVER_PID=""
         DETACHED_PID=""
@@ -225,7 +226,19 @@ launch_bong_server() {
     fi
 }
 
-# Tests source this file to exercise the exact production detach helper.
+stop_managed_server_before_reload() {
+    local status
+
+    if bong_server_stop_managed_for_replacement "server rebuild and relaunch"; then
+        return 0
+    else
+        status=$?
+    fi
+    echo "FAIL: previous server could not be stopped safely; refusing rebuild and relaunch" >&2
+    return "$status"
+}
+
+# Tests source this file to exercise the exact production detach and stop helpers.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
 fi
@@ -311,15 +324,20 @@ if [ "$LAUNCH_CONSOLE" = true ]; then
     echo "    viewer  -> cd worldgen/console && npm install && npm run dev"
 fi
 
-# --- Step 3: Rebuild server ---
-echo "==> [3/4] Building server..."
+restart_bong_server() {
+# --- Step 3: Stop the previous server before rebuilding ---
+# Cargo may atomically replace the executable. Stop while its exact PID/starttime
+# record is still valid so a normal SIGTERM reaches the AppExit bridge.
+echo "==> [3/5] Stopping previous server..."
+stop_managed_server_before_reload || return $?
+
+# --- Step 4: Rebuild server ---
+echo "==> [4/5] Building server..."
 (cd server && cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
 echo "    OK"
 
-# --- Step 4: Restart server ---
-echo "==> [4/4] Restarting server..."
-pkill -f 'target/debug/bong-server' 2>/dev/null || true
-sleep 0.5
+# --- Step 5: Launch server ---
+echo "==> [5/5] Starting server..."
 MANIFEST_ABS="$(pwd)/$MANIFEST"
 TSY_MANIFEST_ABS="$(pwd)/$TSY_MANIFEST"
 ENV_ARGS=("BONG_TERRAIN_RASTER_PATH=$MANIFEST_ABS")
@@ -336,3 +354,6 @@ else
 fi
 
 echo "==> Done. Connect to localhost:25565"
+}
+
+bong_server_with_lock restart_bong_server

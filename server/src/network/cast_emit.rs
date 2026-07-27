@@ -538,7 +538,22 @@ fn set_cast_cooldown(
 ) {
     match casting.source {
         CastSource::QuickSlot => quick_bindings.set_cooldown(slot, until_tick),
-        CastSource::SkillBar => skillbar_bindings.set_cooldown(slot, until_tick),
+        // bughunt skillbar-rebind-cooldown-reset：SkillBarBindings 的冷却按 skill_id
+        // 记账（不再按槽位），这里必须用 Casting.skill_id 而非 slot 作为 key——所有
+        // 生产 SkillBar Casting 构造点都无条件填了 skill_id（见 dugu_v2/skills.rs、
+        // sword_basics.rs、burst_meridian.rs 等 insert_casting/insert_instant_cast），
+        // None 分支只是防御性兜底，理论不可达。
+        CastSource::SkillBar => {
+            if let Some(skill_id) = casting.skill_id.as_deref() {
+                skillbar_bindings.set_cooldown(skill_id, until_tick);
+            } else {
+                tracing::warn!(
+                    "[bong][network][cast] set_cast_cooldown: SkillBar Casting 缺 skill_id \
+                     (slot={slot})，无法写入冷却——所有生产路径构造 SkillBar Casting 时都应带 \
+                     skill_id，这里出现 None 说明某条构造路径遗漏了该字段"
+                );
+            }
+        }
     }
 }
 
@@ -1270,6 +1285,97 @@ mod tests {
         assert!(!bindings.is_on_cooldown(99, 0));
         bindings.set_cooldown(99, 100);
         assert!(!bindings.is_on_cooldown(99, 50));
+    }
+
+    /// 供 `set_cast_cooldown` 单测复用的最小 `Casting`。
+    fn minimal_skillbar_casting(source: CastSource, slot: u8, skill_id: Option<&str>) -> Casting {
+        Casting {
+            source,
+            slot,
+            started_at_tick: 0,
+            duration_ticks: 1,
+            started_at_ms: 0,
+            duration_ms: 50,
+            bound_instance_id: None,
+            start_position: DVec3::ZERO,
+            complete_cooldown_ticks: 1,
+            skill_id: skill_id.map(str::to_string),
+            skill_config: None,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // bughunt skillbar-rebind-cooldown-reset — `set_cast_cooldown` 的 SkillBar 分支
+    // 改为按 `Casting.skill_id` 记账（不再按 `slot`），锁住该行为并覆盖缺 skill_id
+    // 的防御性兜底分支。
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn set_cast_cooldown_skillbar_branch_keys_by_skill_id_not_slot() {
+        let casting = minimal_skillbar_casting(CastSource::SkillBar, 5, Some("dugu.eclipse"));
+        let mut quick_bindings = QuickSlotBindings::default();
+        let mut skillbar_bindings = SkillBarBindings::default();
+
+        set_cast_cooldown(
+            &casting,
+            &mut quick_bindings,
+            &mut skillbar_bindings,
+            5,
+            200,
+        );
+
+        assert!(
+            skillbar_bindings.is_on_cooldown("dugu.eclipse", 100),
+            "SkillBar 分支必须按 Casting.skill_id（而非 slot）写入 SkillBarBindings 冷却"
+        );
+        assert!(
+            !quick_bindings.is_on_cooldown(5, 100),
+            "SkillBar 来源不应误写 QuickSlotBindings（两套 bindings 必须互不干扰）"
+        );
+    }
+
+    #[test]
+    fn set_cast_cooldown_quickslot_branch_still_keys_by_slot() {
+        // 对照：QuickSlotBindings 是 bug 修复范围之外的既有设计，仍按 slot 记账，不受影响。
+        let casting = minimal_skillbar_casting(CastSource::QuickSlot, 7, None);
+        let mut quick_bindings = QuickSlotBindings::default();
+        let mut skillbar_bindings = SkillBarBindings::default();
+
+        set_cast_cooldown(
+            &casting,
+            &mut quick_bindings,
+            &mut skillbar_bindings,
+            7,
+            200,
+        );
+
+        assert!(quick_bindings.is_on_cooldown(7, 100));
+        assert!(
+            skillbar_bindings.cooldowns.is_empty(),
+            "QuickSlot 来源不应写入 SkillBarBindings 的 cooldowns map"
+        );
+    }
+
+    #[test]
+    fn set_cast_cooldown_skillbar_branch_missing_skill_id_is_defensive_noop() {
+        // 理论不可达的防御性分支：所有生产 SkillBar Casting 构造点都填了 skill_id，
+        // 这里锁住"万一没填"时不 panic、也不产生任何 cooldowns entry。
+        let casting = minimal_skillbar_casting(CastSource::SkillBar, 2, None);
+        let mut quick_bindings = QuickSlotBindings::default();
+        let mut skillbar_bindings = SkillBarBindings::default();
+
+        set_cast_cooldown(
+            &casting,
+            &mut quick_bindings,
+            &mut skillbar_bindings,
+            2,
+            200,
+        );
+
+        assert!(
+            skillbar_bindings.cooldowns.is_empty(),
+            "缺 skill_id 时不应产生任何 cooldowns entry（无 key 可写）"
+        );
     }
 
     #[test]

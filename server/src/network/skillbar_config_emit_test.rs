@@ -165,7 +165,7 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
         },
     ));
     assert!(bindings.set(1, SkillSlot::Item { instance_id: 42 }));
-    bindings.set_cooldown(0, 70);
+    bindings.set_cooldown("burst_meridian.beng_quan", 70);
 
     let skillbar = emit_and_collect_skillbar_config(
         ItemRegistry::from_map(HashMap::from([(
@@ -200,6 +200,61 @@ fn skillbar_config_emit_serializes_skill_item_and_cooldown() {
                 && icon_texture.is_empty()
     ));
     assert!(skillbar.cooldown_until_ms[0] > 0);
+}
+
+/// bughunt skillbar-rebind-cooldown-reset —— 冷却按 skill_id 记账后，同一招式绑在
+/// 两个槽位必须在 wire payload 里显示**相同**的非零冷却（旧的按槽位数组实现下，
+/// 只有真正 cast 过的那个槽会显示冷却，另一个槽恒 0——那正是"绑多槽绕过冷却"的
+/// 可利用信号）。同时验证 Item 槽即便与某个恰好同名的 skill_id 冷却 entry 共存，
+/// 也恒报 0（Item 槽从不查 cooldowns map）。
+#[test]
+fn skillbar_config_emit_same_skill_bound_to_two_slots_reports_identical_cooldown() {
+    let mut bindings = SkillBarBindings::default();
+    assert!(bindings.set(
+        0,
+        SkillSlot::Skill {
+            skill_id: "burst_meridian.beng_quan".to_string(),
+        },
+    ));
+    assert!(bindings.set(
+        4,
+        SkillSlot::Skill {
+            skill_id: "burst_meridian.beng_quan".to_string(),
+        },
+    ));
+    assert!(bindings.set(8, SkillSlot::Item { instance_id: 42 }));
+    bindings.set_cooldown("burst_meridian.beng_quan", 70);
+
+    let mut inventory = empty_inventory();
+    inventory.containers[0].items.push(PlacedItemState {
+        row: 0,
+        col: 0,
+        instance: item_instance(42, "tea"),
+    });
+
+    let skillbar = emit_and_collect_skillbar_config(
+        ItemRegistry::from_map(HashMap::from([(
+            "tea".to_string(),
+            template("tea", "清茶"),
+        )])),
+        10,
+        bindings,
+        Some(inventory),
+    );
+
+    assert!(
+        skillbar.cooldown_until_ms[0] > 0,
+        "槽 0（beng_quan）应显示冷却"
+    );
+    assert_eq!(
+        skillbar.cooldown_until_ms[0], skillbar.cooldown_until_ms[4],
+        "同一 skill_id 绑在槽 0 和槽 4，两槽下发的 cooldown_until_ms 必须完全一致——\
+         按 slot 记账的旧实现下这里会是 0（漏了另一槽的冷却），恰是「绑多槽绕过冷却」的信号"
+    );
+    assert_eq!(
+        skillbar.cooldown_until_ms[8], 0,
+        "Item 槽恒报 0，不查 cooldowns map（即便有同名 skill_id 冷却 entry 存在）"
+    );
 }
 
 /// plan-skill-av-relink-v1 P3 —— 全部 technique 逐条对拍：Skill 槽下发的

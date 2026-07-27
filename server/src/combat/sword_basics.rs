@@ -535,7 +535,7 @@ fn cast_sword_thrust(
 fn cast_sword_attack(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     target: Option<Entity>,
     technique: SwordTechnique,
 ) -> CastResult {
@@ -543,7 +543,7 @@ fn cast_sword_attack(
     // 冷却照走）。命中走 AttackIntent —— target=Some 时正常命中，None 时 resolver 跳过即空挥。
     // 不自动锁定、不改战斗解析、无误伤（用户选 Option B：只拆门禁）。
     let now_tick = current_tick(world);
-    if is_on_cooldown(world, caster, slot, now_tick) {
+    if is_on_cooldown(world, caster, technique.id(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if !has_sword(world, caster) {
@@ -563,7 +563,7 @@ fn cast_sword_attack(
     set_cooldown(
         world,
         caster,
-        slot,
+        technique.id(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     let qi_invest = drain_sword_qi_for_hit(world, caster);
@@ -686,11 +686,11 @@ fn emit_attack_particle(
 fn cast_sword_parry(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
-    slot: u8,
+    _slot: u8,
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_on_cooldown(world, caster, slot, now_tick) {
+    if is_on_cooldown(world, caster, SwordTechnique::Parry.id(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     if !has_sword(world, caster) {
@@ -710,7 +710,7 @@ fn cast_sword_parry(
     set_cooldown(
         world,
         caster,
-        slot,
+        SwordTechnique::Parry.id(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     if let Some(mut statuses) = world.get_mut::<StatusEffects>(caster) {
@@ -746,7 +746,7 @@ fn cast_sword_infuse(
     _target: Option<Entity>,
 ) -> CastResult {
     let now_tick = current_tick(world);
-    if is_on_cooldown(world, caster, slot, now_tick) {
+    if is_on_cooldown(world, caster, SwordTechnique::Infuse.id(), now_tick) {
         return rejected(CastRejectReason::OnCooldown);
     }
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
@@ -782,7 +782,7 @@ fn cast_sword_infuse(
     set_cooldown(
         world,
         caster,
-        slot,
+        SwordTechnique::Infuse.id(),
         now_tick.saturating_add(profile.cooldown_ticks),
     );
     insert_casting(
@@ -888,15 +888,25 @@ fn spend_stamina(world: &mut bevy_ecs::world::World, caster: Entity, amount: f32
     stamina.last_drain_tick = Some(now_tick);
 }
 
-fn is_on_cooldown(world: &bevy_ecs::world::World, caster: Entity, slot: u8, now_tick: u64) -> bool {
+fn is_on_cooldown(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+    now_tick: u64,
+) -> bool {
     world
         .get::<SkillBarBindings>(caster)
-        .is_some_and(|bindings| bindings.is_on_cooldown(slot, now_tick))
+        .is_some_and(|bindings| bindings.is_on_cooldown(skill_id, now_tick))
 }
 
-fn set_cooldown(world: &mut bevy_ecs::world::World, caster: Entity, slot: u8, until_tick: u64) {
+fn set_cooldown(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    skill_id: &str,
+    until_tick: u64,
+) {
     if let Some(mut bindings) = world.get_mut::<SkillBarBindings>(caster) {
-        bindings.set_cooldown(slot, until_tick);
+        bindings.set_cooldown(skill_id, until_tick);
     }
 }
 
