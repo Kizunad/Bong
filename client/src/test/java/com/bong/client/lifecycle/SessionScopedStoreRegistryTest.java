@@ -14,9 +14,9 @@ class SessionScopedStoreRegistryTest {
     void clearsEveryHandleOnceInDeclarationOrder() {
         List<String> calls = new ArrayList<>();
         List<SessionStoreHandle> handles = List.of(
-            handle("com.bong.test.FirstStore", () -> calls.add("first")),
-            handle("com.bong.test.SecondStore", () -> calls.add("second")),
-            handle("com.bong.test.ThirdStore", () -> calls.add("third"))
+            handle(FirstStore.class, () -> calls.add("first")),
+            handle(SecondStore.class, () -> calls.add("second")),
+            handle(ThirdStore.class, () -> calls.add("third"))
         );
 
         SessionScopedStoreRegistry.clearAllOnDisconnect(handles, failure -> {
@@ -36,12 +36,12 @@ class SessionScopedStoreRegistryTest {
         RuntimeException expected = new IllegalStateException("broken store");
         List<SessionScopedStoreRegistry.StoreClearFailure> failures = new ArrayList<>();
         List<SessionStoreHandle> handles = List.of(
-            handle("com.bong.test.FirstStore", () -> calls.add("first")),
-            handle("com.bong.test.BrokenStore", () -> {
+            handle(FirstStore.class, () -> calls.add("first")),
+            handle(BrokenStore.class, () -> {
                 calls.add("broken");
                 throw expected;
             }),
-            handle("com.bong.test.LastStore", () -> calls.add("last"))
+            handle(LastStore.class, () -> calls.add("last"))
         );
 
         SessionScopedStoreRegistry.clearAllOnDisconnect(handles, failures::add);
@@ -52,7 +52,7 @@ class SessionScopedStoreRegistryTest {
             "单个 Store 的 RuntimeException 不得阻断后续断线清理"
         );
         assertEquals(1, failures.size(), "每个失败 Store 应报告一次且仅一次");
-        assertEquals("com.bong.test.BrokenStore", failures.get(0).fqcn());
+        assertEquals(BrokenStore.class.getName(), failures.get(0).fqcn());
         assertEquals(expected, failures.get(0).cause());
     }
 
@@ -62,7 +62,7 @@ class SessionScopedStoreRegistryTest {
         AssertionError actual = assertThrows(
             AssertionError.class,
             () -> SessionScopedStoreRegistry.clearAllOnDisconnect(
-                List.of(handle("com.bong.test.FatalStore", () -> {
+                List.of(handle(FatalStore.class, () -> {
                     throw expected;
                 })),
                 failure -> {
@@ -78,8 +78,8 @@ class SessionScopedStoreRegistryTest {
     void rejectsDuplicateFqcnBeforeAnyClearRuns() {
         List<String> calls = new ArrayList<>();
         List<SessionStoreHandle> handles = List.of(
-            handle("com.bong.test.DuplicateStore", () -> calls.add("first")),
-            handle("com.bong.test.DuplicateStore", () -> calls.add("second"))
+            handle(DuplicateStore.class, () -> calls.add("first")),
+            handle(DuplicateStore.class, () -> calls.add("second"))
         );
 
         IllegalArgumentException exception = assertThrows(
@@ -89,7 +89,7 @@ class SessionScopedStoreRegistryTest {
         );
 
         assertTrue(
-            exception.getMessage().contains("com.bong.test.DuplicateStore"),
+            exception.getMessage().contains(DuplicateStore.class.getName()),
             "重复登记失败应指出具体 FQCN，实际=" + exception.getMessage()
         );
         assertTrue(calls.isEmpty(), "重复 key 必须在任何清理副作用前 fail-fast");
@@ -106,21 +106,51 @@ class SessionScopedStoreRegistryTest {
     }
 
     @Test
-    void handleRejectsBlankFqcnAndNullClearer() {
+    void handleDerivesFqcnFromStoreTypeAndRejectsNullInputs() {
+        SessionStoreHandle handle = handle(FirstStore.class, () -> {
+        });
+
+        assertEquals(
+            FirstStore.class.getName(),
+            handle.fqcn(),
+            "handle 身份必须从 Store class 派生，调用方不得手填可与 clearer 脱节的 FQCN"
+        );
+        assertEquals(FirstStore.class, handle.storeType());
         assertThrows(
-            IllegalArgumentException.class,
-            () -> new SessionStoreHandle(" ", () -> {
+            NullPointerException.class,
+            () -> SessionStoreHandle.forStore(null, () -> {
             }),
-            "空白 FQCN 无法参与 source manifest 对拍，必须拒绝"
+            "null Store class 无法派生 manifest 身份，必须在构造时拒绝"
         );
         assertThrows(
             NullPointerException.class,
-            () -> new SessionStoreHandle("com.bong.test.NullStore", null),
+            () -> SessionStoreHandle.forStore(FirstStore.class, null),
             "null clearer 会让断线时延迟 NPE，必须在构造时拒绝"
         );
     }
 
-    private static SessionStoreHandle handle(String fqcn, SessionScopedStore clearer) {
-        return new SessionStoreHandle(fqcn, clearer);
+    private static SessionStoreHandle handle(Class<?> storeType, SessionScopedStore clearer) {
+        return SessionStoreHandle.forStore(storeType, clearer);
+    }
+
+    private static final class FirstStore {
+    }
+
+    private static final class SecondStore {
+    }
+
+    private static final class ThirdStore {
+    }
+
+    private static final class BrokenStore {
+    }
+
+    private static final class LastStore {
+    }
+
+    private static final class FatalStore {
+    }
+
+    private static final class DuplicateStore {
     }
 }

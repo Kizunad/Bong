@@ -30,7 +30,7 @@
 ### #1 注册机制：显式静态 adapter registry
 
 **决议**：
-1. `SessionScopedStore` 只定义生产语义 `void clearOnDisconnect()`；中央 registry 保存显式、强类型 adapter（method reference / 命名 handle），不要求现有静态 utility Store 被实例化。
+1. `SessionScopedStore` 只定义生产语义 `void clearOnDisconnect()`；中央 registry 保存显式、强类型 adapter（由目标 Store 的 `Class<?>` 派生 FQCN 身份，并绑定 method reference / 命名 handle），不要求现有静态 utility Store 被实例化。调用方不得手填与 clearer 相互独立的身份字符串；P1/P2 接入每个实际 adapter 时另以 Store 行为 pin 证明清的是对应 Store。
 2. 禁止构造器自注册、运行时反射和注解扫描。多数 Store 是 private constructor + static state，构造器路径并不会被业务触发；显式 manifest 才能稳定 grep、review 和源码扫描。
 3. `BongNetworkHandler.disconnectSession(...)` 的原子边界不变：先 `ClientConnectionStatusStore.invalidateSession(handler, disconnectedAtMs)`，仅 active token 失活成功才在同一 client-thread task 清 registry。旧 handler 的迟到 DISCONNECT 不得清新 session。
 
@@ -50,7 +50,7 @@
 **决议**：
 1. P0 manifest 以 production source root 下的 FQCN 为唯一键，覆盖 P0 基线的全部 108 个业务 `*Store.java`；每个业务文件必须恰好落入 session-scoped、persistent-config、constant 三类之一。新增的 `SessionScopedStore.java` 接口虽匹配文件后缀，但作为 lifecycle infrastructure 由 source guard 单独显式排除，不能被误计为第 109 个业务 Store；registry / catalog 类自身不以 `*Store.java` 命名。
 2. 当前明确例外是 `HudLayoutPreferenceStore`（persistent-config，断线保留用户 HUD 偏好）和 `ArmorProfileStore`（constant，固定护甲 profile 表）。106 个 session-scoped Store 中，`ClientConnectionStatusStore` 是 token-gated 连接状态机：它由 `invalidateSession(handler, disconnectedAtMs)` 在 registry 之前按 handler 精确失活，不得再被无参全局 clear；其余业务 Store 必须在 P3 前全部有生产 clear 并登记。
-3. 测试以 `Files.walk` 扫描 `client/src/main/java/com/bong/client`，用排序后的相对路径 / FQCN 比较“发现集 = manifest 三类并集”，并断言分类互斥、registry-managed session 集 = registry 集；不只硬编码数量 108，也不扫描 test / gametest / build-generated。
+3. 测试以 `Files.walk` 扫描 `client/src/main/java/com/bong/client`，用排序后的相对路径 / FQCN 比较“发现集 = manifest 三类并集”，并断言分类互斥；登记强制分阶段启用：P0 明确 pin registry 为空且登记项只能属于 registry-managed session 集，P1/P2 对迁移清单做精确阶段 pin，P3 再断言“registry-managed session 集 = registry 集”。不只硬编码数量 108，也不扫描 test / gametest / build-generated。
 
 **落点**：`client/src/main/java/com/bong/client/hud/HudLayoutPreferenceStore.java:15-51`；`client/src/main/java/com/bong/client/combat/ArmorProfileStore.java:45-86`；`client/src/test/java/com/bong/client/BongNetworkHandlerTest.java:560-575`；plan P0/P3。
 

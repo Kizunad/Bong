@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -99,7 +100,13 @@ class ClientStoreScopeManifestTest {
     }
 
     @Test
-    void p0RegistryIsAnExplicitSessionScopeSubset() {
+    void p0RegistryIsEmptyAndWithinRegistryManagedSessionScope() {
+        assertEquals(
+            List.of(),
+            SessionScopedStoreRegistry.registeredFqcnsForTests(),
+            "P0 registry 必须为空，保证本阶段只冻结框架而不改变既有生产断线行为；P1 首次迁移时再显式更新此 pin"
+        );
+
         Set<String> registered = new HashSet<>(SessionScopedStoreRegistry.registeredFqcnsForTests());
         assertEquals(
             registered.size(),
