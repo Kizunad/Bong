@@ -102,7 +102,7 @@
 2. `Missing` 与 `Loaded` 可写；`Failed` 即使为维持会话创建 runtime default，也必须携带 `WriteBlocked` provenance。即时 Changed、周期 autosave、disconnect、shutdown、export 与聚合 transaction 全部只能通过 `GuardedSlice::write_permit` 取得不可直接构造的 writer permit；公开 API 不提供丢弃 load provenance 的拆解入口，新会话成功重载才恢复写资格。
 3. 默认体验为**按 slice 降级**：展示/非关键 slice 可只读运行；core、inventory、craft、lifespan/Lifecycle、cultivation/qi 等高价值或跨 slice mutation 在依赖集读取失败时拒绝可变 gameplay。关键世界账本使用 `RefuseStartup`。自动回滚整库备份不进入在线加载路径，只保留人工审计恢复。
 
-**落点**：`server/src/player/state.rs:173-182`、`server/src/player/mod.rs:221-272,470-486,629-645`（KnownTechniques 正向范式）；`server/src/player/state.rs:434-573`（待推广 fallback）；plan §阶段 P2、§bot 验收场景 #3。
+**落点**：`server/src/player/state.rs:173-182`、`server/src/player/mod.rs:463-501,645-683`（KnownTechniques 正向范式）；`server/src/player/state.rs:434-573`（待推广 fallback）；plan §阶段 P2、§bot 验收场景 #3。
 
 ### #3 Shutdown registry：复用 `AppExit → Last`，失败隔离
 
@@ -120,12 +120,12 @@
 2. deadline 持久化 `remaining_ticks + saved_at_wall + offline_policy`：online-only 重建为 `new_tick + remaining`；offline-continuous 先按 `MILLIS_PER_TICK` 扣除 wall elapsed，再重建本地 deadline。age/elapsed 使用 observed age + pending elapsed；history/audit tick 不参与新进程 deadline 比较。
 3. rebase 在 hydrate 后、首个 live Update 前只执行一次。旧 raw deadline 无法精确恢复时必须写明保守迁移，不得伪造精确值。
 
-**落点**：`server/src/time.rs:1`；`server/src/persistence/mod.rs:2826-2919`（void action 反例）；`server/src/mineral/persistence.rs:57-71,180-259`（mineral 反例）；`server/src/world/heartbeat.rs:491-584,3025-3153`（正向范式）；plan §阶段 P3、§bot 验收场景 #4。
+**落点**：`server/src/time.rs:1`；`server/src/persistence/mod.rs:773-784,2860-2959`（void action hydrate 与存取/恢复反例）；`server/src/mineral/persistence.rs:57-71,180-259`（mineral 反例）；`server/src/world/heartbeat.rs:491-584,3025-3153`（正向范式）；plan §阶段 P3、§bot 验收场景 #4。
 
 ### #5 Autosave 竞态：write authority + dirty revision/CAS
 
 **决议**：
-1. 每个 `WriteDomain` 的 mutation 递增 `DirtyRevision`；`DirtyTracker` 只能凭同一 `WriteBinding(domain + authority)` 的 write permit 产生 snapshot。写失败不产生 receipt、永不清 dirty；writer 成功后由 `PersistedRevisionFence::commit` 产生不可直接构造的 domain-bound `DurableWriteReceipt`，tracker 仅消费匹配当前 revision 的 receipt 才能 ack clean。
+1. 每个 `WriteDomain` 的 mutation 递增 `DirtyRevision`；`DirtyTracker` 只能凭同一具体 `GuardedSlice` subject 的 `WriteBinding(domain + authority)` write permit 产生 snapshot。写失败不产生 receipt、永不清 dirty；writer 成功后由 persistence-private durable capability + `PersistedRevisionFence::commit` 产生不可直接构造的 subject-bound `DurableWriteReceipt`，tracker 仅消费匹配同一 subject 与当前 revision 的 receipt 才能 ack clean。
 2. revision 只保护内存 dirty acknowledgement，不能单独阻止旧 snapshot 晚到覆盖数据库。registry 对同一 domain 强制唯一 authority 和一致 ordering；每个 domain 选择单一串行 writer，或由 `DurableWriteRequest` 把 expected persisted revision 纳入 SQL CAS/单调拒绝。
 3. 字段写权威必须明确：事件拥有的字段不得被周期快照重新断言。跨 inventory/session/cultivation/ledger/dropped-loot 的原子 checkpoint 保持领域 transaction，不拆散。
 
@@ -144,10 +144,10 @@
 
 **决议**：
 1. 同一持久化主体在同一 schedule tick 内出现 disconnect 与 reconnect 时，必须同步完成旧实体的 disconnect save，成功后才允许新实体 hydrate；保存失败则跳过载入并保留失败，禁止从旧 durable row 重建后继续运行。
-2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部保存成功后，才开始任何 `hydrate`。入口用稳定 `handoff_key` 绑定主体；任一保存失败都会跳过整个载入阶段。
+2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才开始任何 `hydrate`。入口用稳定 `handoff_key` 绑定主体；任一保存失败或返回 `SkippedBlocked` 都会跳过整个载入阶段。
 3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。
 
-**落点**：`server/src/persistence/slice.rs:124-149,191-203,446-532,1347-1414` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
+**落点**：`server/src/persistence/slice.rs:124-149,191-203,446-536,1447-1575` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
 
 ### #8 时间 / deadline 测试：只用注入时钟（#1289 review 继承项）
 
@@ -156,4 +156,4 @@
 2. deadline rebase helper继续接受显式时间参数；contract pins 禁止调用 `SystemTime::now()`、`Instant::now()` 或依赖测试执行恰好未跨秒的 exact assertion。
 3. 生产 adapter 在调用边界采样一次时间后注入；同一 dispatch 内复用该快照，避免一次操作跨秒得到不一致字段。
 
-**落点**：`server/src/persistence/slice.rs:133-150,407-425,468-485,1026-1045,1056-1070,1594-1637` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #4。
+**落点**：`server/src/persistence/slice.rs:133-150,407-425,469-485,1159-1178,1189-1203,1865-1907` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #4。
