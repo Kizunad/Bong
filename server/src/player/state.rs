@@ -166,8 +166,20 @@ pub struct LoadedPlayerSlices {
     /// 棺材档级：Some(grade) = 在棺内 + 档级；None = 不在棺内（与 in_coffin=false 语义对齐）
     pub coffin_grade: Option<CoffinGrade>,
     pub skill_set: SkillSet,
-    pub known_techniques: KnownTechniques,
+    pub known_techniques: LoadedKnownTechniques,
     pub(crate) ui_prefs: PlayerUiPrefs,
+}
+
+/// 功法加载结果。`LoadFailed` 表示持久化状态无法可靠读取：行存在但读取/解析失败
+/// （JSON 损坏、SELECT 报错），或连接都打不开导致**行状态完全不可知**——两种情况都
+/// 绝不允许用 `KnownTechniques::default()` 覆盖写回（会把玩家全部功法+熟练度
+/// 永久清零）；消费侧必须挂 `KnownTechniquesLoadFailed` 写保护标记跳过所有落盘路径。
+/// 唯一能确认「无数据」的是连接成功且查到无行（真新玩家），归入 `Loaded(default)`，
+/// 可正常写回。
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoadedKnownTechniques {
+    Loaded(KnownTechniques),
+    LoadFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -445,7 +457,9 @@ pub fn load_player_slices(
                 in_coffin: false,
                 coffin_grade: None,
                 skill_set: SkillSet::default(),
-                known_techniques: KnownTechniques::default(),
+                // 连接都打不开 = 行状态不可知（DB busy/文件不可达），
+                // 必须按 LoadFailed 写保护，绝不能当「新玩家」用 default 覆盖写回
+                known_techniques: LoadedKnownTechniques::LoadFailed,
                 ui_prefs: PlayerUiPrefs::default(),
             };
         }
@@ -522,14 +536,14 @@ pub fn load_player_slices(
         }
     };
     let known_techniques = match load_player_known_techniques_from_sqlite(&connection, username) {
-        Ok(known_techniques) => known_techniques,
+        Ok(known_techniques) => LoadedKnownTechniques::Loaded(known_techniques),
         Err(error) => {
-            tracing::warn!(
-                "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; using default known techniques",
+            tracing::error!(
+                "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; blocking known techniques persistence for this session to protect the stored row",
                 username,
                 persistence.db_path().display()
             );
-            KnownTechniques::default()
+            LoadedKnownTechniques::LoadFailed
         }
     };
     let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
@@ -935,6 +949,11 @@ pub fn export_player_bundle(
     username: &str,
 ) -> io::Result<PlayerExportBundle> {
     let loaded = load_player_slices(persistence, username);
+    let LoadedKnownTechniques::Loaded(known_techniques) = loaded.known_techniques else {
+        return Err(io::Error::other(format!(
+            "known techniques for `{username}` could not be reliably loaded; refusing to export a default table in its place"
+        )));
+    };
     let connection = open_player_connection(persistence)?;
     let current_char_id: String = connection
         .query_row(
@@ -962,7 +981,7 @@ pub fn export_player_bundle(
         last_dimension: loaded.last_dimension,
         inventory: loaded.inventory,
         skill_set: loaded.skill_set,
-        known_techniques: loaded.known_techniques,
+        known_techniques,
         ui_prefs,
     })
 }
@@ -4139,7 +4158,11 @@ mod player_state_tests {
         let snapshot: serde_json::Value = serde_json::from_str(&known_techniques_json)
             .expect("known techniques JSON should decode");
 
-        assert_eq!(loaded.known_techniques, known_techniques);
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::Loaded(known_techniques),
+            "roundtrip 后应加载出与写入一致的功法表（Loaded 变体），否则持久化链路本身已损坏"
+        );
         assert_eq!(
             snapshot
                 .pointer("/entries/0/id")
@@ -4151,6 +4174,172 @@ mod player_state_tests {
             .and_then(serde_json::Value::as_f64)
             .expect("dash proficiency should persist");
         assert!((proficiency - 0.42).abs() < 1e-6);
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    fn seed_dash_known_techniques_row(persistence: &PlayerStatePersistence) -> KnownTechniques {
+        let known_techniques = KnownTechniques {
+            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                id: "movement.dash".to_string(),
+                proficiency: 0.42,
+                active: true,
+            }],
+        };
+        save_player_state(persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        save_player_known_techniques_slice(persistence, "Azure", &known_techniques)
+            .expect("known techniques slice should persist");
+        known_techniques
+    }
+
+    fn corrupt_known_techniques_row(persistence: &PlayerStatePersistence) {
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "UPDATE player_known_techniques SET known_techniques_json = '{not json' WHERE username = ?1",
+                params!["Azure"],
+            )
+            .expect("corrupting known techniques row should succeed");
+    }
+
+    #[test]
+    fn known_techniques_load_returns_load_failed_on_corrupt_json_without_touching_row() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-corrupt-json");
+        seed_dash_known_techniques_row(&persistence);
+        corrupt_known_techniques_row(&persistence);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::LoadFailed,
+            "行存在但 JSON 损坏时必须返回 LoadFailed（禁止兜底 default），\
+             否则 join 后的 Changed flush 会用空表覆盖真实存档"
+        );
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let raw_json: String = connection
+            .query_row(
+                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_known_techniques row should still exist");
+        assert_eq!(
+            raw_json, "{not json",
+            "load 是只读操作，失败路径不得改写/删除已持久化的行"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn known_techniques_load_returns_load_failed_on_sqlite_error() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-sqlite-error");
+        seed_dash_known_techniques_row(&persistence);
+        // 注入 sqlite 层错误（非 JSON 解析错误）：表被删后 SELECT 直接报错，
+        // 模拟 DB 结构损坏 / 迁移中途等「行状态不可知」场景。
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute_batch("DROP TABLE player_known_techniques;")
+            .expect("dropping table should succeed");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::LoadFailed,
+            "sqlite 层错误（表缺失/锁竞争等）必须返回 LoadFailed 而非 default，\
+             因为无法区分「无数据」与「有数据但读不到」"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn known_techniques_load_returns_load_failed_when_connection_cannot_open() {
+        // 锁定 load_player_slices 的连接失败早退分支（open_player_connection 报错）：
+        // 把 db_path 指向一个目录，sqlite 打开必定 SQLITE_CANTOPEN，稳定跨平台复现，
+        // 不依赖文件权限行为。此时行状态完全不可知，必须 LoadFailed 而非「新玩家」。
+        let data_dir = std::env::temp_dir().join(format!(
+            "bong-known-techniques-cantopen-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        let dir_as_db = data_dir.join("bong.db");
+        fs::create_dir_all(&dir_as_db).expect("creating directory placeholder should succeed");
+        let persistence = PlayerStatePersistence::with_db_path(&data_dir, &dir_as_db);
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::LoadFailed,
+            "连接都打不开时行状态不可知，必须返回 LoadFailed 触发写保护，\
+             退化成 Loaded(default) 就会重新打开「空表覆盖真实存档」的丢档路径"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn known_techniques_load_defaults_for_new_player_without_row() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-new-player");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let loaded = load_player_slices(&persistence, "Azure");
+
+        assert_eq!(
+            loaded.known_techniques,
+            LoadedKnownTechniques::Loaded(KnownTechniques::default()),
+            "DB 无行 = 真新玩家，应返回 Loaded(default) 并允许后续正常落盘，\
+             不得与「有行但读取失败」混为一谈"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn known_techniques_load_recovers_after_corrupt_row_is_repaired() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-repair-recovery");
+        let original = seed_dash_known_techniques_row(&persistence);
+        corrupt_known_techniques_row(&persistence);
+        assert_eq!(
+            load_player_slices(&persistence, "Azure").known_techniques,
+            LoadedKnownTechniques::LoadFailed,
+            "前置条件：损坏行应先观察到 LoadFailed"
+        );
+
+        // 恢复路径：损坏行被合法写路径修复（如人工修复 / 另一次健康会话的落盘）后，
+        // 下一次加载应完整恢复，不残留任何失败状态。
+        save_player_known_techniques_slice(&persistence, "Azure", &original)
+            .expect("repairing the row via the legit save path should succeed");
+
+        assert_eq!(
+            load_player_slices(&persistence, "Azure").known_techniques,
+            LoadedKnownTechniques::Loaded(original),
+            "行修复后重新加载应回到 Loaded(原数据)——失败状态只属于单次会话，不粘滞"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn export_player_bundle_refuses_when_known_techniques_load_fails() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-export-refusal");
+        seed_dash_known_techniques_row(&persistence);
+        corrupt_known_techniques_row(&persistence);
+
+        let error = export_player_bundle(&persistence, "Azure")
+            .expect_err("行损坏时导出必须失败，而不是静默导出一张 default 空表");
+        assert!(
+            error.to_string().contains("refusing to export"),
+            "导出失败原因应指明是功法行读取失败的写保护拒绝，实际：{error}"
+        );
 
         let _ = fs::remove_dir_all(&data_dir);
     }

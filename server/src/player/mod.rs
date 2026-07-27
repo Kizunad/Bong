@@ -6,8 +6,8 @@ pub mod state;
 use self::state::{
     canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
     save_player_known_techniques_slice, save_player_lifespan_slice_with_coffin,
-    save_player_skill_slice, save_player_slices_with_coffin, save_player_slow_slice, PlayerState,
-    PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_skill_slice, save_player_slices_with_coffin, save_player_slow_slice,
+    LoadedKnownTechniques, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
 use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
@@ -17,7 +17,7 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, KnownTechniquesLoadFailed};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -31,6 +31,7 @@ use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::spawn_tutorial::TutorialState;
 use valence::entity::entity::Flags;
 use valence::message::SendMessage;
+use valence::prelude::bevy_ecs::query::Has;
 use valence::prelude::Despawned;
 use valence::prelude::{
     bevy_ecs, Added, App, AppExit, Changed, Client, Commands, Component, Entity, EntityLayerId,
@@ -77,7 +78,12 @@ type ChangedInventoryClientsQueryFilter = (
 type ChangedSkillClientsQueryItem<'a> = (&'a Username, &'a SkillSet);
 type ChangedSkillClientsQueryFilter = (With<Client>, Changed<SkillSet>);
 type ChangedKnownTechniquesClientsQueryItem<'a> = (&'a Username, &'a KnownTechniques);
-type ChangedKnownTechniquesClientsQueryFilter = (With<Client>, Changed<KnownTechniques>);
+// Without<KnownTechniquesLoadFailed>：加载失败会话禁止把 default 表写回覆盖真实存档
+type ChangedKnownTechniquesClientsQueryFilter = (
+    With<Client>,
+    Changed<KnownTechniques>,
+    Without<KnownTechniquesLoadFailed>,
+);
 type CultivationBundleQueryItem<'a> = (
     &'a Username,
     &'a Cultivation,
@@ -217,7 +223,11 @@ pub(crate) fn attach_player_state_to_joined_clients(
         let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()
             || !persisted.skill_set.consumed_scrolls.is_empty();
-        let restored_technique = !persisted.known_techniques.entries.is_empty();
+        let (known_techniques, techniques_load_failed) = match persisted.known_techniques {
+            LoadedKnownTechniques::Loaded(known_techniques) => (known_techniques, false),
+            LoadedKnownTechniques::LoadFailed => (KnownTechniques::default(), true),
+        };
+        let restored_technique = !known_techniques.entries.is_empty();
         let last_dimension = persisted.last_dimension;
         let composite_power = persisted.state.composite_power(&Cultivation::default());
         position.set(persisted.position);
@@ -256,8 +266,11 @@ pub(crate) fn attach_player_state_to_joined_clients(
             quick_slot_bindings,
             skill_bar_bindings,
             UnlockedStyles::default(),
-            persisted.known_techniques,
+            known_techniques,
         ));
+        if techniques_load_failed {
+            entity_commands.insert(KnownTechniquesLoadFailed);
+        }
         if let Some(player_inventory) = persisted.inventory {
             entity_commands.insert(player_inventory);
         }
@@ -342,6 +355,7 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&LifespanComponent>,
         Option<&SkillSet>,
         Option<&KnownTechniques>,
+        Has<KnownTechniquesLoadFailed>,
         Option<&CoffinComponent>,
         Option<&CraftSession>,
     )>,
@@ -380,6 +394,7 @@ pub(crate) fn despawn_disconnected_clients(
             lifespan,
             skill_set,
             known_techniques,
+            known_techniques_load_failed,
             coffin,
             craft_session,
         )) = core_players.get(entity)
@@ -452,7 +467,12 @@ pub(crate) fn despawn_disconnected_clients(
                     username.0,
                 ),
             }
-            if let Some(known_techniques) = known_techniques {
+            if known_techniques_load_failed {
+                tracing::warn!(
+                    "[bong][player] skipping known techniques save for disconnected client `{}`: join-time load failed, refusing to overwrite the stored row",
+                    username.0,
+                );
+            } else if let Some(known_techniques) = known_techniques {
                 if let Err(error) = save_player_known_techniques_slice(
                     &persistence,
                     username.0.as_str(),
@@ -496,6 +516,7 @@ fn flush_connected_players_on_shutdown(
             Option<&LifespanComponent>,
             Option<&SkillSet>,
             Option<&KnownTechniques>,
+            Has<KnownTechniquesLoadFailed>,
             Option<&CoffinComponent>,
             Option<&CraftSession>,
         ),
@@ -532,6 +553,7 @@ fn flush_connected_players_on_shutdown(
         lifespan,
         skill_set,
         known_techniques,
+        known_techniques_load_failed,
         coffin,
         craft_session,
     ) in &players
@@ -604,7 +626,12 @@ fn flush_connected_players_on_shutdown(
                 username.0,
             ),
         }
-        if let Some(known_techniques) = known_techniques {
+        if known_techniques_load_failed {
+            tracing::warn!(
+                "[bong][player] skipping known techniques save during shutdown flush for `{}`: join-time load failed, refusing to overwrite the stored row",
+                username.0,
+            );
+        } else if let Some(known_techniques) = known_techniques {
             if let Err(error) = save_player_known_techniques_slice(
                 &persistence,
                 username.0.as_str(),
@@ -1365,6 +1392,278 @@ mod tests {
         assert!(
             app.world().get::<Client>(entity).is_some(),
             "shutdown flush should persist while the player is still connected"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    fn seed_and_corrupt_known_techniques_row(persistence: &PlayerStatePersistence) {
+        crate::player::state::save_player_state(persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        crate::player::state::save_player_known_techniques_slice(
+            persistence,
+            "Azure",
+            &dash_known_techniques(0.42),
+        )
+        .expect("seeding known techniques row should persist");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        connection
+            .execute(
+                "UPDATE player_known_techniques SET known_techniques_json = '{not json' WHERE username = ?1",
+                params!["Azure"],
+            )
+            .expect("corrupting known techniques row should succeed");
+    }
+
+    #[test]
+    fn join_with_corrupt_known_techniques_row_blocks_flush_from_wiping_it() {
+        // C1 回归主锚：损坏行 → join 兜底 default → 同 tick Changed(=Added) flush。
+        // 修复前该 flush 会把 default 空表写回 DB，玩家全部功法+熟练度永久蒸发。
+        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-corrupt-join");
+        seed_and_corrupt_known_techniques_row(&persistence);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(
+            Update,
+            (
+                attach_player_state_to_joined_clients,
+                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        // 多跑一帧：attach 的 insert 经 deferred command 落地后，Changed 过滤在
+        // 下一帧才对 flush 系统可见，两帧覆盖「join 当帧 + 组件落地帧」全窗口。
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<KnownTechniquesLoadFailed>(entity)
+                .is_some(),
+            "加载失败的 join 应给实体挂 KnownTechniquesLoadFailed 写保护标记"
+        );
+        assert_eq!(
+            app.world()
+                .get::<KnownTechniques>(entity)
+                .expect("join should still attach a KnownTechniques component"),
+            &KnownTechniques::default(),
+            "加载失败时会话内组件应为 default（玩家本次会话看到空表，但存档不受损）"
+        );
+        assert_eq!(
+            read_known_techniques_json(&db_path),
+            "{not json",
+            "DB 行必须保持损坏原文原样——任何写回（哪怕合法格式）都意味着真实存档被覆盖"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn join_without_known_techniques_row_flushes_normally_as_new_player() {
+        // 对照组：DB 无行（真新玩家）不挂写保护，后续熟练度增长照常落盘。
+        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-new-join");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(
+            Update,
+            (
+                attach_player_state_to_joined_clients,
+                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<KnownTechniquesLoadFailed>(entity)
+                .is_none(),
+            "真新玩家（无行）不得挂写保护标记，否则整个会话的功法进度都无法持久化"
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(dash_known_techniques(0.58));
+        app.update();
+
+        assert!(
+            (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.58).abs() < 1e-6,
+            "新玩家会话内的功法变更应照常经 Changed flush 落盘"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn disconnect_save_skips_known_techniques_when_load_failed_marker_present() {
+        let (persistence, data_dir, db_path) = sqlite_persistence("known-techniques-disc-guard");
+        seed_and_corrupt_known_techniques_row(&persistence);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-known-techniques-disc-guard",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            PlayerState::default(),
+            dash_known_techniques(0.99),
+            KnownTechniquesLoadFailed,
+        ));
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        assert_eq!(
+            read_known_techniques_json(&db_path),
+            "{not json",
+            "挂写保护标记的实体断线时不得把会话内组件（0.99）写回覆盖损坏前的真实存档"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn shutdown_flush_skips_known_techniques_when_load_failed_marker_present() {
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("known-techniques-shutdown-guard");
+        seed_and_corrupt_known_techniques_row(&persistence);
+
+        let mut app = App::default();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-known-techniques-shutdown-guard",
+        ));
+        app.add_systems(Last, flush_connected_players_on_shutdown);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert((
+            PlayerState::default(),
+            dash_known_techniques(0.99),
+            KnownTechniquesLoadFailed,
+        ));
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        assert_eq!(
+            read_known_techniques_json(&db_path),
+            "{not json",
+            "挂写保护标记的实体在停服 flush 时同样必须跳过功法落盘"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn join_with_unopenable_db_marks_load_failed_and_recovery_preserves_row() {
+        // 锁定「连接打不开」早退分支的全链路契约（review #1288 major finding）：
+        // db_path 指向目录 → open_player_connection 必 SQLITE_CANTOPEN（稳定跨平台，
+        // 不依赖权限行为）→ join 挂写保护标记；DB 恢复可访问后，带标记会话的
+        // Changed flush 仍不得把 default/会话内数据写回覆盖真实存档；
+        // 恢复后的新 join 则完整加载原行、不带标记。
+        let data_dir = unique_temp_dir("known-techniques-cantopen-join");
+        let healthy_db = data_dir.join("healthy.db");
+        bootstrap_sqlite(&healthy_db, "player-mod-cantopen-join")
+            .expect("sqlite bootstrap should succeed");
+        let seed_persistence = PlayerStatePersistence::with_db_path(&data_dir, &healthy_db);
+        crate::player::state::save_player_state(
+            &seed_persistence,
+            "Azure",
+            &PlayerState::default(),
+        )
+        .expect("baseline player state should persist");
+        crate::player::state::save_player_known_techniques_slice(
+            &seed_persistence,
+            "Azure",
+            &dash_known_techniques(0.42),
+        )
+        .expect("seeding known techniques row should persist");
+
+        // 运行时 persistence 指向 bong.db——先以同名目录占位，令连接打开必失败。
+        let db_path = data_dir.join("bong.db");
+        fs::create_dir_all(&db_path).expect("creating directory placeholder should succeed");
+        let persistence = PlayerStatePersistence::with_db_path(&data_dir, &db_path);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.add_systems(
+            Update,
+            (
+                attach_player_state_to_joined_clients,
+                flush_changed_player_known_techniques.after(attach_player_state_to_joined_clients),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<KnownTechniquesLoadFailed>(entity)
+                .is_some(),
+            "连接打不开（行状态不可知）的 join 应挂 KnownTechniquesLoadFailed 写保护标记"
+        );
+        assert_eq!(
+            app.world()
+                .get::<KnownTechniques>(entity)
+                .expect("join should still attach a KnownTechniques component"),
+            &KnownTechniques::default(),
+            "连接失败时会话内组件应为 default（本次会话降级，但不得反向污染存档）"
+        );
+
+        // 模拟 DB 恢复：目录占位撤掉，真实健康库落位到同一路径。
+        fs::remove_dir(&db_path).expect("removing directory placeholder should succeed");
+        fs::rename(&healthy_db, &db_path).expect("restoring healthy db should succeed");
+
+        // 带标记会话内的变更（0.99）不得写回：行必须保持恢复前的 0.42。
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(dash_known_techniques(0.99));
+        app.update();
+        assert!(
+            (dash_proficiency_from_json(&read_known_techniques_json(&db_path)) - 0.42).abs() < 1e-6,
+            "DB 恢复后，加载失败会话的 Changed flush 仍必须被写保护标记拦住，\
+             期望行保持 0.42（真实存档），若被写成 0.99/空表即丢档回归"
+        );
+
+        // 恢复后的新 join（重连）应完整加载原行且不带标记——失败状态不粘滞。
+        let (client_bundle2, _helper2) = create_mock_client("Azure");
+        let entity2 = app.world_mut().spawn(client_bundle2).id();
+        app.update();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<KnownTechniquesLoadFailed>(entity2)
+                .is_none(),
+            "DB 恢复后的新 join 不得再挂写保护标记"
+        );
+        assert_eq!(
+            app.world()
+                .get::<KnownTechniques>(entity2)
+                .expect("recovered join should attach KnownTechniques"),
+            &dash_known_techniques(0.42),
+            "DB 恢复后的新 join 应完整加载原功法行（dash 0.42）"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
