@@ -57,12 +57,14 @@
   - 新增 `qi_drain_survives_heartbeat_zone_inflow_resync`：真实注册 `baolongwang_qi_drain_aura_system` + `heartbeat::zone_qi_inflow_tick` 两个 system 进同一 `App`，推进 `CultivationClock` 触发字段权威重同步，断言 BossDrain 入账不被陈旧 `zone.spirit_qi` 抹掉（修复要求 #5）。
 - `server/src/dandao/tests.rs`（`mod boss_spawn_integration`，PR #1296 回归修复）：`boss_spawn::register` 端到端集成测试早于 `ZoneRegistry` 接入就已存在，上一轮修复未同步给它插入 `ZoneRegistry` 资源，导致 `baolongwang_qi_drain_aura_system` 每 tick 在 `find_zone_mut` 处早退，`boss_spawn_register_drain_system_runs_end_to_end` 断言玩家真元减少撞红。补一份与 `boss_spawn.rs` 同款 `baolongwang_zone_fixture`，给两条集成测试都插入含 `BOSS_HOME_ZONE` 的 `ZoneRegistry`；顺带把 `boss_spawn_register_expel_phase_no_drain` 也接上真实 zone，让它锁住"Expel 阶段跳过吸取"分支本身，而非凑巧靠 zone 缺失早退得出同样结果。
 - `server/src/dandao/boss_spawn.rs`（`mod boss_spawn_tests`，PR #1296 加固）：新增 `boss_home_zone_exists_in_production_zones_json` pin 测试，直接用 `ZoneRegistry::load()` 读生产 `server/zones.json` 断言 `BOSS_HOME_ZONE` 存在——`find_zone_mut` 未命中时是静默早退（无报错），一旦有人改名/删掉这个 zone，BossDrain 会在无任何测试撞红的情况下失效，这条测试把该配置漂移钉在测试期。
+- `server/src/dandao/boss_spawn.rs`（PR #1296 `/review` blocker 修复，2026-07-27）：`/review` 复投 4 位 reviewer 全票 blocker，指出生产 `baolongwang_cavern_deep` 当前 `spirit_qi=-0.729232`（负灵域，约 -36.46 绝对真元点债务）时，实现先把该负值 `.max(0.0)` 归零参与 `qi_release_to_zone` 计算，再用非负 `outcome.zone_after` 直接覆盖 `zone.spirit_qi` 字段权威——单次约 0.35 的小额吸取即可把字段从 -0.729232 跳变为约 +0.007，凭空抹除整笔负灵域债务。修复：保留原始有符号字段值到局部变量 `zone_spirit_qi_before`，`.max(0.0)` 仅继续用作 `WorldQiAccount::set_balance` 非负校验所需的 ledger 输入基线，字段写回改为 `zone_spirit_qi_before + outcome.accepted / QI_ZONE_UNIT_CAPACITY`（在原始有符号值上累加本次实际吸取量，而不是用 floor 过的镜像值覆盖）——债务未被填平前继续为负、只减少 accepted 那部分，填平后自然转正，全程不凭空增减；`zone_spirit_qi_before >= 0` 时与旧写法代数完全等价（`outcome.zone_after / CAP == zone_spirit_qi_before + outcome.accepted / CAP`），非负路径无行为变化。复用既有 `qi_physics::release::qi_release_to_zone` 的 `accepted` 计算，未新增衰减/入账公式，未改动 `qi_physics` 目录任何文件。新增两条回归：`qi_drain_aura_preserves_negative_zone_debt_when_debt_not_fully_repaid`（生产真实值 -0.729232 起步，单 tick 吸取量远小于债务，断言字段仍为负且债务减少量精确等于玩家减少量）、`qi_drain_aura_crosses_zero_exactly_when_drain_exceeds_remaining_debt`（极小负债 -0.001，单 tick 吸取量足以填平并跨零转正，断言跨零后增量同样精确对齐玩家减少量）。
 
 ### 关键 commit
 
 - `c79bc03eb` — 2026-07-27 — 修复暴龙王 BossDrain 只落 ledger 镜像不写 `ZoneRegistry.spirit_qi` 的吞真元漏洞（含全部代码修复 + 5 个新增/改造回归测试）。
 - `869ade73a` — 2026-07-27 — PR #1296：修复 `dandao::tests::boss_spawn_integration` 两条 App 级集成测试未插入 `ZoneRegistry` 导致的回归（`c79bc03eb` 引入）。
 - `e3bfd907e` — 2026-07-27 — PR #1296：加固，新增 `boss_home_zone_exists_in_production_zones_json` pin 测试锁死生产 `zones.json` 必须注册 `BOSS_HOME_ZONE`。
+- `064c1ca04` — 2026-07-27 — PR #1296：修复 `/review` blocker——负灵域字段权威被 floor 过的 ledger 镜像凭空覆盖抹除债务；新增 2 条负灵域回归（债务未填平 / 跨零转正）。
 
 ### 测试结果
 
@@ -74,11 +76,12 @@
 - pin 测试实测：临时把 `server/zones.json` 里 `baolongwang_cavern_deep` 改名后 `boss_home_zone_exists_in_production_zones_json` 立刻撞红，改回后转绿，确认测试真能钉住配置漂移（非空转）。
 - `agent/` 侧 `network::tests::narration_tests::realm_gate_producer_consumer_selector_routes_only_target_player`：新建 worktree 环境缺口（缺 `agent/node_modules/.bin/tsx` 与 `@bong/schema` 构建产物），`npm ci` + `npm run build -w @bong/schema` 后转绿，与本轮 server 代码改动无关。
 - 未跑全量 `cargo test`（按任务约束，交后续全量门禁验证）。
+- 负灵域修复（`064c1ca04`）判据自检：把字段写回临时退回旧写法 `zone.spirit_qi = (outcome.zone_after / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);` 后，`qi_drain_aura_preserves_negative_zone_debt_when_debt_not_fully_repaid` 与 `qi_drain_aura_crosses_zero_exactly_when_drain_exceeds_remaining_debt` 均撞红（字段从 -0.729232 跳变为 +0.007031250 / 跨零增量差值 0.05），恢复后 `cargo test --lib dandao::boss_spawn::` → `24 passed; 0 failed`，`cargo test --lib dandao::tests::boss_spawn_integration::` → `2 passed; 0 failed`；`cargo fmt --check` 干净、`cargo clippy --all-targets -- -D warnings` 干净。
 
 ### 对抗验证
 
 - 无上下文 read-only validator（`general-purpose` agent）对 HEAD `c79bc03eb187fe4a255950b2f25543b0070e6022` 独立复核：**PASS**。覆盖：① 判据自检复现（撞红 2 个测试，恢复后全绿）② 原子性逐行走查（`set_balance` 失败路径先于任何 mutation）③ 确认 `qi_drain_survives_heartbeat_zone_inflow_resync` 真实通过 `app.add_systems` 注册 `zone_qi_inflow_tick` 并靠 `app.update()` 触发，非手塞状态 ④ `git diff origin/main HEAD -- server/src/qi_physics/` 为空，未新增衰减/漂移类常数，写回口径与 `combat/carrier.rs:1382` / `npc/npc_skill.rs:173` / `npc/dormant/mod.rs:2045` 既有范式字节级一致 ⑤ 确认 `ZoneRegistry` 在生产 `Startup` 真实注册（非仅测试可达）。
-- PR #1296（回归修复 + 加固）：无上下文 read-only validator 对最终 HEAD 独立复核，见下方「PR #1296 对抗验证」占位——由本轮流程在 push 前补齐结论与 SHA。
+- PR #1296（`/review` 复投 blocker 修复）：无上下文 read-only validator（`general-purpose` agent）对 HEAD `064c1ca044547b60e726896813080cd5b37a87fa` 独立复核：**PASS**。第一步核对 `git rev-parse HEAD` 与目标 SHA 一致后再判定。覆盖：① 独立把字段写回临时改回旧写法并实测两条新回归均 FAILED（`zone_spirit_qi_after=0.007031250` / 差值 0.05），验证后 `git checkout --` 恢复并核对 `git diff`/`git status` 为空、HEAD SHA 未变 ② `git show <SHA> -- server/src/qi_physics/` 为空，独立代数验算 `zone_spirit_qi_before>=0` 时新旧写法完全等价，确认未自造公式 ③ `git show <SHA> --stat` 仅 1 个文件、`npc/dormant/mod.rs` 等其余同款 `.max(0.0)` 站点未被触碰 ④ 独立重跑 `dandao::boss_spawn::`（24 passed）与 `dandao::tests::boss_spawn_integration::`（2 passed）确认既有路径无回归 ⑤ 指出归档 Finish Evidence 在验证时仍是修复前的旧版本（本次已更新，不影响其 PASS 判定）。
 
 ### 跨仓库核验
 
@@ -86,6 +89,7 @@
 
 ### 遗留 / 后续
 
-- `zone.spirit_qi` 为负值（当前 `baolongwang_cavern_deep` 实际配置为 `-0.729232`，负灵域）时，`qi_release_to_zone` 的 `zone_current` 入参沿用仓库既有 `.max(0.0)` 镜像口径（与 `release_dormant_qi_to_zone` / `zone_qi_inflow_tick` 同款），即从 0 开始重新累积，不会精确保留负值债务的连续性——这是仓库里"负灵域 ↔ ledger 非负余额"这条更深的既有架构特性（`WorldQiAccount::set_balance` 硬性拒绝负数），不属于本 plan 范围，未在此修复。
+- ~~`zone.spirit_qi` 为负值时字段权威被 floor 覆盖抹除债务~~ —— **已于 PR #1296 `064c1ca04` 修复**（见上方「落地清单」「关键 commit」）：`.max(0.0)` 现在仅作为 `qi_release_to_zone` 调用与 `WorldQiAccount::set_balance` 的非负输入基线，字段权威写回改为在原始有符号值上累加本次实际吸取量，不再用 floor 过的镜像值覆盖。
+- **`.max(0.0)` 同款镜像口径的其余站点未逐一审计**：本轮 grep 确认仓库里至少还有 `npc/dormant/mod.rs`、`combat/carrier.rs`、`combat/needle.rs`、`combat/woliu_v2/skills.rs`、`combat/tuike_v2/skills.rs`、`cultivation/burst_meridian.rs`、`cultivation/void/actions.rs` / `ledger_hooks.rs`、`zhenfa/mod.rs`、`world/pseudo_vein_runtime.rs`、`world/heartbeat.rs`、`npc/lod.rs`、`fauna/rat_phase.rs` / `mimic_spider.rs`、`persistence/mod.rs` 等站点使用同一 `zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY` 模式；哪些站点之后还会把 floor 过的结果**反写**回 `zone.spirit_qi`（即具备本次同型"凭空抹除负债"风险）未逐一核实——按"一个 PR 只动一个 plan"原则本轮不顺手改，留待独立 plan/PR 统一核查处理。
 - 本 plan 只修暴龙王 `BossDrain`；`docs/plans-skeleton/plan-bughunt-skull-fiend-drain-zone-shadow.md` 中同型 `SkullFiendDrain`（骨煞）仍待独立 plan/PR 处理，未在本次改动内。
 - PR #1296 未给 `baolongwang_qi_drain_aura_system` 的 zone 缺失早退分支加 `tracing::warn!`：该 system 挂在 `Update`，每 tick 都跑，若真触发早退会变成无限刷日志（与仓库里 `forge/mod.rs:596-599` / `client_request_handler.rs:18504` 那种事件驱动、单次触发的 `warn!` 场景不同）；且新增的 pin 测试已经把这条早退路径的现实触发条件（zone 改名/删除）钉在测试期，运行时再加日志对已经在生产失效的场景边际诊断价值有限。判断为不加。
