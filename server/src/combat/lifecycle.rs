@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use valence::prelude::{
-    Commands, Entity, EventReader, EventWriter, Events, GameMode, Position, Query, Res, ResMut,
-    Username,
+    Added, Client, Commands, Entity, EventReader, EventWriter, Events, GameMode, Position, Query,
+    Res, ResMut, Username, Without,
 };
 
 use crate::alchemy::LearnedRecipes;
@@ -893,6 +893,106 @@ fn should_terminate_npc_without_near_death_wait(
     // All NPCs skip the NearDeath wait window and go straight to Terminated.
     // NearDeath is only meaningful for players who need a revival decision window.
     npc_marker.is_some()
+}
+
+type ReconnectedAwaitingRevivalQueryItem<'a> = (
+    Entity,
+    &'a Lifecycle,
+    &'a mut Client,
+    Option<&'a LifeRecord>,
+    Option<&'a DeathRegistry>,
+    Option<&'a LifespanComponent>,
+    Option<&'a Position>,
+);
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 2）：断线时正处于
+/// `AwaitingRevival`（濒死已判定出渡劫/大限决策、等待玩家确认）的角色，重连后必须重新
+/// 收到死亡屏与 `DeathCinematic`——不能让玩家在满血、无任何 UI 解释的情况下静默"裸奔"
+/// 在这个会阻断攻防（见 `resolve.rs` 对 `LifecycleState::AwaitingRevival` 的双向 gate）、
+/// 又会在 deadline 到期后被 `auto_confirm_revival_decisions` 强制结算（可能永久终结角色，
+/// 见 `RevivalDecision::Tribulation`）的状态里。
+///
+/// 只处理 `AwaitingRevival`：`NearDeath` 本身没有独立的"死亡屏"（濒死靠 `Wounds.
+/// health_current` 走低血量 HUD 呈现），重连时 `Wounds::default()` 会让血量满血复位，
+/// `near_death_tick` 下一 tick 就会判定"已稳定"并静默清回 `Alive`——这属于
+/// `Wounds`/`NearDeath` 秒退漏洞（另案跟踪，不在本次返工范围内），这里不重复处理。
+///
+/// 直接在查询数据元组里拿 `&mut Client`（而不是像 `emit_death_screen` 那样另开一个
+/// `Query<&mut Client>`），是为了避免同一系统里 `Added<Client>` 过滤器（要求对 `Client`
+/// 的读访问）与另一个 `Query<&mut Client>`（要求写访问）产生 Bevy 查询访问冲突 panic。
+#[allow(clippy::too_many_arguments)]
+pub fn reemit_death_screen_for_reconnected_awaiting_revival_clients(
+    clock: Res<CombatClock>,
+    zones: Option<Res<ZoneRegistry>>,
+    mut commands: Commands,
+    mut death_cinematics: ResMut<Events<DeathCinematicPublished>>,
+    mut reconnected: Query<
+        ReconnectedAwaitingRevivalQueryItem<'_>,
+        (
+            Added<Client>,
+            Without<crate::death_lifecycle::cinematic::DeathCinematic>,
+        ),
+    >,
+) {
+    for (entity, lifecycle, mut client, life_record, death_registry, lifespan, position) in
+        &mut reconnected
+    {
+        if lifecycle.state != LifecycleState::AwaitingRevival {
+            continue;
+        }
+        let Some(decision) = lifecycle.awaiting_decision else {
+            // 状态机内部不一致（AwaitingRevival 却没有待决策项）——没有决策可展示，跳过而不
+            // panic，交由 near_death_tick/auto_confirm 之类的常规 tick 逻辑去纠偏。
+            continue;
+        };
+
+        let decision_deadline_tick = lifecycle
+            .revival_decision_deadline_tick
+            .unwrap_or(clock.tick);
+        let cause = eventual_cause(life_record);
+        let death_zone = death_zone_from_context(cause.as_str(), position, zones.as_deref());
+        let final_words = vec![default_final_words(cause.as_str(), death_zone)];
+        let cinematic = crate::death_lifecycle::cinematic::build_death_cinematic(
+            lifecycle,
+            death_registry,
+            Some(decision),
+            death_zone,
+            cause.as_str(),
+            final_words.clone(),
+            clock.tick,
+        );
+        commands.entity(entity).insert(cinematic.clone());
+        let cinematic_payload = cinematic.snapshot(clock.tick);
+        death_cinematics.send(DeathCinematicPublished {
+            payload: cinematic_payload.clone(),
+        });
+
+        let payload = build_death_screen_payload(
+            cause.as_str(),
+            decision,
+            DeathScreenContext {
+                lifecycle,
+                death_registry,
+                lifespan,
+                position,
+                zones: zones.as_deref(),
+                final_words,
+                cinematic: Some(cinematic_payload),
+            },
+            clock.tick,
+            decision_deadline_tick,
+        );
+        let Ok(payload_bytes) = serialize_server_data_payload(&payload) else {
+            continue;
+        };
+        send_server_data_payload(&mut client, payload_bytes.as_slice());
+        tracing::info!(
+            "[bong][network] sent {} {} payload to reconnected client entity {entity:?} \
+             (re-emitted AwaitingRevival death screen)",
+            SERVER_DATA_CHANNEL,
+            payload_type_label(payload.payload_type()),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1958,6 +2058,44 @@ fn decision_deadline_ms(decision_deadline_tick: u64, now_tick: u64) -> u64 {
         .saturating_add(remaining_ticks.saturating_mul(crate::time::MILLIS_PER_TICK))
 }
 
+/// 构造 DeathScreen payload（不负责发送）。抽出来是为了让
+/// `reemit_death_screen_for_reconnected_awaiting_revival_clients`（bughunt
+/// player-lifecycle-relog-death-consequence-wipe OPUS 返工要求 2）可以复用同一份
+/// payload 构造逻辑：它直接持有 `&mut Client`（避免与 `Added<Client>` 过滤器在同一系统里
+/// 对 `Client` 组件产生读写冲突），而不是像 `emit_death_screen` 那样通过
+/// `Query<&mut Client>` 二次查找。
+fn build_death_screen_payload(
+    cause: &str,
+    decision: RevivalDecision,
+    context: DeathScreenContext<'_>,
+    now_tick: u64,
+    decision_deadline_tick: u64,
+) -> ServerDataV1 {
+    let zone_kind = death_zone_from_context(cause, context.position, context.zones);
+    ServerDataV1::new(ServerDataPayloadV1::DeathScreen {
+        visible: true,
+        cause: cause.to_string(),
+        luck_remaining: decision.chance_shown(),
+        final_words: context.final_words,
+        countdown_until_ms: decision_deadline_ms(decision_deadline_tick, now_tick),
+        can_reincarnate: decision.can_reincarnate(),
+        can_terminate: decision.can_terminate(),
+        stage: Some(death_screen_stage(decision)),
+        death_number: Some(
+            context
+                .death_registry
+                .map_or(context.lifecycle.death_count, |registry| {
+                    registry.death_count.max(context.lifecycle.death_count)
+                }),
+        ),
+        zone_kind: Some(death_screen_zone_kind(zone_kind)),
+        lifespan: context.lifespan.map(|lifespan| {
+            death_screen_lifespan_preview(lifespan, context.position, context.zones)
+        }),
+        cinematic: context.cinematic,
+    })
+}
+
 fn emit_death_screen(
     clients: &mut Query<&mut valence::prelude::Client>,
     entity: Entity,
@@ -1967,33 +2105,9 @@ fn emit_death_screen(
     now_tick: u64,
     decision_deadline_tick: u64,
 ) {
-    let zone_kind = death_zone_from_context(cause, context.position, context.zones);
-    send_payload(
-        clients,
-        entity,
-        ServerDataV1::new(ServerDataPayloadV1::DeathScreen {
-            visible: true,
-            cause: cause.to_string(),
-            luck_remaining: decision.chance_shown(),
-            final_words: context.final_words,
-            countdown_until_ms: decision_deadline_ms(decision_deadline_tick, now_tick),
-            can_reincarnate: decision.can_reincarnate(),
-            can_terminate: decision.can_terminate(),
-            stage: Some(death_screen_stage(decision)),
-            death_number: Some(
-                context
-                    .death_registry
-                    .map_or(context.lifecycle.death_count, |registry| {
-                        registry.death_count.max(context.lifecycle.death_count)
-                    }),
-            ),
-            zone_kind: Some(death_screen_zone_kind(zone_kind)),
-            lifespan: context.lifespan.map(|lifespan| {
-                death_screen_lifespan_preview(lifespan, context.position, context.zones)
-            }),
-            cinematic: context.cinematic,
-        }),
-    );
+    let payload =
+        build_death_screen_payload(cause, decision, context, now_tick, decision_deadline_tick);
+    send_payload(clients, entity, payload);
 }
 
 fn emit_terminate_screen(
@@ -2158,6 +2272,7 @@ mod tests {
     use crate::cultivation::death_hooks::CultivationDeathCause;
     use crate::cultivation::life_record::LifeRecord;
     use crate::cultivation::tick::CultivationClock;
+    use crate::death_lifecycle::cinematic::DeathCinematicInit;
     use crate::network::agent_bridge::SERVER_DATA_CHANNEL;
     use crate::persistence::{
         bootstrap_sqlite, complete_tribulation_ascension, load_ascension_quota,
@@ -2167,6 +2282,9 @@ mod tests {
     use crate::player::state::player_character_id;
     use crate::qi_physics::constants::QI_ZHENMAI_PREP_WINDOW_MS;
     use crate::schema::anticheat::ViolationKindV1;
+    use crate::schema::death_cinematic::{
+        DeathCinematicRollV1, DeathCinematicZoneKindV1, DeathRollResultV1,
+    };
     use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
     use rusqlite::{params, Connection};
     use std::fs;
@@ -4588,6 +4706,300 @@ mod tests {
         )));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    // ── bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 2）──
+    //
+    // 断线时正处于 AwaitingRevival 的角色重连后必须重新收到死亡屏 + DeathCinematic，不能
+    // 让玩家满血、无 UI 地"裸奔"在这个阻断攻防、又会被 auto_confirm_revival_decisions
+    // 强制结算（可能永久终结角色）的状态里。下面的用例覆盖：两个 RevivalDecision 变体各一条
+    // 专属 case（happy path）、NearDeath/Alive 两个不该触发的状态（负分支）、
+    // awaiting_decision=None 的内部不一致状态（错误分支，不panic）、以及
+    // Without<DeathCinematic> 过滤器的防重复触发保护。
+
+    fn spawn_reconnected_client_actor(
+        app: &mut App,
+        username: &str,
+        lifecycle: Lifecycle,
+    ) -> (Entity, MockClientHelper) {
+        spawn_client_actor(
+            app,
+            username,
+            Wounds {
+                health_current: 30.0,
+                health_max: 30.0,
+                entries: Vec::new(),
+            },
+            Stamina::default(),
+            lifecycle,
+        )
+    }
+
+    #[test]
+    fn reconnect_while_awaiting_revival_tribulation_reemits_death_screen_and_cinematic() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<DeathCinematicPublished>();
+        app.add_systems(
+            Update,
+            reemit_death_screen_for_reconnected_awaiting_revival_clients,
+        );
+
+        let (entity, mut helper) = spawn_reconnected_client_actor(
+            &mut app,
+            "ReconnectTribulation",
+            Lifecycle {
+                character_id: "offline:ReconnectTribulation".to_string(),
+                death_count: 2,
+                fortune_remaining: 0,
+                state: LifecycleState::AwaitingRevival,
+                awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
+                revival_decision_deadline_tick: Some(560),
+                ..Default::default()
+            },
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| matches!(
+                payload.payload,
+                ServerDataPayloadV1::DeathScreen {
+                    visible: true,
+                    can_reincarnate: true,
+                    can_terminate: true,
+                    stage: Some(DeathScreenStageV1::Tribulation),
+                    ..
+                }
+            )),
+            "重连时处于 AwaitingRevival + Tribulation 待决策的角色必须重新收到死亡屏\
+             （can_terminate=true 因为 Tribulation 携带永久终结风险）；实际 payloads={payloads:?}"
+        );
+
+        let cinematic = app
+            .world()
+            .entity(entity)
+            .get::<crate::death_lifecycle::cinematic::DeathCinematic>();
+        assert!(
+            cinematic.is_some(),
+            "重连必须重新插入 DeathCinematic 组件，不能让玩家停在无 UI 的裸奔状态"
+        );
+    }
+
+    #[test]
+    fn reconnect_while_awaiting_revival_fortune_reemits_death_screen_without_terminate_button() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<DeathCinematicPublished>();
+        app.add_systems(
+            Update,
+            reemit_death_screen_for_reconnected_awaiting_revival_clients,
+        );
+
+        let (entity, mut helper) = spawn_reconnected_client_actor(
+            &mut app,
+            "ReconnectFortune",
+            Lifecycle {
+                character_id: "offline:ReconnectFortune".to_string(),
+                fortune_remaining: 1,
+                state: LifecycleState::AwaitingRevival,
+                awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                revival_decision_deadline_tick: Some(560),
+                ..Default::default()
+            },
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.iter().any(|payload| matches!(
+                payload.payload,
+                ServerDataPayloadV1::DeathScreen {
+                    visible: true,
+                    can_reincarnate: true,
+                    can_terminate: false,
+                    stage: Some(DeathScreenStageV1::Fortune),
+                    ..
+                }
+            )),
+            "Fortune 分支重连必须重新收到死亡屏，且 can_terminate=false（Fortune 不携带\
+             永久终结风险，voluntary termination 按钮不应出现）；实际 payloads={payloads:?}"
+        );
+
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::death_lifecycle::cinematic::DeathCinematic>()
+                .is_some(),
+            "Fortune 分支重连同样必须重新插入 DeathCinematic"
+        );
+    }
+
+    #[test]
+    fn reconnect_while_near_death_does_not_reemit_death_screen() {
+        // NearDeath 没有独立的死亡屏（濒死靠 Wounds.health_current 走低血量 HUD 呈现）；
+        // 重连时 Wounds::default() 满血复位属于另案跟踪的秒退漏洞（out of scope），这里只
+        // 锁住"NearDeath 不会触发本系统发送 DeathScreen/DeathCinematic"这个边界。
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<DeathCinematicPublished>();
+        app.add_systems(
+            Update,
+            reemit_death_screen_for_reconnected_awaiting_revival_clients,
+        );
+
+        let (entity, mut helper) = spawn_reconnected_client_actor(
+            &mut app,
+            "ReconnectNearDeath",
+            Lifecycle {
+                state: LifecycleState::NearDeath,
+                near_death_deadline_tick: Some(560),
+                ..Default::default()
+            },
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "NearDeath 状态不应该触发死亡屏重发（本系统只处理 AwaitingRevival）；\
+             实际收到 {} 个 payload：{payloads:?}",
+            payloads.len()
+        );
+        assert!(
+            app.world()
+                .entity(entity)
+                .get::<crate::death_lifecycle::cinematic::DeathCinematic>()
+                .is_none(),
+            "NearDeath 状态不应该被插入 DeathCinematic"
+        );
+    }
+
+    #[test]
+    fn reconnect_while_alive_does_not_reemit_death_screen() {
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<DeathCinematicPublished>();
+        app.add_systems(
+            Update,
+            reemit_death_screen_for_reconnected_awaiting_revival_clients,
+        );
+
+        let (_entity, mut helper) =
+            spawn_reconnected_client_actor(&mut app, "ReconnectAlive", Lifecycle::default());
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "Alive 状态（最常见的健康在线玩家重连路径）绝不应该触发死亡屏；\
+             实际收到 {} 个 payload：{payloads:?}",
+            payloads.len()
+        );
+    }
+
+    #[test]
+    fn reconnect_while_awaiting_revival_without_pending_decision_skips_without_panicking() {
+        // 状态机内部不一致：state=AwaitingRevival 却没有 awaiting_decision（正常流程不会
+        // 产生这种组合，但组件是外部可写的，防御性地要求不 panic、不发送残缺 payload）。
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<DeathCinematicPublished>();
+        app.add_systems(
+            Update,
+            reemit_death_screen_for_reconnected_awaiting_revival_clients,
+        );
+
+        let (_entity, mut helper) = spawn_reconnected_client_actor(
+            &mut app,
+            "ReconnectInconsistent",
+            Lifecycle {
+                state: LifecycleState::AwaitingRevival,
+                awaiting_decision: None,
+                ..Default::default()
+            },
+        );
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "awaiting_decision=None 时没有决策可展示，不应该发送残缺的死亡屏 payload；\
+             实际收到 {} 个 payload：{payloads:?}",
+            payloads.len()
+        );
+    }
+
+    #[test]
+    fn reconnect_skips_entities_that_already_carry_a_death_cinematic() {
+        // Without<DeathCinematic> 过滤器防重复触发：如果实体在 Added<Client> 这一 tick
+        // 就已经带着 DeathCinematic（例如某种未来的预取/迁移路径），本系统不应该覆盖或
+        // 重复发送。
+        let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 500 });
+        app.add_event::<DeathCinematicPublished>();
+        app.add_systems(
+            Update,
+            reemit_death_screen_for_reconnected_awaiting_revival_clients,
+        );
+
+        let (entity, mut helper) = spawn_reconnected_client_actor(
+            &mut app,
+            "ReconnectAlreadyCinematic",
+            Lifecycle {
+                state: LifecycleState::AwaitingRevival,
+                awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+                revival_decision_deadline_tick: Some(560),
+                ..Default::default()
+            },
+        );
+        let pre_existing_cinematic =
+            crate::death_lifecycle::cinematic::DeathCinematic::new(DeathCinematicInit {
+                character_id: "offline:ReconnectAlreadyCinematic".to_string(),
+                started_at_tick: 400,
+                roll: DeathCinematicRollV1 {
+                    probability: 1.0,
+                    threshold: 1.0,
+                    luck_value: 1.0,
+                    result: DeathRollResultV1::Survive,
+                },
+                insight_text: vec!["既有插曲".to_string()],
+                is_final: false,
+                death_number: 1,
+                zone_kind: DeathCinematicZoneKindV1::Ordinary,
+                tsy_death: false,
+            });
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(pre_existing_cinematic.clone());
+
+        app.update();
+        flush_client_packets(&mut app);
+
+        let payloads = collect_server_data_payloads(&mut helper);
+        assert!(
+            payloads.is_empty(),
+            "已经携带 DeathCinematic 的实体必须被 Without<DeathCinematic> 过滤掉，不应该\
+             再收到一份重复的死亡屏；实际收到 {} 个 payload：{payloads:?}",
+            payloads.len()
+        );
+        assert_eq!(
+            app.world()
+                .entity(entity)
+                .get::<crate::death_lifecycle::cinematic::DeathCinematic>(),
+            Some(&pre_existing_cinematic),
+            "既有 DeathCinematic 不应该被覆盖"
+        );
     }
 
     #[test]

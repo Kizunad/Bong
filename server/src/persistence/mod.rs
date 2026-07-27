@@ -55,8 +55,11 @@ pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
-/// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池。
-const CURRENT_USER_VERSION: i32 = 38;
+/// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池；
+/// v39 新增 `player_lifecycle`（bughunt player-lifecycle-relog-death-consequence-wipe：
+/// 断线重连此前从未持久化 `Lifecycle` 死亡/复活状态机，`fortune_remaining`/
+/// `awaiting_decision`/`state` 全部被 `Lifecycle::default()` 抹回满状态新角色）。
+const CURRENT_USER_VERSION: i32 = 39;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -2335,6 +2338,43 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             )?;
         }
         transaction.execute_batch("PRAGMA user_version = 38;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 39 {
+        let transaction = connection.transaction()?;
+        // bughunt player-lifecycle-relog-death-consequence-wipe：`combat::components::
+        // Lifecycle`（死亡/复活状态机：state/fortune_remaining/awaiting_decision/各 deadline
+        // tick）此前从未落盘，断线重连时 `attach_combat_bundle_to_joined_clients` 只能盲插
+        // `Lifecycle::default()`，把 NearDeath/AwaitingRevival 玩家的运气次数与渡劫决策全部
+        // 抹回满状态"新角色"。单 JSON 列镜像整个组件（同 `player_known_techniques` 的
+        // `known_techniques_json` 模式），键仍是 `username`（与其余 per-character slice 表一致，
+        // 代表"当前存活角色"）。
+        //
+        // `combat_clock_tick_at_save` 是 OPUS 返工要求的跨重启锚点：`CombatClock` 每次进程
+        // 重启都从 0 重新计数（`combat::mod::register` 里 `insert_resource(CombatClock::
+        // default())`），而 `near_death_deadline_tick`/`revival_decision_deadline_tick`/
+        // `weakened_until_tick` 都是"绝对 tick"——落盘时刻的 CombatClock.tick 值。跨重启直接
+        // 复用这些绝对值毫无意义（新进程 tick=0 时，旧 deadline 动辄百万级，等价于几十小时后
+        // 才会被 near_death_tick/auto_confirm_revival_decisions 结算，期间玩家卡在
+        // AwaitingRevival 无敌状态）。这里把落盘时刻的 CombatClock.tick 一并记录，配合既有的
+        // `last_updated_wall`，在读档时按真实流逝墙钟秒数把 deadline 折算到读档当刻的 tick
+        // 空间（见 `player::state::translate_lifecycle_deadline_tick_across_restart`），
+        // 镜像 `player_lifespan.offline_pause_wall` 的按墙钟折算模式。
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS player_lifecycle (
+                username TEXT PRIMARY KEY,
+                lifecycle_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                combat_clock_tick_at_save INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version = 39;
+            ",
+        )?;
         transaction.commit()?;
     }
 
