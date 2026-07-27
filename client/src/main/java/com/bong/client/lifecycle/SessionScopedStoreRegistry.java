@@ -50,7 +50,7 @@ public final class SessionScopedStoreRegistry {
             } catch (RuntimeException exception) {
                 if (reportingFailure == null) {
                     reportingFailure = exception;
-                } else {
+                } else if (reportingFailure != exception) {
                     reportingFailure.addSuppressed(exception);
                 }
             }

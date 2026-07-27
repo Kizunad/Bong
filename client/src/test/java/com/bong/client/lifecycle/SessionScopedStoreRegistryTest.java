@@ -145,6 +145,91 @@ class SessionScopedStoreRegistryTest {
     }
 
     @Test
+    void repeatedReportingFailureInstanceDoesNotAbortRemainingReports() {
+        List<String> calls = new ArrayList<>();
+        RuntimeException reportingFailure = new IllegalStateException("shared reporter broken");
+        List<SessionStoreHandle> handles = List.of(
+            handle(FirstStore.class, () -> {
+                calls.add("first");
+                throw new IllegalStateException("first store broken");
+            }),
+            handle(BrokenStore.class, () -> {
+                calls.add("broken");
+                throw new IllegalArgumentException("second store broken");
+            }),
+            handle(LastStore.class, () -> {
+                calls.add("last");
+                throw new IllegalStateException("third store broken");
+            })
+        );
+
+        RuntimeException actual = assertThrows(
+            RuntimeException.class,
+            () -> SessionScopedStoreRegistry.clearAllOnDisconnect(
+                handles,
+                failure -> {
+                    calls.add("report:" + failure.fqcn());
+                    throw reportingFailure;
+                }
+            )
+        );
+
+        assertEquals(
+            reportingFailure,
+            actual,
+            "同一 reporter 异常实例重复抛出时必须原样透传，不能因 self-suppression 改抛 IllegalArgumentException"
+        );
+        assertEquals(
+            List.of(),
+            List.of(actual.getSuppressed()),
+            "同一异常实例不能 suppressed 自身，也不应制造重复诊断条目"
+        );
+        assertEquals(
+            List.of(
+                "first",
+                "broken",
+                "last",
+                "report:" + FirstStore.class.getName(),
+                "report:" + BrokenStore.class.getName(),
+                "report:" + LastStore.class.getName()
+            ),
+            calls,
+            "共享 reporter 异常实例不得阻断后续 failure 的上报尝试"
+        );
+    }
+
+    @Test
+    void reportingErrorIsNotSwallowedAfterStoreClearsComplete() {
+        List<String> calls = new ArrayList<>();
+        AssertionError expected = new AssertionError("fatal reporter invariant");
+        List<SessionStoreHandle> handles = List.of(
+            handle(FirstStore.class, () -> {
+                calls.add("first");
+                throw new IllegalStateException("store broken");
+            }),
+            handle(LastStore.class, () -> calls.add("last"))
+        );
+
+        AssertionError actual = assertThrows(
+            AssertionError.class,
+            () -> SessionScopedStoreRegistry.clearAllOnDisconnect(
+                handles,
+                failure -> {
+                    calls.add("report:" + failure.fqcn());
+                    throw expected;
+                }
+            )
+        );
+
+        assertEquals(expected, actual, "registry 不能吞掉或转换 failure reporter 的 Error");
+        assertEquals(
+            List.of("first", "last", "report:" + FirstStore.class.getName()),
+            calls,
+            "failure reporter 的 Error 只能在所有 Store 完成清理后透传"
+        );
+    }
+
+    @Test
     void errorIsNotSwallowed() {
         AssertionError expected = new AssertionError("fatal invariant");
         AssertionError actual = assertThrows(
