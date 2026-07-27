@@ -20,8 +20,28 @@ HOST="${BOT_E2E_HOST:-127.0.0.1}"
 PORT="${BOT_E2E_PORT:-25565}"
 PROFILE="${BOT_E2E_PROFILE:-release}"
 REUSE="${BOT_E2E_REUSE:-0}"
-EVIDENCE_DIR="$ROOT/.sisyphus/evidence/bot-e2e"
-SERVER_LOG="$EVIDENCE_DIR/server.log"
+AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"
+# Ambient fixture ownership has three intentionally closed values: unset/default, generic 0,
+# and strict owned-fixture 1. Reject typos before creating files or starting tools.
+case "$AMBIENT_FIXTURE_MODE" in
+  ""|0|1) ;;
+  *)
+    echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1，实际为 $AMBIENT_FIXTURE_MODE" >&2
+    exit 2
+    ;;
+esac
+
+EVIDENCE_ROOT="$ROOT/.sisyphus/evidence/bot-e2e"
+EVIDENCE_DIR=""
+RUN_ID=""
+SERVER_LOG=""
+SERVER_RUNTIME_DIR=""
+BOT_NOVICE_RASTER_DIR=""
+BOT_RASTER_READY_PAYLOAD=""
+
+# ownership 只能由本轮 self-start server 的 exact ready marker 授予；拒绝继承调用方
+# 或上一轮 shell 留下的声明。REUSE 也没有修改外部 server 启动环境的权限。
+unset BOT_E2E_AMBIENT_FIXTURE_OWNED
 
 # 自起 server 固定由当前 checkout 监听本机 IPv4；若要连接远端或 IPv6 server，
 # 必须显式 REUSE，避免 ownership 校验命中 IPv4 子进程、Bot 却连到另一地址族旧服。
@@ -30,29 +50,85 @@ if [ "$REUSE" != "1" ] && [ "$HOST" != "127.0.0.1" ]; then
   exit 2
 fi
 
-mkdir -p "$EVIDENCE_DIR"
+# Ambient fixture is an explicit ownership mode, not a generic harness property. It must
+# self-start the server so the marker can prove the exact fixture/startup process pairing.
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "$REUSE" = "1" ]; then
+  echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥；fixture ownership 仅限本轮自起 server" >&2
+  exit 2
+fi
 
-# 测试诚实性约束：Bot 必须能黑盒证明真实 manifest → Startup loader →
-# PoiNoviceRegistry，而不是只看到 register() 无条件创建的空 resource。默认生成
-# 一个 stdlib-only 的 256×256 平地 v2 raster fixture（六类 novice POI 各 1）；
-# 调用方显式提供 BONG_TERRAIN_RASTER_PATH 时尊重其真实世界配置。
-if [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then
-  BOT_NOVICE_RASTER_DIR="$EVIDENCE_DIR/novice-raster"
+# Only owned-fixture mode reserves the startup inputs. Generic self-start retains the
+# caller's raster/state contract and simply skips the ownership-only ambient scenario.
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then
+  echo "[bot-e2e] ambient fixture mode 不接受外部 BONG_TERRAIN_RASTER_PATH；严格 fixture 必须由本轮 harness 独占生成" >&2
+  exit 2
+fi
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then
+  echo "[bot-e2e] ambient fixture mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH；测试状态必须由本轮 harness 独占" >&2
+  exit 2
+fi
+
+mkdir -p "$EVIDENCE_ROOT"
+EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"
+RUN_ID="${EVIDENCE_DIR##*.}"
+SERVER_LOG="$EVIDENCE_DIR/server.log"
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+  SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"
+  mkdir -p "$SERVER_RUNTIME_DIR/server/data" "$SERVER_RUNTIME_DIR/library-web/public/deceased"
+  # botany / forge 的生产 loader 仍从 cwd-relative assets/... 读取；只桥接 checkout
+  # 的资产输入，持久化输出继续全部落在本轮私有 runtime。
+  ln -s "$ROOT/server/assets" "$SERVER_RUNTIME_DIR/server/assets"
+fi
+
+# Owned-fixture mode generates and pins one tokenized raster. Generic self-start preserves a
+# caller-supplied raster (or the historical generated novice fixture) but never claims ownership.
+if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then
+  BOT_NOVICE_RASTER_DIR="$(mktemp -d "$EVIDENCE_DIR/novice-raster.XXXXXX")"
+  # The generator requires a token for every fixture. Generic mode uses a fresh token only to
+  # create valid raster metadata; it never exports the ambient witness ownership capability.
+  BOT_FIXTURE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+  if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+    BOT_E2E_AMBIENT_FIXTURE_TOKEN="$BOT_FIXTURE_TOKEN"
+    BONG_TERRAIN_RASTER_PATH="$(
+      python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" \
+        "$BOT_NOVICE_RASTER_DIR" \
+        --fixture-token "$BOT_E2E_AMBIENT_FIXTURE_TOKEN"
+    )"
+  else
+    BONG_TERRAIN_RASTER_PATH="$(
+      python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" \
+        "$BOT_NOVICE_RASTER_DIR" \
+        --fixture-token "$BOT_FIXTURE_TOKEN"
+    )"
+  fi
   export BONG_TERRAIN_RASTER_PATH
-  BONG_TERRAIN_RASTER_PATH="$(
-    python3 "$ROOT/scripts/bot/make_novice_raster_fixture.py" "$BOT_NOVICE_RASTER_DIR"
-  )"
   echo "[bot-e2e] novice raster fixture: $BONG_TERRAIN_RASTER_PATH"
+fi
+
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+  BONG_TERRAIN_RASTER_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$BONG_TERRAIN_RASTER_PATH")"
+  export BONG_TERRAIN_RASTER_PATH
+  export BOT_E2E_AMBIENT_FIXTURE_TOKEN
+  export BOT_E2E_AMBIENT_FIXTURE_MANIFEST="$BONG_TERRAIN_RASTER_PATH"
+  BOT_RASTER_READY_PAYLOAD="[bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN"
+else
+  unset BOT_E2E_AMBIENT_FIXTURE_OWNED
+  unset BOT_E2E_AMBIENT_FIXTURE_MANIFEST
+  unset BOT_E2E_AMBIENT_FIXTURE_TOKEN
 fi
 
 SERVER_PID=""
 STARTED_REDIS=0
+REDIS_COMPOSE_PROJECT=""
 SPIRITWOOD_STATE_DIR=""
 
-# 真实灵木场景会按生产契约持久化已采伐位置。自起 server 时给每轮 e2e 独立状态，
-# 否则第二次运行会正确 hydrate 上一轮的树干并把可重复测试误判成不可采。
-# REUSE 模式无法改变既有 server 环境，仍由调用方负责其世界状态。
-if [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then
+# Ambient-owned runs pin state to their private runtime. Generic self-start keeps a caller path
+# untouched and creates the historical per-run temporary state only when none was supplied.
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+  SPIRITWOOD_STATE_DIR="$SERVER_RUNTIME_DIR/server/data/spiritwood"
+  mkdir -p "$SPIRITWOOD_STATE_DIR"
+  export BONG_SPIRITWOOD_HARVESTED_PATH="$SPIRITWOOD_STATE_DIR/harvested.json"
+elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then
   SPIRITWOOD_STATE_DIR="$(mktemp -d "$EVIDENCE_DIR/spiritwood-state.XXXXXX")"
   export BONG_SPIRITWOOD_HARVESTED_PATH="$SPIRITWOOD_STATE_DIR/harvested.json"
 fi
@@ -99,6 +175,19 @@ port_owned_by_tree() {
   return 1
 }
 
+# Readiness is not a permanent capability: the owned server may exit after the first marker/port
+# check and another process may take 25565. Re-evaluate the whole binding before, throughout and
+# after the scenario runner so a replacement listener can never turn the local fixture files into
+# false evidence about the server Bot actually exercised.
+self_started_fixture_runtime_is_current() {
+  [ "$REUSE" != "1" ] \
+    && [ -n "$SERVER_PID" ] \
+    && kill -0 "$SERVER_PID" 2>/dev/null \
+    && port_open "$HOST" "$PORT" \
+    && port_owned_by_tree "$SERVER_PID" "$PORT" \
+    && { [ "$AMBIENT_FIXTURE_MODE" != "1" ] || grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"; }
+}
+
 # 递归杀整棵进程树（与 e2e-redis.sh 同模式）：先子孙后父防 reparent 孤儿，
 # SIGTERM 后短等 + SIGKILL 兜底，保证 25565 真正释放。
 kill_tree() {
@@ -116,14 +205,28 @@ kill_tree() {
 }
 
 cleanup() {
+  if [ -n "${WATCH_PID:-}" ] && kill -0 "$WATCH_PID" 2>/dev/null; then
+    kill "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || true
+  fi
+  if [ -n "${RUNTIME_WATCH_LOG:-}" ]; then
+    rm -f "$RUNTIME_WATCH_LOG.stop" "$RUNTIME_WATCH_LOG" 2>/dev/null || true
+  fi
+  if [ -n "${RUNTIME_WATCH_DIR:-}" ]; then
+    rmdir "$RUNTIME_WATCH_DIR" 2>/dev/null || true
+  fi
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill_tree "$SERVER_PID"
     wait "$SERVER_PID" 2>/dev/null || true
   fi
-  if [ "$STARTED_REDIS" = "1" ]; then
-    docker compose -f "$ROOT/docker-compose.test.yml" down -v --remove-orphans >/dev/null 2>&1 || true
+  if [ "$STARTED_REDIS" = "1" ] && [ -n "$REDIS_COMPOSE_PROJECT" ]; then
+    BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0 \
+      docker compose -f "$ROOT/docker-compose.test.yml" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
-  if [ -n "$SPIRITWOOD_STATE_DIR" ]; then
+  if [ -n "$BOT_NOVICE_RASTER_DIR" ] && [ -d "$BOT_NOVICE_RASTER_DIR" ]; then
+    rm -rf "$BOT_NOVICE_RASTER_DIR"
+  fi
+  if [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -n "$SPIRITWOOD_STATE_DIR" ]; then
     rm -f "$SPIRITWOOD_STATE_DIR/harvested.json" "$SPIRITWOOD_STATE_DIR/harvested.tmp"
     rmdir "$SPIRITWOOD_STATE_DIR" 2>/dev/null || true
   fi
@@ -133,26 +236,34 @@ trap cleanup EXIT
 # ---- 编解码单测（无需 server；坏了没必要浪费一次 server 启动）----
 python3 "$ROOT/scripts/bot/test_protocol.py"
 
-# ---- redis（server 启动依赖）----
-if ! port_open 127.0.0.1 6379; then
-  echo "[bot-e2e] redis 未起，尝试 docker compose 拉起"
-  docker compose -f "$ROOT/docker-compose.test.yml" up -d redis --wait
+# ---- redis ----
+# Owned fixture evidence always receives an isolated Redis, even if CI/global environment exports
+# REDIS_URL. Generic self-start preserves an explicit caller URL. With no explicit URL it first
+# adopts the historical caller Redis at 127.0.0.1:6379; only an absent default listener gets a
+# private Compose Redis owned and cleaned up by this run.
+if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then
+  echo "[bot-e2e] 沿用调用方默认 Redis 127.0.0.1:6379"
+elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then
+  REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"
   STARTED_REDIS=1
+  echo "[bot-e2e] 启动本轮私有 Redis project: $REDIS_COMPOSE_PROJECT"
+  BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0 \
+    docker compose -f "$ROOT/docker-compose.test.yml" up -d redis --wait
+  redis_binding="$(
+    BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0 \
+      docker compose -f "$ROOT/docker-compose.test.yml" port redis 6379
+  )"
+  redis_port="${redis_binding##*:}"
+  if [[ ! "$redis_port" =~ ^[0-9]+$ ]] || ! port_open 127.0.0.1 "$redis_port"; then
+    echo "[bot-e2e] 无法确认本轮 Redis published port，实际 binding=$redis_binding" >&2
+    exit 1
+  fi
+  export REDIS_URL="redis://127.0.0.1:$redis_port"
 fi
 
 # ---- server ----
-if port_open "$HOST" "$PORT" && [ "$REUSE" != "1" ] && [ "${BOT_E2E_KILL_STALE:-0}" = "1" ]; then
-  # CI 专用兜底：上游 stage 若留下孤儿 server（历史上 e2e-redis.sh 只杀子 shell），
-  # 这里按名清掉再自起，保证测的是本 job 构建的二进制。本地默认关闭，绝不误杀 dev server。
-  echo "[bot-e2e] BOT_E2E_KILL_STALE=1：清理占用 $PORT 的残留 server 进程"
-  pkill -TERM -f 'bong-server' 2>/dev/null || true
-  pkill -TERM -f 'cargo run --release' 2>/dev/null || true
-  for _ in $(seq 1 15); do
-    port_open "$HOST" "$PORT" || break
-    sleep 1
-  done
-fi
-
+# 自起模式绝不终止不属于本轮进程树的 listener。端口已占用即 fail-closed；CI 上游若
+# 泄漏 server，应修其 owner 的 cleanup，而不是按进程名误杀其它 worktree/用户开发服。
 if port_open "$HOST" "$PORT"; then
   if [ "$REUSE" = "1" ]; then
     echo "[bot-e2e] 复用已在 $HOST:$PORT 运行的 server（BOT_E2E_REUSE=1）"
@@ -162,25 +273,39 @@ if port_open "$HOST" "$PORT"; then
     exit 2
   fi
 else
+  if [ "$REUSE" = "1" ]; then
+    echo "[bot-e2e] BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起" >&2
+    exit 2
+  fi
   PROFILE_FLAG=""
   if [ "$PROFILE" = "release" ]; then
     PROFILE_FLAG="--release"
   fi
   echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，log: $SERVER_LOG）"
-  # 子 shell 继承外层变量无需字符串插值；exec 让 SERVER_PID 直接等于 cargo run
+  # Owned-fixture mode moves all relative persistent outputs into its evidence runtime. Generic
+  # mode retains the historical checkout/server CWD for callers that rely on that contract.
   (
-    cd "$ROOT/server"
+    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+      cd "$SERVER_RUNTIME_DIR/server"
+    else
+      cd "$ROOT/server"
+    fi
     export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
     export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
-    exec cargo run $PROFILE_FLAG
+    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+      export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"
+      export BONG_ASSETS_DIR="$ROOT/server"
+      # private cwd does not discover checkout/server/.cargo/config.toml automatically.
+      export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"
+      # The owned server is the harness capability boundary; REUSE never enters this branch.
+      export BONG_DEV_MODE=1
+    fi
+    exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
 
-  # 就绪 = 我们自己的 server 日志出现 world bootstrap 锚点 **且** 端口可连。
-  # 只看端口会被环境里别人的瞬时 listener（并发 orchestrator 跑集成测试绑 25565）
-  # 骗过；只看日志则可能端口还没 bind。
-  # 该锚点在 fallback/raster/anvil 任一 overworld 后端成功创建后统一输出；不能继续
-  # 等 fallback 专属的 `creating overworld test area`，否则默认 raster fixture 会假超时。
+  # Owned-fixture mode needs an exact fixture marker. Generic mode keeps the prior common
+  # world bootstrap anchor while still requiring the listener to belong to this process tree.
   BOOT_ANCHOR="spawned tsy dimension layer (empty, awaits worldgen)"
   echo "[bot-e2e] 等待 $HOST:$PORT 就绪（最长 600s，冷编译会慢）"
   for _ in $(seq 1 300); do
@@ -194,17 +319,31 @@ else
       tail -n 40 "$SERVER_LOG" >&2
       exit 1
     fi
-    if grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
-      && port_open "$HOST" "$PORT" \
-      && port_owned_by_tree "$SERVER_PID" "$PORT"; then
-      break
+    # Owned-fixture readiness requires an exact tokenized marker; generic mode retains
+    # the world bootstrap + owned-listener readiness contract.
+    if { [ "$AMBIENT_FIXTURE_MODE" = "1" ] && grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"; } \
+      || { [ "$AMBIENT_FIXTURE_MODE" != "1" ] && grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG"; }; then
+      if port_open "$HOST" "$PORT" && port_owned_by_tree "$SERVER_PID" "$PORT"; then
+        if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+          export BOT_E2E_AMBIENT_FIXTURE_OWNED=1
+        fi
+        break
+      fi
     fi
     sleep 2
   done
-  if ! grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" \
+  if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+    ready_marker_ok=0
+    grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
+  else
+    ready_marker_ok=0
+    grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && ready_marker_ok=1
+  fi
+  if { [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "${BOT_E2E_AMBIENT_FIXTURE_OWNED:-0}" != "1" ]; } \
+    || [ "$ready_marker_ok" != "1" ] \
     || ! port_open "$HOST" "$PORT" \
     || ! port_owned_by_tree "$SERVER_PID" "$PORT"; then
-    echo "[bot-e2e] 600s 内未同时满足「日志锚点 $BOOT_ANCHOR + 当前 server 进程树持有端口 $PORT」，log 尾部：" >&2
+    echo "[bot-e2e] 600s 内未同时满足「本轮就绪锚点 + 当前 server 进程树持有端口 $PORT」，log 尾部：" >&2
     if grep -q "Blocking waiting for file lock" "$SERVER_LOG"; then
       echo "[bot-e2e] 提示：cargo 卡在 build directory 锁——共享 CARGO_TARGET_DIR 正被其他 cargo 进程占用" >&2
     fi
@@ -215,8 +354,71 @@ fi
 
 # ---- 场景 ----
 EXIT_CODE=0
+SCENARIOS_LOG="$EVIDENCE_DIR/scenarios.log"
+RUNTIME_WATCH_DIR=""
+RUNTIME_WATCH_LOG=""
+
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && ! self_started_fixture_runtime_is_current; then
+  echo "[bot-e2e] 场景启动前本轮 ambient fixture ownership 已失效，拒绝运行 Bot" >&2
+  exit 1
+fi
+
+# Watch ownership in a dedicated sibling process rather than sampling only from the foreground.
+# It emits exactly one terminal line and exits: `lost` closes the replacement-listener race;
+# `complete` means the runner finished while ownership remained bound to this server tree.
+WATCH_PID=""
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
+  RUNTIME_WATCH_DIR="$(mktemp -d "$EVIDENCE_DIR/runtime-watch.XXXXXX")"
+  RUNTIME_WATCH_LOG="$RUNTIME_WATCH_DIR/status"
+  (
+    while true; do
+      if [ -f "$RUNTIME_WATCH_LOG.stop" ]; then
+        echo complete >"$RUNTIME_WATCH_LOG"
+        exit 0
+      fi
+      if ! kill -0 "$SERVER_PID" 2>/dev/null \
+        || ! port_owned_by_tree "$SERVER_PID" "$PORT"; then
+        echo lost >"$RUNTIME_WATCH_LOG"
+        exit 1
+      fi
+      sleep 0.2
+    done
+  ) &
+  WATCH_PID=$!
+fi
+
+set +e
 BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \
-  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1 | tee "$EVIDENCE_DIR/scenarios.log" || EXIT_CODE=$?
+  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1 | tee "$SCENARIOS_LOG"
+pipeline_status=("${PIPESTATUS[@]}")
+if [ "${pipeline_status[0]}" -ne 0 ]; then
+  EXIT_CODE=${pipeline_status[0]}
+else
+  EXIT_CODE=${pipeline_status[1]}
+fi
+set -e
+
+if [ -n "$WATCH_PID" ]; then
+  touch "$RUNTIME_WATCH_LOG.stop"
+  wait "$WATCH_PID" || true
+  watch_result="$(cat "$RUNTIME_WATCH_LOG" 2>/dev/null || true)"
+  if [ -n "${BOT_E2E_WATCH_STATUS_EVIDENCE_PATH:-}" ]; then
+    printf '%s\n' "$watch_result" >"$BOT_E2E_WATCH_STATUS_EVIDENCE_PATH"
+  fi
+  rm -f "$RUNTIME_WATCH_LOG.stop" "$RUNTIME_WATCH_LOG"
+  rmdir "$RUNTIME_WATCH_DIR" 2>/dev/null || true
+  RUNTIME_WATCH_LOG=""
+  RUNTIME_WATCH_DIR=""
+  if [ "$watch_result" != "complete" ]; then
+    echo "[bot-e2e] Bot 运行期间本轮 server 退出或失去端口 ownership；拒绝替代 server 伪证" >&2
+    EXIT_CODE=1
+  fi
+fi
+
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && ! self_started_fixture_runtime_is_current; then
+  echo "[bot-e2e] 场景结束时本轮 ambient fixture ownership 不再成立，本次证据无效" >&2
+  EXIT_CODE=1
+fi
 
 if [ "$EXIT_CODE" != "0" ] && [ -f "$SERVER_LOG" ]; then
   echo "[bot-e2e] 场景失败，server log 尾部（完整见 $SERVER_LOG）："
