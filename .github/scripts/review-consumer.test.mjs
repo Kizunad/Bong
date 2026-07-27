@@ -55,20 +55,20 @@ const expectedCentralInterface = `  workflow_call:
         description: Caller-owned provider credential
         required: true`;
 
-const expectedCentralPermissionBlocks = [
-  `    permissions:
+const expectedCentralJobs = Object.freeze({
+  preflight: `    permissions:
       actions: read
       contents: read
       pull-requests: read
       issues: read`,
-  `    permissions:
+  review: `    permissions:
       contents: read
       pull-requests: read`,
-  `    permissions:
+  finalize: `    permissions:
       contents: read
       pull-requests: write
       issues: write`,
-];
+});
 
 const expectedCallerJobs = `jobs:
   central-review-shadow:
@@ -129,10 +129,40 @@ function assertExactCentralInterface(yaml) {
   assert.equal(actual, expectedCentralInterface, 'central workflow_call interface drifted');
 }
 
+function topLevelJobNames(yaml) {
+  const jobsStart = yaml.indexOf('\njobs:\n');
+  assert.ok(jobsStart >= 0, 'central jobs section is missing');
+  const jobsText = yaml.slice(jobsStart + 1);
+  return [...jobsText.matchAll(/^  ([a-z][a-z0-9_-]*):$/gm)].map((match) => match[1]);
+}
+
+function exactJobSection(yaml, jobName, nextJobName) {
+  const startMarker = `  ${jobName}:`;
+  const endMarker = nextJobName === null ? null : `\n  ${nextJobName}:`;
+  return exactSection(yaml, startMarker, endMarker, `central job ${jobName}`);
+}
+
 function assertExactCentralPermissions(yaml) {
-  const actual = (yaml.match(/^    permissions:\n(?:^      [a-z-]+: (?:read|write|none)\n?)+/gm) ?? [])
-    .map((block) => block.trimEnd());
-  assert.deepEqual(actual, expectedCentralPermissionBlocks, 'central job permission requirements drifted');
+  const jobNames = topLevelJobNames(yaml);
+  assert.deepEqual(jobNames, Object.keys(expectedCentralJobs), 'central job set or order drifted');
+  for (const [index, jobName] of jobNames.entries()) {
+    const nextJobName = jobNames[index + 1] ?? null;
+    const section = exactJobSection(yaml, jobName, nextJobName);
+    const declarations = section.match(/^    permissions:(?: .*|\n(?:^      .*\n?)*)/gm) ?? [];
+    assert.equal(declarations.length, 1, `${jobName} must declare permissions exactly once`);
+    assert.equal(
+      declarations[0].trimEnd(),
+      expectedCentralJobs[jobName],
+      `${jobName} permission requirements drifted`,
+    );
+  }
+
+  const allDeclarations = yaml.match(/^permissions:.*$|^    permissions:.*$/gm) ?? [];
+  assert.deepEqual(
+    allDeclarations,
+    ['permissions: {}', ...jobNames.map(() => '    permissions:')],
+    'central workflow contains an unexpected permissions declaration',
+  );
 }
 
 function assertExactCallerJobs(yaml) {
@@ -281,24 +311,49 @@ test('caller publication contract rejects mapping, secret, and permission drift'
   }
 });
 
-test('central permission contract rejects any job requirement drift', () => {
-  const permissionFixture = `jobs:
+test('central permission contract rejects unbound and non-block permission forms', () => {
+  const permissionFixture = `permissions: {}
+
+jobs:
   preflight:
-${expectedCentralPermissionBlocks[0]}
+${expectedCentralJobs.preflight}
   review:
-${expectedCentralPermissionBlocks[1]}
+${expectedCentralJobs.review}
   finalize:
-${expectedCentralPermissionBlocks[2]}
+${expectedCentralJobs.finalize}
 `;
   assert.doesNotThrow(() => assertExactCentralPermissions(permissionFixture));
-  assert.throws(
-    () => assertExactCentralPermissions(permissionFixture.replace('      actions: read\n', '')),
-    { message: /central job permission requirements drifted/ },
-  );
-  assert.throws(
-    () => assertExactCentralPermissions(permissionFixture.replace('      issues: write', '      issues: write\n      checks: write')),
-    { message: /central job permission requirements drifted/ },
-  );
+  for (const [name, mutation] of [
+    ['missing permission', permissionFixture.replace('      actions: read\n', '')],
+    ['additional permission', permissionFixture.replace(
+      '      issues: write',
+      '      issues: write\n      checks: write',
+    )],
+    ['scalar write-all', permissionFixture.replace(
+      `  finalize:\n${expectedCentralJobs.finalize}`,
+      '  finalize:\n    permissions: write-all',
+    )],
+    ['inline mapping', permissionFixture.replace(
+      `  review:\n${expectedCentralJobs.review}`,
+      '  review:\n    permissions: {contents: read, pull-requests: write}',
+    )],
+    ['empty mapping', permissionFixture.replace(
+      `  review:\n${expectedCentralJobs.review}`,
+      '  review:\n    permissions: {}',
+    )],
+    ['additional privileged job', `${permissionFixture}  publish:\n    permissions: write-all\n`],
+    ['job rename', permissionFixture.replace('  review:', '  inspect:')],
+    ['job permission swap', permissionFixture
+      .replace(expectedCentralJobs.preflight, '__PREFLIGHT__')
+      .replace(expectedCentralJobs.finalize, expectedCentralJobs.preflight)
+      .replace('__PREFLIGHT__', expectedCentralJobs.finalize)],
+  ]) {
+    assert.throws(
+      () => assertExactCentralPermissions(mutation),
+      undefined,
+      name,
+    );
+  }
 });
 
 test('provider canary remains dispatch-only, minimally permissioned, and secret-isolated', async () => {
