@@ -60,8 +60,8 @@ jobs:
             client/gradle.properties
             client/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install system test dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tmux
 
       - name: Cache Rust target
         uses: actions/cache@v4

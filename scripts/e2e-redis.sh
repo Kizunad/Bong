@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/bong-server-lifecycle.sh"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"
 TASK_ID="task-13"
 SCRIPT_TAG="e2e-redis"
@@ -30,6 +31,15 @@ FAIL=0
 CURRENT_STAGE="init"
 REDIS_PID=""
 SERVER_PID=""
+SERVER_PGID=""
+SERVER_OWNER_STARTTIME=""
+SERVER_OWNER_EXECUTABLE_IDENTITY=""
+SERVER_AUTHORITY_UNCERTAIN=0
+SERVER_STARTUP_CONTROL_FD=""
+SERVER_STARTUP_READY_FD=""
+NORTH_RIFT_DB_STASH=""
+PERSISTENCE_TRANSACTION_ACTIVE=0
+PERSISTENCE_STASH_READY=0
 REDIS_SUB_PID=""
 REDIS_PROVIDER=""
 REDIS_SERVER_BIN=""
@@ -832,50 +842,189 @@ ensure_redis() {
   finalize_failure "redis" "Redis provider '$REDIS_PROVIDER' did not become healthy within 30s"
 }
 
-# 递归杀整棵进程树。SERVER_PID 是子 shell，直接 kill 只杀 shell 本身，
-# cargo run / bong-server 会变孤儿继续占 25565（实测 bash 不向子进程转发 SIGTERM），
-# 拖垮后续需要该端口的 stage（如 bot-e2e）。
+# The production helper lives in the lifecycle library so its child-enumeration
+# fail-closed contract is executable-testable without running the full e2e.
 kill_tree() {
-  local pid="$1"
-  local child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do
-    kill_tree "$child"
-  done
-  kill "$pid" 2>/dev/null || true
-  # SIGTERM 被忽略/卡 syscall 时兜底 SIGKILL，保证端口真正释放
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    sleep 0.2
-  done
-  kill -9 "$pid" 2>/dev/null || true
+  bong_server_kill_tree "$@"
 }
 
 port_open() {
-  python3 - "$1" <<'PY'
-import socket
-import sys
+  bong_server_port_is_open "$@"
+}
 
-try:
-    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1.0).close()
-except OSError:
-    sys.exit(1)
-PY
+start_server_process_group() {
+  local log_file="$1" preview_mode="$2" actual_pgid="" cargo_target owner_pid=""
+  local owner_starttime="" owner_executable_identity="" supervisor="" ready_line="" committed_line=""
+  local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
+
+  cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  supervisor="${BONG_E2E_SUPERVISOR:-$ROOT/scripts/lib/bong-process-group-supervisor.py}"
+  local server_directory="${BONG_E2E_SERVER_DIRECTORY:-$ROOT/server}"
+  SERVER_PID=""
+  SERVER_PGID=""
+  SERVER_OWNER_STARTTIME=""
+  SERVER_OWNER_EXECUTABLE_IDENTITY=""
+  SERVER_STARTUP_CONTROL_FD=""
+  SERVER_STARTUP_READY_FD=""
+  SERVER_AUTHORITY_UNCERTAIN=1
+  coproc BONG_SERVER_SUPERVISOR {
+    exec env \
+      PATH="$RUST_PATH" \
+      CARGO_TARGET_DIR="$cargo_target" \
+      BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
+      BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
+      BONG_PREVIEW_MODE="$preview_mode" \
+      python3 "$supervisor" "$server_directory" \
+      2>"$log_file"
+  }
+  owner_pid=""
+  ready_fd="${BONG_SERVER_SUPERVISOR[0]}"
+  control_fd="${BONG_SERVER_SUPERVISOR[1]}"
+  SERVER_STARTUP_READY_FD="$ready_fd"
+  SERVER_STARTUP_CONTROL_FD="$control_fd"
+
+  if ! IFS= read -r -t 5 -u "$ready_fd" ready_line \
+    || [[ "$ready_line" != 'READY pid='[0-9]* ]]; then
+    exec {control_fd}>&-
+    exec {ready_fd}<&-
+    # Do not wait on an unpinned startup PID: it can outlive a failed protocol
+    # transaction and is never authority. The supervisor receives EOF and rolls
+    # its own private group back.
+    SERVER_STARTUP_CONTROL_FD=""
+    SERVER_STARTUP_READY_FD=""
+    echo "FAIL: server supervisor did not publish startup rollback readiness" >&2
+    return 1
+  fi
+  # READY is emitted by the post-setsid supervisor itself and carries that exact
+  # PID, avoiding Bash coproc wrapper ambiguity. The following identity snapshot
+  # still pins starttime, executable inode, and PGID before C is sent.
+  owner_pid="${ready_line#READY pid=}"
+  [[ "$owner_pid" =~ ^[0-9]+$ ]] || {
+    exec {control_fd}>&-
+    exec {ready_fd}<&-
+    SERVER_STARTUP_CONTROL_FD=""
+    SERVER_STARTUP_READY_FD=""
+    echo "FAIL: server supervisor readiness line carried an invalid owner PID" >&2
+    return 1
+  }
+
+  for _ in $(seq 1 500); do
+    if bong_server_process_is_running "$owner_pid"; then
+      actual_pgid="$(ps -o pgid= -p "$owner_pid" 2>/dev/null || true)"
+      actual_pgid="${actual_pgid//[[:space:]]/}"
+      if [ "$actual_pgid" = "$owner_pid" ]; then
+        owner_snapshot="$(bong_server_process_starttime_and_group "$owner_pid" 2>/dev/null || true)"
+        read -r owner_starttime actual_pgid <<< "$owner_snapshot"
+        owner_executable_identity="$(
+          bong_server_process_executable_identity "$owner_pid" 2>/dev/null || true
+        )"
+        if [ "$actual_pgid" = "$owner_pid" ] \
+          && [[ "$owner_starttime" =~ ^[0-9]+$ ]] \
+          && [[ "$owner_executable_identity" =~ ^[0-9]+:[0-9]+$ ]]; then
+          if ! printf C >&"$control_fd"; then
+            break
+          fi
+          # C is one-way control. Close the write end immediately so no process
+          # can mistake a still-open control channel for uncommitted authority.
+          exec {control_fd}>&-
+          control_fd=""
+          SERVER_STARTUP_CONTROL_FD=""
+          if [ -n "${BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK:-}" ]; then
+            "$BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK" "$owner_pid"
+          fi
+          if IFS= read -r -t 5 -u "$ready_fd" committed_line \
+            && [ "$committed_line" = COMMITTED ]; then
+            if [ -n "${BONG_E2E_TEST_AFTER_ACK_HOOK:-}" ]; then
+              "$BONG_E2E_TEST_AFTER_ACK_HOOK" "$owner_pid"
+            fi
+            if bong_server_pinned_process_group_status \
+              "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid"; then
+              exec {ready_fd}<&-
+              SERVER_STARTUP_READY_FD=""
+              SERVER_PID="$owner_pid"
+              SERVER_PGID="$actual_pgid"
+              SERVER_OWNER_STARTTIME="$owner_starttime"
+              SERVER_OWNER_EXECUTABLE_IDENTITY="$owner_executable_identity"
+              SERVER_AUTHORITY_UNCERTAIN=0
+              return 0
+            fi
+          fi
+          break
+        fi
+      fi
+    else
+      break
+    fi
+    sleep 0.01
+  done
+
+  # Never publish partial authority. If the full pre-C candidate still pins, its
+  # owner-bound stop helper may clean it. A changed/dead/uninspectable candidate
+  # is deliberately left for diagnosis: numeric PGID teardown would be unsafe.
+  [ -n "$control_fd" ] && exec {control_fd}>&-
+  exec {ready_fd}<&-
+  SERVER_STARTUP_CONTROL_FD=""
+  SERVER_STARTUP_READY_FD=""
+  if [ -n "$owner_starttime" ] && [ -n "$owner_executable_identity" ] \
+    && [ -n "$actual_pgid" ] \
+    && bong_server_pinned_process_group_status \
+      "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid"; then
+    if bong_server_stop_owned_process_group_and_release_port \
+      "$owner_pid" "$owner_starttime" "$owner_executable_identity" "$actual_pgid" 25565; then
+      cleanup_status=0
+    else
+      cleanup_status=$?
+    fi
+  fi
+  # A bounded wait reaps a normal rollback/cleanup owner without accidentally
+  # turning an unpinned PID into authority. Never wait indefinitely here.
+  if [ "$cleanup_status" -eq 0 ]; then
+    echo "FAIL: server supervisor commit acknowledgement failed; pinned rollback completed" >&2
+  else
+    echo "FAIL: server supervisor commit acknowledgement failed; authority was not published" >&2
+  fi
+  return 1
 }
 
 stop_server() {
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill_tree "$SERVER_PID"
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
-  SERVER_PID=""
+  local pid="$SERVER_PID" pgid="$SERVER_PGID"
+  local owner_starttime="$SERVER_OWNER_STARTTIME"
+  local owner_executable_identity="$SERVER_OWNER_EXECUTABLE_IDENTITY"
+  local stop_status
 
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if ! port_open 25565; then
-      return 0
+  if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then
+    echo "FAIL: server process-group authority is uncertain; refusing teardown or restore" >&2
+    return 1
+  fi
+
+  if [ -n "$pid" ] || [ -n "$pgid" ] \
+    || [ -n "$owner_starttime" ] || [ -n "$owner_executable_identity" ]; then
+    if [ -z "$pid" ] || [ -z "$pgid" ] \
+      || [ -z "$owner_starttime" ] || [ -z "$owner_executable_identity" ]; then
+      echo "FAIL: incomplete server process-group authority (pid=${pid:-missing}, pgid=${pgid:-missing})" >&2
+      return 1
     fi
-    sleep 0.2
-  done
-  return 1
+    if bong_server_stop_owned_process_group_and_release_port \
+        "$pid" "$owner_starttime" "$owner_executable_identity" "$pgid" 25565; then
+      SERVER_PID=""
+      SERVER_PGID=""
+      SERVER_OWNER_STARTTIME=""
+      SERVER_OWNER_EXECUTABLE_IDENTITY=""
+      SERVER_AUTHORITY_UNCERTAIN=0
+      return 0
+    else
+      stop_status=$?
+    fi
+    return "$stop_status"
+  fi
+  # Outside a READY transaction there are no stashed developer bytes to expose:
+  # an empty PID remains an ordinary no-op. Restore authorization is stricter and
+  # requires fresh shared-port evidence for this cleanup invocation.
+  if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
+    bong_server_confirm_port_released 25565
+    return $?
+  fi
+  return 0
 }
 
 cleanup() {
@@ -884,7 +1033,28 @@ cleanup() {
     wait "$REDIS_SUB_PID" 2>/dev/null || true
   fi
 
-  stop_server || true
+  STOP_SERVER_CONFIRMED=0
+  if stop_server; then
+    STOP_SERVER_CONFIRMED=1
+  else
+    echo "FAIL: preview server did not stop/release port; persistence restore is forbidden" >&2
+  fi
+
+  # 持久化 transaction 覆盖 stash → 专用 preview 停服 → restore 的整段。
+  # cleanup 绝不能先解锁：必须先停服，再还原；还原/完成失败则留下 durable
+  # handoff marker，之后的 e2e 会 fail closed 而不是覆盖开发者存档。
+  if [ "$PERSISTENCE_TRANSACTION_ACTIVE" -eq 1 ]; then
+    if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then
+      if bong_server_finalize_preview_persistence_after_stop \
+        "$ROOT/server/data" "$NORTH_RIFT_DB_STASH" "$STOP_SERVER_CONFIRMED"; then
+        PERSISTENCE_STASH_READY=0
+      fi
+    else
+      # No stash path was committed: pre-manifest/stale failure, safe to clear.
+      bong_server_persistence_transaction_complete || bong_server_persistence_transaction_release
+    fi
+    PERSISTENCE_TRANSACTION_ACTIVE=0
+  fi
 
   if [ -n "$REDIS_PID" ] && kill -0 "$REDIS_PID" 2>/dev/null; then
     kill_tree "$REDIS_PID"
@@ -929,18 +1099,9 @@ fi
 echo ""
 CURRENT_STAGE="server"
 echo "=== [$TASK_ID][$SCRIPT_TAG][3/8] Server startup ==="
-(
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  # NPC perf v1：e2e 默认恢复 100 rogue seed，并用 TickRateProbe 日志作为
-  # CI 回归门禁。低负载调试可手动覆盖 BONG_ROGUE_SEED_COUNT=0。
-  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-100}"
-  # CI 无 MINESKIN_API_KEY，跳过皮肤预取（NPC 回退 villager 实体）。
-  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-  cd "$ROOT/server"
-  cargo run --release
-) >"$SERVER_LOG" 2>&1 &
-SERVER_PID="$!"
+if ! start_server_process_group "$SERVER_LOG" 0; then
+  finalize_failure "server" "failed to establish dedicated server process group; see $SERVER_LOG"
+fi
 
 if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
   pass "server world bootstrap"
@@ -1038,71 +1199,142 @@ echo "=== [$TASK_ID][$SCRIPT_TAG][7/8] North-rift dedicated preview bot ==="
 # client 的 ViewDistance 提到 32。绝不能把该 env 塞进常规 bot --all server：
 # 先在上面的普通 release server 完成 100 NPC TPS gate，再完整停服；这里只另起
 # 一个无 rogue seed 的专用 release server，运行唯一 north-rift bot 后立即清理。
-if ! stop_server; then
-  finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
-fi
-
-(
-  export PATH="$RUST_PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  export BONG_ROGUE_SEED_COUNT=0
-  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-  export BONG_PREVIEW_MODE=1
-  cd "$ROOT/server"
-  cargo run --release
-) >"$NORTH_RIFT_SERVER_LOG" 2>&1 &
-SERVER_PID="$!"
-
-if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
-fi
-if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
-fi
-NORTH_RIFT_PORT_READY=0
-for _ in $(seq 1 50); do
-  if port_open 25565; then
-    NORTH_RIFT_PORT_READY=1
-    break
+run_north_rift_preview() {
+  # The lifecycle lock spans ordinary-server stop through persistence restore.
+  # Production start/dev-reload use the same lock, so neither can open
+  # server/data while the preview transaction has moved its SQLite snapshot.
+  if ! stop_server; then
+    finalize_failure "north-rift-preview" "ordinary server stopped but port 25565 stayed occupied"
   fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    break
+
+  # Recheck under the lifecycle lock immediately before transaction begin. A
+  # listener with no PID authority is unsafe and must leave developer data intact.
+  if ! bong_server_confirm_port_released 25565; then
+    finalize_failure "north-rift-preview" "port 25565 is occupied before persistence stash; refusing to move live SQLite files"
   fi
-  sleep 0.2
-done
-if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated preview server did not own port 25565; see $NORTH_RIFT_SERVER_LOG"
-fi
 
-NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
-if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
-  python3 "$ROOT/scripts/bot/run_scenarios.py" \
-    --host 127.0.0.1 \
-    --port 25565 \
-    --run-tag "$NORTH_RIFT_RUN_TAG" \
-    --scenario terrain_north_rift_scorch_zone_identity \
-    >"$NORTH_RIFT_BOT_LOG" 2>&1; then
-  pass "north-rift preview_tp zone_info + ambient_zone bot"
-else
-  tail -n 80 "$NORTH_RIFT_BOT_LOG" || true
-  tail -n 80 "$NORTH_RIFT_SERVER_LOG" || true
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated north-rift protocol bot failed; see $NORTH_RIFT_BOT_LOG"
-fi
+  # 优雅关服（SIGTERM → AppExit → Last）现在真正可达，上面 stop_server 会让
+  # 普通 e2e server 在退出前把运行期 zone 快照（被 100 NPC seed 消耗过的
+  # spirit_qi）刷进 server/data/bong.db。但下面这台专用 preview server 与
+  # 普通 server 共用同一个相对 cwd 持久化路径，而 terrain_north_rift_scorch_
+  # zone_identity 场景断言的是 zones.json 的 pristine 权威身份数值——必须先
+  # 把开发者本地真实存档挪走，让专用 preview server 从干净持久化状态启动，
+  # 场景通过 / 脚本退出后再原样还原，不能影响本机开发者的真实存档。
+  NORTH_RIFT_DB_STASH="$RUN_DIR/north-rift-db-stash"
+  if ! bong_server_persistence_transaction_begin "$ROOT/server/data"; then
+    finalize_failure "north-rift-preview" "failed to acquire exclusive server/data persistence transaction (or an unrecovered handoff exists)"
+  fi
+  PERSISTENCE_TRANSACTION_ACTIVE=1
+  if ! bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+    # Helper creates the durable stash-path marker only after V3 manifest publish
+    # and validation, before its first move. A pre-publish/stale failure remains
+    # unready and cleanup only clears ACTIVE without touching that leaf.
+    if [ "${BONG_SERVER_PERSISTENCE_STASH_READY:-0}" -eq 1 ]; then
+      PERSISTENCE_STASH_READY=1
+    fi
+    finalize_failure "north-rift-preview" "failed to atomically publish and stash local server/data/bong.db before dedicated preview server"
+  fi
+  PERSISTENCE_STASH_READY=1
 
-if ! stop_server; then
-  finalize_failure \
-    "north-rift-preview" \
-    "dedicated preview bot passed but server did not release port 25565"
+  if ! start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1; then
+    finalize_failure \
+      "north-rift-preview" \
+      "failed to establish dedicated preview server process group; see $NORTH_RIFT_SERVER_LOG"
+  fi
+
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
+  fi
+  NORTH_RIFT_PORT_READY=0
+  NORTH_RIFT_LISTENER_INSPECTION_FAILED=0
+  for _ in $(seq 1 50); do
+    if bong_server_owned_process_group_owns_ipv4_listener \
+        "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+        "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID" 25565; then
+      listener_status=0
+    else
+      listener_status=$?
+    fi
+    if [ "$listener_status" -ne 0 ] && [ "$listener_status" -ne 1 ]; then
+      NORTH_RIFT_LISTENER_INSPECTION_FAILED=1
+      break
+    fi
+    if [ "$listener_status" -eq 0 ] && port_open 25565; then
+      if bong_server_owned_process_group_owns_ipv4_listener \
+          "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+          "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID" 25565; then
+        NORTH_RIFT_PORT_READY=1
+        break
+      else
+        listener_status=$?
+      fi
+      if [ "$listener_status" -ne 1 ]; then
+        NORTH_RIFT_LISTENER_INSPECTION_FAILED=1
+        break
+      fi
+    fi
+    if ! bong_server_pinned_process_group_status \
+        "$SERVER_PID" "$SERVER_OWNER_STARTTIME" \
+        "$SERVER_OWNER_EXECUTABLE_IDENTITY" "$SERVER_PGID"; then
+      break
+    fi
+    sleep 0.2
+  done
+  if [ "$NORTH_RIFT_PORT_READY" -ne 1 ]; then
+    if [ "$NORTH_RIFT_LISTENER_INSPECTION_FAILED" -eq 1 ]; then
+      listener_failure="dedicated preview server listener ownership became uninspectable"
+    else
+      listener_failure="dedicated preview server did not prove ownership of port 25565"
+    fi
+    finalize_failure \
+      "north-rift-preview" \
+      "$listener_failure; see $NORTH_RIFT_SERVER_LOG"
+  fi
+
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
+    python3 "$ROOT/scripts/bot/run_scenarios.py" \
+      --host 127.0.0.1 \
+      --port 25565 \
+      --run-tag "$NORTH_RIFT_RUN_TAG" \
+      --scenario terrain_north_rift_scorch_zone_identity \
+      >"$NORTH_RIFT_BOT_LOG" 2>&1; then
+    pass "north-rift preview_tp zone_info + ambient_zone bot"
+  else
+    tail -n 80 "$NORTH_RIFT_BOT_LOG" || true
+    tail -n 80 "$NORTH_RIFT_SERVER_LOG" || true
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated north-rift protocol bot failed; see $NORTH_RIFT_BOT_LOG"
+  fi
+
+  if ! stop_server; then
+    finalize_failure \
+      "north-rift-preview" \
+      "dedicated preview bot passed but server did not release port 25565"
+  fi
+
+  if ! bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"; then
+    finalize_failure "north-rift-preview" "failed to restore local server/data/bong.db after dedicated preview server; durable handoff will remain"
+  fi
+  if ! bong_server_persistence_transaction_complete; then
+    finalize_failure "north-rift-preview" "restored local server/data/bong.db but could not clear the durable persistence handoff"
+  fi
+  PERSISTENCE_STASH_READY=0
+  PERSISTENCE_TRANSACTION_ACTIVE=0
+  pass "north-rift dedicated preview server cleanup"
+}
+
+if ! bong_server_with_preview_persistence_lock run_north_rift_preview; then
+  finalize_failure "north-rift-preview" "failed to hold lifecycle exclusion through north-rift preview persistence transaction"
 fi
-pass "north-rift dedicated preview server cleanup"
 
 CURRENT_STAGE="summary"
 echo ""

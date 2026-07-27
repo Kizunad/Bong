@@ -1474,40 +1474,180 @@ class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
         phase = self.source[phase_start:phase_end]
 
         self.assertEqual(
-            self.source.count("export BONG_PREVIEW_MODE=1"),
+            self.source.count('start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1'),
             1,
-            "preview env 只能出现在 dedicated north-rift server phase",
+            "preview mode 只能传给 dedicated north-rift server launch",
         )
         first_stop = phase.index("if ! stop_server;")
-        preview_env = phase.index("export BONG_PREVIEW_MODE=1")
+        preview_env = phase.index(
+            'start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1'
+        )
         scenario = phase.index("--scenario terrain_north_rift_scorch_zone_identity")
         second_stop = phase.index("if ! stop_server;", first_stop + 1)
         self.assertLess(first_stop, preview_env, "必须先停普通 100 NPC server 再开 preview")
         self.assertLess(preview_env, scenario, "专用 server 激活 preview 后才能运行真实 bot")
         self.assertLess(scenario, second_stop, "唯一场景结束后必须立即 stop_server")
         self.assertIn("BOT_E2E_NORTH_RIFT_PREVIEW=1", phase)
-        self.assertIn("export BONG_ROGUE_SEED_COUNT=0", phase)
+        self.assertIn(
+            'BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ]',
+            self.source,
+            "dedicated preview launch 必须显式禁用 rogue seed",
+        )
 
-    def test_stop_server_kills_tree_waits_and_verifies_port_release(self):
+    def test_stop_server_delegates_shared_lifecycle_and_cleanup_fails_closed(self):
         start = self.source.index("stop_server() {")
         end = self.source.index("\n}\n\ncleanup()", start)
         stop_body = self.source[start:end]
-        for required in (
-            'kill_tree "$SERVER_PID"',
-            'wait "$SERVER_PID"',
-            'SERVER_PID=""',
-            "port_open 25565",
-            "return 1",
+        helper_branch = stop_body.index(
+            "if bong_server_stop_owned_process_group_and_release_port"
+        )
+        empty_pid_port_check = stop_body.index(
+            "bong_server_confirm_port_released 25565", helper_branch
+        )
+        clear_pid = stop_body.index('SERVER_PID=""', helper_branch)
+        success_return = stop_body.index("return 0", clear_pid)
+        capture_status = stop_body.index("stop_status=$?", success_return)
+        failure_return = stop_body.index('return "$stop_status"', capture_status)
+        branch_end = stop_body.index("\n  fi", failure_return)
+
+        self.assertLess(
+            helper_branch,
+            clear_pid,
+            "e2e stop_server 必须先由共享 helper 确认停树和端口释放，才能清空 PID",
+        )
+        self.assertLess(clear_pid, success_return)
+        self.assertLess(success_return, capture_status)
+        self.assertLess(capture_status, failure_return)
+        self.assertLess(failure_return, branch_end)
+        self.assertIn(
+            'return "$stop_status"',
+            stop_body,
+            "共享 helper 的 forced/uncertain 状态必须原样传播，不能压平为普通失败",
+        )
+        self.assertIn(
+            'if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then',
+            stop_body,
+            "只有 READY persistence cleanup 的空 PID 分支才必须获取新端口证据",
+        )
+        self.assertLess(
+            stop_body.index('if [ "$PERSISTENCE_STASH_READY" -eq 1 ]; then'),
+            empty_pid_port_check,
+            "空 PID 的端口探测必须受 READY restore gate 约束",
+        )
+        self.assertEqual(
+            stop_body.count('SERVER_PID=""'),
+            1,
+            "SERVER_PID 只能在共享 helper 成功分支清空一次",
+        )
+        self.assertEqual(
+            stop_body.count('SERVER_PGID=""'),
+            1,
+            "SERVER_PGID 只能在整组确认退出后清空一次",
+        )
+        for authority_var, local_name in (
+            ("SERVER_OWNER_STARTTIME", "owner_starttime"),
+            ("SERVER_OWNER_EXECUTABLE_IDENTITY", "owner_executable_identity"),
         ):
-            with self.subTest(required=required):
-                self.assertIn(required, stop_body)
+            with self.subTest(authority=authority_var):
+                self.assertIn(
+                    f'local {local_name}="${authority_var}"',
+                    stop_body,
+                    "stop_server 必须把 pinned supervisor 身份传给共享 helper",
+                )
+                self.assertEqual(
+                    stop_body.count(f'{authority_var}=""'),
+                    1,
+                    "supervisor authority 只能在整组确认退出后清空",
+                )
+        self.assertIn('if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then', stop_body)
+        self.assertLess(
+            stop_body.index('if [ "$SERVER_AUTHORITY_UNCERTAIN" -ne 0 ]; then'),
+            helper_branch,
+            "authority 尚未完整固定时必须先 fail closed，不能扫描裸 PGID",
+        )
+        self.assertNotIn("authority_path=", self.source)
+        self.assertNotIn("setsid --fork", self.source)
+        self.assertIn("bong-process-group-supervisor.py", self.source)
+        for legacy_detail in (
+            'kill_tree "$pid"',
+            'wait "$pid"',
+            "port_open 25565",
+        ):
+            with self.subTest(legacy_detail=legacy_detail):
+                self.assertNotIn(
+                    legacy_detail,
+                    stop_body,
+                    "stop_server 不得重新内联共享 lifecycle helper 的停树/等待/端口逻辑",
+                )
 
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\n\ntrap cleanup EXIT", cleanup_start)
-        self.assertIn(
+        cleanup_body = self.source[cleanup_start:cleanup_end]
+        unconfirmed = cleanup_body.index("STOP_SERVER_CONFIRMED=0")
+        stop_if = cleanup_body.index("if stop_server; then", unconfirmed)
+        confirmed = cleanup_body.index("STOP_SERVER_CONFIRMED=1", stop_if)
+        stop_else = cleanup_body.index("\n  else", confirmed)
+        stop_fi = cleanup_body.index("\n  fi", stop_else)
+        finalize = cleanup_body.index(
+            "bong_server_finalize_preview_persistence_after_stop", stop_fi
+        )
+        finalize_end = cleanup_body.index("; then", finalize)
+        finalize_call = cleanup_body[finalize:finalize_end]
+
+        self.assertLess(unconfirmed, stop_if)
+        self.assertLess(
+            stop_if,
+            confirmed,
+            "cleanup 只能在 stop_server 成功分支标记停服已确认",
+        )
+        self.assertLess(confirmed, stop_else)
+        self.assertEqual(
+            cleanup_body.count("STOP_SERVER_CONFIRMED=1"),
+            1,
+            "cleanup 只能从 stop_server 成功分支产生唯一确认状态",
+        )
+        self.assertNotIn(
             "stop_server || true",
-            self.source[cleanup_start:cleanup_end],
-            "PASS/FAIL/异常退出都必须经 trap 回收当前 server tree",
+            cleanup_body,
+            "停服失败不能被吞掉，否则可能错误恢复仍被 preview server 占用的 SQLite",
+        )
+        self.assertIn(
+            '"$STOP_SERVER_CONFIRMED"',
+            finalize_call,
+            "cleanup 必须把停服确认结果交给共享 finalize helper 决定 restore 或 durable abort",
+        )
+
+    def test_preview_persistence_interval_holds_shared_lifecycle_lock(self):
+        phase_start = self.source.index('CURRENT_STAGE="north-rift-preview"')
+        phase_end = self.source.index('CURRENT_STAGE="summary"', phase_start)
+        phase = self.source[phase_start:phase_end]
+        fn_start = phase.index("run_north_rift_preview() {")
+        fn_end = phase.index("\n}\n\nif ! bong_server_with_preview_persistence_lock", fn_start)
+        preview_body = phase[fn_start:fn_end]
+        lock_call = phase.index(
+            "bong_server_with_preview_persistence_lock run_north_rift_preview",
+            fn_end,
+        )
+
+        for required_step in (
+            "if ! stop_server; then",
+            "bong_server_confirm_port_released 25565",
+            'bong_server_persistence_transaction_begin "$ROOT/server/data"',
+            'bong_server_stash_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"',
+            '--scenario terrain_north_rift_scorch_zone_identity',
+            'bong_server_restore_persistence "$ROOT/server/data" "$NORTH_RIFT_DB_STASH"',
+            "bong_server_persistence_transaction_complete",
+        ):
+            with self.subTest(step=required_step):
+                self.assertIn(
+                    required_step,
+                    preview_body,
+                    "preview lifecycle lock 的函数体必须覆盖完整 stash→run→restore 临界区",
+                )
+        self.assertGreater(
+            lock_call,
+            fn_end,
+            "完整 preview transaction 必须经生产 start/reload 共用的 lifecycle lock 调用",
         )
 
 
