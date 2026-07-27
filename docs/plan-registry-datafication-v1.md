@@ -2,14 +2,14 @@
 
 > **一句话主题**：把三处最挡"横向扩内容"的硬编码注册表迁成扫盘数据文件——craft 手搓/制作台配方（pin 测试锁定 90 条 + 5 条 legacy 的 Rust 元组表）、功法元数据（49 条 const 数组）、terrain 方块名映射（`blocks.rs` + `raster.rs` 孪生双份 match）——**零新系统、零 wire 改动，有效数据的运行时语义零变化**（唯一有意变更：无效引用从运行时静默失败改为启动期 fail fast，错误契约见 P2），只搬装载来源不动消费方，让"加一条内容 = 加一个数据条目"的覆盖面从物品/丹方/锻造蓝图扩到配方/功法/地形材质。
 
-**状态**：骨架（skeleton）。升 active 前按 docs/CLAUDE.md §五 收口 §8。
+**状态**：Active（2026-07-27 pre-P0 决议已收口，实施以 §8.1 为准）。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
 | P0 | craft 配方数据化——workbench 90 条（pin 锁定）+ legacy 5 条 → `assets/craft/recipes/*.toml` 扫盘 + 对拍回归门 | ⬜ |
 | P1 | 功法元数据数据化——`TECHNIQUE_DEFINITIONS` 49 条 → TOML + 双向 wiring 启动校验 | ⬜ |
 | P2 | 方块名映射查表化——`blocks.rs` + `raster.rs` 孪生表合一 + manifest 引用启动期 fail-fast（替代静默丢材质） | ⬜ |
-| P3 | 范围裁决项——矿物 registry / NPC 原型默认掉落 / 丹道 6 方包装（§8 #5 收口后定） | ⬜ |
+| P3 | 范围裁决项——矿物 registry / NPC 原型默认掉落 / 丹道 6 方包装（§8.1 #5 已裁决为本 plan 不实施） | ✅ 2026-07-27 |
 
 ---
 
@@ -44,11 +44,11 @@
 
 ## P1 功法元数据数据化 ⬜
 
-- 新 `server/assets/cultivation/techniques.toml`（或按 category 分文件，§8 #1）：49 条全字段迁移。resolver 函数指针**留 Rust**（`SkillRegistry` 注册模式不动——本 plan 只外置元数据，不外置行为）。
-- 新 `TechniqueRegistry` Resource 替换 const 数组查找；`known_techniques.rs` 门面函数签名保留与否按调用面大小定（§8 #3）。
-- **双向 wiring 启动校验（fail fast，防孤岛）**：① 每条元数据声明可施放的功法必须在 `SkillRegistry` 有 resolver；② 每个已注册 resolver id 必须有元数据条目；③ 声明 `required_meridians` 的功法必须与 `SkillMeridianDependencies::declare` 对齐（docs/CLAUDE.md §四 经脉红旗的机械化检查）。
+- 新 `server/assets/cultivation/techniques.toml`：49 条全字段按现有 source order 迁移。resolver 函数指针**留 Rust**（`SkillRegistry` 注册模式不动——本 plan 只外置元数据，不外置行为）。
+- 新 owned `TechniqueRegistry` Resource（有序 `Vec<TechniqueDefinition>` + `id → index`），保持 NPC 同 seed 选招与命令展示的原顺序；系统消费方取 `Res<TechniqueRegistry>`，纯函数显式收 `&TechniqueRegistry`。玩家持久化 `KnownTechniques { id, proficiency, active }` 与 `KnownTechniquesLoadFailed` 写保护不动。详见 §8.1 #3。
+- **分类 wiring 启动校验（fail fast，防孤岛）**：不能把 metadata 49 条与 resolver 68 条强行做双向全等。loader 对 metadata 条目显式标记 `metadata_backed` / `direct_generic`；`metadata_backed` 必须存在 resolver，`direct_generic` 允许走统一非 resolver 入口；resolver-only 的 22 条由所属 subsystem 持有，不反向要求本表元数据。所有 `SkillRegistry ∩ TechniqueRegistry` 条目仍必须在**完整同步构造完成后**有 `SkillMeridianDependencies` 声明；metadata 的 `min_health` 不与仅存 `MeridianId` 的 deps 表做伪字段相等。详见 §8.1 #3。
 - 与 **plan-skill-av-relink-v1（active）** 协调：图标链防回归测试（#1220，skill_scroll 单一真相源）以 icon id 为锚——元数据外置**不得改任何 icon id 语义**，迁移后该测试族必须原样全绿。
-- 对拍回归门同 P0：const 数组快照 == TOML 加载结果逐条相等 + 49 数量 pin。realm / race gate / category 枚举字符串每变体正反 serde sample。
+- 对拍回归门同 P0：旧 const 数组 canonical 快照 == TOML 加载结果逐条相等；数量从快照长度派生，不在迁移后测试中另写一份 49 条真源。realm / race gate / category 枚举字符串每变体正反 serde sample。
 
 ## P2 方块名映射查表化（孪生表合一）⬜
 
@@ -57,9 +57,9 @@
 - **静默 `None` → 启动期 fail fast（有意的失败语义变更）**：`TerrainProvider::load` 时把 manifest 携带的 surface_palette / decoration blocks 全量预解析，未知方块名启动即报错。错误契约：报错信息列出**全部**未知名及各自来源（palette 项 / decoration id / NBT 文件），触发条件 = manifest 引用的任一方块名不可解析；有效数据的运行时行为不变。发布策略：对拍测试保证现两表覆盖名全数可解析 + 合并前 `scripts/dev-reload.sh` 对现网 raster 全链过一遍，故现存数据不会触发新的启动失败。
 - 饱和测试：两份现 match 覆盖的**全部名字新旧解析结果对拍**（一致性快照，含两表差集专项——若两表现状已有分歧条目，逐条裁决记录进 plan）；未知名报错路径；manifest 校验命中 / 漏配用例；`raster_check` 后验流程不受影响（`bash scripts/dev-reload.sh` 全绿）。
 
-## P3 范围裁决项 ⬜
+## P3 范围裁决项 ✅ 2026-07-27
 
-§8 #5 收口后定去留（并入本 plan 追加阶段 or 登记 `reminder.md` 另立）：
+§8.1 #5 已裁决：以下三项全部 out-of-scope，本 plan 不实施、不顺手改代码；归档证据登记为后续独立验真/立项候选：
 
 - 矿物 registry：`mineral/registry.rs:80` `build_default_registry` 手写 18 条（跨 `MineralId` 枚举 + registry + `minerals.toml` + `mineral_anchors.json` 四处）。
 - NPC 原型默认掉落：`npc/loot.rs:63` `default_loot_for_archetype` 静态 match 表（世界/TSY/宗门掉落均已 JSON，唯此硬编）。
@@ -67,7 +67,7 @@
 
 ---
 
-## §8 开放问题（升 active / P0 决策门前收口）
+## §8 开放问题（已于 §8.1 收口）
 
 1. **数据文件粒度**：craft 单文件 vs 按十大类分文件（倾向按类分，对齐 alchemy 一方一文件的可 review 性）；techniques 同题（倾向按 `SkillCategory` 分）。
 2. **流派 code-register 配方是否迁**：倾向不迁——dugu-v2 / tuike-v2 / zhenfa 等配方与 skill plan 生命周期绑定，迁了反拆散 plan 内聚；本 plan 只迁 workbench + legacy example，需在 P0 里 grep 确认边界清单。
@@ -77,6 +77,80 @@
 6. **数据 lint**：loader 测试是否顺带做 worldview §三 L63 禁词 lint（display_name 扫 玄/陨/星/仙/太/古）——低成本高护栏，倾向做。
 7. **与 plan-craft-chain-items-v1（同批 skeleton）顺序协调**：若本 plan P0 先 merge，物品 plan 的新配方直接落 TOML；反之先落 Rust 表行、本 plan 迁移时一并搬。**两 plan 不得同时改 `workbench_recipes.rs`**（merge conflict 高危区，历史上并行 PR 改同一表已叠出过重复字段编译错）。
 
-## §10（升 active 时补）
+全部已在 §8.1 收口。原表保留以备追溯，**实施时以 §8.1 决议为准**。
 
-scope **固定 3 PR**（依赖序列化：PR-1 = P0 → PR-2 = P1 → PR-3 = P2，三者互不跨改同一注册表文件）；P3 若 §8 #5 裁决纳入则 scope 升 4——届时升 active 必须先按 docs/CLAUDE.md §六 模板补全 §10 全文（含"单次 consume-plan 全自动到 merge"章节）再消费。纯 server 基建 plan，无视听规格要求（docs/CLAUDE.md §四 豁免条款）；每 PR 以对拍回归门为 merge 前置；本地门禁 server 栈全跑 + PR-3 追加 `scripts/dev-reload.sh` 全链。**单 plan 边界**：每个实施 PR 仅消费并修改本 plan，不得与 plan-craft-chain-items-v1 在同一 PR 内交叉改动（跨 plan 变更拆独立 PR）；快照/pin 更新规则：他 plan 新增配方后，本 plan 对拍基线在 PR-1 实施起点重新 dump，数量断言随快照长度走。
+## §8.1 决议（pre-P0 收口，2026-07-27）
+
+### #1 数据文件粒度
+
+**决议**：
+1. craft 用 `server/assets/craft/recipes/*.toml` 多文件扫盘，按现 `workbench_recipes.rs` 的领域组拆分；每个文件可含多条 `[[recipes]]`，兼顾 review 可读性与避免约百个碎文件。
+2. techniques 只有 49 条且顺序属于运行时契约，使用单一 `server/assets/cultivation/techniques.toml`，文件内 `[[techniques]]` 顺序即 registry 顺序；禁止按 category 合并后重排。
+3. 两类 loader 均递归发现、按路径排序、`deny_unknown_fields`、空目录/无匹配文件/坏文件 fail fast；解析与跨引用 preflight 全通过后才原子写入 registry。
+
+**落点**：`server/src/craft/mod.rs:88-127`、`server/src/craft/registry.rs:40-88`、`server/src/cultivation/known_techniques.rs:67-166`；plan P0/P1。
+
+### #2 craft 迁移边界
+
+**决议**：
+1. 本 plan 只迁 `register_workbench_recipes` 的实际生产集合与 `register_examples` 5 条；数量由实施起点旧 registrar canonical dump 推导，不信过期注释，也不在新 loader 测试里另写字面总数。
+2. anqi/zhenfa/tuike/poison/armor/gathering/basic-processing/coffin 等所属模块的 code-register 配方继续留 Rust；它们保持原注册顺序，数据配方在同一 `CraftRegistry` 内按现顺序接入。
+3. loader 必须对材料、产出和 scroll 解锁物品查 `ItemRegistry`；mentor archetype 当前没有稳定且启动顺序兼容的单一 registry，本阶段只做非空校验，不伪造跨表校验。
+
+**落点**：`server/src/craft/mod.rs:88-127,157-280`、`server/src/craft/workbench_recipes.rs:79-1360`、`server/src/inventory/mod.rs:1634-1715`；plan P0。
+
+### #3 功法 runtime API 与 wiring 范围
+
+**决议**：
+1. `KnownTechniques` 玩家持久化形状和 load-failed 写保护不变；元数据改成 owned `TechniqueDefinition` / `TechniqueRequiredMeridian` / `RaceGateOwned`，由 `TechniqueRegistry(Resource)` 持有有序 `Vec` + id 索引。系统注入 `Res<TechniqueRegistry>`，非 ECS helper 显式接收 registry；不使用 `Box::leak` 或 `OnceLock` 全局兼容层，避免全局 fixture 污染和第二真源。
+2. 现 `TECHNIQUE_DEFINITIONS` 与零参 `technique_definition(id) -> &'static` 无法在启动数据上自然保留；“消费接口不变”解释为外部可观察 registry 查询/顺序/payload 语义不变，而不是强保不可能的 `'static` 内部签名。所有生产调用方在本 PR 同步机械迁移到 registry 借用，wire/schema/client/agent 零改动。
+3. `SkillRegistry` 现实是 68 resolver，而 metadata 为 49：交集 46；metadata-only/direct 3 条为 `movement.dash`、`shield_block`、`body.guangbo_ticao`；resolver-only 22 条由 Yidao/Woliu 侵蚀/Dugu v2/Baomai extra/Dandao 等 subsystem 自持。因此校验按 `metadata_backed` / `direct_generic` 分类，不做必红的集合全等。
+4. `SkillMeridianDependencies` 必须由单一同步 builder 构造完整后再校验，不能在 `cultivation::register` 仅插入首批声明时抢跑；声明表只表示 channel ID 集，metadata 另含 `min_health`，不做伪全字段相等。保留并强化“交集条目必须显式 declared”的不变量；`declare` 重复覆盖应改为拒绝重复，空声明与未声明继续通过 `is_declared` 区分。
+
+**落点**：`server/src/cultivation/known_techniques.rs:24-166,1117-1121`、`server/src/cultivation/skill_registry.rs:79-123,217-293`、`server/src/cultivation/meridian/severed.rs:423-446`、`server/src/cultivation/mod.rs:216-255`；plan P1。
+
+### #4 方块孪生表合一与属性边界
+
+**决议**：
+1. `blocks.rs` 生产 catalog 现有 213 个 logical key；`raster.rs` surface fast-path 39 个且严格为其子集（差集 174 / 0）。删除 39-arm 镜像，surface 也统一走 canonical resolver。
+2. catalog 仍只开放现有 213 logical key，不直接接受全部 vanilla `BlockKind`，避免无意扩大 worldgen 内容契约；213 项中 211 项可由 `BlockKind::from_str(name).to_state()` 解析，两项显式 alias 保留：`glowshroom → shroomlight`、`iron_nugget → air`。
+3. NBT/placement 的 properties 继续走统一 property lowerer；启动校验必须汇总未知 block 名、未知 property 名/值、以及属性不适用于该 block 三类错误，不再静默丢弃。有效属性后的 `BlockState` 结果与旧路径逐条对拍。
+4. `TerrainProvider::load` 在 manifest/sidecar/NBT 解析后、构造 provider 前用排序集合一次性报告 surface palette、decoration blocks、NBT template/palette/property、placement block/property 的全部错误；缺失旧 placement sidecar 的兼容语义不变，但 sidecar 存在而损坏必须报错，不能降级为空。
+
+**落点**：`server/src/world/terrain/blocks.rs:17-263`、`server/src/world/terrain/raster.rs:850-994,1401-1453,1480-1573`、`server/src/world/terrain/nbt_io.rs:90-150`、`server/src/world/terrain/nbt_registry.rs:223-240`；plan P2。
+
+### #5 P3 三项去留
+
+**决议**：
+1. 矿物 registry、NPC 原型默认掉落、丹道 6 方包装全部排除在本 plan 与本 PR；用户明确委托的原子范围是 craft/technique/block 三类硬编码表。
+2. P3 标为“不实施/后续另立”，不向 `reminder.md` 写入（本 PR 的 docs 权限只消费本 plan，且三个主题应先各自验真再立轨道）。
+3. 归档证据中登记三项为 out-of-scope，不得为了凑阶段顺手迁移。
+
+**落点**：`server/src/mineral/registry.rs:80`、`server/src/npc/loot.rs:63`、`server/src/dandao/recipes.rs:41`；plan P3。
+
+### #6 worldview 名称 lint
+
+**决议**：
+1. 不在通用 loader 中新增“玄/陨/星/仙/太/古”机械拒绝；这些字在既有正典内容、专名或迁移快照中可能合法存在，基础设施 PR 不应借迁移改变有效内容语义。
+2. 本 plan 通过旧表→新数据逐条 snapshot equality 保证名称零改动；未来新增内容的 worldview review 仍由正典检查和所属玩法 plan 负责。
+
+**落点**：`docs/worldview.md §三 L63`、plan P0/P1 对拍回归门。
+
+### #7 并行冲突与实施形态
+
+**决议**：
+1. 实施期间每次修改旧配方表前先 `git fetch origin` 并检查开放 PR/最新 main 是否触碰 owned files；若有并行变更，先 merge 后重新生成 canonical baseline，禁止手工拼旧快照。
+2. 本次按用户授权的固定 claim 分支 `refactor/plan-registry-datafication-v1` 走**单 PR**闭环；P0/P1/P2 用独立 atomic commits 分层，不沿用骨架原“固定 3 PR”草案。
+3. 所有 cargo 命令在 `scripts/build-token.sh` 未落 main 前经 `flock /tmp/bong-cargo.lock -c "cargo ..."`；push 前紧邻执行 `git fetch origin && git merge origin/main`，任何合入变更后重跑完整 server 门与 P2 worldgen 门。
+
+**落点**：本 plan §10、用户本轮 claim/worktree/gate 协议；plan P0-P2。
+
+## §10 实施工作流（单 PR，三阶段 atomic commits）
+
+1. **P0 craft**：先从旧 `register_examples + register_workbench_recipes` 生成 canonical fixture，再落 TOML/loader/启动引用校验，逐条对拍后删除生产硬编码来源；其余模块 code-register 不动。
+2. **P1 technique**：先从旧 49 条 const 生成有序 canonical fixture，再落 owned `TechniqueRegistry`、迁移调用方与分类 wiring 校验；保住 NPC source order、icon/cast/race payload 快照。
+3. **P2 block**：先锁 213 catalog 与 39 fast-path 的逐条结果，再以 catalog + `BlockKind::from_str` + 两 alias 合一 resolver，删除 raster 镜像，补 manifest/NBT/placement 汇总 fail-fast。
+4. 每阶段独立中文 atomic commit；每个 commit 均带 `Model: gpt-5.6-sol-xhigh` 与 `Co-Authored-By: Claude <noreply@anthropic.com>` trailer。纯 server 基建，无视觉资产三轮要求。
+5. 每阶段先跑 targeted tests；push 前跑 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（全部经 flock），P2 追加 `bash scripts/dev-reload.sh`。管道不得吞退出码。
+6. push 前 `git fetch origin && git merge origin/main`；merge 带入任何变化则重新执行完整门禁，并针对最终 HEAD 启动 fresh-context、read-only、首步 SHA 对拍的对抗 validator。任何 HEAD 变化都使旧 PASS 失效。
+7. plan 全阶段完成后更新状态、补 `## Finish Evidence` 并迁入 `docs/finished_plans/`；push 固定 claim 分支，中文 PR 标题/body 含完整 `plan-registry-datafication-v1`，独立评论 `/review`，等待 e2e 与 review 收敛。
