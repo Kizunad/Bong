@@ -176,7 +176,7 @@ mod tests {
             SoundRecipeRegistry::load_default().expect("default audio recipes should load");
         assert_eq!(
             registry.len(),
-            271,
+            273,
             "audio registry should exclude removed slide and double-jump movement recipes \
              plus include 7 supply_coffin recipes (break + open common/rare/precious + emerge) \
              plus 1 ambient_dan_zong recipe \
@@ -225,7 +225,10 @@ mod tests {
              plus 1 heaven_gate_charge recipe (plan-fpv-cast-av-v1 P4 天门蓄力专属配方——\
              复用 release 的 bong:skill.sword_path.heaven_gate 签名 ogg 作 pitch 0.72/vol 0.4 \
              前兆 L0 + amethyst 铺底；蓄力不再借用 sword_basics 共享的 sword_infuse，避免签名\
-             泄漏到普通注剑)"
+             泄漏到普通注剑) \
+             plus 2 plan-gathering-tool-bind-v1 P1 recipes (cao_lian_harvest_swing / \
+             botany_bare_hand_wound —— 草镰采集割手草本时的持镰挥砍声 / 徒手割手痛呼，\
+             全部复用 vanilla 音色分层，无新音频文件)"
         );
         assert!(
             registry.get("fauna_mundane_wither").is_some(),
@@ -529,6 +532,55 @@ mod tests {
                 "expected audio registry to contain `{key}` because gathering-ux added a recipe JSON for that cue; actual lookup returned None"
             );
         }
+    }
+
+    #[test]
+    fn cao_lian_harvest_swing_recipe_matches_plan_spec() {
+        // plan-gathering-tool-bind-v1 P1：持镰收割 SFX = block.grass.break，pitch 0.8，vol 0.9。
+        let registry = SoundRecipeRegistry::load_default().expect("default recipes should load");
+        let recipe = registry.get("cao_lian_harvest_swing").expect(
+            "cao_lian_harvest_swing recipe must be loaded from server/assets/audio/recipes/",
+        );
+        assert_eq!(
+            recipe.layers.len(),
+            1,
+            "expected exactly 1 sound layer, got {}",
+            recipe.layers.len()
+        );
+        let layer = &recipe.layers[0];
+        assert_eq!(layer.sound, "minecraft:block.grass.break");
+        assert!(
+            (layer.pitch - 0.8).abs() < 1e-6,
+            "expected pitch=0.8 per plan spec, got {}",
+            layer.pitch
+        );
+        assert!(
+            (layer.volume - 0.9).abs() < 1e-6,
+            "expected volume=0.9 per plan spec, got {}",
+            layer.volume
+        );
+    }
+
+    #[test]
+    fn botany_bare_hand_wound_recipe_matches_plan_spec() {
+        // plan-gathering-tool-bind-v1 P1：徒手割手 SFX = entity.player.hurt，vol 0.5。
+        let registry = SoundRecipeRegistry::load_default().expect("default recipes should load");
+        let recipe = registry.get("botany_bare_hand_wound").expect(
+            "botany_bare_hand_wound recipe must be loaded from server/assets/audio/recipes/",
+        );
+        assert_eq!(
+            recipe.layers.len(),
+            1,
+            "expected exactly 1 sound layer, got {}",
+            recipe.layers.len()
+        );
+        let layer = &recipe.layers[0];
+        assert_eq!(layer.sound, "minecraft:entity.player.hurt");
+        assert!(
+            (layer.volume - 0.5).abs() < 1e-6,
+            "expected volume=0.5 per plan spec, got {}",
+            layer.volume
+        );
     }
 
     #[test]

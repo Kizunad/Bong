@@ -1,0 +1,10 @@
+{
+  "id": "botany_bare_hand_wound",
+  "layers": [
+    { "sound": "minecraft:entity.player.hurt", "volume": 0.5, "pitch": 1.0, "delay_ticks": 0 }
+  ],
+  "priority": 45,
+  "attenuation": "world_3d",
+  "category": "PLAYERS",
+  "bus": "COMBAT"
+}

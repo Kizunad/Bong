@@ -1042,6 +1042,19 @@ mod tests {
     }
 
     #[test]
+    fn fixed_bot_ambient_witness_selects_cow_in_summer() {
+        // Bot e2e 的 default server 固定以 Summer 启动；这个 witness 仅锁住它实际会走的
+        // 确定性坐标/物种契约，不应反向冻结 Winter 或转季时的生态权重演化。
+        let position = DVec3::new(5.0, 73.0, 3.0);
+        assert_eq!(
+            mundane_species_for_position_seasonal("spawn", position, Season::Summer),
+            MundaneFaunaKind::Cow,
+            "bot ambient witness (season=Summer, zone=spawn,x=5,z=3) must remain Cow; \
+             changing this pin also requires an explicit protocol witness update"
+        );
+    }
+
+    #[test]
     fn species_for_position_seasonal_respects_biome_pool() {
         for season in [
             Season::Summer,

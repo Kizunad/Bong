@@ -8,8 +8,8 @@
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | herb_bundle:去重配方 + shelflife 挂载 | ⬜ |
-| P1 | cao_lian:required_tool 接通(割手草本) | ⬜ |
+| P0 | herb_bundle:去重配方 + shelflife 挂载 | ✅ 2026-07-27 |
+| P1 | cao_lian:required_tool 接通(割手草本) | ✅ 2026-07-27 |
 
 ---
 
@@ -90,3 +90,41 @@
 3. 不选择 `spirit_grass`；其 v1 基础灵草定位已有 `server/src/botany/registry.rs:1635` 测试锁定。
 
 **落点**：`server/src/botany/registry.rs:173` / `server/src/botany/registry.rs:1032` / `server/src/botany/registry.rs:1635` / plan P1。
+
+---
+
+## Finish Evidence
+
+### 落地清单
+
+- **P0**：`server/assets/items/workbench_materials.toml`（herb_bundle 挂 `shelflife_profile = "fresh_herb_v1"` + `shelflife_track = "spoil"`）；`server/src/craft/workbench_recipes.rs`（`herb_bundle_recipe_registered_exactly_once` / `re_registering_herb_bundle_recipe_id_is_rejected_as_duplicate` 唯一性回归 pin）；`server/src/inventory/mod.rs`（`herb_bundle_item_template_has_shelflife_profile_set` / `runtime_instance_from_template_attaches_freshness_for_herb_bundle` / `herb_bundle_decay_curve_reaches_spoiled_state_over_three_game_days` / `herb_bundle_decays_identically_regardless_of_stack_count`[PR #1293 review 修正：从"同 initial_qi 自比较"改为经生产 `runtime_instance_from_template` 分别构造 stack_count=1/50 实例对照，已用假实现验证会撞红] / `herb_bundle_freshness_ignores_stack_count` / `herb_bundle_expiry_drives_production_spoil_check_consumption_path`[PR #1293 review 新增：驱动生产入口 `shelflife::consume::spoil_check`（`food.rs::consume_food` 同款）走过 Safe→Warn→CriticalBlock 三段，锁住"过期行为"分支]）。
+- **P1**：`server/src/botany/registry.rs`（`DuanJiCi` / `XueSeMaiCao` 叠加 `HarvestHazard::WoundOnBareHand{ Laceration, required_tool: CaoLian }`）；`server/src/botany/hazard.rs`（`apply_completion_hazards` 返回值改为 `bool`，标记徒手割手是否命中；PR #1293 review 修正：`bare_hand_wound_applied` 改为仅在 Wound 成功写入后才置位，补 wounds=None/Some 两条对照测试）；`server/src/botany/harvest.rs`（`HarvestTerminalEvent` 消费方计算 `bare_hand_wound` / `required_tool_used` / `required_tool_kind`[PR #1293 review 新增字段] 正交字段）；`server/src/botany/components.rs`（`HarvestTerminalEvent` 新增 `required_tool_kind: Option<ToolKind>` 字段，携带目标植物 hazard 声明的 required_tool，供下游甄别"是否真的是草镰"）。
+- **视听接线**（P1 规格内联段，非独立阶段）：`server/assets/audio/recipes/cao_lian_harvest_swing.json` + `botany_bare_hand_wound.json`（新 audio recipe，走既有 server 权威运行时）；`server/src/network/audio_trigger.rs`（`emit_botany_audio_triggers` 扩展差异化 SFX 分支；PR #1293 review 修正：额外校验 `required_tool_kind == Some(ToolKind::CaoLian)`，收窄到草镰专属，防 DunQiJia/GuaDao/BingJiaShouTao 等既有 required_tool 草本泄漏草镰反馈，补 4 条正反向回归）；`server/src/network/vfx_animation_trigger.rs`（`emit_botany_harvest_visual_triggers` 同款收窄到 CaoLian；新增 `emit_spawn_particle_with_direction`，草镰挥砍分支传入"玩家→采集目标"水平方向向量，接通 plan P1"沿挥镰弧线"视听规格，补方向断言 + 正反向回归测试）；`client/src/main/java/com/bong/client/visual/particle/BotanyHarvestBurstPlayer.java`（PR #1293 review 新增 client 改动：消费 `direction` 时把 8 颗粒子的出射角约束到该方向 ±55° 扇形范围内，替代原全向 360° 随机 burst，无 direction 的调用——普通采集 burst / 徒手割手细红痕——保持原行为不变）；`server/src/network/event_stream_emit.rs`（`emit_botany_harvest_wound_to_event_stream` system，推「叶缘割手」HUD 提示；PR #1293 review 修正：同款收窄到 `required_tool_kind == Some(ToolKind::CaoLian)`，补 1 条负向回归）；`server/src/network/mod.rs`（system 注册）；`server/src/audio/mod.rs`（audio registry 计数 pin 271→273 + 2 条 recipe 数值回归测试）。
+
+### 关键 commit
+
+- `e2846ed50`（2026-07-27）P0：herb_bundle 挂载 fresh_herb_v1 保鲜 profile + 配方唯一性回归 pin。
+- `51cb428d0`（2026-07-27）P1：草镰(cao_lian)接通 required_tool 本职——DuanJiCi/XueSeMaiCao 割手草本。
+- `4515619ec`（2026-07-27）视听接线：草镰持镰收割 vs 徒手割手差异化 SFX/VFX/HUD。
+- `971ad5c32`（2026-07-27）PR #1293 review 返工①：P0 捆vs单株对照改为 stack_count 判别式对照（经生产 `runtime_instance_from_template`，已用假实现验证撞红）+ 补腐坏产物分支生产路径测试（`shelflife::consume::spoil_check`）。
+- `4b296384a`（2026-07-27）PR #1293 review 返工②：草镰专属反馈收窄到 `ToolKind::CaoLian`（`HarvestTerminalEvent` 加 `required_tool_kind`，audio_trigger.rs 门禁 + DunQiJia 正反向回归）。
+- `cd488c158`（2026-07-27）PR #1293 review 返工②③：VFX 消费方同款收窄到 CaoLian + 草镰挥砍粒子接通"沿挥镰弧线"方向参数（server `emit_spawn_particle_with_direction` + client `BotanyHarvestBurstPlayer` ±55° 扇形约束）。
+- `9c92c15e5`（2026-07-27）PR #1293 review 返工④：hazard.rs 仅在成功写入 Wounds 后才报告徒手割手实际命中，补 wounds=None/Some 对照测试。
+
+### 测试结果
+
+- 定向测试（consume 时跑过一次）：`inventory::` 508 passed、`craft::` 212 passed、`botany::` 149 passed、`network::vfx_animation_trigger::tests` 93 passed、`network::event_stream_emit::tests` 6 passed、`audio::tests` 17 passed（含 `loads_default_audio_recipes` 271→273 计数 pin），均 0 failed。
+- PR #1293 review 返工后重跑（2026-07-27）：`inventory::` 509 passed、`botany::` 151 passed、`network::vfx_animation_trigger::` 97 passed、`network::event_stream_emit::` 7 passed、`network::audio_trigger::` 54 passed，均 0 failed。
+- `cargo fmt --check` RC=0；`cargo clippy --all-targets -- -D warnings` RC=0；全量 `cargo test`（返工后完整跑一次）0 failed。
+- 手动对抗注入（本轮核验，非自动化测试的一部分）：临时给 `runtime_instance_from_template` 的 `initial_qi` 加 `stack_count > 1` 时的固定加成，`herb_bundle_decays_identically_regardless_of_stack_count` 立即撞红（`left: 0.8, right: 0.82`），验证后已还原（无残留 diff）。
+- 对抗验证（validator，无上下文、read-only）：初轮 `VALIDATOR VERDICT: PASS (SHA=4515619ec5b26402a1957bf24f0573fe6c001c70)`；PR #1293 review 返工闭环后追加一轮，见下方最新 SHA 记录（`git log` 可查）。
+
+### 跨仓库核验
+
+- **server**：见上方落地清单。
+- **client**：`client/src/main/java/com/bong/client/visual/particle/BotanyHarvestBurstPlayer.java`（PR #1293 review 新增：消费 `VfxEventPayload.SpawnParticle.direction` 字段，约束粒子出射角到 ±55° 扇形，接通"沿挥镰弧线"）；`SoundRecipePlayer.java`（通用按 recipe id 播放，无需新分支）；event_stream World channel（既有通用 HUD 消费方）。`direction` 字段本身在 `VfxEventPayload` 中早于本 plan 存在（`sword_qi_slash` 等已在用），本次是新增消费方读取。
+- **agent**：无接触。
+
+### 遗留 / 后续
+
+- 草镰速度/品质加成（`GatheringToolKind::Sickle` 变体 + 与 `bao_chu` 重新平衡）明确不在本 plan 范围内（§8.1 决议 #3），留待后续独立 plan。

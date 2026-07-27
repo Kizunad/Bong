@@ -17,6 +17,13 @@ public final class BotanyHarvestBurstPlayer implements VfxPlayer {
     private static final int FALLBACK_RGB = 0x88CC55;
     private static final int DEFAULT_COUNT = 12;
 
+    /**
+     * plan-gathering-tool-bind-v1 P1 视听规格"沿挥镰弧线"：草镰挥砍粒子携带 {@code direction}
+     * 时，把粒子约束到该方向 ±{@value #ARC_HALF_WIDTH_RADIANS} 弧度（约 ±55°）的扇形范围内，
+     * 而不是全向 360° 随机 burst，近似挥镰扫过的弧线轨迹。
+     */
+    private static final double ARC_HALF_WIDTH_RADIANS = Math.toRadians(55.0);
+
     @Override
     public void play(MinecraftClient client, VfxEventPayload.SpawnParticle payload) {
         ClientWorld world = client.world;
@@ -33,8 +40,17 @@ public final class BotanyHarvestBurstPlayer implements VfxPlayer {
         int count = clamp(payload.count().orElse(DEFAULT_COUNT), 1, 32);
         int maxAge = payload.durationTicks().orElse(36);
 
+        // direction 存在时（草镰挥砍分支）取水平朝向作为弧心角；徒手割手细红痕与普通采集
+        // 完成 burst 都不带 direction，保持原有全向随机。
+        Double baseAngle = payload.direction()
+            .filter(dir -> dir[0] * dir[0] + dir[2] * dir[2] > 1e-9)
+            .map(dir -> Math.atan2(dir[2], dir[0]))
+            .orElse(null);
+
         for (int i = 0; i < count; i++) {
-            double angle = world.random.nextDouble() * Math.PI * 2.0;
+            double angle = baseAngle != null
+                ? baseAngle + (world.random.nextDouble() * 2.0 - 1.0) * ARC_HALF_WIDTH_RADIANS
+                : world.random.nextDouble() * Math.PI * 2.0;
             double speed = 0.045 + world.random.nextDouble() * 0.055;
             double vx = Math.cos(angle) * speed;
             double vz = Math.sin(angle) * speed;
