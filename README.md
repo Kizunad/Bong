@@ -16,7 +16,7 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 _自动生成于 2026-07-27 · 共 170 份 plan_
 
 ```text
-总进度  ███████████████████████████░░░  88.6%
+总进度  ███████████████████████████░░░  88.7%
 ```
 
 **分布**：`merged` 139 · `wip` 16 · `design` 8 · `skeleton` 3 · `done` 4
@@ -158,7 +158,7 @@ _IPC schema、持久化、工作流、内容、音效 · 24 份 · 组均 84%_
 | `merged` | **天道叙事模板** <br/><sub>`finished_plans/plan-narrative-v1.md`</sub> | `███████████░`  90% | #89 | 2026-06-08 |
 | `wip` | **r2 跨端/境界门控/守恒 bug 修复** <br/><sub>`plan-bughunt-r2-findings-v1.md`</sub> | `███████████░`  90% | #605 #611 #617 #593 #602 #604 #597 | 2026-06-18 |
 | `wip` | **r1 机械型 bug 批量修复** <br/><sub>`plan-bughunt-r1-mechanical-fixes-v1.md`</sub> | `██████████░░`  85% | #599 #702 #595 #576 #590 #585 | 2026-06-25 |
-| `wip` | **CI Redis 镜像拉取韧性** <br/><sub>`plan-ci-redis-pull-resilience-v1.md`</sub> | `██████░░░░░░`  50% | #575 | 2026-06-15 |
+| `wip` | **CI Redis 镜像拉取韧性** <br/><sub>`plan-ci-redis-pull-resilience-v1.md`</sub> | `████████░░░░`  65% | #575 | 2026-07-27 |
 | `wip` | **r7 顿悟 modifier/UI 生命周期 bug** <br/><sub>`plan-bughunt-r7-findings-v1.md`</sub> | `█████░░░░░░░`  40% | #709 #708 #707 #711 | 2026-06-25 |
 | `wip` | **r8 派生属性孤岛审计** <br/><sub>`plan-bughunt-r8-modifier-orphan-audit-v1.md`</sub> | `████░░░░░░░░`  33% | #1143 | 2026-07-09 |
 | `wip` | **r6 炼丹/装备 registry/渡劫 bug** <br/><sub>`plan-bughunt-r6-findings-v1.md`</sub> | `███░░░░░░░░░`  25% | #1068 | 2026-07-07 |
