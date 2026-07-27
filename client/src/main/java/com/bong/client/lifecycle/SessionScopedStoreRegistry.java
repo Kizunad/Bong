@@ -35,12 +35,28 @@ public final class SessionScopedStoreRegistry {
         Objects.requireNonNull(handles, "handles");
         Objects.requireNonNull(failureHandler, "failureHandler");
         validateUniqueFqcns(handles);
+        List<StoreClearFailure> failures = new ArrayList<>();
         for (SessionStoreHandle handle : handles) {
             try {
                 handle.clearOnDisconnect();
             } catch (RuntimeException exception) {
-                failureHandler.accept(new StoreClearFailure(handle.fqcn(), exception));
+                failures.add(new StoreClearFailure(handle.fqcn(), exception));
             }
+        }
+        RuntimeException reportingFailure = null;
+        for (StoreClearFailure failure : failures) {
+            try {
+                failureHandler.accept(failure);
+            } catch (RuntimeException exception) {
+                if (reportingFailure == null) {
+                    reportingFailure = exception;
+                } else {
+                    reportingFailure.addSuppressed(exception);
+                }
+            }
+        }
+        if (reportingFailure != null) {
+            throw reportingFailure;
         }
     }
 

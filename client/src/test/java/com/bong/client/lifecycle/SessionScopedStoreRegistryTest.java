@@ -57,6 +57,94 @@ class SessionScopedStoreRegistryTest {
     }
 
     @Test
+    void reportingFailureCannotBlockRemainingStoreClears() {
+        List<String> calls = new ArrayList<>();
+        RuntimeException reportingFailure = new IllegalStateException("reporter broken");
+        List<SessionStoreHandle> handles = List.of(
+            handle(FirstStore.class, () -> calls.add("first")),
+            handle(BrokenStore.class, () -> {
+                calls.add("broken");
+                throw new IllegalStateException("store broken");
+            }),
+            handle(LastStore.class, () -> calls.add("last"))
+        );
+
+        RuntimeException actual = assertThrows(
+            RuntimeException.class,
+            () -> SessionScopedStoreRegistry.clearAllOnDisconnect(
+                handles,
+                failure -> {
+                    calls.add("report:" + failure.fqcn());
+                    throw reportingFailure;
+                }
+            )
+        );
+
+        assertEquals(reportingFailure, actual, "失败上报异常应在全部 Store 清理完成后原样透传");
+        assertEquals(
+            List.of("first", "broken", "last", "report:" + BrokenStore.class.getName()),
+            calls,
+            "失败上报必须与 Store 清理遍历解耦，reporter 异常不得跳过后续 Store"
+        );
+    }
+
+    @Test
+    void everyReportingFailureIsAttemptedAfterAllStoreClears() {
+        List<String> calls = new ArrayList<>();
+        RuntimeException firstReportingFailure = new IllegalStateException("first reporter broken");
+        RuntimeException secondReportingFailure = new IllegalArgumentException("second reporter broken");
+        List<SessionStoreHandle> handles = List.of(
+            handle(FirstStore.class, () -> {
+                calls.add("first");
+                throw new IllegalStateException("first store broken");
+            }),
+            handle(SecondStore.class, () -> calls.add("second")),
+            handle(BrokenStore.class, () -> {
+                calls.add("broken");
+                throw new IllegalStateException("second store broken");
+            }),
+            handle(LastStore.class, () -> calls.add("last"))
+        );
+
+        RuntimeException actual = assertThrows(
+            RuntimeException.class,
+            () -> SessionScopedStoreRegistry.clearAllOnDisconnect(
+                handles,
+                failure -> {
+                    calls.add("report:" + failure.fqcn());
+                    if (failure.fqcn().equals(FirstStore.class.getName())) {
+                        throw firstReportingFailure;
+                    }
+                    throw secondReportingFailure;
+                }
+            )
+        );
+
+        assertEquals(
+            firstReportingFailure,
+            actual,
+            "首个失败上报异常应在所有 Store 清理和上报尝试结束后原样透传"
+        );
+        assertEquals(
+            List.of(secondReportingFailure),
+            List.of(actual.getSuppressed()),
+            "后续失败上报异常必须保留为 suppressed，不能让诊断信息静默丢失"
+        );
+        assertEquals(
+            List.of(
+                "first",
+                "second",
+                "broken",
+                "last",
+                "report:" + FirstStore.class.getName(),
+                "report:" + BrokenStore.class.getName()
+            ),
+            calls,
+            "所有 Store 必须先完成清理，随后每个 Store failure 都必须获得一次上报尝试"
+        );
+    }
+
+    @Test
     void errorIsNotSwallowed() {
         AssertionError expected = new AssertionError("fatal invariant");
         AssertionError actual = assertThrows(
