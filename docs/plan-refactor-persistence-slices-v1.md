@@ -147,7 +147,7 @@
 2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部保存成功后，才开始任何 `hydrate`。入口用稳定 `handoff_key` 绑定主体；任一保存失败都会跳过整个载入阶段。
 3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。
 
-**落点**：`server/src/persistence/slice.rs:124-149,191-203,446-532,1342-1408` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
+**落点**：`server/src/persistence/slice.rs:124-149,191-203,446-532,1347-1414` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
 
 ### #8 时间 / deadline 测试：只用注入时钟（#1289 review 继承项）
 
@@ -156,4 +156,4 @@
 2. deadline rebase helper继续接受显式时间参数；contract pins 禁止调用 `SystemTime::now()`、`Instant::now()` 或依赖测试执行恰好未跨秒的 exact assertion。
 3. 生产 adapter 在调用边界采样一次时间后注入；同一 dispatch 内复用该快照，避免一次操作跨秒得到不一致字段。
 
-**落点**：`server/src/persistence/slice.rs:133-150,407-425,468-485,1022-1049,1052-1064,1590-1631` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper 与 `FixedClock` contract pins；plan §阶段 P0/P3、§bot 验收场景 #4。
+**落点**：`server/src/persistence/slice.rs:133-150,407-425,468-485,1026-1045,1056-1070,1594-1637` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #4。
