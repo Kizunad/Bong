@@ -63,3 +63,4 @@
 - **#1（审查 S1，需用户拍板）cast 时是否查 `required_realm`——「学会不忘」vs「跌境封招」**。现状证据：技能栏 cast 入口检查 拥有/race/form-anchor/经脉，唯独不查 realm；全仓仅丹道用 `CastRejectReason::RealmTooLow`（`server/src/dandao/skills.rs:217,223`），枚举变体存在但几乎无人消费；同时仓内存在主动跌境机制（heaven_gate 跌境 / RealmRegressed），跌境后仍可施放化虚级招式。拍「跌境封招」→ 统一入口加 realm 门 + HUD 拒绝理由；拍「学会不忘」→ 明文注释口径并处理 RealmTooLow 的孤儿语义。
 - **#2 观摩免费习得的经济边界**：会不会击穿残卷流通价值（worldview.md L1113 道统遗物稀缺）——是否要求目标功法品阶上限 / 观摩仅得极低初始熟练度；观摩对 NPC 施法（npc.\* 前缀）的 eligibility 与 [[plan-bughunt-technique-proficiency-growth-v1]] 开放问题 #2 的 npc.\* allowlist **共用同一决议**，不各自维护排除逻辑。
 - **#3 观摩/传功成功时刻的 A/V 规格**：粒子基类/数量/lifetime、SFX recipe、narration 文案示例——转 active 前按 docs/CLAUDE.md §四 视听精度要求补齐，不允许"学会时冒个光"一笔带过。
+- **#4（review r3）师承 C2S 选择请求的服务端重校验契约细节**：身份绑定字段、时效/防重放（是否用一次性 interaction token）、提交时重跑 `mentor_dialog_option_appears` 全部条件——server 权威与错误分支饱和测试是仓库架构/测试默认（CLAUDE.md「架构硬约束」「饱和化测试」节），具体字段与 token 语义转 active 前决议。

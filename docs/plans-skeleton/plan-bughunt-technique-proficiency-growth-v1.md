@@ -70,7 +70,7 @@
 - 发射 system：消费 `TechniqueProficiencyGained`（P0 的唯一权威源，自带 old/new，阈值判断不需要前值缓存）→ 跨整数百分比阈值才发、**定向发给该玩家**；注册点写死（network emit 层既有 schedule，实施时落点写进 plan 更新）
 - **客户端一致性契约（唯一权威同步协议）**：阈值 payload **携带权威新 proficiency 值**；client handler 除 toast 外**同步更新本地功法面板状态模型**——面板打开期间的增量以阈值 payload 为准（分辨率=整数百分比），全量以 P0 的确定性 snapshot 触发器（join/重连/功法增删/开面板）为准；阈值以下变化允许面板暂留旧值、开面板/重连必收敛，最大陈旧窗口 = 距上次阈值 <1 个百分点
 - **增量合并规则（乱序收敛的成立前提）**：gameplay 熟练度单调不减（唯一合法降值路径 = dev 命令/重置，**不走增量、只走全量 snapshot 覆盖语义**）→ client 对阈值 payload 取 `max(local, incoming)`，旧包晚到天然不回退；全量 snapshot 为覆盖语义，可承载合法降值
-- 测试：未跨阈值不发；恰好跨阈值发一次；一次增长跨多个阈值只发最新值；乱序/重复 payload 按 max 合并不回退（含「新值先到、旧值后到」显式用例）；dev 降值经 snapshot 覆盖后旧增量不再回写；面板常驻打开时连续增长的显示收敛；重连后 snapshot 收敛
+- 测试：未跨阈值不发；恰好跨阈值发一次；一次增长跨多个阈值只发最新值；乱序/重复 payload 按 max 合并不回退（含「新值先到、旧值后到」显式用例）；面板常驻打开时连续增长的显示收敛；重连后 snapshot 收敛。dev 降值（reset）与 max 合并的时序竞态见开放问题 #5，收口前不写死该场景断言
 
 ## P2 — 防回归 ⬜
 
@@ -91,3 +91,7 @@
 - **#2 npc.\* 前缀 3 招是否显式排除**：疑似 NPC 专属，不该出现在玩家增长清单与玩家 snapshot；顺带处理 snapshot 对未知 id 的静默丢弃（审查 m4，`techniques_snapshot_emit.rs:44-47` filter_map 丢弃 + DB 永久占位）。
 - **#3 `known_woliu_proficiency` fallback 0.5 与习得初值 0.0 不一致**（审查 m2，`combat/woliu_v2/skills.rs:1618` `unwrap_or(0.5)`——无 entry 的施放者比刚学会的更强）：口径统一并入本 plan P0 还是单独小修。
 - **#4 逐流派定「施放成功」还是「命中确认」口径**：挂施放会开对空气白挥刷熟练度的口子；范本中 sword 挂命中、dash 挂动作完成。口径决议须同时定**记账单位**（每 cast / 每命中目标 / 每段 / 每持续 tick）与幂等键（cast_id/hit_id），AOE 多目标、多段、持续伤害的期望增量随之写死。转 active 时逐流派收口（本条收口后 P0 交付物 A 的"权威事件"列才可实施）。
+- **#5（review r3）max 合并与合法降值（dev reset）的时序竞态**：旧增量包晚于降值 snapshot 到达会按 max 回写——引入 generation/epoch 版本协议，还是接受 dev-only 边界不设防——转 active 前决议。
+- **#6（review r3）P0→P1 间隔期常驻打开面板的陈旧窗口**：P0 抑制逐击重发但保留确定性触发器（join/重连/功法增删/开面板），过渡期常驻面板比现状陈旧——接受过渡窗口，还是 P0/P1 同 PR 合入——转 active 前决议。
+- **#7（review r3）增长写入与 `TechniqueProficiencyGained` 发射的封装粒度**：P0 已定统一提交点（`apply_proficiency_gain` 唯一入口 + 禁止散落直写）；是否进一步私有化直写入口、clamp 内聚到提交 API——转 active 前决议。
+- **#8（review r3）逐 id wiring guard 与生产注册级验证的强度取舍**：P2 已含注册表级必红 guard；是否升级为逐事件源家族从生产 app 驱动的运行时可达性测试——转 active 前决议。
