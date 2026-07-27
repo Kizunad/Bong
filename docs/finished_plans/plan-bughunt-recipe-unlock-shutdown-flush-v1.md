@@ -72,6 +72,7 @@
 
 ### 关键 commit
 
+- `cee79a9e9`（2026-07-27）`Merge remote-tracking branch 'origin/main' into auto/plan-bughunt-recipe-unlock-shutdown-flush-v1`：按 `git fetch origin && git merge origin/main` 同步最新主线；自动合并涉及 E2E workflow、protocol tests 与 `server/src/main.rs`，随后重跑全部受影响门禁并对 exact merged HEAD 复验。
 - `f178ead4f`（2026-07-27）`修复服务端生命周期权威发布与强制停服传播`：补齐 PostStartup no-replace readiness、精确 listener ownership、pidfd/PGID 信号、persistent supervisor `READY/C/COMMITTED`、真实 tmux shutdown ordering，以及 production caller 的 0/3/1/2 显式传播与执行回归。
 - `55dee1a29`（2026-07-26）`更新生命周期收口完成证据`：同步 prior exact-HEAD 门禁与生命周期完成证据。
 - `03b0a4fea`（2026-07-26）`修复 preview 持久化与生命周期收口`：补齐 FD 类型校验、managed record 清理三态、READY 空 PID 端口门、preview 全区间 lifecycle exclusion，以及先 durable `RESTORED`、后幂等清理证据的可重试事务收口。
@@ -85,10 +86,11 @@
 
 ### 测试结果
 
-- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（提交 `f178ead4f` 前的同内容 immutable patch，基于 HEAD `55dee1a29`）：通过；11,969 个库测试、11 个 binary 测试、`full_app_startup` 2 个、`shutdown_signal` 2 个、Tarkov backpack integration 4 个均通过，2 个库测试与 5 个既有 doc-test ignored。
-- `python3 scripts/bot/test_protocol.py`：通过，131 个纯协议/脚本契约测试全绿；north-rift harness 预检验证普通 stop、三态原样传播、端口复核、persistence transaction、专用 preview、restore 与 complete 均位于共享 lifecycle lock 临界区，且 cleanup 仅在停服确认后允许 finalize restore。
+- `cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（merged HEAD `cee79a9e9`）：通过；12,035 个库测试通过、2 个 ignored，12 个 binary 测试、`full_app_startup` 2 个、`shutdown_signal` 2 个、Tarkov backpack integration 4 个均通过，5 个既有 doc-test ignored。
+- `python3 scripts/bot/test_protocol.py`（merged HEAD `cee79a9e9`）：通过，159 个纯协议/脚本契约测试全绿；north-rift harness 预检验证普通 stop、三态原样传播、端口复核、persistence transaction、专用 preview、restore 与 complete 均位于共享 lifecycle lock 临界区，且 cleanup 仅在停服确认后允许 finalize restore。
 - `bash -n scripts/lib/bong-server-lifecycle.sh scripts/e2e-redis.sh scripts/start.sh scripts/stop.sh scripts/dev-reload.sh scripts/test-server-lifecycle.sh scripts/test-dev-reload-disown.sh`、`bash scripts/test-server-lifecycle.sh`、`bash scripts/test-dev-reload-disown.sh`、`git diff --check`：全部通过；完整 lifecycle suite 额外执行 exact listener owner、supervisor protocol、真实 tmux shutdown ordering 与 stale process-group snapshot 子门禁。shell 输出中的 `FAIL:` 为负向 fail-closed fixture 的预期诊断。
 - 当前不可变完整补丁 artifact `/tmp/pr1261-current-exact-v2.patch` 的 SHA-256 为 `6ca3c06781eef5f1f423463c9116bbe7457a0a4ed53e650d54fba50e9a30bd88`；无上下文只读 validator 对拍 hash、复跑完整 lifecycle suite并给出 `PASS`，确认 production caller 的 0/3/1/2 传播、`set -e` 分支、锁重入、status 3 replacement/stop teardown 及 startup failure 保留 tmux 均无 blocker/major。
+- 合并主线后的 exact HEAD `cee79a9e999eb427de874d8a1f7b1411f052a843` 已重新通过完整 server、protocol、lifecycle 与 dev-reload 门禁；独立 exact-HEAD validator 对拍并复核 merge 涉及的 E2E workflow、protocol contract 与 `server/src/main.rs`，结论见最终 review 证据。
 - lifecycle 饱和回归覆盖：kill-tree 叶节点 `pgrep=1` 必须收到 TERM；`pgrep=0` 空 child 在信号前拒绝；跨设备 stash 在 READY/move 前拒绝且源文件不动；同设备三文件 round-trip；V3 digest+inode swap 检测；partial restore retry；unexpected entry；data-dir rename/symlink replacement；并发 transaction；PID record FD/path swap；TERM 等待和 SIGKILL 前身份检查的 status 2；RESTORED 前 data-dir sync 失败保持 STASHED；RESTORED 后 manifest unlink/stash sync 失败及 rmdir/parent sync 失败均可重试 completion；tmux no-server 与 permission/unknown failure；E2E stop 未确认时 restore 调用次数为 0。
 - protected assertions：`server/zones.json` 的 `north_waste_east_scorch.spirit_qi = 0.290146` 未修改；`terrain_north_rift_scorch_zone_identity` 仍断言 `0.290146 ± 0.001`。
 
