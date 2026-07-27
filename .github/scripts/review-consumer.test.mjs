@@ -1,13 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 const workflowPath = new URL('../workflows/review-next.yml', import.meta.url);
+const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.yml', import.meta.url);
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const policyPath = new URL('../review-policy/bong.v1.json', import.meta.url);
+const centralSha = '417e55e55737b8fe42803b97f85b59fce8bbfb2a';
 
 async function workflow() {
   return readFile(workflowPath, 'utf8');
+}
+
+async function consumerTestsWorkflow() {
+  return readFile(consumerTestsWorkflowPath, 'utf8');
 }
 
 async function canaryWorkflow() {
@@ -49,6 +56,47 @@ test('shadow caller maps only the existing Claude credential and grants the cent
   assert.doesNotMatch(yaml, /secrets:\s*inherit/);
   assert.doesNotMatch(yaml, /REVIEW_CODEX_API_KEY|PI_CLIPROXY_KEY|HLOOL_API_KEY|OPENAI_API_KEY/);
   assert.equal((yaml.match(/uses: Kizunad\/review\//g) ?? []).length, 1);
+});
+
+test('consumer CI checks out and tests the exact central workflow contract', async () => {
+  const yaml = await consumerTestsWorkflow();
+  assert.match(yaml, /repository: Kizunad\/review/);
+  assert.match(yaml, new RegExp(`ref: ${centralSha}`));
+  assert.ok(
+    yaml.includes(`[[ "$(git -C _central-contract rev-parse HEAD)" == '${centralSha}' ]]`),
+    'consumer CI must verify the checked-out central OID',
+  );
+  assert.match(yaml, /npm --prefix _central-contract test/);
+  assert.doesNotMatch(yaml, /repository: Kizunad\/review[\s\S]*?ref: (?:main|master|v?\d|[0-9a-f]{1,39})\b/);
+});
+
+test('checked-out central workflow accepts the complete shadow caller interface', async (context) => {
+  const centralRoot = process.env.CENTRAL_REVIEW_CONTRACT_DIR;
+  if (!centralRoot) {
+    context.skip('CENTRAL_REVIEW_CONTRACT_DIR is required for the cross-repository contract check');
+    return;
+  }
+  const centralWorkflow = await readFile(path.join(centralRoot, '.github/workflows/review.yml'), 'utf8');
+  assert.match(centralWorkflow, /^  workflow_call:$/m);
+  for (const [name, type, required] of [
+    ['pr_number', 'number', true],
+    ['policy_path', 'string', true],
+    ['review_base_url', 'string', true],
+    ['shadow', 'boolean', false],
+    ['max_diff_chars', 'number', false],
+    ['max_shard_chars', 'number', false],
+    ['worker_timeout_ms', 'number', false],
+    ['circuit_manual_retry', 'boolean', false],
+  ]) {
+    const input = centralWorkflow.match(new RegExp(`^      ${name}:\\n([\\s\\S]*?)(?=^      [a-z_]+:|^    secrets:)`, 'm'))?.[1];
+    assert.ok(input, `central workflow is missing input ${name}`);
+    assert.match(input, new RegExp(`^        type: ${type}$`, 'm'));
+    assert.match(input, new RegExp(`^        required: ${required}$`, 'm'));
+  }
+  const secret = centralWorkflow.match(/^      review_api_key:\n([\s\S]*?)(?=^permissions:)/m)?.[1];
+  assert.ok(secret, 'central workflow is missing review_api_key');
+  assert.match(secret, /^        required: true$/m);
+  assert.match(centralWorkflow, /^permissions: \{\}$/m);
 });
 
 test('provider canary remains dispatch-only, minimally permissioned, and secret-isolated', async () => {

@@ -29,6 +29,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
+      - name: Checkout pinned central review contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Kizunad/review
+          ref: 417e55e55737b8fe42803b97f85b59fce8bbfb2a
+          path: _central-contract
+          persist-credentials: false
+          fetch-depth: 1
       - name: Set up Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -36,8 +44,12 @@ jobs:
           check-latest: false
       - name: Validate central review consumer contract
         shell: bash
+        env:
+          CENTRAL_REVIEW_CONTRACT_DIR: _central-contract
         run: |
           set -euo pipefail
+          [[ "$(git -C _central-contract rev-parse HEAD)" == '417e55e55737b8fe42803b97f85b59fce8bbfb2a' ]]
           node --check .github/scripts/review-consumer.test.mjs
           node --test .github/scripts/review-consumer.test.mjs
+          npm --prefix _central-contract test
           git diff --check
