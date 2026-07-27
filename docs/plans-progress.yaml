@@ -1494,9 +1494,10 @@ plans:
   state: finished
   percent: 100
   last_updated: '2026-07-27'
-  pr_refs: []
+  pr_refs:
+  - 1293
   blocking_on: []
-  summary: P0（herb_bundle 挂 fresh_herb_v1）+ P1（cao_lian required_tool 接通 DuanJiCi/XueSeMaiCao）+ 视听接线全部落地，对抗验证 PASS，已归档。
+  summary: P0（herb_bundle 挂 fresh_herb_v1）+ P1（cao_lian required_tool 接通 DuanJiCi/XueSeMaiCao）+ 视听接线全部落地，对抗验证 PASS，已归档；PR #1293 review 返工修正 P0 测试判别力/草镰专属反馈越界/挥镰弧线。
 - file: plan-nested-pack-base-v1.md
   group: gameplay-npc
   title: 塔科夫式套包（物品内嵌子容器）

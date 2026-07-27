@@ -212,7 +212,7 @@ _M0/M1 阶段产物 + 已 docs/finished_plans 的子 plan · 50 份 · 组均 10
 | `merged` | **死亡 / 运数 / 寿元 / 遗念 / 亡者博物馆** <br/><sub>`finished_plans/plan-death-lifecycle-v1.md`</sub> | `████████████` 100% | — | 2026-04-27 |
 | `done` | **时代状态机** <br/><sub>`finished_plans/plan-era-state-v1.md`</sub> | `████████████` 100% | — | 2026-06-08 |
 | `merged` | **炼器（武器）专项：四步状态机 + IPC Schema + 客户端占位** <br/><sub>`finished_plans/plan-forge-v1.md`</sub> | `████████████` 100% | #19 #61 | 2026-04-28 |
-| `done` | **草药捆保鲜挂载 + 草镰采集接通** <br/><sub>`finished_plans/plan-gathering-tool-bind-v1.md`</sub> | `████████████` 100% | — | 2026-07-27 |
+| `done` | **草药捆保鲜挂载 + 草镰采集接通** <br/><sub>`finished_plans/plan-gathering-tool-bind-v1.md`</sub> | `████████████` 100% | #1293 | 2026-07-27 |
 | `merged` | **双行快捷栏：1-9 技能行 + F1-F9 物品行** <br/><sub>`finished_plans/plan-hotbar-modify-v1.md`</sub> | `████████████` 100% | #65 | 2026-04-29 |
 | `merged` | **Redis channel + TypeBox schema 双端对齐管理** <br/><sub>`finished_plans/plan-ipc-schema-v1.md`</sub> | `████████████` 100% | — | 2026-04-28 |
 | `merged` | **library-web 内容（已弃置）** <br/><sub>`finished_plans/plan-library-web-content-v1.md`</sub> | `████████████` 100% | — | 2026-05-03 |
