@@ -16,7 +16,7 @@
 #   - skeleton            骨架 plan（在 plans-skeleton/ 或尚未开工）
 #   - finished            已归档（在 finished 分组）
 
-generated_at: '2026-07-26'
+generated_at: '2026-07-27'
 project: Bong
 groups:
 - id: tsy
@@ -1758,12 +1758,12 @@ plans:
   - 897
   blocking_on: []
   summary: BotanyHarvestRequest 改调 request_harvest_mode，4 条 pin（#897）；审计追认归档。
-- file: finished_plans/plan-race-system-v1.md
+- file: plan-race-system-v1.md
   group: cultivation-economy
   title: 种族 BodyPlan 通用化+固元易形功法
-  state: merged
-  percent: 100
-  last_updated: '2026-07-26'
+  state: active-implementing
+  percent: 60
+  last_updated: '2026-07-27'
   pr_refs:
   - 1160
   - 1180
@@ -1776,7 +1776,7 @@ plans:
   - 1206
   - 1250
   blocking_on: []
-  summary: P0-P5 全落地（morph.rs/whale body_plan//race set/RaceChange 两阶段），#1250 回归修复收尾；文档从未同步 P4/P5，审计追认归档。
+  summary: P1-P3 已逐项核验落地（经脉通用化/动态面板/RaceGate 三档）；P0（战斗部位消费点改造范围收窄是否构成正式 amendment）与 P4（易形功法，14 项交付物 9 项完全落地、5 项部分完成：FormAnchor 门控无生产收拢点集成测试且缺 happy path、易形态名牌/队友标识经反编译确认未保留、proto_min bot 解码缺失、morph TPV 渲染 harness 截图缺失、生产 races.json 缺 whale→human pair 致本体非人玩家无法易形化人）本轮逐项核验后改回 ⏳；P5 已落机制底盘（/race set dev 命令+RaceChange 两阶段事务 #1204、突破配额+dugu 路由换轨 #1203、whale body_plan+IntrinsicRace 接线 #1206），仍欠 FinRing 消费链（最小验收=单变体+1件实物） / 2 条 bot 场景 / e2e / worldview 增补案 / 非人种族生产获得路径（已完整走查角色创建/首次登录/新角色/旧档迁移四条链路，确认无非 dev 入口），此前被 #1278 误追认归档，已回退。
 - file: finished_plans/plan-season-phase-stale-client-v1.md
   group: infrastructure
   title: 季节跨相位客户端状态陈旧

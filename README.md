@@ -13,13 +13,13 @@ AI-Native Xianxia (修仙) sandbox on Minecraft. Three-layer architecture:
 <!-- BEGIN:PLANS_PROGRESS -->
 ## Plan 进度
 
-_自动生成于 2026-07-26 · 共 170 份 plan_
+_自动生成于 2026-07-27 · 共 170 份 plan_
 
 ```text
-总进度  ███████████████████████████░░░  88.8%
+总进度  ███████████████████████████░░░  88.6%
 ```
 
-**分布**：`merged` 140 · `wip` 15 · `design` 8 · `skeleton` 3 · `done` 4
+**分布**：`merged` 139 · `wip` 16 · `design` 8 · `skeleton` 3 · `done` 4
 
 ### 坍缩渊（TSY）
 
@@ -58,7 +58,7 @@ _战斗 ECS、流派、HUD、粒子、动画、Iris · 20 份 · 组均 84%_
 
 ### 修炼 / 经济
 
-_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 · 组均 94%_
+_六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 · 组均 92%_
 
 | 状态 | Plan | 进度 | PR | 最近更新 |
 |---|---|---|---|---|
@@ -78,7 +78,6 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 �
 | `merged` | **灵气物品搬运磨损** <br/><sub>`finished_plans/plan-qi-handling-attrition-v1.md`</sub> | `████████████` 100% | — | 2026-06 |
 | `merged` | **qi 物理迁移收口** <br/><sub>`finished_plans/plan-qi-physics-patch-v1.md`</sub> | `████████████` 100% | #133 #142 #152 #156 #160 #162 #165 | 2026-06-08 |
 | `merged` | **真元物理守恒底盘** <br/><sub>`finished_plans/plan-qi-physics-v1.md`</sub> | `████████████` 100% | #132 | 2026-06-08 |
-| `merged` | **种族 BodyPlan 通用化+固元易形功法** <br/><sub>`finished_plans/plan-race-system-v1.md`</sub> | `████████████` 100% | #1160 #1180 #1184 #1198 #1201 #1202 #1203 #1204 #1206 #1250 | 2026-07-26 |
 | `merged` | **灵眼系统链路** <br/><sub>`finished_plans/plan-spirit-eye-v1.md`</sub> | `████████████` 100% | #111 | 2026-06-08 |
 | `merged` | **灵木采伐与封灵匣** <br/><sub>`finished_plans/plan-spiritwood-v1.md`</sub> | `████████████` 100% | #106 | 2026-06-08 |
 | `merged` | **凡器工具体系** <br/><sub>`finished_plans/plan-tools-v1.md`</sub> | `████████████` 100% | #84 #86 | 2026-06-08 |
@@ -88,6 +87,7 @@ _六境修炼、天劫、炼丹/炼器、矿物、灵田、保质期 · 28 份 �
 | `merged` | **世界灵气预算化虚名额** <br/><sub>`finished_plans/plan-void-quota-v1.md`</sub> | `████████████` 100% | #159 | 2026-06-08 |
 | `merged` | **灵田专项** <br/><sub>`finished_plans/plan-lingtian-v1.md`</sub> | `███████████░`  88% | #26 #127 #115 | 2026-06-08 |
 | `merged` | **灵田季节天气消费层** <br/><sub>`finished_plans/plan-lingtian-weather-v1.md`</sub> | `██████████░░`  85% | #154 | 2026-06-08 |
+| `wip` | **种族 BodyPlan 通用化+固元易形功法** <br/><sub>`plan-race-system-v1.md`</sub> | `███████░░░░░`  60% | #1160 #1180 #1184 #1198 #1201 #1202 #1203 #1204 #1206 #1250 | 2026-07-27 |
 | `wip` | **渡虚劫系统性平衡矩阵校准** <br/><sub>`plan-tribulation-balance-v1.md`</sub> | `██████░░░░░░`  50% | #533 #560 | 2026-06-14 |
 | `design` | **半步化虚 buff 运营数值校准** <br/><sub>`plan-halfstep-buff-calibration-v1.md`</sub> | `░░░░░░░░░░░░`   0% | — | 2026-06-08 |
 
