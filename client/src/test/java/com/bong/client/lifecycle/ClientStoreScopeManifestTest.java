@@ -38,6 +38,20 @@ class ClientStoreScopeManifestTest {
     }
 
     @Test
+    void p0BaselineKeepsTheVerifiedThreeWayClassification() {
+        assertEquals(
+            106,
+            ClientStoreScopeManifest.sessionScopedStores().size(),
+            "P0 验真基线应有 106 个 session-scoped Store；数量变化时必须连同逐 FQCN source 对拍一起显式复核"
+        );
+        assertEquals(
+            108,
+            ClientStoreScopeManifest.allClassifiedStores().size(),
+            "P0 验真基线应有 108 个业务 *Store.java（106 session + 1 persistent + 1 constant）"
+        );
+    }
+
+    @Test
     void persistentPreferenceAndConstantLookupStayOutOfSessionScope() {
         assertEquals(
             Set.of("com.bong.client.hud.HudLayoutPreferenceStore"),
