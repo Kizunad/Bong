@@ -114,10 +114,22 @@ public final class EnvironmentEffectController {
      * {@link #clearOnDisconnect()} 以表达其会话边界。
      */
     public static void clear() {
+        clearRuntimeState(AUDIO::clear);
+    }
+
+    static void clearRuntimeState(Runnable audioCleanup) {
         REGISTRY.clear();
-        AUDIO.clear();
+        lastWorld = null;
+        RuntimeException failure = null;
+        try {
+            audioCleanup.run();
+        } catch (RuntimeException exception) {
+            failure = exception;
+        }
         ZoneAtmosphereRenderer.clear();
         EnvironmentFogController.clear();
-        lastWorld = null;
+        if (failure != null) {
+            throw failure;
+        }
     }
 }

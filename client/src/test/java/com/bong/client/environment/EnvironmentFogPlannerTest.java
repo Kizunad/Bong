@@ -1,5 +1,8 @@
 package com.bong.client.environment;
 
+import com.bong.client.audio.AudioScheduledSound;
+import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.audio.SoundSink;
 import net.minecraft.util.math.Vec3d;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EnvironmentFogPlannerTest {
@@ -19,6 +23,7 @@ class EnvironmentFogPlannerTest {
     void resetSink() {
         EnvironmentFogController.setSinkForTests(null);
         EnvironmentFogController.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
     }
 
     @Test
@@ -107,6 +112,33 @@ class EnvironmentFogPlannerTest {
     }
 
     @Test
+    void audioControllerClearDropsAllLoopKeysBeforeRuntimeStopFailure() {
+        RuntimeFailingSink sink = new RuntimeFailingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        EnvironmentAudioController controller = new EnvironmentAudioController(player);
+        ActiveEmitter first = active("old-fog", 1, fog(0x788494, 0.5));
+        ActiveEmitter second = active("old-fog-2", 1, fog(0x788494, 0.5));
+        String firstFlag = EnvironmentAudioController.loopFlag(first.key());
+        String secondFlag = EnvironmentAudioController.loopFlag(second.key());
+
+        controller.update(List.of(first, second), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(2, controller.activeLoopCountForTests(), "前置：旧 session 必须持有两个 environment loop key");
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, controller::clear);
+
+        assertEquals("stop failed", failure.getMessage(), "首个 RuntimeException 应交给父级中央清理隔离");
+        assertEquals(2, sink.stopAttempts, "一个 stop 失败后仍必须尝试停止剩余旧 loop");
+        assertEquals(0, controller.activeLoopCountForTests(), "stop 失败前必须先摘除全部旧 loop key");
+        assertFalse(EnvironmentAudioLoopState.isActive(firstFlag), "stop 失败不得保留第一个旧 flag");
+        assertFalse(EnvironmentAudioLoopState.isActive(secondFlag), "stop 失败不得保留第二个旧 flag");
+
+        sink.failStops = false;
+        controller.update(List.of(first), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(1, controller.activeLoopCountForTests(), "新 session 同 key emitter 必须能重新启动 loop");
+        assertTrue(EnvironmentAudioLoopState.isActive(firstFlag), "新 session 必须能重新激活同 key flag");
+    }
+
+    @Test
     void audioLoopFlagUsesFullKeyInsteadOfHashCode() {
         assertEquals("FB".hashCode(), "Ea".hashCode());
         assertNotEquals(
@@ -140,5 +172,23 @@ class EnvironmentFogPlannerTest {
             tintRgb,
             density
         );
+    }
+
+    private static final class RuntimeFailingSink implements SoundSink {
+        boolean failStops = true;
+        int stopAttempts;
+
+        @Override
+        public boolean play(AudioScheduledSound sound) {
+            return true;
+        }
+
+        @Override
+        public void stop(long instanceId, int fadeOutTicks) {
+            stopAttempts++;
+            if (failStops) {
+                throw new IllegalStateException("stop failed");
+            }
+        }
     }
 }

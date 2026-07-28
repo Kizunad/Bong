@@ -34,8 +34,8 @@ public final class MusicStateMachine {
             return false;
         }
 
-        player.setMusicState(update.state());
         stopActive(update.fadeTicks());
+        player.setMusicState(update.state());
         long instanceId = ++nextInstanceId;
         update.recipe().loop().map(AudioLoopConfig::whileFlag).ifPresent(EnvironmentAudioLoopState::activate);
         player.play(new AudioEventPayload.PlaySoundRecipe(
@@ -52,9 +52,8 @@ public final class MusicStateMachine {
     }
 
     public void clear() {
-        stopActive(0);
-        active = null;
         player.setMusicState(State.AMBIENT);
+        stopActive(0);
     }
 
     public State currentStateForTests() {
@@ -86,11 +85,13 @@ public final class MusicStateMachine {
     }
 
     private void stopActive(int fadeTicks) {
-        if (active == null) {
+        ActiveMusic stopped = active;
+        if (stopped == null) {
             return;
         }
-        active.loopFlag.ifPresent(EnvironmentAudioLoopState::deactivate);
-        player.stop(new AudioEventPayload.StopSoundRecipe(active.instanceId, Math.max(0, fadeTicks)));
+        active = null;
+        stopped.loopFlag.ifPresent(EnvironmentAudioLoopState::deactivate);
+        player.stop(new AudioEventPayload.StopSoundRecipe(stopped.instanceId, Math.max(0, fadeTicks)));
     }
 
     private static double clamp01(double value) {
