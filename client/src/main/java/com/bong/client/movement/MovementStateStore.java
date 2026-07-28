@@ -38,6 +38,10 @@ public final class MovementStateStore {
         snapshot = MovementState.empty();
     }
 
+    public static synchronized void clearOnDisconnect() {
+        clear();
+    }
+
     public static void resetForTests() {
         clear();
     }

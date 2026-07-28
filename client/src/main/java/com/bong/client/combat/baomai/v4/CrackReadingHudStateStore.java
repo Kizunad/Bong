@@ -43,6 +43,10 @@ public final class CrackReadingHudStateStore {
         CURRENT.set(State.EMPTY);
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     // ── nested types ──────────────────────────────────────────────────────────
 
     public record MeridianEntry(

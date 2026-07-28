@@ -24,6 +24,10 @@ public final class BaomaiV3HudStateStore {
         scarSeverity = 0.0;
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     public static void recordBloodBurn(int durationTicks) {
         recordBloodBurn(durationTicks, System.currentTimeMillis());
     }
