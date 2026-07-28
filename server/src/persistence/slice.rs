@@ -291,34 +291,48 @@ impl fmt::Display for SliceRegistryError {
 impl std::error::Error for SliceRegistryError {}
 
 /// Sorted registry of persistence lifecycle descriptors.
+///
+/// The type itself, its construction, and descriptor-token issuance are restricted to
+/// the `crate::persistence` trust boundary. Code outside that boundary cannot create,
+/// insert, or remove a second registry and use it to downgrade the application's
+/// canonical write policy:
+///
+/// ```compile_fail
+/// use bong_server::persistence::slice::PersistenceSliceRegistry;
+///
+/// let _shadow = PersistenceSliceRegistry::empty();
+/// ```
 #[derive(Debug)]
-pub struct PersistenceSliceRegistry {
+pub(in crate::persistence) struct PersistenceSliceRegistry {
     descriptors: Vec<&'static SliceDescriptor>,
 }
 
 impl Resource for PersistenceSliceRegistry {}
 
-/// Descriptor proven to come from one live registry lookup.
+/// Descriptor proven to come from a registry lookup inside the persistence boundary.
 ///
-/// The private field prevents load activation from accepting an unregistered local
-/// descriptor whose write ordering disagrees with the canonical domain policy.
-pub struct RegisteredSliceDescriptor<'registry> {
+/// Both this token and `SliceLoad::activate` are persistence-private. Gameplay code
+/// can declare slice data, but only a persistence adapter can construct the canonical
+/// registry, resolve its policy, and activate writable state.
+pub(in crate::persistence) struct RegisteredSliceDescriptor<'registry> {
     descriptor: &'static SliceDescriptor,
     _registry: std::marker::PhantomData<&'registry PersistenceSliceRegistry>,
 }
 
 impl PersistenceSliceRegistry {
-    pub fn empty() -> Self {
+    pub(in crate::persistence) fn empty() -> Self {
         Self {
             descriptors: Vec::new(),
         }
     }
 
-    pub fn register_slice<S: PersistenceSlice>(&mut self) -> Result<(), SliceRegistryError> {
+    pub(in crate::persistence) fn register_slice<S: PersistenceSlice>(
+        &mut self,
+    ) -> Result<(), SliceRegistryError> {
         self.register(S::descriptor())
     }
 
-    pub fn register(
+    pub(in crate::persistence) fn register(
         &mut self,
         descriptor: &'static SliceDescriptor,
     ) -> Result<(), SliceRegistryError> {
@@ -383,7 +397,7 @@ impl PersistenceSliceRegistry {
         self.descriptors.iter().copied()
     }
 
-    pub fn registered_descriptor(
+    pub(in crate::persistence) fn registered_descriptor(
         &self,
         slice_id: SliceId,
     ) -> Option<RegisteredSliceDescriptor<'_>> {
@@ -639,7 +653,7 @@ impl<T, E> SliceLoad<T, E> {
     /// A `RefuseStartup` descriptor never constructs a fallback runtime value. A
     /// `BlockWrites` descriptor may construct one, but retains failed provenance so
     /// no durable outlet can obtain a write permit.
-    pub fn activate(
+    pub(in crate::persistence) fn activate(
         self,
         registered: RegisteredSliceDescriptor<'_>,
         on_missing: impl FnOnce() -> T,
