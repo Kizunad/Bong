@@ -2,7 +2,7 @@
 
 ## Bug 摘要
 
-**严重度：critical（生产可达——`67c647346` / PR #652 已接通自然熟练度 producer；dev 命令可做确定性快速复现）**
+**严重度：critical（潜伏态——当前被 `plan-bughunt-r10-findings-v1` P1 的熟练度断裂掩盖，r10 P1 修复即引爆；dev 命令今天就可复现）**
 
 `body.guangbo_ticao`（广播体操）的四肢防御加成走的是**每 tick 向 `DerivedAttrs.defense_profile` 做 `+=` 累加**，而 `defense_profile` 的唯一重建/重置点是 `Changed<PlayerInventory>` 触发的护甲重扫。玩家只要不换装备，加成就每 tick 叠一层，直到撞上 `ARMOR_MITIGATION_CAP = 0.85`——设计上限是 **+0.5%** 四肢防御（`LIMB_DEFENSE_BONUS_MAX = 0.005`），实际会漂到 **85% 全伤型减伤**，裸体站桩即可达成，偏差 170 倍。
 
@@ -18,11 +18,11 @@
 
 ## 可达性（诚实声明）
 
-- **当前生产路径已可达**：`server/src/network/cast_emit.rs:349-353` 在广播体操 cast 自然完成时发送 `GuangboTicaoPracticeEvent`，`server/src/combat/body_conditioning.rs:119-153` 经过真元守恒门增长 proficiency；只要 proficiency > 0，`limb_def > 0.0` 分支就会在每 tick 累加。
-- **dev 命令可确定性加速复现**：`/technique add body.guangbo_ticao` + `/technique proficiency body.guangbo_ticao 1.0` 后站桩约 9 秒即可复现 85% 减伤。
-- **落地关系**：producer 缺口已由 `67c647346` / PR #652 独立闭环；本 plan 只拥有 `defense_profile` 加成幂等性，不再依赖或阻塞 round10 finding。
+- **当前生产路径不可达**：`plan-bughunt-r10-findings-v1` P1 确认 `GuangboTicaoPracticeEvent` 生产端为零 → 熟练度恒 0 → `limb_def = 0` 走不进 `body_conditioning.rs:170` 的 `if limb_def > 0.0`。本 bug 处于**潜伏态**。
+- **dev 命令立即可达**：`/technique add body.guangbo_ticao` + `/technique proficiency body.guangbo_ticao 1.0` 后站桩 ~9 秒即可复现 85% 减伤。
+- **落地顺序硬约束**：本 plan **必须先于或随同 r10 P1（熟练度闭环接通）落地**——先修 r10 P1 会把潜伏 critical 直接推上生产。
 
-## 实际游玩体验影响
+## 实际游玩体验影响（r10 P1 接通后）
 
 - 任何练过一次广播体操的玩家，站着不动十几分钟后四肢获得 85% 全伤型（Cut/Blunt/Pierce/Burn/Concussion）减伤，等效于满配护甲 cap，**裸体免费拿到本应由整套护甲 + 丹药叠出来的极限值**。
 - 广播体操是入门级锻体功法（scroll 习得），却提供了越过所有装备 progression 的防御——护甲、锻体、境界的防御成长曲线全部作废。
@@ -43,7 +43,7 @@
 
 ## 触发路径
 
-1. 玩家习得 `body.guangbo_ticao`（`scroll_body_guangbo_ticao`），自然完成招式并通过真元门增长熟练度；也可用 dev 命令 `/technique proficiency` 直接设置非零熟练度复现。
+1. 玩家习得 `body.guangbo_ticao`（`scroll_body_guangbo_ticao`）且熟练度 > 0（当前需 dev 命令 `/technique proficiency`；r10 P1 修复后自然施放即可累积）。
 2. 每 tick `body_conditioning_aggregate` → `apply_guangbo_ticao_bonuses` 向 `defense_profile` 的 20 个 (肢体, 伤型) entry 各 `+= limb_def`。
 3. 玩家不触发 `Changed<PlayerInventory>`（不穿脱装备）→ 无任何重置。
 4. N tick 后所有肢体 entry 达到 0.85，`apply_armor_mitigation` 按 85% 削减一切四肢伤害。
@@ -53,7 +53,7 @@
 - 2026-07-26 防御系统全链路审计发现，经独立 read-only Explore agent 逐行核验：累加逻辑、注册方式、重建触发器、重置清单缺席四点全部 CONFIRMED。
 - 审计初稿称"无限累加"——核验修正为**饱和于 `ARMOR_MITIGATION_CAP = 0.85`**（`:176` 有 `.min()`），但 0.5% 设计值 vs 85% 实际值的 170 倍偏差不变。
 - 核验排除"设计如此"：同函数的 move_speed/jump 加成因 `attribute_aggregate_tick` 重置清单而幂等，`defense_profile` 是清单唯一漏项；`LIMB_DEFENSE_BONUS_MAX` 命名与文件头 doc comment（`body_conditioning.rs:2`「+0.5% 四肢防御」）均自证意图。
-- 与 round10 #6 去重确认：`67c647346` / PR #652 已修**熟练度增长 producer**；本 plan 只修**加成应用幂等性**。两者是同模块的独立缺陷，前者已闭环且不是本 plan 的待办或依赖。
+- 与 `plan-bughunt-r10-findings-v1` P1 去重确认：r10 P1 修**熟练度增长断裂**（事件无生产者），本 plan 修**加成应用幂等性**——同模块两个独立缺陷，且存在上述落地顺序耦合。
 
 ## Skeleton Fix Plan（路线已锁定，2026-07-26 立案决议，不留给实施者临场拍板）
 
@@ -83,10 +83,10 @@
 
 - 路线 A 动 `DerivedAttrs` 结构体——并行 PR 若同时改该 struct，merge 后须防 E0062 重复字段（合并主线后重跑完整门禁）。
 - `apply_armor_mitigation` 是热路径纯函数（`resolve.rs:133` 的 `?` 提前返回依赖 entry 缺失），路线 A 给四肢部位引入"无护甲 entry 也有 limb 加成"的新分支时，注意不要破坏"NPC defense_profile 恒空 → 不减伤"的现状（NPC 穿甲减伤归 `plan-npc-combat-gear-v2`，本 plan 不扩大范围）。
-- 熟练度 producer 已在生产可达；实施时要保留 `GuangboTicaoPracticeEvent` → 真元门 → proficiency 的既有链路，不得把幂等性修复误做成禁用自然练习。
+- 与 r10 P1 的顺序耦合是**调度约束**不是代码依赖：两者代码互不冲突，可独立 PR，但 r10 P1 先合且本 plan 未合的窗口期 = 生产可达的 critical，主干调度时注意。
 
 ## 与其他 plan 的关系
 
-- `docs/finished_plans/plan-bughunt-r10-findings-v1.md` #6：保留 producer 断裂的历史来源；`67c647346` / PR #652 已闭环，本 plan 不重复实施。
+- `docs/plans-skeleton/plan-bughunt-r10-findings-v1.md` P1：同模块上游断裂（熟练度恒 0），修好即引爆本 bug——见「可达性」落地顺序硬约束。
 - `docs/plans-skeleton/plan-defense-hardening-v1.md`（同批立案）：P0 全局减伤 cap 是本 bug 的纵深防御层（即使再出现类似漂移，总减伤也被全局 cap 压住），但不替代本修复。
 - `docs/finished_plans/plan-layered-equip-v1.md`：`ARMOR_MITIGATION_CAP` 三层 clamp 语义的 owner，路线 A 的"相加后统一 clamp"必须保持其"resolve 侧最终唯一兜底"约定。
