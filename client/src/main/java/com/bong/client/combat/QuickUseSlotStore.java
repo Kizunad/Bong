@@ -65,6 +65,14 @@ public final class QuickUseSlotStore {
         listeners.remove(listener);
     }
 
+    /**
+     * Clears the session snapshot while retaining listeners and the monotonic
+     * sequence used by subscribers to reject stale updates.
+     */
+    public static void clearOnDisconnect() {
+        publish(QuickSlotConfig.empty(), Source.LOCAL, null, null);
+    }
+
     public static void resetForTests() {
         synchronized (LOCK) {
             snapshot = QuickSlotConfig.empty();

@@ -54,6 +54,11 @@ public final class SkillBarStore {
         selectedSlot = NO_SELECTED_SLOT;
     }
 
+    /** Clears bindings and selection while retaining long-lived listeners. */
+    public static void clearOnDisconnect() {
+        replace(SkillBarConfig.empty());
+    }
+
     public static void resetForTests() {
         snapshot = SkillBarConfig.empty();
         selectedSlot = NO_SELECTED_SLOT;

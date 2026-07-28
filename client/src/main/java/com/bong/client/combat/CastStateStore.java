@@ -126,6 +126,15 @@ public final class CastStateStore {
         }
     }
 
+    /**
+     * Clears only the current session snapshot after disconnect. Listener wiring
+     * remains installed so long-lived HUD/juice consumers can observe the idle
+     * transition and receive the next session's state.
+     */
+    public static void clearOnDisconnect() {
+        setSnapshot(CastState.idle(), Origin.LOCAL_PREDICTION);
+    }
+
     public static void resetForTests() {
         snapshot = CastState.idle();
         listeners.clear();
