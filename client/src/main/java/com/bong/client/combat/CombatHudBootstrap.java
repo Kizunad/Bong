@@ -1,16 +1,10 @@
 package com.bong.client.combat;
 
 import com.bong.client.BongClient;
-import com.bong.client.hud.AnqiHudStateStore;
-import com.bong.client.hud.HudImmersionMode;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 
 /**
- * Wires the combat-HUD stores, key-binding dispatch, and on-disconnect reset
- * (§8.3). Dispatch of the resulting intents into the real network protocol is
- * intentionally left as a TODO until the server-side handlers land — the
- * client-side HUD state already transitions correctly for local-feedback
- * rendering.
+ * Wires combat-HUD stores and key-binding dispatch. Session runtime adjunct cleanup is
+ * exposed for the token-gated central disconnect lifecycle.
  */
 public final class CombatHudBootstrap {
     static final int ZHENMAI_PREP_WINDOW_MS = 1000;
@@ -27,7 +21,6 @@ public final class CombatHudBootstrap {
         // plan-shield-block-v1 P1 — 举盾键盘备用路径（默认 UNKNOWN，主路径为右键 MixinMouse）。
         CombatKeybindings.setShieldHoldHandler(CombatHudBootstrap::onShieldHold);
 
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(CombatHudBootstrap::resetOnDisconnect));
         BongClient.LOGGER.info("Combat HUD bootstrap ready.");
     }
 
@@ -59,7 +52,7 @@ public final class CombatHudBootstrap {
      * 加守卫后：窗口未开 → 直接返回，既不发包也不开环；窗口开启 → 维持原行为（刷新本地窗口
      * 计时供 HUD 渲染 + 发包）。
      *
-     * <p>包级可见以便单测直接驱动（同 {@link #resetOnDisconnect()}）。
+     * <p>包级可见以便单测直接驱动。
      */
     static void onJiemaiPressed() {
         if (!DefenseWindowStore.snapshot().active()) {
@@ -94,33 +87,16 @@ public final class CombatHudBootstrap {
         }
     }
 
-    static void resetOnDisconnect() {
-        // §8.3 hydration expects a fresh first-frame payload post-reconnect.
-        CombatHudStateStore.resetForTests();
-        // 暗器 HUD 的 per-dimension lastTick 属于本地 session，断线后必须开启新的 tick epoch。
-        AnqiHudStateStore.clear();
-        CastStateStore.resetForTests();
-        DefenseWindowStore.resetForTests();
-        QuickUseSlotStore.resetForTests();
-        SkillBarStore.resetForTests();
-        UnlockedStylesStore.resetForTests();
-        UnifiedEventStore.resetForTests();
-        SpellVolumeStore.resetForTests();
-        // Combat UI stores (plan-combat-ui).
-        com.bong.client.combat.store.WoundsStore.resetForTests();
-        com.bong.client.combat.store.StatusEffectStore.resetForTests();
-        com.bong.client.combat.store.DerivedAttrsStore.resetForTests();
-        com.bong.client.combat.store.DamageFloaterStore.resetForTests();
-        com.bong.client.combat.store.DeathStateStore.resetForTests();
-        com.bong.client.combat.store.TerminateStateStore.resetForTests();
-        com.bong.client.combat.store.TribulationStateStore.resetForTests();
-        com.bong.client.combat.store.TribulationBroadcastStore.resetForTests();
-        com.bong.client.combat.store.CarrierStateStore.resetForTests();
-        com.bong.client.combat.inspect.TechniquesListPanel.resetForTests();
-        com.bong.client.combat.inspect.WeaponTreasurePanel.resetForTests();
-        com.bong.client.social.SocialStateStore.clearOnDisconnect();
+    /**
+     * Clears non-Store combat HUD runtime adjuncts for the current client session.
+     *
+     * <p>Store payload belongs to {@code SessionScopedStoreRegistry}; this bootstrap must
+     * neither clear Store data nor invoke test reset helpers. Existing panel, immersion, and
+     * combat-juice classes expose no production disconnect cleaner on this branch, so they are
+     * intentionally not called here.</p>
+     */
+    public static void clearOnDisconnect() {
+        CombatKeybindings.clearOnDisconnect();
         com.bong.client.social.SparringInviteScreenBootstrap.clearOnDisconnect();
-        TreasureEquippedStore.resetForTests();
-        HudImmersionMode.resetForTests();
     }
 }

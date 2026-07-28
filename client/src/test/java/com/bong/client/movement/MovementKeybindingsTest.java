@@ -3,6 +3,9 @@ package com.bong.client.movement;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,7 +19,7 @@ class MovementKeybindingsTest {
     }
 
     @Test
-    void disconnectResetClearsRejectTimingAndSameDashRefreshesInNewSession() {
+    void disconnectAdjunctCleanupIsIdempotentAndLeavesRegistryOwnedMovementStateUntouched() {
         MovementState rejectedDash = new MovementState(
             0.75,
             false,
@@ -37,33 +40,54 @@ class MovementKeybindingsTest {
         assertEquals(3_000L, MovementStateStore.snapshot().rejectedAtMs());
         assertEquals(3_000L, MovementStateStore.snapshot().hudActivityAtMs());
 
-        MovementKeybindings.resetOnDisconnect();
+        MovementKeybindings.clearOnDisconnect();
+        MovementKeybindings.clearOnDisconnect();
 
-        MovementState reset = MovementStateStore.snapshot();
+        MovementState unchanged = MovementStateStore.snapshot();
         assertTrue(
-            reset.isEmpty(),
-            () -> "expected an empty snapshot because production disconnect must clear the prior session; actual snapshot="
-                + reset
+            !unchanged.isEmpty(),
+            "keybinding adjunct cleanup must not clear registry-owned movement Store data"
         );
-        assertEquals(0L, reset.rejectedAtMs(), "disconnect must clear prior reject timing");
-        assertEquals(0L, reset.hudActivityAtMs(), "disconnect must clear prior HUD activity timing");
-
-        MovementStateStore.replace(rejectedDash, 4_000L);
-        MovementState nextSession = MovementStateStore.snapshot();
-        assertEquals("dash", nextSession.rejectedAction());
-        assertEquals(
-            4_000L,
-            nextSession.rejectedAtMs(),
-            "the same dash reject in a new session must refresh rejectedAtMs"
-        );
-        assertEquals(
-            4_000L,
-            nextSession.hudActivityAtMs(),
-            "the same dash reject in a new session must reactivate the HUD"
-        );
+        assertEquals("dash", unchanged.rejectedAction(), "registry-owned snapshot must remain intact");
+        assertEquals(3_000L, unchanged.rejectedAtMs(), "adjunct cleanup must not alter reject timing");
+        assertEquals(3_000L, unchanged.hudActivityAtMs(), "adjunct cleanup must not alter HUD timing");
     }
 
-    // ---- 参考帧：玩家体朝向 yaw（无 WASD 输入时即朝正前 dash）----
+
+    @Test
+    void sourceLeavesDisconnectRoutingToTheCentralLifecycleOwner() throws Exception {
+        String source = Files.readString(Path.of(
+            "src/main/java/com/bong/client/movement/MovementKeybindings.java"
+        ));
+        assertTrue(
+            !source.contains("ClientPlayConnectionEvents.DISCONNECT.register"),
+            "MovementKeybindings must not register a distributed DISCONNECT callback"
+        );
+        assertTrue(
+            !source.contains("client.execute("),
+            "MovementKeybindings must not queue an independently ungated disconnect cleanup task"
+        );
+
+        int cleanerStart = source.indexOf("public static void clearOnDisconnect()");
+        assertTrue(cleanerStart >= 0, "MovementKeybindings must expose a production adjunct cleaner");
+        String cleaner = source.substring(cleanerStart);
+        assertTrue(
+            cleaner.contains("ROUTER.resetOnDisconnect()"),
+            "movement adjunct cleaner must reset the router"
+        );
+        assertTrue(
+            !cleaner.contains("MovementStateStore."),
+            "registry-owned MovementStateStore must not be cleared by the keybinding bootstrap"
+        );
+        assertTrue(
+            !cleaner.contains("resetForTest"),
+            "production adjunct cleaner must not invoke a test reset helper"
+        );
+        assertTrue(
+            !cleaner.contains("clearForTest"),
+            "production adjunct cleaner must not invoke a test-only clear helper"
+        );
+    }
 
     @Test
     void noInputDashesAlongPlayerYaw() {

@@ -5,7 +5,6 @@ import com.bong.client.network.ClientRequestProtocol;
 import com.bong.client.network.ClientRequestSender;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.input.Input;
 import net.minecraft.client.option.KeyBinding;
@@ -30,7 +29,6 @@ public final class MovementKeybindings {
             new KeyBinding(DASH_KEY_TRANSLATION, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, CATEGORY)
         );
         ClientTickEvents.END_CLIENT_TICK.register(MovementKeybindings::onEndClientTick);
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(MovementKeybindings::resetOnDisconnect));
         registered = true;
         BongClient.LOGGER.info("Movement key router ready: configurable dash key.");
     }
@@ -109,8 +107,13 @@ public final class MovementKeybindings {
         return pressed;
     }
 
-    static void resetOnDisconnect() {
-        ROUTER.reset();
-        MovementStateStore.clear();
+    /**
+     * Clears only the movement input router's session adjunct state.
+     *
+     * <p>{@code MovementStateStore} is registry-owned and must be cleared by the central
+     * disconnect lifecycle, not by this keybinding bootstrap.</p>
+     */
+    public static void clearOnDisconnect() {
+        ROUTER.resetOnDisconnect();
     }
 }
