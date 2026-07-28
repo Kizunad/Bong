@@ -88,6 +88,23 @@ public final class ScreenTransitionController {
         );
     }
 
+    /**
+     * 断线时只取消尚未结束的视觉转场。
+     *
+     * <p>不关闭 screen、不触发 pending protocol terminal callback，也不改测试取消计数、重入 guard
+     * 或注册状态；连接已终结时这些协议副作用不得补发。</p>
+     */
+    public static void clearOnDisconnect() {
+        ActiveTransition active = activeTransition;
+        if (active == null) {
+            return;
+        }
+        active.handle().cancel();
+        if (activeTransition == active) {
+            activeTransition = null;
+        }
+    }
+
     public static boolean inputLocked() {
         ActiveTransition active = activeTransition;
         if (active == null) {

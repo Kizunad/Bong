@@ -76,8 +76,13 @@ public final class MusicStateMachine {
         return seasonModifier;
     }
 
-    public void clearSeasonModifierForTests() {
+    /** Clears only the season-derived modifier; active music, player wiring, and instance sequence stay intact. */
+    public void clearSeasonModifierOnDisconnect() {
         seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
+    }
+
+    public void clearSeasonModifierForTests() {
+        clearSeasonModifierOnDisconnect();
     }
 
     private void stopActive(int fadeTicks) {

@@ -20,7 +20,19 @@ class AdjunctDisconnectOwnershipTest {
         "insight/InsightOfferScreenBootstrap.java",
         "ui/CultivationScreenBootstrap.java",
         "inventory/InspectScreenBootstrap.java",
-        "inventory/LootContainerScreenBootstrap.java"
+        "inventory/LootContainerScreenBootstrap.java",
+        "animation/BongAnimationRegistry.java",
+        "audio/NpcFootstepAudioController.java",
+        "combat/inspect/TechniquesListPanel.java",
+        "combat/inspect/WeaponTreasurePanel.java",
+        "hud/MorphCastVignetteState.java",
+        "hud/PillBuffHudPlanner.java",
+        "loop/HomeSequence.java",
+        "network/InventoryMoveRejectedHandler.java",
+        "season/SeasonVisualController.java",
+        "ui/ScreenTransitionController.java",
+        "visual/particle/DeadDropBreakPlayer.java",
+        "visual/particle/WorldVfxDemoBootstrap.java"
     };
 
     @Test
@@ -63,7 +75,19 @@ class AdjunctDisconnectOwnershipTest {
             "CombatJuiceSystem.clearOnDisconnect()",
             "CombatHudBootstrap.clearOnDisconnect()",
             "MovementKeybindings.clearOnDisconnect()",
-            "BotanyHudBootstrap.clearOnDisconnect()"
+            "BotanyHudBootstrap.clearOnDisconnect()",
+            "TechniquesListPanel.clearOnDisconnect()",
+            "WeaponTreasurePanel.clearOnDisconnect()",
+            "HomeSequence.clearOnDisconnect()",
+            "InventoryMoveRejectedHandler.clearOnDisconnect()",
+            "PillBuffHudPlanner.clearOnDisconnect()",
+            "MorphCastVignetteState.clearOnDisconnect()",
+            "SeasonVisualController.clearOnDisconnect()",
+            "ScreenTransitionController.clearOnDisconnect()",
+            "WorldVfxDemoBootstrap.clearOnDisconnect()",
+            "DeadDropBreakPlayer.clearOnDisconnect()",
+            "NpcFootstepAudioController.clearOnDisconnect()",
+            "BongAnimationRegistry.clearOnDisconnect()"
         }) {
             assertTrue(helper.contains(call), "中央断线 helper 必须接入 adjunct：" + call);
             assertTrue(helper.indexOf(call) == helper.lastIndexOf(call),
@@ -81,7 +105,19 @@ class AdjunctDisconnectOwnershipTest {
             "combat/CombatKeybindings.java",
             "movement/MovementKeybindings.java",
             "botany/BotanyHudBootstrap.java",
-            "botany/BotanyDragState.java"
+            "botany/BotanyDragState.java",
+            "animation/BongAnimationRegistry.java",
+            "audio/NpcFootstepAudioController.java",
+            "combat/inspect/TechniquesListPanel.java",
+            "combat/inspect/WeaponTreasurePanel.java",
+            "hud/MorphCastVignetteState.java",
+            "hud/PillBuffHudPlanner.java",
+            "loop/HomeSequence.java",
+            "network/InventoryMoveRejectedHandler.java",
+            "season/SeasonVisualController.java",
+            "ui/ScreenTransitionController.java",
+            "visual/particle/DeadDropBreakPlayer.java",
+            "visual/particle/WorldVfxDemoBootstrap.java"
         }) {
             String hook = productionHook(source(path), "clearOnDisconnect");
             assertFalse(hook.contains("resetForTest"),
