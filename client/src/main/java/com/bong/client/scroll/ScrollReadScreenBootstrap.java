@@ -2,7 +2,6 @@ package com.bong.client.scroll;
 
 import com.bong.client.BongClient;
 import com.bong.client.ui.ScreenTransitionController;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 
@@ -13,8 +12,8 @@ import java.util.function.Consumer;
  * {@code InsightOfferScreenBootstrap}）：
  * <ul>
  *   <li>有新 ScrollOpen 推入 → 自动打开 {@link ScrollReadScreen}。</li>
- *   <li>store 被清空（玩家自己关屏 / 断线兜底）→ 若当前正显示阅读屏则关闭。</li>
- *   <li>断线 → 同步失活阅读会话身份；数据快照仍由集中 lifecycle registry 清理。</li>
+ *   <li>store 被清空（玩家自己关屏 / 中央 token-gated 断线清理）→ 若当前正显示阅读屏则关闭。</li>
+ *   <li>本 bootstrap 不持有独立断线回调，避免旧 handler 的迟到 DISCONNECT 失活新会话。</li>
  * </ul>
  */
 public final class ScrollReadScreenBootstrap {
@@ -23,10 +22,6 @@ public final class ScrollReadScreenBootstrap {
 
     public static void register() {
         ScrollReadStore.addSessionListener(ScrollReadScreenBootstrap::onStoreChanged);
-
-        // Invalidate only the atomic UI identity before any already queued open task can run.
-        // The token-gated central disconnect path owns the later production data clear.
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> onDisconnect());
 
         BongClient.LOGGER.info("Registered scroll read screen bootstrap via store listener");
     }
@@ -37,17 +32,6 @@ public final class ScrollReadScreenBootstrap {
             return;
         }
         client.execute(() -> applyStoreChange(client, session));
-    }
-
-    /**
-     * 立即切断已排队 UI 任务对旧阅读会话的所有权；不在此处清 Store 数据。
-     *
-     * <p>{@code BongNetworkHandler} 的 handler-token gate 成功后会由 registry 调用
-     * {@link ScrollReadStore#clearOnDisconnect()}。分离两者可避免 bootstrap 和 registry
-     * 对同一 production Store 重复 clear。
-     */
-    static void onDisconnect() {
-        ScrollReadStore.invalidateSessionIdentityOnDisconnect();
     }
 
     static void applyStoreChange(MinecraftClient client, ScrollReadStore.ActiveSession session) {

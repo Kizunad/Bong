@@ -106,19 +106,6 @@ public final class ScrollReadStore {
         ClientRequestSender.sendScrollReadClosed();
     }
 
-    /**
-     * DISCONNECT 的同步 ABA 栅栏：仅轮换当前阅读会话身份，不清 payload、不开关屏也不通知监听器。
-     *
-     * <p>已经排队的开屏任务持有旧 {@link ActiveSession}，旧 screen 持有旧
-     * {@link SessionToken}；轮换后两者都会 fail closed。真正的数据清理由集中 lifecycle
-     * registry 随后调用 {@link #clearOnDisconnect()}，不能由这个同步屏障重复执行。
-     */
-    static void invalidateSessionIdentityOnDisconnect() {
-        activeSession.updateAndGet(current -> current == null
-            ? null
-            : new ActiveSession(new SessionToken(), current.viewModel()));
-    }
-
     /** 由集中 lifecycle registry 调用：仅清当前快照，保留监听器。 */
     public static void clearOnDisconnect() {
         replace(null);

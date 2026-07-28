@@ -248,35 +248,6 @@ class ScrollReadStoreTest {
     }
 
     @Test
-    void invalidateSessionIdentityOnDisconnect_keepsDataAndListenersButRevokesOldOwnership() {
-        installNetworkCapture();
-        List<ScrollOpenViewModel> notified = new ArrayList<>();
-        List<ScrollReadStore.ActiveSession> sessionNotified = new ArrayList<>();
-        ScrollReadStore.addListener(notified::add);
-        ScrollReadStore.addSessionListener(sessionNotified::add);
-        ScrollOpenViewModel current = fixture("scroll_disconnect_identity");
-        ScrollReadStore.replace(current);
-        ScrollReadStore.ActiveSession queuedSession = sessionNotified.get(0);
-        ScrollReadStore.SessionToken oldToken = queuedSession.token();
-
-        ScrollReadStore.invalidateSessionIdentityOnDisconnect();
-        ScrollReadStore.closeIfCurrent(oldToken);
-
-        assertSame(current, ScrollReadStore.snapshot(),
-            "同步身份失活只能阻断旧 UI 所有权，数据快照必须留给 registry 的 production clear");
-        assertEquals(1, notified.size(),
-            "身份失活不得通知普通 listener 或额外安排屏幕更新，实际通知=" + notified);
-        assertEquals(1, sessionNotified.size(),
-            "身份失活不得发布伪 refresh/clear session 通知，实际通知=" + sessionNotified);
-        assertFalse(ScrollReadStore.isCurrent(queuedSession),
-            "断线前排队的 ActiveSession 必须立即失效，不能随后开旧屏");
-        assertNotSame(oldToken, currentToken(current),
-            "断线身份屏障必须轮换 token，旧 screen 不得再拥有当前数据");
-        assertTrue(sent.isEmpty(),
-            "被撤销的旧 token close 不得发送 scroll_read_closed，实际=" + sent);
-    }
-
-    @Test
     void sessionSnapshotsInvalidateAcrossRefreshClearAndReopen() {
         List<ScrollReadStore.ActiveSession> notified = new ArrayList<>();
         ScrollReadStore.addSessionListener(notified::add);
@@ -336,7 +307,7 @@ class ScrollReadStoreTest {
     // ─── 断线兜底 ──────────────────────────────────────────────────────
 
     @Test
-    void registryClearAfterIdentityInvalidationClearsSnapshotButKeepsListeners() {
+    void registryClearClearsSnapshotButKeepsListeners() {
         List<ScrollOpenViewModel> notified = new ArrayList<>();
         List<ScrollReadStore.ActiveSession> sessionNotified = new ArrayList<>();
         ScrollReadStore.addListener(notified::add);
@@ -344,16 +315,15 @@ class ScrollReadStoreTest {
         ScrollOpenViewModel stale = fixture("scroll_disc");
         ScrollReadStore.replace(stale);
 
-        ScrollReadStore.invalidateSessionIdentityOnDisconnect();
         ScrollReadStore.clearOnDisconnect();
 
         assertNull(ScrollReadStore.snapshot(), "registry clear 后 snapshot 必须为空");
         assertEquals(2, notified.size(),
-            "身份失活不得通知，只有 registry clear 应向既有 listener 发布 open 与空态");
+            "registry clear 应向既有 listener 发布 open 与空态");
         assertSame(stale, notified.get(0), "既有 listener 首次通知必须保留原数据");
         assertNull(notified.get(1), "registry clear 必须向既有 listener 发布空态");
         assertEquals(2, sessionNotified.size(),
-            "session listener 必须收到 open 与 registry clear，不得收到身份失活的伪 refresh");
+            "session listener 必须收到 open 与 registry clear");
         assertNull(sessionNotified.get(1), "registry clear 必须发布明确空态 session");
 
         ScrollOpenViewModel fresh = fixture("scroll_after_disc");

@@ -15,6 +15,7 @@ class AdjunctDisconnectOwnershipTest {
         "combat/juice/CastFovController.java",
         "combat/CombatHudBootstrap.java",
         "movement/MovementKeybindings.java",
+        "scroll/ScrollReadScreenBootstrap.java",
         "botany/BotanyHudBootstrap.java",
         "npc/NpcInteractionLogControls.java",
         "insight/InsightOfferScreenBootstrap.java",

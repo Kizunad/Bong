@@ -1,17 +1,20 @@
 package com.bong.client.scroll;
 
+import com.bong.client.BongNetworkHandler;
+import com.bong.client.ui.ClientConnectionStatusStore;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,6 +22,7 @@ class ScrollReadScreenBootstrapTest {
     @AfterEach
     void cleanup() {
         ScrollReadStore.resetForTests();
+        ClientConnectionStatusStore.resetForTests();
     }
 
     @Test
@@ -77,29 +81,63 @@ class ScrollReadScreenBootstrapTest {
     }
 
     @Test
-    void disconnectInvalidatesQueuedOpenBeforeRegistryClearsData() {
+    void centralRegistryClearInvalidatesQueuedOpenBeforeItCanSetScreen() {
         List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
         List<Screen> setScreens = new ArrayList<>();
         ScrollReadStore.addSessionListener(sessions::add);
-        ScrollOpenViewModel model = fixture("正文");
-        ScrollReadStore.replace(model);
+        ScrollReadStore.replace(fixture("正文"));
         ScrollReadStore.ActiveSession queuedOpen = sessions.get(0);
 
-        ScrollReadScreenBootstrap.onDisconnect();
+        ScrollReadStore.clearOnDisconnect();
         ScrollReadScreenBootstrap.applyStoreChange(null, null, setScreens::add, queuedOpen);
 
-        assertSame(model, ScrollReadStore.snapshot(),
-            "bootstrap DISCONNECT 只可同步失活 UI 身份，数据快照必须留给集中 registry 清理");
-        assertEquals(1, sessions.size(),
-            "身份失活不得自行发布 clear 通知或重复安排视觉清理，实际通知=" + sessions);
         assertFalse(ScrollReadStore.isCurrent(queuedOpen),
-            "disconnect 回调返回前必须同步使已排队阅读 session 失效");
+            "中央 registry 清理必须使断线前排队的阅读 session 失效");
         assertTrue(setScreens.isEmpty(),
-            "断线前排队的 open 任务不得在断线后开屏，实际 setScreen=" + setScreens);
+            "断线前排队的 open 任务不得在中央清理后开屏，实际 setScreen=" + setScreens);
     }
 
     @Test
-    void registryClearAfterIdentityInvalidationAllowsFreshSessionToOpen() {
+    void lateOldHandlerDisconnectCannotRevokeNewScrollSessionOwnership() {
+        Object oldHandler = new Object();
+        ClientConnectionStatusStore.initializeSession(oldHandler);
+        assertTrue(ClientConnectionStatusStore.activateSession(oldHandler, 1_000L),
+            "测试前置：handler A 必须成为 active session");
+
+        List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
+        List<Runnable> disconnectTasks = new ArrayList<>();
+        ScrollReadStore.addSessionListener(sessions::add);
+        invokeDisconnectSession(
+            oldHandler,
+            1_100L,
+            ScrollReadStore::clearOnDisconnect,
+            disconnectTasks::add
+        );
+
+        Object newHandler = new Object();
+        ClientConnectionStatusStore.SessionToken newConnectionToken =
+            ClientConnectionStatusStore.initializeSession(newHandler);
+        assertTrue(ClientConnectionStatusStore.activateSession(newHandler, 2_000L),
+            "测试前置：handler B JOIN 必须先成为 active session");
+        ScrollOpenViewModel freshModel = fixture("新正文");
+        ScrollReadStore.replace(freshModel);
+        ScrollReadStore.ActiveSession freshSession = sessions.get(0);
+        ScrollReadScreen freshScreen = new ScrollReadScreen(freshModel, freshSession.token());
+
+        disconnectTasks.remove(0).run();
+
+        assertTrue(ClientConnectionStatusStore.isActiveSession(newConnectionToken),
+            "handler A 的迟到 DISCONNECT 不得使 handler B token 失活");
+        assertTrue(ScrollReadStore.isCurrent(freshSession),
+            "handler A 的迟到 DISCONNECT 不得轮换或清除 handler B 的阅读身份");
+        assertTrue(ScrollReadScreenBootstrap.belongsToSession(freshScreen, freshSession),
+            "handler B 已打开的阅读屏必须继续拥有当前会话，不能被旧 A 撤销 token");
+        assertSame(freshModel, ScrollReadStore.snapshot(),
+            "handler A 的迟到 DISCONNECT 不得清除 handler B 的阅读数据");
+    }
+
+    @Test
+    void registryClearAllowsFreshSessionToOpenAndRejectsOldScreenClose() {
         List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
         List<Screen> setScreens = new ArrayList<>();
         ScrollReadStore.addSessionListener(sessions::add);
@@ -108,7 +146,6 @@ class ScrollReadScreenBootstrapTest {
         ScrollReadStore.ActiveSession oldSession = sessions.get(0);
         ScrollReadScreen oldScreen = new ScrollReadScreen(oldModel, oldSession.token());
 
-        ScrollReadScreenBootstrap.onDisconnect();
         ScrollReadStore.clearOnDisconnect();
         ScrollOpenViewModel freshModel = fixture("新正文");
         ScrollReadStore.replace(freshModel);
@@ -126,12 +163,11 @@ class ScrollReadScreenBootstrapTest {
     }
 
     @Test
-    void lateRegistryClearTaskAfterReopenDoesNotCloseNewSession() {
+    void staleClearNotificationAfterReopenDoesNotCloseNewSession() {
         List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
         List<Screen> setScreens = new ArrayList<>();
         ScrollReadStore.addSessionListener(sessions::add);
         ScrollReadStore.replace(fixture("旧会话"));
-        ScrollReadScreenBootstrap.onDisconnect();
         ScrollReadStore.clearOnDisconnect();
         ScrollOpenViewModel reopenedModel = fixture("重开会话");
         ScrollReadStore.replace(reopenedModel);
@@ -146,9 +182,9 @@ class ScrollReadScreenBootstrapTest {
         );
 
         assertSame(reopenedModel, ScrollReadStore.snapshot(),
-            "迟到的 registry clear 任务不得清理后来重开的 session");
+            "迟到的 registry clear 通知不得清理后来重开的 session");
         assertTrue(setScreens.isEmpty(),
-            "迟到的 registry clear 任务不得关闭新 screen，实际 setScreen=" + setScreens);
+            "迟到的 registry clear 通知不得关闭新 screen，实际 setScreen=" + setScreens);
     }
 
     @Test
@@ -168,6 +204,22 @@ class ScrollReadScreenBootstrapTest {
             "当前 open 任务必须创建 ScrollReadScreen，实际=" + setScreens.get(0));
         assertTrue(ScrollReadScreenBootstrap.belongsToSession(setScreens.get(0), current),
             "新 screen 必须绑定当前不可复用 token，实际 screen=" + setScreens.get(0));
+    }
+
+    private static void invokeDisconnectSession(
+        Object handler,
+        long disconnectedAtMs,
+        Runnable cleanupTask,
+        Consumer<Runnable> clientExecutor
+    ) {
+        try {
+            Method method = BongNetworkHandler.class.getDeclaredMethod(
+                "disconnectSession", Object.class, long.class, Runnable.class, Consumer.class);
+            method.setAccessible(true);
+            method.invoke(null, handler, disconnectedAtMs, cleanupTask, clientExecutor);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法调用 production disconnect token gate", exception);
+        }
     }
 
     private static ScrollOpenViewModel fixture(String body) {
