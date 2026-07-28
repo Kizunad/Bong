@@ -211,6 +211,16 @@ pub struct SliceDescriptor {
 }
 
 /// Compile-time owner of a static slice descriptor.
+///
+/// Registry construction remains outside the public API. This compile-fail example
+/// is attached to a public item so `cargo test --doc` actually collects it and pins
+/// the trust boundary:
+///
+/// ```compile_fail
+/// use bong_server::persistence::slice::PersistenceSliceRegistry;
+///
+/// let _shadow = PersistenceSliceRegistry::empty();
+/// ```
 pub trait PersistenceSlice {
     fn descriptor() -> &'static SliceDescriptor;
 }
@@ -311,13 +321,7 @@ impl std::error::Error for SliceRegistryError {}
 /// The type itself, its construction, and descriptor-token issuance are restricted to
 /// the `crate::persistence` trust boundary. Code outside that boundary cannot create,
 /// insert, or remove a second registry and use it to downgrade the application's
-/// canonical write policy:
-///
-/// ```compile_fail
-/// use bong_server::persistence::slice::PersistenceSliceRegistry;
-///
-/// let _shadow = PersistenceSliceRegistry::empty();
-/// ```
+/// canonical write policy.
 #[derive(Debug)]
 pub(in crate::persistence) struct PersistenceSliceRegistry {
     descriptors: Vec<&'static SliceDescriptor>,
@@ -367,6 +371,24 @@ impl PersistenceSliceRegistry {
                 slice_id: descriptor.id,
             });
         }
+        if matches!(descriptor.autosave, AutosavePolicy::EveryTicks(0)) {
+            return Err(SliceRegistryError::ZeroAutosaveCadence {
+                slice_id: descriptor.id,
+            });
+        }
+        if descriptor.scope == SliceScope::PlayerEntity
+            && descriptor.time_basis != TimeBasis::None
+            && descriptor.hydrate.is_none()
+        {
+            return Err(SliceRegistryError::MissingHydrateHook {
+                slice_id: descriptor.id,
+            });
+        }
+        if descriptor.time_basis != TimeBasis::None && descriptor.rebase.is_none() {
+            return Err(SliceRegistryError::MissingRebaseHook {
+                slice_id: descriptor.id,
+            });
+        }
         if self
             .descriptors
             .iter()
@@ -393,24 +415,6 @@ impl PersistenceSliceRegistry {
                     conflicting: descriptor.write_ordering,
                 });
             }
-        }
-        if matches!(descriptor.autosave, AutosavePolicy::EveryTicks(0)) {
-            return Err(SliceRegistryError::ZeroAutosaveCadence {
-                slice_id: descriptor.id,
-            });
-        }
-        if descriptor.scope == SliceScope::PlayerEntity
-            && descriptor.time_basis != TimeBasis::None
-            && descriptor.hydrate.is_none()
-        {
-            return Err(SliceRegistryError::MissingHydrateHook {
-                slice_id: descriptor.id,
-            });
-        }
-        if descriptor.time_basis != TimeBasis::None && descriptor.rebase.is_none() {
-            return Err(SliceRegistryError::MissingRebaseHook {
-                slice_id: descriptor.id,
-            });
         }
 
         self.descriptors.push(descriptor);
@@ -485,10 +489,19 @@ impl PersistenceSliceRegistry {
 }
 
 fn valid_stable_name(value: &str) -> bool {
-    !value.is_empty()
-        && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+    let bytes = value.as_bytes();
+    bytes.first().is_some_and(|byte| byte.is_ascii_lowercase())
+        && bytes.last().is_some_and(|byte| !is_name_separator(*byte))
+        && bytes.iter().copied().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || is_name_separator(byte)
         })
+        && !bytes
+            .windows(2)
+            .any(|pair| is_name_separator(pair[0]) && is_name_separator(pair[1]))
+}
+
+const fn is_name_separator(byte: u8) -> bool {
+    matches!(byte, b'.' | b'_' | b'-')
 }
 
 /// Whether the shutdown lifecycle requested a registry dispatch this frame.
@@ -1581,6 +1594,10 @@ mod tests {
         let first = Box::leak(Box::new(basic_descriptor("player.core", 10)));
         let duplicate = Box::leak(Box::new(basic_descriptor("player.core", 20)));
         let invalid = Box::leak(Box::new(basic_descriptor("Player Core", 30)));
+        let invalid_leading_separator = Box::leak(Box::new(basic_descriptor(".player.core", 31)));
+        let invalid_leading_digit = Box::leak(Box::new(basic_descriptor("9player.core", 32)));
+        let invalid_trailing_separator = Box::leak(Box::new(basic_descriptor("player.core-", 33)));
+        let invalid_adjacent_separators = Box::leak(Box::new(basic_descriptor("player..core", 34)));
         let zero_cadence = Box::leak(Box::new(SliceDescriptor {
             autosave: AutosavePolicy::EveryTicks(0),
             ..basic_descriptor("player.zero_cadence", 40)
@@ -1617,10 +1634,18 @@ mod tests {
                 "player.core"
             )))
         );
-        assert!(matches!(
-            registry.register(invalid),
-            Err(SliceRegistryError::InvalidSliceId(_))
-        ));
+        for invalid_name in [
+            invalid,
+            invalid_leading_separator,
+            invalid_leading_digit,
+            invalid_trailing_separator,
+            invalid_adjacent_separators,
+        ] {
+            assert!(matches!(
+                registry.register(invalid_name),
+                Err(SliceRegistryError::InvalidSliceId(_))
+            ));
+        }
         assert!(matches!(
             registry.register(zero_cadence),
             Err(SliceRegistryError::ZeroAutosaveCadence { .. })
@@ -1716,26 +1741,18 @@ mod tests {
     fn shutdown_dispatch_is_ordered_and_failure_isolated() {
         let descriptors = [
             Box::leak(Box::new(SliceDescriptor {
-                id: SliceId::new("shutdown.flushed"),
-                order: 30,
                 shutdown_flush: Some(flushed_hook),
                 ..basic_descriptor("shutdown.flushed", 30)
             })),
             Box::leak(Box::new(SliceDescriptor {
-                id: SliceId::new("shutdown.failed"),
-                order: 20,
                 shutdown_flush: Some(failed_hook),
                 ..basic_descriptor("shutdown.failed", 20)
             })),
             Box::leak(Box::new(SliceDescriptor {
-                id: SliceId::new("shutdown.clean"),
-                order: 10,
                 shutdown_flush: Some(clean_hook),
                 ..basic_descriptor("shutdown.clean", 10)
             })),
             Box::leak(Box::new(SliceDescriptor {
-                id: SliceId::new("shutdown.blocked"),
-                order: 40,
                 shutdown_flush: Some(blocked_hook),
                 ..basic_descriptor("shutdown.blocked", 40)
             })),
