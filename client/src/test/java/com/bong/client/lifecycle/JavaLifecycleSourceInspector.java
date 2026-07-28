@@ -1,5 +1,6 @@
 package com.bong.client.lifecycle;
 
+import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.MemberReferenceTree;
@@ -69,21 +70,20 @@ final class JavaLifecycleSourceInspector {
         String storeIdentity
     ) {
         CompilationUnitTree unit = parse(simpleName(storeIdentity), source);
-        String className = unit.getTypeDecls().stream()
-            .filter(tree -> tree instanceof com.sun.source.tree.ClassTree)
-            .map(tree -> ((com.sun.source.tree.ClassTree) tree).getSimpleName().toString())
-            .filter(name -> !name.isEmpty())
+        String className = simpleName(storeIdentity);
+        ClassTree storeType = unit.getTypeDecls().stream()
+            .filter(ClassTree.class::isInstance)
+            .map(ClassTree.class::cast)
+            .filter(type -> type.getSimpleName().contentEquals(className))
             .findFirst()
-            .orElse(simpleName(storeIdentity));
+            .orElseThrow(() -> new AssertionError("无法定位 production Store 类型：" + storeIdentity));
         Map<String, List<MethodTree>> methodsByName = new HashMap<>();
-        new TreeScanner<Void, Void>() {
-            @Override
-            public Void visitMethod(MethodTree method, Void unused) {
+        for (Tree member : storeType.getMembers()) {
+            if (member instanceof MethodTree method) {
                 methodsByName.computeIfAbsent(method.getName().toString(), ignored -> new ArrayList<>())
                     .add(method);
-                return super.visitMethod(method, unused);
             }
-        }.scan(unit, null);
+        }
 
         List<MethodTree> entries = methodsByName.getOrDefault(entryMethod, List.of());
         if (entries.isEmpty()) {
@@ -109,9 +109,7 @@ final class JavaLifecycleSourceInspector {
                 public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
                     String callee = invokedMethodName(invocation.getMethodSelect());
                     rejectTestReset(callee, storeIdentity, reachableNames);
-                    if (isSameClassCall(invocation.getMethodSelect(), className)) {
-                        pending.addAll(methodsByName.getOrDefault(callee, List.of()));
-                    }
+                    pending.addAll(methodsByName.getOrDefault(callee, List.of()));
                     return super.visitMethodInvocation(invocation, unused);
                 }
 
@@ -119,9 +117,7 @@ final class JavaLifecycleSourceInspector {
                 public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
                     String callee = reference.getName().toString();
                     rejectTestReset(callee, storeIdentity, reachableNames);
-                    if (isSameClassQualifier(reference.getQualifierExpression().toString(), className)) {
-                        pending.addAll(methodsByName.getOrDefault(callee, List.of()));
-                    }
+                    pending.addAll(methodsByName.getOrDefault(callee, List.of()));
                     return super.visitMemberReference(reference, unused);
                 }
             }.scan(method.getBody(), null);
@@ -136,20 +132,6 @@ final class JavaLifecycleSourceInspector {
             return memberSelect.getIdentifier().toString();
         }
         return methodSelect.toString();
-    }
-
-    private static boolean isSameClassCall(Tree methodSelect, String className) {
-        if (methodSelect instanceof IdentifierTree) {
-            return true;
-        }
-        if (methodSelect instanceof MemberSelectTree memberSelect) {
-            return isSameClassQualifier(memberSelect.getExpression().toString(), className);
-        }
-        return false;
-    }
-
-    private static boolean isSameClassQualifier(String qualifier, String className) {
-        return qualifier.equals(className) || qualifier.endsWith("." + className);
     }
 
     private static void rejectTestReset(

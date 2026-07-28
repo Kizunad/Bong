@@ -954,6 +954,76 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
+    void productionCleanerChainGuardTargetsDeclaredStoreWhenHelperTypePrecedesIt() {
+        String fixture = """
+            final class PreludeType {
+                static void clearOnDisconnect() { }
+            }
+            final class FixtureStore {
+                public static void clearOnDisconnect() { FixtureStore.clear(); }
+                public static void clear() { resetForTests(); }
+                public static void resetForTests() { }
+            }
+            """;
+
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+                fixture,
+                "clearOnDisconnect",
+                "com.example.FixtureStore"
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("resetForTests"),
+            "前置顶层类型不得让 source guard 跟错类并漏过 production cleaner 委托链；实际="
+                + failure.getMessage()
+        );
+    }
+
+    @Test
+    void productionCleanerChainGuardRejectsMissingDeclaredStoreType() {
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+                "final class DifferentStore { static void clearOnDisconnect() { } }",
+                "clearOnDisconnect",
+                "com.example.FixtureStore"
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("无法定位 production Store 类型"),
+            "source guard 必须 fail-closed，不能把其它顶层类型当成目标 Store；实际=" + failure.getMessage()
+        );
+    }
+
+    @Test
+    void productionCleanerChainGuardRejectsInstanceQualifiedSameClassDelegate() {
+        String fixture = """
+            final class FixtureStore {
+                private static final FixtureStore INSTANCE = new FixtureStore();
+                public static void clearOnDisconnect() { INSTANCE.clear(); }
+                private void clear() { resetForTests(); }
+                public static void resetForTests() { }
+            }
+            """;
+
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+                fixture,
+                "clearOnDisconnect",
+                "FixtureStore"
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("resetForTests"),
+            "实例限定的同类 helper 也必须进入调用图，不能绕过 test reset 门禁；实际="
+                + failure.getMessage()
+        );
+    }
+
+    @Test
     void productionCleanerChainGuardRejectsEverySupportedTestResetCallShape() {
         List<String> forbiddenFixtures = List.of(
             """
