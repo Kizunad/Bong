@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScreenTransitionTest {
@@ -284,6 +285,59 @@ class ScreenTransitionTest {
     }
 
     @Test
+    void disconnectClearCancelsOnlyVisualTransitionWithoutProtocolSettlement() {
+        PendingScreen oldPending = new PendingScreen("old pending");
+        ScreenTransition.TransitionHandle oldHandle = ScreenTransition.play(
+            new DummyScreen("old"),
+            oldPending,
+            ScreenTransition.Type.FADE,
+            200,
+            ScreenTransition.Easing.LINEAR,
+            () -> {
+            }
+        );
+        ScreenTransitionController.setActiveTransitionForTests(active(oldHandle));
+        int cancellationsBefore = ScreenTransitionController.cancelledTransitionsForTests();
+
+        ScreenTransitionController.clearOnDisconnect();
+
+        assertTrue(oldHandle.cancelled(), "disconnect cleanup must cancel the old visual transition handle");
+        assertNull(ScreenTransitionController.activeTransition(),
+            "disconnect cleanup must not retain an old pending transition");
+        assertEquals(cancellationsBefore, ScreenTransitionController.cancelledTransitionsForTests(),
+            "disconnect cleanup must not mutate the test-only normal-cancellation counter");
+        assertFalse(oldPending.cancellationCalled,
+            "disconnect cleanup must not send a pending-open protocol terminal callback");
+
+        ScreenTransition.TransitionHandle freshHandle = ScreenTransition.play(
+            new DummyScreen("fresh old"),
+            new DummyScreen("fresh pending"),
+            ScreenTransition.Type.SLIDE_UP,
+            300,
+            ScreenTransition.Easing.LINEAR,
+            () -> {
+            }
+        );
+        ScreenTransitionController.setActiveTransitionForTests(active(freshHandle));
+        assertSame(freshHandle, ScreenTransitionController.activeTransition().handle(),
+            "a fresh connection must be able to establish a new visual transition after teardown");
+    }
+
+    private static ScreenTransitionController.ActiveTransition active(ScreenTransition.TransitionHandle handle) {
+        return new ScreenTransitionController.ActiveTransition(
+            handle,
+            new TransitionConfig.TransitionSpec(
+                handle.type(),
+                200,
+                ScreenTransition.Easing.LINEAR,
+                TransitionConfig.OverlayStyle.NONE,
+                false
+            ),
+            ScreenTransition.nowMillis()
+        );
+    }
+
+    @Test
     void same_screen_request_is_consumed_and_clears_previous_transition() {
         DummyScreen current = new DummyScreen("current");
         ScreenTransition.TransitionHandle stale = ScreenTransition.play(
@@ -317,6 +371,20 @@ class ScreenTransitionTest {
             "same-instance 请求必须取消旧 transition handle，实际 cancelled=" + stale.cancelled());
         assertEquals(1, ScreenTransitionController.cancelledTransitionsForTests(),
             "same-instance 请求只能结算一次旧 transition");
+    }
+
+    private static final class PendingScreen extends DummyScreen
+        implements ScreenTransitionController.PendingOpenCancellationHandler {
+        private boolean cancellationCalled;
+
+        PendingScreen(String title) {
+            super(title);
+        }
+
+        @Override
+        public void onPendingOpenCancelled() {
+            cancellationCalled = true;
+        }
     }
 
     private static class DummyScreen extends Screen {

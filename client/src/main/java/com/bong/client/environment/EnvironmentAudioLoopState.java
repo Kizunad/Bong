@@ -25,7 +25,14 @@ public final class EnvironmentAudioLoopState {
         return flag != null && ACTIVE_FLAGS.contains(flag);
     }
 
-    public static void clear() {
+    /** 清除当前连接派生的 loop flag；不影响任何长期 wiring。 */
+    public static void clearOnDisconnect() {
         ACTIVE_FLAGS.clear();
+    }
+
+    /** @deprecated 仅保留给既有非 session 调用；断线清理请用 {@link #clearOnDisconnect()}. */
+    @Deprecated(forRemoval = false)
+    public static void clear() {
+        clearOnDisconnect();
     }
 }

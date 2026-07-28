@@ -88,9 +88,14 @@ public final class InventoryMoveRejectedHandler implements ServerDataHandler {
         lastShownAtMillis.put(reason, nowMillis);
     }
 
+    /** Clears the disconnected server's short-lived rejection throttle without changing message rules. */
+    public static void clearOnDisconnect() {
+        lastShownAtMillis.clear();
+    }
+
     /** 清空去重 map，供测试隔离用例。 */
     static void resetForTests() {
-        lastShownAtMillis.clear();
+        clearOnDisconnect();
     }
 
     /**

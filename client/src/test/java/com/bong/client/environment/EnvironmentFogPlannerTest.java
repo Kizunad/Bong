@@ -1,5 +1,8 @@
 package com.bong.client.environment;
 
+import com.bong.client.audio.AudioScheduledSound;
+import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.audio.SoundSink;
 import net.minecraft.util.math.Vec3d;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EnvironmentFogPlannerTest {
@@ -19,6 +23,7 @@ class EnvironmentFogPlannerTest {
     void resetSink() {
         EnvironmentFogController.setSinkForTests(null);
         EnvironmentFogController.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
     }
 
     @Test
@@ -90,6 +95,70 @@ class EnvironmentFogPlannerTest {
     }
 
     @Test
+    void audioLoopClearOnDisconnectDropsDerivedFlags() {
+        String oldFlag = EnvironmentAudioController.loopFlag("old-session-fog");
+        String newFlag = EnvironmentAudioController.loopFlag("new-session-fog");
+        EnvironmentAudioLoopState.activate(oldFlag);
+        EnvironmentAudioLoopState.activate(newFlag);
+        assertTrue(EnvironmentAudioLoopState.isActive(oldFlag), "前置：旧 session 派生 flag 必须存在");
+        assertTrue(EnvironmentAudioLoopState.isActive(newFlag), "前置：第二个派生 flag 必须存在");
+
+        EnvironmentAudioLoopState.clearOnDisconnect();
+
+        assertFalse(EnvironmentAudioLoopState.isActive(oldFlag), "断线必须清空旧 session 的环境 loop flag");
+        assertFalse(EnvironmentAudioLoopState.isActive(newFlag), "断线必须一次清空所有派生 flag");
+        EnvironmentAudioLoopState.activate(newFlag);
+        assertTrue(EnvironmentAudioLoopState.isActive(newFlag), "断线清理后新 session 必须能重新注册 flag");
+    }
+
+    @Test
+    void audioControllerClearDropsAllLoopKeysBeforeRuntimeStopFailure() {
+        RuntimeFailingSink sink = new RuntimeFailingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        EnvironmentAudioController controller = new EnvironmentAudioController(player);
+        ActiveEmitter first = active("old-fog", 1, fog(0x788494, 0.5));
+        ActiveEmitter second = active("old-fog-2", 1, fog(0x788494, 0.5));
+        String firstFlag = EnvironmentAudioController.loopFlag(first.key());
+        String secondFlag = EnvironmentAudioController.loopFlag(second.key());
+
+        controller.update(List.of(first, second), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(2, controller.activeLoopCountForTests(), "前置：旧 session 必须持有两个 environment loop key");
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, controller::clearOnDisconnect);
+
+        assertEquals("stop failed", failure.getMessage(), "首个 RuntimeException 应交给父级中央清理隔离");
+        assertEquals(2, sink.stopAttempts, "一个 stop 失败后仍必须尝试停止剩余旧 loop");
+        assertEquals(List.of(0, 0), sink.fadeOutTicks,
+            "断线必须对全部 environment loop 请求零 tick hard-stop");
+        assertEquals(0, controller.activeLoopCountForTests(), "stop 失败前必须先摘除全部旧 loop key");
+        assertFalse(EnvironmentAudioLoopState.isActive(firstFlag), "stop 失败不得保留第一个旧 flag");
+        assertFalse(EnvironmentAudioLoopState.isActive(secondFlag), "stop 失败不得保留第二个旧 flag");
+
+        sink.failStops = false;
+        controller.update(List.of(first), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(1, controller.activeLoopCountForTests(), "新 session 同 key emitter 必须能重新启动 loop");
+        assertTrue(EnvironmentAudioLoopState.isActive(firstFlag), "新 session 必须能重新激活同 key flag");
+    }
+
+    @Test
+    void ordinaryEnvironmentClearKeepsConfiguredFadeAndDropsPendingLayers() {
+        RuntimeFailingSink sink = new RuntimeFailingSink();
+        sink.failStops = false;
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        EnvironmentAudioController controller = new EnvironmentAudioController(player);
+        ActiveEmitter emitter = active("world-switch-fog", 1, fog(0x788494, 0.5));
+
+        controller.update(List.of(emitter), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(0, sink.playAttempts, "前置：environment loop 的首层尚在 player pending 队列");
+
+        controller.clear();
+
+        assertEquals(List.of(40), sink.fadeOutTicks, "普通 runtime/world clear 必须保留 effect 配置淡出");
+        player.tick();
+        assertEquals(0, sink.playAttempts, "已停止的 pending environment layer 不得在后续 tick 播放");
+    }
+
+    @Test
     void audioLoopFlagUsesFullKeyInsteadOfHashCode() {
         assertEquals("FB".hashCode(), "Ea".hashCode());
         assertNotEquals(
@@ -123,5 +192,27 @@ class EnvironmentFogPlannerTest {
             tintRgb,
             density
         );
+    }
+
+    private static final class RuntimeFailingSink implements SoundSink {
+        boolean failStops = true;
+        int playAttempts;
+        int stopAttempts;
+        final List<Integer> fadeOutTicks = new ArrayList<>();
+
+        @Override
+        public boolean play(AudioScheduledSound sound) {
+            playAttempts++;
+            return true;
+        }
+
+        @Override
+        public void stop(long instanceId, int fadeOutTicks) {
+            stopAttempts++;
+            this.fadeOutTicks.add(fadeOutTicks);
+            if (failStops) {
+                throw new IllegalStateException("stop failed");
+            }
+        }
     }
 }

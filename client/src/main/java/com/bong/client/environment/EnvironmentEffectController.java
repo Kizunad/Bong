@@ -3,7 +3,6 @@ package com.bong.client.environment;
 import com.bong.client.BongClient;
 import com.bong.client.atmosphere.ZoneAtmosphereRenderer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
@@ -28,7 +27,6 @@ public final class EnvironmentEffectController {
         bootstrapped = true;
         REGISTRY.registerBuiltInBehaviors();
         ClientTickEvents.END_CLIENT_TICK.register(EnvironmentEffectController::tick);
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> clear());
     }
 
     public static void acceptPayload(String jsonPayload) {
@@ -101,11 +99,37 @@ public final class EnvironmentEffectController {
         return client.world.getRegistryKey().getValue().toString();
     }
 
+    /**
+     * 清空旧连接的环境运行态，供未来 token-gated 网络断连入口调用。
+     *
+     * <p>只释放按 world/session 派生的 emitter、音频、天空和雾状态；内建 behavior 注册表、
+     * tick listener 与测试 seam 均属于进程级 wiring，必须保留。重复调用安全。
+     */
+    public static void clearOnDisconnect() {
+        clearRuntimeState(AUDIO::clearOnDisconnect);
+    }
+
+    /**
+     * 清空当前环境运行态。切换 {@link ClientWorld} 时由 tick 路径使用；断线应调用
+     * {@link #clearOnDisconnect()} 以表达其会话边界。
+     */
     public static void clear() {
+        clearRuntimeState(AUDIO::clear);
+    }
+
+    static void clearRuntimeState(Runnable audioCleanup) {
         REGISTRY.clear();
-        AUDIO.clear();
+        lastWorld = null;
+        RuntimeException failure = null;
+        try {
+            audioCleanup.run();
+        } catch (RuntimeException exception) {
+            failure = exception;
+        }
         ZoneAtmosphereRenderer.clear();
         EnvironmentFogController.clear();
-        lastWorld = null;
+        if (failure != null) {
+            throw failure;
+        }
     }
 }

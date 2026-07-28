@@ -84,6 +84,23 @@ public class BongAnimationRegistryInlineTest {
         assertEquals(4, BongAnimationRegistry.get(INLINE_ID).endTick);
     }
 
+    @Test
+    void disconnectClearRemovesOldInlineAnimationAndAcceptsFreshInjection() {
+        assertTrue(BongAnimationRegistry.registerInlineJson(INLINE_ID, inlineJson("old_inline_pose", 4)));
+        assertEquals(BongAnimationRegistry.Source.INLINE, BongAnimationRegistry.sourceOf(INLINE_ID));
+
+        BongAnimationRegistry.clearOnDisconnect();
+
+        assertNull(BongAnimationRegistry.get(INLINE_ID),
+            "old server inline animation must not survive into a new connection");
+        assertEquals(BongAnimationRegistry.Source.NONE, BongAnimationRegistry.sourceOf(INLINE_ID));
+
+        assertTrue(BongAnimationRegistry.registerInlineJson(INLINE_ID, inlineJson("fresh_inline_pose", 8)));
+        assertEquals(8, BongAnimationRegistry.get(INLINE_ID).endTick,
+            "fresh server inline animation must still register after teardown");
+        assertEquals(BongAnimationRegistry.Source.INLINE, BongAnimationRegistry.sourceOf(INLINE_ID));
+    }
+
     private static String inlineJson(String name, int endTick) {
         return "{\"version\":3,\"name\":\"" + name + "\",\"emote\":{"
             + "\"beginTick\":0,\"endTick\":" + endTick + ",\"isLoop\":false,"

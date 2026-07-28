@@ -106,7 +106,7 @@ public final class ScrollReadStore {
         ClientRequestSender.sendScrollReadClosed();
     }
 
-    /** 断线时调用：仅清当前快照，保留监听器（对齐 InsightOfferStore.clearOnDisconnect）。 */
+    /** 由集中 lifecycle registry 调用：仅清当前快照，保留监听器。 */
     public static void clearOnDisconnect() {
         replace(null);
     }

@@ -11,6 +11,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -159,6 +160,83 @@ class MinecraftSoundSinkTest {
         sink.stopInternal(11L, 5, ignored -> { });
         assertTrue(layerA.isFading(), "layer A 应进入淡出");
         assertTrue(layerB.isFading(), "layer B 应进入淡出");
+    }
+
+    // ─── 断线边界：全局 hard-stop + 索引清空 ──────────────────────────────
+
+    @Test
+    void clearOnDisconnectHardStopsActiveAndDelayedInstancesThenClearsIndex() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        FadeableSoundInstance activeLayer = instance();
+        FadeableSoundInstance delayedLayer = instance();
+        FadeableSoundInstance anotherLoop = instance();
+        sink.registerInstanceForTests(21L, activeLayer);
+        sink.registerInstanceForTests(21L, delayedLayer);
+        sink.registerInstanceForTests(22L, anotherLoop);
+        List<FadeableSoundInstance> hardStopped = new ArrayList<>();
+
+        sink.clearOnDisconnectInternal(hardStopped::add);
+
+        assertEquals(3, hardStopped.size(), "断线必须 hard-stop 所有 instanceId 下的活动与延迟层");
+        assertTrue(activeLayer.isDone(), "活动层断线后必须标记 done");
+        assertTrue(delayedLayer.isDone(), "延迟层断线后必须标记 done，不能在新 session 补响");
+        assertTrue(anotherLoop.isDone(), "不同 loop instance 也必须硬停");
+        assertEquals(0.0f, delayedLayer.volumeForTests(), 1e-6f,
+            "延迟层必须归零音量，即使 vanilla 延迟队列之后取出它也无可听输出");
+        assertEquals(0, sink.trackedInstanceCountForTests(), "断线必须清空 activeByInstance 索引");
+    }
+
+    @Test
+    void clearOnDisconnectRuntimeFailureStillSilencesEveryInstanceAndClearsIndex() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        FadeableSoundInstance first = instance();
+        FadeableSoundInstance second = instance();
+        sink.registerInstanceForTests(31L, first);
+        sink.registerInstanceForTests(32L, second);
+        int[] attempts = {0};
+
+        sink.clearOnDisconnectInternal(ignored -> {
+            attempts[0]++;
+            throw new IllegalStateException("sound manager unavailable");
+        });
+
+        assertEquals(2, attempts[0], "单个 hardStopper RuntimeException 不得阻断其余实例清理");
+        assertTrue(first.isDone(), "失败实例也必须先标记 done，不能在新 session 补响");
+        assertTrue(second.isDone(), "后续实例也必须继续标记 done");
+        assertEquals(0.0f, first.volumeForTests(), 1e-6f, "失败实例也必须先静音");
+        assertEquals(0.0f, second.volumeForTests(), 1e-6f, "后续实例也必须静音");
+        assertEquals(0, sink.trackedInstanceCountForTests(), "RuntimeException 后也必须清空实例索引");
+    }
+
+    @Test
+    void clearOnDisconnectStillPropagatesHardStopperError() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        FadeableSoundInstance sound = instance();
+        sink.registerInstanceForTests(33L, sound);
+
+        AssertionError error = assertThrows(
+            AssertionError.class,
+            () -> sink.clearOnDisconnectInternal(ignored -> {
+                throw new AssertionError("fatal hard stop");
+            })
+        );
+
+        assertEquals("fatal hard stop", error.getMessage(), "Error 必须原样透传");
+        assertTrue(sound.isDone(), "Error 前也必须先把当前实例静音并标记 done");
+        assertEquals(1, sink.trackedInstanceCountForTests(),
+            "Error 透传不伪装成已完成的全局索引清理");
+    }
+
+    @Test
+    void clearOnDisconnectOnEmptySinkIsIdempotent() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        List<FadeableSoundInstance> hardStopped = new ArrayList<>();
+
+        sink.clearOnDisconnectInternal(hardStopped::add);
+        sink.clearOnDisconnectInternal(hardStopped::add);
+
+        assertEquals(0, hardStopped.size(), "空 sink 反复断线清理不得虚构 hard-stop");
+        assertEquals(0, sink.trackedInstanceCountForTests(), "空 sink 反复断线清理必须保持空索引");
     }
 
     // ─── 边界：未知 id / 空索引 ─────────────────────────────────────────────

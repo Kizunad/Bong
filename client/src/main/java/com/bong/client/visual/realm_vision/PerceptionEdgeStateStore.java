@@ -13,6 +13,11 @@ public final class PerceptionEdgeStateStore {
         return STATE.get();
     }
 
+    /** 断线时恢复视觉边缘感知的既有空初值。 */
+    public static void clearOnDisconnect() {
+        STATE.set(PerceptionEdgeState.empty());
+    }
+
     public static void replace(PerceptionEdgeState state) {
         STATE.set(state == null ? PerceptionEdgeState.empty() : state);
     }

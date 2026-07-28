@@ -36,6 +36,13 @@ public final class DeadDropBreakPlayer implements VfxPlayer {
         enqueueGasBurst(ox, oy, oz);
     }
 
+    /** Clears only queued local gas bursts; the once-registered ticker remains available to new sessions. */
+    public static void clearOnDisconnect() {
+        synchronized (GAS_LOCK) {
+            GAS_BURSTS.clear();
+        }
+    }
+
     private static synchronized void ensureTickerRegistered() {
         if (tickerRegistered) {
             return;

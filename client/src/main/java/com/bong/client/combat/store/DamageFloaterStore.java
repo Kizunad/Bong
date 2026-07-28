@@ -60,6 +60,10 @@ public final class DamageFloaterStore {
         }
     }
 
+    public static void clearOnDisconnect() {
+        ENTRIES.clear();
+    }
+
     public static void resetForTests() {
         ENTRIES.clear();
     }

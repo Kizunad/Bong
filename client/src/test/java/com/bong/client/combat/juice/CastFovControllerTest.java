@@ -798,6 +798,34 @@ class CastFovControllerTest {
     }
 
     @Test
+    void disconnectClearResetsRuntimeButPreservesConfigAndTestSeams() {
+        CastFovController.setLocalPlayerPredicateForTest(LOCAL_PLAYER::equals);
+        JuiceConfig.setJuiceMultiplier(0.5f);
+        predictAndAccept(HEAVY_SLOT, START);
+        serverSync("complete", HEAVY_SLOT, START, "completed");
+        advanceMs(FOV_DURATION_MS / 2);
+        assertEquals(HEAVY_FOV_PEAK * 0.5, fov(), 1e-6, "前置：旧 session 的 FOV pulse 必须在播");
+
+        CastFovController.clearOnDisconnect();
+        CastFovController.clearOnDisconnect();
+
+        assertBaseline("断线清理必须幂等地清除旧 session FOV runtime");
+        assertTrue(CameraShakeController.activeOffsets(now[0]).isZero(),
+            "断线清理必须同时停掉旧 session 的相机抖动");
+        assertEquals(0.5f, JuiceConfig.juiceMultiplier(), 1e-6f,
+            "断线清理不得复位玩家的 juice 配置");
+
+        acceptGateCast(START + 20_000);
+        releaseAnim();
+        advanceMs(GATE_FOV_DURATION_MS / 2);
+        assertEquals(GATE_FOV_PEAK * 0.5, fov(), 1e-6,
+            "断线清理不得复位本地玩家 seam；新 session 的动画驱动 juice 必须按保留配置重建");
+        advanceMs(GATE_FOV_DURATION_MS);
+        CastFovController.tick();
+        assertBaseline("新 session pulse 仍可正常收束到基准");
+    }
+
+    @Test
     void disconnectTeardownResetsMidPulse() {
         predictAndAccept(HEAVY_SLOT, START);
         serverSync("complete", HEAVY_SLOT, START, "completed");

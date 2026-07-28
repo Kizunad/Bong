@@ -18,6 +18,10 @@ public final class ContaminationWarningStore {
                 "代谢速率 = 经脉 sum_rate × integrity（contamination_tick 10:15）"
             );
         }
+
+        public static Snapshot neutral() {
+            return new Snapshot(0.0f, 0.0f, true, 0.0f, 0.0f, true, "");
+        }
     }
 
     private static volatile Snapshot snapshot = Snapshot.empty();
@@ -31,6 +35,10 @@ public final class ContaminationWarningStore {
 
     public static void replace(Snapshot next) {
         snapshot = next == null ? Snapshot.empty() : next;
+    }
+
+    public static void clearOnDisconnect() {
+        replace(Snapshot.neutral());
     }
 
     public static void resetForTests() {

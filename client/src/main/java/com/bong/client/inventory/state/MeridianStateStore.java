@@ -36,6 +36,13 @@ public final class MeridianStateStore {
         listeners.remove(listener);
     }
 
+    /**
+     * 断线时仅清当前会话快照，保留长期 UI listener wiring。
+     */
+    public static void clearOnDisconnect() {
+        replace(null);
+    }
+
     public static void resetForTests() {
         snapshot = null;
         listeners.clear();

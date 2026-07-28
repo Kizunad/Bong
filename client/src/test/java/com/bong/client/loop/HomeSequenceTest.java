@@ -212,6 +212,30 @@ public class HomeSequenceTest {
         assertEquals(2, audio.played.size());
     }
 
+    @Test
+    void disconnectClearDropsOldRunBaselineAndBadgesButPreservesAudioBridge() {
+        RecordingAudioBridge audio = new RecordingAudioBridge();
+        HomeSequence.setAudioBridgeForTests(audio);
+        InventoryItem oldItem = InventoryItem.simple("dry_root", "枯根");
+        InventoryItem oldGain = InventoryItem.simple("old_gain", "旧服收获");
+        HomeSequence.update(runtime(40.0, 40.0, marker(10.0, 10.0)), inventory(oldItem), 1_000L);
+        HomeSequence.update(runtime(35.0, 35.0, marker(10.0, 10.0)), inventory(oldItem, oldGain), 1_500L);
+        HomeSequence.update(runtime(10.0, 10.0, marker(10.5, 10.5)), inventory(oldItem, oldGain), 2_000L);
+        assertTrue(HomeSequence.newBadgeActive(oldGain, 2_100L));
+
+        HomeSequence.clearOnDisconnect();
+
+        assertFalse(HomeSequence.newBadgeActive(oldGain, 2_100L),
+            "断线必须清空旧会话 NEW badge 和 run baseline，避免新服背包被按旧基线比较");
+        HomeSequence.State fresh = HomeSequence.update(
+            runtime(10.0, 10.0, marker(10.5, 10.5)), inventory(oldItem), 3_000L
+        );
+        assertTrue(fresh.enteredThisTick(),
+            "旧服 insideHome 状态不得阻止新 session 首次进入灵龛");
+        assertEquals(2, audio.played.size(),
+            "生产清理必须保留 audio bridge seam；旧服一次和新服一次进入各播放一次");
+    }
+
     private static HudRuntimeContext runtime(double playerX, double playerZ, HudRuntimeContext.CompassMarker marker) {
         return new HudRuntimeContext(0.0, playerX, 64.0, playerZ, false, List.of(marker));
     }

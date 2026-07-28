@@ -40,7 +40,12 @@ public final class MorphCastVignetteState {
         return PEAK_OPACITY;
     }
 
-    public static void resetForTests() {
+    /** Clears the active cast window without altering the immutable timing specification. */
+    public static void clearOnDisconnect() {
         triggeredAtMillis = -1L;
+    }
+
+    public static void resetForTests() {
+        clearOnDisconnect();
     }
 }

@@ -125,6 +125,23 @@ public final class CombatJuiceSystem {
         activeOverlay(nowMs);
     }
 
+    /**
+     * 断线时清空上一会话的 combat juice 运行态。
+     *
+     * <p>这是 data-only teardown：不触碰 {@link #BOOTSTRAPPED}、client tick 注册或测试 seam，
+     * 因此同一客户端进程的新会话仍复用既有生产 wiring。
+     */
+    public static void clearOnDisconnect() {
+        lastCommand = LastCommand.empty();
+        activeOverlay = Overlay.none();
+        lastParry = null;
+        lastGhost = null;
+        HitStopController.clearOnDisconnect();
+        CameraShakeController.clearOnDisconnect();
+        EntityTintController.clearOnDisconnect();
+        KillJuiceController.clearOnDisconnect();
+    }
+
     public static void resetForTests() {
         lastCommand = LastCommand.empty();
         activeOverlay = Overlay.none();

@@ -18,7 +18,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -510,9 +512,202 @@ class CombatJuiceTest {
     }
 
     @Test
+    void clearOnDisconnectResetsEveryOldSessionRuntimeEffectAndAllowsFreshReuse() {
+        CombatJuiceEvent oldOverload = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.OVERLOAD,
+            CombatSchool.BAOMAI,
+            CombatJuiceTier.LIGHT,
+            "old-attacker",
+            "old-target",
+            "",
+            "",
+            1.0,
+            0.0,
+            false,
+            1_000L
+        );
+        CombatJuiceEvent oldCollision = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.QI_COLLISION,
+            CombatSchool.ZHENMAI,
+            CombatJuiceTier.HEAVY,
+            "old-attacker",
+            "old-tinted-target",
+            "",
+            "",
+            0.0,
+            1.0,
+            false,
+            1_001L
+        );
+        CombatJuiceEvent oldParry = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.PERFECT_PARRY,
+            CombatSchool.ZHENMAI,
+            CombatJuiceTier.LIGHT,
+            "old-attacker",
+            "old-defender",
+            "",
+            "",
+            0.0,
+            1.0,
+            false,
+            1_002L
+        );
+        CombatJuiceEvent oldDodge = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.DODGE,
+            CombatSchool.ZHENMAI,
+            CombatJuiceTier.LIGHT,
+            "",
+            "old-dodger",
+            "",
+            "",
+            0.0,
+            1.0,
+            false,
+            1_003L
+        );
+        CombatJuiceEvent oldKill = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.KILL,
+            CombatSchool.BAOMAI,
+            CombatJuiceTier.CRITICAL,
+            "old-attacker",
+            "old-victim",
+            "old-attacker",
+            "old victim",
+            0.0,
+            1.0,
+            false,
+            1_004L
+        );
+
+        CombatJuiceSystem.accept(oldOverload, 1_000L);
+        CombatJuiceSystem.accept(oldCollision, 1_001L);
+        CombatJuiceSystem.accept(oldParry, 1_002L);
+        CombatJuiceSystem.accept(oldDodge, 1_003L);
+        CombatJuiceSystem.accept(oldKill, 1_004L);
+
+        assertTrue(HitStopController.isFrozen("old-target", 1_004L), "前置：旧 session overload 必须留下 freeze");
+        assertNotEquals(CameraShakeController.ZERO, CameraShakeController.activeOffsets(1_004L),
+            "前置：旧 session overload 必须留下 shake");
+        assertEquals(CameraShakeController.Source.HIT, CameraShakeController.activeSource(),
+            "前置：旧 session shake 必须登记 owner");
+        assertTrue(EntityTintController.activeTint("old-tinted-target", 1_004L).activeAt(1_004L),
+            "前置：旧 session collision 必须留下 tint");
+        assertTrue(CombatJuiceSystem.activeOverlay(1_004L).activeAt(1_004L),
+            "前置：旧 session parry 必须留下 overlay");
+        assertNotNull(CombatJuiceSystem.lastParry(), "前置：旧 session parry 必须留下 parry plan");
+        assertNotNull(CombatJuiceSystem.lastGhost(), "前置：旧 session dodge 必须留下 ghost");
+        assertTrue(KillJuiceController.activeKill(1_004L).activeAt(1_004L),
+            "前置：旧 session local kill 必须留下 slowmo");
+        assertEquals(1, KillJuiceController.multiKill().count(), "前置：旧 session kill 必须起连杀计数");
+
+        CombatJuiceSystem.clearOnDisconnect();
+
+        assertEquals(CombatJuiceSystem.LastCommand.empty(), CombatJuiceSystem.lastCommand(),
+            "断线必须清空 lastCommand，不能向新 session 暴露旧指令");
+        assertEquals(CombatJuiceSystem.Overlay.none(), CombatJuiceSystem.activeOverlay(1_004L),
+            "断线必须清空 active overlay");
+        assertNull(CombatJuiceSystem.lastParry(), "断线必须清空旧 parry plan");
+        assertNull(CombatJuiceSystem.lastGhost(), "断线必须清空旧 dodge ghost");
+        assertFalse(HitStopController.isFrozen("old-target", 1_004L), "断线必须清空旧 freeze");
+        assertEquals(CameraShakeController.ZERO, CameraShakeController.activeOffsets(1_004L),
+            "断线必须清空旧 camera shake");
+        assertEquals(CameraShakeController.Source.NONE, CameraShakeController.activeSource(),
+            "断线必须清空 shake owner");
+        assertEquals(EntityTintController.Tint.none(), EntityTintController.activeTint("old-tinted-target", 1_004L),
+            "断线必须清空旧实体 tint cache");
+        assertEquals(KillJuiceController.KillState.none(), KillJuiceController.activeKill(1_004L),
+            "断线必须清空旧 kill slowmo");
+        assertEquals(KillJuiceController.MultiKillState.empty(), KillJuiceController.multiKill(),
+            "断线必须清空旧 multi-kill state");
+
+        CombatJuiceSystem.clearOnDisconnect();
+        assertEquals(CombatJuiceSystem.LastCommand.empty(), CombatJuiceSystem.lastCommand(),
+            "重复断线清理必须保持 neutral lastCommand");
+        assertEquals(CameraShakeController.Source.NONE, CameraShakeController.activeSource(),
+            "重复断线清理必须保持无 shake owner");
+        assertEquals(KillJuiceController.MultiKillState.empty(), KillJuiceController.multiKill(),
+            "重复断线清理必须保持 empty multi-kill");
+
+        CombatJuiceEvent freshHit = CombatJuiceEvent.hit(
+            CombatSchool.ZHENFA, CombatJuiceTier.HEAVY, "fresh-attacker", "fresh-target", 1.0, 0.0, 2_000L
+        );
+        CombatJuiceEvent freshCollision = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.QI_COLLISION,
+            CombatSchool.ZHENFA,
+            CombatJuiceTier.HEAVY,
+            "fresh-attacker",
+            "fresh-tinted-target",
+            "",
+            "",
+            0.0,
+            1.0,
+            false,
+            2_001L
+        );
+        CombatJuiceEvent freshKill = new CombatJuiceEvent(
+            CombatJuiceEvent.Kind.KILL,
+            CombatSchool.BAOMAI,
+            CombatJuiceTier.CRITICAL,
+            "fresh-attacker",
+            "fresh-victim",
+            "fresh-attacker",
+            "fresh victim",
+            0.0,
+            1.0,
+            false,
+            2_002L
+        );
+        CombatJuiceSystem.LastCommand freshCommand = CombatJuiceSystem.accept(freshHit, 2_000L);
+        CombatJuiceSystem.accept(freshCollision, 2_001L);
+        CombatJuiceSystem.accept(freshKill, 2_002L);
+        assertEquals(freshHit, freshCommand.event(), "fresh session 的新命中必须仍可写入 command");
+        assertTrue(HitStopController.isFrozen("fresh-target", 2_002L), "fresh session 必须可重新创建 freeze");
+        assertNotEquals(CameraShakeController.ZERO, CameraShakeController.activeOffsets(2_002L),
+            "fresh session 必须可重新创建 shake");
+        assertEquals(CameraShakeController.Source.HIT, CameraShakeController.activeSource(),
+            "fresh session 的 shake 必须重新登记 owner");
+        assertTrue(EntityTintController.activeTint("fresh-tinted-target", 2_002L).activeAt(2_002L),
+            "fresh session 必须可重新创建 tint cache");
+        assertTrue(KillJuiceController.activeKill(2_002L).activeAt(2_002L),
+            "fresh session 必须可重新创建 kill slowmo");
+        assertEquals(1, KillJuiceController.multiKill().count(),
+            "fresh session 的首杀必须从 empty multi-kill 重新起算");
+    }
+
+    @Test
+    void clearOnDisconnectPreservesBootstrapAndTickWiring() {
+        CombatJuiceSystem.bootstrap();
+        AtomicBoolean bootstrapped = bootstrappedFlag();
+        assertTrue(bootstrapped.get(), "前置：生产 bootstrap 必须已登记一次 tick listener");
+
+        CombatJuiceSystem.clearOnDisconnect();
+
+        assertTrue(bootstrapped.get(),
+            "断线清理只能清 session data，不能复位 BOOTSTRAPPED 或摘除 production tick wiring");
+
+        CombatJuiceEvent hit = CombatJuiceEvent.hit(
+            CombatSchool.GENERIC, CombatJuiceTier.LIGHT, "fresh-attacker", "fresh-target", 0.0, 1.0, 3_000L
+        );
+        CombatJuiceSystem.accept(hit, 3_000L);
+        CombatJuiceSystem.tick(3_050L);
+
+        assertEquals(1, HitStopController.remainingTicks("fresh-target", 3_050L),
+            "断线后既有 tick wiring 必须继续推进 fresh session freeze，不得被 teardown 摘除");
+    }
+
+    private static AtomicBoolean bootstrappedFlag() {
+        try {
+            Field field = CombatJuiceSystem.class.getDeclaredField("BOOTSTRAPPED");
+            field.setAccessible(true);
+            return (AtomicBoolean) field.get(null);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法读取 CombatJuiceSystem.BOOTSTRAPPED 来核验断线不会重置 production wiring", exception);
+        }
+    }
+
+    @Test
     void pvp_calibration_matrix_covers_49_pairings() {
         List<CombatJuiceCalibration.PvpPairing> pairings = CombatJuiceCalibration.pvpPairings();
-
         assertEquals(49, pairings.size());
         assertFalse(pairings.stream().anyMatch(CombatJuiceCalibration.PvpPairing::inputLagRisk));
         assertTrue(pairings.stream().anyMatch(CombatJuiceCalibration.PvpPairing::sameQiColor));

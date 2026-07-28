@@ -1,14 +1,21 @@
 package com.bong.client.combat.inspect;
 
 import com.bong.client.inventory.model.MeridianChannel;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TechniquesListPanelTest {
+    @AfterEach
+    void resetPanel() {
+        TechniquesListPanel.resetForTests();
+    }
+
     @Test
     void filtersByIdDisplayNameAndAlias() {
         var bengQuan = technique("burst_meridian.beng_quan", "崩拳", List.of("bq"));
@@ -47,6 +54,25 @@ class TechniquesListPanelTest {
             List.of(MeridianChannel.PC, MeridianChannel.YIN_WEI),
             TechniquesListPanel.requiredChannels(technique)
         );
+    }
+
+    @Test
+    void disconnectClearDropsOldSnapshotButPreservesListenersForFreshSession() {
+        AtomicInteger notifications = new AtomicInteger();
+        TechniquesListPanel.addListener(snapshot -> notifications.incrementAndGet());
+        TechniquesListPanel.replace(List.of(technique("old.skill", "旧服功法", List.of())));
+
+        TechniquesListPanel.clearOnDisconnect();
+
+        assertTrue(TechniquesListPanel.snapshot().isEmpty(),
+            "断线必须清空旧 techniques_snapshot，避免新服首包前显示旧功法或生成错误习得提示");
+        assertEquals(2, notifications.get(),
+            "生产清理应沿 replace 路径通知长期 UI listener 进入空态，而不是移除 listener");
+
+        TechniquesListPanel.replace(List.of(technique("fresh.skill", "新服功法", List.of())));
+        assertEquals("fresh.skill", TechniquesListPanel.snapshot().get(0).id());
+        assertEquals(3, notifications.get(),
+            "清理后长期 listener 必须仍能观察新 session 的首个 snapshot");
     }
 
     private static TechniquesListPanel.Technique technique(String id, String name, List<String> aliases) {
