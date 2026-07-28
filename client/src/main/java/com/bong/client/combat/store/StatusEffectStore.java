@@ -121,10 +121,6 @@ public final class StatusEffectStore {
         INSTANCE.cultivationAcceleration = 1.0;
     }
 
-    public static void clearOnDisconnect() {
-        clear();
-    }
-
     public static void resetForTests() {
         clear();
     }

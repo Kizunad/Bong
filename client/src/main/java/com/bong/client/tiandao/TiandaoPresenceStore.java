@@ -20,8 +20,4 @@ public final class TiandaoPresenceStore {
     public static void clear() {
         STATE.set(TiandaoPresenceState.empty());
     }
-
-    public static void clearOnDisconnect() {
-        clear();
-    }
 }

@@ -87,8 +87,6 @@ public final class TribulationBroadcastStore {
 
     public static void clear() { snapshots = Map.of(); }
 
-    public static void clearOnDisconnect() { clear(); }
-
     public static void resetForTests() { snapshots = Map.of(); }
 
     private static State selectPrimary(Map<String, State> states, long nowMs) {

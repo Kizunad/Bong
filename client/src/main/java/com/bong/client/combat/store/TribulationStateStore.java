@@ -137,10 +137,6 @@ public final class TribulationStateStore {
         lastTerminal = State.NONE;
     }
 
-    public static void clearOnDisconnect() {
-        clear();
-    }
-
     public static void resetForTests() { clear(); }
 
     private static State selectPrimary(Map<String, State> states) {

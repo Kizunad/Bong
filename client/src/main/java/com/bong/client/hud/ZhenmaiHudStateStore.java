@@ -136,10 +136,6 @@ public final class ZhenmaiHudStateStore {
         SHIELD_SLOT.set(Slot.EMPTY);
     }
 
-    public static void clearOnDisconnect() {
-        clear();
-    }
-
     public static void resetForTests() {
         clear();
     }

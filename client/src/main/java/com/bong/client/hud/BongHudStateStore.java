@@ -25,8 +25,4 @@ public final class BongHudStateStore {
     public static void clear() {
         snapshot = BongHudStateSnapshot.empty();
     }
-
-    public static void clearOnDisconnect() {
-        clear();
-    }
 }

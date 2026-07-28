@@ -42,10 +42,6 @@ public final class SpiritTreasureDialogueStore {
         DIALOGUES.clear();
     }
 
-    public static synchronized void clearOnDisconnect() {
-        clear();
-    }
-
     public static void resetForTests() {
         clear();
     }

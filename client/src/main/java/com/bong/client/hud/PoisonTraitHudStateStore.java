@@ -60,8 +60,4 @@ public final class PoisonTraitHudStateStore {
     public static void clear() {
         STATE.set(State.NONE);
     }
-
-    public static void clearOnDisconnect() {
-        clear();
-    }
 }

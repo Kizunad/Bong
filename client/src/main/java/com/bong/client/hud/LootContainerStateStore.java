@@ -75,10 +75,6 @@ public final class LootContainerStateStore {
         current = null;
     }
 
-    public static void clearOnDisconnect() {
-        clear();
-    }
-
     public static void addListener(Listener listener) {
         listeners.add(listener);
     }

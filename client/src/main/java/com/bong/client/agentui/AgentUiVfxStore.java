@@ -30,8 +30,4 @@ public final class AgentUiVfxStore {
     public static void clear() {
         current = null;
     }
-
-    public static void clearOnDisconnect() {
-        clear();
-    }
 }
