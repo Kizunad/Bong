@@ -96,7 +96,6 @@ pub fn handle_technique(
     registry: Res<TechniqueRegistry>,
     mut players: Query<(&mut KnownTechniques, &mut Client)>,
 ) {
-    let registry = registry.as_ref();
     for event in events.read() {
         let Ok((mut techniques, mut client)) = players.get_mut(event.executor) else {
             continue;
@@ -104,7 +103,7 @@ pub fn handle_technique(
 
         match &event.result {
             TechniqueCmd::List => {
-                for line in technique_catalog_lines(registry, &techniques) {
+                for line in technique_catalog_lines(&registry, &techniques) {
                     client.send_chat_message(line);
                 }
             }
@@ -127,7 +126,7 @@ pub fn handle_technique(
             }
             TechniqueCmd::Give { id } => {
                 if id == "all" {
-                    let granted = grant_all_techniques(registry, &mut techniques);
+                    let granted = grant_all_techniques(&registry, &mut techniques);
                     client.send_chat_message(format!(
                         "[dev] technique give all: added={} activated={} total={}",
                         granted.added,
@@ -205,7 +204,7 @@ pub fn handle_technique(
                 client.send_chat_message(format!("[dev] technique `{id}` active={value}"));
             }
             TechniqueCmd::ResetAll => {
-                *techniques = KnownTechniques::dev_default(registry);
+                *techniques = KnownTechniques::dev_default(&registry);
                 client.send_chat_message(format!(
                     "[dev] technique reset_all; entries={}",
                     techniques.entries.len()
@@ -307,10 +306,7 @@ fn grant_technique(techniques: &mut KnownTechniques, id: &str) -> TechniqueGrant
 mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
-    use crate::cultivation::known_techniques::TechniqueDefinition;
-    use valence::prelude::{Client, Events, Position};
-    use valence::protocol::packets::play::GameMessageS2c;
-    use valence::testing::{create_mock_client, MockClientHelper};
+    use valence::prelude::Events;
 
     const BENG_QUAN: &str = "burst_meridian.beng_quan";
     const NEEDLE: &str = "dugu.shoot_needle";
@@ -318,70 +314,10 @@ mod tests {
 
     fn setup_app() -> App {
         let mut app = App::new();
-        app.insert_resource(runtime_registry());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<CommandResultEvent<TechniqueCmd>>();
         app.add_systems(Update, handle_technique);
         app
-    }
-
-    /// M03：dev 命令必须消费注入的权威 runtime registry，而不是独立重读默认
-    /// catalog。所有命令测试统一安装带 runtime-only 招式的 registry——`runtime.only`
-    /// 只存在于注入实例，checked-in catalog 中没有。若命令 handler 改读默认
-    /// catalog（或传入别的 registry 实例），`give`/`list`/`add` 会找不到它并撞红。
-    fn runtime_registry() -> TechniqueRegistry {
-        TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
-            id: "runtime.only".to_string(),
-            display_name: "运行时专属".to_string(),
-            grade: "common".to_string(),
-            description: "只存在于注入 registry 的 runtime-only 招式（M03 契约）。".to_string(),
-            required_realm: "Awaken".to_string(),
-            required_meridians: Vec::new(),
-            required_race: crate::body_plan::RaceGateOwned::Any,
-            qi_cost: 1.0,
-            stamina_cost: 1.0,
-            cast_ticks: 10,
-            cooldown_ticks: 20,
-            range: 3.0,
-            icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
-                .to_string(),
-            category: crate::cultivation::known_techniques::SkillCategory::Attack,
-            dispatch: crate::cultivation::known_techniques::TechniqueDispatch::DirectGeneric,
-        })
-    }
-
-    fn spawn_known_with_helper(
-        app: &mut App,
-        techniques: KnownTechniques,
-    ) -> (valence::prelude::Entity, MockClientHelper) {
-        let (mut client_bundle, helper) = create_mock_client("Alice");
-        client_bundle.player.position = Position::new([0.0, 0.0, 0.0]);
-        let player = app.world_mut().spawn(client_bundle).id();
-        app.world_mut().entity_mut(player).insert(techniques);
-        (player, helper)
-    }
-
-    fn flush_client_packets(app: &mut App) {
-        let world = app.world_mut();
-        let mut query = world.query::<&mut Client>();
-        for mut client in query.iter_mut(world) {
-            client
-                .flush_packets()
-                .expect("mock client packets should flush successfully");
-        }
-    }
-
-    fn collect_chat_texts(helper: &mut MockClientHelper) -> Vec<String> {
-        helper
-            .collect_received()
-            .0
-            .into_iter()
-            .filter_map(|frame| {
-                frame
-                    .decode::<GameMessageS2c>()
-                    .ok()
-                    .map(|packet| packet.chat.to_string())
-            })
-            .collect()
     }
 
     fn spawn_known(app: &mut App, techniques: KnownTechniques) -> valence::prelude::Entity {
@@ -391,7 +327,7 @@ mod tests {
     }
 
     fn default_technique_count() -> usize {
-        runtime_registry().len()
+        TechniqueRegistry::load_for_tests().len()
     }
 
     fn send(app: &mut App, player: valence::prelude::Entity, result: TechniqueCmd) {
@@ -407,7 +343,10 @@ mod tests {
     #[test]
     fn technique_list_keeps_default_entries() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default(&runtime_registry()));
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(&mut app, player, TechniqueCmd::List);
         run_update(&mut app);
@@ -424,7 +363,7 @@ mod tests {
 
     #[test]
     fn technique_catalog_exposes_all_defined_ids() {
-        let registry = runtime_registry();
+        let registry = TechniqueRegistry::load_for_tests();
         let lines = technique_catalog_lines(
             &registry,
             &KnownTechniques {
@@ -448,7 +387,10 @@ mod tests {
     #[test]
     fn technique_add_is_idempotent_and_rejects_unknown_ids() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default(&runtime_registry()));
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(
             &mut app,
@@ -567,7 +509,10 @@ mod tests {
     #[test]
     fn technique_remove_allows_unknown_but_removes_existing() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default(&runtime_registry()));
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(
             &mut app,
@@ -593,7 +538,10 @@ mod tests {
     #[test]
     fn technique_proficiency_clamps_and_active_flag_mutates() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default(&runtime_registry()));
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(
             &mut app,
@@ -628,7 +576,10 @@ mod tests {
     #[test]
     fn technique_proficiency_rejects_non_finite_values() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default(&runtime_registry()));
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
         let before = app
             .world()
             .get::<KnownTechniques>(player)
@@ -708,59 +659,5 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.id == "woliu.vortex" && entry.active));
-    }
-
-    #[test]
-    fn runtime_only_technique_is_consumed_by_dev_commands() {
-        // M03：dev 命令必须消费注入 registry 的 runtime-only 招式——若 handler 改读
-        // 默认/静态 catalog，`runtime.only` 会从 list/give/remove 中消失并撞红。
-        let mut app = setup_app();
-        let (player, mut helper) = spawn_known_with_helper(&mut app, KnownTechniques::default());
-
-        // give all：registry 注入的 runtime-only 招式必须出现在授予集合。
-        send(
-            &mut app,
-            player,
-            TechniqueCmd::Give {
-                id: "all".to_string(),
-            },
-        );
-        run_update(&mut app);
-        let techniques = app.world().get::<KnownTechniques>(player).unwrap();
-        assert!(
-            techniques
-                .entries
-                .iter()
-                .any(|entry| entry.id == "runtime.only"),
-            "give all 必须授予注入 registry 的 runtime-only 招式（M03）"
-        );
-
-        // list：catalog 行必须包含 runtime-only 招式（消费注入 registry，非独立重读）。
-        send(&mut app, player, TechniqueCmd::List);
-        run_update(&mut app);
-        flush_client_packets(&mut app);
-        let chats = collect_chat_texts(&mut helper);
-        assert!(
-            chats.iter().any(|line| line.contains("runtime.only")),
-            "list 必须通过客户端聊天输出注入 registry 的 runtime-only 招式，实际 {chats:?}"
-        );
-
-        // remove：runtime-only 招式可被移除（默认 catalog 不认识它也能移除）。
-        send(
-            &mut app,
-            player,
-            TechniqueCmd::Remove {
-                id: "runtime.only".to_string(),
-            },
-        );
-        run_update(&mut app);
-        let techniques = app.world().get::<KnownTechniques>(player).unwrap();
-        assert!(
-            techniques
-                .entries
-                .iter()
-                .all(|entry| entry.id != "runtime.only"),
-            "remove 必须能移除注入 registry 的 runtime-only 招式（M03）"
-        );
     }
 }

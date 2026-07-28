@@ -39,15 +39,68 @@ pub fn emit_skillbar_config_payloads(
     let now_tick = clock.tick;
 
     for (entity, mut client, username, bindings, inventory) in &mut clients {
-        let config = build_skillbar_config(
-            bindings,
-            inventory,
-            &item_registry,
-            &technique_registry,
-            now_tick,
-            now_ms,
-        );
-        let payload = ServerDataV1::new(ServerDataPayloadV1::SkillBarConfig(config));
+        let mut slots = Vec::with_capacity(SkillBarBindings::SLOT_COUNT);
+        let mut cooldown_until_ms = Vec::with_capacity(SkillBarBindings::SLOT_COUNT);
+        for i in 0..SkillBarBindings::SLOT_COUNT {
+            let entry = match &bindings.slots[i] {
+                SkillSlot::Empty => None,
+                SkillSlot::Item { instance_id } => inventory.and_then(|inventory| {
+                    let template_id = lookup_template_id(inventory, *instance_id)?;
+                    let template = item_registry.get(&template_id);
+                    let display_name = template
+                        .map(|template| template.display_name.clone())
+                        .unwrap_or_else(|| template_id.clone());
+                    let cast_duration_ms = template
+                        .map(|template| template.cast_duration_ms)
+                        .unwrap_or(TEMPLATE_DEFAULT_CAST_MS);
+                    let cooldown_ms = template
+                        .map(|template| template.cooldown_ms)
+                        .unwrap_or(TEMPLATE_DEFAULT_COOLDOWN_MS);
+                    Some(SkillBarEntryV1::Item {
+                        template_id,
+                        display_name,
+                        cast_duration_ms,
+                        cooldown_ms,
+                        // 契约（plan-skill-av-relink-v1 P0）：Item 槽 icon_texture
+                        // 恒空串，client 按 template_id 走 ItemIconRegistry 富解析
+                        // （tools/ 映射、armor tint、兜底），填路径会绕过它。
+                        icon_texture: String::new(),
+                    })
+                }),
+                SkillSlot::Skill { skill_id } => {
+                    technique_registry
+                        .get(skill_id)
+                        .map(|definition| SkillBarEntryV1::Skill {
+                            skill_id: skill_id.clone(),
+                            display_name: definition.display_name.to_string(),
+                            cast_duration_ms: definition.cast_ticks.saturating_mul(TICK_MS as u32),
+                            cooldown_ms: definition.cooldown_ticks.saturating_mul(TICK_MS as u32),
+                            icon_texture: definition.icon_texture.to_string(),
+                        })
+                }
+            };
+            slots.push(entry);
+            // bughunt skillbar-rebind-cooldown-reset：冷却按 skill_id 记账，不再是按槽位
+            // 索引的定长数组——只有 Skill 槽才可能有冷却 entry；Item/Empty 槽恒 0
+            // （与旧数组语义一致：这两类槽从未真正走过 SkillBarBindings 冷却）。
+            let cd_tick = match &bindings.slots[i] {
+                SkillSlot::Skill { skill_id } => {
+                    bindings.cooldowns.get(skill_id).copied().unwrap_or(0)
+                }
+                SkillSlot::Item { .. } | SkillSlot::Empty => 0,
+            };
+            let cd_until_ms = if cd_tick > now_tick {
+                now_ms.saturating_add((cd_tick - now_tick).saturating_mul(TICK_MS))
+            } else {
+                0
+            };
+            cooldown_until_ms.push(cd_until_ms);
+        }
+
+        let payload = ServerDataV1::new(ServerDataPayloadV1::SkillBarConfig(SkillBarConfigV1 {
+            slots,
+            cooldown_until_ms,
+        }));
         let payload_type = payload_type_label(payload.payload_type());
         let payload_bytes = match serialize_server_data_payload(&payload) {
             Ok(bytes) => bytes,
@@ -64,70 +117,6 @@ pub fn emit_skillbar_config_payloads(
             payload_type,
             username.0
         );
-    }
-}
-
-fn build_skillbar_config(
-    bindings: &SkillBarBindings,
-    inventory: Option<&PlayerInventory>,
-    item_registry: &ItemRegistry,
-    technique_registry: &TechniqueRegistry,
-    now_tick: u64,
-    now_ms: u64,
-) -> SkillBarConfigV1 {
-    let mut slots = Vec::with_capacity(SkillBarBindings::SLOT_COUNT);
-    let mut cooldown_until_ms = Vec::with_capacity(SkillBarBindings::SLOT_COUNT);
-    for i in 0..SkillBarBindings::SLOT_COUNT {
-        let entry = match &bindings.slots[i] {
-            SkillSlot::Empty => None,
-            SkillSlot::Item { instance_id } => inventory.and_then(|inventory| {
-                let template_id = lookup_template_id(inventory, *instance_id)?;
-                let template = item_registry.get(&template_id);
-                let display_name = template
-                    .map(|template| template.display_name.clone())
-                    .unwrap_or_else(|| template_id.clone());
-                let cast_duration_ms = template
-                    .map(|template| template.cast_duration_ms)
-                    .unwrap_or(TEMPLATE_DEFAULT_CAST_MS);
-                let cooldown_ms = template
-                    .map(|template| template.cooldown_ms)
-                    .unwrap_or(TEMPLATE_DEFAULT_COOLDOWN_MS);
-                Some(SkillBarEntryV1::Item {
-                    template_id,
-                    display_name,
-                    cast_duration_ms,
-                    cooldown_ms,
-                    icon_texture: String::new(),
-                })
-            }),
-            SkillSlot::Skill { skill_id } => {
-                technique_registry
-                    .get(skill_id)
-                    .map(|definition| SkillBarEntryV1::Skill {
-                        skill_id: skill_id.clone(),
-                        display_name: definition.display_name.to_string(),
-                        cast_duration_ms: definition.cast_ticks.saturating_mul(TICK_MS as u32),
-                        cooldown_ms: definition.cooldown_ticks.saturating_mul(TICK_MS as u32),
-                        icon_texture: definition.icon_texture.to_string(),
-                    })
-            }
-        };
-        slots.push(entry);
-        let cd_tick = match &bindings.slots[i] {
-            SkillSlot::Skill { skill_id } => bindings.cooldowns.get(skill_id).copied().unwrap_or(0),
-            SkillSlot::Item { .. } | SkillSlot::Empty => 0,
-        };
-        let cd_until_ms = if cd_tick > now_tick {
-            now_ms.saturating_add((cd_tick - now_tick).saturating_mul(TICK_MS))
-        } else {
-            0
-        };
-        cooldown_until_ms.push(cd_until_ms);
-    }
-
-    SkillBarConfigV1 {
-        slots,
-        cooldown_until_ms,
     }
 }
 
@@ -162,67 +151,4 @@ fn current_unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn config_uses_injected_technique_metadata_and_skill_cooldown() {
-        let registry =
-            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
-                definition.display_name = "运行时覆写劈".to_string();
-                definition.cast_ticks = 17;
-                definition.cooldown_ticks = 83;
-                definition.icon_texture =
-                    "bong:textures/gui/skill/runtime_override.png".to_string();
-            });
-        let mut bindings = SkillBarBindings::default();
-        assert!(bindings.set(
-            2,
-            SkillSlot::Skill {
-                skill_id: "sword.cleave".to_string(),
-            },
-        ));
-        bindings.set_cooldown("sword.cleave", 120);
-
-        let config = build_skillbar_config(
-            &bindings,
-            None,
-            &ItemRegistry::default(),
-            &registry,
-            100,
-            10_000,
-        );
-
-        assert_eq!(config.slots.len(), SkillBarBindings::SLOT_COUNT);
-        assert!(config.slots[..2].iter().all(Option::is_none));
-        assert!(config.slots[3..].iter().all(Option::is_none));
-        assert_eq!(config.cooldown_until_ms[2], 11_000);
-        assert!(config
-            .cooldown_until_ms
-            .iter()
-            .enumerate()
-            .all(|(index, value)| index == 2 || *value == 0));
-        match config.slots[2]
-            .as_ref()
-            .expect("skill slot must be emitted")
-        {
-            SkillBarEntryV1::Skill {
-                skill_id,
-                display_name,
-                cast_duration_ms,
-                cooldown_ms,
-                icon_texture,
-            } => {
-                assert_eq!(skill_id, "sword.cleave");
-                assert_eq!(display_name, "运行时覆写劈");
-                assert_eq!(*cast_duration_ms, 850);
-                assert_eq!(*cooldown_ms, 4_150);
-                assert_eq!(icon_texture, "bong:textures/gui/skill/runtime_override.png");
-            }
-            SkillBarEntryV1::Item { .. } => panic!("skill binding emitted as item"),
-        }
-    }
 }

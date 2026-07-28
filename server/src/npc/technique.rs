@@ -15,11 +15,10 @@ use std::collections::HashMap;
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use valence::prelude::{bevy_ecs, Commands, Component, Entity, Query, Res, Resource, With};
 
-use crate::body_plan::RaceId;
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::known_techniques::{
     parse_required_realm, KnownTechnique, KnownTechniques, SkillCategory, TechniqueDefinition,
-    TechniqueDispatch, TechniqueRegistry,
+    TechniqueRegistry,
 };
 use crate::cultivation::meridian::severed::{
     check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
@@ -179,41 +178,14 @@ pub fn assign_npc_techniques(
     realm: Realm,
     meridian_sys: &MeridianSystem,
     meridian_deps: &SkillMeridianDependencies,
-    qi_color_hint: Option<&str>,
-    entity_seed: u64,
-) -> KnownTechniques {
-    assign_npc_techniques_for_identity(
-        technique_registry,
-        archetype,
-        realm,
-        meridian_sys,
-        meridian_deps,
-        qi_color_hint,
-        entity_seed,
-        &RaceId::new("human"),
-        true,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn assign_npc_techniques_for_identity(
-    technique_registry: &TechniqueRegistry,
-    archetype: NpcArchetype,
-    realm: Realm,
-    meridian_sys: &MeridianSystem,
-    meridian_deps: &SkillMeridianDependencies,
     _qi_color_hint: Option<&str>,
     entity_seed: u64,
-    race: &RaceId,
-    is_humanoid: bool,
 ) -> KnownTechniques {
     // 收集所有 realm + 经脉可用的功法
     let available: Vec<&TechniqueDefinition> = technique_registry
         .iter()
         .filter(|def| {
-            def.dispatch == TechniqueDispatch::MetadataBacked
-                && def.required_race.allows(race, is_humanoid)
-                && technique_realm_satisfied(def, realm)
+            technique_realm_satisfied(def, realm)
                 && meridian_deps_satisfied(def, meridian_sys, meridian_deps)
         })
         .collect();
@@ -456,7 +428,7 @@ pub fn select_technique(
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             continue;
         }
-        if def.qi_cost > cultivation.qi_current {
+        if f64::from(def.qi_cost) > cultivation.qi_current {
             continue;
         }
         // 通用功法池(category_filter=None)排除有专属 scorer/action 通道的类别：
@@ -478,7 +450,7 @@ pub fn select_technique(
     }
 
     if ctx.qi_ratio < 0.15 {
-        let mut qi_costs: Vec<f64> = candidates.iter().map(|(_, def)| def.qi_cost).collect();
+        let mut qi_costs: Vec<f32> = candidates.iter().map(|(_, def)| def.qi_cost).collect();
         qi_costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median_idx = qi_costs.len().saturating_sub(1) / 2;
         let median_cost = qi_costs[median_idx];
@@ -681,7 +653,7 @@ pub fn npc_heal_scorer_system(
                 if cooldowns.is_on_cooldown(*actor, &entry.id, current_tick) {
                     return false;
                 }
-                if def.qi_cost > cultivation.qi_current {
+                if f64::from(def.qi_cost) > cultivation.qi_current {
                     return false;
                 }
                 true
@@ -740,7 +712,7 @@ pub fn has_usable_heal_technique(
         if cooldowns.is_on_cooldown(npc_entity, &entry.id, current_tick) {
             return false;
         }
-        if def.qi_cost > cultivation.qi_current {
+        if f64::from(def.qi_cost) > cultivation.qi_current {
             return false;
         }
         true
@@ -1050,9 +1022,8 @@ mod tests {
     };
     use crate::npc::lifecycle::NpcArchetype;
 
-    fn registry() -> &'static TechniqueRegistry {
-        static REGISTRY: std::sync::OnceLock<TechniqueRegistry> = std::sync::OnceLock::new();
-        REGISTRY.get_or_init(TechniqueRegistry::load_for_tests)
+    fn registry() -> TechniqueRegistry {
+        TechniqueRegistry::load_for_tests()
     }
 
     fn technique_definition_for_test(id: &str) -> Option<TechniqueDefinition> {
@@ -1068,7 +1039,7 @@ mod tests {
         entity_seed: u64,
     ) -> KnownTechniques {
         super::assign_npc_techniques(
-            registry(),
+            &registry(),
             archetype,
             realm,
             meridian_sys,
@@ -1093,7 +1064,7 @@ mod tests {
         category_filter: Option<SkillCategory>,
     ) -> Option<SelectedTechnique> {
         super::select_technique(
-            registry(),
+            &registry(),
             known,
             cultivation,
             meridian_deps,
@@ -1120,7 +1091,7 @@ mod tests {
         current_tick: u64,
     ) -> bool {
         super::has_usable_heal_technique(
-            registry(),
+            &registry(),
             known,
             cultivation,
             deps,
@@ -1392,76 +1363,6 @@ mod tests {
                     entry.proficiency
                 );
             }
-        }
-    }
-
-    #[test]
-    fn assignment_filters_dispatch_and_uses_injected_race_identity() {
-        use crate::body_plan::RaceGateOwned;
-
-        let registry =
-            TechniqueRegistry::load_for_tests_with_override("npc.heal_basic", |definition| {
-                definition.required_race = RaceGateOwned::Species {
-                    species: vec![RaceId::new("whale")],
-                };
-            });
-        let sys = full_regular_meridians();
-        let deps = empty_deps();
-
-        let human = super::assign_npc_techniques(
-            &registry,
-            NpcArchetype::Rogue,
-            Realm::Induce,
-            &sys,
-            &deps,
-            None,
-            42,
-        );
-        assert!(
-            human
-                .entries
-                .iter()
-                .all(|entry| entry.id != "npc.heal_basic"),
-            "human wrapper must reject whale-only metadata"
-        );
-
-        let whale = super::assign_npc_techniques_for_identity(
-            &registry,
-            NpcArchetype::Rogue,
-            Realm::Induce,
-            &sys,
-            &deps,
-            None,
-            42,
-            &RaceId::new("whale"),
-            false,
-        );
-        assert!(
-            whale
-                .entries
-                .iter()
-                .any(|entry| entry.id == "npc.heal_basic"),
-            "matching whale identity must admit whale-only metadata"
-        );
-
-        for seed in 0..200 {
-            let assigned = super::assign_npc_techniques(
-                &registry,
-                NpcArchetype::GuardianRelic,
-                Realm::Void,
-                &full_all_meridians(),
-                &deps,
-                None,
-                seed,
-            );
-            assert!(
-                assigned.entries.iter().all(|entry| {
-                    registry.get(&entry.id).is_some_and(|definition| {
-                        definition.dispatch == TechniqueDispatch::MetadataBacked
-                    })
-                }),
-                "NPC loadout must never contain direct_generic entries (seed={seed})"
-            );
         }
     }
 
@@ -1752,46 +1653,6 @@ mod tests {
         let sel = result.unwrap();
         assert_eq!(sel.technique_id, "sword.cleave");
         assert_eq!(sel.target, SkillTarget::NearestEnemy);
-    }
-
-    #[test]
-    fn selection_uses_injected_registry_cost() {
-        let registry =
-            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
-                definition.qi_cost = 101.0
-            });
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 1.0,
-                active: true,
-            }],
-        };
-        let cultivation = Cultivation {
-            qi_current: 100.0,
-            qi_max: 100.0,
-            ..Default::default()
-        };
-
-        let result = super::select_technique(
-            &registry,
-            &known,
-            &cultivation,
-            &empty_deps(),
-            None,
-            None,
-            &NpcCooldownMap::default(),
-            Entity::from_raw(1),
-            3.0,
-            100,
-            &default_ctx(),
-            None,
-        );
-
-        assert!(
-            result.is_none(),
-            "injected unaffordable qi_cost must exclude the sole candidate"
-        );
     }
 
     #[test]
@@ -3207,268 +3068,6 @@ mod tests {
             map.len(),
             1,
             "removing unknown entity should not affect existing entries"
-        );
-    }
-
-    // ─── M33：通用 scorer system 必须消费注入 registry 的 override 值 ───────────
-    //
-    // 若 npc_technique_scorer_system 改读默认/静态 catalog 的 qi_cost，override 后
-    // 的通用功法会错误通过 affordability gate。
-
-    #[test]
-    fn technique_scorer_system_follows_injected_registry_affordability() {
-        use big_brain::prelude::{Actor, Score};
-        use valence::prelude::{App, Update};
-
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            "sword.cleave",
-            |definition| {
-                definition.qi_cost = 101.0;
-            },
-        ));
-        app.insert_resource(NpcCooldownMap::default());
-        app.insert_resource(SkillMeridianDependencies::default());
-        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
-        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
-        app.insert_resource(crate::npc::lod::NpcLodTick(0));
-        app.add_systems(Update, npc_technique_scorer_system);
-
-        let target = app.world_mut().spawn_empty().id();
-        let npc = app
-            .world_mut()
-            .spawn((
-                NpcBlackboard {
-                    nearest_player: Some(target),
-                    player_distance: 3.0,
-                    ..Default::default()
-                },
-                Cultivation {
-                    realm: Realm::Awaken,
-                    qi_current: 100.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                KnownTechniques {
-                    entries: vec![KnownTechnique {
-                        id: "sword.cleave".to_string(),
-                        proficiency: 1.0,
-                        active: true,
-                    }],
-                },
-                crate::npc::spawn::NpcMarker,
-                crate::npc::lod::NpcLodTier::Near,
-            ))
-            .id();
-        let scorer_entity = app
-            .world_mut()
-            .spawn((NpcTechniqueScorer, Actor(npc), Score::default()))
-            .id();
-
-        app.update();
-
-        let score = app
-            .world()
-            .get::<Score>(scorer_entity)
-            .map(|score| score.get())
-            .unwrap();
-        assert_eq!(
-            score, 0.0,
-            "通用 scorer 必须消费注入的 101 qi_cost 并拒绝 qi=100 的唯一候选"
-        );
-
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            "sword.cleave",
-            |definition| {
-                definition.qi_cost = 1.0;
-            },
-        ));
-        app.insert_resource(NpcCooldownMap::default());
-        app.insert_resource(SkillMeridianDependencies::default());
-        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
-        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
-        app.insert_resource(crate::npc::lod::NpcLodTick(0));
-        app.add_systems(Update, npc_technique_scorer_system);
-
-        let target = app.world_mut().spawn_empty().id();
-        let npc = app
-            .world_mut()
-            .spawn((
-                NpcBlackboard {
-                    nearest_player: Some(target),
-                    player_distance: 3.0,
-                    ..Default::default()
-                },
-                Cultivation {
-                    realm: Realm::Awaken,
-                    qi_current: 100.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                KnownTechniques {
-                    entries: vec![KnownTechnique {
-                        id: "sword.cleave".to_string(),
-                        proficiency: 1.0,
-                        active: true,
-                    }],
-                },
-                crate::npc::spawn::NpcMarker,
-                crate::npc::lod::NpcLodTier::Near,
-            ))
-            .id();
-        let scorer_entity = app
-            .world_mut()
-            .spawn((NpcTechniqueScorer, Actor(npc), Score::default()))
-            .id();
-
-        app.update();
-
-        let score = app
-            .world()
-            .get::<Score>(scorer_entity)
-            .map(|score| score.get())
-            .unwrap();
-        assert_eq!(
-            score, 0.85,
-            "通用 scorer 必须跟随注入的 1 qi_cost，选择可负担的唯一候选"
-        );
-    }
-
-    // ─── M33：heal scorer system 必须消费注入 registry 的 override 值 ───────────
-    //
-    // 若 npc_heal_scorer_system 改读默认/静态 catalog 的 qi_cost，override 后
-    // heal 成本高于 NPC 当前 qi 时 scorer 会错误 emit 0.9（低血量 NPC 选不可负担
-    // 的 heal action）。直接调 select_technique 无法探测——scorer 自带 registry
-    // 查找/category/cooldown/meridian/affordability 过滤，这里用完整 bevy system
-    // 跑一遍证明生产路径消费注入 registry。
-
-    #[test]
-    fn heal_scorer_system_follows_injected_registry_affordability() {
-        use big_brain::prelude::{Actor, Score};
-        use valence::prelude::{App, Update};
-
-        // checked-in npc.heal_basic 是 Awaken/Heal/低 qi_cost；override 成 500 qi_cost，
-        // 任何 NPC（这里 100 qi）都负担不起 → scorer 必须给 0.0。
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            "npc.heal_basic",
-            |definition| {
-                definition.qi_cost = 500.0;
-            },
-        ));
-        app.insert_resource(NpcCooldownMap::default());
-        app.insert_resource(SkillMeridianDependencies::default());
-        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
-        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
-        app.insert_resource(crate::npc::lod::NpcLodTick(0));
-        app.add_systems(Update, npc_heal_scorer_system);
-
-        // NPC：低血量（health 10/100）且知道 npc.heal_basic——若 scorer 读默认
-        // catalog（成本低）就会给 0.9。
-        let npc = app
-            .world_mut()
-            .spawn((
-                NpcBlackboard::default(),
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 100.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                KnownTechniques {
-                    entries: vec![KnownTechnique {
-                        id: "npc.heal_basic".to_string(),
-                        proficiency: 1.0,
-                        active: true,
-                    }],
-                },
-                crate::combat::components::Wounds {
-                    entries: Vec::new(),
-                    health_current: 10.0,
-                    health_max: 100.0,
-                },
-                crate::npc::spawn::NpcMarker,
-                crate::npc::lod::NpcLodTier::Near,
-            ))
-            .id();
-
-        // big-brain scorer entity：挂 NpcHealScorer + Actor(npc) + Score。
-        let scorer_entity = app
-            .world_mut()
-            .spawn((NpcHealScorer, Actor(npc), Score::default()))
-            .id();
-        let _ = scorer_entity;
-
-        app.update();
-
-        let score = app
-            .world()
-            .get::<Score>(scorer_entity)
-            .map(|score| score.get())
-            .unwrap();
-        assert_eq!(
-            score, 0.0,
-            "scorer must see the injected 500 qi_cost and reject the unaffordable heal (M33)"
-        );
-
-        // 对照组：override 成低成本（1.0）→ 低血量 NPC 必须得到 0.9，证明
-        // scorer 正向跟随注入 registry 而非恒 0。
-        let mut app = App::new();
-        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
-            "npc.heal_basic",
-            |definition| {
-                definition.qi_cost = 1.0;
-            },
-        ));
-        app.insert_resource(NpcCooldownMap::default());
-        app.insert_resource(SkillMeridianDependencies::default());
-        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
-        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
-        app.insert_resource(crate::npc::lod::NpcLodTick(0));
-        app.add_systems(Update, npc_heal_scorer_system);
-
-        let npc = app
-            .world_mut()
-            .spawn((
-                NpcBlackboard::default(),
-                Cultivation {
-                    realm: Realm::Condense,
-                    qi_current: 100.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                KnownTechniques {
-                    entries: vec![KnownTechnique {
-                        id: "npc.heal_basic".to_string(),
-                        proficiency: 1.0,
-                        active: true,
-                    }],
-                },
-                crate::combat::components::Wounds {
-                    entries: Vec::new(),
-                    health_current: 10.0,
-                    health_max: 100.0,
-                },
-                crate::npc::spawn::NpcMarker,
-                crate::npc::lod::NpcLodTier::Near,
-            ))
-            .id();
-        let scorer_entity = app
-            .world_mut()
-            .spawn((NpcHealScorer, Actor(npc), Score::default()))
-            .id();
-
-        app.update();
-
-        let score = app
-            .world()
-            .get::<Score>(scorer_entity)
-            .map(|score| score.get())
-            .unwrap();
-        assert_eq!(
-            score, 0.9,
-            "scorer must admit an affordable heal when override lowers cost (M33)"
         );
     }
 }

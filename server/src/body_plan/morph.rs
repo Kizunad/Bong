@@ -11,7 +11,6 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity, Events, Position};
 
-use crate::combat::components::{Stamina, StaminaState};
 use crate::cultivation::components::{Cultivation, MeridianSystem};
 use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -163,7 +162,7 @@ fn cast_morph_yixing(
         };
     };
 
-    let (qi_cost, stamina_cost, cooldown_ticks, anim_duration_ticks) = {
+    let (qi_cost, cooldown_ticks, anim_duration_ticks) = {
         let techniques = world
             .get_resource::<TechniqueRegistry>()
             .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
@@ -171,42 +170,21 @@ fn cast_morph_yixing(
             .get(YIXING_SKILL_ID)
             .expect("validated TechniqueRegistry must contain morph.yixing");
         (
-            definition.qi_cost,
-            definition.stamina_cost,
+            f64::from(definition.qi_cost),
             u64::from(definition.cooldown_ticks),
             definition.cast_ticks,
         )
     };
-    if let Some(stamina) = world.get::<Stamina>(caster) {
-        if stamina_cost > 0.0 && (stamina.current < stamina_cost || stamina.current <= 0.0) {
-            return CastResult::Rejected {
-                reason: CastRejectReason::InRecovery,
-            };
-        }
-    }
     if !drain_qi_to_zone(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
+
     let tick = world
         .get_resource::<CultivationClock>()
         .map(|clock| clock.tick)
         .unwrap_or(0);
-    if let Some(mut stamina) = world.get_mut::<Stamina>(caster) {
-        if stamina_cost > 0.0 {
-            stamina.current = (stamina.current - stamina_cost).clamp(0.0, stamina.max);
-            // M28 修复：扣到 0 必须同步进入 Exhausted（对齐 sword_path::apply_cast_costs
-            // 的既有状态机），否则维持 Idle 享受完整恢复、绕过衰竭惩罚。
-            stamina.state = if stamina.current <= 0.0 {
-                StaminaState::Exhausted
-            } else {
-                StaminaState::Combat
-            };
-            stamina.last_drain_tick = Some(tick);
-        }
-    }
-
     world
         .entity_mut(caster)
         .insert(MorphState::new(target_race, 0, tick));
@@ -760,10 +738,12 @@ mod tests {
         }
 
         fn yixing_qi_cost() -> f64 {
-            TechniqueRegistry::load_for_tests()
-                .get(YIXING_SKILL_ID)
-                .expect("checked-in TechniqueRegistry must contain morph.yixing")
-                .qi_cost
+            f64::from(
+                TechniqueRegistry::load_for_tests()
+                    .get(YIXING_SKILL_ID)
+                    .expect("checked-in TechniqueRegistry must contain morph.yixing")
+                    .qi_cost,
+            )
         }
 
         #[test]
@@ -823,25 +803,18 @@ mod tests {
 
         #[test]
         fn cast_and_release_timing_consume_overridden_registry_metadata() {
-            let configured_cost = 2.5_f64;
-            let configured_stamina_cost = 7.5_f32;
+            let configured_cost = 2.5_f32;
             let configured_cooldown = 73;
             let configured_cast_ticks = 19;
             let techniques =
                 TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
                     definition.qi_cost = configured_cost;
-                    definition.stamina_cost = configured_stamina_cost;
                     definition.cooldown_ticks = configured_cooldown;
                     definition.cast_ticks = configured_cast_ticks;
                 });
             let races = human_to_whale_registry();
             let (mut world, caster) =
                 make_world_with_caster_and_zone_and_registry(10.0, 100.0, races, techniques);
-            world.entity_mut(caster).insert(Stamina {
-                current: 20.0,
-                max: 20.0,
-                ..Default::default()
-            });
 
             let morph = cast_morph_yixing(&mut world, caster, 0, None);
             assert_eq!(
@@ -853,14 +826,12 @@ mod tests {
                 "morph timing must come from the injected TechniqueRegistry"
             );
             assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current - (10.0 - configured_cost))
-                    .abs()
+                (world.get::<Cultivation>(caster).unwrap().qi_current
+                    - (10.0 - f64::from(configured_cost)))
+                .abs()
                     < 1e-9,
                 "morph charge must use overridden registry qi_cost"
             );
-            let stamina = world.get::<Stamina>(caster).unwrap();
-            assert_eq!(stamina.current, 20.0 - configured_stamina_cost);
-            assert_eq!(stamina.last_drain_tick, Some(1234));
 
             let release = cast_morph_yixing(&mut world, caster, 0, None);
             assert_eq!(
@@ -872,196 +843,11 @@ mod tests {
                 "release timing must use the same registry metadata rather than Rust constants"
             );
             assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current - (10.0 - configured_cost))
-                    .abs()
+                (world.get::<Cultivation>(caster).unwrap().qi_current
+                    - (10.0 - f64::from(configured_cost)))
+                .abs()
                     < 1e-9,
                 "release branch remains free and must not charge metadata qi_cost twice"
-            );
-        }
-
-        #[test]
-        fn cast_at_exact_stamina_cost_enters_exhausted_and_charges_fully() {
-            // M19 精确边界：stamina_cost 恰好等于 current → 扣到 0 → 同步 Exhausted
-            // （M28 状态机），并照常扣真元 + 插入 MorphState。
-            let configured_stamina_cost = 7.5_f32;
-            let techniques =
-                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
-                    definition.stamina_cost = configured_stamina_cost;
-                    definition.qi_cost = 2.5;
-                });
-            let races = human_to_whale_registry();
-            let (mut world, caster) =
-                make_world_with_caster_and_zone_and_registry(10.0, 100.0, races, techniques);
-            world.entity_mut(caster).insert(Stamina {
-                current: configured_stamina_cost,
-                max: 20.0,
-                ..Default::default()
-            });
-
-            let result = cast_morph_yixing(&mut world, caster, 0, None);
-
-            assert!(
-                matches!(result, CastResult::Started { .. }),
-                "恰好够 stamina_cost 的 morph 应成功：{result:?}"
-            );
-            let stamina = world.get::<Stamina>(caster).unwrap();
-            assert_eq!(stamina.current, 0.0, "exact cost 应把 stamina 扣到恰好 0");
-            assert_eq!(
-                stamina.state,
-                StaminaState::Exhausted,
-                "扣到 0 必须进入 Exhausted（M28），而不是保持 Idle 享受完整恢复"
-            );
-            assert_eq!(stamina.last_drain_tick, Some(1234));
-            assert!(world.get::<MorphState>(caster).is_some());
-            assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current - 7.5).abs() < 1e-9,
-                "exact-cost 边界仍应照常扣真元（M19 断言的是状态机不是豁免）"
-            );
-        }
-
-        #[test]
-        fn cast_at_zero_stamina_cost_keeps_idle_state() {
-            // 零 stamina cost 元数据 → 不加体力、状态保持 Idle（不误伤 Exhausted）。
-            let techniques =
-                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
-                    definition.stamina_cost = 0.0;
-                });
-            let races = human_to_whale_registry();
-            let (mut world, caster) = make_world_with_caster_and_zone_and_registry(
-                yixing_qi_cost() + 10.0,
-                100.0,
-                races,
-                techniques,
-            );
-            world.entity_mut(caster).insert(Stamina {
-                current: 20.0,
-                max: 20.0,
-                ..Default::default()
-            });
-
-            let result = cast_morph_yixing(&mut world, caster, 0, None);
-
-            assert!(matches!(result, CastResult::Started { .. }));
-            let stamina = world.get::<Stamina>(caster).unwrap();
-            assert_eq!(stamina.current, 20.0, "零 cost 不得扣体力");
-            assert_eq!(
-                stamina.state,
-                StaminaState::Idle,
-                "零 cost 不扣体力不得把状态误置为 Combat/Exhausted"
-            );
-            assert_eq!(stamina.last_drain_tick, None);
-        }
-
-        #[test]
-        fn release_branch_leaves_stamina_and_qi_state_untouched() {
-            // M29：release 分支（再次 cast = 解除）是免费操作——stamina/current/
-            // last_drain_tick/qi 必须完全不变，锁住 no-charge contract。
-            let configured_stamina_cost = 7.5_f32;
-            let techniques =
-                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
-                    definition.stamina_cost = configured_stamina_cost;
-                    definition.qi_cost = 2.5;
-                });
-            let races = human_to_whale_registry();
-            let (mut world, caster) =
-                make_world_with_caster_and_zone_and_registry(10.0, 100.0, races, techniques);
-            world.entity_mut(caster).insert(Stamina {
-                current: 20.0,
-                max: 20.0,
-                ..Default::default()
-            });
-
-            // 先易形（扣一次 cost）。
-            let morph = cast_morph_yixing(&mut world, caster, 0, None);
-            assert!(matches!(morph, CastResult::Started { .. }));
-            let qi_after_morph = world.get::<Cultivation>(caster).unwrap().qi_current;
-            let stamina_after_morph = world.get::<Stamina>(caster).unwrap().clone();
-            let zone_after_morph = world
-                .resource::<ZoneRegistry>()
-                .find_zone_by_name("spawn")
-                .unwrap()
-                .spirit_qi;
-
-            // 再 cast = 解除：免费，所有资源字段完全不变。
-            let release = cast_morph_yixing(&mut world, caster, 0, None);
-            assert!(matches!(release, CastResult::Started { .. }));
-
-            assert_eq!(
-                world.get::<Cultivation>(caster).unwrap().qi_current,
-                qi_after_morph,
-                "release 不得再扣真元"
-            );
-            let stamina = world.get::<Stamina>(caster).unwrap();
-            assert_eq!(
-                (stamina.current, stamina.state, stamina.last_drain_tick),
-                (
-                    stamina_after_morph.current,
-                    stamina_after_morph.state,
-                    stamina_after_morph.last_drain_tick
-                ),
-                "release 不得改变 stamina.current/state/last_drain_tick（no-charge contract）"
-            );
-            assert_eq!(
-                world
-                    .resource::<ZoneRegistry>()
-                    .find_zone_by_name("spawn")
-                    .unwrap()
-                    .spirit_qi,
-                zone_after_morph,
-                "release 不得再次向 zone 转账"
-            );
-            assert!(
-                world.get::<MorphState>(caster).is_none(),
-                "release 应移除 MorphState"
-            );
-        }
-
-        #[test]
-        fn cast_rejects_overridden_stamina_cost_without_mutation() {
-            let techniques =
-                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
-                    definition.stamina_cost = 12.0
-                });
-            let races = human_to_whale_registry();
-            let (mut world, caster) = make_world_with_caster_and_zone_and_registry(
-                yixing_qi_cost() + 10.0,
-                100.0,
-                races,
-                techniques,
-            );
-            world.entity_mut(caster).insert(Stamina {
-                current: 11.9,
-                max: 20.0,
-                ..Default::default()
-            });
-            let qi_before = world.get::<Cultivation>(caster).unwrap().qi_current;
-            let zone_before = world
-                .resource::<ZoneRegistry>()
-                .find_zone_by_name("spawn")
-                .unwrap()
-                .spirit_qi;
-
-            let result = cast_morph_yixing(&mut world, caster, 0, None);
-
-            assert_eq!(
-                result,
-                CastResult::Rejected {
-                    reason: CastRejectReason::InRecovery
-                }
-            );
-            assert!(world.get::<MorphState>(caster).is_none());
-            assert_eq!(
-                world.get::<Cultivation>(caster).unwrap().qi_current,
-                qi_before
-            );
-            assert_eq!(world.get::<Stamina>(caster).unwrap().current, 11.9);
-            assert_eq!(
-                world
-                    .resource::<ZoneRegistry>()
-                    .find_zone_by_name("spawn")
-                    .unwrap()
-                    .spirit_qi,
-                zone_before
             );
         }
 
