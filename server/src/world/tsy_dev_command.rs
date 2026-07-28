@@ -178,6 +178,7 @@ pub fn apply_tsy_spawn_requests(
     portals: Query<&RiftPortal>,
     container_specs: Option<Res<TsyContainerSpawnRegistry>>,
     hostile_specs: Option<Res<TsySpawnPoolRegistry>>,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     dimension_layers: Option<Res<DimensionLayers>>,
     mut npc_registry: Option<ResMut<NpcRegistry>>,
     clock: Option<Res<CombatClock>>,
@@ -331,6 +332,7 @@ pub fn apply_tsy_spawn_requests(
             let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or(0);
             let summary = spawn_tsy_hostiles_for_family(
                 &mut commands,
+                &technique_registry,
                 layers.tsy,
                 &req.family_id,
                 hostiles,

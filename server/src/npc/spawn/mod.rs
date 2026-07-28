@@ -608,6 +608,9 @@ mod tests {
     #[test]
     fn startup_spawned_npc_default_thinker_emits_attack_intent_in_melee_range() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::npc::lifecycle::register(&mut app);
         brain::register(&mut app);
         app.insert_resource(CapturedAttackIntents::default());
@@ -699,6 +702,9 @@ mod tests {
     #[test]
     fn spawn_rogue_npc_at_attaches_rogue_components() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (setup_test_layer, spawn_test_rogue.after(setup_test_layer)),
@@ -997,9 +1003,14 @@ mod tests {
         );
     }
 
-    fn spawn_test_rogue(mut commands: Commands, layer: Res<TestLayer>) {
+    fn spawn_test_rogue(
+        mut commands: Commands,
+        layer: Res<TestLayer>,
+        technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
+    ) {
         rogue::spawn_rogue_npc_at(
             &mut commands,
+            &technique_registry,
             NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
@@ -1083,6 +1094,9 @@ mod tests {
     #[test]
     fn spawn_disciple_npc_at_attaches_mission_and_social_state() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -1107,6 +1121,9 @@ mod tests {
     #[test]
     fn spawn_relic_guard_npc_at_attaches_guardian_trial_state() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -1135,6 +1152,9 @@ mod tests {
         // 局部变量（disciple.rs:217 定义为 Realm::Spirit）此前只喂 npc_meridian_system_for_realm/
         // assign_npc_techniques，最后 npc_runtime_bundle 恒吞成 Realm::Awaken。
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -1173,9 +1193,14 @@ mod tests {
         );
     }
 
-    fn spawn_test_disciple(mut commands: Commands, layer: Res<TestLayer>) {
+    fn spawn_test_disciple(
+        mut commands: Commands,
+        layer: Res<TestLayer>,
+        technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
+    ) {
         disciple::spawn_disciple_npc_at(
             &mut commands,
+            &technique_registry,
             NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
@@ -1189,9 +1214,14 @@ mod tests {
         );
     }
 
-    fn spawn_test_relic_guard(mut commands: Commands, layer: Res<TestLayer>) {
+    fn spawn_test_relic_guard(
+        mut commands: Commands,
+        layer: Res<TestLayer>,
+        technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
+    ) {
         disciple::spawn_relic_guard_npc_at(
             &mut commands,
+            &technique_registry,
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
             DVec3::new(44.0, 66.0, 44.0),
@@ -1228,6 +1258,9 @@ mod tests {
     #[test]
     fn spawn_disciple_with_real_skin_attaches_npc_player_skin_and_player_kind() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -1268,6 +1301,9 @@ mod tests {
     #[test]
     fn spawn_disciple_without_skin_pool_falls_back_to_villager() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -1300,6 +1336,9 @@ mod tests {
     #[test]
     fn spawn_disciple_with_empty_skin_pool_falls_back_to_villager() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -1329,10 +1368,15 @@ mod tests {
         );
     }
 
-    fn spawn_test_disciple_with_skin(mut commands: Commands, layer: Res<TestLayer>) {
+    fn spawn_test_disciple_with_skin(
+        mut commands: Commands,
+        layer: Res<TestLayer>,
+        technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
+    ) {
         let mut pool = pool_with_real_skins();
         disciple::spawn_disciple_npc_at(
             &mut commands,
+            &technique_registry,
             NpcSkinSpawnContext::new(Some(&mut pool), NpcSkinFallbackPolicy::AllowFallback),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
@@ -1346,10 +1390,15 @@ mod tests {
         );
     }
 
-    fn spawn_test_disciple_with_empty_pool(mut commands: Commands, layer: Res<TestLayer>) {
+    fn spawn_test_disciple_with_empty_pool(
+        mut commands: Commands,
+        layer: Res<TestLayer>,
+        technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
+    ) {
         let mut pool = SkinPool::default();
         disciple::spawn_disciple_npc_at(
             &mut commands,
+            &technique_registry,
             NpcSkinSpawnContext::new(Some(&mut pool), NpcSkinFallbackPolicy::WaitForReady),
             layer.0,
             DEFAULT_SPAWN_ZONE_NAME,
@@ -2156,6 +2205,9 @@ mod tests {
         // We only call spawn::register() (not brain::register()) to avoid needing
         // all the events that brain systems require.
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::npc::lifecycle::register(&mut app);
         app.insert_resource(RoguePopulationSeedConfig {
             target_count: 0,
@@ -2261,7 +2313,11 @@ mod tests {
     // 走固定 Realm::Spirit 单点，已有专属 pin
     // (spawn_relic_guard_npc_at_writes_spirit_realm_into_cultivation)，本审计不重复。
 
-    fn spawn_test_realm_audit_population(mut commands: Commands, layer: Res<TestLayer>) {
+    fn spawn_test_realm_audit_population(
+        mut commands: Commands,
+        layer: Res<TestLayer>,
+        technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
+    ) {
         let realms = [
             Realm::Awaken,
             Realm::Induce,
@@ -2274,6 +2330,7 @@ mod tests {
             let x = 200.0 + i as f64 * 10.0;
             rogue::spawn_rogue_npc_at(
                 &mut commands,
+                &technique_registry,
                 NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
                 layer.0,
                 DEFAULT_SPAWN_ZONE_NAME,
@@ -2295,6 +2352,7 @@ mod tests {
             );
             disciple::spawn_disciple_npc_at(
                 &mut commands,
+                &technique_registry,
                 NpcSkinSpawnContext::new(None, NpcSkinFallbackPolicy::AllowFallback),
                 layer.0,
                 DEFAULT_SPAWN_ZONE_NAME,
@@ -2321,11 +2379,13 @@ mod tests {
 
     #[test]
     fn spawn_paths_technique_realm_never_exceeds_persisted_cultivation_realm() {
-        use crate::cultivation::known_techniques::technique_definition;
         use crate::cultivation::known_techniques::KnownTechniques;
         use crate::npc::technique::technique_realm_satisfied;
 
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (
@@ -2336,6 +2396,10 @@ mod tests {
         app.update();
         app.update();
 
+        let technique_registry = app
+            .world()
+            .resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+            .clone();
         let world = app.world_mut();
         let mut query = world.query_filtered::<(
             Entity,
@@ -2350,10 +2414,10 @@ mod tests {
             let Some(known) = known else { continue };
             for entry in &known.entries {
                 checked_techniques += 1;
-                let def = technique_definition(&entry.id).unwrap_or_else(|| {
+                let def = technique_registry.get(&entry.id).unwrap_or_else(|| {
                     panic!(
                         "entity={entity:?} archetype={archetype:?} realm={:?}: technique {} \
-                         not found in TECHNIQUE_DEFINITIONS",
+                         not found in TechniqueRegistry",
                         cultivation.realm, entry.id
                     )
                 });
@@ -2388,6 +2452,9 @@ mod tests {
         use crate::skin::{select_npc_visual_profile, NpcVisualProfile};
 
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(
             valence::prelude::Startup,
             (

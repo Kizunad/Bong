@@ -238,6 +238,30 @@ fn assert_full_app_core_resources(app: &App) {
             .is_some(),
         "CraftRegistry must contain data-owned workbench recipes after strict TOML startup loading"
     );
+    let technique_registry = world
+        .get_resource::<cultivation::known_techniques::TechniqueRegistry>()
+        .expect("full server App must install TechniqueRegistry after strict TOML startup loading");
+    assert_eq!(
+        technique_registry.len(),
+        49,
+        "TechniqueRegistry must contain the frozen 49-entry metadata catalog"
+    );
+    assert_eq!(
+        technique_registry
+            .definitions()
+            .first()
+            .map(|definition| definition.id.as_str()),
+        Some("sword.cleave"),
+        "TechniqueRegistry must preserve the source declaration order at the first entry"
+    );
+    assert_eq!(
+        technique_registry
+            .definitions()
+            .last()
+            .map(|definition| definition.id.as_str()),
+        Some("morph.yixing"),
+        "TechniqueRegistry must preserve the source declaration order at the last entry"
+    );
     // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
     // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产
     // `network::register()` 从未 `init_resource::<MorphStateEmitState>()`（只在

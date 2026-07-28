@@ -1,7 +1,7 @@
-use valence::prelude::{Added, Changed, Client, Entity, Query, Username, With};
+use valence::prelude::{Added, Changed, Client, Entity, Query, Res, Username, With};
 
 use crate::combat::sword_basics::sword_proficiency_label;
-use crate::cultivation::known_techniques::{KnownTechniques, TECHNIQUE_DEFINITIONS};
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
 };
@@ -16,22 +16,37 @@ type JoinTechniquesSnapshotFilter = (With<Client>, Added<KnownTechniques>);
 type TechniquesSnapshotQueryItem<'a> = (Entity, &'a mut Client, &'a Username, &'a KnownTechniques);
 
 pub fn emit_techniques_snapshot_payloads(
+    registry: Res<TechniqueRegistry>,
     mut clients: Query<TechniquesSnapshotQueryItem<'_>, TechniquesSnapshotFilter>,
 ) {
     for (entity, mut client, username, known) in &mut clients {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
 pub fn emit_join_techniques_snapshot_payloads(
+    registry: Res<TechniqueRegistry>,
     mut clients: Query<TechniquesSnapshotQueryItem<'_>, JoinTechniquesSnapshotFilter>,
 ) {
     for (entity, mut client, username, known) in &mut clients {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
 pub fn send_techniques_snapshot_to_client(
+    registry: &TechniqueRegistry,
     entity: Entity,
     client: &mut Client,
     username: &str,
@@ -42,9 +57,7 @@ pub fn send_techniques_snapshot_to_client(
             .entries
             .iter()
             .filter_map(|known| {
-                let definition = TECHNIQUE_DEFINITIONS
-                    .iter()
-                    .find(|definition| definition.id == known.id)?;
+                let definition = registry.get(&known.id)?;
                 Some(TechniqueEntryV1 {
                     id: definition.id.to_string(),
                     display_name: definition.display_name.to_string(),

@@ -1,7 +1,7 @@
 //! plan-skill-anim-fidelity-v1 P0 —— technique cast_ticks 快照单向同步测试（动画时长对拍链）。
 //!
 //! 快照文件 `client/src/test/resources/bong/technique_cast_ticks_snapshot.json` 是
-//! `TECHNIQUE_DEFINITIONS` + yidao 5 招 spec（P4 增补，见 `definitions_cast_map`）
+//! `TechniqueRegistry` + yidao 5 招 spec（P4 增补，见 `definitions_cast_map`）
 //! 的 `skill_id → cast_ticks` 单向导出（BTreeMap 排序 + pretty-print，稳定 diff），
 //! 双端消费：
 //! - server（本文件）：经 `CARGO_MANIFEST_DIR/../client` 路径读盘，断言快照与定义表
@@ -16,9 +16,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::known_techniques::TECHNIQUE_DEFINITIONS;
+use super::known_techniques::TechniqueRegistry;
 
-const REGEN_HINT: &str = "快照由 TECHNIQUE_DEFINITIONS + yidao_skill_spec 具名双表\
+const REGEN_HINT: &str = "快照由 TechniqueRegistry + yidao_skill_spec 具名双表\
     有序并集单向生成（plan-skill-anim-fidelity-v1 §8.1 #4a）、禁止手改；重生成：\
     cd server && BONG_REGEN_CAST_TICKS_SNAPSHOT=1 cargo test technique_cast_ticks_snapshot";
 
@@ -30,11 +30,11 @@ fn snapshot_path() -> PathBuf {
 }
 
 fn definitions_cast_map() -> BTreeMap<String, u32> {
-    let mut map: BTreeMap<String, u32> = TECHNIQUE_DEFINITIONS
+    let mut map: BTreeMap<String, u32> = TechniqueRegistry::load_for_tests()
         .iter()
         .map(|def| (def.id.to_string(), def.cast_ticks))
         .collect();
-    // plan-skill-anim-fidelity-v1 P4：yidao 5 招不在 TECHNIQUE_DEFINITIONS（功法
+    // plan-skill-anim-fidelity-v1 P4：yidao 5 招不在 TechniqueRegistry（功法
     // 定义表），其 cast 窗由 `yidao_skill_spec().cast_ticks_base` 声明（运行时经
     // `yidao_cast_ticks` 按 mastery/平和色缩放——快照 pin 基准值即可，对拍分类
     // 只依赖 cast ≥ 40 长引导域）。单向生成纪律不变：server 代码 → 快照。
@@ -45,7 +45,7 @@ fn definitions_cast_map() -> BTreeMap<String, u32> {
         let previous = map.insert(skill.skill_id().to_string(), cast_ticks);
         assert!(
             previous.is_none(),
-            "yidao skill_id `{}` 与 TECHNIQUE_DEFINITIONS 撞名——两源合并会静默吞条目",
+            "yidao skill_id `{}` 与 TechniqueRegistry 撞名——两源合并会静默吞条目",
             skill.skill_id()
         );
     }
@@ -65,8 +65,8 @@ fn technique_cast_ticks_snapshot_matches_definitions_exactly() {
     let expected = definitions_cast_map();
     assert_eq!(
         expected.len(),
-        TECHNIQUE_DEFINITIONS.len() + crate::combat::yidao::YidaoSkillId::ALL.len(),
-        "TECHNIQUE_DEFINITIONS / yidao spec 出现重复 id 会让快照吞条目——先修定义表再谈快照"
+        TechniqueRegistry::load_for_tests().len() + crate::combat::yidao::YidaoSkillId::ALL.len(),
+        "TechniqueRegistry / yidao spec 出现重复 id 会让快照吞条目——先修定义表再谈快照"
     );
 
     let path = snapshot_path();

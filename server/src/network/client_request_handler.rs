@@ -47,7 +47,7 @@ use crate::cultivation::dugu::SelfAntidoteIntent;
 use crate::cultivation::forging::ForgeRequest;
 use crate::cultivation::insight::{InsightChosen, InsightRequest};
 use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechniques, TechniqueDefinition,
+    KnownTechniques, TechniqueDefinition, TechniqueRegistry,
 };
 use crate::cultivation::lifespan::LifespanExtensionIntent;
 use crate::cultivation::meridian::severed::{
@@ -229,6 +229,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub unique_ids: Query<'w, 's, &'static UniqueId>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
+    pub technique_registry: Res<'w, TechniqueRegistry>,
     pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
     pub skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
     pub entity_manager: Option<Res<'w, EntityManager>>,
@@ -415,7 +416,8 @@ pub struct SkillScrollRequestParams<'w, 's> {
     pub inscription_scroll_tx: Option<ResMut<'w, Events<InscriptionScrollSubmit>>>,
     pub forge_sessions: Option<Res<'w, ForgeSessions>>,
     pub item_registry: Res<'w, ItemRegistry>,
-    /// plan-forge-session-entry-wiring-v1 §4.1#3 — station_pos → Entity 寻址（对齐
+    pub technique_registry: Res<'w, TechniqueRegistry>,
+    /// forge station 查找：station_pos → Entity 寻址（对齐
     /// `with_owned_furnace_mut` 的 BlockPos 寻址模式）。
     pub forge_stations: Query<'w, 's, (Entity, &'static WeaponForgeStation)>,
     /// plan-forge-session-entry-wiring-v1 §4.1#2 — 翻页后回推 `forge_blueprint_book` 需要
@@ -2252,6 +2254,7 @@ pub fn handle_client_request_payloads(
                     &inventories,
                     &clients,
                     persistence.as_deref(),
+                    &skill_scroll_params.technique_registry,
                     &skill_scroll_params.known_techniques,
                 );
             }
@@ -3161,6 +3164,7 @@ fn handle_learn_technique_scroll(
             skill_scroll_params.race_registry.as_deref(),
         );
         can_learn_technique(
+            &skill_scroll_params.technique_registry,
             known,
             cultivation,
             &meridians,
@@ -3209,6 +3213,7 @@ fn handle_learn_technique_scroll(
             );
             matches!(
                 learn_technique_if_allowed(
+                    &skill_scroll_params.technique_registry,
                     &mut known,
                     cultivation,
                     &meridians,
@@ -3291,7 +3296,13 @@ fn resync_technique_scroll_use(
         );
     }
     if let Ok(known) = skill_scroll_params.known_techniques.get(entity) {
-        send_techniques_snapshot_to_client(entity, &mut client, username.0.as_str(), known);
+        send_techniques_snapshot_to_client(
+            &skill_scroll_params.technique_registry,
+            entity,
+            &mut client,
+            username.0.as_str(),
+            known,
+        );
     }
 }
 
@@ -5620,6 +5631,7 @@ mod tests {
     fn register_request_app(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
         app.insert_resource(SkillMeridianDependencies::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -9207,6 +9219,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_emits_probe_intent() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -9506,6 +9519,7 @@ mod tests {
     #[test]
     fn spirit_niche_coordinate_requests_emit_reveal_intents() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedSpiritNicheCoordinateReveals::default());
         app.insert_resource(CombatClock { tick: 89 });
         app.insert_resource(GameplayActionQueue::default());
@@ -9591,6 +9605,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_out_of_range_is_rejected() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -9779,6 +9794,7 @@ mod tests {
     #[test]
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -9868,6 +9884,7 @@ mod tests {
     #[test]
     fn learn_skill_scroll_duplicate_does_not_consume_item() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -9959,6 +9976,7 @@ mod tests {
     #[test]
     fn learn_blueprint_consumes_scroll_item() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -10504,6 +10522,7 @@ mod tests {
     #[test]
     fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10584,6 +10603,7 @@ mod tests {
     #[test]
     fn forge_inscription_scroll_rejects_invalid_session_before_consuming_item() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10656,6 +10676,7 @@ mod tests {
     #[test]
     fn forge_tempering_hit_emits_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10719,6 +10740,7 @@ mod tests {
     #[test]
     fn forge_tempering_hit_rejects_unknown_beat() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10778,6 +10800,7 @@ mod tests {
     #[test]
     fn forge_consecration_inject_emits_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10841,6 +10864,7 @@ mod tests {
     #[test]
     fn forge_consecration_inject_rejects_negative_qi() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10900,6 +10924,7 @@ mod tests {
     #[test]
     fn forge_step_advance_emits_event() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedStepAdvances::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -10962,6 +10987,7 @@ mod tests {
     #[test]
     fn forge_session_inputs_reject_wrong_caster() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CapturedStepAdvances::default());
@@ -12630,7 +12656,7 @@ mod tests {
             1,
         );
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result =
@@ -12654,7 +12680,7 @@ mod tests {
             lung.integrity = 0.3;
         }
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -12706,7 +12732,7 @@ mod tests {
         ms.get_mut(crate::cultivation::components::MeridianId::Lung)
             .integrity = 1.0;
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -12751,7 +12777,7 @@ mod tests {
             lung.integrity = 0.8; // ≥ min_health=0.5
         }
         let req = [TechniqueRequiredMeridian {
-            channel: "Lung",
+            channel: "Lung".to_string(),
             min_health: 0.5,
         }];
         let result = check_player_skill_meridian_gate("test.skill", &req, &ms, None, None);
@@ -14240,7 +14266,7 @@ fn handle_skill_bar_cast(
         );
         return;
     };
-    let Some(definition) = technique_definition(&skill_id) else {
+    let Some(definition) = combat_params.technique_registry.get(&skill_id).cloned() else {
         tracing::warn!(
             "[bong][network] skill_bar_cast entity={entity:?} slot={slot} dropped: unknown skill `{skill_id}`"
         );
@@ -14387,7 +14413,7 @@ fn handle_skill_bar_cast(
         if let Some(meridians) = meridians_ok {
             if let Err(blocked) = check_player_skill_meridian_gate(
                 &skill_id,
-                definition.required_meridians,
+                &definition.required_meridians,
                 meridians,
                 severed,
                 deps_table,
@@ -14472,7 +14498,7 @@ fn handle_skill_bar_cast(
             entity,
             slot,
             &skill_id,
-            definition,
+            &definition,
             clock,
             commands,
             clients,
@@ -15061,6 +15087,7 @@ fn handle_skill_config_intent_request(
         return;
     };
     let snapshot = match handle_config_intent(
+        &combat_params.technique_registry,
         player_id.as_str(),
         skill_id.as_str(),
         config,
@@ -15122,6 +15149,7 @@ fn handle_skill_bar_bind(
     inventories: &Query<&mut PlayerInventory>,
     clients: &Query<(&Username, &mut Client)>,
     persistence: Option<&PlayerStatePersistence>,
+    technique_registry: &TechniqueRegistry,
     known_techniques: &Query<&mut KnownTechniques>,
 ) {
     if slot >= SkillBarBindings::SLOT_COUNT as u8 {
@@ -15144,7 +15172,7 @@ fn handle_skill_bar_bind(
             SkillSlot::Item { instance_id }
         }
         Some(SkillBarBindingV1::Skill { skill_id }) => {
-            if technique_definition(skill_id).is_none() {
+            if technique_registry.get(skill_id).is_none() {
                 tracing::warn!(
                     "[bong][network] skill_bar_bind entity={entity:?} slot={slot} rejected: unknown skill `{skill_id}`"
                 );
@@ -19670,6 +19698,7 @@ mod freshness_probe_handler_tests {
     /// 镜像 mineral_probe_request_emits_probe_intent 的 app 构造模式。
     fn setup_freshness_probe_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedFreshnessProbes::default());
         app.insert_resource(CombatClock { tick: 42 });
         app.insert_resource(GameplayActionQueue::default());
@@ -20022,6 +20051,7 @@ mod freshness_probe_handler_tests {
 
     fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedRaiseShieldIntents::default());
         app.insert_resource(CapturedLowerShieldIntents::default());
         app.insert_resource(CombatClock::default());

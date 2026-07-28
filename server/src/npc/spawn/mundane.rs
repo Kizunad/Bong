@@ -398,6 +398,9 @@ mod tests {
 
     fn mundane_thinker_scenario_with_kind(kind: MundaneFaunaKind) -> (App, Entity) {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::npc::lifecycle::register(&mut app);
         crate::npc::brain::register(&mut app);
         app.add_event::<crate::combat::events::AttackIntent>();

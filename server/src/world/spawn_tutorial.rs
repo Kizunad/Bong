@@ -430,6 +430,7 @@ fn grant_meridian_primer_on_join(
 fn spawn_tutorial_poi_markers(
     mut commands: Commands,
     mut notices: EventWriter<NpcSpawnNotice>,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     mut skin_pool: Option<ResMut<SkinPool>>,
     providers: Option<Res<TerrainProviders>>,
     layers: Option<Res<DimensionLayers>>,
@@ -512,6 +513,7 @@ fn spawn_tutorial_poi_markers(
                 let patrol_target = first_lingquan.unwrap_or(pos);
                 let entity = spawn_rogue_npc_at(
                     &mut commands,
+                    &technique_registry,
                     NpcSkinSpawnContext::new(
                         skin_pool.as_deref_mut(),
                         NpcSkinFallbackPolicy::AllowFallback,

@@ -455,6 +455,9 @@ mod tests {
     fn setup_app_for_dropped_loot_pickup() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock::default());
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(AlchemyMockState::default());
         app.insert_resource(DroppedLootRegistry::default());
         // plan-remains-suite P0 — DroppedLootRequestParams 新增 EventWriter<RemainsLootIntent>。
