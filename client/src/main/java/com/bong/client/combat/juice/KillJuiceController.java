@@ -58,6 +58,14 @@ public final class KillJuiceController {
         }
     }
 
+    /** 断线时复位旧 session 的击杀慢放与连杀计数。 */
+    public static void clearOnDisconnect() {
+        synchronized (LOCK) {
+            activeKill = KillState.none();
+            multiKill = MultiKillState.empty();
+        }
+    }
+
     public static void resetForTests() {
         synchronized (LOCK) {
             activeKill = KillState.none();

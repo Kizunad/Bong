@@ -22,6 +22,11 @@ public final class SpellVolumeStore {
         snapshot = snapshot.hidden();
     }
 
+    /** Clears local spell-volume controls at the session boundary. */
+    public static void clearOnDisconnect() {
+        snapshot = SpellVolumeState.idle();
+    }
+
     public static void resetForTests() {
         snapshot = SpellVolumeState.idle();
     }

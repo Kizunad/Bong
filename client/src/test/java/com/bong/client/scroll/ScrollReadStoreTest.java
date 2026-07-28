@@ -307,18 +307,36 @@ class ScrollReadStoreTest {
     // ─── 断线兜底 ──────────────────────────────────────────────────────
 
     @Test
-    void clearOnDisconnect_clearsSnapshotButKeepsListeners() {
+    void registryClearClearsSnapshotButKeepsListeners() {
         List<ScrollOpenViewModel> notified = new ArrayList<>();
+        List<ScrollReadStore.ActiveSession> sessionNotified = new ArrayList<>();
         ScrollReadStore.addListener(notified::add);
-        ScrollReadStore.replace(fixture("scroll_disc"));
+        ScrollReadStore.addSessionListener(sessionNotified::add);
+        ScrollOpenViewModel stale = fixture("scroll_disc");
+        ScrollReadStore.replace(stale);
 
         ScrollReadStore.clearOnDisconnect();
 
-        assertNull(ScrollReadStore.snapshot(), "断线后 snapshot 应清空");
-        // 监听器应保留：再次 replace 仍应通知（2 次：open + disconnect-clear，第 3 次是新 open）
-        ScrollReadStore.replace(fixture("scroll_after_disc"));
+        assertNull(ScrollReadStore.snapshot(), "registry clear 后 snapshot 必须为空");
+        assertEquals(2, notified.size(),
+            "registry clear 应向既有 listener 发布 open 与空态");
+        assertSame(stale, notified.get(0), "既有 listener 首次通知必须保留原数据");
+        assertNull(notified.get(1), "registry clear 必须向既有 listener 发布空态");
+        assertEquals(2, sessionNotified.size(),
+            "session listener 必须收到 open 与 registry clear");
+        assertNull(sessionNotified.get(1), "registry clear 必须发布明确空态 session");
+
+        ScrollOpenViewModel fresh = fixture("scroll_after_disc");
+        ScrollReadStore.replace(fresh);
+
+        assertSame(fresh, ScrollReadStore.snapshot(), "新连接的 fresh write 必须正常恢复 Store 数据");
         assertEquals(3, notified.size(),
-            "断线兜底不应拆掉监听器——之后的 replace 仍应正常通知，实际通知次数=" + notified.size());
+            "registry clear 不得拆 listener，fresh write 必须继续通知原 listener");
+        assertSame(stale, notified.get(0), "首条通知必须保持断线前数据");
+        assertNull(notified.get(1), "第二条通知必须是 registry clear 的空态");
+        assertSame(fresh, notified.get(2), "fresh write 必须作为第三条通知送达原 listener");
+        assertSame(fresh, sessionNotified.get(2).viewModel(),
+            "fresh write 必须发布可供 bootstrap 开屏的新 ActiveSession");
     }
 
     @Test

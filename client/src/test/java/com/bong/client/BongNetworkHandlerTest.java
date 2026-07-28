@@ -44,6 +44,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongNetworkHandlerTest {
@@ -61,6 +62,16 @@ public class BongNetworkHandlerTest {
         SearchHudStateStore.resetForTests();
         PlayerStateStore.resetForTests();
         SeasonStateStore.resetForTests();
+    }
+
+    @Test
+    void seasonStoreClearOnDisconnect_restoresSummerBaseline() {
+        SeasonStateStore.replace(new SeasonState(SeasonState.Phase.WINTER, 42L, 1_000L, 2L));
+
+        SeasonStateStore.clearOnDisconnect();
+
+        assertEquals(SeasonState.summerAt(0L), SeasonStateStore.snapshot(),
+            "断线必须移除旧会话的 season payload，恢复无服务端状态的夏季基线");
     }
 
     @Test
@@ -511,9 +522,49 @@ public class BongNetworkHandlerTest {
         );
     }
 
+    @Test
+    void disconnectAdjunctRuntimeFailureDoesNotSkipLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+
+        BongNetworkHandler.runDisconnectCleanups(
+            () -> calls.add("before"),
+            () -> {
+                calls.add("failing");
+                throw new IllegalStateException("recoverable cleanup failure");
+            },
+            () -> calls.add("after")
+        );
+
+        assertEquals(
+            List.of("before", "failing", "after"),
+            calls,
+            "单个 adjunct RuntimeException 必须被隔离，后续 animation/audio/HUD 清理仍要执行"
+        );
+    }
+
+    @Test
+    void disconnectAdjunctErrorStillPropagatesWithoutRunningLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+
+        AssertionError error = assertThrows(
+            AssertionError.class,
+            () -> BongNetworkHandler.runDisconnectCleanups(
+                () -> calls.add("before"),
+                () -> {
+                    calls.add("fatal");
+                    throw new AssertionError("fatal cleanup");
+                },
+                () -> calls.add("after")
+            )
+        );
+
+        assertEquals("fatal cleanup", error.getMessage(), "Error 必须原样透传");
+        assertEquals(List.of("before", "fatal"), calls, "Error 不得伪装成可恢复 RuntimeException");
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 — 断线注册接线断言。
-    // 上面两条用例只驱动 clearClientStateOnDisconnect() helper 本体；若有人把
+    // 上面的 helper 级用例只驱动 clearClientStateOnDisconnect() 本体；若有人把
     // ClientPlayConnectionEvents.DISCONNECT 注册块删掉、或把 helper 里的
     // DuguV2HudStateStore.clearOnDisconnect() 调用移走，helper 级测试依然全绿，
     // 生产态断线清理却已断链。register() 挂的 Fabric DISCONNECT 回调需要活的
@@ -582,6 +633,10 @@ public class BongNetworkHandlerTest {
         List<String> nonStoreHooks = List.of(
             "NpcDialogueBubbleRenderer.clear()",
             "MusicStateMachine.instance().clear()",
+            "SoundRecipePlayer.instance().clearOnDisconnect()",
+            "BongAnimationPlayer.clearOnDisconnect()",
+            "AnimationLayerManager.clearOnDisconnect()",
+            "BongPunchCombo.clearOnDisconnect()",
             "MutationVisualState.reset()",
             "SpiderDisguiseHandler.clearOnDisconnect()",
             "RatQiTierHandler.clearOnDisconnect()",

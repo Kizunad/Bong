@@ -6,7 +6,6 @@ import com.bong.client.skill.SkillId;
 import com.bong.client.skill.SkillSetStore;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.input.Input;
 import net.minecraft.client.option.KeyBinding;
@@ -27,7 +26,6 @@ public final class BotanyHudBootstrap {
         autoHarvestKey();
         ClientTickEvents.START_CLIENT_TICK.register(BotanyHudBootstrap::onStartClientTick);
         ClientTickEvents.END_CLIENT_TICK.register(BotanyHudBootstrap::onEndClientTick);
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(BotanyHudBootstrap::resetOnDisconnect));
         BongClient.LOGGER.info("Botany HUD bootstrap ready: manual via inventory key, auto via R.");
     }
 
@@ -35,13 +33,8 @@ public final class BotanyHudBootstrap {
         return HarvestSessionStore.capturesReservedInput();
     }
 
-    static void resetOnDisconnect() {
-        HarvestSessionStore.clearOnDisconnect();
-        BotanyPlantRenderProfileStore.clearOnDisconnect();
-        BotanyPlantStageVisualStore.clear();
-        com.bong.client.skill.SkillSetStore.clearOnDisconnect();
-        com.bong.client.skill.SkillMilestoneStore.clearOnDisconnect();
-        com.bong.client.skill.SkillRecentEventStore.clearOnDisconnect();
+    public static void clearOnDisconnect() {
+        BotanyDragState.clearOnDisconnect();
     }
 
     private static void onStartClientTick(MinecraftClient client) {

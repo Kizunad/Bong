@@ -8,9 +8,54 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EnvironmentEffectRegistryTest {
+    @Test
+    void controllerDisconnectClearDropsRuntimeStateButPreservesBuiltInBehaviors() {
+        EnvironmentEffectController.resetForTests();
+        EnvironmentEffectController.acceptState(state(1, fog()));
+        EnvironmentEffectRegistry registry = EnvironmentEffectController.registryForTests();
+        assertEquals(1, registry.activeEmitters().size(), "前置：旧 session 的 emitter 必须已写入 controller registry");
+        assertEquals(8, registry.behaviorCount(), "前置：内建 behavior 必须已注册");
+
+        EnvironmentEffectController.clearOnDisconnect();
+        EnvironmentEffectController.clearOnDisconnect();
+
+        assertTrue(registry.activeEmitters().isEmpty(), "断线必须清空旧 world/session 的 active emitter");
+        assertTrue(registry.zoneState("spawn") == null, "断线必须清空旧 session 的 zone state");
+        assertEquals(8, registry.behaviorCount(),
+            "断线只清数据，不得移除进程级内建 behavior registry");
+
+        EnvironmentEffectController.acceptState(state(2, fog()));
+        assertEquals(1, registry.activeEmitters().size(),
+            "新 session 收到首包后必须能复用保留的内建 behavior 重建 emitter");
+    }
+
+    @Test
+    void runtimeClearStillDropsRegistryAtmosphereAndFogWhenAudioCleanupFails() {
+        EnvironmentEffectController.resetForTests();
+        EnvironmentEffectController.acceptState(state(1, fog()));
+        EnvironmentEffectRegistry registry = EnvironmentEffectController.registryForTests();
+        EnvironmentFogController.update(registry.activeEmitters(), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(1, registry.activeEmitters().size(), "前置：旧 session emitter 必须存在");
+        assertTrue(EnvironmentFogController.currentCommand() != null, "前置：旧 session fog command 必须存在");
+
+        IllegalStateException failure = assertThrows(
+            IllegalStateException.class,
+            () -> EnvironmentEffectController.clearRuntimeState(() -> {
+                throw new IllegalStateException("audio failed");
+            })
+        );
+
+        assertEquals("audio failed", failure.getMessage(), "audio RuntimeException 应继续交给中央 adjunct 隔离");
+        assertTrue(registry.activeEmitters().isEmpty(), "audio 失败不得保留旧 emitter");
+        assertTrue(registry.zoneState("spawn") == null, "audio 失败不得保留旧 zone state");
+        assertNull(EnvironmentFogController.currentCommand(), "audio 失败后仍必须清掉旧 fog command");
+    }
+
     @Test
     void emitterRegistersBuiltInBehaviors() {
         EnvironmentEffectRegistry registry = registry();

@@ -1,14 +1,10 @@
 package com.bong.client.inventory;
 
 import com.bong.client.BongClient;
-import com.bong.client.combat.EquippedShieldStore;
-import com.bong.client.combat.TreasureEquippedStore;
-import com.bong.client.combat.WeaponEquippedStore;
 import com.bong.client.cultivation.QiColorObservedStore;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
@@ -18,13 +14,6 @@ public final class InspectScreenBootstrap {
     private InspectScreenBootstrap() {}
 
     public static void register() {
-        // 不在 JOIN 时清空 store —— 否则会与网络线程并发处理的 inventory_snapshot
-        // 形成竞态：JOIN callback 经 client.execute 排队到主线程，期间快照已经到达
-        // 并写入 store；queued task 一执行就把刚到的权威数据 reset 回 loading 态。
-        // disconnect 已经清空，重新连接前 store 是 empty / revision=-1，不需要再清。
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
-            client.execute(InspectScreenBootstrap::clearInventorySnapshot)
-        );
         BongClient.LOGGER.info("Registered inspect screen bootstrap via vanilla E inventory interception");
     }
 
@@ -55,14 +44,6 @@ public final class InspectScreenBootstrap {
 
     static boolean shouldOpenInspectScreen(Screen currentScreen) {
         return !(currentScreen instanceof InspectScreen);
-    }
-
-    static void clearInventorySnapshot() {
-        InventoryStateStore.clearOnDisconnect();
-        WeaponEquippedStore.clearOnDisconnect();
-        EquippedShieldStore.clear();
-        TreasureEquippedStore.clearOnDisconnect();
-        QiColorObservedStore.clear();
     }
 
     static void requestQiColorInspectForCrosshairTarget(MinecraftClient client) {

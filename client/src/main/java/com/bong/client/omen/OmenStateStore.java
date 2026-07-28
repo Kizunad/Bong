@@ -76,6 +76,11 @@ public final class OmenStateStore {
         return new Snapshot(entries);
     }
 
+    /** 断线时仅移除当前会话的 omen 条目。 */
+    public static synchronized void clearOnDisconnect() {
+        entries.clear();
+    }
+
     public static synchronized void resetForTests() {
         entries.clear();
     }

@@ -8,7 +8,6 @@ import com.bong.client.combat.SkillBarStore;
 import com.bong.client.combat.store.DeathStateStore;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
@@ -139,7 +138,7 @@ public final class CastFovController {
     private CastFovController() {
     }
 
-    /** 客户端启动挂钩：cast 转换监听 + tick decay + 断线/切世界 teardown。 */
+    /** 客户端启动挂钩：cast 转换监听、tick decay 与切世界 teardown。 */
     public static void bootstrap() {
         if (!BOOTSTRAPPED.compareAndSet(false, true)) {
             return;
@@ -147,7 +146,6 @@ public final class CastFovController {
         // 必须挂**带来源**的监听：Consumer 版拿不到 Origin，会把本地预测当成 accepted。
         CastStateStore.addTransitionListener(CastFovController::onCastState);
         ClientTickEvents.END_CLIENT_TICK.register(client -> tick());
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> teardown());
         // 切世界（跨维度 / 换服）：vanilla 不重建 ClientPlayNetworkHandler，只发 PlayerRespawn
         // 换掉 ClientWorld，故 DISCONNECT / JOIN 都**不触发**。Fabric 在 onPlayerRespawn、
         // onGameJoin、clearWorld 三处对**旧世界**全量 emit ENTITY_UNLOAD，本地玩家实体被卸载
@@ -678,6 +676,16 @@ public final class CastFovController {
                 pulse = null;  // 脉冲自然结束 → 回 idle
             }
         }
+    }
+
+    /**
+     * 断线专用数据清理入口，由 token-gated 中央网络生命周期调用。
+     *
+     * <p>与切世界 / 死亡共用同一运行态终结语义；不会复位 listener、时钟 / 本地玩家测试 seam
+     * 或 {@link JuiceConfig} 的玩家配置。
+     */
+    public static void clearOnDisconnect() {
+        teardown();
     }
 
     /**

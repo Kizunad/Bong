@@ -28,6 +28,13 @@ public final class PhysicalBodyStore {
     public static void addListener(Consumer<PhysicalBody> listener) { listeners.add(listener); }
     public static void removeListener(Consumer<PhysicalBody> listener) { listeners.remove(listener); }
 
+    /**
+     * 断线时仅清当前会话快照，保留长期 UI listener wiring。
+     */
+    public static void clearOnDisconnect() {
+        replace(null);
+    }
+
     public static void resetForTests() {
         snapshot = null;
         listeners.clear();
