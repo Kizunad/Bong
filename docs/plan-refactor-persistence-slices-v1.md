@@ -37,7 +37,7 @@
 
 ## 阶段
 
-- ⏳ P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；在 `server/src/persistence/slice.rs` 冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save-before-load、注入时钟、tick rebase 与 domain-bound dirty receipt；不迁移生产 slice。
+- ✅ 2026-07-28 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save-before-load、注入时钟、tick rebase 与 subject-bound dirty receipt；14 个 contract-pin tests 覆盖注册冲突、失败隔离、写资格、重连顺序、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
 - ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
 - ⬜ P3 关服 flush + tick rebase 批次：shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
