@@ -1,4 +1,7 @@
-# plan-bughunt-r9-findings-v1（骨架）
+# plan-bughunt-r9-findings-v1（已归档）
+
+> **归档说明（2026-07-28）**：除本说明与文末 Round bundle triage 外，下列正文完整保留本 plan 在冻结基线 `origin/main @ c625d5a5` 上的原始阶段、决议、测试与审计记录；正文里的 “Active / 骨架 / ⬜ / 开放问题” 是历史状态。当前唯一实施归属以文末 `Finding Mapping` 为准，移交 successor 的条目仍未实施，不因本 bundle 归档而视为完成。
+
 
 > **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round9**（fresh origin/main worktree ROOT，角度：zhenfa 阵法新代码 · client 渲染/资源包 · payload 往返 · Bevy 时序 · dev 命令泄漏）确认的 **6 个新真 bug**——含 **player-facing HUD 错（spirit_qi_max 未下发 → 固元及以上境界真元条分母恒为 100）** + 涡流全 6 招缺 atlas 条目无贴图 + 拟态灰烬蛛常驻缺贴图 + 散灵珠 ledger 僵尸账户（zhenfa 新子系统）。已对 r1-r8 去重，全部 real-on-main。
 
@@ -41,3 +44,28 @@
 ## 审计来源
 
 bug-hunt round9（workflow，5 全新角度 finder + 怀疑者对抗 + opus 逐条全树复核，11 候选）。**ROOT = fresh origin/main worktree**（方法论修正后第七轮）。已对 r1-r8 去重。**report-only**：#6 spirit_qi_max 是 player-facing HUD 错（中高境界真元条恒满），优先；#2/#3 资产/atlas 缺失 + #1 zhenfa ledger 局部明确可 fix_pr；#4/#5 技能图标是美术 backlog，建议统一 gen-image plan。**本轮转向**：资产纹理/HUD payload/zhenfa 新代码均 r1-r8 未碰，证明换全新角度仍有真问题；同时 5 条 NOT_REAL（含 dev 命令无认证=文档化设计）显示严格裁决持续有效。
+
+---
+
+## 2026-07-28 Round bundle finding triage
+
+本节是 master §6.16 / §7 一次性 docs-only 归档移交记录；上文未实施 finding 只有在下表登记唯一 owner 后才退出原聚合队列。
+
+## Finding Mapping
+
+| Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
+|---|---|---|---|---|
+| #6 `spirit_qi_max` 未下发 | `server/src/player/state.rs:265` 当前 emit `cultivation.qi_max`，`server/src/player/state.rs:5907-5918` 有 payload pin；`client/src/main/java/com/bong/client/network/ProtoServerDataBridge.java:54,324-325` 路由 `PLAYER_STATE`，`client/src/main/java/com/bong/client/network/PlayerStateHandler.java:23-30,62-92` 强制读取并携带 `spirit_qi_max`，`client/src/main/java/com/bong/client/BongNetworkHandler.java:1054-1056` 写入 `PlayerStateStore`，`client/src/main/java/com/bong/client/ui/CultivationScreenBootstrap.java:66-71` 读取该 store 且 `client/src/main/java/com/bong/client/ui/CultivationScreen.java:71-80` 最终显示 current/max；`client/src/test/java/com/bong/client/network/PlayerStateHandlerTest.java:50-67` 锁定非默认 max=300 | `already-fixed/invalid`（already-fixed） | `9cfdfe0f7` / PR #700 | 仅归档 |
+| #2 vortex particle atlas | `client/src/main/resources/assets/minecraft/atlases/particles.json:209` 已含 `bong:particle/vortex_spiral`，并有 asset/reconciliation tests | `already-fixed/invalid`（already-fixed） | `754b8c3fa`/#838；test hardening `1294cfc0b`/#1079 | 仅归档 |
+| #3 ash spider disguise texture | `client/src/main/java/com/bong/client/fauna/FaunaModel.java:31-35` 声明 `ash_spider_disguised.png`，`client/src/test/java/com/bong/client/fauna/FaunaModelDisguiseTest.java:38-64` 验证当前资产路径/存在性 | `already-fixed/invalid`（already-fixed） | `1285f79a0` / PR #674 | 仅归档 |
+| #1 scatter-bead ledger zombie | `server/src/zhenfa/mod.rs:215-229,2589-2647` 主动成功链移除 burial 后不删 account；`server/src/zhenfa/mod.rs:2726-2734` 自然耗尽同样只删 burial；canonical API 在 `server/src/qi_physics/ledger.rs:404-405` | `independent-domain-fix` | successor 短名 `plan-bughunt-scatter-bead-ledger-account-cleanup-v1` | 后续单独 docs PR 第一性冻结 qi-ledger 语义；本 PR 不创建；`server/src/zhenfa/mod.rs:2528-2537` 仅是失败 rollback |
+| #4 38 个 skill icon 缺失 | 当前 `server/src/cultivation/known_techniques.rs:6-14` 已把多数技能重链到 `gui/items/skill_scroll_*` 单一真源，磁盘资产与 snapshot test 对拍 | `already-fixed/invalid`（already-fixed） | `9d2e29d08`/#1220 + `001bbe7d8`/#1222 | 旧 `gui/skill` 计数不再是 canonical 缺口 |
+| #5 tuike 三 icon 缺失 | 当前磁盘有 `skill_scroll_tuike_{don,shed,transfer_taint}.png`，`client/src/test/resources/bong/technique_icon_snapshot.json:32-34` pin 三路径 | `already-fixed/invalid`（already-fixed） | 同 PR #1220/#1222 | 与 #4 同修 |
+
+## Finish Evidence
+
+- **落地清单**：五条 merged 修复结案；scatter bead 记录后续 successor 短名（尚未立 skeleton）；bundle 迁入本路径。
+- **关键 commit / PR**：`9cfdfe0f7`/#700、`754b8c3fa`/#838、`1294cfc0b`/#1079、`1285f79a0`/#674、`9d2e29d08`/#1220、`001bbe7d8`/#1222；均从当前路径反查并验证在目标 HEAD 祖先链。
+- **测试结果**：docs-only triage；不复跑 client/server gate，最终执行 docs static gate + exact-HEAD validator。
+- **跨仓库核验**：PlayerState server→client 字段、particle atlas、fauna texture、canonical technique icon snapshot 均核对。
+- **遗留 / 后续**：仅 scatter-bead runtime account lifecycle，等待独立 docs PR 建立 focused successor 后实施；restart persistence 仍归既有 `plan-bughunt-scatter-bead-burial-restart-loss-v1`，两者不重复。

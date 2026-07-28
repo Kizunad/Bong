@@ -1,4 +1,7 @@
-# plan-bughunt-r6-findings-v1（active）
+# plan-bughunt-r6-findings-v1（已归档）
+
+> **归档说明（2026-07-28）**：除本说明与文末 Round bundle triage 外，下列正文完整保留本 plan 在冻结基线 `origin/main @ c625d5a5` 上的原始阶段、决议、测试与审计记录；正文里的 “Active / 骨架 / ⬜ / 开放问题” 是历史状态。当前唯一实施归属以文末 `Finding Mapping` 为准，移交 successor 的条目仍未实施，不因本 bundle 归档而视为完成。
+
 
 > **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round6**（fresh origin/main worktree ROOT，换角度：alchemy 炼丹链 · botany/shelflife · 渡劫 wave 状态机 · 装备 equip · agent Arbiter/WorldModel）确认的 **4 个新真 bug**——含 **1 critical（register_mundane_armors 撞 JSON ID 早退 → 16 种凡甲永不入 registry 静默零防御）**。已对 r1-r5 去重，全部 real-on-main。
 
@@ -40,3 +43,27 @@
 ## 审计来源
 
 bug-hunt round6（workflow，5 全新角度 finder + 怀疑者对抗 + opus 裁决，11 候选）。**ROOT = fresh origin/main worktree**（方法论修正后第四轮）。已对 r1-r5 去重（无一重复）。**report-only**：critical 凡甲零防御优先；#8 局部明确可直接 fix_pr，#0/#1/#4/#6 需 alchemy effect 接入层/容器接线/渡劫清理设计。**健康信号**：本轮 4 REAL / 7 NOT_REAL，NOT_REAL 比例较前几轮升高，提示易发 bug 趋于枯竭、去重机制有效——后续轮次应转向更深的集成/registry 健壮性/系统调度角度。
+
+---
+
+## 2026-07-28 Round bundle finding triage
+
+本节是 master §6.16 / §7 一次性 docs-only 归档移交记录；上文未实施 finding 只有在下表登记唯一 owner 后才退出原聚合队列。
+
+## Finding Mapping
+
+| Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
+|---|---|---|---|---|
+| #8 mundane armor duplicate 早退 | `server/src/armor/mundane.rs:249-270` 当前 duplicate 走 skip-on-duplicate；`server/src/armor/mundane.rs:315-352,371-380` 覆盖非空 registry | `already-fixed/invalid`（already-fixed） | `e42092c11` / PR #1068 | 仅归档 |
+| #0 `ContaminationBoost` 无 consumer | `server/src/alchemy/side_effect_apply.rs:25` 仍生产；`server/src/cultivation/contamination.rs:97-205` 的 tick query/公式不读 `StatusEffects` | `independent-domain-fix` | successor 短名 `plan-bughunt-modifier-effect-consumer-completion-v1`（alchemy effect 域） | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| #1 JinZhongDan negative slot 极性 | `server/src/alchemy/pill.rs:632-642` negative duration 仍 push 正向 `QiRegenBoost`；当前 regen consumer 会把它变成增益 | `independent-domain-fix` | 同一 successor 短名 | 与 #0 同一 effect/极性批次；后续 skeleton 自洽收口 |
+| #4 Freeze 容器接线 | `server/src/shelflife/container.rs:82,94` helper 存在；`server/src/network/client_request_handler.rs:18079` 消费仍硬编码 `Normal` | `independent-domain-fix` | 现有 active `docs/plan-container-filter-and-completion-v1.md` P2 | 既有 canonical owner；本 PR 不改其正文 |
+| #6 `JueBiAfterDuXuQuota` 泄漏 | `server/src/cultivation/tribulation.rs:305,949,3177` marker 插入/读取存在，终止态尚无统一 cleanup invariant | `independent-domain-fix` | successor 短名 `plan-bughunt-duxu-juebi-quota-marker-lifecycle-v1` | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+
+## Finish Evidence
+
+- **落地清单**：alchemy 两项记录统一 modifier/effect successor 短名；Freeze 指向既有 container P2；JueBi marker 记录独立 successor 短名（新 skeleton 均不在本 PR 创建）；bundle 迁入本路径。
+- **关键 commit / PR**：凡甲修复 `e42092c11` / PR #1068 已验证为目标 HEAD 祖先且当前行为保留。
+- **测试结果**：docs-only triage；最终以 docs static gates + exact-HEAD validator 验收。
+- **跨仓库核验**：纯 server finding；Freeze owner 的后续 P2 仍按 inventory/shelflife 契约执行，无本次 wire 修改。
+- **遗留 / 后续**：四条 live finding 已记录 owner 类别或 successor 短名；新 skeleton 均等待后续独立 docs PR；本 bundle 禁止再消费。

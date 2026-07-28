@@ -1,4 +1,7 @@
-# plan-bughunt-r7-findings-v1（active）
+# plan-bughunt-r7-findings-v1（已归档）
+
+> **归档说明（2026-07-28）**：除本说明与文末 Round bundle triage 外，下列正文完整保留本 plan 在冻结基线 `origin/main @ c625d5a5` 上的原始阶段、决议、测试与审计记录；正文里的 “Active / 骨架 / ⬜ / 开放问题” 是历史状态。当前唯一实施归属以文末 `Finding Mapping` 为准，移交 successor 的条目仍未实施，不因本 bundle 归档而视为完成。
+
 
 > **Active（已从 skeleton 升级，待逐项消费）**。一句话主题：代码库自检 bug-hunt **round7**（fresh origin/main worktree ROOT，转深角度：registry 注册健壮性 · 跨子系统多跳集成链 · Bevy 系统调度 · Redis IPC 往返 · client 输入/屏幕生命周期）确认的 **10 个新真 bug**——含**重磅系统发现：InsightModifiers 五字段全断链（顿悟投资的通用天赋 modifier 写入却无任何系统读取 → insight 投资全失效）**。已对 r1-r6 去重，全部 real-on-main。
 
@@ -44,3 +47,32 @@
 ## 审计来源
 
 bug-hunt round7（workflow，5 深角度 finder + 怀疑者对抗 + opus 逐条全树复核，15 候选）。**ROOT = fresh origin/main worktree**（方法论修正后第五轮）。已对 r1-r6 去重。**report-only**：InsightModifiers 五字段断链是本轮最大系统发现（顿悟投资全失效），建议与 r4/r6 effect 孤岛合并统一接入层；#9 client UI 关屏泄漏次之；P2 三条文档漂移可合机械 fix。**深角度转向有效**：registry/集成链/client 生命周期挖出 10 个全新真 bug，证明浅层枯竭后转深仍有富矿。
+
+---
+
+## 2026-07-28 Round bundle finding triage
+
+本节是 master §6.16 / §7 一次性 docs-only 归档移交记录；上文未实施 finding 只有在下表登记唯一 owner 后才退出原聚合队列。
+
+## Finding Mapping
+
+| Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
+|---|---|---|---|---|
+| #3 `qi_regen_mul` | `server/src/cultivation/insight_apply.rs:25,127` 仍只有定义/写入，无 regen production consumer | `independent-domain-fix` | successor 短名 `plan-bughunt-modifier-effect-consumer-completion-v1`（Insight 域） | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| #4 `next_breakthrough_bonus` | `server/src/cultivation/insight_apply.rs:27,159` 写入；breakthrough 主循环仍不读 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #5 `vortex_backfire_resist_mul` | `server/src/cultivation/insight_apply.rs:36,178` 写入；woliu backfire 主循环不读 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #6 `vortex_delta_bonus_add` | `server/src/cultivation/insight_apply.rs:38,184` 写入；vortex delta 仍取 realm 基值 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #7 `vortex_flow_speed_mul` | `server/src/cultivation/insight_apply.rs:40,190` 写入；无 production flow-speed consumer | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #9 AgentUiStore close 泄漏 | `client/src/main/java/com/bong/client/agentui/AgentUiScreen.java:252,266` 两条关闭路径都调用 `AgentUiStore.clearIfActive` | `already-fixed/invalid`（already-fixed） | `f6d422250` / PR #709 | 仅归档 |
+| #10 Botany LEFT RELEASE stale drag | `client/src/main/java/com/bong/client/mixin/MixinMouse.java:99-118` 的 screen-open 早退先于 `BotanyDragState.onLeftButton`，仍可漏收 release | `independent-domain-fix` | successor 短名 `plan-bughunt-botany-drag-release-lifecycle-v1` | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| #2 duplicate skill registration | `server/src/cultivation/skill_registry.rs:85-92` 当前 duplicate registration assert fail-closed，`server/src/cultivation/skill_registry.rs:200-215` 有专属 panic test，旧静默覆盖路径已删除 | `already-fixed/invalid`（already-fixed） | `fca6cdb30` / PR #711 | 仅归档 |
+| #7chat PLAYER_CHAT 注释 | `agent/packages/schema/src/channels.ts:7-10` 当前注明 LRANGE/LTRIM batch drain | `already-fixed/invalid`（already-fixed） | `15a34ba4e` / PR #708 | 仅归档 |
+| #8 Agent UI error union | `agent/packages/schema/src/payloads/agent-ui.ts:99-110` 已含 `invalid_command`、`xml_sanitize_failed` | `already-fixed/invalid`（already-fixed） | `ac998e6fa` / PR #707 | 仅归档 |
+
+## Finish Evidence
+
+- **落地清单**：五个 Insight finding 记录统一 successor 短名；Botany 记录独立 successor 短名（均尚未立 skeleton）；四个已修 finding 结案；bundle 迁入本路径。
+- **关键 commit / PR**：`f6d422250`/#709、`fca6cdb30`/#711、`15a34ba4e`/#708、`ac998e6fa`/#707 均为目标 HEAD 祖先且当前修复存在。
+- **测试结果**：docs-only triage；最终以 docs static gates + exact-HEAD validator 验收。
+- **跨仓库核验**：server Insight/registry、client Agent UI/Botany、agent TypeBox/channels 均逐条对拍。
+- **遗留 / 后续**：Insight 五字段与 Botany 输入生命周期已记录 successor 短名，等待各自后续 docs PR；本 bundle 禁止再消费。
