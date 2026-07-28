@@ -77,29 +77,62 @@ class ScrollReadScreenBootstrapTest {
     }
 
     @Test
-    void disconnectInvalidatesQueuedOpenBeforeItCanSetScreen() {
+    void disconnectInvalidatesQueuedOpenBeforeRegistryClearsData() {
         List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
         List<Screen> setScreens = new ArrayList<>();
         ScrollReadStore.addSessionListener(sessions::add);
-        ScrollReadStore.replace(fixture("正文"));
+        ScrollOpenViewModel model = fixture("正文");
+        ScrollReadStore.replace(model);
         ScrollReadStore.ActiveSession queuedOpen = sessions.get(0);
 
         ScrollReadScreenBootstrap.onDisconnect();
         ScrollReadScreenBootstrap.applyStoreChange(null, null, setScreens::add, queuedOpen);
 
-        assertNull(ScrollReadStore.snapshot(),
-            "disconnect 回调返回前必须同步使阅读 session 失效");
+        assertSame(model, ScrollReadStore.snapshot(),
+            "bootstrap DISCONNECT 只可同步失活 UI 身份，数据快照必须留给集中 registry 清理");
+        assertEquals(1, sessions.size(),
+            "身份失活不得自行发布 clear 通知或重复安排视觉清理，实际通知=" + sessions);
+        assertFalse(ScrollReadStore.isCurrent(queuedOpen),
+            "disconnect 回调返回前必须同步使已排队阅读 session 失效");
         assertTrue(setScreens.isEmpty(),
             "断线前排队的 open 任务不得在断线后开屏，实际 setScreen=" + setScreens);
     }
 
     @Test
-    void lateClearTaskAfterReopenDoesNotCloseNewSession() {
+    void registryClearAfterIdentityInvalidationAllowsFreshSessionToOpen() {
+        List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
+        List<Screen> setScreens = new ArrayList<>();
+        ScrollReadStore.addSessionListener(sessions::add);
+        ScrollOpenViewModel oldModel = fixture("旧正文");
+        ScrollReadStore.replace(oldModel);
+        ScrollReadStore.ActiveSession oldSession = sessions.get(0);
+        ScrollReadScreen oldScreen = new ScrollReadScreen(oldModel, oldSession.token());
+
+        ScrollReadScreenBootstrap.onDisconnect();
+        ScrollReadStore.clearOnDisconnect();
+        ScrollOpenViewModel freshModel = fixture("新正文");
+        ScrollReadStore.replace(freshModel);
+        ScrollReadStore.ActiveSession freshSession = sessions.get(2);
+
+        ScrollReadScreenBootstrap.applyStoreChange(null, null, setScreens::add, freshSession);
+        oldScreen.close();
+
+        assertEquals(1, setScreens.size(),
+            "集中 clear 后新 session 的当前 open 必须恰好开一次屏，实际=" + setScreens);
+        assertTrue(ScrollReadScreenBootstrap.belongsToSession(setScreens.get(0), freshSession),
+            "新开的 screen 必须绑定 fresh token，不能复用断线前身份");
+        assertSame(freshModel, ScrollReadStore.snapshot(),
+            "旧 screen 关闭不得结算集中 clear 后重开的 fresh session");
+    }
+
+    @Test
+    void lateRegistryClearTaskAfterReopenDoesNotCloseNewSession() {
         List<ScrollReadStore.ActiveSession> sessions = new ArrayList<>();
         List<Screen> setScreens = new ArrayList<>();
         ScrollReadStore.addSessionListener(sessions::add);
         ScrollReadStore.replace(fixture("旧会话"));
         ScrollReadScreenBootstrap.onDisconnect();
+        ScrollReadStore.clearOnDisconnect();
         ScrollOpenViewModel reopenedModel = fixture("重开会话");
         ScrollReadStore.replace(reopenedModel);
         ScrollReadStore.ActiveSession reopened = sessions.get(2);
@@ -113,9 +146,9 @@ class ScrollReadScreenBootstrapTest {
         );
 
         assertSame(reopenedModel, ScrollReadStore.snapshot(),
-            "迟到的 clear 任务不得清理后来重开的 session");
+            "迟到的 registry clear 任务不得清理后来重开的 session");
         assertTrue(setScreens.isEmpty(),
-            "迟到的 clear 任务不得关闭新 screen，实际 setScreen=" + setScreens);
+            "迟到的 registry clear 任务不得关闭新 screen，实际 setScreen=" + setScreens);
     }
 
     @Test
