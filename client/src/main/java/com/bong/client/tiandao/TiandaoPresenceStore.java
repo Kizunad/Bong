@@ -22,11 +22,7 @@ public final class TiandaoPresenceStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         clear();
-
     }
 }

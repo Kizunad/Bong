@@ -19,12 +19,8 @@ public final class TsyDeathVfxStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         reset();
-
     }
 
     public static void resetForTests() {

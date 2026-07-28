@@ -26,7 +26,6 @@ public final class BongHudStateStore {
         snapshot = BongHudStateSnapshot.empty();
     }
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
     public static void clearOnDisconnect() {
         clear();
     }

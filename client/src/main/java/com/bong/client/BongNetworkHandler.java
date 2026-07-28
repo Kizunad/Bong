@@ -1201,10 +1201,14 @@ public class BongNetworkHandler {
             try {
                 cleanup.action().run();
             } catch (RuntimeException exception) {
-                failureHandler.accept(new DisconnectCleanupFailure(
-                    cleanup.resourceIdentity(),
-                    exception
-                ));
+                try {
+                    failureHandler.accept(new DisconnectCleanupFailure(
+                        cleanup.resourceIdentity(),
+                        exception
+                    ));
+                } catch (RuntimeException reportingFailure) {
+                    exception.addSuppressed(reportingFailure);
+                }
             }
         }
     }

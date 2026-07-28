@@ -571,6 +571,99 @@ public class BongNetworkHandlerTest {
     }
 
     @Test
+    void disconnectAdjunctReporterRuntimeFailureDoesNotSkipLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+        IllegalStateException reportingFailure = new IllegalStateException("reporter failed");
+        IllegalStateException cleanupFailure = new IllegalStateException("cleanup failed");
+
+        BongNetworkHandler.runDisconnectCleanups(
+            failure -> {
+                calls.add("reporting:" + failure.resourceIdentity());
+                throw reportingFailure;
+            },
+            new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
+                calls.add("failing");
+                throw cleanupFailure;
+            }),
+            new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
+        );
+
+        assertEquals(
+            List.of("failing", "reporting:test.failing", "after"),
+            calls,
+            "reporter RuntimeException 也必须被隔离，后续 adjunct 清理仍要执行"
+        );
+        assertEquals(
+            List.of(reportingFailure),
+            List.of(cleanupFailure.getSuppressed()),
+            "reporter RuntimeException 应附着到原 cleanup 异常，保留诊断证据"
+        );
+    }
+
+    @Test
+    void disconnectAdjunctReporterErrorStillPropagatesWithoutRunningLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+
+        AssertionError error = assertThrows(
+            AssertionError.class,
+            () -> BongNetworkHandler.runDisconnectCleanups(
+                failure -> {
+                    calls.add("reporting:" + failure.resourceIdentity());
+                    throw new AssertionError("fatal reporter");
+                },
+                new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
+                    calls.add("failing");
+                    throw new IllegalStateException("cleanup failed");
+                }),
+                new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
+            )
+        );
+
+        assertEquals("fatal reporter", error.getMessage(), "reporter Error 必须原样透传");
+        assertEquals(
+            List.of("failing", "reporting:test.failing"),
+            calls,
+            "reporter Error 后不得继续执行后续 cleanup"
+        );
+    }
+
+    @Test
+    void disconnectCleanupRejectsInvalidContractInputs() {
+        assertThrows(NullPointerException.class,
+            () -> BongNetworkHandler.cleanup(null, () -> { }));
+        assertThrows(NullPointerException.class,
+            () -> BongNetworkHandler.cleanup(BongToast.class, null));
+        assertThrows(NullPointerException.class,
+            () -> new BongNetworkHandler.DisconnectCleanup(null, () -> { }));
+        assertThrows(IllegalArgumentException.class,
+            () -> new BongNetworkHandler.DisconnectCleanup("", () -> { }));
+        assertThrows(IllegalArgumentException.class,
+            () -> new BongNetworkHandler.DisconnectCleanup("   ", () -> { }));
+        assertThrows(NullPointerException.class,
+            () -> new BongNetworkHandler.DisconnectCleanup("test", null));
+        assertThrows(NullPointerException.class,
+            () -> BongNetworkHandler.runDisconnectCleanups(
+                (java.util.function.Consumer<BongNetworkHandler.DisconnectCleanupFailure>) null,
+                new BongNetworkHandler.DisconnectCleanup("test", () -> { })
+            ));
+        assertThrows(NullPointerException.class,
+            () -> BongNetworkHandler.runDisconnectCleanups(
+                failure -> { },
+                (BongNetworkHandler.DisconnectCleanup[]) null
+            ));
+        assertThrows(NullPointerException.class,
+            () -> BongNetworkHandler.runDisconnectCleanups(
+                failure -> { },
+                new BongNetworkHandler.DisconnectCleanup[] {null}
+            ));
+        assertThrows(NullPointerException.class,
+            () -> new BongNetworkHandler.DisconnectCleanupFailure(null,
+                new IllegalStateException("failure")));
+        assertThrows(NullPointerException.class,
+            () -> new BongNetworkHandler.DisconnectCleanupFailure("test", null));
+    }
+
+    @Test
     void disconnectAdjunctErrorStillPropagatesWithoutRunningLaterCleanup() {
         List<String> calls = new java.util.ArrayList<>();
         List<BongNetworkHandler.DisconnectCleanupFailure> failures = new java.util.ArrayList<>();
@@ -693,10 +786,24 @@ public class BongNetworkHandlerTest {
         for (String storeFqcn : ClientStoreScopeManifest.registryManagedSessionStores()) {
             String storeType = storeFqcn.substring(storeFqcn.lastIndexOf('.') + 1);
             assertFalse(
-                clearHelper.contains(storeType + "."),
-                storeType + " 应只由 registry adapter 清理，helper 不得保留任何 direct call"
+                referencesStoreType(clearHelper, storeType),
+                storeType + " 应只由 registry adapter 清理，helper 不得保留 point call、method reference 或 class identity"
             );
         }
+    }
+
+    @Test
+    void storeReferenceGuardRejectsPointCallsMethodReferencesAndClassIdentities() {
+        assertFalse(referencesStoreType("cleanup(Other.class, Other::clear)", "LootContainerStateStore"));
+        assertTrue(referencesStoreType("LootContainerStateStore.clearOnDisconnect()", "LootContainerStateStore"));
+        assertTrue(referencesStoreType("LootContainerStateStore::clearOnDisconnect", "LootContainerStateStore"));
+        assertTrue(referencesStoreType("cleanup(LootContainerStateStore.class, action)", "LootContainerStateStore"));
+    }
+
+    private static boolean referencesStoreType(String source, String storeType) {
+        return source.contains(storeType + ".")
+            || source.contains(storeType + "::")
+            || source.contains(storeType + ".class");
     }
 
     private static Envelope.PlayerState.Builder seasonAuditPlayerState() {

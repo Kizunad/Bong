@@ -31,7 +31,6 @@ public final class AgentUiVfxStore {
         current = null;
     }
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
     public static void clearOnDisconnect() {
         clear();
     }

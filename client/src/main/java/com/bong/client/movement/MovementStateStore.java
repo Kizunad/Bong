@@ -39,12 +39,8 @@ public final class MovementStateStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static synchronized void clearOnDisconnect() {
-
         clear();
-
     }
 
     public static void resetForTests() {

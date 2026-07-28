@@ -75,13 +75,12 @@ public final class LootContainerStateStore {
         current = null;
     }
 
-
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
-        clear();
-
+        Session previous = current;
+        current = null;
+        if (previous instanceof OpenSession open) {
+            notifyListeners(new Closed(open.sessionId(), "disconnect"));
+        }
     }
 
     public static void addListener(Listener listener) {

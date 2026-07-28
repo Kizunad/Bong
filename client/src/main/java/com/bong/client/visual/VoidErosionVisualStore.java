@@ -86,7 +86,6 @@ public final class VoidErosionVisualStore {
         STATES.clear();
     }
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
     public static void clearOnDisconnect() {
         reset();
     }

@@ -157,12 +157,8 @@ public final class AnqiHudStateStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         clear();
-
     }
 
     // ─── 遗留兼容：replace(state)（仅测试向后兼容，生产已改 updateXxx） ─

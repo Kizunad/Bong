@@ -62,11 +62,7 @@ public final class PoisonTraitHudStateStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         clear();
-
     }
 }

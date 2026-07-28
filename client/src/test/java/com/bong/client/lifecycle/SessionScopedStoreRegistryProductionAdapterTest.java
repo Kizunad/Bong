@@ -187,11 +187,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SessionScopedStoreRegistryProductionAdapterTest {
@@ -929,7 +931,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionRegisteredStoreCleanersNeverCallTestResetVariants() throws Exception {
+    void productionRegisteredStoreCleanersNeverReachTestResetVariants() throws Exception {
         String registrySource = Files.readString(
             productionSourceRoot().resolve("com/bong/client/lifecycle/SessionScopedStoreRegistry.java")
         );
@@ -943,14 +945,53 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             );
             Path source = productionSourceRoot().resolve(handle.fqcn().replace('.', '/') + ".java");
             assertTrue(Files.exists(source), "registry handle 必须对应 production Store source：" + handle.fqcn());
-            String method = staticVoidMethod(Files.readString(source), cleanerNames.get(0));
-            assertFalse(method.contains("resetForTests("),
-                handle.fqcn() + " 的 production cleaner 不得调用 resetForTests");
-            assertFalse(method.contains("resetForTest("),
-                handle.fqcn() + " 的 production cleaner 不得调用 resetForTest");
-            assertFalse(method.contains("clearForTests("),
-                handle.fqcn() + " 的 production cleaner 不得调用 clearForTests");
+            assertProductionCleanerChainRejectsTestResets(
+                Files.readString(source),
+                cleanerNames.get(0),
+                handle.fqcn()
+            );
         }
+    }
+
+    @Test
+    void productionCleanerChainGuardRejectsIndirectTestResetDelegation() {
+        String indirectReset = """
+            public final class FixtureStore {
+                public static void clearOnDisconnect() { clear(); }
+                public static void clear() { resetForTests(); }
+                public static void resetForTests() { }
+            }
+            """;
+
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> assertProductionCleanerChainRejectsTestResets(
+                indirectReset,
+                "clearOnDisconnect",
+                "FixtureStore"
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("resetForTests"),
+            "负向 fixture 必须证明一次委托后的 test reset 仍会撞红；实际=" + failure.getMessage()
+        );
+    }
+
+    @Test
+    void productionCleanerChainGuardHandlesRecursiveHelperCycles() {
+        String recursiveCycle = """
+            public final class FixtureStore {
+                public static void clearOnDisconnect() { clear(); }
+                public static void clear() { helper(); }
+                public static void helper() { clear(); }
+            }
+            """;
+
+        assertDoesNotThrow(() -> assertProductionCleanerChainRejectsTestResets(
+            recursiveCycle,
+            "clearOnDisconnect",
+            "FixtureStore"
+        ));
     }
 
     @Test
@@ -1339,6 +1380,48 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             names.add(matcher.group(1));
         }
         return names;
+    }
+
+    private static void assertProductionCleanerChainRejectsTestResets(
+        String source,
+        String entryMethod,
+        String storeIdentity
+    ) {
+        java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>();
+        java.util.Set<String> visited = new java.util.HashSet<>();
+        pending.add(entryMethod);
+        while (!pending.isEmpty()) {
+            String methodName = pending.removeFirst();
+            if (!visited.add(methodName)) {
+                continue;
+            }
+            String method = staticVoidMethod(source, methodName);
+            for (String forbidden : List.of("resetForTests", "resetForTest", "clearForTests")) {
+                assertFalse(
+                    method.contains(forbidden + "("),
+                    storeIdentity + " 的 production cleaner 委托链不得调用 " + forbidden
+                        + "；可达方法=" + visited
+                );
+            }
+            java.util.regex.Matcher call = java.util.regex.Pattern.compile(
+                "(?<![.\\w])([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(\\s*\\)"
+            ).matcher(method.substring(method.indexOf('{') + 1));
+            while (call.find()) {
+                String callee = call.group(1);
+                if (!visited.contains(callee) && hasStaticVoidMethod(source, callee)) {
+                    pending.addLast(callee);
+                }
+            }
+        }
+    }
+
+    private static boolean hasStaticVoidMethod(String source, String methodName) {
+        java.util.regex.Pattern signature = java.util.regex.Pattern.compile(
+            "(?:public|protected|private)?\\s*static\\s+(?:synchronized\\s+)?void\\s+"
+                + java.util.regex.Pattern.quote(methodName)
+                + "\\s*\\(\\s*\\)\\s*\\{"
+        );
+        return signature.matcher(source).find();
     }
 
     private static String staticVoidMethod(String source, String methodName) {

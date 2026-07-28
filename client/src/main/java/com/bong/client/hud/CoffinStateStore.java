@@ -27,12 +27,8 @@ public final class CoffinStateStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static synchronized void clearOnDisconnect() {
-
         clear();
-
     }
 
     public static void resetForTests() {

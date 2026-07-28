@@ -37,11 +37,7 @@ public final class NpcMetadataStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         clearAll();
-
     }
 }

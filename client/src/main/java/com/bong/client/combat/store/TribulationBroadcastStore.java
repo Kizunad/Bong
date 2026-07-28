@@ -88,12 +88,8 @@ public final class TribulationBroadcastStore {
     public static void clear() { snapshots = Map.of(); }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         clear();
-
     }
 
     public static void resetForTests() { snapshots = Map.of(); }

@@ -211,6 +211,57 @@ class LootContainerHandlerTest {
     }
 
     @Test
+    void disconnectClosesOpenSessionExactlyOnceAndPreservesListenerForReconnect() {
+        var received = new java.util.ArrayList<LootContainerStateStore.Session>();
+        LootContainerStateStore.Listener listener = received::add;
+        LootContainerStateStore.addListener(listener);
+        try {
+            LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
+                7, "supply_coffin", "precious", 5, 6, 1716872600L, java.util.List.of()
+            ));
+            received.clear();
+
+            LootContainerStateStore.clearOnDisconnect();
+
+            assertNull(LootContainerStateStore.current(),
+                "断线必须先清空旧 loot session，避免 listener 回调观察到仍开放的旧容器");
+            assertEquals(
+                java.util.List.of(new LootContainerStateStore.Closed(7, "disconnect")),
+                received,
+                "断线必须向长期 listener 恰好发布一次携旧 session id 的 disconnect 关闭事件"
+            );
+
+            LootContainerStateStore.clearOnDisconnect();
+            assertEquals(1, received.size(),
+                "重复断线清理在无 open session 时不得重复发布关闭事件");
+
+            LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
+                8, "dead_drop", "common", 3, 3, 0L, java.util.List.of()
+            ));
+            assertEquals(2, received.size(),
+                "断线清理必须保留长期 listener，使新 session 重连后仍能收到 open 事件");
+            assertEquals(8,
+                ((LootContainerStateStore.OpenSession) received.get(1)).sessionId());
+        } finally {
+            LootContainerStateStore.removeListener(listener);
+        }
+    }
+
+    @Test
+    void disconnectWithoutOpenSessionDoesNotNotifyListener() {
+        var received = new java.util.ArrayList<LootContainerStateStore.Session>();
+        LootContainerStateStore.Listener listener = received::add;
+        LootContainerStateStore.addListener(listener);
+        try {
+            LootContainerStateStore.clearOnDisconnect();
+            assertTrue(received.isEmpty(),
+                "无 open session 的断线清理不得制造虚假的 Closed 事件");
+        } finally {
+            LootContainerStateStore.removeListener(listener);
+        }
+    }
+
+    @Test
     void listenerNotifiedOnOpenAndClose() {
         var received = new java.util.concurrent.atomic.AtomicReference<LootContainerStateStore.Session>();
         LootContainerStateStore.Listener listener = received::set;

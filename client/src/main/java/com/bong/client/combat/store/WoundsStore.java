@@ -113,12 +113,8 @@ public final class WoundsStore {
     }
 
 
-    /** Clears session-scoped state while preserving process-lifetime wiring. */
-
     public static void clearOnDisconnect() {
-
         clear();
-
     }
 
     public static void resetForTests() {
