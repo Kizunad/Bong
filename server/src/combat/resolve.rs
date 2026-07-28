@@ -221,6 +221,9 @@ pub struct CombatResolveEventWriters<'w, 's> {
     status_effect_intents: EventWriter<'w, ApplyStatusEffectIntent>,
     out_events: EventWriter<'w, CombatEvent>,
     qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
+    /// R5 P0 — jiemai cost 的物理 settlement owner；与 zone/event 一起收进 SystemParam，
+    /// 避免超过 Bevy 顶层参数上限。
+    qi_ledger: ResMut<'w, crate::qi_physics::WorldQiAccount>,
     multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
@@ -1092,12 +1095,8 @@ pub fn resolve_attack_intents(
                         .is_some_and(|cost| defender_cultivation.qi_current + f64::EPSILON >= cost)
                     && fov_ok
                 {
-                    let qi_cost = qi_cost.expect("checked Some above");
-                    defender_cultivation.qi_current = (defender_cultivation.qi_current - qi_cost)
-                        .clamp(0.0, defender_cultivation.qi_max);
-
-                    // bughunt r2 QP-003 — 守恒：扣减的格挡真元费用回灌到防御方所在 zone。
-                    // 格挡消耗是"主动施法真元散逸"，语义同 ReleaseToZone。
+                    // bughunt r2 QP-003 — 守恒：格挡真元费用通过 typed transaction
+                    // 原子扣除并回灌防御方所在 zone；失败时不开格挡结果。
                     {
                         let defender_dim = event_writers
                             .defender_dim_q
@@ -1105,16 +1104,24 @@ pub fn resolve_attack_intents(
                             .ok()
                             .flatten();
                         let defender_pos = positions.get(target_entity).ok().map(|(pos, _)| pos);
-                        crate::cultivation::death_hooks::release_qi_amount_to_zone(
-                            target_entity,
-                            qi_cost,
+                        let release = crate::cultivation::death_hooks::release_qi_amount_to_zone(
+                            &mut defender_cultivation,
+                            qi_cost.expect("window guard requires a realm parry qi cost"),
                             defender_pos,
                             defender_dim,
                             life_record.as_deref(),
                             event_writers.zone_registry.as_deref_mut(),
+                            &mut event_writers.qi_ledger,
                             event_writers.qi_transfers.as_deref_mut(),
                             "jiemai_parry",
                         );
+                        if let Err(error) = release {
+                            tracing::warn!(
+                                ?error,
+                                "[bong][combat] jiemai parry qi release failed closed"
+                            );
+                            continue;
+                        }
                     }
 
                     let before = emitted_contam_delta;

@@ -23,7 +23,7 @@ const DEFAULT_SPAWN_BOUNDS_MAX_Y: f64 = 80.0;
 const DEFAULT_SPAWN_SPIRIT_QI: f64 = 0.9;
 const DEFAULT_SPAWN_PATROL_ANCHORS: [[f64; 3]; 1] = [[14.0, 66.0, 14.0]];
 const MAX_ZONE_DANGER_LEVEL: u8 = 7;
-const MIN_ZONE_SPIRIT_QI: f64 = -1.0;
+const MIN_ZONE_SPIRIT_QI: f64 = -1.2;
 const MAX_ZONE_SPIRIT_QI: f64 = 1.0;
 const COLLAPSED_ZONE_EVENT_NAME: &str = "realm_collapse";
 
@@ -1067,7 +1067,7 @@ mod zone_tests {
         "min": [0.0, 64.0, 0.0],
         "max": [32.0, 80.0, 32.0]
       },
-      "spirit_qi": -1.0,
+      "spirit_qi": -1.2,
       "danger_level": 0,
       "active_events": [],
       "patrol_anchors": [],
@@ -1080,7 +1080,7 @@ mod zone_tests {
 
         let registry = ZoneRegistry::load_from_path(&valid_path);
         assert_eq!(registry.zones.len(), 1);
-        assert_eq!(registry.zones[0].spirit_qi, -1.0);
+        assert_eq!(registry.zones[0].spirit_qi, -1.2);
     }
 
     #[test]
@@ -1096,7 +1096,7 @@ mod zone_tests {
         "min": [0.0, 64.0, 0.0],
         "max": [32.0, 80.0, 32.0]
       },
-      "spirit_qi": -1.01,
+      "spirit_qi": -1.21,
       "danger_level": 0,
       "active_events": [],
       "patrol_anchors": [],
