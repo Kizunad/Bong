@@ -9,6 +9,7 @@ import com.bong.client.fauna.RatQiTierHandler;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
 import com.bong.client.combat.juice.CastFovController;
 import com.bong.client.combat.juice.CombatJuiceSystem;
@@ -1126,6 +1127,7 @@ public class BongNetworkHandler {
         CombatJuiceSystem.clearOnDisconnect();
         CombatHudBootstrap.clearOnDisconnect();
         MovementKeybindings.clearOnDisconnect();
+        BotanyHudBootstrap.clearOnDisconnect();
         NpcDialogueBubbleRenderer.clear();
         com.bong.client.audio.MusicStateMachine.instance().clear();
         SoundRecipePlayer.instance().clearOnDisconnect();

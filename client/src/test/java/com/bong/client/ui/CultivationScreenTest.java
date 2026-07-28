@@ -150,7 +150,7 @@ public class CultivationScreenTest {
         CultivationScreen staleScreen = CultivationScreenBootstrap.createScreenForCurrentState();
         assertFalse(staleScreen.playerState().isEmpty());
 
-        CultivationScreenBootstrap.clearPlayerStateSnapshot();
+        com.bong.client.lifecycle.SessionScopedStoreRegistry.clearAllOnDisconnect();
 
         CultivationScreen clearedScreen = CultivationScreenBootstrap.createScreenForCurrentState();
         assertTrue(clearedScreen.playerState().isEmpty());
