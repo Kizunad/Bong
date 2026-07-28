@@ -187,7 +187,7 @@ pub type SliceRunResult = Result<SliceRunOutcome, SliceRunError>;
 pub type SliceHook = fn(&mut World, &SliceRunContext) -> SliceRunResult;
 
 /// Static lifecycle declaration for one persistence slice.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SliceDescriptor {
     pub id: SliceId,
     pub scope: SliceScope,
@@ -291,14 +291,29 @@ impl fmt::Display for SliceRegistryError {
 impl std::error::Error for SliceRegistryError {}
 
 /// Sorted registry of persistence lifecycle descriptors.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PersistenceSliceRegistry {
     descriptors: Vec<&'static SliceDescriptor>,
 }
 
 impl Resource for PersistenceSliceRegistry {}
 
+/// Descriptor proven to come from one live registry lookup.
+///
+/// The private field prevents load activation from accepting an unregistered local
+/// descriptor whose write ordering disagrees with the canonical domain policy.
+pub struct RegisteredSliceDescriptor<'registry> {
+    descriptor: &'static SliceDescriptor,
+    _registry: std::marker::PhantomData<&'registry PersistenceSliceRegistry>,
+}
+
 impl PersistenceSliceRegistry {
+    pub fn empty() -> Self {
+        Self {
+            descriptors: Vec::new(),
+        }
+    }
+
     pub fn register_slice<S: PersistenceSlice>(&mut self) -> Result<(), SliceRegistryError> {
         self.register(S::descriptor())
     }
@@ -366,6 +381,20 @@ impl PersistenceSliceRegistry {
 
     pub fn descriptors(&self) -> impl Iterator<Item = &'static SliceDescriptor> + '_ {
         self.descriptors.iter().copied()
+    }
+
+    pub fn registered_descriptor(
+        &self,
+        slice_id: SliceId,
+    ) -> Option<RegisteredSliceDescriptor<'_>> {
+        self.descriptors
+            .iter()
+            .copied()
+            .find(|descriptor| descriptor.id == slice_id)
+            .map(|descriptor| RegisteredSliceDescriptor {
+                descriptor,
+                _registry: std::marker::PhantomData,
+            })
     }
 }
 
@@ -612,10 +641,11 @@ impl<T, E> SliceLoad<T, E> {
     /// no durable outlet can obtain a write permit.
     pub fn activate(
         self,
-        descriptor: &SliceDescriptor,
+        registered: RegisteredSliceDescriptor<'_>,
         on_missing: impl FnOnce() -> T,
         on_failed: impl FnOnce(&E) -> T,
     ) -> Result<GuardedSlice<T, E>, SliceActivationError<E>> {
+        let descriptor = registered.descriptor;
         match self {
             Self::Missing => Ok(GuardedSlice {
                 value: on_missing(),
@@ -1268,6 +1298,14 @@ mod tests {
         }
     }
 
+    fn registered(descriptor: &SliceDescriptor) -> RegisteredSliceDescriptor<'static> {
+        let descriptor = Box::leak(Box::new(*descriptor));
+        let mut registry = Box::new(PersistenceSliceRegistry::empty());
+        registry.register(descriptor).unwrap();
+        let registry = Box::leak(registry);
+        registry.registered_descriptor(descriptor.id).unwrap()
+    }
+
     #[test]
     fn registry_rejects_duplicate_and_invalid_descriptors() {
         let first = Box::leak(Box::new(basic_descriptor("player.core", 10)));
@@ -1293,7 +1331,7 @@ mod tests {
             rebase: Some(noop_rebase),
             ..basic_descriptor("player.valid_rebase", 60)
         }));
-        let mut registry = PersistenceSliceRegistry::default();
+        let mut registry = PersistenceSliceRegistry::empty();
 
         assert_eq!(registry.register(first), Ok(()));
         assert_eq!(
@@ -1335,7 +1373,7 @@ mod tests {
             write_ordering: WriteOrdering::PersistedRevisionCas,
             ..basic_descriptor("player.craft", 30)
         }));
-        let mut registry = PersistenceSliceRegistry::default();
+        let mut registry = PersistenceSliceRegistry::empty();
         registry.register(first).unwrap();
 
         assert!(matches!(
@@ -1353,7 +1391,7 @@ mod tests {
         let later = Box::leak(Box::new(basic_descriptor("world.later", 20)));
         let same_order_b = Box::leak(Box::new(basic_descriptor("world.b", 10)));
         let same_order_a = Box::leak(Box::new(basic_descriptor("world.a", 10)));
-        let mut registry = PersistenceSliceRegistry::default();
+        let mut registry = PersistenceSliceRegistry::empty();
         registry.register(later).unwrap();
         registry.register(same_order_b).unwrap();
         registry.register(same_order_a).unwrap();
@@ -1421,7 +1459,7 @@ mod tests {
                 ..basic_descriptor("shutdown.blocked", 40)
             })),
         ];
-        let mut registry = PersistenceSliceRegistry::default();
+        let mut registry = PersistenceSliceRegistry::empty();
         for descriptor in descriptors {
             registry.register(descriptor).unwrap();
         }
@@ -1454,7 +1492,7 @@ mod tests {
             shutdown_flush: Some(flushed_hook),
             ..basic_descriptor("shutdown.not_requested", 10)
         }));
-        let mut registry = PersistenceSliceRegistry::default();
+        let mut registry = PersistenceSliceRegistry::empty();
         registry.register(descriptor).unwrap();
         let mut world = World::new();
         world.insert_resource(registry);
@@ -1519,7 +1557,7 @@ mod tests {
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.handoff_second", 20)
         }));
-        let mut registry = PersistenceSliceRegistry::default();
+        let mut registry = PersistenceSliceRegistry::empty();
         registry.register(second).unwrap();
         registry.register(first).unwrap();
         let clock = FixedClock {
@@ -1605,7 +1643,7 @@ mod tests {
     fn load_failure_default_remains_blocked_for_every_write_outlet() {
         let descriptor = basic_descriptor("player.failed", 10);
         let guarded = SliceLoad::<u32, _>::Failed("invalid json")
-            .activate(&descriptor, || 1, |_error| 0)
+            .activate(registered(&descriptor), || 1, |_error| 0)
             .unwrap();
         assert_eq!(*guarded.value(), 0);
         assert_eq!(
@@ -1636,7 +1674,7 @@ mod tests {
         };
         let mut fallback_called = false;
         let result = SliceLoad::<u32, _>::Failed("corrupt ledger").activate(
-            &descriptor,
+            registered(&descriptor),
             || 1,
             |_error| {
                 fallback_called = true;
@@ -1654,10 +1692,10 @@ mod tests {
     fn missing_and_loaded_slices_are_writable() {
         let descriptor = basic_descriptor("player.writable", 10);
         let missing = SliceLoad::<u32, &str>::Missing
-            .activate(&descriptor, || 7, |_| 0)
+            .activate(registered(&descriptor), || 7, |_| 0)
             .unwrap();
         let loaded = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&descriptor, || 0, |_| 0)
+            .activate(registered(&descriptor), || 0, |_| 0)
             .unwrap();
 
         assert_eq!(*missing.value(), 7);
@@ -1672,10 +1710,10 @@ mod tests {
     fn mutation_and_durable_receipts_remain_bound_to_one_guarded_subject() {
         let descriptor = basic_descriptor("player.subject", 10);
         let mut first = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&descriptor, || 0, |_| 0)
+            .activate(registered(&descriptor), || 0, |_| 0)
             .unwrap();
         let mut second = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&descriptor, || 0, |_| 0)
+            .activate(registered(&descriptor), || 0, |_| 0)
             .unwrap();
         let (mut first_tracker, mut first_fence) = first
             .restore_persistence_state(DirtyRevision::default())
@@ -1747,7 +1785,7 @@ mod tests {
     fn failed_durable_write_and_stale_receipt_never_clear_dirty_state() {
         let descriptor = basic_descriptor("player.dirty", 10);
         let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&descriptor, || 0, |_| 0)
+            .activate(registered(&descriptor), || 0, |_| 0)
             .unwrap();
         let (mut tracker, mut fence) = guarded
             .restore_persistence_state(DirtyRevision::default())
@@ -1805,19 +1843,32 @@ mod tests {
             WriteDomain::new("test.other"),
             WriteAuthority::new("test.other.writer"),
         );
-        let descriptor = SliceDescriptor {
+        let descriptor = Box::leak(Box::new(SliceDescriptor {
             write_ordering: WriteOrdering::PersistedRevisionCas,
             ..basic_descriptor("player.bound", 10)
+        }));
+        let unregistered_downgrade = SliceDescriptor {
+            write_ordering: WriteOrdering::Serialized,
+            ..*descriptor
         };
-        let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&descriptor, || 0, |_| 0)
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(descriptor).unwrap();
+        let canonical = registry
+            .registered_descriptor(unregistered_downgrade.id)
             .unwrap();
+        let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
+            .activate(canonical, || 0, |_| 0)
+            .unwrap();
+        assert_eq!(
+            unregistered_downgrade.write_ordering,
+            WriteOrdering::Serialized
+        );
         let other_descriptor = SliceDescriptor {
             write_binding: OTHER_BINDING,
             ..basic_descriptor("player.other", 20)
         };
         let mut other = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&other_descriptor, || 0, |_| 0)
+            .activate(registered(&other_descriptor), || 0, |_| 0)
             .unwrap();
         let (mut wrong_tracker, _wrong_fence) = other
             .restore_persistence_state(DirtyRevision::default())
@@ -1876,7 +1927,7 @@ mod tests {
     fn dirty_revision_overflow_rejects_mutation_without_changing_value() {
         let descriptor = basic_descriptor("player.overflow", 10);
         let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
-            .activate(&descriptor, || 0, |_| 0)
+            .activate(registered(&descriptor), || 0, |_| 0)
             .unwrap();
         let mut tracker = DirtyTracker {
             binding: TEST_BINDING,
