@@ -1,4 +1,4 @@
-"""Dual-pin tests: NBT structure block palette ⊆ server block_from_name known list.
+"""Dual-pin tests: NBT structure block palette ⊆ canonical server block catalog.
 
 FIX A (plan-terrain-wiring-v1 opus verify) — cross-boundary contract:
 
@@ -7,7 +7,7 @@ FIX A (plan-terrain-wiring-v1 opus verify) — cross-boundary contract:
   2. Every block name in AUTHORED_STRUCTURE_BLOCKS must appear in the NBT palette
      OR have an explicit justification (e.g. iron_nugget → AIR alias).
 
-If the NBT palette gains a new block that is not added to blocks.rs, the Python
+If the NBT palette gains a new block that is not added to block_catalog.toml, the Python
 side test fires first (CI catches it before the Rust side silently drops blocks).
 """
 
@@ -100,7 +100,7 @@ AUTHORED_STRUCTURE_BLOCKS: frozenset[str] = frozenset(
 
 # The dual-pin fixture below is the dan_zong / wangyintai authored-structure
 # contract (see module docstring). The P6 `decorations/` asset family is a
-# separate, much larger palette that has its own blocks.rs-resolution contract
+# separate, much larger palette that has its own catalog-resolution contract
 # (see DecorationNbtPaletteTest below and worldgen/tests/test_decoration_contract
 # .py), so the dual-pin walk is scoped to its own subdirs — folding decorations
 # into AUTHORED_STRUCTURE_BLOCKS would make the dual-pin meaningless.
@@ -146,7 +146,7 @@ class NbtPaletteSubsetTest(unittest.TestCase):
         """Each block name in every NBT file must be in AUTHORED_STRUCTURE_BLOCKS.
 
         If this fails: add the new block name to AUTHORED_STRUCTURE_BLOCKS here
-        AND to block_from_name in server/src/world/terrain/blocks.rs.
+        AND to server/assets/worldgen/block_catalog.toml.
         """
         missing: dict[str, set[str]] = {}
         for path, names in self.nbt_blocks_by_file.items():
@@ -160,7 +160,7 @@ class NbtPaletteSubsetTest(unittest.TestCase):
             + "\n".join(f"  {f}: {sorted(s)}" for f, s in sorted(missing.items()))
             + "\n\nAdd each missing name to:\n"
             "  1. AUTHORED_STRUCTURE_BLOCKS in worldgen/tests/test_nbt_block_palette.py\n"
-            "  2. block_from_name in server/src/world/terrain/blocks.rs",
+            "  2. server/assets/worldgen/block_catalog.toml",
         )
 
     def test_all_nbt_files_are_non_empty(self) -> None:
@@ -212,7 +212,7 @@ class NbtPaletteSubsetTest(unittest.TestCase):
 
 
 class DecorationNbtPaletteTest(unittest.TestCase):
-    """worldgen-v4 P6 — every `decorations/**/*.nbt` block resolves in blocks.rs.
+    """worldgen-v4 P6 — every `decorations/**/*.nbt` block resolves in the canonical catalog.
 
     The decoration asset family is far larger than the dan_zong / wangyintai
     dual-pin fixture, so it gets its own contract: each block the runtime
@@ -222,7 +222,7 @@ class DecorationNbtPaletteTest(unittest.TestCase):
     fixes — a regenerated asset using an unknown block trips here.
     """
 
-    BLOCKS_RS = REPO_ROOT / "server" / "src" / "world" / "terrain" / "blocks.rs"
+    BLOCK_CATALOG_TOML = REPO_ROOT / "server" / "assets" / "worldgen" / "block_catalog.toml"
     DECORATIONS_DIR = SERVER_STRUCTURES_DIR / "decorations"
 
     @classmethod
@@ -230,10 +230,11 @@ class DecorationNbtPaletteTest(unittest.TestCase):
         cls.deco_blocks_by_file = _load_all_nbt_blocks(("decorations",))
 
     def _resolved_block_names(self) -> set[str]:
-        import re
+        import tomllib
 
-        source = self.BLOCKS_RS.read_text(encoding="utf-8")
-        return set(re.findall(r'"([a-z0-9_]+)"\s*=>\s*BlockState::', source))
+        with self.BLOCK_CATALOG_TOML.open("rb") as stream:
+            document = tomllib.load(stream)
+        return {str(entry["name"]) for entry in document["block"]}
 
     def test_decoration_assets_present(self) -> None:
         self.assertTrue(
@@ -242,7 +243,7 @@ class DecorationNbtPaletteTest(unittest.TestCase):
             "scripts/nbt/decorations/gen_decorations.py",
         )
 
-    def test_every_decoration_nbt_block_resolves_in_blocks_rs(self) -> None:
+    def test_every_decoration_nbt_block_resolves_in_catalog(self) -> None:
         resolved = self._resolved_block_names()
         missing: dict[str, set[str]] = {}
         for path, names in self.deco_blocks_by_file.items():
@@ -252,7 +253,7 @@ class DecorationNbtPaletteTest(unittest.TestCase):
         self.assertFalse(
             missing,
             "These decoration NBT files use blocks NOT resolvable by "
-            "block_from_name in server/src/world/terrain/blocks.rs (the runtime "
+            "server/assets/worldgen/block_catalog.toml (the runtime "
             "registry would stamp a hole):\n"
             + "\n".join(f"  {f}: {sorted(s)}" for f, s in sorted(missing.items())),
         )

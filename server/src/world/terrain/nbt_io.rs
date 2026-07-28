@@ -32,14 +32,17 @@
 //! below exercises every public entry point regardless.
 #![allow(dead_code)]
 
-use std::io::{self, Read, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, ErrorKind, Read, Write};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use valence::nbt::{from_binary, to_binary, Compound, List, Value};
-use valence::prelude::{BlockState, PropName, PropValue};
+use valence::prelude::BlockState;
 
 /// MC 1.20.1 structure DataVersion. Must match
 /// `scripts/nbt/nbt_builder.py::StructureBuilder.DATA_VERSION`.
@@ -132,22 +135,16 @@ impl PaletteEntry {
         PaletteEntry { name, properties }
     }
 
-    /// Lower this palette entry into a runtime [`BlockState`], applying any
-    /// properties valence recognises. Returns `None` when the bare block name
-    /// is unknown to `block_from_name` (the caller decides whether to warn and
-    /// skip or treat it as fatal).
-    pub fn block_state(&self) -> Option<BlockState> {
-        let mut state = super::blocks::block_from_name(self.bare_name())?;
-        for (prop_name, prop_val) in &self.properties {
-            if let (Some(pn), Some(pv)) =
-                (PropName::from_str(prop_name), PropValue::from_str(prop_val))
-            {
-                if state.get(pn).is_some() {
-                    state = state.set(pn, pv);
-                }
-            }
-        }
-        Some(state)
+    /// Lower this palette entry through the shared strict catalog/property
+    /// validator. Unknown blocks, namespaces, properties, and invalid values are
+    /// returned to the caller instead of being silently dropped.
+    pub fn block_state(&self) -> Result<BlockState, super::blocks::BlockStateResolveError> {
+        super::blocks::block_state_with_properties(
+            &self.name,
+            self.properties
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
     }
 }
 
@@ -192,17 +189,114 @@ impl StructureNbt {
     pub fn unresolved_palette_blocks(&self) -> Vec<String> {
         self.palette
             .iter()
-            .filter(|entry| super::blocks::block_from_name(entry.bare_name()).is_none())
-            .map(|entry| entry.name.clone())
+            .filter_map(|entry| {
+                entry
+                    .block_state()
+                    .err()
+                    .map(|error| format!("{}: {error}", entry.name))
+            })
             .collect()
     }
+
+    /// Validate every palette entry and every block-to-palette state index before
+    /// a structure is admitted or stamped. This prevents malformed authored NBT
+    /// from silently dropping blocks on either the startup registry path or the
+    /// direct dev-gallery path.
+    pub fn palette_diagnostics(&self) -> Vec<String> {
+        let mut diagnostics = self.unresolved_palette_blocks();
+        diagnostics.extend(
+            self.blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(block_index, block)| {
+                    let state = usize::try_from(block.state).ok();
+                    if state.is_some_and(|state| state < self.palette.len()) {
+                        None
+                    } else {
+                        Some(format!(
+                            "block #{} at {:?} references invalid palette state {} (palette length {})",
+                            block_index + 1,
+                            block.pos,
+                            block.state,
+                            self.palette.len()
+                        ))
+                    }
+                }),
+        );
+        diagnostics
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK: std::cell::RefCell<
+        Option<Box<dyn FnOnce()>>,
+    > = std::cell::RefCell::new(None);
+}
+
+/// Open an authored input without following a final-component symlink, then
+/// verify the opened descriptor itself is a regular file. Reading and type
+/// validation therefore operate on the same filesystem object even if another
+/// process replaces the path after discovery.
+pub(crate) fn open_regular_file_no_follow(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    options.custom_flags(0o400_000 | 0o4_000); // Linux O_NOFOLLOW | O_NONBLOCK.
+
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(open_error) => {
+            // Some special nodes (notably Unix sockets and FIFOs opened with
+            // O_NONBLOCK) fail before a descriptor exists. Inspecting the path
+            // here is diagnostic-only: it can never turn a failed open into an
+            // admitted file, but it preserves the actionable file-type contract.
+            if std::fs::symlink_metadata(path).is_ok_and(|metadata| !metadata.file_type().is_file())
+            {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!(
+                        "{} must be a regular file, not a symlink or special node (open failed: {open_error})",
+                        path.display()
+                    ),
+                ));
+            }
+            return Err(open_error);
+        }
+    };
+    #[cfg(test)]
+    OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!(
+                "{} must be a regular file, not a symlink or special node",
+                path.display()
+            ),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(test)]
+pub(crate) fn set_open_regular_file_after_open_test_hook(hook: impl FnOnce() + 'static) {
+    OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
 }
 
 /// Read a gzip-compressed structure `.nbt` file from disk.
 ///
 /// Rejects bare (uncompressed) NBT with [`NbtIoError::NotGzip`].
 pub fn read_structure_nbt(path: &Path) -> Result<StructureNbt, NbtIoError> {
-    let raw = std::fs::read(path)?;
+    let mut file = open_regular_file_no_follow(path)?;
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
     read_structure_nbt_bytes(&raw)
 }
 
@@ -459,6 +553,7 @@ mod tests {
     use super::*;
     use crate::world::terrain::blocks::tests::AUTHORED_STRUCTURE_BLOCKS;
     use std::path::PathBuf;
+    use valence::prelude::{PropName, PropValue};
 
     /// The 11 authored `.nbt` assets, loaded at compile time so the round-trip
     /// pins run without touching the filesystem.
@@ -918,8 +1013,8 @@ mod tests {
             let unresolved = parsed.unresolved_palette_blocks();
             assert!(
                 unresolved.is_empty(),
-                "{name}: palette blocks not resolvable via block_from_name: {unresolved:?}. \
-                 Add each bare name to AUTHORED_STRUCTURE_BLOCKS and block_from_name."
+                "{name}: palette entries not resolvable via the canonical block catalog: {unresolved:?}. \
+                 Add each bare name to AUTHORED_STRUCTURE_BLOCKS and block_catalog.toml."
             );
         }
     }
@@ -950,7 +1045,7 @@ mod tests {
         assert!(
             missing.is_empty(),
             "asset palette blocks not in AUTHORED_STRUCTURE_BLOCKS pin: {missing:?}. \
-             Update blocks.rs::AUTHORED_STRUCTURE_BLOCKS and block_from_name."
+             Update blocks.rs::AUTHORED_STRUCTURE_BLOCKS and block_catalog.toml."
         );
     }
 
@@ -975,11 +1070,63 @@ mod tests {
             entities: vec![],
         };
         let unresolved = structure.unresolved_palette_blocks();
+        assert_eq!(unresolved.len(), 1);
+        assert!(
+            unresolved[0].contains("minecraft:totally_not_a_real_block")
+                && unresolved[0].contains("unknown catalog block"),
+            "illegal palette block must include its exact startup validation reason; \
+             known 'minecraft:stone' must not appear: {unresolved:?}"
+        );
+    }
+
+    #[test]
+    fn palette_diagnostics_reject_negative_and_upper_bound_state_indices() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [3, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![
+                StructureBlockEntry {
+                    pos: [0, 0, 0],
+                    state: 0,
+                    block_nbt: None,
+                },
+                StructureBlockEntry {
+                    pos: [1, 0, 0],
+                    state: -1,
+                    block_nbt: None,
+                },
+                StructureBlockEntry {
+                    pos: [2, 0, 0],
+                    state: 1,
+                    block_nbt: None,
+                },
+            ],
+            entities: vec![],
+        };
+
+        let diagnostics = structure.palette_diagnostics();
         assert_eq!(
-            unresolved,
-            vec!["minecraft:totally_not_a_real_block".to_string()],
-            "illegal palette block must be flagged by unresolved_palette_blocks; \
-             known 'minecraft:stone' must not appear"
+            diagnostics.len(),
+            2,
+            "valid state 0 must not be diagnosed while both invalid indices are retained: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics[0].contains("block #2")
+                && diagnostics[0].contains("[1, 0, 0]")
+                && diagnostics[0].contains("state -1")
+                && diagnostics[0].contains("palette length 1"),
+            "negative diagnostic must identify block, position, state, and palette length: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics[1].contains("block #3")
+                && diagnostics[1].contains("[2, 0, 0]")
+                && diagnostics[1].contains("state 1")
+                && diagnostics[1].contains("palette length 1"),
+            "state == palette.len() must be rejected with actionable context: {diagnostics:?}"
         );
     }
 

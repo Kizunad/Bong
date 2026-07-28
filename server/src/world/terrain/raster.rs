@@ -1,12 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 use serde::Deserialize;
-use valence::prelude::{
-    BiomeId, BiomeRegistry, BlockPos, BlockState, ChunkPos, Ident, PropName, PropValue, Resource,
-};
+use valence::prelude::{BiomeId, BiomeRegistry, BlockPos, BlockState, ChunkPos, Ident, Resource};
 
 use super::nbt_registry::DecorationAnchor;
 use super::wilderness;
@@ -25,6 +24,7 @@ use super::wilderness;
 /// A single pre-flattened block from the worldgen placement manifest.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlacementBlock {
     /// Absolute world position [x, y, z].
     pub pos: [i32; 3],
@@ -38,6 +38,7 @@ pub struct PlacementBlock {
 /// One authored structure (NBT paste or inline stamp) in the placement manifest.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlacementStructure {
     pub nbt_path: String,
     pub origin: [i32; 3],
@@ -48,6 +49,7 @@ pub struct PlacementStructure {
 /// Top-level placement manifest written by worldgen's `export_placement_manifest`.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlacementManifest {
     pub version: u32,
     pub structures: Vec<PlacementStructure>,
@@ -429,6 +431,39 @@ pub struct TerrainProviders {
 
 impl Resource for TerrainProviders {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TerrainLoadError {
+    diagnostics: Vec<String>,
+}
+
+impl TerrainLoadError {
+    fn new<I>(diagnostics: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let diagnostics = diagnostics.into_iter().collect::<BTreeSet<_>>();
+        Self {
+            diagnostics: diagnostics.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+}
+
+impl std::fmt::Display for TerrainLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "terrain raster failed startup preflight:\n- {}",
+            self.diagnostics.join("\n- ")
+        )
+    }
+}
+
+impl std::error::Error for TerrainLoadError {}
+
 impl TerrainProviders {
     /// Look up the provider for the given dimension. Returns `None` for TSY
     /// when no TSY manifest is loaded (transitional state until worldgen plan
@@ -514,6 +549,7 @@ fn validate_manifest_version(version: u32, manifest_path: &Path) -> Result<(), S
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RasterManifest {
     /// Manifest schema version (written by worldgen raster_export). Validated in
     /// `load()` against `EXPECTED_RASTER_MANIFEST_VERSION`. No serde default — a
@@ -539,6 +575,7 @@ struct RasterManifest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestBotFixture {
     kind: String,
     token: String,
@@ -576,6 +613,7 @@ fn validate_bot_fixture(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestBounds {
     min_x: i32,
     max_x: i32,
@@ -584,6 +622,7 @@ struct ManifestBounds {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestTile {
     tile_x: i32,
     tile_z: i32,
@@ -592,6 +631,7 @@ struct ManifestTile {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestPoi {
     zone: String,
     kind: String,
@@ -624,6 +664,7 @@ fn manifest_pois_into_runtime(raw_pois: Vec<ManifestPoi>) -> Vec<Poi> {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestDecoration {
     global_id: u32,
     profile: String,
@@ -649,6 +690,7 @@ struct ManifestDecoration {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestFossilBbox {
     zone: String,
     name: String,
@@ -686,6 +728,7 @@ pub struct Decoration {
     pub name: String,
     pub kind: String,
     pub blocks: Vec<String>,
+    pub(crate) resolved_blocks: Vec<BlockState>,
     pub size_range: [i32; 2],
     pub rarity: f32,
     pub notes: String,
@@ -852,38 +895,162 @@ impl TerrainProvider {
         raster_dir: &Path,
         biomes: &BiomeRegistry,
     ) -> Result<Self, String> {
+        let nbt_preflight = super::nbt_registry::DecorationNbtRegistry::prepare_default();
+        let mut diagnostics = nbt_preflight
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| format!("nbt: {diagnostic}"))
+            .collect::<Vec<_>>();
+        let provider = match Self::load_preflighted(
+            manifest_path,
+            raster_dir,
+            biomes,
+            nbt_preflight.candidate(),
+        ) {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                diagnostics.extend(error.diagnostics().iter().cloned());
+                None
+            }
+        };
+        if diagnostics.is_empty() {
+            Ok(provider.expect("diagnostic-free raster preflight must produce a provider"))
+        } else {
+            Err(TerrainLoadError::new(diagnostics).to_string())
+        }
+    }
+
+    pub(crate) fn load_preflighted(
+        manifest_path: &Path,
+        raster_dir: &Path,
+        biomes: &BiomeRegistry,
+        registry: &super::nbt_registry::DecorationNbtRegistry,
+    ) -> Result<Self, TerrainLoadError> {
         let manifest_text = std::fs::read_to_string(manifest_path).map_err(|error| {
-            format!(
-                "failed to read terrain raster manifest {}: {error}",
+            TerrainLoadError::new([format!(
+                "manifest: failed to read terrain raster manifest {}: {error}",
                 manifest_path.display()
-            )
+            )])
         })?;
         let manifest: RasterManifest = serde_json::from_str(&manifest_text).map_err(|error| {
-            format!(
-                "failed to parse terrain raster manifest {}: {error}",
+            TerrainLoadError::new([format!(
+                "manifest: failed to parse terrain raster manifest {}: {error}",
                 manifest_path.display()
-            )
+            )])
         })?;
 
-        validate_manifest_version(manifest.version, manifest_path)?;
-        let bot_fixture = validate_bot_fixture(manifest.bot_fixture, manifest_path)?;
-
-        let tile_area = (manifest.tile_size as usize)
-            .checked_mul(manifest.tile_size as usize)
-            .ok_or_else(|| "tile_size squared overflowed while loading rasters".to_string())?;
-        let surface_palette = manifest
-            .surface_palette
-            .iter()
-            .map(|name| block_state_from_name(name))
-            .collect::<Result<Vec<_>, _>>()?;
-        let biome_palette = manifest
+        let mut diagnostics = Vec::new();
+        if let Err(error) = validate_manifest_version(manifest.version, manifest_path) {
+            diagnostics.push(format!("manifest: {error}"));
+        }
+        let bot_fixture = match validate_bot_fixture(manifest.bot_fixture, manifest_path) {
+            Ok(fixture) => Some(fixture),
+            Err(error) => {
+                diagnostics.push(format!("manifest: {error}"));
+                None
+            }
+        };
+        let tile_area = match usize::try_from(manifest.tile_size) {
+            Ok(tile_size) if tile_size > 0 => match tile_size.checked_mul(tile_size) {
+                Some(tile_area) => Some(tile_area),
+                None => {
+                    diagnostics.push(
+                        "manifest: tile_size squared overflowed while loading rasters".to_string(),
+                    );
+                    None
+                }
+            },
+            _ => {
+                diagnostics.push("manifest: tile_size must be positive".to_string());
+                None
+            }
+        };
+        let surface_palette =
+            match resolve_surface_palette(&manifest.surface_palette, manifest_path) {
+                Ok(palette) if !palette.is_empty() => Some(palette),
+                Ok(_) => {
+                    diagnostics.push("manifest: surface palette cannot be empty".to_string());
+                    None
+                }
+                Err(error) => {
+                    diagnostics.extend(prefix_multiline_diagnostics("surface", &error));
+                    None
+                }
+            };
+        let biome_palette = match manifest
             .biome_palette
             .iter()
             .map(|name| biome_id_from_name(name, biomes))
-            .collect::<Result<Vec<_>, _>>()?;
-        let default_wilderness_biome = *biome_palette
-            .first()
-            .ok_or_else(|| "biome palette cannot be empty".to_string())?;
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(palette) if !palette.is_empty() => Some(palette),
+            Ok(_) => {
+                diagnostics.push("manifest: biome palette cannot be empty".to_string());
+                None
+            }
+            Err(error) => {
+                diagnostics.push(format!("manifest: {error}"));
+                None
+            }
+        };
+
+        collect_decoration_template_diagnostics(
+            &manifest.global_decoration_palette,
+            registry,
+            &mut diagnostics,
+        );
+        let decoration_palette = match resolve_decoration_palette(
+            manifest.global_decoration_palette.clone(),
+            manifest_path,
+        ) {
+            Ok(palette) => Some(palette),
+            Err(error) => {
+                diagnostics.extend(prefix_multiline_diagnostics("decoration", &error));
+                None
+            }
+        };
+
+        let sidecar_path = raster_dir.join("placement_manifest.json");
+        let placement = match load_placement_index(&sidecar_path) {
+            Ok(placement) => Some(placement),
+            Err(error) => {
+                diagnostics.extend(prefix_multiline_diagnostics("placement", &error));
+                None
+            }
+        };
+
+        let mut tiles = HashMap::with_capacity(manifest.tiles.len());
+        if let Some(tile_area) = tile_area {
+            for tile in &manifest.tiles {
+                let tile_dir = raster_dir.join(&tile.dir);
+                match TileFields::load(&tile_dir, &tile.layers, tile_area) {
+                    Ok(tile_fields) => {
+                        if !manifest.surface_palette.is_empty() {
+                            collect_surface_palette_id_diagnostics(
+                                tile,
+                                &tile_fields,
+                                manifest.surface_palette.len(),
+                                &mut diagnostics,
+                            );
+                        }
+                        tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
+                    }
+                    Err(error) => diagnostics.push(format!("raster: {error}")),
+                }
+            }
+        }
+
+        if !diagnostics.is_empty() {
+            return Err(TerrainLoadError::new(diagnostics));
+        }
+
+        let surface_palette = surface_palette.expect("validated surface palette must be present");
+        let biome_palette = biome_palette.expect("validated biome palette must be present");
+        let decoration_palette =
+            decoration_palette.expect("validated decoration palette must be present");
+        let (placement_index, placement_block_count) =
+            placement.expect("validated placement index must be present");
+        let default_wilderness_biome = biome_palette[0];
         let forest_wilderness_biome = biome_palette
             .get(7)
             .copied()
@@ -893,57 +1060,17 @@ impl TerrainProvider {
             .copied()
             .unwrap_or(default_wilderness_biome);
 
-        let mut tiles = HashMap::with_capacity(manifest.tiles.len());
-        for tile in &manifest.tiles {
-            let tile_dir = raster_dir.join(&tile.dir);
-            let tile_fields = TileFields::load(&tile_dir, &tile.layers, tile_area)?;
-            tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
-        }
-
-        // --- Narrative / event metadata ---
         let pois = manifest_pois_into_runtime(manifest.pois);
-
         let anomaly_kinds = manifest
             .anomaly_kinds
             .into_iter()
             .filter_map(|(k, v)| k.parse::<u8>().ok().map(|id| (id, v)))
             .collect::<HashMap<u8, String>>();
-
         let abyssal_tier_floor_y = manifest
             .abyssal_tier_floor_y
             .into_iter()
             .filter_map(|(k, v)| k.parse::<u8>().ok().map(|tier| (tier, v)))
             .collect::<HashMap<u8, f32>>();
-
-        // Build indexed decoration palette — expand to `max global_id + 1` so
-        // variant lookup is a single Vec::get.
-        let max_deco_id = manifest
-            .global_decoration_palette
-            .iter()
-            .map(|d| d.global_id)
-            .max()
-            .unwrap_or(0);
-        let mut decoration_palette: Vec<Option<Decoration>> = vec![None; max_deco_id as usize + 1];
-        for raw in manifest.global_decoration_palette {
-            let id = raw.global_id as usize;
-            if id == 0 || id >= decoration_palette.len() {
-                continue;
-            }
-            decoration_palette[id] = Some(Decoration {
-                global_id: raw.global_id,
-                profile: raw.profile,
-                local_id: raw.local_id,
-                name: raw.name,
-                kind: raw.kind,
-                blocks: raw.blocks,
-                size_range: raw.size_range,
-                rarity: raw.rarity,
-                notes: raw.notes,
-                nbt_templates: raw.nbt_templates,
-                anchor: DecorationAnchor::from_manifest(&raw.anchor),
-            });
-        }
-
         let fossil_bboxes = manifest
             .fossil_bboxes
             .into_iter()
@@ -959,14 +1086,6 @@ impl TerrainProvider {
                 max_units: raw.max_units,
             })
             .collect::<Vec<_>>();
-
-        // P1 — load optional placement_manifest.json sidecar and build
-        // ChunkPos→blocks index (断链 #2, plan-terrain-wiring-v1).
-        // Sidecar lives next to manifest.json in the same raster dir.
-        let (placement_index, placement_block_count) = {
-            let sidecar_path = raster_dir.join("placement_manifest.json");
-            load_placement_index(&sidecar_path)
-        };
 
         Ok(Self {
             tiles,
@@ -989,7 +1108,7 @@ impl TerrainProvider {
             fossil_bboxes,
             placement_index,
             placement_block_count,
-            bot_fixture,
+            bot_fixture: bot_fixture.expect("validated bot fixture result must be present"),
         })
     }
 
@@ -1030,6 +1149,40 @@ impl TerrainProvider {
         self.decoration_palette
             .get(global_id as usize)
             .and_then(|o| o.as_ref())
+    }
+
+    /// Strict startup preflight for all manifest-owned block references and NBT
+    /// template ids. The provider already stores lowered decoration states, so
+    /// runtime flora placement cannot silently drop an unknown name.
+    pub fn validate_decoration_templates(
+        &self,
+        registry: &super::nbt_registry::DecorationNbtRegistry,
+    ) -> Result<(), Vec<String>> {
+        let raw = self
+            .decorations()
+            .map(|decoration| ManifestDecoration {
+                global_id: decoration.global_id,
+                profile: decoration.profile.clone(),
+                local_id: decoration.local_id,
+                name: decoration.name.clone(),
+                kind: decoration.kind.clone(),
+                blocks: decoration.blocks.clone(),
+                size_range: decoration.size_range,
+                rarity: decoration.rarity,
+                notes: decoration.notes.clone(),
+                nbt_templates: decoration.nbt_templates.clone(),
+                anchor: decoration.anchor.as_manifest().to_string(),
+            })
+            .collect::<Vec<_>>();
+        let mut diagnostics = Vec::new();
+        collect_decoration_template_diagnostics(&raw, registry, &mut diagnostics);
+        diagnostics.sort();
+        diagnostics.dedup();
+        if diagnostics.is_empty() {
+            Ok(())
+        } else {
+            Err(diagnostics)
+        }
     }
 
     #[allow(dead_code)]
@@ -1261,6 +1414,27 @@ fn read_tile_layer_u8(tile: &TileFields, index: usize, layer_name: &str, fallbac
     }
 }
 
+fn collect_surface_palette_id_diagnostics(
+    tile: &ManifestTile,
+    fields: &TileFields,
+    palette_len: usize,
+    diagnostics: &mut Vec<String>,
+) {
+    for (layer_name, bytes) in [
+        ("surface_id", &fields.surface_id),
+        ("subsurface_id", &fields.subsurface_id),
+    ] {
+        for (index, value) in bytes.iter().copied().enumerate() {
+            if usize::from(value) >= palette_len {
+                diagnostics.push(format!(
+                    "raster: tile ({},{}) '{}' layer {layer_name} index {index} has palette id {value}, but surface palette length is {palette_len}",
+                    tile.tile_x, tile.tile_z, tile.dir
+                ));
+            }
+        }
+    }
+}
+
 impl TileFields {
     fn load(tile_dir: &Path, layers: &[String], tile_area: usize) -> Result<Self, String> {
         let area4 = tile_area * 4;
@@ -1398,57 +1572,162 @@ fn read_optional_u8(bytes: &Option<Mmap>, index: usize, fallback: u8) -> u8 {
         .unwrap_or(fallback)
 }
 
+fn prefix_multiline_diagnostics(prefix: &str, error: &str) -> Vec<String> {
+    let mut lines = error.lines();
+    let context = lines.next().unwrap_or(error);
+    let details = lines
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .map(|detail| format!("{prefix}: {context}: {detail}"))
+        .collect::<Vec<_>>();
+    if details.is_empty() {
+        vec![format!("{prefix}: {error}")]
+    } else {
+        details
+    }
+}
+
+fn collect_decoration_template_diagnostics(
+    decorations: &[ManifestDecoration],
+    registry: &super::nbt_registry::DecorationNbtRegistry,
+    diagnostics: &mut Vec<String>,
+) {
+    for decoration in decorations {
+        for (template_index, template_id) in decoration.nbt_templates.iter().enumerate() {
+            if template_id.is_empty()
+                || template_id.starts_with('/')
+                || template_id.contains("..")
+                || !template_id.starts_with("decorations/")
+                || !template_id.ends_with(".nbt")
+            {
+                diagnostics.push(format!(
+                    "nbt-reference: decoration '{}' (global_id {}) nbt_templates #{} has invalid template id '{}'",
+                    decoration.name,
+                    decoration.global_id,
+                    template_index + 1,
+                    template_id
+                ));
+            } else if !registry.contains(template_id) {
+                diagnostics.push(format!(
+                    "nbt-reference: decoration '{}' (global_id {}) nbt_templates #{} references missing resident template '{}'",
+                    decoration.name,
+                    decoration.global_id,
+                    template_index + 1,
+                    template_id
+                ));
+            }
+        }
+    }
+}
+
+fn resolve_decoration_palette(
+    raw_decorations: Vec<ManifestDecoration>,
+    manifest_path: &Path,
+) -> Result<Vec<Option<Decoration>>, String> {
+    let mut diagnostics = Vec::new();
+    let max_id = raw_decorations
+        .iter()
+        .filter_map(|decoration| {
+            if decoration.global_id == 0 || decoration.global_id > u8::MAX.into() {
+                diagnostics.push(format!(
+                    "decoration '{}' has invalid global_id {} (ids must be in 1..={})",
+                    decoration.name,
+                    decoration.global_id,
+                    u8::MAX
+                ));
+                None
+            } else {
+                Some(decoration.global_id)
+            }
+        })
+        .max()
+        .unwrap_or(0);
+    let mut palette: Vec<Option<Decoration>> = vec![None; max_id as usize + 1];
+
+    for raw in raw_decorations {
+        if raw.global_id == 0 || raw.global_id > u8::MAX.into() {
+            continue;
+        }
+        let id = raw.global_id as usize;
+        let mut resolved_blocks = Vec::with_capacity(raw.blocks.len());
+        for (block_index, block_name) in raw.blocks.iter().enumerate() {
+            match block_state_from_name(block_name) {
+                Ok(state) => resolved_blocks.push(state),
+                Err(error) => diagnostics.push(format!(
+                    "decoration '{}' (global_id {}) block #{}: {error}",
+                    raw.name,
+                    raw.global_id,
+                    block_index + 1
+                )),
+            }
+        }
+        if raw.blocks.is_empty() {
+            diagnostics.push(format!(
+                "decoration '{}' (global_id {}) must declare at least one procedural block",
+                raw.name, raw.global_id
+            ));
+        }
+        if palette[id].is_some() {
+            diagnostics.push(format!(
+                "duplicate decoration global_id {} at decoration '{}'",
+                raw.global_id, raw.name
+            ));
+            continue;
+        }
+        palette[id] = Some(Decoration {
+            global_id: raw.global_id,
+            profile: raw.profile,
+            local_id: raw.local_id,
+            name: raw.name,
+            kind: raw.kind,
+            blocks: raw.blocks,
+            resolved_blocks,
+            size_range: raw.size_range,
+            rarity: raw.rarity,
+            notes: raw.notes,
+            nbt_templates: raw.nbt_templates,
+            anchor: DecorationAnchor::from_manifest(&raw.anchor),
+        });
+    }
+
+    if diagnostics.is_empty() {
+        Ok(palette)
+    } else {
+        Err(format!(
+            "terrain raster manifest {} has invalid decoration palette:\n- {}",
+            manifest_path.display(),
+            diagnostics.join("\n- ")
+        ))
+    }
+}
+
 fn block_state_from_name(name: &str) -> Result<BlockState, String> {
-    match name {
-        "stone" => Ok(BlockState::STONE),
-        "smooth_stone" => Ok(BlockState::SMOOTH_STONE),
-        "coarse_dirt" => Ok(BlockState::COARSE_DIRT),
-        "gravel" => Ok(BlockState::GRAVEL),
-        "grass_block" => Ok(BlockState::GRASS_BLOCK),
-        "dirt" => Ok(BlockState::DIRT),
-        "sand" => Ok(BlockState::SAND),
-        "red_sandstone" => Ok(BlockState::RED_SANDSTONE),
-        "terracotta" => Ok(BlockState::TERRACOTTA),
-        "red_terracotta" => Ok(BlockState::RED_TERRACOTTA),
-        "cobblestone" => Ok(BlockState::COBBLESTONE),
-        "mossy_cobblestone" => Ok(BlockState::MOSSY_COBBLESTONE),
-        "tuff" => Ok(BlockState::TUFF),
-        "blackstone" => Ok(BlockState::BLACKSTONE),
-        "obsidian" => Ok(BlockState::OBSIDIAN),
-        "basalt" => Ok(BlockState::BASALT),
-        "magma_block" => Ok(BlockState::MAGMA_BLOCK),
-        "crimson_nylium" => Ok(BlockState::CRIMSON_NYLIUM),
-        "calcite" => Ok(BlockState::CALCITE),
-        "snow_block" => Ok(BlockState::SNOW_BLOCK),
-        "packed_ice" => Ok(BlockState::PACKED_ICE),
-        "podzol" => Ok(BlockState::PODZOL),
-        "rooted_dirt" => Ok(BlockState::ROOTED_DIRT),
-        "soul_sand" => Ok(BlockState::SOUL_SAND),
-        "soul_soil" => Ok(BlockState::SOUL_SOIL),
-        "bone_block" => Ok(BlockState::BONE_BLOCK),
-        "mud" => Ok(BlockState::MUD),
-        "clay" => Ok(BlockState::CLAY),
-        "moss_block" => Ok(BlockState::MOSS_BLOCK),
-        "andesite" => Ok(BlockState::ANDESITE),
-        "deepslate" => Ok(BlockState::DEEPSLATE),
-        "cobbled_deepslate" => Ok(BlockState::COBBLED_DEEPSLATE),
-        "deepslate_bricks" => Ok(BlockState::DEEPSLATE_BRICKS),
-        "cracked_stone_bricks" => Ok(BlockState::CRACKED_STONE_BRICKS),
-        "smooth_quartz" => Ok(BlockState::SMOOTH_QUARTZ),
-        "lodestone" => Ok(BlockState::LODESTONE),
-        "weathered_copper" => Ok(BlockState::WEATHERED_COPPER),
-        "warped_planks" => Ok(BlockState::WARPED_PLANKS),
-        "dead_bush" => Ok(BlockState::DEAD_BUSH),
-        // Fall back to the broader decoration block resolver — it mirrors this
-        // fast-path list and additionally knows glass / stained-glass / many
-        // more surface materials authored by newer profiles (e.g. the
-        // tribulation_scorch fused-glass ground). A genuinely unknown surface
-        // block degrades to stone + warns rather than panicking the *entire*
-        // world bootstrap over one drifted palette entry.
-        other => Ok(super::blocks::block_from_name(other).unwrap_or_else(|| {
-            tracing::warn!("[bong][terrain] surface palette block '{other}' unknown; using stone");
-            BlockState::STONE
-        })),
+    super::blocks::block_from_name(name).ok_or_else(|| {
+        format!(
+            "unknown surface palette block '{name}' (not declared in the canonical terrain block catalog)"
+        )
+    })
+}
+
+fn resolve_surface_palette(
+    names: &[String],
+    manifest_path: &Path,
+) -> Result<Vec<BlockState>, String> {
+    let mut states = Vec::with_capacity(names.len());
+    let mut diagnostics = Vec::new();
+    for (index, name) in names.iter().enumerate() {
+        match block_state_from_name(name) {
+            Ok(state) => states.push(state),
+            Err(error) => diagnostics.push(format!("surface_palette #{}: {error}", index + 1)),
+        }
+    }
+    if diagnostics.is_empty() {
+        Ok(states)
+    } else {
+        Err(format!(
+            "terrain raster manifest {} has invalid surface palette:\n- {}",
+            manifest_path.display(),
+            diagnostics.join("\n- ")
+        ))
     }
 }
 
@@ -1477,99 +1756,124 @@ pub fn raster_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, St
 // P1 — placement manifest loading helpers
 // ---------------------------------------------------------------------------
 
-/// Load `placement_manifest.json` sidecar and pre-bucket all blocks by
-/// `ChunkPos` for O(1) per-chunk lookup at chunk generation time.
-///
-/// Returns an empty index (not an error) when the sidecar is absent — this
-/// maintains backward compatibility with manifests generated before P0 landed.
-pub(crate) fn load_placement_index(
-    sidecar_path: &Path,
-) -> (HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>, usize) {
-    let text = match std::fs::read_to_string(sidecar_path) {
-        Ok(t) => t,
-        Err(_) => {
-            // Sidecar absent is normal for pre-P0 manifests — not an error.
-            return (HashMap::new(), 0);
-        }
-    };
+const EXPECTED_PLACEMENT_MANIFEST_VERSION: u32 = 1;
 
-    let pm: PlacementManifest = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!(
-                "[bong][world] failed to parse placement_manifest.json at {}: {e}",
+type PlacementIndex = HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>;
+type PlacementLoadResult = Result<(PlacementIndex, usize), String>;
+type PlacementBuildResult = Result<(PlacementIndex, usize), Vec<String>>;
+
+/// Load `placement_manifest.json` and pre-bucket all authored blocks by
+/// `ChunkPos`. Only a genuinely missing sidecar is backward-compatible; a file
+/// that exists but cannot be read, decoded, parsed, versioned, or lowered is a
+/// fatal startup error.
+pub(crate) fn load_placement_index(sidecar_path: &Path) -> PlacementLoadResult {
+    let mut file = match super::nbt_io::open_regular_file_no_follow(sidecar_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((HashMap::new(), 0));
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to open placement sidecar {} as a regular file without following symlinks: {error}",
                 sidecar_path.display()
-            );
-            return (HashMap::new(), 0);
+            ));
         }
     };
 
-    build_placement_index(pm)
+    let mut text = String::new();
+    file.read_to_string(&mut text).map_err(|error| {
+        format!(
+            "failed to read placement sidecar {}: {error}",
+            sidecar_path.display()
+        )
+    })?;
+
+    let manifest: PlacementManifest = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "failed to parse placement sidecar {}: {error}",
+            sidecar_path.display()
+        )
+    })?;
+    if manifest.version != EXPECTED_PLACEMENT_MANIFEST_VERSION {
+        return Err(format!(
+            "placement sidecar {} has unsupported version {} (expected {})",
+            sidecar_path.display(),
+            manifest.version,
+            EXPECTED_PLACEMENT_MANIFEST_VERSION
+        ));
+    }
+
+    build_placement_index(manifest).map_err(|diagnostics| {
+        format!(
+            "placement sidecar {} failed validation:\n- {}",
+            sidecar_path.display(),
+            diagnostics.join("\n- ")
+        )
+    })
 }
 
-/// Convert a `PlacementManifest` into a `ChunkPos`-keyed lookup table.
-///
-/// Blocks with unknown `block` names are warned and skipped (no panic).
-/// Blocks with unrecognised property names/values are applied where possible;
-/// properties that fail to parse are silently dropped (best-effort).
-pub fn build_placement_index(
-    pm: PlacementManifest,
-) -> (HashMap<ChunkPos, Vec<(BlockPos, BlockState)>>, usize) {
-    let mut index: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>> = HashMap::new();
-    let mut total: usize = 0;
+/// Convert a placement manifest into a `ChunkPos`-keyed lookup table. Validation
+/// is atomic: every invalid block/property is collected in deterministic source
+/// order and no partial index is returned.
+pub fn build_placement_index(manifest: PlacementManifest) -> PlacementBuildResult {
+    let mut candidate: HashMap<ChunkPos, Vec<(BlockPos, BlockState)>> = HashMap::new();
+    let mut candidate_total = 0;
+    let mut diagnostics = Vec::new();
 
-    for structure in pm.structures {
-        for pb in structure.blocks {
-            let [x, y, z] = pb.pos;
-            let block_state = match block_state_from_placement(&pb.block, &pb.properties) {
-                Some(bs) => bs,
-                None => {
-                    tracing::warn!(
-                        "[bong][world] placement_manifest: unknown block '{}' at [{x},{y},{z}] — skipped",
-                        pb.block
-                    );
-                    continue;
-                }
-            };
+    for (structure_index, structure) in manifest.structures.into_iter().enumerate() {
+        for (block_index, block) in structure.blocks.into_iter().enumerate() {
+            let [x, y, z] = block.pos;
+            let mut properties = block.properties.iter().collect::<Vec<_>>();
+            properties.sort_by(|left, right| left.0.cmp(right.0));
+            let property_pairs = properties
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()));
+            let block_state =
+                match super::blocks::block_state_with_properties(&block.block, property_pairs) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        diagnostics.push(format!(
+                            "structure #{}, block #{} '{}' at [{x},{y},{z}]: {error}",
+                            structure_index + 1,
+                            block_index + 1,
+                            block.block
+                        ));
+                        continue;
+                    }
+                };
             let block_pos = BlockPos::new(x, y, z);
             let chunk_pos = ChunkPos::new(x.div_euclid(16), z.div_euclid(16));
-            index
+            candidate
                 .entry(chunk_pos)
                 .or_default()
                 .push((block_pos, block_state));
-            total += 1;
+            candidate_total += 1;
         }
     }
 
-    (index, total)
+    if diagnostics.is_empty() {
+        Ok((candidate, candidate_total))
+    } else {
+        Err(diagnostics)
+    }
 }
 
-/// Resolve a Minecraft block name + blockstate properties map into a valence
-/// `BlockState`.  Returns `None` for names not in `blocks::block_from_name`.
-///
-/// Properties are applied one-by-one; any property whose name or value is not
-/// recognised by valence is silently ignored (best-effort).
+/// Strict public lowering helper for placement/NBT-style names. The optional
+/// `minecraft:` namespace is accepted once; all validation is delegated to the
+/// shared catalog property lowerer.
+#[cfg(test)]
 pub fn block_state_from_placement(
     name: &str,
     properties: &HashMap<String, String>,
-) -> Option<BlockState> {
-    // Strip optional "minecraft:" namespace prefix.
-    let bare = name.strip_prefix("minecraft:").unwrap_or(name);
-    let mut state = super::blocks::block_from_name(bare)?;
-
-    for (prop_name_str, prop_val_str) in properties {
-        if let (Some(pn), Some(pv)) = (
-            PropName::from_str(prop_name_str),
-            PropValue::from_str(prop_val_str),
-        ) {
-            // Only apply the property if it is valid for this block.
-            if state.get(pn).is_some() {
-                state = state.set(pn, pv);
-            }
-        }
-    }
-
-    Some(state)
+) -> Result<BlockState, super::blocks::BlockStateResolveError> {
+    let mut properties = properties.iter().collect::<Vec<_>>();
+    properties.sort_by(|left, right| left.0.cmp(right.0));
+    super::blocks::block_state_with_properties(
+        name,
+        properties
+            .into_iter()
+            .map(|(property, value)| (property.as_str(), value.as_str())),
+    )
 }
 
 #[cfg(test)]
@@ -1621,6 +1925,44 @@ mod tests {
     /// in-range so `sample_layer("height")` (which now reads the span ceiling)
     /// has a deterministic expected value.
     const FIXTURE_SURFACE_Y: i16 = 100;
+
+    fn test_biomes() -> BiomeRegistry {
+        use valence::prelude::Biome;
+
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(
+            Ident::new("plains").expect("valid test biome identifier"),
+            Biome::default(),
+        );
+        biomes
+    }
+
+    fn invalid_cross_source_manifest() -> String {
+        r#"{
+            "version": 2,
+            "tile_size": 1,
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["unknown_surface_for_preflight"],
+            "biome_palette": ["plains"],
+            "tiles": [],
+            "global_decoration_palette": [
+                {
+                    "global_id": 1,
+                    "profile": "test",
+                    "local_id": 1,
+                    "name": "broken_deco",
+                    "kind": "test",
+                    "blocks": ["unknown_decoration_for_preflight"],
+                    "size_range": [1, 1],
+                    "rarity": 1.0,
+                    "notes": "",
+                    "nbt_templates": ["../escape.nbt", "decorations/test/missing.nbt"],
+                    "anchor": "ground"
+                }
+            ]
+        }"#
+        .to_string()
+    }
 
     fn build_fixture() -> RasterFixture {
         let root = unique_temp_dir();
@@ -2163,7 +2505,7 @@ mod tests {
             "local_id": 1,
             "name": "wild_grass",
             "kind": "flower",
-            "blocks": ["minecraft:grass"],
+            "blocks": ["grass"],
             "size_range": [1, 1],
             "rarity": 0.65,
             "notes": "野草"
@@ -2187,9 +2529,340 @@ mod tests {
     }
 
     #[test]
-    fn decoration_palette_lowers_nbt_fields_through_terrain_provider_load() {
-        // End-to-end-ish: a manifest whose global_decoration_palette carries an
-        // NBT-driven entry must surface on the public Decoration with the same
+    fn resolve_surface_palette_aggregates_every_invalid_entry() {
+        let names = vec![
+            "stone".to_string(),
+            "unknown_surface_one".to_string(),
+            "minecraft:dirt".to_string(),
+            "unknown_surface_two".to_string(),
+        ];
+        let manifest_path = Path::new("/tmp/test-manifest.json");
+
+        let error = resolve_surface_palette(&names, manifest_path)
+            .expect_err("all unsupported surface keys must reject manifest admission");
+        assert!(error.contains("test-manifest.json"));
+        assert!(error.contains("surface_palette #2"));
+        assert!(error.contains("unknown_surface_one"));
+        assert!(error.contains("surface_palette #3"));
+        assert!(error.contains("minecraft:dirt"));
+        assert!(error.contains("surface_palette #4"));
+        assert!(error.contains("unknown_surface_two"));
+        assert_eq!(
+            error.matches("unknown surface palette block").count(),
+            3,
+            "one valid key must not hide or multiply the three invalid diagnostics: {error}"
+        );
+    }
+
+    #[test]
+    fn resolve_decoration_palette_aggregates_ids_blocks_and_empty_entries() {
+        fn decoration(global_id: u32, name: &str, blocks: &[&str]) -> ManifestDecoration {
+            ManifestDecoration {
+                global_id,
+                profile: "test".into(),
+                local_id: 1,
+                name: name.into(),
+                kind: "test".into(),
+                blocks: blocks.iter().map(|block| (*block).to_string()).collect(),
+                size_range: [1, 1],
+                rarity: 1.0,
+                notes: String::new(),
+                nbt_templates: Vec::new(),
+                anchor: String::new(),
+            }
+        }
+
+        let error = resolve_decoration_palette(
+            vec![
+                decoration(0, "zero", &["stone"]),
+                decoration(1, "first", &["unknown_deco_one", "unknown_deco_two"]),
+                decoration(1, "duplicate", &["stone"]),
+                decoration(2, "empty", &[]),
+                decoration(256, "too_large", &["stone"]),
+            ],
+            Path::new("/tmp/test-manifest.json"),
+        )
+        .expect_err("every invalid decoration entry must reject admission atomically");
+
+        assert!(error.contains("zero") && error.contains("invalid global_id 0"));
+        assert!(error.contains("too_large") && error.contains("invalid global_id 256"));
+        assert!(error.contains("duplicate decoration global_id 1"));
+        assert!(error.contains("unknown_deco_one"));
+        assert!(error.contains("unknown_deco_two"));
+        assert!(error.contains("empty") && error.contains("at least one procedural block"));
+        assert_eq!(
+            error.matches("unknown surface palette block").count(),
+            2,
+            "both invalid block keys must be diagnosed without returning a partial palette: {error}"
+        );
+    }
+
+    fn write_required_raster_tile(tile_dir: &Path, surface_ids: &[u8], subsurface_ids: &[u8]) {
+        assert_eq!(
+            surface_ids.len(),
+            subsurface_ids.len(),
+            "surface and subsurface fixtures must describe the same tile area"
+        );
+        fs::create_dir_all(tile_dir).expect("raster tile fixture directory should be creatable");
+        write_spans_single_fixture(tile_dir, surface_ids.len(), FIXTURE_SURFACE_Y);
+        fs::write(tile_dir.join("surface_id.bin"), surface_ids)
+            .expect("surface id fixture should be writable");
+        fs::write(tile_dir.join("subsurface_id.bin"), subsurface_ids)
+            .expect("subsurface id fixture should be writable");
+        write_u8_layer(&tile_dir.join("biome_id.bin"), 0, surface_ids.len());
+        write_f32_layer(&tile_dir.join("water_level.bin"), -1.0, surface_ids.len());
+        write_f32_layer(&tile_dir.join("feature_mask.bin"), 0.0, surface_ids.len());
+        write_f32_layer(
+            &tile_dir.join("boundary_weight.bin"),
+            0.0,
+            surface_ids.len(),
+        );
+    }
+
+    fn write_loadable_raster_manifest(path: &Path, surface_palette: &[&str], tile_dir: &str) {
+        let palette = surface_palette
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        fs::write(
+            path,
+            format!(
+                r#"{{
+                    "version": 2,
+                    "tile_size": 2,
+                    "world_bounds": {{"min_x":0,"max_x":1,"min_z":0,"max_z":1}},
+                    "surface_palette": [{palette}],
+                    "biome_palette": ["plains"],
+                    "tiles": [{{
+                        "tile_x": 0,
+                        "tile_z": 0,
+                        "dir": "{tile_dir}",
+                        "layers": []
+                    }}]
+                }}"#
+            ),
+        )
+        .expect("raster manifest fixture should be writable");
+    }
+
+    #[test]
+    fn load_preflighted_rejects_empty_surface_palette() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("empty-palette fixture root should be creatable");
+        let manifest_path = root.join("manifest.json");
+        write_loadable_raster_manifest(&manifest_path, &[], "tile_0_0");
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("an empty surface palette must fail before runtime sampling");
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic == "manifest: surface palette cannot be empty"),
+            "empty-palette admission must be explicit: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_preflighted_aggregates_every_surface_and_subsurface_palette_id_overflow() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0, 2, 3, 0], &[4, 0, 5, 0]);
+        let manifest_path = root.join("manifest.json");
+        write_loadable_raster_manifest(&manifest_path, &["stone", "dirt"], "tile_0_0");
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("every palette id outside [0, palette_len) must reject provider admission");
+        let palette_diagnostics = error
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.contains("surface palette length is 2"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            palette_diagnostics.len(),
+            4,
+            "two bad surface ids and two bad subsurface ids must all survive aggregation: {error}"
+        );
+        for expected in [
+            "surface_id index 1 has palette id 2",
+            "surface_id index 2 has palette id 3",
+            "subsurface_id index 0 has palette id 4",
+            "subsurface_id index 2 has palette id 5",
+        ] {
+            assert!(
+                palette_diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(expected)
+                        && diagnostic.contains("tile (0,0) 'tile_0_0'")),
+                "palette-id diagnostic must identify tile, layer, index, value, and palette length for {expected:?}: {error}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_preflighted_accepts_surface_ids_at_the_upper_valid_boundary() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0, 1, 1, 0], &[1, 0, 1, 0]);
+        let manifest_path = root.join("manifest.json");
+        write_loadable_raster_manifest(&manifest_path, &["stone", "dirt"], "tile_0_0");
+
+        let provider = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect("palette id == palette_len - 1 is valid for both raster layers");
+        assert_eq!(provider.sample(1, 0).surface_block, BlockState::DIRT);
+        assert_eq!(provider.sample(0, 0).subsurface_block, BlockState::DIRT);
+        drop(provider);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn public_load_rejects_invalid_and_missing_nbt_template_references() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("public loader fixture root should be creatable");
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version": 2,
+                "tile_size": 1,
+                "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette": ["stone"],
+                "biome_palette": ["plains"],
+                "tiles": [],
+                "global_decoration_palette": [{
+                    "global_id": 1,
+                    "profile": "test",
+                    "local_id": 1,
+                    "name": "broken_public_loader_deco",
+                    "kind": "test",
+                    "blocks": ["stone"],
+                    "size_range": [1, 1],
+                    "rarity": 1.0,
+                    "notes": "",
+                    "nbt_templates": ["../escape.nbt", "decorations/test/missing.nbt"],
+                    "anchor": "ground"
+                }]
+            }"#,
+        )
+        .expect("public loader manifest should be writable");
+
+        let error = TerrainProvider::load(&manifest_path, &root, &test_biomes())
+            .expect_err("the public loader must enforce the same strict NBT reference admission");
+        assert!(
+            error.contains("../escape.nbt") && error.contains("invalid template id"),
+            "public loader must reject malformed template ids: {error}"
+        );
+        assert!(
+            error.contains("decorations/test/missing.nbt")
+                && error.contains("missing resident template"),
+            "public loader must reject dangling resident-template references: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_preflighted_aggregates_surface_decoration_template_and_placement_errors() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("cross-source preflight root should be creatable");
+        let manifest_path = root.join("manifest.json");
+        fs::write(&manifest_path, invalid_cross_source_manifest())
+            .expect("cross-source manifest should be writable");
+        fs::write(
+            root.join("placement_manifest.json"),
+            r#"{
+                "version": 1,
+                "structures": [{
+                    "nbt_path": "test.nbt",
+                    "origin": [0, 64, 0],
+                    "rotation": 0,
+                    "blocks": [
+                        {"pos":[0,64,0],"block":"unknown_placement_for_preflight"},
+                        {"pos":[1,64,0],"block":"oak_log","properties":{"axis":"north"}}
+                    ]
+                }]
+            }"#,
+        )
+        .expect("invalid placement fixture should be writable");
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("all four invalid authored sources must reject provider construction");
+        let diagnostics = error.diagnostics();
+        assert!(diagnostics.windows(2).all(|pair| pair[0] <= pair[1]));
+        for expected in [
+            "surface: ",
+            "decoration: ",
+            "nbt-reference: ",
+            "placement: ",
+        ] {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.starts_with(expected)),
+                "cross-source preflight must report the {expected:?} source: {error}"
+            );
+        }
+        for authored_value in [
+            "unknown_surface_for_preflight",
+            "unknown_decoration_for_preflight",
+            "../escape.nbt",
+            "decorations/test/missing.nbt",
+            "unknown_placement_for_preflight",
+            "axis",
+        ] {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(authored_value)),
+                "diagnostics must identify invalid authored value {authored_value:?}: {error}"
+            );
+        }
+        assert_eq!(
+            diagnostics,
+            TerrainProvider::load_preflighted(
+                &manifest_path,
+                &root,
+                &test_biomes(),
+                &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+            )
+            .expect_err("repeated preflight must remain fatal")
+            .diagnostics(),
+            "startup diagnostics must be deterministic across repeated preflights"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn decoration_palette_helper_lowers_nbt_fields() {
+        // A manifest decoration carrying NBT fields lowers them into the runtime
+        // Decoration while preserving the authored template order and anchor.
         // templates + lowered anchor, and `is_nbt_driven()` must agree.
         let json = r#"{
             "version": 2,
@@ -2205,7 +2878,7 @@ mod tests {
                     "local_id": 1,
                     "name": "grave_mound",
                     "kind": "grave_mound",
-                    "blocks": ["minecraft:dirt", "minecraft:mossy_cobblestone", "minecraft:oak_sign"],
+                    "blocks": ["dirt", "mossy_cobblestone", "oak_sign"],
                     "size_range": [2, 4],
                     "rarity": 0.4,
                     "notes": "荒冢",
@@ -2216,26 +2889,14 @@ mod tests {
         }"#;
         let manifest: RasterManifest =
             serde_json::from_str(json).expect("manifest with NBT-driven decoration must parse");
-        // Mirror the lowering the load() constructor does for the decoration
-        // palette (without needing on-disk raster tiles).
-        let raw = manifest
-            .global_decoration_palette
-            .into_iter()
-            .next()
-            .expect("one decoration in the palette");
-        let deco = Decoration {
-            global_id: raw.global_id,
-            profile: raw.profile,
-            local_id: raw.local_id,
-            name: raw.name,
-            kind: raw.kind,
-            blocks: raw.blocks,
-            size_range: raw.size_range,
-            rarity: raw.rarity,
-            notes: raw.notes,
-            nbt_templates: raw.nbt_templates,
-            anchor: DecorationAnchor::from_manifest(&raw.anchor),
-        };
+        let mut palette = resolve_decoration_palette(
+            manifest.global_decoration_palette,
+            Path::new("/tmp/test-manifest.json"),
+        )
+        .expect("valid NBT-driven decoration palette must lower");
+        let deco = palette[1]
+            .take()
+            .expect("global_id 1 must occupy palette slot 1");
         assert!(
             deco.is_nbt_driven(),
             "a decoration with a template path must report is_nbt_driven()"
@@ -2260,7 +2921,8 @@ mod tests {
             local_id: 1,
             name: "wild_grass".into(),
             kind: "flower".into(),
-            blocks: vec!["minecraft:grass".into()],
+            blocks: vec!["grass".into()],
+            resolved_blocks: vec![BlockState::GRASS],
             size_range: [1, 1],
             rarity: 0.65,
             notes: String::new(),
@@ -2271,6 +2933,49 @@ mod tests {
             !deco.is_nbt_driven(),
             "a decoration with no templates must stay procedural (is_nbt_driven() == false)"
         );
+    }
+
+    #[test]
+    fn decoration_template_preflight_aggregates_missing_and_invalid_ids() {
+        let provider = TerrainProvider {
+            decoration_palette: vec![
+                None,
+                Some(Decoration {
+                    global_id: 1,
+                    profile: "spawn".into(),
+                    local_id: 1,
+                    name: "broken_tree".into(),
+                    kind: "tree".into(),
+                    blocks: vec!["oak_log".into()],
+                    resolved_blocks: vec![BlockState::OAK_LOG],
+                    size_range: [1, 2],
+                    rarity: 0.2,
+                    notes: String::new(),
+                    nbt_templates: vec![
+                        "../escape.nbt".into(),
+                        "decorations/tree/missing.nbt".into(),
+                    ],
+                    anchor: DecorationAnchor::Ground,
+                }),
+            ],
+            ..TerrainProvider::empty_for_tests()
+        };
+        let diagnostics = provider
+            .validate_decoration_templates(
+                &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+            )
+            .expect_err("both malformed and dangling template ids must reject startup");
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "all template reference errors aggregate"
+        );
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.contains("../escape.nbt") && d.contains("invalid")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.contains("missing.nbt") && d.contains("missing resident")));
     }
 
     // -----------------------------------------------------------------------
@@ -2343,75 +3048,52 @@ mod tests {
 
     // ----- block_state_from_placement -------------------------------------------
 
-    /// Known block names resolve to a non-AIR BlockState.
+    /// Known bare and namespaced block names resolve through the same strict path.
     #[test]
-    fn block_state_from_placement_resolves_known_bare_name() {
-        let result = block_state_from_placement("stone_bricks", &HashMap::new());
+    fn block_state_from_placement_resolves_known_names() {
+        let bare = block_state_from_placement("stone_bricks", &HashMap::new())
+            .expect("bare stone_bricks must resolve");
+        let namespaced = block_state_from_placement("minecraft:stone_bricks", &HashMap::new())
+            .expect("minecraft: prefix must be accepted once");
+        assert_eq!(bare, namespaced);
+    }
+
+    #[test]
+    fn block_state_from_placement_rejects_unknown_blocks_and_properties() {
         assert!(
-            result.is_some(),
-            "bare 'stone_bricks' must resolve to a BlockState"
+            block_state_from_placement("minecraft:unknown_block_xyz", &HashMap::new()).is_err()
         );
+
+        let mut unknown_name = HashMap::new();
+        unknown_name.insert("nonexistent_prop".to_string(), "x".to_string());
+        assert!(block_state_from_placement("oak_log", &unknown_name).is_err());
+
+        let mut unknown_value = HashMap::new();
+        unknown_value.insert("axis".to_string(), "not_a_value".to_string());
+        assert!(block_state_from_placement("oak_log", &unknown_value).is_err());
+
+        let mut inapplicable = HashMap::new();
+        inapplicable.insert("axis".to_string(), "x".to_string());
+        assert!(block_state_from_placement("stone", &inapplicable).is_err());
+
+        let mut invalid_for_property = HashMap::new();
+        invalid_for_property.insert("axis".to_string(), "north".to_string());
+        assert!(block_state_from_placement("oak_log", &invalid_for_property).is_err());
     }
 
-    /// `minecraft:` prefix is stripped automatically.
-    #[test]
-    fn block_state_from_placement_strips_minecraft_prefix() {
-        let with_prefix = block_state_from_placement("minecraft:stone_bricks", &HashMap::new());
-        let without_prefix = block_state_from_placement("stone_bricks", &HashMap::new());
-        assert_eq!(
-            with_prefix, without_prefix,
-            "minecraft: prefix must be stripped; result must match bare name"
-        );
-    }
-
-    /// Unknown block name returns None (warn-and-skip contract).
-    #[test]
-    fn block_state_from_placement_returns_none_for_unknown_block() {
-        let result = block_state_from_placement("minecraft:unknown_block_xyz", &HashMap::new());
-        assert!(
-            result.is_none(),
-            "unknown block name must return None so caller can warn+skip"
-        );
-    }
-
-    /// Valid properties are applied to the BlockState.
     #[test]
     fn block_state_from_placement_applies_valid_properties() {
         let mut props = HashMap::new();
-        props.insert("axis".to_string(), "y".to_string());
-        let with_props = block_state_from_placement("oak_log", &props);
-        let without_props = block_state_from_placement("oak_log", &HashMap::new());
-        assert!(with_props.is_some());
-        // A log with axis=y should differ from the default (axis=y is the default
-        // for OAK_LOG, so also check axis=x differs from default)
-        let mut props_x = HashMap::new();
-        props_x.insert("axis".to_string(), "x".to_string());
-        let with_axis_x = block_state_from_placement("oak_log", &props_x);
-        assert_ne!(
-            with_axis_x, without_props,
-            "axis=x should produce a different BlockState from default"
-        );
+        props.insert("axis".to_string(), "x".to_string());
+        let with_axis_x =
+            block_state_from_placement("oak_log", &props).expect("axis=x is valid for oak_log");
+        let without_props =
+            block_state_from_placement("oak_log", &HashMap::new()).expect("oak_log resolves");
+        assert_ne!(with_axis_x, without_props);
     }
 
-    /// Unknown property names/values are silently ignored (no panic).
     #[test]
-    fn block_state_from_placement_ignores_unknown_properties_without_panic() {
-        let mut props = HashMap::new();
-        props.insert("nonexistent_prop".to_string(), "bad_value".to_string());
-        props.insert("moisture".to_string(), "999_out_of_range".to_string());
-        let result = block_state_from_placement("farmland", &props);
-        // Should still resolve the block (just without the bad property applied)
-        assert!(
-            result.is_some(),
-            "unknown properties must be silently ignored, not panic or return None"
-        );
-    }
-
-    // ----- build_placement_index ------------------------------------------------
-
-    /// A manifest with two blocks in different chunks produces a 2-bucket index.
-    #[test]
-    fn build_placement_index_buckets_blocks_by_chunk_pos() {
+    fn build_placement_index_buckets_blocks_atomically() {
         let manifest = PlacementManifest {
             version: 1,
             structures: vec![PlacementStructure {
@@ -2433,24 +3115,17 @@ mod tests {
             }],
         };
 
-        let (index, total) = build_placement_index(manifest);
-        assert_eq!(total, 2, "two valid blocks must count as 2 total");
-        assert_eq!(
-            index.len(),
-            2,
-            "two blocks in different chunks must produce 2 buckets"
-        );
-        let cp0 = ChunkPos::new(0, 0);
-        let cp1 = ChunkPos::new(1, 0);
-        assert!(index.contains_key(&cp0), "chunk (0,0) must have an entry");
-        assert!(index.contains_key(&cp1), "chunk (1,0) must have an entry");
-        assert_eq!(index[&cp0].len(), 1);
-        assert_eq!(index[&cp1].len(), 1);
+        let (index, total) = build_placement_index(manifest).expect("all blocks are valid");
+        assert_eq!(total, 2);
+        assert_eq!(index.len(), 2);
+        assert_eq!(index[&ChunkPos::new(0, 0)].len(), 1);
+        assert_eq!(index[&ChunkPos::new(1, 0)].len(), 1);
     }
 
-    /// Blocks with unknown names are skipped; the index total does not count them.
     #[test]
-    fn build_placement_index_skips_unknown_blocks() {
+    fn build_placement_index_aggregates_invalid_blocks_without_partial_success() {
+        let mut bad_property = HashMap::new();
+        bad_property.insert("axis".to_string(), "north".to_string());
         let manifest = PlacementManifest {
             version: 1,
             structures: vec![PlacementStructure {
@@ -2468,70 +3143,258 @@ mod tests {
                         block: "minecraft:unknown_block_for_test".to_string(),
                         properties: HashMap::new(),
                     },
+                    PlacementBlock {
+                        pos: [2, 64, 0],
+                        block: "minecraft:oak_log".to_string(),
+                        properties: bad_property,
+                    },
                 ],
             }],
         };
 
-        let (index, total) = build_placement_index(manifest);
-        assert_eq!(total, 1, "only the valid block must be counted");
-        let cp = ChunkPos::new(0, 0);
+        let diagnostics = build_placement_index(manifest)
+            .expect_err("one valid block must not hide two invalid authored blocks");
         assert_eq!(
-            index.get(&cp).map(|v| v.len()),
-            Some(1),
-            "only the valid block must appear in the index"
+            diagnostics.len(),
+            2,
+            "both invalid entries must be reported"
         );
+        assert!(diagnostics[0].contains("unknown_block_for_test"));
+        assert!(diagnostics[1].contains("axis"));
     }
 
-    /// load_placement_index with missing sidecar returns empty index without error.
     #[test]
-    fn load_placement_index_returns_empty_for_missing_sidecar() {
+    fn load_placement_index_accepts_only_a_missing_sidecar_as_empty() {
         let (index, total) =
-            load_placement_index(Path::new("/nonexistent/path/placement_manifest.json"));
-        assert!(index.is_empty(), "missing sidecar must yield empty index");
-        assert_eq!(total, 0, "missing sidecar must yield zero block count");
-    }
-
-    /// load_placement_index with malformed JSON returns empty index without panic.
-    #[test]
-    fn load_placement_index_returns_empty_for_malformed_json() {
-        let root = unique_temp_dir();
-        fs::create_dir_all(&root).expect("temp dir should be creatable");
-        let path = root.join("placement_manifest.json");
-        fs::write(&path, b"not valid json { { {").expect("should be writable");
-        let (index, total) = load_placement_index(&path);
-        let _ = fs::remove_dir_all(&root);
-        assert!(index.is_empty(), "malformed JSON must yield empty index");
+            load_placement_index(Path::new("/nonexistent/path/placement_manifest.json"))
+                .expect("NotFound is the only backward-compatible sidecar case");
+        assert!(index.is_empty());
         assert_eq!(total, 0);
     }
 
-    /// load_placement_index with valid fixture JSON produces a non-empty index.
     #[test]
-    fn load_placement_index_from_valid_fixture_produces_non_empty_index() {
+    fn load_placement_index_rejects_malformed_schema_version_and_unknown_fields() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("temp dir should be creatable");
         let path = root.join("placement_manifest.json");
-        let fixture = include_str!("placement_manifest_fixture.json");
-        fs::write(&path, fixture).expect("fixture should be writable");
-        let (index, total) = load_placement_index(&path);
+
+        fs::write(&path, b"not valid json { { {").expect("write malformed fixture");
+        assert!(load_placement_index(&path).is_err());
+
+        fs::write(&path, r#"{"version":2,"structures":[]}"#).expect("write version fixture");
+        assert!(load_placement_index(&path).is_err());
+
+        fs::write(&path, r#"{"version":1,"structures":[],"extra":true}"#)
+            .expect("write unknown-field fixture");
+        assert!(load_placement_index(&path).is_err());
+
         let _ = fs::remove_dir_all(&root);
-        // The fixture has 5 + 2 = 7 blocks, but only known blocks count.
-        // stone_bricks × 3 + farmland × 1 + oak_log × 1 + farmland × 1 + wheat × 1 = 7
-        // All should be resolvable after our blocks.rs additions.
+    }
+
+    #[test]
+    fn load_placement_index_rejects_invalid_utf8_directory_and_nested_unknown_fields() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+
+        fs::write(&path, [0xff, 0xfe, 0xfd]).expect("write invalid utf-8 fixture");
+        let utf8_error = load_placement_index(&path)
+            .expect_err("present non-UTF-8 sidecar must fail instead of degrading to empty");
+        assert!(utf8_error.contains("failed to read placement sidecar"));
+
+        fs::remove_file(&path).expect("remove utf-8 fixture");
+        fs::create_dir(&path).expect("create directory at sidecar path");
+        let directory_error = load_placement_index(&path)
+            .expect_err("a directory at the configured sidecar path must be fatal");
+        assert!(directory_error.contains("must be a regular file"));
+
+        fs::remove_dir(&path).expect("remove sidecar directory fixture");
+        fs::write(
+            &path,
+            r#"{"version":1,"structures":[{"nbt_path":"x","origin":[0,0,0],"rotation":0,"blocks":[{"pos":[0,0,0],"block":"minecraft:stone","properties":{},"extra":true}]}]}"#,
+        )
+        .expect("write nested unknown-field fixture");
+        let nested_error = load_placement_index(&path)
+            .expect_err("unknown fields in nested placement blocks must fail schema admission");
+        assert!(nested_error.contains("failed to parse placement sidecar"));
+        assert!(nested_error.contains("unknown field `extra`"));
+
+        fs::remove_file(&path).expect("remove block unknown-field fixture");
+        fs::write(
+            &path,
+            r#"{"version":1,"structures":[{"nbt_path":"x","origin":[0,0,0],"rotation":0,"blocks":[],"extra":true}]}"#,
+        )
+        .expect("write structure unknown-field fixture");
+        let structure_error = load_placement_index(&path)
+            .expect_err("unknown fields in placement structures must fail schema admission");
+        assert!(structure_error.contains("failed to parse placement sidecar"));
+        assert!(structure_error.contains("unknown field `extra`"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_placement_index_rejects_dangling_symlink_and_special_node() {
+        use std::os::unix::fs::symlink;
+        use std::os::unix::net::UnixListener;
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+
+        symlink(root.join("missing-target.json"), &path)
+            .expect("create dangling placement sidecar symlink");
+        let symlink_error = load_placement_index(&path)
+            .expect_err("a dangling sidecar symlink exists and must not use NotFound fallback");
         assert!(
-            total > 0,
-            "valid fixture should produce at least one indexed block; got {total}"
+            symlink_error.contains("without following symlinks")
+                || symlink_error.to_ascii_lowercase().contains("symbolic link"),
+            "dangling symlink diagnostic must explain the no-follow admission failure: {symlink_error}"
+        );
+
+        fs::remove_file(&path).expect("remove dangling symlink fixture");
+        let listener = UnixListener::bind(&path).expect("bind special sidecar socket fixture");
+        let special_error = load_placement_index(&path)
+            .expect_err("a special sidecar node must fail before any blocking read is attempted");
+        assert!(
+            special_error.contains("must be a regular file")
+                && special_error.contains("special node"),
+            "special-node diagnostic must explain the file-type contract: {special_error}"
+        );
+
+        drop(listener);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_placement_index_rejects_fresh_symlink_and_fifo_inputs_without_blocking() {
+        use std::os::unix::fs::symlink;
+        use std::process::Command;
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+        let external = root.join("external.json");
+        fs::write(&external, r#"{"version":1,"structures":[]}"#)
+            .expect("write external sidecar target");
+        symlink(&external, &path).expect("create placement sidecar symlink");
+
+        let symlink_error = load_placement_index(&path)
+            .expect_err("no-follow open must reject a symlink before reading its target");
+        assert!(
+            symlink_error.contains("without following symlinks")
+                || symlink_error.to_ascii_lowercase().contains("symbolic link"),
+            "fresh symlink admission must fail closed: {symlink_error}"
+        );
+
+        fs::remove_file(&path).expect("remove symlink fixture");
+        let status = Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("run mkfifo for input fixture");
+        assert!(status.success(), "mkfifo input fixture must succeed");
+        let fifo_error = load_placement_index(&path).expect_err(
+            "nonblocking no-follow open must reject a FIFO without waiting for a writer",
         );
         assert!(
-            !index.is_empty(),
-            "valid fixture should produce a non-empty index"
+            fifo_error.contains("regular file") && fifo_error.contains("special node"),
+            "fresh FIFO admission must identify the regular-file contract: {fifo_error}"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_placement_index_reads_the_opened_descriptor_after_path_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+        let external = root.join("replacement.json");
+        fs::write(&path, r#"{"version":1,"structures":[]}"#).expect("write original valid sidecar");
+        fs::write(&external, b"replacement must not be read").expect("write replacement target");
+
+        let hook_path = path.clone();
+        let hook_external = external.clone();
+        super::super::nbt_io::set_open_regular_file_after_open_test_hook(move || {
+            fs::remove_file(&hook_path).expect("unlink opened sidecar path");
+            symlink(&hook_external, &hook_path).expect("replace sidecar path with symlink");
+        });
+
+        let (index, total) = load_placement_index(&path)
+            .expect("loader must read the already-open original file, not reopen the replacement");
+        assert!(index.is_empty());
+        assert_eq!(total, 0);
+        assert!(
+            fs::symlink_metadata(&path)
+                .expect("replacement path should exist")
+                .file_type()
+                .is_symlink(),
+            "test must actually replace the path after descriptor open"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_placement_index_reads_the_opened_descriptor_after_fifo_replacement() {
+        use std::process::Command;
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+        fs::write(&path, r#"{"version":1,"structures":[]}"#).expect("write original valid sidecar");
+
+        let hook_path = path.clone();
+        super::super::nbt_io::set_open_regular_file_after_open_test_hook(move || {
+            fs::remove_file(&hook_path).expect("unlink opened sidecar path");
+            let status = Command::new("mkfifo")
+                .arg(&hook_path)
+                .status()
+                .expect("run mkfifo for replacement fixture");
+            assert!(status.success(), "mkfifo replacement fixture must succeed");
+        });
+
+        let (index, total) = load_placement_index(&path)
+            .expect("loader must not reopen and block on a FIFO replacement");
+        assert!(index.is_empty());
+        assert_eq!(total, 0);
+        assert!(
+            !fs::symlink_metadata(&path)
+                .expect("FIFO replacement path should exist")
+                .is_file(),
+            "test must actually replace the path with a non-regular node"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_placement_index_from_valid_fixture_produces_all_blocks() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir should be creatable");
+        let path = root.join("placement_manifest.json");
+        fs::write(&path, include_str!("placement_manifest_fixture.json"))
+            .expect("fixture should be writable");
+        let (index, total) = load_placement_index(&path).expect("valid sidecar loads");
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            total, 7,
+            "the valid fixture's seven authored blocks all resolve"
+        );
+        assert!(!index.is_empty());
     }
 
     // ----- authored NBT palette zero-drop contract ------------------------------------------------
 
     /// Every block name authored in dan_zong / wangyintai structures must be indexed
     /// without any drops.  If block_from_name doesn't cover a name, build_placement_index
-    /// silently skips it, resulting in `total < authored_count` (a structural hole).
+    /// rejects it, preventing a partial placement index (a structural hole).
     ///
     /// This test creates a synthetic manifest containing one block entry for each name
     /// in the authored palette and asserts that ALL are indexed (drop count == 0).
@@ -2562,12 +3425,13 @@ mod tests {
             }],
         };
 
-        let (_, total) = build_placement_index(manifest);
+        let (_, total) =
+            build_placement_index(manifest).expect("the authored NBT palette must all resolve");
         assert_eq!(
             total,
             authored_count,
             "Authored NBT palette has {authored_count} distinct block names but only {total} \
-             resolved (drop count = {}). Add missing names to block_from_name in blocks.rs.",
+             resolved (drop count = {}). Add missing names to server/assets/worldgen/block_catalog.toml.",
             authored_count.saturating_sub(total)
         );
     }
