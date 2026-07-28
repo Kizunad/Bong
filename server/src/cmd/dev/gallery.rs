@@ -264,13 +264,13 @@ pub fn structure_placements(
     structure: &StructureNbt,
     origin: [i32; 3],
 ) -> (Vec<StampPlacement>, Vec<String>) {
-    let unresolved = structure.unresolved_palette_blocks();
+    let unresolved = structure.palette_diagnostics();
     let mut placements = Vec::with_capacity(structure.blocks.len());
     for block in &structure.blocks {
         let Some(entry) = structure.palette.get(block.state as usize) else {
             continue;
         };
-        let Some(state) = entry.block_state() else {
+        let Ok(state) = entry.block_state() else {
             // palette 未知块：跳过（已记入 unresolved），不写空洞。
             continue;
         };
@@ -458,7 +458,10 @@ fn stamp_gallery(layer: &mut ChunkLayer, gallery: &mut GalleryState) -> String {
 /// **dev-only**：直写 ChunkLayer，绕过生产生成链；与 `/gallery` 无参（排除 `decorations/`）
 /// 是两条独立审阅路。
 fn stamp_decoration_gallery(layer: &mut ChunkLayer, gallery: &mut GalleryState) -> String {
-    let registry = DecorationNbtRegistry::load_default();
+    let registry = match DecorationNbtRegistry::load_default() {
+        Ok(registry) => registry,
+        Err(error) => return format!("§c[dev] decoration assets failed to load: {error}"),
+    };
     if registry.is_empty() {
         return "§c[dev] no decorations (server/structures/decorations/ missing or all failed \
                 to parse — run scripts/nbt/decorations/gen_decorations.py)"
@@ -871,9 +874,14 @@ mod tests {
         };
         let (placements, unresolved) = structure_placements(&structure, [0, 0, 0]);
         assert_eq!(
-            unresolved,
-            vec!["minecraft:totally_not_a_real_block".to_string()],
-            "unknown palette block must be reported"
+            unresolved.len(),
+            1,
+            "unknown palette block must produce one diagnostic: {unresolved:?}"
+        );
+        assert!(
+            unresolved[0].contains("minecraft:totally_not_a_real_block")
+                && unresolved[0].contains("unknown catalog block"),
+            "unknown palette diagnostic must preserve both authored name and strict resolver reason: {unresolved:?}"
         );
         assert_eq!(
             placements.len(),
@@ -881,6 +889,66 @@ mod tests {
             "unknown palette block must be skipped, only the resolvable stone placed"
         );
         assert_eq!(placements[0].1, BlockState::STONE);
+    }
+
+    #[test]
+    fn structure_placements_reports_invalid_palette_state_indices_without_hiding_valid_blocks() {
+        let structure = StructureNbt {
+            data_version: nbt_io::DATA_VERSION,
+            size: [3, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![
+                StructureBlockEntry {
+                    pos: [0, 0, 0],
+                    state: 0,
+                    block_nbt: None,
+                },
+                StructureBlockEntry {
+                    pos: [1, 0, 0],
+                    state: -1,
+                    block_nbt: None,
+                },
+                StructureBlockEntry {
+                    pos: [2, 0, 0],
+                    state: 1,
+                    block_nbt: None,
+                },
+            ],
+            entities: vec![],
+        };
+
+        let (placements, diagnostics) = structure_placements(&structure, [10, 64, 20]);
+        assert_eq!(
+            placements,
+            vec![(BlockPos::new(10, 64, 20), BlockState::STONE, None)],
+            "the valid block must still lower while malformed state references are skipped"
+        );
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "negative and upper-bound state references must both be reported: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.contains("block #2")
+                    && diagnostic.contains("[1, 0, 0]")
+                    && diagnostic.contains("state -1")
+                    && diagnostic.contains("palette length 1")
+            }),
+            "negative state diagnostic must retain source coordinates: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.contains("block #3")
+                    && diagnostic.contains("[2, 0, 0]")
+                    && diagnostic.contains("state 1")
+                    && diagnostic.contains("palette length 1")
+            }),
+            "state == palette.len() diagnostic must retain source coordinates: {diagnostics:?}"
+        );
     }
 
     /// 核心：region 回序列化 → nbt_io 写出 → 再读回，结构等价（包围盒往返）。
@@ -1351,7 +1419,8 @@ mod tests {
     /// 这是审阅台「stamped N/54」报告的真值来源——资产被删/改名会撞红。
     #[test]
     fn real_registry_has_54_variants_each_with_resolvable_anchor() {
-        let registry = DecorationNbtRegistry::load_default();
+        let registry =
+            DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(
             !registry.is_empty(),
             "审阅台依赖真实装饰资产；为空说明 server/structures/decorations/ 缺失或全解析失败"
@@ -1378,7 +1447,8 @@ mod tests {
     /// 直接对真实资产派生几何（不碰 ECS），覆盖 stamp_decoration_gallery 的纯函数核。
     #[test]
     fn every_real_variant_yields_a_valid_review_cell() {
-        let registry = DecorationNbtRegistry::load_default();
+        let registry =
+            DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         let grid = DecorationGalleryGrid::default();
         let mut variants: Vec<(String, StructureNbt)> = registry
             .iter()

@@ -3274,7 +3274,7 @@ mod nbt_stamp_tests {
 
     #[test]
     fn real_structure_assets_stamp_for_every_scatter_kind() {
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(
             !reg.is_empty(),
             "authored decoration assets must be present (run gen_decorations.py)"
