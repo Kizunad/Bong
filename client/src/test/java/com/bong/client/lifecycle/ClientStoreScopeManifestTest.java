@@ -18,32 +18,112 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ClientStoreScopeManifestTest {
     private static final String LIFECYCLE_INTERFACE =
         "com.bong.client.lifecycle.SessionScopedStore";
-    private static final List<String> P1_REGISTERED_STORES = List.of(
-        "com.bong.client.state.RealmCollapseHudStateStore",
-        "com.bong.client.npc.NpcMetadataStore",
-        "com.bong.client.npc.NpcLodStore",
-        "com.bong.client.npc.NpcMoodStore",
-        "com.bong.client.tsy.TsyBossHealthStore",
-        "com.bong.client.tsy.TsyDeathVfxStore",
-        "com.bong.client.hud.CoffinStateStore",
-        "com.bong.client.gathering.GatheringSessionStore",
+    private static final List<String> P2_REGISTERED_STORES = List.of(
+        "com.bong.client.agentui.AgentUiStore",
+        "com.bong.client.agentui.AgentUiVfxStore",
+        "com.bong.client.alchemy.state.AlchemyAttemptHistoryStore",
+        "com.bong.client.alchemy.state.AlchemyFurnaceStore",
+        "com.bong.client.alchemy.state.AlchemyOutcomeForecastStore",
+        "com.bong.client.alchemy.state.AlchemySessionStore",
+        "com.bong.client.alchemy.state.ContaminationWarningStore",
+        "com.bong.client.alchemy.state.InventoryMetaStore",
+        "com.bong.client.alchemy.state.RecipeScrollStore",
+        "com.bong.client.botany.BotanyPlantRenderProfileStore",
+        "com.bong.client.botany.BotanyPlantStageVisualStore",
+        "com.bong.client.botany.HarvestSessionStore",
+        "com.bong.client.coffin.TutorialCoffinPosStore",
+        "com.bong.client.combat.CastStateStore",
+        "com.bong.client.combat.CombatHudStateStore",
+        "com.bong.client.combat.DefenseWindowStore",
+        "com.bong.client.combat.EquippedShieldStore",
+        "com.bong.client.combat.QuickUseSlotStore",
+        "com.bong.client.combat.SkillBarStore",
+        "com.bong.client.combat.SkillConfigStore",
+        "com.bong.client.combat.SpellVolumeStore",
+        "com.bong.client.combat.TreasureEquippedStore",
+        "com.bong.client.combat.UnifiedEventStore",
+        "com.bong.client.combat.UnlockedStylesStore",
+        "com.bong.client.combat.WeaponEquippedStore",
+        "com.bong.client.combat.baomai.v3.BaomaiV3HudStateStore",
         "com.bong.client.combat.baomai.v4.CrackReadingHudStateStore",
         "com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore",
-        "com.bong.client.visual.VoidErosionVisualStore",
-        "com.bong.client.fauna.HallucinationLayerStore",
-        "com.bong.client.dying_elder.DyingElderEncounterStore",
-        "com.bong.client.tiandao.TiandaoPresenceStore",
-        "com.bong.client.hud.BongHudStateStore",
-        "com.bong.client.hud.SearchHudStateStore",
-        "com.bong.client.agentui.AgentUiStore",
-        "com.bong.client.combat.store.HalfStepRechallengeStore",
-        "com.bong.client.coffin.TutorialCoffinPosStore",
-        "com.bong.client.inventory.state.RemainsStore",
-        "com.bong.client.inventory.state.DroppedItemStore",
-        "com.bong.client.craft.CraftStore",
-        "com.bong.client.identity.IdentityPanelStateStore",
+        "com.bong.client.combat.store.AscensionQuotaStore",
+        "com.bong.client.combat.store.CarrierStateStore",
+        "com.bong.client.combat.store.DamageFloaterStore",
+        "com.bong.client.combat.store.DeathStateStore",
+        "com.bong.client.combat.store.DerivedAttrsStore",
+        "com.bong.client.combat.store.DuguPoisonStateStore",
         "com.bong.client.combat.store.FalseSkinHudStateStore",
-        "com.bong.client.hud.DuguV2HudStateStore"
+        "com.bong.client.combat.store.FullPowerStateStore",
+        "com.bong.client.combat.store.HalfStepRechallengeStore",
+        "com.bong.client.combat.store.StatusEffectStore",
+        "com.bong.client.combat.store.TerminateStateStore",
+        "com.bong.client.combat.store.TribulationBroadcastStore",
+        "com.bong.client.combat.store.TribulationStateStore",
+        "com.bong.client.combat.store.VortexStateStore",
+        "com.bong.client.combat.store.WoundsStore",
+        "com.bong.client.craft.CraftStore",
+        "com.bong.client.cultivation.BreakthroughRenderStateStore",
+        "com.bong.client.cultivation.QiColorObservedStore",
+        "com.bong.client.cultivation.voidaction.VoidActionStore",
+        "com.bong.client.dying_elder.DyingElderEncounterStore",
+        "com.bong.client.fauna.HallucinationLayerStore",
+        "com.bong.client.forge.state.BlueprintScrollStore",
+        "com.bong.client.forge.state.ForgeOutcomeStore",
+        "com.bong.client.forge.state.ForgeSessionStore",
+        "com.bong.client.forge.state.ForgeStationStore",
+        "com.bong.client.gathering.GatheringSessionStore",
+        "com.bong.client.hud.AnqiHudStateStore",
+        "com.bong.client.hud.BongHudStateStore",
+        "com.bong.client.hud.CoffinStateStore",
+        "com.bong.client.hud.DuguV2HudStateStore",
+        "com.bong.client.hud.LootContainerStateStore",
+        "com.bong.client.hud.PoisonTraitHudStateStore",
+        "com.bong.client.hud.SearchHudStateStore",
+        "com.bong.client.hud.SwordBondHudStateStore",
+        "com.bong.client.hud.TargetInfoStateStore",
+        "com.bong.client.hud.ZhenmaiHudStateStore",
+        "com.bong.client.identity.IdentityPanelStateStore",
+        "com.bong.client.insight.InsightOfferStore",
+        "com.bong.client.inventory.state.BodyPlanLayoutStore",
+        "com.bong.client.inventory.state.DroppedItemStore",
+        "com.bong.client.inventory.state.InventoryStateStore",
+        "com.bong.client.inventory.state.MeridianStateStore",
+        "com.bong.client.inventory.state.MorphStateStore",
+        "com.bong.client.inventory.state.PhysicalBodyStore",
+        "com.bong.client.inventory.state.PlayerRaceIdentityStore",
+        "com.bong.client.inventory.state.RaceGateMetaStore",
+        "com.bong.client.inventory.state.RemainsStore",
+        "com.bong.client.lingtian.state.LingtianSessionStore",
+        "com.bong.client.movement.MovementStateStore",
+        "com.bong.client.npc.NpcInteractionLogStore",
+        "com.bong.client.npc.NpcLodStore",
+        "com.bong.client.npc.NpcMetadataStore",
+        "com.bong.client.npc.NpcMoodStore",
+        "com.bong.client.omen.OmenStateStore",
+        "com.bong.client.processing.state.FreshnessStore",
+        "com.bong.client.processing.state.ProcessingSessionStore",
+        "com.bong.client.scroll.ScrollReadStore",
+        "com.bong.client.skill.SkillMilestoneStore",
+        "com.bong.client.skill.SkillRecentEventStore",
+        "com.bong.client.skill.SkillSetStore",
+        "com.bong.client.social.NicheGuardianStore",
+        "com.bong.client.social.SocialStateStore",
+        "com.bong.client.spirittreasure.SpiritTreasureDialogueStore",
+        "com.bong.client.spirittreasure.SpiritTreasureStateStore",
+        "com.bong.client.state.PlayerStateStore",
+        "com.bong.client.state.RealmCollapseHudStateStore",
+        "com.bong.client.state.SeasonStateStore",
+        "com.bong.client.tiandao.TiandaoPresenceStore",
+        "com.bong.client.tsy.ExtractStateStore",
+        "com.bong.client.tsy.TsyBossHealthStore",
+        "com.bong.client.tsy.TsyContainerStateStore",
+        "com.bong.client.tsy.TsyDeathVfxStore",
+        "com.bong.client.visual.VoidErosionVisualStore",
+        "com.bong.client.visual.realm_vision.PerceptionEdgeStateStore",
+        "com.bong.client.visual.realm_vision.RealmVisionStateStore",
+        "com.bong.client.yidao.YidaoHudStateStore",
+        "com.bong.client.yidao.YidaoNpcAiStateStore"
     );
 
     @Test
@@ -127,12 +207,12 @@ class ClientStoreScopeManifestTest {
     }
 
     @Test
-    void p1RegistryMatchesTheVerifiedMigrationSetAndScope() {
+    void p2RegistryMatchesTheOrderedCumulativeMigrationSetAndScope() {
         List<String> registeredFqcns = SessionScopedStoreRegistry.registeredFqcnsForTests();
         assertEquals(
-            P1_REGISTERED_STORES,
+            P2_REGISTERED_STORES,
             registeredFqcns,
-            "P1 registry 必须严格按旧 helper 的 Store 相对顺序登记已核验的 25 个 adapter；"
+            "P2 registry 必须严格按 manifest registry-managed session Store 的既定相对顺序累计登记 105 个 adapter；"
                 + "漏项、错绑 Class 或顺序漂移都需要逐 Store 行为复核"
         );
 
@@ -144,12 +224,20 @@ class ClientStoreScopeManifestTest {
         );
         assertTrue(
             ClientStoreScopeManifest.registryManagedSessionStores().containsAll(registered),
-            "P1 registry 只允许登记 manifest 中由全局 registry 管理的 session Store；P3 再收紧为全集相等，实际越界="
+            "P2 registry 只允许登记 manifest 中由全局 registry 管理的 session Store；实际越界="
                 + difference(registered, ClientStoreScopeManifest.registryManagedSessionStores())
         );
         assertFalse(
             registered.contains("com.bong.client.ui.ClientConnectionStatusStore"),
             "ClientConnectionStatusStore 必须继续由 invalidateSession(handler, now) 管理，不能进入无参 registry"
+        );
+        assertFalse(
+            registered.contains("com.bong.client.hud.HudLayoutPreferenceStore"),
+            "HudLayoutPreferenceStore 是跨 session 的本地偏好，不能进入 registry"
+        );
+        assertFalse(
+            registered.contains("com.bong.client.combat.ArmorProfileStore"),
+            "ArmorProfileStore 是固定查表，不能进入 registry"
         );
     }
 
