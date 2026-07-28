@@ -50,6 +50,7 @@ fn test_command_app_for_dev_mode(dev_mode_enabled: bool) -> App {
     app.insert_resource(PendingScenario::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
+    app.insert_resource(crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests());
     register_for_dev_mode(&mut app, dev_mode_enabled);
     app.finish();
     app.cleanup();

@@ -2831,6 +2831,9 @@ mod tests {
     #[test]
     fn leader_spawn_creates_active_faction_leaders_and_skips_headless() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
@@ -2905,6 +2908,9 @@ mod tests {
         // Cultivation.realm 必须等于 leader_realm_for(faction)（三档全覆盖），
         // 而不是被 npc_runtime_bundle 恒吞成 Realm::Awaken（修复前的 bug）。
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
@@ -2949,6 +2955,9 @@ mod tests {
     #[test]
     fn leader_spawn_is_idempotent_after_startup_runs_twice() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());
@@ -2971,6 +2980,9 @@ mod tests {
     #[test]
     fn leader_spawn_waits_for_zone_registry_before_marking_done() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NamedFactionRegistry::startup_default());
         let claims =
             FactionZoneClaims::from_registry(app.world().resource::<NamedFactionRegistry>());

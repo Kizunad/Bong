@@ -478,6 +478,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -639,6 +642,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -687,6 +693,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.add_systems(Update, apply_tsy_spawn_requests);
 
         let player = app.world_mut().spawn(()).id();
@@ -753,6 +762,9 @@ mod tests {
         app.add_event::<TsySpawnResult>();
         app.add_event::<TsyZoneInitialized>();
         app.add_event::<TsyHostileSpawnedSummary>();
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         crate::world::entity_model::register(&mut app);
         app.add_systems(Update, apply_tsy_spawn_requests);
 

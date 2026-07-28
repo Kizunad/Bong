@@ -7874,6 +7874,7 @@ mod tests {
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedBreakthroughRequests::default());
         app.insert_resource(CapturedForgeRequests::default());
         app.insert_resource(CapturedInsightChoices::default());
@@ -9287,6 +9288,7 @@ mod tests {
     #[test]
     fn spirit_niche_place_request_emits_place_intent() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedSpiritNichePlaces::default());
         app.insert_resource(CombatClock { tick: 88 });
         app.insert_resource(GameplayActionQueue::default());
@@ -9667,6 +9669,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_uses_player_dimension() {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());

@@ -1416,6 +1416,9 @@ mod command_executor_tests {
     fn setup_executor_app() -> App {
         let scenario = ScenarioSingleClient::new();
         let mut app = scenario.app;
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(CommandExecutorResource::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(ActiveEventsResource::default());
