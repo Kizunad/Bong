@@ -931,7 +931,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionRegisteredStoreCleanersNeverReachTestResetVariants() throws Exception {
+    void productionRegisteredStoresDeclareCanonicalCleaner() throws Exception {
         String registrySource = Files.readString(
             productionSourceRoot().resolve("com/bong/client/lifecycle/SessionScopedStoreRegistry.java")
         );
@@ -945,7 +945,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             );
             Path source = productionSourceRoot().resolve(handle.fqcn().replace('.', '/') + ".java");
             assertTrue(Files.exists(source), "registry handle 必须对应 production Store source：" + handle.fqcn());
-            JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+            JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
                 Files.readString(source),
                 cleanerNames.get(0),
                 handle.fqcn()
@@ -954,38 +954,47 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionCleanerChainGuardTargetsDeclaredStoreWhenHelperTypePrecedesIt() {
+    void productionSourcesConfineTestResetCallsToTestResetMethods() throws Exception {
+        Path sourceRoot = productionSourceRoot();
+        try (Stream<Path> paths = Files.walk(sourceRoot.resolve("com/bong/client"))) {
+            List<Path> sources = paths
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".java"))
+                .sorted()
+                .toList();
+            assertFalse(sources.isEmpty(), "production source guard 必须实际扫描 client Java source");
+            for (Path source : sources) {
+                JavaLifecycleSourceInspector.assertTestResetCallsAreConfinedToTestResetMethods(
+                    Files.readString(source),
+                    sourceRoot.relativize(source).toString()
+                );
+            }
+        }
+    }
+
+    @Test
+    void productionCleanerDeclarationGuardTargetsDeclaredStoreWhenHelperTypePrecedesIt() {
         String fixture = """
             final class PreludeType {
                 static void clearOnDisconnect() { }
             }
             final class FixtureStore {
-                public static void clearOnDisconnect() { FixtureStore.clear(); }
-                public static void clear() { resetForTests(); }
-                public static void resetForTests() { }
+                public static void clearOnDisconnect() { }
             }
             """;
 
-        AssertionError failure = assertThrows(
-            AssertionError.class,
-            () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
-                fixture,
-                "clearOnDisconnect",
-                "com.example.FixtureStore"
-            )
-        );
-        assertTrue(
-            failure.getMessage().contains("resetForTests"),
-            "前置顶层类型不得让 source guard 跟错类并漏过 production cleaner 委托链；实际="
-                + failure.getMessage()
-        );
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
+            fixture,
+            "clearOnDisconnect",
+            "com.example.FixtureStore"
+        ));
     }
 
     @Test
-    void productionCleanerChainGuardRejectsMissingDeclaredStoreType() {
+    void productionCleanerDeclarationGuardRejectsMissingDeclaredStoreType() {
         AssertionError failure = assertThrows(
             AssertionError.class,
-            () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+            () -> JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
                 "final class DifferentStore { static void clearOnDisconnect() { } }",
                 "clearOnDisconnect",
                 "com.example.FixtureStore"
@@ -998,56 +1007,38 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionCleanerChainGuardRejectsInstanceQualifiedSameClassDelegate() {
-        String fixture = """
-            final class FixtureStore {
-                private static final FixtureStore INSTANCE = new FixtureStore();
-                public static void clearOnDisconnect() { INSTANCE.clear(); }
-                private void clear() { resetForTests(); }
-                public static void resetForTests() { }
-            }
-            """;
-
-        AssertionError failure = assertThrows(
-            AssertionError.class,
-            () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
-                fixture,
-                "clearOnDisconnect",
-                "FixtureStore"
-            )
-        );
-        assertTrue(
-            failure.getMessage().contains("resetForTests"),
-            "实例限定的同类 helper 也必须进入调用图，不能绕过 test reset 门禁；实际="
-                + failure.getMessage()
-        );
-    }
-
-    @Test
-    void productionCleanerChainGuardRejectsEverySupportedTestResetCallShape() {
+    void productionTestResetGuardRejectsEveryDirectCallOrReferenceOutsideTestResetMethods() {
         List<String> forbiddenFixtures = List.of(
             """
                 public final class FixtureStore {
-                    public static void clearOnDisconnect() { clear(); }
-                    public static void clear() { resetForTests (); }
+                    public static void clearOnDisconnect() { Helper.clear(); }
+                    public static void resetForTests() { }
+                }
+                final class Helper {
+                    static void clear() { FixtureStore.resetForTests(); }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    static final Runnable RESET = FixtureStore::resetForTests;
+                    public static void clearOnDisconnect() { RESET.run(); }
                     public static void resetForTests() { }
                 }
                 """,
             """
                 public final class FixtureStore {
-                    public static void clearOnDisconnect() { FixtureStore.clear(); }
-                    public static void clear() { helper(false); }
-                    public static void helper(boolean unused) { clearForTests(); }
-                    public static void clearForTests() { }
+                    public static void clearOnDisconnect() { Helper.clear(); }
+                    public static void resetForTest() { }
+                    static final class Helper {
+                        static void clear() { FixtureStore.resetForTest(); }
+                    }
                 }
                 """,
             """
                 public final class FixtureStore {
-                    public static void clearOnDisconnect() {
-                        Runnable reset = FixtureStore::resetForTest;
-                        reset.run();
-                    }
-                    public static void resetForTest() { }
+                    FixtureStore() { clearForTests(); }
+                    public static void clearOnDisconnect() { new FixtureStore(); }
+                    public static void clearForTests() { }
                 }
                 """
         );
@@ -1055,35 +1046,35 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         for (String fixture : forbiddenFixtures) {
             AssertionError failure = assertThrows(
                 AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+                () -> JavaLifecycleSourceInspector.assertTestResetCallsAreConfinedToTestResetMethods(
                     fixture,
-                    "clearOnDisconnect",
-                    "FixtureStore"
+                    "FixtureStore.java"
                 )
             );
             assertTrue(
-                failure.getMessage().contains("resetForTest")
-                    || failure.getMessage().contains("clearForTests"),
-                "负向 fixture 必须证明空白、同类限定调用、带参委托与 method reference 均会撞红；实际="
+                failure.getMessage().contains("test reset"),
+                "字段、构造器、嵌套或跨顶层 helper 的 test reset 直连都必须撞红；实际="
                     + failure.getMessage()
             );
         }
     }
 
     @Test
-    void productionCleanerChainGuardHandlesRecursiveHelperCycles() {
-        String recursiveCycle = """
+    void productionTestResetGuardAllowsTestResetCompositionAndUnrelatedOverloads() {
+        String fixture = """
             public final class FixtureStore {
-                public static void clearOnDisconnect() { FixtureStore.clear(); }
-                public static void clear() { helper(false); }
-                public static void helper(boolean unused) { clear(); }
+                private static final java.util.List<String> CACHE = java.util.List.of();
+                public static void clearOnDisconnect() { CACHE.clear(); }
+                public static void clear() { }
+                public static void clear(int unused) { }
+                public static void resetForTests() { clearForTests(); }
+                public static void clearForTests() { }
             }
             """;
 
-        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
-            recursiveCycle,
-            "clearOnDisconnect",
-            "FixtureStore"
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertTestResetCallsAreConfinedToTestResetMethods(
+            fixture,
+            "FixtureStore.java"
         ));
     }
 

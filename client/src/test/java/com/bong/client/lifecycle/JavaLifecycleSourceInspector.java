@@ -3,6 +3,7 @@ package com.bong.client.lifecycle;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.ImportTree;
 import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
@@ -19,15 +20,14 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URI;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
-final class JavaLifecycleSourceInspector {
+public final class JavaLifecycleSourceInspector {
     private static final Set<String> TEST_RESET_METHODS = Set.of(
         "resetForTests",
         "resetForTest",
@@ -64,7 +64,7 @@ final class JavaLifecycleSourceInspector {
         return List.copyOf(registrations);
     }
 
-    static void assertCleanerDoesNotReachTestReset(
+    static void assertDeclaresProductionCleaner(
         String source,
         String entryMethod,
         String storeIdentity
@@ -77,50 +77,132 @@ final class JavaLifecycleSourceInspector {
             .filter(type -> type.getSimpleName().contentEquals(className))
             .findFirst()
             .orElseThrow(() -> new AssertionError("无法定位 production Store 类型：" + storeIdentity));
-        Map<String, List<MethodTree>> methodsByName = new HashMap<>();
-        for (Tree member : storeType.getMembers()) {
-            if (member instanceof MethodTree method) {
-                methodsByName.computeIfAbsent(method.getName().toString(), ignored -> new ArrayList<>())
-                    .add(method);
-            }
-        }
-
-        List<MethodTree> entries = methodsByName.getOrDefault(entryMethod, List.of());
-        if (entries.isEmpty()) {
+        boolean declaresEntry = storeType.getMembers().stream()
+            .filter(MethodTree.class::isInstance)
+            .map(MethodTree.class::cast)
+            .anyMatch(method -> method.getName().contentEquals(entryMethod));
+        if (!declaresEntry) {
             throw new AssertionError("必须能定位 production cleaner：" + storeIdentity + "." + entryMethod);
         }
+    }
 
-        ArrayDeque<MethodTree> pending = new ArrayDeque<>(entries);
-        Set<MethodTree> visited = new HashSet<>();
-        Set<String> reachableNames = new HashSet<>();
-        while (!pending.isEmpty()) {
-            MethodTree method = pending.removeFirst();
-            if (!visited.add(method)) {
-                continue;
-            }
-            String methodName = method.getName().toString();
-            reachableNames.add(methodName);
-            rejectTestReset(methodName, storeIdentity, reachableNames);
-            if (method.getBody() == null) {
-                continue;
-            }
-            new TreeScanner<Void, Void>() {
-                @Override
-                public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
-                    String callee = invokedMethodName(invocation.getMethodSelect());
-                    rejectTestReset(callee, storeIdentity, reachableNames);
-                    pending.addAll(methodsByName.getOrDefault(callee, List.of()));
-                    return super.visitMethodInvocation(invocation, unused);
-                }
+    static void assertTestResetCallsAreConfinedToTestResetMethods(
+        String source,
+        String sourceIdentity
+    ) {
+        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        new TreeScanner<Void, Void>() {
+            private String enclosingMethod;
 
-                @Override
-                public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                    String callee = reference.getName().toString();
-                    rejectTestReset(callee, storeIdentity, reachableNames);
-                    pending.addAll(methodsByName.getOrDefault(callee, List.of()));
-                    return super.visitMemberReference(reference, unused);
+            @Override
+            public Void visitMethod(MethodTree method, Void unused) {
+                String previousMethod = enclosingMethod;
+                enclosingMethod = method.getName().toString();
+                try {
+                    return super.visitMethod(method, unused);
+                } finally {
+                    enclosingMethod = previousMethod;
                 }
-            }.scan(method.getBody(), null);
+            }
+
+            @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                rejectTestResetOutsideTestResetMethod(
+                    invokedMethodName(invocation.getMethodSelect()),
+                    sourceIdentity,
+                    enclosingMethod
+                );
+                return super.visitMethodInvocation(invocation, unused);
+            }
+
+            @Override
+            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                rejectTestResetOutsideTestResetMethod(
+                    reference.getName().toString(),
+                    sourceIdentity,
+                    enclosingMethod
+                );
+                return super.visitMemberReference(reference, unused);
+            }
+        }.scan(unit, null);
+    }
+
+    public static void assertMethodDoesNotReferenceTypes(
+        String source,
+        String className,
+        String methodName,
+        Set<String> forbiddenFqcns
+    ) {
+        CompilationUnitTree unit = parse(className, source);
+        ClassTree owner = unit.getTypeDecls().stream()
+            .filter(ClassTree.class::isInstance)
+            .map(ClassTree.class::cast)
+            .filter(type -> type.getSimpleName().contentEquals(className))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("无法定位 production 类型：" + className));
+        List<MethodTree> methods = owner.getMembers().stream()
+            .filter(MethodTree.class::isInstance)
+            .map(MethodTree.class::cast)
+            .filter(method -> method.getName().contentEquals(methodName))
+            .toList();
+        if (methods.size() != 1) {
+            throw new AssertionError(
+                "production helper 必须恰好声明一次：" + className + "." + methodName
+                    + "；实际=" + methods.size()
+            );
+        }
+
+        Set<String> forbiddenSimpleNames = new TreeSet<>();
+        Map<String, String> forbiddenImportedMembers = new HashMap<>();
+        Set<String> forbiddenWildcardImports = new TreeSet<>();
+        for (String fqcn : forbiddenFqcns) {
+            forbiddenSimpleNames.add(simpleName(fqcn));
+            for (ImportTree importTree : unit.getImports()) {
+                if (!importTree.isStatic()) {
+                    continue;
+                }
+                String imported = importTree.getQualifiedIdentifier().toString();
+                if (imported.equals(fqcn + ".*")) {
+                    forbiddenWildcardImports.add(imported);
+                } else if (imported.startsWith(fqcn + ".")) {
+                    forbiddenImportedMembers.put(imported.substring(fqcn.length() + 1), imported);
+                }
+            }
+        }
+
+        Set<String> references = new TreeSet<>();
+        new TreeScanner<Void, Void>() {
+            @Override
+            public Void visitIdentifier(IdentifierTree identifier, Void unused) {
+                String name = identifier.getName().toString();
+                if (forbiddenSimpleNames.contains(name)) {
+                    references.add(name);
+                }
+                String imported = forbiddenImportedMembers.get(name);
+                if (imported != null) {
+                    references.add(imported);
+                }
+                return super.visitIdentifier(identifier, unused);
+            }
+
+            @Override
+            public Void visitMemberSelect(MemberSelectTree selection, Void unused) {
+                String selected = selection.toString();
+                for (String fqcn : forbiddenFqcns) {
+                    if (selected.equals(fqcn) || selected.startsWith(fqcn + ".")) {
+                        references.add(selected);
+                    }
+                }
+                return super.visitMemberSelect(selection, unused);
+            }
+        }.scan(methods.get(0).getBody(), null);
+
+        if (!forbiddenWildcardImports.isEmpty() || !references.isEmpty()) {
+            throw new AssertionError(
+                className + "." + methodName
+                    + " 只能通过 SessionScopedStoreRegistry 清理 Store；wildcard static import="
+                    + forbiddenWildcardImports + "，直连=" + references
+            );
         }
     }
 
@@ -134,15 +216,17 @@ final class JavaLifecycleSourceInspector {
         return methodSelect.toString();
     }
 
-    private static void rejectTestReset(
+    private static void rejectTestResetOutsideTestResetMethod(
         String methodName,
-        String storeIdentity,
-        Set<String> reachableNames
+        String sourceIdentity,
+        String enclosingMethod
     ) {
-        if (TEST_RESET_METHODS.contains(methodName)) {
+        if (TEST_RESET_METHODS.contains(methodName)
+            && (enclosingMethod == null || !TEST_RESET_METHODS.contains(enclosingMethod))) {
             throw new AssertionError(
-                storeIdentity + " 的 production cleaner 委托链不得调用 " + methodName
-                    + "；可达方法=" + reachableNames
+                sourceIdentity + " 的 production source 不得从 "
+                    + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
+                    + " 调用或引用 test reset " + methodName
             );
         }
     }

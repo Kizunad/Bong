@@ -19,6 +19,7 @@ import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
 import com.bong.client.lifecycle.ClientStoreScopeManifest;
+import com.bong.client.lifecycle.JavaLifecycleSourceInspector;
 import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
@@ -812,27 +813,89 @@ public class BongNetworkHandlerTest {
             previousIndex = hookIndex;
         }
 
-        for (String storeFqcn : ClientStoreScopeManifest.registryManagedSessionStores()) {
-            String storeType = storeFqcn.substring(storeFqcn.lastIndexOf('.') + 1);
-            assertFalse(
-                referencesStoreType(clearHelper, storeType),
-                storeType + " 应只由 registry adapter 清理，helper 不得保留 point call、method reference 或 class identity"
+        JavaLifecycleSourceInspector.assertMethodDoesNotReferenceTypes(
+            src,
+            "BongNetworkHandler",
+            "clearClientStateOnDisconnect",
+            ClientStoreScopeManifest.registryManagedSessionStores()
+        );
+    }
+
+    @Test
+    void storeReferenceGuardRejectsEveryDirectStoreReferenceShape() {
+        List<String> forbiddenFixtures = List.of(
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        LootContainerStateStore.clearOnDisconnect();
+                    }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        com.bong.client.hud.LootContainerStateStore.clearOnDisconnect();
+                    }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable cleaner = LootContainerStateStore::clearOnDisconnect;
+                    }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Class<?> storeType = LootContainerStateStore.class;
+                    }
+                }
+                """,
+            """
+                import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { clearOnDisconnect(); }
+                }
+                """,
+            """
+                import static com.bong.client.hud.LootContainerStateStore.*;
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { clearOnDisconnect(); }
+                }
+                """
+        );
+
+        for (String fixture : forbiddenFixtures) {
+            assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertMethodDoesNotReferenceTypes(
+                    fixture,
+                    "BongNetworkHandler",
+                    "clearClientStateOnDisconnect",
+                    ClientStoreScopeManifest.registryManagedSessionStores()
+                )
             );
         }
     }
 
     @Test
-    void storeReferenceGuardRejectsPointCallsMethodReferencesAndClassIdentities() {
-        assertFalse(referencesStoreType("cleanup(Other.class, Other::clear)", "LootContainerStateStore"));
-        assertTrue(referencesStoreType("LootContainerStateStore.clearOnDisconnect()", "LootContainerStateStore"));
-        assertTrue(referencesStoreType("LootContainerStateStore::clearOnDisconnect", "LootContainerStateStore"));
-        assertTrue(referencesStoreType("cleanup(LootContainerStateStore.class, action)", "LootContainerStateStore"));
-    }
+    void storeReferenceGuardAllowsNonStoreHooksAndRegistryCall() {
+        String fixture = """
+            final class BongNetworkHandler {
+                static void clearClientStateOnDisconnect() {
+                    SessionScopedStoreRegistry.clearAllOnDisconnect();
+                    BongToast.clearOnDisconnect();
+                }
+            }
+            """;
 
-    private static boolean referencesStoreType(String source, String storeType) {
-        return source.contains(storeType + ".")
-            || source.contains(storeType + "::")
-            || source.contains(storeType + ".class");
+        JavaLifecycleSourceInspector.assertMethodDoesNotReferenceTypes(
+            fixture,
+            "BongNetworkHandler",
+            "clearClientStateOnDisconnect",
+            ClientStoreScopeManifest.registryManagedSessionStores()
+        );
     }
 
     private static Envelope.PlayerState.Builder seasonAuditPlayerState() {
