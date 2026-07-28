@@ -61,11 +61,13 @@ pub use knockback::{
 pub use ledger::{
     assert_conservation, build_qi_ledger_hash_fields, credit_pending_inflow,
     dying_elder_dan_excess_account, dying_elder_release_overflow_account, pending_inflow_account,
-    persistent_runtime_qi_accounts, snapshot_for_ipc, summarize_world_qi,
-    transfer_external_qi_to_ledger, AttritionOpKind, QiAccountId, QiAccountKind,
-    QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
-    WorldQiSnapshot, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
-    PENDING_INFLOW_ACCOUNT_ID, PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    persistent_runtime_qi_accounts, qi_flow_overflow_account, reject_audit_only_qi_reason,
+    snapshot_for_ipc, summarize_world_qi, transfer_external_qi_to_ledger,
+    transfer_ledger_qi_to_zone, transfer_zone_qi_to_ledger, AttritionOpKind, QiAccountId,
+    QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
+    WorldQiBudget, WorldQiSnapshot, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
+    DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
+    PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_FLOW_OVERFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
 };
 pub use prepare::{prepare_transfer, TransferPlan};
 pub use projectile::{
@@ -86,6 +88,11 @@ pub enum QiPhysicsError {
     InvalidAmount {
         field: &'static str,
         value: f64,
+    },
+    UnrepresentableChange {
+        field: &'static str,
+        before: f64,
+        amount: f64,
     },
     InsufficientQi {
         account: String,
@@ -115,6 +122,14 @@ impl std::fmt::Display for QiPhysicsError {
             Self::InvalidAmount { field, value } => {
                 write!(f, "invalid qi amount `{field}`: {value}")
             }
+            Self::UnrepresentableChange {
+                field,
+                before,
+                amount,
+            } => write!(
+                f,
+                "qi change cannot make representable progress for {field}: before={before}, amount={amount}"
+            ),
             Self::InsufficientQi {
                 account,
                 available,
@@ -133,10 +148,13 @@ impl std::fmt::Display for QiPhysicsError {
             ),
             Self::AuditOnlyReason { reason } => write!(
                 f,
-                "QiTransferReason::{reason} is audit-only and must not mutate WorldQiAccount balance"
+                "QiTransferReason::{reason} is audit-only and must not mutate physical qi owners"
             ),
             Self::SameAccountTransfer { account } => {
-                write!(f, "qi transfer source and destination are identical: {account}")
+                write!(
+                    f,
+                    "qi transfer source and destination are identical: {account}"
+                )
             }
         }
     }
