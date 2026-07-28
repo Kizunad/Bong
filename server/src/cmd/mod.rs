@@ -61,6 +61,7 @@ fn test_command_app_for_dev_mode(connection_mode: ConnectionMode, dev_mode_enabl
     app.insert_resource(PendingScenario::default());
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
+    app.insert_resource(crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests());
     register_for_dev_mode(&mut app, dev_mode_enabled);
     crate::identity::command::register(&mut app);
     app.finish();
