@@ -7,7 +7,7 @@
 | 阶段 | 交付物 | 状态 |
 |---|---|---|
 | P0 | 枚举直接使用、自然耗尽、主动触发、重复终止四条账户生命周期并冻结 strict-zero 合约 | ⬜ |
-| P1 | zhenfa-domain release + burial/account 同 tick cleanup | ⬜ |
+| P1 | R5 P3-B handoff 后：zhenfa-domain release + burial/account 同 tick cleanup | ⬜ |
 | P2 | 守恒、失败补偿、重启/telemetry 回归 + server gate | ⬜ |
 
 ## 接入面
@@ -31,7 +31,7 @@
 1. 终止前读取实际 `WorldQiAccount` source balance；任意有限正余额（包括 `0 < balance <= QI_EPSILON`）均须沿既有 release 语义完整转移：zone 可接收部分进入 `QiAccountId::zone`，剩余部分进入该珠对应的 `QiAccountId::overflow`，全部使用 `QiTransferReason::ReleaseToZone`。
 2. 只有 source 实际余额严格为 `0.0` 后才允许 `remove_balance`；burial 为零且 source key 不存在时可 idempotent no-op。
 3. source 缺失但 burial 为正、source/burial 余额不一致、输入非有限、zone lookup/release/transfer 任一步失败时必须 fail closed：保留或恢复 burial/source，不得用 `set_balance` 覆盖真实余额后删除，也不得吞掉 epsilon-positive qi。
-4. 主动 trigger 已先从 map 取走 burial；失败分支必须原样 reinstate。若既有 API 无法原子预检多腿 transfer，则只消费 R5 冻结的事务/close API，不在 zhenfa 另造账本实现。
+4. 主动 trigger 已先从 map 取走 burial；失败分支必须原样 reinstate。领域实现只消费 R5 P3-B 冻结的 `release_all_to_zone_then_close`（最终 canonical 命名以 R5 为准）事务 API，不在 zhenfa 另造账本实现；在 R5 P3-B 合入并满足 strict-zero/失败原子性/misuse 放行门前，P1 保持 BLOCKED。
 
 ## 验收
 
@@ -45,5 +45,5 @@
 ## 边界
 
 - 不替代 `plan-bughunt-scatter-bead-burial-restart-loss-v1` 的 persistence owner；本 plan 只修运行时 source-account 终止。
-- R5 唯一拥有 `server/src/qi_physics/**`：本 plan 只改 zhenfa-domain 调用方/测试并消费既有或 R5 冻结的 close/release API，不并行修改 ledger 实现。
+- R5 唯一拥有 `server/src/qi_physics/**`：本 plan 只改 zhenfa-domain 调用方/测试，并只消费已合入的 R5 P3-B 原子 release+strict-close API；不得并行修改 ledger 实现，也不得以裸 `remove_balance` 临时绕过 handoff。
 - 不改变珠容量、释放速率、距离或阵法效果。

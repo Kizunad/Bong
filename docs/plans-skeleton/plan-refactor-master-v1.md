@@ -51,7 +51,7 @@
 ## 3. 波次与依赖
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
-- **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
+- **Wave 1**：R6（R2 **P0 framework** 合入后即可启动，不等待 R2 全轨）、R7（R2 合入后）、R1（R3 P1 合入后）。jump 窄 handoff 顺序固定为：R2 P0 → R6 P2-J → R2 P2-J → focused modifier P4。
 - **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
@@ -62,8 +62,8 @@
 - client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
 - 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
 - **一次性 pre-R3 P1 窄例外**：尽管 `persistence/**` 默认属 R3，`npc-deceased-archive-db-open-rollback` 在 R3 P1 尚未迁移或修改 `persist_npc_deceased_archive` 前，独占该函数的 file↔SQLite 补偿原子性及其同地回归测试，且仅可开一个 focused PR。R3 P0 可冻结接口但不得并改该 symbol；若 R3 P1 先触及它，例外立即失效，由 R3 接管同一故障矩阵，focused plan 只写 handoff/Finish Evidence，不得双线实施。
-- **R5 文件所有权不例外**：`distance-decay-calibration` 与 `scatter-bead-ledger-account-cleanup` 可拥有问题规格、领域调用方和验收，但不得修改 `server/src/qi_physics/**`；所需无量纲 coefficient、常数、纯计算 helper 或账本 close/release API 由 R5 冻结并落地，focused plan 只消费该 API。P0 可并行取证，implementation 必须等 R5 对应 API 合入，禁止双线改 qi_physics 文件。
-- **modifier jump handoff 无例外**：`modifier-effect-consumer-completion` P4 不拥有 R6/R2 独占区段。R6 先交付并冻结 jump 的 schema/proto/generated、server `network/*_emit.rs` / `network/emit/` builder / `schema/proto_convert.rs`、client bridge/router 与 `BongNetworkHandler.register()` channel-registration API；R2 再交付并冻结 client store adapter/registry、session reset 与 `BongNetworkHandler.clearClientStateOnDisconnect` API；focused P4 只在两者合入后消费冻结 API，落 gameplay consumer 与 bot/e2e，不得双线修改这些独占区段。
+- **R5 文件所有权不例外**：`distance-decay-calibration` 与 `scatter-bead-ledger-account-cleanup` 可拥有问题规格、领域调用方和验收，但不得修改 `server/src/qi_physics/**`；所需无量纲 coefficient/effect-account 分腿已登记为 R5 P3-A，账本原子 release+strict-close API 已登记为 R5 P3-B，各自含量纲/守恒/misuse/失败原子性 pin 与明确 handoff 放行条件。focused P0 可并行取证，implementation 必须等对应 R5 P3-A/P3-B API 合入，禁止双线改 qi_physics 文件。
+- **modifier jump handoff 无例外**：`modifier-effect-consumer-completion` P4 不拥有 R6/R2 独占区段。执行序固定为已完成的 R2 P0 framework → R6 P2-J → R2 P2-J → focused P4。R6 P2-J 交付 schema/proto/generated、server `network/*_emit.rs` / `network/emit/` builder / `schema/proto_convert.rs`、client bridge/router 与 `BongNetworkHandler.register()` channel-registration API；R2 P2-J 交付 client store adapter/registry、session reset 与 `BongNetworkHandler.clearClientStateOnDisconnect` API。每段均在对应权威轨道 plan 登记契约 pin 与 Finish Evidence 放行条件；focused P4 只消费两段冻结 API，落 gameplay consumer 与 bot/e2e，不得双线修改独占区段。
 
 ## 5. 工作流（GPT tmux 多会话）
 

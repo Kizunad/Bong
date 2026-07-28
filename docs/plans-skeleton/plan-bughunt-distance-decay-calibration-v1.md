@@ -9,7 +9,7 @@
 | P0 | 冻结无量纲 coefficient、退役 amount API、全调用方量纲/ledger 矩阵 | ⬜ |
 | P1 | R5-owned coefficient 类型/helper + focused gameplay consumer 迁移 | ⬜ |
 | P2 | 双锚点/单调性/非法输入 + 账户零变化/static misuse pins | ⬜ |
-| P3 | bot 远程伤害/污染效果校准回归 | ⬜ |
+| P3 | bot 远程伤害/纯展示命中反馈校准 + 污染全生命周期跨距离不变回归 | ⬜ |
 
 ## 接入面
 
@@ -41,12 +41,12 @@
 1. **API/量纲 pin**：编译测试只允许 ratio-only helper；其签名无 initial amount/account/ledger 参数，返回强类型 `DistanceEffectCoefficient`，不存在可调用的 amount-shaped `qi_distance_atten*`。
 2. **数值 pin**：0 格=1.0；Mellow+BareQi@10≈0.40；Solid+SpiritWeapon@50≈0.80；距离单调不增、高级载体不劣于普通载体；NaN/负值按 P0 冻结契约处理。
 3. **账户/污染全生命周期零变化 runtime pin**：在同一 fixture 记录 source、target、zone、overflow、玩家 `qi_current`、`Contamination.entries`/排异结果与 audit 快照，分别以 0/10/50 格 coefficient 运行完整命中→污染 tick→排异结算；断言距离变化只改变 wound/health/纯展示 feedback，所有 qi account delta、transfer legs、reason/audit 数量、污染 amount 与后续排异 qi delta 逐项完全相同。
-4. **misuse static gate**：扫描所有 `DistanceEffectCoefficient` consumer，若其值流入 `QiTransfer::new`/ledger mutation/projectile qi balance/residual/release amount、`ContamSource.amount`/污染排异输入或任何会改变 qi/污染资源生命周期的字段则测试必红；所有生产 caller 必须登记为 effect-only 或由 R5 ledger owner 显式豁免并给出账户 API。
+4. **misuse static gate**：扫描所有 `DistanceEffectCoefficient` consumer，若其值流入 `QiTransfer::new`/ledger mutation/projectile qi balance/residual/release amount、`ContamSource.amount`/污染排异输入或任何会改变 qi/污染资源生命周期的字段则测试必红；所有生产 caller 必须登记为 effect-only，**不存在 R5 或领域调用方豁免**。若产品未来要让距离改变真实 qi/污染资源量，必须废止本 coefficient 路线并由 R5 另立完整 ledger 转账契约，不能复用或绕过本 API。
 5. `combat::decay`/carrier 与 `qi_physics::collision` 只有在完成 effect/account 分腿后才能消费 canonical helper；当前未接入的 needle 不计为迁移完成。
-6. R5 coefficient 与量纲 pins 合入后，focused plan 跑完整 server gate，并以 bot 场景比较近距/10 格/50 格的真实伤害/污染效果；bot 不得用账户余额变化来证明 coefficient。
+6. R5 coefficient 与量纲 pins 合入后，focused plan 跑完整 server gate；bot 比较近距/10 格/50 格的真实 wound/health damage 与**既有纯展示命中 feedback**，并在三种距离分别跑命中→污染 tick→排异链，断言 `Contamination.entries`、污染 amount、排异 qi delta 与全部账户/audit 快照逐项相同。bot 不得把账户余额或污染资源量变化当成 coefficient 效果；本 plan 不新增距离相关污染展示字段。
 
 ## 边界
 
 - 不改真实 qi 总量、账户归属、污染资源量/排异 qi 代价、技能基础扣费、瞄准、弹道速度或射程；只校准 wound/health damage 与纯展示 feedback 等非账户 gameplay effect。
-- 本 plan 不直接修改 `server/src/qi_physics/**`；P0 可先完成反解/验收冻结，implementation 等 R5 coefficient API 合入后再消费，禁止与 R5 并行写文件。
+- 本 plan 不直接修改 `server/src/qi_physics/**`；P0 可先完成反解/验收冻结，implementation 等 R5 P3-A 的 `DistanceEffectCoefficient`/effect-account 分腿与放行证据合入后再消费，禁止与 R5 并行写文件。
 - 不把候选但非 `origin/main` 祖先的历史提交当作已修证据。
