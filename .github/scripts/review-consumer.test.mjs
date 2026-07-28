@@ -70,6 +70,35 @@ const expectedCentralJobs = Object.freeze({
       issues: write`,
 });
 
+const expectedPolicyLevels = Object.freeze({
+  'plan-intent': 'major',
+  'production-wiring': 'major',
+  'three-layer-contract': 'major',
+  'schema-source-of-truth': 'major',
+  'wire-format-bridge': 'major',
+  'qi-conservation': 'blocker',
+  'qi-constants': 'major',
+  'qi-era-decay': 'blocker',
+  'worldview-realms': 'major',
+  'worldview-economy': 'major',
+  'worldview-naming': 'major',
+  'zone-identity': 'major',
+  'layer-registry': 'major',
+  'raster-contract': 'major',
+  'bevy-ecs-boundary': 'major',
+  'no-vanilla-entity-hack': 'major',
+  'bot-client-tolerance': 'major',
+  'skill-full-stack-av': 'major',
+  'conditional-hud': 'major',
+  'player-animation-contract': 'major',
+  'resourcepack-binding': 'major',
+  'inventory-category': 'major',
+  'saturated-tests': 'major',
+  'test-failure-honesty': 'major',
+  'minimal-maintainable-change': 'major',
+  'quality-improvements': 'suggestion',
+});
+
 const expectedCallerJobs = `jobs:
   central-review-shadow:
     if: >-
@@ -412,6 +441,11 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
 
   const byId = Object.fromEntries(
     value.rules.map((rule) => [rule.id, rule]),
+  );
+  assert.deepEqual(
+    Object.fromEntries(value.rules.map((rule) => [rule.id, rule.level])),
+    expectedPolicyLevels,
+    'Bong policy rule set and levels must remain explicit',
   );
   assert.equal(byId['qi-conservation'].level, 'blocker');
   assert.match(
