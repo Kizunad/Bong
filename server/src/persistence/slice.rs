@@ -599,7 +599,9 @@ pub struct GuardedSlice<T, E> {
     value: T,
     load_state: SliceLoadState<E>,
     binding: WriteBinding,
+    write_ordering: WriteOrdering,
     subject: SliceSubject,
+    persistence_state_issued: bool,
 }
 
 impl<T, E> SliceLoad<T, E> {
@@ -619,13 +621,17 @@ impl<T, E> SliceLoad<T, E> {
                 value: on_missing(),
                 load_state: SliceLoadState::Missing,
                 binding: descriptor.write_binding,
+                write_ordering: descriptor.write_ordering,
                 subject: SliceSubject::new(),
+                persistence_state_issued: false,
             }),
             Self::Loaded(value) => Ok(GuardedSlice {
                 value,
                 load_state: SliceLoadState::Loaded,
                 binding: descriptor.write_binding,
+                write_ordering: descriptor.write_ordering,
                 subject: SliceSubject::new(),
+                persistence_state_issued: false,
             }),
             Self::Failed(error) if descriptor.load_failure == LoadFailurePolicy::RefuseStartup => {
                 Err(SliceActivationError {
@@ -639,7 +645,9 @@ impl<T, E> SliceLoad<T, E> {
                     value,
                     load_state: SliceLoadState::Failed(error),
                     binding: descriptor.write_binding,
+                    write_ordering: descriptor.write_ordering,
                     subject: SliceSubject::new(),
+                    persistence_state_issued: false,
                 })
             }
         }
@@ -710,28 +718,34 @@ impl<T, E> GuardedSlice<T, E> {
         self.binding
     }
 
-    /// Restores dirty acknowledgement state for this exact guarded subject.
-    pub fn dirty_tracker_at(&self, revision: DirtyRevision) -> DirtyTracker {
-        DirtyTracker {
-            binding: self.binding,
-            subject: self.subject.clone(),
-            current: revision,
-            acknowledged: revision,
+    /// Restores the unique dirty tracker and durable revision fence for this subject.
+    ///
+    /// Both capabilities are issued together exactly once. Reissuing either one could
+    /// manufacture a clean acknowledgement state after a failed write or fork dirty
+    /// ownership between autosave and shutdown paths. The fence always inherits the
+    /// descriptor's registered ordering rather than accepting a caller override.
+    pub fn restore_persistence_state(
+        &mut self,
+        revision: DirtyRevision,
+    ) -> Result<(DirtyTracker, PersistedRevisionFence), PersistenceStateAlreadyIssued> {
+        if self.persistence_state_issued {
+            return Err(PersistenceStateAlreadyIssued);
         }
-    }
-
-    /// Restores the durable revision fence for this exact guarded subject.
-    pub fn persisted_revision_fence_at(
-        &self,
-        ordering: WriteOrdering,
-        persisted: DirtyRevision,
-    ) -> PersistedRevisionFence {
-        PersistedRevisionFence {
-            binding: self.binding,
-            subject: self.subject.clone(),
-            ordering,
-            persisted,
-        }
+        self.persistence_state_issued = true;
+        Ok((
+            DirtyTracker {
+                binding: self.binding,
+                subject: self.subject.clone(),
+                current: revision,
+                acknowledged: revision,
+            },
+            PersistedRevisionFence {
+                binding: self.binding,
+                subject: self.subject.clone(),
+                ordering: self.write_ordering,
+                persisted: revision,
+            },
+        ))
     }
 
     /// Applies one mutation only after proving the tracker belongs to this subject.
@@ -766,6 +780,18 @@ impl<T, E> GuardedSlice<T, E> {
         })
     }
 }
+
+/// Returned when code tries to fork persistence state for one guarded subject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistenceStateAlreadyIssued;
+
+impl fmt::Display for PersistenceStateAlreadyIssued {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("persistence state was already restored for this guarded subject")
+    }
+}
+
+impl std::error::Error for PersistenceStateAlreadyIssued {}
 
 /// Monotonic revision attached to one write domain.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1651,10 +1677,12 @@ mod tests {
         let mut second = SliceLoad::<u32, &str>::Loaded(9)
             .activate(&descriptor, || 0, |_| 0)
             .unwrap();
-        let mut first_tracker = first.dirty_tracker_at(DirtyRevision::default());
-        let mut second_tracker = second.dirty_tracker_at(DirtyRevision::default());
-        let mut first_fence =
-            first.persisted_revision_fence_at(WriteOrdering::Serialized, DirtyRevision::default());
+        let (mut first_tracker, mut first_fence) = first
+            .restore_persistence_state(DirtyRevision::default())
+            .unwrap();
+        let (mut second_tracker, _second_fence) = second
+            .restore_persistence_state(DirtyRevision::default())
+            .unwrap();
 
         let (revision, ()) = first
             .mutate(&mut first_tracker, |value| *value = 10)
@@ -1721,9 +1749,9 @@ mod tests {
         let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
             .activate(&descriptor, || 0, |_| 0)
             .unwrap();
-        let mut tracker = guarded.dirty_tracker_at(DirtyRevision::default());
-        let mut fence = guarded
-            .persisted_revision_fence_at(WriteOrdering::Serialized, DirtyRevision::default());
+        let (mut tracker, mut fence) = guarded
+            .restore_persistence_state(DirtyRevision::default())
+            .unwrap();
 
         guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
         let first_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
@@ -1739,6 +1767,11 @@ mod tests {
             Err(DurableCommitError::WriteFailed("disk unavailable"))
         );
         assert!(tracker.is_dirty());
+        assert_eq!(
+            guarded.restore_persistence_state(DirtyRevision::new(2)),
+            Err(PersistenceStateAlreadyIssued),
+            "a failed writer must not be bypassed by restoring a new clean tracker/fence"
+        );
 
         let stale_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
         let stale_receipt = fence
@@ -1772,7 +1805,10 @@ mod tests {
             WriteDomain::new("test.other"),
             WriteAuthority::new("test.other.writer"),
         );
-        let descriptor = basic_descriptor("player.bound", 10);
+        let descriptor = SliceDescriptor {
+            write_ordering: WriteOrdering::PersistedRevisionCas,
+            ..basic_descriptor("player.bound", 10)
+        };
         let mut guarded = SliceLoad::<u32, &str>::Loaded(9)
             .activate(&descriptor, || 0, |_| 0)
             .unwrap();
@@ -1780,10 +1816,12 @@ mod tests {
             write_binding: OTHER_BINDING,
             ..basic_descriptor("player.other", 20)
         };
-        let other = SliceLoad::<u32, &str>::Loaded(9)
+        let mut other = SliceLoad::<u32, &str>::Loaded(9)
             .activate(&other_descriptor, || 0, |_| 0)
             .unwrap();
-        let mut wrong_tracker = other.dirty_tracker_at(DirtyRevision::default());
+        let (mut wrong_tracker, _wrong_fence) = other
+            .restore_persistence_state(DirtyRevision::default())
+            .unwrap();
         let mut wrong_subject_mutation_called = false;
         assert!(matches!(
             guarded.mutate(&mut wrong_tracker, |_| {
@@ -1808,11 +1846,9 @@ mod tests {
             ))
         ));
 
-        let mut tracker = guarded.dirty_tracker_at(DirtyRevision::new(41));
-        let mut fence = guarded.persisted_revision_fence_at(
-            WriteOrdering::PersistedRevisionCas,
-            DirtyRevision::new(41),
-        );
+        let (mut tracker, mut fence) = guarded
+            .restore_persistence_state(DirtyRevision::new(41))
+            .unwrap();
         guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
         let permit = guarded.write_permit(WriteOutlet::Shutdown).unwrap();
         let snapshot = tracker.begin_snapshot(&permit).unwrap().unwrap();
