@@ -34,4 +34,13 @@ public final class NpcMoodStore {
     public static void clearAll() {
         MOOD_BY_ENTITY_ID.clear();
     }
+
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clearAll();
+
+    }
 }

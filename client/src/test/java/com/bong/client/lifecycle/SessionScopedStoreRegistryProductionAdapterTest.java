@@ -936,7 +936,11 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         for (SessionStoreHandle handle : SessionScopedStoreRegistry.registeredHandlesForTests()) {
             String simpleName = handle.storeType().getSimpleName();
             List<String> cleanerNames = registeredCleanerNames(registrySource, simpleName);
-            assertEquals(1, cleanerNames.size(), "每个 production Store 必须恰好登记一个 cleaner：" + handle.fqcn());
+            assertEquals(
+                List.of("clearOnDisconnect"),
+                cleanerNames,
+                "每个 production Store 必须恰好登记 canonical cleaner clearOnDisconnect：" + handle.fqcn()
+            );
             Path source = productionSourceRoot().resolve(handle.fqcn().replace('.', '/') + ".java");
             assertTrue(Files.exists(source), "registry handle 必须对应 production Store source：" + handle.fqcn());
             String method = staticVoidMethod(Files.readString(source), cleanerNames.get(0));

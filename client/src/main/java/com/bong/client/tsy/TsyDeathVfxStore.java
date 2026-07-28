@@ -18,6 +18,15 @@ public final class TsyDeathVfxStore {
         state = TsyDeathVfxState.empty();
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        reset();
+
+    }
+
     public static void resetForTests() {
         reset();
     }

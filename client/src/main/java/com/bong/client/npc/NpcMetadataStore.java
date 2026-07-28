@@ -35,4 +35,13 @@ public final class NpcMetadataStore {
     public static void clearAll() {
         METADATA_BY_ENTITY_ID.clear();
     }
+
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clearAll();
+
+    }
 }

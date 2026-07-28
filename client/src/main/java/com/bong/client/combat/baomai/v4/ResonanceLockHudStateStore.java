@@ -42,6 +42,15 @@ public final class ResonanceLockHudStateStore {
         CURRENT.set(State.UNLOCKED);
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
+
     // ── nested types ──────────────────────────────────────────────────────────
 
     public static final class State {

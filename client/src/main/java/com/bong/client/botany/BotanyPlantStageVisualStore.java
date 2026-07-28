@@ -28,4 +28,13 @@ public final class BotanyPlantStageVisualStore {
     public static void clear() {
         VISUALS.clear();
     }
+
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
 }

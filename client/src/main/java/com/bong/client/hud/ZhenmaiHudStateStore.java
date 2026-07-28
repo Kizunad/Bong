@@ -136,6 +136,15 @@ public final class ZhenmaiHudStateStore {
         SHIELD_SLOT.set(Slot.EMPTY);
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
+
     public static void resetForTests() {
         clear();
     }

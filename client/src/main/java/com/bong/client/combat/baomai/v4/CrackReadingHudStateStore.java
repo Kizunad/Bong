@@ -43,6 +43,15 @@ public final class CrackReadingHudStateStore {
         CURRENT.set(State.EMPTY);
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
+
     // ── nested types ──────────────────────────────────────────────────────────
 
     public record MeridianEntry(

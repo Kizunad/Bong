@@ -18,6 +18,15 @@ public final class TsyBossHealthStore {
         state = TsyBossHealthState.empty();
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        reset();
+
+    }
+
     public static void resetForTests() {
         reset();
     }

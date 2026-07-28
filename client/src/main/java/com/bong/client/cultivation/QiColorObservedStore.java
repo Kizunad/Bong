@@ -25,6 +25,15 @@ public final class QiColorObservedStore {
         replace(null);
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
+
     public static void addListener(Consumer<QiColorObservedState> listener) {
         listeners.add(listener);
     }

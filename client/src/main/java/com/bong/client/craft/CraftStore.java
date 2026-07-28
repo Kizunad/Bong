@@ -119,6 +119,15 @@ public final class CraftStore {
         for (Consumer<CraftSessionStateView> l : sessionListeners) l.accept(CraftSessionStateView.IDLE);
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
+
     /**
      * 测试隔离用：清掉所有 listener。生产代码不应调用——listener 由 owner（Screen / Hud）
      * 显式 add/remove 自管。

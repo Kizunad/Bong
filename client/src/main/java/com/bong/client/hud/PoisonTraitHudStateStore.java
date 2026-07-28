@@ -60,4 +60,13 @@ public final class PoisonTraitHudStateStore {
     public static void clear() {
         STATE.set(State.NONE);
     }
+
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
 }

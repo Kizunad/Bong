@@ -18,6 +18,7 @@ import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.state.DroppedItemStore;
+import com.bong.client.lifecycle.ClientStoreScopeManifest;
 import com.bong.client.network.ProtoServerDataBridge;
 import com.bong.client.network.ServerDataDispatch;
 import com.bong.client.network.ServerDataRouter;
@@ -523,16 +524,18 @@ public class BongNetworkHandlerTest {
     }
 
     @Test
-    void disconnectAdjunctRuntimeFailureDoesNotSkipLaterCleanup() {
+    void disconnectAdjunctRuntimeFailureReportsStableIdentityAndDoesNotSkipLaterCleanup() {
         List<String> calls = new java.util.ArrayList<>();
+        List<BongNetworkHandler.DisconnectCleanupFailure> failures = new java.util.ArrayList<>();
 
         BongNetworkHandler.runDisconnectCleanups(
-            () -> calls.add("before"),
-            () -> {
+            failures::add,
+            new BongNetworkHandler.DisconnectCleanup("test.before", () -> calls.add("before")),
+            new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
                 calls.add("failing");
                 throw new IllegalStateException("recoverable cleanup failure");
-            },
-            () -> calls.add("after")
+            }),
+            new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
         );
 
         assertEquals(
@@ -540,26 +543,54 @@ public class BongNetworkHandlerTest {
             calls,
             "单个 adjunct RuntimeException 必须被隔离，后续 animation/audio/HUD 清理仍要执行"
         );
+        assertEquals(1, failures.size(), "每个失败 adjunct 必须向 reporter 报告一次");
+        assertEquals(
+            "test.failing",
+            failures.get(0).resourceIdentity(),
+            "失败报告必须携带不受数组排序影响的稳定 resource identity"
+        );
+        assertEquals(
+            "recoverable cleanup failure",
+            failures.get(0).cause().getMessage(),
+            "失败报告必须保留原 RuntimeException 供日志输出堆栈"
+        );
+    }
+
+    @Test
+    void disconnectCleanupClassFactoryUsesStableFullyQualifiedResourceIdentity() {
+        BongNetworkHandler.DisconnectCleanup cleanup = BongNetworkHandler.cleanup(
+            BongToast.class,
+            () -> { }
+        );
+
+        assertEquals(
+            BongToast.class.getName(),
+            cleanup.resourceIdentity(),
+            "production adjunct identity 必须使用稳定 FQCN，而不是数组 index 或易碰撞 simple name"
+        );
     }
 
     @Test
     void disconnectAdjunctErrorStillPropagatesWithoutRunningLaterCleanup() {
         List<String> calls = new java.util.ArrayList<>();
+        List<BongNetworkHandler.DisconnectCleanupFailure> failures = new java.util.ArrayList<>();
 
         AssertionError error = assertThrows(
             AssertionError.class,
             () -> BongNetworkHandler.runDisconnectCleanups(
-                () -> calls.add("before"),
-                () -> {
+                failures::add,
+                new BongNetworkHandler.DisconnectCleanup("test.before", () -> calls.add("before")),
+                new BongNetworkHandler.DisconnectCleanup("test.fatal", () -> {
                     calls.add("fatal");
                     throw new AssertionError("fatal cleanup");
-                },
-                () -> calls.add("after")
+                }),
+                new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
             )
         );
 
         assertEquals("fatal cleanup", error.getMessage(), "Error 必须原样透传");
         assertEquals(List.of("before", "fatal"), calls, "Error 不得伪装成可恢复 RuntimeException");
+        assertTrue(failures.isEmpty(), "Error 不得被 RuntimeException reporter 吞掉或降级为可恢复日志");
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -631,18 +662,18 @@ public class BongNetworkHandlerTest {
         );
 
         List<String> nonStoreHooks = List.of(
-            "NpcDialogueBubbleRenderer.clear()",
+            "NpcDialogueBubbleRenderer::clear",
             "MusicStateMachine.instance().clear()",
             "SoundRecipePlayer.instance().clearOnDisconnect()",
-            "BongAnimationPlayer.clearOnDisconnect()",
-            "AnimationLayerManager.clearOnDisconnect()",
-            "BongPunchCombo.clearOnDisconnect()",
-            "MutationVisualState.reset()",
-            "SpiderDisguiseHandler.clearOnDisconnect()",
-            "RatQiTierHandler.clearOnDisconnect()",
-            "DaoZhanDisguiseHandler.clearOnDisconnect()",
-            "EraAmbianceState.reset()",
-            "BongToast.clearOnDisconnect()"
+            "BongAnimationPlayer::clearOnDisconnect",
+            "AnimationLayerManager::clearOnDisconnect",
+            "BongPunchCombo::clearOnDisconnect",
+            "MutationVisualState::reset",
+            "SpiderDisguiseHandler::clearOnDisconnect",
+            "RatQiTierHandler::clearOnDisconnect",
+            "DaoZhanDisguiseHandler::clearOnDisconnect",
+            "EraAmbianceState::reset",
+            "BongToast::clearOnDisconnect"
         );
         int previousIndex = clearHelper.indexOf(registryCall);
         for (String hook : nonStoreHooks) {
@@ -659,34 +690,8 @@ public class BongNetworkHandlerTest {
             previousIndex = hookIndex;
         }
 
-        List<String> migratedStoreTypes = List.of(
-            "RealmCollapseHudStateStore",
-            "NpcMetadataStore",
-            "NpcLodStore",
-            "NpcMoodStore",
-            "TsyBossHealthStore",
-            "TsyDeathVfxStore",
-            "CoffinStateStore",
-            "GatheringSessionStore",
-            "CrackReadingHudStateStore",
-            "ResonanceLockHudStateStore",
-            "VoidErosionVisualStore",
-            "HallucinationLayerStore",
-            "DyingElderEncounterStore",
-            "TiandaoPresenceStore",
-            "BongHudStateStore",
-            "SearchHudStateStore",
-            "AgentUiStore",
-            "HalfStepRechallengeStore",
-            "TutorialCoffinPosStore",
-            "RemainsStore",
-            "DroppedItemStore",
-            "CraftStore",
-            "IdentityPanelStateStore",
-            "FalseSkinHudStateStore",
-            "DuguV2HudStateStore"
-        );
-        for (String storeType : migratedStoreTypes) {
+        for (String storeFqcn : ClientStoreScopeManifest.registryManagedSessionStores()) {
+            String storeType = storeFqcn.substring(storeFqcn.lastIndexOf('.') + 1);
             assertFalse(
                 clearHelper.contains(storeType + "."),
                 storeType + " 应只由 registry adapter 清理，helper 不得保留任何 direct call"

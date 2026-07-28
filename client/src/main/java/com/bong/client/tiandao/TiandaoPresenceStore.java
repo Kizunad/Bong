@@ -20,4 +20,13 @@ public final class TiandaoPresenceStore {
     public static void clear() {
         STATE.set(TiandaoPresenceState.empty());
     }
+
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
 }

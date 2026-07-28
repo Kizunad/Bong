@@ -56,30 +56,30 @@ class AdjunctDisconnectOwnershipTest {
         assertTrue(helperEnd > helperStart, "必须能圈定中央断线 helper");
         String helper = networkHandler.substring(helperStart, helperEnd);
 
-        for (String call : new String[] {
-            "EnvironmentEffectController.clearOnDisconnect()",
-            "BongShaderState.clearOnDisconnect()",
-            "CastFovController.clearOnDisconnect()",
-            "CombatJuiceSystem.clearOnDisconnect()",
-            "CombatHudBootstrap.clearOnDisconnect()",
-            "MovementKeybindings.clearOnDisconnect()",
-            "BotanyHudBootstrap.clearOnDisconnect()",
-            "TechniquesListPanel.clearOnDisconnect()",
-            "WeaponTreasurePanel.clearOnDisconnect()",
-            "HomeSequence.clearOnDisconnect()",
-            "InventoryMoveRejectedHandler.clearOnDisconnect()",
-            "PillBuffHudPlanner.clearOnDisconnect()",
-            "MorphCastVignetteState.clearOnDisconnect()",
-            "SeasonVisualController.clearOnDisconnect()",
-            "ScreenTransitionController.clearOnDisconnect()",
-            "WorldVfxDemoBootstrap.clearOnDisconnect()",
-            "DeadDropBreakPlayer.clearOnDisconnect()",
-            "NpcFootstepAudioController.clearOnDisconnect()",
-            "BongAnimationRegistry.clearOnDisconnect()"
+        for (String registration : new String[] {
+            "cleanup(EnvironmentEffectController.class, EnvironmentEffectController::clearOnDisconnect)",
+            "cleanup(BongShaderState.class, BongShaderState::clearOnDisconnect)",
+            "cleanup(CastFovController.class, CastFovController::clearOnDisconnect)",
+            "cleanup(CombatJuiceSystem.class, CombatJuiceSystem::clearOnDisconnect)",
+            "cleanup(CombatHudBootstrap.class, CombatHudBootstrap::clearOnDisconnect)",
+            "cleanup(MovementKeybindings.class, MovementKeybindings::clearOnDisconnect)",
+            "cleanup(BotanyHudBootstrap.class, BotanyHudBootstrap::clearOnDisconnect)",
+            "cleanup(TechniquesListPanel.class, TechniquesListPanel::clearOnDisconnect)",
+            "cleanup(WeaponTreasurePanel.class, WeaponTreasurePanel::clearOnDisconnect)",
+            "cleanup(HomeSequence.class, HomeSequence::clearOnDisconnect)",
+            "cleanup(InventoryMoveRejectedHandler.class, InventoryMoveRejectedHandler::clearOnDisconnect)",
+            "cleanup(PillBuffHudPlanner.class, PillBuffHudPlanner::clearOnDisconnect)",
+            "cleanup(MorphCastVignetteState.class, MorphCastVignetteState::clearOnDisconnect)",
+            "cleanup(SeasonVisualController.class, SeasonVisualController::clearOnDisconnect)",
+            "cleanup(ScreenTransitionController.class, ScreenTransitionController::clearOnDisconnect)",
+            "cleanup(WorldVfxDemoBootstrap.class, WorldVfxDemoBootstrap::clearOnDisconnect)",
+            "cleanup(DeadDropBreakPlayer.class, DeadDropBreakPlayer::clearOnDisconnect)",
+            "cleanup(NpcFootstepAudioController.class, NpcFootstepAudioController::clearOnDisconnect)",
+            "cleanup(BongAnimationRegistry.class, BongAnimationRegistry::clearOnDisconnect)"
         }) {
-            assertTrue(helper.contains(call), "中央断线 helper 必须接入 adjunct：" + call);
-            assertTrue(helper.indexOf(call) == helper.lastIndexOf(call),
-                "中央断线 helper 必须恰好调用一次 adjunct：" + call);
+            assertTrue(helper.contains(registration), "中央断线 helper 必须接入稳定身份 adjunct：" + registration);
+            assertTrue(helper.indexOf(registration) == helper.lastIndexOf(registration),
+                "中央断线 helper 必须恰好登记一次 adjunct：" + registration);
         }
     }
 

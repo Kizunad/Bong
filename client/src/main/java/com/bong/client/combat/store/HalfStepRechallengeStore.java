@@ -66,6 +66,11 @@ public final class HalfStepRechallengeStore {
         snapshot = State.NONE;
     }
 
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     /** 测试用重置。 */
     public static void resetForTests() {
         snapshot = State.NONE;

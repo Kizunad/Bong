@@ -120,6 +120,11 @@ public final class AgentUiStore {
         pendingErrorClose = null;
     }
 
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     private record PendingErrorClose(
         String requestId,
         long startedAtNanos,

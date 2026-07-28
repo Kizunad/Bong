@@ -46,6 +46,11 @@ public final class NpcLodStore {
         STORE.clear();
     }
 
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+    public static void clearOnDisconnect() {
+        clearAll();
+    }
+
     /** 当前快照数量（供测试 / debug 用）。 */
     public static int size() {
         return STORE.size();

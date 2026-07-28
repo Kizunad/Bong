@@ -137,6 +137,15 @@ public final class TribulationStateStore {
         lastTerminal = State.NONE;
     }
 
+
+    /** Clears session-scoped state while preserving process-lifetime wiring. */
+
+    public static void clearOnDisconnect() {
+
+        clear();
+
+    }
+
     public static void resetForTests() { clear(); }
 
     private static State selectPrimary(Map<String, State> states) {
