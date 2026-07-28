@@ -1,8 +1,8 @@
 //! plan-craft-v1 §3 — `CraftRegistry` resource。
 //!
 //! 全局配方注册表。各流派 plan（dugu-v2 / tuike-v2 / zhenfa-v2 / tools-v1）
-//! 在自己 P0 阶段调 `register` 注入；本 plan 内 `mod_default::register_examples`
-//! 注册 5 个示例（P1 验收基线）。
+//! 在自己 P0 阶段调 `register` 注入；数据所有的 legacy/workbench 配方由
+//! `craft::data` 在启动期预检后注册。
 //!
 //! 与 `alchemy::RecipeRegistry` 命名空间隔离：手搓走 craft 命名空间，
 //! 炼丹走 alchemy 命名空间，两边 RecipeRegistry resource 都存在不冲突。
@@ -65,6 +65,14 @@ impl CraftRegistry {
 
     pub fn iter(&self) -> impl Iterator<Item = &CraftRecipe> {
         self.recipes.values()
+    }
+
+    pub(crate) fn cloned_recipes(&self) -> HashMap<RecipeId, CraftRecipe> {
+        self.recipes.clone()
+    }
+
+    pub(crate) fn replace_recipes(&mut self, recipes: HashMap<RecipeId, CraftRecipe>) {
+        self.recipes = recipes;
     }
 
     /// 按类别筛选 — UI 左列表分组的服务端起点。
