@@ -7,12 +7,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientStoreScopeManifestTest {
@@ -138,24 +140,74 @@ class ClientStoreScopeManifestTest {
             )
         );
 
-        for (String fqcn : ClientStoreScopeManifest.registryManagedSessionStores()) {
+        assertCanonicalStoreCleanerPairs(
+            registrySource,
+            ClientStoreScopeManifest.registryManagedSessionStores()
+        );
+    }
+
+    @Test
+    void canonicalStoreCleanerPairGuardRejectsSwappedOwners() {
+        String swapped = """
+            final class FixtureRegistry {
+                private static final java.util.List<SessionStoreHandle> REGISTERED = java.util.List.of(
+                    SessionStoreHandle.forStore(AlphaStore.class, BetaStore::clearOnDisconnect),
+                    SessionStoreHandle.forStore(BetaStore.class, AlphaStore::clearOnDisconnect)
+                );
+            }
+            """;
+
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> assertCanonicalStoreCleanerPairs(
+                swapped,
+                Set.of("fixture.AlphaStore", "fixture.BetaStore")
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("AlphaStore")
+                && failure.getMessage().contains("BetaStore"),
+            "负向 fixture 必须证明交换两个 Store cleaner owner 会撞红；实际=" + failure.getMessage()
+        );
+    }
+
+    private static void assertCanonicalStoreCleanerPairs(
+        String registrySource,
+        Set<String> expectedFqcns
+    ) {
+        List<JavaLifecycleSourceInspector.StoreRegistration> registrations =
+            JavaLifecycleSourceInspector.storeRegistrations(registrySource);
+        Map<String, Long> counts = registrations.stream().collect(java.util.stream.Collectors.groupingBy(
+            JavaLifecycleSourceInspector.StoreRegistration::storeType,
+            java.util.stream.Collectors.counting()
+        ));
+
+        assertEquals(
+            expectedFqcns.size(),
+            registrations.size(),
+            "registry 必须恰好有一个 canonical registration 对应每个 registry-managed Store"
+        );
+        for (String fqcn : expectedFqcns) {
             String storeSimpleName = fqcn.substring(fqcn.lastIndexOf('.') + 1);
-            String canonicalCleaner = storeSimpleName + "::clearOnDisconnect";
-            assertTrue(
-                registrySource.contains(canonicalCleaner),
-                fqcn + " 必须由 registry 绑定统一 production lifecycle 方法 clearOnDisconnect；"
-                    + "不得退回 clear/clearAll/reset 或 test reset"
-            );
             assertEquals(
-                registrySource.indexOf(canonicalCleaner),
-                registrySource.lastIndexOf(canonicalCleaner),
+                1L,
+                counts.getOrDefault(storeSimpleName, 0L),
                 fqcn + " 必须恰好登记一次 canonical lifecycle cleaner"
             );
         }
-        assertFalse(
-            registrySource.matches("(?s).*::(?:clear|clearAll|reset)\\).*"),
-            "registry 不得再混用 clear/clearAll/reset；production disconnect 命名必须统一为 clearOnDisconnect"
-        );
+        for (JavaLifecycleSourceInspector.StoreRegistration registration : registrations) {
+            assertEquals(
+                registration.storeType(),
+                registration.cleanerOwner(),
+                "forStore 的 class token 与 method-reference owner 必须指向同一个 Store；登记="
+                    + registration
+            );
+            assertEquals(
+                "clearOnDisconnect",
+                registration.cleanerMethod(),
+                "registry 不得混用 clear/clearAll/reset 或 test reset；登记=" + registration
+            );
+        }
     }
 
     private static Set<String> discoverProductionStores() throws IOException {

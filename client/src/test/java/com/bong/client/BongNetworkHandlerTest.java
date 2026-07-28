@@ -601,6 +601,35 @@ public class BongNetworkHandlerTest {
     }
 
     @Test
+    void disconnectAdjunctReporterRethrowingCleanupFailureDoesNotSkipLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+        IllegalStateException cleanupFailure = new IllegalStateException("cleanup failed");
+
+        BongNetworkHandler.runDisconnectCleanups(
+            failure -> {
+                calls.add("reporting:" + failure.resourceIdentity());
+                throw failure.cause();
+            },
+            new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
+                calls.add("failing");
+                throw cleanupFailure;
+            }),
+            new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
+        );
+
+        assertEquals(
+            List.of("failing", "reporting:test.failing", "after"),
+            calls,
+            "reporter 原样重抛 cleanup 异常时不得触发 self-suppression，后续 cleanup 仍要执行"
+        );
+        assertEquals(
+            0,
+            cleanupFailure.getSuppressed().length,
+            "同一异常对象不得附加到自身，否则 Throwable 会抛 IllegalArgumentException"
+        );
+    }
+
+    @Test
     void disconnectAdjunctReporterErrorStillPropagatesWithoutRunningLaterCleanup() {
         List<String> calls = new java.util.ArrayList<>();
 

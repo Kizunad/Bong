@@ -1135,10 +1135,6 @@ public class BongNetworkHandler {
         SessionScopedStoreRegistry.clearAllOnDisconnect();
 
         runDisconnectCleanups(
-            failure -> BongClient.LOGGER.error(
-                "Failed to clear client disconnect adjunct " + failure.resourceIdentity(),
-                failure.cause()
-            ),
             cleanup(EnvironmentEffectController.class, EnvironmentEffectController::clearOnDisconnect),
             cleanup(BongShaderState.class, BongShaderState::clearOnDisconnect),
             cleanup(CastFovController.class, CastFovController::clearOnDisconnect),
@@ -1207,7 +1203,9 @@ public class BongNetworkHandler {
                         exception
                     ));
                 } catch (RuntimeException reportingFailure) {
-                    exception.addSuppressed(reportingFailure);
+                    if (reportingFailure != exception) {
+                        exception.addSuppressed(reportingFailure);
+                    }
                 }
             }
         }

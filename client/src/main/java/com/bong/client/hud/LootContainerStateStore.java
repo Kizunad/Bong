@@ -76,11 +76,7 @@ public final class LootContainerStateStore {
     }
 
     public static void clearOnDisconnect() {
-        Session previous = current;
-        current = null;
-        if (previous instanceof OpenSession open) {
-            notifyListeners(new Closed(open.sessionId(), "disconnect"));
-        }
+        clear();
     }
 
     public static void addListener(Listener listener) {

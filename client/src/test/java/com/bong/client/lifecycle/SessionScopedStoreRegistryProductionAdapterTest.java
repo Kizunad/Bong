@@ -945,7 +945,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             );
             Path source = productionSourceRoot().resolve(handle.fqcn().replace('.', '/') + ".java");
             assertTrue(Files.exists(source), "registry handle 必须对应 production Store source：" + handle.fqcn());
-            assertProductionCleanerChainRejectsTestResets(
+            JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
                 Files.readString(source),
                 cleanerNames.get(0),
                 handle.fqcn()
@@ -954,40 +954,63 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionCleanerChainGuardRejectsIndirectTestResetDelegation() {
-        String indirectReset = """
-            public final class FixtureStore {
-                public static void clearOnDisconnect() { clear(); }
-                public static void clear() { resetForTests(); }
-                public static void resetForTests() { }
-            }
-            """;
+    void productionCleanerChainGuardRejectsEverySupportedTestResetCallShape() {
+        List<String> forbiddenFixtures = List.of(
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() { clear(); }
+                    public static void clear() { resetForTests (); }
+                    public static void resetForTests() { }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() { FixtureStore.clear(); }
+                    public static void clear() { helper(false); }
+                    public static void helper(boolean unused) { clearForTests(); }
+                    public static void clearForTests() { }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() {
+                        Runnable reset = FixtureStore::resetForTest;
+                        reset.run();
+                    }
+                    public static void resetForTest() { }
+                }
+                """
+        );
 
-        AssertionError failure = assertThrows(
-            AssertionError.class,
-            () -> assertProductionCleanerChainRejectsTestResets(
-                indirectReset,
-                "clearOnDisconnect",
-                "FixtureStore"
-            )
-        );
-        assertTrue(
-            failure.getMessage().contains("resetForTests"),
-            "负向 fixture 必须证明一次委托后的 test reset 仍会撞红；实际=" + failure.getMessage()
-        );
+        for (String fixture : forbiddenFixtures) {
+            AssertionError failure = assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
+                    fixture,
+                    "clearOnDisconnect",
+                    "FixtureStore"
+                )
+            );
+            assertTrue(
+                failure.getMessage().contains("resetForTest")
+                    || failure.getMessage().contains("clearForTests"),
+                "负向 fixture 必须证明空白、同类限定调用、带参委托与 method reference 均会撞红；实际="
+                    + failure.getMessage()
+            );
+        }
     }
 
     @Test
     void productionCleanerChainGuardHandlesRecursiveHelperCycles() {
         String recursiveCycle = """
             public final class FixtureStore {
-                public static void clearOnDisconnect() { clear(); }
-                public static void clear() { helper(); }
-                public static void helper() { clear(); }
+                public static void clearOnDisconnect() { FixtureStore.clear(); }
+                public static void clear() { helper(false); }
+                public static void helper(boolean unused) { clear(); }
             }
             """;
 
-        assertDoesNotThrow(() -> assertProductionCleanerChainRejectsTestResets(
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertCleanerDoesNotReachTestReset(
             recursiveCycle,
             "clearOnDisconnect",
             "FixtureStore"
@@ -1380,69 +1403,6 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             names.add(matcher.group(1));
         }
         return names;
-    }
-
-    private static void assertProductionCleanerChainRejectsTestResets(
-        String source,
-        String entryMethod,
-        String storeIdentity
-    ) {
-        java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>();
-        java.util.Set<String> visited = new java.util.HashSet<>();
-        pending.add(entryMethod);
-        while (!pending.isEmpty()) {
-            String methodName = pending.removeFirst();
-            if (!visited.add(methodName)) {
-                continue;
-            }
-            String method = staticVoidMethod(source, methodName);
-            for (String forbidden : List.of("resetForTests", "resetForTest", "clearForTests")) {
-                assertFalse(
-                    method.contains(forbidden + "("),
-                    storeIdentity + " 的 production cleaner 委托链不得调用 " + forbidden
-                        + "；可达方法=" + visited
-                );
-            }
-            java.util.regex.Matcher call = java.util.regex.Pattern.compile(
-                "(?<![.\\w])([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(\\s*\\)"
-            ).matcher(method.substring(method.indexOf('{') + 1));
-            while (call.find()) {
-                String callee = call.group(1);
-                if (!visited.contains(callee) && hasStaticVoidMethod(source, callee)) {
-                    pending.addLast(callee);
-                }
-            }
-        }
-    }
-
-    private static boolean hasStaticVoidMethod(String source, String methodName) {
-        java.util.regex.Pattern signature = java.util.regex.Pattern.compile(
-            "(?:public|protected|private)?\\s*static\\s+(?:synchronized\\s+)?void\\s+"
-                + java.util.regex.Pattern.quote(methodName)
-                + "\\s*\\(\\s*\\)\\s*\\{"
-        );
-        return signature.matcher(source).find();
-    }
-
-    private static String staticVoidMethod(String source, String methodName) {
-        java.util.regex.Pattern signature = java.util.regex.Pattern.compile(
-            "(?:public|protected|private)?\\s*static\\s+(?:synchronized\\s+)?void\\s+"
-                + java.util.regex.Pattern.quote(methodName)
-                + "\\s*\\(\\s*\\)\\s*\\{"
-        );
-        java.util.regex.Matcher matcher = signature.matcher(source);
-        assertTrue(matcher.find(), "必须能定位 production cleaner：" + methodName);
-        int bodyStart = source.indexOf('{', matcher.start());
-        int depth = 0;
-        for (int index = bodyStart; index < source.length(); index++) {
-            char current = source.charAt(index);
-            if (current == '{') {
-                depth++;
-            } else if (current == '}' && --depth == 0) {
-                return source.substring(matcher.start(), index + 1);
-            }
-        }
-        throw new AssertionError("无法圈定 production cleaner：" + methodName);
     }
 
     private static void resetTestOnlyState() {
