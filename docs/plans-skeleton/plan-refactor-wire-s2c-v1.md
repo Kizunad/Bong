@@ -20,33 +20,22 @@
 
 - ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单。
 - ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发。
-- ⬜ P2 client 桥接层收敛 + jump wire handoff：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）；交付 `jump_height_multiplier` schema/emit/bridge（详见 P2-J）。
+- ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）。
 - ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
 - ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
-
-## P2-J jump wire 冻结交付与下游放行（R6 canonical owner）
-
-本交付登记在 R6 P2 的实际实施队列中；R6 只拥有 wire/emit/bridge 切片，不吸收 `modifier-effect-consumer-completion` 的 gameplay consumer。
-
-- **server/schema 交付**：给 canonical `DerivedAttrsSyncV1` 增加 `jump_height_multiplier`，同步 Rust schema、proto/generated、server `network/derived_attrs_emit.rs`/`network/emit/` builder 与 `schema/proto_convert.rs`；字段由 server `DerivedAttrs` 单一事实源产生，不新造 parallel payload，也不保留新旧双轨。
-- **client bridge 交付**：在 client `network/` 的 `ProtoServerDataBridge`/`ServerDataRouter` 与 `BongNetworkHandler.register()` channel-registration 区段把该字段转换为冻结的 bridge/router 输入；R6 不写 `DerivedAttrsStore`、Store registry 或 `clearClientStateOnDisconnect`。
-- **契约 pin**：schema 正反 sample、proto/generated 对拍与 bridge/router 测试必须证明非默认 jump 值从 server emit 穿过真实 wire 到 client bridge 输出；缺字段、NaN/非有限值和默认 `1.0` 语义按 P0 冻结。只测 DTO struct 或手塞 Store 不算完成。
-- **放行证据**：P2-J PR 合入，schema dist/generated 已重建，buf/schema sample、server emit 与 client bridge/router 契约 pin 全绿，并在 Finish Evidence 记录冻结字段/API。此证据只放行 R2 的 P2-J store handoff；`modifier-effect-consumer-completion` P4 仍须等待 R2 P2-J。
-- **无环顺序**：已合入的 R2 P0 `SessionScopedStore`/adapter framework → R6 P2-J wire/bridge → R2 P2-J Store 登记/重连 reset → focused modifier P4 gameplay consumer。R6 不等待 R2 P1-P4 全轨完成。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
 active：server-data-s2c-schema-union-drift（TS union 补齐走 regenerate）、spirit-treasure-chat-key-conflict 除外（归 R7）。
 skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、forge-session-enum-unstripped（#1294 在飞）、client-request-schema-drift（C2S 契约 pin 部分）、cl-ningmai-meridian-target-drop（payload 字段丢失）、alchemy-recipe-fragment-handoff（id 前缀契约）、vfx-event-slash-contract（event_id 格式契约；agent 侧改动最小化）、npc-trade-bundle-count-bridge（展示/结算数量桥）、dropped-loot-g-pickup-range-desync（拾取范围下发对齐部分）、skillbar-cast-source-drift 与 skillconfig-castsync 除外（归 R9）。
 注：server↔agent 方向的桥（anticheat-tiandao-drop、niche-guardian-redis-dispatch、npc-combat-relic-schema-drift、pseudo-vein-agent-deadwire、war-participate-agent-command-drift、天道叙事簇 14 项）**不吸收**——agent 不在本次重构范围，独立保留（见总纲 §6 独立轨）。
-跨轨 API handoff（R6 只承接 wire/emit/bridge 切片）：`modifier-effect-consumer-completion` P4 → R6 P2-J；完成后只放行 R2 P2-J，不直接宣称 jump gameplay 闭环。
 
 ## 文件所有权与边界
 
 - 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：R2 P0 的 `SessionScopedStore`/adapter 基础接口已合入后即可动工；R6 P2-J 不等待 R2 后续全轨。P2-J 合入后反向放行 R2 P2-J store/reset handoff；R4 P2 建议在本轨 P1 后开。
+- 依赖：无硬前置；R2 先合（同文件低冲突区段）；R4 P2 建议在本轨 P1 后开。
 
 ## bot 验收场景
 

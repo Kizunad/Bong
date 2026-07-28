@@ -63,17 +63,17 @@ bug-hunt round10（**末轮**，workflow，5 系统性角度 finder + 怀疑者�
 
 | Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | Absorb list / 文档动作 |
 |---|---|---|---|---|
-| #5 shield-break state leak | `server/src/combat/resolve.rs:1234-1264` 空 offhand fallback wooden shield；`server/src/combat/resolve.rs:1347-1359` 破盾只删物品/emit；`server/src/combat/lifecycle.rs:291-312` stale state 仍 drain | `independent-domain-fix` | `docs/plans-skeleton/plan-bughunt-shield-break-state-cleanup-v1.md` | 新建唯一 owner；defense-hardening 去重表已改指它 |
+| #5 shield-break state leak | `server/src/combat/resolve.rs:1234-1264` 空 offhand fallback wooden shield；`server/src/combat/resolve.rs:1347-1359` 破盾只删物品/emit；`server/src/combat/lifecycle.rs:291-312` stale state 仍 drain | `independent-domain-fix` | successor 短名 `plan-bughunt-shield-break-state-cleanup-v1` | 后续单独 docs PR 立 skeleton；本 PR 不改 defense-hardening 正文 |
 | #6 Guangbo practice producer | `server/src/network/cast_emit.rs:349-353` 当前发送 `GuangboTicaoPracticeEvent`，`server/src/combat/body_conditioning.rs:112-154` 消费并按守恒门增长熟练度 | `already-fixed/invalid`（already-fixed） | `67c647346` / PR #652 | 不归 R9/R10 重构 |
-| #1 mineral exhausted shutdown flush | `server/src/mineral/mod.rs:93-102` 仍只在 Update 注册；节流 persistence 无 Last/AppExit 强刷 | `absorbed-by-track` | `docs/plans-skeleton/plan-refactor-persistence-slices-v1.md` R3 P3 | 原 absorb list 漏列；本 PR 已精确补录 finding/symbol |
-| #2 zone influence shutdown flush | `server/src/persistence/mod.rs:698-710` 只把 influence persist 注册在 Update、Last 仅刷 zone runtime；`server/src/persistence/mod.rs:953-980` 的 influence snapshot 仍按 300 秒节流 | `absorbed-by-track` | 同 R3 P3 | 原 absorb list已列 `zone-influence-shutdown-flush`；active focused plan 标 DELEGATED，禁止双线 |
+| #1 mineral exhausted shutdown flush | `server/src/mineral/mod.rs:93-102` 仍只在 Update 注册；节流 persistence 无 Last/AppExit 强刷 | `absorbed-by-track` | `docs/plans-skeleton/plan-refactor-persistence-slices-v1.md`（R3 shutdown-flush 域） | 最小 absorb-list 行补录 mineral finding |
+| #2 zone influence shutdown flush | `server/src/persistence/mod.rs:698-710` 只把 influence persist 注册在 Update、Last 仅刷 zone runtime；`server/src/persistence/mod.rs:953-980` 的 influence snapshot 仍按 300 秒节流 | `absorbed-by-track` | 同一 R3 域 | 既有 absorb-list 已含 `zone-influence-shutdown-flush`；本 PR 不改 active plan 正文 |
 | #3 `DyingElderQi` TypeBox | `agent/packages/schema/src/spiritual-sense.ts:17` 当前含 `DyingElderQi`；`agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json:12` pin wire literal | `already-fixed/invalid`（already-fixed） | `a64b9f7e1` / PR #704 | 仅归档 |
 | #4 tribulation kind inline union | `agent/packages/schema/src/server-data.ts:105,991-1005` 当前复用 `agent/packages/schema/src/tribulation.ts:7-14` 的 canonical `TribulationKindV1`；`agent/packages/schema/samples/server-data.tribulation-state.jue-bi.sample.json:7` pin `jue_bi` | `already-fixed/invalid`（already-fixed） | `c09de7228` / PR #705 | 仅归档 |
 
 ## Finish Evidence
 
-- **落地清单**：shield 新建 focused successor，并更新 `plan-defense-hardening-v1` 去重引用；R3 P3/absorb list 精确加入 mineral，确认 zone influence 已列并把 standalone active 标为 DELEGATED；三条 merged 修复结案；bundle 迁入本路径。
+- **落地清单**：shield 记录后续 successor 短名；R3 absorb-list 最小补录 mineral，确认 zone influence 已在既有 absorb-list；不改 defense-hardening 或 standalone active plan 正文；三条 merged 修复结案；bundle 迁入本路径。
 - **关键 commit / PR**：`67c647346`/#652、`a64b9f7e1`/#704、`c09de7228`/#705 均为目标 HEAD 祖先且当前修复存在。
 - **测试结果**：docs-only triage；最终执行 docs static gate + exact-HEAD validator。
 - **跨仓库核验**：shield 为 server 状态+既有 client feedback；shutdown 为 server R3；schema 两项 TypeBox/Rust/client literal 当前对齐。
-- **遗留 / 后续**：#5 由 shield successor；#1/#2 由 R3 P3。graceful `Last + AppExit` 只保证 SIGINT/SIGTERM 等正常停服，不宣称覆盖 SIGKILL、进程崩溃或断电。
+- **遗留 / 后续**：#5 等待独立 docs PR 建立 shield successor；#1/#2 由 R3 shutdown-flush 域承接。graceful `Last + AppExit` 只保证 SIGINT/SIGTERM 等正常停服，不宣称覆盖 SIGKILL、进程崩溃或断电。

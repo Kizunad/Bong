@@ -51,7 +51,7 @@
 ## 3. 波次与依赖
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
-- **Wave 1**：R6（R2 **P0 framework** 合入后即可启动，不等待 R2 全轨）、R7（R2 合入后）、R1（R3 P1 合入后）。jump 窄 handoff 顺序固定为：R2 P0 → R6 P2-J → R2 P2-J → focused modifier P4。
+- **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
 - **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
@@ -61,9 +61,6 @@
 - `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
 - client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
 - 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
-- **一次性 pre-R3 P1 窄例外**：尽管 `persistence/**` 默认属 R3，`npc-deceased-archive-db-open-rollback` 在 R3 P1 尚未迁移或修改 `persist_npc_deceased_archive` 前，独占该函数的 file↔SQLite 补偿原子性及其同地回归测试，且仅可开一个 focused PR。R3 P0 可冻结接口但不得并改该 symbol；若 R3 P1 先触及它，例外立即失效，由 R3 接管同一故障矩阵，focused plan 只写 handoff/Finish Evidence，不得双线实施。
-- **R5 文件所有权不例外**：`distance-decay-calibration` 与 `scatter-bead-ledger-account-cleanup` 可拥有问题规格、领域调用方和验收，但不得修改 `server/src/qi_physics/**`；所需无量纲 coefficient/effect-account 分腿已登记为 R5 P3-A，账本原子 release+strict-close API 已登记为 R5 P3-B，各自含量纲/守恒/misuse/失败原子性 pin 与明确 handoff 放行条件。focused P0 可并行取证，implementation 必须等对应 R5 P3-A/P3-B API 合入，禁止双线改 qi_physics 文件。
-- **modifier jump handoff 无例外**：`modifier-effect-consumer-completion` P4 不拥有 R6/R2 独占区段。执行序固定为已完成的 R2 P0 framework → R6 P2-J → R2 P2-J → focused P4。R6 P2-J 交付 schema/proto/generated、server `network/*_emit.rs` / `network/emit/` builder / `schema/proto_convert.rs`、client bridge/router 与 `BongNetworkHandler.register()` channel-registration API；R2 P2-J 交付 client store adapter/registry、session reset 与 `BongNetworkHandler.clearClientStateOnDisconnect` API。每段均在对应权威轨道 plan 登记契约 pin 与 Finish Evidence 放行条件；focused P4 只消费两段冻结 API，落 gameplay consumer 与 bot/e2e，不得双线修改独占区段。
 
 ## 5. 工作流（GPT tmux 多会话）
 
@@ -87,14 +84,14 @@
 - **6.13 接线拍板轨（module-wiring-gaps-v2 为决策菜单，人工拍板后逐个拆实施 plan；重构后接线成本大降）**：module-wiring-gaps-v2、forge-lingtian-processing-deadpath、poi-trespass-refusal-runtime-gap、silent-signal-runtime-bridge、social-runtime-bridge-gap、k2-identity-social-renown-bridge、war-emergent-group-reputation-gap、npc-combat-gear-v2、social-anonymity-live-refresh-gap、unconsumed-event-feedback、zhenfa-array-flag-e2e-wiring、woliu-dying-master-runtime-gap。
 - **6.14 Feature 轨（独立，注意 §5.6 冻结窗口）**：active——beast-horde、client-login-ux、container-filter-and-completion、gameplay-journey、gathering-tool-bind、halfstep-buff-calibration、iris-integration、nested-pack（已 WITHDRAWN）、social-v2、sou-da-che、satiety-hydration（在飞）、ci-redis-pull-resilience（#1291 返工中）；skeleton——ancient-relic-payoff、bonecoin-wallet-bridge、craft-chain-items、dandao-mutation-gameplay、dazuo、first-technique-grant、lootcrate、neardeath-ux、newbie-30min-hooks-audit、block-break-integration（#1253，基建 skeleton，建议 Wave 2 后评估与 R4 关系）。
 - **6.15 近完成独立收尾（Wave 0 清场，重构不吞）**：craft-refund-full-inventory-loss（余 P4）、dead-armor-contamination-wiring、dense-fog、fpv-cast-av、life-record-epitaph、tribulation-balance。
-- **6.16 Round bundle 拆散复核（✅ 2026-07-28，不整体消费）**：r1/r2/r6/r7/r8-modifier-audit/r8/r9/r10 已逐 finding 第一性验真、登记唯一 owner 并归档 mapping。八张 `Finding Mapping` 表共有 **61 个物理数据行 = 60 个 finding rows + 1 个 audit-history row**；逐表为 r1=7、r2=10、r6=5、r7=10、r8-modifier-audit=6（5 finding + 1 history）、r8=11、r9=6、r10=6。60 个 finding rows 的分类严格为 32 already-fixed + 1 invalid/retired + 25 independent-domain-fix + 2 absorbed-by-track；r8 bundle/audit 的来源重复仍按各自 finding row 保留映射，不形成第二 implementation owner。25 个 independent rows 归入 10 份 focused successor + 既有 container P2，r10 #1/#2 两行 shutdown flush 由 R3 P3 精确吸收。本轮是 §7 授权的 docs-only 批量归档例外，不宣称 successor 已实施。
-- **6.16a Round bundle focused successors（短名；每项唯一 implementation owner）**：`npc-deceased-archive-db-open-rollback`（r1 P6；§4 pre-R3 P1 窄例外）、`dandao-pill-rush-dead-realm-guard`、`breakthrough-freeze-factor-align`、`modifier-effect-consumer-completion`、`duxu-juebi-quota-marker-lifecycle`、`botany-drag-release-lifecycle`、`distance-decay-calibration`（规格/combat 验收 owner；`qi_physics/**` 由 R5）、`tsy-collapse-hostile-cleanup`、`scatter-bead-ledger-account-cleanup`（zhenfa lifecycle owner；`qi_physics/**` 由 R5）、`shield-break-state-cleanup`。r10 #1/#2 仍仅由 R3 P3 吸收，不计入以上十个 focused owner；Freeze 仍仅由既有 `container-filter-and-completion` P2 实施。
+- **6.16 Round bundle 拆散复核（✅ 2026-07-28，不整体消费）**：r1/r2/r6/r7/r8-modifier-audit/r8/r9/r10 已逐 finding 第一性验真、登记唯一 owner 类别并归档 mapping。八张 `Finding Mapping` 表共有 **61 个物理数据行 = 60 个 finding rows + 1 个 audit-history row**；逐表为 r1=7、r2=10、r6=5、r7=10、r8-modifier-audit=6（5 finding + 1 history）、r8=11、r9=6、r10=6。60 个 finding rows 的分类严格为 32 already-fixed + 1 invalid/retired + 25 independent-domain-fix + 2 absorbed-by-track；r8 bundle/audit 的来源重复仍按各自 finding row 保留映射，不形成第二 implementation owner。两条 absorbed finding 仅登记 R3；25 条 independent finding 的候选短名仅保留在归档 mapping，successor skeleton 按一个 skeleton 一个后续 docs PR 另行建立。本轮是 §7 授权的 docs-only 批量归档例外，不宣称任何未实施 finding 已完成。
+- **6.16a Round bundle 后续 successor 队列（短名；本 PR 不创建 skeleton）**：`npc-deceased-archive-db-open-rollback`、`dandao-pill-rush-dead-realm-guard`、`breakthrough-freeze-factor-align`、`modifier-effect-consumer-completion`、`duxu-juebi-quota-marker-lifecycle`、`botany-drag-release-lifecycle`、`distance-decay-calibration`、`tsy-collapse-hostile-cleanup`、`scatter-bead-ledger-account-cleanup`、`shield-break-state-cleanup`。每个 skeleton 必须在独立后续 docs PR 中第一性收口后再成为可消费 implementation owner；r10 #1/#2 仅由 R3 吸收，Freeze 仍指向既有 `container-filter-and-completion` P2。
 - **6.17 孤立域修复（量少不并簇，随缘消费）**：alchemy-freshness-feed、gathering-mineral-origin-position-break、zone-atmosphere-zoneid-profile-mismatch、zone-environment-audio-loop-fallback（音效映射数据部分）、lingtian-quality-accum-harvest（#1294 在飞）。
 
 ## 7. 促升与归档机制（被吸收 plan 的出口）
 
 - 各轨 P0「吸收清单验真」：逐个复读被吸收 plan，第一性验真仍是真缺陷才吸收；已被在飞 PR 修掉的标「已闭环只归档」；验伪的写结论证据。
-- 被吸收 plan 的归档：对应轨道的修复 PR merge 后，**每轨一个 docs-only 批量归档 PR**——每份被吸收 plan 补 `## Finish Evidence`（指向重构 PR + bot 场景 + 验真结论）后 `git mv` 入 `finished_plans/`。这是对「一个 PR 只动一个 plan」的**总纲授权例外**，仅限归档、不改其他内容。**§6.16 唯一一次性实施前例外**：2026-07-28 Round bundle triage 可在同一 docs-only PR 中逐 finding 验真并归档八份聚合 bundle、建立最小 focused successor、只更新命中的 canonical owner/absorb mapping；不得改代码或配置，不得把 successor/track 未实施工作写成已完成。本例外随 §6.16 归档闭环即耗尽，不扩展到后续 plan。
+- 被吸收 plan 的归档：对应轨道的修复 PR merge 后，**每轨一个 docs-only 批量归档 PR**——每份被吸收 plan 补 `## Finish Evidence`（指向重构 PR + bot 场景 + 验真结论）后 `git mv` 入 `finished_plans/`。这是对「一个 PR 只动一个 plan」的**总纲授权例外**，仅限归档、不改其他内容。**§6.16 唯一一次性例外**：2026-07-28 Round bundle triage 可在同一 docs-only PR 中逐 finding 验真并归档八份聚合 bundle、记录后续 successor 短名并只更新命中的 canonical absorb-list 行；不得创建 successor skeleton，不得改写 Rx 或其他 plan 正文，不得改代码或配置，也不得把未实施 finding/track 写成已完成。本例外随 §6.16 归档闭环即耗尽，不扩展到后续 plan。
 - 覆盖审计脚本化：枚举 `docs/plan-*.md` + `docs/plans-skeleton/*.md` 与本矩阵 diff，未归属项报红（V 轨 P0 顺手落地）。
 
 ## 8. 计划族完成定义

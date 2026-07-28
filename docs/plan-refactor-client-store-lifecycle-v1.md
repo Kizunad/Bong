@@ -28,7 +28,7 @@
   - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/SessionScopedStoreRegistry.java` 的显式 `REGISTERED`；`client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `disconnectSession(...)` / `clearClientStateOnDisconnect()`。
   - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin P1 已迁移 FQCN 集；`BongNetworkHandlerTest` pin token invalidation 先于 registry、迟到旧 handler 不清新 session、非 Store hook 仍保留；每个 adapter 以目标 Store 的状态级行为测试证明 method reference 未错绑。
   - **跨仓库契约**：保持现有 wire、schema、Redis key 与 CustomPayload 不变。
-- ⬜ **P2 裸奔状态收编 + jump store handoff**：按 P0 manifest 显式接入 Freshness、`combat/store/`、炼丹 / 锻造 / 灵田 / 灵宝 / TSY / 医道等会话态 Store、玩家动画层缓存，并为灵田等循环音效提供“活动实例 + 延迟层 + 派生 flag”同边界硬停；R6 P2-J 合入后完成 `DerivedAttrsStore` jump adapter/登记/reset（详见 P2-J）。
+- ⬜ **P2 裸奔状态收编**：按 P0 manifest 显式接入 Freshness、`combat/store/`、炼丹 / 锻造 / 灵田 / 灵宝 / TSY / 医道等会话态 Store、玩家动画层缓存，并为灵田等循环音效提供“活动实例 + 延迟层 + 派生 flag”同边界硬停。
   - **模块 / symbol**：各目标 `*Store.clearOnDisconnect()`；`processing/state/FreshnessStore.java`；`combat/store/*.java`；`animation/BongAnimationPlayer.java`；generic audio / animation adjunct lifecycle handle（不得计入 108 Store manifest）。
   - **测试抓手**：逐 Store pin data-only production clear 不删除 listener / dispatcher / built-in registry / test seam；动画 pin 旧 layer 不跨重连；循环音频 pin active instance、pending layer 与派生 flag 同时归零；`ClientStoreScopeManifestTest` 精确 pin P2 累积登记集。
   - **跨仓库契约**：零 schema / Redis / wire 变更；既有 server 首包仍是重灌来源。
@@ -40,16 +40,6 @@
   - **模块 / symbol**：`ClientConnectionStatusStore.invalidateSession(...)`；`BongNetworkHandler.disconnectSession(...)`；`scripts/bot/scenarios/reconnect_state_freshness.*`；被完全吸收 plan 的 `## Finish Evidence`。
   - **测试抓手**：Java 17 `./gradlew test build`；断线→旧 payload 到达→重连→新首包重灌的 client 契约测试；bot e2e 精确验完整首包集合；source-scan 终态全集门禁。
   - **跨仓库契约**：只复用既有 join 首包 CustomPayload symbol，不新增 schema / Redis key；bot 验收 server 重发与 client 新 session 接收的现有契约。
-
-## P2-J jump Store/reset 冻结交付与下游放行（R2 canonical owner）
-
-本交付登记在 R2 P2 的实际实施队列中，并以 R6 P2-J 已合入的 wire/bridge API 为硬前置；R2 只拥有 Store 生命周期切片，不吸收 focused jump gameplay consumer。
-
-- **Store 交付**：扩展 `client/src/main/java/com/bong/client/combat/store/DerivedAttrsStore.java` 的 canonical snapshot/update adapter 以接收 R6 冻结的 `jump_height_multiplier` bridge 输出；默认值与断线 reset 值均为 `1.0`。将该 Store 以强类型 handle 恰好一次登记到 `SessionScopedStoreRegistry`/manifest，不新建 parallel jump Store。
-- **断线入口**：`BongNetworkHandler.clearClientStateOnDisconnect()` 仍只通过 R2 registry 清理 Store；R2 不修改 `BongNetworkHandler.register()` channel-registration、`ProtoServerDataBridge`、`ServerDataRouter` 或 server emit/schema（均为 R6 独占）。
-- **生命周期 pin**：非默认倍率经 R6 冻结 bridge 输入写入 Store→active session 可读；DISCONNECT token invalidation→registry clear 后恢复 `1.0`；旧 handler/旧 session 排队 payload 不得在 reset 后复写；重连在新权威首包到达前不得读到旧倍率，新首包可重新灌入。source-scan 断言 Store 分类与 registry 登记恰好一次。
-- **放行证据**：R6 P2-J 的 schema/emit/bridge Finish Evidence 已存在；R2 P2-J PR 使用 Java 17 通过 Store behavior、registry/source-scan、disconnect/reconnect stale-value pins，并在 Finish Evidence 记录冻结 adapter/reset API。两段证据齐全后才放行 `plan-bughunt-modifier-effect-consumer-completion-v1` P4；focused plan只落 gameplay jump consumer 与同一玩法/bot 差分。
-- **无环顺序**：已完成 R2 P0 framework → R6 P2-J → R2 P2-J → focused P4。R2 P1 和 P2 其他 Store 可继续按既有顺序实施，但 P3 全集强制不得在 P2-J 漏登记时宣称完成。
 
 ## §8 开放问题（P0 决策门前需收口）
 
@@ -117,13 +107,11 @@ skeleton：niche-guardian-cross-session-leak。
 
 不吸收：`ambient-zone-audio-stale-anchor`（在线 session 内 anchor / 去重键刷新问题）、`zone-environment-audio-loop-fallback`（recipe id 映射缺口）。R2 只为 generic loop / pending layer 提供断线硬停契约。
 
-跨轨 API handoff（R2 只承接 Store 生命周期切片）：`modifier-effect-consumer-completion` P4 → R2 P2-J；必须先消费 R6 P2-J 冻结 bridge，再以 Store/reset/reconnect 证据放行 focused gameplay consumer。
-
 ## 文件所有权与边界
 
 - 独占：全部 `*Store.java` 的生命周期接口与登记、`BongNetworkHandler.java` 的 `clearClientStateOnDisconnect` 区段。
 - 不碰：`BongNetworkHandler.register()` 的 channel 注册区（R6 域，同文件分区段协作，两轨 merge 前互相 fetch）；Screen 结构（R7 域）；store 的业务字段语义。
-- 依赖：P0 无前置且已完成；P1/P2 非 jump Store 可继续 Wave 0。P2-J 唯一硬前置是 R6 P2-J wire/bridge 合入；P2-J 完成后才放行 modifier focused P4，且 P3 全集强制不得漏过该 Store。R7/R9 继续依赖本轨接口。
+- 依赖：无前置，Wave 0 即可动工。R7/R9 依赖本轨接口，先于它们合入。
 
 ## bot 验收场景
 
@@ -140,7 +128,7 @@ bot 是协议级客户端，测不了 client 内存——本轨主验收是 clie
 
 1. **PR-1 / P0 框架与分类**：冻结 108 Store manifest、`SessionScopedStore`、强类型 handle、空 registry 与 source-scan 门禁；不改变生产断线行为。
 2. **PR-2 / P1 在册平移**：仅在 PR-1 merge 后开始，将现有 25 个 Store 清理行为不变地迁入 registry，并保留全部非 Store hooks。
-3. **PR-3 / P2 裸 Store、adjunct resource 与 P2-J**：仅在 PR-2 **以及 R6 P2-J wire/bridge handoff** 均 merge 后开始，补齐 data-only production clear、动画缓存、循环音频硬停和 `DerivedAttrsStore` jump adapter/reset；R6 P2-J 可在已完成的 R2 P0 之后与 R2 P1 并行，不形成环。
+3. **PR-3 / P2 裸 Store 与 adjunct resource**：仅在 PR-2 merge 后开始，补齐 data-only production clear、动画缓存与循环音频硬停。
 4. **PR-4 / P3 全集强制**：仅在 PR-3 merge 后开始，删除手工 Store 清单并将 source-scan 收紧为 registry-managed session 集与 registry 集精确相等。
 5. **PR-5 / P4 重连验收与归档**：仅在 PR-4 merge 后开始，完成旧 handler / 迟到 payload / 新首包重灌与 bot e2e；只归档被完整吸收的计划。
 

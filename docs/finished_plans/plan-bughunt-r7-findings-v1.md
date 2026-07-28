@@ -58,21 +58,21 @@ bug-hunt round7（workflow，5 深角度 finder + 怀疑者对抗 + opus 逐条�
 
 | Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
 |---|---|---|---|---|
-| #3 `qi_regen_mul` | `server/src/cultivation/insight_apply.rs:25,127` 仍只有定义/写入，无 regen production consumer | `independent-domain-fix` | `plan-bughunt-modifier-effect-consumer-completion-v1.md` P3 | 统一 successor |
-| #4 `next_breakthrough_bonus` | `server/src/cultivation/insight_apply.rs:27,159` 写入；breakthrough 主循环仍不读 | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #5 `vortex_backfire_resist_mul` | `server/src/cultivation/insight_apply.rs:36,178` 写入；woliu backfire 主循环不读 | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #6 `vortex_delta_bonus_add` | `server/src/cultivation/insight_apply.rs:38,184` 写入；vortex delta 仍取 realm 基值 | `independent-domain-fix` | 同上 P3 | 统一 successor |
-| #7 `vortex_flow_speed_mul` | `server/src/cultivation/insight_apply.rs:40,190` 写入；无 production flow-speed consumer | `independent-domain-fix` | 同上 P3 | 统一 successor |
+| #3 `qi_regen_mul` | `server/src/cultivation/insight_apply.rs:25,127` 仍只有定义/写入，无 regen production consumer | `independent-domain-fix` | successor 短名 `plan-bughunt-modifier-effect-consumer-completion-v1`（Insight 域） | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| #4 `next_breakthrough_bonus` | `server/src/cultivation/insight_apply.rs:27,159` 写入；breakthrough 主循环仍不读 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #5 `vortex_backfire_resist_mul` | `server/src/cultivation/insight_apply.rs:36,178` 写入；woliu backfire 主循环不读 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #6 `vortex_delta_bonus_add` | `server/src/cultivation/insight_apply.rs:38,184` 写入；vortex delta 仍取 realm 基值 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #7 `vortex_flow_speed_mul` | `server/src/cultivation/insight_apply.rs:40,190` 写入；无 production flow-speed consumer | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
 | #9 AgentUiStore close 泄漏 | `client/src/main/java/com/bong/client/agentui/AgentUiScreen.java:252,266` 两条关闭路径都调用 `AgentUiStore.clearIfActive` | `already-fixed/invalid`（already-fixed） | `f6d422250` / PR #709 | 仅归档 |
-| #10 Botany LEFT RELEASE stale drag | `client/src/main/java/com/bong/client/mixin/MixinMouse.java:99-118` 的 screen-open 早退先于 `BotanyDragState.onLeftButton`，仍可漏收 release | `independent-domain-fix` | `docs/plans-skeleton/plan-bughunt-botany-drag-release-lifecycle-v1.md` | 新建唯一 focused owner |
+| #10 Botany LEFT RELEASE stale drag | `client/src/main/java/com/bong/client/mixin/MixinMouse.java:99-118` 的 screen-open 早退先于 `BotanyDragState.onLeftButton`，仍可漏收 release | `independent-domain-fix` | successor 短名 `plan-bughunt-botany-drag-release-lifecycle-v1` | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
 | #2 duplicate skill registration | `server/src/cultivation/skill_registry.rs:85-92` 当前 duplicate registration assert fail-closed，`server/src/cultivation/skill_registry.rs:200-215` 有专属 panic test，旧静默覆盖路径已删除 | `already-fixed/invalid`（already-fixed） | `fca6cdb30` / PR #711 | 仅归档 |
 | #7chat PLAYER_CHAT 注释 | `agent/packages/schema/src/channels.ts:7-10` 当前注明 LRANGE/LTRIM batch drain | `already-fixed/invalid`（already-fixed） | `15a34ba4e` / PR #708 | 仅归档 |
 | #8 Agent UI error union | `agent/packages/schema/src/payloads/agent-ui.ts:99-110` 已含 `invalid_command`、`xml_sanitize_failed` | `already-fixed/invalid`（already-fixed） | `ac998e6fa` / PR #707 | 仅归档 |
 
 ## Finish Evidence
 
-- **落地清单**：五个 Insight finding 归统一 successor；Botany 新建 focused skeleton；四个已修 finding 结案；bundle 迁入本路径。
+- **落地清单**：五个 Insight finding 记录统一 successor 短名；Botany 记录独立 successor 短名（均尚未立 skeleton）；四个已修 finding 结案；bundle 迁入本路径。
 - **关键 commit / PR**：`f6d422250`/#709、`fca6cdb30`/#711、`15a34ba4e`/#708、`ac998e6fa`/#707 均为目标 HEAD 祖先且当前修复存在。
 - **测试结果**：docs-only triage；最终以 docs static gates + exact-HEAD validator 验收。
 - **跨仓库核验**：server Insight/registry、client Agent UI/Botany、agent TypeBox/channels 均逐条对拍。
-- **遗留 / 后续**：Insight 五字段与 Botany 输入生命周期已各有唯一 owner；本 bundle 禁止再消费。
+- **遗留 / 后续**：Insight 五字段与 Botany 输入生命周期已记录 successor 短名，等待各自后续 docs PR；本 bundle 禁止再消费。
