@@ -228,7 +228,7 @@
 
 ### 2026-07-28 Round bundle triage 证据
 
-- **落地清单**：P0 结论与 P1 代码修复历史保留；P2-P5 全部迁到 `plan-bughunt-modifier-effect-consumer-completion-v1`，后者明确列 canonical 字段、排除项、设计门与跨栈验收；本文件迁入 finished。
+- **落地清单**：P0 结论与 P1 代码修复历史保留；P2-P5 的事实范围与候选 successor 短名仍保留在本归档的 Finding Mapping 中；`plan-bughunt-modifier-effect-consumer-completion-v1` 尚未建立，也不是当前可消费的 implementation owner。canonical 字段、排除项、设计门与跨栈验收须由后续独立 docs PR 第一性收口；本文件迁入 finished。
 - **关键 commit**：`3e6981513`（2026-07-09，PR #1143）接通 reach/regen/purge；已验证为 `origin/main @ c625d5a5` 祖先且当前 consumers 存在。
 - **测试结果**：原 P1 Finish Evidence 记录 server tests/gate；本次只做 docs-only triage，以 docs static gate + exact-HEAD validator 验收，不复跑旧代码测试。
 - **跨仓库核验**：P1 为 server-only；jump 的未实施 server/schema/client 链仅记录待立 successor 短名，不能以单端 schema 代替 runtime consumer。
