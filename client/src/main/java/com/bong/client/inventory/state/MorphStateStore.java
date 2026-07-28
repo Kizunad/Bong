@@ -72,6 +72,14 @@ public final class MorphStateStore {
         }
     }
 
+    /**
+     * 断线时清空本会话易形表，保留长期渲染 listener wiring。
+     */
+    public static void clearOnDisconnect() {
+        morphed = Map.of();
+        notifyListeners();
+    }
+
     public static void resetForTests() {
         morphed = Map.of();
         listeners.clear();
