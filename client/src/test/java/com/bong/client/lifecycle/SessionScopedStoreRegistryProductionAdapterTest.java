@@ -221,16 +221,25 @@ class SessionScopedStoreRegistryProductionAdapterTest {
 
         adapter.seed().run();
         assertFalse(adapter.isCleared().getAsBoolean(), "测试前必须建立目标 Store 的旧 session 状态：" + adapter);
-        boolean targetIsCanary = adapter.storeType() == FreshnessStore.class;
-        if (!targetIsCanary) {
+        boolean targetIsFreshnessCanary = adapter.storeType() == FreshnessStore.class;
+        if (targetIsFreshnessCanary) {
+            NpcMetadataStore.upsert(metadata(9_001, "adapter-canary"));
+            assertNotNull(NpcMetadataStore.get(9_001), "测试前必须建立 NPC 旁观 canary：" + adapter);
+        } else {
             FreshnessStore.upsert("adapter-canary", 0.75f, "must-survive-other-cleaners");
-            assertNotNull(FreshnessStore.get("adapter-canary"), "测试前必须建立旁观 Store canary：" + adapter);
+            assertNotNull(FreshnessStore.get("adapter-canary"), "测试前必须建立 freshness 旁观 canary：" + adapter);
         }
 
         handle.clearOnDisconnect();
 
         assertTrue(adapter.isCleared().getAsBoolean(), "声明 handle 必须清掉其自身 Store：" + adapter);
-        if (!targetIsCanary) {
+        if (targetIsFreshnessCanary) {
+            assertNotNull(
+                NpcMetadataStore.get(9_001),
+                "FreshnessStore handle 不得越权清理旁观 NpcMetadataStore：" + adapter
+            );
+            NpcMetadataStore.clearAll();
+        } else {
             assertNotNull(
                 FreshnessStore.get("adapter-canary"),
                 "单个 production handle 不得越权清理旁观 FreshnessStore：" + adapter
