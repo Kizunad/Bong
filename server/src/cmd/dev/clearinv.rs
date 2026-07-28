@@ -3,10 +3,10 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::{CommandArg, CommandArgParseError, ParseInput};
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Query, Update};
+use valence::prelude::{App, Client, EventReader, Query, Res, Update};
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
-use crate::inventory::{clear_player_inventory, ClearScope, PlayerInventory};
+use crate::inventory::{clear_player_inventory, ClearScope, ItemRegistry, PlayerInventory};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearScopeArg(pub ClearScope);
@@ -60,13 +60,14 @@ pub fn register(app: &mut App) {
 pub fn handle_clearinv(
     mut events: EventReader<CommandResultEvent<ClearInvCmd>>,
     mut players: Query<(&mut PlayerInventory, &mut Client)>,
+    registry: Res<ItemRegistry>,
 ) {
     for event in events.read() {
         let Ok((mut inventory, mut client)) = players.get_mut(event.executor) else {
             continue;
         };
         let ClearInvCmd::Clear { scope } = event.result;
-        clear_player_inventory(&mut inventory, scope);
+        clear_player_inventory(&mut inventory, scope, &registry);
         client.send_chat_message(format!(
             "[dev] clearinv {scope:?} revision={}",
             inventory.revision.0
@@ -88,10 +89,11 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::inventory::{
-        ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
-        MAIN_PACK_CONTAINER_ID,
+        container_id_for_worn_pack, instantiate_inventory_from_loadout, load_default_loadout,
+        load_item_registry, worn_pack_instance_from_container_id, ContainerState,
+        InventoryInstanceIdAllocator, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
+        BASE_CARRY_CAPACITY, BODY_POCKET_CONTAINER_ID, EQUIP_SLOT_CHEST, MAIN_PACK_CONTAINER_ID,
     };
-    use std::collections::HashMap;
     use valence::prelude::Events;
 
     fn item(id: u64, template_id: &str) -> ItemInstance {
@@ -120,56 +122,44 @@ mod tests {
     }
 
     fn inventory() -> PlayerInventory {
-        let mut equipped = HashMap::new();
-        equipped.insert(
-            "main_hand".to_string(),
-            crate::inventory::SlotContents::held_single(item(4, "sword")),
-        );
-        let mut hotbar: [Option<ItemInstance>; 9] = Default::default();
-        hotbar[0] = Some(item(3, "hotbar_item"));
-        PlayerInventory {
-            triggered_treasures: Vec::new(),
-            revision: InventoryRevision(0),
-            containers: vec![
-                ContainerState {
-                    quick_access: false,
-                    id: MAIN_PACK_CONTAINER_ID.to_string(),
-                    name: "主背包".to_string(),
-                    rows: 2,
-                    cols: 2,
-                    items: vec![PlacedItemState {
-                        row: 0,
-                        col: 0,
-                        instance: item(1, "main_item"),
-                    }],
+        let registry = load_item_registry().expect("real item registry should load");
+        let loadout = load_default_loadout(&registry).expect("default loadout should load");
+        let mut allocator = InventoryInstanceIdAllocator::default();
+        let mut inventory = instantiate_inventory_from_loadout(&loadout, &mut allocator, &registry)
+            .expect("default inventory should instantiate");
 
-                    owner_instance_id: None,
-                },
-                ContainerState {
-                    quick_access: false,
-                    id: "side_pack".to_string(),
-                    name: "侧袋".to_string(),
-                    rows: 1,
-                    cols: 1,
-                    items: vec![PlacedItemState {
-                        row: 0,
-                        col: 0,
-                        instance: item(2, "side_item"),
-                    }],
-
-                    owner_instance_id: None,
-                },
-            ],
-            equipped,
-            hotbar,
-            bone_coins: 0,
-            max_weight: 99.0,
-        }
+        inventory
+            .containers
+            .iter_mut()
+            .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+            .expect("default inventory should contain body_pocket")
+            .items
+            .push(PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: item(9_001, "body_sentinel"),
+            });
+        inventory.hotbar[8] = Some(item(9_002, "hotbar_sentinel"));
+        inventory.containers.push(ContainerState {
+            id: MAIN_PACK_CONTAINER_ID.to_string(),
+            name: "legacy main pack".to_string(),
+            rows: 1,
+            cols: 1,
+            items: vec![PlacedItemState {
+                row: 0,
+                col: 0,
+                instance: item(9_003, "legacy_sentinel"),
+            }],
+            owner_instance_id: None,
+            quick_access: false,
+        });
+        inventory
     }
 
     fn setup_app() -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<ClearInvCmd>>();
+        app.insert_resource(load_item_registry().expect("real item registry should load"));
         app.add_systems(Update, handle_clearinv);
         app
     }
@@ -190,6 +180,22 @@ mod tests {
             });
     }
 
+    fn worn_pack_identity(inventory: &PlayerInventory) -> (u64, String) {
+        let pack = inventory
+            .equipped
+            .get(EQUIP_SLOT_CHEST)
+            .and_then(|slot| {
+                slot.worn
+                    .iter()
+                    .find(|item| item.template_id == "worn_grass_pouch")
+            })
+            .expect("default inventory should wear worn_grass_pouch");
+        (
+            pack.instance_id,
+            container_id_for_worn_pack(pack.instance_id),
+        )
+    }
+
     #[test]
     fn parse_clear_scope_accepts_three_modes() {
         assert_eq!(parse_clear_scope("pack"), Some(ClearScope::PackOnly));
@@ -199,52 +205,144 @@ mod tests {
     }
 
     #[test]
-    fn clearinv_pack_clears_only_main_pack() {
+    fn clearinv_pack_clears_legacy_and_dynamic_pack_only() {
         let mut app = setup_app();
         let player = spawn_player(&mut app);
+        let before = app.world().get::<PlayerInventory>(player).unwrap();
+        let previous_revision = before.revision;
+        let (pack_instance_id, pack_container_id) = worn_pack_identity(before);
+        assert!(
+            before
+                .containers
+                .iter()
+                .find(|container| container.id == pack_container_id)
+                .is_some_and(|container| !container.items.is_empty()),
+            "default dynamic pack must start non-empty so the clear assertion is meaningful"
+        );
 
         send(&mut app, player, ClearScope::PackOnly);
         run_update(&mut app);
 
-        let inv = app.world().get::<PlayerInventory>(player).unwrap();
-        assert!(inv.containers[0].items.is_empty());
-        assert_eq!(inv.containers[1].items.len(), 1);
-        assert!(inv.hotbar[0].is_some());
-        assert_eq!(inv.equipped.len(), 1);
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .filter(|container| {
+                    container.id == MAIN_PACK_CONTAINER_ID
+                        || worn_pack_instance_from_container_id(&container.id).is_some()
+                })
+                .all(|container| container.items.is_empty()),
+            "clearinv pack must clear legacy main_pack and every dynamic pack_<instance_id>"
+        );
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .find(|container| container.id == BODY_POCKET_CONTAINER_ID)
+                .expect("body_pocket must remain")
+                .items
+                .iter()
+                .any(|placed| placed.instance.instance_id == 9_001),
+            "clearinv pack must preserve body_pocket sentinel instance=9001"
+        );
+        assert_eq!(
+            inventory.hotbar[8].as_ref().map(|item| item.instance_id),
+            Some(9_002),
+            "clearinv pack must preserve hotbar"
+        );
+        let dynamic_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == pack_container_id)
+            .expect("worn pack dynamic container must remain");
+        assert_eq!(dynamic_pack.owner_instance_id, Some(pack_instance_id));
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(previous_revision.0 + 1),
+            "one clear command must bump revision exactly once"
+        );
     }
 
     #[test]
-    fn clearinv_all_clears_containers_and_hotbar_but_keeps_equipment() {
+    fn clearinv_all_clears_carried_items_but_preserves_pack_topology() {
         let mut app = setup_app();
         let player = spawn_player(&mut app);
+        let before = app.world().get::<PlayerInventory>(player).unwrap();
+        let previous_revision = before.revision;
+        let (pack_instance_id, pack_container_id) = worn_pack_identity(before);
 
         send(&mut app, player, ClearScope::PackAndHotbar);
         run_update(&mut app);
 
-        let inv = app.world().get::<PlayerInventory>(player).unwrap();
-        assert!(inv
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(inventory
             .containers
             .iter()
             .all(|container| container.items.is_empty()));
-        assert!(inv.hotbar.iter().all(Option::is_none));
-        assert_eq!(inv.equipped.len(), 1);
+        assert!(inventory.hotbar.iter().all(Option::is_none));
+        let (actual_pack_id, _) = worn_pack_identity(inventory);
+        assert_eq!(
+            actual_pack_id, pack_instance_id,
+            "worn pack instance must survive"
+        );
+        let dynamic_pack = inventory
+            .containers
+            .iter()
+            .find(|container| container.id == pack_container_id)
+            .expect("worn pack dynamic container must remain");
+        assert_eq!(dynamic_pack.owner_instance_id, Some(pack_instance_id));
+        assert!(
+            (inventory.max_weight - 23.0).abs() < f64::EPSILON,
+            "worn starter pack must retain BASE 15 + 8 capacity, got {}",
+            inventory.max_weight
+        );
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(previous_revision.0 + 1),
+            "one clear command must bump revision exactly once"
+        );
     }
 
     #[test]
-    fn clearinv_naked_clears_equipment_too() {
+    fn clearinv_naked_removes_orphan_pack_and_restores_base_capacity() {
         let mut app = setup_app();
         let player = spawn_player(&mut app);
+        let previous_revision = app.world().get::<PlayerInventory>(player).unwrap().revision;
 
         send(&mut app, player, ClearScope::All);
         run_update(&mut app);
 
-        let inv = app.world().get::<PlayerInventory>(player).unwrap();
-        assert!(inv
+        let inventory = app.world().get::<PlayerInventory>(player).unwrap();
+        assert!(inventory
             .containers
             .iter()
             .all(|container| container.items.is_empty()));
-        assert!(inv.hotbar.iter().all(Option::is_none));
-        assert!(inv.equipped.is_empty());
-        assert_eq!(inv.revision, InventoryRevision(1));
+        assert!(inventory.hotbar.iter().all(Option::is_none));
+        assert!(inventory.equipped.is_empty());
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .all(|container| worn_pack_instance_from_container_id(&container.id).is_none()),
+            "clearinv naked must remove dynamic pack containers after clearing equipment"
+        );
+        assert!(
+            inventory
+                .containers
+                .iter()
+                .any(|container| container.id == BODY_POCKET_CONTAINER_ID),
+            "clearinv naked must preserve authoritative body_pocket topology"
+        );
+        assert!(
+            (inventory.max_weight - BASE_CARRY_CAPACITY).abs() < f64::EPSILON,
+            "naked capacity must return to BASE {BASE_CARRY_CAPACITY}, got {}",
+            inventory.max_weight
+        );
+        assert_eq!(
+            inventory.revision,
+            InventoryRevision(previous_revision.0 + 1),
+            "one clear command must bump revision exactly once"
+        );
     }
 }

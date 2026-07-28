@@ -1,19 +1,15 @@
-"""P4 生产系统：炼丹炉 / 炼器砧 client_request 最小黑盒链路。
+"""禁用的历史浅场景：占位 instance_id=0 不能证明炼丹炉或炼器砧生产链路。
 
-覆盖面：
-- dev 铺垫：发送 `/give furnace_fantie`、`/give fan_iron_anvil`，断言 server_data 继续回流
-- client_request：`alchemy_furnace_place` / `alchemy_ignite` / `forge_station_place`
-- 观察面：`[炼丹]` unknown recipe chat + 连接保持
-
-`bong:server_data` inventory_snapshot 目前不能稳定给 bot 提供刚 give 的
-item_instance_id，生产模板 `/give` chat 反馈在 CI/复用服也不稳定；深 intent 断言
-留后续 bug/coverage plan。
+真实炼丹链路由 `production_alchemy_brew_pill` 覆盖；真实炼器链路由
+`production_forge_full_cycle` 覆盖。本文件仅保留旧请求形状供人工诊断，默认验收矩阵
+不得运行，防止 generic server_data / assert_alive 被误记为 P4 证据。
 """
 
 from bot.bot import BotAssertionError
 
 DESCRIPTION = "炼丹炉/炼器砧：dev give 入口 → client_request 入口 → 炼丹错误 chat"
 MODULES = ["alchemy", "forge", "inventory", "network"]
+DEFAULT_ENABLED = False
 
 
 def _event_mark(bot) -> float:

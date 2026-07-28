@@ -567,6 +567,202 @@ class ServerDataDecodeTest(unittest.TestCase):
             f"actual={decoded['reason']}",
         )
 
+    def test_proto_p4_gathering_payloads_deep_decode_every_observable_field(self):
+        botany = (
+            _pb_string(1, "harvest:17")
+            + _pb_string(2, "plant:qingcao")
+            + _pb_string(3, "残青草")
+            + _pb_string(4, "qingcao")
+            + _pb_string(5, "careful")
+            + _pb_fixed64(6, 0.625)
+            + _pb_varint(7, 1)
+            + _pb_varint(8, 0)
+            + _pb_varint(9, 1)
+            + _pb_varint(10, 0)
+            + _pb_string(11, "被玩家移动打断")
+            + _pb_string(12, "toxic_spore")
+            + _pb_string(12, "sharp_leaf")
+            + _pb_fixed64(13, -12.5)
+            + _pb_fixed64(14, 73.0)
+            + _pb_fixed64(15, 38.25)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(25, botany)),
+            {
+                "v": 1,
+                "type": "botany_harvest_progress",
+                "session_id": "harvest:17",
+                "target_id": "plant:qingcao",
+                "target_name": "残青草",
+                "plant_kind": "qingcao",
+                "mode": "careful",
+                "progress": 0.625,
+                "auto_selectable": True,
+                "request_pending": False,
+                "interrupted": True,
+                "completed": False,
+                "detail": "被玩家移动打断",
+                "hazard_hints": ["toxic_spore", "sharp_leaf"],
+                "target_pos": [-12.5, 73.0, 38.25],
+            },
+        )
+
+        gathering = (
+            _pb_string(1, "gather:9")
+            + _pb_varint(2, 39)
+            + _pb_varint(3, 40)
+            + _pb_string(4, "碎铁矿")
+            + _pb_varint(5, 2)
+            + _pb_varint(6, 5)
+            + _pb_string(7, "pickaxe_iron")
+            + _pb_varint(8, 0)
+            + _pb_varint(9, 1)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(30, gathering)),
+            {
+                "v": 1,
+                "type": "gathering_session",
+                "session_id": "gather:9",
+                "progress_ticks": 39,
+                "total_ticks": 40,
+                "target_name": "碎铁矿",
+                "target_type": "ore",
+                "quality_hint": "perfect",
+                "tool_used": "pickaxe_iron",
+                "interrupted": False,
+                "completed": True,
+            },
+        )
+
+        lingtian = (
+            _pb_varint(1, 1)
+            + _pb_varint(2, 4)
+            + _pb_varint(3, (1 << 64) - 2)
+            + _pb_varint(4, 72)
+            + _pb_varint(5, 31)
+            + _pb_varint(6, 18)
+            + _pb_varint(7, 20)
+            + _pb_string(8, "qingcao")
+            + _pb_fixed32(10, 0.35)
+            + _pb_varint(11, 1)
+        )
+        decoded = decode_server_data_payload(_pb_message(31, lingtian))
+        self.assertEqual(
+            {key: decoded[key] for key in decoded if key != "dye_contamination"},
+            {
+                "v": 1,
+                "type": "lingtian_session",
+                "active": True,
+                "kind": "harvest",
+                "pos": [-2, 72, 31],
+                "elapsed_ticks": 18,
+                "target_ticks": 20,
+                "plant_id": "qingcao",
+                "source": None,
+                "dye_contamination_warning": True,
+            },
+        )
+        self.assertAlmostEqual(decoded["dye_contamination"], 0.35, places=6)
+
+    def test_proto_alchemy_outcome_preserves_optional_presence_and_enum_identity(self):
+        pill = (
+            _pb_varint(1, 3)
+            + _pb_string(2, "hui_yuan_pill_v0")
+            + _pb_string(3, "hui_yuan_pill")
+            + _pb_fixed64(4, 0.4)
+            + _pb_fixed64(5, 0.8)
+            + _pb_varint(6, 10)
+            + _pb_fixed64(7, 18.0)
+            + _pb_string(8, "qi_cap_perm_minus_1")
+            + _pb_varint(9, 1)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(14, pill)),
+            {
+                "v": 1,
+                "type": "alchemy_outcome_resolved",
+                "bucket": "flawed",
+                "recipe_id": "hui_yuan_pill_v0",
+                "pill": "hui_yuan_pill",
+                "quality": 0.4,
+                "toxin_amount": 0.8,
+                "toxin_color": "turbid",
+                "qi_gain": 18.0,
+                "side_effect_tag": "qi_cap_perm_minus_1",
+                "flawed_path": True,
+                "damage": None,
+                "meridian_crack": None,
+            },
+        )
+
+        explode = (
+            _pb_varint(1, 5)
+            + _pb_fixed64(10, 12.0)
+            + _pb_fixed64(11, 0.2)
+        )
+        self.assertEqual(
+            decode_server_data_payload(_pb_message(14, explode)),
+            {
+                "v": 1,
+                "type": "alchemy_outcome_resolved",
+                "bucket": "explode",
+                "recipe_id": None,
+                "pill": None,
+                "quality": None,
+                "toxin_amount": None,
+                "toxin_color": None,
+                "qi_gain": None,
+                "side_effect_tag": None,
+                "flawed_path": False,
+                "damage": 12.0,
+                "meridian_crack": 0.2,
+            },
+            "absent proto optionals must remain None rather than counterfeit zero/empty values",
+        )
+
+    def test_p4_decoder_contract_matches_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        expected_envelope = {
+            "botany_harvest_progress": ("BotanyHarvestProgress", 25),
+            "gathering_session": ("GatheringSession", 30),
+            "lingtian_session": ("LingtianSessionData", 31),
+            "alchemy_outcome_resolved": ("AlchemyOutcomeResolved", 14),
+        }
+        for field_name, expected in expected_envelope.items():
+            with self.subTest(envelope_field=field_name):
+                self.assertEqual(_proto_field_signature(envelope, field_name), expected)
+
+        expected_messages = {
+            "BotanyHarvestProgress": {
+                "session_id": ("string", 1),
+                "hazard_hints": ("string", 12),
+                "target_pos_z": ("double", 15),
+            },
+            "GatheringSession": {
+                "progress_ticks": ("uint64", 2),
+                "tool_used": ("string", 7),
+                "completed": ("bool", 9),
+            },
+            "LingtianSessionData": {
+                "pos_x": ("int32", 3),
+                "dye_contamination": ("float", 10),
+                "dye_contamination_warning": ("bool", 11),
+            },
+            "AlchemyOutcomeResolved": {
+                "toxin_amount": ("double", 5),
+                "side_effect_tag": ("string", 8),
+                "meridian_crack": ("double", 11),
+            },
+        }
+        for message_name, fields in expected_messages.items():
+            body = _proto_message_body(source, message_name)
+            for field_name, expected in fields.items():
+                with self.subTest(message=message_name, field=field_name):
+                    self.assertEqual(_proto_field_signature(body, field_name), expected)
+
     def test_proto_morph_state_full_payload_decodes(self):
         # plan-race-system-v1 P4 — field 142，mode="full"，一条 active=true entry。
         decoded = decode_server_data_payload(
@@ -746,11 +942,11 @@ class CombatServerDataGateTest(unittest.TestCase):
         self.assertEqual(unequip_snapshot["revision"], 4)
         self.assertEqual(unequip_snapshot["marker"], "after_unequip")
 
-    def test_wait_inventory_revision_after_matching_skips_intermediate_snapshot(self):
+    def test_wait_inventory_revision_after_matching_requires_exact_next_revision(self):
         bot = _FakeBot(
             [
-                _snapshot_event(2.0, 2, "command_intermediate"),
-                _snapshot_event(3.0, 3, "command_final"),
+                _snapshot_event(2.0, 2, "command_final"),
+                _snapshot_event(3.0, 3, "later_unrelated"),
             ]
         )
 
@@ -761,8 +957,24 @@ class CombatServerDataGateTest(unittest.TestCase):
             "command_final marker",
         )
 
-        self.assertEqual(snapshot["revision"], 3)
+        self.assertEqual(snapshot["revision"], 2)
         self.assertEqual(snapshot["marker"], "command_final")
+
+    def test_wait_inventory_revision_after_matching_rejects_matching_later_revision(self):
+        bot = _FakeBot(
+            [
+                _snapshot_event(2.0, 2, "command_intermediate"),
+                _snapshot_event(3.0, 3, "command_final"),
+            ]
+        )
+
+        with self.assertRaisesRegex(AssertionError, r"revision == 2"):
+            wait_inventory_revision_after_matching(
+                bot,
+                1,
+                lambda payload: payload["marker"] == "command_final",
+                "command_final marker",
+            )
 
 
 class NovicePoiScenarioParsingTest(unittest.TestCase):
@@ -3173,6 +3385,123 @@ class RunnerLogicTest(unittest.TestCase):
         run.assert_called_once()
         self.assertIn("PASS", output.getvalue())
         self.assertIn("pass=1", output.getvalue())
+
+    def test_default_gameplay_scenarios_do_not_assert_raw_server_data_transport(self):
+        scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
+        raw_server_data_calls = {
+            "expect_server_data_payload",
+            "server_data_payload_field",
+            "server_data_payload_name",
+        }
+        failures: list[str] = []
+
+        for path in scenarios_dir.glob("*.py"):
+            if path.name.startswith("_"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            default_enabled = True
+            for node in tree.body:
+                if (
+                    isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name) and target.id == "DEFAULT_ENABLED"
+                        for target in node.targets
+                    )
+                    and isinstance(node.value, ast.Constant)
+                    and node.value.value is False
+                ):
+                    default_enabled = False
+                    break
+            if not default_enabled:
+                continue
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                function_name = None
+                if isinstance(node.func, ast.Attribute):
+                    function_name = node.func.attr
+                elif isinstance(node.func, ast.Name):
+                    function_name = node.func.id
+                if function_name in raw_server_data_calls:
+                    failures.append(
+                        f"{path.name}:{node.lineno}: {function_name} 只识别 transport/oneof，"
+                        "玩法验收必须断言 kind=server_data 的深解码字段"
+                    )
+
+        self.assertEqual(
+            failures,
+            [],
+            "默认 gameplay 场景不得用 raw bong:server_data payload/oneof 充当行为证据：\n"
+            + "\n".join(failures),
+        )
+
+    def test_decoder_acceptance_matrix_covers_every_default_server_data_assertion_type(self):
+        scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
+        asserted_types: set[str] = set()
+
+        for path in scenarios_dir.glob("*.py"):
+            if path.name.startswith("_"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            default_enabled = True
+            for node in tree.body:
+                if (
+                    isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name) and target.id == "DEFAULT_ENABLED"
+                        for target in node.targets
+                    )
+                    and isinstance(node.value, ast.Constant)
+                    and node.value.value is False
+                ):
+                    default_enabled = False
+                    break
+            if not default_enabled:
+                continue
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Compare):
+                    continue
+                expressions = [node.left, *node.comparators]
+                for expression in expressions:
+                    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+                        if expression.value in set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()):
+                            asserted_types.add(expression.value)
+
+        dispatch_source = pathlib.Path(proto_min.__file__).read_text(encoding="utf-8")
+        dispatch_tree = ast.parse(dispatch_source, filename=proto_min.__file__)
+        deep_decoded_fields: set[int] = set()
+        decode_function = next(
+            node
+            for node in dispatch_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "decode_server_data_envelope"
+        )
+        for node in ast.walk(decode_function):
+            if not isinstance(node, ast.Compare):
+                continue
+            for expression in [node.left, *node.comparators]:
+                if isinstance(expression, ast.Constant) and isinstance(expression.value, int):
+                    deep_decoded_fields.add(expression.value)
+                elif isinstance(expression, ast.Name):
+                    value = getattr(proto_min, expression.id, None)
+                    if isinstance(value, int):
+                        deep_decoded_fields.add(value)
+
+        field_for_name = {
+            name: field for field, name in proto_min.SERVER_DATA_PAYLOAD_NAMES.items()
+        }
+        missing = sorted(
+            payload_type
+            for payload_type in asserted_types
+            if field_for_name.get(payload_type) not in deep_decoded_fields
+        )
+        self.assertEqual(
+            missing,
+            [],
+            "默认场景断言的 server_data 类型必须进入深解码 acceptance matrix；"
+            f"asserted={sorted(asserted_types)}, missing={missing}",
+        )
 
     def test_scenarios_do_not_reuse_literal_bot_tags(self):
         owners: dict[str, str] = {}

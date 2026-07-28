@@ -4458,6 +4458,29 @@ mod tests {
         session_registered: bool,
         owner_is_player: bool,
     ) -> (App, Entity, Entity, Vec<String>) {
+        run_external_container_move_case_with_source(
+            player_dimension,
+            player_pos,
+            source_kind,
+            source_active,
+            session_registered,
+            owner_is_player,
+            0,
+            0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_external_container_move_case_with_source(
+        player_dimension: Option<DimensionKind>,
+        player_pos: DVec3,
+        source_kind: crate::inventory::external_container::ExternalContainerKind,
+        source_active: bool,
+        session_registered: bool,
+        owner_is_player: bool,
+        source_row: u64,
+        source_col: u64,
+    ) -> (App, Entity, Entity, Vec<String>) {
         use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
         use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
 
@@ -4542,7 +4565,7 @@ mod tests {
                 client: player,
                 channel: ident!("bong:client_request").into(),
                 data: format!(
-                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":0,"col":0}},"to":{{"kind":"container","container_id":"main_pack","row":0,"col":0}}}}"#
+                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":{source_row},"col":{source_col}}},"to":{{"kind":"container","container_id":"main_pack","row":0,"col":0}}}}"#
                 )
                 .into_bytes()
                 .into_boxed_slice(),
@@ -4792,6 +4815,32 @@ mod tests {
             payload_types.iter().any(|ty| ty == "loot_container_update")
                 && payload_types.iter().any(|ty| ty == "inventory_snapshot"),
             "successful move must keep existing update + inventory snapshot contract; payloads={payload_types:?}"
+        );
+    }
+
+    #[test]
+    fn external_move_rejects_forged_external_source_coordinates_without_mutation() {
+        let (app, player, coffin, payload_types) = run_external_container_move_case_with_source(
+            Some(DimensionKind::Overworld),
+            DVec3::new(0.0, 64.0, 0.0),
+            crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                is_herb: false,
+            },
+            false,
+            true,
+            true,
+            0,
+            1,
+        );
+
+        assert_external_move_rejected_without_mutation(&app, player, coffin);
+        assert!(
+            payload_types.iter().any(|ty| ty == "loot_container_update"),
+            "authorized owner with forged source coordinates must receive authoritative external resync; payloads={payload_types:?}"
+        );
+        assert!(
+            payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+            "forged source rejection must resync player inventory; payloads={payload_types:?}"
         );
     }
 
@@ -18319,6 +18368,34 @@ fn handle_external_container_move(
             return;
         };
 
+        let authoritative_source = ext.container.items.iter().find(|placed| {
+            placed.instance.instance_id == instance_id
+                && matches!(
+                    from,
+                    InventoryLocationV1::Container {
+                        container_id,
+                        row,
+                        col,
+                    } if *container_id == ext_container_id
+                        && *row == u64::from(placed.row)
+                        && *col == u64::from(placed.col)
+                )
+        });
+        if authoritative_source.is_none() {
+            tracing::warn!(
+                "[bong][network] external_container_move: instance {instance_id} source location does not match authoritative external placement"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        }
+
         let Some(removed) = remove_item_from_container(&mut ext.container, instance_id) else {
             tracing::warn!(
                 "[bong][network] external_container_move: instance {instance_id} not found in ext container"
@@ -18490,25 +18567,14 @@ fn handle_external_container_move(
             return;
         };
 
-        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
-            return;
-        };
-
-        let mut found_item = None;
-        for container in inventory.containers.iter_mut() {
-            if let Some(idx) = container
-                .items
-                .iter()
-                .position(|p| p.instance.instance_id == instance_id)
-            {
-                found_item = Some(container.items.remove(idx));
-                break;
-            }
-        }
-
-        let Some(removed) = found_item else {
+        let InventoryLocationV1::Container {
+            container_id: from_container_id,
+            row: from_row,
+            col: from_col,
+        } = from
+        else {
             tracing::warn!(
-                "[bong][network] external_container_move: instance {instance_id} not in player inventory"
+                "[bong][network] external_container_move: player source must be container slot"
             );
             resync_ext_and_inventory(
                 player_entity,
@@ -18520,6 +18586,41 @@ fn handle_external_container_move(
             );
             return;
         };
+
+        let Ok(mut inventory) = inventories.get_mut(player_entity) else {
+            return;
+        };
+
+        let authoritative_source = inventory.containers.iter().position(|container| {
+            container.id == *from_container_id
+                && container.items.iter().any(|placed| {
+                    placed.instance.instance_id == instance_id
+                        && u64::from(placed.row) == *from_row
+                        && u64::from(placed.col) == *from_col
+                })
+        });
+        let Some(source_container_index) = authoritative_source else {
+            tracing::warn!(
+                "[bong][network] external_container_move: instance {instance_id} source location does not match authoritative player placement"
+            );
+            resync_ext_and_inventory(
+                player_entity,
+                &ext,
+                inventories,
+                player_states,
+                cultivations,
+                clients,
+            );
+            return;
+        };
+        let source_item_index = inventory.containers[source_container_index]
+            .items
+            .iter()
+            .position(|placed| placed.instance.instance_id == instance_id)
+            .expect("authoritative source search found matching item");
+        let removed = inventory.containers[source_container_index]
+            .items
+            .remove(source_item_index);
 
         let (to_row, to_col) = match (u8::try_from(*to_row), u8::try_from(*to_col)) {
             (Ok(r), Ok(c)) => (r, c),

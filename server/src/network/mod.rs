@@ -782,8 +782,11 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     app.add_systems(
         Update,
         (
-            alchemy_bridge::publish_alchemy_session_end_events,
+            alchemy_bridge::publish_alchemy_session_end_events
+                .after(client_request_handler::handle_client_request_payloads),
             alchemy_bridge::publish_alchemy_insight_events,
+            alchemy_snapshot_emit::emit_alchemy_outcome_resolved
+                .after(client_request_handler::handle_client_request_payloads),
         ),
     );
     app.add_systems(

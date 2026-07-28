@@ -64,8 +64,14 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _craft_session_state(value)
         if field == 23:
             return _craft_outcome(value)
+        if field == 25:
+            return _botany_harvest_progress(value)
         if field == 29:
             return _lumber_progress(value)
+        if field == 30:
+            return _gathering_session(value)
+        if field == 31:
+            return _lingtian_session(value)
         if field == 34:
             return _cast_sync(value)
         if field == 36:
@@ -512,6 +518,12 @@ def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0
     return default
 
 
+def _optional_double(fields: list[tuple[int, int, Any]], field: int) -> float | None:
+    if not _has(fields, field):
+        return None
+    return _double(fields, field)
+
+
 def _message(fields: list[tuple[int, int, Any]], field: int) -> list[tuple[int, int, Any]]:
     for existing, wire, value in reversed(fields):
         if existing == field and wire == 2:
@@ -530,7 +542,106 @@ def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.
     return default
 
 
+def _optional_float32(fields: list[tuple[int, int, Any]], field: int) -> float | None:
+    if not _has(fields, field):
+        return None
+    return _float32(fields, field)
+
+
 # ── 生产 / 消费玩法 payload（envelope.proto oneof tag 见 proto/bong/envelope.proto）──
+
+
+def _botany_harvest_progress(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "botany_harvest_progress",
+        "session_id": _string(fields, 1),
+        "target_id": _string(fields, 2),
+        "target_name": _string(fields, 3),
+        "plant_kind": _string(fields, 4),
+        "mode": _string(fields, 5),
+        "progress": _double(fields, 6),
+        "auto_selectable": bool(_varint(fields, 7)),
+        "request_pending": bool(_varint(fields, 8)),
+        "interrupted": bool(_varint(fields, 9)),
+        "completed": bool(_varint(fields, 10)),
+        "detail": _string(fields, 11),
+        "hazard_hints": _strings(fields, 12),
+        "target_pos": [
+            _optional_double(fields, 13),
+            _optional_double(fields, 14),
+            _optional_double(fields, 15),
+        ],
+    }
+
+
+GATHERING_TARGET_TYPE_NAMES = {
+    0: "unspecified",
+    1: "herb",
+    2: "ore",
+    3: "wood",
+}
+
+GATHERING_QUALITY_HINT_NAMES = {
+    0: "unspecified",
+    1: "normal",
+    2: "fine_likely",
+    3: "perfect_possible",
+    4: "fine",
+    5: "perfect",
+}
+
+
+def _gathering_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "gathering_session",
+        "session_id": _string(fields, 1),
+        "progress_ticks": _varint(fields, 2),
+        "total_ticks": _varint(fields, 3),
+        "target_name": _string(fields, 4),
+        "target_type": GATHERING_TARGET_TYPE_NAMES.get(
+            _varint(fields, 5), "unspecified"
+        ),
+        "quality_hint": GATHERING_QUALITY_HINT_NAMES.get(
+            _varint(fields, 6), "unspecified"
+        ),
+        "tool_used": _optional_string(fields, 7),
+        "interrupted": bool(_varint(fields, 8)),
+        "completed": bool(_varint(fields, 9)),
+    }
+
+
+LINGTIAN_SESSION_KIND_NAMES = {
+    0: "unspecified",
+    1: "till",
+    2: "renew",
+    3: "planting",
+    4: "harvest",
+    5: "replenish",
+    6: "drain_qi",
+}
+
+
+def _lingtian_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "lingtian_session",
+        "active": bool(_varint(fields, 1)),
+        "kind": LINGTIAN_SESSION_KIND_NAMES.get(
+            _varint(fields, 2), "unspecified"
+        ),
+        "pos": [_int32(fields, 3), _int32(fields, 4), _int32(fields, 5)],
+        "elapsed_ticks": _varint(fields, 6),
+        "target_ticks": _varint(fields, 7),
+        "plant_id": _optional_string(fields, 8),
+        "source": _optional_string(fields, 9),
+        "dye_contamination": _optional_float32(fields, 10),
+        "dye_contamination_warning": bool(_varint(fields, 11)),
+    }
 
 
 def _lumber_progress(data: bytes) -> dict[str, Any]:
@@ -661,15 +772,53 @@ def _alchemy_session(data: bytes) -> dict[str, Any]:
     }
 
 
+ALCHEMY_OUTCOME_BUCKET_NAMES = {
+    0: "unspecified",
+    1: "perfect",
+    2: "good",
+    3: "flawed",
+    4: "waste",
+    5: "explode",
+}
+
+COLOR_KIND_NAMES = {
+    0: "unspecified",
+    1: "sharp",
+    2: "heavy",
+    3: "mellow",
+    4: "solid",
+    5: "light",
+    6: "intricate",
+    7: "gentle",
+    8: "insidious",
+    9: "violent",
+    10: "turbid",
+}
+
+
 def _alchemy_outcome_resolved(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
+    toxin_color = _optional_varint(fields, 6)
     return {
         "v": 1,
         "type": "alchemy_outcome_resolved",
-        "bucket": _varint(fields, 1),
-        "recipe_id": _string(fields, 2),
-        "pill": _string(fields, 3),
-        "quality": _double(fields, 4),
+        "bucket": ALCHEMY_OUTCOME_BUCKET_NAMES.get(
+            _varint(fields, 1), "unspecified"
+        ),
+        "recipe_id": _optional_string(fields, 2),
+        "pill": _optional_string(fields, 3),
+        "quality": _optional_double(fields, 4),
+        "toxin_amount": _optional_double(fields, 5),
+        "toxin_color": (
+            COLOR_KIND_NAMES.get(toxin_color, "unspecified")
+            if toxin_color is not None
+            else None
+        ),
+        "qi_gain": _optional_double(fields, 7),
+        "side_effect_tag": _optional_string(fields, 8),
+        "flawed_path": bool(_varint(fields, 9)),
+        "damage": _optional_double(fields, 10),
+        "meridian_crack": _optional_double(fields, 11),
     }
 
 
@@ -974,6 +1123,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     8: "inventory_snapshot",
     11: "alchemy_furnace",
     12: "alchemy_session",
+    14: "alchemy_outcome_resolved",
     15: "alchemy_recipe_book",
     17: "forge_station",
     18: "forge_session",

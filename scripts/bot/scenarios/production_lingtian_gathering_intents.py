@@ -1,62 +1,64 @@
-"""P4 生产系统：灵田 / 采集最小黑盒链路。
+"""P4 生产系统：真锄开垦 + 野生灵草采集进度的黑盒链路。
 
-覆盖面：
-- dev 铺垫：发送 `/give hoe_iron`，断言 server_data 继续回流
-- client_request：`lingtian_start_till` 入口（无 item instance 深断言）
-- chat 反馈：`/bong gather spirit_grass` → Gameplay action queued.
-- payload 回流：`bong:server_data` 的 `lingtian_session` / 采集进度
-
-灵田能否真正开垦取决于 live server 当前地形；场景只断言 wire 入口与 HUD
-payload 回流，不把地形/作物结算当成 bot 脚本职责。inventory_snapshot 目前不能
-稳定给 bot 提供刚 give 的 hoe_iron instance_id，装备/开垦深链路留后续 plan。
+黑盒契约面：
+- `inventory_snapshot` 给出 `/give hoe_iron` 的真实 instance_id 与权威来源位置；
+  `inventory_move_intent` 把同一实例移到 `main_hand/held`。
+- fallback/raster 地表由服务器权威读取；场景在玩家附近尝试候选脚下格，只有收到
+  `lingtian_session{active:true,kind:till,target_ticks:40}` 才算开垦受理，不能把
+  占位 `hoe_instance_id=0` 或 inactive 心跳记为 P4 证据。
+- `/bong gather spirit_grass` 必须进入真实 botany harvest session，并收到深解码的
+  `gathering_session` / `botany_harvest_progress` 字段；raw server_data oneof 不算证据。
 """
 
+import math
+
 from bot.bot import BotAssertionError
-from bot import proto_min
+from bot.scenarios._combat_helpers import last_event_time
+from bot.scenarios._inventory_helpers import (
+    equip_location,
+    find_item,
+    require_item,
+    send_move,
+    wait_inventory_contains,
+    wait_join_and_inventory,
+)
 
-DESCRIPTION = "灵田/采集：锄头 give 入口 → lingtian_start_till 入口；/bong gather → 采集进度"
-MODULES = ["lingtian", "gathering", "inventory", "network"]
+DESCRIPTION = "灵田/采集：真锄装备→开垦 active session；/bong gather→深解码采集进度"
+MODULES = ["lingtian", "gathering", "inventory"]
 
-GATHER_PROGRESS_PAYLOADS = {"gathering_session", "botany_harvest_progress"}
-
-
-def _event_mark(bot) -> float:
-    return bot.events[-1].t if bot.events else 0.0
-
-
-def _expect_gather_progress_payload(bot, after: float) -> None:
-    def matches(event) -> bool:
-        if (
-            event.kind != "payload"
-            or event.data["channel"] != "bong:server_data"
-            or event.t <= after
-        ):
-            return False
-        return proto_min.server_data_payload_name(event.data["data"]) in GATHER_PROGRESS_PAYLOADS
-
-    bot.wait_for(
-        matches,
-        timeout=15.0,
-        description=(
-            "采集链路的 bong:server_data 进度回流"
-            "（gathering_session 或 botany_harvest_progress）"
-        ),
-    )
+HOE_ID = "hoe_iron"
+HERB_ID = "spirit_grass"
 
 
-def run(env) -> None:
-    with env.new_bot("ProdLG") as bot:
-        bot.expect_event("game_join", timeout=15.0)
-        bot.expect_event("pos_look", timeout=15.0)
+def _surface_candidates(bot) -> list[tuple[int, int, int]]:
+    if bot.position is None:
+        raise BotAssertionError("lingtian 场景需要 pos_look 后才能派生目标格")
+    px = math.floor(bot.position[0])
+    py = math.floor(bot.position[1]) - 1
+    pz = math.floor(bot.position[2])
+    # 玩家脚下优先；fallback 的资源露头或 raster 局部非草地时，尝试近邻而不依赖
+    # 客户端伪造 terrain。每个候选仍由生产 handler 从 ChunkLayer 权威分类。
+    offsets = [
+        (0, 0),
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1),
+        (1, 1),
+        (-1, 1),
+        (1, -1),
+        (-1, -1),
+        (2, 0),
+        (-2, 0),
+        (0, 2),
+        (0, -2),
+    ]
+    return [(px + dx, max(1, py), pz + dz) for dx, dz in offsets]
 
-        mark = _event_mark(bot)
-        bot.cmd("give hoe_iron 1")
-        bot.expect_server_data_payload(timeout=10.0, after=mark)
 
-        if bot.position is None:
-            raise BotAssertionError("lingtian 场景需要 pos_look 后才能派生目标格")
-        x, y, z = bot.position
-        target = (int(x), max(1, int(y) - 1), int(z))
+def _start_real_till(bot, hoe_iid: int) -> dict:
+    for target in _surface_candidates(bot):
+        anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "lingtian_start_till",
@@ -64,13 +66,110 @@ def run(env) -> None:
                 "x": target[0],
                 "y": target[1],
                 "z": target[2],
-                "hoe_instance_id": 0,
+                "hoe_instance_id": hoe_iid,
                 "mode": "manual",
             }
         )
+        try:
+            event = bot.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "lingtian_session"
+                and e.t > anchor
+                and e.data["payload"]["active"] is True,
+                timeout=1.5,
+                description=f"真实锄实例在候选地表 {target} 开启 till session",
+            )
+        except BotAssertionError:
+            continue
+        payload = event.data["payload"]
+        if payload["kind"] != "till" or payload["pos"] != list(target):
+            raise BotAssertionError(
+                "lingtian_start_till 受理快照必须锁定 till 类型与请求坐标；"
+                f"target={target} actual={payload}"
+            )
+        if payload["target_ticks"] != 40 or payload["elapsed_ticks"] > 40:
+            raise BotAssertionError(
+                "manual till 的权威进度应满足 target_ticks=40 且 elapsed<=target；"
+                f"actual={payload}"
+            )
+        return payload
+    raise BotAssertionError(
+        "玩家附近候选地表均未开启 lingtian till session；"
+        "真实 instance_id/主手装备/服务器 terrain 分类任一断链都会在此失败"
+    )
 
-        mark = _event_mark(bot)
-        bot.cmd("bong gather spirit_grass")
+
+def _wait_gather_progress(bot, after: float) -> dict:
+    event = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.t > after
+        and e.data["payload_type"] in {"gathering_session", "botany_harvest_progress"},
+        timeout=15.0,
+        description="/bong gather 后深解码 gathering/botany 进度",
+    )
+    payload = event.data["payload"]
+    if payload["type"] == "gathering_session":
+        if payload["target_type"] != "herb":
+            raise BotAssertionError(f"spirit_grass 采集 target_type 应为 herb，实际 {payload}")
+        if payload["total_ticks"] <= 0 or payload["progress_ticks"] > payload["total_ticks"]:
+            raise BotAssertionError(f"采集 tick 区间必须有效，实际 {payload}")
+    else:
+        if payload["plant_kind"] != HERB_ID or payload["target_name"] != HERB_ID:
+            raise BotAssertionError(f"采集进度必须绑定 spirit_grass，实际 {payload}")
+        if not 0.0 <= payload["progress"] <= 1.0:
+            raise BotAssertionError(f"botany progress 必须位于 [0,1]，实际 {payload}")
+    return payload
+
+
+def run(env) -> None:
+    with env.new_bot("ProdLG") as bot:
+        wait_join_and_inventory(bot)
+
+        # clearinv naked 才清装备；再 all 清掉卸入背包的出生物品。
+        bot.cmd("clearinv naked")
+        bot.expect_chat("[dev] clearinv", timeout=10.0)
+        bot.cmd("clearinv all")
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and not e.data["payload"].get("equipped", {}).get("main_hand_held"),
+            timeout=10.0,
+            description="灵田准备阶段 main_hand held 为空",
+        )
+
+        give_anchor = last_event_time(bot)
+        bot.cmd(f"give {HOE_ID} 1")
+        snapshot = wait_inventory_contains(bot, HOE_ID)
+        hoe = require_item(snapshot, HOE_ID)
+        hoe_iid = int(hoe["item"]["instance_id"])
+        if hoe_iid <= 0:
+            raise BotAssertionError(f"/give 的锄头必须有正 runtime instance_id，实际 {hoe}")
+        if not any(
+            e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > give_anchor
+            and find_item(e.data["payload"], HOE_ID) is not None
+            for e in bot.events
+        ):
+            raise BotAssertionError("锄头 instance 必须来自 give 动作之后的权威 inventory_snapshot")
+
+        equip_anchor = last_event_time(bot)
+        send_move(bot, hoe_iid, hoe["location"], equip_location("main_hand", "held"))
+        bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > equip_anchor
+            and (e.data["payload"].get("equipped", {}).get("main_hand_held") or {}).get(
+                "instance_id"
+            )
+            == hoe_iid,
+            timeout=10.0,
+            description=f"真实锄头 {hoe_iid} 装备到 main_hand held",
+        )
+        _start_real_till(bot, hoe_iid)
+
+        gather_anchor = last_event_time(bot)
+        bot.cmd(f"bong gather {HERB_ID}")
         bot.expect_chat("Gameplay action queued.", timeout=10.0)
-        _expect_gather_progress_payload(bot, after=mark)
-        bot.assert_alive("灵田 intent 与 gather 命令后")
+        _wait_gather_progress(bot, gather_anchor)
+        bot.assert_alive("真锄开垦与采集深断言之后")

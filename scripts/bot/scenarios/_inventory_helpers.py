@@ -33,12 +33,13 @@ def wait_inventory_snapshot_after(bot, after_t: float, timeout: float = 10.0) ->
 
 
 def wait_inventory_revision_after(bot, previous_revision: int, timeout: float = 10.0) -> dict[str, Any]:
+    expected_revision = previous_revision + 1
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.data["payload"]["revision"] > previous_revision,
+        and e.data["payload"]["revision"] == expected_revision,
         timeout=timeout,
-        description=f"revision > {previous_revision} 的 inventory_snapshot",
+        description=f"revision == {expected_revision} 的 inventory_snapshot",
     )
     return event.data["payload"]
 
@@ -50,13 +51,14 @@ def wait_inventory_revision_after_matching(
     description: str,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
+    expected_revision = previous_revision + 1
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.data["payload"]["revision"] > previous_revision
+        and e.data["payload"]["revision"] == expected_revision
         and predicate(e.data["payload"]),
         timeout=timeout,
-        description=f"revision > {previous_revision} 且 {description} 的 inventory_snapshot",
+        description=f"revision == {expected_revision} 且 {description} 的 inventory_snapshot",
     )
     return event.data["payload"]
 
@@ -144,10 +146,16 @@ def require_container(snapshot: dict[str, Any], container_id: str) -> dict[str, 
 def require_pack_container(snapshot: dict[str, Any], owner_instance_id: int) -> dict[str, Any]:
     expected_id = f"pack_{owner_instance_id}"
     for container in snapshot.get("containers", []):
-        if container.get("owner_instance_id") == owner_instance_id or container["id"] == expected_id:
-            return container
+        if container["id"] != expected_id:
+            continue
+        if container.get("owner_instance_id") != owner_instance_id:
+            raise BotAssertionError(
+                f"穿戴背包容器 id={expected_id} 的 owner_instance_id 必须精确匹配；"
+                f"expected={owner_instance_id} actual={container.get('owner_instance_id')}"
+            )
+        return container
     raise BotAssertionError(
-        f"期望找到 owner_instance_id={owner_instance_id} 的穿戴背包容器，"
+        f"期望找到 id={expected_id} 且 owner_instance_id={owner_instance_id} 的穿戴背包容器，"
         f"实际 containers={snapshot.get('containers')}"
     )
 

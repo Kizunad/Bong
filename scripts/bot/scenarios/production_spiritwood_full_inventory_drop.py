@@ -48,8 +48,8 @@ def run(env) -> None:
 
         # 新手 loadout 自带出生剑；`clearinv all` 按契约保留装备槽。先清空
         # 携带面，把出生剑移入暗袋，再清一次携带面，既腾出主手又保留有效
-        # worn 背包容器（直接 `clearinv naked` 会留下孤儿 pack_* 壳，发放
-        # 物品时会被容器 owner 校验拒绝）。
+        # worn 背包容器。`clearinv naked` 会权威移除装备、动态 pack 拓扑与
+        # 容量加成，不适合后续“填满全部随身格”的采伐测试。
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
         after_first_clear = bot.wait_for(
