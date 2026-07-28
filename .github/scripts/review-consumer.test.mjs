@@ -7,9 +7,9 @@ import path from 'node:path';
 const workflowPath = new URL('../workflows/review-next.yml', import.meta.url);
 const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.yml', import.meta.url);
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
-const policyPath = new URL('../review-policy/bong.v1.json', import.meta.url);
-const centralSha = '417e55e55737b8fe42803b97f85b59fce8bbfb2a';
-const centralWorkflowSha256 = '498aa3dc8d6d7258ccb34787a4127cf54d848473fe9e21ffd512fb81ee65c8c4';
+const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
+const centralSha = '3683431a33465c4fd62fb5c1dfd4fb2b8cef9421';
+const centralWorkflowSha256 = '66ef54e4ff879c1041d4697da74e3667115dfdab373693dfc9fab6089972eac3';
 
 const expectedCentralInterface = `  workflow_call:
     inputs:
@@ -70,6 +70,35 @@ const expectedCentralJobs = Object.freeze({
       issues: write`,
 });
 
+const expectedPolicyLevels = Object.freeze({
+  'plan-intent': 'major',
+  'production-wiring': 'major',
+  'three-layer-contract': 'major',
+  'schema-source-of-truth': 'major',
+  'wire-format-bridge': 'major',
+  'qi-conservation': 'blocker',
+  'qi-constants': 'major',
+  'qi-era-decay': 'blocker',
+  'worldview-realms': 'major',
+  'worldview-economy': 'major',
+  'worldview-naming': 'major',
+  'zone-identity': 'major',
+  'layer-registry': 'major',
+  'raster-contract': 'major',
+  'bevy-ecs-boundary': 'major',
+  'no-vanilla-entity-hack': 'major',
+  'bot-client-tolerance': 'major',
+  'skill-full-stack-av': 'major',
+  'conditional-hud': 'major',
+  'player-animation-contract': 'major',
+  'resourcepack-binding': 'major',
+  'inventory-category': 'major',
+  'saturated-tests': 'major',
+  'test-failure-honesty': 'major',
+  'minimal-maintainable-change': 'major',
+  'quality-improvements': 'suggestion',
+});
+
 const expectedCallerJobs = `jobs:
   central-review-shadow:
     if: >-
@@ -82,10 +111,10 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@417e55e55737b8fe42803b97f85b59fce8bbfb2a
+    uses: Kizunad/review/.github/workflows/review.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
-      policy_path: .github/review-policy/bong.v1.json
+      policy_path: .github/review-policy/bong.v2.json
       review_base_url: \${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
       shadow: true
       max_diff_chars: 40000
@@ -202,14 +231,14 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@417e55e55737b8fe42803b97f85b59fce8bbfb2a/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
   assert.match(yaml, /shadow: true/);
   assert.match(yaml, /worker_timeout_ms: 120000/);
   assert.match(yaml, /circuit_manual_retry: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/);
-  assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v1\.json/);
+  assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v2\.json/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
 });
 
@@ -290,10 +319,10 @@ test('central publication contract rejects every input and secret set drift', ()
 test('caller publication contract rejects mapping, secret, and permission drift', () => {
   assert.doesNotThrow(() => assertExactCallerJobs(callerFixture()));
   for (const [name, mutation] of [
-    ['missing input', expectedCallerJobs.replace('      policy_path: .github/review-policy/bong.v1.json\n', '')],
+    ['missing input', expectedCallerJobs.replace('      policy_path: .github/review-policy/bong.v2.json\n', '')],
     ['unknown input', expectedCallerJobs.replace(
-      '      policy_path: .github/review-policy/bong.v1.json',
-      '      policy_path: .github/review-policy/bong.v1.json\n      unknown_input: value',
+      '      policy_path: .github/review-policy/bong.v2.json',
+      '      policy_path: .github/review-policy/bong.v2.json\n      unknown_input: value',
     )],
     ['missing secret', expectedCallerJobs.replace('      review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}', '')],
     ['unknown secret', expectedCallerJobs.replace(
@@ -379,18 +408,18 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
   assert.deepEqual(Object.keys(value).sort(), [
     'minorFindingsRequestChanges', 'project', 'rules', 'version',
   ]);
-  assert.equal(value.version, 'project-review-policy.v1');
+  assert.equal(value.version, 'project-review-policy.v2');
   assert.equal(value.project, 'Kizunad/Bong');
-  assert.equal(value.minorFindingsRequestChanges, true);
+  assert.equal(value.minorFindingsRequestChanges, false);
   assert.ok(value.rules.length >= 20 && value.rules.length <= 256);
 
   const ids = new Set();
   for (const rule of value.rules) {
-    assert.deepEqual(Object.keys(rule).sort(), ['id', 'severity', 'text']);
+    assert.deepEqual(Object.keys(rule).sort(), ['id', 'level', 'text']);
     assert.match(rule.id, /^[a-z][a-z0-9-]{0,79}$/);
     assert.ok(!ids.has(rule.id), `duplicate policy rule: ${rule.id}`);
     ids.add(rule.id);
-    assert.ok(['blocker', 'major', 'minor'].includes(rule.severity));
+    assert.ok(['blocker', 'major', 'minor', 'suggestion'].includes(rule.level));
     assert.ok(rule.text.length >= 1 && rule.text.length <= 4000);
   }
 
@@ -405,14 +434,80 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
     'layer-registry',
     'skill-full-stack-av',
     'saturated-tests',
+    'quality-improvements',
   ]) {
     assert.ok(ids.has(required), `missing Bong policy rule: ${required}`);
   }
+
+  const byId = Object.fromEntries(
+    value.rules.map((rule) => [rule.id, rule]),
+  );
+  assert.deepEqual(
+    Object.fromEntries(value.rules.map((rule) => [rule.id, rule.level])),
+    expectedPolicyLevels,
+    'Bong policy rule set and levels must remain explicit',
+  );
+  assert.equal(byId['qi-conservation'].level, 'blocker');
+  assert.match(
+    byId['qi-conservation'].text,
+    /conservation.*merge blockers/i,
+  );
+  assert.equal(byId['saturated-tests'].level, 'major');
+  for (const requiredContract of [
+    /happy paths/i,
+    /boundaries.*empty.*maximum.*off-by-one/i,
+    /invalid inputs.*every error branch/i,
+    /permission and state preconditions/i,
+    /every enum variant/i,
+    /every state transition.*self or no-op transitions/i,
+    /Schema, enum, and state-machine changes require dedicated positive and negative pin tests/i,
+    /producer-to-wire-to-consumer.*integration test/i,
+    /concrete incorrect implementation/,
+    /falsely claim nonexistent coverage/,
+    /Finer assertions.*already fully protected.*suggestions/i,
+  ]) {
+    assert.match(
+      byId['saturated-tests'].text,
+      requiredContract,
+      `saturated-tests must preserve ${requiredContract}`,
+    );
+  }
+  assert.equal(byId['minimal-maintainable-change'].level, 'major');
+  for (const requiredRisk of [
+    /Compatibility layers without an explicit migration need/i,
+    /speculative abstractions without a present requirement/i,
+    /inconsistent duplicate sources of truth/i,
+    /broad refactors unrelated to the requested outcome/i,
+    /major defects.*before a production failure is observed/i,
+    /unreachable production wiring/i,
+    /non-atomic state/i,
+    /unbounded resource paths/i,
+  ]) {
+    assert.match(
+      byId['minimal-maintainable-change'].text,
+      requiredRisk,
+      `minimal-maintainable-change must preserve ${requiredRisk}`,
+    );
+  }
+  assert.equal(byId['quality-improvements'].level, 'suggestion');
+  assert.match(
+    byId['quality-improvements'].text,
+    /merely restate obvious code.*clearer naming.*optional helper extraction.*finer assertions/s,
+  );
+  assert.match(
+    byId['quality-improvements'].text,
+    /bounded improvements do not gate the review/,
+  );
+  assert.match(
+    byId['quality-improvements'].text,
+    /does not downgrade.*speculative abstractions.*compatibility layers.*duplicate sources of truth.*unrelated scope growth.*missing required contract tests/s,
+  );
 
   const serialized = JSON.stringify(value);
   assert.match(serialized, /醒灵.*引气.*凝脉.*固元.*通灵.*化虚/);
   assert.match(serialized, /骨币/);
   assert.match(serialized, /SPIRIT_QI_TOTAL/);
   assert.match(serialized, /LAYER_REGISTRY/);
+  assert.doesNotMatch(serialized, /"severity"/);
   assert.doesNotMatch(serialized, /(?:^|\W)(?:command|shell|runner|action ref|MCP server)(?:\W|$)/i);
 });
