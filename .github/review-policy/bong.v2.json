@@ -1,132 +1,137 @@
 {
-  "version": "project-review-policy.v1",
+  "version": "project-review-policy.v2",
   "project": "Kizunad/Bong",
   "rules": [
     {
       "id": "plan-intent",
-      "severity": "major",
+      "level": "major",
       "text": "When a pull request names or changes a plan, verify the implementation against that plan's stated phase deliverables, acceptance evidence, tests, and cross-stack symbols; changing expected files alone is not evidence of completion."
     },
     {
       "id": "production-wiring",
-      "severity": "major",
+      "level": "major",
       "text": "Every new struct, function, component, event, payload, registry entry, schema, asset ID, or configuration field must have a reachable production producer, consumer, registration, and loading path as applicable; reject disconnected definitions and tests that only inject the missing connection manually."
     },
     {
       "id": "three-layer-contract",
-      "severity": "major",
+      "level": "major",
       "text": "Preserve Bong's server Rust, agent TypeScript, and client Fabric boundaries. Cross-layer changes must update every affected producer, wire schema, generated or mirrored representation, converter, consumer, and contract test."
     },
     {
       "id": "schema-source-of-truth",
-      "severity": "major",
+      "level": "major",
       "text": "TypeBox schemas are the IPC source of truth. Schema or enum changes must update generated JSON Schema, Rust serde mirrors, shared samples, and all consumers; agent code that imports @bong/schema must also receive the rebuilt distribution artifact when required."
     },
     {
       "id": "wire-format-bridge",
-      "severity": "major",
+      "level": "major",
       "text": "For server_data and other protobuf-to-JSON bridges, verify the real wire representation end to end: protobuf enums, uint64 string encoding, flattened coordinates, Rust conversion, emission, JsonFormat conversion, and client field access must agree exactly."
     },
     {
       "id": "qi-conservation",
-      "severity": "blocker",
+      "level": "blocker",
       "text": "SPIRIT_QI_TOTAL conservation is mandatory. Every qi or spirit-qi movement must be represented by qi_physics ledger transfer semantics with a real state-applying consumer; direct one-sided increments, decrements, dropped off-screen snapshots, or audit-only transfer events that do not update WorldQiAccount are merge blockers."
     },
     {
       "id": "qi-constants",
-      "severity": "major",
+      "level": "major",
       "text": "Do not invent local qi decay, drain, attenuation, half-life, density, or similar physical constants or formulas. Reuse qi_physics constants and helpers, or extend qi_physics first and import the canonical definition."
     },
     {
       "id": "qi-era-decay",
-      "severity": "blocker",
+      "level": "blocker",
       "text": "The only permitted system outflow is the tracked Tiandao era decay path. It must move qi into era_decay_accum so current_total plus era_decay_accum remains equal to initial_total; it must not silently evaporate qi."
     },
     {
       "id": "worldview-realms",
-      "severity": "major",
+      "level": "major",
       "text": "The six canonical realms, in order, are 醒灵, 引气, 凝脉, 固元, 通灵, 化虚. Reject legacy cultivation names such as 练气, 筑基, 金丹, or 元婴 in new gameplay and user-facing content."
     },
     {
       "id": "worldview-economy",
-      "severity": "major",
+      "level": "major",
       "text": "骨币 is the only true currency. Minerals are barter goods, 灵石 is a degraded fuel rather than currency, and gold or silver is not a canonical money system."
     },
     {
       "id": "worldview-naming",
-      "severity": "major",
+      "level": "major",
       "text": "New names must fit the depleted末法 setting. Avoid 玄, 陨, 星, 仙, 太, 古 except established mundane mineral names, and prefer plain decayed imagery such as 残, 碎, 锈, 杂, 粗, 髓, 朴, 枯."
     },
     {
       "id": "zone-identity",
-      "severity": "major",
+      "level": "major",
       "text": "New or changed zones must agree with existing canonical zone IDs and their worldgen/server consumers. Reject duplicate concepts, renamed IDs without migrations, or a blueprint/raster/runtime mismatch."
     },
     {
       "id": "layer-registry",
-      "severity": "major",
+      "level": "major",
       "text": "Worldgen terrain fields must remain registered through LAYER_REGISTRY, including safe_default, blend_mode, and export_type. Stitching, raster export, and Rust runtime interpretation must derive from the same layer contract."
     },
     {
       "id": "raster-contract",
-      "severity": "major",
+      "level": "major",
       "text": "Worldgen raster exports and Rust readers must agree on layer order, dimensions, little-endian element type, safe defaults, and mmap layout; regenerated manifests and postconditions must accompany contract changes."
     },
     {
       "id": "bevy-ecs-boundary",
-      "severity": "major",
+      "level": "major",
       "text": "Keep Bevy ECS data and behavior separated: components represent state, systems perform logic, queries exclude terminal markers where required, and client-visible Valence entities must use Despawned rather than bare despawn before the entity layer update pass."
     },
     {
       "id": "no-vanilla-entity-hack",
-      "severity": "major",
+      "level": "major",
       "text": "Do not use armor stands, invisible mobs, or other vanilla entities as custom collision or interaction carriers. Bong custom entities use Marker plus custom rendering, with interaction sent through an explicit client-to-server intent request."
     },
     {
       "id": "bot-client-tolerance",
-      "severity": "major",
+      "level": "major",
       "text": "The server must tolerate vanilla or bot clients that omit, delay, or send malformed optional Fabric payloads without panic or disconnect unless the protocol contract explicitly requires rejection. New gameplay modules need an appropriate headless bot scenario when an end-to-end client/server path exists."
     },
     {
       "id": "skill-full-stack-av",
-      "severity": "major",
+      "level": "major",
       "text": "Every implemented active skill or cast must ship a distinct animation, particle or VFX, SFX, HUD feedback, and SkillBar or hotbar PNG icon through real server-schema-client wiring. A server-only operator, enum-only stub, shared generic feedback, or unregistered icon is incomplete."
     },
     {
       "id": "conditional-hud",
-      "severity": "major",
+      "level": "major",
       "text": "Locked, inactive, or unavailable abilities and styles must not remain permanently visible as disabled HUD clutter; conditional HUD elements should be hidden until their authoritative state makes them relevant."
     },
     {
       "id": "player-animation-contract",
-      "severity": "major",
+      "level": "major",
       "text": "PlayerAnimator loops need endTick keys for every animated axis, large leg motion must avoid unsupported IK poses, torso-only motion must not misuse body transforms, and bend-dependent animation requires the existing bendy-lib integration."
     },
     {
       "id": "resourcepack-binding",
-      "severity": "major",
+      "level": "major",
       "text": "Any committed client asset change that affects the distributed resource pack must update the server resource-pack SHA-1 and committed manifest size/hash bindings so runtime delivery and CI remain synchronized."
     },
     {
       "id": "inventory-category",
-      "severity": "major",
+      "level": "major",
       "text": "ItemCategory must use only its canonical enum variants. In particular, alchemy or crafting materials use Misc rather than a nonexistent Material category; one invalid registry entry can invalidate the entire item registry."
     },
     {
       "id": "saturated-tests",
-      "severity": "major",
-      "text": "Tests must lock observable contracts across happy paths, boundaries, invalid inputs, permission or state preconditions, every enum variant, and every state transition. Unit tests do not replace an integration test for a cross-stack producer-to-wire-to-consumer path."
+      "level": "major",
+      "text": "Treat missing regression protection as a defect only when the pull request changes or claims a specific observable contract and the current suite would still pass a concrete incorrect implementation, or when documentation or the pull request falsely claims coverage that does not exist. Cross-stack producer-to-wire-to-consumer contracts require an integration test when unit tests cannot expose that concrete break. Requests for finer assertions, extra cases without a demonstrated gap, less mocking, or cleaner fixtures are suggestions."
     },
     {
       "id": "test-failure-honesty",
-      "severity": "major",
+      "level": "major",
       "text": "Do not classify newly appearing failures as pre-existing without proof. A batch of failures sharing registry, asset, schema, or initialization signatures should be traced to the common change, and piped build commands must preserve the actual producer exit status."
     },
     {
       "id": "minimal-maintainable-change",
-      "severity": "major",
-      "text": "Prefer the smallest complete and maintainable implementation. Reject compatibility layers without an explicit migration need, speculative abstractions, duplicate sources of truth, broad refactors unrelated to the requested outcome, and comments that restate obvious code rather than explaining a non-obvious invariant."
+      "level": "major",
+      "text": "Treat maintainability as a defect only when this diff creates a demonstrated production failure, unreachable production wiring, non-atomic state, unbounded resource path, inconsistent duplicate source of truth, or a structure that materially prevents a required correct change. Compatibility layers without a real migration need, speculative abstractions, or unrelated broad refactors are major only when such a concrete wrong result is demonstrated."
+    },
+    {
+      "id": "quality-improvements",
+      "level": "suggestion",
+      "text": "Classify comments that restate obvious code, clearer naming, optional helper extraction or reuse, simplification of already-correct branches, finer assertions around already-protected behavior, and extra defensive checks without a reachable failure as suggestions; these improvements never gate the review."
     }
   ],
-  "minorFindingsRequestChanges": true
+  "minorFindingsRequestChanges": false
 }
