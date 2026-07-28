@@ -48,7 +48,9 @@ class AdjunctDisconnectOwnershipTest {
             "EnvironmentEffectController.clearOnDisconnect()",
             "BongShaderState.clearOnDisconnect()",
             "CastFovController.teardown()",
-            "CombatJuiceSystem.clearOnDisconnect()"
+            "CombatJuiceSystem.clearOnDisconnect()",
+            "CombatHudBootstrap.clearOnDisconnect()",
+            "MovementKeybindings.clearOnDisconnect()"
         }) {
             assertTrue(helper.contains(call), "中央断线 helper 必须接入 adjunct：" + call);
             assertTrue(helper.indexOf(call) == helper.lastIndexOf(call),
