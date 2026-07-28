@@ -1,5 +1,8 @@
 package com.bong.client;
 
+import com.bong.client.animation.AnimationLayerManager;
+import com.bong.client.animation.BongAnimationPlayer;
+import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.fauna.FaunaActionBridge;
 import com.bong.client.fauna.RatQiTierHandler;
@@ -1115,6 +1118,9 @@ public class BongNetworkHandler {
         NpcDialogueBubbleRenderer.clear();
         com.bong.client.audio.MusicStateMachine.instance().clear();
         SoundRecipePlayer.instance().clearOnDisconnect();
+        BongAnimationPlayer.clearOnDisconnect();
+        AnimationLayerManager.clearOnDisconnect();
+        BongPunchCombo.clearOnDisconnect();
         MutationVisualState.reset();
         SpiderDisguiseHandler.clearOnDisconnect();
         RatQiTierHandler.clearOnDisconnect();
