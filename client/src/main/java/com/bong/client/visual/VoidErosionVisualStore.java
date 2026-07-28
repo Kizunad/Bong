@@ -86,6 +86,10 @@ public final class VoidErosionVisualStore {
         STATES.clear();
     }
 
+    public static void clearOnDisconnect() {
+        reset();
+    }
+
     /**
      * 虚蚀视觉状态快照（不可变记录）。
      */

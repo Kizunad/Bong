@@ -35,4 +35,8 @@ public final class NpcMetadataStore {
     public static void clearAll() {
         METADATA_BY_ENTITY_ID.clear();
     }
+
+    public static void clearOnDisconnect() {
+        clearAll();
+    }
 }

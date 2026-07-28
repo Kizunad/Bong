@@ -38,6 +38,10 @@ public final class SpiritTreasureStateStore {
         updatedAtMs = 0L;
     }
 
+    public static synchronized void clearOnDisconnect() {
+        clear();
+    }
+
     public static void resetForTests() {
         clear();
     }
