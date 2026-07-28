@@ -6,8 +6,10 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillBarKeyRouterTest {
@@ -25,6 +27,31 @@ class SkillBarKeyRouterTest {
     void tearDown() {
         SkillBarStore.resetForTests();
         CastStateStore.resetForTests();
+    }
+
+    @Test
+    void disconnectClearRestoresFullNeutralStateAndPreservesListener() {
+        AtomicInteger notifications = new AtomicInteger();
+        SkillBarStore.addListener(config -> notifications.incrementAndGet());
+        SkillBarStore.replace(SkillBarConfig.of(
+            new SkillBarEntry[] { SkillBarEntry.item("earth_crumb", "土块", 0, 0, "") },
+            new long[] { 2_000L }
+        ));
+        SkillBarStore.setSelectedSlot(0);
+        assertEquals(1, notifications.get(), "前置：旧 session 写入必须通知长期 listener");
+
+        SkillBarStore.clearOnDisconnect();
+
+        assertSame(SkillBarConfig.empty(), SkillBarStore.snapshot(),
+            "断线必须恢复完整 empty config，而非只清一个槽位");
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot(),
+            "断线必须独立清除旧 session selected slot");
+        assertEquals(2, notifications.get(), "clear 必须通知且不得删除长期 listener");
+
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("fresh", "新物", 0, 0, ""));
+
+        assertEquals("fresh", SkillBarStore.snapshot().slot(1).id());
+        assertEquals(3, notifications.get(), "新 session 写入仍必须通知原 listener");
     }
 
     @Test

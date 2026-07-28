@@ -63,7 +63,17 @@ public final class EnvironmentAudioController {
         return loops.size();
     }
 
+    /** Stops environment loops with their configured fade for ordinary runtime/world changes. */
     public void clear() {
+        clearLoops(false);
+    }
+
+    /** Hard-stops every old-session environment loop, including layers still pending in the player. */
+    public void clearOnDisconnect() {
+        clearLoops(true);
+    }
+
+    private void clearLoops(boolean hardStop) {
         List<ActiveLoop> stopped = new ArrayList<>(loops.values());
         loops.clear();
         EnvironmentAudioLoopState.clearOnDisconnect();
@@ -72,7 +82,7 @@ public final class EnvironmentAudioController {
             try {
                 player.stop(new AudioEventPayload.StopSoundRecipe(
                     loop.instanceId,
-                    loop.fadeOutTicks
+                    hardStop ? 0 : loop.fadeOutTicks
                 ));
             } catch (RuntimeException exception) {
                 if (failure == null) {

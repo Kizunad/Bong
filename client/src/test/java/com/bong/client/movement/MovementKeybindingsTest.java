@@ -1,7 +1,10 @@
 package com.bong.client.movement;
 
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +18,8 @@ class MovementKeybindingsTest {
 
     @AfterEach
     void tearDown() {
+        KeyBinding.unpressAll();
+        MovementKeybindings.setDashKeyForTests(null);
         MovementStateStore.resetForTests();
     }
 
@@ -55,6 +60,37 @@ class MovementKeybindingsTest {
 
 
     @Test
+    void disconnectCleanupDropsOldDashPressButFreshPressStillConsumes() {
+        KeyBinding dash = new KeyBinding(
+            "test.movement_dash",
+            InputUtil.Type.KEYSYM,
+            GLFW.GLFW_KEY_V,
+            "test.bong"
+        );
+        MovementKeybindings.setDashKeyForTests(dash);
+        KeyBinding.onKeyPressed(dash.getDefaultKey());
+
+        MovementKeybindings.clearOnDisconnect();
+        MovementKeybindings.clearOnDisconnect();
+
+        assertTrue(
+            !MovementKeybindings.consumeWasPressed(dash),
+            "旧 session 已排队的 dash press 必须在断线时丢弃"
+        );
+
+        KeyBinding.onKeyPressed(dash.getDefaultKey());
+
+        assertTrue(
+            MovementKeybindings.consumeWasPressed(dash),
+            "保留的 dash binding 必须能消费 fresh session 的新按键"
+        );
+        assertTrue(
+            !MovementKeybindings.consumeWasPressed(dash),
+            "fresh press 只能消费一次，不能生成重复 dash"
+        );
+    }
+
+    @Test
     void sourceLeavesDisconnectRoutingToTheCentralLifecycleOwner() throws Exception {
         String source = Files.readString(Path.of(
             "src/main/java/com/bong/client/movement/MovementKeybindings.java"
@@ -72,8 +108,12 @@ class MovementKeybindingsTest {
         assertTrue(cleanerStart >= 0, "MovementKeybindings must expose a production adjunct cleaner");
         String cleaner = source.substring(cleanerStart);
         assertTrue(
-            cleaner.contains("ROUTER.resetOnDisconnect()"),
-            "movement adjunct cleaner must reset the router"
+            cleaner.contains("consumeWasPressed(dashKey)"),
+            "movement adjunct cleaner 必须排空旧 session 的 dash 按键队列"
+        );
+        assertTrue(
+            !cleaner.contains("resetOnDisconnect"),
+            "无状态 MovementKeyRouter 不得暴露空 lifecycle stub"
         );
         assertTrue(
             !cleaner.contains("MovementStateStore."),

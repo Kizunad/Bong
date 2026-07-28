@@ -1,40 +1,16 @@
 package com.bong.client;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** P2 adjunct lifecycle ownership: disconnect must remain centralized in BongNetworkHandler. */
 class AdjunctDisconnectOwnershipTest {
-    private static final String[] BOOTSTRAPS_WITHOUT_DISCONNECT = {
-        "environment/EnvironmentEffectController.java",
-        "iris/IrisBootstrap.java",
-        "combat/juice/CastFovController.java",
-        "combat/CombatHudBootstrap.java",
-        "movement/MovementKeybindings.java",
-        "scroll/ScrollReadScreenBootstrap.java",
-        "botany/BotanyHudBootstrap.java",
-        "npc/NpcInteractionLogControls.java",
-        "insight/InsightOfferScreenBootstrap.java",
-        "ui/CultivationScreenBootstrap.java",
-        "inventory/InspectScreenBootstrap.java",
-        "inventory/LootContainerScreenBootstrap.java",
-        "animation/BongAnimationRegistry.java",
-        "audio/NpcFootstepAudioController.java",
-        "combat/inspect/TechniquesListPanel.java",
-        "combat/inspect/WeaponTreasurePanel.java",
-        "hud/MorphCastVignetteState.java",
-        "hud/PillBuffHudPlanner.java",
-        "loop/HomeSequence.java",
-        "network/InventoryMoveRejectedHandler.java",
-        "season/SeasonVisualController.java",
-        "ui/ScreenTransitionController.java",
-        "visual/particle/DeadDropBreakPlayer.java",
-        "visual/particle/WorldVfxDemoBootstrap.java"
-    };
 
     @Test
     void adjunctBootstrapsKeepProductionWiringButDoNotRegisterDistributedDisconnectCallbacks()
@@ -54,10 +30,21 @@ class AdjunctDisconnectOwnershipTest {
         assertTrue(fov.contains("ClientEntityEvents.ENTITY_UNLOAD.register((entity, world) -> onEntityUnload(entity))"),
             "CastFovController 必须保留切世界 entity-unload teardown wiring");
 
-        for (String path : BOOTSTRAPS_WITHOUT_DISCONNECT) {
-            assertFalse(source(path).contains("ClientPlayConnectionEvents.DISCONNECT"),
-                path + " 不得保留绕过 active-handler token gate 的分散 DISCONNECT 注册");
+        List<String> disconnectOwners;
+        try (var sources = Files.walk(productionSourceRoot())) {
+            disconnectOwners = sources
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".java"))
+                .filter(path -> read(path).contains("ClientPlayConnectionEvents.DISCONNECT"))
+                .map(path -> productionSourceRoot().relativize(path).toString().replace('\\', '/'))
+                .sorted()
+                .toList();
         }
+        assertEquals(
+            List.of("BongNetworkHandler.java"),
+            disconnectOwners,
+            "全部 production Java 源码中只能由 BongNetworkHandler 注册 DISCONNECT；任何分散入口都会绕过 active-handler token gate"
+        );
     }
 
     @Test
@@ -129,13 +116,25 @@ class AdjunctDisconnectOwnershipTest {
     }
 
     private static String source(String relativePath) throws Exception {
+        Path source = productionSourceRoot().resolve(relativePath);
+        assertTrue(Files.exists(source), "必须存在 lifecycle source：" + source.toAbsolutePath());
+        return read(source);
+    }
+
+    private static Path productionSourceRoot() {
         Path workingDirectory = Path.of("").toAbsolutePath().normalize();
         Path clientRoot = Files.isDirectory(workingDirectory.resolve("src"))
             ? workingDirectory
             : workingDirectory.resolve("client");
-        Path source = clientRoot.resolve("src/main/java/com/bong/client").resolve(relativePath);
-        assertTrue(Files.exists(source), "必须存在 lifecycle source：" + source.toAbsolutePath());
-        return Files.readString(source);
+        return clientRoot.resolve("src/main/java/com/bong/client");
+    }
+
+    private static String read(Path source) {
+        try {
+            return Files.readString(source);
+        } catch (java.io.IOException exception) {
+            throw new AssertionError("无法读取 production source：" + source.toAbsolutePath(), exception);
+        }
     }
 
     private static String productionHook(String source, String methodName) {

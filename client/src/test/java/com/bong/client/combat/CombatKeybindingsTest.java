@@ -82,19 +82,7 @@ class CombatKeybindingsTest {
 
 
     @Test
-    void disconnectCleanupClearsHeldEdgesButPreservesIntentHandlers() {
-        List<Integer> dispatchedSlots = new ArrayList<>();
-        CombatKeybindings.setQuickSlotHandler(dispatchedSlots::add);
-        CombatKeybindings.setHeldEdgesForTests(true, true);
-
-        CombatKeybindings.clearOnDisconnect();
-        CombatKeybindings.clearOnDisconnect();
-
-        assertEquals(false, CombatKeybindings.spellVolumeHeldLastTickForTests(),
-            "断线清理必须清掉旧 session 的 spell-volume held edge");
-        assertEquals(false, CombatKeybindings.shieldHeldLastTickForTests(),
-            "断线清理必须清掉旧 session 的 shield held edge");
-
+    void disconnectCleanupDropsOldPressesButPreservesBindingsAndIntentHandler() {
         Map<String, KeyBinding> installedByDefinition = new LinkedHashMap<>();
         CombatKeybindings.installBindings(definition -> {
             KeyBinding installed = new KeyBinding(
@@ -106,7 +94,24 @@ class CombatKeybindingsTest {
             installedByDefinition.put(definition.getTranslationKey(), installed);
             return installed;
         });
+        List<Integer> dispatchedSlots = new ArrayList<>();
+        CombatKeybindings.setQuickSlotHandler(dispatchedSlots::add);
+        CombatKeybindings.setHeldEdgesForTests(true, true);
         KeyBinding installedQuickSlot = installedByDefinition.get("key.bong-client.quick_slot_1");
+        KeyBinding.onKeyPressed(installedQuickSlot.getDefaultKey());
+
+        CombatKeybindings.clearOnDisconnect();
+        CombatKeybindings.clearOnDisconnect();
+
+        assertEquals(false, CombatKeybindings.spellVolumeHeldLastTickForTests(),
+            "断线清理必须清掉旧 session 的 spell-volume held edge");
+        assertEquals(false, CombatKeybindings.shieldHeldLastTickForTests(),
+            "断线清理必须清掉旧 session 的 shield held edge");
+        assertEquals(0, CombatKeybindings.consumeQuickSlotPresses(),
+            "旧 session 已排队但未消费的快捷槽按键不得跨重连派发");
+        assertEquals(List.of(), dispatchedSlots,
+            "排空旧 session 按键时不得调用长期 quick-slot handler");
+
         KeyBinding.onKeyPressed(installedQuickSlot.getDefaultKey());
 
         assertEquals(1, CombatKeybindings.consumeQuickSlotPresses(),

@@ -106,7 +106,7 @@ public final class EnvironmentEffectController {
      * tick listener 与测试 seam 均属于进程级 wiring，必须保留。重复调用安全。
      */
     public static void clearOnDisconnect() {
-        clear();
+        clearRuntimeState(AUDIO::clearOnDisconnect);
     }
 
     /**

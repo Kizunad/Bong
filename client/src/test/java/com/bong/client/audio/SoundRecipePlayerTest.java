@@ -82,14 +82,18 @@ public class SoundRecipePlayerTest {
     }
 
     @Test
-    void stopRemovesLoopAndCallsSinkStop() {
+    void stopRemovesLoopPendingLayersAndCallsSinkStop() {
         RecordingSink sink = new RecordingSink();
         SoundRecipePlayer player = new SoundRecipePlayer(sink, flag -> true);
         player.play(playPayload(recipeWithLoop(), 1.0f, 0.0f));
+        assertEquals(1, player.pendingCountForTests(), "前置：loop 初始 layers 必须仍在 pending 队列");
 
         player.stop(new AudioEventPayload.StopSoundRecipe(42, 10));
+        player.tick();
 
         assertEquals(0, player.activeLoopCountForTests());
+        assertEquals(0, player.pendingCountForTests(), "stop 必须移除同 instance 尚未播放的 pending layers");
+        assertTrue(sink.played.isEmpty(), "已停止的 pending layers 不得在后续 tick 进入 sink");
         assertEquals(42L, sink.stoppedInstanceId);
         assertEquals(10, sink.stoppedFadeOutTicks);
     }

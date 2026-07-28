@@ -99,7 +99,7 @@ public final class MovementKeybindings {
         return Math.toDegrees(Math.atan2(-movementSideways, movementForward));
     }
 
-    private static boolean consumeWasPressed(KeyBinding key) {
+    static boolean consumeWasPressed(KeyBinding key) {
         boolean pressed = false;
         while (key != null && key.wasPressed()) {
             pressed = true;
@@ -108,12 +108,16 @@ public final class MovementKeybindings {
     }
 
     /**
-     * Clears only the movement input router's session adjunct state.
+     * Discards old-session dash presses while retaining process-lifetime binding and router wiring.
      *
      * <p>{@code MovementStateStore} is registry-owned and must be cleared by the central
      * disconnect lifecycle, not by this keybinding bootstrap.</p>
      */
     public static void clearOnDisconnect() {
-        ROUTER.resetOnDisconnect();
+        consumeWasPressed(dashKey);
+    }
+
+    static void setDashKeyForTests(KeyBinding key) {
+        dashKey = key;
     }
 }

@@ -101,6 +101,7 @@ import com.bong.client.identity.IdentityPanelState;
 import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.insight.InsightCategory;
 import com.bong.client.insight.InsightChoice;
+import com.bong.client.insight.InsightDecision;
 import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.insight.InsightOfferViewModel;
 import com.bong.client.inventory.model.InventoryItem;
@@ -177,6 +178,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -260,11 +264,11 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 adapter(3, AlchemyFurnaceStore.class,
                     () -> AlchemyFurnaceStore.replace(new AlchemyFurnaceStore.Snapshot(
                         new BlockPos(1, 64, 1), 2, 40f, 100f, "old", true)),
-                    () -> AlchemyFurnaceStore.snapshot().pos() == null),
+                    () -> AlchemyFurnaceStore.Snapshot.empty().equals(AlchemyFurnaceStore.snapshot())),
                 adapter(5, AlchemySessionStore.class,
                     () -> AlchemySessionStore.replace(new AlchemySessionStore.Snapshot(
                         "old", true, 1, 10, 1f, 2f, 0.5f, 1d, 2d, "old", List.of(), List.of())),
-                    () -> !AlchemySessionStore.snapshot().isActive()),
+                    () -> AlchemySessionStore.Snapshot.empty().equals(AlchemySessionStore.snapshot())),
                 adapter(9, BotanyPlantRenderProfileStore.class,
                     () -> BotanyPlantRenderProfileStore.replaceAll(List.of(new BotanyPlantRenderProfile(
                         "old", "grass", 0x123456, null, BotanyPlantRenderProfile.ModelOverlay.NONE))),
@@ -279,18 +283,24 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 adapter(14, CombatHudStateStore.class,
                     () -> CombatHudStateStore.replace(CombatHudState.create(
                         0.2f, 0.3f, 0.4f, DerivedAttrFlags.none())),
-                    () -> !CombatHudStateStore.snapshot().active()),
+                    () -> CombatHudStateStore.snapshot() == CombatHudState.empty()),
                 adapter(16, EquippedShieldStore.class,
                     () -> EquippedShieldStore.equip(new EquippedShield(1L, "old", 10f, 20f)),
                     () -> EquippedShieldStore.snapshot() == null),
                 adapter(17, QuickUseSlotStore.class,
                     () -> QuickUseSlotStore.replace(QuickSlotConfig.of(
-                        new QuickSlotEntry[] {new QuickSlotEntry("old", "old", 1, 1, "")}, new long[0])),
-                    () -> QuickUseSlotStore.snapshot().slot(0) == null),
+                        new QuickSlotEntry[] {new QuickSlotEntry("old", "old", 1, 1, "")}, new long[] {2_000L})),
+                    () -> QuickUseSlotStore.snapshot() == QuickSlotConfig.empty()),
                 adapter(18, SkillBarStore.class,
-                    () -> SkillBarStore.replace(SkillBarConfig.of(
-                        new SkillBarEntry[] {SkillBarEntry.item("old", "old", 1, 1, "")}, new long[0])),
-                    () -> SkillBarStore.snapshot().slot(0) == null),
+                    () -> {
+                        SkillBarStore.replace(SkillBarConfig.of(
+                            new SkillBarEntry[] {SkillBarEntry.item("old", "old", 1, 1, "")},
+                            new long[] {2_000L}
+                        ));
+                        SkillBarStore.setSelectedSlot(0);
+                    },
+                    () -> SkillBarStore.snapshot() == SkillBarConfig.empty()
+                        && SkillBarStore.selectedSlot() == SkillBarStore.NO_SELECTED_SLOT),
                 adapter(19, SkillConfigStore.class,
                     () -> {
                         JsonObject config = new JsonObject();
@@ -300,7 +310,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     () -> SkillConfigStore.snapshot().isEmpty()),
                 adapter(20, SpellVolumeStore.class,
                     () -> SpellVolumeStore.show(2f, 20f, 0.5f),
-                    () -> !SpellVolumeStore.snapshot().visible()),
+                    () -> SpellVolumeStore.snapshot() == com.bong.client.combat.SpellVolumeState.idle()),
                 adapter(21, TreasureEquippedStore.class,
                     () -> TreasureEquippedStore.putOrClear("main", new EquippedTreasure("main", 1L, "old", "old")),
                     () -> TreasureEquippedStore.get("main") == null),
@@ -362,8 +372,14 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                         "old-observer", "old-target", ColorKind.Sharp, null, false, false, 1d)),
                     () -> QiColorObservedStore.snapshot() == null),
                 adapter(54, AnqiHudStateStore.class,
-                    () -> AnqiHudStateStore.updateAim(0.5f, 1_000L, 10_000L, 1L),
-                    () -> !AnqiHudStateStore.snapshot(1_000L).active(1_000L)),
+                    () -> {
+                        AnqiHudStateStore.updateAim(0.5f, 1_000L, 10_000L, 1L);
+                        AnqiHudStateStore.updateEcho(2, 1_000L, 10_000L, 2L);
+                        AnqiHudStateStore.updateCharge(0.4f, 1_000L, 10_000L, 3L);
+                        AnqiHudStateStore.updateAbrasion("old", 2f, 1_000L, 10_000L, 4L);
+                        AnqiHudStateStore.updateMultiShot(3, 1_000L, 10_000L, 5L);
+                    },
+                    () -> AnqiHudStateStore.snapshot(1_000L).equals(com.bong.client.hud.AnqiHudState.empty())),
                 adapter(58, LootContainerStateStore.class,
                     () -> LootContainerStateStore.open(new LootContainerStateStore.OpenSession(
                         1L, "old", "old", 1, 1, 1_000L, List.of())),
@@ -412,13 +428,13 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 adapter(101, PerceptionEdgeStateStore.class,
                     () -> PerceptionEdgeStateStore.replace(new PerceptionEdgeState(List.of(
                         new PerceptionEdgeState.SenseEntry(SenseKind.LIVING_QI, 1d, 2d, 3d, 1d)), 1L)),
-                    () -> PerceptionEdgeStateStore.snapshot().isEmpty()),
+                    () -> PerceptionEdgeStateStore.snapshot().equals(PerceptionEdgeState.empty())),
                 adapter(102, RealmVisionStateStore.class,
                     () -> RealmVisionStateStore.replace(new RealmVisionState(
                         new com.bong.client.visual.realm_vision.RealmVisionCommand(
                             1d, 2d, 0x123456, null, 0.5d, 0xFF123456, 0.5d, 0.5d),
                         null, 1, 1, 1L, 1)),
-                    () -> RealmVisionStateStore.snapshot().isEmpty())
+                    () -> RealmVisionStateStore.snapshot().equals(RealmVisionState.empty()))
             ),
             existingP1ProductionAdapters()
         );
@@ -447,8 +463,8 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     0.5d, true, false, false, false, "old", 1_000L)),
                 () -> HarvestSessionStore.snapshot().isEmpty()),
             adapter(13, CastStateStore.class,
-                () -> CastStateStore.beginCast(0, 100, 1_000L),
-                () -> !CastStateStore.snapshot().isCasting()),
+                () -> CastStateStore.beginSkillBarCast(3, 100, 1_000L),
+                () -> CastStateStore.snapshot() == com.bong.client.combat.CastState.idle()),
             adapter(15, DefenseWindowStore.class,
                 () -> DefenseWindowStore.open(100, 1_000L),
                 () -> !DefenseWindowStore.snapshot().active()),
@@ -551,9 +567,13 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             adapter(66, BodyPlanLayoutStore.class,
                 () -> {
                     BodyPlanLayoutStore.putLayout(new BodyPlanLayout("old", List.of(), List.of(), List.of(), List.of()));
+                    BodyPlanLayoutStore.putLayout(new BodyPlanLayout("cached", List.of(), List.of(), List.of(), List.of()));
                     BodyPlanLayoutStore.setCurrentPlanId("old");
                 },
-                () -> BodyPlanLayoutStore.currentPlanId() == null && BodyPlanLayoutStore.current() == null),
+                () -> BodyPlanLayoutStore.currentPlanId() == null
+                    && BodyPlanLayoutStore.current() == null
+                    && BodyPlanLayoutStore.byId("old") == null
+                    && BodyPlanLayoutStore.byId("cached") == null),
             adapter(67, DroppedItemStore.class,
                 () -> DroppedItemStore.putOrReplace(drop(1L, "old-item", 1.0)),
                 () -> DroppedItemStore.snapshot().isEmpty()),
@@ -561,8 +581,11 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 () -> MeridianStateStore.replace(MeridianBody.builder().realm("old").build()),
                 () -> MeridianStateStore.snapshot() == null),
             adapter(70, MorphStateStore.class,
-                () -> MorphStateStore.applyDelta(1, new MorphEntry(0, "old", "old")),
-                () -> MorphStateStore.morphOf(1).isEmpty()),
+                () -> {
+                    MorphStateStore.applyDelta(1, new MorphEntry(0, "old", "old"));
+                    MorphStateStore.applyDelta(2, new MorphEntry(0, "old-2", "old-2"));
+                },
+                () -> MorphStateStore.morphOf(1).isEmpty() && MorphStateStore.morphOf(2).isEmpty()),
             adapter(71, PhysicalBodyStore.class,
                 () -> PhysicalBodyStore.replace(PhysicalBody.builder().build()),
                 () -> PhysicalBodyStore.snapshot() == null),
@@ -719,6 +742,210 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         @Override
         public String toString() {
             return index + ":" + storeType.getSimpleName();
+        }
+    }
+
+    @Test
+    void registryPreservesLongLivedStoreResourcesAcrossNewSessionWrites() {
+        AtomicInteger alchemyNotifications = new AtomicInteger();
+        AtomicInteger castNotifications = new AtomicInteger();
+        AtomicInteger castTransitions = new AtomicInteger();
+        AtomicInteger quickUseNotifications = new AtomicInteger();
+        AtomicInteger bodyPlanNotifications = new AtomicInteger();
+        AtomicInteger meridianNotifications = new AtomicInteger();
+        AtomicInteger morphNotifications = new AtomicInteger();
+        AtomicInteger physicalBodyNotifications = new AtomicInteger();
+        AtomicInteger raceGateNotifications = new AtomicInteger();
+        AlchemySessionStore.addListener(ignored -> alchemyNotifications.incrementAndGet());
+        CastStateStore.addListener(ignored -> castNotifications.incrementAndGet());
+        CastStateStore.addTransitionListener((state, origin) -> castTransitions.incrementAndGet());
+        QuickUseSlotStore.Update subscribed = QuickUseSlotStore.subscribeAndGet(
+            ignored -> quickUseNotifications.incrementAndGet()
+        );
+        BodyPlanLayoutStore.addListener(ignored -> bodyPlanNotifications.incrementAndGet());
+        MeridianStateStore.addListener(ignored -> meridianNotifications.incrementAndGet());
+        MorphStateStore.addListener(morphNotifications::incrementAndGet);
+        PhysicalBodyStore.addListener(ignored -> physicalBodyNotifications.incrementAndGet());
+        RaceGateMetaStore.addListener(raceGateNotifications::incrementAndGet);
+
+        AlchemySessionStore.Snapshot oldAlchemy = new AlchemySessionStore.Snapshot(
+            "old", true, 1, 10, 1f, 2f, 0.5f, 1d, 2d, "old", List.of(), List.of()
+        );
+        AlchemySessionStore.replace(oldAlchemy);
+        CastStateStore.beginSkillBarCast(3, 100, 1_000L);
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.of(
+                new QuickSlotEntry[] {new QuickSlotEntry("old", "old", 1, 1, "")},
+                new long[] {2_000L}
+            ),
+            "old-ack",
+            true
+        );
+        BodyPlanLayout oldLayout = new BodyPlanLayout("old", List.of(), List.of(), List.of(), List.of());
+        BodyPlanLayoutStore.putLayout(oldLayout);
+        BodyPlanLayoutStore.setCurrentPlanId("old");
+        MeridianStateStore.replace(MeridianBody.builder().realm("old").build());
+        MorphStateStore.applyDelta(1, new MorphEntry(0, "old", "old"));
+        PhysicalBodyStore.replace(PhysicalBody.builder().build());
+        RaceGateMetaStore.replace(
+            Map.of("old", new RaceGate(RaceGate.KIND_HUMANOID, List.of())),
+            Map.of("old-skill", new RaceGate(RaceGate.KIND_HUMANOID, List.of()))
+        );
+        long sequenceBeforeClear = QuickUseSlotStore.subscribeAndGet(ignored -> {}).sequence();
+        assertTrue(sequenceBeforeClear > subscribed.sequence(), "旧 session 写入必须推进 quick-use 单调 sequence");
+
+        SessionScopedStoreRegistry.clearAllOnDisconnect();
+
+        assertEquals(AlchemySessionStore.Snapshot.empty(), AlchemySessionStore.snapshot());
+        assertSame(com.bong.client.combat.CastState.idle(), CastStateStore.snapshot());
+        QuickUseSlotStore.Update clearedQuickUse = QuickUseSlotStore.subscribeAndGet(ignored -> {});
+        assertSame(QuickSlotConfig.empty(), clearedQuickUse.config());
+        assertEquals(QuickUseSlotStore.Source.LOCAL, clearedQuickUse.source());
+        assertNull(clearedQuickUse.ackRequestId());
+        assertNull(clearedQuickUse.bindAccepted());
+        assertTrue(clearedQuickUse.sequence() > sequenceBeforeClear, "production clear 不得回退 quick-use sequence");
+        assertNull(BodyPlanLayoutStore.currentPlanId());
+        assertNull(BodyPlanLayoutStore.current());
+        assertNull(BodyPlanLayoutStore.byId("old"), "production clear 必须清完整 body-plan cache");
+        assertNull(MeridianStateStore.snapshot());
+        assertTrue(MorphStateStore.morphOf(1).isEmpty());
+        assertNull(PhysicalBodyStore.snapshot());
+        assertFalse(RaceGateMetaStore.hasReceived());
+        assertNull(RaceGateMetaStore.gateForItem("old"));
+        assertNull(RaceGateMetaStore.gateForTechnique("old-skill"));
+        assertEquals(2, alchemyNotifications.get(), "炼丹 listener 必须收到旧态与断线空态");
+        assertEquals(2, castNotifications.get(), "施法 listener 必须收到旧态与断线 idle");
+        assertEquals(2, castTransitions.get(), "施法 transition listener 必须收到旧态与断线 idle");
+        assertEquals(2, quickUseNotifications.get(), "quick-use listener 必须收到旧态与断线空态");
+        assertEquals(2, bodyPlanNotifications.get(), "body-plan listener 必须收到旧态与断线空态");
+        assertEquals(2, meridianNotifications.get(), "经脉 listener 必须收到旧态与断线空态");
+        assertEquals(2, morphNotifications.get(), "易形 listener 必须收到旧态与断线空态");
+        assertEquals(2, physicalBodyNotifications.get(), "肉身 listener 必须收到旧态与断线空态");
+        assertEquals(2, raceGateNotifications.get(), "种族门 listener 必须收到旧态与断线空态");
+
+        AlchemySessionStore.Snapshot freshAlchemy = new AlchemySessionStore.Snapshot(
+            "fresh", true, 2, 20, 2f, 3f, 0.25f, 2d, 3d, "fresh", List.of(), List.of()
+        );
+        AlchemySessionStore.replace(freshAlchemy);
+        CastStateStore.beginCast(2, 200, 2_000L);
+        QuickUseSlotStore.replaceAuthoritative(
+            QuickSlotConfig.of(
+                new QuickSlotEntry[] {new QuickSlotEntry("fresh", "fresh", 1, 1, "")},
+                new long[] {3_000L}
+            ),
+            "fresh-ack",
+            true
+        );
+        BodyPlanLayout freshLayout = new BodyPlanLayout("fresh", List.of(), List.of(), List.of(), List.of());
+        BodyPlanLayoutStore.putLayout(freshLayout);
+        BodyPlanLayoutStore.setCurrentPlanId("fresh");
+        MeridianStateStore.replace(MeridianBody.builder().realm("fresh").build());
+        MorphStateStore.applyDelta(2, new MorphEntry(0, "fresh", "fresh"));
+        PhysicalBody freshPhysicalBody = PhysicalBody.builder().build();
+        PhysicalBodyStore.replace(freshPhysicalBody);
+        RaceGate freshGate = new RaceGate(RaceGate.KIND_HUMANOID, List.of());
+        RaceGateMetaStore.replace(Map.of("fresh", freshGate), Map.of("fresh-skill", freshGate));
+
+        assertEquals(freshAlchemy, AlchemySessionStore.snapshot());
+        assertTrue(CastStateStore.snapshot().isCasting());
+        assertEquals("fresh", QuickUseSlotStore.snapshot().slot(0).itemId());
+        assertTrue(QuickUseSlotStore.subscribeAndGet(ignored -> {}).sequence() > clearedQuickUse.sequence());
+        assertSame(freshLayout, BodyPlanLayoutStore.current());
+        assertEquals("fresh", MeridianStateStore.snapshot().realm());
+        assertTrue(MorphStateStore.morphOf(2).isPresent());
+        assertSame(freshPhysicalBody, PhysicalBodyStore.snapshot());
+        assertSame(freshGate, RaceGateMetaStore.gateForItem("fresh"));
+        assertEquals(3, alchemyNotifications.get(), "原炼丹 listener 必须接收新 session 写入");
+        assertEquals(3, castNotifications.get(), "原施法 listener 必须接收新 session 写入");
+        assertEquals(3, castTransitions.get(), "原施法 transition listener 必须接收新 session 写入");
+        assertEquals(3, quickUseNotifications.get(), "原 quick-use listener 必须接收新 session 写入");
+        assertEquals(3, bodyPlanNotifications.get(), "原 body-plan listener 必须接收新 session 写入");
+        assertEquals(3, meridianNotifications.get(), "原经脉 listener 必须接收新 session 写入");
+        assertEquals(3, morphNotifications.get(), "原易形 listener 必须接收新 session 写入");
+        assertEquals(3, physicalBodyNotifications.get(), "原肉身 listener 必须接收新 session 写入");
+        assertEquals(3, raceGateNotifications.get(), "原种族门 listener 必须接收新 session 写入");
+    }
+
+    @Test
+    void registryPreservesDispatcherStreamAndSkillBarListenerResources() {
+        AtomicInteger dispatched = new AtomicInteger();
+        AtomicInteger offers = new AtomicInteger();
+        AtomicInteger skillBarNotifications = new AtomicInteger();
+        InsightOfferStore.setDispatcher(decision -> dispatched.incrementAndGet());
+        var dispatcher = InsightOfferStore.dispatcher();
+        InsightOfferStore.addListener(ignored -> offers.incrementAndGet());
+        SkillBarStore.addListener(ignored -> skillBarNotifications.incrementAndGet());
+        var eventStream = UnifiedEventStore.stream();
+        InsightOfferViewModel oldOffer = new InsightOfferViewModel(
+            "old", "old", "old", 0.5d, 1, 1, 2_000L,
+            List.of(new InsightChoice("old", InsightCategory.QI, "old", "old", "old", ""))
+        );
+        InsightOfferStore.replace(oldOffer);
+        SkillBarStore.replace(SkillBarConfig.of(
+            new SkillBarEntry[] {SkillBarEntry.item("old", "old", 0, 0, "")},
+            new long[] {2_000L}
+        ));
+        SkillBarStore.setSelectedSlot(0);
+        eventStream.publish(
+            UnifiedEvent.Channel.COMBAT,
+            UnifiedEvent.Priority.P2_NORMAL,
+            "old",
+            "old",
+            0,
+            1L
+        );
+
+        SessionScopedStoreRegistry.clearAllOnDisconnect();
+
+        assertNull(InsightOfferStore.snapshot());
+        assertSame(dispatcher, InsightOfferStore.dispatcher(), "production clear 不得替换 insight dispatcher seam");
+        assertSame(eventStream, UnifiedEventStore.stream(), "production clear 不得替换 HUD 持有的 event stream");
+        assertTrue(eventStream.snapshot().isEmpty());
+        assertSame(SkillBarConfig.empty(), SkillBarStore.snapshot());
+        assertEquals(SkillBarStore.NO_SELECTED_SLOT, SkillBarStore.selectedSlot());
+        assertEquals(2, offers.get(), "insight listener 必须收到旧态与断线空态");
+        assertEquals(2, skillBarNotifications.get(), "skill-bar listener 必须收到旧态与断线空态");
+
+        InsightOfferViewModel freshOffer = new InsightOfferViewModel(
+            "fresh", "fresh", "fresh", 0.5d, 1, 1, 3_000L,
+            List.of(new InsightChoice("fresh", InsightCategory.QI, "fresh", "fresh", "fresh", ""))
+        );
+        InsightOfferStore.replace(freshOffer);
+        InsightOfferStore.submit(InsightDecision.chosen("fresh", "fresh"));
+        SkillBarStore.updateSlot(1, SkillBarEntry.item("fresh", "fresh", 0, 0, ""));
+        eventStream.publish(
+            UnifiedEvent.Channel.WORLD,
+            UnifiedEvent.Priority.P2_NORMAL,
+            "fresh",
+            "fresh",
+            0,
+            2_000L
+        );
+
+        assertEquals(1, dispatched.get(), "registry clear 后必须继续通过同一 dispatcher 派发新 session 决策");
+        assertEquals(4, offers.get(), "原 insight listener 必须接收新 offer 与 submit 空态");
+        assertEquals(3, skillBarNotifications.get(), "原 skill-bar listener 必须接收新 session 写入");
+        assertEquals(1, eventStream.snapshot().size(), "保留的 event stream 必须接收新 session event");
+    }
+
+    @Test
+    void productionRegisteredStoreCleanersNeverCallTestResetVariants() throws Exception {
+        String registrySource = Files.readString(
+            productionSourceRoot().resolve("com/bong/client/lifecycle/SessionScopedStoreRegistry.java")
+        );
+        for (SessionStoreHandle handle : SessionScopedStoreRegistry.registeredHandlesForTests()) {
+            String simpleName = handle.storeType().getSimpleName();
+            List<String> cleanerNames = registeredCleanerNames(registrySource, simpleName);
+            assertEquals(1, cleanerNames.size(), "每个 production Store 必须恰好登记一个 cleaner：" + handle.fqcn());
+            Path source = productionSourceRoot().resolve(handle.fqcn().replace('.', '/') + ".java");
+            assertTrue(Files.exists(source), "registry handle 必须对应 production Store source：" + handle.fqcn());
+            String method = staticVoidMethod(Files.readString(source), cleanerNames.get(0));
+            assertFalse(method.contains("resetForTests("),
+                handle.fqcn() + " 的 production cleaner 不得调用 resetForTests");
+            assertFalse(method.contains("resetForTest("),
+                handle.fqcn() + " 的 production cleaner 不得调用 resetForTest");
+            assertFalse(method.contains("clearForTests("),
+                handle.fqcn() + " 的 production cleaner 不得调用 clearForTests");
         }
     }
 
@@ -1083,6 +1310,52 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         return new DuguV2HudStateStore.State(
             true, 0.8f, hint, 0.6f, 70f, revealed, true, 9L, 1f, 99f, 10L
         );
+    }
+
+    private static Path productionSourceRoot() {
+        Path workingDirectory = Path.of("").toAbsolutePath().normalize();
+        Path clientRoot = Files.isDirectory(workingDirectory.resolve("src"))
+            ? workingDirectory
+            : workingDirectory.resolve("client");
+        return clientRoot.resolve("src/main/java");
+    }
+
+    private static List<String> registeredCleanerNames(String registrySource, String storeSimpleName) {
+        java.util.regex.Pattern registration = java.util.regex.Pattern.compile(
+            "SessionStoreHandle\\.forStore\\(\\s*"
+                + java.util.regex.Pattern.quote(storeSimpleName)
+                + "\\.class,\\s*"
+                + java.util.regex.Pattern.quote(storeSimpleName)
+                + "::([A-Za-z0-9_]+)\\s*\\)",
+            java.util.regex.Pattern.DOTALL
+        );
+        java.util.regex.Matcher matcher = registration.matcher(registrySource);
+        List<String> names = new java.util.ArrayList<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
+    }
+
+    private static String staticVoidMethod(String source, String methodName) {
+        java.util.regex.Pattern signature = java.util.regex.Pattern.compile(
+            "(?:public|protected|private)?\\s*static\\s+(?:synchronized\\s+)?void\\s+"
+                + java.util.regex.Pattern.quote(methodName)
+                + "\\s*\\(\\s*\\)\\s*\\{"
+        );
+        java.util.regex.Matcher matcher = signature.matcher(source);
+        assertTrue(matcher.find(), "必须能定位 production cleaner：" + methodName);
+        int bodyStart = source.indexOf('{', matcher.start());
+        int depth = 0;
+        for (int index = bodyStart; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}' && --depth == 0) {
+                return source.substring(matcher.start(), index + 1);
+            }
+        }
+        throw new AssertionError("无法圈定 production cleaner：" + methodName);
     }
 
     private static void resetTestOnlyState() {

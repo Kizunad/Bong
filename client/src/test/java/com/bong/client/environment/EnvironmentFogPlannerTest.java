@@ -124,10 +124,12 @@ class EnvironmentFogPlannerTest {
         controller.update(List.of(first, second), new Vec3d(8.0, 70.0, 8.0));
         assertEquals(2, controller.activeLoopCountForTests(), "前置：旧 session 必须持有两个 environment loop key");
 
-        IllegalStateException failure = assertThrows(IllegalStateException.class, controller::clear);
+        IllegalStateException failure = assertThrows(IllegalStateException.class, controller::clearOnDisconnect);
 
         assertEquals("stop failed", failure.getMessage(), "首个 RuntimeException 应交给父级中央清理隔离");
         assertEquals(2, sink.stopAttempts, "一个 stop 失败后仍必须尝试停止剩余旧 loop");
+        assertEquals(List.of(0, 0), sink.fadeOutTicks,
+            "断线必须对全部 environment loop 请求零 tick hard-stop");
         assertEquals(0, controller.activeLoopCountForTests(), "stop 失败前必须先摘除全部旧 loop key");
         assertFalse(EnvironmentAudioLoopState.isActive(firstFlag), "stop 失败不得保留第一个旧 flag");
         assertFalse(EnvironmentAudioLoopState.isActive(secondFlag), "stop 失败不得保留第二个旧 flag");
@@ -136,6 +138,24 @@ class EnvironmentFogPlannerTest {
         controller.update(List.of(first), new Vec3d(8.0, 70.0, 8.0));
         assertEquals(1, controller.activeLoopCountForTests(), "新 session 同 key emitter 必须能重新启动 loop");
         assertTrue(EnvironmentAudioLoopState.isActive(firstFlag), "新 session 必须能重新激活同 key flag");
+    }
+
+    @Test
+    void ordinaryEnvironmentClearKeepsConfiguredFadeAndDropsPendingLayers() {
+        RuntimeFailingSink sink = new RuntimeFailingSink();
+        sink.failStops = false;
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        EnvironmentAudioController controller = new EnvironmentAudioController(player);
+        ActiveEmitter emitter = active("world-switch-fog", 1, fog(0x788494, 0.5));
+
+        controller.update(List.of(emitter), new Vec3d(8.0, 70.0, 8.0));
+        assertEquals(0, sink.playAttempts, "前置：environment loop 的首层尚在 player pending 队列");
+
+        controller.clear();
+
+        assertEquals(List.of(40), sink.fadeOutTicks, "普通 runtime/world clear 必须保留 effect 配置淡出");
+        player.tick();
+        assertEquals(0, sink.playAttempts, "已停止的 pending environment layer 不得在后续 tick 播放");
     }
 
     @Test
@@ -176,16 +196,20 @@ class EnvironmentFogPlannerTest {
 
     private static final class RuntimeFailingSink implements SoundSink {
         boolean failStops = true;
+        int playAttempts;
         int stopAttempts;
+        final List<Integer> fadeOutTicks = new ArrayList<>();
 
         @Override
         public boolean play(AudioScheduledSound sound) {
+            playAttempts++;
             return true;
         }
 
         @Override
         public void stop(long instanceId, int fadeOutTicks) {
             stopAttempts++;
+            this.fadeOutTicks.add(fadeOutTicks);
             if (failStops) {
                 throw new IllegalStateException("stop failed");
             }

@@ -94,6 +94,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         if (removed != null) {
             removed.deactivateOwnedFlag();
         }
+        pending.removeIf(queued -> queued.instanceId() == payload.instanceId());
         sink.stop(payload.instanceId(), payload.fadeOutTicks());
         return true;
     }
