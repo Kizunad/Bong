@@ -3,12 +3,19 @@ package com.bong.client.inventory.state;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.lifecycle.SessionScopedStoreRegistry;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InventoryStoreRegistryAdapterTest {
+
+    @BeforeEach
+    void setUp() {
+        RemainsStore.resetForTests();
+        DroppedItemStore.resetForTests();
+    }
 
     @AfterEach
     void tearDown() {

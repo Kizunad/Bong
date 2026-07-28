@@ -596,17 +596,47 @@ public class BongNetworkHandlerTest {
                 hookIndex > previousIndex,
                 "非 Store hook 必须保留且维持既有相对顺序；未按序找到 " + hook
             );
+            assertEquals(
+                hookIndex,
+                clearHelper.lastIndexOf(hook),
+                "非 Store hook 必须恰好调用一次，避免重复副作用：" + hook
+            );
             previousIndex = hookIndex;
         }
 
-        assertFalse(
-            clearHelper.contains("DuguV2HudStateStore.clearOnDisconnect()"),
-            "DuguV2HudStateStore 应由 registry adapter 清理，helper 不得保留重复 direct call"
+        List<String> migratedStoreTypes = List.of(
+            "RealmCollapseHudStateStore",
+            "NpcMetadataStore",
+            "NpcLodStore",
+            "NpcMoodStore",
+            "TsyBossHealthStore",
+            "TsyDeathVfxStore",
+            "CoffinStateStore",
+            "GatheringSessionStore",
+            "CrackReadingHudStateStore",
+            "ResonanceLockHudStateStore",
+            "VoidErosionVisualStore",
+            "HallucinationLayerStore",
+            "DyingElderEncounterStore",
+            "TiandaoPresenceStore",
+            "BongHudStateStore",
+            "SearchHudStateStore",
+            "AgentUiStore",
+            "HalfStepRechallengeStore",
+            "TutorialCoffinPosStore",
+            "RemainsStore",
+            "DroppedItemStore",
+            "CraftStore",
+            "IdentityPanelStateStore",
+            "FalseSkinHudStateStore",
+            "DuguV2HudStateStore"
         );
-        assertFalse(
-            clearHelper.contains("TiandaoPresenceStore.clear()"),
-            "TiandaoPresenceStore 应由 registry adapter 清理，helper 不得保留重复 direct call"
-        );
+        for (String storeType : migratedStoreTypes) {
+            assertFalse(
+                clearHelper.contains(storeType + "."),
+                storeType + " 应只由 registry adapter 清理，helper 不得保留任何 direct call"
+            );
+        }
     }
 
     private static Envelope.PlayerState.Builder seasonAuditPlayerState() {
