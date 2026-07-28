@@ -1,5 +1,7 @@
 package com.bong.client.audio;
 
+import com.bong.client.BongClient;
+
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.sound.SoundInstance;
 import net.minecraft.sound.SoundCategory;
@@ -87,7 +89,14 @@ public final class MinecraftSoundSink implements SoundSink {
         for (List<FadeableSoundInstance> instances : activeByInstance.values()) {
             for (FadeableSoundInstance instance : instances) {
                 instance.beginFadeOut(0);
-                hardStopper.accept(instance);
+                try {
+                    hardStopper.accept(instance);
+                } catch (RuntimeException exception) {
+                    BongClient.LOGGER.error(
+                        "Failed to hard-stop sound instance while clearing disconnect state",
+                        exception
+                    );
+                }
             }
         }
         activeByInstance.clear();

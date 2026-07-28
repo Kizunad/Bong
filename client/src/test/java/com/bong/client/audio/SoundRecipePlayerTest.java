@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SoundRecipePlayerTest {
@@ -477,6 +478,62 @@ public class SoundRecipePlayerTest {
         assertEquals(0.0f, sink.played.get(2).volume(), 0.0001f,
             "新 session UI 层必须按当前 immersive 状态计算，而非继承旧 session UI restore 窗口");
     }
+
+    @Test
+    void clearOnDisconnectCompletesLocalResetWhenSinkRuntimeOperationsFail() {
+        RuntimeFailingSink sink = new RuntimeFailingSink();
+        AudioBusMixer mixer = new AudioBusMixer();
+        SoundRecipePlayer player = new SoundRecipePlayer(
+            sink,
+            EnvironmentAudioLoopState::isActive,
+            mixer,
+            new AudioTelemetry()
+        );
+        player.play(playPayloadWithFlag(recipeWithLoop(), "zone_env:runtime-failure"));
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.tick();
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+        player.setMusicState(MusicStateMachine.State.TRIBULATION);
+        mixer.restoreUiForTicks(100);
+
+        player.clearOnDisconnect();
+
+        assertEquals(1, sink.stopAttempts, "即使 hard stop 抛 RuntimeException，也必须尝试停止旧 loop");
+        assertEquals(1, sink.clearAttempts, "loop stop 失败后仍必须尝试 sink 全局清理");
+        assertEquals(0, player.activeLoopCountForTests(), "sink 失败不得保留旧 session loop 引用");
+        assertEquals(0, player.pendingCountForTests(), "sink 失败不得保留旧 session pending payload");
+        assertFalse(EnvironmentAudioLoopState.isActive("zone_env:runtime-failure"),
+            "sink 失败不得保留旧 session 派生 flag");
+        assertEquals(0L, player.tickForTests(), "sink 失败仍必须复位 session tick");
+        assertEquals(1.0f, player.ambientVolumeFactorForTests(), 0.0001f,
+            "sink 失败仍必须复位 combat ducking");
+        assertEquals(1.0f, mixer.effectiveVolume(AudioBus.ENVIRONMENT), 0.0001f,
+            "sink 失败仍必须复位 session music state");
+
+        player.clearOnDisconnect();
+        assertEquals(1, sink.stopAttempts, "幂等清理不得重试已摘除的旧 loop 引用");
+        assertEquals(2, sink.clearAttempts, "幂等清理仍可再次请求 sink 清理空状态");
+    }
+
+    @Test
+    void clearOnDisconnectStillPropagatesSinkErrorAfterLocalReset() {
+        ErrorFailingSink sink = new ErrorFailingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        player.play(playPayloadWithFlag(recipeWithLoop(), "zone_env:error"));
+        player.tick();
+        player.play(playPayload(recipeWithoutLoop(), 1.0f, 0.0f));
+
+        AssertionError error = assertThrows(AssertionError.class, player::clearOnDisconnect);
+
+        assertEquals("fatal stop", error.getMessage(), "Error 必须原样透传，不能按可恢复 RuntimeException 吞掉");
+        assertEquals(0, player.activeLoopCountForTests(), "Error 前也必须先摘除旧 session loop 引用");
+        assertEquals(0, player.pendingCountForTests(), "Error 前也必须先丢弃旧 session pending payload");
+        assertFalse(EnvironmentAudioLoopState.isActive("zone_env:error"),
+            "Error 前也必须先撤销旧 session 派生 flag");
+        assertEquals(0L, player.tickForTests(), "Error 前也必须先复位 session tick");
+        assertEquals(0, sink.clearAttempts, "fatal stop Error 应原样中止后续 sink 操作");
+    }
+
     @Test
     void telemetryFlagsRecipeOverplayWindow() {
         AudioTelemetry telemetry = new AudioTelemetry(1_000L, 2);
@@ -612,6 +669,47 @@ public class SoundRecipePlayerTest {
             return played.stream()
                 .filter(sound -> sound.sound().getPath().contains(recipeId))
                 .count();
+        }
+    }
+
+    private static final class RuntimeFailingSink implements SoundSink {
+        int stopAttempts;
+        int clearAttempts;
+
+        @Override
+        public boolean play(AudioScheduledSound sound) {
+            return true;
+        }
+
+        @Override
+        public void stop(long instanceId, int fadeOutTicks) {
+            stopAttempts++;
+            throw new IllegalStateException("runtime stop");
+        }
+
+        @Override
+        public void clearOnDisconnect() {
+            clearAttempts++;
+            throw new IllegalStateException("runtime clear");
+        }
+    }
+
+    private static final class ErrorFailingSink implements SoundSink {
+        int clearAttempts;
+
+        @Override
+        public boolean play(AudioScheduledSound sound) {
+            return true;
+        }
+
+        @Override
+        public void stop(long instanceId, int fadeOutTicks) {
+            throw new AssertionError("fatal stop");
+        }
+
+        @Override
+        public void clearOnDisconnect() {
+            clearAttempts++;
         }
     }
 }

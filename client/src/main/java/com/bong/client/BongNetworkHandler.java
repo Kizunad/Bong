@@ -1133,37 +1133,53 @@ public class BongNetworkHandler {
     static void clearClientStateOnDisconnect() {
         SessionScopedStoreRegistry.clearAllOnDisconnect();
 
-        EnvironmentEffectController.clearOnDisconnect();
-        BongShaderState.clearOnDisconnect();
-        CastFovController.teardown();
-        CombatJuiceSystem.clearOnDisconnect();
-        CombatHudBootstrap.clearOnDisconnect();
-        MovementKeybindings.clearOnDisconnect();
-        BotanyHudBootstrap.clearOnDisconnect();
-        TechniquesListPanel.clearOnDisconnect();
-        WeaponTreasurePanel.clearOnDisconnect();
-        HomeSequence.clearOnDisconnect();
-        InventoryMoveRejectedHandler.clearOnDisconnect();
-        PillBuffHudPlanner.clearOnDisconnect();
-        MorphCastVignetteState.clearOnDisconnect();
-        SeasonVisualController.clearOnDisconnect();
-        ScreenTransitionController.clearOnDisconnect();
-        WorldVfxDemoBootstrap.clearOnDisconnect();
-        DeadDropBreakPlayer.clearOnDisconnect();
-        NpcFootstepAudioController.clearOnDisconnect();
-        BongAnimationRegistry.clearOnDisconnect();
-        NpcDialogueBubbleRenderer.clear();
-        com.bong.client.audio.MusicStateMachine.instance().clear();
-        SoundRecipePlayer.instance().clearOnDisconnect();
-        BongAnimationPlayer.clearOnDisconnect();
-        AnimationLayerManager.clearOnDisconnect();
-        BongPunchCombo.clearOnDisconnect();
-        MutationVisualState.reset();
-        SpiderDisguiseHandler.clearOnDisconnect();
-        RatQiTierHandler.clearOnDisconnect();
-        DaoZhanDisguiseHandler.clearOnDisconnect();
-        com.bong.client.era.EraAmbianceState.reset();
-        BongToast.clearOnDisconnect();
+        runDisconnectCleanups(
+            () -> EnvironmentEffectController.clearOnDisconnect(),
+            () -> BongShaderState.clearOnDisconnect(),
+            () -> CastFovController.clearOnDisconnect(),
+            () -> CombatJuiceSystem.clearOnDisconnect(),
+            () -> CombatHudBootstrap.clearOnDisconnect(),
+            () -> MovementKeybindings.clearOnDisconnect(),
+            () -> BotanyHudBootstrap.clearOnDisconnect(),
+            () -> TechniquesListPanel.clearOnDisconnect(),
+            () -> WeaponTreasurePanel.clearOnDisconnect(),
+            () -> HomeSequence.clearOnDisconnect(),
+            () -> InventoryMoveRejectedHandler.clearOnDisconnect(),
+            () -> PillBuffHudPlanner.clearOnDisconnect(),
+            () -> MorphCastVignetteState.clearOnDisconnect(),
+            () -> SeasonVisualController.clearOnDisconnect(),
+            () -> ScreenTransitionController.clearOnDisconnect(),
+            () -> WorldVfxDemoBootstrap.clearOnDisconnect(),
+            () -> DeadDropBreakPlayer.clearOnDisconnect(),
+            () -> NpcFootstepAudioController.clearOnDisconnect(),
+            () -> BongAnimationRegistry.clearOnDisconnect(),
+            () -> NpcDialogueBubbleRenderer.clear(),
+            () -> com.bong.client.audio.MusicStateMachine.instance().clear(),
+            () -> SoundRecipePlayer.instance().clearOnDisconnect(),
+            () -> BongAnimationPlayer.clearOnDisconnect(),
+            () -> AnimationLayerManager.clearOnDisconnect(),
+            () -> BongPunchCombo.clearOnDisconnect(),
+            () -> MutationVisualState.reset(),
+            () -> SpiderDisguiseHandler.clearOnDisconnect(),
+            () -> RatQiTierHandler.clearOnDisconnect(),
+            () -> DaoZhanDisguiseHandler.clearOnDisconnect(),
+            () -> com.bong.client.era.EraAmbianceState.reset(),
+            () -> BongToast.clearOnDisconnect()
+        );
+    }
+
+    static void runDisconnectCleanups(Runnable... cleanups) {
+        for (int index = 0; index < cleanups.length; index++) {
+            try {
+                cleanups[index].run();
+            } catch (RuntimeException exception) {
+                BongClient.LOGGER.error(
+                    "Failed to clear client disconnect adjunct at index {}",
+                    index,
+                    exception
+                );
+            }
+        }
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {

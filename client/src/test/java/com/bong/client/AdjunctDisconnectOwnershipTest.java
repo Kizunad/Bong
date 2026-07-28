@@ -72,7 +72,7 @@ class AdjunctDisconnectOwnershipTest {
         for (String call : new String[] {
             "EnvironmentEffectController.clearOnDisconnect()",
             "BongShaderState.clearOnDisconnect()",
-            "CastFovController.teardown()",
+            "CastFovController.clearOnDisconnect()",
             "CombatJuiceSystem.clearOnDisconnect()",
             "CombatHudBootstrap.clearOnDisconnect()",
             "MovementKeybindings.clearOnDisconnect()",

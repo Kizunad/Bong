@@ -679,7 +679,7 @@ public final class CastFovController {
     }
 
     /**
-     * 断线专用数据清理入口，供未来 token-gated 网络生命周期调用。
+     * 断线专用数据清理入口，由 token-gated 中央网络生命周期调用。
      *
      * <p>与切世界 / 死亡共用同一运行态终结语义；不会复位 listener、时钟 / 本地玩家测试 seam
      * 或 {@link JuiceConfig} 的玩家配置。

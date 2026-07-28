@@ -209,7 +209,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("productionAdapters")
-    void eachRegisteredHandleClearsOnlyItsDeclaredStore(ProductionAdapterCase adapter) {
+    void eachRegisteredHandleClearsItsDeclaredStoreWithoutTouchingCanary(ProductionAdapterCase adapter) {
         List<SessionStoreHandle> handles = SessionScopedStoreRegistry.registeredHandlesForTests();
         assertEquals(105, handles.size(), "P2 必须对生产 REGISTERED 的全部 105 个 handle 逐项验真");
         SessionStoreHandle handle = handles.get(adapter.index());
@@ -221,10 +221,22 @@ class SessionScopedStoreRegistryProductionAdapterTest {
 
         adapter.seed().run();
         assertFalse(adapter.isCleared().getAsBoolean(), "测试前必须建立目标 Store 的旧 session 状态：" + adapter);
+        boolean targetIsCanary = adapter.storeType() == FreshnessStore.class;
+        if (!targetIsCanary) {
+            FreshnessStore.upsert("adapter-canary", 0.75f, "must-survive-other-cleaners");
+            assertNotNull(FreshnessStore.get("adapter-canary"), "测试前必须建立旁观 Store canary：" + adapter);
+        }
 
         handle.clearOnDisconnect();
 
         assertTrue(adapter.isCleared().getAsBoolean(), "声明 handle 必须清掉其自身 Store：" + adapter);
+        if (!targetIsCanary) {
+            assertNotNull(
+                FreshnessStore.get("adapter-canary"),
+                "单个 production handle 不得越权清理旁观 FreshnessStore：" + adapter
+            );
+            FreshnessStore.clearOnDisconnect();
+        }
     }
 
     private static Stream<ProductionAdapterCase> productionAdapters() {

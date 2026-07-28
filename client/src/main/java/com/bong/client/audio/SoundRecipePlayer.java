@@ -144,24 +144,38 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
     /**
      * 断线时撤销本 session 的所有声音派生状态。
      *
-     * <p>loop 逐一零淡出 stop，确保不依赖下一帧 flag 判定；随后撤销它们各自拥有的 flag、
-     * 丢弃尚未 drain 的 payload，并复位仅由 session 事件演算出的 ducking/combat/tick 状态。
+     * <p>先从 player 摘掉全部旧会话引用和派生 flag，再 best-effort 硬停 sink 中的实例；
+     * sink 的 {@link RuntimeException} 只记录，不得阻断本地状态复位或中央 helper 的后续
+     * animation/HUD 清理。{@link Error} 仍原样透传。
      * mixer、telemetry、flag provider 与 sink 依赖均保留，保证同一 player 在新 session 可重用。
      */
     public void clearOnDisconnect() {
-        for (Map.Entry<Long, ActiveLoop> entry : loops.entrySet()) {
-            entry.getValue().deactivateOwnedFlag();
-            sink.stop(entry.getKey(), 0);
-        }
+        List<Long> staleInstanceIds = new ArrayList<>(loops.keySet());
         loops.clear();
         pending.clear();
         EnvironmentAudioLoopState.clearOnDisconnect();
-        sink.clearOnDisconnect();
         ambientVolumeFactor = 1.0f;
         lastCombatActive = false;
         lastCombatHpPercent = Float.NaN;
         tick = 0L;
         mixer.clearOnDisconnect();
+
+        for (Long instanceId : staleInstanceIds) {
+            try {
+                sink.stop(instanceId, 0);
+            } catch (RuntimeException exception) {
+                BongClient.LOGGER.error(
+                    "Failed to stop sound instance {} while clearing disconnect state",
+                    instanceId,
+                    exception
+                );
+            }
+        }
+        try {
+            sink.clearOnDisconnect();
+        } catch (RuntimeException exception) {
+            BongClient.LOGGER.error("Failed to clear sound sink on disconnect", exception);
+        }
     }
 
     public void setMusicState(MusicStateMachine.State state) {
