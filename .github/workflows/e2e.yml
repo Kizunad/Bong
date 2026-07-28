@@ -86,12 +86,27 @@ jobs:
       - name: Proto breaking change check (buf)
         if: github.event_name == 'pull_request'
         working-directory: proto
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          if git ls-tree origin/${{ github.event.pull_request.base.ref }} proto/ | grep -q .; then
-            buf breaking --against '../.git#branch=origin/${{ github.event.pull_request.base.ref }},subdir=proto'
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin \
+            "$BASE_REF:refs/remotes/origin/$BASE_REF"
+          base_commit="$(git rev-parse --verify "refs/remotes/origin/$BASE_REF^{commit}")"
+          proto_type="$(git cat-file -t "$base_commit:proto" 2>/dev/null || true)"
+          if [ "$proto_type" = "tree" ]; then
+            buf breaking --against "../.git#branch=origin/$BASE_REF,subdir=proto"
+          elif [ -z "$proto_type" ]; then
+            echo "proto/ not found on verified base commit $base_commit — skipping breaking check (first PR)"
           else
-            echo "proto/ not found on base branch — skipping breaking check (first PR)"
+            echo "verified base path proto has unexpected git object type: $proto_type" >&2
+            exit 1
           fi
+
+      - name: Build-token contract tests
+        run: |
+          bash scripts/tests/build_token_test.sh
+          python3 scripts/tests/ci_build_token_entrypoint_test.py
 
       - name: Install agent workspace dependencies
         working-directory: agent
@@ -99,7 +114,7 @@ jobs:
 
       - name: Client stage (gradlew test)
         working-directory: client
-        run: ./gradlew test
+        run: ../scripts/build-token.sh gradle test
 
       - name: Pre-pull Redis image with retry
         run: |
@@ -132,11 +147,11 @@ jobs:
 
       - name: Build server release binary
         working-directory: server
-        run: cargo build --release
+        run: ../scripts/build-token.sh cargo build --release
 
       - name: Server stage (cargo test)
         working-directory: server
-        run: cargo test
+        run: ../scripts/build-token.sh cargo test
 
       - name: Smoke/E2E stage (Task 13 harness)
         env:

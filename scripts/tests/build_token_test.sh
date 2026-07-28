@@ -196,21 +196,21 @@ for pid in "${PIDS[@]:1}"; do wait "$pid" 2>/dev/null || true; done
 PIDS=()
 
 start_cargo cwd_first
-if wait_file "$SANDBOX/cwd_first.started"; then
+start_cargo cwd_occupant
+if wait_file "$SANDBOX/cwd_first.started" && wait_file "$SANDBOX/cwd_occupant.started"; then
   other="$SANDBOX/other-worktree"
   mkdir "$other"
   (cd "$other" && "$TOKEN" cargo cwd_second) >"$SANDBOX/cwd_second.out" 2>"$SANDBOX/cwd_second.err" &
   PIDS+=("$!")
-  start_cargo cwd_third
-  if wait_file "$SANDBOX/cwd_second.started" && not_started_briefly "$SANDBOX/cwd_third.started"; then
+  if not_started_briefly "$SANDBOX/cwd_second.started"; then
     pass "不同 cwd/worktree 仍共享同一默认测试锁池"
   else
     fail "不同 cwd 错误分裂了锁池"
   fi
 else
-  fail "cwd 共享测试首进程未启动"
+  fail "cwd 共享测试两个持锁进程未同时启动"
 fi
-for name in cwd_first cwd_second cwd_third; do touch "$SANDBOX/$name.release"; done
+for name in cwd_first cwd_occupant cwd_second; do touch "$SANDBOX/$name.release"; done
 for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
 PIDS=()
 

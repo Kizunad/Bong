@@ -51,7 +51,7 @@ export BONG_RESOURCE_PACK_ENABLED="${BONG_RESOURCE_PACK_ENABLED:-false}"
 echo "[run-server-headless] 启动 server (cwd=$PWD profile=${PROFILE:-debug})..."
 # nohup + setsid 防 CI 上父进程退出后子进程被收割
 # stdout/stderr 都重定向到 LOG_FILE 方便失败时回看
-nohup cargo run $PROFILE >"$LOG_FILE" 2>&1 &
+nohup "$REPO_ROOT/scripts/build-token.sh" cargo run --locked $PROFILE >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 echo "[run-server-headless] PID=$SERVER_PID log=$LOG_FILE"

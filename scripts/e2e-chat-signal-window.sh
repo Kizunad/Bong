@@ -124,7 +124,7 @@ fi
   export BONG_SKIP_SKIN_PREFETCH=1
   export BONG_ROGUE_SEED_COUNT=0
   unset BONG_TERRAIN_RASTER_PATH
-  exec cargo run "${PROFILE_FLAG[@]}"
+  exec "$ROOT/scripts/build-token.sh" cargo run --locked "${PROFILE_FLAG[@]}"
 ) >"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"
 

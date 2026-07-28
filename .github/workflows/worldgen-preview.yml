@@ -134,7 +134,7 @@ jobs:
 
       - name: Build server (release) — 让后续 cargo run 直接命中 cache
         working-directory: server
-        run: cargo build --release
+        run: ../scripts/build-token.sh cargo build --release
 
       - name: Start headless Bong server
         # BONG_PREVIEW_MODE=1 激活 preview module 的 !preview-tp 命令处理 +
@@ -162,9 +162,9 @@ jobs:
         # 不复用 client/.gradle 任务状态：Loom dev runtime 曾从缓存带入已删除
         # mixin 类，导致 preview client world 初始化前崩在 stale Mixin 校验。
         run: |
-          ./gradlew clean --no-daemon
+          ../scripts/build-token.sh gradle clean --no-daemon
           xvfb-run -a --server-args='-screen 0 1280x720x24' \
-            ./gradlew runClientPreview --no-daemon --stacktrace --rerun-tasks
+            ../scripts/build-token.sh gradle runClientPreview --no-daemon --stacktrace --rerun-tasks
 
       - name: Stop server (cleanup)
         if: always()
