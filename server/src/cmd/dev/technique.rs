@@ -96,6 +96,7 @@ pub fn handle_technique(
     registry: Res<TechniqueRegistry>,
     mut players: Query<(&mut KnownTechniques, &mut Client)>,
 ) {
+    let registry = registry.as_ref();
     for event in events.read() {
         let Ok((mut techniques, mut client)) = players.get_mut(event.executor) else {
             continue;
@@ -103,7 +104,7 @@ pub fn handle_technique(
 
         match &event.result {
             TechniqueCmd::List => {
-                for line in technique_catalog_lines(&registry, &techniques) {
+                for line in technique_catalog_lines(registry, &techniques) {
                     client.send_chat_message(line);
                 }
             }
@@ -126,7 +127,7 @@ pub fn handle_technique(
             }
             TechniqueCmd::Give { id } => {
                 if id == "all" {
-                    let granted = grant_all_techniques(&registry, &mut techniques);
+                    let granted = grant_all_techniques(registry, &mut techniques);
                     client.send_chat_message(format!(
                         "[dev] technique give all: added={} activated={} total={}",
                         granted.added,
@@ -204,7 +205,7 @@ pub fn handle_technique(
                 client.send_chat_message(format!("[dev] technique `{id}` active={value}"));
             }
             TechniqueCmd::ResetAll => {
-                *techniques = KnownTechniques::dev_default(&registry);
+                *techniques = KnownTechniques::dev_default(registry);
                 client.send_chat_message(format!(
                     "[dev] technique reset_all; entries={}",
                     techniques.entries.len()
