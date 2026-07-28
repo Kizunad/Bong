@@ -13,12 +13,11 @@ public final class AlchemyOutcomeForecastStore {
         String flawedNote
     ) {
         public static Snapshot empty() {
-            return new Snapshot(
-                18f, 54f, 22f, 5f, 1f,
-                "q1.0 · Mellow 0.30",
-                "q0.7 · Mellow 0.50",
-                "q0.4 · Turbid 0.80"
-            );
+            return neutral();
+        }
+
+        public static Snapshot neutral() {
+            return new Snapshot(0f, 0f, 0f, 0f, 0f, "", "", "");
         }
     }
 
@@ -33,6 +32,10 @@ public final class AlchemyOutcomeForecastStore {
 
     public static void replace(Snapshot next) {
         snapshot = next == null ? Snapshot.empty() : next;
+    }
+
+    public static void clearOnDisconnect() {
+        replace(Snapshot.neutral());
     }
 
     public static void resetForTests() {

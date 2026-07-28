@@ -63,6 +63,10 @@ public final class AlchemySessionStore {
         listeners.remove(listener);
     }
 
+    public static void clearOnDisconnect() {
+        replace(null);
+    }
+
     public static void resetForTests() {
         snapshot = Snapshot.empty();
         listeners.clear();
