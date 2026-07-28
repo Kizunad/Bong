@@ -29,7 +29,7 @@
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
 active：anqi-throw-imprint-drop、baolongwang-bossdrain-zone-shadow（#1296 已闭环则只核验归档）、dandao-skill-overflow-ledger、lingtian-plot-qi-ledger-gap、locust-zone-qi-ledger、meridian-forge-zone-shadow、npc-daily-life-qi-mint、qi-needle-negative-zone-release、qi-recovery-consumable-ledger。
-skeleton：attrition-overflow-ledger、bonecoin-qi-facevalue、carrier-resonance-seal-mint、dormant-negative-qi-release、fullpower-interrupt-refund-mint、heartbeat-pseudo-vein-qi-mint、qimax-shrink-clamp-leak、skull-fiend-drain-zone-shadow、tsy-entry-filter-ledger、yidao-healing-cap-leak；在飞 #1294：botany-growth-cost-harvest-ledger。
+skeleton：attrition-overflow-ledger、bonecoin-qi-facevalue、carrier-resonance-seal-mint、dormant-negative-qi-release、fullpower-interrupt-refund-mint、heartbeat-pseudo-vein-qi-mint、qimax-shrink-clamp-leak、skull-fiend-drain-zone-shadow、tsy-entry-filter-ledger、yidao-healing-cap-leak；在飞 #1294：botany-growth-cost-harvest-ledger；round-bundle 精确吸收：r8-findings #6 distance decay calibration（`qi_physics` 常数与 ledger/decay 语义）。
 
 ## 文件所有权与边界
 

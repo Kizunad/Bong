@@ -67,7 +67,7 @@ bug-hunt round8（workflow，5 角度 finder + 怀疑者对抗 + opus 逐条全�
 | #3 scar-forged flow | `server/src/combat/baomai_v4/iron_cocoon.rs:106-143` 写 flag；`server/src/cultivation/components.rs:522-524` 的 `MeridianSystem::sum_rate` 不读 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 冻结 effective-rate 设计门 |
 | #5 Insight benefit/cost cluster | `server/src/cultivation/insight_apply.rs:24-254` 多字段仍无 production consumer | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
 | #4 `jump_height_multiplier` | `server/src/combat/status.rs:174` reset、`server/src/combat/body_conditioning.rs:157-167` 写入；server/client 下游无 jump consumer | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
-| #6 distance decay calibration | `server/src/qi_physics/constants.rs:4` 仍 `0.03`；`server/src/combat/decay.rs:40-54` 仍锁 Mellow+BareQi@10 约 `0.737` 与 Solid+AncientRelic@50 约 `0.494`，且 Beast 当前映射 SpiritWeapon@50 约 `0.364`，均未锁 0.40/0.80 目标 | `independent-domain-fix` | successor 短名 `plan-bughunt-distance-decay-calibration-v1` | 后续单独 docs PR 第一性冻结 qi-ledger 语义与 R5 边界；本 PR 不创建 |
+| #6 distance decay calibration | `server/src/qi_physics/constants.rs:4` 仍 `0.03`；`server/src/combat/decay.rs:40-54` 仍锁 Mellow+BareQi@10 约 `0.737` 与 Solid+AncientRelic@50 约 `0.494`，且 Beast 当前映射 SpiritWeapon@50 约 `0.364`，均未锁 0.40/0.80 目标 | `absorbed-by-track` | R5 `plan-refactor-qi-ledger-v1`（独占 `server/src/qi_physics/**`，含常数与 ledger/decay 语义） | 已登记 R5 round-bundle 精确吸收，不另立 successor |
 | #7 NPC defense scorer lifecycle | `server/src/npc/brain/scorers_combat.rs:348-389` 当前在评分前按 `LifecycleState::Alive` gate | `already-fixed/invalid`（already-fixed） | `79c4e0258` / PR #1136 | 仅归档 |
 | #8 NPC defense action lifecycle | `server/src/npc/brain/actions_combat.rs:447-448,468-500` 对 Requested/Executing 两态均应用 lifecycle gate | `already-fixed/invalid`（already-fixed） | 同 commit/PR #1136 | 仅归档 |
 | #11 collapse death `TsyPresence` | `server/src/world/extract_system.rs:775-779` 插 `PendingTsyDeathDrop` 并移除 presence | `already-fixed/invalid`（already-fixed） | `5b477b453` / PR #1139 | 仅归档 |
@@ -76,8 +76,8 @@ bug-hunt round8（workflow，5 角度 finder + 怀疑者对抗 + opus 逐条全�
 
 ## Finish Evidence
 
-- **落地清单**：modifier 四条记录统一 successor 短名；距离与 TSY hostile 各记录独立 successor 短名（均尚未立 skeleton）；五条 merged 修复结案；bundle 迁入本路径。
+- **落地清单**：modifier 四条记录统一 successor 短名；距离衰减由 R5 `plan-refactor-qi-ledger-v1` 吸收，TSY hostile 保留独立 successor 短名（尚未立 skeleton）；五条 merged 修复结案；bundle 迁入本路径。
 - **关键 commit / PR**：`3e6981513`/#1143、`79c4e0258`/#1136、`5b477b453`/#1139 均为目标 HEAD 祖先且当前修复保留。
 - **测试结果**：docs-only triage；最终 docs static gate + exact-HEAD validator。
 - **跨仓库核验**：modifier/jump 的跨 server/schema/client 未实现部分仅记录待立 successor 短名；NPC/TSY 当前 finding 为 server lifecycle。
-- **遗留 / 后续**：仅三个后续 successor 短名；须各自独立 docs PR 建立自洽 skeleton 后才可消费；本 bundle 禁止再消费。
+- **遗留 / 后续**：仅 modifier 与 TSY hostile 两个后续 successor 短名，须各自独立 docs PR 建立自洽 skeleton 后才可消费；距离衰减留给 R5 实施，本 bundle 禁止再消费。
