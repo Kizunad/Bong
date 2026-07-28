@@ -31,7 +31,7 @@
 
 - **进料**：SQLite（`bong.db`，沿用每次操作开连接的 ownership）、JSON 状态文件、`shutdown.rs` 的 `AppExit` 链路、各域 runtime clock 与 wall-clock snapshot。
 - **出料**：统一 Slice contract 供各域声明 `load_policy / autosave_policy / shutdown_flush / time_basis / write_domain`；R1 的 session 持久化钩子和各域运行态逐批接入。
-- **共享类型**：`server/src/persistence/slice.rs` 的 `PersistenceSlice`、`SliceDescriptor`、`SliceLoad`、`PersistenceSliceRegistry`、`DirtyTracker` 与 tick rebase helper。
+- **共享类型**：`server/src/persistence/slice.rs` 的公开 `PersistenceSlice`、`SliceDescriptor`、`SliceLoad`、`GuardedSlice`、`DirtyTracker` 与 tick rebase helper；`PersistenceSliceRegistry` 及其 activation token 属于 `crate::persistence` 内部 trust boundary，不向 gameplay 暴露构造/Resource 访问能力。
 - **跨仓库契约**：零 wire 改动。
 - **qi_physics 锚点**：任何带 qi 的快照持久化/恢复不得造成账面变化；`qi_runtime_accounts` 的缺行/失败继续 fail-closed，恢复兜底不得把未知余额解释为 0。
 
@@ -126,10 +126,10 @@
 
 **决议**：
 1. 每个 `WriteDomain` 的 mutation 递增 `DirtyRevision`；每个具体 `GuardedSlice` subject 只能一次性联合恢复唯一一对 `DirtyTracker + PersistedRevisionFence`，禁止失败写后重铸 clean tracker 或让 autosave/shutdown 各持分叉 tracker。tracker 只能凭同一 subject 的 `WriteBinding(domain + authority)` write permit 产生 snapshot。写失败不产生 receipt、永不清 dirty；writer 成功后由 persistence-private durable capability + `PersistedRevisionFence::commit` 产生不可直接构造的 subject-bound `DurableWriteReceipt`，tracker 仅消费匹配同一 subject 与当前 revision 的 receipt 才能 ack clean。
-2. revision 只保护内存 dirty acknowledgement，不能单独阻止旧 snapshot 晚到覆盖数据库。registry 对同一 domain 强制唯一 authority 和一致 ordering；`SliceLoad::activate` 只接受 registry lookup 签发、外部不可构造的 `RegisteredSliceDescriptor`，`GuardedSlice` 再从该 canonical descriptor 固定 `write_ordering` 并原样传给唯一 fence，未注册局部 descriptor 无法降级覆盖。每个 domain 选择单一串行 writer，或由 `DurableWriteRequest` 把 expected persisted revision 纳入 SQL CAS/单调拒绝。
+2. revision 只保护内存 dirty acknowledgement，不能单独阻止旧 snapshot 晚到覆盖数据库。registry 对同一 domain 强制唯一 authority 和一致 ordering；registry 构造、注册、lookup token 与 `SliceLoad::activate` 全部封闭在 `crate::persistence` trust boundary，外部 gameplay 只能声明静态 descriptor，不能构造 shadow registry 签发降级 token；`GuardedSlice` 再从 canonical lookup 固定 `write_ordering` 并原样传给唯一 fence。每个 domain 选择单一串行 writer，或由 `DurableWriteRequest` 把 expected persisted revision 纳入 SQL CAS/单调拒绝。
 3. 字段写权威必须明确：事件拥有的字段不得被周期快照重新断言。跨 inventory/session/cultivation/ledger/dropped-loot 的原子 checkpoint 保持领域 transaction，不拆散。
 
-**落点**：`server/src/coffin/mod.rs:656-666`、`server/src/player/mod.rs:773-805`、`server/src/player/state.rs:670-697,780-830`；plan §阶段 P3。
+**落点**：`server/src/persistence/slice.rs:293-412,655-697,770-792,1149-1195`（canonical registry trust boundary、load activation、唯一 persistence state 与 durable commit）；`server/src/coffin/mod.rs:656-666`、`server/src/player/mod.rs:773-805`、`server/src/player/state.rs:670-697,780-830`（P3 生产迁移锚点）；plan §阶段 P3。
 
 ### #6 迁移链与 P0 范围：不 squash，只落纯契约
 
@@ -147,7 +147,7 @@
 2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才开始任何 `hydrate`。入口用稳定 `handoff_key` 绑定主体；任一保存失败或返回 `SkippedBlocked` 都会跳过整个载入阶段。
 3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。
 
-**落点**：`server/src/persistence/slice.rs:124-149,191-203,475-565,1549-1640` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
+**落点**：`server/src/persistence/slice.rs:124-149,191-203,488-578,1562-1653` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
 
 ### #8 时间 / deadline 测试：只用注入时钟（#1289 review 继承项）
 
@@ -156,4 +156,4 @@
 2. deadline rebase helper继续接受显式时间参数；contract pins 禁止调用 `SystemTime::now()`、`Instant::now()` 或依赖测试执行恰好未跨秒的 exact assertion。
 3. 生产 adapter 在调用边界采样一次时间后注入；同一 dispatch 内复用该快照，避免一次操作跨秒得到不一致字段。
 
-**落点**：`server/src/persistence/slice.rs:133-150,436-454,498-514,1217-1235,1245-1259,1954-1998` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #4。
+**落点**：`server/src/persistence/slice.rs:133-150,449-467,511-527,1230-1248,1259-1273,1967-2011` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #4。

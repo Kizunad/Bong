@@ -54,6 +54,7 @@ use crate::world::heartbeat::{
 
 #[allow(dead_code)]
 pub mod identity;
+#[allow(dead_code)]
 pub mod slice;
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
