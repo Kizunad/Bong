@@ -64,6 +64,16 @@ public class BongNetworkHandlerTest {
     }
 
     @Test
+    void seasonStoreClearOnDisconnect_restoresSummerBaseline() {
+        SeasonStateStore.replace(new SeasonState(SeasonState.Phase.WINTER, 42L, 1_000L, 2L));
+
+        SeasonStateStore.clearOnDisconnect();
+
+        assertEquals(SeasonState.summerAt(0L), SeasonStateStore.snapshot(),
+            "断线必须移除旧会话的 season payload，恢复无服务端状态的夏季基线");
+    }
+
+    @Test
     void realPlayerStateProtoDispatchUpdatesStoresThroughPrivateProductionApplyDispatch() {
         SeasonStateStore.replace(new SeasonState(SeasonState.Phase.SUMMER, 7L, 1000L, 0L));
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()

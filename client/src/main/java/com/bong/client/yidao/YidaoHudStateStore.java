@@ -57,6 +57,11 @@ public final class YidaoHudStateStore {
         snapshot = next == null ? Snapshot.EMPTY : next;
     }
 
+    /** 断线时仅清除本会话的医道 HUD 快照。 */
+    public static void clearOnDisconnect() {
+        snapshot = Snapshot.EMPTY;
+    }
+
     public static void resetForTests() {
         snapshot = Snapshot.EMPTY;
     }
