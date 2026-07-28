@@ -9,6 +9,8 @@ import com.bong.client.fauna.RatQiTierHandler;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.combat.juice.CastFovController;
+import com.bong.client.combat.juice.CombatJuiceSystem;
 import com.bong.client.dandao.MutationPayloadHandler;
 import com.bong.client.dandao.MutationVisualState;
 import com.bong.client.environment.EnvironmentEffectController;
@@ -16,6 +18,7 @@ import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.iris.BongShaderState;
 import com.bong.client.lifecycle.SessionScopedStoreRegistry;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
@@ -1115,6 +1118,10 @@ public class BongNetworkHandler {
     static void clearClientStateOnDisconnect() {
         SessionScopedStoreRegistry.clearAllOnDisconnect();
 
+        EnvironmentEffectController.clearOnDisconnect();
+        BongShaderState.clearOnDisconnect();
+        CastFovController.teardown();
+        CombatJuiceSystem.clearOnDisconnect();
         NpcDialogueBubbleRenderer.clear();
         com.bong.client.audio.MusicStateMachine.instance().clear();
         SoundRecipePlayer.instance().clearOnDisconnect();
