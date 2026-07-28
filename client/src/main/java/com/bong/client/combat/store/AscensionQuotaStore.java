@@ -59,6 +59,10 @@ public final class AscensionQuotaStore {
         listeners.remove(listener);
     }
 
+    public static void clearOnDisconnect() {
+        replace(State.EMPTY);
+    }
+
     public static void resetForTests() {
         snapshot = State.EMPTY;
         listeners.clear();
