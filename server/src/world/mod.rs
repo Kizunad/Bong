@@ -206,6 +206,7 @@ pub fn setup_world(
         WorldBootstrap::FallbackFlat(fallback) => {
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
+            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_fallback_flat_world(&mut commands, &server, &dimensions, &biomes)
         }
         WorldBootstrap::TerrainRaster(config) => {
@@ -213,7 +214,19 @@ pub fn setup_world(
                 "[bong][world] selected terrain raster bootstrap from {}",
                 config.manifest_path.display()
             );
-            terrain::spawn_raster_world(&mut commands, &server, &mut dimensions, &biomes, config)
+            let tsy_config = terrain::configured_tsy_raster_bootstrap().unwrap_or_else(|error| {
+                panic!("[bong][world] failed to configure TSY raster bootstrap: {error}")
+            });
+            let bootstrap = terrain::prepare_raster_bootstrap(config.clone(), tsy_config, &biomes)
+                .unwrap_or_else(|error| panic!("[bong][world] {error}"));
+            terrain::spawn_raster_world(
+                &mut commands,
+                &server,
+                &mut dimensions,
+                &biomes,
+                config,
+                bootstrap,
+            )
         }
         WorldBootstrap::AnvilIfPresent(anvil) => {
             tracing::info!(
@@ -221,6 +234,7 @@ pub fn setup_world(
                 anvil.world_path.display(),
                 anvil.region_dir.display()
             );
+            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_anvil_world(&mut commands, &server, &dimensions, &biomes, anvil)
         }
     };

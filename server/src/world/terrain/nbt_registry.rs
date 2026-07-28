@@ -137,20 +137,30 @@ impl Rotation {
 }
 
 /// Errors surfaced when loading the decoration template registry.
-#[derive(Debug)]
-pub enum RegistryError {
-    /// A specific template file failed to read / decompress / parse. Carries
-    /// the relative template id and the underlying NBT IO error string.
-    Template { id: String, source: String },
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryError {
+    diagnostics: Vec<String>,
+}
+
+impl RegistryError {
+    fn new(mut diagnostics: Vec<String>) -> Self {
+        diagnostics.sort();
+        diagnostics.dedup();
+        Self { diagnostics }
+    }
+
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
 }
 
 impl std::fmt::Display for RegistryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RegistryError::Template { id, source } => {
-                write!(f, "decoration template '{id}' failed to load: {source}")
-            }
-        }
+        write!(
+            f,
+            "decoration NBT registry failed validation:\n- {}",
+            self.diagnostics.join("\n- ")
+        )
     }
 }
 
@@ -167,6 +177,46 @@ impl std::error::Error for RegistryError {}
 #[derive(Debug, Default)]
 pub struct DecorationNbtRegistry {
     templates: HashMap<String, StructureNbt>,
+}
+
+/// Startup-only candidate plus every NBT admission diagnostic. Valid templates
+/// remain queryable so raster manifests can validate their template references
+/// in the same preflight even when another authored template is broken. The
+/// candidate cannot become a runtime resource until
+/// [`DecorationNbtPreflight::into_registry`] proves the diagnostic set is empty.
+pub(crate) struct DecorationNbtPreflight {
+    candidate: DecorationNbtRegistry,
+    diagnostics: Vec<String>,
+}
+
+impl DecorationNbtPreflight {
+    #[cfg(test)]
+    pub(crate) fn from_parts_for_tests(
+        candidate: DecorationNbtRegistry,
+        diagnostics: Vec<String>,
+    ) -> Self {
+        let diagnostics = RegistryError::new(diagnostics).diagnostics;
+        Self {
+            candidate,
+            diagnostics,
+        }
+    }
+
+    pub(crate) fn candidate(&self) -> &DecorationNbtRegistry {
+        &self.candidate
+    }
+
+    pub(crate) fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+
+    pub(crate) fn into_registry(self) -> Result<DecorationNbtRegistry, RegistryError> {
+        if self.diagnostics.is_empty() {
+            Ok(self.candidate)
+        } else {
+            Err(RegistryError::new(self.diagnostics))
+        }
+    }
 }
 
 impl Resource for DecorationNbtRegistry {}
@@ -188,56 +238,67 @@ impl DecorationNbtRegistry {
 
     /// Load from the default `server/structures/decorations/**` location.
     ///
-    /// On a malformed asset this logs the error and returns an **empty** registry
-    /// rather than propagating — startup must not panic just because one
-    /// decoration template is corrupt (every NBT-driven decoration then falls
-    /// back to its procedural path). The hard-error form is [`load`] for callers
-    /// that want to fail loudly (e.g. tests / asset-build validation).
-    ///
-    /// [`load`]: DecorationNbtRegistry::load
-    pub fn load_default() -> Self {
-        let dir = Self::default_structures_dir();
-        match Self::load(&dir) {
-            Ok(reg) => reg,
-            Err(error) => {
-                tracing::error!(
-                    "[bong][world] decoration NBT registry failed to load from {}: {error}; \
-                     continuing with an empty registry (NBT-driven decorations fall back to \
-                     procedural placement)",
-                    dir.display()
-                );
-                Self::empty()
-            }
-        }
+    /// A missing decorations directory remains compatible and returns an empty
+    /// registry. A present but malformed template is fatal and propagates to
+    /// startup; corrupt authored assets must never degrade into a silent empty
+    /// registry.
+    pub fn load_default() -> Result<Self, RegistryError> {
+        Self::prepare_default().into_registry()
+    }
+
+    pub(crate) fn prepare_default() -> DecorationNbtPreflight {
+        Self::prepare(&Self::default_structures_dir())
     }
 
     /// Scan `<structures_dir>/decorations/**/*.nbt`, decompress each once, and
     /// build the resident registry. Keys are relative paths under
     /// `structures_dir` (so they start with `decorations/`).
     ///
-    /// **Graceful on a missing / empty directory** — returns an empty registry
-    /// (never errors, never panics) when `decorations/` is absent or holds no
+    /// **Graceful on a missing / empty directory** — returns an empty registry when `decorations/` is absent or holds no
     /// `.nbt` files, so the binary boots before any decoration asset is authored.
     /// A *present but malformed* file is a hard error (a corrupt asset must trip
     /// loudly, not be silently dropped from placement).
     pub fn load(structures_dir: &Path) -> Result<Self, RegistryError> {
+        Self::prepare(structures_dir).into_registry()
+    }
+
+    pub(crate) fn prepare(structures_dir: &Path) -> DecorationNbtPreflight {
         let deco_dir = structures_dir.join(DECORATIONS_SUBDIR);
-        let mut paths: Vec<PathBuf> = Vec::new();
-        collect_nbt_files(&deco_dir, &mut paths);
-        // Deterministic load order so logging / iteration is stable across runs.
+        let NbtFileScan {
+            mut paths,
+            mut diagnostics,
+        } = collect_nbt_files(&deco_dir);
+        // Deterministic load order so diagnostics and iteration are stable.
         paths.sort();
 
         let mut templates = HashMap::with_capacity(paths.len());
         for path in paths {
             let id = relative_template_id(structures_dir, &path);
-            let structure =
-                nbt_io::read_structure_nbt(&path).map_err(|e| RegistryError::Template {
-                    id: id.clone(),
-                    source: e.to_string(),
-                })?;
-            templates.insert(id, structure);
+            match nbt_io::read_structure_nbt(&path) {
+                Ok(structure) => {
+                    let invalid_palette = structure.palette_diagnostics();
+                    if invalid_palette.is_empty() {
+                        if templates.insert(id.clone(), structure).is_some() {
+                            diagnostics.push(format!("duplicate decoration template id '{id}'"));
+                        }
+                    } else {
+                        diagnostics.extend(invalid_palette.into_iter().map(|reason| {
+                            format!("decoration template '{id}' has invalid palette entry {reason}")
+                        }));
+                    }
+                }
+                Err(error) => diagnostics.push(format!(
+                    "decoration template '{id}' failed to load: {error}"
+                )),
+            }
         }
-        Ok(Self { templates })
+
+        diagnostics.sort();
+        diagnostics.dedup();
+        DecorationNbtPreflight {
+            candidate: Self { templates },
+            diagnostics,
+        }
     }
 
     /// Number of resident templates.
@@ -275,8 +336,7 @@ impl DecorationNbtRegistry {
     /// Returns `(placements, unresolved)`:
     /// * `placements` — `(world_pos, block_state, block_entity_nbt)` triples to
     ///   write into the chunk (the same [`StampPlacement`] shape `/gallery` uses).
-    /// * `unresolved` — palette block names that did not resolve via
-    ///   `block_from_name` (skipped, not written as holes); callers should warn.
+    /// * `unresolved` — always empty for a registry admitted by startup validation.
     ///
     /// `None` when `template_id` is not resident (caller falls back to procedural).
     ///
@@ -314,13 +374,13 @@ impl DecorationNbtRegistry {
         // Rotated path: rotate each block's template-local offset about Y, then
         // place at base_origin. We rebuild placements directly (rather than via
         // structure_placements at one origin) because the rotation is per-block.
-        let unresolved = structure.unresolved_palette_blocks();
+        let unresolved = structure.palette_diagnostics();
         let mut placements = Vec::with_capacity(structure.blocks.len());
         for block in &structure.blocks {
             let Some(entry) = structure.palette.get(block.state as usize) else {
                 continue;
             };
-            let Some(state) = entry.block_state() else {
+            let Ok(state) = entry.block_state() else {
                 continue;
             };
             let (rx, ry, rz) = rotation.apply(block.pos[0], block.pos[1], block.pos[2]);
@@ -394,20 +454,109 @@ impl DecorationNbtRegistry {
     }
 }
 
-/// Recursively collect every `*.nbt` file under `dir` into `out`. Missing dir is
-/// a silent no-op (graceful empty-directory handling).
-fn collect_nbt_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+/// Paths that remain safe to inspect plus every filesystem admission error.
+/// Keeping valid paths alongside diagnostics lets startup validate their NBT
+/// contents and manifest references in the same failure instead of losing the
+/// rest of the scan after one bad node.
+struct NbtFileScan {
+    paths: Vec<PathBuf>,
+    diagnostics: Vec<String>,
+}
+
+/// Recursively collect every regular `*.nbt` file under `dir`. A genuinely
+/// missing decorations root remains the backward-compatible empty registry;
+/// unreadable entries, symlinks, and non-regular `*.nbt` nodes fail closed while
+/// other valid files remain available to the startup candidate.
+fn collect_nbt_files(dir: &Path) -> NbtFileScan {
+    let metadata = match std::fs::symlink_metadata(dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return NbtFileScan {
+                paths: Vec::new(),
+                diagnostics: Vec::new(),
+            };
+        }
+        Err(error) => {
+            return NbtFileScan {
+                paths: Vec::new(),
+                diagnostics: vec![format!(
+                    "failed to inspect decoration directory {}: {error}",
+                    dir.display()
+                )],
+            };
+        }
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_nbt_files(&path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("nbt") {
-            out.push(path);
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return NbtFileScan {
+            paths: Vec::new(),
+            diagnostics: vec![format!(
+                "decoration path {} must be a real directory, not a symlink or special file",
+                dir.display()
+            )],
+        };
+    }
+
+    let mut pending = vec![dir.to_path_buf()];
+    let mut paths = Vec::new();
+    let mut diagnostics = Vec::new();
+    while let Some(current) = pending.pop() {
+        let read_dir = match std::fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(error) => {
+                diagnostics.push(format!(
+                    "failed to read decoration directory {}: {error}",
+                    current.display()
+                ));
+                continue;
+            }
+        };
+        let mut entries: Vec<std::fs::DirEntry> = Vec::new();
+        for entry_result in read_dir {
+            match entry_result {
+                Ok(entry) => entries.push(entry),
+                Err(error) => diagnostics.push(format!(
+                    "failed to enumerate decoration directory {}: {error}",
+                    current.display()
+                )),
+            }
+        }
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+
+        for entry in entries {
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    diagnostics.push(format!(
+                        "failed to inspect decoration path {}: {error}",
+                        path.display()
+                    ));
+                    continue;
+                }
+            };
+            if file_type.is_symlink() {
+                diagnostics.push(format!(
+                    "decoration path {} must not be a symlink",
+                    path.display()
+                ));
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("nbt") {
+                if file_type.is_file() {
+                    paths.push(path);
+                } else {
+                    diagnostics.push(format!(
+                        "decoration template {} must be a regular file",
+                        path.display()
+                    ));
+                }
+            } else if file_type.is_dir() {
+                pending.push(path);
+            }
         }
     }
+
+    diagnostics.sort();
+    diagnostics.dedup();
+    NbtFileScan { paths, diagnostics }
 }
 
 /// The forward-slash relative id of `path` under `base` (e.g.
@@ -673,6 +822,115 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_root_and_nested_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root_case = temp_structures_dir("root_symlink");
+        let external = root_case.join("external");
+        fs::create_dir_all(&external).unwrap();
+        symlink(&external, root_case.join(DECORATIONS_SUBDIR)).unwrap();
+        let root_error = DecorationNbtRegistry::load(&root_case)
+            .expect_err("a symlinked decorations root must fail closed");
+        assert!(
+            root_error.to_string().contains("real directory"),
+            "root symlink diagnostic must explain the real-directory contract: {root_error}"
+        );
+        let _ = fs::remove_dir_all(&root_case);
+
+        let nested_case = temp_structures_dir("nested_symlink");
+        let decorations = nested_case.join(DECORATIONS_SUBDIR);
+        let external = nested_case.join("external");
+        fs::create_dir_all(&decorations).unwrap();
+        fs::create_dir_all(&external).unwrap();
+        symlink(&external, decorations.join("linked-kind")).unwrap();
+        let nested_error = DecorationNbtRegistry::load(&nested_case)
+            .expect_err("a nested symlink must fail closed instead of being followed or skipped");
+        assert!(
+            nested_error.to_string().contains("must not be a symlink"),
+            "nested symlink diagnostic must name the forbidden node type: {nested_error}"
+        );
+        let _ = fs::remove_dir_all(&nested_case);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_non_regular_nbt_node() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = temp_structures_dir("non_regular_nbt");
+        let decorations = dir.join(DECORATIONS_SUBDIR);
+        fs::create_dir_all(&decorations).unwrap();
+        let socket_path = decorations.join("not-a-template.nbt");
+        let listener = UnixListener::bind(&socket_path).expect("bind unix socket fixture");
+
+        let error = DecorationNbtRegistry::load(&dir)
+            .expect_err("a special node ending in .nbt must fail before any read is attempted");
+        assert!(
+            error.to_string().contains("must be a regular file"),
+            "special .nbt node diagnostic must explain the regular-file contract: {error}"
+        );
+
+        drop(listener);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_fresh_nbt_symlink_input() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_structures_dir("fresh_nbt_symlink");
+        let decorations = dir.join(DECORATIONS_SUBDIR);
+        fs::create_dir_all(&decorations).expect("create decorations fixture");
+        let external = dir.join("external.nbt");
+        fs::write(&external, b"not gzip nbt").expect("write external NBT target");
+        symlink(&external, decorations.join("linked.nbt")).expect("create NBT symlink fixture");
+
+        let error = DecorationNbtRegistry::load(&dir)
+            .expect_err("the discovery and open path must reject a symlinked NBT input");
+        assert!(
+            error.to_string().contains("must not be a symlink"),
+            "fresh NBT symlink admission must name the forbidden node type: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_reads_the_opened_nbt_descriptor_after_path_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_structures_dir("opened_descriptor_race");
+        let template_path = dir.join("decorations/tree/original.nbt");
+        write_template(&dir, "decorations/tree/original.nbt", &row_structure());
+        let replacement = dir.join("replacement.nbt");
+        fs::write(&replacement, b"not gzip nbt").expect("write bad replacement target");
+
+        let hook_path = template_path.clone();
+        let hook_replacement = replacement.clone();
+        super::nbt_io::set_open_regular_file_after_open_test_hook(move || {
+            fs::remove_file(&hook_path).expect("unlink opened NBT path");
+            symlink(&hook_replacement, &hook_path).expect("replace NBT path with symlink");
+        });
+
+        let registry = DecorationNbtRegistry::load(&dir).expect(
+            "registry must decode the opened original descriptor, not the path replacement",
+        );
+        assert!(registry.contains("decorations/tree/original.nbt"));
+        assert!(
+            fs::symlink_metadata(&template_path)
+                .expect("replacement path should exist")
+                .file_type()
+                .is_symlink(),
+            "test must actually replace the path after descriptor open"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn load_collects_nested_templates_keyed_by_relative_path() {
         let dir = temp_structures_dir("nested");
@@ -740,18 +998,19 @@ mod tests {
 
         let err = DecorationNbtRegistry::load(&dir)
             .expect_err("a corrupt template must be a hard error, not silently skipped");
-        match err {
-            RegistryError::Template { id, source } => {
-                assert!(
-                    id.contains("broken.nbt"),
-                    "error must name the offending template, got id={id:?}"
-                );
-                assert!(
-                    !source.is_empty(),
-                    "error must carry the underlying nbt_io reason"
-                );
-            }
-        }
+        assert_eq!(
+            err.diagnostics().len(),
+            1,
+            "one corrupt template must produce one deterministic diagnostic"
+        );
+        assert!(
+            err.diagnostics()[0].contains("broken.nbt"),
+            "error must name the offending template: {err}"
+        );
+        assert!(
+            err.diagnostics()[0].contains("failed to load"),
+            "error must carry the underlying nbt_io reason: {err}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -954,62 +1213,130 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn stamp_skips_unresolved_palette_blocks_and_reports_them() {
-        // A template referencing an unknown block must skip that block (no hole)
-        // and report it in `unresolved` so the wiring stage can warn.
-        let dir = temp_structures_dir("unresolved");
-        let structure = StructureNbt {
-            data_version: DATA_VERSION,
-            size: [2, 1, 1],
-            palette: vec![
-                PaletteEntry {
-                    name: "minecraft:stone".into(),
-                    properties: vec![],
-                },
-                PaletteEntry {
-                    name: "minecraft:totally_not_a_real_block".into(),
-                    properties: vec![],
-                },
-            ],
-            blocks: vec![
-                StructureBlockEntry {
-                    pos: [0, 0, 0],
-                    state: 0,
-                    block_nbt: None,
-                },
-                StructureBlockEntry {
-                    pos: [1, 0, 0],
-                    state: 1,
-                    block_nbt: None,
-                },
-            ],
-            entities: vec![],
-        };
-        write_template(&dir, "decorations/mixed.nbt", &structure);
-        let reg = DecorationNbtRegistry::load(&dir).unwrap();
+    fn preflight_keeps_valid_candidate_when_sibling_nbt_node_is_invalid() {
+        use std::os::unix::net::UnixListener;
 
-        // Both the rotated and non-rotated paths must agree on skip+report.
-        for rot in [Rotation::None, Rotation::Cw90] {
-            let (placements, unresolved) = reg
-                .stamp(
-                    "decorations/mixed.nbt",
-                    BlockPos::new(0, 64, 0),
-                    DecorationAnchor::Ground,
-                    rot,
-                )
-                .unwrap();
-            assert_eq!(
-                placements.len(),
-                1,
-                "{rot:?}: only the resolvable stone block is placed (unknown block skipped, no hole)"
-            );
-            assert_eq!(
-                unresolved,
-                vec!["minecraft:totally_not_a_real_block".to_string()],
-                "{rot:?}: the unknown palette block must be reported, not silently dropped"
-            );
-        }
+        let dir = temp_structures_dir("candidate_with_special_node");
+        write_template(&dir, "decorations/tree/valid.nbt", &column_structure());
+        let socket_path = dir.join("decorations/tree/broken.nbt");
+        let listener = UnixListener::bind(&socket_path).expect("bind special NBT socket fixture");
+
+        let preflight = DecorationNbtRegistry::prepare(&dir);
+        assert!(
+            preflight.candidate().contains("decorations/tree/valid.nbt"),
+            "a bad sibling node must not hide valid templates from cross-source reference preflight"
+        );
+        assert!(
+            preflight
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.contains("broken.nbt")
+                    && diagnostic.contains("regular file")),
+            "special-node admission failure must remain fatal and identify the path"
+        );
+        assert!(
+            preflight.into_registry().is_err(),
+            "filesystem diagnostics must prevent the partial candidate becoming a runtime resource"
+        );
+
+        drop(listener);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_invalid_palette_entries_is_atomic_and_aggregated() {
+        let dir = temp_structures_dir("invalid_palette");
+        write_template(&dir, "decorations/tree/valid.nbt", &column_structure());
+
+        let mut unknown_block = row_structure();
+        unknown_block.palette[0].name = "minecraft:totally_not_a_real_block".into();
+        write_template(&dir, "decorations/tree/unknown_block.nbt", &unknown_block);
+
+        let mut invalid_property = row_structure();
+        invalid_property.palette[0].name = "minecraft:oak_log".into();
+        invalid_property.palette[0].properties = vec![("axis".into(), "north".into())];
+        write_template(
+            &dir,
+            "decorations/tree/invalid_property.nbt",
+            &invalid_property,
+        );
+
+        let preflight = DecorationNbtRegistry::prepare(&dir);
+        assert!(
+            preflight.candidate().contains("decorations/tree/valid.nbt"),
+            "valid templates stay queryable during the same startup preflight"
+        );
+        assert!(
+            !preflight
+                .candidate()
+                .contains("decorations/tree/unknown_block.nbt"),
+            "invalid templates must never enter the candidate registry"
+        );
+        let error = preflight
+            .into_registry()
+            .expect_err("a candidate with diagnostics must not become a runtime registry");
+        assert_eq!(
+            error.diagnostics().len(),
+            2,
+            "both invalid templates must be reported in one startup failure: {error}"
+        );
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.contains("unknown_block.nbt")
+                    && diagnostic.contains("totally_not_a_real_block")),
+            "unknown block diagnostic must name both template and block: {error}"
+        );
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.contains("invalid_property.nbt")
+                    && diagnostic.contains("axis")
+                    && diagnostic.contains("north")),
+            "invalid property diagnostic must name template, property, and value: {error}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_rejects_negative_and_out_of_range_palette_state_references() {
+        let dir = temp_structures_dir("invalid_palette_state");
+
+        let mut negative = row_structure();
+        negative.blocks[0].state = -1;
+        write_template(&dir, "decorations/tree/negative.nbt", &negative);
+
+        let mut out_of_range = row_structure();
+        out_of_range.blocks[1].state = out_of_range.palette.len() as i32;
+        write_template(&dir, "decorations/tree/out_of_range.nbt", &out_of_range);
+
+        let error = DecorationNbtRegistry::load(&dir)
+            .expect_err("dangling palette state references must reject the whole registry");
+        assert_eq!(
+            error.diagnostics().len(),
+            2,
+            "negative and upper-bound state references must both be reported: {error}"
+        );
+        assert!(
+            error.diagnostics().iter().any(|diagnostic| {
+                diagnostic.contains("negative.nbt")
+                    && diagnostic.contains("state -1")
+                    && diagnostic.contains("palette length 3")
+            }),
+            "negative state diagnostic must identify template, state, and palette length: {error}"
+        );
+        assert!(
+            error.diagnostics().iter().any(|diagnostic| {
+                diagnostic.contains("out_of_range.nbt")
+                    && diagnostic.contains("state 3")
+                    && diagnostic.contains("palette length 3")
+            }),
+            "state == palette.len() diagnostic must identify the upper-bound failure: {error}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1048,7 +1375,7 @@ mod tests {
 
     #[test]
     fn real_decoration_assets_load_and_round_trip() {
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(
             !reg.is_empty(),
             "the authored decoration assets must load; if this is empty either \
@@ -1095,31 +1422,29 @@ mod tests {
 
     #[test]
     fn real_decoration_assets_have_no_unresolved_palette_blocks() {
-        // The §contract: every authored palette block must resolve via
-        // `blocks::block_from_name`, else the stamp silently drops it (a hole).
-        // This is the runtime mirror of the Python name<->blocks.rs cross-check.
-        let reg = DecorationNbtRegistry::load_default();
+        // Every authored palette block/property passed the same strict load-time
+        // validation production startup uses. This mirrors the Python catalog check.
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(!reg.is_empty(), "decoration assets must be present");
 
         let mut offenders: Vec<(String, Vec<String>)> = Vec::new();
         for (id, structure) in reg.iter() {
-            let unresolved = structure.unresolved_palette_blocks();
+            let unresolved = structure.palette_diagnostics();
             if !unresolved.is_empty() {
                 offenders.push((id.to_string(), unresolved));
             }
         }
         assert!(
             offenders.is_empty(),
-            "these decoration templates contain palette blocks that do NOT resolve \
-             in block_from_name (they would stamp as holes). Add each block name to \
-             server/src/world/terrain/blocks.rs::block_from_name:\n{offenders:#?}"
+            "these decoration templates contain palette entries that do NOT resolve \
+             in server/assets/worldgen/block_catalog.toml:\n{offenders:#?}"
         );
     }
 
     #[test]
     fn every_decoration_kind_has_at_least_three_variants() {
         // §6.1 hard requirement: each NBT-ised kind ships >=3 form variants.
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(!reg.is_empty(), "decoration assets must be present");
 
         for kind in DECORATION_KINDS {
@@ -1138,7 +1463,7 @@ mod tests {
         // Variants must be genuinely different shapes, not copies — compare the
         // (size, block-count, palette) signature within each kind and require
         // at least two distinct signatures (so we never ship 3 identical files).
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(!reg.is_empty(), "decoration assets must be present");
 
         for kind in DECORATION_KINDS {
@@ -1161,7 +1486,7 @@ mod tests {
     fn fallen_log_and_rift_bridge_ship_orientation_variants() {
         // Directional kinds bake explicit orientation variants so the runtime
         // can place them along either world axis without re-authoring.
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         assert!(!reg.is_empty(), "decoration assets must be present");
 
         // Fallen log: an X-axis run and a Z-axis run have transposed bounding
@@ -1202,7 +1527,7 @@ mod tests {
     fn grave_assets_are_authored_for_embedded_stamping() {
         // Grave mounds use the Embedded anchor (sink one block). The dome must
         // start at template y=0 so the lowest row replaces the surface soil.
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         let grave = reg
             .get("decorations/grave/small_v1.nbt")
             .expect("grave small_v1 must be present");
@@ -1233,7 +1558,7 @@ mod tests {
     fn hanging_crystal_assets_grow_downward_under_hanging_anchor() {
         // Hanging crystals attach at the template top and the tip is at y=0, so
         // a Hanging stamp puts the whole structure BELOW the underside surface.
-        let reg = DecorationNbtRegistry::load_default();
+        let reg = DecorationNbtRegistry::load_default().expect("real decoration assets must load");
         let id = "decorations/hanging_crystal/amethyst_stalactite_v1.nbt";
         let crystal = reg.get(id).expect("hanging crystal v1 must be present");
         let (placements, unresolved) = reg

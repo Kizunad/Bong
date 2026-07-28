@@ -30,7 +30,8 @@ fn pick_largest_template(reg: &DecorationNbtRegistry) -> String {
 }
 
 fn bench_nbt_stamp(c: &mut Criterion) {
-    let reg = DecorationNbtRegistry::load_default();
+    let reg = DecorationNbtRegistry::load_default()
+        .expect("committed decoration NBT assets must pass startup validation");
     assert!(
         !reg.is_empty(),
         "load_default must find the committed decoration .nbt assets under \

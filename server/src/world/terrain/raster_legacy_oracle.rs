@@ -1,0 +1,47 @@
+//! Frozen P2 oracle derived from the pre-datafication raster surface fast-path.
+//!
+//! The 39 surface keys are a strict subset of the 213-key terrain catalog.
+
+use valence::prelude::BlockState;
+
+pub(crate) const LEGACY_RASTER_ORACLE: &[(&str, BlockState)] = &[
+    ("stone", BlockState::STONE),
+    ("smooth_stone", BlockState::SMOOTH_STONE),
+    ("coarse_dirt", BlockState::COARSE_DIRT),
+    ("gravel", BlockState::GRAVEL),
+    ("grass_block", BlockState::GRASS_BLOCK),
+    ("dirt", BlockState::DIRT),
+    ("sand", BlockState::SAND),
+    ("red_sandstone", BlockState::RED_SANDSTONE),
+    ("terracotta", BlockState::TERRACOTTA),
+    ("red_terracotta", BlockState::RED_TERRACOTTA),
+    ("cobblestone", BlockState::COBBLESTONE),
+    ("mossy_cobblestone", BlockState::MOSSY_COBBLESTONE),
+    ("tuff", BlockState::TUFF),
+    ("blackstone", BlockState::BLACKSTONE),
+    ("obsidian", BlockState::OBSIDIAN),
+    ("basalt", BlockState::BASALT),
+    ("magma_block", BlockState::MAGMA_BLOCK),
+    ("crimson_nylium", BlockState::CRIMSON_NYLIUM),
+    ("calcite", BlockState::CALCITE),
+    ("snow_block", BlockState::SNOW_BLOCK),
+    ("packed_ice", BlockState::PACKED_ICE),
+    ("podzol", BlockState::PODZOL),
+    ("rooted_dirt", BlockState::ROOTED_DIRT),
+    ("soul_sand", BlockState::SOUL_SAND),
+    ("soul_soil", BlockState::SOUL_SOIL),
+    ("bone_block", BlockState::BONE_BLOCK),
+    ("mud", BlockState::MUD),
+    ("clay", BlockState::CLAY),
+    ("moss_block", BlockState::MOSS_BLOCK),
+    ("andesite", BlockState::ANDESITE),
+    ("deepslate", BlockState::DEEPSLATE),
+    ("cobbled_deepslate", BlockState::COBBLED_DEEPSLATE),
+    ("deepslate_bricks", BlockState::DEEPSLATE_BRICKS),
+    ("cracked_stone_bricks", BlockState::CRACKED_STONE_BRICKS),
+    ("smooth_quartz", BlockState::SMOOTH_QUARTZ),
+    ("lodestone", BlockState::LODESTONE),
+    ("weathered_copper", BlockState::WEATHERED_COPPER),
+    ("warped_planks", BlockState::WARPED_PLANKS),
+    ("dead_bush", BlockState::DEAD_BUSH),
+];
