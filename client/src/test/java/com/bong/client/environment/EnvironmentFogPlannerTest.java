@@ -90,6 +90,23 @@ class EnvironmentFogPlannerTest {
     }
 
     @Test
+    void audioLoopClearOnDisconnectDropsDerivedFlags() {
+        String oldFlag = EnvironmentAudioController.loopFlag("old-session-fog");
+        String newFlag = EnvironmentAudioController.loopFlag("new-session-fog");
+        EnvironmentAudioLoopState.activate(oldFlag);
+        EnvironmentAudioLoopState.activate(newFlag);
+        assertTrue(EnvironmentAudioLoopState.isActive(oldFlag), "前置：旧 session 派生 flag 必须存在");
+        assertTrue(EnvironmentAudioLoopState.isActive(newFlag), "前置：第二个派生 flag 必须存在");
+
+        EnvironmentAudioLoopState.clearOnDisconnect();
+
+        assertFalse(EnvironmentAudioLoopState.isActive(oldFlag), "断线必须清空旧 session 的环境 loop flag");
+        assertFalse(EnvironmentAudioLoopState.isActive(newFlag), "断线必须一次清空所有派生 flag");
+        EnvironmentAudioLoopState.activate(newFlag);
+        assertTrue(EnvironmentAudioLoopState.isActive(newFlag), "断线清理后新 session 必须能重新注册 flag");
+    }
+
+    @Test
     void audioLoopFlagUsesFullKeyInsteadOfHashCode() {
         assertEquals("FB".hashCode(), "Ea".hashCode());
         assertNotEquals(

@@ -1114,6 +1114,7 @@ public class BongNetworkHandler {
 
         NpcDialogueBubbleRenderer.clear();
         com.bong.client.audio.MusicStateMachine.instance().clear();
+        SoundRecipePlayer.instance().clearOnDisconnect();
         MutationVisualState.reset();
         SpiderDisguiseHandler.clearOnDisconnect();
         RatQiTierHandler.clearOnDisconnect();

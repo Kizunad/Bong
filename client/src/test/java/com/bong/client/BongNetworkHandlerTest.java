@@ -592,6 +592,7 @@ public class BongNetworkHandlerTest {
         List<String> nonStoreHooks = List.of(
             "NpcDialogueBubbleRenderer.clear()",
             "MusicStateMachine.instance().clear()",
+            "SoundRecipePlayer.instance().clearOnDisconnect()",
             "MutationVisualState.reset()",
             "SpiderDisguiseHandler.clearOnDisconnect()",
             "RatQiTierHandler.clearOnDisconnect()",

@@ -129,6 +129,41 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         return loops.size();
     }
 
+    int pendingCountForTests() {
+        return pending.size();
+    }
+
+    long tickForTests() {
+        return tick;
+    }
+
+    float ambientVolumeFactorForTests() {
+        return ambientVolumeFactor;
+    }
+
+    /**
+     * 断线时撤销本 session 的所有声音派生状态。
+     *
+     * <p>loop 逐一零淡出 stop，确保不依赖下一帧 flag 判定；随后撤销它们各自拥有的 flag、
+     * 丢弃尚未 drain 的 payload，并复位仅由 session 事件演算出的 ducking/combat/tick 状态。
+     * mixer、telemetry、flag provider 与 sink 依赖均保留，保证同一 player 在新 session 可重用。
+     */
+    public void clearOnDisconnect() {
+        for (Map.Entry<Long, ActiveLoop> entry : loops.entrySet()) {
+            entry.getValue().deactivateOwnedFlag();
+            sink.stop(entry.getKey(), 0);
+        }
+        loops.clear();
+        pending.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
+        sink.clearOnDisconnect();
+        ambientVolumeFactor = 1.0f;
+        lastCombatActive = false;
+        lastCombatHpPercent = Float.NaN;
+        tick = 0L;
+        mixer.clearOnDisconnect();
+    }
+
     public void setMusicState(MusicStateMachine.State state) {
         mixer.setMusicState(state);
     }

@@ -59,7 +59,7 @@ public final class EnvironmentAudioController {
             stopLoop(key);
         }
         loops.clear();
-        EnvironmentAudioLoopState.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
     }
 
     private ActiveLoop startLoop(String key, String recipeId, EnvironmentEffect effect, Vec3d playerPos) {

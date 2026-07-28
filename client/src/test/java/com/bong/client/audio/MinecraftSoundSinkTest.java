@@ -161,6 +161,42 @@ class MinecraftSoundSinkTest {
         assertTrue(layerB.isFading(), "layer B 应进入淡出");
     }
 
+    // ─── 断线边界：全局 hard-stop + 索引清空 ──────────────────────────────
+
+    @Test
+    void clearOnDisconnectHardStopsActiveAndDelayedInstancesThenClearsIndex() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        FadeableSoundInstance activeLayer = instance();
+        FadeableSoundInstance delayedLayer = instance();
+        FadeableSoundInstance anotherLoop = instance();
+        sink.registerInstanceForTests(21L, activeLayer);
+        sink.registerInstanceForTests(21L, delayedLayer);
+        sink.registerInstanceForTests(22L, anotherLoop);
+        List<FadeableSoundInstance> hardStopped = new ArrayList<>();
+
+        sink.clearOnDisconnectInternal(hardStopped::add);
+
+        assertEquals(3, hardStopped.size(), "断线必须 hard-stop 所有 instanceId 下的活动与延迟层");
+        assertTrue(activeLayer.isDone(), "活动层断线后必须标记 done");
+        assertTrue(delayedLayer.isDone(), "延迟层断线后必须标记 done，不能在新 session 补响");
+        assertTrue(anotherLoop.isDone(), "不同 loop instance 也必须硬停");
+        assertEquals(0.0f, delayedLayer.volumeForTests(), 1e-6f,
+            "延迟层必须归零音量，即使 vanilla 延迟队列之后取出它也无可听输出");
+        assertEquals(0, sink.trackedInstanceCountForTests(), "断线必须清空 activeByInstance 索引");
+    }
+
+    @Test
+    void clearOnDisconnectOnEmptySinkIsIdempotent() {
+        MinecraftSoundSink sink = new MinecraftSoundSink();
+        List<FadeableSoundInstance> hardStopped = new ArrayList<>();
+
+        sink.clearOnDisconnectInternal(hardStopped::add);
+        sink.clearOnDisconnectInternal(hardStopped::add);
+
+        assertEquals(0, hardStopped.size(), "空 sink 反复断线清理不得虚构 hard-stop");
+        assertEquals(0, sink.trackedInstanceCountForTests(), "空 sink 反复断线清理必须保持空索引");
+    }
+
     // ─── 边界：未知 id / 空索引 ─────────────────────────────────────────────
 
     @Test

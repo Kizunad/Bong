@@ -66,6 +66,33 @@ public final class MinecraftSoundSink implements SoundSink {
         stopInternal(instanceId, fadeOutTicks, instance -> client.getSoundManager().stop(instance));
     }
 
+    @Override
+    public void clearOnDisconnect() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        Consumer<FadeableSoundInstance> hardStopper = client == null || client.getSoundManager() == null
+            ? instance -> { }
+            : instance -> client.getSoundManager().stop(instance);
+        clearOnDisconnectInternal(hardStopper);
+    }
+
+    /**
+     * 断线时硬停所有本会话实例（包括尚在 vanilla 延迟队列中的 layer）并清空索引。
+     *
+     * <p>与 {@link #stopInternal(long, int, Consumer)} 的单 instance hard-stop 相同，先将
+     * 实例自身标记为完成、音量归零；即使 sound manager 已不可用，延迟层之后被取出时也
+     * 没有可听输出。随后无条件清掉 {@code activeByInstance}，不能把旧 session 的 id 留给
+     * 新 session。
+     */
+    void clearOnDisconnectInternal(Consumer<FadeableSoundInstance> hardStopper) {
+        for (List<FadeableSoundInstance> instances : activeByInstance.values()) {
+            for (FadeableSoundInstance instance : instances) {
+                instance.beginFadeOut(0);
+                hardStopper.accept(instance);
+            }
+        }
+        activeByInstance.clear();
+    }
+
     /**
      * stop 的核心逻辑，与 MinecraftClient 解耦以便 headless 单测。
      *
