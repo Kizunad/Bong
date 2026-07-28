@@ -453,31 +453,54 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
     /conservation.*merge blockers/i,
   );
   assert.equal(byId['saturated-tests'].level, 'major');
-  assert.match(
-    byId['saturated-tests'].text,
+  for (const requiredContract of [
+    /happy paths/i,
+    /boundaries.*empty.*maximum.*off-by-one/i,
+    /invalid inputs.*every error branch/i,
+    /permission and state preconditions/i,
+    /every enum variant/i,
+    /every state transition.*self or no-op transitions/i,
+    /Schema, enum, and state-machine changes require dedicated positive and negative pin tests/i,
+    /producer-to-wire-to-consumer.*integration test/i,
     /concrete incorrect implementation/,
-  );
-  assert.match(
-    byId['saturated-tests'].text,
-    /falsely claims coverage/,
-  );
-  assert.match(
-    byId['saturated-tests'].text,
-    /finer assertions.*suggestions/,
-  );
+    /falsely claim nonexistent coverage/,
+    /Finer assertions.*already fully protected.*suggestions/i,
+  ]) {
+    assert.match(
+      byId['saturated-tests'].text,
+      requiredContract,
+      `saturated-tests must preserve ${requiredContract}`,
+    );
+  }
   assert.equal(byId['minimal-maintainable-change'].level, 'major');
-  assert.match(
-    byId['minimal-maintainable-change'].text,
-    /concrete wrong result is demonstrated/,
-  );
+  for (const requiredRisk of [
+    /Compatibility layers without an explicit migration need/i,
+    /speculative abstractions without a present requirement/i,
+    /inconsistent duplicate sources of truth/i,
+    /broad refactors unrelated to the requested outcome/i,
+    /major defects.*before a production failure is observed/i,
+    /unreachable production wiring/i,
+    /non-atomic state/i,
+    /unbounded resource paths/i,
+  ]) {
+    assert.match(
+      byId['minimal-maintainable-change'].text,
+      requiredRisk,
+      `minimal-maintainable-change must preserve ${requiredRisk}`,
+    );
+  }
   assert.equal(byId['quality-improvements'].level, 'suggestion');
   assert.match(
     byId['quality-improvements'].text,
-    /comments that restate obvious code.*clearer naming.*optional helper extraction.*finer assertions/s,
+    /merely restate obvious code.*clearer naming.*optional helper extraction.*finer assertions/s,
   );
   assert.match(
     byId['quality-improvements'].text,
-    /never gate the review/,
+    /bounded improvements do not gate the review/,
+  );
+  assert.match(
+    byId['quality-improvements'].text,
+    /does not downgrade.*speculative abstractions.*compatibility layers.*duplicate sources of truth.*unrelated scope growth.*missing required contract tests/s,
   );
 
   const serialized = JSON.stringify(value);

@@ -115,7 +115,7 @@
     {
       "id": "saturated-tests",
       "level": "major",
-      "text": "Treat missing regression protection as a defect only when the pull request changes or claims a specific observable contract and the current suite would still pass a concrete incorrect implementation, or when documentation or the pull request falsely claims coverage that does not exist. Cross-stack producer-to-wire-to-consumer contracts require an integration test when unit tests cannot expose that concrete break. Requests for finer assertions, extra cases without a demonstrated gap, less mocking, or cleaner fixtures are suggestions."
+      "text": "Tests must lock every observable contract changed or claimed by the pull request across its happy paths, boundaries including empty, maximum, and off-by-one cases, invalid inputs and every error branch, permission and state preconditions, every enum variant, and every state transition including self or no-op transitions where the contract permits them. Schema, enum, and state-machine changes require dedicated positive and negative pin tests. Cross-stack producer-to-wire-to-consumer contracts require an integration test when unit tests cannot expose the full break. Missing one of these required contract categories is a major defect when it leaves changed behavior unprotected or permits a concrete incorrect implementation to pass; documentation or pull requests that falsely claim nonexistent coverage are also defects. Finer assertions or extra cases around behavior already fully protected by this contract are suggestions."
     },
     {
       "id": "test-failure-honesty",
@@ -125,12 +125,12 @@
     {
       "id": "minimal-maintainable-change",
       "level": "major",
-      "text": "Treat maintainability as a defect only when this diff creates a demonstrated production failure, unreachable production wiring, non-atomic state, unbounded resource path, inconsistent duplicate source of truth, or a structure that materially prevents a required correct change. Compatibility layers without a real migration need, speculative abstractions, or unrelated broad refactors are major only when such a concrete wrong result is demonstrated."
+      "text": "Prefer the smallest complete and maintainable implementation. Compatibility layers without an explicit migration need, speculative abstractions without a present requirement, inconsistent duplicate sources of truth, and broad refactors unrelated to the requested outcome are major defects because they expand the supported surface and obscure the authoritative path even before a production failure is observed. Also treat demonstrated production failures, unreachable production wiring, non-atomic state, unbounded resource paths, and structures that materially prevent a required correct change as major defects."
     },
     {
       "id": "quality-improvements",
       "level": "suggestion",
-      "text": "Classify comments that restate obvious code, clearer naming, optional helper extraction or reuse, simplification of already-correct branches, finer assertions around already-protected behavior, and extra defensive checks without a reachable failure as suggestions; these improvements never gate the review."
+      "text": "Classify comments that merely restate obvious code, clearer naming, optional helper extraction or reuse, simplification of already-correct branches, finer assertions around behavior already fully protected by the saturated-tests contract, and extra defensive checks without a reachable failure as suggestions; these bounded improvements do not gate the review. This rule does not downgrade speculative abstractions, compatibility layers without migration need, duplicate sources of truth, unrelated scope growth, or missing required contract tests."
     }
   ],
   "minorFindingsRequestChanges": false
