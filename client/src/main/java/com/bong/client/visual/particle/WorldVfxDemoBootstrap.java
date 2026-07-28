@@ -31,7 +31,7 @@ import java.util.List;
 public final class WorldVfxDemoBootstrap {
     private static final List<FlyingSwordDemoState> FLYING_SWORDS = new ArrayList<>();
     private static final List<FormationCoreDemoState> FORMATION_CORES = new ArrayList<>();
-    private static final ItemStack FLYING_SWORD_STACK = new ItemStack(Items.DIAMOND_SWORD);
+    private static ItemStack flyingSwordStack;
     private static ClientWorld activeWorld;
 
     private WorldVfxDemoBootstrap() {
@@ -121,7 +121,7 @@ public final class WorldVfxDemoBootstrap {
             matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(90.0f - yaw));
             matrices.multiply(RotationAxis.POSITIVE_Z.rotationDegrees(roll));
             client.getItemRenderer().renderItem(
-                FLYING_SWORD_STACK,
+                flyingSwordStack(),
                 ModelTransformationMode.GROUND,
                 light,
                 OverlayTexture.DEFAULT_UV,
@@ -188,10 +188,26 @@ public final class WorldVfxDemoBootstrap {
         }
     }
 
-    private static void clear() {
+    /**
+     * Clears local actors and their old world reference after disconnect.
+     *
+     * <p>The item stack and Fabric tick/render registrations are process-lifetime rendering resources and remain live.</p>
+     */
+    public static void clearOnDisconnect() {
         FLYING_SWORDS.clear();
         FORMATION_CORES.clear();
         activeWorld = null;
+    }
+
+    private static void clear() {
+        clearOnDisconnect();
+    }
+
+    private static ItemStack flyingSwordStack() {
+        if (flyingSwordStack == null) {
+            flyingSwordStack = new ItemStack(Items.DIAMOND_SWORD);
+        }
+        return flyingSwordStack;
     }
 
     private static float[] rgb(int colorRgb) {

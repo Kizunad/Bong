@@ -59,6 +59,11 @@ public final class TsyContainerStateStore {
             .orElse(null);
     }
 
+    /** 断线时清空本会话容器视图。 */
+    public static synchronized void clearOnDisconnect() {
+        containers.clear();
+    }
+
     public static synchronized void resetForTests() {
         containers.clear();
     }

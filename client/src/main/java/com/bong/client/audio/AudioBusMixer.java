@@ -37,6 +37,13 @@ public final class AudioBusMixer {
         }
     }
 
+    /** 复位仅由当前连接派生的混音状态，保留用户配置的各 bus 音量。 */
+    public void clearOnDisconnect() {
+        musicState = MusicStateMachine.State.AMBIENT;
+        immersiveMode = false;
+        uiRestoreTicks = 0;
+    }
+
     public float effectiveVolume(AudioBus bus) {
         AudioBus resolved = bus == null ? AudioBus.ENVIRONMENT : bus;
         float volume = volumes.getOrDefault(resolved, 1.0f);

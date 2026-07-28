@@ -108,6 +108,30 @@ public class CultivationScreenTest {
     }
 
     @Test
+    void clearOnDisconnect_clearsStaleSnapshotBeforeNextScreenBuild() {
+        PlayerStateStore.replace(PlayerStateViewModel.create(
+            "Spirit",
+            "offline:Azure",
+            88.0,
+            100.0,
+            0.45,
+            0.82,
+            PlayerStateViewModel.PowerBreakdown.create(0.90, 0.30, 0.50, 0.20),
+            PlayerStateViewModel.SocialSnapshot.empty(),
+            "violet_valley",
+            "紫霞谷",
+            0.91
+        ));
+
+        PlayerStateStore.clearOnDisconnect();
+
+        CultivationScreen clearedScreen = CultivationScreenBootstrap.createScreenForCurrentState();
+        assertTrue(clearedScreen.playerState().isEmpty(),
+            "断线必须清掉旧会话 player_state，避免修炼面板在新连接首帧展示旧角色数据");
+        assertTrue(CultivationScreen.describe(clearedScreen.playerState()).placeholder());
+    }
+
+    @Test
     void disconnectResetClearsStaleSnapshotBeforeNextScreenBuild() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
             "Spirit",
@@ -126,7 +150,7 @@ public class CultivationScreenTest {
         CultivationScreen staleScreen = CultivationScreenBootstrap.createScreenForCurrentState();
         assertFalse(staleScreen.playerState().isEmpty());
 
-        CultivationScreenBootstrap.clearPlayerStateSnapshot();
+        com.bong.client.lifecycle.SessionScopedStoreRegistry.clearAllOnDisconnect();
 
         CultivationScreen clearedScreen = CultivationScreenBootstrap.createScreenForCurrentState();
         assertTrue(clearedScreen.playerState().isEmpty());

@@ -1,7 +1,6 @@
 package com.bong.client.insight;
 
 import com.bong.client.BongClient;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.sound.SoundEvents;
@@ -21,9 +20,6 @@ public final class InsightOfferScreenBootstrap {
 
     public static void register() {
         InsightOfferStore.addListener(InsightOfferScreenBootstrap::onStoreChanged);
-
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
-            client.execute(InsightOfferStore::clearOnDisconnect));
 
         BongClient.LOGGER.info("Registered insight offer screen bootstrap via store listener");
     }

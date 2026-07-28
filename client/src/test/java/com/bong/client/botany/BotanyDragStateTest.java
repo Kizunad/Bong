@@ -61,6 +61,25 @@ public class BotanyDragStateTest {
     }
 
     @Test
+    void disconnectClearResetsAllInteractionStateAndIsIdempotent() {
+        BotanyDragState.recordRenderedBounds(100, 100, 280, 200);
+        assertTrue(BotanyDragState.onLeftButton(1, 150.0, 150.0));
+        BotanyDragState.tickDrag(200.0, 210.0);
+        assertTrue(BotanyDragState.isDragging());
+        assertEquals(50, BotanyDragState.deltaX());
+        assertEquals(60, BotanyDragState.deltaY());
+
+        BotanyDragState.clearOnDisconnect();
+        BotanyDragState.clearOnDisconnect();
+
+        assertFalse(BotanyDragState.isDragging());
+        assertEquals(0, BotanyDragState.deltaX());
+        assertEquals(0, BotanyDragState.deltaY());
+        assertFalse(BotanyDragState.onLeftButton(1, 150.0, 150.0),
+            "disconnect must invalidate old rendered bounds so stale UI cannot capture clicks");
+    }
+
+    @Test
     void releaseWithoutDraggingDoesNotConsume() {
         BotanyDragState.recordRenderedBounds(100, 100, 280, 200);
         boolean consumed = BotanyDragState.onLeftButton(0, 150.0, 150.0);

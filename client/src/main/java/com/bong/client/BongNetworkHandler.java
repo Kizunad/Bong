@@ -1,21 +1,38 @@
 package com.bong.client;
 
+import com.bong.client.animation.AnimationLayerManager;
+import com.bong.client.animation.BongAnimationPlayer;
+import com.bong.client.animation.BongAnimationRegistry;
+import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.fauna.FaunaActionBridge;
 import com.bong.client.fauna.RatQiTierHandler;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
+import com.bong.client.audio.NpcFootstepAudioController;
 import com.bong.client.audio.SoundRecipePlayer;
+import com.bong.client.botany.BotanyHudBootstrap;
+import com.bong.client.combat.CombatHudBootstrap;
+import com.bong.client.combat.inspect.TechniquesListPanel;
+import com.bong.client.combat.inspect.WeaponTreasurePanel;
+import com.bong.client.combat.juice.CastFovController;
+import com.bong.client.combat.juice.CombatJuiceSystem;
 import com.bong.client.dandao.MutationPayloadHandler;
 import com.bong.client.dandao.MutationVisualState;
 import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
+import com.bong.client.hud.MorphCastVignetteState;
+import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.iris.BongShaderState;
 import com.bong.client.lifecycle.SessionScopedStoreRegistry;
+import com.bong.client.loop.HomeSequence;
+import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
+import com.bong.client.network.InventoryMoveRejectedHandler;
 import com.bong.client.network.LocustSwarmWarningHandler;
 import com.bong.client.network.QiAttritionPayload;
 import com.bong.client.network.ServerDataDispatch;
@@ -27,8 +44,7 @@ import com.bong.client.npc.NpcMetadataHandler;
 import com.bong.client.npc.NpcBubbleHandler;
 import com.bong.client.npc.NpcDialogueBubbleRenderer;
 import com.bong.client.npc.NpcMoodHandler;
-import com.bong.client.visual.particle.BongVfxParticleBridge;
-import com.bong.client.visual.particle.QiAttritionVfxPlayer;
+import com.bong.client.season.SeasonVisualController;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.RealmCollapseHudStateStore;
@@ -40,8 +56,13 @@ import com.bong.client.tiandao.TiandaoPresencePayloadHandler;
 import com.bong.client.tsy.TsyBossHealthHandler;
 import com.bong.client.tsy.TsyDeathVfxHandler;
 import com.bong.client.ui.ClientConnectionStatusStore;
+import com.bong.client.ui.ScreenTransitionController;
 import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
+import com.bong.client.visual.particle.BongVfxParticleBridge;
+import com.bong.client.visual.particle.DeadDropBreakPlayer;
+import com.bong.client.visual.particle.QiAttritionVfxPlayer;
+import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -1112,14 +1133,53 @@ public class BongNetworkHandler {
     static void clearClientStateOnDisconnect() {
         SessionScopedStoreRegistry.clearAllOnDisconnect();
 
-        NpcDialogueBubbleRenderer.clear();
-        com.bong.client.audio.MusicStateMachine.instance().clear();
-        MutationVisualState.reset();
-        SpiderDisguiseHandler.clearOnDisconnect();
-        RatQiTierHandler.clearOnDisconnect();
-        DaoZhanDisguiseHandler.clearOnDisconnect();
-        com.bong.client.era.EraAmbianceState.reset();
-        BongToast.clearOnDisconnect();
+        runDisconnectCleanups(
+            () -> EnvironmentEffectController.clearOnDisconnect(),
+            () -> BongShaderState.clearOnDisconnect(),
+            () -> CastFovController.clearOnDisconnect(),
+            () -> CombatJuiceSystem.clearOnDisconnect(),
+            () -> CombatHudBootstrap.clearOnDisconnect(),
+            () -> MovementKeybindings.clearOnDisconnect(),
+            () -> BotanyHudBootstrap.clearOnDisconnect(),
+            () -> TechniquesListPanel.clearOnDisconnect(),
+            () -> WeaponTreasurePanel.clearOnDisconnect(),
+            () -> HomeSequence.clearOnDisconnect(),
+            () -> InventoryMoveRejectedHandler.clearOnDisconnect(),
+            () -> PillBuffHudPlanner.clearOnDisconnect(),
+            () -> MorphCastVignetteState.clearOnDisconnect(),
+            () -> SeasonVisualController.clearOnDisconnect(),
+            () -> ScreenTransitionController.clearOnDisconnect(),
+            () -> WorldVfxDemoBootstrap.clearOnDisconnect(),
+            () -> DeadDropBreakPlayer.clearOnDisconnect(),
+            () -> NpcFootstepAudioController.clearOnDisconnect(),
+            () -> BongAnimationRegistry.clearOnDisconnect(),
+            () -> NpcDialogueBubbleRenderer.clear(),
+            () -> com.bong.client.audio.MusicStateMachine.instance().clear(),
+            () -> SoundRecipePlayer.instance().clearOnDisconnect(),
+            () -> BongAnimationPlayer.clearOnDisconnect(),
+            () -> AnimationLayerManager.clearOnDisconnect(),
+            () -> BongPunchCombo.clearOnDisconnect(),
+            () -> MutationVisualState.reset(),
+            () -> SpiderDisguiseHandler.clearOnDisconnect(),
+            () -> RatQiTierHandler.clearOnDisconnect(),
+            () -> DaoZhanDisguiseHandler.clearOnDisconnect(),
+            () -> com.bong.client.era.EraAmbianceState.reset(),
+            () -> BongToast.clearOnDisconnect()
+        );
+    }
+
+    static void runDisconnectCleanups(Runnable... cleanups) {
+        for (int index = 0; index < cleanups.length; index++) {
+            try {
+                cleanups[index].run();
+            } catch (RuntimeException exception) {
+                BongClient.LOGGER.error(
+                    "Failed to clear client disconnect adjunct at index {}",
+                    index,
+                    exception
+                );
+            }
+        }
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {

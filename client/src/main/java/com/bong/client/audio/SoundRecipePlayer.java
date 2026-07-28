@@ -94,6 +94,7 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
         if (removed != null) {
             removed.deactivateOwnedFlag();
         }
+        pending.removeIf(queued -> queued.instanceId() == payload.instanceId());
         sink.stop(payload.instanceId(), payload.fadeOutTicks());
         return true;
     }
@@ -127,6 +128,55 @@ public final class SoundRecipePlayer implements com.bong.client.network.AudioPla
 
     public int activeLoopCountForTests() {
         return loops.size();
+    }
+
+    int pendingCountForTests() {
+        return pending.size();
+    }
+
+    long tickForTests() {
+        return tick;
+    }
+
+    float ambientVolumeFactorForTests() {
+        return ambientVolumeFactor;
+    }
+
+    /**
+     * 断线时撤销本 session 的所有声音派生状态。
+     *
+     * <p>先从 player 摘掉全部旧会话引用和派生 flag，再 best-effort 硬停 sink 中的实例；
+     * sink 的 {@link RuntimeException} 只记录，不得阻断本地状态复位或中央 helper 的后续
+     * animation/HUD 清理。{@link Error} 仍原样透传。
+     * mixer、telemetry、flag provider 与 sink 依赖均保留，保证同一 player 在新 session 可重用。
+     */
+    public void clearOnDisconnect() {
+        List<Long> staleInstanceIds = new ArrayList<>(loops.keySet());
+        loops.clear();
+        pending.clear();
+        EnvironmentAudioLoopState.clearOnDisconnect();
+        ambientVolumeFactor = 1.0f;
+        lastCombatActive = false;
+        lastCombatHpPercent = Float.NaN;
+        tick = 0L;
+        mixer.clearOnDisconnect();
+
+        for (Long instanceId : staleInstanceIds) {
+            try {
+                sink.stop(instanceId, 0);
+            } catch (RuntimeException exception) {
+                BongClient.LOGGER.error(
+                    "Failed to stop sound instance {} while clearing disconnect state",
+                    instanceId,
+                    exception
+                );
+            }
+        }
+        try {
+            sink.clearOnDisconnect();
+        } catch (RuntimeException exception) {
+            BongClient.LOGGER.error("Failed to clear sound sink on disconnect", exception);
+        }
     }
 
     public void setMusicState(MusicStateMachine.State state) {

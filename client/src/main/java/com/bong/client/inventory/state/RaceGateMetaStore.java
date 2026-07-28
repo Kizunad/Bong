@@ -69,6 +69,16 @@ public final class RaceGateMetaStore {
         }
     }
 
+    /**
+     * 断线时清空本会话 gate 元数据并恢复“尚未收到 payload”标记，保留 UI listener wiring。
+     */
+    public static void clearOnDisconnect() {
+        itemWearerRace = Map.of();
+        techniqueRequiredRace = Map.of();
+        received = false;
+        notifyListeners();
+    }
+
     public static void resetForTests() {
         itemWearerRace = Map.of();
         techniqueRequiredRace = Map.of();

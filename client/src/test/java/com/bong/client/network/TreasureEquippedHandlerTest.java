@@ -60,6 +60,32 @@ class TreasureEquippedHandlerTest {
         assertTrue(WeaponTreasurePanel.treasures().isEmpty());
     }
 
+    @Test
+    void disconnectClearDropsOldPanelProjectionAndAllowsFreshSync() {
+        new TreasureEquippedHandler().handle(parseEnvelope("""
+            {"v":1,"type":"treasure_equipped","slot":"off_hand",
+             "treasure":{"instance_id":7,"template_id":"old_talisman","display_name":"旧服护符"}}
+            """));
+        WeaponTreasurePanel.replaceWeapon(new WeaponTreasurePanel.Weapon(
+            "sword", "rusted_iron", "worn", 0.5f
+        ));
+
+        WeaponTreasurePanel.clearOnDisconnect();
+
+        assertNull(WeaponTreasurePanel.weapon(),
+            "断线必须清空旧服武器 projection，避免 inspect tooltip 跨 session 残留");
+        assertTrue(WeaponTreasurePanel.treasures().isEmpty(),
+            "断线必须清空旧服法宝 projection，不能等待新服首个 treasure payload 才纠正");
+
+        new TreasureEquippedHandler().handle(parseEnvelope("""
+            {"v":1,"type":"treasure_equipped","slot":"off_hand",
+             "treasure":{"instance_id":8,"template_id":"fresh_talisman","display_name":"新服护符"}}
+            """));
+        assertEquals("新服护符", WeaponTreasurePanel.treasures().get(0).displayName(),
+            "生产清理不能变成一次性开关；新 session projection 必须能重新写入");
+    }
+
+
     private static ServerDataEnvelope parseEnvelope(String json) {
         ServerPayloadParseResult parseResult = ServerDataEnvelope.parse(
             json, json.getBytes(StandardCharsets.UTF_8).length);

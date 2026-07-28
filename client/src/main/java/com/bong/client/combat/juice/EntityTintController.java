@@ -40,6 +40,11 @@ public final class EntityTintController {
         }
     }
 
+    /** 断线时丢弃旧 session 的实体 tint 缓存。 */
+    public static void clearOnDisconnect() {
+        TINTS.clear();
+    }
+
     public static void resetForTests() {
         TINTS.clear();
     }

@@ -188,6 +188,16 @@ public final class CameraShakeController {
         return true;
     }
 
+    /**
+     * 断线时无差别清空旧 session 的抖动及其来源标记。
+     *
+     * <p>不同于 {@link #clearIfOwnedBy(Source)} 的运行中定向取消，断线后不存在仍应保留的
+     * owner，故必须把 {@link #active} 和 {@link #activeSource} 成对复位。
+     */
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     public static void resetForTests() {
         active = Shake.none();
         activeSource = Source.NONE;

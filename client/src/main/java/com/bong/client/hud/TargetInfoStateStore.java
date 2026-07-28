@@ -23,6 +23,11 @@ public final class TargetInfoStateStore {
         snapshot = next == null ? TargetInfoState.empty() : next;
     }
 
+    /** 断线时仅清除本会话的观察目标快照。 */
+    public static void clearOnDisconnect() {
+        snapshot = TargetInfoState.empty();
+    }
+
     public static void resetForTests() {
         snapshot = TargetInfoState.empty();
     }

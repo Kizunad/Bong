@@ -1,7 +1,13 @@
 package com.bong.client.movement;
 
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.lwjgl.glfw.GLFW;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,11 +18,13 @@ class MovementKeybindingsTest {
 
     @AfterEach
     void tearDown() {
+        KeyBinding.unpressAll();
+        MovementKeybindings.setDashKeyForTests(null);
         MovementStateStore.resetForTests();
     }
 
     @Test
-    void disconnectResetClearsRejectTimingAndSameDashRefreshesInNewSession() {
+    void disconnectAdjunctCleanupIsIdempotentAndLeavesRegistryOwnedMovementStateUntouched() {
         MovementState rejectedDash = new MovementState(
             0.75,
             false,
@@ -37,33 +45,89 @@ class MovementKeybindingsTest {
         assertEquals(3_000L, MovementStateStore.snapshot().rejectedAtMs());
         assertEquals(3_000L, MovementStateStore.snapshot().hudActivityAtMs());
 
-        MovementKeybindings.resetOnDisconnect();
+        MovementKeybindings.clearOnDisconnect();
+        MovementKeybindings.clearOnDisconnect();
 
-        MovementState reset = MovementStateStore.snapshot();
+        MovementState unchanged = MovementStateStore.snapshot();
         assertTrue(
-            reset.isEmpty(),
-            () -> "expected an empty snapshot because production disconnect must clear the prior session; actual snapshot="
-                + reset
+            !unchanged.isEmpty(),
+            "keybinding adjunct cleanup must not clear registry-owned movement Store data"
         );
-        assertEquals(0L, reset.rejectedAtMs(), "disconnect must clear prior reject timing");
-        assertEquals(0L, reset.hudActivityAtMs(), "disconnect must clear prior HUD activity timing");
+        assertEquals("dash", unchanged.rejectedAction(), "registry-owned snapshot must remain intact");
+        assertEquals(3_000L, unchanged.rejectedAtMs(), "adjunct cleanup must not alter reject timing");
+        assertEquals(3_000L, unchanged.hudActivityAtMs(), "adjunct cleanup must not alter HUD timing");
+    }
 
-        MovementStateStore.replace(rejectedDash, 4_000L);
-        MovementState nextSession = MovementStateStore.snapshot();
-        assertEquals("dash", nextSession.rejectedAction());
-        assertEquals(
-            4_000L,
-            nextSession.rejectedAtMs(),
-            "the same dash reject in a new session must refresh rejectedAtMs"
+
+    @Test
+    void disconnectCleanupDropsOldDashPressButFreshPressStillConsumes() {
+        KeyBinding dash = new KeyBinding(
+            "test.movement_dash",
+            InputUtil.Type.KEYSYM,
+            GLFW.GLFW_KEY_V,
+            "test.bong"
         );
-        assertEquals(
-            4_000L,
-            nextSession.hudActivityAtMs(),
-            "the same dash reject in a new session must reactivate the HUD"
+        MovementKeybindings.setDashKeyForTests(dash);
+        KeyBinding.onKeyPressed(dash.getDefaultKey());
+
+        MovementKeybindings.clearOnDisconnect();
+        MovementKeybindings.clearOnDisconnect();
+
+        assertTrue(
+            !MovementKeybindings.consumeWasPressed(dash),
+            "旧 session 已排队的 dash press 必须在断线时丢弃"
+        );
+
+        KeyBinding.onKeyPressed(dash.getDefaultKey());
+
+        assertTrue(
+            MovementKeybindings.consumeWasPressed(dash),
+            "保留的 dash binding 必须能消费 fresh session 的新按键"
+        );
+        assertTrue(
+            !MovementKeybindings.consumeWasPressed(dash),
+            "fresh press 只能消费一次，不能生成重复 dash"
         );
     }
 
-    // ---- 参考帧：玩家体朝向 yaw（无 WASD 输入时即朝正前 dash）----
+    @Test
+    void sourceLeavesDisconnectRoutingToTheCentralLifecycleOwner() throws Exception {
+        String source = Files.readString(Path.of(
+            "src/main/java/com/bong/client/movement/MovementKeybindings.java"
+        ));
+        assertTrue(
+            !source.contains("ClientPlayConnectionEvents.DISCONNECT.register"),
+            "MovementKeybindings must not register a distributed DISCONNECT callback"
+        );
+        assertTrue(
+            !source.contains("client.execute("),
+            "MovementKeybindings must not queue an independently ungated disconnect cleanup task"
+        );
+
+        int cleanerStart = source.indexOf("public static void clearOnDisconnect()");
+        assertTrue(cleanerStart >= 0, "MovementKeybindings must expose a production adjunct cleaner");
+        String cleaner = source.substring(cleanerStart);
+        assertTrue(
+            cleaner.contains("consumeWasPressed(dashKey)"),
+            "movement adjunct cleaner 必须排空旧 session 的 dash 按键队列"
+        );
+        assertTrue(
+            !cleaner.contains("resetOnDisconnect"),
+            "无状态 MovementKeyRouter 不得暴露空 lifecycle stub"
+        );
+        assertTrue(
+            !cleaner.contains("MovementStateStore."),
+            "registry-owned MovementStateStore must not be cleared by the keybinding bootstrap"
+        );
+        assertTrue(
+            !cleaner.contains("resetForTest"),
+            "production adjunct cleaner must not invoke a test reset helper"
+        );
+        assertTrue(
+            !cleaner.contains("clearForTest"),
+            "production adjunct cleaner must not invoke a test-only clear helper"
+        );
+    }
 
     @Test
     void noInputDashesAlongPlayerYaw() {

@@ -62,6 +62,22 @@ class PillBuffHudPlannerTest {
     }
 
     @Test
+    void disconnectClearRemovesOldBuffsAndAcceptsFreshBuffs() {
+        PillBuffHudPlanner.updateBuff("old_server_buff", 3_000, 1.0);
+        assertEquals(1, PillBuffHudPlanner.activeBuffs().size(),
+            "old server buff must be visible before disconnect cleanup");
+
+        PillBuffHudPlanner.clearOnDisconnect();
+
+        assertTrue(PillBuffHudPlanner.activeBuffs().isEmpty(),
+            "disconnect cleanup must remove old server buffs from the HUD planner");
+        PillBuffHudPlanner.updateBuff("fresh_server_buff", 1_500, 1.2);
+        List<PillBuffHudPlanner.PillBuff> fresh = PillBuffHudPlanner.activeBuffs();
+        assertEquals(1, fresh.size(), "fresh server buff must be accepted after teardown");
+        assertEquals("fresh_server_buff", fresh.get(0).buffId());
+    }
+
+    @Test
     void clearRemovesAllBuffs() {
         PillBuffHudPlanner.updateBuff("huo_xue_dan", 3000, 1.0);
         PillBuffHudPlanner.updateBuff("tie_bi_san", 1500, 1.2);
