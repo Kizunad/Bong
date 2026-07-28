@@ -133,8 +133,12 @@ public final class SessionScopedStoreRegistry {
         }
     }
 
+    static List<SessionStoreHandle> registeredHandlesForTests() {
+        return REGISTERED;
+    }
+
     static List<String> registeredFqcnsForTests() {
-        return REGISTERED.stream().map(SessionStoreHandle::fqcn).toList();
+        return registeredHandlesForTests().stream().map(SessionStoreHandle::fqcn).toList();
     }
 
     static void validateUniqueFqcns(List<SessionStoreHandle> handles) {
