@@ -624,8 +624,22 @@ impl QiColor {
     }
 }
 
+#[path = "components/persisted.rs"]
+mod persisted;
+#[path = "components/qi_flow.rs"]
+mod qi_flow;
+
+pub use persisted::{
+    decode_persisted_cultivation, encode_persisted_cultivation, PersistedCultivationV1,
+};
+pub(crate) use qi_flow::release_external_qi_to_zone;
+pub use qi_flow::{
+    ActorQiIdentity, ActorQiKind, ActorQiTarget, CultivationQiInit, CultivationQiSnapshot,
+    PersistentQiSink, QiFlowError, QiFlowOutcome, QiFlowTarget, QiResizeOutcome,
+};
+
 /// 修为主组件。`qi_max_frozen` 用于 QiZeroDecay 窗口期（plan §2）。
-#[derive(Debug, Clone, Component, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Component, PartialEq)]
 pub struct Cultivation {
     pub realm: Realm,
     pub qi_current: f64,
@@ -636,10 +650,8 @@ pub struct Cultivation {
     pub composure: f64, // 0.0..=1.0
     pub composure_recover_rate: f64,
     /// plan-race-system-v1 P0 — 种族标识，`body_plan::resolve_body_plan` 的玩家身份
-    /// 权威真源（未知 id 拒绝解析，见该函数文档）。`#[serde(default)]` 让旧存档
-    /// （`cultivation_json` bundle 缺该字段）反序列化时自动落 `"human"`，
-    /// persistence 层（`persist_player_cultivation_bundle` 等）零改动即可透传。
-    #[serde(default = "default_race_id")]
+    /// 权威真源（未知 id 拒绝解析，见该函数文档）。旧存档缺失字段时由专用
+    /// `PersistedCultivationV1` DTO 默认到 `"human"`；runtime domain 本身不承担 serde。
     pub race: RaceId,
 }
 
