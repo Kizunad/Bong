@@ -109,6 +109,7 @@ pub fn hydrate_dormant_near_players_system(
     config: Res<NpcVirtualizationConfig>,
     mut store: ResMut<NpcDormantStore>,
     mut commands: Commands,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     dimension_layers: Option<Res<DimensionLayers>>,
     players: Query<(&Position, Option<&CurrentDimension>), With<ClientMarker>>,
     registry: Option<Res<NpcRegistry>>,
@@ -191,6 +192,7 @@ pub fn hydrate_dormant_near_players_system(
         };
         let entity = spawn_from_snapshot(
             &mut commands,
+            &technique_registry,
             snapshot,
             dimension_layers,
             tick,
@@ -231,6 +233,7 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
     mut events: EventReader<HalfStepRechallengeTriggerEvent>,
     mut store: ResMut<NpcDormantStore>,
     mut commands: Commands,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     dimension_layers: Option<Res<DimensionLayers>>,
     game_tick: Option<Res<GameTick>>,
     pois: Option<Res<PoiNoviceRegistry>>,
@@ -302,6 +305,7 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
 
         let entity = spawn_from_snapshot(
             &mut commands,
+            &technique_registry,
             snapshot,
             dimension_layers,
             tick,
@@ -810,8 +814,10 @@ fn resolve_sentinel_guarding_container(
     found
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_from_snapshot(
     commands: &mut Commands,
+    technique_registry: &crate::cultivation::known_techniques::TechniqueRegistry,
     snapshot: NpcDormantSnapshot,
     dimension_layers: &DimensionLayers,
     current_tick: u64,
@@ -870,6 +876,7 @@ fn spawn_from_snapshot(
         ),
         NpcArchetype::Rogue => spawn_rogue_npc_at(
             commands,
+            technique_registry,
             NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
@@ -897,6 +904,7 @@ fn spawn_from_snapshot(
         },
         NpcArchetype::Disciple => spawn_disciple_npc_at(
             commands,
+            technique_registry,
             NpcSkinSpawnContext::new(skin_pool, skin_policy),
             layer,
             home_zone,
@@ -947,6 +955,7 @@ fn spawn_from_snapshot(
                 let relic = snapshot.guardian_relic.as_ref();
                 spawn_relic_guard_npc_at(
                     commands,
+                    technique_registry,
                     layer,
                     home_zone,
                     pos,
@@ -966,6 +975,7 @@ fn spawn_from_snapshot(
             .map(|tsy| {
                 spawn_tsy_daoxiang_at(
                     commands,
+                    technique_registry,
                     layer,
                     tsy.family_id.as_str(),
                     home_zone,
@@ -980,6 +990,7 @@ fn spawn_from_snapshot(
             .map(|tsy| {
                 spawn_tsy_zhinian_at(
                     commands,
+                    technique_registry,
                     layer,
                     tsy.family_id.as_str(),
                     home_zone,

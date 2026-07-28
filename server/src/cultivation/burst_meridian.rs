@@ -13,7 +13,7 @@ use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
-use crate::cultivation::known_techniques::technique_definition;
+use crate::cultivation::known_techniques::{TechniqueDefinition, TechniqueRegistry};
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, MeridianSeveredPermanent,
 };
@@ -208,8 +208,8 @@ pub fn declare_meridian_dependencies(
 }
 
 /// 从 known_techniques 读招式的 flat qi_cost（单一真值源，严禁在本文件硬编码重复）。
-fn flat_qi_cost(skill_id: &str) -> Option<f64> {
-    technique_definition(skill_id).map(|def| f64::from(def.qi_cost))
+fn flat_qi_cost(techniques: &TechniqueRegistry, skill_id: &str) -> Option<f64> {
+    techniques.get(skill_id).map(|def| f64::from(def.qi_cost))
 }
 
 /// 空挥（无锁定目标）时的 AV 朝向点：沿施法者视线前推一臂；无 Look 组件时
@@ -425,8 +425,16 @@ pub fn resolve_tie_shan_kao(
     if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
         return rejected(reason);
     }
-    let Some(cost) = flat_qi_cost(TIE_SHAN_KAO_SKILL_ID) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    let (cost, cast_ticks, cooldown_ticks) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(cost) = flat_qi_cost(techniques, TIE_SHAN_KAO_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) =
+            cast_timing(techniques.get(TIE_SHAN_KAO_SKILL_ID), 10, 70);
+        (cost, cast_ticks, cooldown_ticks)
     };
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -439,8 +447,6 @@ pub fn resolve_tie_shan_kao(
         )));
     };
 
-    let definition = technique_definition(TIE_SHAN_KAO_SKILL_ID);
-    let (cast_ticks, cooldown_ticks) = cast_timing(definition, 10, 70);
     insert_casting(
         world,
         caster,
@@ -535,8 +541,15 @@ pub fn resolve_xue_beng_bu(
     if let Some(reason) = check_realm_gate(world, caster, Realm::Condense) {
         return rejected(reason);
     }
-    let Some(cost) = flat_qi_cost(XUE_BENG_BU_SKILL_ID) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    let (cost, cast_ticks, cooldown_ticks) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(cost) = flat_qi_cost(techniques, XUE_BENG_BU_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) = cast_timing(techniques.get(XUE_BENG_BU_SKILL_ID), 6, 50);
+        (cost, cast_ticks, cooldown_ticks)
     };
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -549,8 +562,6 @@ pub fn resolve_xue_beng_bu(
         )));
     };
 
-    let definition = technique_definition(XUE_BENG_BU_SKILL_ID);
-    let (cast_ticks, cooldown_ticks) = cast_timing(definition, 6, 50);
     insert_casting(
         world,
         caster,
@@ -630,8 +641,16 @@ pub fn resolve_ni_mai_hu_ti(
     if let Some(reason) = check_realm_gate(world, caster, Realm::Solidify) {
         return rejected(reason);
     }
-    let Some(cost) = flat_qi_cost(NI_MAI_HU_TI_SKILL_ID) else {
-        return rejected(CastRejectReason::InvalidTarget);
+    let (cost, cast_ticks, cooldown_ticks) = {
+        let techniques = world
+            .get_resource::<TechniqueRegistry>()
+            .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
+        let Some(cost) = flat_qi_cost(techniques, NI_MAI_HU_TI_SKILL_ID) else {
+            return rejected(CastRejectReason::InvalidTarget);
+        };
+        let (cast_ticks, cooldown_ticks) =
+            cast_timing(techniques.get(NI_MAI_HU_TI_SKILL_ID), 12, 120);
+        (cost, cast_ticks, cooldown_ticks)
     };
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
@@ -644,8 +663,6 @@ pub fn resolve_ni_mai_hu_ti(
         )));
     };
 
-    let definition = technique_definition(NI_MAI_HU_TI_SKILL_ID);
-    let (cast_ticks, cooldown_ticks) = cast_timing(definition, 12, 120);
     insert_casting(
         world,
         caster,
@@ -803,7 +820,7 @@ fn insert_casting(
 
 /// 从 known_techniques 读 cast/cooldown，缺定义时退化为传入兜底（保证 ≥1）。
 fn cast_timing(
-    definition: Option<&'static crate::cultivation::known_techniques::TechniqueDefinition>,
+    definition: Option<&TechniqueDefinition>,
     fallback_cast: u32,
     fallback_cooldown: u64,
 ) -> (u32, u64) {
@@ -1131,6 +1148,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock { tick: 10 });
         app.add_event::<AttackIntent>();
         app.add_event::<BurstMeridianEvent>();
@@ -2112,11 +2130,12 @@ mod tests {
 
     #[test]
     fn flat_qi_cost_reads_from_known_techniques_single_source() {
-        // 严禁本文件硬编码重复 qi_cost：值必须来自 known_techniques。
-        assert_eq!(flat_qi_cost(TIE_SHAN_KAO_SKILL_ID), Some(35.0));
-        assert_eq!(flat_qi_cost(XUE_BENG_BU_SKILL_ID), Some(25.0));
-        assert_eq!(flat_qi_cost(NI_MAI_HU_TI_SKILL_ID), Some(45.0));
-        assert_eq!(flat_qi_cost("nonexistent.skill"), None);
+        // 严禁本文件硬编码重复 qi_cost：值必须来自 checked-in registry。
+        let techniques = TechniqueRegistry::load_for_tests();
+        assert_eq!(flat_qi_cost(&techniques, TIE_SHAN_KAO_SKILL_ID), Some(35.0));
+        assert_eq!(flat_qi_cost(&techniques, XUE_BENG_BU_SKILL_ID), Some(25.0));
+        assert_eq!(flat_qi_cost(&techniques, NI_MAI_HU_TI_SKILL_ID), Some(45.0));
+        assert_eq!(flat_qi_cost(&techniques, "nonexistent.skill"), None);
     }
 
     // ─── 真元守恒：burst_meridian 招式扣 qi 后必须释放回区域 ────────────────────────
@@ -2132,6 +2151,7 @@ mod tests {
     /// caster 位置应使用 DVec3::new(0.0, 70.0, 0.0) 才落在 spawn zone AABB 内。
     fn app_with_zone() -> App {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.insert_resource(CombatClock { tick: 10 });
         app.add_event::<AttackIntent>();
         app.add_event::<BurstMeridianEvent>();

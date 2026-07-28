@@ -3,11 +3,9 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Query, Update};
+use valence::prelude::{App, Client, EventReader, Query, Res, Update};
 
-use crate::cultivation::known_techniques::{
-    technique_definition, KnownTechnique, KnownTechniques, TECHNIQUE_DEFINITIONS,
-};
+use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques, TechniqueRegistry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TechniqueCmd {
@@ -95,6 +93,7 @@ pub fn register(app: &mut App) {
 
 pub fn handle_technique(
     mut events: EventReader<CommandResultEvent<TechniqueCmd>>,
+    registry: Res<TechniqueRegistry>,
     mut players: Query<(&mut KnownTechniques, &mut Client)>,
 ) {
     for event in events.read() {
@@ -104,12 +103,12 @@ pub fn handle_technique(
 
         match &event.result {
             TechniqueCmd::List => {
-                for line in technique_catalog_lines(&techniques) {
+                for line in technique_catalog_lines(&registry, &techniques) {
                     client.send_chat_message(line);
                 }
             }
             TechniqueCmd::Add { id } => {
-                if technique_definition(id).is_none() {
+                if registry.get(id).is_none() {
                     client
                         .send_chat_message(format!("[dev] technique add rejected: unknown `{id}`"));
                     continue;
@@ -127,7 +126,7 @@ pub fn handle_technique(
             }
             TechniqueCmd::Give { id } => {
                 if id == "all" {
-                    let granted = grant_all_techniques(&mut techniques);
+                    let granted = grant_all_techniques(&registry, &mut techniques);
                     client.send_chat_message(format!(
                         "[dev] technique give all: added={} activated={} total={}",
                         granted.added,
@@ -136,13 +135,13 @@ pub fn handle_technique(
                     ));
                     continue;
                 }
-                let Some(definition) = technique_definition(id) else {
+                let Some(definition) = registry.get(id) else {
                     client.send_chat_message(format!(
                         "[dev] technique give rejected: unknown `{id}`; use /technique list"
                     ));
                     continue;
                 };
-                match grant_technique(&mut techniques, definition.id) {
+                match grant_technique(&mut techniques, &definition.id) {
                     TechniqueGrantResult::Added => client.send_chat_message(format!(
                         "[dev] technique give `{}` ({}) added",
                         definition.id, definition.display_name
@@ -166,7 +165,7 @@ pub fn handle_technique(
                 ));
             }
             TechniqueCmd::Proficiency { id, value } => {
-                if technique_definition(id).is_none() {
+                if registry.get(id).is_none() {
                     client.send_chat_message(format!(
                         "[dev] technique proficiency rejected: unknown `{id}`"
                     ));
@@ -190,7 +189,7 @@ pub fn handle_technique(
                 ));
             }
             TechniqueCmd::Active { id, value } => {
-                if technique_definition(id).is_none() {
+                if registry.get(id).is_none() {
                     client.send_chat_message(format!(
                         "[dev] technique active rejected: unknown `{id}`"
                     ));
@@ -205,7 +204,7 @@ pub fn handle_technique(
                 client.send_chat_message(format!("[dev] technique `{id}` active={value}"));
             }
             TechniqueCmd::ResetAll => {
-                *techniques = KnownTechniques::dev_default();
+                *techniques = KnownTechniques::dev_default(&registry);
                 client.send_chat_message(format!(
                     "[dev] technique reset_all; entries={}",
                     techniques.entries.len()
@@ -228,18 +227,21 @@ struct TechniqueGrantSummary {
     activated: usize,
 }
 
-fn technique_catalog_lines(techniques: &KnownTechniques) -> Vec<String> {
+fn technique_catalog_lines(
+    registry: &TechniqueRegistry,
+    techniques: &KnownTechniques,
+) -> Vec<String> {
     let mut lines = vec![format!(
         "[dev] technique list: {} definitions; * = known; use /technique give <id|all>",
-        TECHNIQUE_DEFINITIONS.len()
+        registry.len()
     )];
     let mut grade: Option<&str> = None;
     let mut parts = Vec::new();
-    for definition in TECHNIQUE_DEFINITIONS {
-        if grade.is_some_and(|current| current != definition.grade) {
+    for definition in registry.iter() {
+        if grade.is_some_and(|current| current != definition.grade.as_str()) {
             flush_catalog_line(&mut lines, grade.unwrap_or("unknown"), &mut parts);
         }
-        grade = Some(definition.grade);
+        grade = Some(&definition.grade);
         let known = techniques
             .entries
             .iter()
@@ -266,13 +268,16 @@ fn flush_catalog_line(lines: &mut Vec<String>, grade: &str, parts: &mut Vec<Stri
     }
 }
 
-fn grant_all_techniques(techniques: &mut KnownTechniques) -> TechniqueGrantSummary {
+fn grant_all_techniques(
+    registry: &TechniqueRegistry,
+    techniques: &mut KnownTechniques,
+) -> TechniqueGrantSummary {
     let mut summary = TechniqueGrantSummary {
         added: 0,
         activated: 0,
     };
-    for definition in TECHNIQUE_DEFINITIONS {
-        match grant_technique(techniques, definition.id) {
+    for definition in registry.iter() {
+        match grant_technique(techniques, &definition.id) {
             TechniqueGrantResult::Added => summary.added += 1,
             TechniqueGrantResult::Activated => summary.activated += 1,
             TechniqueGrantResult::AlreadyKnown => {}
@@ -309,6 +314,7 @@ mod tests {
 
     fn setup_app() -> App {
         let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests());
         app.add_event::<CommandResultEvent<TechniqueCmd>>();
         app.add_systems(Update, handle_technique);
         app
@@ -321,7 +327,7 @@ mod tests {
     }
 
     fn default_technique_count() -> usize {
-        KnownTechniques::dev_default().entries.len()
+        TechniqueRegistry::load_for_tests().len()
     }
 
     fn send(app: &mut App, player: valence::prelude::Entity, result: TechniqueCmd) {
@@ -337,7 +343,10 @@ mod tests {
     #[test]
     fn technique_list_keeps_default_entries() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default());
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(&mut app, player, TechniqueCmd::List);
         run_update(&mut app);
@@ -354,9 +363,13 @@ mod tests {
 
     #[test]
     fn technique_catalog_exposes_all_defined_ids() {
-        let lines = technique_catalog_lines(&KnownTechniques {
-            entries: Vec::new(),
-        });
+        let registry = TechniqueRegistry::load_for_tests();
+        let lines = technique_catalog_lines(
+            &registry,
+            &KnownTechniques {
+                entries: Vec::new(),
+            },
+        );
         let joined = lines.join("\n");
         assert!(joined.contains("use /technique give <id|all>"));
         assert!(joined.contains("movement.dash(闪避)"));
@@ -366,7 +379,7 @@ mod tests {
             lines[0],
             format!(
                 "[dev] technique list: {} definitions; * = known; use /technique give <id|all>",
-                TECHNIQUE_DEFINITIONS.len()
+                registry.len()
             )
         );
     }
@@ -374,7 +387,10 @@ mod tests {
     #[test]
     fn technique_add_is_idempotent_and_rejects_unknown_ids() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default());
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(
             &mut app,
@@ -477,7 +493,10 @@ mod tests {
         run_update(&mut app);
 
         let techniques = app.world().get::<KnownTechniques>(player).unwrap();
-        assert_eq!(techniques.entries.len(), TECHNIQUE_DEFINITIONS.len());
+        assert_eq!(
+            techniques.entries.len(),
+            app.world().resource::<TechniqueRegistry>().len()
+        );
         let beng = techniques
             .entries
             .iter()
@@ -490,7 +509,10 @@ mod tests {
     #[test]
     fn technique_remove_allows_unknown_but_removes_existing() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default());
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(
             &mut app,
@@ -516,7 +538,10 @@ mod tests {
     #[test]
     fn technique_proficiency_clamps_and_active_flag_mutates() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default());
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
 
         send(
             &mut app,
@@ -551,7 +576,10 @@ mod tests {
     #[test]
     fn technique_proficiency_rejects_non_finite_values() {
         let mut app = setup_app();
-        let player = spawn_known(&mut app, KnownTechniques::dev_default());
+        let player = spawn_known(
+            &mut app,
+            KnownTechniques::dev_default(&TechniqueRegistry::load_for_tests()),
+        );
         let before = app
             .world()
             .get::<KnownTechniques>(player)

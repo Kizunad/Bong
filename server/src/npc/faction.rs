@@ -986,12 +986,14 @@ pub fn register(app: &mut App) {
         );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_named_faction_leaders_on_startup(
     mut commands: Commands,
     registry: Option<Res<NamedFactionRegistry>>,
     claims: Option<Res<FactionZoneClaims>>,
     zones: Option<Res<ZoneRegistry>>,
     layers: Query<Entity, With<OverworldLayer>>,
+    technique_registry: Res<crate::cultivation::known_techniques::TechniqueRegistry>,
     leaders: Query<&NamedFactionLeader>,
     mut done: valence::prelude::Local<bool>,
 ) {
@@ -1041,6 +1043,7 @@ fn spawn_named_faction_leaders_on_startup(
         let spawn_position = zone.patrol_target(0);
         let entity = spawn_disciple_npc_at(
             &mut commands,
+            &technique_registry,
             NpcSkinSpawnContext::new(None, skin_policy),
             layer,
             zone.name.as_str(),
