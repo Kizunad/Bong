@@ -55,6 +55,11 @@ public final class HitStopController {
         FREEZES.entrySet().removeIf(entry -> entry.getValue().endsAtMs() <= nowMs);
     }
 
+    /** 断线时丢弃旧 session 的所有 freeze ownership。 */
+    public static void clearOnDisconnect() {
+        FREEZES.clear();
+    }
+
     public static void resetForTests() {
         FREEZES.clear();
     }
