@@ -68,6 +68,8 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _lumber_progress(value)
         if field == 34:
             return _cast_sync(value)
+        if field == 36:
+            return _skill_bar_config(value)
         if field == 137:
             return _inventory_move_rejected(value)
         if field == 51:
@@ -561,6 +563,7 @@ CAST_OUTCOME_NAMES = {
     13: "reject_realm_too_low",
     14: "reject_no_weapon",
     15: "reject_technique_inactive",
+    16: "reject_race_mismatch",
 }
 
 CAST_PHASE_NAMES = {0: "unspecified", 1: "idle", 2: "casting", 3: "complete", 4: "interrupt"}
@@ -699,6 +702,63 @@ def _cast_sync(data: bytes) -> dict[str, Any]:
         "duration_ms": _varint(fields, 3),
         "outcome": CAST_OUTCOME_NAMES.get(_varint(fields, 5), "unspecified"),
     }
+
+
+def _skill_bar_config(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skillbar_config",
+        "slots": [_optional_skill_bar_entry(raw) for raw in _messages(fields, 1)],
+        "cooldown_until_ms": _repeated_uint64(fields, 2),
+    }
+
+
+def _optional_skill_bar_entry(data: bytes) -> dict[str, Any] | None:
+    fields = _fields(data)
+    entries = _messages(fields, 1)
+    if not entries:
+        return None
+    entry = _fields(entries[-1])
+    items = _messages(entry, 1)
+    if items:
+        item = _fields(items[-1])
+        return {
+            "kind": "item",
+            "template_id": _string(item, 1),
+            "display_name": _string(item, 2),
+            "cast_duration_ms": _varint(item, 3),
+            "cooldown_ms": _varint(item, 4),
+            "icon_texture": _string(item, 5),
+        }
+    skills = _messages(entry, 2)
+    if skills:
+        skill = _fields(skills[-1])
+        return {
+            "kind": "skill",
+            "skill_id": _string(skill, 1),
+            "display_name": _string(skill, 2),
+            "cast_duration_ms": _varint(skill, 3),
+            "cooldown_ms": _varint(skill, 4),
+            "icon_texture": _string(skill, 5),
+        }
+    return None
+
+
+def _repeated_uint64(fields: list[tuple[int, int, Any]], field: int) -> list[int]:
+    values: list[int] = []
+    for number, wire, value in fields:
+        if number != field:
+            continue
+        if wire == 0:
+            values.append(int(value))
+            continue
+        if wire == 2:
+            pos = 0
+            while pos < len(value):
+                decoded, pos = _read_varint(value, pos)
+                values.append(decoded)
+    return values
 
 
 def _combat_event_floater(data: bytes) -> dict[str, Any]:
@@ -925,6 +985,9 @@ SERVER_DATA_PAYLOAD_NAMES = {
     29: "lumber_progress",
     30: "gathering_session",
     31: "lingtian_session",
+    34: "cast_sync",
+    36: "skillbar_config",
+    51: "combat_event",
     71: "breakthrough_cinematic",
     81: "dropped_loot_sync",
     119: "loot_container_open",

@@ -20,6 +20,8 @@ use crate::npc::spawn::{
 };
 use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
 
+const PASSIVE_TARGET_HEALTH: f32 = 32.0;
+
 /// Marker component for NPCs spawned by the `/npc_scenario` command.
 /// Used for bulk cleanup on `/npc_scenario clear`.
 #[derive(Clone, Copy, Debug, Component)]
@@ -40,6 +42,8 @@ pub enum ScenarioType {
     Swarm,
     /// 2 NPCs fight each other for observation.
     Duel,
+    /// Stationary non-retaliating NPC for deterministic protocol Bot combat evidence.
+    PassiveTarget,
     /// Despawn all scenario NPCs.
     Clear,
 }
@@ -53,6 +57,7 @@ impl ScenarioType {
             "kite" => Some(Self::Kite),
             "swarm" => Some(Self::Swarm),
             "duel" => Some(Self::Duel),
+            "passive_target" => Some(Self::PassiveTarget),
             "clear" => Some(Self::Clear),
             _ => None,
         }
@@ -109,7 +114,6 @@ fn process_pending_scenarios(
         let offset = scenario_offset(i, spawn_count);
         let spawn_pos = player_pos + offset;
 
-        let thinker = build_thinker(&scenario);
         let loadout = scenario_combat_loadout(&scenario, i);
         let melee_archetype = loadout.melee_archetype;
         let melee_profile = loadout.melee_profile();
@@ -137,8 +141,13 @@ fn process_pending_scenarios(
             ))
             .id();
 
-        commands
-            .entity(entity)
+        let mut runtime = npc_runtime_bundle(entity, NpcArchetype::Zombie, Realm::Awaken);
+        if matches!(scenario, ScenarioType::PassiveTarget) {
+            runtime.wounds.health_current = PASSIVE_TARGET_HEALTH;
+            runtime.wounds.health_max = PASSIVE_TARGET_HEALTH;
+        }
+        let mut entity_commands = commands.entity(entity);
+        entity_commands
             .insert((
                 NpcArchetype::Zombie,
                 Navigator::new(),
@@ -149,13 +158,11 @@ fn process_pending_scenarios(
                     DEFAULT_SPAWN_ZONE_NAME,
                     DVec3::new(spawn_pos.x, spawn_pos.y, spawn_pos.z),
                 ),
-                thinker,
             ))
-            .insert(npc_runtime_bundle(
-                entity,
-                NpcArchetype::Zombie,
-                Realm::Awaken,
-            ));
+            .insert(runtime);
+        if !matches!(scenario, ScenarioType::PassiveTarget) {
+            entity_commands.insert(build_thinker(&scenario));
+        }
 
         spawned_entities.push(entity);
     }
@@ -202,7 +209,7 @@ fn build_thinker(scenario: &ScenarioType) -> ThinkerBuilder {
             .when(PlayerProximityScorer, FleeAction)
             .when(ChaseTargetScorer, ChaseAction),
 
-        ScenarioType::Clear => {
+        ScenarioType::Clear | ScenarioType::PassiveTarget => {
             // Clear is handled before we get here, but provide a default.
             Thinker::build()
                 .picker(FirstToScore { threshold: 0.8 })
@@ -228,6 +235,13 @@ fn scenario_combat_loadout(scenario: &ScenarioType, index: usize) -> NpcCombatLo
                 NpcCombatLoadout::fighter(NpcMeleeArchetype::Sword)
             }
         }
+        ScenarioType::PassiveTarget => NpcCombatLoadout::new(
+            NpcMeleeArchetype::Brawler,
+            MovementCapabilities {
+                can_sprint: false,
+                can_dash: false,
+            },
+        ),
         _ => NpcCombatLoadout::default(),
     }
 }
@@ -241,6 +255,7 @@ mod tests {
     use crate::npc::brain::canonical_npc_id;
     use crate::npc::lifecycle::NpcLifespan;
     use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
+    use big_brain::prelude::ThinkerBuilder;
     use valence::prelude::{Entity, Update, With};
     use valence::testing::ScenarioSingleClient;
 
@@ -307,6 +322,55 @@ mod tests {
                 "scenario NPC should include shared lifespan component"
             );
         }
+    }
+
+    #[test]
+    fn passive_target_is_stationary_non_retaliating_real_combat_npc() {
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        crate::world::dimension::mark_test_layer_as_overworld(&mut app);
+        app.insert_resource(PendingScenario {
+            request: Some((ScenarioType::PassiveTarget, DVec3::new(8.0, 66.0, 8.0))),
+        });
+        app.add_systems(Update, process_pending_scenarios);
+
+        app.update();
+
+        let npc = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<ScenarioNpc>>();
+            query
+                .iter(world)
+                .next()
+                .expect("passive_target should spawn one scenario NPC")
+        };
+        let entity_ref = app.world().entity(npc);
+        let wounds = entity_ref
+            .get::<Wounds>()
+            .expect("passive target must use the production combat Wounds component");
+        assert_eq!(wounds.health_current, PASSIVE_TARGET_HEALTH);
+        assert_eq!(wounds.health_max, PASSIVE_TARGET_HEALTH);
+        let movement = entity_ref
+            .get::<MovementCapabilities>()
+            .expect("passive target must expose explicit movement capabilities");
+        assert!(!movement.can_sprint);
+        assert!(!movement.can_dash);
+        assert!(
+            entity_ref.get::<ThinkerBuilder>().is_none(),
+            "passive target must not receive a brain that could move or retaliate"
+        );
+        assert!(entity_ref.get::<NpcMarker>().is_some());
+        assert!(entity_ref.get::<Lifecycle>().is_some());
+        assert!(entity_ref.get::<Cultivation>().is_some());
+    }
+
+    #[test]
+    fn passive_target_parser_is_pinned() {
+        assert!(matches!(
+            ScenarioType::from_str("passive_target"),
+            Some(ScenarioType::PassiveTarget)
+        ));
+        assert!(ScenarioType::from_str("passive-target").is_none());
     }
 
     #[test]

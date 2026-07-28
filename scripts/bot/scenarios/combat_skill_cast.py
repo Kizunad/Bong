@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import time
-
 from bot.scenarios._combat_helpers import (
+    is_outgoing_positive_hit,
     last_event_time,
-    payload_text,
     queue_fight_target,
     queue_npc_scenario,
-    wait_for_payload_after,
     wait_for_ready,
-    wait_for_server_data_after,
+    wait_for_skill_binding,
 )
 
-DESCRIPTION = "/technique give 后用 skill_bar_bind/cast 施放 dugu.shoot_needle，并断言专属 VFX/战斗反馈"
+DESCRIPTION = "/technique give 后用 skill_bar_bind/cast 施放 dugu.shoot_needle，并断言权威绑定、cast_sync、专属 VFX/战斗反馈"
 MODULES = ["combat", "skill", "network", "cmd"]
 
 SKILL_ID = "dugu.shoot_needle"
@@ -38,6 +35,7 @@ def run(env) -> None:
         queue_npc_scenario(bot, "clear")
         spawn = queue_fight_target(bot)
 
+        bind_anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "skill_bar_bind",
@@ -46,8 +44,34 @@ def run(env) -> None:
                 "binding": {"kind": "skill", "skill_id": SKILL_ID},
             }
         )
-        time.sleep(0.2)
+        wait_for_skill_binding(bot, bind_anchor, SLOT, SKILL_ID)
 
+        bot.cmd("qi set 0")
+        bot.expect_chat("[dev] qi set", timeout=10.0)
+        reject_anchor = last_event_time(bot)
+        bot.intent(
+            {
+                "type": "skill_bar_cast",
+                "v": 1,
+                "slot": SLOT,
+                "target": f"entity:{spawn.data['entity_id']}",
+            }
+        )
+        bot.wait_for(
+            lambda event: event.kind == "server_data"
+            and event.t > reject_anchor
+            and event.data.get("payload_type") == "cast_sync"
+            and event.data.get("payload", {}).get("slot") == SLOT
+            and event.data.get("payload", {}).get("phase") == "idle"
+            and event.data.get("payload", {}).get("outcome") == "reject_qi_insufficient",
+            timeout=10.0,
+            description="真元清零后凝针须 typed cast_sync 明确拒绝为 reject_qi_insufficient",
+        )
+
+        # 拒绝分支不应写入 cooldown；补足真元后再走正分支，避免先成功施放时
+        # resolver 按 OnCooldown→QiInsufficient 的既定门顺序遮住目标拒绝证据。
+        bot.cmd("qi set 10")
+        bot.expect_chat("[dev] qi set", timeout=10.0)
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -58,19 +82,36 @@ def run(env) -> None:
             }
         )
 
-        wait_for_payload_after(
-            bot,
-            anchor,
-            predicate=lambda e: e.data.get("channel") == "bong:vfx_event"
-            and "bong:dugu_needle_bolt" in payload_text(e),
+        bot.wait_for(
+            lambda event: event.kind == "server_data"
+            and event.t > anchor
+            and event.data.get("payload_type") == "cast_sync"
+            and event.data.get("payload", {}).get("slot") == SLOT
+            and event.data.get("payload", {}).get("phase") == "casting"
+            and event.data.get("payload", {}).get("outcome") == "none",
             timeout=10.0,
-            description="凝针 skill cast 后 bong:vfx_event 携带 bong:dugu_needle_bolt",
+            description="凝针施放须先收到 slot=0 phase=casting outcome=none 的 typed cast_sync",
         )
-        wait_for_server_data_after(
-            bot,
-            anchor,
-            expected_json_types={"cast_sync", "combat_event"},
+        bot.wait_for(
+            lambda event: event.kind == "server_data"
+            and event.t > anchor
+            and event.data.get("payload_type") == "cast_sync"
+            and event.data.get("payload", {}).get("slot") == SLOT
+            and event.data.get("payload", {}).get("phase") == "complete"
+            and event.data.get("payload", {}).get("outcome") == "completed",
             timeout=10.0,
-            description="凝针 skill cast 后新的 bong:server_data cast_sync 或 combat_event payload",
+            description="凝针施放须终止于 slot=0 phase=complete outcome=completed",
         )
-        bot.assert_alive("技能栏施放凝针并收到专属反馈后")
+        bot.wait_for(
+            lambda event: event.kind == "vfx_event"
+            and event.t > anchor
+            and event.data.get("event_id") == "bong:dugu_needle_bolt",
+            timeout=10.0,
+            description="凝针 skill cast 后 typed VFX event_id 精确等于 bong:dugu_needle_bolt",
+        )
+        bot.wait_for(
+            lambda event: event.t > anchor and is_outgoing_positive_hit(event),
+            timeout=10.0,
+            description="凝针 skill cast 后本 Bot 的 combat_event hit/outgoing=true/amount>0",
+        )
+        bot.assert_alive("技能栏施放凝针真元不足拒绝分支与正分支之后")

@@ -25,6 +25,7 @@ import time
 import tomllib
 import types
 import unittest
+import uuid
 import zlib
 from contextlib import redirect_stdout
 from unittest import mock
@@ -37,6 +38,10 @@ from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
+from bot.scenarios._combat_helpers import (  # noqa: E402
+    is_outgoing_positive_hit,
+    wait_for_server_data_after,
+)
 from bot.scenarios._inventory_helpers import (  # noqa: E402
     latest_inventory_snapshot,
     wait_inventory_revision_after,
@@ -64,6 +69,12 @@ from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_OWNED_ENV,
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
+)
+from bot.scenarios.terrain_join_chunk_delivery import (  # noqa: E402
+    EXPECTED_CI_CLUSTERS,
+    MIN_CHUNKS_AFTER_CENTER,
+    REQUIRED_ENV as FALLBACK_OWNED_ENV,
+    _assert_expected_cluster,
 )
 from bot.scenarios.terrain_poi_novice_startup import (  # noqa: E402
     _selection_strategy,
@@ -609,7 +620,88 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["entries"], [])
 
 
-class InventoryHelperTest(unittest.TestCase):
+class CombatServerDataGateTest(unittest.TestCase):
+    def _event(self, t: float, payload_type: str, payload: dict) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "server_data",
+            {"payload_type": payload_type, "payload": payload},
+        )
+
+    def test_wait_ignores_raw_heartbeat_unknown_and_malformed_payloads(self):
+        combat = self._event(
+            6.0,
+            "combat_event",
+            {
+                "type": "combat_event",
+                "events": [{"kind": "hit", "amount": 2.0, "outgoing": True}],
+            },
+        )
+        bot = _FakeBot(
+            [
+                _FakeEvent(2.0, "payload", {"channel": "bong:server_data", "data": b"\x12\x00"}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "heartbeat", "payload": {"type": "heartbeat"}}),
+                _FakeEvent(4.0, "server_data_decode_error", {"error": "truncated"}),
+                _FakeEvent(5.0, "server_data", {"payload_type": "field_999", "payload": {"type": "field_999"}}),
+                combat,
+            ]
+        )
+
+        matched = wait_for_server_data_after(
+            bot,
+            anchor=1.0,
+            expected_types={"combat_event"},
+            timeout=0.1,
+            description="strict combat event",
+        )
+
+        self.assertIs(matched, combat)
+
+    def test_wait_ignores_matching_type_before_watermark(self):
+        old = self._event(1.0, "combat_event", {"type": "combat_event", "events": []})
+        new = self._event(3.0, "combat_event", {"type": "combat_event", "events": []})
+        matched = wait_for_server_data_after(
+            _FakeBot([old, new]),
+            anchor=2.0,
+            expected_types={"combat_event"},
+            timeout=0.1,
+            description="after-watermark combat event",
+        )
+        self.assertIs(matched, new)
+
+    def test_outgoing_positive_hit_rejects_incoming_non_hit_and_zero(self):
+        rejected = (
+            self._event(1.0, "heartbeat", {"type": "heartbeat"}),
+            self._event(
+                2.0,
+                "combat_event",
+                {"events": [{"kind": "hit", "amount": 3.0, "outgoing": False}]},
+            ),
+            self._event(
+                3.0,
+                "combat_event",
+                {"events": [{"kind": "heal", "amount": 3.0, "outgoing": True}]},
+            ),
+            self._event(
+                4.0,
+                "combat_event",
+                {"events": [{"kind": "hit", "amount": 0.0, "outgoing": True}]},
+            ),
+            self._event(
+                5.0,
+                "combat_event",
+                {"events": [{"kind": "hit", "amount": -1.0, "outgoing": True}]},
+            ),
+        )
+        self.assertTrue(all(not is_outgoing_positive_hit(event) for event in rejected))
+
+        accepted = self._event(
+            6.0,
+            "combat_event",
+            {"events": [{"kind": "hit", "amount": 0.001, "outgoing": True}]},
+        )
+        self.assertTrue(is_outgoing_positive_hit(accepted))
+
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(
             [
@@ -860,8 +952,13 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
         guard = self.source[:guard_end]
         self.assertIn('AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"', guard)
+        self.assertIn('FALLBACK_MODE="${BOT_E2E_FALLBACK_MODE:-0}"', guard)
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥', guard)
+        self.assertIn('BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_WORLD_PATH:-}" ]; then', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
@@ -870,10 +967,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         fixture_start = self.source.index('# Owned-fixture mode generates')
         fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
         self.assertIn('BOT_FIXTURE_TOKEN="$(python3 -c', fixture)
         self.assertIn('--fixture-token "$BOT_FIXTURE_TOKEN"', fixture)
-        state_start = self.source.index('# Ambient-owned runs pin state')
+        state_start = self.source.index('# Dedicated world evidence pins state to its private runtime.')
         state_end = self.source.index('\nport_open() {', state_start)
         state = self.source[state_start:state_end]
         self.assertIn('elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', state)
@@ -888,8 +985,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn(redis_guard, redis)
         self.assertNotIn('export REDIS_URL=', redis[:redis.index(redis_guard)])
 
-    def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
-        runtime_start = self.source.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+    def test_dedicated_world_modes_keep_private_runtime_and_exact_marker_gate(self):
+        runtime_start = self.source.index('if [ "$OWNED_WORLD_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
         runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
         runtime = self.source[runtime_start:runtime_end]
         self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
@@ -922,6 +1019,35 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1",
             ),
             (
+                {"BOT_E2E_FALLBACK_MODE": "bogus"},
+                "BOT_E2E_FALLBACK_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                },
+                "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥",
+            ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "fallback mode 不接受 BONG_TERRAIN_RASTER_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_WORLD_PATH": "/caller/world",
+                },
+                "fallback mode 不接受 BONG_WORLD_PATH",
+            ),
+            (
                 {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
                 "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥",
             ),
@@ -942,10 +1068,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         isolated = (
             "BOT_E2E_AMBIENT_FIXTURE_MODE",
+            "BOT_E2E_FALLBACK_MODE",
             "BOT_E2E_REUSE",
             "BOT_E2E_HOST",
             "BOT_E2E_PORT",
             "BONG_TERRAIN_RASTER_PATH",
+            "BONG_WORLD_PATH",
             "BONG_SPIRITWOOD_HARVESTED_PATH",
             "REDIS_URL",
         )
@@ -994,6 +1122,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_FALLBACK_MODE",
                 "BOT_E2E_REUSE",
                 "BOT_E2E_HOST",
                 "BOT_E2E_PORT",
@@ -1003,6 +1132,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             ):
                 env.pop(name, None)
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            env["BONG_BUILD_TOKEN_DIR"] = str(pathlib.Path(temp_dir) / "build-token")
             result = subprocess.run(
                 ["bash", "scripts/bot-e2e.sh"],
                 cwd=root,
@@ -1019,6 +1150,106 @@ class BotE2eDevModeContractTest(unittest.TestCase):
     def test_ci_selects_explicit_ambient_fixture_mode(self):
         bot_stage = self.workflow_source[self.workflow_source.index('Bot e2e stage'):]
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE: "1"', bot_stage)
+
+    def test_ci_runs_owned_rasterless_fallback_stage(self):
+        stage_start = self.workflow_source.index('Bot fallback-flat e2e stage')
+        stage_end = self.workflow_source.index(
+            'Bot chat timestamp', stage_start
+        )
+        stage = self.workflow_source[stage_start:stage_end]
+        self.assertIn('BOT_E2E_RUN_TAG: ci', stage)
+        self.assertIn('BOT_E2E_FALLBACK_MODE: "1"', stage)
+        self.assertIn('run: bash scripts/bot-e2e.sh', stage)
+
+    def test_fallback_ownership_requires_exact_marker_and_continuous_listener_watch(self):
+        readiness_start = self.source.index('BOOT_ANCHOR="spawned tsy dimension layer')
+        readiness_end = self.source.index('\n# ---- 场景 ----', readiness_start)
+        readiness = self.source[readiness_start:readiness_end]
+        marker_match = 'grep -Fq -- "$BOT_FALLBACK_READY_PAYLOAD" "$SERVER_LOG"'
+        ownership = 'export BOT_E2E_FALLBACK_OWNED=1'
+        self.assertIn(marker_match, readiness)
+        self.assertIn(ownership, readiness)
+        self.assertLess(readiness.index(marker_match), readiness.index(ownership))
+
+        scenario = self.source[self.source.index('# ---- 场景 ----'):]
+        self.assertIn(
+            'if [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ "$FALLBACK_MODE" = "1" ]; then',
+            scenario,
+            "fallback 场景执行期间也必须持续盯住本轮 listener ownership",
+        )
+        self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
+        self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
+
+    def test_fallback_harness_selects_only_dedicated_join_scenario(self):
+        scenario = self.source[self.source.index('# ---- 场景 ----'):]
+        self.assertIn('SCENARIO_ARGS=(--all)', scenario)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ]; then', scenario)
+        self.assertIn(
+            'SCENARIO_ARGS=(--scenario terrain_join_chunk_delivery)',
+            scenario,
+            "fallback CI 不得重跑 gameplay --all 或依赖 dev commands",
+        )
+        self.assertIn(
+            'elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then',
+            scenario,
+            "owned dev harness 应允许显式聚焦一组场景，避免 P2 验证被全套 P3-P5 噪声遮蔽",
+        )
+        self.assertIn('IFS=\',\' read -r -a requested_scenarios', scenario)
+        self.assertLess(
+            scenario.index('if [ "$FALLBACK_MODE" = "1" ]; then'),
+            scenario.index('elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then'),
+            "fallback dedicated selector 优先级必须高于外部 focused selector",
+        )
+        self.assertIn(
+            'python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"',
+            scenario,
+        )
+
+    def test_fallback_ci_cluster_witness_pins_exact_production_disks(self):
+        self.assertEqual(
+            EXPECTED_CI_CLUSTERS,
+            {
+                "J1": ((180.0, 140.0), 112.0, "east"),
+                "J2": ((-240.0, -160.0), 96.0, "west"),
+                "FC": ((24.0, -24.0), 80.0, "central"),
+            },
+        )
+        for tag, ((anchor_x, anchor_z), radius, expected_name) in EXPECTED_CI_CLUSTERS.items():
+            with self.subTest(tag=tag):
+                self.assertEqual(
+                    _assert_expected_cluster("ci", tag, (anchor_x + radius, anchor_z)),
+                    expected_name,
+                    "配置圆盘 inclusive 边界必须通过",
+                )
+                with self.assertRaises(BotAssertionError):
+                    _assert_expected_cluster(
+                        "ci", tag, (anchor_x + radius + 0.001, anchor_z)
+                    )
+        with self.assertRaises(BotAssertionError, msg="非 ci tag 不能冒充三簇稳定 witness"):
+            _assert_expected_cluster("local", "J1", (180.0, 140.0))
+        with self.assertRaises(BotAssertionError, msg="未知 tag 必须 fail closed"):
+            _assert_expected_cluster("ci", "XX", (180.0, 140.0))
+
+    def test_fallback_runtime_and_state_are_private(self):
+        runtime_start = self.source.index('if [ "$OWNED_WORLD_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+        runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
+        runtime = self.source[runtime_start:runtime_end]
+        self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
+
+        state_start = self.source.index('# Dedicated world evidence pins state to its private runtime.')
+        state_end = self.source.index('\nport_open() {', state_start)
+        state = self.source[state_start:state_end]
+        self.assertIn('if [ "$OWNED_WORLD_MODE" = "1" ]; then', state)
+        self.assertIn('SPIRITWOOD_STATE_DIR="$SERVER_RUNTIME_DIR/server/data/spiritwood"', state)
+
+    def test_fallback_mode_skips_novice_raster_generation(self):
+        fixture_start = self.source.index('# Owned-fixture mode generates')
+        fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
+        fixture = self.source[fixture_start:fixture_end]
+        self.assertIn(
+            'if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then',
+            fixture,
+        )
 
     def test_self_started_server_builds_unique_exact_fixture_identity(self):
         fixture_start = self.source.index('# Owned-fixture mode generates')
@@ -1058,7 +1289,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         self.assertLess(
             self.source.index(ownership, readiness_start),
-            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" --all'),
+            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"'),
             "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
         )
 
@@ -1067,7 +1298,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
         runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
-  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
+  python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
             pipeline.count(runner),
@@ -1127,7 +1358,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
         scenario_start = self.source.index("# ---- 场景 ----")
         scenario = self.source[scenario_start:]
-        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" --all'
+        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"'
         self.assertIn('while true; do', scenario)
         self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
         self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
@@ -1171,8 +1402,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn(rejection, server)
         self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
 
-    def test_owned_fixture_mode_uses_private_cwd_and_generic_uses_checkout_cwd(self):
-        launch_start = self.source.index('  (\n    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then')
+    def test_owned_world_modes_use_private_cwd_and_only_ambient_enables_dev_commands(self):
+        launch_start = self.source.index('  (\n    if [ "$OWNED_WORLD_MODE" = "1" ]; then')
         launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
         launch = self.source[launch_start:launch_end]
         for required in (
@@ -1180,6 +1411,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             'cd "$ROOT/server"',
             'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
             'export BONG_ASSETS_DIR="$ROOT/server"',
+            'if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then',
             'export BONG_DEV_MODE=1',
         ):
             with self.subTest(required=required):
@@ -1258,6 +1490,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
+            base_env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            base_env["BONG_BUILD_TOKEN_DIR"] = str(pathlib.Path(temp_dir) / "build-token")
 
             adopted = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "0"}
             adopted_result = subprocess.run(
@@ -1453,6 +1687,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
+                "BOT_E2E_FALLBACK_MODE",
                 "BONG_TERRAIN_RASTER_PATH", "BONG_SPIRITWOOD_HARVESTED_PATH",
                 "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
             ):
@@ -1472,6 +1707,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 }
             )
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            env["BONG_BUILD_TOKEN_DIR"] = str(temp / "build-token")
             evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
             runner_output = ""
             runner_result = ""
@@ -2598,6 +2835,21 @@ class ProtoMinTest(unittest.TestCase):
     def test_server_data_payload_name_reads_oneof_field(self):
         envelope = _pb_len_field(31, b"\x08\x01")
         self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(34, b"")),
+            "cast_sync",
+            "shallow payload table must not hide production field 34",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(36, b"")),
+            "skillbar_config",
+            "shallow payload table must not hide authoritative bind acknowledgement field 36",
+        )
+        self.assertEqual(
+            proto_min.server_data_payload_name(_pb_len_field(51, b"")),
+            "combat_event",
+            "shallow payload table must not hide production field 51",
+        )
 
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
@@ -2782,6 +3034,44 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertIn("PASS", output.getvalue())
         self.assertIn("pass=1", output.getvalue())
 
+    def test_all_runs_fallback_only_when_owned_runtime_is_declared(self):
+        self.assertGreaterEqual(
+            MIN_CHUNKS_AFTER_CENTER,
+            8,
+            "fallback join gate 至少要观察 center 后 8 个真实 ChunkData",
+        )
+        scenario = discover_scenarios()["terrain_join_chunk_delivery"]
+        self.assertFalse(scenario.DEFAULT_ENABLED)
+        self.assertEqual(scenario.REQUIRED_ENV, FALLBACK_OWNED_ENV)
+        self.assertEqual(scenario.RUN_IN_ALL_WHEN_ENV, FALLBACK_OWNED_ENV)
+
+        run = mock.Mock()
+        dedicated = types.SimpleNamespace(
+            DESCRIPTION="owned fallback",
+            MODULES=["terrain"],
+            DEFAULT_ENABLED=False,
+            REQUIRED_ENV=FALLBACK_OWNED_ENV,
+            RUN_IN_ALL_WHEN_ENV=FALLBACK_OWNED_ENV,
+            run=run,
+        )
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                scenario_runner,
+                "discover_scenarios",
+                return_value={"terrain_join_chunk_delivery": dedicated},
+            ),
+            mock.patch.object(scenario_runner, "check_server_reachable", return_value=True),
+            mock.patch.dict(os.environ, {FALLBACK_OWNED_ENV: "1"}, clear=False),
+            mock.patch.object(sys, "argv", ["run_scenarios.py", "--all"]),
+            redirect_stdout(output),
+        ):
+            result = scenario_runner.main()
+
+        self.assertEqual(result, 0)
+        run.assert_called_once()
+        self.assertIn("PASS", output.getvalue())
+
     def test_all_skips_ambient_without_fixture_ownership(self):
         run = mock.Mock()
         scenario = types.SimpleNamespace(
@@ -2913,22 +3203,33 @@ class RunnerLogicTest(unittest.TestCase):
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)
         port = listener.getsockname()[1]
-        accepted = threading.Thread(target=lambda: listener.accept(), daemon=True)
+        accepted_connections: list[socket.socket] = []
+
+        def accept_once() -> None:
+            connection, _ = listener.accept()
+            accepted_connections.append(connection)
+
+        accepted = threading.Thread(target=accept_once)
         accepted.start()
         try:
             self.assertTrue(check_server_reachable("127.0.0.1", port, timeout=2.0))
         finally:
+            accepted.join(timeout=2.0)
+            for connection in accepted_connections:
+                connection.close()
             listener.close()
         self.assertFalse(check_server_reachable("127.0.0.1", 1, timeout=0.5))
 
     def test_intent_payload_is_valid_json_utf8(self):
         # intent() 的 wire 形状：channel string + UTF-8 JSON —— 锁编码不锁语义
         body = mc.mc_string("bong:client_request") + json.dumps(
-            {"v": 1, "type": "breakthrough"}
+            {"v": 1, "type": "breakthrough_request"}
         ).encode("utf-8")
         reader = mc.Reader(body)
         self.assertEqual(reader.string(), "bong:client_request")
-        self.assertEqual(json.loads(reader.rest()), {"v": 1, "type": "breakthrough"})
+        self.assertEqual(
+            json.loads(reader.rest()), {"v": 1, "type": "breakthrough_request"}
+        )
 
 
 def _bare_bot() -> Bot:
@@ -2939,6 +3240,8 @@ def _bare_bot() -> Bot:
     bot.t0 = 0.0
     bot.events = []
     bot.entities = {}
+    bot.player_names = {}
+    bot.player_entity_uuids = {}
     bot._lock = _threading.RLock()
     bot._new_event = _threading.Condition(bot._lock)
     bot._send_lock = _threading.Lock()
@@ -3168,6 +3471,127 @@ class EntityTrackingTest(unittest.TestCase):
         body = mc.write_varint(mc.S2C_ENTITIES_DESTROY) + mc.write_varint(1) + mc.write_varint(7)
         bot._dispatch(body)
         self.assertIsNone(bot.entity_pos(7), "destroy 后实体应从位置表移除（追击应停止）")
+
+
+class PlayerIdentityTrackingTest(unittest.TestCase):
+    """PlayerList + PlayerSpawn 共同提供用户名、UUID、协议 entity ID 的权威关联。"""
+
+    PLAYER_UUID = "12345678-1234-5678-9abc-def012345678"
+
+    def _player_list_add(self, bot, username="Alice"):
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + bytes([0x01])
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string(username)
+            + mc.write_varint(0)
+        )
+        bot._dispatch(body)
+
+    def _player_spawn(self, bot, entity_id=42):
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(entity_id)
+            + raw_uuid
+            + struct.pack(">ddd", 8.5, 66.0, -4.25)
+            + bytes([64, 192])
+        )
+        bot._dispatch(body)
+
+    def test_player_list_add_records_uuid_to_username(self):
+        bot = _bare_bot()
+
+        self._player_list_add(bot)
+
+        self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_list")
+        self.assertEqual(
+            event.data["entries"],
+            [{"uuid": self.PLAYER_UUID, "username": "Alice"}],
+        )
+
+    def test_player_spawn_joins_entity_id_uuid_username_and_position(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+
+        self._player_spawn(bot)
+
+        self.assertEqual(bot.entity_pos(42), (8.5, 66.0, -4.25))
+        self.assertEqual(bot.player_entity_uuids[42], self.PLAYER_UUID)
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_spawn")
+        self.assertEqual(event.data["username"], "Alice")
+        self.assertEqual(event.data["yaw"], 64)
+        self.assertEqual(event.data["pitch"], 192)
+
+    def test_player_spawn_without_prior_list_is_still_observable(self):
+        bot = _bare_bot()
+
+        self._player_spawn(bot)
+
+        event = bot.events[-1]
+        self.assertEqual(event.kind, "player_spawn")
+        self.assertIsNone(event.data["username"])
+        self.assertEqual(event.data["uuid"], self.PLAYER_UUID)
+
+    def test_destroy_removes_player_entity_identity_but_preserves_list_name(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+        self._player_spawn(bot)
+
+        bot._dispatch(
+            mc.write_varint(mc.S2C_ENTITIES_DESTROY)
+            + mc.write_varint(1)
+            + mc.write_varint(42)
+        )
+
+        self.assertIsNone(bot.entity_pos(42))
+        self.assertNotIn(42, bot.player_entity_uuids)
+        self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+
+    def test_combined_actions_follow_authoritative_valence_field_order(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        # Valence PlayerListS2c encodes every selected action for an entry in bit order:
+        # add_player → initialize_chat → game_mode → listed → latency → display_name.
+        actions = 0x3F
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + bytes([actions])
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(1)
+            + mc.mc_string("textures")
+            + mc.mc_string("base64")
+            + b"\x01"
+            + mc.mc_string("signed")
+            + b"\x01"
+            + raw_uuid
+            + struct.pack(">q", 1234)
+            + mc.write_varint(3)
+            + b"key"
+            + mc.write_varint(3)
+            + b"sig"
+            + mc.write_varint(1)
+            + b"\x01"
+            + mc.write_varint(37)
+            + b"\x01"
+            + mc.mc_string('{"text":"Alias"}')
+        )
+
+        bot._dispatch(body)
+
+        self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+        self.assertEqual(bot.events[-1].data["actions"], actions)
+        self.assertEqual(
+            bot.events[-1].data["entries"],
+            [{"uuid": self.PLAYER_UUID, "username": "Alice"}],
+        )
 
 
 def _pb_float32_field(number: int, value: float) -> bytes:
@@ -3792,6 +4216,42 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         )
         self.assertEqual(
             decoded["pill"], "ling_xi_wan", "AlchemyOutcomeResolved.pill 是 field 3"
+        )
+
+    def test_skillbar_config_tag36_decodes_empty_item_skill_and_packed_cooldowns(self):
+        empty = b""
+        item = (
+            _pb_len_field(1, b"iron_sword")
+            + _pb_len_field(2, "凡铁剑".encode("utf-8"))
+            + _pb_varint_field(3, 250)
+            + _pb_varint_field(4, 500)
+            + _pb_len_field(5, b"")
+        )
+        skill = (
+            _pb_len_field(1, b"dugu.shoot_needle")
+            + _pb_len_field(2, "凝针".encode("utf-8"))
+            + _pb_varint_field(3, 50)
+            + _pb_varint_field(4, 600)
+            + _pb_len_field(5, b"bong-client:textures/gui/items/needle.png")
+        )
+        config = (
+            _pb_len_field(1, empty)
+            + _pb_len_field(1, _pb_len_field(1, _pb_len_field(1, item)))
+            + _pb_len_field(1, _pb_len_field(1, _pb_len_field(2, skill)))
+            + _pb_len_field(2, _pb_raw_varint(0) + _pb_raw_varint(42))
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(36, config))
+
+        self.assertEqual(decoded["type"], "skillbar_config")
+        self.assertIsNone(decoded["slots"][0], "OptionalSkillBarEntry 无 entry 应解为 None")
+        self.assertEqual(decoded["slots"][1]["kind"], "item")
+        self.assertEqual(decoded["slots"][1]["template_id"], "iron_sword")
+        self.assertEqual(decoded["slots"][2]["kind"], "skill")
+        self.assertEqual(decoded["slots"][2]["skill_id"], "dugu.shoot_needle")
+        self.assertEqual(
+            decoded["cooldown_until_ms"],
+            [0, 42],
+            "proto3 repeated uint64 默认 packed，最小解码器必须逐个读取",
         )
 
     def test_cast_sync_tag34_outcome_names(self):

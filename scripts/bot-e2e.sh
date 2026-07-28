@@ -437,6 +437,16 @@ if [ "$FALLBACK_MODE" = "1" ]; then
   # Keeping the runner explicit also ensures dev-command scenarios cannot accidentally enter this
   # production-mode server and turn unrelated persistence/setup into fallback evidence.
   SCENARIO_ARGS=(--scenario terrain_join_chunk_delivery)
+elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then
+  SCENARIO_ARGS=()
+  IFS=',' read -r -a requested_scenarios <<<"$BOT_E2E_SCENARIOS"
+  for scenario in "${requested_scenarios[@]}"; do
+    if [ -z "$scenario" ]; then
+      echo "[bot-e2e] BOT_E2E_SCENARIOS 含空场景名：$BOT_E2E_SCENARIOS" >&2
+      exit 2
+    fi
+    SCENARIO_ARGS+=(--scenario "$scenario")
+  done
 fi
 
 set +e
