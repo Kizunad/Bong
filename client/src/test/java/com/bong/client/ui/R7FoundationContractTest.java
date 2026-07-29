@@ -34,7 +34,7 @@ class R7FoundationContractTest {
             "DiffListWidget",
             "ScreenOpenPolicy"
         ), components.keySet(), "P0 freezes one base plus four shared helper contracts");
-        assertEquals(34, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
+        assertEquals(36, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
         assertTrue(rows.stream().allMatch(row -> row.owner().equals("R7")),
             "all five contract surfaces are R7-owned even when integration belongs to another track");
         assertTrue(rows.stream().anyMatch(row -> row.component().equals("BongScreenBase")
@@ -135,6 +135,15 @@ class R7FoundationContractTest {
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
         List<OpenPolicyRow> rows = openPolicyRows();
         assertEquals(14, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
+        Set<String> requestKinds = Set.of("SOCIAL_INVITE", "HOTKEY", "INSIGHT", "SYSTEM_TERMINAL");
+        Set<String> currentKinds = Set.of("NONE", "ORDINARY", "MODAL", "SYSTEM_TERMINAL");
+        Set<String> decisions = Set.of("OPEN", "PREEMPT", "NOOP_MATCHING", "DEFER_NOTIFY", "BLOCK_DROP", "EXPIRE");
+        assertTrue(rows.stream().allMatch(row -> requestKinds.contains(row.requestKind())),
+            "every vector request_kind must instantiate the frozen RequestKind enum");
+        assertTrue(rows.stream().allMatch(row -> currentKinds.contains(row.currentKind())),
+            "every vector current_kind must instantiate the frozen CurrentKind enum");
+        assertTrue(rows.stream().allMatch(row -> decisions.contains(row.decision())),
+            "every vector decision must instantiate the frozen Decision enum");
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-combat").decision());
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-screen").decision());
         assertEquals("EXPIRE", findPolicy(rows, "social-expired").decision());

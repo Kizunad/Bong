@@ -22,6 +22,8 @@ BongKeybindRegistry	constructor	BongKeybindRegistry(UnaryOperator<KeyBinding> re
 BongKeybindRegistry	register	public KeyBinding register(BindingSpec spec)	R7	Duplicate translation keys always fail; UNKNOWN defaults do not collide physically.
 BongKeybindRegistry	registrations	public List<Registration> registrations()	R7	Inspection is immutable and preserves registration order.
 BongKeybindRegistry	binding-spec	record BindingSpec(String translationKey, InputUtil.Type type, int defaultCode, String category)	R7	Physical identity is the exact InputUtil.Type plus default code pair.
+BongKeybindRegistry	registration	record Registration(BindingSpec spec, KeyBinding binding)	R7	A successful immutable registration pairs its exact spec with the Fabric binding.
+BongKeybindRegistry	physical-default	record PhysicalDefault(InputUtil.Type type, int code)	R7	Physical collision identity does not collapse different InputUtil types sharing one numeric code.
 BongKeybindRegistry	reserved-default	record ReservedDefault(String owner, PhysicalDefault key)	R7	Vanilla-reserved defaults are an explicit manifest.
 BongKeybindRegistry	conflict-exemption	record ConflictExemption(String firstOwner, String secondOwner, PhysicalDefault key, String reason)	R7	An exemption applies only to an exact owner pair and non-empty reason.
 ClientThreadMarshal	run-production	public static boolean run(Runnable task)	R7	Null MinecraftClient fails closed; accepted inline or queued work returns true.
