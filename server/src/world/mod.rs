@@ -731,11 +731,11 @@ mod tests {
     };
     use super::zone::{default_spawn_bounds, Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use super::{
-        block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
-        select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
-        AnvilBootstrapConfig, FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap,
-        ANVIL_REGION_DIR_NAME, GRASS_Y, NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
-        TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
+        block_coord_to_chunk, fallback_flat_chunk_count_is_safe, fallback_spawn_chunk_union,
+        select_world_bootstrap, select_world_bootstrap_from_configured_paths,
+        terrain::RasterBootstrapConfig, AnvilBootstrapConfig, FallbackFlatBootstrap,
+        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS,
+        GRASS_Y, NEW_PLAYER_VIEW_DISTANCE_CHUNKS, TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::{
         BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3, UnloadedChunk,
