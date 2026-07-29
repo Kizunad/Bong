@@ -910,6 +910,26 @@ public class BongNetworkHandlerTest {
                 final class Helper {
                     static void clear() { LootContainerStateStore.clearOnDisconnect(); }
                 }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable cleaner = Helper::clearOnDisconnect;
+                    }
+                }
+                final class Helper {
+                    static void clearOnDisconnect() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable cleaner = Helper::clear;
+                    }
+                }
+                final class Helper {
+                    static void clear() { LootContainerStateStore.clearOnDisconnect(); }
+                }
                 """
         );
 

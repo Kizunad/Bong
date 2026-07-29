@@ -12,6 +12,7 @@ import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreeScanner;
 
+import javax.lang.model.element.Modifier;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -78,7 +79,9 @@ public final class JavaLifecycleSourceInspector {
         boolean declaresEntry = storeType.getMembers().stream()
             .filter(MethodTree.class::isInstance)
             .map(MethodTree.class::cast)
-            .anyMatch(method -> method.getName().contentEquals(entryMethod));
+            .anyMatch(method -> method.getName().contentEquals(entryMethod)
+                && method.getParameters().isEmpty()
+                && method.getModifiers().getFlags().contains(Modifier.STATIC));
         if (!declaresEntry) {
             throw new AssertionError("必须能定位 production cleaner：" + storeIdentity + "." + entryMethod);
         }
@@ -171,6 +174,12 @@ public final class JavaLifecycleSourceInspector {
             public Void visitMemberSelect(MemberSelectTree selection, Void unused) {
                 reject(selection.getIdentifier().toString());
                 return super.visitMemberSelect(selection, unused);
+            }
+
+            @Override
+            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                reject(reference.getName().toString());
+                return super.visitMemberReference(reference, unused);
             }
         };
 

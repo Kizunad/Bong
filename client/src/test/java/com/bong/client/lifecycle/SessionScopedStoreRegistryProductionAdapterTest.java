@@ -976,7 +976,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     void productionCleanerDeclarationGuardTargetsDeclaredStoreWhenHelperTypePrecedesIt() {
         String fixture = """
             final class PreludeType {
-                static void clearOnDisconnect() { }
+                static void differentLifecycleHook() { }
             }
             final class FixtureStore {
                 public static void clearOnDisconnect() { }
@@ -988,6 +988,28 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             "clearOnDisconnect",
             "com.example.FixtureStore"
         ));
+    }
+
+    @Test
+    void productionCleanerDeclarationGuardRequiresStaticNoArgEntry() {
+        for (String fixture : List.of(
+            "final class FixtureStore { void clearOnDisconnect() { } }",
+            "final class FixtureStore { static void clearOnDisconnect(long now) { } }"
+        )) {
+            AssertionError failure = assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
+                    fixture,
+                    "clearOnDisconnect",
+                    "com.example.FixtureStore"
+                )
+            );
+            assertTrue(
+                failure.getMessage().contains("必须能定位 production cleaner"),
+                "canonical registry cleaner 必须是目标 Store 自己声明的 static 无参入口；实际="
+                    + failure.getMessage()
+            );
+        }
     }
 
     @Test
