@@ -395,7 +395,7 @@ test('provider canary remains dispatch-only, minimally permissioned, and secret-
   assert.doesNotMatch(yaml, /contents:|pull-requests:|issues:/);
   assert.match(
     yaml,
-    new RegExp(`uses: Kizunad/review/\\.github/workflows/provider-canary\\.yml@${providerCanarySha}`),
+    new RegExp(`^    uses: Kizunad/review/\\.github/workflows/provider-canary\\.yml@${providerCanarySha}$`, 'm'),
   );
   assert.equal(
     (yaml.match(/uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/g) ?? []).length,
