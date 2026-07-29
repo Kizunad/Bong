@@ -7,9 +7,27 @@ import path from 'node:path';
 const workflowPath = new URL('../workflows/review-next.yml', import.meta.url);
 const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.yml', import.meta.url);
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
+const canaryContractPath = '.github/workflows/provider-canary.yml';
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
 const centralSha = '3683431a33465c4fd62fb5c1dfd4fb2b8cef9421';
+const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 const centralWorkflowSha256 = '66ef54e4ff879c1041d4697da74e3667115dfdab373693dfc9fab6089972eac3';
+
+const expectedCanaryInterface = `  workflow_call:
+    inputs:
+      review_base_url:
+        description: Claude-compatible provider base URL
+        required: true
+        type: string
+      worker_timeout_ms:
+        description: Per-model canary timeout
+        required: false
+        default: 60000
+        type: number
+    secrets:
+      review_api_key:
+        description: Caller-owned provider credential
+        required: true`;
 
 const expectedCentralInterface = `  workflow_call:
     inputs:
@@ -153,9 +171,13 @@ function exactSection(yaml, startMarker, endMarker, name) {
   return yaml.slice(start, end).trimEnd();
 }
 
+function assertExactWorkflowCall(yaml, expected, name) {
+  const actual = exactSection(yaml, '  workflow_call:', '\npermissions:', `${name} workflow_call`);
+  assert.equal(actual, expected, `${name} workflow_call interface drifted`);
+}
+
 function assertExactCentralInterface(yaml) {
-  const actual = exactSection(yaml, '  workflow_call:', '\npermissions:', 'central workflow_call');
-  assert.equal(actual, expectedCentralInterface, 'central workflow_call interface drifted');
+  assertExactWorkflowCall(yaml, expectedCentralInterface, 'central');
 }
 
 function topLevelJobNames(yaml) {
@@ -258,6 +280,13 @@ test('consumer CI checks out and tests the exact central workflow contract', asy
     yaml.includes(`[[ "$(git -C _central-contract rev-parse HEAD)" == '${centralSha}' ]]`),
     'consumer CI must verify the checked-out central OID',
   );
+  assert.match(yaml, new RegExp(`ref: ${providerCanarySha}`));
+  assert.match(yaml, new RegExp(`path: ${providerCanarySha}`));
+  assert.ok(
+    yaml.includes(`[[ "$(git -C ${providerCanarySha} rev-parse HEAD)" == '${providerCanarySha}' ]]`),
+    'consumer CI must verify the checked-out provider canary OID',
+  );
+  assert.match(yaml, new RegExp(`PROVIDER_CANARY_CONTRACT_DIR=${providerCanarySha}`));
   assert.match(yaml, /bubblewrap_0\.9\.0-1ubuntu0\.1_amd64\.deb/);
   assert.match(yaml, /1b506492bd9c7fd0cdb4f02ac822f1d3e336b0aead5113c1239baf8db5db562a/);
   assert.match(yaml, /sha256sum --check --strict/);
@@ -385,6 +414,56 @@ ${expectedCentralJobs.finalize}
   }
 });
 
+test('checked-out provider canary release matches its caller interface', async (context) => {
+  const canaryRoot = process.env.PROVIDER_CANARY_CONTRACT_DIR;
+  if (!canaryRoot) {
+    context.skip('PROVIDER_CANARY_CONTRACT_DIR is required for the provider canary contract check');
+    return;
+  }
+  assert.equal(
+    path.basename(canaryRoot),
+    providerCanarySha,
+    'provider canary contract directory must be named for the immutable release SHA',
+  );
+  const centralYaml = await readFile(path.join(canaryRoot, canaryContractPath), 'utf8');
+  assertExactWorkflowCall(centralYaml, expectedCanaryInterface, 'provider canary');
+  assert.match(centralYaml, /^permissions: \{\}$/m);
+  assert.match(centralYaml, /^    permissions:\n      # Used only to resolve this reusable workflow's immutable referenced_workflows SHA\.\n      actions: read$/m);
+  assert.doesNotMatch(centralYaml, /contents:|pull-requests:|issues:/);
+});
+
+test('provider canary publication contract rejects every input and secret set drift', () => {
+  const fixture = `name: fixture\n\non:\n${expectedCanaryInterface}\n\npermissions: {}\n`;
+  assert.doesNotThrow(() => assertExactWorkflowCall(fixture, expectedCanaryInterface, 'provider canary'));
+  for (const [name, mutation] of [
+    ['required input addition', expectedCanaryInterface.replace(
+      '      worker_timeout_ms:',
+      '      added_required_input:\n        required: true\n        type: string\n      worker_timeout_ms:',
+    )],
+    ['input removal', expectedCanaryInterface.replace(
+      '      worker_timeout_ms:\n        description: Per-model canary timeout\n        required: false\n        default: 60000\n        type: number\n',
+      '',
+    )],
+    ['input type drift', expectedCanaryInterface.replace('        type: number', '        type: string')],
+    ['input default drift', expectedCanaryInterface.replace('        default: 60000', '        default: 120000')],
+    ['required secret addition', expectedCanaryInterface.replace(
+      '      review_api_key:',
+      '      added_required_secret:\n        required: true\n      review_api_key:',
+    )],
+    ['secret removal', expectedCanaryInterface.replace(
+      '    secrets:\n      review_api_key:\n        description: Caller-owned provider credential\n        required: true',
+      '    secrets: {}',
+    )],
+  ]) {
+    const mutated = fixture.replace(expectedCanaryInterface, mutation);
+    assert.throws(
+      () => assertExactWorkflowCall(mutated, expectedCanaryInterface, 'provider canary'),
+      { message: /provider canary workflow_call interface drifted/ },
+      name,
+    );
+  }
+});
+
 test('provider canary remains dispatch-only, minimally permissioned, and secret-isolated', async () => {
   const yaml = await canaryWorkflow();
   assert.match(yaml, /^  workflow_dispatch:$/m);
@@ -394,7 +473,12 @@ test('provider canary remains dispatch-only, minimally permissioned, and secret-
   assert.doesNotMatch(yaml, /contents:|pull-requests:|issues:/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/,
+    new RegExp(`^    uses: Kizunad/review/\\.github/workflows/provider-canary\\.yml@${providerCanarySha}$`, 'm'),
+  );
+  assert.equal(
+    (yaml.match(/uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/g) ?? []).length,
+    1,
+    'provider canary must use exactly one immutable central release',
   );
   assert.doesNotMatch(yaml, /provider-canary\.yml@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
