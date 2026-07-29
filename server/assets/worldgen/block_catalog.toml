@@ -1,7 +1,7 @@
-# plan-registry-datafication-v1 P2 — canonical terrain logical-key catalog.
-# Source order is deterministic and externally observable; exactly 213 entries are required.
+# plan-registry-datafication-v1 P2 — authoritative terrain logical-key catalog.
+# The checked-in 213 entries preserve the migration baseline; they are not a production limit.
 # Direct entries resolve through Valence BlockKind::from_str(name).to_state().
-# Aliases are intentionally limited to glowshroom→shroomlight and iron_nugget→air.
+# Additional aliases may target any direct key declared in this file; alias chains are rejected.
 version = 1
 
 [[block]]
