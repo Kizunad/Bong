@@ -18,6 +18,29 @@ SKILL_ID = "dugu.shoot_needle"
 SLOT = 0
 
 
+def _wait_successful_cast_sequence(bot, anchor: float):
+    casting = bot.wait_for(
+        lambda event: event.kind == "server_data"
+        and event.t > anchor
+        and event.data.get("payload_type") == "cast_sync"
+        and event.data.get("payload", {}).get("slot") == SLOT
+        and event.data.get("payload", {}).get("phase") == "casting"
+        and event.data.get("payload", {}).get("outcome") == "none",
+        timeout=10.0,
+        description="凝针施放须先收到 slot=0 phase=casting outcome=none 的 typed cast_sync",
+    )
+    return bot.wait_for(
+        lambda event: event.kind == "server_data"
+        and event.t > casting.t
+        and event.data.get("payload_type") == "cast_sync"
+        and event.data.get("payload", {}).get("slot") == SLOT
+        and event.data.get("payload", {}).get("phase") == "complete"
+        and event.data.get("payload", {}).get("outcome") == "completed",
+        timeout=10.0,
+        description="凝针施放须终止于 slot=0 phase=complete outcome=completed",
+    )
+
+
 def run(env) -> None:
     with env.new_bot("Cast") as bot:
         wait_for_ready(bot)
@@ -82,26 +105,7 @@ def run(env) -> None:
             }
         )
 
-        casting = bot.wait_for(
-            lambda event: event.kind == "server_data"
-            and event.t > anchor
-            and event.data.get("payload_type") == "cast_sync"
-            and event.data.get("payload", {}).get("slot") == SLOT
-            and event.data.get("payload", {}).get("phase") == "casting"
-            and event.data.get("payload", {}).get("outcome") == "none",
-            timeout=10.0,
-            description="凝针施放须先收到 slot=0 phase=casting outcome=none 的 typed cast_sync",
-        )
-        bot.wait_for(
-            lambda event: event.kind == "server_data"
-            and event.t > casting.t
-            and event.data.get("payload_type") == "cast_sync"
-            and event.data.get("payload", {}).get("slot") == SLOT
-            and event.data.get("payload", {}).get("phase") == "complete"
-            and event.data.get("payload", {}).get("outcome") == "completed",
-            timeout=10.0,
-            description="凝针施放须终止于 slot=0 phase=complete outcome=completed",
-        )
+        _wait_successful_cast_sequence(bot, anchor)
         bot.wait_for(
             lambda event: event.kind == "vfx_event"
             and event.t > anchor

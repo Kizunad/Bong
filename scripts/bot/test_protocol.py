@@ -49,6 +49,9 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios.combat_skill_cast import (  # noqa: E402
+    _wait_successful_cast_sequence,
+)
 from bot.scenarios.cultivation_realm_qi import (  # noqa: E402
     _chat_after,
     _successful_command_and_chat,
@@ -2723,6 +2726,41 @@ def _player_state_event(t: float, qi: float, qi_max: float = 100.0) -> _FakeEven
     )
 
 
+class CombatSkillCastScenarioTest(unittest.TestCase):
+    @staticmethod
+    def _cast_sync(t: float, phase: str, outcome: str) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "server_data",
+            {
+                "payload_type": "cast_sync",
+                "payload": {
+                    "slot": 0,
+                    "phase": phase,
+                    "outcome": outcome,
+                },
+            },
+        )
+
+    def test_successful_cast_requires_complete_after_casting(self):
+        casting = self._cast_sync(3.0, "casting", "none")
+        complete = self._cast_sync(4.0, "complete", "completed")
+
+        self.assertIs(
+            _wait_successful_cast_sequence(_FakeBot([casting, complete]), 1.0),
+            complete,
+        )
+
+    def test_successful_cast_rejects_complete_before_casting(self):
+        bot = _FakeBot(
+            [
+                self._cast_sync(2.0, "complete", "completed"),
+                self._cast_sync(3.0, "casting", "none"),
+            ]
+        )
+
+        with self.assertRaisesRegex(AssertionError, "phase=complete"):
+            _wait_successful_cast_sequence(bot, 1.0)
 
 
 class CultivationRealmQiScenarioTest(unittest.TestCase):
