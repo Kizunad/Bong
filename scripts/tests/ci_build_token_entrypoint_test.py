@@ -23,10 +23,12 @@ SPECS = {
             "../scripts/build-token.sh cargo build --release",
             "../scripts/build-token.sh gradle clean --no-daemon",
             "../scripts/build-token.sh gradle runClientPreview --no-daemon --stacktrace --rerun-tasks",
+            "bash scripts/preview/stop-server-headless.sh",
         ],
         "forbid": [
             r"(?m)^\s*run:\s*cargo\b",
             r"(?m)^\s*(?:xvfb-run[^\n]*\\\n\s*)?\./gradlew\b",
+            r"(?m)^\s*kill\s+-TERM\s+\"?\$PID",
         ],
     },
     "scripts/smoke-test-e2e.sh": {
@@ -41,9 +43,16 @@ SPECS = {
     },
     "scripts/preview/run-server-headless.sh": {
         "required": [
-            'nohup "$REPO_ROOT/scripts/build-token.sh" cargo run --locked $PROFILE'
+            '"$REPO_ROOT/scripts/build-token.sh" cargo "${BUILD_ARGS[@]}"',
+            'exec env "$SERVER_BINARY"',
+            'bong_server_write_record "$SERVER_PID" "$SERVER_BINARY"',
+            'bong_server_pinned_process_owns_ipv4_listener',
         ],
-        "forbid": [],
+        "forbid": [r"(?m)^\s*nohup\s+.*build-token\.sh.*cargo\s+run\b"],
+    },
+    "scripts/preview/stop-server-headless.sh": {
+        "required": ['bong_server_stop_managed_for_replacement "preview cleanup"'],
+        "forbid": [r"(?m)^\s*kill\s"],
     },
     "scripts/e2e-redis.sh": {
         "required": [
@@ -61,8 +70,11 @@ SPECS = {
         "forbid": [],
     },
     "scripts/dev-reload.sh": {
-        "required": ['"$PWD/scripts/build-token.sh" cargo build'],
-        "forbid": [],
+        "required": [
+            'ROOT="$(git rev-parse --show-toplevel)"',
+            '(cd server && "$ROOT/scripts/build-token.sh" cargo build',
+        ],
+        "forbid": [r'\(cd server && "\$PWD/scripts/build-token\.sh"'],
     },
 }
 
