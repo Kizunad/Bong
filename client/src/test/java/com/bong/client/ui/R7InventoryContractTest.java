@@ -65,6 +65,16 @@ class R7InventoryContractTest {
             actual.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
             "a token moved between executable code and comment/string context"
         );
+        assertEquals(
+            expectedRows.stream().map(FillInventoryRow::freezeLine).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::line).toList(),
+            "freeze-line diagnostics drifted; re-audit the affected layout context"
+        );
+        assertEquals(
+            expectedRows.stream().map(FillInventoryRow::source).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::sourceLine).toList(),
+            "source context drifted; retain or explicitly reclassify each fill(100) occurrence"
+        );
 
         Map<String, Long> verdicts = histogram(expectedRows.stream().map(FillInventoryRow::verdict).toList());
         assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L), verdicts,
