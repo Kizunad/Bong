@@ -12,6 +12,16 @@ BONG_SERVER_LIFECYCLE_LOCK_OWNER_BASHPID=""
 
 BONG_SERVER_STOP_FORCED=3
 
+# Linux kill(2) reserves 0 and negative values for process-group or broad
+# delivery. PID 1 is never a Bong-owned child. Every signal authority and the
+# process identity readers feeding it must reject these values before touching
+# /proc, pgrep, ps, kill, or pidfd.
+bong_server_validate_signal_id() {
+    local value="${1:-}"
+
+    [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt 1 ]
+}
+
 bong_server_validate_real_directory() {
     local directory="${1:-}"
     [ -n "$directory" ] && [ -d "$directory" ] && [ ! -L "$directory" ]
@@ -197,7 +207,7 @@ bong_server_process_is_running() {
     local pid="${1:-}"
     local state
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     state="$(ps -o stat= -p "$pid" 2>/dev/null)" || {
         kill -0 "$pid" 2>/dev/null || return 1
@@ -238,7 +248,7 @@ bong_server_parse_stat_starttime_and_group() {
 bong_server_process_starttime_and_group() {
     local pid="${1:-}" stat
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     { IFS= read -r stat < "/proc/$pid/stat"; } 2>/dev/null || return 1
     bong_server_parse_stat_starttime_and_group "$stat"
 }
@@ -253,14 +263,14 @@ bong_server_process_starttime() {
 bong_server_process_executable() {
     local pid="${1:-}"
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     readlink -f -- "/proc/$pid/exe" 2>/dev/null
 }
 
 bong_server_process_executable_identity() {
     local pid="${1:-}"
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     stat -Lc '%d:%i' -- "/proc/$pid/exe" 2>/dev/null
 }
 
@@ -333,7 +343,7 @@ bong_server_read_record() {
     exec {fd}<&-
 
     [ "$count" -eq 4 ] || return 1
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     [[ "$starttime" =~ ^[0-9]+$ ]] || return 1
     [ -n "$executable" ] || return 1
     [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
@@ -370,10 +380,10 @@ bong_server_pidfd_signal() {
     local expected_pgrp="${5:-}"
     local -a pidfd_args
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$pid" || return 2
     [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
     [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
-    [ -z "$expected_pgrp" ] || [[ "$expected_pgrp" =~ ^[0-9]+$ ]] || return 2
+    [ -z "$expected_pgrp" ] || bong_server_validate_signal_id "$expected_pgrp" || return 2
     case "$signal_name" in TERM|KILL) ;; *) return 2 ;; esac
     [ -n "${BONG_SERVER_LIFECYCLE_LIBRARY_DIR:-}" ] || return 2
     pidfd_args=("$pid" "$expected_starttime" "$expected_executable_identity" "$signal_name")
@@ -388,11 +398,11 @@ bong_server_pinned_process_owns_ipv4_listener() {
     local port="${4:-}" expected_pgrp="${5:-}"
     local -a owner_args
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$pid" || return 2
     [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
     [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 2
-    [ -z "$expected_pgrp" ] || [[ "$expected_pgrp" =~ ^[0-9]+$ ]] || return 2
+    [ -z "$expected_pgrp" ] || bong_server_validate_signal_id "$expected_pgrp" || return 2
     [ -n "${BONG_SERVER_LIFECYCLE_LIBRARY_DIR:-}" ] || return 2
     owner_args=("$pid" "$expected_starttime" "$expected_executable_identity" "$port")
     [ -z "$expected_pgrp" ] || owner_args+=("$expected_pgrp")
@@ -405,7 +415,7 @@ bong_server_pinned_process_status() {
     local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
     local actual_starttime actual_executable_identity status
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$pid" || return 2
     [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
     [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
     if bong_server_process_is_running "$pid"; then
@@ -433,10 +443,10 @@ bong_server_pinned_process_group_status() {
     local pid="${1:-}" expected_starttime="${2:-}" expected_executable_identity="${3:-}"
     local expected_pgid="${4:-}" snapshot actual_starttime actual_pgid actual_executable_identity status
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$pid" || return 2
     [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
     [[ "$expected_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
-    [[ "$expected_pgid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$expected_pgid" || return 2
     if bong_server_process_is_running "$pid"; then
         status=0
     else
@@ -657,6 +667,7 @@ bong_server_read_ready_pid() {
     fi
     exec {fd}<&-
     [[ "$line" =~ ^pid=([0-9]+)$ ]] || return 2
+    bong_server_validate_signal_id "${BASH_REMATCH[1]}" || return 2
     printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
@@ -665,7 +676,7 @@ _bong_server_write_record() {
     local expected_executable="${2:-}"
     local record directory temporary starttime executable executable_identity fd published_identity
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     [ -n "$expected_executable" ] || return 1
     bong_server_process_is_running "$pid" || return 1
     starttime="$(bong_server_process_starttime "$pid")" || return 1
@@ -713,7 +724,7 @@ bong_server_write_record() {
 bong_server_kill_tree() {
     local pid="${1:-}" children child status
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     # Command substitution drops trailing newlines, so append a private status
     # delimiter. This preserves a status-0 blank child line as malformed input
     # while still allowing pgrep's status-1 "no children" result to be empty.
@@ -777,7 +788,7 @@ PY
 bong_server_stop_process_tree_and_release_port() {
     local pid="${1:-}" port="${2:-25565}" tree_stopped=1 port_released=0
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     [[ "$port" =~ ^[0-9]+$ ]] || return 1
     if kill -0 "$pid" 2>/dev/null; then
         if bong_server_kill_tree "$pid"; then
@@ -806,7 +817,7 @@ bong_server_process_group_members() {
     local pgid="${1:-}" pid member_pgid state found=0 process_table
     local snapshot starttime snapshot_pgrp executable_identity status
 
-    [[ "$pgid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$pgid" || return 2
     process_table="$(ps -e -o pid=,pgid=,stat= 2>/dev/null)" || return 2
     while read -r pid member_pgid state; do
         [ -z "$pid$member_pgid$state" ] && continue
@@ -877,7 +888,7 @@ bong_server_stop_owned_process_group_and_release_port() {
     local pgid="${4:-}" port="${5:-25565}" current_pgid members status pid starttime executable_identity
     local forced_stop=0 forced_children=0
 
-    [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 2
+    bong_server_validate_signal_id "$owner_pid" || return 2
     [[ "$owner_starttime" =~ ^[0-9]+$ ]] || return 2
     [[ "$owner_executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
     [ "$pgid" = "$owner_pid" ] || {
@@ -908,7 +919,7 @@ bong_server_stop_owned_process_group_and_release_port() {
     esac
     while read -r pid starttime executable_identity; do
         [ -n "$pid$starttime$executable_identity" ] || continue
-        [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$starttime" =~ ^[0-9]+$ ]] \
+        bong_server_validate_signal_id "$pid" && [[ "$starttime" =~ ^[0-9]+$ ]] \
             && [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
         [ "$pid" = "$owner_pid" ] && continue
         bong_server_pinned_process_status \
@@ -938,7 +949,7 @@ bong_server_stop_owned_process_group_and_release_port() {
         forced_children=0
         while read -r pid starttime executable_identity; do
             [ -n "$pid$starttime$executable_identity" ] || continue
-            [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$starttime" =~ ^[0-9]+$ ]] \
+            bong_server_validate_signal_id "$pid" && [[ "$starttime" =~ ^[0-9]+$ ]] \
                 && [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 2
             [ "$pid" = "$owner_pid" ] && continue
             bong_server_pinned_process_status \
@@ -1030,7 +1041,7 @@ bong_server_wait_for_executable() {
     local attempts="${3:-500}"
     local actual_executable attempt status
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     [ -n "$expected_executable" ] || return 1
     [[ "$attempts" =~ ^[0-9]+$ ]] || return 1
     expected_executable="$(readlink -f -- "$expected_executable")" || return 1
@@ -1058,7 +1069,7 @@ bong_server_wait_for_exit() {
     local grace_seconds="${2:-}"
     local deadline status
 
-    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    bong_server_validate_signal_id "$pid" || return 1
     [[ "$grace_seconds" =~ ^[0-9]+$ ]] || return 1
     deadline=$((SECONDS + grace_seconds))
     while :; do

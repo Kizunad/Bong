@@ -9,7 +9,7 @@ export BONG_SERVER_PID_FILE="$TEST_ROOT/managed.pid"
 ACTIVE_PID=""
 
 cleanup() {
-    if [[ "$ACTIVE_PID" =~ ^[0-9]+$ ]]; then
+    if bong_server_validate_signal_id "$ACTIVE_PID"; then
         kill -KILL "$ACTIVE_PID" 2>/dev/null || true
         wait "$ACTIVE_PID" 2>/dev/null || true
     fi
@@ -2306,7 +2306,12 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
-"$ROOT/scripts/test-tmux-shutdown-order.sh"
+if [ "${GITHUB_ACTIONS:-}" = true ] \
+    && [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ]; then
+    "$ROOT/scripts/test-tmux-shutdown-order.sh"
+else
+    printf 'SKIP: tmux shutdown-order signal test is quarantined to opted-in GitHub Actions e2e\n'
+fi
 supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
 supervisor_fixture_dir="$TEST_ROOT/supervisor-fixture"
 supervisor_fixture_bin="$supervisor_fixture_dir/bin"
@@ -2314,6 +2319,8 @@ supervisor_fixture_marker="$supervisor_fixture_dir/cargo.marker"
 supervisor_fixture_term_marker="$supervisor_fixture_dir/term.marker"
 supervisor_fixture_descendant="$supervisor_fixture_dir/descendant.pid"
 supervisor_fixture_cargo="$supervisor_fixture_bin/cargo"
+supervisor_fixture_build_token="$supervisor_fixture_dir/build-token.sh"
+supervisor_fixture_build_token_args="$supervisor_fixture_dir/build-token.args"
 mkdir -p "$supervisor_fixture_bin" "$supervisor_fixture_dir/server"
 cat > "$supervisor_fixture_cargo" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -2335,17 +2342,29 @@ printf 'started\n' > "$SUPERVISOR_FIXTURE_MARKER"
 while :; do sleep 1; done
 SCRIPT
 chmod +x "$supervisor_fixture_cargo"
+cat > "$supervisor_fixture_build_token" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS:?}"
+printf '%s\n' "$@" > "$SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS"
+[ "$#" -ge 1 ] && [ "$1" = cargo ] || exit 42
+shift
+exec cargo "$@"
+SCRIPT
+chmod +x "$supervisor_fixture_build_token"
 
 start_supervisor_fixture() {
     local control_fd ready_fd ready_line
 
+    rm -f -- "$supervisor_fixture_build_token_args"
     coproc LIFECYCLE_SUPERVISOR_FIXTURE {
         exec env \
             PATH="$supervisor_fixture_bin:$PATH" \
             SUPERVISOR_FIXTURE_MARKER="$supervisor_fixture_marker" \
             SUPERVISOR_FIXTURE_TERM_MARKER="$supervisor_fixture_term_marker" \
             SUPERVISOR_FIXTURE_DESCENDANT="$supervisor_fixture_descendant" \
-            python3 "$supervisor" "$supervisor_fixture_dir/server" \
+            SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$supervisor_fixture_build_token_args" \
+            python3 "$supervisor" "$supervisor_fixture_dir/server" "$supervisor_fixture_build_token" \
             2>"$supervisor_fixture_dir/supervisor.log"
     }
     SUPERVISOR_FIXTURE_PID="$LIFECYCLE_SUPERVISOR_FIXTURE_PID"
@@ -2364,6 +2383,8 @@ start_supervisor_fixture() {
     done
     [ -s "$supervisor_fixture_descendant" ] \
         || fail "startup supervisor fixture did not publish its descendant"
+    [ "$(tr '\n' ' ' < "$supervisor_fixture_build_token_args")" = "cargo run --release " ] \
+        || fail "startup supervisor must route exact cargo run --release argv through build-token"
 }
 
 read_supervisor_ack() {

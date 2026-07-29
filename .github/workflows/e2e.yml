@@ -103,10 +103,11 @@ jobs:
             exit 1
           fi
 
-      - name: Build-token contract tests
+      - name: Build-token and signal-boundary contract tests
         run: |
           bash scripts/tests/build_token_test.sh
           python3 scripts/tests/ci_build_token_entrypoint_test.py
+          python3 scripts/tests/signal_boundary_contract_test.py
 
       - name: Install agent workspace dependencies
         working-directory: agent
@@ -156,6 +157,9 @@ jobs:
       - name: Smoke/E2E stage (Task 13 harness)
         env:
           RUN_LABEL: ci-smoke
+          # Real tmux/process signals stay quarantined to this disposable runner.
+          # Local lifecycle suites must not opt in.
+          BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
         run: bash scripts/smoke-test-e2e.sh
 
       # AGENTS.md §15 —— 协议级黑盒玩家场景（复用上面已构建的 release 二进制和 redis）

@@ -48,17 +48,35 @@ track_active_owner() {
 }
 
 cleanup_active_owner() {
-    local snapshot="" actual_starttime="" actual_pgid="" actual_identity=""
+    local stop_status original_port_check
     [ -n "$ACTIVE_OWNER_PID" ] || return 0
-    snapshot="$(bong_server_process_starttime_and_group "$ACTIVE_OWNER_PID" 2>/dev/null || true)"
-    read -r actual_starttime actual_pgid <<< "$snapshot"
-    actual_identity="$(bong_server_process_executable_identity "$ACTIVE_OWNER_PID" 2>/dev/null || true)"
-    if [ "$actual_starttime" = "$ACTIVE_OWNER_STARTTIME" ] \
-        && [ "$actual_pgid" = "$ACTIVE_OWNER_PGID" ] \
-        && [ "$actual_identity" = "$ACTIVE_OWNER_IDENTITY" ]; then
-        kill -KILL -- "-$ACTIVE_OWNER_PGID" 2>/dev/null || true
+    if ! bong_server_validate_signal_id "$ACTIVE_OWNER_PID" \
+        || ! bong_server_validate_signal_id "$ACTIVE_OWNER_PGID" \
+        || [[ ! "$ACTIVE_OWNER_STARTTIME" =~ ^[0-9]+$ ]] \
+        || [[ ! "$ACTIVE_OWNER_IDENTITY" =~ ^[0-9]+:[0-9]+$ ]]; then
+        printf 'WARN: refusing cleanup without complete pinned fixture authority\n' >&2
+        clear_active_owner
+        return 0
     fi
-    wait "$ACTIVE_OWNER_PID" 2>/dev/null || true
+
+    # Reuse production's per-member pidfd teardown. The protocol fixture never
+    # owns a TCP listener, so port release is an invariant rather than a signal
+    # authority and is kept deterministic here.
+    original_port_check="$(declare -f bong_server_port_is_open)"
+    bong_server_port_is_open() { return 1; }
+    if bong_server_stop_owned_process_group_and_release_port \
+        "$ACTIVE_OWNER_PID" "$ACTIVE_OWNER_STARTTIME" "$ACTIVE_OWNER_IDENTITY" \
+        "$ACTIVE_OWNER_PGID" 25565; then
+        stop_status=0
+    else
+        stop_status=$?
+    fi
+    unset -f bong_server_port_is_open
+    eval "$original_port_check"
+    case "$stop_status" in
+        0|"$BONG_SERVER_STOP_FORCED") wait "$ACTIVE_OWNER_PID" 2>/dev/null || true ;;
+        *) printf 'WARN: pinned fixture cleanup failed closed (status=%s)\n' "$stop_status" >&2 ;;
+    esac
     clear_active_owner
 }
 
@@ -68,14 +86,22 @@ cleanup() {
     close_fd_if_open "${SERVER_STARTUP_CONTROL_FD:-}" write
     close_fd_if_open "${SERVER_STARTUP_READY_FD:-}" read
     cleanup_active_owner
-    if [[ "${BONG_SERVER_SUPERVISOR_PID:-}" =~ ^[0-9]+$ ]]; then
-        local fallback_pid="$BONG_SERVER_SUPERVISOR_PID" fallback_snapshot fallback_starttime fallback_pgid
+    if bong_server_validate_signal_id "${BONG_SERVER_SUPERVISOR_PID:-}"; then
+        local fallback_pid="$BONG_SERVER_SUPERVISOR_PID" fallback_snapshot fallback_starttime fallback_pgid fallback_identity
         fallback_snapshot="$(bong_server_process_starttime_and_group "$fallback_pid" 2>/dev/null || true)"
         read -r fallback_starttime fallback_pgid <<< "$fallback_snapshot"
-        if [ "$fallback_pgid" = "$fallback_pid" ]; then
-            kill -KILL -- "-$fallback_pgid" 2>/dev/null || true
+        fallback_identity="$(bong_server_process_executable_identity "$fallback_pid" 2>/dev/null || true)"
+        if [ "$fallback_pgid" = "$fallback_pid" ] \
+            && [[ "$fallback_starttime" =~ ^[0-9]+$ ]] \
+            && [[ "$fallback_identity" =~ ^[0-9]+:[0-9]+$ ]]; then
+            ACTIVE_OWNER_PID="$fallback_pid"
+            ACTIVE_OWNER_STARTTIME="$fallback_starttime"
+            ACTIVE_OWNER_IDENTITY="$fallback_identity"
+            ACTIVE_OWNER_PGID="$fallback_pgid"
+            cleanup_active_owner
+        else
+            printf 'WARN: refusing fallback cleanup without complete private-group authority\n' >&2
         fi
-        wait "$fallback_pid" 2>/dev/null || true
     fi
     rm -rf -- "$TEST_ROOT"
 }
@@ -102,6 +128,8 @@ fixture_bin="$fixture_dir/bin"
 fixture_server="$fixture_dir/server"
 cargo_pid_file="$fixture_dir/cargo.pid"
 descendant_pid_file="$fixture_dir/descendant.pid"
+build_token_args_file="$fixture_dir/build-token.args"
+build_token="$fixture_dir/build-token.sh"
 mkdir -p "$fixture_bin" "$fixture_server"
 cat > "$fixture_bin/cargo" <<'FIXTURE'
 #!/usr/bin/env bash
@@ -119,16 +147,27 @@ trap 'kill -KILL "$descendant" 2>/dev/null || true; wait "$descendant" 2>/dev/nu
 while :; do sleep 1; done
 FIXTURE
 chmod +x "$fixture_bin/cargo"
+cat > "$build_token" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS:?}"
+printf '%s\n' "$@" > "$SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS"
+[ "$#" -ge 1 ] && [ "$1" = cargo ] || exit 42
+shift
+exec cargo "$@"
+FIXTURE
+chmod +x "$build_token"
 
 start_direct_supervisor() {
     local ready_line=""
-    rm -f -- "$cargo_pid_file" "$descendant_pid_file"
+    rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
     coproc DIRECT_SUPERVISOR {
         exec env \
             PATH="$fixture_bin:$PATH" \
             SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
             SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
-            python3 "$SUPERVISOR" "$fixture_server" \
+            SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+            python3 "$SUPERVISOR" "$fixture_server" "$build_token" \
             2>"$fixture_dir/supervisor.log"
     }
     DIRECT_OWNER_PID=""
@@ -140,6 +179,9 @@ start_direct_supervisor() {
         || fail "supervisor published malformed READY: $ready_line"
     DIRECT_OWNER_PID="${ready_line#READY pid=}"
     track_active_owner "$DIRECT_OWNER_PID"
+    wait_for_file "$build_token_args_file" || fail "build-token fixture did not publish argv"
+    [ "$(tr '\n' ' ' < "$build_token_args_file")" = "cargo run --release " ] \
+        || fail "supervisor did not route exact cargo run --release argv through build-token"
     wait_for_file "$cargo_pid_file" || fail "cargo fixture did not publish its PID"
     wait_for_file "$descendant_pid_file" || fail "cargo descendant did not publish its PID"
     DIRECT_CARGO_PID="$(<"$cargo_pid_file")"
@@ -228,10 +270,12 @@ assert_parent_unpublished() {
 }
 
 # Happy path uses the production supervisor and publishes only after exact ACK.
-rm -f -- "$cargo_pid_file" "$descendant_pid_file"
+rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
 SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
 SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
+SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
 BONG_E2E_SUPERVISOR="$SUPERVISOR" \
+BONG_E2E_BUILD_TOKEN="$build_token" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
 start_server_process_group "$TEST_ROOT/parent-normal.log" 0 \
     || fail "parent rejected the production READY -> C -> COMMITTED protocol"
