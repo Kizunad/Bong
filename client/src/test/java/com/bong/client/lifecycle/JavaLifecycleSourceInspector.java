@@ -341,9 +341,6 @@ public final class JavaLifecycleSourceInspector {
             .replace('/', '.')
             .replaceFirst("\\.java$", "");
         boolean sourceIsManagedStore = storeFqcns.contains(sourceFqcn);
-        Set<String> managedStoreTypeNames = storeFqcns.stream()
-            .map(JavaLifecycleSourceInspector::simpleName)
-            .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         Set<String> visibleStoreTypeNames = new TreeSet<>();
         Set<String> staticallyImportedCleaners = new TreeSet<>();
         for (String fqcn : storeFqcns) {
@@ -391,13 +388,13 @@ public final class JavaLifecycleSourceInspector {
                     if (isManagedStoreOwner(
                         owner,
                         storeFqcns,
-                        visibleStoreTypeNames,
-                        managedStoreTypeNames,
-                        sourceIsManagedStore
+                        visibleStoreTypeNames
                     )) {
                         violations.add("invoke:" + invocation.getMethodSelect());
                     }
                 } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
+                    // Store 内部只能由 canonical clearOnDisconnect() 向 data-only helper 单向委派；
+                    // 其它方法不得反向调用 cleaner，否则 registry 会失去唯一调用所有权。
                     if (sourceIsManagedStore) {
                         violations.add("self-invoke:clearOnDisconnect");
                     } else if (!staticallyImportedCleaners.isEmpty()) {
@@ -413,9 +410,7 @@ public final class JavaLifecycleSourceInspector {
                     || !isManagedStoreOwner(
                         reference.getQualifierExpression().toString(),
                         storeFqcns,
-                        visibleStoreTypeNames,
-                        managedStoreTypeNames,
-                        sourceIsManagedStore
+                        visibleStoreTypeNames
                     )) {
                     return super.visitMemberReference(reference, unused);
                 }
@@ -456,16 +451,9 @@ public final class JavaLifecycleSourceInspector {
     private static boolean isManagedStoreOwner(
         String owner,
         Set<String> storeFqcns,
-        Set<String> visibleStoreTypeNames,
-        Set<String> managedStoreTypeNames,
-        boolean sourceIsManagedStore
+        Set<String> visibleStoreTypeNames
     ) {
-        if (storeFqcns.contains(owner) || visibleStoreTypeNames.contains(owner)) {
-            return true;
-        }
-        int separator = owner.lastIndexOf('.');
-        String terminalOwner = separator >= 0 ? owner.substring(separator + 1) : owner;
-        return !sourceIsManagedStore && managedStoreTypeNames.contains(terminalOwner);
+        return storeFqcns.contains(owner) || visibleStoreTypeNames.contains(owner);
     }
 
     private static String invokedMethodName(Tree methodSelect) {

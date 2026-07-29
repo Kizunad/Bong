@@ -152,30 +152,36 @@ class AdjunctDisconnectOwnershipTest {
 
     @Test
     void adjunctStoreReferenceAuditRejectsHiddenStoreReferenceShapes() {
-        for (String fixture : List.of(
-            """
-                package com.bong.client.hud;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() {
-                        LootContainerStateStore.clearOnDisconnect();
-                    }
-                }
-                """,
-            """
-                import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() {
-                        clearOnDisconnect();
-                    }
-                }
+        for (String[] fixture : new String[][] {
+            {
                 """
-        )) {
+                    package com.bong.client.hud;
+                    final class AllowlistedAdjunct {
+                        static void clearOnDisconnect() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
+                    }
+                    """,
+                "clearOnDisconnect"
+            },
+            {
+                """
+                    import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
+                    final class AllowlistedAdjunct {
+                        static void tearDown() {
+                            clearOnDisconnect();
+                        }
+                    }
+                    """,
+                "tearDown"
+            }
+        }) {
             org.junit.jupiter.api.Assertions.assertThrows(
                 AssertionError.class,
                 () -> JavaLifecycleSourceInspector.assertMethodContainsNoStoreReferences(
-                    fixture,
+                    fixture[0],
                     "AllowlistedAdjunct",
-                    "clearOnDisconnect",
+                    fixture[1],
                     java.util.Set.of("com.bong.client.hud.LootContainerStateStore")
                 )
             );

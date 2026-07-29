@@ -1076,6 +1076,20 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         ));
         assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
             """
+                package com.example;
+                final class LootContainerStateStore {
+                    static void clearOnDisconnect() { }
+                }
+                final class UnrelatedOwner {
+                    static void clear() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            "com/example/UnrelatedOwner.java",
+            managedStores,
+            false
+        ));
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
                 import com.bong.client.hud.LootContainerStateStore;
                 final class SessionScopedStoreRegistry {
                     Object handle = SessionStoreHandle.forStore(

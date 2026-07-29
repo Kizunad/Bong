@@ -150,7 +150,7 @@ public final class SocialStateStore {
         tradeOffer = null;
     }
 
-    public static void resetForTests() {
+    public static synchronized void resetForTests() {
         clearSessionState();
     }
 
