@@ -29,8 +29,8 @@ def _assert_initial_cinematic(bot, payload: dict) -> None:
     expected = {
         "phase": "prelude",
         "phase_tick": 0,
-        "realm_from": "awaken",
-        "realm_to": "induce",
+        "realm_from": "Awaken",
+        "realm_to": "Induce",
         "interrupted": False,
     }
     actual = {key: payload.get(key) for key in expected}

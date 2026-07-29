@@ -18,6 +18,9 @@ MODULES = ["spiritwood", "inventory", "worldgen"]
 TREE_LOG_PATTERN = re.compile(
     r"Teleported to spirit tree log at \((-?\d+), (-?\d+), (-?\d+)\)\."
 )
+# Bot gate 过载实测可降至 2 TPS：240 production tick 需 120 秒。
+# 额外留出 chunk/worldgen stall 余量，但 terminal payload 断言不降级。
+LUMBER_TERMINAL_TIMEOUT_SECONDS = 180.0
 
 
 def _latest_drops(bot, timeout: float = 10.0) -> list[dict]:
@@ -208,7 +211,7 @@ def run(env) -> None:
                 event.data["payload"]["completed"]
                 or event.data["payload"]["interrupted"]
             ),
-            timeout=25.0,
+            timeout=LUMBER_TERMINAL_TIMEOUT_SECONDS,
             description="真实 DiggingEvent 经过 240 tick 后的 lumber_progress terminal",
         ).data["payload"]
         assert terminal["completed"] is True, f"采伐应成功完成，实际 {terminal!r}"

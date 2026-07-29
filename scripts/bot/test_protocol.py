@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import math
 import os
 import pathlib
 import re
@@ -64,11 +65,21 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _set_qi_max_and_wait,
     _snapshot_after_server_tick_fence,
 )
+from bot.scenarios.inventory_pack_move_intents import _uncover_pack  # noqa: E402
 from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_MANIFEST_ENV,
     FIXTURE_OWNED_ENV,
     FIXTURE_TOKEN_ENV,
     _assert_raster_fixture_contract,
+)
+from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
+    CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
+)
+from bot.scenarios.production_lingtian_gathering_intents import (  # noqa: E402
+    _surface_candidates,
+)
+from bot.scenarios.production_spiritwood_full_inventory_drop import (  # noqa: E402
+    LUMBER_TERMINAL_TIMEOUT_SECONDS,
 )
 from bot.scenarios.terrain_join_chunk_delivery import (  # noqa: E402
     EXPECTED_CI_CLUSTERS,
@@ -223,13 +234,17 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+            expected_tiles = (
+                make_novice_raster_fixture.spawn_fixture_tiles()
+                | make_novice_raster_fixture.SPIRITWOOD_TILES
+            )
             self.assertEqual(
                 {(tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]},
-                {(0, 0), (4, 5), (5, 5), (4, 6), (5, 6)},
+                expected_tiles,
             )
             self.assertEqual(
                 manifest["world_bounds"],
-                {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
+                make_novice_raster_fixture._world_bounds(expected_tiles),
             )
             palette = manifest["biome_palette"]
             self.assertEqual(palette[4], "minecraft:meadow")
@@ -240,8 +255,12 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
                 self.assertLess(max(biome_ids), len(palette))
 
-            self.assertEqual(set((root / "tile_0_0" / "biome_id.bin").read_bytes()), {0})
-            for tile_x, tile_z in ((4, 5), (5, 5), (4, 6), (5, 6)):
+            for tile_x, tile_z in make_novice_raster_fixture.spawn_fixture_tiles():
+                self.assertEqual(
+                    set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
+                    {0},
+                )
+            for tile_x, tile_z in make_novice_raster_fixture.SPIRITWOOD_TILES:
                 self.assertEqual(
                     set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
                     {4},
@@ -249,6 +268,107 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             spirit_biomes = (root / "tile_5_5" / "biome_id.bin").read_bytes()
             seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
             self.assertEqual(spirit_biomes[seed_index], 4)
+
+    def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            generated_tiles = {
+                (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
+            }
+
+            zones = json.loads(
+                make_novice_raster_fixture.DEFAULT_ZONES_PATH.read_text(
+                    encoding="utf-8"
+                )
+            )
+            spawn_zone = next(
+                zone for zone in zones["zones"] if zone["name"] == "spawn"
+            )
+            for cluster in spawn_zone["spawn_distribution"]:
+                x, _, z = cluster["anchor"]
+                radius = cluster["radius"]
+                for point_x, point_z in (
+                    (x - radius, z),
+                    (x + radius, z),
+                    (x, z - radius),
+                    (x, z + radius),
+                ):
+                    tile = (
+                        math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
+                        math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
+                    )
+                    self.assertIn(
+                        tile,
+                        generated_tiles,
+                        f"production spawn cluster boundary {point_x, point_z} 缺 fixture tile",
+                    )
+                    self.assertEqual(
+                        set(
+                            (
+                                root
+                                / f"tile_{tile[0]}_{tile[1]}"
+                                / "surface_id.bin"
+                            ).read_bytes()
+                        ),
+                        {0},
+                        f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
+                    )
+
+            bounds = manifest["world_bounds"]
+            for tile_x, tile_z in generated_tiles:
+                self.assertLessEqual(bounds["min_x"], tile_x * 256)
+                self.assertGreaterEqual(bounds["max_x"], (tile_x + 1) * 256 - 1)
+                self.assertLessEqual(bounds["min_z"], tile_z * 256)
+                self.assertGreaterEqual(bounds["max_z"], (tile_z + 1) * 256 - 1)
+
+    def test_spawn_fixture_tiles_rejects_missing_empty_or_invalid_distribution(self):
+        cases = [
+            ({"zones": []}, "missing the spawn zone"),
+            ({"zones": [{"name": "spawn", "spawn_distribution": []}]}, "has no spawn_distribution"),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": -1.0,
+                                    "safe_y": 72.0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "safe_y": 73.0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+        ]
+
+        for config, expected_error in cases:
+            with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
 
     def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -392,8 +512,8 @@ class ServerDataDecodeTest(unittest.TestCase):
             "phase": "prelude",
             "phase_tick": 0,
             "phase_duration_ticks": 60,
-            "realm_from": "awaken",
-            "realm_to": "induce",
+            "realm_from": "Awaken",
+            "realm_to": "Induce",
             "result": "success",
             "interrupted": False,
             "world_pos": [-240.5, 72.0, -160.25],
@@ -469,7 +589,7 @@ class ServerDataDecodeTest(unittest.TestCase):
             "breakthrough_cinematic",
             "真实 Bot reader 必须把 envelope field 71 暴露成结构化观察事件",
         )
-        self.assertEqual(decoded_events[0].data["payload"]["realm_to"], "induce")
+        self.assertEqual(decoded_events[0].data["payload"]["realm_to"], "Induce")
 
     def test_breakthrough_cinematic_wrong_envelope_wire_type_is_not_dispatched(self):
         self.assertIsNone(
@@ -975,6 +1095,151 @@ class CombatServerDataGateTest(unittest.TestCase):
                 lambda payload: payload["marker"] == "command_final",
                 "command_final marker",
             )
+
+
+class ProductionScenarioContractTest(unittest.TestCase):
+    @staticmethod
+    def _worn_item(instance_id: int, item_id: str) -> dict:
+        return {
+            "instance_id": instance_id,
+            "item_id": item_id,
+            "grid_width": 1,
+            "grid_height": 1,
+        }
+
+    @classmethod
+    def _pack_snapshot(cls, worn_ids: list[int]) -> dict:
+        names = {10: "worn_grass_pouch", 20: "fake_spirit_hide", 30: "cloth_wrap"}
+        return {
+            "revision": 1,
+            "containers": [{"id": "pack_10", "rows": 2, "cols": 2}],
+            "placed_items": [],
+            "equipped": {
+                "chest_worn": [
+                    cls._worn_item(instance_id, names[instance_id])
+                    for instance_id in worn_ids
+                ]
+            },
+            "hotbar": [],
+        }
+
+    def test_lingtian_surface_candidates_probe_three_support_depths(self):
+        bot = types.SimpleNamespace(position=(-0.2, 74.9, 3.8))
+
+        candidates = _surface_candidates(bot)
+
+        self.assertEqual(candidates[:3], [(-1, 73, 3), (-1, 72, 3), (-1, 71, 3)])
+        self.assertEqual(len(candidates), 39)
+        self.assertEqual(
+            len(set(candidates)),
+            39,
+            "13 个水平点各自向下三层时不应重复，否则会浪费真实 intent 等待窗口",
+        )
+
+    def test_spiritwood_terminal_timeout_covers_240_ticks_at_two_tps(self):
+        minimum_runtime = 240 / 2
+        self.assertGreaterEqual(
+            LUMBER_TERMINAL_TIMEOUT_SECONDS,
+            minimum_runtime + 30,
+            "全量 Bot gate 实测会降至 2 TPS；terminal timeout 必须覆盖 240 tick 加 stall 余量",
+        )
+
+    def test_craft_progress_timeout_covers_worst_global_emit_phase(self):
+        interval = 20
+        required_elapsed = 20
+        worst_elapsed = max(
+            next(
+                elapsed
+                for elapsed in range(required_elapsed, required_elapsed + interval)
+                if (start_phase + elapsed) % interval == 0
+            )
+            for start_phase in range(interval)
+        )
+
+        self.assertEqual(
+            worst_elapsed,
+            39,
+            "全局 20-tick emit 边界最坏要到 session 第 39 tick 才能观察 elapsed>=20",
+        )
+        self.assertGreaterEqual(
+            CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
+            40 / 2 + 5,
+            "全量 gate 的 2 TPS 下必须覆盖两段 emit cadence 并留 packet/I/O 余量",
+        )
+
+    def test_uncover_pack_moves_every_lifo_layer_in_authoritative_order(self):
+        class InventoryMoveBot:
+            username = "Fake"
+
+            def __init__(self, snapshot: dict):
+                self.snapshot = snapshot
+                self.events = []
+                self.intents = []
+
+            def intent(self, payload: dict) -> None:
+                self.intents.append(payload)
+                candidate = json.loads(json.dumps(self.snapshot))
+                worn = candidate["equipped"]["chest_worn"]
+                moved = worn.pop()
+                assert moved["instance_id"] == payload["instance_id"]
+                destination = payload["to"]
+                candidate["placed_items"].append(
+                    {
+                        "container_id": destination["container_id"],
+                        "row": destination["row"],
+                        "col": destination["col"],
+                        "item": moved,
+                    }
+                )
+                candidate["revision"] += 1
+                self.snapshot = candidate
+                self.events.append(
+                    _FakeEvent(
+                        float(candidate["revision"]),
+                        "server_data",
+                        {
+                            "payload_type": "inventory_snapshot",
+                            "payload": candidate,
+                        },
+                    )
+                )
+
+            def wait_for(self, predicate, timeout: float, description: str):
+                for event in self.events:
+                    if predicate(event):
+                        return event
+                raise AssertionError(f"未找到 {description}; events={self.events}")
+
+        initial = self._pack_snapshot([10, 20, 30])
+        bot = InventoryMoveBot(initial)
+
+        final = _uncover_pack(bot, initial, 10, "pack_10")
+
+        self.assertEqual([intent["instance_id"] for intent in bot.intents], [30, 20])
+        self.assertEqual(
+            [(intent["to"]["row"], intent["to"]["col"]) for intent in bot.intents],
+            [(0, 0), (0, 1)],
+        )
+        self.assertEqual(
+            [item["instance_id"] for item in final["equipped"]["chest_worn"]],
+            [10],
+        )
+        self.assertEqual(
+            sorted(item["item"]["instance_id"] for item in final["placed_items"]),
+            [20, 30],
+        )
+        self.assertEqual(final["revision"], 3)
+
+    def test_uncover_pack_is_noop_when_pack_is_already_top(self):
+        snapshot = self._pack_snapshot([20, 10])
+        bot = types.SimpleNamespace()
+
+        self.assertIs(_uncover_pack(bot, snapshot, 10, "pack_10"), snapshot)
+
+    def test_uncover_pack_rejects_snapshot_without_target_instance(self):
+        snapshot = self._pack_snapshot([20, 30])
+        with self.assertRaisesRegex(BotAssertionError, "找不到 pack instance=10"):
+            _uncover_pack(types.SimpleNamespace(), snapshot, 10, "pack_10")
 
 
 class NovicePoiScenarioParsingTest(unittest.TestCase):
@@ -2902,8 +3167,8 @@ def _server_data_breakthrough_cinematic_bytes() -> bytes:
         + _pb_string(2, "prelude")
         + _pb_varint(3, 0)
         + _pb_varint(4, 60)
-        + _pb_string(5, "awaken")
-        + _pb_string(6, "induce")
+        + _pb_string(5, "Awaken")
+        + _pb_string(6, "Induce")
         + _pb_string(7, "success")
         + _pb_varint(8, 0)
         + _pb_fixed64(9, -240.5)
@@ -4324,6 +4589,9 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(
             decoded["recipe_id"], "workbench.weapon.stone_knife",
             "CraftSessionState.recipe_id 是 field 4（optional string）",
+        )
+        self.assertEqual(
+            decoded["elapsed_ticks"], 10, "CraftSessionState.elapsed_ticks 是 field 5"
         )
         self.assertEqual(
             decoded["total_ticks"], 400, "CraftSessionState.total_ticks 是 field 6"

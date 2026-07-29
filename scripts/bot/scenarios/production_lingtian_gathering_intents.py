@@ -19,7 +19,7 @@ from bot.scenarios._inventory_helpers import (
     find_item,
     require_item,
     send_move,
-    wait_inventory_contains,
+    wait_inventory_revision_after_matching,
     wait_join_and_inventory,
 )
 
@@ -34,10 +34,11 @@ def _surface_candidates(bot) -> list[tuple[int, int, int]]:
     if bot.position is None:
         raise BotAssertionError("lingtian 场景需要 pos_look 后才能派生目标格")
     px = math.floor(bot.position[0])
-    py = math.floor(bot.position[1]) - 1
+    feet_y = math.floor(bot.position[1])
     pz = math.floor(bot.position[2])
-    # 玩家脚下优先；fallback 的资源露头或 raster 局部非草地时，尝试近邻而不依赖
-    # 客户端伪造 terrain。每个候选仍由生产 handler 从 ChunkLayer 权威分类。
+    # 玩家脚下优先；spawn/recover 的权威脚点可能在 support 上方 1-2 格，故每个
+    # 水平候选向下探三层。terrain 仍由 production handler 从 ChunkLayer 权威分类，
+    # Bot 不读取或伪造 block kind。
     offsets = [
         (0, 0),
         (1, 0),
@@ -53,7 +54,11 @@ def _surface_candidates(bot) -> list[tuple[int, int, int]]:
         (0, 2),
         (0, -2),
     ]
-    return [(px + dx, max(1, py), pz + dz) for dx, dz in offsets]
+    return [
+        (px + dx, max(1, feet_y - depth), pz + dz)
+        for dx, dz in offsets
+        for depth in (1, 2, 3)
+    ]
 
 
 def _start_real_till(bot, hoe_iid: int) -> dict:
@@ -123,23 +128,40 @@ def _wait_gather_progress(bot, after: float) -> dict:
 
 def run(env) -> None:
     with env.new_bot("ProdLG") as bot:
-        wait_join_and_inventory(bot)
+        snapshot = wait_join_and_inventory(bot)
 
-        # clearinv naked 才清装备；再 all 清掉卸入背包的出生物品。
+        # clearinv naked 才清装备；再 all 清掉卸入背包的出生物品。两条命令都以
+        # 精确 revision +1 为前置门，避免第二条 clear 与后续 give 交错执行。
         bot.cmd("clearinv naked")
         bot.expect_chat("[dev] clearinv", timeout=10.0)
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            snapshot["revision"],
+            lambda candidate: all(
+                not value
+                for value in candidate.get("equipped", {}).values()
+            ),
+            "clearinv naked 后装备为空",
+        )
         bot.cmd("clearinv all")
-        bot.wait_for(
-            lambda e: e.kind == "server_data"
-            and e.data["payload_type"] == "inventory_snapshot"
-            and not e.data["payload"].get("equipped", {}).get("main_hand_held"),
-            timeout=10.0,
-            description="灵田准备阶段 main_hand held 为空",
+        bot.expect_chat("[dev] clearinv", timeout=10.0)
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            snapshot["revision"],
+            lambda candidate: not candidate.get("placed_items")
+            and not any(candidate.get("hotbar", []))
+            and not candidate.get("equipped", {}).get("main_hand_held"),
+            "灵田准备阶段 carried surfaces 与 main_hand held 为空",
         )
 
         give_anchor = last_event_time(bot)
         bot.cmd(f"give {HOE_ID} 1")
-        snapshot = wait_inventory_contains(bot, HOE_ID)
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            snapshot["revision"],
+            lambda candidate: find_item(candidate, HOE_ID) is not None,
+            f"/give 后出现 {HOE_ID}",
+        )
         hoe = require_item(snapshot, HOE_ID)
         hoe_iid = int(hoe["item"]["instance_id"])
         if hoe_iid <= 0:

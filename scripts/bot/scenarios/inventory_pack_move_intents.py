@@ -68,6 +68,10 @@ def run(env) -> None:
         _assert_max_weight(snapshot, 23.0, "穿脱准备 clearinv all 后")
         _assert_instance_count(snapshot, pack_id, 1, "穿脱准备 clearinv all 后")
 
+        # chest worn 是 LIFO 栈；起手假灵兽皮位于破草包上层，必须先按权威
+        # 栈序逐件收入该背包，才能验证同一破草包实例的穿脱。
+        snapshot = _uncover_pack(bot, snapshot, pack_id, pack_container_id)
+
         # 同一实例 worn -> body_pocket；动态 pack 容器仍属于该实例，但只有 worn 状态提供容量。
         pack = require_item(snapshot, "worn_grass_pouch")
         row, col = first_free_cell(
@@ -143,6 +147,49 @@ def run(env) -> None:
         bot.assert_alive("动态背包拓扑与 clearinv 三分支完成后")
 
 
+def _uncover_pack(bot, snapshot: dict, pack_id: int, pack_container_id: str) -> dict:
+    while True:
+        worn = snapshot.get("equipped", {}).get("chest_worn", [])
+        pack_index = next(
+            (
+                index
+                for index, item in enumerate(worn)
+                if int(item["instance_id"]) == pack_id
+            ),
+            None,
+        )
+        if pack_index is None:
+            raise BotAssertionError(
+                f"chest_worn 中找不到 pack instance={pack_id}；actual={worn}"
+            )
+        if pack_index == len(worn) - 1:
+            return snapshot
+
+        top = worn[-1]
+        row, col = first_free_cell(
+            snapshot,
+            pack_container_id,
+            int(top["grid_width"]),
+            int(top["grid_height"]),
+        )
+        top_id = int(top["instance_id"])
+        send_move(
+            bot,
+            top_id,
+            equip_location("chest"),
+            container_location(pack_container_id, row, col),
+        )
+        snapshot = wait_inventory_revision_after_matching(
+            bot,
+            snapshot["revision"],
+            lambda candidate: _placed_instance_at(
+                candidate, top_id, pack_container_id, row, col
+            ),
+            f"chest worn 栈顶 instance={top_id} 收入 {pack_container_id}@{row},{col}",
+            timeout=10.0,
+        )
+
+
 def _clearinv(bot, snapshot, scope, feedback_scope, predicate, description) -> dict:
     previous_revision = int(snapshot["revision"])
     anchor = bot.events[-1].t if bot.events else 0.0
@@ -201,6 +248,18 @@ def _hotbar_instance_ids(snapshot: dict) -> list[int]:
         int(item["instance_id"])
         for item in snapshot.get("hotbar", [])
         if isinstance(item, dict)
+    )
+
+
+def _placed_instance_at(
+    snapshot: dict, instance_id: int, container_id: str, row: int, col: int
+) -> bool:
+    return any(
+        int(placed["item"]["instance_id"]) == instance_id
+        and placed["container_id"] == container_id
+        and int(placed["row"]) == row
+        and int(placed["col"]) == col
+        for placed in snapshot.get("placed_items", [])
     )
 
 
