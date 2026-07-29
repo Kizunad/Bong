@@ -14,7 +14,7 @@
 ## 接入面
 
 - **进料**：alchemy 由 `server/src/alchemy/side_effect_apply.rs:20-83` 与 `server/src/alchemy/pill.rs:632-642` 生产 `StatusEffectKind`；顿悟由 `server/src/cultivation/insight_apply.rs:24-254` 写 `InsightModifiers`；活茧由 `server/src/combat/baomai_v4/iron_cocoon.rs:99-143` 写四个 `DerivedAttrs` 字段；广播体操由 `server/src/combat/body_conditioning.rs:157-167` 写 `jump_height_multiplier`。
-- **出料**：污染排异 `cultivation::contamination_tick`、回气 `cultivation::qi_regen_and_zone_drain_tick`、突破/过载/经脉恢复/颜色与涡流 gameplay loop、伤口结算 `combat::resolve_attack_intents`、有效经脉流率、以及真实跳跃物理必须读取对应 modifier；单纯持久化、HUD、schema、client store 或测试内读取不算 gameplay consumer。
+- **出料**：污染排异 `cultivation::contamination_tick`、回气 `cultivation::qi_regen_and_zone_drain_tick`、突破/过载/经脉恢复/颜色与涡流 gameplay loop、统一 wound consequence pipeline（覆盖 melee/projectile/AoE/collision 等全部 production wound writer）、有效经脉流率、以及真实跳跃物理必须读取对应 modifier；单纯持久化、HUD、schema、client store 或测试内读取不算 gameplay consumer。
 - **共享类型 / event**：复用 `StatusEffects`、`StatusEffectKind`、`InsightModifiers`、`DerivedAttrs`、`MeridianSystem`、`ActiveScarCircuits`、`Wound`/`WoundKindProfile`、`DerivedAttrsSyncV1`；禁止另造 parallel modifier component 或持久改写派生倍率。
 - **跨仓库契约**：P0-P2 以 server 为主；P3 若采用 client jump hook，必须同 PR 扩 `DerivedAttrsSyncV1` → proto/generated → `DerivedAttrsHandler` / `DerivedAttrsStore` → 非 mixin 包 helper + jump input/mixin，并锁断线 reset。若采用 server-authoritative velocity，则仍需 server movement/e2e 证明客户端实际高度变化。
 - **worldview 锚点**：`worldview.md §四 L250-L260`（伤口档次与护甲后果）、`§四 L275-L288`（经脉流量）、`§四 L344-L351`（污染排异亏损）、`§五 L401-L405`（爆脉体修）；顿悟收益/代价必须进入日常 gameplay loop，不能只留文字与存档。
@@ -48,14 +48,15 @@ P0 anti-orphan manifest/lint 是本 skeleton 的共享实施门，但不是第 1
 
 ## P0 — Modifier/effect consumer contract（先于 gameplay batch）
 
-- [ ] 建立 greppable `ModifierConsumerContract` / `MODIFIER_CONSUMER_MANIFEST`（名称可等义），以 Rust AST、唯一声明宏或同等可机械穷举源提取**完整** `DerivedAttrs` 字段、`InsightModifiers` 字段与 `StatusEffectKind` variant 集合，再与 manifest 做精确一一对账；展示/存储/internal 项也必须逐项显式分类并写理由，禁止在库存生成前用“非展示”或“gameplay”语义预筛选。新增、删除或改名未同步登记即 gate 失败。
+- [ ] 建立 greppable `ModifierConsumerContract` / `MODIFIER_CONSUMER_MANIFEST`（名称可等义），以 Rust AST、唯一声明宏或同等可机械穷举源提取**完整** `DerivedAttrs` 字段、`InsightModifiers` 字段、`StatusEffectKind` variant 与 typed practices key/prefix 集合，再与 manifest 做精确一一对账；展示/存储/internal 项也必须逐项显式分类并写理由，禁止在库存生成前用“非展示”或“gameplay”语义预筛选。新增、删除或改名未同步登记即 gate 失败。
+- [ ] 同一 gate 还须机械穷举每个 inventory member 的**全部 production writer site**（AST/call-graph aware source scan、唯一 typed constructor/macro，或同等方案），以稳定 site identity（module + owning function/system + variant/field/key）与 manifest 的 producer 集合精确对账；只登记一个合法 producer/caller 不足以让整项变绿。新增 writer、绕过 typed constructor、动态 practices string、production 文件内无调度 caller 的 helper，以及 writer 未绑定本条 consumer 语义/差分 fixture 都必须 fail closed。既有 `StatusEffectKind::Slowed` 在 `world/container_block.rs`、`sword_path/skill_register.rs`、`npc/heiwushi.rs` 等多生产点是 mandatory fixture，证明 variant 集合不变但新增/遗漏 producer 仍会撞红。
 - [ ] 每条登记明确 producer、production consumer、observable differential test 与**互斥**分类：`Gameplay`、`ShadowDirectEffect`、`DisplayStorageOnly`、`InternalOnly`、`DormantNoProducer`、`DormantSelectorShadowed`、`PlannedNoConsumer`。完整 inventory 中任何具有 modifier/effect gameplay 语义且存在 production producer 的成员，默认只能是 `Gameplay`、满足下述严格准入的 `ShadowDirectEffect`，或阻塞阶段/归档的 `PlannedNoConsumer`；不得改贴 `DisplayStorageOnly` / `InternalOnly` 绕过 consumer。
 - [ ] `DisplayStorageOnly` 只允许“canonical 语义本来就不影响 gameplay、无 gameplay producer、仅从已消费权威状态派生用于 display/serialization”的成员；`InternalOnly` 只允许“无 gameplay modifier 语义、producer/reader 都属于基础设施内部合同”的成员。两类均须写 canonical 依据、owner、完整 producer/reader、禁止路径与负向 pin test；发现任一 gameplay producer 或 gameplay 语义即 gate 失败。HUD/schema/persistence/store/test-only read 永远不能证明 `Gameplay`。
 - [ ] `ShadowDirectEffect` 只允许无独立持久状态、无独立 production writer、由唯一 canonical gameplay state 同事务派生的只读投影，并须用重复应用、持久化/水合、旧状态 migration、reset 与 gameplay differential test 机械证明不漂移、不重放、不双算。当前持久化且被独立写入的 `composure_recover_mul` **不满足**该准入，P0 先标红 `PlannedNoConsumer`；P1 必须二选一收束为单一权威：删除/停止写入该字段并迁移旧状态，只保留 `Cultivation.composure_recover_rate` 直接效果，或让 canonical recovery helper 消费该字段并移除 sibling direct mutation。
 - [ ] P0 必须登记 11 条 canonical finding 及 P1 的完整 live Insight 清单；短期设计未决字段可临时 `PlannedNoConsumer`，但不得静默遗漏：`qi_regen_mul`、`next_breakthrough_bonus`、`vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`、`hunyuan_threshold_mul`、`chaotic_tolerance_add`、`overload_tolerance_add`、`opposite_color_efficiency_penalty`、`qi_volatility_add`、`shock_sensitivity_add`、`main_color_efficiency_penalty`、`overload_fragility_add`、`reaction_window_penalty`、`breakthrough_failure_penalty_mul`、`sense_exposure_add`、`meridian_heal_slowdown_mul`、`chaotic_tolerance_loss`。
 - [ ] `InsightModifiers.practices` 必须收束到 typed enum/newtype registry 与唯一构造/解析入口；参数化 marker 使用结构化编码，禁止 production 直接插入任意字符串。门禁从该 registry 穷举全部 key/prefix 并逐 key 做 reachability 分类；未知、脏值、重复值与旧存档 key 必须有 fail-closed 或显式 migration 策略及 pin test，不能用一个 `HashSet` 字段条目掩盖新孤岛 marker。
 - [ ] 已有真消费/特殊分类须显式防重复：`zhenfa_concealment`、`zhenfa_disenchant` 为 `Gameplay`；`composure_recover_mul` 按上述单一权威决议删除/migrate 或改为真实 `Gameplay` consumer，未收束前保持红色 `PlannedNoConsumer`，不得以 sibling `Cultivation.composure_recover_rate` 冒充已消费；`observe_chance_bonus` 为 `DormantNoProducer`；`woliu:vortex_burst_damage_mul:*` 为 `DormantSelectorShadowed`，除非同 PR 先补 production selector reachability，再新增 typed consumer 与差分测试。
-- [ ] `Gameplay` 合同不能靠文本 grep 自证：每条必须绑定可 grep 的 production caller/system schedule 与 gameplay differential test；helper 只有 tests caller 必须失败。可核验测试：`modifier_consumer_manifest_stays_current`、`modifier_contract_rejects_unregistered_inventory_member`、`modifier_contract_rejects_storage_test_or_dead_helper_consumer`、`modifier_contract_rejects_live_producer_as_display_or_internal`、`shadow_direct_effect_requires_single_authority`、`practices_registry_rejects_unknown_or_direct_string_marker`、`planned_modifier_contract_requires_owner_reason_and_exit_condition`。fixture 覆盖缺字段、未登记新字段/variant、仅测试引用、仅 HUD/serialization 引用、live producer 伪装 display/internal、独立 writer 伪装 shadow、生产文件 helper read 但无 caller（仿 `evaluate_observe_attempt`）与未知 practices key；manifest 不能取代后续 gameplay 差分测试。
+- [ ] `Gameplay` 合同不能靠文本 grep 自证：每条必须绑定可 grep 的全部 production writer/caller/system schedule 与逐 producer gameplay differential test；helper 只有 tests caller 必须失败。可核验测试：`modifier_consumer_manifest_stays_current`、`modifier_producer_sites_stay_current`、`modifier_contract_rejects_unregistered_inventory_member`、`modifier_contract_rejects_unregistered_production_writer`、`modifier_contract_rejects_storage_test_or_dead_helper_consumer`、`modifier_contract_rejects_live_producer_as_display_or_internal`、`shadow_direct_effect_requires_single_authority`、`practices_registry_rejects_unknown_or_direct_string_marker`、`planned_modifier_contract_requires_owner_reason_and_exit_condition`。fixture 覆盖缺字段、未登记新字段/variant、variant 不变但新增/遗漏 writer、绕过唯一 constructor、仅测试引用、仅 HUD/serialization 引用、live producer 伪装 display/internal、独立 writer 伪装 shadow、production 文件 helper read 但无 caller（仿 `evaluate_observe_attempt`）与未知 practices key；manifest 不能取代后续 gameplay 差分测试。
 
 ## P1 — Alchemy + Insight gameplay consumers
 
@@ -80,10 +81,11 @@ P0 anti-orphan manifest/lint 是本 skeleton 的共享实施门，但不是第 1
 ## P2 — Iron Cocoon wound-grade + effective flow
 
 - [ ] pre-P0 决议冻结唯一 wound pipeline：`raw hit → armor mitigation → effective severity → grade threshold 判定（含等号归属）→ 每 hit 至多一次 deterministic fracture roll → downgrade → health/bleeding/contamination/肢体/meridian crack/LifeRecord/event 全后果派生`；若代码事实要求不同顺序，§8.1 必须给出 worldview 与当前调用链双锚点后统一改写本条。`bruise_threshold_multiplier`、`cut_pierce_downgrade` 必须统一作用于真实 effective severity/grade，不能把 Bruise/Abrasion/Laceration/Fracture 伪装成 `WoundKind`。
+- [ ] 建立 `WOUND_PRODUCER_MANIFEST` / `wound_producer_sites_stay_current`（名称可等义），机械穷举全仓所有 production `Wound` 构造/`Wounds.entries` 写入与直接 health/bleeding/contamination consequence writer；每个 site 必须迁入统一 pipeline，或以 §8.1 双锚点明确分类为不产生伤口的纯伤害路径并证明不会绕过 Iron Cocoon 语义。当前 mandatory 旁路 fixture 至少包括 `combat/carrier.rs:1168-1199`（projectile/载体）、`combat/woliu_v2/skills.rs:653-666`（AoE/招式）和 `npc/movement.rs:923-945`（collision）；仅接 `combat::resolve_attack_intents` 不得完成 P2。新增 writer 未登记、site 仍直接 push `Wound`、或 consequences 绕开统一 grade 必须 gate 失败。
 - [ ] 所有下游后果——health、bleeding、contamination、肢体状态、meridian crack、LifeRecord 与 emitted event——必须消费同一降档结果，避免“伤口显示降档但流血/裂脉仍按原档”。
 - [ ] `fracture_downgrade_chance` 使用 deterministic、测试可固定的 combat RNG；覆盖 0%、阈值等号及两侧、20% 命中/未命中与 100%，并保证同一 hit 只 roll 一次；另以 armor 把 raw severity 推过档次边界的案例锁定上述唯一顺序。
 - [ ] 新建 `effective_meridian_sum_rate`（或等义 helper）：只有 `DerivedAttrs.scar_forged_flow_bonus == true` 时，才对 `ActiveScarCircuits` 涉及的经脉应用 §8.1 冻结的唯一 effective-rate 倍率；先把所有 active circuit 的 `meridian_pair()` 展开为去重后的 `HashSet<MeridianId>`，同一经脉被多个回路共享也只应用一次，禁止按回路叠乘。不持久改 `Meridian.flow_rate`、不逐 tick 累积；先修 producer query 需读取 active circuits，再替换所有需要派生流率的生产调用点。仓库当前 `SCAR_FORGED_FLOW_RATE_BONUS = 1.05`（`server/src/combat/baomai_v4/constants.rs:72`）只是已存在实现常数，不构成 worldview/canonical 数值依据；§8.1 必须用当前代码+设计双锚点明确 1.05 是否保留、单位、适用对象与组合公式，不能由本 skeleton 自创新 qi flow 常数。
-- [ ] 测试覆盖五种 `WoundKind`、四档后果边界、armor 前后顺序、ScarForged flag false/true、无/单/多活跃回路、两个回路共享同一经脉时仅加成一次、§8.1 权威倍率/组合公式 pin、重登 neutral 与 qi regen/ledger 守恒；`IronCocoonStage` 的 49/50、119/120、249/250、499/500 四组跃迁都必须覆盖前值/边界值、累计继承及降回低阶段时字段 reset。
+- [ ] 测试覆盖五种 `WoundKind`、四档后果边界、armor 前后顺序、melee/projectile/AoE/collision 每类真实 production writer、writer 集合新增/遗漏 fail-closed、ScarForged flag false/true、无/单/多活跃回路、两个回路共享同一经脉时仅加成一次、§8.1 权威倍率/组合公式 pin、重登 neutral 与 qi regen/ledger 守恒；`IronCocoonStage` 的 49/50、119/120、249/250、499/500 四组跃迁都必须覆盖前值/边界值、累计继承及降回低阶段时字段 reset。
 - [ ] 可核验 symbol：`effective_wound_grade`、`cocoon_fracture_roll`、`effective_meridian_sum_rate`、`iron_cocoon_downgrade_changes_full_wound_consequences`、`scar_forged_bonus_only_applies_to_active_circuits`（名称可等义）。
 
 ## P3 — `jump_height_multiplier` runtime authority
@@ -114,10 +116,10 @@ P0 anti-orphan manifest/lint 是本 skeleton 的共享实施门，但不是第 1
 8. fracture deterministic RNG 复用哪一个 combat seed/context？
 9. ScarForged “活跃回路”的唯一数据源是否为 `ActiveScarCircuits`，NPC/离屏路径是否适用？
 10. jump 最终采用 server authority 还是 client hook + server validation？
-11. P0 manifest 采用哪一个可机械穷举的权威源（Rust AST、唯一声明宏或同等方案）；如何对完整字段/variant inventory 精确集合对账，并避免把文本 grep 冒充 reachability？
+11. P0 manifest 采用哪一个可机械穷举的权威源（Rust AST、唯一声明宏或同等方案）；如何对完整字段/variant/key inventory 与**全部 production writer site** 精确集合对账，强制唯一 typed constructor，并避免把文本 grep、单个合法 writer 或 caller 冒充整项 reachability？
 12. `InsightModifiers.practices` 如何迁成 typed enum/newtype registry 与唯一构造/解析入口；参数化 key 如何编码，未知/脏/重复/旧存档 key 如何 fail-closed 或 migration？
 13. `vortex_burst_damage` 是否应先改 selector 使 talent production-reachable；若启用，cost 是迁成 typed 字段还是保留 registry 中的结构化 marker？
-14. 唯一 wound pipeline 是否采用 P2 所列 `raw hit → armor → effective severity → grade → roll → downgrade → consequences`；阈值等号归哪一档？
+14. 唯一 wound pipeline 是否采用 P2 所列 `raw hit → armor → effective severity → grade → roll → downgrade → consequences`；阈值等号归哪一档；全仓 melee/projectile/AoE/collision/其他 direct `Wound` 与 consequence writer 的机械清单、迁移归属和允许的“纯伤害不产伤口”例外分别是什么？
 15. jump multiplier 的合法 finite `[min,max]` 是什么；遇到 0、负数、超上限、NaN、±Infinity 与脏 proficiency 时是否统一回 neutral 1.0？
 16. `DisplayStorageOnly` / `InternalOnly` 的 canonical 准入清单分别是什么；如何从完整 inventory 机械证明无 gameplay 语义/producer，并让 live producer 伪装分类的 fixture 必红？
 17. `composure_recover_mul` 的单一权威状态选择哪条：删除/停止写入并迁移到 `Cultivation.composure_recover_rate`，还是移除 sibling direct mutation 后由唯一 recovery helper 消费；如何证明重复应用、水合、旧档、reset 不漂移/不双算？
@@ -135,10 +137,10 @@ P0 anti-orphan manifest/lint 是本 skeleton 的共享实施门，但不是第 1
 
 同一 bugfix 分支/PR 内按以下依赖顺序做中文原子 commit；这些是 commit 批次而非独立 PR，最终只 push/开一个 `bugfix/plan-bughunt-modifier-effect-consumer-completion-v1` PR：
 
-1. **contract batch**：P0 typed manifest、完整类型 inventory 精确对账、typed practices registry、production caller/schedule/test 绑定与 gate 自测；不改 gameplay 数值。
+1. **contract batch**：P0 typed manifest、完整类型/key inventory + 全部 production writer site 精确对账、typed practices registry、production caller/schedule/test 绑定与 gate 自测；不改 gameplay 数值。
 2. **alchemy batch**：P1a `ContaminationBoost` + JinZhongDan 极性；完成 production status→污染/回气 caller 与 schedule，含完整链及 ledger 差分。
 3. **Insight A-E batches**：严格按 P1b 五个 gameplay 域分五个原子 commit；每批同包完成 production App/system/event/registry 注册和由真实 schedule 驱动的差分测试。找不到 canonical seam 时对应阶段保持未完成；只有按 §8.1 删除/禁用 producer 或先完成 canonical owner 移交，才可消除 live finding，禁止以 `PlannedNoConsumer` 结案。
-4. **Iron Cocoon wound batch**：只接唯一 wound pipeline、确定性 RNG、production resolve 注册与全后果一致性。
+4. **Iron Cocoon wound batch**：接唯一 wound pipeline、全仓 wound/consequence writer manifest 与旁路迁移、确定性 RNG、各 production damage family 注册及全后果一致性。
 5. **ScarForged flow batch**：只接 active circuits、去重 effective rate、production 调用点与 qi ledger。
 6. **jump authority batch**：严格按 §8.1 选定的一条互斥路线完成 runtime consumer/注册/验证；server 路线不创建死 proto/store，client 路线必须完成协议、hook 加载与断线 reset。
 7. **integration closure batch**：只验证或调整同一 PR 内已注册系统之间的跨域顺序，补全链 e2e 与 manifest 汇总；不得首次注册任何 production consumer、system、EventReader、handler、registry、mixin 或 hook，也不得在此首次决定字段语义。
@@ -155,8 +157,8 @@ P0 anti-orphan manifest/lint 是本 skeleton 的共享实施门，但不是第 1
 
 ### §10.3 归档前跨域验收
 
-- `modifier_consumer_manifest_stays_current` 必须从机械权威源穷举最新完整 `DerivedAttrs`、`InsightModifiers`、`StatusEffectKind` 集合，并从 typed practices registry 穷举全部 key/prefix，与 manifest 精确一一对账；每条 `Gameplay` 合同有 production caller/schedule + observable differential test，未知字段/variant/key 与 direct string marker 一律 fail-closed。
+- `modifier_consumer_manifest_stays_current` / `modifier_producer_sites_stay_current` 必须从机械权威源穷举最新完整 `DerivedAttrs`、`InsightModifiers`、`StatusEffectKind`、typed practices key/prefix 及各自全部 production writer site，与 manifest 精确一一对账；每个 writer 绑定 `Gameplay` production caller/schedule + differential test，未知字段/variant/key、direct string marker、绕过 typed constructor 与新增/遗漏 writer 一律 fail-closed。
 - 归档时完整机械 inventory 中的每个 production producer 都必须通过分类不变量：具有 gameplay modifier/effect 语义者成为 `Gameplay` / 严格单一权威 `ShadowDirectEffect`，或按 §8.1 删除/禁用 producer并迁移；不得残留 `PlannedNoConsumer`，也不得伪装 `DisplayStorageOnly` / `InternalOnly`。11 条 canonical finding 另逐条对账；移交外域只能按独立 canonical Mapping 变更执行，不能用 manifest 备注代替交付。
-- 运行 alchemy→status→污染/回气、Insight choice→持久化→gameplay loop、Iron Cocoon→resolve/flow、Guangbo→选定权威路线→实际 jump 四条完整链；每条链的 production 注册必须在所属功能 batch 已存在，integration closure 只验跨域顺序和 e2e，manifest 绿不能替代任何一条。
+- 运行 alchemy→status→污染/回气、Insight choice→持久化→gameplay loop、所有 wound writer family→统一 grade/consequences、Iron Cocoon→effective flow、Guangbo→选定权威路线→实际 jump 五条完整链；每条链的 production 注册必须在所属功能 batch 已存在，integration closure 只验跨域顺序和 e2e，manifest 绿不能替代任何一条。
 - qi 路径以 `WorldQiAccount` / `QiTransfer` 守恒断言验收；jump 共同以实际 apex/velocity 验收，server 路线验非法速度与重登 neutral，client 路线另验 proto 幂等与 disconnect reset。
 - 全部阶段 ✅、上述 live-orphan 清零断言成立、各栈本地 gate 与 exact-HEAD validator PASS 后，填写 Finish Evidence 并迁入 `docs/finished_plans/`，再 push、开唯一 PR、评论 `/review`。`/review` 与 GitHub e2e 是 PR 后置门；出现 blocker/major 时在同 PR 返工并仅原地更新已归档 Finish Evidence，不重复 promotion/归档。
