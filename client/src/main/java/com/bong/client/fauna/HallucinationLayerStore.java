@@ -206,7 +206,7 @@ public final class HallucinationLayerStore {
 
     /** 仅供测试：完全重置所有状态。 */
     static void resetForTest() {
-        clearOnDisconnect();
+        clearSessionState();
     }
 
     /** 仅供测试：直接注入 fadeProgress。 */

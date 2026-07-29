@@ -397,9 +397,12 @@ public final class JavaLifecycleSourceInspector {
                     )) {
                         violations.add("invoke:" + invocation.getMethodSelect());
                     }
-                } else if (invocation.getMethodSelect() instanceof IdentifierTree
-                    && !staticallyImportedCleaners.isEmpty()) {
-                    violations.add("static-import:" + staticallyImportedCleaners);
+                } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
+                    if (sourceIsManagedStore) {
+                        violations.add("self-invoke:clearOnDisconnect");
+                    } else if (!staticallyImportedCleaners.isEmpty()) {
+                        violations.add("static-import:" + staticallyImportedCleaners);
+                    }
                 }
                 return super.visitMethodInvocation(invocation, unused);
             }

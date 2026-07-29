@@ -999,38 +999,60 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     @Test
     void managedStoreCleanerSingleOwnerGuardRejectsHiddenCallsAndReferences() {
         Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
-        for (String fixture : List.of(
-            """
-                package com.bong.client.hud;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() {
-                        LootContainerStateStore.clearOnDisconnect();
-                    }
-                }
-                """,
-            """
-                import com.bong.client.hud.LootContainerStateStore;
-                final class Helper {
-                    Helper() { LootContainerStateStore.clearOnDisconnect(); }
-                }
-                """,
-            """
-                final class Helper {
-                    Runnable cleaner = com.bong.client.hud.LootContainerStateStore::clearOnDisconnect;
-                }
-                """,
-            """
-                import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
-                final class Helper {
-                    static void clear() { clearOnDisconnect(); }
-                }
+        for (String[] fixture : new String[][] {
+            {
+                "fixture/HiddenCleaner.java",
                 """
-        )) {
+                    package com.bong.client.hud;
+                    final class AllowlistedAdjunct {
+                        static void clearOnDisconnect() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        Helper() { LootContainerStateStore.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    final class Helper {
+                        Runnable cleaner = com.bong.client.hud.LootContainerStateStore::clearOnDisconnect;
+                    }
+                    """
+            },
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
+                    final class Helper {
+                        static void clear() { clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "com/bong/client/hud/LootContainerStateStore.java",
+                """
+                    package com.bong.client.hud;
+                    final class LootContainerStateStore {
+                        static void resetForTests() { clearOnDisconnect(); }
+                        public static void clearOnDisconnect() { }
+                    }
+                    """
+            }
+        }) {
             assertThrows(
                 AssertionError.class,
                 () -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
-                    fixture,
-                    "fixture/HiddenCleaner.java",
+                    fixture[1],
+                    fixture[0],
                     managedStores,
                     false
                 )
