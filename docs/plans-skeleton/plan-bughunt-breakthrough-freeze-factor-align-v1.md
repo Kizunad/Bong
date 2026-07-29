@@ -11,17 +11,17 @@
 
 ## 接入面
 
-- **进料**：`server/src/cultivation/breakthrough.rs:556-593` 的 `try_breakthrough` 在扣费并 roll 失败后计算 `severity`、添加 `CrackCause::Backfire` 裂痕；`server/src/cultivation/overload.rs:13-16` 定义 cultivation 当前公开冻结系数 `FREEZE_FACTOR = 5.0`。
+- **进料**：`server/src/cultivation/breakthrough.rs:503-593` 的 `try_breakthrough_with_profile`（`try_breakthrough` 经 `try_breakthrough_with_env_bonus` / `try_breakthrough_with_env_season_bonus` 包装到此）在扣费并 roll 失败后计算 `severity`、添加 `CrackCause::Backfire` 裂痕；`server/src/cultivation/overload.rs:14-16` 定义 cultivation 当前公开冻结系数 `FREEZE_FACTOR = 5.0`。
 - **出料**：两条来源都累计到既有 `Cultivation.qi_max_frozen`；`server/src/cultivation/components.rs:666-675` 的 `recover_current_qi` 与 `server/src/cultivation/tick.rs:200-209` 的回气主循环按 `qi_max - qi_max_frozen` 缩小可用上限。
 - **共享类型 / event**：复用 `Cultivation`、`MeridianSystem`、`MeridianCrack`、`CrackCause`、`BreakthroughError::RolledFailure` 与 `overload::FREEZE_FACTOR`；禁止在 breakthrough 再造第二个数值相同但可独立漂移的 freeze constant。
 - **跨仓库契约**：纯 server 数值/状态对齐；`qi_max_frozen` 现有 server→agent snapshot schema 形状不变，不改 proto/client/Redis key。
-- **worldview 锚点**：`worldview.md §四 L275-L288` 固定经脉流量与过载会造成物理裂伤；`worldview.md §三 L136-L155` 规定突破是修炼主循环。`docs/finished_plans/plan-cultivation-v1.md:323-330` 明确 canonical 公式 `qi_max_frozen += severity × 5.0`。
+- **worldview 锚点**：`worldview.md §四 L353-L360` 明确过载撕裂会造成经脉裂缝与真元上限永久扣除/临时冻结；`worldview.md §三 L136-L155` 规定突破是修炼主循环。`docs/finished_plans/plan-cultivation-v1.md:323-330` 明确 canonical 公式 `qi_max_frozen += severity × 5.0`。
 - **qi_physics 锚点**：本 plan 不移动真元或灵气，只调整可用上限冻结量；突破扣费/zone ledger 路径不得改动。`qi_max_frozen` 是容量约束而非 ledger 账户，禁止把 5.0 误当 qi transfer amount 发起额外转账。
 
-## 第一性验真（`origin/main @ aea2d9dcc89c540795018e86c3eb55bc340adb58`，2026-07-29）
+## 第一性验真（`origin/main @ e2af0651bf2adc6e09328c75c6d1cded3954b346`，2026-07-29）
 
 1. `server/src/cultivation/overload.rs:13-16,43-75` 的检测路径按 `severity * FREEZE_FACTOR` 累计冻结；`server/src/cultivation/overload.rs:140-163` 的 event-reader 路径也使用同一 `FREEZE_FACTOR`，并都 clamp 到 `qi_max * 0.5`。
-2. `server/src/cultivation/breakthrough.rs:571-591` 对相同含义的 failure `severity` 却硬编码 `severity * 10.0`，是 canonical 5.0 的 2×；该值随后进入同一个 `Cultivation.qi_max_frozen`，不是独立状态或不同单位。
+2. `server/src/cultivation/breakthrough.rs:571-591` 的 `try_breakthrough_with_profile` 对相同含义的 failure `severity` 却硬编码 `severity * 10.0`，是 canonical 5.0 的 2×；该值随后进入同一个 `Cultivation.qi_max_frozen`，不是独立状态或不同单位。
 3. PR #597 的 partial fix 仍在：`server/src/cultivation/breakthrough.rs:46-50` 定义 `BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO = 0.5`，失败写入在 `:589-590` 应用 cap。successor 只承接系数漂移，不能重写或删除 cap。
 4. 现有测试把旧偏差焊死：`server/src/cultivation/breakthrough.rs:2513-2535` 明确期望 `severity 0.10 × 10.0 = 1.0`；`server/src/cultivation/overload.rs:229-264` 对相同 `severity=0.2` 则期望 `0.2 × 5.0 = 1.0`。
 5. 冻结具有 runtime 影响：`server/src/cultivation/tick.rs:200-209` 直接用它缩小 `effective_max/qi_room`，`server/src/cultivation/components.rs:666-675` 也将恢复值 clamp 到有效上限。因此突破失败当前冻结惩罚确实是 canonical 的两倍。
@@ -38,14 +38,14 @@
 
 ## P1 — 跨来源一致性与饱和回归
 
-- [ ] 新增纯函数或测试夹具级 helper（优先不扩大生产 API）计算 `severity * FREEZE_FACTOR` 后再应用 0.5×cap；突破失败与过载 event-reader 用相同 severity、相同初始 frozen/qi_max 对拍，结果必须一致。
-- [ ] 保留并更新 `repeated_breakthrough_failures_frozen_capped_at_half_qi_max`：足量失败后恰停在/不超过 0.5×cap，有效上限至少剩 50%。
-- [ ] 保留 `breakthrough_failure_does_not_exceed_cap_when_already_near_cap`，覆盖 pre-existing frozen + 新增量跨 cap 边界。
+- [ ] 新增 `breakthrough_and_overload_share_freeze_factor`（或同义 greppable 测试），驱动真实 `try_breakthrough` 失败路径与 `apply_meridian_overload_events` event-reader：给两者相同 severity、初始 frozen 与 `qi_max`，断言最终 `qi_max_frozen` 一致；禁止只对拍两段测试内复制的 `severity * FREEZE_FACTOR` 公式而绕过 production 写入路径。
+- [ ] 强化 `repeated_breakthrough_failures_frozen_capped_at_half_qi_max`：足量失败后必须精确等于 `qi_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO`（浮点 epsilon 内），并断言有效上限精确保留 `qi_max * (1.0 - ratio)`；不能只用 `frozen <= cap` / `effective > 0` 的弱断言。
+- [ ] 强化 `breakthrough_failure_does_not_exceed_cap_when_already_near_cap`：fixture 必须让 `pre-existing frozen + 新增量` 实际跨越 cap（当前 40 + 约 9 只到 49，未越界），并断言结果精确 clamp 到 cap。
 - [ ] 保留 `successful_breakthrough_does_not_change_qi_max_frozen`，成功路径不因共享常量引入副作用。
 - [ ] 运行 `cultivation::overload::tests`，锁定 detection 与 event-reader 两条路径仍用 factor 5，且同 tick 去重行为不变。
 - [ ] 可核验 symbol：`breakthrough_and_overload_share_freeze_factor`、`repeated_breakthrough_failures_frozen_capped_at_half_qi_max`、`breakthrough_failure_does_not_exceed_cap_when_already_near_cap`、`successful_breakthrough_does_not_change_qi_max_frozen`。
 
-**P1 测试声明**：`cd server && cargo test cultivation::breakthrough::tests` 与 `cd server && cargo test cultivation::overload::tests`；最终 server gate 为 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
+**P1 测试声明**：`cd server && cargo test cultivation::breakthrough::tests` 与 `cd server && cargo test cultivation::overload::tests`；两个过滤器都必须实际列出并运行目标模块测试，禁止零测试假绿。最终 server gate 为 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`。
 
 ## 范围边界
 
