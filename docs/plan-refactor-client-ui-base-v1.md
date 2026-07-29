@@ -41,7 +41,7 @@
 
 ### 2. `DiffListWidget<T, K, C extends Component>`
 
-- `keyOf` 返回 ordered stable key；相同 key + 相同顺序只 patch 已 mounted rows，结构变更才 rebuild。
+- `keyOf` 以 constructor-injected `Function<? super T, ? extends K>` 提供，组件保持 `final`；同时注入 row factory 与 idempotent patcher。相同 key + 相同顺序只 patch 已 mounted rows，结构变更才 rebuild。
 - equal-key patch 必须保留 component identity、selection/callback 和 scroll（通过“不 clear children”实现，不虚构 owo 0.11.2 没公开的 scroll-offset getter/setter）。
 - null list/item/key 和 duplicate key 在 mutation 前 fail-fast；P1 pin empty→items、equal keys、reorder/add/remove、duplicate/null 和 patch failure。
 
