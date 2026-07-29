@@ -9,6 +9,7 @@ const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.ym
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
 const centralSha = '3683431a33465c4fd62fb5c1dfd4fb2b8cef9421';
+const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 const centralWorkflowSha256 = '66ef54e4ff879c1041d4697da74e3667115dfdab373693dfc9fab6089972eac3';
 
 const expectedCentralInterface = `  workflow_call:
@@ -394,7 +395,12 @@ test('provider canary remains dispatch-only, minimally permissioned, and secret-
   assert.doesNotMatch(yaml, /contents:|pull-requests:|issues:/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/,
+    new RegExp(`uses: Kizunad/review/\\.github/workflows/provider-canary\\.yml@${providerCanarySha}`),
+  );
+  assert.equal(
+    (yaml.match(/uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/g) ?? []).length,
+    1,
+    'provider canary must use exactly one immutable central release',
   );
   assert.doesNotMatch(yaml, /provider-canary\.yml@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);

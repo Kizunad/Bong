@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/review-next.yml
+      - .github/workflows/review-provider-canary.yml
       - .github/workflows/review-consumer-tests.yml
       - .github/review-policy/bong.v2.json
       - .github/scripts/review-consumer.test.mjs
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/review-next.yml
+      - .github/workflows/review-provider-canary.yml
       - .github/workflows/review-consumer-tests.yml
       - .github/review-policy/bong.v2.json
       - .github/scripts/review-consumer.test.mjs
