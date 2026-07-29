@@ -93,7 +93,7 @@
 
 **决议**：
 1. `PersistenceSlice` 只返回一个静态 `SliceDescriptor`；registry 保存静态 descriptor 并按 `(order, id)` 稳定排序。会修改运行态的 hook 使用无捕获函数指针 `fn(&mut World, &SliceRunContext) -> SliceRunResult`，由 adapter 在 hook 内拿强类型 Resource/Query；重连 `reconnect_preflight` 单独使用 `fn(&World, &SliceRunContext) -> SliceRunResult`，在类型层禁止破坏旧 activation。
-2. descriptor 必须声明 `scope`、`load_policy`、`time_basis`、`write_domain`、`write_ordering`、`autosave_policy`，以及可选 hydrate/rebase/shutdown hook；重复/空 Slice ID 在注册时 fail-fast。
+2. descriptor 必须声明 `scope`、`load_policy`、`time_basis`、`write_domain`、`write_ordering`、`autosave_policy`，以及可选 hydrate/rebase/shutdown hook；重复/空 Slice ID 在注册时 fail-fast。任何声明 rebase 的玩家 descriptor 必须同时声明 hydrate，使失败回滚集合覆盖所有可能建立新 activation 的 hook；禁止 rebase-only reconnect participant 绕过 abort cleanup/lease check。
 3. 不把泛型 `SystemParam`、`Query`、`ResMut`、关联类型或 `rusqlite::Connection` 装进 trait object。若后续确需动态 driver，再以同一对象安全签名包装，不推翻 P0 descriptor。
 
 **落点**：`server/src/persistence/mod.rs:103-110`、`server/src/player/state.rs:278-290`（现有资源只拥有路径/元数据）；plan §阶段 P0、§接入面。

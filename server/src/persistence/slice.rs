@@ -332,7 +332,7 @@ impl fmt::Display for SliceRegistryError {
             Self::MissingHydrateHook { slice_id } => {
                 write!(
                     formatter,
-                    "slice `{slice_id}` declares a time basis without a hydrate hook"
+                    "slice `{slice_id}` declares a time basis or rebase hook without a hydrate hook"
                 )
             }
             Self::MissingReconnectPreflightHook { slice_id } => {
@@ -419,14 +419,14 @@ impl PersistenceSliceRegistry {
                 slice_id: descriptor.id,
             });
         }
-        if descriptor.time_basis != TimeBasis::None
-            && (descriptor.hydrate.is_none() || descriptor.rebase.is_none())
+        if descriptor.hydrate.is_none()
+            && (descriptor.time_basis != TimeBasis::None || descriptor.rebase.is_some())
         {
-            if descriptor.hydrate.is_none() {
-                return Err(SliceRegistryError::MissingHydrateHook {
-                    slice_id: descriptor.id,
-                });
-            }
+            return Err(SliceRegistryError::MissingHydrateHook {
+                slice_id: descriptor.id,
+            });
+        }
+        if descriptor.time_basis != TimeBasis::None && descriptor.rebase.is_none() {
             return Err(SliceRegistryError::MissingRebaseHook {
                 slice_id: descriptor.id,
             });
@@ -1854,6 +1854,13 @@ mod tests {
             hydrate: Some(noop_rebase),
             ..basic_descriptor("player.missing_rebase", 50)
         }));
+        let rebase_without_hydrate = Box::leak(Box::new(SliceDescriptor {
+            time_basis: TimeBasis::None,
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(noop_cleanup),
+            rebase: Some(noop_rebase),
+            ..basic_descriptor("player.rebase_without_hydrate", 51)
+        }));
         let invalid_domain = Box::leak(Box::new(SliceDescriptor {
             write_binding: WriteBinding::new(
                 WriteDomain::new("Player Core"),
@@ -1921,6 +1928,12 @@ mod tests {
             registry.register(missing_rebase),
             Err(SliceRegistryError::MissingRebaseHook { .. })
         ));
+        assert_eq!(
+            registry.register(rebase_without_hydrate),
+            Err(SliceRegistryError::MissingHydrateHook {
+                slice_id: rebase_without_hydrate.id,
+            })
+        );
         assert!(matches!(
             registry.register(invalid_domain),
             Err(SliceRegistryError::InvalidWriteDomain { .. })
