@@ -2,6 +2,15 @@
 
 一句话主题：把 `scripts/bot/` 协议级玩家 Bot 的场景覆盖推到"每个 gameplay/网络模块都有对应 Bot e2e 场景"，让 CI 在无真人客户端条件下锁住玩家可感知行为（AGENTS.md §15）。
 
+## 接入面
+
+- **进料**：MC 1.20.1 protocol 763 的 S2C/C2S 包、`bong:server_data` protobuf `Envelope`、dev 命令反馈、Redis `bong:player_chat`，以及现有修炼/战斗/库存/生产/交易/渡劫模块的权威事件与快照。
+- **出料**：`scripts/bot/scenarios/` 的协议级黑盒断言、`scripts/bot/test_protocol.py` 的编解码/场景契约回归，以及 `.github/workflows/e2e.yml` 的 Bot e2e 证据；框架只观测并驱动生产链路，不另造 gameplay 状态。
+- **复用类型 / event / schema**：复用 `Envelope` oneof、`player_state`、`breakthrough_cinematic`、`combat_event`、`cast_sync`、`inventory_snapshot`、`alchemy_outcome`、`Narration` 与 `Tribulation*` 契约；MC 包 ID 以 Valence pin `2b705351` 的 packet inspector 为唯一来源。
+- **跨仓库契约**：server 负责 emit/消费协议与 Redis 消息；agent 通过 `bong:player_chat` 和 Narration schema 产出回流；client 与 Bot 共同消费 `bong:server_data`，其中 Bot 的 `proto_min.py` 必须与 proto oneof 标签及客户端 HUD handler 对拍。
+- **worldview 锚点**：修炼/真元对应 `worldview.md` §三，战斗对应 §四/§五，天道 narration 对应 §八，交易与骨币对应 §九，玩家社交边界对应 §十一。
+- **qi_physics 锚点**：本 plan 不定义物理公式或常数；涉及真元变动的场景只验证现有 `qi_physics::ledger::QiTransfer` 所驱动的外部可观察结果与守恒，不直接改写账户。
+
 ## 阶段总览
 
 | 阶段 | 内容 | 状态 |
@@ -35,6 +44,7 @@
 - `scripts/bot/scenarios/combat_skill_cast.py`：`skill_bar_bind` / `skill_bar_cast` 的权威绑定、`cast_sync`、独立 VFX 与战斗反馈。
 - `scripts/bot/scenarios/combat_weapon_equip_damage.py`：空手基线与满耐久铁剑的 outgoing damage 契约。
 - `scripts/bot/scenarios/combat_respawn_stops_low_hp_heartbeat.py`、`combat_technique_sword_av.py`：重生收掉低血心跳，剑招三反馈与断脉拒因。
+- **玩家可感知验收**：Bot 必须按时序观察 `cast_sync(casting → complete)`，并分别匹配每招既有的 `vfx_id`、SFX/战斗事件与 HUD 反馈；不得以 raw bytes 或无类型聊天替代。动画/粒子/音效/icon 的具体视觉资产由各招式所属 plan 定义，本 plan 只锁已发布协议身份及先后顺序，不新增资产。
 
 ## P3 — 库存/物品 ✅ 2026-07-29
 
@@ -50,6 +60,7 @@
 - `production_handcraft_stone_knife.py`、`production_craft_cancel_full_inventory_refund.py`、`production_craft_disconnect_resume.py`：制作完成、满包取消落地、断线恢复与 exactly-once 退款。
 - `production_lingtian_gathering_intents.py`、`production_spiritwood_full_inventory_drop.py`：权威地形开垦、深解码采集进度、240-tick 灵木采伐、freshness wire 保真与同实例拾回。
 - `scripts/bot/make_novice_raster_fixture.py` 从 `server/zones.json` 生产 `spawn_distribution` 派生草地 tiles，避免用户名 hash 落入 Stone fallback。
+- **玩家可感知验收**：生产场景必须观察既有 typed 进度、成功/拒绝 outcome、库存数量与落地物；粒子、音效、HUD 和动画按炼丹/锻造/灵田/采集所属 finished plan 的既有 ID 对拍，本 plan 不以聊天提示代替这些可见结果，也不另立视觉规格。
 
 ## P5 — 多 bot 并发 ⏳
 
@@ -64,6 +75,8 @@
 - 真实双玩家交易。
 - 组队渡劫。
 - 完整 `chat → bong:player_chat → Tiandao → narration` Agent 联跑回流。
+
+- **玩家可感知验收**：双 Bot 的交易、组队渡劫和聊天回流必须分别证明“发起方/接收方/旁观者”的可见范围；Tiandao 回流使用现有 `Narration` scope/style，至少锁定 player/zone 隔离和一条符合 §八语调的真实 narration，不以 server echo 冒充 Agent 输出。
 
 ## P6 — server_data protobuf 深断言 ⏳
 
@@ -86,4 +99,67 @@
 4. **短 timeout 轮询下的半帧撕裂**：reader 用 0.5s socket timeout 时，timeout 可能落在帧长度前缀读一半处；朴素"边读边消费"实现会把已读字节丢掉导致整条流错位。框架已用"缓冲区攒够完整帧才消费"规避（`_try_parse_frame`），后续写新协议工具照抄这个模式。
 5. **raster-less 世界盖不住 spawn 散布区（server 侧真缺口，建议后续修）**：`server/src/world/mod.rs` fallback 平台日志自称 "16x16 chunks centered on spawn"，实际 centered on **origin**；spawn 迁移（#808）+ zone "spawn" 散布后，玩家/bot 常出生在平台外纯虚空（实测三连 join：chunk(11,3) 34 chunk / chunk(-15,-15) 0 chunk ×2）。影响：CI e2e 与本地 raster-less dev server 的玩家出生即虚空 + 坠落回弹；`terrain_join_chunk_delivery` 场景的 chunk 投递 leg 只能自适应跳过（已显式打印）。修法候选：fallback 平台以真实 spawn 点为中心生成、或覆盖整个 spawn zone；修好后把场景下限收紧 ≥8。
 6. **Bot.wait_for 的 predicate 持锁回调死锁**：predicate 在事件锁内执行，回调 `events_of()` 等同样拿锁的方法时非重入锁直接死锁（连 SIGTERM 都收不干净）。已改 `RLock` 修复；写框架新等待原语时沿用。
-7. **并发 orchestrator 环境下"端口开 ≠ server 就绪"**：本机 CARGO_TARGET_DIR 全局指向共享 target，别的 agent 的 cargo 会占 build lock 把 `cargo run` 卡住；同时 25565 上可能出现别人集成测试的瞬时 listener（接受 TCP 几秒后断），单看端口会误判就绪、bot 连上直接 connection_lost。bot-e2e.sh 已改「自己 log 的 bootstrap 锚点 + 端口」双条件，并对 build lock 卡死给出显式提示。CI 单租户无此问题，本地多 agent 并发时留意。
+7. **并发 orchestrator 环境下"端口开 ≠ server 就绪"**：本机 `CARGO_TARGET_DIR` 全局指向共享 target，别的 agent 的 cargo 会占 build lock 把 `cargo run` 卡住；同时 25565 上可能出现别人集成测试的瞬时 listener（接受 TCP 几秒后断），单看端口会误判就绪、Bot 连上直接 `connection_lost`。`bot-e2e.sh` 已改为「本轮 log bootstrap 锚点 + listener 属于本轮进程树」双门，并对 build lock 卡死给出提示；CI 单租户无此问题，本地多 agent 并发时仍须 fail closed。
+## §9 开放问题（P5/P6 决策门）
+
+1. P5 的真实交易以哪条现有交易协议作为首个 Bot 验收入口？
+2. 组队渡劫怎样证明同一事件的参与者与旁观者 scope，而不靠脆弱聊天文案？
+3. Tiandao 联跑在 CI 中使用真实 Agent 模型还是确定性 mock？怎样证明 Redis 往返而非 server echo？
+4. P6 的 HUD oneof 完整清单以哪个生成物为唯一真相，如何防 proto 增字段后静默漏测？
+
+## §9.1 决议（pre-P5/P6 收口，2026-07-29）
+
+### #1 交易入口
+
+**决议**：首个场景复用已落地的 `TradeOfferRequest` / `TradeOfferResponse`、typed `trade_offer` 与权威 `inventory_snapshot` revision；双方各交换一个现有 item instance，并以交换前后 instance 集合不变证明无复制/丢失。当前玩家交易不是骨币支付路径，不虚构余额断言，也不新建 Bot 专用旁路。
+
+**落点**：`server/src/social/mod.rs:1020-1243`、`proto/bong/envelope.proto:2333-2344` + P5 §「真实双玩家交易」。
+
+### #2 组队渡劫 scope
+
+**决议**：用 `Tribulation*` schema 的 `char_id`、`zone_name` 与参与者列表作为身份锚；参与 Bot 必须收到 typed 阶段事件，zone 内旁观者只收到契约允许的 zone narration，跨 zone Bot 不收到。断言事件 identity/scope，不匹配自由文本。
+
+**落点**：`agent/packages/schema/src/tribulation.ts:82-99` + P5 §「组队渡劫」。
+
+### #3 Tiandao 联跑
+
+**决议**：CI 使用确定性 Tiandao mock，但必须保留完整 `chat → bong:player_chat → agent consumer → bong:agent_narrate/Narration → server → Bot` Redis 往返；测试为每轮生成 token/timestamp，并断言回流携带该关联值，server 本地 echo 不能满足。
+
+**落点**：`agent/packages/tiandao/src/redis-ipc.ts:927-940,983-991`、`agent/packages/schema/src/channels.ts:10-16`、`agent/packages/schema/src/narration.ts`、`agent/packages/schema/src/client-payload.ts` + P5 §「Agent 联跑回流」。
+
+### #4 HUD oneof 真相源
+
+**决议**：从 `proto/bong/envelope.proto` 的 `ServerDataPayload` oneof 自动提取 tag/name 清单，与 `SERVER_DATA_PAYLOAD_NAMES`、decoder 分派和场景覆盖矩阵做集合等价测试；新增 oneof 后测试必须先红。未知枚举值保留可诊断 identity，不折叠成缺省值。
+
+**落点**：`proto/bong/envelope.proto:16-102`、`scripts/bot/proto_min.py`、`scripts/bot/test_protocol.py` + P6。
+
+以上问题均以 §9.1 为实施基线；若生产 symbol/handler 在 P5/P6 开工前变化，先原地更新本节再实现。
+
+## §10 实施工作流
+
+### §10.1 单 plan 多 PR 序列化
+
+本 plan 已跨 P0-P6，后续仍保持一个 active plan，按依赖序列逐 PR 落地：
+
+1. **PR-P5a**：真实双玩家交易，含双方 revision/守恒与拒绝分支。
+2. **PR-P5b**：组队渡劫参与者/旁观者 scope。
+3. **PR-P5c**：Redis Tiandao narration 完整回流。
+4. **PR-P6**：由 proto 真相源驱动的 HUD oneof 覆盖矩阵，补齐 `combat_hud_state` 等缺口。
+5. **归档 PR**：仅当 P5/P6 全部 ✅、Finish Evidence 齐全后，原子迁入 `docs/finished_plans/`。
+
+前一 PR merge 并通过 e2e、`/review` 与 CodeRabbit 后才开下一 PR；不得并行修改同一 Bot decoder/场景注册表。
+
+### §10.2 实施与验证约束
+
+- 每个 PR 使用独立实现上下文，先从 `origin/main` 核验 production handler/schema，不得凭本 plan 的旧 symbol 猜实现。
+- 场景代码、protocol decoder、饱和单测和 CI 注册必须同 PR；禁止只加 helper 或只加 mock。
+- 本 plan 无建筑/NBT/layout/新视觉资产交付，不适用 3 轮视觉打磨；若阶段意外引入资产，必须转由所属 gameplay plan 定义并遵守 `<PROMISE>` 纪律。
+- 本地验证不得运行被安全隔离的 shutdown-order 信号测试；真实 shutdown-order 覆盖保留在 GitHub e2e，PR 测试说明必须披露本地跳过。
+- 最终精确 HEAD 必须经 fresh-context read-only validator；HEAD 变化后重验。
+
+### §10.3 Review 与自动归档
+
+- Push 后发送独立 `/review` 评论；只以 `/review` 与 CodeRabbit 为 review gate，不等待 Codex。
+- review 修改带来新 HEAD 后重跑受影响门禁并重发 `/review`。
+- P5/P6 均完成后，由最后一轮实施补齐 `## Finish Evidence`（落地清单、commit、测试、跨仓 symbol、遗留），再 `git mv` 归档；任何阶段仍为 ⏳ 时禁止归档。
+- 单次 consume-plan 只编排当前未完成阶段；用户无需手工拆 plan，但 merge 仍遵守仓库授权边界。
