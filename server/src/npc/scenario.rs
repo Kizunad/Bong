@@ -154,14 +154,15 @@ fn process_pending_scenarios(
                 MovementController::new(),
                 movement_capabilities,
                 MovementCooldowns::default(),
-                NpcPatrol::new(
-                    DEFAULT_SPAWN_ZONE_NAME,
-                    DVec3::new(spawn_pos.x, spawn_pos.y, spawn_pos.z),
-                ),
             ))
             .insert(runtime);
         if !matches!(scenario, ScenarioType::PassiveTarget) {
-            entity_commands.insert(build_thinker(&scenario));
+            entity_commands
+                .insert(NpcPatrol::new(
+                    DEFAULT_SPAWN_ZONE_NAME,
+                    DVec3::new(spawn_pos.x, spawn_pos.y, spawn_pos.z),
+                ))
+                .insert(build_thinker(&scenario));
         }
 
         spawned_entities.push(entity);
@@ -256,7 +257,7 @@ mod tests {
     use crate::npc::lifecycle::NpcLifespan;
     use crate::npc::spawn::{NpcCombatLoadout, NpcMeleeProfile};
     use big_brain::prelude::ThinkerBuilder;
-    use valence::prelude::{Entity, Update, With};
+    use valence::prelude::{Entity, FixedUpdate, Update, With};
     use valence::testing::ScenarioSingleClient;
 
     #[test]
@@ -333,6 +334,8 @@ mod tests {
             request: Some((ScenarioType::PassiveTarget, DVec3::new(8.0, 66.0, 8.0))),
         });
         app.add_systems(Update, process_pending_scenarios);
+        crate::npc::patrol::register(&mut app);
+        crate::npc::navigator::register(&mut app);
 
         app.update();
 
@@ -344,24 +347,61 @@ mod tests {
                 .next()
                 .expect("passive_target should spawn one scenario NPC")
         };
+        let initial_position = {
+            let entity_ref = app.world().entity(npc);
+            let wounds = entity_ref
+                .get::<Wounds>()
+                .expect("passive target must use the production combat Wounds component");
+            assert_eq!(wounds.health_current, PASSIVE_TARGET_HEALTH);
+            assert_eq!(wounds.health_max, PASSIVE_TARGET_HEALTH);
+            let movement = entity_ref
+                .get::<MovementCapabilities>()
+                .expect("passive target must expose explicit movement capabilities");
+            assert!(!movement.can_sprint);
+            assert!(!movement.can_dash);
+            assert!(
+                entity_ref.get::<ThinkerBuilder>().is_none(),
+                "passive target must not receive a brain that could move or retaliate"
+            );
+            assert!(
+                entity_ref.get::<NpcPatrol>().is_none(),
+                "passive target must not receive patrol state that can assign navigation goals"
+            );
+            assert!(
+                entity_ref
+                    .get::<Navigator>()
+                    .expect("passive target must retain production navigation state")
+                    .is_idle(),
+                "passive target navigator must start idle"
+            );
+            assert!(entity_ref.get::<NpcMarker>().is_some());
+            assert!(entity_ref.get::<Lifecycle>().is_some());
+            assert!(entity_ref.get::<Cultivation>().is_some());
+            entity_ref
+                .get::<Position>()
+                .expect("passive target must expose authoritative Position")
+                .get()
+        };
+
+        for _ in 0..8 {
+            app.world_mut().run_schedule(FixedUpdate);
+            app.update();
+        }
+
         let entity_ref = app.world().entity(npc);
-        let wounds = entity_ref
-            .get::<Wounds>()
-            .expect("passive target must use the production combat Wounds component");
-        assert_eq!(wounds.health_current, PASSIVE_TARGET_HEALTH);
-        assert_eq!(wounds.health_max, PASSIVE_TARGET_HEALTH);
-        let movement = entity_ref
-            .get::<MovementCapabilities>()
-            .expect("passive target must expose explicit movement capabilities");
-        assert!(!movement.can_sprint);
-        assert!(!movement.can_dash);
+        let final_position = entity_ref
+            .get::<Position>()
+            .expect("passive target must remain alive after schedule ticks")
+            .get();
+        assert_eq!(final_position.x, initial_position.x);
+        assert_eq!(final_position.z, initial_position.z);
         assert!(
-            entity_ref.get::<ThinkerBuilder>().is_none(),
-            "passive target must not receive a brain that could move or retaliate"
+            entity_ref
+                .get::<Navigator>()
+                .expect("passive target must retain its Navigator")
+                .is_idle(),
+            "real patrol and navigator schedules must not move a passive target"
         );
-        assert!(entity_ref.get::<NpcMarker>().is_some());
-        assert!(entity_ref.get::<Lifecycle>().is_some());
-        assert!(entity_ref.get::<Cultivation>().is_some());
     }
 
     #[test]
