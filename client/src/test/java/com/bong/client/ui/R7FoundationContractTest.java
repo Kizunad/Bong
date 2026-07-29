@@ -34,14 +34,21 @@ class R7FoundationContractTest {
             "DiffListWidget",
             "ScreenOpenPolicy"
         ), components.keySet(), "P0 freezes one base plus four shared helper contracts");
-        assertEquals(14, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
+        assertEquals(34, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
         assertTrue(rows.stream().allMatch(row -> row.owner().equals("R7")),
             "all five contract surfaces are R7-owned even when integration belongs to another track");
         assertTrue(rows.stream().anyMatch(row -> row.component().equals("BongScreenBase")
             && row.signature().contains("R extends ParentComponent")),
             "BongScreenBase must support both code-built and UIModel owo adapters");
+        assertTrue(rows.stream().anyMatch(row -> row.component().equals("DiffListWidget")
+            && row.symbol().equals("constructor")
+            && row.signature().contains("Function<? super T, ? extends K> keyOf")),
+            "a final DiffListWidget must receive its key extractor by constructor injection");
+        assertFalse(rows.stream().anyMatch(row -> row.component().equals("DiffListWidget")
+            && row.signature().contains("abstract")),
+            "a final DiffListWidget cannot freeze abstract extension points");
         assertTrue(rows.stream().anyMatch(row -> row.component().equals("ClientThreadMarshal")
-            && row.invariant().contains("off-thread work is enqueued once")),
+            && row.invariant().contains("false enqueues once")),
             "marshal contract must freeze exactly-once inline/enqueue behavior");
     }
 
@@ -105,13 +112,10 @@ class R7FoundationContractTest {
         for (KeybindRow row : rows) {
             Path source = CLIENT_ROOT.resolve(expectedProductionKeySources().get(row.action()));
             String sourceText = R7SourceScan.read(source);
-            String code = R7SourceScan.codeOnly(sourceText);
             assertTrue(sourceText.contains("\"" + row.translationKey() + "\""),
                 "migration translation key does not match production source " + source + ": "
                     + row.translationKey());
-            assertTrue(containsCurrentDefault(code, row.currentDefault()),
-                "migration current default does not match production source " + source + ": "
-                    + row.currentDefault());
+            assertKeyBindingDeclaration(sourceText, row, source);
         }
 
         Set<String> boundTargets = new TreeSet<>();
@@ -180,11 +184,69 @@ class R7FoundationContractTest {
         }
     }
 
-    private static boolean containsCurrentDefault(String code, String defaultKey) {
-        if (defaultKey.equals("UNKNOWN")) {
-            return code.contains("InputUtil.UNKNOWN_KEY.getCode()") || code.contains("GLFW.GLFW_KEY_UNKNOWN");
+    private static void assertKeyBindingDeclaration(String source, KeybindRow row, Path path) {
+        String translationLiteral = "\"" + row.translationKey() + "\"";
+        int literalIndex = source.indexOf(translationLiteral);
+        assertTrue(literalIndex >= 0, "missing production translation literal in " + path + ": " + row.translationKey());
+
+        String variable = declaredStringVariable(source, literalIndex);
+        String translationArgument = variable == null ? translationLiteral : variable;
+        int bindingIndex = findBindingUsing(source, translationArgument);
+        assertTrue(bindingIndex >= 0,
+            "translation key is not connected to a KeyBinding declaration in " + path + ": " + row.translationKey());
+
+        int declarationEnd = source.indexOf(")", bindingIndex);
+        assertTrue(declarationEnd > bindingIndex, "unterminated KeyBinding declaration in " + path);
+        String declaration = source.substring(bindingIndex, declarationEnd + 1);
+        assertTrue(containsCurrentDefault(source, declaration, row.currentDefault()),
+            "migration key/default are not wired in the same KeyBinding declaration " + path + ": "
+                + row.translationKey() + " -> " + row.currentDefault());
+    }
+
+    private static String declaredStringVariable(String source, int literalIndex) {
+        int lineStart = source.lastIndexOf('\n', literalIndex) + 1;
+        String prefix = source.substring(lineStart, literalIndex);
+        var matcher = java.util.regex.Pattern.compile("String\\s+(\\w+)\\s*=\\s*$").matcher(prefix);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static int findBindingUsing(String source, String argument) {
+        int searchFrom = 0;
+        while (true) {
+            int bindingIndex = source.indexOf("new KeyBinding(", searchFrom);
+            if (bindingIndex < 0) {
+                return -1;
+            }
+            int declarationEnd = source.indexOf(")", bindingIndex);
+            if (declarationEnd < 0) {
+                return -1;
+            }
+            String declaration = source.substring(bindingIndex, declarationEnd + 1);
+            if (declaration.contains(argument)) {
+                return bindingIndex;
+            }
+            searchFrom = declarationEnd + 1;
         }
-        return code.contains("GLFW.GLFW_KEY_" + defaultKey);
+    }
+
+    private static boolean containsCurrentDefault(String source, String declaration, String defaultKey) {
+        if (defaultKey.equals("UNKNOWN")) {
+            return declaration.contains("InputUtil.UNKNOWN_KEY.getCode()")
+                || declaration.contains("GLFW.GLFW_KEY_UNKNOWN");
+        }
+        String direct = "GLFW.GLFW_KEY_" + defaultKey;
+        if (declaration.contains(direct)) {
+            return true;
+        }
+        for (String variable : List.of("DEFAULT_KEY", "DEFAULT_KEY_CODE")) {
+            if (declaration.contains(variable)
+                && java.util.regex.Pattern.compile(
+                    "(?:int\\s+)?" + variable + "\\s*=\\s*" + java.util.regex.Pattern.quote(direct)
+                ).matcher(source).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Map<String, String> expectedProductionKeySources() {
