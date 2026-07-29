@@ -39,6 +39,14 @@ jobs:
           path: _central-contract
           persist-credentials: false
           fetch-depth: 1
+      - name: Checkout pinned provider canary contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: Kizunad/review
+          ref: 9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784
+          path: 9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784
+          persist-credentials: false
+          fetch-depth: 1
       - name: Set up Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -70,8 +78,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git -C _central-contract rev-parse HEAD)" == '3683431a33465c4fd62fb5c1dfd4fb2b8cef9421' ]]
+          [[ "$(git -C 9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784 rev-parse HEAD)" == '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784' ]]
           node --check .github/scripts/review-consumer.test.mjs
-          CENTRAL_REVIEW_CONTRACT_DIR=_central-contract node --test .github/scripts/review-consumer.test.mjs
+          CENTRAL_REVIEW_CONTRACT_DIR=_central-contract \
+            PROVIDER_CANARY_CONTRACT_DIR=9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784 \
+            node --test .github/scripts/review-consumer.test.mjs
           (
             cd _central-contract
             npm test
