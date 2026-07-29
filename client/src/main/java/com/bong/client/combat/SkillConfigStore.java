@@ -52,6 +52,11 @@ public final class SkillConfigStore {
         snapshot = next.isEmpty() ? Collections.emptyMap() : Collections.unmodifiableMap(next);
     }
 
+    /** Clears per-session server config snapshots without touching test seams. */
+    public static void clearOnDisconnect() {
+        snapshot = Collections.emptyMap();
+    }
+
     public static void resetForTests() {
         snapshot = Collections.emptyMap();
     }

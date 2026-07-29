@@ -1462,12 +1462,12 @@ plans:
   group: infrastructure
   title: CI Redis 镜像拉取韧性
   state: active-implementing
-  percent: 50
-  last_updated: '2026-06-15'
+  percent: 65
+  last_updated: '2026-07-27'
   pr_refs:
   - 575
   blocking_on: []
-  summary: P0 拉取重试已落地 e2e.yml:104-115（3 次+线性退避）；P1 GHCR 镜像源/actions cache 未做。文档标 ⬜ 滞后。
+  summary: PR #1291 初版曾归档 100%，经 /review 8/8 判定 misaligned 后撤销归档。P0 拉取重试早已落地 e2e.yml:104-114（3 次+线性退避）；P1 GHCR/mirror 经按 pull_request event 过滤重新验证（85 次 PR-event run，7 次失败，零次死于 redis 拉取）判定重试已充分，撤回不实施；新拆出 P2（scripts/bot-e2e.sh:138-139 的 CI gate 路径 redis 拉取分支无重试）未开工，P2 未 ✅ 前不得重新归档。
 - file: plan-container-filter-and-completion-v1.md
   group: gameplay-npc
   title: 容器品类筛选 + 12 僵尸容器补全

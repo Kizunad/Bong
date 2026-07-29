@@ -32,5 +32,7 @@ public final class TerminateStateStore {
 
     public static void hide() { snapshot = State.HIDDEN; }
 
+    public static void clearOnDisconnect() { snapshot = State.HIDDEN; }
+
     public static void resetForTests() { snapshot = State.HIDDEN; }
 }

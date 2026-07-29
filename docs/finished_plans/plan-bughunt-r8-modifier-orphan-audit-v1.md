@@ -1,4 +1,7 @@
-# plan-bughunt-r8-modifier-orphan-audit-v1
+# plan-bughunt-r8-modifier-orphan-audit-v1（已归档）
+
+> **归档说明（2026-07-28）**：除本说明与文末 Round bundle triage 外，下列正文完整保留本 plan 在冻结基线 `origin/main @ c625d5a5` 上的原始阶段、决议、测试与审计记录；正文里的 “Active / 骨架 / ⬜ / 开放问题” 是历史状态。当前唯一实施归属以文末 `Finding Mapping` 为准，移交 successor 的条目仍未实施，不因本 bundle 归档而视为完成。
+
 
 > **Active（验证收口 + 后续实施入口）**。一句话主题：从 `docs/plans-skeleton/plan-bughunt-r8-findings-v1.md` 拆出 P0 modifier/derived-attr orphan 大簇，第一性原理复核 baomai-v4 `DerivedAttrs`、`InsightModifiers`、`jump_height_multiplier` 的“写入端齐全、消费端断裂”事实，并把后续修复拆成低风险消费层 PR + 需设计决策 PR，防止逐字段草率接线。
 >
@@ -175,9 +178,34 @@
 - 涉及 client jump 时必须使用 JDK 17 跑 `cd client && ./gradlew test build`，不得用系统默认 JDK 21。
 - 若后续开 PR，PR body 必须逐字段说明：写入端、消费端、因果链、测试证据、剩余风险。
 
+---
+
+## 2026-07-28 Round bundle finding triage
+
+本节仅登记当前裁决与唯一 owner；不改写上文历史结论，也不把 P2-P5 标为完成。
+
+## Finding Mapping
+
+| Finding / 阶段 | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
+|---|---|---|---|---|
+| P0 验证矩阵 | `server/src/combat/components.rs:311-392`、`server/src/cultivation/insight_apply.rs:24-98` 与 `server/src/combat/body_conditioning.rs:157-167` 的 producer/consumer 第一性矩阵与误报剔除完整保留于上文 | audit-history（不是 finding row） | 本归档只保留验证史，不形成 implementation owner | 唯一 history row，不计入 60 个 finding rows |
+| P1 scar circuit 三字段 | `server/src/combat/player_attack.rs:37-107` 消费 reach；`server/src/cultivation/tick.rs:240-269` 消费 regen；`server/src/cultivation/contamination.rs:97-211` 消费 purge | `already-fixed/invalid`（already-fixed） | `3e6981513` / PR #1143 | 不重复实施 |
+| P2 wound-grade：`bruise_threshold_multiplier` / `fracture_downgrade_chance` / `cut_pierce_downgrade` | `server/src/combat/baomai_v4/iron_cocoon.rs:110-139` 写三项伤口字段，combat resolve 仍不读 | `independent-domain-fix` | successor 短名 `plan-bughunt-modifier-effect-consumer-completion-v1`（wound 域） | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| P2 scar-forged flow：`scar_forged_flow_bonus` | `server/src/combat/baomai_v4/iron_cocoon.rs:106-143` 写 flag；`server/src/cultivation/components.rs:522-524` 的 `MeridianSystem::sum_rate` 不读 | `independent-domain-fix` | 同一 successor 短名 | 独立 effective-flow finding row；后续 skeleton 收口 |
+| P3 InsightModifiers | `observe_chance_bonus` 当前仅有默认值（`server/src/cultivation/insight_apply.rs:34,81`；无 effect 写入）；`server/src/cultivation/technique_observe.rs:64-87` 的 `observe_learn_chance` 读取该字段，但 `server/src/cultivation/technique_observe.rs:90-134` 的 `evaluate_observe_attempt` 仅由 tests（`server/src/cultivation/technique_observe.rs:253,280,315`）调用、无 production caller；其余 live 字段见 `server/src/cultivation/insight_apply.rs:24-254` | `independent-domain-fix` | 同一 successor 短名 | 仅记录 live 字段，排除已生效项 |
+| P4 jump | `server/src/combat/status.rs:174` 有字段 reset、`server/src/combat/body_conditioning.rs:157-167` 有写入；`server/src/schema/combat_hud.rs:209-220`、`server/src/network/derived_attrs_emit.rs:76-90` 与 `client/src/main/java/com/bong/client/combat/store/DerivedAttrsStore.java:13-28` 均无 jump 字段/consumer | `independent-domain-fix` | 同一 successor 短名 | 后续独立 skeleton 冻结跨端 owner 与依赖；本 PR 不改 R2/R6 正文 |
+
+## Successor implementation gate（非 finding row）
+
+- P5 anti-orphan manifest/lint 是后续 `plan-bughunt-modifier-effect-consumer-completion-v1` skeleton 需要第一性收口的共享实施门，不是 round bundle 的独立 finding，故不占 Finding Mapping 数据行；本 PR 不创建或冻结该 skeleton。
+
 ## Finish Evidence
 
 > 本 plan 当前完成 P0 验证收口 + P1 低风险 server 修复；P2-P5 未完成，暂不归档。
+>
+> **2026-07-28 归档更新**：P0 验证与 P1 修复已经完成；P2-P5 从未在本 plan 实施。Round bundle triage 只记录后续 successor 短名后归档本 audit；successor 尚未建立，移交只关闭重复聚合队列，不代表其已落地。
+
+### 原 P0/P1 实施与测试证据（完整保留）
 
 - **落地清单**：新增本文档；`server/src/combat/events.rs` 增加 `AttackReach::with_bonus`；`server/src/combat/player_attack.rs` 消费 `DerivedAttrs.reach_bonus`；`server/src/cultivation/tick.rs` 消费 `DerivedAttrs.qi_regen_multiplier` 并按 `BloodBurnActive` / `CombatClock` 限定；`server/src/cultivation/contamination.rs` 消费 `DerivedAttrs.contam_purge_multiplier`；`server/src/cultivation/mod.rs` 补生产调度顺序；未移动 `docs/plans-skeleton/plan-bughunt-r8-findings-v1.md`。
 - **关键 commit**：本 PR 拆为近战 reach 消费、回气/排异守恒消费、审计证据三个提交；最终提交列表以 PR git log 为准。
@@ -197,3 +225,11 @@
   - `jump_height_multiplier`：写入在 `server/src/combat/body_conditioning.rs:166-167`，`move_speed_multiplier` 兄弟字段在 `server/src/movement/mod.rs:273-274` 消费；`jump_height_multiplier` 不在 `DerivedAttrsSyncV1`、proto convert、client `DerivedAttrsStore` 中。
 - **跨仓库核验**：server `DerivedAttrs` / `InsightModifiers` / `DerivedAttrsSyncV1` 已核对；client jump 下游未实施，列入 P4 needs design。
 - **遗留 / 后续**：P2 活茧、P3 InsightModifiers、P4 jump、P5 防孤岛 manifest 均为后续实施阶段。
+
+### 2026-07-28 Round bundle triage 证据
+
+- **落地清单**：P0 结论与 P1 代码修复历史保留；P2-P5 的事实范围与候选 successor 短名仍保留在本归档的 Finding Mapping 中；`plan-bughunt-modifier-effect-consumer-completion-v1` 尚未建立，也不是当前可消费的 implementation owner。canonical 字段、排除项、设计门与跨栈验收须由后续独立 docs PR 第一性收口；本文件迁入 finished。
+- **关键 commit**：`3e6981513`（2026-07-09，PR #1143）接通 reach/regen/purge；已验证为 `origin/main @ c625d5a5` 祖先且当前 consumers 存在。
+- **测试结果**：原 P1 Finish Evidence 记录 server tests/gate；本次只做 docs-only triage，以 docs static gate + exact-HEAD validator 验收，不复跑旧代码测试。
+- **跨仓库核验**：P1 为 server-only；jump 的未实施 server/schema/client 链仅记录待立 successor 短名，不能以单端 schema 代替 runtime consumer。
+- **遗留 / 后续**：后续 successor 短名为 `plan-bughunt-modifier-effect-consumer-completion-v1`，须独立 docs PR 建立 P2-P5 自洽 skeleton；P2 wound-grade/flow、P3 Insight、P4 jump 分别见 Finding Mapping，P5 anti-orphan manifest/lint 作为共享 implementation gate 见紧随表后的非 finding 说明；本 audit 禁止再消费。

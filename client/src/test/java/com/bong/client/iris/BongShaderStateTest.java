@@ -95,6 +95,30 @@ class BongShaderStateTest {
     }
 
     @Test
+    void clearOnDisconnectDropsServerRuntimeButPreservesInterpolationConfiguration() {
+        BongShaderState.setLerpSpeed(BongUniform.LINGQI, 0.5f);
+        BongShaderState.setTarget(BongUniform.BLOODMOON, 1.0f);
+        BongShaderState.setOverride(BongUniform.MEDITATION, 0.8f);
+
+        BongShaderState.clearOnDisconnect();
+        BongShaderState.clearOnDisconnect();
+
+        for (BongUniform uniform : BongUniform.values()) {
+            assertEquals(0f, BongShaderState.get(uniform), 0.0001f,
+                "断线必须清空旧会话的 current shader runtime 值：" + uniform.shaderName());
+            assertEquals(0f, BongShaderState.getTarget(uniform), 0.0001f,
+                "断线必须清空旧会话的 target shader runtime 值：" + uniform.shaderName());
+            assertFalse(BongShaderState.isOverridden(uniform),
+                "断线必须移除旧会话的 override：" + uniform.shaderName());
+        }
+
+        BongShaderState.setTarget(BongUniform.LINGQI, 1.0f);
+        BongShaderState.tickInterpolate();
+        assertEquals(0.5f, BongShaderState.get(BongUniform.LINGQI), 0.0001f,
+            "断线清理不得把本地 interpolation 配置还原为默认值；新会话仍应沿用 0.5 speed");
+    }
+
+    @Test
     void resetClearsEverything() {
         BongShaderState.setTarget(BongUniform.DEMONIC, 1.0f);
         BongShaderState.setOverride(BongUniform.ENLIGHTENMENT, 0.9f);

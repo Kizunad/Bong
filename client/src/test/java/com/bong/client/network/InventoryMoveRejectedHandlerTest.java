@@ -437,6 +437,20 @@ class InventoryMoveRejectedHandlerTest {
     }
 
     @Test
+    void clearOnDisconnectRemovesOldSessionDedupeAndAcceptsFreshReason() {
+        InventoryMoveRejectedHandler.recordShown("realm_too_low", 1_000_000L);
+        assertTrue(InventoryMoveRejectedHandler.isDuplicateWithinWindow("realm_too_low", 1_000_100L));
+
+        InventoryMoveRejectedHandler.clearOnDisconnect();
+
+        assertFalse(InventoryMoveRejectedHandler.isDuplicateWithinWindow("realm_too_low", 1_000_100L),
+            "新 session 的首个拒绝提示不得被上一连接的 500ms throttle 吞掉");
+        InventoryMoveRejectedHandler.recordShown("realm_too_low", 1_000_100L);
+        assertTrue(InventoryMoveRejectedHandler.isDuplicateWithinWindow("realm_too_low", 1_000_101L),
+            "生产清理后新 session 内的防刷屏语义必须继续生效");
+    }
+
+    @Test
     void resetForTestsClearsDedupeState() {
         InventoryMoveRejectedHandler.recordShown("realm_too_low", 1_000_000L);
         InventoryMoveRejectedHandler.resetForTests();

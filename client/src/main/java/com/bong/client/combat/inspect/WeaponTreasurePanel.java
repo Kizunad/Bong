@@ -92,8 +92,13 @@ public final class WeaponTreasurePanel {
         return sb.toString();
     }
 
-    public static void resetForTests() {
+    /** Clears server-derived panel projections without changing tooltip rules. */
+    public static void clearOnDisconnect() {
         weapon = null;
         treasures = Collections.emptyList();
+    }
+
+    public static void resetForTests() {
+        clearOnDisconnect();
     }
 }

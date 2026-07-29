@@ -215,6 +215,17 @@ public final class AnimationLayerManager {
         return stopped;
     }
 
+    /**
+     * 断线时清除旧会话的 channel ownership。
+     *
+     * <p>具体 AnimationStack 层由 {@link BongAnimationPlayer#clearOnDisconnect()} 摘除；本类只保留
+     * player UUID 到语义 channel 的所有权索引，必须同步失效，避免新 session 的同 channel 播放
+     * 先尝试停止旧 stack 上的动画。
+     */
+    public static synchronized void clearOnDisconnect() {
+        ACTIVE_BY_CHANNEL.clear();
+    }
+
     static synchronized Identifier activeInChannel(UUID playerId, Channel channel) {
         EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
         return byChannel == null ? null : byChannel.get(channel);

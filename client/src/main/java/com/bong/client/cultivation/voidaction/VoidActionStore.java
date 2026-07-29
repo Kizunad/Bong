@@ -75,6 +75,11 @@ public final class VoidActionStore {
         LISTENERS.remove(listener);
     }
 
+    /** 断线时仅替换会话快照，保留并通知长期 listener。 */
+    public static void clearOnDisconnect() {
+        replace(Snapshot.empty());
+    }
+
     public static void resetForTests() {
         LISTENERS.clear();
         SNAPSHOT.set(Snapshot.empty());

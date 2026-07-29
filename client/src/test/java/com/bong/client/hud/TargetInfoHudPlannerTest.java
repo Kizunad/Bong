@@ -28,6 +28,26 @@ class TargetInfoHudPlannerTest {
     }
 
     @Test
+    void clearOnDisconnect_removesObservedTarget() {
+        TargetInfoStateStore.replaceForTests(TargetInfoState.create(
+            TargetInfoState.Kind.NPC,
+            "npc:old-target",
+            "旧会话目标",
+            "Condense",
+            0.5,
+            0.2,
+            1_000L
+        ));
+        assertFalse(TargetInfoStateStore.snapshot().isEmpty(),
+            "测试前必须建立旧会话的目标信息");
+
+        TargetInfoStateStore.clearOnDisconnect();
+
+        assertTrue(TargetInfoStateStore.snapshot().isEmpty(),
+            "断线必须清掉旧会话的准星目标，避免新世界 HUD 显示不存在的实体");
+    }
+
+    @Test
     void targetInfoShowsOnAttackAndExpiresAfterFiveSeconds() {
         PlayerStateStore.replace(PlayerStateViewModel.create(
             "Solidify",

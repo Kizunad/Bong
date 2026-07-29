@@ -1,4 +1,7 @@
-# plan-bughunt-r8-findings-v1（骨架）
+# plan-bughunt-r8-findings-v1（已归档）
+
+> **归档说明（2026-07-28）**：除本说明与文末 Round bundle triage 外，下列正文完整保留本 plan 在冻结基线 `origin/main @ c625d5a5` 上的原始阶段、决议、测试与审计记录；正文里的 “Active / 骨架 / ⬜ / 开放问题” 是历史状态。当前唯一实施归属以文末 `Finding Mapping` 为准，移交 successor 的条目仍未实施，不因本 bundle 归档而视为完成。
+
 
 > **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round8**（fresh origin/main worktree ROOT，角度：modifier/effect 消费层系统审计 · 数值/公式偏离正典 · 热路径 panic · NPC AI · TSY 深挖）确认的 **11 个新真 bug**——**modifier-orphan 模式大爆发**（baomai-v4 三子簇 7 字段 + InsightModifiers 再 12+ 字段 + jump_height 全"写入端齐全消费端断裂"）+ **距离衰减公式偏离 worldview §四正典 1.84×** + NPC 防御生命周期门缺失 + TSY 塌缩生命周期泄漏。已对 r1-r7 去重，全部 real-on-main。
 
@@ -48,3 +51,33 @@
 ## 审计来源
 
 bug-hunt round8（workflow，5 角度 finder + 怀疑者对抗 + opus 逐条全树复核 + 数值类引 worldview 章节佐证，12 候选）。**ROOT = fresh origin/main worktree**（方法论修正后第六轮）。已对 r1-r7 去重。**report-only**：P0 modifier orphan 大簇是**顶级系统主题**（累计 25+ 字段，建议统一接入层）；P1 距离衰减偏离 worldview §四是 worldview 锚点级数值偏差；#7/#8/#11/#12 局部明确可机械 fix。**外部 review 价值印证**（[[feedback_external_review_catches_semantic]]）：#6 这类"测试名义拟合 worldview 实则锁定偏离值 + plan 校准从未落地"靠对照正典才抓得出，纯代码自洽检查会漏。
+
+---
+
+## 2026-07-28 Round bundle finding triage
+
+本节是 master §6.16 / §7 一次性 docs-only 归档移交记录；上文未实施 finding 只有在下表登记唯一 owner 后才退出原聚合队列。
+
+## Finding Mapping
+
+| Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | 文档动作 |
+|---|---|---|---|---|
+| #1 scar circuit reach/regen/purge | `server/src/combat/player_attack.rs:37-107`、`server/src/cultivation/tick.rs:96-269`、`server/src/cultivation/contamination.rs:97-211` 当前均有 runtime consumer | `already-fixed/invalid`（already-fixed） | `3e6981513` / PR #1143 | 仅归档 |
+| #2 iron cocoon wound fields | `server/src/combat/baomai_v4/iron_cocoon.rs:110-139` 写入；伤口 resolve 不读 | `independent-domain-fix` | successor 短名 `plan-bughunt-modifier-effect-consumer-completion-v1`（wound 域） | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| #3 scar-forged flow | `server/src/combat/baomai_v4/iron_cocoon.rs:106-143` 写 flag；`server/src/cultivation/components.rs:522-524` 的 `MeridianSystem::sum_rate` 不读 | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 冻结 effective-rate 设计门 |
+| #5 Insight benefit/cost cluster | `server/src/cultivation/insight_apply.rs:24-254` 多字段仍无 production consumer | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #4 `jump_height_multiplier` | `server/src/combat/status.rs:174` reset、`server/src/combat/body_conditioning.rs:157-167` 写入；server/client 下游无 jump consumer | `independent-domain-fix` | 同一 successor 短名 | 后续 skeleton 自洽收口 |
+| #6 distance decay calibration | `server/src/qi_physics/constants.rs:4` 仍 `0.03`；`server/src/combat/decay.rs:40-54` 仍锁 Mellow+BareQi@10 约 `0.737` 与 Solid+AncientRelic@50 约 `0.494`，且 Beast 当前映射 SpiritWeapon@50 约 `0.364`，均未锁 0.40/0.80 目标 | `absorbed-by-track` | R5 `plan-refactor-qi-ledger-v1`（独占 `server/src/qi_physics/**`，含常数与 ledger/decay 语义） | 已登记 R5 round-bundle 精确吸收，不另立 successor |
+| #7 NPC defense scorer lifecycle | `server/src/npc/brain/scorers_combat.rs:348-389` 当前在评分前按 `LifecycleState::Alive` gate | `already-fixed/invalid`（already-fixed） | `79c4e0258` / PR #1136 | 仅归档 |
+| #8 NPC defense action lifecycle | `server/src/npc/brain/actions_combat.rs:447-448,468-500` 对 Requested/Executing 两态均应用 lifecycle gate | `already-fixed/invalid`（already-fixed） | 同 commit/PR #1136 | 仅归档 |
+| #11 collapse death `TsyPresence` | `server/src/world/extract_system.rs:775-779` 插 `PendingTsyDeathDrop` 并移除 presence | `already-fixed/invalid`（already-fixed） | `5b477b453` / PR #1139 | 仅归档 |
+| #10 TSY hostile ghost | `server/src/world/tsy_lifecycle.rs:667` 仍 skip 非 Daoxiang；`server/src/npc/tsy_hostile.rs:81-84` 的 `TsyHostileMarker.family_id`（writer `server/src/world/tsy_lifecycle.rs:824-829`）尚无 family-cleanup | `independent-domain-fix` | successor 短名 `plan-bughunt-tsy-collapse-hostile-cleanup-v1` | 后续单独 docs PR 立 skeleton；本 PR 不创建 |
+| #12 Fuya death stop-audio 广播 | `server/src/npc/tsy_hostile.rs:1135-1153` 当前 stop query 以 `With<FuyaAura>` 对称门控；`server/src/npc/tsy_hostile.rs:2414-2528` 覆盖非 aura/aura-family recipient | `already-fixed/invalid`（already-fixed） | `5b477b453` / PR #1139 | 仅归档 |
+
+## Finish Evidence
+
+- **落地清单**：modifier 四条记录统一 successor 短名；距离衰减由 R5 `plan-refactor-qi-ledger-v1` 吸收，TSY hostile 保留独立 successor 短名（尚未立 skeleton）；五条 merged 修复结案；bundle 迁入本路径。
+- **关键 commit / PR**：`3e6981513`/#1143、`79c4e0258`/#1136、`5b477b453`/#1139 均为目标 HEAD 祖先且当前修复保留。
+- **测试结果**：docs-only triage；最终 docs static gate + exact-HEAD validator。
+- **跨仓库核验**：modifier/jump 的跨 server/schema/client 未实现部分仅记录待立 successor 短名；NPC/TSY 当前 finding 为 server lifecycle。
+- **遗留 / 后续**：仅 modifier 与 TSY hostile 两个后续 successor 短名，须各自独立 docs PR 建立自洽 skeleton 后才可消费；距离衰减留给 R5 实施，本 bundle 禁止再消费。

@@ -5,7 +5,6 @@ import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.PlayerStateViewModel;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
@@ -23,9 +22,6 @@ public final class CultivationScreenBootstrap {
     public static void register() {
         keyBinding();
         ClientTickEvents.END_CLIENT_TICK.register(CultivationScreenBootstrap::onEndClientTick);
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
-            client.execute(CultivationScreenBootstrap::clearPlayerStateSnapshot)
-        );
         BongClient.LOGGER.info("Registered cultivation screen bootstrap keybinding on key: K");
     }
 
@@ -65,10 +61,6 @@ public final class CultivationScreenBootstrap {
 
     static boolean shouldOpenCultivationScreen(Screen currentScreen) {
         return !(currentScreen instanceof CultivationScreen);
-    }
-
-    static void clearPlayerStateSnapshot() {
-        PlayerStateStore.replace(null);
     }
 
     static CultivationScreen createScreenForCurrentState() {

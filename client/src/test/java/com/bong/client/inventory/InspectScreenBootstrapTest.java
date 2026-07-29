@@ -72,7 +72,7 @@ public class InspectScreenBootstrapTest {
     }
 
     @Test
-    void clearInventorySnapshotClearsAllEquipmentHudStores() {
+    void registryClearsAllEquipmentHudStores() {
         WeaponEquippedStore.putOrClear(
             "main_hand",
             new EquippedWeapon("main_hand", 1L, "iron_sword", "sword", 200.0f, 200.0f, 0)
@@ -88,11 +88,11 @@ public class InspectScreenBootstrapTest {
             1.0
         ));
 
-        InspectScreenBootstrap.clearInventorySnapshot();
+        com.bong.client.lifecycle.SessionScopedStoreRegistry.clearAllOnDisconnect();
 
         assertNull(WeaponEquippedStore.get("main_hand"));
         assertNull(EquippedShieldStore.snapshot(),
-            "断线必须清空盾牌 fallback；否则新 session 主副手为空或为 tool 时旧盾会重返战斗 HUD");
+            "中央 registry 必须清空盾牌 fallback；否则新 session 主副手为空或为 tool 时旧盾会重返战斗 HUD");
         assertNull(QiColorObservedStore.snapshot());
     }
 

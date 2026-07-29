@@ -265,6 +265,11 @@ public final class TechniquesListPanel {
         listeners.clear();
     }
 
+    /** Clears the disconnected server snapshot while preserving long-lived UI listeners. */
+    public static void clearOnDisconnect() {
+        replace(List.of());
+    }
+
     public static void resetForTests() {
         snapshot = Collections.emptyList();
         listeners.clear();

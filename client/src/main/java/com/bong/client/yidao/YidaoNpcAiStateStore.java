@@ -69,6 +69,11 @@ public final class YidaoNpcAiStateStore {
         upsert(next);
     }
 
+    /** 断线时仅清除本会话的医道 NPC AI 快照。 */
+    public static void clearOnDisconnect() {
+        snapshots = Map.of();
+    }
+
     public static void resetForTests() {
         snapshots = Map.of();
     }

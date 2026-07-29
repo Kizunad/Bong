@@ -1,5 +1,7 @@
 package com.bong.client.audio;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -7,6 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class NpcFootstepAudioControllerTest {
+    @BeforeEach
+    @AfterEach
+    void clearTrackedState() {
+        NpcFootstepAudioController.clearOnDisconnect();
+    }
+
     @Test
     void materialPlannerSelectsDistinctRecipes() {
         assertEquals("npc_footstep_default", NpcFootstepAudioController.recipeForMaterial("default").id());
@@ -29,6 +37,27 @@ public class NpcFootstepAudioControllerTest {
 
         assertFalse(decision.play());
         assertEquals(28, decision.next().nextTick());
+    }
+
+    @Test
+    void disconnectClearDropsOldEntityStateAndFreshEntityCanBeTracked() {
+        NpcFootstepAudioController.seedStateForTests(
+            42,
+            new NpcFootstepAudioController.StepState(1.0, 64.0, 2.0, 28L)
+        );
+        assertEquals(1, NpcFootstepAudioController.trackedStateCountForTests(),
+            "old server entity step state must be present before disconnect cleanup");
+
+        NpcFootstepAudioController.clearOnDisconnect();
+
+        assertEquals(0, NpcFootstepAudioController.trackedStateCountForTests(),
+            "entity-id state must not survive because a new world can reuse the same id");
+        NpcFootstepAudioController.seedStateForTests(
+            42,
+            new NpcFootstepAudioController.StepState(8.0, 70.0, 9.0, 48L)
+        );
+        assertEquals(1, NpcFootstepAudioController.trackedStateCountForTests(),
+            "fresh world state must be trackable after disconnect teardown");
     }
 
     @Test

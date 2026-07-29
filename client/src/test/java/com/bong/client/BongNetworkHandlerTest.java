@@ -44,6 +44,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongNetworkHandlerTest {
@@ -61,6 +62,16 @@ public class BongNetworkHandlerTest {
         SearchHudStateStore.resetForTests();
         PlayerStateStore.resetForTests();
         SeasonStateStore.resetForTests();
+    }
+
+    @Test
+    void seasonStoreClearOnDisconnect_restoresSummerBaseline() {
+        SeasonStateStore.replace(new SeasonState(SeasonState.Phase.WINTER, 42L, 1_000L, 2L));
+
+        SeasonStateStore.clearOnDisconnect();
+
+        assertEquals(SeasonState.summerAt(0L), SeasonStateStore.snapshot(),
+            "断线必须移除旧会话的 season payload，恢复无服务端状态的夏季基线");
     }
 
     @Test
@@ -511,9 +522,49 @@ public class BongNetworkHandlerTest {
         );
     }
 
+    @Test
+    void disconnectAdjunctRuntimeFailureDoesNotSkipLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+
+        BongNetworkHandler.runDisconnectCleanups(
+            () -> calls.add("before"),
+            () -> {
+                calls.add("failing");
+                throw new IllegalStateException("recoverable cleanup failure");
+            },
+            () -> calls.add("after")
+        );
+
+        assertEquals(
+            List.of("before", "failing", "after"),
+            calls,
+            "单个 adjunct RuntimeException 必须被隔离，后续 animation/audio/HUD 清理仍要执行"
+        );
+    }
+
+    @Test
+    void disconnectAdjunctErrorStillPropagatesWithoutRunningLaterCleanup() {
+        List<String> calls = new java.util.ArrayList<>();
+
+        AssertionError error = assertThrows(
+            AssertionError.class,
+            () -> BongNetworkHandler.runDisconnectCleanups(
+                () -> calls.add("before"),
+                () -> {
+                    calls.add("fatal");
+                    throw new AssertionError("fatal cleanup");
+                },
+                () -> calls.add("after")
+            )
+        );
+
+        assertEquals("fatal cleanup", error.getMessage(), "Error 必须原样透传");
+        assertEquals(List.of("before", "fatal"), calls, "Error 不得伪装成可恢复 RuntimeException");
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 — 断线注册接线断言。
-    // 上面两条用例只驱动 clearClientStateOnDisconnect() helper 本体；若有人把
+    // 上面的 helper 级用例只驱动 clearClientStateOnDisconnect() 本体；若有人把
     // ClientPlayConnectionEvents.DISCONNECT 注册块删掉、或把 helper 里的
     // DuguV2HudStateStore.clearOnDisconnect() 调用移走，helper 级测试依然全绿，
     // 生产态断线清理却已断链。register() 挂的 Fabric DISCONNECT 回调需要活的
@@ -522,7 +573,7 @@ public class BongNetworkHandlerTest {
     // ──────────────────────────────────────────────────────────────────────
 
     @Test
-    void bongNetworkHandlerRegistersDisconnectWiringThatClearsDuguV2HudStateStore() throws Exception {
+    void bongNetworkHandlerRegistersDisconnectWiringThroughTheSessionStoreRegistry() throws Exception {
         java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
         java.nio.file.Path clientRoot;
         if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
@@ -538,7 +589,7 @@ public class BongNetworkHandlerTest {
         assertTrue(
             java.nio.file.Files.exists(handlerSrc),
             "BongNetworkHandler.java 必须存在于 " + handlerSrc.toAbsolutePath()
-                + "，否则无法核验毒蛊 v2 HUD 断线接线；实际 exists=false"
+                + "，否则无法核验统一 Store 断线清理接线；实际 exists=false"
         );
         String src = java.nio.file.Files.readString(handlerSrc);
 
@@ -558,32 +609,89 @@ public class BongNetworkHandlerTest {
 
         assertTrue(
             disconnectBlock.contains("clearClientStateOnDisconnect"),
-            "期望 DISCONNECT 注册块路由到 BongNetworkHandler.clearClientStateOnDisconnect()（统一断线"
-                + "清理 helper），否则毒蛊 v2 等所有跨 session store 清理都不会在真实断线时执行；"
-                + "实际：注册块内未找到该 helper 调用"
+            "期望 DISCONNECT 注册块路由到 BongNetworkHandler.clearClientStateOnDisconnect()；"
+                + "否则 registry 和非 Store hook 都不会在真实断线时执行"
         );
 
         int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(
-            clearHelperStart >= 0,
-            "期望 BongNetworkHandler.clearClientStateOnDisconnect() helper 存在（断线清理逻辑从 Fabric"
-                + "回调中抽出的统一入口），实际：源码中未找到方法定义"
-        );
+        assertTrue(clearHelperStart >= 0, "统一断线清理 helper 必须存在");
         int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
-        assertTrue(
-            clearHelperEnd > clearHelperStart,
-            "期望 clearClientStateOnDisconnect() 之后存在 logNoOp(...) 用于圈定清理 helper 范围，"
-                + "实际 clearHelperEnd=" + clearHelperEnd
-        );
+        assertTrue(clearHelperEnd > clearHelperStart, "必须能精确圈定统一断线清理 helper 范围");
         String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
 
-        assertTrue(
-            clearHelper.contains("DuguV2HudStateStore.clearOnDisconnect()"),
-            "期望 clearClientStateOnDisconnect() 调用 DuguV2HudStateStore.clearOnDisconnect()——server 的"
-                + " dugu_v2_* bridge 没有 join/disconnect reset payload，revealRisk 无 expiry、selfRevealed"
-                + " 是 sticky merge，漏掉这条调用会让上一局毒蛊 v2 HUD 跨 session 无限残留"
-                + "（plan-bughunt-dugu-v2-hud-disconnect-bleed-v1）；实际：清理 helper 内未找到该调用"
+        String registryCall = "SessionScopedStoreRegistry.clearAllOnDisconnect()";
+        assertEquals(
+            clearHelper.indexOf(registryCall),
+            clearHelper.lastIndexOf(registryCall),
+            "统一 helper 必须恰好调用一次 session Store registry，避免漏清或重复清理"
         );
+        assertTrue(
+            clearHelper.contains(registryCall),
+            "统一 helper 必须调用 SessionScopedStoreRegistry.clearAllOnDisconnect()"
+        );
+
+        List<String> nonStoreHooks = List.of(
+            "NpcDialogueBubbleRenderer.clear()",
+            "MusicStateMachine.instance().clear()",
+            "SoundRecipePlayer.instance().clearOnDisconnect()",
+            "BongAnimationPlayer.clearOnDisconnect()",
+            "AnimationLayerManager.clearOnDisconnect()",
+            "BongPunchCombo.clearOnDisconnect()",
+            "MutationVisualState.reset()",
+            "SpiderDisguiseHandler.clearOnDisconnect()",
+            "RatQiTierHandler.clearOnDisconnect()",
+            "DaoZhanDisguiseHandler.clearOnDisconnect()",
+            "EraAmbianceState.reset()",
+            "BongToast.clearOnDisconnect()"
+        );
+        int previousIndex = clearHelper.indexOf(registryCall);
+        for (String hook : nonStoreHooks) {
+            int hookIndex = clearHelper.indexOf(hook);
+            assertTrue(
+                hookIndex > previousIndex,
+                "非 Store hook 必须保留且维持既有相对顺序；未按序找到 " + hook
+            );
+            assertEquals(
+                hookIndex,
+                clearHelper.lastIndexOf(hook),
+                "非 Store hook 必须恰好调用一次，避免重复副作用：" + hook
+            );
+            previousIndex = hookIndex;
+        }
+
+        List<String> migratedStoreTypes = List.of(
+            "RealmCollapseHudStateStore",
+            "NpcMetadataStore",
+            "NpcLodStore",
+            "NpcMoodStore",
+            "TsyBossHealthStore",
+            "TsyDeathVfxStore",
+            "CoffinStateStore",
+            "GatheringSessionStore",
+            "CrackReadingHudStateStore",
+            "ResonanceLockHudStateStore",
+            "VoidErosionVisualStore",
+            "HallucinationLayerStore",
+            "DyingElderEncounterStore",
+            "TiandaoPresenceStore",
+            "BongHudStateStore",
+            "SearchHudStateStore",
+            "AgentUiStore",
+            "HalfStepRechallengeStore",
+            "TutorialCoffinPosStore",
+            "RemainsStore",
+            "DroppedItemStore",
+            "CraftStore",
+            "IdentityPanelStateStore",
+            "FalseSkinHudStateStore",
+            "DuguV2HudStateStore"
+        );
+        for (String storeType : migratedStoreTypes) {
+            assertFalse(
+                clearHelper.contains(storeType + "."),
+                storeType + " 应只由 registry adapter 清理，helper 不得保留任何 direct call"
+            );
+        }
     }
 
     private static Envelope.PlayerState.Builder seasonAuditPlayerState() {

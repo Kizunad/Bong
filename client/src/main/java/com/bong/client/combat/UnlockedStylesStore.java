@@ -14,6 +14,11 @@ public final class UnlockedStylesStore {
         snapshot = next == null ? UnlockedStyles.none() : next;
     }
 
+    /** Clears the server-provided unlocked-style snapshot for this session. */
+    public static void clearOnDisconnect() {
+        snapshot = UnlockedStyles.none();
+    }
+
     public static void resetForTests() {
         snapshot = UnlockedStyles.none();
     }
