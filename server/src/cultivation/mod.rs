@@ -650,12 +650,23 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(
-                    "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: {error}",
+                    "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: {error}; deferring hydration instead of publishing defaults",
                     username.0,
                 );
-                None
+                commands.entity(entity).insert(CultivationAttachRetry);
+                continue;
             }
         };
+
+        let persisted_terminated = persisted_bundle.as_ref().is_some_and(|bundle| {
+            bundle
+                .get("life_record")
+                .and_then(|record| record.get("biography"))
+                .and_then(|biography| biography.as_array())
+                .and_then(|biography| biography.last())
+                .and_then(|entry| entry.as_object())
+                .is_some_and(|entry| entry.contains_key("Terminated"))
+        });
 
         // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知 race id 必须
         // 拒载**整份** bundle，不只是 `cultivation` 这一个 slice：此前的实现只在下面
@@ -671,33 +682,41 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // 原始 JSON 里的 `cultivation.race`，一旦命中未知 race 就把整份 bundle 提前
         // 归零成 `None`，让下面所有 slice 的 hydration 分支统一走"无持久化数据"的
         // 默认路径（缺失 race 字段的旧存档 `cultivation.race` 键本身不存在，
-        // `as_str()` 拿不到值，不受影响，仍走既有 legacy 迁移路径）。
-        let persisted_bundle = persisted_bundle.and_then(|bundle| {
-            let unknown_persisted_race =
-                authorities.race_registry.as_deref().and_then(|registry| {
-                    bundle
-                        .get("cultivation")
-                        .and_then(|cultivation_value| cultivation_value.get("race"))
-                        .and_then(|race_value| race_value.as_str())
-                        .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
-                });
-            if unknown_persisted_race == Some(true) {
-                tracing::warn!(
-                    "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
-                     unknown race id in persisted `cultivation.race` is not found in \
-                     RaceRegistry — falling back to default state for every slice \
-                     (cultivation/meridians/qi_color/karma/practice_log/contamination/\
-                     life_record/insight_quota/unlocked_perceptions/insight_modifiers/\
-                     meridian_severed/poison_toxicity/digestion_load/nourishment/\
-                     ), not just the \
-                     `cultivation` field",
-                    username.0,
-                );
-                None
-            } else {
-                Some(bundle)
-            }
+        // `as_str()` 拿不到值，不受影响，仍走既有 legacy 迁移路径）。终结角色例外：
+        // fallback 会把旧 qi 伪装成零并允许后续覆盖，必须保留 durable bundle 等待修复。
+        let unknown_persisted_race = persisted_bundle.as_ref().and_then(|bundle| {
+            authorities.race_registry.as_deref().and_then(|registry| {
+                bundle
+                    .get("cultivation")
+                    .and_then(|cultivation_value| cultivation_value.get("race"))
+                    .and_then(|race_value| race_value.as_str())
+                    .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
+            })
         });
+        if unknown_persisted_race == Some(true) && persisted_terminated {
+            tracing::warn!(
+                "[bong][cultivation] refusing terminated-character reincarnation for `{}`: persisted race id is unknown; leaving the old identity untouched",
+                username.0,
+            );
+            commands.entity(entity).insert(CultivationAttachRetry);
+            continue;
+        }
+        let persisted_bundle = if unknown_persisted_race == Some(true) {
+            tracing::warn!(
+                "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
+                 unknown race id in persisted `cultivation.race` is not found in \
+                 RaceRegistry — falling back to default state for every slice \
+                 (cultivation/meridians/qi_color/karma/practice_log/contamination/\
+                 life_record/insight_quota/unlocked_perceptions/insight_modifiers/\
+                 meridian_severed/poison_toxicity/digestion_load/nourishment/\
+                 ), not just the \
+                 `cultivation` field",
+                username.0,
+            );
+            None
+        } else {
+            persisted_bundle
+        };
 
         // plan-race-system-v1 P1a —— bundle 内嵌版本号（`persist_player_cultivation_bundle`
         // 的 `"v"` 字段，与全局 `CURRENT_SCHEMA_VERSION`/`CURRENT_USER_VERSION` 是两套
@@ -711,6 +730,23 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             .and_then(|bundle| bundle.get("v"))
             .and_then(|v| v.as_i64())
             .unwrap_or(1);
+
+        // A terminated character is the only join path that can replace the durable identity and
+        // settle the old cultivation bundle. Its persisted slices therefore must be decoded as a
+        // unit before any default value can make the old qi look like exact zero. Ordinary live
+        // hydration keeps the legacy best-effort behavior below for backwards compatibility.
+        if persisted_terminated {
+            if let Some(bundle) = persisted_bundle.as_ref() {
+                if let Err(error) = validate_terminated_persisted_bundle(bundle, bundle_version) {
+                    tracing::warn!(
+                        "[bong][cultivation] refusing terminated-character reincarnation for `{}`: persisted cultivation bundle is incomplete: {error}; leaving the old identity untouched",
+                        username.0,
+                    );
+                    commands.entity(entity).insert(CultivationAttachRetry);
+                    continue;
+                }
+            }
+        }
 
         let mut cultivation = Cultivation::default();
         let mut meridians = MeridianSystem::default();
@@ -1283,6 +1319,74 @@ fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error
     tracing::warn!(
         "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}"
     );
+}
+
+/// Validate every non-optional slice before replacing a terminated character's durable identity.
+///
+/// Ordinary hydration below deliberately preserves the historical best-effort behavior for live
+/// characters. Terminated hydration is different: its first successful transaction replaces the
+/// old character and settles its qi, so a decode fallback here would turn an unreadable positive
+/// `qi_current` into zero and make the old balance unaccountable.
+fn validate_terminated_persisted_bundle(
+    bundle: &serde_json::Value,
+    bundle_version: i64,
+) -> Result<(), String> {
+    macro_rules! require_decode {
+        ($key:literal, $ty:ty) => {{
+            let value = bundle
+                .get($key)
+                .ok_or_else(|| format!("missing required `{}` slice", $key))?;
+            serde_json::from_value::<$ty>(value.clone())
+                .map_err(|error| format!("failed to decode `{}`: {error}", $key))?;
+        }};
+    }
+
+    if let Some(version) = bundle.get("v") {
+        if version.as_i64().is_none() {
+            return Err("bundle `v` must be an integer when present".to_string());
+        }
+    }
+
+    require_decode!("cultivation", Cultivation);
+    legacy_meridian_bundle::decode_meridian_system(
+        bundle
+            .get("meridians")
+            .ok_or_else(|| "missing required `meridians` slice".to_string())?
+            .clone(),
+        bundle_version,
+    )
+    .map_err(|error| format!("failed to decode `meridians`: {error}"))?;
+    require_decode!("qi_color", QiColor);
+    require_decode!("karma", Karma);
+    require_decode!("contamination", Contamination);
+    require_decode!("life_record", LifeRecord);
+    require_decode!("practice_log", PracticeLog);
+    require_decode!("insight_quota", InsightQuota);
+    require_decode!("unlocked_perceptions", UnlockedPerceptions);
+    require_decode!("insight_modifiers", InsightModifiers);
+    legacy_meridian_bundle::decode_meridian_severed(
+        bundle
+            .get("meridian_severed")
+            .ok_or_else(|| "missing required `meridian_severed` slice".to_string())?
+            .clone(),
+        bundle_version,
+    )
+    .map_err(|error| format!("failed to decode `meridian_severed`: {error}"))?;
+
+    macro_rules! decode_optional_if_present {
+        ($key:literal, $ty:ty) => {
+            if let Some(value) = bundle.get($key).filter(|value| !value.is_null()) {
+                serde_json::from_value::<$ty>(value.clone())
+                    .map_err(|error| format!("failed to decode `{}`: {error}", $key))?;
+            }
+        };
+    }
+    decode_optional_if_present!("tutorial_state", TutorialState);
+    decode_optional_if_present!("poison_toxicity", PoisonToxicity);
+    decode_optional_if_present!("digestion_load", DigestionLoad);
+    decode_optional_if_present!("nourishment", Nourishment);
+
+    Ok(())
 }
 
 /// plan-race-system-v1 P1a —— `cultivation_json` bundle 里 `meridians` / `meridian_severed`
@@ -2631,6 +2735,263 @@ mod tests {
             crate::combat::components::LifecycleState::Alive
         );
         assert_eq!(persisted_lifecycle.character_id, fresh_character_id);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn terminated_bundle_validation_rejects_every_unreadable_slice() {
+        let life_record = terminated_life_record("offline:BundleValidation");
+        let valid = serde_json::json!({
+            "v": legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
+            "cultivation": Cultivation::default(),
+            "meridians": MeridianSystem::default(),
+            "qi_color": QiColor::default(),
+            "karma": Karma::default(),
+            "contamination": Contamination::default(),
+            "life_record": life_record,
+            "practice_log": PracticeLog::default(),
+            "insight_quota": InsightQuota::default(),
+            "unlocked_perceptions": UnlockedPerceptions::default(),
+            "insight_modifiers": InsightModifiers::new(),
+            "tutorial_state": null,
+            "meridian_severed": MeridianSeveredPermanent::default(),
+            "poison_toxicity": null,
+            "digestion_load": null,
+            "nourishment": null,
+        });
+        assert!(validate_terminated_persisted_bundle(
+            &valid,
+            legacy_meridian_bundle::CURRENT_BUNDLE_VERSION
+        )
+        .is_ok());
+
+        let required = [
+            "cultivation",
+            "meridians",
+            "qi_color",
+            "karma",
+            "contamination",
+            "life_record",
+            "practice_log",
+            "insight_quota",
+            "unlocked_perceptions",
+            "insight_modifiers",
+            "meridian_severed",
+        ];
+        for key in required {
+            let mut missing = valid.clone();
+            missing
+                .as_object_mut()
+                .expect("bundle fixture must be an object")
+                .remove(key);
+            assert!(
+                validate_terminated_persisted_bundle(
+                    &missing,
+                    legacy_meridian_bundle::CURRENT_BUNDLE_VERSION
+                )
+                .is_err(),
+                "required slice `{key}` must not fall back when missing"
+            );
+
+            let mut malformed = valid.clone();
+            malformed[key] = serde_json::json!("unreadable");
+            assert!(
+                validate_terminated_persisted_bundle(
+                    &malformed,
+                    legacy_meridian_bundle::CURRENT_BUNDLE_VERSION
+                )
+                .is_err(),
+                "required slice `{key}` must not fall back when malformed"
+            );
+        }
+
+        for key in [
+            "tutorial_state",
+            "poison_toxicity",
+            "digestion_load",
+            "nourishment",
+        ] {
+            let mut malformed = valid.clone();
+            malformed[key] = serde_json::json!("unreadable");
+            assert!(
+                validate_terminated_persisted_bundle(
+                    &malformed,
+                    legacy_meridian_bundle::CURRENT_BUNDLE_VERSION
+                )
+                .is_err(),
+                "present optional slice `{key}` must not be silently discarded when malformed"
+            );
+        }
+
+        let mut invalid_version = valid;
+        invalid_version["v"] = serde_json::json!("current");
+        assert!(
+            validate_terminated_persisted_bundle(&invalid_version, 1).is_err(),
+            "a present non-integer bundle version must fail closed"
+        );
+    }
+
+    #[test]
+    fn join_reincarnation_decode_failure_preserves_positive_qi_then_retries_atomically() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join-decode-retry");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "MalformedQiJoin";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        let old_qi = crate::qi_physics::constants::QI_EPSILON / 2.0;
+        seed_cultivation_bundle_with_tutorial_and_qi(
+            &settings,
+            username,
+            Realm::Spirit,
+            old_qi,
+            &terminated_life_record(old_canonical_id.as_str()),
+            None,
+        );
+        let valid_bundle = crate::persistence::load_player_cultivation_bundle(&settings, username)
+            .expect("seeded bundle should load")
+            .expect("seeded bundle should exist");
+        let mut malformed_bundle = valid_bundle.clone();
+        malformed_bundle["meridians"] = serde_json::json!({ "regular": "unreadable" });
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("cultivation database should open");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![malformed_bundle.to_string(), username],
+            )
+            .expect("malformed terminated bundle should be written");
+        drop(connection);
+
+        let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry must include spawn")
+            .spirit_qi = 1.0;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<QiTransfer>();
+        insert_reincarnation_cleanup_resources(&mut app);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client(username);
+        client_bundle.player.position = Position::new([0.0, 66.0, 0.0]);
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "an unreadable terminated bundle must not publish default cultivation over positive old qi"
+        );
+        assert!(
+            app.world().get::<CultivationAttachRetry>(entity).is_some(),
+            "a rejected terminated hydration must stay explicitly retryable"
+        );
+        assert_eq!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current_char_id should reload"),
+            Some(old_raw_id.clone()),
+            "decode rejection must preserve the durable old identity"
+        );
+        assert_eq!(
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("malformed bundle should remain readable as JSON")
+                .expect("malformed bundle should remain durable"),
+            malformed_bundle,
+            "decode rejection must not overwrite any durable old-life slice"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            0.0,
+            "decode rejection must not publish staged pending inflow"
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+        assert_eq!(
+            crate::persistence::load_pending_inflow_balance(&settings)
+                .expect("durable pending balance should remain readable"),
+            0.0,
+            "decode rejection must not persist any partial qi settlement"
+        );
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("cultivation database should reopen");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![valid_bundle.to_string(), username],
+            )
+            .expect("repairing the terminated bundle should succeed");
+        drop(connection);
+
+        app.update();
+
+        let fresh_lifecycle = app
+            .world()
+            .get::<Lifecycle>(entity)
+            .expect("the repaired retry must publish a fresh lifecycle");
+        assert_ne!(fresh_lifecycle.character_id, old_canonical_id);
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            0.0,
+            "the fresh life must start after settling all old qi"
+        );
+        assert!(app.world().get::<CultivationAttachRetry>(entity).is_none());
+        assert!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("fresh current_char_id should reload")
+                .is_some_and(|id| id != old_raw_id),
+            "only the successful retry may rotate the durable identity"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            old_qi,
+            "a full zone must retain even sub-epsilon old qi in pending inflow"
+        );
+        assert_eq!(
+            crate::persistence::load_pending_inflow_balance(&settings)
+                .expect("committed pending balance should reload"),
+            old_qi,
+            "the retry transaction must durably conserve sub-epsilon old qi"
+        );
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].from, QiAccountId::player(old_canonical_id));
+        assert_eq!(emitted[0].to, pending_inflow_account());
+        assert_eq!(emitted[0].amount, old_qi);
+
+        let persisted_fresh =
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("fresh bundle should reload")
+                .expect("successful retry must persist a fresh bundle");
+        assert_eq!(
+            serde_json::from_value::<Cultivation>(persisted_fresh["cultivation"].clone())
+                .expect("fresh cultivation should decode")
+                .qi_current,
+            0.0
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
