@@ -1,0 +1,282 @@
+package com.bong.client.ui;
+
+import io.wispforest.owo.ui.core.Sizing;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class R7InventoryContractTest {
+    private static final Pattern SCREEN_DECLARATION = Pattern.compile(
+        "\\b(?:public\\s+)?(?:final\\s+)?class\\s+(\\w+)\\s+extends\\s+"
+            + "(BaseOwoScreen\\s*<\\s*FlowLayout\\s*>|Screen)"
+    );
+    private static final Path PRODUCTION_ROOT = R7SourceScan.productionRoot();
+
+    @Test
+    void screenInventoryPinsEveryDirectProductionScreenAndSuffixException() throws IOException {
+        List<ScreenInventoryRow> expectedRows = readScreenInventory();
+        List<ScreenInventoryRow> actualRows = discoverDirectScreensAndSuffixHelpers();
+
+        assertEquals(expectedRows, actualRows,
+            "R7 Screen inventory drifted: every direct Screen and every *Screen.java false positive must be classified");
+        assertEquals(30, expectedRows.size(), "fixture should contain 29 suffix files plus one non-suffix Screen");
+        assertEquals(15, count(expectedRows, "BASE_OWO"), "direct owo migration set changed");
+        assertEquals(14, count(expectedRows, "VANILLA_SCREEN"), "direct vanilla Screen set changed");
+        assertEquals(1, count(expectedRows, "NON_SCREEN_HELPER"), "Screen.java false-positive set changed");
+        assertEquals(15, expectedRows.stream().filter(ScreenInventoryRow::eligible).count(),
+            "P1 base migration is limited to direct owo Screens");
+        assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
+            "cultivation/voidaction/LegacyAssignPanel.java")),
+            "suffix-only discovery must not lose a real Screen named LegacyAssignPanel");
+        assertTrue(expectedRows.stream().anyMatch(row -> row.path().equals(
+            "cultivation/TechniqueScrollReadScreen.java") && row.kind().equals("NON_SCREEN_HELPER")),
+            "suffix-only discovery must not count TechniqueScrollReadScreen as a Screen");
+    }
+
+    @Test
+    void fill100InventoryPinsEveryTokenWithLexicalState() throws IOException {
+        List<FillInventoryRow> expectedRows = readFillInventory();
+        List<R7SourceScan.TokenOccurrence> actual = R7SourceScan.tokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)");
+
+        assertEquals(92, actual.size(), "raw Sizing.fill(100) inventory must include code and comments");
+        assertEquals(
+            expectedRows.stream().map(FillInventoryRow::stableKey).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::stableKey).toList(),
+            "Sizing.fill(100) path-local occurrence inventory drifted; classify each added or removed token explicitly"
+        );
+        assertEquals(
+            expectedRows.stream().map(FillInventoryRow::code).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
+            "a token moved between executable code and comment/string context"
+        );
+
+        Map<String, Long> verdicts = histogram(expectedRows.stream().map(FillInventoryRow::verdict).toList());
+        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L), verdicts,
+            "P0 context-aware classification is frozen at 82 accepted, 5 risks, and 5 comments");
+        Map<String, Long> risks = histogram(expectedRows.stream()
+            .map(FillInventoryRow::riskKind)
+            .filter(kind -> !kind.equals("NONE"))
+            .toList());
+        assertEquals(Map.of(
+            "EVICTS_LATER_SIBLING", 4L,
+            "TERMINAL_INTENTIONAL", 3L,
+            "TERMINAL_ORDER_DEPENDENT", 1L
+        ), risks, "main-axis overflow classification drifted");
+        assertEquals(20, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
+            "fill(100) token file count changed");
+    }
+
+    @Test
+    void owoFillInflatesAgainstTheWholeAvailableSpace() {
+        assertEquals(0, Sizing.fill(100).inflate(0, ignored -> 43));
+        assertEquals(73, Sizing.fill(100).inflate(73, ignored -> 43));
+        assertEquals(200, Sizing.fill(100).inflate(200, ignored -> 43));
+        assertEquals(50, Sizing.fill(25).inflate(200, ignored -> 43));
+        assertEquals(16, Sizing.content(3).inflate(10_000, ignored -> 10));
+    }
+
+    @Test
+    void p0AddsNoProductionFoundationOrScreenMigration() throws IOException {
+        Set<String> forbiddenProductionTypes = Set.of(
+            "BongScreenBase.java",
+            "DiffListWidget.java",
+            "BongKeybindRegistry.java",
+            "ClientThreadMarshal.java",
+            "ScreenOpenPolicy.java"
+        );
+        Set<String> discovered = new TreeSet<>();
+        try (var files = Files.walk(PRODUCTION_ROOT)) {
+            files.filter(Files::isRegularFile)
+                .map(path -> path.getFileName().toString())
+                .filter(forbiddenProductionTypes::contains)
+                .forEach(discovered::add);
+        }
+        assertTrue(discovered.isEmpty(), "P0 is docs/tests/resources only; production foundation found=" + discovered);
+
+        for (ScreenInventoryRow row : readScreenInventory()) {
+            if (!row.kind().equals("BASE_OWO")) {
+                continue;
+            }
+            String code = R7SourceScan.codeOnly(R7SourceScan.read(PRODUCTION_ROOT.resolve(row.path())));
+            assertTrue(code.contains("extends BaseOwoScreen<FlowLayout>"),
+                "P0 must not migrate production Screen inheritance: " + row.path());
+            assertFalse(code.contains("extends BongScreenBase"),
+                "P0 must not introduce production behavior: " + row.path());
+        }
+    }
+
+    private static List<ScreenInventoryRow> discoverDirectScreensAndSuffixHelpers() throws IOException {
+        List<ScreenInventoryRow> result = new ArrayList<>();
+        try (var files = Files.walk(PRODUCTION_ROOT)) {
+            for (Path path : files.filter(Files::isRegularFile)
+                .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
+                .sorted()
+                .toList()) {
+                String relative = relative(path);
+                String source = R7SourceScan.read(path);
+                Matcher matcher = SCREEN_DECLARATION.matcher(R7SourceScan.codeOnly(source));
+                if (matcher.find()) {
+                    String parent = matcher.group(2).replaceAll("\\s+", "");
+                    boolean owo = parent.equals("BaseOwoScreen<FlowLayout>");
+                    result.add(new ScreenInventoryRow(
+                        relative,
+                        matcher.group(1),
+                        owo ? "BASE_OWO" : "VANILLA_SCREEN",
+                        owo ? adapterStyle(source) : "VANILLA",
+                        owo,
+                        noteFor(relative)
+                    ));
+                } else if (path.getFileName().toString().endsWith("Screen.java")) {
+                    String simpleName = path.getFileName().toString().replaceFirst("\\.java$", "");
+                    result.add(new ScreenInventoryRow(
+                        relative,
+                        simpleName,
+                        "NON_SCREEN_HELPER",
+                        "NONE",
+                        false,
+                        noteFor(relative)
+                    ));
+                }
+            }
+        }
+        result.sort((left, right) -> {
+            boolean leftLegacy = left.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
+            boolean rightLegacy = right.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
+            if (leftLegacy != rightLegacy) {
+                return leftLegacy ? 1 : -1;
+            }
+            return left.path().compareTo(right.path());
+        });
+        return result;
+    }
+
+    private static String adapterStyle(String source) {
+        String compact = R7SourceScan.codeOnly(source).replaceAll("\\s+", "");
+        return compact.contains("model.createAdapter(FlowLayout.class,this)") ? "XML_MODEL" : "CODE";
+    }
+
+    private static String noteFor(String path) {
+        return switch (path) {
+            case "agentui/AgentUiScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
+            case "alchemy/AlchemyScreen.java" -> "Code-built FlowLayout";
+            case "coffin/CoffinMenuScreen.java" -> "Vanilla Screen, not a direct base migration";
+            case "combat/screen/DeathScreen.java", "combat/screen/TerminateScreen.java" -> "System-terminal screen";
+            case "combat/screen/ForgeCarrierScreen.java", "combat/screen/RepairScreen.java",
+                "combat/screen/ZhenfaLayoutScreen.java", "cultivation/voidaction/VoidActionScreen.java",
+                "forge/ForgeScreen.java", "identity/IdentityPanelScreen.java", "inspect/ItemInspectScreen.java",
+                "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
+            case "craft/CraftScreen.java", "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
+                "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
+                "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java",
+                "ui/CultivationScreen.java" -> "Code-built FlowLayout";
+            case "cultivation/TechniqueScrollReadScreen.java" ->
+                "Suffix matches Screen.java but class is a toast/text helper";
+            case "insight/InsightOfferScreen.java" -> "Code-built modal FlowLayout";
+            case "inventory/InspectScreen.java" -> "Code-built FlowLayout; P3 split target";
+            case "social/SparringInviteScreen.java", "social/TradeOfferScreen.java" -> "Vanilla modal screen";
+            case "ui/DynamicXmlScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
+            case "cultivation/voidaction/LegacyAssignPanel.java" ->
+                "Real Screen missed by the Screen.java suffix inventory";
+            default -> throw new AssertionError("fixture note mapping missing for " + path);
+        };
+    }
+
+    private static long count(List<ScreenInventoryRow> rows, String kind) {
+        return rows.stream().filter(row -> row.kind().equals(kind)).count();
+    }
+
+    private static Map<String, Long> histogram(List<String> values) {
+        Map<String, Long> result = new TreeMap<>();
+        for (String value : values) {
+            result.merge(value, 1L, Long::sum);
+        }
+        return result;
+    }
+
+    private static List<ScreenInventoryRow> readScreenInventory() {
+        return resourceLines("/bong/ui/r7-screen-inventory.tsv").stream()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new ScreenInventoryRow(
+                columns[0],
+                columns[1],
+                columns[2],
+                columns[3],
+                Boolean.parseBoolean(columns[4]),
+                columns[5]
+            ))
+            .toList();
+    }
+
+    private static List<FillInventoryRow> readFillInventory() {
+        return resourceLines("/bong/ui/r7-fill100-inventory.tsv").stream()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new FillInventoryRow(
+                columns[0],
+                Integer.parseInt(columns[1]),
+                Integer.parseInt(columns[2]),
+                columns[3],
+                columns[4],
+                columns[5]
+            ))
+            .toList();
+    }
+
+    private static List<String> resourceLines(String name) {
+        try {
+            var resource = R7InventoryContractTest.class.getResource(name);
+            assertNotNull(resource, "missing R7 fixture " + name);
+            return Files.readAllLines(Path.of(resource.toURI())).stream()
+                .filter(line -> !line.isBlank() && !line.startsWith("#"))
+                .toList();
+        } catch (IOException | URISyntaxException exception) {
+            throw new AssertionError("unable to read R7 fixture " + name, exception);
+        }
+    }
+
+    private static String relative(Path path) {
+        return PRODUCTION_ROOT.relativize(path).toString().replace('\\', '/');
+    }
+
+    private record ScreenInventoryRow(
+        String path,
+        String className,
+        String kind,
+        String adapterStyle,
+        boolean eligible,
+        String note
+    ) {
+    }
+
+    private record FillInventoryRow(
+        String path,
+        int ordinal,
+        int freezeLine,
+        String verdict,
+        String riskKind,
+        String source
+    ) {
+        boolean code() {
+            return !verdict.equals("COMMENT");
+        }
+
+        String stableKey() {
+            return path + "#" + ordinal;
+        }
+    }
+}

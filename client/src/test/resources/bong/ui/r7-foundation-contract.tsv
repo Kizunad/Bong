@@ -1,0 +1,15 @@
+# component	symbol	signature	owner	invariant
+BongScreenBase	type	public abstract class BongScreenBase<R extends ParentComponent> extends BaseOwoScreen<R>	R7	Root type remains generic; subclasses keep ownership of the owo adapter.
+BongScreenBase	adapter	protected abstract @NotNull OwoUIAdapter<R> createAdapter()	R7	The base never hard-codes OwoUIAdapter.create or a vertical-flow root factory.
+BongScreenBase	build	protected abstract void build(R rootComponent)	R7	The base delegates layout construction to the concrete screen.
+BongScreenBase	cleanup	protected final void registerCleanup(Runnable cleanup)	R7	Screen-local cleanup runs exactly once in LIFO order and is not Store lifecycle clearing.
+BongScreenBase	refresh	protected final void runWhileOpen(Runnable task)	R7	A queued refresh is discarded after removal and cannot touch a detached screen.
+BongScreenBase	tick	public final void tick()	R7	Tick dispatch reaches the protected hook only while the screen is open.
+DiffListWidget	type	public final class DiffListWidget<T, K, C extends Component>	R7	The generic list owns ordered-key diffing without imposing an owo scroll-offset API.
+DiffListWidget	update	public void update(List<T> items)	R7	Equal ordered keys patch mounted rows; structural key changes rebuild rows.
+DiffListWidget	key	protected abstract K keyOf(T item)	R7	Null items, null keys, and duplicate keys fail fast before mutation.
+BongKeybindRegistry	type	public final class BongKeybindRegistry	R7	Registrations are explicit and inspectable; no reflection or annotation discovery.
+BongKeybindRegistry	register	public KeyBinding register(String translationKey, InputUtil.Type type, int defaultCode, String category)	R7	Duplicate translation keys always fail; UNKNOWN defaults do not collide physically.
+ClientThreadMarshal	run	public static void run(boolean onClientThread, Runnable task, Consumer<Runnable> clientExecutor)	R7	Already-client work runs once inline; off-thread work is enqueued once; unknown client state fails closed.
+ScreenOpenPolicy	decide	public static Decision decide(Request request, Current current, long nowMs)	R7	The policy is pure; it never calls MinecraftClient.setScreen or owns a second pending-offer store.
+ScreenOpenPolicy	priority	enum Decision { OPEN, PREEMPT, NOOP_MATCHING, DEFER_NOTIFY, BLOCK_DROP, EXPIRE }	R7	System-terminal and higher-priority modal screens preempt lower UI; passive social offers defer until safe or expiry.

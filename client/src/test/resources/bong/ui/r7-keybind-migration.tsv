@@ -1,0 +1,12 @@
+# action	translation_key	current_default	target_default	conflict	p1_resolution
+spirit_treasure_open	key.bong-client.spirit_treasure	T	UNKNOWN	VANILLA_CHAT	Leave passive/open action unbound by default; player may bind explicitly.
+lingtian_open	key.bong-client.lingtian	L	UNKNOWN	VANILLA_ADVANCEMENTS	Leave screen hotkey unbound by default; interaction entry remains available.
+identity_open	key.bong-client.identity_panel	O	O	BONG_O_DUPLICATE	Keep the established identity entry point.
+void_action_open	key.bong-client.void_action	O	UNKNOWN	BONG_O_DUPLICATE	Leave the secondary O action unbound by default.
+forge_open	key.bong-client.forge	U	U	BONG_U_DUPLICATE	Keep the established forge entry point.
+extract_cancel	key.bong-client.extract_cancel	U	UNKNOWN	BONG_U_DUPLICATE	Leave cancellation unbound; active interaction UI remains authoritative.
+botany_auto	key.bong-client.botany_auto	R	UNKNOWN	BONG_R_DUPLICATE	Remove the passive automation default and drain stale press backlog.
+spell_volume_hold	key.bong-client.spell_volume_hold	R	R	BONG_R_DUPLICATE	Keep the combat hold action on R.
+dying_elder_give	key.bong-client.dying_elder_give_dan	UNKNOWN	UNKNOWN	HUD_LABEL_MISMATCH	HUD must resolve the effective binding instead of promising G; the unified G router remains unique.
+dying_elder_refuse	key.bong-client.dying_elder_refuse	UNKNOWN	UNKNOWN	HUD_LABEL_MISMATCH	HUD must resolve the effective binding and show unbound when absent.
+dying_elder_delay	key.bong-client.dying_elder_delay	UNKNOWN	UNKNOWN	HUD_LABEL_MISMATCH	HUD must resolve the effective binding and show unbound when absent.
