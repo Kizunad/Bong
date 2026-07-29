@@ -41,7 +41,7 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 1. **Alchemy effect 仍断链**：`server/src/alchemy/side_effect_apply.rs:20-83` 把可达 `contam_boost` 变成带 magnitude/duration 的 `ContaminationBoost`；`server/src/combat/status.rs:17-58` 会 upsert，HUD 也会显示，但 `server/src/cultivation/contamination.rs:97-205` 的 query/公式不读 `StatusEffects`。它是“可生产、可显示、会到期，但不改变污染物理”的 behavioral orphan。
 2. **金钟丹极性仍错**：`server/src/alchemy/pill.rs:632-642` 的 negative duration 仍 push 正向 `QiRegenBoost(0.001)`；`server/src/cultivation/tick.rs:223-226,445-455` 现有 consumer 按 `1 + magnitude` 增益回气。因此本项只修 negative kind/极性，不重做通用 `QiRegenBoost` consumer。
 3. **r7 五字段仍只有 producer/storage**：`server/src/cultivation/insight_apply.rs:25-40,123-191` 写 `qi_regen_mul`、`next_breakthrough_bonus` 与三个 vortex 字段；回气 query `server/src/cultivation/tick.rs:96-132` 不含 `InsightModifiers`，breakthrough/woliu 主循环也不读这些字段。选择会真实发生并持久化（`cultivation/insight_flow.rs:251-344`、`persistence/mod.rs:6193-6229`），但 gameplay 数值不变。
-4. **P3 live Insight 簇仍断链**：`server/src/cultivation/insight_apply.rs:24-254` 的 live benefit/cost 字段中，除阵法两字段已有 consumer、`composure_recover_mul` 有 sibling direct effect 外，当前生产读取 grep 仅命中 reset/fixture/offer schema。`observe_chance_bonus` 仅 default，`technique_observe.rs:64-134` 的 reader 上层又无 production caller，必须登记为 dormant，不可误报已闭环。
+4. **P3 live Insight 簇仍断链**：`server/src/cultivation/insight_apply.rs:24-254` 的 live benefit/cost 字段中，除阵法两字段已有 consumer、`composure_recover_mul` 有 sibling direct effect 外，当前生产读取 grep 仅命中 reset/fixture/offer schema。另有 `generic_talents.json:173-188` 的可达 `vortex_burst_damage` cost，经 `generic_talent.rs:405-407` 生成 `VortexBurstDamageMul`，最终只在 `insight_apply.rs:248-251` 写 `practices` marker，无伤害 consumer。`observe_chance_bonus` 仅 default，`technique_observe.rs:64-134` 的 reader 上层又无 production caller，必须登记为 dormant，不可误报已闭环。
 5. **活茧四字段仍只写不读**：`server/src/combat/baomai_v4/iron_cocoon.rs:99-143` 写三项 wound 字段与 `scar_forged_flow_bonus`；全仓其它命中只在 producer 单测。`server/src/cultivation/components.rs:522-524` 的 `MeridianSystem::sum_rate` 只加持久 `flow_rate`；`combat/resolve.rs` 也不读三项 wound 字段。
 6. **jump 仍是跨栈 orphan**：`server/src/combat/body_conditioning.rs:157-167` 写入、`combat/status.rs:163-175` reset，但 `schema/combat_hud.rs:209-220`、`network/derived_attrs_emit.rs:76-90`、`proto/bong/envelope.proto:1706-1718`、client `DerivedAttrsStore` 和跳跃输入链均无该字段。兄弟字段 `move_speed_multiplier` 已消费，不能代替 jump consumer。
 7. **P0 gate 仍不存在**：`server/src/test_coverage_guards.rs` 现有源码扫描面向 `EventWriter<T>`/`EventReader<T>`；仓库无 `MODIFIER_CONSUMER_MANIFEST` / `modifier_consumer_manifest_stays_current`。它无法区分 gameplay、HUD/persistence-only、test-only、shadow direct effect 或 dormant producer。
@@ -50,9 +50,9 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 
 - [ ] 建立 greppable `ModifierConsumerContract` / `MODIFIER_CONSUMER_MANIFEST`（名称可等义），库存至少覆盖 `DerivedAttrs` 非展示字段、`InsightModifiers` 字段与 `StatusEffectKind` gameplay variant；新增字段/variant 未登记即 gate 失败。
 - [ ] 每条登记明确 producer、production consumer、observable differential test 与分类：`Gameplay`、`ShadowDirectEffect`、`DormantNoProducer`、`PlannedNoConsumer`。后两类必须写 owner、阻塞原因和解除条件；禁止把 HUD/schema/persistence/store/test-only read 填成 consumer。
-- [ ] P0 必须登记 11 条 canonical finding 及 P1 的完整 live Insight 清单；短期设计未决字段可 `PlannedNoConsumer`，但不得静默遗漏：`qi_regen_mul`、`next_breakthrough_bonus`、`vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`、`hunyuan_threshold_mul`、`chaotic_tolerance_add`、`overload_tolerance_add`、`opposite_color_efficiency_penalty`、`qi_volatility_add`、`shock_sensitivity_add`、`main_color_efficiency_penalty`、`overload_fragility_add`、`reaction_window_penalty`、`breakthrough_failure_penalty_mul`、`sense_exposure_add`、`meridian_heal_slowdown_mul`、`chaotic_tolerance_loss`。
+- [ ] P0 必须登记 11 条 canonical finding 及 P1 的完整 live Insight 清单；短期设计未决字段可 `PlannedNoConsumer`，但不得静默遗漏：`qi_regen_mul`、`next_breakthrough_bonus`、`vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`、`hunyuan_threshold_mul`、`chaotic_tolerance_add`、`overload_tolerance_add`、`opposite_color_efficiency_penalty`、`qi_volatility_add`、`shock_sensitivity_add`、`main_color_efficiency_penalty`、`overload_fragility_add`、`reaction_window_penalty`、`breakthrough_failure_penalty_mul`、`sense_exposure_add`、`meridian_heal_slowdown_mul`、`chaotic_tolerance_loss`；`practices` 这类 key-value 容器还必须逐 key 登记可达的 `woliu:vortex_burst_damage_mul:*`，不能用一个 HashSet 字段条目掩盖 marker orphan。
 - [ ] 已有真消费/特殊分类须显式防重复：`zhenfa_concealment`、`zhenfa_disenchant` 为 `Gameplay`；`composure_recover_mul` 为 `ShadowDirectEffect`（真实 `Cultivation.composure_recover_rate` 被消费）；`observe_chance_bonus` 为 `DormantNoProducer`，直到 producer 与 production observe caller 同包落地。
-- [ ] 可核验测试：`modifier_consumer_manifest_stays_current`、`modifier_contract_rejects_storage_or_test_only_consumer`、`planned_modifier_contract_requires_owner_reason_and_exit_condition`。用故意缺字段/仅测试引用/仅 HUD 引用 fixture 锁 fail-closed；manifest 不能取代后续 gameplay 差分测试。
+- [ ] `Gameplay` 合同不能靠文本 grep 自证：每条必须绑定可 grep 的 production caller/system schedule 与 gameplay differential test；helper 只有 tests caller 必须失败。可核验测试：`modifier_consumer_manifest_stays_current`、`modifier_contract_rejects_storage_test_or_dead_helper_consumer`、`planned_modifier_contract_requires_owner_reason_and_exit_condition`。fixture 覆盖缺字段、仅测试引用、仅 HUD/serialization 引用、生产文件 helper read 但无 caller（仿 `evaluate_observe_attempt`）；manifest 不能取代后续 gameplay 差分测试。
 
 ## P1 — Alchemy + Insight gameplay consumers
 
@@ -68,7 +68,7 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 - [ ] **PR-Insight-A（回气/突破）**：接 `qi_regen_mul`、`next_breakthrough_bonus`、`breakthrough_failure_penalty_mul`；真实 choice→component→tick/breakthrough 流程对拍，明确 bonus 的一次性消费时点。回气 gain/drain 必须继续 ledger 守恒。
 - [ ] **PR-Insight-B（颜色/混元/杂色）**：接 `hunyuan_threshold_mul`、`chaotic_tolerance_add/loss` 与两个 color penalty。现有 aggregate penalty 丢失受罚颜色 identity，实施前必须先改成能表达目标颜色的持久化形状并补 migration；不能把惩罚全局化。
 - [ ] **PR-Insight-C（过载/经脉恢复）**：接 `overload_tolerance_add`、`overload_fragility_add`、`meridian_heal_slowdown_mul`；阈值、严重度、恢复时长分别做 neutral/benefit/cost 差分，避免同一 modifier 在 detection 与 event-reader 双算。
-- [ ] **PR-Insight-D（涡流）**：接 `vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`；先定义 flow speed 是 cast ticks、吸收 dt 还是维持周期，所有 Woliu 生产路径必须共用同一 effective helper。
+- [ ] **PR-Insight-D（涡流）**：接 `vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`，并解析/消费可达 `practices` marker `woliu:vortex_burst_damage_mul:*`；先定义 flow speed 是 cast ticks、吸收 dt 还是维持周期，所有 Woliu 生产路径必须共用同一 effective helper。burst-damage cost 必须在真实涡流爆发伤害中生效并覆盖 marker 缺失、单值、多次 choice 累乘及脏 marker fail-closed。
 - [ ] **PR-Insight-E（感知/反应/冲击/波动）**：`sense_exposure_add`、`reaction_window_penalty`、`shock_sensitivity_add`、`qi_volatility_add` 在 pre-P0 找到或建立 canonical gameplay seam；若 seam 不存在则继续 `PlannedNoConsumer`，不得为消除 manifest 红线随意挂错系统。
 - [ ] 每字段至少一条“相同 gameplay 输入，仅 modifier 不同”的 production differential integration test；同时覆盖 neutral、累计/组合、非有限或脏持久化值 fail-closed、重登水合后仍生效及 reset。只断言 `InsightModifiers` 字段变化不算验收。
 - [ ] 可核验 symbol：`insight_qi_regen_multiplier`、`effective_breakthrough_bonus`、`effective_overload_threshold`、`effective_meridian_heal_rate`、`effective_vortex_delta`、`effective_vortex_flow_speed`（名称可等义）及 `insight_modifier_changes_*_gameplay` 测试族。
@@ -79,7 +79,7 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 - [ ] 所有下游后果——health、bleeding、contamination、肢体状态、meridian crack、LifeRecord 与 emitted event——必须消费同一降档结果，避免“伤口显示降档但流血/裂脉仍按原档”。
 - [ ] `fracture_downgrade_chance` 使用 deterministic、测试可固定的 combat RNG；覆盖 0%、阈值两侧、20% 命中/未命中与 100%，并保证同一 hit 只 roll 一次。
 - [ ] 新建 `effective_meridian_sum_rate`（或等义 helper）：ScarForged 仅对 `ActiveScarCircuits` 中的经脉加有效 +5%，不持久改 `Meridian.flow_rate`、不逐 tick 累积；先修 producer query 需读取 active circuits，再替换所有需要派生流率的生产调用点。
-- [ ] 测试覆盖五种 `WoundKind`、四档后果边界、armor 前后顺序、ScarForged 无/单/多活跃回路、阶段 499/500、重登 neutral 与 qi regen/ledger 守恒。
+- [ ] 测试覆盖五种 `WoundKind`、四档后果边界、armor 前后顺序、ScarForged 无/单/多活跃回路、重登 neutral 与 qi regen/ledger 守恒；`IronCocoonStage` 的 49/50、119/120、249/250、499/500 四组跃迁都必须覆盖前值/边界值、累计继承及降回低阶段时字段 reset。
 - [ ] 可核验 symbol：`effective_wound_grade`、`cocoon_fracture_roll`、`effective_meridian_sum_rate`、`iron_cocoon_downgrade_changes_full_wound_consequences`、`scar_forged_bonus_only_applies_to_active_circuits`（名称可等义）。
 
 ## P3 — `jump_height_multiplier` runtime authority
@@ -112,4 +112,36 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 10. jump 最终采用 server authority 还是 client hook + server validation？
 11. P0 manifest 是 Rust typed inventory 还是脚本生成清单；如何 fail-closed 地证明字段 inventory 完整、同时避免把文本 grep 冒充 reachability？
 
-> 全部开放问题必须按 `docs/CLAUDE.md §五` 追加当前代码 `file:line + plan 章节` 双锚点决议后，P1-P3 才可实施；未决项允许留在 `PlannedNoConsumer`，但不允许由自动消费 agent 拍脑袋选择语义。
+12. `vortex_burst_damage` cost 是替换 `practices` marker 为 typed 字段，还是保留 marker 并建立唯一 parser；旧存档脏/重复 marker 如何 fail-closed？
+
+> 全部开放问题必须按 `docs/CLAUDE.md §五` 追加当前代码 `file:line + plan 章节` 双锚点决议后，P0-P3 均不得实施；未决项允许在决议后留作 `PlannedNoConsumer`，但不允许由自动消费 agent 拍脑袋选择语义。
+
+## §10 实施工作流
+
+### §10.1 串行 PR 边界
+
+本 plan scope 明确超过 4 个 PR，必须在单 plan 内序列化，前一个 merge 后才开始下一个，禁止将 P1/P2/P3 混成 giant PR：
+
+1. **PR-0 contract gate**：仅 P0 typed manifest、production caller/schedule/test 绑定与 gate 自测；不改 gameplay 数值。
+2. **PR-1 alchemy**：仅 P1a `ContaminationBoost` + JinZhongDan 极性，含污染/回气完整链与 ledger 差分。
+3. **PR-2..PR-6 Insight A-E**：严格按 P1b 五个 gameplay 域拆分；无法找到 canonical seam 的字段只更新 typed `PlannedNoConsumer` 证据，不假接线。
+4. **PR-7 Iron Cocoon wound**：只接 wound grade/确定性 RNG/全后果一致性。
+5. **PR-8 ScarForged effective flow**：只接 active circuits 与 effective rate，含 qi ledger。
+6. **PR-9 jump authority**：P3 独立跨栈 PR，同包完成 runtime consumer 与断线 reset。
+7. **PR-10 integration closure**：只补跨 PR 系统调度、manifest 全转绿与全链 e2e；不得在此首次决定字段语义。
+
+### §10.2 每 PR 验收门
+
+- 每个代码 PR 在修改前重新 fetch 并以 current `origin/main` 第一性验真；完成后用显式工作区绝对路径 + exact HEAD SHA 启动 fresh-context read-only validator，任何 HEAD 变化都重验。
+- server 变更在 `server/` 下通过 `flock /tmp/bong-cargo.lock` 或 `scripts/build-token.sh` 运行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；严禁本地运行 `scripts/test-tmux-shutdown-order.sh` 或任何调用它的 suite，该隔离/关停覆盖留给 GitHub e2e。
+- proto/schema 改动同步生成 Rust/proto artifacts 并跑 server gate；若触及 `agent/packages/schema/src`，先 `cd agent && npm run build -w @bong/schema` 再跑对应 `npm test`。
+- client 变更固定 Java 17，并在 `client/` 下通过 `flock /tmp/bong-gradle.lock` 跑 `./gradlew test build`；P3 另跑真实 bot/e2e jump apex 场景。
+- 每次 push 前紧邻执行 `git fetch origin && git merge origin/main`；merge 带进相关改动则重跑受影响完整门禁与 fresh validator。push 后对同一 PR 新发独立 `/review` 评论，等待 review/CodeRabbit 收敛。
+- 所有提交使用中文原子 commit，带 `Model: <精确模型 id>` 与 `Co-Authored-By` trailer；最终归档前逐条核验 11 finding、P0 gate、全部 `PlannedNoConsumer` owner/reason/exit condition 与 `## Finish Evidence`。
+
+### §10.3 归档前跨域验收
+
+- `modifier_consumer_manifest_stays_current` 必须覆盖最新 `DerivedAttrs`、`InsightModifiers`、`StatusEffectKind` 及 `practices` live key，且每条 `Gameplay` 合同有 production caller/schedule + observable differential test。
+- 运行 alchemy→status→污染/回气、Insight choice→持久化→gameplay loop、Iron Cocoon→resolve/flow、Guangbo→sync→jump 四条完整链；manifest 绿不能替代任何一条。
+- qi 路径以 `WorldQiAccount` / `QiTransfer` 守恒断言验收；跨端 jump 以实际 apex/velocity 与 disconnect reset 验收。
+- 全部阶段 ✅、review 无 blocker/major、GitHub e2e 覆盖本地隔离 suite 后，才填写 Finish Evidence 并迁入 `docs/finished_plans/`。
