@@ -171,13 +171,14 @@
 - `c9781d4f5`（2026-07-28）：数据化地形方块目录并收口启动预检。
 - `25169bea8`（2026-07-28）：补齐严格 `TechniqueRegistry` 下隔离测试 App 的显式资源契约。
 - `be2ba7c30`（2026-07-28）：接纳 production worldgen manifest 的已知元数据，同时保留未来字段 fail-closed。
-- `31997f20c`（2026-07-29）：紧邻发布前合并 `origin/main`。
+- `31997f20c`（2026-07-29）：首次发布收口合并 `origin/main`，并据此修正合并态生命周期测试契约。
 - `8d4bad052`（2026-07-29）：合并态生命周期测试按既有墙钟 deadline 折算契约断言，生产公式未放宽。
+- `f968aff0f`（2026-07-29）：最终发布前再次 fetch 并合并最新 `origin/main`；仅带入一份无关 bughunt skeleton，随后仍按协议重跑全部受影响门禁。
 
 **测试结果**：
 
-- 合并态完整 server 门：`flock -x /tmp/bong-cargo.lock bash -lc 'cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 全绿——library `12185 passed / 0 failed / 2 ignored`；CLI `12 passed`；full-app startup `2 passed`；shutdown `2 passed`；Tarkov backpack e2e `4 passed`；doc tests `5 ignored`。
-- worldgen 合同：`python3 -m unittest worldgen.tests.test_decoration_contract worldgen.tests.test_nbt_block_palette` → `22 passed`。
+- 最终合并态完整 server 门（`f968aff0f`）：`flock -x /tmp/bong-cargo.lock bash -lc 'cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 全绿——library `12185 passed / 0 failed / 2 ignored`；CLI `12 passed`；full-app startup `2 passed`；shutdown `2 passed`；Tarkov backpack e2e `4 passed`；doc tests `5 ignored`。
+- 最终合并态 worldgen 合同：`python3 -m unittest worldgen.tests.test_decoration_contract worldgen.tests.test_nbt_block_palette` → `22 passed`。
 - 完整 raster 生成产物：overworld `306 tiles / 84 POIs / 112 decorations / 138969 placements`；TSY `9 tiles / 56 POIs`。
 - 双 raster 后验：`validate_rasters` → overworld 306/306、TSY 9/9 全部通过。
 - 最终可执行文件启动预检：经 Cargo flock 显式 `cargo build`，以生成的 overworld + TSY manifests 启动并持续 30 秒无 panic；日志确认 `loaded 306 terrain tiles`、`loaded TSY 9 terrain tiles`、`decoration NBT registry: 54 templates resident`。
