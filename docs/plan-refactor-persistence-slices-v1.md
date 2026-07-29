@@ -38,7 +38,7 @@
 
 ## 阶段
 
-- ✅ 2026-07-28 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save→teardown→lease preflight→hydrate→rebase（后序失败则逆序 abort）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；19 个 contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败隔离、写资格、重连顺序/阻断/旧 activation 残留/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
+- ✅ 2026-07-28 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→hydrate→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败隔离、写资格、重连顺序/阻断/旧 activation 原子保留/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
 - ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
 - ⬜ P3 关服 flush + tick rebase 批次：shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
@@ -74,7 +74,7 @@
 ## bot 验收场景
 
 1. `restart_player_slices`：bot 建号→修炼/学功法/受伤→关服重启→重连→断言功法/伤势/濒死后果/buff 全部还原。
-2. `same_tick_reconnect_handoff`：真实 lifecycle 在同一 schedule tick 投递同主体 disconnect+reconnect（含同 event ID 重复投递）→断言 all saves→旧 activation teardown→all hydrates→all rebases 且事件只 mint/dispatch 一次；注入任一 save 失败/blocked 或故意残留旧 tracker/fence→断言零 hydrate/零可变 gameplay，新 activation 以 `DuplicateSubject` fail-closed。
+2. `same_tick_reconnect_handoff`：真实 lifecycle 在同一 schedule tick 投递同主体 disconnect+reconnect（含同 event ID 重复投递）→断言 all saves→全量只读 preflight→无 blocked/error 返回通道的旧 activation cleanup→lease check→all hydrates→all rebases 且事件只 mint/dispatch 一次；注入任一 save/preflight 失败或 blocked→断言两个旧 `GuardedSlice + DirtyTracker + PersistedRevisionFence` activation/lease 均完整保留且零 hydrate，解除后 clean retry；注入第二 hydrate 在真实 activation 后失败或 blocked→断言两个已尝试 descriptor 逆序 abort cleanup、零残留 lease，随后 clean retry；故意让 cleanup 返回但保留任一 lease→断言 `DuplicateSubject` fail-closed。
 3. `restart_world_runtime`：触发矿脉枯竭/配方解锁/zone influence→SIGTERM 关服→重启→断言无回滚无复活。
 4. `load_failure_guard`：注入一行损坏 slice 数据→启动→断言该玩家进入守护降级而非清零覆盖。
 5. `tick_rebase`：带冷却/再生倒计时重启→断言按该 slice 的 offline policy 折算，首个 live tick 不重复计时。
@@ -92,7 +92,7 @@
 ### #1 Slice 形态：静态 descriptor + exclusive-world adapter
 
 **决议**：
-1. `PersistenceSlice` 只返回一个静态 `SliceDescriptor`；registry 保存静态 descriptor 并按 `(order, id)` 稳定排序。hook 使用无捕获函数指针 `fn(&mut World, &SliceRunContext) -> SliceRunResult`，由 adapter 在 hook 内拿强类型 Resource/Query。
+1. `PersistenceSlice` 只返回一个静态 `SliceDescriptor`；registry 保存静态 descriptor 并按 `(order, id)` 稳定排序。会修改运行态的 hook 使用无捕获函数指针 `fn(&mut World, &SliceRunContext) -> SliceRunResult`，由 adapter 在 hook 内拿强类型 Resource/Query；重连 `reconnect_preflight` 单独使用 `fn(&World, &SliceRunContext) -> SliceRunResult`，在类型层禁止破坏旧 activation。
 2. descriptor 必须声明 `scope`、`load_policy`、`time_basis`、`write_domain`、`write_ordering`、`autosave_policy`，以及可选 hydrate/rebase/shutdown hook；重复/空 Slice ID 在注册时 fail-fast。
 3. 不把泛型 `SystemParam`、`Query`、`ResMut`、关联类型或 `rusqlite::Connection` 装进 trait object。若后续确需动态 driver，再以同一对象安全签名包装，不推翻 P0 descriptor。
 
@@ -147,11 +147,11 @@
 
 **决议**：
 1. 同一持久化主体在同一 schedule tick 内出现 disconnect 与 reconnect 时，必须同步完成旧实体的 disconnect save，成功后才允许新实体 hydrate；保存失败则跳过载入并保留失败，禁止从旧 durable row 重建后继续运行。
-2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才开始任何 `hydrate`；所有 hydrate 成功后才按同一时钟快照运行 rebase。入口消费 persistence-private 的一次性 `ReconnectHandoffToken`，同一 generation 不可重复执行；save/teardown 阶段失败或返回 `SkippedBlocked` 会跳过全部后续阶段；hydrate/rebase 阶段失败或 blocked 则以 `ReconnectAbort` 逆序调用已尝试新 activation 的幂等 teardown，确保零残留 lease 后才允许同一稳定主体重试。
+2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才对所有参与玩家重连的 descriptor 执行**只读** `reconnect_preflight`。任一 preflight blocked/failed 时，旧 activation/lease 全部原样保留且零 hydrate；全量 preflight 成功后才用独立、无 blocked/error 返回通道的 `reconnect_cleanup` 提交删除旧 activation（panic 视为 adapter 契约违规并 fail-fast）。所有 hydrate 成功后才按同一时钟快照运行 rebase。入口消费 persistence-private 的一次性 `ReconnectHandoffToken`，同一 generation 不可重复执行；hydrate/rebase fail-fast，失败或 blocked 时对所有已尝试 hydrate descriptor（包括 hook 激活后才返回失败者）以 `ReconnectAbort` 逆序调用同一 cleanup，随后复核所有 subject/domain lease 均已释放；残留以 `DuplicateSubject` fail-closed，干净时才允许同一稳定主体重试。
 3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。一次性 generation 只约束已经 mint 的 token；真实 lifecycle adapter 必须按稳定 reconnect event ID 去重，同一上游事件只 mint/dispatch 一次。
-4. 所有该主体/domain 的 disconnect save 成功后、任何 hydrate 前，adapter 必须同步 teardown/drop 旧实体持有的 `GuardedSlice + DirtyTracker + PersistedRevisionFence` activation state；若任一旧 state 仍存活，新 activation 必须以 `DuplicateSubject` fail-closed，禁止框架强制 revoke 后并存双 writer。多 slice 主体只能在全部保存完成后统一 teardown，或逐 slice 只释放对应 state，不得首个 save hook 便销毁后续保存所需实体。`reconnect_teardown` 必须幂等，并同时处理 `ReconnectTeardown`（释放旧 activation）与 `ReconnectAbort`（回滚本轮已尝试的新 activation）。
+4. 所有该主体/domain 的 disconnect save 成功后、任何 hydrate 前，adapter 必须把“能否同步释放旧 activation”的可失败检查放进只读签名 `reconnect_preflight: fn(&World, ...)`；registry 校验所有参与玩家 reconnect 的 descriptor 必须同时提供 preflight 与无 blocked/error 返回通道的 `reconnect_cleanup`。只有全量 preflight 成功后 dispatcher 才统一 cleanup；cleanup 必须同步释放对应 state、可幂等处理 `ReconnectCleanup`（旧 activation 提交）与 `ReconnectAbort`（本轮新 activation 回滚），panic 视为 adapter 契约违规。cleanup/abort 返回后若仍残留 lease，以 `DuplicateSubject` fail-closed，禁止框架强制 revoke 后并存双 writer。
 
-**落点**：`server/src/persistence/slice.rs:124-149,191-203,488-578,1562-1653` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
+**落点**：`server/src/persistence/slice.rs:129-235,555-560,724-971,2226-3135` 的 `SliceRunReason::{DisconnectSave,ReconnectPreflight,ReconnectCleanup,ReconnectLoad,ReconnectAbort}`、`SlicePreflightHook`、`SliceDescriptor::{disconnect_save,reconnect_preflight,reconnect_cleanup}`、`dispatch_reconnect_handoff` 与真实 activation contract pins；plan §阶段 P0/P2、§bot 验收场景 #2。
 
 ### #8 时间 / deadline 测试：只用注入时钟（#1289 review 继承项）
 
