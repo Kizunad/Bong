@@ -1,15 +1,15 @@
 # scenario	request_kind	current_kind	combat_active	matching	unexpired	decision	rationale
 social-clear	SOCIAL_INVITE	NONE	false	false	false	EXPIRE	Missing or expired passive offer is terminal and never opens.
 social-open	SOCIAL_INVITE	NONE	false	false	true	OPEN	A live passive offer opens only when gameplay is not in combat and no screen is active.
-social-matching	SOCIAL_INVITE	SAME_MODAL	false	true	true	NOOP_MATCHING	The already-open matching modal keeps component and protocol identity.
+social-matching	SOCIAL_INVITE	MODAL	false	true	true	NOOP_MATCHING	The already-open matching modal keeps component and protocol identity.
 social-combat	SOCIAL_INVITE	NONE	true	false	true	DEFER_NOTIFY	Combat defers the authoritative domain-store offer and emits at most one notification per identity.
 social-screen	SOCIAL_INVITE	ORDINARY	false	false	true	DEFER_NOTIFY	Another screen defers the authoritative domain-store offer until currentScreen becomes null.
 social-expired	SOCIAL_INVITE	ORDINARY	false	false	false	EXPIRE	TTL expiry settles the offer instead of replaying it later.
 hotkey-open	HOTKEY	NONE	false	false	true	OPEN	An immediate user keypress may open when no screen blocks it.
-hotkey-matching	HOTKEY	SAME_SCREEN	false	true	true	NOOP_MATCHING	A matching screen is not recreated.
+hotkey-matching	HOTKEY	ORDINARY	false	true	true	NOOP_MATCHING	A matching screen is not recreated.
 hotkey-blocked	HOTKEY	MODAL	false	false	true	BLOCK_DROP	Physical keypresses are never queued for future replay.
 insight-preempt	INSIGHT	ORDINARY	false	false	true	PREEMPT	Insight may replace ordinary non-modal UI through transition arbitration.
-insight-matching	INSIGHT	SAME_MODAL	false	true	true	NOOP_MATCHING	The same insight offer is not reopened.
+insight-matching	INSIGHT	MODAL	false	true	true	NOOP_MATCHING	The same insight offer is not reopened.
 insight-modal	INSIGHT	MODAL	false	false	true	DEFER_NOTIFY	Insight waits behind equal or higher modal UI.
 insight-terminal	INSIGHT	SYSTEM_TERMINAL	false	false	true	DEFER_NOTIFY	Insight never displaces death or termination UI.
 terminal-preempt	SYSTEM_TERMINAL	ORDINARY	false	false	true	PREEMPT	Death or termination may displace lower-priority UI.
