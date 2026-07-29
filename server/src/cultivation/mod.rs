@@ -211,8 +211,8 @@ use crate::persistence::{
     PlayerCultivationBundle,
 };
 use crate::player::state::{
-    canonical_player_id, load_current_character_id, player_character_id, PlayerState,
-    PlayerStatePersistence,
+    canonical_player_id, load_current_character_id, load_player_lifecycle_slice,
+    player_character_id, PlayerState, PlayerStatePersistence,
 };
 #[cfg(test)]
 use crate::qi_physics::{pending_inflow_account, QiAccountId};
@@ -658,7 +658,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
         };
 
-        let persisted_terminated = persisted_bundle.as_ref().is_some_and(|bundle| {
+        let life_record_declares_terminated = persisted_bundle.as_ref().is_some_and(|bundle| {
             bundle
                 .get("life_record")
                 .and_then(|record| record.get("biography"))
@@ -667,6 +667,78 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 .and_then(|entry| entry.as_object())
                 .is_some_and(|entry| entry.contains_key("Terminated"))
         });
+        let persisted_lifecycle = match player_persistence.as_deref() {
+            Some(persistence) => {
+                let current_combat_clock_tick = clock.as_deref().map_or(0, |clock| clock.tick);
+                match load_player_lifecycle_slice(
+                    persistence,
+                    username.0.as_str(),
+                    current_combat_clock_tick,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][cultivation] failed to load persisted lifecycle for `{}`: {error}; deferring cultivation hydration instead of risking terminated-character fallback",
+                            username.0,
+                        );
+                        commands.entity(entity).insert(CultivationAttachRetry);
+                        continue;
+                    }
+                }
+            }
+            None => None,
+        };
+        let expected_character_id = match player_persistence.as_deref() {
+            Some(persistence) => {
+                match load_current_character_id(persistence, username.0.as_str()) {
+                    Ok(Some(current_char_id)) => {
+                        player_character_id(username.0.as_str(), current_char_id.as_str())
+                    }
+                    Ok(None) => canonical_player_id(username.0.as_str()),
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][cultivation] failed to load current character identity for `{}`: {error}; deferring cultivation hydration instead of comparing lifecycle against an unknown identity",
+                            username.0,
+                        );
+                        commands.entity(entity).insert(CultivationAttachRetry);
+                        continue;
+                    }
+                }
+            }
+            None => canonical_player_id(username.0.as_str()),
+        };
+        let persisted_current_lifecycle = persisted_lifecycle
+            .as_ref()
+            .filter(|lifecycle| lifecycle.character_id == expected_character_id);
+        let lifecycle_declares_current_terminated =
+            persisted_current_lifecycle.is_some_and(|lifecycle| {
+                lifecycle.state == crate::combat::components::LifecycleState::Terminated
+            });
+        // LifeRecord keeps pre-lifecycle-slice saves compatible. The independently persisted
+        // Lifecycle is authoritative when LifeRecord itself is the malformed slice: either signal
+        // requires strict all-slice validation before old qi can be treated as zero.
+        let persisted_terminated =
+            life_record_declares_terminated || lifecycle_declares_current_terminated;
+        if life_record_declares_terminated
+            && persisted_current_lifecycle.is_some_and(|lifecycle| {
+                lifecycle.state != crate::combat::components::LifecycleState::Terminated
+            })
+        {
+            tracing::warn!(
+                "[bong][cultivation] refusing reincarnation for `{}`: cultivation bundle and durable lifecycle disagree about termination; leaving the old identity untouched",
+                username.0,
+            );
+            commands.entity(entity).insert(CultivationAttachRetry);
+            continue;
+        }
+        if lifecycle_declares_current_terminated && persisted_bundle.is_none() {
+            tracing::warn!(
+                "[bong][cultivation] refusing terminated-character reincarnation for `{}`: durable cultivation bundle is missing; leaving the old identity untouched",
+                username.0,
+            );
+            commands.entity(entity).insert(CultivationAttachRetry);
+            continue;
+        }
 
         // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知 race id 必须
         // 拒载**整份** bundle，不只是 `cultivation` 这一个 slice：此前的实现只在下面
@@ -2830,6 +2902,158 @@ mod tests {
             validate_terminated_persisted_bundle(&invalid_version, 1).is_err(),
             "a present non-integer bundle version must fail closed"
         );
+    }
+
+    #[test]
+    fn join_reincarnation_malformed_life_record_uses_durable_lifecycle_and_preserves_qi() {
+        let (settings, root) = temp_persistence_settings("reincarnate-life-record-retry");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "MalformedLifeRecordJoin";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        let old_qi = crate::qi_physics::constants::QI_EPSILON / 2.0;
+        let terminated_record = terminated_life_record(old_canonical_id.as_str());
+        seed_cultivation_bundle_with_tutorial_and_qi(
+            &settings,
+            username,
+            Realm::Spirit,
+            old_qi,
+            &terminated_record,
+            None,
+        );
+        crate::player::state::save_player_lifecycle_slice(
+            &player_persistence,
+            username,
+            &crate::combat::components::Lifecycle {
+                state: crate::combat::components::LifecycleState::Terminated,
+                character_id: old_canonical_id.clone(),
+                ..Default::default()
+            },
+            50,
+        )
+        .expect("terminated lifecycle should persist");
+        let valid_bundle = crate::persistence::load_player_cultivation_bundle(&settings, username)
+            .expect("seeded bundle should load")
+            .expect("seeded bundle should exist");
+        let mut malformed_bundle = valid_bundle.clone();
+        malformed_bundle["life_record"] = serde_json::json!("unreadable");
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("cultivation database should open");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![malformed_bundle.to_string(), username],
+            )
+            .expect("malformed life_record should be written");
+        drop(connection);
+
+        let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry must include spawn")
+            .spirit_qi = 1.0;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<QiTransfer>();
+        insert_reincarnation_cleanup_resources(&mut app);
+        app.add_systems(
+            Update,
+            (
+                attach_cultivation_to_joined_clients,
+                crate::combat::attach_combat_bundle_to_joined_clients
+                    .after(attach_cultivation_to_joined_clients),
+            ),
+        );
+
+        let (mut client_bundle, _helper) = create_mock_client(username);
+        client_bundle.player.position = Position::new([0.0, 66.0, 0.0]);
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+        assert!(app.world().get::<Lifecycle>(entity).is_none());
+        assert!(app.world().get::<CultivationAttachRetry>(entity).is_some());
+        assert_eq!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("current_char_id should reload"),
+            Some(old_raw_id.clone()),
+            "malformed life_record must not rotate the durable terminated identity"
+        );
+        assert_eq!(
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("malformed bundle should remain readable as JSON")
+                .expect("malformed bundle should remain durable"),
+            malformed_bundle,
+            "durable lifecycle classification must reject the malformed bundle without overwriting old qi"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            0.0
+        );
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("cultivation database should reopen");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![valid_bundle.to_string(), username],
+            )
+            .expect("repairing life_record should succeed");
+        drop(connection);
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current,
+            0.0
+        );
+        assert!(app.world().get::<CultivationAttachRetry>(entity).is_none());
+        assert!(app.world().get::<Lifecycle>(entity).is_some());
+        assert!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("fresh current_char_id should reload")
+                .is_some_and(|id| id != old_raw_id)
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&pending_inflow_account()),
+            old_qi
+        );
+        assert_eq!(
+            crate::persistence::load_pending_inflow_balance(&settings)
+                .expect("pending inflow should reload"),
+            old_qi
+        );
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].from, QiAccountId::player(old_canonical_id));
+        assert_eq!(emitted[0].to, pending_inflow_account());
+        assert_eq!(emitted[0].amount, old_qi);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
