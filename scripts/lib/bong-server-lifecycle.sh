@@ -640,7 +640,7 @@ _bong_server_finish_managed_record_cleanup() {
 }
 
 bong_server_read_ready_pid() {
-    local ready_path="${1:-}" directory fd line extra
+    local ready_path="${1:-}" directory fd line extra ready_pid
 
     [ -n "$ready_path" ] || return 2
     if [ ! -e "$ready_path" ] && [ ! -L "$ready_path" ]; then
@@ -667,8 +667,9 @@ bong_server_read_ready_pid() {
     fi
     exec {fd}<&-
     [[ "$line" =~ ^pid=([0-9]+)$ ]] || return 2
-    bong_server_validate_signal_id "${BASH_REMATCH[1]}" || return 2
-    printf '%s\n' "${BASH_REMATCH[1]}"
+    ready_pid="${BASH_REMATCH[1]}"
+    bong_server_validate_signal_id "$ready_pid" || return 2
+    printf '%s\n' "$ready_pid"
 }
 
 _bong_server_write_record() {

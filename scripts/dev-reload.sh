@@ -244,7 +244,8 @@ if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
 
 SKIP_REGEN=false
 SKIP_VALIDATE=false
@@ -333,7 +334,7 @@ stop_managed_server_before_reload || return $?
 
 # --- Step 4: Rebuild server ---
 echo "==> [4/5] Building server..."
-(cd server && "$PWD/scripts/build-token.sh" cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
+(cd server && "$ROOT/scripts/build-token.sh" cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
 echo "    OK"
 
 # --- Step 5: Launch server ---

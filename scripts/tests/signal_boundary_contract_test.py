@@ -115,6 +115,28 @@ done
                 with self.assertRaisesRegex(RuntimeError, "private session"):
                     supervisor.private_process_group()
 
+    def test_ready_pid_capture_survives_nested_regex_validation(self):
+        script = f"""
+set -euo pipefail
+source {LIFECYCLE!s}
+runtime="$(mktemp -d)"
+trap 'rm -rf -- "$runtime"' EXIT
+chmod 700 "$runtime"
+ready="$runtime/ready"
+printf 'pid=4242\\n' > "$ready"
+chmod 600 "$ready"
+[ "$(bong_server_read_ready_pid "$ready")" = 4242 ]
+for value in 0 1 -1 abc; do
+    printf 'pid=%s\\n' "$value" > "$ready"
+    chmod 600 "$ready"
+    if bong_server_read_ready_pid "$ready" >/dev/null; then
+        printf 'accepted reserved or malformed ready pid: %s\\n' "$value" >&2
+        exit 1
+    fi
+done
+"""
+        subprocess.run(["bash", "-c", script], check=True)
+
     def test_shutdown_order_is_ci_opt_in_and_uses_absolute_socket(self):
         shutdown_text = SHUTDOWN_ORDER.read_text(encoding="utf-8")
         lifecycle_text = LIFECYCLE_TEST.read_text(encoding="utf-8")
