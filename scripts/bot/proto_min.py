@@ -33,70 +33,45 @@ class ProtoDecodeError(ValueError):
     pass
 
 
-def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
-    fields = _fields(data)
-    for field, wire, value in fields:
-        if wire != 2:
-            continue
-        if field == 3:
-            return _narration_batch(value)
-        if field == SERVER_DATA_ZONE_INFO_FIELD:
-            return _zone_info(value)
-        if field == SERVER_DATA_PLAYER_STATE_FIELD:
-            return _player_state(value)
-        if field == 8:
-            return _inventory_snapshot(value)
-        if field == 11:
-            return _alchemy_furnace(value)
-        if field == 12:
-            return _alchemy_session(value)
-        if field == 14:
-            return _alchemy_outcome_resolved(value)
-        if field == 17:
-            return _forge_station(value)
-        if field == 18:
-            return _forge_session(value)
-        if field == 19:
-            return _forge_outcome(value)
-        if field == 20:
-            return _forge_blueprint_book(value)
-        if field == 22:
-            return _craft_session_state(value)
-        if field == 23:
-            return _craft_outcome(value)
-        if field == 25:
-            return _botany_harvest_progress(value)
-        if field == 29:
-            return _lumber_progress(value)
-        if field == 30:
-            return _gathering_session(value)
-        if field == 31:
-            return _lingtian_session(value)
-        if field == 34:
-            return _cast_sync(value)
-        if field == 36:
-            return _skill_bar_config(value)
-        if field == 137:
-            return _inventory_move_rejected(value)
-        if field == 51:
-            return _combat_event_floater(value)
-        if field == SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD:
-            return _breakthrough_cinematic(value)
-        if field == 80:
-            return _inventory_event(value)
-        if field == 81:
-            return _dropped_loot_sync(value)
-        if field == 90:
-            return _container_state(value)
-        if field == 119:
-            return _loot_container_open(value)
-        if field == 120:
-            return _loot_container_update(value)
-        if field == 121:
-            return _loot_container_close(value)
-        if field == 142:
-            return _morph_state(value)
-    return None
+# Authoritative oneof names live in proto/bong/envelope.proto. This table is the
+# Bot harness's supported shallow observation surface; deep decoders below are a
+# strict subset keyed by the same field numbers.
+SERVER_DATA_PAYLOAD_NAMES = {
+    1: "welcome",
+    2: "heartbeat",
+    3: "narration",
+    4: "zone_info",
+    5: "player_state",
+    6: "cultivation_detail",
+    7: "skill_xp_gain",
+    8: "inventory_snapshot",
+    11: "alchemy_furnace",
+    12: "alchemy_session",
+    14: "alchemy_outcome_resolved",
+    15: "alchemy_recipe_book",
+    17: "forge_station",
+    18: "forge_session",
+    19: "forge_outcome",
+    20: "forge_blueprint_book",
+    22: "craft_session_state",
+    23: "craft_outcome",
+    25: "botany_harvest_progress",
+    29: "lumber_progress",
+    30: "gathering_session",
+    31: "lingtian_session",
+    34: "cast_sync",
+    36: "skillbar_config",
+    51: "combat_event",
+    71: "breakthrough_cinematic",
+    80: "inventory_event",
+    81: "dropped_loot_sync",
+    90: "container_state",
+    119: "loot_container_open",
+    120: "loot_container_update",
+    121: "loot_container_close",
+    137: "inventory_move_rejected",
+    142: "morph_state",
+}
 
 
 def _narration_batch(data: bytes) -> dict[str, Any]:
@@ -578,6 +553,10 @@ def _botany_harvest_progress(data: bytes) -> dict[str, Any]:
     }
 
 
+def _enum_name(names: dict[int, str], value: int) -> str:
+    return names.get(value, f"unknown_{value}")
+
+
 GATHERING_TARGET_TYPE_NAMES = {
     0: "unspecified",
     1: "herb",
@@ -604,12 +583,8 @@ def _gathering_session(data: bytes) -> dict[str, Any]:
         "progress_ticks": _varint(fields, 2),
         "total_ticks": _varint(fields, 3),
         "target_name": _string(fields, 4),
-        "target_type": GATHERING_TARGET_TYPE_NAMES.get(
-            _varint(fields, 5), "unspecified"
-        ),
-        "quality_hint": GATHERING_QUALITY_HINT_NAMES.get(
-            _varint(fields, 6), "unspecified"
-        ),
+        "target_type": _enum_name(GATHERING_TARGET_TYPE_NAMES, _varint(fields, 5)),
+        "quality_hint": _enum_name(GATHERING_QUALITY_HINT_NAMES, _varint(fields, 6)),
         "tool_used": _optional_string(fields, 7),
         "interrupted": bool(_varint(fields, 8)),
         "completed": bool(_varint(fields, 9)),
@@ -633,9 +608,7 @@ def _lingtian_session(data: bytes) -> dict[str, Any]:
         "v": 1,
         "type": "lingtian_session",
         "active": bool(_varint(fields, 1)),
-        "kind": LINGTIAN_SESSION_KIND_NAMES.get(
-            _varint(fields, 2), "unspecified"
-        ),
+        "kind": _enum_name(LINGTIAN_SESSION_KIND_NAMES, _varint(fields, 2)),
         "pos": [_int32(fields, 3), _int32(fields, 4), _int32(fields, 5)],
         "elapsed_ticks": _varint(fields, 6),
         "target_ticks": _varint(fields, 7),
@@ -804,15 +777,13 @@ def _alchemy_outcome_resolved(data: bytes) -> dict[str, Any]:
     return {
         "v": 1,
         "type": "alchemy_outcome_resolved",
-        "bucket": ALCHEMY_OUTCOME_BUCKET_NAMES.get(
-            _varint(fields, 1), "unspecified"
-        ),
+        "bucket": _enum_name(ALCHEMY_OUTCOME_BUCKET_NAMES, _varint(fields, 1)),
         "recipe_id": _optional_string(fields, 2),
         "pill": _optional_string(fields, 3),
         "quality": _optional_double(fields, 4),
         "toxin_amount": _optional_double(fields, 5),
         "toxin_color": (
-            COLOR_KIND_NAMES.get(toxin_color, "unspecified")
+            _enum_name(COLOR_KIND_NAMES, toxin_color)
             if toxin_color is not None
             else None
         ),
@@ -866,6 +837,7 @@ def _skill_bar_config(data: bytes) -> dict[str, Any]:
 
 
 def _optional_skill_bar_entry(data: bytes) -> dict[str, Any] | None:
+    # OptionalSkillBarEntry.entry → SkillBarEntry → item/skill.
     fields = _fields(data)
     entries = _messages(fields, 1)
     if not entries:
@@ -1092,6 +1064,53 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     }
 
 
+SERVER_DATA_PAYLOAD_DECODERS = {
+    3: _narration_batch,
+    SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
+    SERVER_DATA_PLAYER_STATE_FIELD: _player_state,
+    8: _inventory_snapshot,
+    11: _alchemy_furnace,
+    12: _alchemy_session,
+    14: _alchemy_outcome_resolved,
+    17: _forge_station,
+    18: _forge_session,
+    19: _forge_outcome,
+    20: _forge_blueprint_book,
+    22: _craft_session_state,
+    23: _craft_outcome,
+    25: _botany_harvest_progress,
+    29: _lumber_progress,
+    30: _gathering_session,
+    31: _lingtian_session,
+    34: _cast_sync,
+    36: _skill_bar_config,
+    51: _combat_event_floater,
+    SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
+    80: _inventory_event,
+    81: _dropped_loot_sync,
+    90: _container_state,
+    119: _loot_container_open,
+    120: _loot_container_update,
+    121: _loot_container_close,
+    137: _inventory_move_rejected,
+    142: _morph_state,
+}
+
+
+if not set(SERVER_DATA_PAYLOAD_DECODERS) <= set(SERVER_DATA_PAYLOAD_NAMES):
+    raise RuntimeError("deep server_data decoders must use named oneof fields")
+
+
+def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
+    for field, wire, value in _fields(data):
+        if wire != 2:
+            continue
+        decoder = SERVER_DATA_PAYLOAD_DECODERS.get(field)
+        if decoder is not None:
+            return decoder(value)
+    return None
+
+
 def _equip_slot(value: int) -> str:
     return {
         1: "head",
@@ -1113,40 +1132,6 @@ WIRE_VARINT = 0
 WIRE_64BIT = 1
 WIRE_LEN = 2
 WIRE_32BIT = 5
-
-SERVER_DATA_PAYLOAD_NAMES = {
-    1: "welcome",
-    2: "heartbeat",
-    3: "narration",
-    4: "zone_info",
-    5: "player_state",
-    6: "cultivation_detail",
-    7: "skill_xp_gain",
-    8: "inventory_snapshot",
-    11: "alchemy_furnace",
-    12: "alchemy_session",
-    14: "alchemy_outcome_resolved",
-    15: "alchemy_recipe_book",
-    17: "forge_station",
-    18: "forge_session",
-    19: "forge_outcome",
-    20: "forge_blueprint_book",
-    22: "craft_session_state",
-    23: "craft_outcome",
-    25: "botany_harvest_progress",
-    29: "lumber_progress",
-    30: "gathering_session",
-    31: "lingtian_session",
-    34: "cast_sync",
-    36: "skillbar_config",
-    51: "combat_event",
-    71: "breakthrough_cinematic",
-    81: "dropped_loot_sync",
-    119: "loot_container_open",
-    120: "loot_container_update",
-    121: "loot_container_close",
-    137: "inventory_move_rejected",
-}
 
 EQUIPPED_ITEM_FIELDS = {
     1: ("head", "worn"),

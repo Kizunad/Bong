@@ -3584,6 +3584,28 @@ class ProtoMinTest(unittest.TestCase):
             "shallow payload table must not hide production field 51",
         )
 
+    def test_server_data_decoder_table_is_named_and_dispatches(self):
+        self.assertLessEqual(
+            set(proto_min.SERVER_DATA_PAYLOAD_DECODERS),
+            set(proto_min.SERVER_DATA_PAYLOAD_NAMES),
+            "每个深解码 field 必须共享 shallow oneof name 的单一字段键",
+        )
+        sentinel = object()
+        for field in proto_min.SERVER_DATA_PAYLOAD_DECODERS:
+            with self.subTest(
+                field=field, name=proto_min.SERVER_DATA_PAYLOAD_NAMES[field]
+            ):
+                with mock.patch.object(
+                    proto_min,
+                    "SERVER_DATA_PAYLOAD_DECODERS",
+                    {field: lambda _payload: sentinel},
+                ):
+                    self.assertIs(
+                        proto_min.decode_server_data_envelope(_pb_len_field(field, b"")),
+                        sentinel,
+                        f"field {field} 必须由 decoder table 分发",
+                    )
+
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
             _pb_varint_field(1, 4242)
@@ -3661,6 +3683,24 @@ class FrameParseTest(unittest.TestCase):
         big = b"\x24" + b"y" * 200
         conn.buf = _frame(mc.write_varint(len(big)) + zlib.compress(big))
         self.assertEqual(conn._try_parse_frame(), big)
+
+
+def _scenario_default_enabled(tree: ast.Module) -> bool:
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "DEFAULT_ENABLED"
+            for target in targets
+        ):
+            continue
+        if isinstance(node.value, ast.Constant) and node.value.value is False:
+            return False
+    return True
 
 
 class RunnerLogicTest(unittest.TestCase):
@@ -3907,6 +3947,19 @@ class RunnerLogicTest(unittest.TestCase):
         self.assertIn("PASS", output.getvalue())
         self.assertIn("pass=1", output.getvalue())
 
+    def test_scenario_default_enabled_recognizes_annotated_false(self):
+        self.assertFalse(
+            _scenario_default_enabled(
+                ast.parse("DEFAULT_ENABLED: bool = False", mode="exec")
+            )
+        )
+        self.assertTrue(
+            _scenario_default_enabled(
+                ast.parse("DEFAULT_ENABLED: bool = True", mode="exec")
+            )
+        )
+        self.assertTrue(_scenario_default_enabled(ast.parse("VALUE = False", mode="exec")))
+
     def test_default_gameplay_scenarios_do_not_assert_raw_server_data_transport(self):
         scenarios_dir = pathlib.Path(__file__).parent / "scenarios"
         raw_server_data_calls = {
@@ -3920,19 +3973,7 @@ class RunnerLogicTest(unittest.TestCase):
             if path.name.startswith("_"):
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            default_enabled = True
-            for node in tree.body:
-                if (
-                    isinstance(node, ast.Assign)
-                    and any(
-                        isinstance(target, ast.Name) and target.id == "DEFAULT_ENABLED"
-                        for target in node.targets
-                    )
-                    and isinstance(node.value, ast.Constant)
-                    and node.value.value is False
-                ):
-                    default_enabled = False
-                    break
+            default_enabled = _scenario_default_enabled(tree)
             if not default_enabled:
                 continue
 
@@ -3965,19 +4006,7 @@ class RunnerLogicTest(unittest.TestCase):
             if path.name.startswith("_"):
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            default_enabled = True
-            for node in tree.body:
-                if (
-                    isinstance(node, ast.Assign)
-                    and any(
-                        isinstance(target, ast.Name) and target.id == "DEFAULT_ENABLED"
-                        for target in node.targets
-                    )
-                    and isinstance(node.value, ast.Constant)
-                    and node.value.value is False
-                ):
-                    default_enabled = False
-                    break
+            default_enabled = _scenario_default_enabled(tree)
             if not default_enabled:
                 continue
 
@@ -3990,24 +4019,7 @@ class RunnerLogicTest(unittest.TestCase):
                         if expression.value in set(proto_min.SERVER_DATA_PAYLOAD_NAMES.values()):
                             asserted_types.add(expression.value)
 
-        dispatch_source = pathlib.Path(proto_min.__file__).read_text(encoding="utf-8")
-        dispatch_tree = ast.parse(dispatch_source, filename=proto_min.__file__)
-        deep_decoded_fields: set[int] = set()
-        decode_function = next(
-            node
-            for node in dispatch_tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "decode_server_data_envelope"
-        )
-        for node in ast.walk(decode_function):
-            if not isinstance(node, ast.Compare):
-                continue
-            for expression in [node.left, *node.comparators]:
-                if isinstance(expression, ast.Constant) and isinstance(expression.value, int):
-                    deep_decoded_fields.add(expression.value)
-                elif isinstance(expression, ast.Name):
-                    value = getattr(proto_min, expression.id, None)
-                    if isinstance(value, int):
-                        deep_decoded_fields.add(value)
+        deep_decoded_fields = set(proto_min.SERVER_DATA_PAYLOAD_DECODERS)
 
         field_for_name = {
             name: field for field, name in proto_min.SERVER_DATA_PAYLOAD_NAMES.items()
@@ -5000,6 +5012,27 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["outcome"], "unknown",
             "无 completed/failed 分支的 CraftOutcome 应兜底 outcome=unknown（防解码 crash）",
         )
+
+    def test_unknown_gameplay_enums_keep_wire_identity(self):
+        gathering = _pb_varint_field(5, 99) + _pb_varint_field(6, 98)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(30, gathering))
+        self.assertEqual(decoded["target_type"], "unknown_99")
+        self.assertEqual(decoded["quality_hint"], "unknown_98")
+
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_len_field(31, _pb_varint_field(2, 97))
+        )
+        self.assertEqual(decoded["kind"], "unknown_97")
+
+        outcome = _pb_varint_field(1, 96) + _pb_varint_field(6, 95)
+        decoded = proto_min.decode_server_data_envelope(_pb_len_field(14, outcome))
+        self.assertEqual(decoded["bucket"], "unknown_96")
+        self.assertEqual(decoded["toxin_color"], "unknown_95")
+
+        missing_color = proto_min.decode_server_data_envelope(
+            _pb_len_field(14, _pb_varint_field(1, 1))
+        )
+        self.assertIsNone(missing_color["toxin_color"])
 
     def test_alchemy_furnace_tag11_and_session_tag12(self):
         furnace = (
