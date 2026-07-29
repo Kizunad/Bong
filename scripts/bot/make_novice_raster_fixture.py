@@ -12,6 +12,7 @@ from pathlib import Path
 TILE_SIZE = 256
 SURFACE_Y = 72
 SPAN_SENTINEL = 32767
+MAX_FIXTURE_TILES = 64
 DEFAULT_ZONES_PATH = Path(__file__).resolve().parents[2] / "server" / "zones.json"
 SPIRITWOOD_TILES = {(4, 5), (5, 5), (4, 6), (5, 6)}
 
@@ -121,11 +122,22 @@ def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int,
         max_tile_x = math.floor((anchor[0] + radius) / TILE_SIZE)
         min_tile_z = math.floor((anchor[2] - radius) / TILE_SIZE)
         max_tile_z = math.floor((anchor[2] + radius) / TILE_SIZE)
-        tiles.update(
-            (tile_x, tile_z)
-            for tile_x in range(min_tile_x, max_tile_x + 1)
-            for tile_z in range(min_tile_z, max_tile_z + 1)
+        cluster_tile_count = (max_tile_x - min_tile_x + 1) * (
+            max_tile_z - min_tile_z + 1
         )
+        if cluster_tile_count > MAX_FIXTURE_TILES:
+            raise ValueError(
+                f"spawn_distribution[{index}] covers {cluster_tile_count} fixture tiles, "
+                f"above safety limit {MAX_FIXTURE_TILES}"
+            )
+        for tile_z in range(min_tile_z, max_tile_z + 1):
+            for tile_x in range(min_tile_x, max_tile_x + 1):
+                tiles.add((tile_x, tile_z))
+                if len(tiles) > MAX_FIXTURE_TILES:
+                    raise ValueError(
+                        f"spawn_distribution union covers at least {len(tiles)} fixture "
+                        f"tiles, above safety limit {MAX_FIXTURE_TILES}"
+                    )
     return tiles
 
 
@@ -156,6 +168,11 @@ def generate(output_dir: Path, fixture_token: str) -> Path:
     # bounds cross both the x=1280 and z=1536 tile edges, so the fixture must cover
     # all four touched tiles with one flat meadow biome.
     all_tiles = spawn_tiles | SPIRITWOOD_TILES
+    if len(all_tiles) > MAX_FIXTURE_TILES:
+        raise ValueError(
+            f"fixture requires {len(all_tiles)} total tiles, above safety limit "
+            f"{MAX_FIXTURE_TILES}"
+        )
     for tile_x, tile_z in sorted(all_tiles):
         biome_id = 4 if (tile_x, tile_z) in SPIRITWOOD_TILES else 0
         _write_flat_tile(output_dir, tile_x, tile_z, biome_id=biome_id)

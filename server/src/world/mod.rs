@@ -525,17 +525,19 @@ fn spawn_fallback_flat_world(
 ) -> Entity {
     let registry = zone::ZoneRegistry::load();
     let anchors = crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-    let chunks = fallback_spawn_chunk_union(&registry, &anchors);
-    if let Err(chunk_count) = fallback_flat_chunk_count_is_safe(&chunks) {
-        tracing::error!(
-            chunks = chunk_count,
-            limit = FALLBACK_FLAT_MAX_CHUNKS,
-            "[bong][world] fallback spawn chunk union exceeded safety limit; refusing eager world allocation"
-        );
-        panic!(
-            "fallback spawn chunk union has {chunk_count} chunks, above safety limit {FALLBACK_FLAT_MAX_CHUNKS}"
-        );
-    }
+    let chunks = match fallback_spawn_chunk_union(&registry, &anchors) {
+        Ok(chunks) => chunks,
+        Err(chunk_count) => {
+            tracing::error!(
+                chunks = chunk_count,
+                limit = FALLBACK_FLAT_MAX_CHUNKS,
+                "[bong][world] fallback spawn chunk union exceeded safety limit during construction; refusing eager world allocation"
+            );
+            panic!(
+                "fallback spawn chunk union has at least {chunk_count} chunks, above safety limit {FALLBACK_FLAT_MAX_CHUNKS}"
+            );
+        }
+    };
 
     let mut layer = LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
 
@@ -569,20 +571,12 @@ fn spawn_fallback_flat_world(
     layer_entity
 }
 
-fn fallback_flat_chunk_count_is_safe(chunks: &BTreeSet<ChunkPos>) -> Result<(), usize> {
-    if chunks.len() <= FALLBACK_FLAT_MAX_CHUNKS {
-        Ok(())
-    } else {
-        Err(chunks.len())
-    }
-}
-
 fn fallback_spawn_chunk_union(
     registry: &zone::ZoneRegistry,
     anchors: &[crate::player::spawn_selector::SpawnDistributionAnchor],
-) -> BTreeSet<ChunkPos> {
+) -> Result<BTreeSet<ChunkPos>, usize> {
     let Some(spawn_zone) = registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) else {
-        return BTreeSet::new();
+        return Ok(BTreeSet::new());
     };
     let (zone_min, zone_max) = spawn_zone.bounds;
     let mut chunks = BTreeSet::new();
@@ -608,14 +602,24 @@ fn fallback_spawn_chunk_union(
         let (min_chunk, _) = min_view.bounding_box();
         let (_, max_chunk) = max_view.bounding_box();
 
+        let rectangle_width = i128::from(max_chunk.x) - i128::from(min_chunk.x) + 1;
+        let rectangle_height = i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1;
+        let rectangle_chunks = rectangle_width * rectangle_height;
+        if rectangle_chunks > FALLBACK_FLAT_MAX_CHUNKS as i128 {
+            return Err(usize::try_from(rectangle_chunks).unwrap_or(usize::MAX));
+        }
+
         for chunk_z in min_chunk.z..=max_chunk.z {
             for chunk_x in min_chunk.x..=max_chunk.x {
                 chunks.insert(ChunkPos::new(chunk_x, chunk_z));
+                if chunks.len() > FALLBACK_FLAT_MAX_CHUNKS {
+                    return Err(chunks.len());
+                }
             }
         }
     }
 
-    chunks
+    Ok(chunks)
 }
 
 fn block_coord_to_chunk(coord: f64) -> i32 {
@@ -731,11 +735,11 @@ mod tests {
     };
     use super::zone::{default_spawn_bounds, Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use super::{
-        block_coord_to_chunk, fallback_flat_chunk_count_is_safe, fallback_spawn_chunk_union,
-        select_world_bootstrap, select_world_bootstrap_from_configured_paths,
-        terrain::RasterBootstrapConfig, AnvilBootstrapConfig, FallbackFlatBootstrap,
-        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS,
-        GRASS_Y, NEW_PLAYER_VIEW_DISTANCE_CHUNKS, TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
+        block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
+        select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
+        AnvilBootstrapConfig, FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap,
+        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, GRASS_Y, NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+        TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::{
         BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3, UnloadedChunk,
@@ -865,7 +869,8 @@ mod tests {
         let registry = ZoneRegistry::load();
         let anchors =
             crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors);
+        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("configured fallback union should fit");
 
         assert!(anchors.len() >= 3, "zones.json 应提供多个出生分布簇");
         for anchor in &anchors {
@@ -967,29 +972,66 @@ mod tests {
         let registry = ZoneRegistry::load();
         let anchors =
             crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let configured = fallback_spawn_chunk_union(&registry, &anchors);
-        assert_eq!(
-            fallback_flat_chunk_count_is_safe(&configured),
-            Ok(()),
-            "当前 zones.json fallback union 必须留在显式 eager-allocation 上限内"
+        let configured = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("当前 zones.json fallback union 必须留在显式 eager-allocation 上限内");
+        assert!(
+            configured.len() <= FALLBACK_FLAT_MAX_CHUNKS,
+            "已受理的 fallback union 不得超过 eager-allocation 上限"
         );
 
-        let at_limit = (0..FALLBACK_FLAT_MAX_CHUNKS)
-            .map(|index| ChunkPos::new(index as i32, 0))
-            .collect();
+        let oversized_registry = synthetic_spawn_registry((
+            DVec3::new(-1_000_000.0, 0.0, -1_000_000.0),
+            DVec3::new(1_000_000.0, 100.0, 1_000_000.0),
+        ));
+        let oversized_anchor = crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+            DVec3::ZERO,
+            1_000_000.0,
+        );
+        let (oversized_center, oversized_radius) = oversized_anchor.cluster();
+        let oversized_min_view = ChunkView::new(
+            ChunkPos::new(
+                block_coord_to_chunk(oversized_center.x - oversized_radius),
+                block_coord_to_chunk(oversized_center.z - oversized_radius),
+            ),
+            NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+        );
+        let oversized_max_view = ChunkView::new(
+            ChunkPos::new(
+                block_coord_to_chunk(oversized_center.x + oversized_radius),
+                block_coord_to_chunk(oversized_center.z + oversized_radius),
+            ),
+            NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+        );
+        let (oversized_min_chunk, _) = oversized_min_view.bounding_box();
+        let (_, oversized_max_chunk) = oversized_max_view.bounding_box();
+        let oversized_count = usize::try_from(
+            (i128::from(oversized_max_chunk.x) - i128::from(oversized_min_chunk.x) + 1)
+                * (i128::from(oversized_max_chunk.z) - i128::from(oversized_min_chunk.z) + 1),
+        )
+        .expect("synthetic fallback rectangle count should fit usize");
+        let oversized_anchors = [oversized_anchor];
         assert_eq!(
-            fallback_flat_chunk_count_is_safe(&at_limit),
-            Ok(()),
-            "精确等于 eager-allocation 上限时仍应受理"
+            fallback_spawn_chunk_union(&oversized_registry, &oversized_anchors),
+            Err(oversized_count),
+            "单个巨大合法矩形必须在分配 BTreeSet 前 fail closed，并报告精确候选 chunk 数"
         );
 
-        let oversized = (0..=FALLBACK_FLAT_MAX_CHUNKS)
-            .map(|index| ChunkPos::new(index as i32, 0))
-            .collect();
+        let disjoint_anchors = (0..=FALLBACK_FLAT_MAX_CHUNKS)
+            .map(|index| {
+                crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+                    DVec3::new(index as f64 * 16_000.0, 65.0, 0.0),
+                    0.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let disjoint_registry = synthetic_spawn_registry((
+            DVec3::new(-1.0, 0.0, -1.0),
+            DVec3::new(FALLBACK_FLAT_MAX_CHUNKS as f64 * 16_000.0 + 1.0, 100.0, 1.0),
+        ));
         assert_eq!(
-            fallback_flat_chunk_count_is_safe(&oversized),
+            fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
             Err(FALLBACK_FLAT_MAX_CHUNKS + 1),
-            "超过上限必须 fail closed 并保留实际 chunk count"
+            "多个小矩形的 union 累积越界也必须在第 4097 个唯一 chunk 处 fail closed"
         );
     }
 
@@ -998,7 +1040,8 @@ mod tests {
         let registry = ZoneRegistry::load();
         let anchors =
             crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors);
+        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("configured fallback union should fit");
         let spawn_zone = registry
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
             .expect("spawn zone should load");
@@ -1029,7 +1072,8 @@ mod tests {
         let registry = ZoneRegistry::load();
         let anchors =
             crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors);
+        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("configured fallback union should fit");
 
         for purpose in [
             crate::player::spawn_selector::SpawnPurpose::InitialLogin,
@@ -1080,7 +1124,8 @@ mod tests {
                 0.0,
             ),
         ];
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors);
+        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("configured fallback union should fit");
 
         let (min, max) =
             ChunkView::new(ChunkPos::new(-1, -1), NEW_PLAYER_VIEW_DISTANCE_CHUNKS).bounding_box();

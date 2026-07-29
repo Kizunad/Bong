@@ -287,6 +287,72 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "biome ownership would be ambiguous"):
                 self._generate(pathlib.Path(temp_dir))
 
+    def test_spawn_fixture_tiles_rejects_oversized_cluster_before_expansion(self):
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": 1_000_000_000.0,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "above safety limit"):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_union_over_limit_during_construction(self):
+        clusters = []
+        for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES + 1):
+            clusters.append(
+                {
+                    "anchor": [
+                        float(index * make_novice_raster_fixture.TILE_SIZE * 10),
+                        70.0,
+                        0.0,
+                    ],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+            )
+        config = {
+            "zones": [{"name": "spawn", "spawn_distribution": clusters}]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "spawn_distribution union covers at least 65 fixture tiles"
+            ):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_fixture_rejects_total_tile_union_before_writing(self):
+        spawn_tiles = {
+            (index, 0)
+            for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES)
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value=spawn_tiles,
+        ):
+            root = pathlib.Path(temp_dir)
+            with self.assertRaisesRegex(ValueError, "total tiles, above safety limit"):
+                self._generate(root)
+            self.assertFalse(
+                any(root.iterdir()),
+                "总 tile union 越界必须在创建 tile 目录和大文件前 fail closed",
+            )
+
     def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
