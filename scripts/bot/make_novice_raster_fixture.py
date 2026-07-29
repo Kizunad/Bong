@@ -146,6 +146,12 @@ def generate(output_dir: Path, fixture_token: str) -> Path:
     # by the authoritative spawn_distribution so username hashes cannot fall through
     # to the raster loader's stone fallback.
     spawn_tiles = spawn_fixture_tiles()
+    overlap = spawn_tiles & SPIRITWOOD_TILES
+    if overlap:
+        raise ValueError(
+            "spawn fixture tiles overlap spiritwood biome tiles; "
+            f"biome ownership would be ambiguous: {sorted(overlap)}"
+        )
     # SpiritWood seed cell (0,0) resolves to (1292, 1519). Its production crown/root
     # bounds cross both the x=1280 and z=1536 tile edges, so the fixture must cover
     # all four touched tiles with one flat meadow biome.

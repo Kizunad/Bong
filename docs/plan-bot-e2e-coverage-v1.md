@@ -10,6 +10,7 @@
 - **跨仓库契约**：server 负责 emit/消费协议与 Redis 消息；agent 通过 `bong:player_chat` 和 Narration schema 产出回流；client 与 Bot 共同消费 `bong:server_data`，其中 Bot 的 `proto_min.py` 必须与 proto oneof 标签及客户端 HUD handler 对拍。
 - **worldview 锚点**：修炼/真元对应 `worldview.md` §三，战斗对应 §四/§五，天道 narration 对应 §八，交易与骨币对应 §九，玩家社交边界对应 §十一。
 - **qi_physics 锚点**：本 plan 不定义物理公式或常数；涉及真元变动的场景只验证现有 `qi_physics::ledger::QiTransfer` 所驱动的外部可观察结果与守恒，不直接改写账户。
+- **运行基础设施边界**：P0 的 Bot CI/preview 启停依赖全机共享 Cargo/Gradle 槽与 identity-safe server lifecycle；`scripts/build-token.sh`、`scripts/lib/bong-server-lifecycle.sh`、`scripts/preview/run-server-headless.sh` 只承载测试 harness 的并发和清理权限，不改变 gameplay。对应回归必须锁住跨 worktree 共享锁域、PID/starttime/executable identity、精确 listener owner 与 fail-closed cleanup。
 
 ## 阶段总览
 

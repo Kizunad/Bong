@@ -76,6 +76,7 @@ const TEST_AREA_CHUNKS: i32 = 16;
 const CHUNK_WIDTH: i32 = 16;
 const NEW_PLAYER_VIEW_DISTANCE_CHUNKS: u8 =
     crate::cultivation::realm_vision::planner::AWAKEN_VIEW_DISTANCE_CHUNKS;
+const FALLBACK_FLAT_MAX_CHUNKS: usize = 4_096;
 const BEDROCK_Y: i32 = 64;
 const GRASS_Y: i32 = BEDROCK_Y + 1;
 pub(crate) const TEST_AREA_BLOCK_EXTENT: i32 = TEST_AREA_CHUNKS * CHUNK_WIDTH;
@@ -525,6 +526,16 @@ fn spawn_fallback_flat_world(
     let registry = zone::ZoneRegistry::load();
     let anchors = crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
     let chunks = fallback_spawn_chunk_union(&registry, &anchors);
+    if let Err(chunk_count) = fallback_flat_chunk_count_is_safe(&chunks) {
+        tracing::error!(
+            chunks = chunk_count,
+            limit = FALLBACK_FLAT_MAX_CHUNKS,
+            "[bong][world] fallback spawn chunk union exceeded safety limit; refusing eager world allocation"
+        );
+        panic!(
+            "fallback spawn chunk union has {chunk_count} chunks, above safety limit {FALLBACK_FLAT_MAX_CHUNKS}"
+        );
+    }
 
     let mut layer = LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
 
@@ -556,6 +567,14 @@ fn spawn_fallback_flat_world(
         NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
     );
     layer_entity
+}
+
+fn fallback_flat_chunk_count_is_safe(chunks: &BTreeSet<ChunkPos>) -> Result<(), usize> {
+    if chunks.len() <= FALLBACK_FLAT_MAX_CHUNKS {
+        Ok(())
+    } else {
+        Err(chunks.len())
+    }
 }
 
 fn fallback_spawn_chunk_union(
@@ -917,23 +936,60 @@ mod tests {
             .map(|(_, max_chunk)| max_chunk.z)
             .max()
             .expect("spawn distribution should not be empty");
-        let bridge_chunk = (global_min_z..=global_max_z)
-            .find_map(|chunk_z| {
-                (global_min_x..=global_max_x).find_map(|chunk_x| {
-                    let candidate = ChunkPos::new(chunk_x, chunk_z);
-                    let inside_local_union = cluster_boxes.iter().any(|(min_chunk, max_chunk)| {
-                        candidate.x >= min_chunk.x
-                            && candidate.x <= max_chunk.x
-                            && candidate.z >= min_chunk.z
-                            && candidate.z <= max_chunk.z
-                    });
-                    (!inside_local_union).then_some(candidate)
-                })
+        let bridge_chunk = (global_min_z..=global_max_z).find_map(|chunk_z| {
+            (global_min_x..=global_max_x).find_map(|chunk_x| {
+                let candidate = ChunkPos::new(chunk_x, chunk_z);
+                let inside_local_union = cluster_boxes.iter().any(|(min_chunk, max_chunk)| {
+                    candidate.x >= min_chunk.x
+                        && candidate.x <= max_chunk.x
+                        && candidate.z >= min_chunk.z
+                        && candidate.z <= max_chunk.z
+                });
+                (!inside_local_union).then_some(candidate)
             })
-            .expect("多个出生簇的全局 AABB 应包含局部矩形 union 之外的桥接 chunk");
+        });
+        let Some(bridge_chunk) = bridge_chunk else {
+            assert_eq!(
+                cluster_boxes.len(),
+                1,
+                "多个出生簇若无桥接 gap，必须明确证明只剩单簇：{cluster_boxes:?}"
+            );
+            return;
+        };
         assert!(
             !chunks.contains(&bridge_chunk),
             "局部出生簇 union 不得退化为跨远端 anchors 的全局 AABB 桥接；gap={bridge_chunk:?}"
+        );
+    }
+
+    #[test]
+    fn fallback_flat_chunk_count_guard_accepts_configured_union_and_rejects_excess() {
+        let registry = ZoneRegistry::load();
+        let anchors =
+            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
+        let configured = fallback_spawn_chunk_union(&registry, &anchors);
+        assert_eq!(
+            fallback_flat_chunk_count_is_safe(&configured),
+            Ok(()),
+            "当前 zones.json fallback union 必须留在显式 eager-allocation 上限内"
+        );
+
+        let at_limit = (0..FALLBACK_FLAT_MAX_CHUNKS)
+            .map(|index| ChunkPos::new(index as i32, 0))
+            .collect();
+        assert_eq!(
+            fallback_flat_chunk_count_is_safe(&at_limit),
+            Ok(()),
+            "精确等于 eager-allocation 上限时仍应受理"
+        );
+
+        let oversized = (0..=FALLBACK_FLAT_MAX_CHUNKS)
+            .map(|index| ChunkPos::new(index as i32, 0))
+            .collect();
+        assert_eq!(
+            fallback_flat_chunk_count_is_safe(&oversized),
+            Err(FALLBACK_FLAT_MAX_CHUNKS + 1),
+            "超过上限必须 fail closed 并保留实际 chunk count"
         );
     }
 

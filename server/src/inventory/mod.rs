@@ -839,6 +839,12 @@ pub fn clear_player_inventory(
     // Clearing equipment or carried packs can change the authoritative topology and capacity.
     // The containers were emptied above, so rebuild must never need to spill an item.
     let overflow = rebuild_containers_from_equipment(inventory, registry);
+    if !overflow.is_empty() {
+        tracing::error!(
+            ?overflow,
+            "clear_player_inventory: emptied inventory unexpectedly produced rebuild overflow"
+        );
+    }
     debug_assert!(
         overflow.is_empty(),
         "clear_player_inventory: empty containers produced rebuild overflow: {overflow:?}"

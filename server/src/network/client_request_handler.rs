@@ -18616,8 +18616,12 @@ fn handle_external_container_move(
         let source_item_index = inventory.containers[source_container_index]
             .items
             .iter()
-            .position(|placed| placed.instance.instance_id == instance_id)
-            .expect("authoritative source search found matching item");
+            .position(|placed| {
+                placed.instance.instance_id == instance_id
+                    && u64::from(placed.row) == *from_row
+                    && u64::from(placed.col) == *from_col
+            })
+            .expect("authoritative source search found matching item and placement");
         let removed = inventory.containers[source_container_index]
             .items
             .remove(source_item_index);

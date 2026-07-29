@@ -293,8 +293,8 @@ mod tests {
             .expect("worn pack dynamic container must remain");
         assert_eq!(dynamic_pack.owner_instance_id, Some(pack_instance_id));
         assert!(
-            (inventory.max_weight - 23.0).abs() < f64::EPSILON,
-            "worn starter pack must retain BASE 15 + 8 capacity, got {}",
+            (inventory.max_weight - (BASE_CARRY_CAPACITY + 8.0)).abs() < f64::EPSILON,
+            "worn starter pack must retain BASE {BASE_CARRY_CAPACITY} + 8 capacity, got {}",
             inventory.max_weight
         );
         assert_eq!(

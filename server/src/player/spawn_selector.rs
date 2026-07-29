@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use valence::prelude::DVec3;
@@ -190,17 +190,19 @@ pub fn emergency_spawn_position() -> [f64; 3] {
     EMERGENCY_SPAWN_POSITION
 }
 
+fn default_spawn_distribution_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::world::zone::DEFAULT_ZONES_PATH)
+}
+
 #[cfg(test)]
 fn load_default_spawn_distribution() -> Result<Vec<SpawnDistributionAnchor>, String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::world::zone::DEFAULT_ZONES_PATH);
-    load_spawn_distribution_from_path(path)
+    load_spawn_distribution_from_path(default_spawn_distribution_path())
 }
 
 pub(crate) fn effective_default_spawn_distribution(
     registry: &ZoneRegistry,
 ) -> Vec<SpawnDistributionAnchor> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::world::zone::DEFAULT_ZONES_PATH);
-    effective_spawn_distribution_from_path(registry, path)
+    effective_spawn_distribution_from_path(registry, default_spawn_distribution_path())
 }
 
 fn effective_spawn_distribution_from_path(

@@ -69,6 +69,13 @@ SPECS = {
         "required": ['"$ROOT/scripts/build-token.sh" cargo build --release'],
         "forbid": [],
     },
+    "scripts/smoke-law-engine.sh": {
+        "required": [
+            "'$ROOT/scripts/build-token.sh' cargo build",
+            "exec ./target/debug/bong-server",
+        ],
+        "forbid": [r"build-token\.sh' cargo run"],
+    },
     "scripts/dev-reload.sh": {
         "required": [
             'ROOT="$(git rev-parse --show-toplevel)"',

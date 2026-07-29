@@ -278,6 +278,15 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
             self.assertEqual(spirit_biomes[seed_index], 4)
 
+    def test_fixture_rejects_spawn_and_spiritwood_biome_overlap(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value={next(iter(make_novice_raster_fixture.SPIRITWOOD_TILES))},
+        ):
+            with self.assertRaisesRegex(ValueError, "biome ownership would be ambiguous"):
+                self._generate(pathlib.Path(temp_dir))
+
     def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
