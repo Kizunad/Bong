@@ -120,32 +120,34 @@ P0 anti-orphan manifest/lint 是本 skeleton 的共享实施门，但不是第 1
 
 ## §10 实施工作流
 
-### §10.1 串行 PR 边界
+### §10.1 BugFix 单 skeleton / 单 PR 边界
 
-本 plan scope 明确超过 4 个 PR，必须在单 plan 内序列化，前一个 merge 后才开始下一个，禁止将 P1/P2/P3 混成 giant PR：
+本文件是 `plan-bughunt-*` skeleton，实施必须遵守根 `CLAUDE.md` 的 BugFix 专用流程：**一个 skeleton = 一个修复 subagent = 一个常驻 slot = 一个 PR**。不得把本计划交给 `/consume-plan`，不得按 feature-plan 的多 PR 模式拆成 PR-0..PR-10，也不得另建子 plan 分散 canonical owner。
 
-1. **PR-0 contract gate**：仅 P0 typed manifest、完整类型 inventory 精确对账、typed practices registry、production caller/schedule/test 绑定与 gate 自测；不改 gameplay 数值。
-2. **PR-1 alchemy**：仅 P1a `ContaminationBoost` + JinZhongDan 极性；同 PR 完成 production status→污染/回气 caller 与 schedule，含完整链及 ledger 差分。
-3. **PR-2..PR-6 Insight A-E**：严格按 P1b 五个 gameplay 域拆分；每 PR 同包完成 production App/system/event/registry 注册和由真实 schedule 驱动的差分测试。找不到 canonical seam 时该 PR/阶段保持未完成；只有按 §8.1 删除/禁用 producer或先完成 canonical owner 移交，才可消除对应 live finding，禁止以 `PlannedNoConsumer` 结案。
-4. **PR-7 Iron Cocoon wound**：只接唯一 wound pipeline、确定性 RNG、production resolve 注册与全后果一致性。
-5. **PR-8 ScarForged effective flow**：只接 active circuits、effective rate、production 调用点与 qi ledger。
-6. **PR-9 jump authority**：P3 独立 PR，严格按 §8.1 选定的一条互斥路线同包完成 runtime consumer/注册/验证；server 路线不创建死 proto/store，client 路线必须完成协议、hook 加载与断线 reset。
-7. **PR-10 integration closure**：只验证或调整已注册系统之间的跨域顺序，补全链 e2e 与 manifest 汇总；不得首次注册任何 production consumer、system、EventReader、handler、registry、mixin 或 hook，也不得在此首次决定字段语义。
+同一 bugfix 分支/PR 内按以下依赖顺序做中文原子 commit；这些是 commit 批次而非独立 PR，最终只 push/开一个 `bugfix/plan-bughunt-modifier-effect-consumer-completion-v1` PR：
 
-### §10.2 每 PR 验收门
+1. **contract batch**：P0 typed manifest、完整类型 inventory 精确对账、typed practices registry、production caller/schedule/test 绑定与 gate 自测；不改 gameplay 数值。
+2. **alchemy batch**：P1a `ContaminationBoost` + JinZhongDan 极性；完成 production status→污染/回气 caller 与 schedule，含完整链及 ledger 差分。
+3. **Insight A-E batches**：严格按 P1b 五个 gameplay 域分五个原子 commit；每批同包完成 production App/system/event/registry 注册和由真实 schedule 驱动的差分测试。找不到 canonical seam 时对应阶段保持未完成；只有按 §8.1 删除/禁用 producer 或先完成 canonical owner 移交，才可消除 live finding，禁止以 `PlannedNoConsumer` 结案。
+4. **Iron Cocoon wound batch**：只接唯一 wound pipeline、确定性 RNG、production resolve 注册与全后果一致性。
+5. **ScarForged flow batch**：只接 active circuits、去重 effective rate、production 调用点与 qi ledger。
+6. **jump authority batch**：严格按 §8.1 选定的一条互斥路线完成 runtime consumer/注册/验证；server 路线不创建死 proto/store，client 路线必须完成协议、hook 加载与断线 reset。
+7. **integration closure batch**：只验证或调整同一 PR 内已注册系统之间的跨域顺序，补全链 e2e 与 manifest 汇总；不得首次注册任何 production consumer、system、EventReader、handler、registry、mixin 或 hook，也不得在此首次决定字段语义。
 
-- 每个功能 PR 必须在同 PR 完成并测试其 production App/system schedule、EventReader/事件链、registry/handler 或 mixin hook 加载；测试须从真实应用构建/调度入口驱动，直接调用 helper 只能作单元补充，不能满足该 PR 的闭环验收。PR-10 不得作为延迟 wiring 的兜底。
-- 每个代码 PR 在修改前重新 fetch 并以 current `origin/main` 第一性验真；完成后用显式工作区绝对路径 + exact HEAD SHA 启动 fresh-context read-only validator，任何 HEAD 变化都重验。
+### §10.2 单 PR 验收门
+
+- 各功能 batch 必须在自身 commit 邻近完成并测试 production App/system schedule、EventReader/事件链、registry/handler 或 mixin hook 加载；测试须从真实应用构建/调度入口驱动，直接调用 helper 只能作单元补充。integration closure 不能作为延迟 wiring 的兜底。
+- 修复 subagent 在修改前重新 fetch 并以 current `origin/main` 第一性验真；全部 batch 完成后用显式 slot 绝对路径 + exact HEAD SHA 启动 fresh-context read-only validator，任何后续 HEAD 变化都重验。
 - server 变更在 `server/` 下通过 `flock /tmp/bong-cargo.lock` 或 `scripts/build-token.sh` 运行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；严禁本地运行 `scripts/test-tmux-shutdown-order.sh` 或任何调用它的 suite，该隔离/关停覆盖留给 GitHub e2e。
 - proto/schema 改动同步生成 Rust/proto artifacts 并跑 server gate；若触及 `agent/packages/schema/src`，先 `cd agent && npm run build -w @bong/schema` 再跑对应 `npm test`。
 - client 变更固定 Java 17，并在 `client/` 下通过 `flock /tmp/bong-gradle.lock` 跑 `./gradlew test build`；P3 另跑真实 bot/e2e jump apex 场景。
-- 每次 push 前紧邻执行 `git fetch origin && git merge origin/main`；merge 带进相关改动则重跑受影响完整门禁与 fresh validator。push 后对同一 PR 新发独立 `/review` 评论，等待 review/CodeRabbit 收敛。
-- 所有提交使用中文原子 commit，带 `Model: <精确模型 id>` 与 `Co-Authored-By` trailer；最终归档前逐条核验 11 finding、P0 gate，并断言本 plan 保留 production producer 的 canonical live finding 中 `PlannedNoConsumer` 为 0；其余 dormant 条目须保留 owner/reason/exit condition，随后才填写 `## Finish Evidence`。
+- 唯一 push 前紧邻执行 `git fetch origin && git merge origin/main`；merge 带进相关改动则重跑受影响完整门禁与 fresh validator。push 后创建唯一 bugfix PR 并发独立 `/review` 评论，等待 review/CodeRabbit 收敛；返工仍在同一 PR 分支，不得重复 promotion/归档。
+- 所有提交使用中文原子 commit，带 `Model: <精确模型 id>` 与 `Co-Authored-By` trailer；归档前逐条核验 11 finding、P0 gate，并断言本 plan 保留 production producer 的 canonical live finding 中 `PlannedNoConsumer` 为 0；其余 dormant 条目须保留 owner/reason/exit condition，随后才填写 `## Finish Evidence`。
 
 ### §10.3 归档前跨域验收
 
 - `modifier_consumer_manifest_stays_current` 必须从机械权威源穷举最新完整 `DerivedAttrs`、`InsightModifiers`、`StatusEffectKind` 集合，并从 typed practices registry 穷举全部 key/prefix，与 manifest 精确一一对账；每条 `Gameplay` 合同有 production caller/schedule + observable differential test，未知字段/variant/key 与 direct string marker 一律 fail-closed。
 - 归档时本 plan 保留 production producer 的 11 条 canonical live finding 必须全部成为 `Gameplay` / 等价 `ShadowDirectEffect`，`PlannedNoConsumer` 数量必须为 0；删除/禁用 producer或移交外域只能按 §8.1 与独立 canonical Mapping 变更执行，不能用 manifest 备注代替交付。
-- 运行 alchemy→status→污染/回气、Insight choice→持久化→gameplay loop、Iron Cocoon→resolve/flow、Guangbo→选定权威路线→实际 jump 四条完整链；每条链的 production 注册必须在所属功能 PR 已存在，PR-10 只验跨域顺序和 e2e，manifest 绿不能替代任何一条。
+- 运行 alchemy→status→污染/回气、Insight choice→持久化→gameplay loop、Iron Cocoon→resolve/flow、Guangbo→选定权威路线→实际 jump 四条完整链；每条链的 production 注册必须在所属功能 batch 已存在，integration closure 只验跨域顺序和 e2e，manifest 绿不能替代任何一条。
 - qi 路径以 `WorldQiAccount` / `QiTransfer` 守恒断言验收；jump 共同以实际 apex/velocity 验收，server 路线验非法速度与重登 neutral，client 路线另验 proto 幂等与 disconnect reset。
 - 全部阶段 ✅、上述 live-orphan 清零断言成立、review 无 blocker/major、GitHub e2e 覆盖本地隔离 suite 后，才填写 Finish Evidence 并迁入 `docs/finished_plans/`。
