@@ -12,10 +12,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 echo "[smoke-tsy-lifecycle] running cargo fmt --check (server)..."
-(cd server && cargo fmt --check)
+(cd server && "$REPO_ROOT/scripts/build-token.sh" cargo fmt --check)
 
 echo "[smoke-tsy-lifecycle] running cargo test (server, full suite ~1300+ tests)..."
-(cd server && cargo test --bin bong-server)
+(cd server && "$REPO_ROOT/scripts/build-token.sh" cargo test --bin bong-server)
 
 echo "[smoke-tsy-lifecycle] running schema vitest + check..."
 (cd agent/packages/schema && npm test && npm run check)

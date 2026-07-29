@@ -174,7 +174,7 @@ CURRENT_STAGE="server"
   export BONG_SIM_SEED="$SIM_SEED"
   export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
   cd "$ROOT/server"
-  cargo run --release
+  "$ROOT/scripts/build-token.sh" cargo run --release
 ) >"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"
 

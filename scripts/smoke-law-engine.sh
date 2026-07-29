@@ -128,10 +128,10 @@ run_or_fail "schema" "npm run build" bash -lc "cd '$ROOT/agent/packages/schema' 
 run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agent/packages/schema' && npm test -- tests/schema.test.ts"
 
 stage "4/10" "Server entrypoint startup"
-run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && cargo build"
+run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
 server_start_exit=0
 echo "[run][server-start] timeout 20s cargo run"
-timeout 20s bash -lc "cd '$ROOT/server' && cargo run" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
+timeout 20s bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo run" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
 echo "[server-start] exit=${server_start_exit}, log=${SERVER_BOOT_LOG}"
 if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
   fail_stage "server-start" "cargo run failed before startup anchors"
@@ -158,12 +158,12 @@ stage "6/10" "Tiandao smoke tests (world_state -> command/narration path)"
 run_or_fail "tiandao" "npm run test -- runtime redis-ipc main-loop" bash -lc "cd '$ROOT/agent/packages/tiandao' && npm run test -- runtime redis-ipc main-loop"
 
 stage "7/10" "Server smoke tests (world_state + command executor + scoped narration)"
-run_or_fail "server" "cargo test world_state_tests::uses_real_player_names_and_positions" bash -lc "cd '$ROOT/server' && cargo test world_state_tests::uses_real_player_names_and_positions -- --nocapture"
-run_or_fail "server" "cargo test command_executor_tests::applies_modify_zone" bash -lc "cd '$ROOT/server' && cargo test command_executor_tests::applies_modify_zone -- --nocapture"
-run_or_fail "server" "cargo test narration_tests::player_scope_matches_username_and_offline_id" bash -lc "cd '$ROOT/server' && cargo test narration_tests::player_scope_matches_username_and_offline_id -- --nocapture"
+run_or_fail "server" "cargo test world_state_tests::uses_real_player_names_and_positions" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo test world_state_tests::uses_real_player_names_and_positions -- --nocapture"
+run_or_fail "server" "cargo test command_executor_tests::applies_modify_zone" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo test command_executor_tests::applies_modify_zone -- --nocapture"
+run_or_fail "server" "cargo test narration_tests::player_scope_matches_username_and_offline_id" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo test narration_tests::player_scope_matches_username_and_offline_id -- --nocapture"
 
 stage "8/10" "Client smoke tests (typed payload parsing)"
-run_or_fail "client" "./gradlew test --tests *BongNetworkHandlerTest --tests *NarrationPayloadParserTest" bash -lc "cd '$ROOT/client' && ./gradlew test --tests '*BongNetworkHandlerTest' --tests '*NarrationPayloadParserTest'"
+run_or_fail "client" "./gradlew test --tests *BongNetworkHandlerTest --tests *NarrationPayloadParserTest" bash -lc "cd '$ROOT/client' && '$ROOT/scripts/build-token.sh' gradle test --tests '*BongNetworkHandlerTest' --tests '*NarrationPayloadParserTest'"
 
 stage "9/10" "Cross-layer closure proof"
 echo "[closure] world_state publication -> server world_state_tests::uses_real_player_names_and_positions"

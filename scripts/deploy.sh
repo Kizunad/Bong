@@ -16,7 +16,7 @@ git pull --ff-only || { echo "Pull failed — resolve conflicts first"; exit 1; 
 echo ""
 echo "=== [2/4] Rust server build ==="
 cd "$ROOT/server"
-cargo build --release 2>&1 | tail -5
+"$ROOT/scripts/build-token.sh" cargo build --release 2>&1 | tail -5
 echo "Server binary: $CARGO_TARGET_DIR/release/bong-server"
 
 echo ""

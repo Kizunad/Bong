@@ -29,7 +29,7 @@ trap cleanup EXIT
 mkdir -p "$PROBE"
 (
   cd "$PROBE"
-  cargo new --bin probe -q --name cargo_profile_probe
+  "$ROOT/scripts/build-token.sh" cargo new --bin probe -q --name cargo_profile_probe
 )
 mkdir -p "$PROBE/probe/.cargo"
 # 与仓库一致的 profile 片段
@@ -38,7 +38,7 @@ cp "$CFG" "$PROBE/probe/.cargo/config.toml"
   cd "$PROBE/probe"
   # 清可能覆盖的环境
   unset CARGO_PROFILE_DEV_DEBUG || true
-  cargo build -v >"$PROBE/build.out" 2>&1
+  "$ROOT/scripts/build-token.sh" cargo build -v >"$PROBE/build.out" 2>&1
 )
 check "build 日志含 debuginfo=line-tables-only" \
   grep -q 'debuginfo=line-tables-only' "$PROBE/build.out"
@@ -54,7 +54,7 @@ check "主 rustc 未使用 debuginfo=2" check_not_false_debug
 echo "== 3. 仓库 server 入口：cd server && cargo metadata 可运行（config 不破坏 canonical 入口）"
 (
   cd "$SERVER"
-  cargo metadata --no-deps --format-version 1 >"$PROBE/meta.json"
+  "$ROOT/scripts/build-token.sh" cargo metadata --no-deps --format-version 1 >"$PROBE/meta.json"
 )
 check "server cargo metadata 成功" test -s "$PROBE/meta.json"
 # metadata 含 workspace_root 指向 server

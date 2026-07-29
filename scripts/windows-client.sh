@@ -75,7 +75,7 @@ if command -v powershell.exe >/dev/null 2>&1; then
 fi
 
 echo "[windows-client] 构建 client（./gradlew build）..."
-(cd "$ROOT/client" && JAVA_HOME="$JAVA17_HOME" PATH="$JAVA17_HOME/bin:$PATH" ./gradlew build)
+(cd "$ROOT/client" && JAVA_HOME="$JAVA17_HOME" PATH="$JAVA17_HOME/bin:$PATH" "$ROOT/scripts/build-token.sh" gradle build)
 
 # Loom 产物：bong-client-<version>.jar（排除 sources / dev / javadoc）
 JAR="$(ls -t "$ROOT"/client/build/libs/bong-client-*.jar 2>/dev/null \

@@ -333,7 +333,7 @@ stop_managed_server_before_reload || return $?
 
 # --- Step 4: Rebuild server ---
 echo "==> [4/5] Building server..."
-(cd server && cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
+(cd server && "$PWD/scripts/build-token.sh" cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
 echo "    OK"
 
 # --- Step 5: Launch server ---
