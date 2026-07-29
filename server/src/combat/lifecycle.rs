@@ -30,6 +30,7 @@ use crate::cultivation::tribulation::AscensionQuotaOpened;
 use crate::cultivation::{
     color::PracticeLog,
     components::{Karma, QiColor},
+    CultivationAttachRetry,
 };
 use crate::fauna::components::FaunaTag;
 use crate::inventory::{
@@ -180,7 +181,7 @@ type NearDeathPersistenceQueryItem<'a> = (
         Option<&'a mut CurrentDimension>,
         Option<&'a mut Flags>,
     ),
-    Option<&'a Username>,
+    (Option<&'a Username>, Option<&'a CultivationAttachRetry>),
     Option<&'a NpcMarker>,
     Option<&'a NpcVisualProfile>,
     Option<&'a mut PlayerInventory>,
@@ -952,7 +953,7 @@ pub fn near_death_tick(
         player_state,
         position,
         (_layer_id, _visible_chunk_layer, _visible_entity_layers, current_dimension, _flags),
-        username,
+        (username, _cultivation_attach_retry),
         npc_marker,
         npc_visual_profile,
         _inventory,
@@ -1305,7 +1306,7 @@ pub fn handle_revival_action_intents(
             player_state,
             position,
             (layer_id, visible_chunk_layer, visible_entity_layers, current_dimension, flags),
-            username,
+            (username, cultivation_attach_retry),
             npc_marker,
             npc_visual_profile,
             inventory,
@@ -1540,6 +1541,7 @@ pub fn handle_revival_action_intents(
                     flags,
                     dimension_layers.as_deref(),
                     cultivation.as_deref(),
+                    cultivation_attach_retry,
                     zones.as_deref_mut(),
                     qi_account.as_deref_mut(),
                     qi_transfers.as_deref_mut(),
@@ -2698,6 +2700,7 @@ fn reset_for_new_character(
     flags: Option<valence::prelude::Mut<'_, Flags>>,
     dimension_layers: Option<&DimensionLayers>,
     old_cultivation: Option<&Cultivation>,
+    cultivation_attach_retry: Option<&CultivationAttachRetry>,
     zones: Option<&mut ZoneRegistry>,
     qi_account: Option<&mut WorldQiAccount>,
     qi_transfers: Option<&mut Events<QiTransfer>>,
@@ -2752,16 +2755,19 @@ fn reset_for_new_character(
         return false;
     };
 
-    let Some(old_cultivation) = old_cultivation else {
+    // A missing Cultivation is expected after the formal PlayerTerminated consumer has settled and
+    // removed the old-life bundle. Only the explicit attach retry marker means hydration failed and
+    // the durable old qi is still unknown.
+    if old_cultivation.is_none() && cultivation_attach_retry.is_some() {
         tracing::warn!(
             "[bong][combat] refusing CreateNewCharacter for {entity:?}: old cultivation hydration is incomplete"
         );
         return false;
-    };
+    }
 
     let staged_old_qi_release = match stage_lifecycle_qi_release(
         entity,
-        old_cultivation.qi_current.max(0.0),
+        old_cultivation.map_or(0.0, |cultivation| cultivation.qi_current.max(0.0)),
         previous_character_id.as_str(),
         current_dimension
             .as_deref()
@@ -9186,7 +9192,7 @@ mod tests {
     }
 
     #[test]
-    fn terminated_create_new_character_without_cultivation_preserves_old_identity() {
+    fn terminated_create_with_rejected_cultivation_hydration_preserves_old_identity() {
         let (settings, root) = persistence_settings("terminated-create-missing-cultivation");
         let username = "UnhydratedTerminated";
         let old_character_id = canonical_player_id(username);
@@ -9228,6 +9234,9 @@ mod tests {
             },
         );
         app.world_mut().entity_mut(entity).remove::<Cultivation>();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(CultivationAttachRetry);
         app.world_mut().send_event(RevivalActionIntent {
             entity,
             action: RevivalActionKind::CreateNewCharacter,
@@ -9241,7 +9250,7 @@ mod tests {
         assert_eq!(
             lifecycle.state,
             LifecycleState::Terminated,
-            "CreateNewCharacter must stay fail-closed until the old cultivation bundle hydrates"
+            "CreateNewCharacter must stay fail-closed while cultivation hydration is explicitly pending"
         );
         assert_eq!(lifecycle.character_id, old_character_id);
         assert_eq!(
