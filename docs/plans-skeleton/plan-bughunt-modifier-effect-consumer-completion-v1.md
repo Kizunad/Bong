@@ -59,7 +59,7 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 | `reaction_window_penalty` | `insight_apply.rs:244-246` | `0.0` | 战斗反应窗口 |
 | `chaotic_tolerance_loss` | `insight_apply.rs:247` | `0.0` | 杂色容忍扣减 |
 
-`composure_recover_mul` 不属于 r8 #5：canonical r8 已确认其 sibling `Cultivation.composure_recover_rate` 有 gameplay consumer。`practices` 动态 marker 及本表外字段不因 P0 inventory 自动进入 mandatory scope。
+`composure_recover_mul` 不属于 r8 #5：canonical r8 只确认其 sibling `Cultivation.composure_recover_rate` 有 gameplay consumer；`InsightModifiers.composure_recover_mul` 本身仍无 reader，P0 必须将它登记为 `UnmappedObservation`，不得误标 `ExistingGameplay`，消费或清理前须另立 canonical finding、owner 与 successor。`practices` 动态 marker 及本表外字段同样不因 P0 inventory 自动进入 mandatory scope。
 
 ## 第一性验真（`origin/main @ de75f14e43daf1105ea978c43d187acbb7f12f14`，2026-07-29）
 
@@ -72,12 +72,12 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 
 ## P0 — mapped anti-orphan contract
 
-- [ ] 建立 greppable `ModifierConsumerContract` / `MODIFIER_CONSUMER_MANIFEST`（名称可等义）。机械穷举 `DerivedAttrs` 字段、`InsightModifiers` 字段与 `StatusEffectKind` variant 全集，再与 manifest 精确集合对账；新增/删除/改名未登记即失败。
-- [ ] 使用互斥生命周期分类：`MappedPendingClosure`、`MappedGameplayClosed`、`MappedProducerRetired`、`ExistingGameplay`、`DormantNoProducer`、`UnmappedObservation`。P0 时本 plan 的未闭环成员合法登记为 `MappedPendingClosure`，只要求 canonical finding ID、稳定 producer-site/reachability 证据、owner、目标 P1 批次、预期 consumer domain 与测试 ID；**不要求尚不存在的 production caller、schedule 或差分测试先通过**。
-- [ ] 各 P1 PR 必须在同一变更中接通 production consumer + schedule + observable differential test，并把本批项目原子转为 `MappedGameplayClosed`；若决议删除语义，则删除/禁用 producer、迁移持久状态后转为 `MappedProducerRetired`。`MappedGameplayClosed` 才启用 scheduled-consumer 强门禁，归档门拒绝任何 `MappedPendingClosure`。
-- [ ] `UnmappedObservation` 只记录域、证据、triage owner 与“先建 canonical finding + successor”退出条件；不得生成 typed migration、gameplay consumer 或本 plan 归档前置。新增观察不会自动扩张 P1。
-- [ ] 对 11 条 finding 的每个 writer 使用稳定 typed producer-site ID；同函数不同 branch 不得折叠，r8 #5 必须与上表 13 项精确相等。P0 不要求把未映射动态字符串域做全仓 typed migration。
-- [ ] 可核验 symbol：`MODIFIER_CONSUMER_MANIFEST`、`ModifierProducerSiteId`、`modifier_consumer_manifest_stays_current`、`modifier_producer_sites_stay_current`、`mapped_pending_requires_closure_target`、`gameplay_closed_requires_scheduled_consumer`、`modifier_archive_rejects_pending_closure`、`unmapped_observation_requires_successor_before_consumption`（名称可等义）。
+- [ ] 建立 greppable `ModifierConsumerContract` / `MODIFIER_CONSUMER_MANIFEST`（名称可等义）。以 §8.1 选定的唯一声明宏、Rust AST 或同等机械来源，穷举 `DerivedAttrs` 字段、`InsightModifiers` 字段与 `StatusEffectKind` variant 全集，并穷举这些成员的每个 production producer branch、typed consumer site 与实际 scheduler registration（排除 `cfg(test)`、测试调用和孤立 helper）；新增/删除/改名/新增 branch 未登记即失败。
+- [ ] 使用互斥生命周期分类：`MappedPendingClosure`、`MappedGameplayClosed`、`MappedProducerRetired`、`ExistingGameplay`、`DormantNoProducer`、`UnmappedObservation`。P0 时本 plan 的未闭环成员合法登记为 `MappedPendingClosure`，只要求 canonical finding ID、稳定 producer-site/reachability 证据、owner、目标 P1 批次、预期 consumer domain 与专属测试 ID；**不要求尚不存在的 production caller、schedule 或差分测试先通过**。Mapped canonical 成员只能在 Pending、Closed、Retired 三类间转换，不得改标其他分类消项。
+- [ ] 各 P1 PR 必须在同一变更中接通 production consumer + schedule + observable differential test，并把本批项目原子转为 `MappedGameplayClosed`；若决议删除语义，则删除/禁用 producer、迁移持久状态后转为 `MappedProducerRetired`。`MappedGameplayClosed` 与 `ExistingGameplay` 都必须引用权威 producer/consumer/schedule site ID 和逐项 differential test ID；`DormantNoProducer` 必须由同一全量机械库存证明无 production-reachable writer，不能靠 manifest 自报。分类、site 与实际 scheduler 加载集合精确对账。
+- [ ] `UnmappedObservation` 只记录域、证据、triage owner 与“先建 canonical finding + successor”退出条件；全量库存中新发现的未映射 production writer 可登记为该类，但不得生成 typed migration、gameplay consumer 或本 plan 归档前置。新增观察不会自动扩张 P1。
+- [ ] 每个 production writer 使用稳定 typed producer-site ID，同函数不同 branch 不得折叠；mapped 11 条 finding 的 producer 子集必须精确对账，r8 #5 必须与上表 13 项相等。P0 不要求把未映射动态字符串域做全仓 typed migration。
+- [ ] 可核验 symbol：`MODIFIER_CONSUMER_MANIFEST`、`ModifierProducerSiteId`、`ModifierConsumerSiteId`、`ModifierScheduleSiteId`、`modifier_consumer_manifest_stays_current`、`modifier_producer_sites_stay_current`、`modifier_consumer_sites_stay_current`、`modifier_schedule_sites_match_production_app`、`mapped_pending_requires_closure_target`、`gameplay_closed_requires_scheduled_consumer`、`existing_gameplay_requires_full_evidence`、`dormant_no_producer_requires_empty_reachability`、`modifier_archive_rejects_pending_closure`、`unmapped_observation_requires_successor_before_consumption`（名称可等义）。
 
 ## P1 — mapped gameplay closure
 
@@ -86,13 +86,14 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 - [ ] 冻结 `ContaminationBoost` 的 magnitude、duration、stack/refresh/expiry 语义，并让 `contamination_tick` 通过 canonical qi ledger 产生可观察差分。
 - [ ] JinZhongDan negative slot 改为语义明确的负面 regen effect；`neg_scale`、0/默认/max、到期回 neutral 与重复 upsert 均有完整链测试。
 - [ ] r7 五字段与 r8 #5 的 13 个冻结字段按表中 gameplay domain 接入唯一 effective helper；P0 若证明某 writer production 不可达，也必须在本批删除/禁用该 writer并迁移状态，不得改标 `UnmappedObservation` 消项。
-- [ ] §8.1 逐字段冻结单位、neutral、finite 区间、add/mul 顺序、累计上限、消费时点、持久化/水合/reset。表驱动 pin 覆盖合法下界/等号/上界、越界、NaN/±Infinity、组合顺序/cap、持久化往返、水合与 reset/到期回 neutral；另有“相同 gameplay 输入，仅 modifier 不同”的 production-schedule differential test。qi gain/drain 继续断言 `WorldQiAccount` / `QiTransfer` 守恒。
+- [ ] §8.1 逐字段冻结单位、neutral、finite 区间、add/mul 顺序、累计上限、消费时点、持久化/水合/reset。表驱动 pin 覆盖合法下界/等号/上界、越界、NaN/±Infinity、组合顺序/cap、持久化往返、水合与 reset/到期回 neutral；r7 五字段与 r8 #5 十三字段各自绑定专属 consumer/schedule site ID 与 differential test ID，逐字段以相同 gameplay 输入、仅该 modifier 在 neutral/非 neutral 间变化，断言目标 domain 可观察差分且非目标后果不变，测试表与 18 字段精确集合对账。qi gain/drain 继续断言 `WorldQiAccount` / `QiTransfer` 守恒。
 - [ ] 可核验 symbol：`ContaminationBoost`、`contamination_tick`、`CombatPillKind::JinZhongDan`、`QiRegenSlowed`、`insight_qi_regen_multiplier`、`effective_breakthrough_bonus`、`effective_overload_threshold`、`effective_vortex_delta`、`effective_vortex_flow_speed`、`mapped_insight_modifier_contract_is_pinned`、`mapped_insight_modifier_changes_gameplay`（名称可等义）。
 
 ### P1-B — Iron Cocoon wound grade + effective flow
 
 - [ ] `combat::resolve_attack_intents` 内建立唯一 typed `CanonicalWoundSink`（名称可等义）：该 sink 是本 pipeline 唯一允许最终构造/写入 `Wound` 与派生后果的位置；参与该 pipeline 的 damage producer必须调用它。门禁 pin sink **恰好一个**、production 可达，并拒绝重复 sink 与 sink 外直接写入。
-- [ ] sink 统一执行 `raw hit → armor → effective severity/grade → deterministic downgrade → health/bleeding/contamination/meridian/event consequences`，mapped 三个 wound modifier 只在这里消费。确定性 fracture roll 由稳定 attack/hit identity 派生，重复投递幂等；覆盖同 tick 多 hit、输入重排、0%/100% 与重放。
+- [ ] sink 统一执行 `raw hit → armor → effective severity/grade → deterministic downgrade → health/bleeding/contamination/meridian/event consequences`，mapped 三个 wound modifier 只在这里消费。§8.1 冻结稳定 attack/hit identity，以及已结算 hit ledger 的 owner、持久化/保留与清理边界；sink 在同一原子边界内先 check、再提交全部后果并记录 identity。确定性 fracture roll 只负责结果稳定，去重 ledger 负责重放幂等；第二次投递必须对所有状态与事件计数零副作用，并覆盖同 tick 多 hit、输入重排、水合后重放与 0%/100%。
+- [ ] §8.1 逐项冻结 `bruise_threshold_multiplier`、`fracture_downgrade_chance`、`cut_pierce_downgrade`、`scar_forged_flow_bonus` 的单位、neutral、合法 finite 闭区间、非法值 fail-closed/reject、组合顺序/cap、持久化/水合/reset/到期。表驱动 pin 覆盖下界/等号/上界、越界、NaN/±Infinity、组合，以及 active→inactive 回 neutral。
 - [ ] §8.1 的唯一 wound-grade 表按每个 wound kind/grade 阈值测试 `threshold-ε`、`threshold`、`threshold+ε`，同时断言最终 grade 与 health、bleeding、contamination、meridian、event 全后果，锁定等号归属。
 - [ ] `effective_meridian_sum_rate` 只在 `scar_forged_flow_bonus` active 时对 `ActiveScarCircuits` 涉及的去重经脉应用 §8.1 决定的倍率；共享经脉只加成一次，不持久改 `Meridian.flow_rate`。
 - [ ] 本批不声称迁移全仓所有历史 wound/health writer；未经过 `resolve_attack_intents` 的旁路属于附录观察，须独立 canonical finding 才能扩 scope。
@@ -102,8 +103,8 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 
 - [ ] §8.1 先选择唯一互斥路线，并冻结字段表示 apex-height multiplier 还是 initial-velocity multiplier、合法 finite 区间与 apex 容差。MC 1.20.1 离散重力、阻力、碰撞和 tick 更新顺序必须锚定确切上游版本/映射/类/方法，不得凭经验自定；client/server 共享公式或同一组 golden tick/velocity/apex vectors。非法值统一 fail-closed 到 1.0 或拒绝。
 - [ ] **server-authoritative 路线**：接 server movement/velocity、production schedule、非法纵向速度拒绝与真实 client/bot apex e2e；禁止新增无 runtime reader 的 proto/store 字段。
-- [ ] **client-hook + server-validation 路线**：从 `server/src/network/derived_attrs_emit.rs` 的 `DerivedAttrs` query、payload 写入与 production send schedule 开始，贯通 `DerivedAttrsSyncV1`、proto/generated、handler/store、非 mixin helper、jump hook 与 disconnect reset。消息采用 session generation + 单调 revision/effective tick 的权威全量状态；同一 session 激活→停用/到期时 server 必须发送显式 `jump_height_multiplier=1.0` 的更高 revision，client 覆盖旧值，server 自 effective tick 起按 1.0 校验。字段缺失、旧 revision 或旧 session 不得清除/复活状态。
-- [ ] 两路线共同测试 multiplier 1.0/中间/上限与非法输入，并以真实 velocity/apex 而不是 payload/store 值验收；client 路线另覆盖 active→neutral、旧 active 与 neutral 乱序、重复 neutral、旧 session neutral、断线/重登及起跳交错。
+- [ ] **client-hook + server-validation 路线**：从 `server/src/network/derived_attrs_emit.rs` 的 `DerivedAttrs` query、payload 写入与 production send schedule 开始，贯通 `DerivedAttrsSyncV1`、proto/generated、handler/store、非 mixin helper、jump hook 与 disconnect reset。消息采用 session generation + 单调 revision/effective tick 的权威全量状态；同一 session 激活→停用/到期时 server 必须预发布显式 `jump_height_multiplier=1.0` 的更高 revision，并按 §8.1 选择 ACK 后生效或双方已知的有界 future effective tick，配套可靠重传、超时 fail-closed 与已确认 revision 校验规则；禁止 server 在 client 可能尚未收到 neutral 时单方面切到 1.0。字段缺失、旧 revision 或旧 session 不得清除/复活状态。
+- [ ] 两路线共同测试 multiplier 1.0/中间/上限与非法输入，并以真实 velocity/apex 而不是 payload/store 值验收；client 路线另覆盖 active→neutral、旧 active 与 neutral 乱序、重复 neutral、旧 session neutral、neutral 延迟跨 tick、丢失/重传、ACK 迟到/丢失、超时、断线/重登及 effective tick 前后起跳交错。
 - [ ] 可核验 symbol：`sanitized_jump_height_multiplier`、`effective_jump_velocity`、`jump_physics_golden_vectors_match_mc_1_20_1`、`guangbo_jump_height_changes_observed_apex`；client 路线另含 `DerivedAttrsSyncV1`、`DerivedAttrsStore`、`jump_modifier_resets_on_disconnect`、`jump_modifier_neutral_revision_clears_same_session`（名称可等义）。
 
 ## §8 开放问题（P0 前须追加 §8.1 决议）
@@ -111,10 +112,10 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 1. `ContaminationBoost` 的单位、stack/refresh/expiry 与 ledger 接缝是什么？
 2. JinZhongDan 的负面 kind、基础强度与 `neg_scale` 公式是什么？
 3. r7 五字段与 r8 #5 十三字段逐项的单位、neutral、finite 区间、组合/累计、消费时点、持久化/水合/reset 是什么？
-4. canonical wound grade 的阈值/等号归属是什么；stable attack/hit identity 与 deterministic roll 如何定义？
-5. ScarForged 倍率的 canonical 数值依据、单位、适用经脉与组合公式是什么？当前代码常数 1.05 不能在无决议时自动视为正典。
-6. jump 选择哪条 authority 路线；字段表示 apex 还是 velocity、合法范围、权威 MC 1.20.1 源码/映射锚点、离散公式/容差及 client 路线 revision + explicit-neutral 合同是什么？
-7. P0 inventory/producer-site 的机械权威源采用 Rust AST、唯一声明宏还是同等方案？
+4. canonical wound grade 的阈值/等号归属是什么；三个 wound modifier 的单位、neutral、合法 finite 闭区间、非法值策略、组合/cap 与生命周期是什么；stable attack/hit identity、deterministic roll，以及已结算 hit ledger 的 owner、原子 check-and-record、持久化/保留/清理边界如何定义？
+5. ScarForged 倍率的 canonical 数值依据、单位、合法 finite 闭区间、非法值策略、适用经脉、组合/cap 与持久化/水合/reset/到期语义是什么？当前代码常数 1.05 不能在无决议时自动视为正典。
+6. jump 选择哪条 authority 路线；字段表示 apex 还是 velocity、合法范围、权威 MC 1.20.1 源码/映射锚点、离散公式/容差，以及 client 路线 revision + explicit-neutral + ACK/future-effective-tick/重传/超时/过渡校验合同是什么？
+7. P0 的机械权威源采用 Rust AST、唯一声明宏还是同等方案；如何从 production 代码与真实 scheduler registration 导出全部 producer branch、consumer site 与 schedule site，并把 pending 检查接入实际归档命令/CI 入口？
 
 > 七项全部以当前 `file:line + plan 章节` 双锚点追加到 §8.1 后，才能进入 P0。
 
@@ -144,11 +145,17 @@ P0 只允许把这些条目标为 `UnmappedObservation` 并验证“未被本 pl
 5. **P1-C PR**：只闭合 r8 #4；按 §8.1 选定的一条 jump 路线完整交付并转换状态，另一条不得留下死 schema/store。
 6. **Closure/Archive PR**：机械拒绝残留 `MappedPendingClosure`，汇总 11 条 finding、各实现 PR exact HEAD、`/review` 与 GitHub e2e run URL/ID/result，填写 `## Finish Evidence` 并迁入 `docs/finished_plans/`；不得首次新增 production wiring。
 
-每个实现 PR 都必须：fresh `origin/main` 复验 → production wiring + 饱和测试 → fresh-context exact-HEAD validator → 按所触栈完整 gate → 紧邻 `git fetch origin && git merge origin/main` → HEAD 变化后重验 → push → 独立 `/review`。本地严禁运行 `scripts/test-tmux-shutdown-order.sh` 或任何调用它的 suite；该覆盖只留给 GitHub e2e。
+每个实现 PR 都必须：fresh `origin/main` 复验 → production wiring + 饱和测试 → fresh-context exact-HEAD validator → 按所触栈完整 gate → `git diff --check` + `python3 scripts/plans_progress.py --check` → 紧邻 `git fetch origin && git merge origin/main` → HEAD 变化后对新 SHA 重跑 validator 与受影响 gate → push → local/remote/PR HEAD SHA 三方对拍 → 独立 `/review` 并等待 `/review` 与 CodeRabbit 收敛。任何 review 修改都必须对更新后的 exact HEAD 重走上述闭环。本地严禁运行 `scripts/test-tmux-shutdown-order.sh` 或任何调用它的 suite；该覆盖只留给 GitHub e2e。
+
+`modifier_archive_rejects_pending_closure` 必须接入实际 Active→Finished 迁档入口及对应 CI（可扩展 `scripts/plans_progress.py --check` 或使用等价唯一入口），不得只存在为可直接调用的 helper 单测；集成测试必须证明含 pending 的真实迁档失败、全部 closed/retired 时成功。
+
+### §10.1 单次 `/consume-plan` 全自动到 merge
+
+用户只需提交一次 `/consume-plan`。主调度在同一 active plan 下按 Decision → P0 → P1-A → P1-B → P1-C → Closure/Archive 串行派发独立实施/返工 agent；每个 PR 完成上方 exact-HEAD 验证、门禁、SHA 对拍、独立 `/review`、CodeRabbit、GitHub e2e 并 merge 后，才启动下一 PR。任一 blocker/major、测试失败、SHA 漂移或 merge 冲突均暂停在当前 PR，修复后从新 HEAD 续跑，不跳阶段、不并行消费附录域。全部实现 PR 收敛且真实归档入口确认 pending 为 0 后，Closure PR 才填写 Finish Evidence 并迁入 `docs/finished_plans/`；merge 后流程结束。
 
 ## 归档门
 
 - 11 条 mapped finding（含 r8 #5 冻结的 13 个子字段）全部转为 `MappedGameplayClosed`，或按 §8.1 删除/禁用 producer、迁移状态并转为 `MappedProducerRetired`；`MappedPendingClosure` 必须为 0，不得以 `UnmappedObservation`、HUD/storage read 或 planned 状态结案。
 - P0 完整库存精确对账，且附录域仍保持“未被本 plan 消费”；它们的存在不冒充本 plan finding，也不阻塞本 plan。
 - Alchemy/Insight、Iron Cocoon wound/effective flow、jump 三条 mapped production chain 均有 observable differential/e2e；数值、生命周期、wound 阈值与 jump neutral/物理 vectors 均有 pin，qi 路径有 ledger 守恒证据。
-- Finish Evidence 只在所有实现 PR 的 `/review` 与 GitHub e2e 对对应 exact HEAD 收敛后填写；记录 commit SHA、validator verdict、命令结果、run URL/ID 与遗留 successor。
+- Finish Evidence 只在所有实现 PR 的 validator、按栈 gate、`git diff --check`、plan 进度检查、local/remote/PR SHA 对拍、更新后 exact-HEAD `/review`、CodeRabbit 与 GitHub e2e 全部收敛后填写；记录 commit SHA、validator verdict、命令结果、run URL/ID 与遗留 successor。
