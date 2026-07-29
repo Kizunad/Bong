@@ -18,3 +18,4 @@ death-preempt-ordinary	SYSTEM_TERMINAL	DEATH	ORDINARY	NONE	false	false	true	PREE
 terminate-preempt-death	SYSTEM_TERMINAL	TERMINATE	SYSTEM_TERMINAL	DEATH	false	false	true	PREEMPT	Terminate explicitly outranks Death.
 death-blocked-terminate	SYSTEM_TERMINAL	DEATH	SYSTEM_TERMINAL	TERMINATE	false	false	true	BLOCK_DROP	Death cannot preempt a visible Terminate terminal.
 death-blocked-peer	SYSTEM_TERMINAL	DEATH	SYSTEM_TERMINAL	DEATH	false	false	true	BLOCK_DROP	A non-matching equal-priority terminal is not replaced.
+terminate-blocked-peer	SYSTEM_TERMINAL	TERMINATE	SYSTEM_TERMINAL	TERMINATE	false	false	true	BLOCK_DROP	A non-matching Terminate terminal cannot replace an equal-priority peer.
