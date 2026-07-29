@@ -1,49 +1,163 @@
 # plan-refactor-client-ui-base-v1 — Client UI 公共基类 + InspectScreen 拆解 + 输入/线程纪律（重构轨 R7）
 
-> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：给 28 个各写各的 owo Screen 建公共基类（store 订阅/tick 刷新/关闭清理/礼貌抢屏），diff-then-patch 列表组件化，keybind 注册表防冲突，网络线程→client 线程 marshal 强制化，并拆掉 4647 行的 `InspectScreen`——owo 布局/输入/线程整簇（16+ 份 plan）收口。
+> 所属总纲：`plan-refactor-master-v1.md`。一句话：给 15 个直接 owo Screen 建公共基类（Screen-local 订阅/tick/关闭清理），把 diff-then-patch、默认键冲突检测、纯 client-thread helper 与礼貌抢屏策略收成共享契约，并以 tab-first 拆掉 4647 行的 `InspectScreen`；P0 仅冻结文档/fixture/contract pin，**ZERO production behavior change**。
 
-## 现状证据（2026-07-27 侦察）
+## 现状证据（P0 复核，2026-07-30）
 
-- 15 个 `BaseOwoScreen<FlowLayout>` 直接子类，无项目公共基类；每个 Screen 各写订阅/刷新/清理。
-- `Sizing.fill(100)` 92 处（20 文件）——顶飞兄弟节点反模式高发（炼丹屏两份重复 skeleton 就是它）；`clearChildren()` 15 处（10 文件），`CraftRecipeListWidget.java:110-142` 已有 diff-then-patch 修复范本（id 序列不变则原地更新），但 NpcTradeScreen/InspectScreen 未推广。
-- `InspectScreen.java` 4647 行是全 client 最大怪物文件。
-- 输入：默认键冲突多起（T 撞聊天、L 撞进度屏、O/U 双派发、给丹 G 未绑定）——无集中 keybind 注册表冲突检查。
-- 线程：网络线程直触 UI/HUD/SFX 多起（cast-sync 配置窗被网络线程关闭、探矿回执网络线程直触 HUD）——无 marshal 强制。
-- 抢屏：邀请每 tick 强制顶屏（v-sparring-invite-screen-hijack）——无"礼貌打开"协议。
+- `client/src/main/java/com/bong/client` 下共有 **29 个 production Screen**：15 个直接 `BaseOwoScreen<FlowLayout>`、14 个直接 vanilla `Screen`。文件名口径有陷阱：29 个 `*Screen.java` 中只有 28 个是真 Screen，`TechniqueScrollReadScreen` 是 helper；另有真实 Screen `LegacyAssignPanel.java` 不带 `Screen.java` 后缀。权威逐文件清单在 `client/src/test/resources/bong/ui/r7-screen-inventory.tsv`。
+- 原始源码共有 **92 个 `Sizing.fill(100)`** token（20 文件）：87 个 executable + 5 个 comment。context-aware 分类为 82 `LEGAL` + 5 `RISK` + 5 `COMMENT`；若只按几何语义计，79 个 axis-safe、8 个 horizontal main-axis overflow，其中 3 个是源码明确标注且末位挂载的 `TERMINAL_INTENTIONAL` workaround。4 个确定会顶飞后续兄弟节点和 1 个未被接受的末位顺序依赖全部在 `r7-fill100-inventory.tsv` 锁定。
+- owo `Sizing.fill(100).inflate(space, ...)` 返回完整 `space`，不是“同轴兄弟拿完后的剩余空间”；horizontal flow 中每个 child 对同一个 child space inflate 后再累计宽度。因此主轴 fill 是否安全取决于容器方向、兄弟顺序和 deliberate terminal placement，不能做纯文本全量替换。
+- 生产 `clearChildren()` 当前 16 处；`CraftRecipeListWidget` 已证明 ordered id 相同则原地 patch、id 序列改变才 rebuild。R7 只把需要保留 mounted identity/selection/callback/scroll 的列表迁 `DiffListWidget`，不把一次性面板重建机械改写。
+- `InspectScreen.java` 4647 行，是 client 最大 UI 聚合点；它同时持有 tab 组合、订阅 intake、drag/drop、context menu、tooltip、hotbar 和 overlay arbitration，拆分必须保留唯一 screen-level intake 与共享交互 owner。
+- 默认键冲突仍在：T/vanilla chat、L/vanilla advancements、O/O、U/U、R/R；垂死大能 G/H/J 的生产默认均为 UNKNOWN，但 HUD 文案硬承诺 `[G]/[H]/[J]`，属于 effective-binding 展示/路由不一致，而不是允许第二个默认 G。
+- 网络线程 premise 已变化：`BongNetworkHandler` 的 server-data bridge/router/handler/store/listener 整段已由 R6-owned `clientExecutor.accept(() -> processServerDataPayload(...))` 包住。`cast-sync-config-window-thread` 与 `mineral-probe-result-network-thread-ui` 的原始生产缺陷已由公共边界闭环；R7 不重复接线。
+- 抢屏 premise 也已变化：切磋邀请已采用“被别的屏挡住时 toast、保留 domain-store invite、空屏再开”的礼貌逻辑，`v-sparring-invite-screen-hijack` 是已完成 canonical plan 的重复项。顿悟屏仍可强制覆盖普通屏，且 replacement/removal 未汇聚到 exactly-once settlement，是 `ScreenOpenPolicy` 的有效输入。
 
 ## 接入面
 
-- **进料**：R2 的 `SessionScopedStore`（Screen 订阅的一律是会话态 store）；`ServerDataRouter` handler（一律经 client-thread marshal 投递 UI）。
-- **出料**：Screen/HUD 展示；HUD 纪律沿用既有 memory 约束（未解锁隐藏不灰掉、沉浸式极简）。
-- **共享类型**：新 `BongScreenBase`（生命周期 + 订阅 + 关闭清理）、`DiffListWidget`（推广 craft 范本）、`BongKeybindRegistry`（注册时冲突检测 + 测试期断言）、`ClientThreadMarshal` helper、`ScreenOpenPolicy`（礼貌抢屏：战斗中/已有模态时排队）。
-- **跨仓库契约**：本轨不定义 wire，只消费 A-CS A-row、R6 P1 craft machinery contract、master M-09/M-10 与 R1 S-row。Idle/no-session 初次 `CraftOpen { request_id, target }` 后进入同 request_id 的 client-local `OpenPending`（不是 gameplay phase）；server identity 尚未 hydrate 时普通 close 置一次性 `pause_when_hydrated`，不得发送缺 identity 的 `CraftPause`。matching `Running` hydration 到达后只发一次带 `session_key + generation` 的 `CraftPause` 且不重开 Screen；matching A-08 reject 立即清 pending/latch并展示 reason，stale/mismatched reject no-op。S-10 guarded reconnect restore 不依赖已清除的 `OpenPending`：只接受带 `restore_token` 的独立 A-06 `Restore { restore_token }` variant、当前 reconnect guard、matching owner/session identity/generation 与严格更高 `phase_revision` 的 server-authoritative `Paused` projection，不发送普通 Pause。已 hydrate close 发 `CraftPause`，选择配方发 matching `CraftStart { session_key, generation, recipe_id, quantity }`，explicit cancel 发 matching generation-bound `CraftCancel`，仅匹配 server-hydrated `Paused` session 发一次 `CraftResume`。R1 `HandoffPreparing`/`Ended` 或 stale identity 均不发 Start/Resume/Cancel；delivery Pending/InFlight/DeadLetter 是 obligation 状态，R7 不把它们存为 resumable gameplay phase。
+- **进料**：现有会话态 Store 的 listener/remove-listener API 与 snapshot；R2 只保证断线数据清理。`SessionScopedStore` 当前只有 `clearOnDisconnect()`，**不是订阅接口**，R7 基类不得持有或调用它。
+- **出料**：Screen/HUD 展示、用户输入到既有 C2S sender；本轨不改变 wire/schema/Redis key。
+- **共享类型**：冻结 `BongScreenBase<R extends ParentComponent>`、`DiffListWidget<T, K, C extends Component>`、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy` 五个 R7 类型；准确签名与 invariant 在 `r7-foundation-contract.tsv`。
+- **跨轨接缝**：R2 独占 Store disconnect lifecycle；R6 独占 channel 注册、`ProtoServerDataBridge`、`ServerDataRouter` 与网络 receive-boundary marshal。`ClientThreadMarshal` 只冻结纯 helper API，P0/P1 不把它接进 R6 文件；若后续发现非网络来源需要 helper，R7 仅在自有 Screen/HUD owner 内消费。
+- **worldview / qi_physics**：纯 client 基础设施重构，不新增玩法、真元公式、境界、经济或世界观名词；零 qi ledger 变更。
 
-## 阶段
+## 阶段总览
 
-- ⬜ P0 设计收口 + 吸收清单验真：92 处 fill(100) 全量分类（根节点合法/子节点顶飞）；28 Screen 普查；冻结基类 API 与四个共享组件。
-- ⬜ P1 基础组件落地：BongScreenBase/DiffListWidget/KeybindRegistry/ClientThreadMarshal/ScreenOpenPolicy 上线；keybind 冲突全数改绑（T/L/O/U/G 簇）。
-- ⬜ P2 Screen 迁移批次 A：炼丹/锻造/手搓/交易屏迁基类，随迁修复 fill(100)/clearChildren；Craft Screen 接线为 Idle→带 request_id 与 `Handcraft` 或 retained `Workbench { workbench_key }` 的 `CraftOpen`，未 hydration close→matching `OpenPending.pause_when_hydrated`，matching Running hydrate 后恰一次 `CraftPause`，matching A-08 reject→clear+reason，已 hydration close→`CraftPause`，选择 recipe/quantity→`CraftStart`，显式取消→generation-bound `CraftCancel`，matching paused hydrate→恰一次 `CraftResume`。client 单测锁住 Open/Start/Pause/Cancel/Resume 不互相替代、Start 仍携 recipe/quantity、Cancel 使用当前 identity、不可恢复 phase/stale identity不发 intent，以及 `Open→close→Running hydrate→Pause once`、Open→reject→可重试、duplicate/stale/mismatched hydrate/reject no-op、disconnect/session clear 丢弃 latch、Paused/HandoffPreparing/Ended hydrate 只清 latch且不重开/误发；S-10 guarded restore 另覆盖 disconnect 后 `OpenPending` 已清除时 matching `restore_token` + reconnect guard + owner/session identity/generation + strictly higher `phase_revision` 接受 authoritative `Paused`，missing/wrong/stale token 或 mismatch、Running/Ended/HandoffPreparing projection 均 no-op，不发送普通 Pause、不重开第二个 Screen。
-- ⬜ P3 InspectScreen 拆解：按 tab/section 拆组件文件（body/container/tooltip 已有雏形），行为不变。
-- ⬜ P4 Screen 迁移批次 B + 网络线程 marshal 强制（handler 层静态检查/测试）+ 删旧。
-- ⬜ P5 验收 + 吸收 plan 批量归档。
+- ✅ 2026-07-30 **P0 设计收口 + 吸收清单验真**：29 Screen/92 fill 全量 fixture、五类型 API/策略/默认键目标冻结、R2/R6 边界 pin；仅 docs/tests/resources，ZERO production behavior change。
+- ⬜ **P1 基础组件落地**：五个 R7 类型上线；默认键冲突按 frozen migration manifest 收口。
+- ⬜ **P2 Screen 迁移批次 A**：炼丹/手搓/交易等迁基类；随迁修 fill 风险和 identity-sensitive clearChildren。
+- ⬜ **P3 InspectScreen tab-first 拆解**：shell + tab panel + oversized section leaf，行为不变。
+- ⬜ **P4 Screen 迁移批次 B + R7-owned UI thread/open-policy 强制 + 删旧**。
+- ⬜ **P5 验收 + 被完整吸收 plan 批量归档**。
 
-## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
+## P0 冻结契约
 
-active：spirit-treasure-chat-key-conflict。
-skeleton：alchemy-screen-fill100-eviction 与 alchemy-screen-fill-overflow（疑似重复开出，P0 合并核实）、techniques-tab-scroll-bounce、botany-rkey-backlog-dispatch、cast-sync-config-window-thread、client-input-keybind-collision、dying-elder-give-dan-input、lingtian-advancements-key-conflict、mineral-probe-result-network-thread-ui、preview-config-dead-server、v-sparring-invite-screen-hijack、trade-offer-first-item-autopick、surface-stash-search-hud-label-gap、hud-qi-radar-mainpath-regression、weather-visual-overlay-collapse（叠层去重键）、client-insight-offer-strand（client 弹窗排队部分）。
+### 1. `BongScreenBase<R extends ParentComponent>`
+
+- 继承 `BaseOwoScreen<R>`，保留 abstract `createAdapter()` 与 `build(R)`；不能硬编码 `Containers::verticalFlow`，因为 `AgentUiScreen` / `DynamicXmlScreen` 使用 `UIModel.createAdapter(...)`。
+- 只拥有 **Screen-local listener/unsubscriber** `Runnable`：登记顺序确定、关闭时 LIFO、异常隔离、exactly once；绝不能把 R2 的 `SessionScopedStore.clearOnDisconnect()` 当 Screen teardown。
+- `removed()` 必须让业务 terminal hook、cleanup 与 `super.removed()` 在异常路径仍可达；`tick()` final 后只在 open 状态调用 protected hook；`runWhileOpen(Runnable)` 丢弃 removal 后到达的 late refresh。
+- P1 行为 pin：正常 removed、重复 removed、cleanup 抛异常、business hook 抛异常、LIFO、late refresh、XML adapter preservation。
+
+### 2. `DiffListWidget<T, K, C extends Component>`
+
+- `keyOf` 返回 ordered stable key；相同 key + 相同顺序只 patch 已 mounted rows，结构变更才 rebuild。
+- equal-key patch 必须保留 component identity、selection/callback 和 scroll（通过“不 clear children”实现，不虚构 owo 0.11.2 没公开的 scroll-offset getter/setter）。
+- null list/item/key 和 duplicate key 在 mutation 前 fail-fast；P1 pin empty→items、equal keys、reorder/add/remove、duplicate/null 和 patch failure。
+
+### 3. `BongKeybindRegistry`
+
+- 显式注册、可 grep，无 annotation/reflection discovery；translation key 永不重复，物理默认冲突 identity 为 `(InputUtil.Type, defaultCode)`；UNKNOWN/unbound 不参与物理唯一性。
+- vanilla reserved defaults 和 deliberate exemptions 必须进入显式 manifest，不靠注释豁免。
+- P0 只冻结 `r7-keybind-migration.tsv`，不改生产键位。P1 目标：保留 identity=O、forge=U、spell-volume=R；将 spirit-treasure T、lingtian L、void-action O、extract-cancel U、botany-auto R 改 UNKNOWN。垂死大能 G/H/J 继续 UNKNOWN，HUD 改为读取 effective binding，未绑定时明确显示“未绑定”；统一 G router 仍是唯一默认 G owner。
+
+### 4. `ClientThreadMarshal`
+
+- 纯 helper：already client thread 时同步执行一次；off-thread 时 enqueue 一次；注入 predicate/executor 供测试；null/unknown client state fail closed，不得在未知线程 inline。
+- **R6 接缝边界**：网络 bridge/router/handler 的公共 receive-boundary 已在 client executor 内，R7 不增加第二层 marshal，不修改 `BongNetworkHandler`、`ServerDataRouter`、`ProtoServerDataBridge` 或 channel 注册。P4 的“强制”只扫描 R7-owned Screen/HUD 异步来源；若必须改 R6 owner，先停并协调。
+
+### 5. `ScreenOpenPolicy`
+
+- pure decision layer：输入 request/current/combat/time，输出 `OPEN | PREEMPT | NOOP_MATCHING | DEFER_NOTIFY | BLOCK_DROP | EXPIRE`；policy 不直接 `setScreen()`，不新建第二份 pending offer store，并与 `ScreenTransitionController` 的 pending/current cancellation protocol 组合而非绕过。
+- passive social invite：domain Store 保持权威；战斗中或已有屏时 `DEFER_NOTIFY`，同 identity 最多提示一次；战斗结束且 `currentScreen == null`、TTL 仍有效才 `OPEN`；先到 TTL 则 `EXPIRE`。
+- ordinary hotkey：无屏 `OPEN`、同屏 `NOOP_MATCHING`、modal block 时 `BLOCK_DROP`；**物理按键永不排队重放**。
+- insight：可 `PREEMPT` 普通 non-modal UI；同 offer no-op；在 equal/higher modal 或 death/terminate system terminal 后 `DEFER_NOTIFY`。close/timeout/replacement/exceptional removal 必须收敛到同一 exactly-once settlement。
+- system terminal：`TerminateScreen > DeathScreen > lower-priority UI`；可抢占普通 UI。P0 decision vectors 在 `r7-screen-open-policy.tsv`。
+
+## InspectScreen P3 决议
+
+采用 **tab-first** top-level extraction，在超大 tab 内再按 section 拆 leaf；不按任意行数切碎，也不与 R10 server inventory 拆分同窗口进行。
+
+- `InspectScreen` shell 保留 root composition、唯一一次 screen-level snapshot/subscription intake、input/render routing，以及 drag/drop、context-menu、tooltip、hotbar、overlay arbitration。
+- tab panels 至少覆盖 equipment、cultivation、skills、现有 techniques panel 与 craft entry；tab 内 section 只接 immutable snapshot/view-model + intent callback，不直接再订阅同一个 Store。
+- body/container/tooltip 等已有组件作为 leaf 继续复用；P3 契约 pin shell 只有一个 authoritative intake、tab switch 不重复 listener、drag/tooltip/context overlay 跨 tab 行为不变。
+- R10 只改 server inventory core；R7 不等待或联动其内部文件重排，双方只守现有 wire/view-model 契约。
+
+## 吸收清单验真（2026-07-30）
+
+| finding | P0 verdict | R7 边界 / 证据 |
+|---|---|---|
+| spirit-treasure-chat-key-conflict | still-valid | T 撞 vanilla chat；P1 改 UNKNOWN，并纳入 registry。 |
+| alchemy-screen-fill-overflow | still-valid, canonical | 4 个 definite sibling eviction + 1 terminal order risk；P2 随迁修。 |
+| alchemy-screen-fill100-eviction | duplicate | 与上一 canonical 同根同点，不建第二 implementation owner。 |
+| techniques-tab-scroll-bounce | still-valid | `TechniquesTabPanel` identity-sensitive refresh 仍 clear children；迁 DiffListWidget。 |
+| botany-rkey-backlog-dispatch | still-valid | R/R 虽有局部仲裁，botany backlog/stale snapshot 仍有效；P1 收口。 |
+| client-input-keybind-collision | still-valid | O/O、U/U 无统一注册门；P1 收口。 |
+| dying-elder-give-dan-input | still-valid (client slice) | G/H/J 默认 UNKNOWN 与 HUD 硬标签不一致；不创建第二默认 G。 |
+| lingtian-advancements-key-conflict | still-valid | L 撞 vanilla advancements；P1 改 UNKNOWN。 |
+| trade-offer-first-item-autopick | still-valid (client picker slice) | outgoing trade 仍自动选第一件；R7 后续改显式 picker。 |
+| hud-qi-radar-mainpath-regression | still-valid | `BongHudOrchestrator` production planner 调用仍被注释；R7 HUD slice。 |
+| client-insight-offer-strand | still-valid (client modal slice) | 强制覆盖 + replacement/removal settlement 缺口；纳 ScreenOpenPolicy。 |
+| cast-sync-config-window-thread | already-fixed | R6 common receive boundary 已整体 client-thread marshal。 |
+| mineral-probe-result-network-thread-ui | already-fixed | 同一 R6 boundary 已覆盖；R7 不重复 handler 接线。 |
+| surface-stash-search-hud-label-gap | already-fixed | `TsyContainerView` 已有 `surface_stash -> 散修遗缴`。 |
+| v-sparring-invite-screen-hijack | duplicate/already-fixed | canonical 修复已用 deferred domain-store + one-shot toast；仅抽通用 policy。 |
+| preview-config-dead-server | out-of-track | Gradle/preview harness tooling，不属 Screen UI-base。 |
+| weather-visual-overlay-collapse | out-of-track | environment/VFX emitter identity，不属 Screen UI-base。 |
+
+只有 `still-valid` 的 R7 slice 可在 P1-P5 修；duplicate/already-fixed 不重复改，out-of-track 保留其独立 owner。
 
 ## 文件所有权与边界
 
-- 独占：client 全部 Screen/`ui/`/`hud/` 结构性改动、keybind 注册、`InspectScreen.java`。
-- 不碰：store 生命周期接口（R2 域，本轨消费）；`network/` 桥与 router（R6 域——marshal helper 由本轨提供、在 handler 注册处的接线与 R6 协调）；server 一切。
-- 依赖：本轨只引用 A-CS A-row、R6 P1 craft machinery contract、master M-09/M-10 与 R1 S-row；R2 Store、R6 machinery、R4 gate 与 R1 session 的 production 接缝在 master atomic activation row 完成前只能提交 contract pins，不宣称端到端可达。
+- **R7 独占**：client Screen/`ui/`/HUD 结构性改动、keybind 注册、`InspectScreen.java`；本 P0 实际只改本 plan、`client/src/test/java/com/bong/client/ui/R7*` 与 `client/src/test/resources/bong/ui/r7-*`。
+- **R2 独占且不碰**：`client/lifecycle/**`、Store clear/registry、`clearClientStateOnDisconnect` 区段及 R2 gate tests。R7 只消费各 Store 已有 listener/snapshot API。
+- **R6 独占且不碰**：`BongNetworkHandler` channel/receive dispatch、`network/` bridge/router/handler integration。R7 不因 helper freeze 取得接线权。
+- **server 全部不碰**；无 wire/schema/Redis 变更。
 
 ## 验收
 
-bot 测不到 client 渲染，本轨主验收 = client 单测（基类生命周期 pin、DiffListWidget 滚动保持、keybind 注册表无冲突断言、marshal 强制扫描、CraftOpen/CraftStart/CraftPause/CraftCancel/CraftResume 五条 intent producer pin，以及 close-before-hydration/rejected-open latch 全矩阵）+ `./gradlew runClient` 人工过一遍五大屏。bot 配合：`ui_c2s_smoke`（各屏的 C2S 动作链路照常可达，防拆解断线）。
+- P0 pin：`R7InventoryContractTest` 对拍 29 Screen、92 fill lexical inventory、owo inflate 语义和 production-zero-change；`R7FoundationContractTest` 对拍五类型签名、keybind target、ScreenOpenPolicy vectors、plan anchors、R2/R6 ownership。
+- P1-P4 单测只 pin 契约：base lifecycle、ordered-key list identity、registry uniqueness、marshal exactly-once、open-policy state table、Inspect shell one-intake。
+- 完整 client gate：Java 17 下 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；人工 `./gradlew runClient` 验五大屏留到实际生产迁移 PR。
+- bot 配合：`ui_c2s_smoke` 只证明各屏原 C2S 动作链路仍可达；bot 无法替代 client UI contract tests。
 
-## 开放问题（pre-P0 收口）
+## §8 开放问题（P0 决策门前需收口）
 
 1. InspectScreen 拆解粒度（按 tab 还是按 section）；拆解与 R10 server 侧 inventory 拆分是否同窗口进行。
-2. ScreenOpenPolicy 的排队语义（战斗中挂起邀请到何时弹出）——涉及玩法体验，需人工拍板。
-3. `OpenPending` 仅是等待 server identity/rejection 的 client-local latch，不进入 A-06/R1 phase enum；R2/R6 Store 先按 request_id/session token 拒绝 stale/mismatched hydration/rejection，latch 同时禁止 unresolved 期间发送第二个 `CraftOpen`。matching hydration one-shot、matching reject clear/retry、typed rejection与断线清理语义已由 P2 acceptance 冻结；latch 不按本地 timeout 自行丢弃，也不得以 Cancel 替代普通 close。
+2. ScreenOpenPolicy 的排队语义（战斗中挂起邀请到何时弹出）。
+
+全部已在 §8.1 收口。原问题保留以备追溯，实施时以 §8.1 决议为准。
+
+## §8.1 决议（pre-P0 收口，2026-07-30）
+
+### #1 InspectScreen 采用 tab-first，和 R10 解耦
+
+**决议**：top-level 按 tab 拆，超大 tab 内再拆 section leaf；shell 保留唯一 store intake 和跨 tab 交互 arbitration。R7 与 R10 不在同窗口重构，只守既有 view-model/wire 边界。
+
+**落点**：`client/src/main/java/com/bong/client/inventory/InspectScreen.java:57`；本 plan §InspectScreen P3 决议；`client/src/test/resources/bong/ui/r7-screen-inventory.tsv`。
+
+### #2 只 deferred passive offer，不 replay physical hotkey
+
+**决议**：被 combat/屏幕挡住的 passive social offer 保留在既有 domain Store，按 identity 一次通知，空屏且未过 TTL 时打开；普通 hotkey 被 modal 挡住即 drop。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；所有 modal terminal path exactly-once settlement。
+
+**落点**：`client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java:42-57`；`client/src/main/java/com/bong/client/insight/InsightOfferScreenBootstrap.java:35-53`；本 plan §ScreenOpenPolicy；`client/src/test/resources/bong/ui/r7-screen-open-policy.tsv`。
+
+## §10 实施工作流
+
+### §10.1 适用边界
+
+纯 client 逻辑重构，无 NBT/layout/model/texture，不适用视觉资产三轮与 `<PROMISE>`。每个 PR 使用中文 atomic commit，带真实 `Model:` trailer；任何生产迁移必须以 P0 fixture/contract 为基线，不能顺便越界改 R2/R6/server。
+
+### §10.2 多 PR 依赖顺序
+
+1. **PR-1 / P0 contract freeze**：docs + R7 tests/resources only，ZERO production behavior change。
+2. **PR-2 / P1 foundations + keybind**：五类型与 conflict migration；不接 R6 network files。
+3. **PR-3 / P2 migration A**：alchemy/craft/trade 等，随迁 fill/list defects。
+4. **PR-4 / P3 Inspect split**：tab-first shell/panels，行为不变。
+5. **PR-5 / P4 migration B + R7-owned enforcement**。
+6. **PR-6 / P5 acceptance + absorbed-plan archive**。
+
+前一 PR 的最终 HEAD 未通过 Java 17 gate、fresh-context SHA validator、`/review`、e2e 与 CodeRabbit 并 merge 前，不提前实施下一阶段。
+
+### §10.3 每个 PR 的闭环门
+
+1. 独立锁定 worktree/branch，不改脏 main checkout。
+2. push 前 `git fetch origin` 后紧邻 `git merge origin/main`；HEAD 变化即重验。
+3. Java 17 串行执行 global-lock client gate。
+4. 对最终 SHA 启动 explicit-worktree、read-only fresh-context validator；任何 HEAD 变化使旧 PASS 失效。
+5. push 后确认 PR head 等于已验证 SHA，独立评论 `/review`；review 修复产生新 HEAD 时重跑全部门并重新评论。
+6. orchestrator owns merge；实施 agent 不 merge。
+
+### §10.4 单次 consume-plan 全自动到 merge
+
+后续完整 `/consume-plan plan-refactor-client-ui-base-v1` 串行消费 P1-P5；每阶段保持本 plan 的 R2/R6 ownership boundary。除产品方向或不可逆操作外不中途回问；终态补 `## Finish Evidence` 并迁入 `docs/finished_plans/`。
