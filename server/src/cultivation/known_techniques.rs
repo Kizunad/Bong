@@ -1,11 +1,11 @@
 //! 功法元数据运行时注册表。
 //!
-//! `assets/cultivation/techniques.toml` 是 49 条玩家功法 metadata 的唯一真源；resolver
+//! `assets/cultivation/techniques.toml` 是玩家功法 metadata 的唯一真源；resolver
 //! 函数指针仍留在 [`crate::cultivation::skill_registry::SkillRegistry`]。本模块刻意不提供
 //! 零参或 `'static` 查询门面：ECS 系统应注入 `Res<TechniqueRegistry>`，纯函数应显式借用
 //! `&TechniqueRegistry`，避免把启动期数据泄漏成全局第二真源。
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -68,8 +68,8 @@ pub enum SkillCategory {
     Defense,
 }
 
-/// metadata 与 resolver 的接线分类。三条 `DirectGeneric` 条目没有 `SkillRegistry` resolver，
-/// 其余 46 条必须由 resolver 支持。
+/// metadata 与 resolver 的接线分类。`MetadataBacked` 由 `SkillRegistry` resolver
+/// 执行；`DirectGeneric` 则走通用 skill-bar cast 生命周期。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TechniqueDispatch {
@@ -422,18 +422,6 @@ fn validate_and_convert(
     }
 
     validate_race_gate(path, &technique_id, &raw.required_race, races)?;
-    if raw.dispatch == TechniqueDispatch::DirectGeneric
-        && !DIRECT_GENERIC_TECHNIQUES.contains(&raw.id.as_str())
-    {
-        return Err(TechniqueLoadError::invalid(
-            path,
-            Some(technique_id.clone()),
-            format!(
-                "direct_generic dispatch is reserved for {:?}",
-                DIRECT_GENERIC_TECHNIQUES
-            ),
-        ));
-    }
 
     Ok(TechniqueDefinition {
         id: raw.id,
@@ -507,14 +495,6 @@ pub fn parse_required_realm(raw: &str) -> Option<Realm> {
     }
 }
 
-pub const DIRECT_GENERIC_TECHNIQUES: [&str; 3] =
-    ["movement.dash", "shield_block", "body.guangbo_ticao"];
-
-const EXPECTED_RESOLVER_COUNT: usize = 68;
-const EXPECTED_METADATA_COUNT: usize = 49;
-const EXPECTED_INTERSECTION_COUNT: usize = 46;
-const EXPECTED_RESOLVER_ONLY_COUNT: usize = 22;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TechniqueWiringError(String);
 
@@ -526,96 +506,39 @@ impl std::fmt::Display for TechniqueWiringError {
 
 impl std::error::Error for TechniqueWiringError {}
 
-/// 验证 metadata、resolver 与经脉依赖表的有意非对称关系。只有三份候选都完整构造后才可
-/// 调用；调用者必须在成功后才把它们 insert 为 Bevy resources。
+/// 验证当前 metadata、resolver 与经脉依赖表的逐条关系。只有三份候选都完整构造后才可
+/// 调用；调用者必须在成功后才把它们 insert 为 Bevy resources。resolver-only 与
+/// dependency-only 条目有意合法，不强迫非 metadata 内容反向补表。
 pub fn validate_startup_wiring(
     techniques: &TechniqueRegistry,
     skills: &SkillRegistry,
     dependencies: &SkillMeridianDependencies,
 ) -> Result<(), TechniqueWiringError> {
-    if techniques.len() != EXPECTED_METADATA_COUNT {
-        return Err(TechniqueWiringError(format!(
-            "TechniqueRegistry must contain exactly {EXPECTED_METADATA_COUNT} metadata entries, got {}",
-            techniques.len()
-        )));
-    }
-    if skills.len() != EXPECTED_RESOLVER_COUNT {
-        return Err(TechniqueWiringError(format!(
-            "SkillRegistry must contain exactly {EXPECTED_RESOLVER_COUNT} resolvers, got {}",
-            skills.len()
-        )));
-    }
-
-    let expected_direct: BTreeSet<&str> = DIRECT_GENERIC_TECHNIQUES.into_iter().collect();
-    let direct: BTreeSet<&str> = techniques
-        .iter()
-        .filter(|definition| definition.dispatch == TechniqueDispatch::DirectGeneric)
-        .map(|definition| definition.id.as_str())
-        .collect();
-    if direct != expected_direct {
-        return Err(TechniqueWiringError(format!(
-            "direct_generic metadata set must be {:?}, got {:?}",
-            expected_direct, direct
-        )));
-    }
-
-    let metadata_backed_count = techniques
-        .iter()
-        .filter(|definition| definition.dispatch == TechniqueDispatch::MetadataBacked)
-        .count();
-    if metadata_backed_count != EXPECTED_INTERSECTION_COUNT {
-        return Err(TechniqueWiringError(format!(
-            "metadata_backed count must be {EXPECTED_INTERSECTION_COUNT}, got {metadata_backed_count}"
-        )));
-    }
-
-    let metadata_ids: BTreeSet<&str> = techniques
-        .iter()
-        .map(|definition| definition.id.as_str())
-        .collect();
-    let resolver_ids: BTreeSet<&str> = skills.ids().collect();
-    let intersection: BTreeSet<&str> = metadata_ids.intersection(&resolver_ids).copied().collect();
-    if intersection.len() != EXPECTED_INTERSECTION_COUNT {
-        return Err(TechniqueWiringError(format!(
-            "SkillRegistry ∩ TechniqueRegistry must contain exactly {EXPECTED_INTERSECTION_COUNT} ids, got {}: {:?}",
-            intersection.len(), intersection
-        )));
-    }
-    let resolver_only_count = resolver_ids.difference(&metadata_ids).count();
-    if resolver_only_count != EXPECTED_RESOLVER_ONLY_COUNT {
-        return Err(TechniqueWiringError(format!(
-            "resolver-only count must be {EXPECTED_RESOLVER_ONLY_COUNT}, got {resolver_only_count}"
-        )));
-    }
-
     for definition in techniques.iter() {
         match definition.dispatch {
-            TechniqueDispatch::MetadataBacked if !resolver_ids.contains(definition.id.as_str()) => {
-                return Err(TechniqueWiringError(format!(
-                    "metadata_backed technique {:?} has no SkillRegistry resolver",
-                    definition.id
-                )));
+            TechniqueDispatch::MetadataBacked => {
+                if skills.lookup(&definition.id).is_none() {
+                    return Err(TechniqueWiringError(format!(
+                        "metadata_backed technique {:?} has no SkillRegistry resolver",
+                        definition.id
+                    )));
+                }
+                if !dependencies.is_declared(&definition.id) {
+                    return Err(TechniqueWiringError(format!(
+                        "metadata_backed technique {:?} lacks an explicit meridian dependency declaration",
+                        definition.id
+                    )));
+                }
             }
-            TechniqueDispatch::DirectGeneric if resolver_ids.contains(definition.id.as_str()) => {
-                return Err(TechniqueWiringError(format!(
-                    "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
-                    definition.id
-                )));
+            TechniqueDispatch::DirectGeneric => {
+                if skills.lookup(&definition.id).is_some() {
+                    return Err(TechniqueWiringError(format!(
+                        "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
+                        definition.id
+                    )));
+                }
             }
-            _ => {}
         }
-    }
-
-    let missing_declarations: Vec<&str> = intersection
-        .iter()
-        .copied()
-        .filter(|skill_id| !dependencies.is_declared(skill_id))
-        .collect();
-    if !missing_declarations.is_empty() {
-        return Err(TechniqueWiringError(format!(
-            "resolver-backed metadata techniques lack explicit meridian dependency declarations: {:?}",
-            missing_declarations
-        )));
     }
 
     Ok(())
@@ -678,21 +601,25 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn toml_matches_legacy_oracle_in_order_and_every_metadata_field() {
+    fn toml_preserves_legacy_entries_as_an_ordered_compatibility_subset() {
         let registry = production_registry();
-        assert_eq!(registry.len(), LEGACY_TECHNIQUE_DEFINITIONS.len());
+        let legacy_ids = LEGACY_TECHNIQUE_IDS.into_iter().collect::<HashSet<_>>();
+        let current_legacy_order = registry
+            .iter()
+            .map(|definition| definition.id.as_str())
+            .filter(|id| legacy_ids.contains(id))
+            .collect::<Vec<_>>();
         assert_eq!(
-            registry.iter().map(|definition| definition.id.as_str()).collect::<Vec<_>>(),
-            LEGACY_TECHNIQUE_IDS,
-            "TOML declaration order is a runtime contract and must match the pre-datafication catalog"
+            current_legacy_order, LEGACY_TECHNIQUE_IDS,
+            "new metadata may be inserted, but historical entries must retain relative order"
         );
 
-        for (index, (actual, legacy)) in registry
-            .iter()
-            .zip(LEGACY_TECHNIQUE_DEFINITIONS.iter())
-            .enumerate()
-        {
-            assert_eq!(actual.id, legacy.id, "id mismatch at index {index}");
+        let historical_direct_generic = ["movement.dash", "shield_block", "body.guangbo_ticao"];
+        for legacy in LEGACY_TECHNIQUE_DEFINITIONS {
+            let actual = registry
+                .get(legacy.id)
+                .unwrap_or_else(|| panic!("legacy technique {:?} must remain present", legacy.id));
+            assert_eq!(actual.id, legacy.id, "id mismatch for {}", legacy.id);
             assert_eq!(
                 actual.display_name, legacy.display_name,
                 "display_name mismatch for {}",
@@ -776,6 +703,16 @@ dispatch = "metadata_backed"
                     legacy.id
                 );
             }
+            let expected_dispatch = if historical_direct_generic.contains(&legacy.id) {
+                TechniqueDispatch::DirectGeneric
+            } else {
+                TechniqueDispatch::MetadataBacked
+            };
+            assert_eq!(
+                actual.dispatch, expected_dispatch,
+                "historical dispatch mismatch for {}",
+                legacy.id
+            );
         }
     }
 
@@ -934,63 +871,99 @@ dispatch = "metadata_backed"
         }
     }
 
-    #[test]
-    fn direct_generic_is_limited_to_the_three_declared_ids() {
-        let invalid = minimal_toml().replace(
-            "dispatch = \"metadata_backed\"",
-            "dispatch = \"direct_generic\"",
-        );
-        assert!(load(&invalid).is_err());
-        let allowed = minimal_toml()
-            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
-            .replace(
-                "dispatch = \"metadata_backed\"",
-                "dispatch = \"direct_generic\"",
-            );
-        assert_eq!(load(&allowed).unwrap().len(), 1);
+    fn noop_skill(
+        _world: &mut bevy_ecs::world::World,
+        _caster: bevy_ecs::entity::Entity,
+        _slot: u8,
+        _target: Option<bevy_ecs::entity::Entity>,
+    ) -> crate::cultivation::skill_registry::CastResult {
+        crate::cultivation::skill_registry::CastResult::Interrupted
     }
 
     #[test]
-    fn production_wiring_matches_the_frozen_68_49_46_3_22_relation() {
+    fn arbitrary_direct_generic_metadata_is_data_owned() {
+        let registry = load(&minimal_toml().replace(
+            "dispatch = \"metadata_backed\"",
+            "dispatch = \"direct_generic\"",
+        ))
+        .expect("an arbitrary valid id may opt into the generic cast path");
+        let skills = SkillRegistry::default();
+
+        validate_startup_wiring(&registry, &skills, &SkillMeridianDependencies::default())
+            .expect("direct_generic does not require a dependency declaration");
+
+        let mut dependencies = SkillMeridianDependencies::default();
+        dependencies.declare("test.skill", Vec::new());
+        validate_startup_wiring(&registry, &skills, &dependencies)
+            .expect("direct_generic may also have an explicit dependency declaration");
+    }
+
+    #[test]
+    fn metadata_backed_accepts_data_only_metadata_when_runtime_wiring_exists() {
+        let registry = load(&minimal_toml()).expect("minimal metadata loads");
+        let mut skills = SkillRegistry::default();
+        skills.register("test.skill", noop_skill);
+        skills.register("resolver.only", noop_skill);
+        let mut dependencies = SkillMeridianDependencies::default();
+        dependencies.declare("test.skill", Vec::new());
+        dependencies.declare("dependency.only", Vec::new());
+
+        validate_startup_wiring(&registry, &skills, &dependencies).expect(
+            "existing resolver plus explicit empty dependency must admit metadata without Rust allowlists",
+        );
+    }
+
+    #[test]
+    fn startup_wiring_rejects_each_metadata_relationship_violation_with_the_id() {
+        let metadata_backed = load(&minimal_toml()).expect("minimal metadata loads");
+        let no_skills = SkillRegistry::default();
+        let mut declared = SkillMeridianDependencies::default();
+        declared.declare("test.skill", Vec::new());
+        let missing_resolver = validate_startup_wiring(&metadata_backed, &no_skills, &declared)
+            .expect_err("metadata_backed without resolver must fail");
+        assert!(missing_resolver.to_string().contains("test.skill"));
+        assert!(missing_resolver
+            .to_string()
+            .contains("no SkillRegistry resolver"));
+
+        let mut skills = SkillRegistry::default();
+        skills.register("test.skill", noop_skill);
+        let missing_dependency = validate_startup_wiring(
+            &metadata_backed,
+            &skills,
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("metadata_backed without an explicit dependency declaration must fail");
+        assert!(missing_dependency.to_string().contains("test.skill"));
+        assert!(missing_dependency
+            .to_string()
+            .contains("explicit meridian dependency declaration"));
+
+        let direct_generic = load(&minimal_toml().replace(
+            "dispatch = \"metadata_backed\"",
+            "dispatch = \"direct_generic\"",
+        ))
+        .expect("direct_generic metadata loads");
+        let resolver_conflict = validate_startup_wiring(
+            &direct_generic,
+            &skills,
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("direct_generic with a resolver must fail");
+        assert!(resolver_conflict.to_string().contains("test.skill"));
+        assert!(resolver_conflict
+            .to_string()
+            .contains("unexpectedly has a SkillRegistry resolver"));
+    }
+
+    #[test]
+    fn checked_in_production_wiring_satisfies_dynamic_relationships() {
         let techniques = production_registry();
         let skills = crate::cultivation::skill_registry::init_registry();
         let dependencies = crate::cultivation::skill_registry::init_meridian_dependencies();
 
         validate_startup_wiring(&techniques, &skills, &dependencies)
             .expect("checked-in metadata, resolvers, and dependencies must satisfy startup wiring");
-
-        let metadata_ids: BTreeSet<&str> = techniques
-            .iter()
-            .map(|definition| definition.id.as_str())
-            .collect();
-        let resolver_ids: BTreeSet<&str> = skills.ids().collect();
-        let direct_ids: BTreeSet<&str> = techniques
-            .iter()
-            .filter(|definition| definition.dispatch == TechniqueDispatch::DirectGeneric)
-            .map(|definition| definition.id.as_str())
-            .collect();
-
-        assert_eq!(resolver_ids.len(), 68, "resolver id count drifted");
-        assert_eq!(metadata_ids.len(), 49, "metadata id count drifted");
-        assert_eq!(metadata_ids.intersection(&resolver_ids).count(), 46);
-        assert_eq!(direct_ids, BTreeSet::from(DIRECT_GENERIC_TECHNIQUES));
-        assert_eq!(resolver_ids.difference(&metadata_ids).count(), 22);
-    }
-
-    #[test]
-    fn startup_wiring_rejects_a_missing_dependency_declaration() {
-        let techniques = production_registry();
-        let skills = crate::cultivation::skill_registry::init_registry();
-        let dependencies = SkillMeridianDependencies::default();
-
-        let error = validate_startup_wiring(&techniques, &skills, &dependencies)
-            .expect_err("resolver-backed metadata without explicit dependencies must fail startup");
-        assert!(
-            error
-                .to_string()
-                .contains("lack explicit meridian dependency declarations"),
-            "diagnostic should identify the missing dependency declarations: {error}"
-        );
     }
 
     #[test]
