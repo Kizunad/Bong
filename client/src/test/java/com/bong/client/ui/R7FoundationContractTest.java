@@ -134,7 +134,7 @@ class R7FoundationContractTest {
     @Test
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
         List<OpenPolicyRow> rows = openPolicyRows();
-        assertEquals(19, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
+        assertEquals(20, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
         Set<String> requestKinds = Set.of("SOCIAL_INVITE", "HOTKEY", "INSIGHT", "SYSTEM_TERMINAL");
         Set<String> currentKinds = Set.of("NONE", "ORDINARY", "MODAL", "SYSTEM_TERMINAL");
         Set<String> terminalPriorities = Set.of("NONE", "DEATH", "TERMINATE");
@@ -162,6 +162,7 @@ class R7FoundationContractTest {
         assertEquals("PREEMPT", findPolicy(rows, "terminate-preempt-death").decision());
         assertEquals("BLOCK_DROP", findPolicy(rows, "death-blocked-terminate").decision());
         assertEquals("BLOCK_DROP", findPolicy(rows, "death-blocked-peer").decision());
+        assertEquals("BLOCK_DROP", findPolicy(rows, "terminate-blocked-peer").decision());
 
         assertTrue(rows.stream()
             .filter(row -> row.requestKind().equals("HOTKEY"))
