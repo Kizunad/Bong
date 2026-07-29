@@ -519,9 +519,10 @@ def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0
 
 
 def _optional_double(fields: list[tuple[int, int, Any]], field: int) -> float | None:
-    if not _has(fields, field):
-        return None
-    return _double(fields, field)
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 1:
+            return struct.unpack("<d", value)[0]
+    return None
 
 
 def _message(fields: list[tuple[int, int, Any]], field: int) -> list[tuple[int, int, Any]]:
@@ -543,9 +544,10 @@ def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.
 
 
 def _optional_float32(fields: list[tuple[int, int, Any]], field: int) -> float | None:
-    if not _has(fields, field):
-        return None
-    return _float32(fields, field)
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 5:
+            return struct.unpack("<f", value)[0]
+    return None
 
 
 # ── 生产 / 消费玩法 payload（envelope.proto oneof tag 见 proto/bong/envelope.proto）──

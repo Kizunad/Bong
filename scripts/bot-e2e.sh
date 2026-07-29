@@ -71,6 +71,11 @@ if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_WORLD_PATH:-}" ]; then
   exit 2
 fi
 
+if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then
+  echo "[bot-e2e] fallback mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH；测试状态必须由本轮 harness 独占" >&2
+  exit 2
+fi
+
 # 自起 server 固定由当前 checkout 监听本机 IPv4；若要连接远端或 IPv6 server，
 # 必须显式 REUSE，避免 ownership 校验命中 IPv4 子进程、Bot 却连到另一地址族旧服。
 if [ "$REUSE" != "1" ] && [ "$HOST" != "127.0.0.1" ]; then
@@ -441,8 +446,10 @@ elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then
   SCENARIO_ARGS=()
   IFS=',' read -r -a requested_scenarios <<<"$BOT_E2E_SCENARIOS"
   for scenario in "${requested_scenarios[@]}"; do
-    if [ -z "$scenario" ]; then
-      echo "[bot-e2e] BOT_E2E_SCENARIOS 含空场景名：$BOT_E2E_SCENARIOS" >&2
+    trimmed_scenario="${scenario#"${scenario%%[![:space:]]*}"}"
+    trimmed_scenario="${trimmed_scenario%"${trimmed_scenario##*[![:space:]]}"}"
+    if [ -z "$trimmed_scenario" ] || [ "$trimmed_scenario" != "$scenario" ]; then
+      echo "[bot-e2e] BOT_E2E_SCENARIOS 含空白或带首尾空白的场景名：$BOT_E2E_SCENARIOS" >&2
       exit 2
     fi
     SCENARIO_ARGS+=(--scenario "$scenario")

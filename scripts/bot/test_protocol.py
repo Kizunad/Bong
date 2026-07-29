@@ -355,7 +355,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                                     "anchor": [0.0, 70.0, 0.0],
                                     "radius": 1.0,
                                     "weight": 1,
-                                    "safe_y": 73.0,
+                                    "safe_y": make_novice_raster_fixture.SURFACE_Y + 1,
                                 }
                             ],
                         }
@@ -370,6 +370,33 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 zones_path = pathlib.Path(temp_dir) / "zones.json"
                 zones_path.write_text(json.dumps(config), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_boolean_anchor_components(self):
+        for index in range(3):
+            anchor = [0.0, 70.0, 0.0]
+            anchor[index] = True
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": anchor,
+                                "radius": 1.0,
+                                "weight": 1,
+                                "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, re.escape("invalid spawn_distribution[0]")
+                ):
                     make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
 
     def test_spawn_fixture_tiles_matches_production_u32_weight_contract(self):
@@ -834,6 +861,40 @@ class ServerDataDecodeTest(unittest.TestCase):
             },
         )
         self.assertAlmostEqual(decoded["dye_contamination"], 0.35, places=6)
+
+    def test_optional_numeric_fields_ignore_wrong_wire_type_and_use_last_typed_value(self):
+        malformed_lingtian = _pb_varint(10, 1)
+        decoded = decode_server_data_payload(_pb_message(31, malformed_lingtian))
+        self.assertIsNone(
+            decoded["dye_contamination"],
+            "同字段号但错误 wire type 不能伪装成 optional float32=0.0",
+        )
+
+        malformed_alchemy = _pb_varint(4, 1) + _pb_string(5, "not-a-double")
+        decoded = decode_server_data_payload(_pb_message(14, malformed_alchemy))
+        self.assertIsNone(
+            decoded["quality"],
+            "同字段号但错误 wire type 不能伪装成 optional double=0.0",
+        )
+        self.assertIsNone(decoded["toxin_amount"])
+
+        mixed_lingtian = _pb_varint(10, 1) + _pb_fixed32(10, 0.25) + _pb_fixed32(10, 0.75)
+        decoded = decode_server_data_payload(_pb_message(31, mixed_lingtian))
+        self.assertAlmostEqual(
+            decoded["dye_contamination"],
+            0.75,
+            places=6,
+            msg="错误 wire 应按 unknown field 忽略，正确 float32 取最后一个 typed value",
+        )
+
+        mixed_alchemy = _pb_string(4, "ignored") + _pb_fixed64(4, 0.2) + _pb_fixed64(4, 0.8)
+        decoded = decode_server_data_payload(_pb_message(14, mixed_alchemy))
+        self.assertAlmostEqual(
+            decoded["quality"],
+            0.8,
+            places=9,
+            msg="错误 wire 应按 unknown field 忽略，正确 double 取最后一个 typed value",
+        )
 
     def test_proto_alchemy_outcome_preserves_optional_presence_and_enum_identity(self):
         pill = (
@@ -1486,6 +1547,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
         self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
         self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_WORLD_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
@@ -1573,6 +1635,13 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "BONG_WORLD_PATH": "/caller/world",
                 },
                 "fallback mode 不接受 BONG_WORLD_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_SPIRITWOOD_HARVESTED_PATH": "/caller/harvested.json",
+                },
+                "fallback mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
             ),
             (
                 {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
@@ -1722,6 +1791,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "owned dev harness 应允许显式聚焦一组场景，避免 P2 验证被全套 P3-P5 噪声遮蔽",
         )
         self.assertIn('IFS=\',\' read -r -a requested_scenarios', scenario)
+        self.assertIn('trimmed_scenario="${scenario#', scenario)
+        self.assertIn('[ "$trimmed_scenario" != "$scenario" ]', scenario)
         self.assertLess(
             scenario.index('if [ "$FALLBACK_MODE" = "1" ]; then'),
             scenario.index('elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then'),
@@ -4196,6 +4267,21 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
         self.assertIsNone(bot.entity_pos(42))
         self.assertNotIn(42, bot.player_entity_uuids)
         self.assertEqual(bot.player_names[self.PLAYER_UUID], "Alice")
+
+    def test_player_remove_clears_stale_uuid_name_mapping(self):
+        bot = _bare_bot()
+        self._player_list_add(bot)
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+
+        bot._dispatch(
+            mc.write_varint(mc.S2C_PLAYER_REMOVE)
+            + mc.write_varint(1)
+            + raw_uuid
+        )
+
+        self.assertNotIn(self.PLAYER_UUID, bot.player_names)
+        self.assertEqual(bot.events[-1].kind, "player_remove")
+        self.assertEqual(bot.events[-1].data["uuids"], [self.PLAYER_UUID])
 
     def test_combined_actions_follow_authoritative_valence_field_order(self):
         bot = _bare_bot()

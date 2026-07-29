@@ -233,6 +233,12 @@ class Bot:
                         reader.string()
                 entries.append(entry)
             self._emit("player_list", {"actions": actions, "entries": entries})
+        elif packet_id == mc.S2C_PLAYER_REMOVE:
+            count = reader.varint()
+            removed = [reader.uuid() for _ in range(count)]
+            for player_uuid in removed:
+                self.player_names.pop(player_uuid, None)
+            self._emit("player_remove", {"uuids": removed})
         elif packet_id == mc.S2C_PLAYER_SPAWN:
             entity_id = reader.varint()
             player_uuid = reader.uuid()
