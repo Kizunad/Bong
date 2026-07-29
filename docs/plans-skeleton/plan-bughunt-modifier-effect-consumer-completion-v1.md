@@ -41,7 +41,7 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 1. **Alchemy effect 仍断链**：`server/src/alchemy/side_effect_apply.rs:20-83` 把可达 `contam_boost` 变成带 magnitude/duration 的 `ContaminationBoost`；`server/src/combat/status.rs:17-58` 会 upsert，HUD 也会显示，但 `server/src/cultivation/contamination.rs:97-205` 的 query/公式不读 `StatusEffects`。它是“可生产、可显示、会到期，但不改变污染物理”的 behavioral orphan。
 2. **金钟丹极性仍错**：`server/src/alchemy/pill.rs:632-642` 的 negative duration 仍 push 正向 `QiRegenBoost(0.001)`；`server/src/cultivation/tick.rs:223-226,445-455` 现有 consumer 按 `1 + magnitude` 增益回气。因此本项只修 negative kind/极性，不重做通用 `QiRegenBoost` consumer。
 3. **r7 五字段仍只有 producer/storage**：`server/src/cultivation/insight_apply.rs:25-40,123-191` 写 `qi_regen_mul`、`next_breakthrough_bonus` 与三个 vortex 字段；回气 query `server/src/cultivation/tick.rs:96-132` 不含 `InsightModifiers`，breakthrough/woliu 主循环也不读这些字段。选择会真实发生并持久化（`cultivation/insight_flow.rs:251-344`、`persistence/mod.rs:6193-6229`），但 gameplay 数值不变。
-4. **P3 live Insight 簇仍断链**：`server/src/cultivation/insight_apply.rs:24-254` 的 live benefit/cost 字段中，除阵法两字段已有 consumer、`composure_recover_mul` 有 sibling direct effect 外，当前生产读取 grep 仅命中 reset/fixture/offer schema。另有 `generic_talents.json:173-188` 的可达 `vortex_burst_damage` cost，经 `generic_talent.rs:405-407` 生成 `VortexBurstDamageMul`，最终只在 `insight_apply.rs:248-251` 写 `practices` marker，无伤害 consumer。`observe_chance_bonus` 仅 default，`technique_observe.rs:64-134` 的 reader 上层又无 production caller，必须登记为 dormant，不可误报已闭环。
+4. **P3 live Insight 簇仍断链**：`server/src/cultivation/insight_apply.rs:24-254` 的 live benefit/cost 字段中，除阵法两字段已有 consumer、`composure_recover_mul` 有 sibling direct effect 外，当前生产读取 grep 仅命中 reset/fixture/offer schema。`generic_talents.json:173-188` 虽定义 `vortex_burst_damage` cost，且可转换为 `insight_apply.rs:248-251` 的 `practices` marker，但当前 `color_affinity.rs:76-105,138-165` 每 alignment 只选第一个 valid candidate，使它被更早的同 affinity 候选遮蔽，production offer 不可达；须登记 dormant selector-shadowed，不能误纳 live consumer scope。`observe_chance_bonus` 同样仅 default，`technique_observe.rs:64-134` 的 reader 上层无 production caller，必须登记 dormant，不可误报已闭环。
 5. **活茧四字段仍只写不读**：`server/src/combat/baomai_v4/iron_cocoon.rs:99-143` 写三项 wound 字段与 `scar_forged_flow_bonus`；全仓其它命中只在 producer 单测。`server/src/cultivation/components.rs:522-524` 的 `MeridianSystem::sum_rate` 只加持久 `flow_rate`；`combat/resolve.rs` 也不读三项 wound 字段。
 6. **jump 仍是跨栈 orphan**：`server/src/combat/body_conditioning.rs:157-167` 写入、`combat/status.rs:163-175` reset，但 `schema/combat_hud.rs:209-220`、`network/derived_attrs_emit.rs:76-90`、`proto/bong/envelope.proto:1706-1718`、client `DerivedAttrsStore` 和跳跃输入链均无该字段。兄弟字段 `move_speed_multiplier` 已消费，不能代替 jump consumer。
 7. **P0 gate 仍不存在**：`server/src/test_coverage_guards.rs` 现有源码扫描面向 `EventWriter<T>`/`EventReader<T>`；仓库无 `MODIFIER_CONSUMER_MANIFEST` / `modifier_consumer_manifest_stays_current`。它无法区分 gameplay、HUD/persistence-only、test-only、shadow direct effect 或 dormant producer。
@@ -50,8 +50,8 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 
 - [ ] 建立 greppable `ModifierConsumerContract` / `MODIFIER_CONSUMER_MANIFEST`（名称可等义），库存至少覆盖 `DerivedAttrs` 非展示字段、`InsightModifiers` 字段与 `StatusEffectKind` gameplay variant；新增字段/variant 未登记即 gate 失败。
 - [ ] 每条登记明确 producer、production consumer、observable differential test 与分类：`Gameplay`、`ShadowDirectEffect`、`DormantNoProducer`、`PlannedNoConsumer`。后两类必须写 owner、阻塞原因和解除条件；禁止把 HUD/schema/persistence/store/test-only read 填成 consumer。
-- [ ] P0 必须登记 11 条 canonical finding 及 P1 的完整 live Insight 清单；短期设计未决字段可 `PlannedNoConsumer`，但不得静默遗漏：`qi_regen_mul`、`next_breakthrough_bonus`、`vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`、`hunyuan_threshold_mul`、`chaotic_tolerance_add`、`overload_tolerance_add`、`opposite_color_efficiency_penalty`、`qi_volatility_add`、`shock_sensitivity_add`、`main_color_efficiency_penalty`、`overload_fragility_add`、`reaction_window_penalty`、`breakthrough_failure_penalty_mul`、`sense_exposure_add`、`meridian_heal_slowdown_mul`、`chaotic_tolerance_loss`；`practices` 这类 key-value 容器还必须逐 key 登记可达的 `woliu:vortex_burst_damage_mul:*`，不能用一个 HashSet 字段条目掩盖 marker orphan。
-- [ ] 已有真消费/特殊分类须显式防重复：`zhenfa_concealment`、`zhenfa_disenchant` 为 `Gameplay`；`composure_recover_mul` 为 `ShadowDirectEffect`（真实 `Cultivation.composure_recover_rate` 被消费）；`observe_chance_bonus` 为 `DormantNoProducer`，直到 producer 与 production observe caller 同包落地。
+- [ ] P0 必须登记 11 条 canonical finding 及 P1 的完整 live Insight 清单；短期设计未决字段可 `PlannedNoConsumer`，但不得静默遗漏：`qi_regen_mul`、`next_breakthrough_bonus`、`vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`、`hunyuan_threshold_mul`、`chaotic_tolerance_add`、`overload_tolerance_add`、`opposite_color_efficiency_penalty`、`qi_volatility_add`、`shock_sensitivity_add`、`main_color_efficiency_penalty`、`overload_fragility_add`、`reaction_window_penalty`、`breakthrough_failure_penalty_mul`、`sense_exposure_add`、`meridian_heal_slowdown_mul`、`chaotic_tolerance_loss`；`practices` 这类 key-value 容器还必须逐 key 做 reachability 分类，不能用一个 HashSet 字段条目掩盖 dormant marker。
+- [ ] 已有真消费/特殊分类须显式防重复：`zhenfa_concealment`、`zhenfa_disenchant` 为 `Gameplay`；`composure_recover_mul` 为 `ShadowDirectEffect`（真实 `Cultivation.composure_recover_rate` 被消费）；`observe_chance_bonus` 为 `DormantNoProducer`；`woliu:vortex_burst_damage_mul:*` 为 `DormantSelectorShadowed`，除非同 PR 先补 production selector reachability，再新增 typed consumer 与差分测试。
 - [ ] `Gameplay` 合同不能靠文本 grep 自证：每条必须绑定可 grep 的 production caller/system schedule 与 gameplay differential test；helper 只有 tests caller 必须失败。可核验测试：`modifier_consumer_manifest_stays_current`、`modifier_contract_rejects_storage_test_or_dead_helper_consumer`、`planned_modifier_contract_requires_owner_reason_and_exit_condition`。fixture 覆盖缺字段、仅测试引用、仅 HUD/serialization 引用、生产文件 helper read 但无 caller（仿 `evaluate_observe_attempt`）；manifest 不能取代后续 gameplay 差分测试。
 
 ## P1 — Alchemy + Insight gameplay consumers
@@ -68,7 +68,7 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 - [ ] **PR-Insight-A（回气/突破）**：接 `qi_regen_mul`、`next_breakthrough_bonus`、`breakthrough_failure_penalty_mul`；真实 choice→component→tick/breakthrough 流程对拍，明确 bonus 的一次性消费时点。回气 gain/drain 必须继续 ledger 守恒。
 - [ ] **PR-Insight-B（颜色/混元/杂色）**：接 `hunyuan_threshold_mul`、`chaotic_tolerance_add/loss` 与两个 color penalty。现有 aggregate penalty 丢失受罚颜色 identity，实施前必须先改成能表达目标颜色的持久化形状并补 migration；不能把惩罚全局化。
 - [ ] **PR-Insight-C（过载/经脉恢复）**：接 `overload_tolerance_add`、`overload_fragility_add`、`meridian_heal_slowdown_mul`；阈值、严重度、恢复时长分别做 neutral/benefit/cost 差分，避免同一 modifier 在 detection 与 event-reader 双算。
-- [ ] **PR-Insight-D（涡流）**：接 `vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`，并解析/消费可达 `practices` marker `woliu:vortex_burst_damage_mul:*`；先定义 flow speed 是 cast ticks、吸收 dt 还是维持周期，所有 Woliu 生产路径必须共用同一 effective helper。burst-damage cost 必须在真实涡流爆发伤害中生效并覆盖 marker 缺失、单值、多次 choice 累乘及脏 marker fail-closed。
+- [ ] **PR-Insight-D（涡流）**：接 `vortex_backfire_resist_mul`、`vortex_delta_bonus_add`、`vortex_flow_speed_mul`；先定义 flow speed 是 cast ticks、吸收 dt 还是维持周期，所有 Woliu 生产路径必须共用同一 effective helper。`woliu:vortex_burst_damage_mul:*` 当前 selector-shadowed，不是本批 live consumer 交付；只有先用 production offer 测试证明其可达，才允许同 PR 将 marker 迁成 typed cost、接真实爆发伤害并覆盖缺失/单值/累乘/脏值。
 - [ ] **PR-Insight-E（感知/反应/冲击/波动）**：`sense_exposure_add`、`reaction_window_penalty`、`shock_sensitivity_add`、`qi_volatility_add` 在 pre-P0 找到或建立 canonical gameplay seam；若 seam 不存在则继续 `PlannedNoConsumer`，不得为消除 manifest 红线随意挂错系统。
 - [ ] 每字段至少一条“相同 gameplay 输入，仅 modifier 不同”的 production differential integration test；同时覆盖 neutral、累计/组合、非有限或脏持久化值 fail-closed、重登水合后仍生效及 reset。只断言 `InsightModifiers` 字段变化不算验收。
 - [ ] 可核验 symbol：`insight_qi_regen_multiplier`、`effective_breakthrough_bonus`、`effective_overload_threshold`、`effective_meridian_heal_rate`、`effective_vortex_delta`、`effective_vortex_flow_speed`（名称可等义）及 `insight_modifier_changes_*_gameplay` 测试族。
@@ -112,9 +112,9 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 10. jump 最终采用 server authority 还是 client hook + server validation？
 11. P0 manifest 是 Rust typed inventory 还是脚本生成清单；如何 fail-closed 地证明字段 inventory 完整、同时避免把文本 grep 冒充 reachability？
 
-12. `vortex_burst_damage` cost 是替换 `practices` marker 为 typed 字段，还是保留 marker 并建立唯一 parser；旧存档脏/重复 marker 如何 fail-closed？
+12. `vortex_burst_damage` 是否应先改 selector 使 talent production-reachable；若启用，cost 是迁成 typed 字段还是保留唯一 parser，旧存档脏/重复 marker 如何 fail-closed？
 
-> 全部开放问题必须按 `docs/CLAUDE.md §五` 追加当前代码 `file:line + plan 章节` 双锚点决议后，P0-P3 均不得实施；未决项允许在决议后留作 `PlannedNoConsumer`，但不允许由自动消费 agent 拍脑袋选择语义。
+> 在上述十二项全部按 `docs/CLAUDE.md §五` 追加当前代码 `file:line + plan 章节` 双锚点决议之前，P0-P3 均不得实施；决议完成后仍无 canonical seam 的项允许保留为 `PlannedNoConsumer` / dormant 分类，但不允许由自动消费 agent 拍脑袋选择语义。
 
 ## §10 实施工作流
 
@@ -141,7 +141,7 @@ P5 anti-orphan manifest/lint 是本 skeleton 的共享实施门，前置为 P0�
 
 ### §10.3 归档前跨域验收
 
-- `modifier_consumer_manifest_stays_current` 必须覆盖最新 `DerivedAttrs`、`InsightModifiers`、`StatusEffectKind` 及 `practices` live key，且每条 `Gameplay` 合同有 production caller/schedule + observable differential test。
+- `modifier_consumer_manifest_stays_current` 必须覆盖最新 `DerivedAttrs`、`InsightModifiers`、`StatusEffectKind` 及 `practices` key 的 live/dormant reachability 分类，且每条 `Gameplay` 合同有 production caller/schedule + observable differential test。
 - 运行 alchemy→status→污染/回气、Insight choice→持久化→gameplay loop、Iron Cocoon→resolve/flow、Guangbo→sync→jump 四条完整链；manifest 绿不能替代任何一条。
 - qi 路径以 `WorldQiAccount` / `QiTransfer` 守恒断言验收；跨端 jump 以实际 apex/velocity 与 disconnect reset 验收。
 - 全部阶段 ✅、review 无 blocker/major、GitHub e2e 覆盖本地隔离 suite 后，才填写 Finish Evidence 并迁入 `docs/finished_plans/`。
