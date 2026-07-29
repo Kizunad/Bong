@@ -160,8 +160,8 @@
 **落地清单**：
 
 - **P0 craft 配方数据化**：`server/assets/craft/recipes/` 收编 90 条 workbench/coffin/self 与 5 条 legacy 配方；`server/src/craft/data.rs` 实现递归、有序、`deny_unknown_fields` 的 TOML loader，并在原子提交前校验重复 ID、材料/产出/卷轴物品引用、数值和文件类型；`server/src/craft/fixtures/legacy_p0_registrar.rs` 与 `registry_datafication_p0_baseline.json` 冻结迁移前 95 条注册结果，逐字段对拍保持 station、unlock、材料顺序和运行时语义。
-- **P1 功法元数据数据化**：`server/assets/cultivation/techniques.toml` 成为 49 条 metadata 的唯一真源；`server/src/cultivation/known_techniques.rs` 落地 owned `TechniqueRegistry`（source-order `Vec` + ID index），`known_techniques_legacy_oracle.rs` 逐字段锁旧表；`cultivation::register` 在资源可见前同步构造并校验 68 resolver / 49 metadata / 46 交集 / 3 direct-generic / 22 resolver-only 关系；`skill_registry::init_meridian_dependencies` 集中构造经脉声明，重复声明 fail fast。生产调用方全部改为显式借用 registry，未新增全局/static 兼容门面。
-- **P2 方块目录与启动预检**：`server/assets/worldgen/block_catalog.toml` 收编封闭的 213 logical key（211 direct + `glowshroom -> shroomlight`、`iron_nugget -> air` 两 alias）；`world/terrain/blocks.rs` 成为唯一 resolver，`raster.rs` 的 39-arm 镜像删除；`blocks_legacy_oracle.rs` 与 `raster_legacy_oracle.rs` 锁定旧结果。`nbt_io.rs`、`nbt_registry.rs`、`terrain/mod.rs`、`world/mod.rs` 将 overworld/可选 TSY、surface palette、decoration NBT、placement sidecar、属性和值及 raster palette 边界集中预检，全部通过后才构造 provider/layer；有效 worldgen 生产 manifest 的已知元数据显式接纳，未来未知字段继续被 `deny_unknown_fields` 拒绝。同步修复 `frost_cluster_v3.nbt` 中误施于 `blue_ice` 的 `facing=up` 属性。
+- **P1 功法元数据数据化**：`server/assets/cultivation/techniques.toml` 是当前 metadata 集合的唯一真源；checked-in 49 条只作为迁移兼容基线，不是生产数量上限。`server/src/cultivation/known_techniques.rs` 落地 owned `TechniqueRegistry`（source-order `Vec` + ID index），`known_techniques_legacy_oracle.rs` 逐字段锁旧表并验证其为有序兼容子序列。`cultivation::register` 在资源可见前按当前数据逐条动态校验：`metadata_backed` 必须有同 ID resolver 与显式经脉依赖声明，`direct_generic` 必须没有 resolver；resolver-only、dependency-only 以及 direct-generic 的可选 dependency 均合法。历史 68 resolver / 49 metadata / 46 交集 / 3 direct-generic / 22 resolver-only 仅是迁移时事实，不再参与生产 admission。生产调用方全部显式借用 registry，未新增全局/static 兼容门面。
+- **P2 方块目录与启动预检**：`server/assets/worldgen/block_catalog.toml` 的 checked-in 213 logical key（211 direct + `glowshroom -> shroomlight`、`iron_nugget -> air` 两 alias）是迁移兼容基线，不是生产上限；TOML 可只改数据新增任意可 lower 的 direct，或新增指向同文件 direct 的 alias。`world/terrain/blocks.rs` 两阶段解析当前声明集合，允许 forward alias，拒绝未声明 target、合法但未列入 catalog 的 vanilla target、self/alias-chain/空/namespaced target，并保持 catalog miss 不回退任意 vanilla block。`blocks_legacy_oracle.rs` 将旧 213 项锁为同值有序兼容子序列，`raster_legacy_oracle.rs` 继续锁定旧 39-key fast-path 子集；`raster.rs` 的 39-arm 镜像已删除。`nbt_io.rs`、`nbt_registry.rs`、`terrain/mod.rs`、`world/mod.rs` 将 overworld/可选 TSY、surface palette、decoration NBT、placement sidecar、属性和值及 raster palette 边界集中预检，全部通过后才构造 provider/layer；有效 worldgen 生产 manifest 的已知元数据显式接纳，未来未知字段继续被 `deny_unknown_fields` 拒绝。同步修复 `frost_cluster_v3.nbt` 中误施于 `blue_ice` 的 `facing=up` 属性。
 - **P3 范围裁决**：按 §8.1 #5 保持矿物 registry、NPC 原型默认掉落、丹道 6 方包装原状；本 PR 不顺手扩 scope。
 
 **关键 commit**：
@@ -174,14 +174,19 @@
 - `31997f20c`（2026-07-29）：首次发布收口合并 `origin/main`，并据此修正合并态生命周期测试契约。
 - `8d4bad052`（2026-07-29）：合并态生命周期测试按既有墙钟 deadline 折算契约断言，生产公式未放宽。
 - `f968aff0f`（2026-07-29）：最终发布前再次 fetch 并合并最新 `origin/main`；仅带入一份无关 bughunt skeleton，随后仍按协议重跑全部受影响门禁。
+- `5af4be29a`（2026-07-30）：根据 fresh validator 结论移除方块目录的 213/211/2、固定 alias 与完整 key-set fingerprint 生产门，将历史集合降为 test-only compatibility baseline。
+- `06f8fe650`（2026-07-30）：移除功法 wiring 的固定 direct-generic ID 与 68/49/46/22 数量门，改为当前 registry 间逐条动态关系校验。
 
 **测试结果**：
 
-- 最终合并态完整 server 门（`f968aff0f`）：`flock -x /tmp/bong-cargo.lock bash -lc 'cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 全绿——library `12185 passed / 0 failed / 2 ignored`；CLI `12 passed`；full-app startup `2 passed`；shutdown `2 passed`；Tarkov backpack e2e `4 passed`；doc tests `5 ignored`。
-- 最终合并态 worldgen 合同：`python3 -m unittest worldgen.tests.test_decoration_contract worldgen.tests.test_nbt_block_palette` → `22 passed`。
-- 完整 raster 生成产物：overworld `306 tiles / 84 POIs / 112 decorations / 138969 placements`；TSY `9 tiles / 56 POIs`。
-- 双 raster 后验：`validate_rasters` → overworld 306/306、TSY 9/9 全部通过。
-- 最终可执行文件启动预检：经 Cargo flock 显式 `cargo build`，以生成的 overworld + TSY manifests 启动并持续 30 秒无 panic；日志确认 `loaded 306 terrain tiles`、`loaded TSY 9 terrain tiles`、`decoration NBT registry: 54 templates resident`。
+- fresh-context validator 在 `79efaf56b4fd552a97b5fa72086c000598f4ac40` 发现迁移实现仍以固定 count/ID/alias/fingerprint 拒绝合法数据扩展；上述两个 follow-up commit 将迁移数字降为 test-only compatibility evidence，并以 data-only 扩展正向测试及严格引用反向矩阵锁定动态生产契约。
+- 修复后 targeted Rust 门：block catalog `14 passed`；known techniques `13 passed`；无 resolver 的已定义 skill-bar cast generic fallback `1 passed`。
+- 修复后完整 server 门（`06f8fe650`）：`flock -x /tmp/bong-cargo.lock bash -lc 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 全绿——library `12191 passed / 0 failed / 2 ignored`；CLI `12 passed`；full-app startup `2 passed`；shutdown `2 passed`；Tarkov backpack e2e `4 passed`；doc tests `5 ignored`。
+- 修复后 worldgen 合同：`python -m unittest worldgen.tests.test_decoration_contract worldgen.tests.test_nbt_block_palette` → `22 passed`。
+- 修复后完整 raster 重新生成与后验：overworld `306 tiles / 84 POIs / 112 decorations / 138969 placements`、TSY `9 tiles / 56 POIs`；`validate_rasters` 分别为 overworld `306/306`、TSY `9/9` 全部通过。
+- 修复后可执行文件启动预检：经 `/tmp/bong-cargo.lock` 执行 `cargo build`，以生成的 overworld + TSY manifests 及 `BONG_SKIP_SKIN_PREFETCH=1` 启动 30 秒无 panic；日志确认 `loaded 306 terrain tiles`、`loaded TSY 9 terrain tiles`、`decoration NBT registry: 54 templates resident`。
+- 以上修复后门禁完成后紧邻执行 `git fetch origin && git merge origin/main`，结果 `Already up to date`；最终 fresh validator 的 PASS SHA 在下方补记。
+- **本地安全隔离**：未运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh` 或任何会调用前者的本地 suite；该覆盖留给 GitHub e2e。
 
 **跨仓库核验**：
 
@@ -193,4 +198,5 @@
 
 - 矿物 registry、NPC 原型默认掉落、丹道 6 方包装仍按 P3 裁决留待各自独立验真/立项。
 - `BONG_TSY_RASTER_PATH` 未配置时仍保持 overworld-only 合法；一旦配置，损坏或不完整 TSY 数据会按本 plan 的严格启动契约 fail fast。
+- §8.1 #3/#4 与 P1/P2 中的 49/68/46/22/3、213/211/2 数字保留为迁移时历史背景；生产 admission 以当前 TOML 和当前 runtime registry 的动态契约为准，不得重新把这些数字或历史 ID/alias 集合引入生产校验。
 - 本 plan 不新增 gameplay、真元常数、ledger 流向或视觉资产；既有有效内容语义保持不变。
