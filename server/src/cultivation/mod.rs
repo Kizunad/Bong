@@ -2883,7 +2883,14 @@ mod tests {
         app.insert_resource(WorldQiAccount::default());
         app.add_event::<QiTransfer>();
         insert_reincarnation_cleanup_resources(&mut app);
-        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        app.add_systems(
+            Update,
+            (
+                attach_cultivation_to_joined_clients,
+                crate::combat::attach_combat_bundle_to_joined_clients
+                    .after(attach_cultivation_to_joined_clients),
+            ),
+        );
 
         let (mut client_bundle, _helper) = create_mock_client(username);
         client_bundle.player.position = Position::new([0.0, 66.0, 0.0]);
@@ -2897,6 +2904,16 @@ mod tests {
         assert!(
             app.world().get::<Cultivation>(entity).is_none(),
             "an unreadable terminated bundle must not publish default cultivation over positive old qi"
+        );
+        assert!(
+            app.world().get::<Lifecycle>(entity).is_none(),
+            "the production combat attach must not expose Terminated while old cultivation and qi are unreadable"
+        );
+        assert!(
+            app.world()
+                .get::<crate::combat::components::Wounds>(entity)
+                .is_none(),
+            "a rejected cultivation hydration must keep the entire combat bundle unpublished"
         );
         assert!(
             app.world().get::<CultivationAttachRetry>(entity).is_some(),
@@ -2953,6 +2970,12 @@ mod tests {
             "the fresh life must start after settling all old qi"
         );
         assert!(app.world().get::<CultivationAttachRetry>(entity).is_none());
+        assert!(
+            app.world()
+                .get::<crate::combat::components::Wounds>(entity)
+                .is_some(),
+            "the repaired retry must publish the combat bundle after cultivation succeeds"
+        );
         assert!(
             crate::player::state::load_current_character_id(&player_persistence, username)
                 .expect("fresh current_char_id should reload")

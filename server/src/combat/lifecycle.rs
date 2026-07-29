@@ -2752,9 +2752,16 @@ fn reset_for_new_character(
         return false;
     };
 
+    let Some(old_cultivation) = old_cultivation else {
+        tracing::warn!(
+            "[bong][combat] refusing CreateNewCharacter for {entity:?}: old cultivation hydration is incomplete"
+        );
+        return false;
+    };
+
     let staged_old_qi_release = match stage_lifecycle_qi_release(
         entity,
-        old_cultivation.map_or(0.0, |cultivation| cultivation.qi_current.max(0.0)),
+        old_cultivation.qi_current.max(0.0),
         previous_character_id.as_str(),
         current_dimension
             .as_deref()
@@ -9173,6 +9180,80 @@ mod tests {
                 .occupied_slots,
             0,
             "new-life publication must not re-occupy the settled old Void quota"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn terminated_create_new_character_without_cultivation_preserves_old_identity() {
+        let (settings, root) = persistence_settings("terminated-create-missing-cultivation");
+        let username = "UnhydratedTerminated";
+        let old_character_id = canonical_player_id(username);
+        let player_persistence =
+            PlayerStatePersistence::with_db_path(root.join("data"), settings.db_path());
+        crate::player::state::save_player_state(
+            &player_persistence,
+            username,
+            &PlayerState::default(),
+        )
+        .expect("old player identity should persist");
+        let old_raw_id =
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("old identity should reload")
+                .expect("old identity should exist");
+
+        let mut app = revival_action_test_app(settings.clone(), 800);
+        let item_registry =
+            crate::inventory::load_item_registry().expect("item registry should load");
+        let default_loadout = crate::inventory::load_default_loadout(&item_registry)
+            .expect("default loadout should load");
+        app.insert_resource(DefaultLoadout(default_loadout));
+        app.insert_resource(item_registry);
+        app.insert_resource(InventoryInstanceIdAllocator::default());
+        let (entity, _helper) = spawn_revival_action_actor(
+            &mut app,
+            username,
+            RevivalActionActorState {
+                lifecycle: Lifecycle {
+                    character_id: old_character_id.clone(),
+                    state: LifecycleState::Terminated,
+                    ..Default::default()
+                },
+                cultivation: Cultivation::default(),
+                meridians: MeridianSystem::default(),
+                contamination: Contamination::default(),
+                life_record: LifeRecord::new(old_character_id.clone()),
+                nourishment: Nourishment::spawn_default(),
+            },
+        );
+        app.world_mut().entity_mut(entity).remove::<Cultivation>();
+        app.world_mut().send_event(RevivalActionIntent {
+            entity,
+            action: RevivalActionKind::CreateNewCharacter,
+            issued_at_tick: 800,
+        });
+
+        app.update();
+        app.update();
+
+        let lifecycle = app.world().get::<Lifecycle>(entity).unwrap();
+        assert_eq!(
+            lifecycle.state,
+            LifecycleState::Terminated,
+            "CreateNewCharacter must stay fail-closed until the old cultivation bundle hydrates"
+        );
+        assert_eq!(lifecycle.character_id, old_character_id);
+        assert_eq!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("old identity should remain readable"),
+            Some(old_raw_id),
+            "missing cultivation must not rotate the durable identity while old qi is unknown"
+        );
+        assert_eq!(
+            app.world().resource::<Events<QiTransfer>>().len(),
+            0,
+            "a rejected transition must not emit a fabricated zero-qi settlement"
         );
 
         let _ = fs::remove_dir_all(root);

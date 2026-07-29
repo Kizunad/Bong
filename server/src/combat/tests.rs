@@ -3,6 +3,7 @@ use crate::combat::{
     components::{Lifecycle, LifecycleState, RevivalDecision},
     is_damageable,
 };
+use crate::cultivation::components::Cultivation;
 use crate::persistence::bootstrap_sqlite;
 use crate::player::state::{
     load_current_character_id, player_character_id, save_player_lifecycle_slice,
@@ -24,6 +25,68 @@ fn unique_temp_dir(test_name: &str) -> PathBuf {
         "bong-combat-mod-{test_name}-{}-{unique_suffix}",
         std::process::id()
     ))
+}
+
+#[test]
+fn combat_hydration_waits_for_cultivation_then_retries_after_it_is_published() {
+    let mut app = App::new();
+    app.add_systems(Update, attach_combat_bundle_to_joined_clients);
+
+    let (client_bundle, _helper) = create_mock_client("DeferredCultivation");
+    let entity = app.world_mut().spawn(client_bundle).id();
+
+    app.update();
+    assert!(
+        app.world().get::<Lifecycle>(entity).is_none(),
+        "combat hydration must not publish Lifecycle while cultivation hydration is rejected"
+    );
+
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(Cultivation::default());
+    app.update();
+
+    assert!(
+        app.world().get::<Lifecycle>(entity).is_some(),
+        "combat hydration must retry after cultivation becomes available even though Added<Client> is no longer true"
+    );
+}
+
+#[test]
+fn combat_hydration_keeps_terminated_lifecycle_private_without_cultivation() {
+    let root = unique_temp_dir("terminated-lifecycle-waits-for-cultivation");
+    let data_dir = root.join("data");
+    std::fs::create_dir_all(&data_dir).expect("data dir should create");
+    let db_path = data_dir.join("bong.db");
+    bootstrap_sqlite(&db_path, "combat-mod-terminated-gate")
+        .expect("sqlite bootstrap should succeed");
+    let persistence = PlayerStatePersistence::with_db_path(&data_dir, &db_path);
+    let character_id = seed_current_character_id(&persistence, "TerminatedJoin");
+    save_player_lifecycle_slice(
+        &persistence,
+        "TerminatedJoin",
+        &Lifecycle {
+            character_id,
+            state: LifecycleState::Terminated,
+            ..Default::default()
+        },
+        0,
+    )
+    .expect("terminated lifecycle fixture should persist");
+
+    let mut app = App::new();
+    app.insert_resource(persistence);
+    app.add_systems(Update, attach_combat_bundle_to_joined_clients);
+    let (client_bundle, _helper) = create_mock_client("TerminatedJoin");
+    let entity = app.world_mut().spawn(client_bundle).id();
+
+    app.update();
+    assert!(
+        app.world().get::<Lifecycle>(entity).is_none(),
+        "a durable Terminated lifecycle must remain unreachable until the old cultivation and qi amount hydrate"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[derive(Clone, Copy)]
@@ -83,7 +146,10 @@ fn joined_client_hydrates_shrine_anchor_from_sqlite_when_present() {
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -115,7 +181,10 @@ fn joined_client_hydrates_rotated_character_id_from_sqlite_when_present() {
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -144,7 +213,10 @@ fn joined_client_has_no_shrine_anchor_when_missing_in_sqlite() {
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Bob");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -164,7 +236,10 @@ fn joined_client_hydrates_shrine_anchor_from_sqlite_with_optional_resource() {
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("NoDb");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let username = app
@@ -233,7 +308,10 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -295,7 +373,10 @@ fn joined_client_ignores_persisted_lifecycle_from_previous_life_after_character_
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -349,7 +430,10 @@ fn joined_client_lifecycle_spawn_anchor_prefers_shrine_table_over_stale_json_sna
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -384,7 +468,10 @@ fn joined_client_defaults_lifecycle_when_no_lifecycle_row_ever_persisted() {
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -435,7 +522,10 @@ fn joined_client_falls_back_to_default_lifecycle_when_persisted_row_is_corrupt()
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app
@@ -510,7 +600,10 @@ fn joined_client_settles_expired_awaiting_revival_deadline_after_combat_clock_re
     app.add_systems(Update, attach_combat_bundle_to_joined_clients);
 
     let (client_bundle, _helper) = create_mock_client("Alice");
-    let entity = app.world_mut().spawn(client_bundle).id();
+    let entity = app
+        .world_mut()
+        .spawn((client_bundle, Cultivation::default()))
+        .id();
     app.update();
 
     let lifecycle = app

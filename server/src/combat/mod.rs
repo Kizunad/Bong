@@ -41,7 +41,7 @@ pub mod zhenmai_v2;
 use std::path::Path;
 use valence::prelude::{
     apply_deferred, bevy_ecs, Added, App, Client, Commands, Entity, GameMode, IntoSystemConfigs,
-    IntoSystemSetConfigs, Query, SystemSet, Update, Username, Without,
+    IntoSystemSetConfigs, Query, SystemSet, Update, Username, With, Without,
 };
 
 #[cfg(test)]
@@ -88,14 +88,15 @@ pub fn is_damageable(entity: Entity, game_modes: &Query<&GameMode>) -> bool {
 }
 
 type JoinedClientsWithoutCombatBundle<'a> = (valence::prelude::Entity, &'a Username);
-type JoinedClientsWithoutCombatBundleFilter = (Added<Client>, Without<Wounds>);
+type ClientsReadyForCombatBundleFilter = (
+    With<Client>,
+    With<crate::cultivation::components::Cultivation>,
+    Without<Wounds>,
+);
 
-fn attach_combat_bundle_to_joined_clients(
+pub(crate) fn attach_combat_bundle_to_joined_clients(
     mut commands: Commands,
-    joined_clients: Query<
-        JoinedClientsWithoutCombatBundle<'_>,
-        JoinedClientsWithoutCombatBundleFilter,
-    >,
+    joined_clients: Query<JoinedClientsWithoutCombatBundle<'_>, ClientsReadyForCombatBundleFilter>,
     player_persistence: Option<valence::prelude::Res<PlayerStatePersistence>>,
     combat_clock: Option<valence::prelude::Res<CombatClock>>,
 ) {
@@ -106,6 +107,11 @@ fn attach_combat_bundle_to_joined_clients(
     // 缺省（未注册 CombatClock 资源的最小化测试 app）时按 0 处理，与生产环境启动瞬间的
     // 真实初值一致。
     let current_combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
+    // Combat hydration is downstream of cultivation hydration, not merely ordered after it. A
+    // rejected terminated cultivation bundle carries the only durable old-qi amount; publishing a
+    // standalone Terminated Lifecycle would expose CreateNewCharacter with no Cultivation and make
+    // that amount look like zero. `With<Client>` plus `Without<Wounds>` intentionally admits a
+    // later retry after cultivation succeeds instead of relying on the one-frame `Added<Client>`.
     for (entity, username) in &joined_clients {
         let persistence = player_persistence.as_deref();
         let spawn_anchor = persistence.and_then(|persistence| {
