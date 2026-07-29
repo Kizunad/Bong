@@ -527,18 +527,16 @@ public class BongNetworkHandlerTest {
     }
 
     @Test
-    void disconnectAdjunctRuntimeFailureReportsStableIdentityAndDoesNotSkipLaterCleanup() {
+    void disconnectAdjunctRuntimeFailureDoesNotSkipLaterCleanup() {
         List<String> calls = new java.util.ArrayList<>();
-        List<BongNetworkHandler.DisconnectCleanupFailure> failures = new java.util.ArrayList<>();
 
         BongNetworkHandler.runDisconnectCleanups(
-            failures::add,
-            new BongNetworkHandler.DisconnectCleanup("test.before", () -> calls.add("before")),
-            new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
+            () -> calls.add("before"),
+            () -> {
                 calls.add("failing");
                 throw new IllegalStateException("recoverable cleanup failure");
-            }),
-            new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
+            },
+            () -> calls.add("after")
         );
 
         assertEquals(
@@ -546,176 +544,26 @@ public class BongNetworkHandlerTest {
             calls,
             "单个 adjunct RuntimeException 必须被隔离，后续 animation/audio/HUD 清理仍要执行"
         );
-        assertEquals(1, failures.size(), "每个失败 adjunct 必须向 reporter 报告一次");
-        assertEquals(
-            "test.failing",
-            failures.get(0).resourceIdentity(),
-            "失败报告必须携带不受数组排序影响的稳定 resource identity"
-        );
-        assertEquals(
-            "recoverable cleanup failure",
-            failures.get(0).cause().getMessage(),
-            "失败报告必须保留原 RuntimeException 供日志输出堆栈"
-        );
-    }
-
-    @Test
-    void disconnectCleanupClassFactoryUsesStableFullyQualifiedResourceIdentity() {
-        BongNetworkHandler.DisconnectCleanup cleanup = BongNetworkHandler.cleanup(
-            BongToast.class,
-            () -> { }
-        );
-
-        assertEquals(
-            BongToast.class.getName(),
-            cleanup.resourceIdentity(),
-            "production adjunct identity 必须使用稳定 FQCN，而不是数组 index 或易碰撞 simple name"
-        );
-    }
-
-    @Test
-    void disconnectAdjunctReporterRuntimeFailureDoesNotSkipLaterCleanup() {
-        List<String> calls = new java.util.ArrayList<>();
-        IllegalStateException reportingFailure = new IllegalStateException("reporter failed");
-        IllegalStateException cleanupFailure = new IllegalStateException("cleanup failed");
-
-        BongNetworkHandler.runDisconnectCleanups(
-            failure -> {
-                calls.add("reporting:" + failure.resourceIdentity());
-                throw reportingFailure;
-            },
-            new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
-                calls.add("failing");
-                throw cleanupFailure;
-            }),
-            new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
-        );
-
-        assertEquals(
-            List.of("failing", "reporting:test.failing", "after"),
-            calls,
-            "reporter RuntimeException 也必须被隔离，后续 adjunct 清理仍要执行"
-        );
-        assertEquals(
-            List.of(reportingFailure),
-            List.of(cleanupFailure.getSuppressed()),
-            "reporter RuntimeException 应附着到原 cleanup 异常，保留诊断证据"
-        );
-    }
-
-    @Test
-    void disconnectAdjunctReporterRethrowingCleanupFailureDoesNotSkipLaterCleanup() {
-        List<String> calls = new java.util.ArrayList<>();
-        IllegalStateException cleanupFailure = new IllegalStateException("cleanup failed");
-
-        BongNetworkHandler.runDisconnectCleanups(
-            failure -> {
-                calls.add("reporting:" + failure.resourceIdentity());
-                throw failure.cause();
-            },
-            new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
-                calls.add("failing");
-                throw cleanupFailure;
-            }),
-            new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
-        );
-
-        assertEquals(
-            List.of("failing", "reporting:test.failing", "after"),
-            calls,
-            "reporter 原样重抛 cleanup 异常时不得触发 self-suppression，后续 cleanup 仍要执行"
-        );
-        assertEquals(
-            0,
-            cleanupFailure.getSuppressed().length,
-            "同一异常对象不得附加到自身，否则 Throwable 会抛 IllegalArgumentException"
-        );
-    }
-
-    @Test
-    void disconnectAdjunctReporterErrorStillPropagatesWithoutRunningLaterCleanup() {
-        List<String> calls = new java.util.ArrayList<>();
-
-        AssertionError error = assertThrows(
-            AssertionError.class,
-            () -> BongNetworkHandler.runDisconnectCleanups(
-                failure -> {
-                    calls.add("reporting:" + failure.resourceIdentity());
-                    throw new AssertionError("fatal reporter");
-                },
-                new BongNetworkHandler.DisconnectCleanup("test.failing", () -> {
-                    calls.add("failing");
-                    throw new IllegalStateException("cleanup failed");
-                }),
-                new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
-            )
-        );
-
-        assertEquals("fatal reporter", error.getMessage(), "reporter Error 必须原样透传");
-        assertEquals(
-            List.of("failing", "reporting:test.failing"),
-            calls,
-            "reporter Error 后不得继续执行后续 cleanup"
-        );
-    }
-
-    @Test
-    void disconnectCleanupRejectsInvalidContractInputs() {
-        assertThrows(NullPointerException.class,
-            () -> BongNetworkHandler.cleanup(null, () -> { }));
-        assertThrows(NullPointerException.class,
-            () -> BongNetworkHandler.cleanup(BongToast.class, null));
-        assertThrows(NullPointerException.class,
-            () -> new BongNetworkHandler.DisconnectCleanup(null, () -> { }));
-        assertThrows(IllegalArgumentException.class,
-            () -> new BongNetworkHandler.DisconnectCleanup("", () -> { }));
-        assertThrows(IllegalArgumentException.class,
-            () -> new BongNetworkHandler.DisconnectCleanup("   ", () -> { }));
-        assertThrows(NullPointerException.class,
-            () -> new BongNetworkHandler.DisconnectCleanup("test", null));
-        assertThrows(NullPointerException.class,
-            () -> BongNetworkHandler.runDisconnectCleanups(
-                (java.util.function.Consumer<BongNetworkHandler.DisconnectCleanupFailure>) null,
-                new BongNetworkHandler.DisconnectCleanup("test", () -> { })
-            ));
-        assertThrows(NullPointerException.class,
-            () -> BongNetworkHandler.runDisconnectCleanups(
-                failure -> { },
-                (BongNetworkHandler.DisconnectCleanup[]) null
-            ));
-        assertThrows(NullPointerException.class,
-            () -> BongNetworkHandler.runDisconnectCleanups(
-                failure -> { },
-                new BongNetworkHandler.DisconnectCleanup[] {null}
-            ));
-        assertThrows(NullPointerException.class,
-            () -> new BongNetworkHandler.DisconnectCleanupFailure(null,
-                new IllegalStateException("failure")));
-        assertThrows(NullPointerException.class,
-            () -> new BongNetworkHandler.DisconnectCleanupFailure("test", null));
     }
 
     @Test
     void disconnectAdjunctErrorStillPropagatesWithoutRunningLaterCleanup() {
         List<String> calls = new java.util.ArrayList<>();
-        List<BongNetworkHandler.DisconnectCleanupFailure> failures = new java.util.ArrayList<>();
 
         AssertionError error = assertThrows(
             AssertionError.class,
             () -> BongNetworkHandler.runDisconnectCleanups(
-                failures::add,
-                new BongNetworkHandler.DisconnectCleanup("test.before", () -> calls.add("before")),
-                new BongNetworkHandler.DisconnectCleanup("test.fatal", () -> {
+                () -> calls.add("before"),
+                () -> {
                     calls.add("fatal");
                     throw new AssertionError("fatal cleanup");
-                }),
-                new BongNetworkHandler.DisconnectCleanup("test.after", () -> calls.add("after"))
+                },
+                () -> calls.add("after")
             )
         );
 
         assertEquals("fatal cleanup", error.getMessage(), "Error 必须原样透传");
         assertEquals(List.of("before", "fatal"), calls, "Error 不得伪装成可恢复 RuntimeException");
-        assertTrue(failures.isEmpty(), "Error 不得被 RuntimeException reporter 吞掉或降级为可恢复日志");
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -769,11 +617,14 @@ public class BongNetworkHandlerTest {
                 + "否则 registry 和非 Store hook 都不会在真实断线时执行"
         );
 
-        int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(clearHelperStart >= 0, "统一断线清理 helper 必须存在");
-        int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
-        assertTrue(clearHelperEnd > clearHelperStart, "必须能精确圈定统一断线清理 helper 范围");
-        String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
+        String clearHelper = methodSource(
+            src,
+            "static void clearClientStateOnDisconnect()"
+        );
+        String adjunctHelper = methodSource(
+            src,
+            "private static void runAdjunctDisconnectTeardown()"
+        );
 
         String registryCall = "SessionScopedStoreRegistry.clearAllOnDisconnect()";
         assertEquals(
@@ -787,29 +638,29 @@ public class BongNetworkHandlerTest {
         );
 
         List<String> nonStoreHooks = List.of(
-            "NpcDialogueBubbleRenderer::clear",
-            "MusicStateMachine.instance().clear()",
-            "SoundRecipePlayer.instance().clearOnDisconnect()",
-            "BongAnimationPlayer::clearOnDisconnect",
-            "AnimationLayerManager::clearOnDisconnect",
-            "BongPunchCombo::clearOnDisconnect",
-            "MutationVisualState::reset",
-            "SpiderDisguiseHandler::clearOnDisconnect",
-            "RatQiTierHandler::clearOnDisconnect",
-            "DaoZhanDisguiseHandler::clearOnDisconnect",
-            "EraAmbianceState::reset",
-            "BongToast::clearOnDisconnect"
+            "() -> NpcDialogueBubbleRenderer.clear()",
+            "() -> com.bong.client.audio.MusicStateMachine.instance().clear()",
+            "() -> SoundRecipePlayer.instance().clearOnDisconnect()",
+            "() -> BongAnimationPlayer.clearOnDisconnect()",
+            "() -> AnimationLayerManager.clearOnDisconnect()",
+            "() -> BongPunchCombo.clearOnDisconnect()",
+            "() -> MutationVisualState.reset()",
+            "() -> SpiderDisguiseHandler.clearOnDisconnect()",
+            "() -> RatQiTierHandler.clearOnDisconnect()",
+            "() -> DaoZhanDisguiseHandler.clearOnDisconnect()",
+            "() -> com.bong.client.era.EraAmbianceState.reset()",
+            "() -> BongToast.clearOnDisconnect()"
         );
-        int previousIndex = clearHelper.indexOf(registryCall);
+        int previousIndex = -1;
         for (String hook : nonStoreHooks) {
-            int hookIndex = clearHelper.indexOf(hook);
+            int hookIndex = adjunctHelper.indexOf(hook);
             assertTrue(
                 hookIndex > previousIndex,
                 "非 Store hook 必须保留且维持既有相对顺序；未按序找到 " + hook
             );
             assertEquals(
                 hookIndex,
-                clearHelper.lastIndexOf(hook),
+                adjunctHelper.lastIndexOf(hook),
                 "非 Store hook 必须恰好调用一次，避免重复副作用：" + hook
             );
             previousIndex = hookIndex;
@@ -823,6 +674,14 @@ public class BongNetworkHandlerTest {
             lexicon.fqcns(),
             lexicon.memberNames(),
             Set.of("clearAllOnDisconnect")
+        );
+        JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+            src,
+            "BongNetworkHandler",
+            "runAdjunctDisconnectTeardown",
+            lexicon.fqcns(),
+            Set.of(),
+            Set.of()
         );
     }
 
@@ -946,6 +805,30 @@ public class BongNetworkHandlerTest {
                 )
             );
         }
+    }
+
+    @Test
+    void adjunctStoreReferenceGuardRejectsStoreMethodReference() {
+        String fixture = """
+            final class BongNetworkHandler {
+                private static void runAdjunctDisconnectTeardown() {
+                    Runnable cleaner = LootContainerStateStore::clearOnDisconnect;
+                }
+            }
+            """;
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+
+        assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+                fixture,
+                "BongNetworkHandler",
+                "runAdjunctDisconnectTeardown",
+                lexicon.fqcns(),
+                Set.of(),
+                Set.of()
+            )
+        );
     }
 
     @Test
@@ -1102,6 +985,23 @@ public class BongNetworkHandlerTest {
         } catch (ReflectiveOperationException exception) {
             throw new AssertionError(scenario + " 无法反射调用 private applyDispatch", exception);
         }
+    }
+
+    private static String methodSource(String source, String declaration) {
+        int start = source.indexOf(declaration);
+        assertTrue(start >= 0, "必须存在 production lifecycle helper：" + declaration);
+        int bodyStart = source.indexOf('{', start);
+        assertTrue(bodyStart >= 0, "production lifecycle helper 必须有方法体：" + declaration);
+        int depth = 0;
+        for (int index = bodyStart; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}' && --depth == 0) {
+                return source.substring(start, index + 1);
+            }
+        }
+        throw new AssertionError("无法圈定 production lifecycle helper：" + declaration);
     }
 
     private static MinecraftClient allocateHeadlessClientWithoutPlayer() {

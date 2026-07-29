@@ -72,7 +72,6 @@ import net.minecraft.util.Util;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -1133,96 +1132,51 @@ public class BongNetworkHandler {
 
     private static void runAdjunctDisconnectTeardown() {
         runDisconnectCleanups(
-            cleanup(EnvironmentEffectController.class, EnvironmentEffectController::clearOnDisconnect),
-            cleanup(BongShaderState.class, BongShaderState::clearOnDisconnect),
-            cleanup(CastFovController.class, CastFovController::clearOnDisconnect),
-            cleanup(CombatJuiceSystem.class, CombatJuiceSystem::clearOnDisconnect),
-            cleanup(CombatHudBootstrap.class, CombatHudBootstrap::clearOnDisconnect),
-            cleanup(MovementKeybindings.class, MovementKeybindings::clearOnDisconnect),
-            cleanup(BotanyHudBootstrap.class, BotanyHudBootstrap::clearOnDisconnect),
-            cleanup(TechniquesListPanel.class, TechniquesListPanel::clearOnDisconnect),
-            cleanup(WeaponTreasurePanel.class, WeaponTreasurePanel::clearOnDisconnect),
-            cleanup(HomeSequence.class, HomeSequence::clearOnDisconnect),
-            cleanup(InventoryMoveRejectedHandler.class, InventoryMoveRejectedHandler::clearOnDisconnect),
-            cleanup(PillBuffHudPlanner.class, PillBuffHudPlanner::clearOnDisconnect),
-            cleanup(MorphCastVignetteState.class, MorphCastVignetteState::clearOnDisconnect),
-            cleanup(SeasonVisualController.class, SeasonVisualController::clearOnDisconnect),
-            cleanup(ScreenTransitionController.class, ScreenTransitionController::clearOnDisconnect),
-            cleanup(WorldVfxDemoBootstrap.class, WorldVfxDemoBootstrap::clearOnDisconnect),
-            cleanup(DeadDropBreakPlayer.class, DeadDropBreakPlayer::clearOnDisconnect),
-            cleanup(NpcFootstepAudioController.class, NpcFootstepAudioController::clearOnDisconnect),
-            cleanup(BongAnimationRegistry.class, BongAnimationRegistry::clearOnDisconnect),
-            cleanup(NpcDialogueBubbleRenderer.class, NpcDialogueBubbleRenderer::clear),
-            cleanup(com.bong.client.audio.MusicStateMachine.class,
-                () -> com.bong.client.audio.MusicStateMachine.instance().clear()),
-            cleanup(SoundRecipePlayer.class, () -> SoundRecipePlayer.instance().clearOnDisconnect()),
-            cleanup(BongAnimationPlayer.class, BongAnimationPlayer::clearOnDisconnect),
-            cleanup(AnimationLayerManager.class, AnimationLayerManager::clearOnDisconnect),
-            cleanup(BongPunchCombo.class, BongPunchCombo::clearOnDisconnect),
-            cleanup(MutationVisualState.class, MutationVisualState::reset),
-            cleanup(SpiderDisguiseHandler.class, SpiderDisguiseHandler::clearOnDisconnect),
-            cleanup(RatQiTierHandler.class, RatQiTierHandler::clearOnDisconnect),
-            cleanup(DaoZhanDisguiseHandler.class, DaoZhanDisguiseHandler::clearOnDisconnect),
-            cleanup(com.bong.client.era.EraAmbianceState.class,
-                com.bong.client.era.EraAmbianceState::reset),
-            cleanup(BongToast.class, BongToast::clearOnDisconnect)
+            () -> EnvironmentEffectController.clearOnDisconnect(),
+            () -> BongShaderState.clearOnDisconnect(),
+            () -> CastFovController.clearOnDisconnect(),
+            () -> CombatJuiceSystem.clearOnDisconnect(),
+            () -> CombatHudBootstrap.clearOnDisconnect(),
+            () -> MovementKeybindings.clearOnDisconnect(),
+            () -> BotanyHudBootstrap.clearOnDisconnect(),
+            () -> TechniquesListPanel.clearOnDisconnect(),
+            () -> WeaponTreasurePanel.clearOnDisconnect(),
+            () -> HomeSequence.clearOnDisconnect(),
+            () -> InventoryMoveRejectedHandler.clearOnDisconnect(),
+            () -> PillBuffHudPlanner.clearOnDisconnect(),
+            () -> MorphCastVignetteState.clearOnDisconnect(),
+            () -> SeasonVisualController.clearOnDisconnect(),
+            () -> ScreenTransitionController.clearOnDisconnect(),
+            () -> WorldVfxDemoBootstrap.clearOnDisconnect(),
+            () -> DeadDropBreakPlayer.clearOnDisconnect(),
+            () -> NpcFootstepAudioController.clearOnDisconnect(),
+            () -> BongAnimationRegistry.clearOnDisconnect(),
+            () -> NpcDialogueBubbleRenderer.clear(),
+            () -> com.bong.client.audio.MusicStateMachine.instance().clear(),
+            () -> SoundRecipePlayer.instance().clearOnDisconnect(),
+            () -> BongAnimationPlayer.clearOnDisconnect(),
+            () -> AnimationLayerManager.clearOnDisconnect(),
+            () -> BongPunchCombo.clearOnDisconnect(),
+            () -> MutationVisualState.reset(),
+            () -> SpiderDisguiseHandler.clearOnDisconnect(),
+            () -> RatQiTierHandler.clearOnDisconnect(),
+            () -> DaoZhanDisguiseHandler.clearOnDisconnect(),
+            () -> com.bong.client.era.EraAmbianceState.reset(),
+            () -> BongToast.clearOnDisconnect()
         );
     }
 
-    static DisconnectCleanup cleanup(Class<?> resourceType, Runnable action) {
-        Objects.requireNonNull(resourceType, "resourceType");
-        return new DisconnectCleanup(resourceType.getName(), action);
-    }
-
-    static void runDisconnectCleanups(DisconnectCleanup... cleanups) {
-        runDisconnectCleanups(
-            failure -> BongClient.LOGGER.error(
-                "Failed to clear client disconnect adjunct " + failure.resourceIdentity(),
-                failure.cause()
-            ),
-            cleanups
-        );
-    }
-
-    static void runDisconnectCleanups(
-        Consumer<DisconnectCleanupFailure> failureHandler,
-        DisconnectCleanup... cleanups
-    ) {
-        Objects.requireNonNull(failureHandler, "failureHandler");
-        Objects.requireNonNull(cleanups, "cleanups");
-        for (DisconnectCleanup cleanup : cleanups) {
-            Objects.requireNonNull(cleanup, "cleanup");
+    static void runDisconnectCleanups(Runnable... cleanups) {
+        for (int index = 0; index < cleanups.length; index++) {
             try {
-                cleanup.action().run();
+                cleanups[index].run();
             } catch (RuntimeException exception) {
-                try {
-                    failureHandler.accept(new DisconnectCleanupFailure(
-                        cleanup.resourceIdentity(),
-                        exception
-                    ));
-                } catch (RuntimeException reportingFailure) {
-                    if (reportingFailure != exception) {
-                        exception.addSuppressed(reportingFailure);
-                    }
-                }
+                BongClient.LOGGER.error(
+                    "Failed to clear client disconnect adjunct at index {}",
+                    index,
+                    exception
+                );
             }
-        }
-    }
-
-    record DisconnectCleanup(String resourceIdentity, Runnable action) {
-        DisconnectCleanup {
-            Objects.requireNonNull(resourceIdentity, "resourceIdentity");
-            Objects.requireNonNull(action, "action");
-            if (resourceIdentity.isBlank()) {
-                throw new IllegalArgumentException("resourceIdentity must not be blank");
-            }
-        }
-    }
-
-    record DisconnectCleanupFailure(String resourceIdentity, RuntimeException cause) {
-        DisconnectCleanupFailure {
-            Objects.requireNonNull(resourceIdentity, "resourceIdentity");
-            Objects.requireNonNull(cause, "cause");
         }
     }
 

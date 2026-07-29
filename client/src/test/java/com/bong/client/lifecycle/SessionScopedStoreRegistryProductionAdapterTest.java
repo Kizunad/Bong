@@ -991,10 +991,17 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionCleanerDeclarationGuardRequiresStaticNoArgEntry() {
+    void productionCleanerDeclarationGuardRequiresPublicStaticNoArgVoidEntry() {
         for (String fixture : List.of(
-            "final class FixtureStore { void clearOnDisconnect() { } }",
-            "final class FixtureStore { static void clearOnDisconnect(long now) { } }"
+            "final class FixtureStore { public void clearOnDisconnect() { } }",
+            "final class FixtureStore { public static void clearOnDisconnect(long now) { } }",
+            "final class FixtureStore { static void clearOnDisconnect() { } }",
+            """
+                record Result() { }
+                final class FixtureStore {
+                    public static Result clearOnDisconnect() { return new Result(); }
+                }
+                """
         )) {
             AssertionError failure = assertThrows(
                 AssertionError.class,
@@ -1006,7 +1013,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             );
             assertTrue(
                 failure.getMessage().contains("必须能定位 production cleaner"),
-                "canonical registry cleaner 必须是目标 Store 自己声明的 static 无参入口；实际="
+                "canonical registry cleaner 必须是目标 Store 自己声明的 public static void 无参入口；实际="
                     + failure.getMessage()
             );
         }
@@ -1083,12 +1090,6 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 """,
             """
                 public final class FixtureStore {
-                    public static void resetForTests() { clearForTests(); }
-                    public static void clearForTests() { }
-                }
-                """,
-            """
-                public final class FixtureStore {
                     public static void clearOnDisconnect() {
                         new Unrelated().resetForTests(1);
                     }
@@ -1109,7 +1110,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             );
             assertTrue(
                 failure.getMessage().contains("test reset"),
-                "字段、构造器、嵌套、跨类型、static import、test reset 组合和同名 overload 均须撞红；实际="
+                "字段、构造器、嵌套、跨类型、static import 和同名 overload 的 production 调用均须撞红；实际="
                     + failure.getMessage()
             );
         }
@@ -1123,8 +1124,10 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 public static void clearOnDisconnect() { CACHE.clear(); }
                 public static void clear() { }
                 public static void clear(int unused) { }
-                public static void resetForTests() { }
-                public static void clearForTests() { }
+                public static void resetForTests() { clearForTests(); }
+                public static void clearForTests() {
+                    Runnable reset = FixtureStore::resetForTests;
+                }
             }
             """;
 

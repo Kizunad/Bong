@@ -8,6 +8,7 @@ import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.PrimitiveTypeTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreeScanner;
@@ -81,7 +82,10 @@ public final class JavaLifecycleSourceInspector {
             .map(MethodTree.class::cast)
             .anyMatch(method -> method.getName().contentEquals(entryMethod)
                 && method.getParameters().isEmpty()
-                && method.getModifiers().getFlags().contains(Modifier.STATIC));
+                && method.getModifiers().getFlags().contains(Modifier.PUBLIC)
+                && method.getModifiers().getFlags().contains(Modifier.STATIC)
+                && method.getReturnType() instanceof PrimitiveTypeTree returnType
+                && returnType.getPrimitiveTypeKind() == javax.lang.model.type.TypeKind.VOID);
         if (!declaresEntry) {
             throw new AssertionError("必须能定位 production cleaner：" + storeIdentity + "." + entryMethod);
         }
@@ -90,18 +94,36 @@ public final class JavaLifecycleSourceInspector {
     static void assertNoTestResetCalls(String source, String sourceIdentity) {
         CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
         new TreeScanner<Void, Void>() {
+            private String enclosingMethod;
+
+            @Override
+            public Void visitMethod(MethodTree method, Void unused) {
+                String previousMethod = enclosingMethod;
+                enclosingMethod = method.getName().toString();
+                try {
+                    return super.visitMethod(method, unused);
+                } finally {
+                    enclosingMethod = previousMethod;
+                }
+            }
+
             @Override
             public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
                 rejectTestResetCall(
                     invokedMethodName(invocation.getMethodSelect()),
-                    sourceIdentity
+                    sourceIdentity,
+                    enclosingMethod
                 );
                 return super.visitMethodInvocation(invocation, unused);
             }
 
             @Override
             public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                rejectTestResetCall(reference.getName().toString(), sourceIdentity);
+                rejectTestResetCall(
+                    reference.getName().toString(),
+                    sourceIdentity,
+                    enclosingMethod
+                );
                 return super.visitMemberReference(reference, unused);
             }
         }.scan(unit, null);
@@ -217,10 +239,17 @@ public final class JavaLifecycleSourceInspector {
         return methodSelect.toString();
     }
 
-    private static void rejectTestResetCall(String methodName, String sourceIdentity) {
-        if (TEST_RESET_METHODS.contains(methodName)) {
+    private static void rejectTestResetCall(
+        String methodName,
+        String sourceIdentity,
+        String enclosingMethod
+    ) {
+        if (TEST_RESET_METHODS.contains(methodName)
+            && (enclosingMethod == null || !TEST_RESET_METHODS.contains(enclosingMethod))) {
             throw new AssertionError(
-                sourceIdentity + " 的 production source 不得调用或引用 test reset " + methodName
+                sourceIdentity + " 的 production source 不得从 "
+                    + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
+                    + " 调用或引用 test reset " + methodName
             );
         }
     }
