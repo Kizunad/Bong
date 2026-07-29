@@ -21,9 +21,11 @@ import com.bong.client.dandao.MutationPayloadHandler;
 import com.bong.client.dandao.MutationVisualState;
 import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
+import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
 import com.bong.client.hud.MorphCastVignetteState;
 import com.bong.client.hud.PillBuffHudPlanner;
+import com.bong.client.identity.IdentityPanelStateStore;
 import com.bong.client.iris.BongShaderState;
 import com.bong.client.lifecycle.SessionScopedStoreRegistry;
 import com.bong.client.loop.HomeSequence;
@@ -44,6 +46,9 @@ import com.bong.client.npc.NpcDialogueBubbleRenderer;
 import com.bong.client.npc.NpcMoodHandler;
 import com.bong.client.season.SeasonVisualController;
 import com.bong.client.state.NarrationState;
+import com.bong.client.state.PlayerStateStore;
+import com.bong.client.state.RealmCollapseHudStateStore;
+import com.bong.client.state.SeasonStateStore;
 import com.bong.client.state.UiOpenState;
 import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
@@ -1047,8 +1052,8 @@ public class BongNetworkHandler {
     }
 
     private static void applyDispatch(net.minecraft.client.MinecraftClient client, ServerDataDispatch dispatch, String envelopeType) {
-        dispatch.playerStateViewModel().ifPresent(com.bong.client.state.PlayerStateStore::replace);
-        dispatch.seasonState().ifPresent(com.bong.client.state.SeasonStateStore::replace);
+        dispatch.playerStateViewModel().ifPresent(PlayerStateStore::replace);
+        dispatch.seasonState().ifPresent(SeasonStateStore::replace);
         dispatch.narrationState().ifPresent(BongNetworkHandler::replaceNarrationState);
         dispatch.toastNarrationState().ifPresent(toastNarrationState -> BongToast.show(toastNarrationState, System.currentTimeMillis()));
         dispatch.zoneState().ifPresent(BongNetworkHandler::replaceZoneState);
@@ -1061,9 +1066,9 @@ public class BongNetworkHandler {
             System.currentTimeMillis(),
             alertToast.durationMillis()
         ));
-        dispatch.realmCollapseHudState().ifPresent(com.bong.client.state.RealmCollapseHudStateStore::replace);
+        dispatch.realmCollapseHudState().ifPresent(RealmCollapseHudStateStore::replace);
         dispatch.uiOpenState().ifPresent(uiOpenState -> applyUiOpen(client, uiOpenState, envelopeType));
-        dispatch.identityPanelState().ifPresent(com.bong.client.identity.IdentityPanelStateStore::replace);
+        dispatch.identityPanelState().ifPresent(IdentityPanelStateStore::replace);
 
         if (client.player == null) {
             return;
@@ -1093,8 +1098,8 @@ public class BongNetworkHandler {
     }
 
     private static void replaceNarrationState(NarrationState narrationState) {
-        BongHudStateSnapshot currentSnapshot = com.bong.client.hud.BongHudStateStore.snapshot();
-        com.bong.client.hud.BongHudStateStore.replace(BongHudStateSnapshot.create(
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
             currentSnapshot.zoneState(),
             narrationState,
             currentSnapshot.visualEffectState()
@@ -1102,8 +1107,8 @@ public class BongNetworkHandler {
     }
 
     private static void replaceZoneState(ZoneState zoneState) {
-        BongHudStateSnapshot currentSnapshot = com.bong.client.hud.BongHudStateStore.snapshot();
-        com.bong.client.hud.BongHudStateStore.replace(BongHudStateSnapshot.create(
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
             zoneState,
             currentSnapshot.narrationState(),
             currentSnapshot.visualEffectState()
@@ -1111,14 +1116,14 @@ public class BongNetworkHandler {
     }
 
     private static void replaceVisualEffectState(VisualEffectState visualEffectState, long nowMillis) {
-        BongHudStateSnapshot currentSnapshot = com.bong.client.hud.BongHudStateStore.snapshot();
+        BongHudStateSnapshot currentSnapshot = BongHudStateStore.snapshot();
         VisualEffectState nextVisualEffectState = VisualEffectController.acceptIncoming(
             currentSnapshot.visualEffectState(),
             visualEffectState,
             nowMillis,
             BongClientFeatures.ENABLE_VISUAL_EFFECTS
         );
-        com.bong.client.hud.BongHudStateStore.replace(BongHudStateSnapshot.create(
+        BongHudStateStore.replace(BongHudStateSnapshot.create(
             currentSnapshot.zoneState(),
             currentSnapshot.narrationState(),
             nextVisualEffectState

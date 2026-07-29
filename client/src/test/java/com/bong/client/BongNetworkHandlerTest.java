@@ -52,6 +52,47 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BongNetworkHandlerTest {
+    private static final Set<String> DISCONNECT_ENTRY_ALLOWED_INVOCATIONS = Set.of(
+        "SessionScopedStoreRegistry.clearAllOnDisconnect",
+        "runAdjunctDisconnectTeardown"
+    );
+    private static final Set<String> DISCONNECT_ADJUNCT_ALLOWED_INVOCATIONS = Set.of(
+        "runDisconnectCleanups",
+        "EnvironmentEffectController.clearOnDisconnect",
+        "BongShaderState.clearOnDisconnect",
+        "CastFovController.clearOnDisconnect",
+        "CombatJuiceSystem.clearOnDisconnect",
+        "CombatHudBootstrap.clearOnDisconnect",
+        "MovementKeybindings.clearOnDisconnect",
+        "BotanyHudBootstrap.clearOnDisconnect",
+        "TechniquesListPanel.clearOnDisconnect",
+        "WeaponTreasurePanel.clearOnDisconnect",
+        "HomeSequence.clearOnDisconnect",
+        "InventoryMoveRejectedHandler.clearOnDisconnect",
+        "PillBuffHudPlanner.clearOnDisconnect",
+        "MorphCastVignetteState.clearOnDisconnect",
+        "SeasonVisualController.clearOnDisconnect",
+        "ScreenTransitionController.clearOnDisconnect",
+        "WorldVfxDemoBootstrap.clearOnDisconnect",
+        "DeadDropBreakPlayer.clearOnDisconnect",
+        "NpcFootstepAudioController.clearOnDisconnect",
+        "BongAnimationRegistry.clearOnDisconnect",
+        "NpcDialogueBubbleRenderer.clear",
+        "com.bong.client.audio.MusicStateMachine.instance",
+        "com.bong.client.audio.MusicStateMachine.instance().clear",
+        "SoundRecipePlayer.instance",
+        "SoundRecipePlayer.instance().clearOnDisconnect",
+        "BongAnimationPlayer.clearOnDisconnect",
+        "AnimationLayerManager.clearOnDisconnect",
+        "BongPunchCombo.clearOnDisconnect",
+        "MutationVisualState.reset",
+        "SpiderDisguiseHandler.clearOnDisconnect",
+        "RatQiTierHandler.clearOnDisconnect",
+        "DaoZhanDisguiseHandler.clearOnDisconnect",
+        "com.bong.client.era.EraAmbianceState.reset",
+        "BongToast.clearOnDisconnect"
+    );
+
     @AfterEach
     void resetUnknownTypeLogCache() {
         BongNetworkHandler.resetUnknownTypeLogTimesForTests();
@@ -667,47 +708,39 @@ public class BongNetworkHandlerTest {
         }
 
         StoreTokenLexicon lexicon = registryManagedStoreTokens(clientRoot.resolve("src/main/java"));
-        JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
             src,
             "BongNetworkHandler",
             "clearClientStateOnDisconnect",
             lexicon.fqcns(),
-            lexicon.memberNames(),
-            Set.of("clearAllOnDisconnect")
+            DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+            Set.of()
         );
-        JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
             src,
             "BongNetworkHandler",
             "runAdjunctDisconnectTeardown",
             lexicon.fqcns(),
-            Set.of(),
+            DISCONNECT_ADJUNCT_ALLOWED_INVOCATIONS,
             Set.of()
         );
     }
 
-    private record StoreTokenLexicon(Set<String> fqcns, Set<String> memberNames) {}
+    private record StoreTokenLexicon(Set<String> fqcns) {}
 
     private static StoreTokenLexicon registryManagedStoreTokens(
         java.nio.file.Path productionSourceRoot
     ) throws Exception {
         Set<String> fqcns = new TreeSet<>(ClientStoreScopeManifest.registryManagedSessionStores());
-        Set<String> memberNames = new TreeSet<>();
         for (String fqcn : fqcns) {
             java.nio.file.Path source = productionSourceRoot.resolve(fqcn.replace('.', '/') + ".java");
-            assertTrue(java.nio.file.Files.exists(source), "词法门禁必须能读取 registry-managed Store：" + fqcn);
-            memberNames.addAll(JavaLifecycleSourceInspector.declaredMethodNames(
-                java.nio.file.Files.readString(source),
-                fqcn
-            ));
+            assertTrue(java.nio.file.Files.exists(source), "allowlist 门禁必须能读取 registry-managed Store：" + fqcn);
         }
-        return new StoreTokenLexicon(Set.copyOf(fqcns), Set.copyOf(memberNames));
+        return new StoreTokenLexicon(Set.copyOf(fqcns));
     }
 
     private static StoreTokenLexicon fixtureStoreTokens() {
-        return new StoreTokenLexicon(
-            Set.of("com.bong.client.hud.LootContainerStateStore"),
-            Set.of("clearOnDisconnect", "clear", "resetForTests", "clearForTests")
-        );
+        return new StoreTokenLexicon(Set.of("com.bong.client.hud.LootContainerStateStore"));
     }
 
     @Test
@@ -736,6 +769,7 @@ public class BongNetworkHandlerTest {
                 }
                 """,
             """
+                import com.bong.client.hud.LootContainerStateStore;
                 final class BongNetworkHandler {
                     static void clearClientStateOnDisconnect() {
                         Class<?> storeType = LootContainerStateStore.class;
@@ -795,12 +829,12 @@ public class BongNetworkHandlerTest {
         for (String fixture : forbiddenFixtures) {
             assertThrows(
                 AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+                () -> JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
                     fixture,
                     "BongNetworkHandler",
                     "clearClientStateOnDisconnect",
                     lexicon.fqcns(),
-                    lexicon.memberNames(),
+                    Set.of(),
                     Set.of()
                 )
             );
@@ -820,7 +854,7 @@ public class BongNetworkHandlerTest {
 
         assertThrows(
             AssertionError.class,
-            () -> JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+            () -> JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
                 fixture,
                 "BongNetworkHandler",
                 "runAdjunctDisconnectTeardown",
@@ -843,13 +877,85 @@ public class BongNetworkHandlerTest {
             """;
         StoreTokenLexicon lexicon = fixtureStoreTokens();
 
-        JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
             fixture,
             "BongNetworkHandler",
             "clearClientStateOnDisconnect",
             lexicon.fqcns(),
-            lexicon.memberNames(),
-            Set.of("clearAllOnDisconnect")
+            DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+            Set.of()
+        );
+    }
+
+    @Test
+    void disconnectAllowlistRejectsRenamedHelperCallAndMethodReference() {
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+        for (String fixture : List.of(
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { Helper.teardown(); }
+                }
+                final class Helper {
+                    static void teardown() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() {
+                        Runnable teardown = Helper::teardown;
+                    }
+                }
+                final class Helper {
+                    static void teardown() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """
+        )) {
+            assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+                    fixture,
+                    "BongNetworkHandler",
+                    "clearClientStateOnDisconnect",
+                    lexicon.fqcns(),
+                    DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+                    Set.of()
+                )
+            );
+        }
+    }
+
+    @Test
+    void storeImportUsedOnlyOutsideAuditedDisconnectMethodIsAllowed() {
+        String fixture = """
+            import com.bong.client.hud.LootContainerStateStore;
+            final class BongNetworkHandler {
+                static void clearClientStateOnDisconnect() {
+                    SessionScopedStoreRegistry.clearAllOnDisconnect();
+                    runAdjunctDisconnectTeardown();
+                }
+                private static void runAdjunctDisconnectTeardown() { }
+                static void applyBusinessPayload() {
+                    LootContainerStateStore.replace(null);
+                }
+            }
+            """;
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
+
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            fixture,
+            "BongNetworkHandler",
+            "clearClientStateOnDisconnect",
+            lexicon.fqcns(),
+            DISCONNECT_ENTRY_ALLOWED_INVOCATIONS,
+            Set.of()
+        );
+        JavaLifecycleSourceInspector.assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
+            fixture,
+            "BongNetworkHandler",
+            "runAdjunctDisconnectTeardown",
+            lexicon.fqcns(),
+            Set.of(),
+            Set.of()
         );
     }
 

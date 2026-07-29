@@ -129,29 +129,13 @@ public final class JavaLifecycleSourceInspector {
         }.scan(unit, null);
     }
 
-    public static Set<String> declaredMethodNames(String source, String sourceIdentity) {
-        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
-        Set<String> names = new TreeSet<>();
-        new TreeScanner<Void, Void>() {
-            @Override
-            public Void visitMethod(MethodTree method, Void unused) {
-                String name = method.getName().toString();
-                if (!name.equals("<init>")) {
-                    names.add(name);
-                }
-                return super.visitMethod(method, unused);
-            }
-        }.scan(unit, null);
-        return Set.copyOf(names);
-    }
-
-    public static void assertMethodContainsNoForbiddenTokens(
+    public static void assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
         String source,
         String className,
         String methodName,
-        Set<String> forbiddenFqcns,
-        Set<String> forbiddenMemberNames,
-        Set<String> allowedTokens
+        Set<String> storeFqcns,
+        Set<String> allowedInvocations,
+        Set<String> allowedMemberReferences
     ) {
         CompilationUnitTree unit = parse(className, source);
         ClassTree owner = unit.getTypeDecls().stream()
@@ -172,59 +156,84 @@ public final class JavaLifecycleSourceInspector {
             );
         }
 
-        Set<String> forbiddenTypeNames = new TreeSet<>();
-        for (String fqcn : forbiddenFqcns) {
-            forbiddenTypeNames.add(simpleName(fqcn));
+        Set<String> importedStoreTypeNames = new TreeSet<>();
+        Set<String> staticImportedStoreMembers = new TreeSet<>();
+        String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+        for (String fqcn : storeFqcns) {
+            if (packageName(fqcn).equals(sourcePackage)) {
+                importedStoreTypeNames.add(simpleName(fqcn));
+            }
+        }
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            for (String fqcn : storeFqcns) {
+                if (!importTree.isStatic() && imported.equals(fqcn)) {
+                    importedStoreTypeNames.add(simpleName(fqcn));
+                }
+                if (importTree.isStatic() && imported.startsWith(fqcn + ".")) {
+                    String member = imported.substring(fqcn.length() + 1);
+                    if (!member.equals("*")) {
+                        staticImportedStoreMembers.add(member);
+                    }
+                }
+            }
         }
 
-        Set<String> rejectedTokens = new TreeSet<>();
-        TreeScanner<Void, Void> bodyScanner = new TreeScanner<>() {
-            private void reject(String token) {
-                if ((forbiddenTypeNames.contains(token) || forbiddenMemberNames.contains(token))
-                    && !allowedTokens.contains(token)) {
-                    rejectedTokens.add(token);
+        Set<String> rejectedCalls = new TreeSet<>();
+        Set<String> rejectedStoreReferences = new TreeSet<>();
+        new TreeScanner<Void, Void>() {
+            private void rejectQualifiedStoreReference(String expression) {
+                for (String fqcn : storeFqcns) {
+                    if (expression.equals(fqcn) || expression.startsWith(fqcn + ".")) {
+                        rejectedStoreReferences.add(expression);
+                    }
                 }
             }
 
             @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                String call = invocation.getMethodSelect().toString();
+                if (!allowedInvocations.contains(call)) {
+                    rejectedCalls.add("invoke:" + call);
+                }
+                if (invocation.getMethodSelect() instanceof IdentifierTree identifier
+                    && staticImportedStoreMembers.contains(identifier.getName().toString())) {
+                    rejectedStoreReferences.add("static-import:" + identifier.getName());
+                }
+                return super.visitMethodInvocation(invocation, unused);
+            }
+
+            @Override
+            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                String memberReference = reference.getQualifierExpression()
+                    + "::" + reference.getName();
+                if (!allowedMemberReferences.contains(memberReference)) {
+                    rejectedCalls.add("reference:" + memberReference);
+                }
+                rejectQualifiedStoreReference(reference.getQualifierExpression().toString());
+                return super.visitMemberReference(reference, unused);
+            }
+
+            @Override
             public Void visitIdentifier(IdentifierTree identifier, Void unused) {
-                reject(identifier.getName().toString());
+                if (importedStoreTypeNames.contains(identifier.getName().toString())) {
+                    rejectedStoreReferences.add(identifier.getName().toString());
+                }
                 return super.visitIdentifier(identifier, unused);
             }
 
             @Override
             public Void visitMemberSelect(MemberSelectTree selection, Void unused) {
-                reject(selection.getIdentifier().toString());
+                rejectQualifiedStoreReference(selection.toString());
                 return super.visitMemberSelect(selection, unused);
             }
+        }.scan(methods.get(0).getBody(), null);
 
-            @Override
-            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                reject(reference.getName().toString());
-                return super.visitMemberReference(reference, unused);
-            }
-        };
-
-        for (ImportTree importTree : unit.getImports()) {
-            String imported = importTree.getQualifiedIdentifier().toString();
-            for (String fqcn : forbiddenFqcns) {
-                if (imported.equals(fqcn)
-                    || imported.equals(fqcn + ".*")
-                    || imported.startsWith(fqcn + ".")) {
-                    rejectedTokens.add(imported);
-                }
-            }
-            if (importTree.isStatic()) {
-                bodyScanner.scan(importTree.getQualifiedIdentifier(), null);
-            }
-        }
-        bodyScanner.scan(methods.get(0).getBody(), null);
-
-        if (!rejectedTokens.isEmpty()) {
+        if (!rejectedCalls.isEmpty() || !rejectedStoreReferences.isEmpty()) {
             throw new AssertionError(
                 className + "." + methodName
-                    + " 只能通过 SessionScopedStoreRegistry.clearAllOnDisconnect 清理 Store；禁用 token="
-                    + rejectedTokens
+                    + " 只能调用显式 allowlist 中的断线清理；未授权调用=" + rejectedCalls
+                    + "，Store 引用=" + rejectedStoreReferences
             );
         }
     }
@@ -282,6 +291,11 @@ public final class JavaLifecycleSourceInspector {
         } catch (IOException exception) {
             throw new AssertionError("无法解析 Java source", exception);
         }
+    }
+
+    private static String packageName(String identity) {
+        int separator = identity.lastIndexOf('.');
+        return separator >= 0 ? identity.substring(0, separator) : "";
     }
 
     private static String simpleName(String identity) {
