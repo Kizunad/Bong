@@ -49,6 +49,10 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios.cultivation_realm_qi import (  # noqa: E402
+    _chat_after,
+    _successful_command_and_chat,
+)
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     NON_CLAMP_EXPECTED_QI,
     PILL_ID,
@@ -76,7 +80,9 @@ from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
 )
 from bot.scenarios.production_lingtian_gathering_intents import (  # noqa: E402
+    HERB_ID,
     _surface_candidates,
+    _wait_gather_progress,
 )
 from bot.scenarios.production_spiritwood_full_inventory_drop import (  # noqa: E402
     LUMBER_TERMINAL_TIMEOUT_SECONDS,
@@ -2715,6 +2721,97 @@ def _player_state_event(t: float, qi: float, qi_max: float = 100.0) -> _FakeEven
             },
         },
     )
+
+
+
+
+class CultivationRealmQiScenarioTest(unittest.TestCase):
+    def test_exact_rejection_does_not_accept_prefixed_or_suffixed_text(self):
+        expected = "[dev] qi set rejected: value must be finite >= 0"
+        exact = _FakeEvent(2.0, "chat", {"text": expected})
+        prefixed = _FakeEvent(3.0, "chat", {"text": f"warning: {expected}"})
+        suffixed = _FakeEvent(4.0, "chat", {"text": f"{expected}; retry"})
+
+        self.assertIs(_chat_after(_FakeBot([exact]), 1.0, expected, exact=True), exact)
+        for misleading in (prefixed, suffixed):
+            with self.subTest(text=misleading.data["text"]), self.assertRaises(AssertionError):
+                _chat_after(_FakeBot([misleading]), 1.0, expected, exact=True)
+
+    def test_successful_command_rejects_matching_rejection_prefix(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "history"})],
+            [_FakeEvent(2.0, "chat", {"text": "[dev] qi set rejected: [dev] qi set"})],
+        )
+
+        with self.assertRaisesRegex(BotAssertionError, "期望成功反馈"):
+            _successful_command_and_chat(bot, "qi set 11", "[dev] qi set")
+
+    def test_command_watermark_is_read_under_bot_lock(self):
+        bot = _CommandFakeBot(
+            [_FakeEvent(1.0, "chat", {"text": "history"})],
+            [_FakeEvent(2.0, "chat", {"text": "[dev] realm set Awaken -> Induce"})],
+        )
+
+        result = _successful_command_and_chat(
+            bot,
+            "realm set induce",
+            "[dev] realm set Awaken -> Induce",
+        )
+
+        self.assertEqual(bot.commands, ["realm set induce"])
+        self.assertEqual(result.t, 2.0)
+
+
+class LingtianScenarioFilteringTest(unittest.TestCase):
+    def test_gather_progress_skips_unrelated_session_and_herb(self):
+        target = _FakeEvent(
+            4.0,
+            "server_data",
+            {
+                "payload_type": "gathering_session",
+                "payload": {
+                    "type": "gathering_session",
+                    "target_type": "herb",
+                    "target_name": HERB_ID,
+                    "total_ticks": 20,
+                    "progress_ticks": 1,
+                },
+            },
+        )
+        bot = _FakeBot(
+            [
+                _FakeEvent(
+                    2.0,
+                    "server_data",
+                    {
+                        "payload_type": "gathering_session",
+                        "payload": {
+                            "type": "gathering_session",
+                            "target_type": "ore",
+                            "target_name": "iron_ore",
+                            "total_ticks": 20,
+                            "progress_ticks": 1,
+                        },
+                    },
+                ),
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {
+                        "payload_type": "botany_harvest_progress",
+                        "payload": {
+                            "type": "botany_harvest_progress",
+                            "plant_kind": "other_herb",
+                            "target_name": "other_herb",
+                            "progress": 0.2,
+                        },
+                    },
+                ),
+                target,
+            ]
+        )
+
+        self.assertEqual(_wait_gather_progress(bot, 1.0), target.data["payload"])
 
 
 class CultivationPillScenarioTest(unittest.TestCase):

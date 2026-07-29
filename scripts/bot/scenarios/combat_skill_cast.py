@@ -82,7 +82,7 @@ def run(env) -> None:
             }
         )
 
-        bot.wait_for(
+        casting = bot.wait_for(
             lambda event: event.kind == "server_data"
             and event.t > anchor
             and event.data.get("payload_type") == "cast_sync"
@@ -94,7 +94,7 @@ def run(env) -> None:
         )
         bot.wait_for(
             lambda event: event.kind == "server_data"
-            and event.t > anchor
+            and event.t > casting.t
             and event.data.get("payload_type") == "cast_sync"
             and event.data.get("payload", {}).get("slot") == SLOT
             and event.data.get("payload", {}).get("phase") == "complete"

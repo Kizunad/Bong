@@ -5,27 +5,52 @@
 """
 
 from bot.bot import BotAssertionError
+from bot.scenarios._combat_helpers import last_event_time
 
 DESCRIPTION = "realm/qi/meridian dev 命令锁住成功、拒绝、钳制与重复状态反馈"
 MODULES = ["cmd", "cultivation"]
 
 
-def _chat_after(bot, watermark: float, substring: str, timeout: float = 10.0):
+def _chat_after(
+    bot,
+    watermark: float,
+    expected: str,
+    timeout: float = 10.0,
+    *,
+    exact: bool = False,
+):
     return bot.wait_for(
         lambda event: (
             event.kind == "chat"
             and event.t > watermark
-            and substring in event.data["text"]
+            and (
+                event.data["text"] == expected
+                if exact
+                else expected in event.data["text"]
+            )
         ),
         timeout=timeout,
-        description=f"t>{watermark:.3f}s 后包含「{substring}」的聊天消息",
+        description=(
+            f"t>{watermark:.3f}s 后严格等于「{expected}」的聊天消息"
+            if exact
+            else f"t>{watermark:.3f}s 后包含「{expected}」的聊天消息"
+        ),
     )
 
 
-def _command_and_chat(bot, command: str, substring: str):
-    watermark = bot.events[-1].t if bot.events else 0.0
+def _command_and_chat(bot, command: str, expected: str, *, exact: bool = False):
+    watermark = last_event_time(bot)
     bot.cmd(command)
-    return _chat_after(bot, watermark, substring)
+    return _chat_after(bot, watermark, expected, exact=exact)
+
+
+def _successful_command_and_chat(bot, command: str, substring: str):
+    event = _command_and_chat(bot, command, substring)
+    if " rejected:" in event.data["text"]:
+        raise BotAssertionError(
+            f"[{bot.username}] {command} 期望成功反馈，实际收到拒绝：{event.data['text']}"
+        )
+    return event
 
 
 def run(env) -> None:
@@ -33,7 +58,11 @@ def run(env) -> None:
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)
 
-        realm = _command_and_chat(bot, "realm set induce", "[dev] realm set")
+        realm = _successful_command_and_chat(
+            bot,
+            "realm set induce",
+            "[dev] realm set Awaken -> Induce",
+        )
         if "Induce" not in realm.data["text"]:
             raise BotAssertionError(
                 f"[{bot.username}] realm set 成功反馈必须带目标 Induce，实际 "
@@ -45,11 +74,24 @@ def run(env) -> None:
             "realm set bot_e2e_no_such_realm",
             "[dev] realm set rejected: unknown realm \"bot_e2e_no_such_realm\"; "
             "allowed: awaken|induce|condense|solidify|spirit|void",
+            exact=True,
         )
 
-        _command_and_chat(bot, "qi max 12", "[dev] qi max")
-        _command_and_chat(bot, "qi set 11", "[dev] qi set")
-        clamped = _command_and_chat(bot, "qi max 4", "[dev] qi max")
+        _successful_command_and_chat(
+            bot,
+            "qi max 12",
+            "[dev] qi max 10.0 -> 12.0; current=0.0",
+        )
+        _successful_command_and_chat(
+            bot,
+            "qi set 11",
+            "[dev] qi set 0.0 -> 11.0",
+        )
+        clamped = _successful_command_and_chat(
+            bot,
+            "qi max 4",
+            "[dev] qi max 12.0 -> 4.0; current=4.0",
+        )
         if "current=4.0" not in clamped.data["text"]:
             raise BotAssertionError(
                 f"[{bot.username}] 降低 qi max 必须同步钳制 qi_current 到 4.0，实际 "
@@ -59,27 +101,29 @@ def run(env) -> None:
             bot,
             "qi set -1",
             "[dev] qi set rejected: value must be finite >= 0",
+            exact=True,
         )
         _command_and_chat(
             bot,
             "qi max -1",
             "[dev] qi max rejected: value must be finite >= 0",
+            exact=True,
         )
 
-        _command_and_chat(bot, "meridian open lung", "[dev] opened meridian lung")
-        _command_and_chat(
+        _successful_command_and_chat(bot, "meridian open lung", "[dev] opened meridian lung")
+        _successful_command_and_chat(
             bot,
             "meridian open lung",
             "[dev] meridian lung already open",
         )
-        listed = _command_and_chat(bot, "meridian list", "[dev] opened meridians:")
+        listed = _successful_command_and_chat(bot, "meridian list", "[dev] opened meridians:")
         if "lung progress=1.00 cap=" not in listed.data["text"]:
             raise BotAssertionError(
                 f"[{bot.username}] meridian list 必须报告已打开 lung 的满进度与容量，实际 "
                 + listed.data["text"]
             )
 
-        opened_all = _command_and_chat(
+        opened_all = _successful_command_and_chat(
             bot,
             "meridian open_all",
             "open_all does not auto-breakthrough",

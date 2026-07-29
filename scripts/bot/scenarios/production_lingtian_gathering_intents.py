@@ -80,7 +80,9 @@ def _start_real_till(bot, hoe_iid: int) -> dict:
                 lambda e: e.kind == "server_data"
                 and e.data["payload_type"] == "lingtian_session"
                 and e.t > anchor
-                and e.data["payload"]["active"] is True,
+                and e.data["payload"]["active"] is True
+                and e.data["payload"]["kind"] == "till"
+                and e.data["payload"]["pos"] == list(target),
                 timeout=1.5,
                 description=f"真实锄实例在候选地表 {target} 开启 till session",
             )
@@ -108,7 +110,18 @@ def _wait_gather_progress(bot, after: float) -> dict:
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.t > after
-        and e.data["payload_type"] in {"gathering_session", "botany_harvest_progress"},
+        and (
+            (
+                e.data["payload_type"] == "gathering_session"
+                and e.data["payload"]["target_type"] == "herb"
+                and e.data["payload"].get("target_name") == HERB_ID
+            )
+            or (
+                e.data["payload_type"] == "botany_harvest_progress"
+                and e.data["payload"]["plant_kind"] == HERB_ID
+                and e.data["payload"]["target_name"] == HERB_ID
+            )
+        ),
         timeout=15.0,
         description="/bong gather 后深解码 gathering/botany 进度",
     )
