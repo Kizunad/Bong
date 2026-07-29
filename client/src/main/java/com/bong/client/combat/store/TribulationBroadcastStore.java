@@ -53,7 +53,7 @@ public final class TribulationBroadcastStore {
 
     public static void replace(State next) {
         if (next == null || !next.active()) {
-            clear();
+            discardAll();
             return;
         }
         LinkedHashMap<String, State> copy = new LinkedHashMap<>();
@@ -63,11 +63,11 @@ public final class TribulationBroadcastStore {
 
     public static void upsert(State next) {
         if (next == null) {
-            clear();
+            discardAll();
             return;
         }
         if (!next.active()) {
-            clear(next);
+            remove(next);
             return;
         }
         LinkedHashMap<String, State> copy = new LinkedHashMap<>(snapshots);
@@ -75,9 +75,9 @@ public final class TribulationBroadcastStore {
         snapshots = Collections.unmodifiableMap(copy);
     }
 
-    public static void clear(State target) {
+    public static void remove(State target) {
         if (target == null || !target.hasTargetKey()) {
-            clear();
+            discardAll();
             return;
         }
         LinkedHashMap<String, State> copy = new LinkedHashMap<>(snapshots);
@@ -85,11 +85,14 @@ public final class TribulationBroadcastStore {
         snapshots = copy.isEmpty() ? Map.of() : Collections.unmodifiableMap(copy);
     }
 
-    public static void clear() { snapshots = Map.of(); }
+    private static void discardAll() { snapshots = Map.of(); }
 
+    public static void clear(State target) { remove(target); }
+
+    public static void clear() { discardAll(); }
 
     public static void clearOnDisconnect() {
-        clear();
+        discardAll();
     }
 
     public static void resetForTests() { snapshots = Map.of(); }

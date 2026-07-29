@@ -7,7 +7,7 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>由 {@link AgentUiScreen#init()} 在面板打开时写入；
  * 由 {@link AgentUiVfxPlanner} 每帧读取生成 HudRenderCommand；
- * 面板关闭时清除（{@link #clear()}）。
+ * 面板关闭时停用（{@link #deactivate()}）。
  */
 public final class AgentUiVfxStore {
     private AgentUiVfxStore() {}
@@ -26,12 +26,16 @@ public final class AgentUiVfxStore {
         return current;
     }
 
-    /** 清除 VFX 状态（面板关闭时调用）。 */
-    public static void clear() {
+    /** 停用当前面板 VFX（面板关闭时调用）。 */
+    public static void deactivate() {
         current = null;
     }
 
+    public static void clear() {
+        deactivate();
+    }
+
     public static void clearOnDisconnect() {
-        clear();
+        deactivate();
     }
 }

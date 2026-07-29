@@ -78,8 +78,7 @@ public class BongNetworkHandlerTest {
         "NpcFootstepAudioController.clearOnDisconnect",
         "BongAnimationRegistry.clearOnDisconnect",
         "NpcDialogueBubbleRenderer.clear",
-        "com.bong.client.audio.MusicStateMachine.instance",
-        "com.bong.client.audio.MusicStateMachine.instance().clear",
+        "com.bong.client.audio.MusicStateMachine.clearOnDisconnect",
         "SoundRecipePlayer.instance",
         "SoundRecipePlayer.instance().clearOnDisconnect",
         "BongAnimationPlayer.clearOnDisconnect",
@@ -680,7 +679,7 @@ public class BongNetworkHandlerTest {
 
         List<String> nonStoreHooks = List.of(
             "() -> NpcDialogueBubbleRenderer.clear()",
-            "() -> com.bong.client.audio.MusicStateMachine.instance().clear()",
+            "() -> com.bong.client.audio.MusicStateMachine.clearOnDisconnect()",
             "() -> SoundRecipePlayer.instance().clearOnDisconnect()",
             "() -> BongAnimationPlayer.clearOnDisconnect()",
             "() -> AnimationLayerManager.clearOnDisconnect()",

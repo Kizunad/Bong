@@ -6,7 +6,7 @@ package com.bong.client.combat.store;
  *
  * <p>三终止条件：
  * <ol>
- *   <li>服务器显式 {@code active=false} HIDE payload → {@link #clear()} 立即清场。</li>
+ *   <li>服务器显式 {@code active=false} HIDE payload → {@link #hide()} 立即清场。</li>
  *   <li>玩家化虚 settle → 服务器再发一次 {@code active=false}（由 emit 系统负责）。</li>
  *   <li>过窗（{@code currentTick > windowUntilTick}）→ client 本地在 Planner 中判定自动淡出。</li>
  * </ol>
@@ -61,13 +61,17 @@ public final class HalfStepRechallengeStore {
         snapshot = next == null ? State.NONE : next;
     }
 
-    /** 显式清场（active=false payload 触发）。 */
-    public static void clear() {
+    /** 显式隐藏（active=false payload 触发）。 */
+    public static void hide() {
         snapshot = State.NONE;
     }
 
+    public static void clear() {
+        hide();
+    }
+
     public static void clearOnDisconnect() {
-        clear();
+        hide();
     }
 
     /** 测试用重置。 */

@@ -11,6 +11,7 @@ import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.PrimitiveTypeTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.VariableTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.TreeScanner;
@@ -25,7 +26,10 @@ import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -35,6 +39,29 @@ public final class JavaLifecycleSourceInspector {
         "resetForTest",
         "clearForTests"
     );
+    private static final Set<String> STORE_CLEANUP_METHODS = Set.of(
+        "clearOnDisconnect",
+        "clear",
+        "clearAll",
+        "reset"
+    );
+
+    public record AuditedLifecycleEntry(
+        String sourceIdentity,
+        String source,
+        String className,
+        String methodName,
+        int parameterCount
+    ) {
+        public AuditedLifecycleEntry(
+            String sourceIdentity,
+            String source,
+            String className,
+            String methodName
+        ) {
+            this(sourceIdentity, source, className, methodName, 0);
+        }
+    }
 
     record StoreRegistration(String storeType, String cleanerOwner, String cleanerMethod) {}
 
@@ -328,6 +355,498 @@ public final class JavaLifecycleSourceInspector {
         }
     }
 
+    public static void assertLifecycleClosureContainsNoStoreCleanupReferences(
+        List<AuditedLifecycleEntry> entries,
+        Set<String> storeFqcns
+    ) {
+        Map<String, AuditedLifecycleEntry> entriesByCall = new HashMap<>();
+        for (AuditedLifecycleEntry entry : entries) {
+            String call = lifecycleEntryCall(entry);
+            AuditedLifecycleEntry previous = entriesByCall.put(call, entry);
+            if (previous != null) {
+                throw new AssertionError("audited lifecycle closure 重复登记：" + call);
+            }
+        }
+
+        Set<String> auditedCalls = Set.copyOf(entriesByCall.keySet());
+        for (AuditedLifecycleEntry entry : entries) {
+            assertMethodClosureContainsNoStoreCleanupReferences(
+                entry.source(),
+                entry.className(),
+                entry.methodName(),
+                entry.parameterCount(),
+                storeFqcns,
+                auditedCalls
+            );
+        }
+    }
+
+    public static void assertMethodClosureContainsNoStoreCleanupReferences(
+        String source,
+        String className,
+        String methodName,
+        Set<String> storeFqcns,
+        Set<String> allowedCrossClassCalls
+    ) {
+        assertMethodClosureContainsNoStoreCleanupReferences(
+            source,
+            className,
+            methodName,
+            0,
+            storeFqcns,
+            allowedCrossClassCalls
+        );
+    }
+
+    private static void assertMethodClosureContainsNoStoreCleanupReferences(
+        String source,
+        String className,
+        String methodName,
+        int parameterCount,
+        Set<String> storeFqcns,
+        Set<String> allowedCrossClassCalls
+    ) {
+        CompilationUnitTree unit = parse(className, source);
+        ClassTree owner = unit.getTypeDecls().stream()
+            .filter(ClassTree.class::isInstance)
+            .map(ClassTree.class::cast)
+            .filter(type -> type.getSimpleName().contentEquals(className))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("无法定位 production 类型：" + className));
+        Map<String, List<MethodTree>> methodsByName = new HashMap<>();
+        for (Tree member : owner.getMembers()) {
+            if (member instanceof MethodTree method) {
+                methodsByName.computeIfAbsent(method.getName().toString(), ignored -> new ArrayList<>())
+                    .add(method);
+            }
+        }
+        Map<String, String> currentClassFieldTypes = new HashMap<>();
+        for (Tree member : owner.getMembers()) {
+            if (member instanceof VariableTree variable && variable.getType() != null) {
+                currentClassFieldTypes.put(
+                    variable.getName().toString(),
+                    rawTypeName(variable.getType().toString())
+                );
+            }
+        }
+        List<MethodTree> entries = methodsByName.getOrDefault(methodName, List.of()).stream()
+            .filter(method -> method.getParameters().size() == parameterCount)
+            .toList();
+        if (entries.size() != 1) {
+            throw new AssertionError(
+                "production helper 必须恰好声明一个匹配入口：" + className + "." + methodName
+                    + "/" + parameterCount + "；实际=" + entries.size()
+            );
+        }
+        Map<String, Set<String>> localDataAccessors = new HashMap<>();
+        collectLocalDataAccessors(unit, localDataAccessors);
+        Map<String, String> visibleTypeFqcns = new HashMap<>();
+        String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+        for (Tree declaration : unit.getTypeDecls()) {
+            if (declaration instanceof ClassTree type) {
+                String fqcn = sourcePackage.isBlank()
+                    ? type.getSimpleName().toString()
+                    : sourcePackage + "." + type.getSimpleName();
+                visibleTypeFqcns.put(type.getSimpleName().toString(), fqcn);
+            }
+        }
+        Set<String> visibleStoreTypeNames = new TreeSet<>();
+        Set<String> staticallyImportedCleanupMethods = new TreeSet<>();
+        Set<String> violations = new TreeSet<>();
+        for (String fqcn : storeFqcns) {
+            if (packageName(fqcn).equals(sourcePackage)) {
+                visibleStoreTypeNames.add(simpleName(fqcn));
+            }
+        }
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            if (!importTree.isStatic() && !imported.endsWith(".*")) {
+                visibleTypeFqcns.put(simpleName(imported), imported);
+            }
+            for (String fqcn : storeFqcns) {
+                if (!importTree.isStatic() && imported.equals(fqcn)) {
+                    visibleStoreTypeNames.add(simpleName(fqcn));
+                }
+                if (!importTree.isStatic() && imported.equals(packageName(fqcn) + ".*")) {
+                    violations.add("wildcard-import:" + imported);
+                }
+                if (importTree.isStatic() && imported.equals(fqcn + ".*")) {
+                    violations.add("wildcard-import:static " + imported);
+                }
+                if (importTree.isStatic()
+                    && STORE_CLEANUP_METHODS.stream()
+                        .anyMatch(cleanup -> imported.equals(fqcn + "." + cleanup))) {
+                    staticallyImportedCleanupMethods.add(
+                        imported.substring(imported.lastIndexOf('.') + 1)
+                    );
+                }
+            }
+        }
+
+        Set<String> visited = new HashSet<>();
+        scanMethodClosure(
+            entries.get(0),
+            className,
+            methodsByName,
+            visited,
+            storeFqcns,
+            visibleStoreTypeNames,
+            currentClassFieldTypes,
+            localDataAccessors,
+            visibleTypeFqcns,
+            sourcePackage,
+            staticallyImportedCleanupMethods,
+            allowedCrossClassCalls,
+            violations
+        );
+        if (!violations.isEmpty()) {
+            throw new AssertionError(
+                className + "." + methodName
+                    + " 的可达断线清理 closure 不得触达 registry-managed Store：" + violations
+            );
+        }
+    }
+
+    private static void scanMethodClosure(
+        MethodTree method,
+        String className,
+        Map<String, List<MethodTree>> methodsByName,
+        Set<String> visited,
+        Set<String> storeFqcns,
+        Set<String> visibleStoreTypeNames,
+        Map<String, String> currentClassFieldTypes,
+        Map<String, Set<String>> localDataAccessors,
+        Map<String, String> visibleTypeFqcns,
+        String sourcePackage,
+        Set<String> staticallyImportedCleanupMethods,
+        Set<String> allowedCrossClassCalls,
+        Set<String> violations
+    ) {
+        String methodKey = method.getName() + "/" + method.getParameters().size();
+        if (!visited.add(methodKey) || method.getBody() == null) {
+            return;
+        }
+        Map<String, String> localDataVariables = new HashMap<>();
+        for (VariableTree parameter : method.getParameters()) {
+            if (parameter.getType() != null) {
+                localDataVariables.put(
+                    parameter.getName().toString(),
+                    rawTypeName(parameter.getType().toString())
+                );
+            }
+        }
+        new TreeScanner<Void, Void>() {
+            @Override
+            public Void visitVariable(VariableTree variable, Void unused) {
+                if (variable.getType() != null) {
+                    localDataVariables.put(
+                        variable.getName().toString(),
+                        rawTypeName(variable.getType().toString())
+                    );
+                }
+                return super.visitVariable(variable, unused);
+            }
+
+            @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                String invokedName = invokedMethodName(invocation.getMethodSelect());
+                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
+                    String owner = selection.getExpression().toString();
+                    String resolvedOwner = currentClassFieldTypes.getOrDefault(owner, owner);
+                    if (STORE_CLEANUP_METHODS.contains(invokedName)
+                        && isManagedStoreOwner(resolvedOwner, storeFqcns, visibleStoreTypeNames)) {
+                        violations.add("invoke:" + invocation.getMethodSelect());
+                    } else if (owner.equals("this") || owner.equals(className) || resolvedOwner.equals(className)) {
+                        recurseLocal(invokedName, invocation.getArguments().size());
+                    } else {
+                        String crossClassCall = normalizeCrossClassCall(
+                            owner,
+                            invokedName,
+                            currentClassFieldTypes,
+                            localDataVariables,
+                            localDataAccessors,
+                            visibleTypeFqcns,
+                            sourcePackage
+                        );
+                        if (crossClassCall != null
+                            && !isAllowedCrossClassCall(crossClassCall, allowedCrossClassCalls)) {
+                            violations.add("cross-class:" + crossClassCall);
+                        }
+                    }
+                } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
+                    if (STORE_CLEANUP_METHODS.contains(invokedName)
+                        && staticallyImportedCleanupMethods.contains(invokedName)) {
+                        violations.add("static-import:" + invokedName);
+                    } else {
+                        recurseLocal(invokedName, invocation.getArguments().size());
+                    }
+                }
+                return super.visitMethodInvocation(invocation, unused);
+            }
+
+            @Override
+            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                String referencedName = reference.getName().toString();
+                String qualifier = reference.getQualifierExpression().toString();
+                String resolvedQualifier = currentClassFieldTypes.getOrDefault(qualifier, qualifier);
+                if (STORE_CLEANUP_METHODS.contains(referencedName)
+                    && isManagedStoreOwner(resolvedQualifier, storeFqcns, visibleStoreTypeNames)) {
+                    violations.add("reference:" + qualifier + "::" + referencedName);
+                } else {
+                    String crossClassCall = normalizeCrossClassCall(
+                        qualifier,
+                        referencedName,
+                        currentClassFieldTypes,
+                        localDataVariables,
+                        localDataAccessors,
+                        visibleTypeFqcns,
+                        sourcePackage
+                    );
+                    if (crossClassCall != null
+                        && !isAllowedCrossClassCall(crossClassCall, allowedCrossClassCalls)) {
+                        violations.add("cross-class-reference:" + crossClassCall);
+                    }
+                }
+                return super.visitMemberReference(reference, unused);
+            }
+
+            @Override
+            public Void visitNewClass(NewClassTree expression, Void unused) {
+                String identifier = rawTypeName(expression.getIdentifier().toString());
+                String constructorFqcn = visibleTypeFqcns.getOrDefault(identifier, identifier);
+                if (isManagedStoreOwner(constructorFqcn, storeFqcns, visibleStoreTypeNames)) {
+                    violations.add("new-store:" + expression.getIdentifier());
+                }
+                return super.visitNewClass(expression, unused);
+            }
+
+            private void recurseLocal(String name, int parameterCount) {
+                List<MethodTree> candidates = methodsByName.getOrDefault(name, List.of()).stream()
+                    .filter(candidate -> candidate.getParameters().size() == parameterCount)
+                    .toList();
+                if (candidates.size() > 1) {
+                    violations.add("ambiguous-local-helper:" + name + "/" + parameterCount);
+                    return;
+                }
+                if (candidates.size() == 1) {
+                    scanMethodClosure(
+                        candidates.get(0),
+                        className,
+                        methodsByName,
+                        visited,
+                        storeFqcns,
+                        visibleStoreTypeNames,
+                        currentClassFieldTypes,
+                        localDataAccessors,
+                        visibleTypeFqcns,
+                        sourcePackage,
+                        staticallyImportedCleanupMethods,
+                        allowedCrossClassCalls,
+                        violations
+                    );
+                }
+            }
+        }.scan(method.getBody(), null);
+    }
+
+    private static boolean isAllowedCrossClassCall(
+        String crossClassCall,
+        Set<String> allowedCrossClassCalls
+    ) {
+        if (allowedCrossClassCalls.contains(crossClassCall)) {
+            return true;
+        }
+        int methodSeparator = crossClassCall.lastIndexOf('.');
+        if (methodSeparator < 0) {
+            return false;
+        }
+        String owner = crossClassCall.substring(0, methodSeparator);
+        String methodName = crossClassCall.substring(methodSeparator + 1);
+        return allowedCrossClassCalls.stream().anyMatch(allowed -> {
+            int allowedArity = allowed.indexOf('/', methodSeparator + 1);
+            String allowedCall = allowedArity >= 0 ? allowed.substring(0, allowedArity) : allowed;
+            int allowedSeparator = allowedCall.lastIndexOf('.');
+            if (allowedSeparator < 0 || !allowedCall.substring(0, allowedSeparator).equals(owner)) {
+                return false;
+            }
+            if (allowedArity >= 0) {
+                return allowedCall.substring(allowedSeparator + 1).equals(methodName);
+            }
+            return allowedCall.endsWith(".clearOnDisconnect");
+        });
+    }
+
+    private static String lifecycleEntryCall(AuditedLifecycleEntry entry) {
+        CompilationUnitTree unit = parse(entry.className(), entry.source());
+        String packageName = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+        String call = packageName.isBlank()
+            ? entry.className() + "." + entry.methodName()
+            : packageName + "." + entry.className() + "." + entry.methodName();
+        return entry.parameterCount() == 0 ? call : call + "/" + entry.parameterCount();
+    }
+
+    private static String normalizeCrossClassCall(
+        String owner,
+        String methodName,
+        Map<String, String> currentClassFieldTypes,
+        Map<String, String> localDataVariables,
+        Map<String, Set<String>> localDataAccessors,
+        Map<String, String> visibleTypeFqcns,
+        String sourcePackage
+    ) {
+        String ownerType = currentClassFieldTypes.get(owner);
+        if (ownerType == null) {
+            ownerType = localDataVariables.get(owner);
+        }
+        if (ownerType == null) {
+            String rootOwner = rootOwner(owner);
+            if (!rootOwner.equals(owner)) {
+                String rootType = currentClassFieldTypes.get(rootOwner);
+                if (rootType == null) {
+                    rootType = localDataVariables.get(rootOwner);
+                }
+                if (rootType != null) {
+                    String rootFqcn = visibleTypeFqcns.getOrDefault(rootType, rootType);
+                    return isFrameworkDataType(rootFqcn)
+                        ? null
+                        : unresolvedCrossClassCall(owner, methodName);
+                }
+            }
+            ownerType = owner;
+        }
+        int chainedCall = ownerType.indexOf('.');
+        if (ownerType.endsWith("()") && chainedCall > 0) {
+            ownerType = ownerType.substring(0, chainedCall);
+        }
+        if (isLocalDataCall(ownerType, methodName, localDataAccessors)) {
+            return null;
+        }
+        String ownerFqcn = visibleTypeFqcns.getOrDefault(ownerType, ownerType);
+        if (ownerType.equals("BongClient.LOGGER")) {
+            return null;
+        }
+        String root = rootOwner(owner);
+        String rootType = localDataVariables.get(root);
+        String rootFqcn = rootType == null ? "" : visibleTypeFqcns.getOrDefault(rootType, rootType);
+        if (isFrameworkDataType(rootFqcn) || isFrameworkDataType(ownerFqcn)) {
+            return null;
+        }
+        if (isCrossClassStaticCallOwner(ownerType)) {
+            if (ownerFqcn.equals(ownerType) && !ownerType.contains(".")) {
+                ownerFqcn = sourcePackage.isBlank() ? ownerType : sourcePackage + "." + ownerType;
+            }
+            return ownerFqcn + "." + methodName;
+        }
+        if (ownerType.matches("[a-z_$][A-Za-z0-9_$]*")) {
+            return unresolvedCrossClassCall(owner, methodName);
+        }
+        return null;
+    }
+
+    private static boolean isLocalDataCall(
+        String ownerType,
+        String methodName,
+        Map<String, Set<String>> localDataAccessors
+    ) {
+        return localDataAccessors.getOrDefault(ownerType, Set.of()).contains(methodName)
+            || isStandardLibraryDataCall(ownerType, methodName);
+    }
+
+    private static boolean isStandardLibraryDataCall(String ownerType, String methodName) {
+        return switch (ownerType) {
+            case "Runnable" -> methodName.equals("run");
+            case "Consumer", "BiConsumer" -> methodName.equals("accept");
+            case "Supplier", "BooleanSupplier", "IntSupplier", "LongSupplier", "DoubleSupplier" ->
+                methodName.equals("get")
+                    || methodName.equals("getAsBoolean")
+                    || methodName.equals("getAsInt")
+                    || methodName.equals("getAsLong")
+                    || methodName.equals("getAsDouble");
+            case "Predicate", "BiPredicate" -> methodName.equals("test");
+            case "Function", "BiFunction", "UnaryOperator", "BinaryOperator" -> methodName.equals("apply");
+            case "Optional" -> Set.of("ifPresent", "isEmpty", "isPresent", "orElse", "orElseGet", "map")
+                .contains(methodName);
+            default -> false;
+        };
+    }
+
+    private static boolean isFrameworkDataType(String fqcn) {
+        return fqcn.startsWith("java.")
+            || fqcn.startsWith("javax.")
+            || Set.of(
+                "ArithmeticException",
+                "Exception",
+                "IllegalArgumentException",
+                "IllegalStateException",
+                "RuntimeException",
+                "String",
+                "Throwable"
+            ).contains(fqcn)
+            || fqcn.startsWith("net.minecraft.")
+            || fqcn.startsWith("net.fabricmc.")
+            || fqcn.startsWith("org.lwjgl.")
+            || fqcn.startsWith("org.slf4j.")
+            || fqcn.startsWith("dev.kosmx.playerAnim.");
+    }
+
+    private static String rootOwner(String owner) {
+        int separator = owner.indexOf('.');
+        return separator >= 0 ? owner.substring(0, separator) : owner;
+    }
+
+    private static String unresolvedCrossClassCall(String owner, String methodName) {
+        return "<unresolved>:" + owner + "." + methodName;
+    }
+
+    private static void collectLocalDataAccessors(
+        CompilationUnitTree unit,
+        Map<String, Set<String>> localDataAccessors
+    ) {
+        for (Tree declaration : unit.getTypeDecls()) {
+            if (declaration instanceof ClassTree type) {
+                collectLocalDataAccessors(type, localDataAccessors);
+            }
+        }
+    }
+
+    private static void collectLocalDataAccessors(
+        ClassTree type,
+        Map<String, Set<String>> localDataAccessors
+    ) {
+        Set<String> accessors = new HashSet<>();
+        for (Tree member : type.getMembers()) {
+            if (type.getKind() == Tree.Kind.RECORD
+                && member instanceof MethodTree method
+                && method.getParameters().isEmpty()
+                && (method.getBody() == null || method.getModifiers().getFlags().contains(Modifier.STATIC))) {
+                accessors.add(method.getName().toString());
+            } else if (type.getKind() == Tree.Kind.RECORD && member instanceof VariableTree component) {
+                accessors.add(component.getName().toString());
+            } else if (member instanceof ClassTree nestedType) {
+                collectLocalDataAccessors(nestedType, localDataAccessors);
+            }
+        }
+        if (!accessors.isEmpty()) {
+            localDataAccessors.put(type.getSimpleName().toString(), Set.copyOf(accessors));
+        }
+    }
+
+    private static String rawTypeName(String declaredType) {
+        int genericStart = declaredType.indexOf('<');
+        String raw = genericStart >= 0 ? declaredType.substring(0, genericStart) : declaredType;
+        int arrayStart = raw.indexOf('[');
+        return arrayStart >= 0 ? raw.substring(0, arrayStart) : raw;
+    }
+
+    private static boolean isCrossClassStaticCallOwner(String owner) {
+        if (owner.equals("this") || owner.equals("super") || owner.isBlank()) {
+            return false;
+        }
+        int separator = owner.lastIndexOf('.');
+        String terminalOwner = separator >= 0 ? owner.substring(separator + 1) : owner;
+        return !terminalOwner.isBlank() && Character.isUpperCase(terminalOwner.charAt(0));
+    }
+
     static void assertRegistryOwnsManagedStoreCleanerCalls(
         String source,
         String sourceIdentity,
@@ -342,7 +861,8 @@ public final class JavaLifecycleSourceInspector {
             .replaceFirst("\\.java$", "");
         boolean sourceIsManagedStore = storeFqcns.contains(sourceFqcn);
         Set<String> visibleStoreTypeNames = new TreeSet<>();
-        Set<String> staticallyImportedCleaners = new TreeSet<>();
+        Set<String> staticallyImportedCleanupMethods = new TreeSet<>();
+        Set<String> forbiddenWildcardImports = new TreeSet<>();
         for (String fqcn : storeFqcns) {
             if (packageName(fqcn).equals(sourcePackage)) {
                 visibleStoreTypeNames.add(simpleName(fqcn));
@@ -354,15 +874,25 @@ public final class JavaLifecycleSourceInspector {
                 if (!importTree.isStatic() && imported.equals(fqcn)) {
                     visibleStoreTypeNames.add(simpleName(fqcn));
                 }
+                if (!importTree.isStatic() && imported.equals(packageName(fqcn) + ".*")) {
+                    forbiddenWildcardImports.add(imported);
+                }
                 if (importTree.isStatic()
-                    && (imported.equals(fqcn + ".clearOnDisconnect")
-                        || imported.equals(fqcn + ".*"))) {
-                    staticallyImportedCleaners.add(fqcn);
+                    && imported.equals(fqcn + ".*")) {
+                    forbiddenWildcardImports.add("static " + imported);
+                }
+                if (importTree.isStatic()
+                    && STORE_CLEANUP_METHODS.stream()
+                        .anyMatch(method -> imported.equals(fqcn + "." + method))) {
+                    staticallyImportedCleanupMethods.add(
+                        imported.substring(imported.lastIndexOf('.') + 1)
+                    );
                 }
             }
         }
 
         Set<String> violations = new TreeSet<>();
+        forbiddenWildcardImports.forEach(value -> violations.add("wildcard-import:" + value));
         new TreePathScanner<Void, Void>() {
             private String enclosingMethod;
 
@@ -380,12 +910,12 @@ public final class JavaLifecycleSourceInspector {
             @Override
             public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
                 String methodName = invokedMethodName(invocation.getMethodSelect());
-                if (!methodName.equals("clearOnDisconnect")) {
+                if (!STORE_CLEANUP_METHODS.contains(methodName)) {
                     return super.visitMethodInvocation(invocation, unused);
                 }
                 if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
                     String owner = selection.getExpression().toString();
-                    if (isManagedStoreOwner(
+                    if (isForbiddenManagedStoreCall(
                         owner,
                         storeFqcns,
                         visibleStoreTypeNames
@@ -393,12 +923,12 @@ public final class JavaLifecycleSourceInspector {
                         violations.add("invoke:" + invocation.getMethodSelect());
                     }
                 } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
-                    // Store 内部只能由 canonical clearOnDisconnect() 向 data-only helper 单向委派；
-                    // 其它方法不得反向调用 cleaner，否则 registry 会失去唯一调用所有权。
-                    if (sourceIsManagedStore) {
-                        violations.add("self-invoke:clearOnDisconnect");
-                    } else if (!staticallyImportedCleaners.isEmpty()) {
-                        violations.add("static-import:" + staticallyImportedCleaners);
+                    if (staticallyImportedCleanupMethods.contains(methodName)) {
+                        violations.add("static-import:" + methodName);
+                    } else if (sourceIsManagedStore && methodName.equals("clearOnDisconnect")) {
+                        // Store 可以在 canonical wrapper / test reset 内委托 legacy/data-only helper；
+                        // 但任何方法反向调用 clearOnDisconnect 都会绕过 registry 唯一所有权。
+                        violations.add("self-invoke:" + methodName);
                     }
                 }
                 return super.visitMethodInvocation(invocation, unused);
@@ -406,7 +936,7 @@ public final class JavaLifecycleSourceInspector {
 
             @Override
             public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                if (!reference.getName().contentEquals("clearOnDisconnect")
+                if (!STORE_CLEANUP_METHODS.contains(reference.getName().toString())
                     || !isManagedStoreOwner(
                         reference.getQualifierExpression().toString(),
                         storeFqcns,
@@ -436,7 +966,8 @@ public final class JavaLifecycleSourceInspector {
         MemberReferenceTree reference,
         Tree parent
     ) {
-        if (!(parent instanceof MethodInvocationTree invocation)
+        if (!reference.getName().contentEquals("clearOnDisconnect")
+            || !(parent instanceof MethodInvocationTree invocation)
             || !invocation.getMethodSelect().toString().equals("SessionStoreHandle.forStore")
             || invocation.getArguments().size() != 2
             || invocation.getArguments().get(1) != reference
@@ -446,6 +977,14 @@ public final class JavaLifecycleSourceInspector {
         }
         return classToken.getExpression().toString()
             .equals(reference.getQualifierExpression().toString());
+    }
+
+    private static boolean isForbiddenManagedStoreCall(
+        String owner,
+        Set<String> storeFqcns,
+        Set<String> visibleStoreTypeNames
+    ) {
+        return isManagedStoreOwner(owner, storeFqcns, visibleStoreTypeNames);
     }
 
     private static boolean isManagedStoreOwner(

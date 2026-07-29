@@ -71,10 +71,16 @@ public final class MinecraftSoundSink implements SoundSink {
     @Override
     public void clearOnDisconnect() {
         MinecraftClient client = MinecraftClient.getInstance();
-        Consumer<FadeableSoundInstance> hardStopper = client == null || client.getSoundManager() == null
-            ? instance -> { }
-            : instance -> client.getSoundManager().stop(instance);
-        clearOnDisconnectInternal(hardStopper);
+        clearOnDisconnectInternal(instance -> stopWithClientSoundManager(client, instance));
+    }
+
+    private static void stopWithClientSoundManager(
+        MinecraftClient client,
+        FadeableSoundInstance instance
+    ) {
+        if (client != null && client.getSoundManager() != null) {
+            client.getSoundManager().stop(instance);
+        }
     }
 
     /**

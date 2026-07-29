@@ -1038,12 +1038,69 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     """
             },
             {
-                "com/bong/client/hud/LootContainerStateStore.java",
+                "fixture/LegacyClear.java",
                 """
-                    package com.bong.client.hud;
-                    final class LootContainerStateStore {
-                        static void resetForTests() { clearOnDisconnect(); }
-                        public static void clearOnDisconnect() { }
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() { LootContainerStateStore.clear(); }
+                    }
+                    """
+            },
+            {
+                "fixture/LegacyClearAll.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() { LootContainerStateStore.clearAll(); }
+                    }
+                    """
+            },
+            {
+                "fixture/LegacyReset.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() { LootContainerStateStore.reset(); }
+                    }
+                    """
+            },
+            {
+                "fixture/LegacyReference.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        Runnable clear = LootContainerStateStore::clear;
+                        Runnable clearAll = LootContainerStateStore::clearAll;
+                        Runnable reset = LootContainerStateStore::reset;
+                    }
+                    """
+            },
+            {
+                "fixture/StaticWildcard.java",
+                """
+                    import static com.bong.client.hud.LootContainerStateStore.*;
+                    final class Helper {
+                        static void tearDown() { clear(); }
+                    }
+                    """
+            },
+            {
+                "fixture/PackageWildcard.java",
+                """
+                    import com.bong.client.hud.*;
+                    final class Helper {
+                        static void tearDown() { }
+                    }
+                    """
+            },
+            {
+                "com/bong/client/lifecycle/SessionScopedStoreRegistry.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class SessionScopedStoreRegistry {
+                        static void clearDirectly() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
                     }
                     """
             }
@@ -1058,6 +1115,22 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 )
             );
         }
+        assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class SessionScopedStoreRegistry {
+                        static void clearDirectly() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
+                    }
+                    """,
+                "com/bong/client/lifecycle/SessionScopedStoreRegistry.java",
+                managedStores,
+                true
+            )
+        );
     }
 
     @Test

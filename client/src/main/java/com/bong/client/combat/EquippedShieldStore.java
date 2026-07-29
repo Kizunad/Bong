@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>盾牌语义上不是武器，不污染 {@link WeaponEquippedStore}。只记录 off_hand 盾槽状态：
  * <ul>
  *   <li>装备盾牌：{@link #equip(EquippedShield)} 写入快照</li>
- *   <li>卸下 / 破盾：{@link #clear()} 清空快照</li>
+ *   <li>卸下 / 破盾：{@link #unequip()} 清空快照</li>
  *   <li>HUD 每帧读取：{@link #snapshot()} 取当前快照（可为 null）</li>
  * </ul>
  *
@@ -20,7 +20,7 @@ public final class EquippedShieldStore {
     private EquippedShieldStore() {
     }
 
-    /** 装备盾牌，写入快照。{@code shield} 为 null 等价于 {@link #clear()}。 */
+    /** 装备盾牌，写入快照。{@code shield} 为 null 等价于 {@link #unequip()}。 */
     public static void equip(EquippedShield shield) {
         current.set(shield);
     }
@@ -43,13 +43,17 @@ public final class EquippedShieldStore {
         );
     }
 
-    /** 无条件清空（卸下 / 断开连接）。 */
-    public static void clear() {
+    /** 卸下盾牌后无条件清空快照。 */
+    public static void unequip() {
         current.set(null);
     }
 
+    public static void clear() {
+        unequip();
+    }
+
     public static void clearOnDisconnect() {
-        clear();
+        unequip();
     }
 
     /** 返回当前快照；未装备时为 null。 */

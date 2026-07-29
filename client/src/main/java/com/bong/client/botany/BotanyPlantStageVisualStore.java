@@ -25,12 +25,15 @@ public final class BotanyPlantStageVisualStore {
         VISUALS.entrySet().removeIf(entry -> entry.getValue().expired(worldTime));
     }
 
-    public static void clear() {
+    public static void discardAllVisuals() {
         VISUALS.clear();
     }
 
+    public static void clear() {
+        discardAllVisuals();
+    }
 
     public static void clearOnDisconnect() {
-        clear();
+        discardAllVisuals();
     }
 }

@@ -51,6 +51,11 @@ public final class MusicStateMachine {
         return true;
     }
 
+    /** 清除 MusicStateMachine 自己持有的旧 session transition key；真实播放资源由 SoundRecipePlayer 清理。 */
+    public static void clearOnDisconnect() {
+        INSTANCE.active = null;
+    }
+
     public void clear() {
         player.setMusicState(State.AMBIENT);
         stopActive(0);
@@ -71,13 +76,12 @@ public final class MusicStateMachine {
         );
     }
 
-    public SeasonModifier seasonModifierForTests() {
-        return seasonModifier;
+    public static void clearSeasonModifierOnDisconnect() {
+        INSTANCE.seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
     }
 
-    /** Clears only the season-derived modifier; active music, player wiring, and instance sequence stay intact. */
-    public void clearSeasonModifierOnDisconnect() {
-        seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
+    public SeasonModifier seasonModifierForTests() {
+        return seasonModifier;
     }
 
     public void clearSeasonModifierForTests() {

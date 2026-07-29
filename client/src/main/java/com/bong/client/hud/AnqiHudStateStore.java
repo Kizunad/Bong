@@ -148,7 +148,7 @@ public final class AnqiHudStateStore {
 
     // ─── 清除 ─────────────────────────────────────────────────────
 
-    public static void clear() {
+    public static void hideAll() {
         AIM_SLOT.set(DimSlot.empty());
         ECHO_SLOT.set(DimSlot.empty());
         CHARGE_SLOT.set(DimSlot.empty());
@@ -156,9 +156,12 @@ public final class AnqiHudStateStore {
         MULTISHOT_SLOT.set(DimSlot.empty());
     }
 
+    public static void clear() {
+        hideAll();
+    }
 
     public static void clearOnDisconnect() {
-        clear();
+        hideAll();
     }
 
     // ─── 遗留兼容：replace(state)（仅测试向后兼容，生产已改 updateXxx） ─
@@ -170,7 +173,7 @@ public final class AnqiHudStateStore {
     @Deprecated
     public static void replace(AnqiHudState state) {
         if (state == null) {
-            clear();
+            hideAll();
             return;
         }
         long expiry = state.expiresAtMillis();

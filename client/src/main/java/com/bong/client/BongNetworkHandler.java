@@ -1157,7 +1157,7 @@ public class BongNetworkHandler {
             () -> NpcFootstepAudioController.clearOnDisconnect(),
             () -> BongAnimationRegistry.clearOnDisconnect(),
             () -> NpcDialogueBubbleRenderer.clear(),
-            () -> com.bong.client.audio.MusicStateMachine.instance().clear(),
+            () -> com.bong.client.audio.MusicStateMachine.clearOnDisconnect(),
             () -> SoundRecipePlayer.instance().clearOnDisconnect(),
             () -> BongAnimationPlayer.clearOnDisconnect(),
             () -> AnimationLayerManager.clearOnDisconnect(),

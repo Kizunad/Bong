@@ -21,13 +21,16 @@ public final class QiColorObservedStore {
         }
     }
 
-    public static void clear() {
+    public static void beginInspection() {
         replace(null);
     }
 
+    public static void clear() {
+        beginInspection();
+    }
 
     public static void clearOnDisconnect() {
-        clear();
+        replace(null);
     }
 
     public static void addListener(Consumer<QiColorObservedState> listener) {
