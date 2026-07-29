@@ -50,11 +50,24 @@ class AdjunctDisconnectOwnershipTest {
     @Test
     void centralizedDisconnectHelperOwnsEachAdjunctExactlyOnce() throws Exception {
         String networkHandler = source("BongNetworkHandler.java");
-        int helperStart = networkHandler.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(helperStart >= 0, "必须存在 token-gated 中央断线 helper");
-        int helperEnd = networkHandler.indexOf("\n    private static", helperStart + 1);
-        assertTrue(helperEnd > helperStart, "必须能圈定中央断线 helper");
-        String helper = networkHandler.substring(helperStart, helperEnd);
+        String centralHelper = methodBody(
+            networkHandler,
+            "static void clearClientStateOnDisconnect()"
+        );
+        String adjunctHelper = methodBody(
+            networkHandler,
+            "private static void runAdjunctDisconnectTeardown()"
+        );
+        String adjunctDelegation = "runAdjunctDisconnectTeardown()";
+        assertTrue(
+            centralHelper.contains(adjunctDelegation),
+            "token-gated 中央断线 helper 必须直接委托唯一 adjunct owner"
+        );
+        assertEquals(
+            centralHelper.indexOf(adjunctDelegation),
+            centralHelper.lastIndexOf(adjunctDelegation),
+            "token-gated 中央断线 helper 必须恰好委托一次 adjunct owner"
+        );
 
         for (String registration : new String[] {
             "cleanup(EnvironmentEffectController.class, EnvironmentEffectController::clearOnDisconnect)",
@@ -77,9 +90,15 @@ class AdjunctDisconnectOwnershipTest {
             "cleanup(NpcFootstepAudioController.class, NpcFootstepAudioController::clearOnDisconnect)",
             "cleanup(BongAnimationRegistry.class, BongAnimationRegistry::clearOnDisconnect)"
         }) {
-            assertTrue(helper.contains(registration), "中央断线 helper 必须接入稳定身份 adjunct：" + registration);
-            assertTrue(helper.indexOf(registration) == helper.lastIndexOf(registration),
-                "中央断线 helper 必须恰好登记一次 adjunct：" + registration);
+            assertTrue(
+                adjunctHelper.contains(registration),
+                "唯一 adjunct owner 必须接入稳定身份 adjunct：" + registration
+            );
+            assertEquals(
+                networkHandler.indexOf(registration),
+                networkHandler.lastIndexOf(registration),
+                "整个 production owner 必须恰好登记一次 adjunct：" + registration
+            );
         }
     }
 
@@ -135,6 +154,23 @@ class AdjunctDisconnectOwnershipTest {
         } catch (java.io.IOException exception) {
             throw new AssertionError("无法读取 production source：" + source.toAbsolutePath(), exception);
         }
+    }
+
+    private static String methodBody(String source, String declaration) {
+        int start = source.indexOf(declaration);
+        assertTrue(start >= 0, "必须存在 production lifecycle helper：" + declaration);
+        int bodyStart = source.indexOf('{', start);
+        assertTrue(bodyStart >= 0, "production lifecycle helper 必须有方法体：" + declaration);
+        int depth = 0;
+        for (int index = bodyStart; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}' && --depth == 0) {
+                return source.substring(start, index + 1);
+            }
+        }
+        throw new AssertionError("无法圈定 production lifecycle helper：" + declaration);
     }
 
     private static String productionHook(String source, String methodName) {

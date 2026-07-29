@@ -21,9 +21,7 @@ import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -86,52 +84,49 @@ public final class JavaLifecycleSourceInspector {
         }
     }
 
-    static void assertTestResetCallsAreConfinedToTestResetMethods(
-        String source,
-        String sourceIdentity
-    ) {
+    static void assertNoTestResetCalls(String source, String sourceIdentity) {
         CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
         new TreeScanner<Void, Void>() {
-            private String enclosingMethod;
-
-            @Override
-            public Void visitMethod(MethodTree method, Void unused) {
-                String previousMethod = enclosingMethod;
-                enclosingMethod = method.getName().toString();
-                try {
-                    return super.visitMethod(method, unused);
-                } finally {
-                    enclosingMethod = previousMethod;
-                }
-            }
-
             @Override
             public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
-                rejectTestResetOutsideTestResetMethod(
+                rejectTestResetCall(
                     invokedMethodName(invocation.getMethodSelect()),
-                    sourceIdentity,
-                    enclosingMethod
+                    sourceIdentity
                 );
                 return super.visitMethodInvocation(invocation, unused);
             }
 
             @Override
             public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                rejectTestResetOutsideTestResetMethod(
-                    reference.getName().toString(),
-                    sourceIdentity,
-                    enclosingMethod
-                );
+                rejectTestResetCall(reference.getName().toString(), sourceIdentity);
                 return super.visitMemberReference(reference, unused);
             }
         }.scan(unit, null);
     }
 
-    public static void assertMethodDoesNotReferenceTypes(
+    public static Set<String> declaredMethodNames(String source, String sourceIdentity) {
+        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        Set<String> names = new TreeSet<>();
+        new TreeScanner<Void, Void>() {
+            @Override
+            public Void visitMethod(MethodTree method, Void unused) {
+                String name = method.getName().toString();
+                if (!name.equals("<init>")) {
+                    names.add(name);
+                }
+                return super.visitMethod(method, unused);
+            }
+        }.scan(unit, null);
+        return Set.copyOf(names);
+    }
+
+    public static void assertMethodContainsNoForbiddenTokens(
         String source,
         String className,
         String methodName,
-        Set<String> forbiddenFqcns
+        Set<String> forbiddenFqcns,
+        Set<String> forbiddenMemberNames,
+        Set<String> allowedTokens
     ) {
         CompilationUnitTree unit = parse(className, source);
         ClassTree owner = unit.getTypeDecls().stream()
@@ -152,56 +147,53 @@ public final class JavaLifecycleSourceInspector {
             );
         }
 
-        Set<String> forbiddenSimpleNames = new TreeSet<>();
-        Map<String, String> forbiddenImportedMembers = new HashMap<>();
-        Set<String> forbiddenWildcardImports = new TreeSet<>();
+        Set<String> forbiddenTypeNames = new TreeSet<>();
         for (String fqcn : forbiddenFqcns) {
-            forbiddenSimpleNames.add(simpleName(fqcn));
-            for (ImportTree importTree : unit.getImports()) {
-                if (!importTree.isStatic()) {
-                    continue;
-                }
-                String imported = importTree.getQualifiedIdentifier().toString();
-                if (imported.equals(fqcn + ".*")) {
-                    forbiddenWildcardImports.add(imported);
-                } else if (imported.startsWith(fqcn + ".")) {
-                    forbiddenImportedMembers.put(imported.substring(fqcn.length() + 1), imported);
-                }
-            }
+            forbiddenTypeNames.add(simpleName(fqcn));
         }
 
-        Set<String> references = new TreeSet<>();
-        new TreeScanner<Void, Void>() {
+        Set<String> rejectedTokens = new TreeSet<>();
+        TreeScanner<Void, Void> bodyScanner = new TreeScanner<>() {
+            private void reject(String token) {
+                if ((forbiddenTypeNames.contains(token) || forbiddenMemberNames.contains(token))
+                    && !allowedTokens.contains(token)) {
+                    rejectedTokens.add(token);
+                }
+            }
+
             @Override
             public Void visitIdentifier(IdentifierTree identifier, Void unused) {
-                String name = identifier.getName().toString();
-                if (forbiddenSimpleNames.contains(name)) {
-                    references.add(name);
-                }
-                String imported = forbiddenImportedMembers.get(name);
-                if (imported != null) {
-                    references.add(imported);
-                }
+                reject(identifier.getName().toString());
                 return super.visitIdentifier(identifier, unused);
             }
 
             @Override
             public Void visitMemberSelect(MemberSelectTree selection, Void unused) {
-                String selected = selection.toString();
-                for (String fqcn : forbiddenFqcns) {
-                    if (selected.equals(fqcn) || selected.startsWith(fqcn + ".")) {
-                        references.add(selected);
-                    }
-                }
+                reject(selection.getIdentifier().toString());
                 return super.visitMemberSelect(selection, unused);
             }
-        }.scan(methods.get(0).getBody(), null);
+        };
 
-        if (!forbiddenWildcardImports.isEmpty() || !references.isEmpty()) {
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            for (String fqcn : forbiddenFqcns) {
+                if (imported.equals(fqcn)
+                    || imported.equals(fqcn + ".*")
+                    || imported.startsWith(fqcn + ".")) {
+                    rejectedTokens.add(imported);
+                }
+            }
+            if (importTree.isStatic()) {
+                bodyScanner.scan(importTree.getQualifiedIdentifier(), null);
+            }
+        }
+        bodyScanner.scan(methods.get(0).getBody(), null);
+
+        if (!rejectedTokens.isEmpty()) {
             throw new AssertionError(
                 className + "." + methodName
-                    + " 只能通过 SessionScopedStoreRegistry 清理 Store；wildcard static import="
-                    + forbiddenWildcardImports + "，直连=" + references
+                    + " 只能通过 SessionScopedStoreRegistry.clearAllOnDisconnect 清理 Store；禁用 token="
+                    + rejectedTokens
             );
         }
     }
@@ -216,17 +208,10 @@ public final class JavaLifecycleSourceInspector {
         return methodSelect.toString();
     }
 
-    private static void rejectTestResetOutsideTestResetMethod(
-        String methodName,
-        String sourceIdentity,
-        String enclosingMethod
-    ) {
-        if (TEST_RESET_METHODS.contains(methodName)
-            && (enclosingMethod == null || !TEST_RESET_METHODS.contains(enclosingMethod))) {
+    private static void rejectTestResetCall(String methodName, String sourceIdentity) {
+        if (TEST_RESET_METHODS.contains(methodName)) {
             throw new AssertionError(
-                sourceIdentity + " 的 production source 不得从 "
-                    + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
-                    + " 调用或引用 test reset " + methodName
+                sourceIdentity + " 的 production source 不得调用或引用 test reset " + methodName
             );
         }
     }

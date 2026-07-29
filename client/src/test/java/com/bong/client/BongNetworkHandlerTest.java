@@ -42,6 +42,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -813,16 +815,45 @@ public class BongNetworkHandlerTest {
             previousIndex = hookIndex;
         }
 
-        JavaLifecycleSourceInspector.assertMethodDoesNotReferenceTypes(
+        StoreTokenLexicon lexicon = registryManagedStoreTokens(clientRoot.resolve("src/main/java"));
+        JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
             src,
             "BongNetworkHandler",
             "clearClientStateOnDisconnect",
-            ClientStoreScopeManifest.registryManagedSessionStores()
+            lexicon.fqcns(),
+            lexicon.memberNames(),
+            Set.of("clearAllOnDisconnect")
+        );
+    }
+
+    private record StoreTokenLexicon(Set<String> fqcns, Set<String> memberNames) {}
+
+    private static StoreTokenLexicon registryManagedStoreTokens(
+        java.nio.file.Path productionSourceRoot
+    ) throws Exception {
+        Set<String> fqcns = new TreeSet<>(ClientStoreScopeManifest.registryManagedSessionStores());
+        Set<String> memberNames = new TreeSet<>();
+        for (String fqcn : fqcns) {
+            java.nio.file.Path source = productionSourceRoot.resolve(fqcn.replace('.', '/') + ".java");
+            assertTrue(java.nio.file.Files.exists(source), "词法门禁必须能读取 registry-managed Store：" + fqcn);
+            memberNames.addAll(JavaLifecycleSourceInspector.declaredMethodNames(
+                java.nio.file.Files.readString(source),
+                fqcn
+            ));
+        }
+        return new StoreTokenLexicon(Set.copyOf(fqcns), Set.copyOf(memberNames));
+    }
+
+    private static StoreTokenLexicon fixtureStoreTokens() {
+        return new StoreTokenLexicon(
+            Set.of("com.bong.client.hud.LootContainerStateStore"),
+            Set.of("clearOnDisconnect", "clear", "resetForTests", "clearForTests")
         );
     }
 
     @Test
     void storeReferenceGuardRejectsEveryDirectStoreReferenceShape() {
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
         List<String> forbiddenFixtures = List.of(
             """
                 final class BongNetworkHandler {
@@ -863,38 +894,59 @@ public class BongNetworkHandlerTest {
                 final class BongNetworkHandler {
                     static void clearClientStateOnDisconnect() { clearOnDisconnect(); }
                 }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { Helper.clearOnDisconnect(); }
+                }
+                final class Helper {
+                    static void clearOnDisconnect() { }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { Helper.clear(); }
+                }
+                final class Helper {
+                    static void clear() { LootContainerStateStore.clearOnDisconnect(); }
+                }
                 """
         );
 
         for (String fixture : forbiddenFixtures) {
             assertThrows(
                 AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertMethodDoesNotReferenceTypes(
+                () -> JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
                     fixture,
                     "BongNetworkHandler",
                     "clearClientStateOnDisconnect",
-                    ClientStoreScopeManifest.registryManagedSessionStores()
+                    lexicon.fqcns(),
+                    lexicon.memberNames(),
+                    Set.of()
                 )
             );
         }
     }
 
     @Test
-    void storeReferenceGuardAllowsNonStoreHooksAndRegistryCall() {
+    void storeReferenceGuardAllowsSanctionedRegistryAndNonStoreTeardown() {
         String fixture = """
             final class BongNetworkHandler {
                 static void clearClientStateOnDisconnect() {
                     SessionScopedStoreRegistry.clearAllOnDisconnect();
-                    BongToast.clearOnDisconnect();
+                    runAdjunctDisconnectTeardown();
                 }
             }
             """;
+        StoreTokenLexicon lexicon = fixtureStoreTokens();
 
-        JavaLifecycleSourceInspector.assertMethodDoesNotReferenceTypes(
+        JavaLifecycleSourceInspector.assertMethodContainsNoForbiddenTokens(
             fixture,
             "BongNetworkHandler",
             "clearClientStateOnDisconnect",
-            ClientStoreScopeManifest.registryManagedSessionStores()
+            lexicon.fqcns(),
+            lexicon.memberNames(),
+            Set.of("clearAllOnDisconnect")
         );
     }
 

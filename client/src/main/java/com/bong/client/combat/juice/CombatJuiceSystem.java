@@ -147,10 +147,10 @@ public final class CombatJuiceSystem {
         activeOverlay = Overlay.none();
         lastParry = null;
         lastGhost = null;
-        HitStopController.resetForTests();
-        CameraShakeController.resetForTests();
-        EntityTintController.resetForTests();
-        KillJuiceController.resetForTests();
+        HitStopController.clearOnDisconnect();
+        CameraShakeController.clearOnDisconnect();
+        EntityTintController.clearOnDisconnect();
+        KillJuiceController.clearOnDisconnect();
     }
 
     public record LastCommand(

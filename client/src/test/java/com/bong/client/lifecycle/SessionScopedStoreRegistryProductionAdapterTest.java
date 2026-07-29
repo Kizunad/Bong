@@ -954,7 +954,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionSourcesConfineTestResetCallsToTestResetMethods() throws Exception {
+    void productionSourcesContainNoTestResetCallSites() throws Exception {
         Path sourceRoot = productionSourceRoot();
         try (Stream<Path> paths = Files.walk(sourceRoot.resolve("com/bong/client"))) {
             List<Path> sources = paths
@@ -964,7 +964,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 .toList();
             assertFalse(sources.isEmpty(), "production source guard 必须实际扫描 client Java source");
             for (Path source : sources) {
-                JavaLifecycleSourceInspector.assertTestResetCallsAreConfinedToTestResetMethods(
+                JavaLifecycleSourceInspector.assertNoTestResetCalls(
                     Files.readString(source),
                     sourceRoot.relativize(source).toString()
                 );
@@ -1007,7 +1007,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionTestResetGuardRejectsEveryDirectCallOrReferenceOutsideTestResetMethods() {
+    void productionTestResetGuardRejectsEveryCallOrReferenceShapeFailClosed() {
         List<String> forbiddenFixtures = List.of(
             """
                 public final class FixtureStore {
@@ -1040,39 +1040,73 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     public static void clearOnDisconnect() { new FixtureStore(); }
                     public static void clearForTests() { }
                 }
+                """,
+            """
+                import static com.example.FixtureStore.resetForTests;
+                public final class Consumer {
+                    static void clear() { resetForTests(); }
+                }
+                final class FixtureStore {
+                    static void resetForTests() { }
+                }
+                """,
+            """
+                import static com.example.FixtureStore.*;
+                public final class Consumer {
+                    static void clear() { clearForTests(); }
+                }
+                final class FixtureStore {
+                    static void clearForTests() { }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    public static void resetForTests() { clearForTests(); }
+                    public static void clearForTests() { }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() {
+                        new Unrelated().resetForTests(1);
+                    }
+                }
+                final class Unrelated {
+                    void resetForTests(int unused) { }
+                }
                 """
         );
 
         for (String fixture : forbiddenFixtures) {
             AssertionError failure = assertThrows(
                 AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertTestResetCallsAreConfinedToTestResetMethods(
+                () -> JavaLifecycleSourceInspector.assertNoTestResetCalls(
                     fixture,
                     "FixtureStore.java"
                 )
             );
             assertTrue(
                 failure.getMessage().contains("test reset"),
-                "字段、构造器、嵌套或跨顶层 helper 的 test reset 直连都必须撞红；实际="
+                "字段、构造器、嵌套、跨类型、static import、test reset 组合和同名 overload 均须撞红；实际="
                     + failure.getMessage()
             );
         }
     }
 
     @Test
-    void productionTestResetGuardAllowsTestResetCompositionAndUnrelatedOverloads() {
+    void productionTestResetGuardAllowsDeclarationsAndUnrelatedNames() {
         String fixture = """
             public final class FixtureStore {
                 private static final java.util.List<String> CACHE = java.util.List.of();
                 public static void clearOnDisconnect() { CACHE.clear(); }
                 public static void clear() { }
                 public static void clear(int unused) { }
-                public static void resetForTests() { clearForTests(); }
+                public static void resetForTests() { }
                 public static void clearForTests() { }
             }
             """;
 
-        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertTestResetCallsAreConfinedToTestResetMethods(
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertNoTestResetCalls(
             fixture,
             "FixtureStore.java"
         ));
