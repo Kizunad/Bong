@@ -555,21 +555,52 @@ struct RasterManifest {
     /// `load()` against `EXPECTED_RASTER_MANIFEST_VERSION`. No serde default — a
     /// manifest missing the field fails to parse rather than silently passing.
     version: u32,
+    // These fields are emitted by worldgen for preview/provenance consumers but
+    // are not used by runtime terrain sampling. Listing them explicitly keeps
+    // deny_unknown_fields useful for catching producer schema drift.
+    #[serde(default, rename = "backend")]
+    _backend: Option<String>,
+    #[serde(default, rename = "world_name")]
+    _world_name: Option<String>,
     tile_size: i32,
+    #[serde(default, rename = "spans_encoding")]
+    _spans_encoding: Option<serde_json::Value>,
     world_bounds: ManifestBounds,
     surface_palette: Vec<String>,
     biome_palette: Vec<String>,
     tiles: Vec<ManifestTile>,
     #[serde(default)]
     pois: Vec<ManifestPoi>,
+    #[serde(default, rename = "zones")]
+    _zones: Vec<serde_json::Value>,
+    #[serde(default, rename = "collapsed_zones")]
+    _collapsed_zones: Vec<serde_json::Value>,
+    #[serde(default, rename = "semantic_layers")]
+    _semantic_layers: Option<serde_json::Value>,
+    #[serde(default, rename = "structure_layers")]
+    _structure_layers: Option<serde_json::Value>,
+    #[serde(default, rename = "vertical_layers")]
+    _vertical_layers: Option<serde_json::Value>,
+    #[serde(default, rename = "profiles_ecology")]
+    _profiles_ecology: Option<serde_json::Value>,
+    #[serde(default, rename = "qi_density_source")]
+    _qi_density_source: Option<serde_json::Value>,
+    #[serde(default, rename = "qi_budget_report")]
+    _qi_budget_report: Option<serde_json::Value>,
     #[serde(default)]
     anomaly_kinds: HashMap<String, String>,
     #[serde(default)]
     abyssal_tier_floor_y: HashMap<String, f32>,
+    #[serde(default, rename = "ascension_pits")]
+    _ascension_pits: Vec<serde_json::Value>,
+    #[serde(default, rename = "corpse_mounds")]
+    _corpse_mounds: Vec<serde_json::Value>,
     #[serde(default)]
     global_decoration_palette: Vec<ManifestDecoration>,
     #[serde(default)]
     fossil_bboxes: Vec<ManifestFossilBbox>,
+    #[serde(default, rename = "notes")]
+    _notes: Option<serde_json::Value>,
     #[serde(default)]
     bot_fixture: Option<ManifestBotFixture>,
 }
@@ -627,7 +658,11 @@ struct ManifestTile {
     tile_x: i32,
     tile_z: i32,
     dir: String,
+    #[serde(default, rename = "zones")]
+    _zones: Vec<String>,
     layers: Vec<String>,
+    #[serde(default, rename = "spans")]
+    _spans: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -683,9 +718,9 @@ struct ManifestDecoration {
     // worldgen-v4 P6 §8.1 — NBT-driven placement. `#[serde(default)]` keeps old
     // manifests (no nbt_templates / no anchor) deserializing into the procedural
     // path: empty templates ⇒ procedural, anchor "" ⇒ Ground (see Decoration).
-    #[serde(default)]
+    #[serde(default, rename = "nbt_templates")]
     nbt_templates: Vec<String>,
-    #[serde(default)]
+    #[serde(default, rename = "anchor")]
     anchor: String,
 }
 
@@ -702,6 +737,10 @@ struct ManifestFossilBbox {
     max_z: i32,
     #[serde(default)]
     max_units: u32,
+    #[serde(default, rename = "mask_values")]
+    _mask_values: Option<serde_json::Value>,
+    #[serde(default, rename = "minerals")]
+    _minerals: Option<serde_json::Value>,
 }
 
 // --- Public read-only views of manifest data ----------------------------
@@ -2429,6 +2468,79 @@ mod tests {
         assert!(pois
             .iter()
             .all(|poi| poi.tags.iter().any(|tag| tag == "poi_novice")));
+    }
+
+    #[test]
+    fn production_manifest_metadata_is_known_but_future_fields_fail_closed() {
+        let mut json = serde_json::json!({
+            "version": 2,
+            "backend": "raster",
+            "world_name": "test_world",
+            "tile_size": 1,
+            "spans_encoding": {"max_spans": 4},
+            "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette": ["stone"],
+            "biome_palette": ["plains"],
+            "tiles": [{
+                "tile_x": 0,
+                "tile_z": 0,
+                "dir": "tile_0_0",
+                "zones": ["spawn"],
+                "layers": [],
+                "spans": {"count_file": "spans_count.bin"}
+            }],
+            "pois": [],
+            "zones": [],
+            "collapsed_zones": [],
+            "semantic_layers": {},
+            "structure_layers": {},
+            "vertical_layers": {},
+            "profiles_ecology": {},
+            "qi_density_source": {},
+            "qi_budget_report": {},
+            "anomaly_kinds": {},
+            "abyssal_tier_floor_y": {},
+            "ascension_pits": [],
+            "corpse_mounds": [],
+            "global_decoration_palette": [{
+                "global_id": 1,
+                "profile": "test",
+                "local_id": 1,
+                "name": "test",
+                "kind": "test",
+                "blocks": ["stone"],
+                "size_range": [1, 1],
+                "rarity": 1.0,
+                "notes": "",
+                "nbt_templates": [],
+                "anchor": "ground"
+            }],
+            "fossil_bboxes": [{
+                "zone": "spawn",
+                "name": "test",
+                "center_xz": [0, 0],
+                "center_y": 0,
+                "min_x": 0,
+                "max_x": 0,
+                "min_z": 0,
+                "max_z": 0,
+                "max_units": 1,
+                "mask_values": {"outer": 1},
+                "minerals": {"outer": ["test"]}
+            }],
+            "notes": {},
+        });
+
+        serde_json::from_value::<RasterManifest>(json.clone())
+            .expect("every field emitted by the production raster exporter must remain admitted");
+
+        json["future_unreviewed_field"] = serde_json::json!(true);
+        let error = serde_json::from_value::<RasterManifest>(json)
+            .expect_err("an unreviewed producer field must fail closed instead of being ignored");
+        assert!(
+            error.to_string().contains("future_unreviewed_field"),
+            "unknown-field diagnostics must identify the producer key: {error}"
+        );
     }
 
     #[test]
