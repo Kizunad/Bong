@@ -2699,17 +2699,12 @@ mod tests {
         fence: PersistedRevisionFence,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     enum InjectedHookResult {
+        #[default]
         Clean,
         Blocked,
         Error,
-    }
-
-    impl Default for InjectedHookResult {
-        fn default() -> Self {
-            Self::Clean
-        }
     }
 
     #[derive(Debug, Default)]
