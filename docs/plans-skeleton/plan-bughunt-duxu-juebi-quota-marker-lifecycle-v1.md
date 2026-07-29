@@ -14,7 +14,7 @@
 - **进料**：`server/src/cultivation/tribulation.rs:860-1023` 的 `start_tribulation_system` 计算 void quota，并在成功持久化渡虚 attempt 后于 `:939-957,983-987` 构造/插入 `JueBiAfterDuXuQuota`；`start_due_juebi_triggers_system` 另有 independent JueBi 入口。
 - **出料**：`tribulation_wave_system` 在渡虚最后一波读取 marker 并转入 `VoidQuotaExceeded` 绝壁；`juebi_settlement_system` 读取同一意图决定原子化虚晋升及结算 reason；DuXu 与 quota-origin JueBi 的 failure、disconnect-as-fled、boundary flee、intercept-death、普通成功与 reset/despawn 必须结束该 attempt 的 marker 所有权。
 - **共享类型 / event**：复用 `TribulationState`、`TribulationOriginDimension`、`JueBiAfterDuXuQuota`、`JueBiRuntimeContext`、`ActiveTribulationRecord`、`JueBiTriggerSource::VoidQuotaExceeded` 与既有 persistence API；禁止另造与 active tribulation 平行的第二套状态机。
-- **跨仓库契约**：纯 server ECS + SQLite persistence 生命周期修复；不改 agent/client/public IPC，不新增 CustomPayload。若 P1 扩 `active_tribulations` 持久化形状，migration 与 join hydration 必须同 PR/同 bugfix 分支完成。
+- **跨仓库契约**：纯 server ECS + SQLite persistence 生命周期修复；不改 agent/client/public IPC，不新增 CustomPayload。若 P1 扩 `tribulations_active` 持久化形状，migration 与 join hydration 必须同 PR/同 bugfix 分支完成。
 - **worldview 锚点**：`worldview.md §三 L72,L81,L126-L130` 规定化虚名额稀缺且通灵→化虚必须渡虚；`docs/finished_plans/plan-tribulation-v2.md §6 L816-L826` 规定“超额 attempt 正常渡虚后追加绝壁，存活才由天道承认”。旧 marker 不得把过去的天道裁决嫁接到普通新 attempt，重启也不得抹掉当前超额裁决。
 - **qi_physics 锚点**：本 plan 只修 attempt metadata ownership，不新增 `QiTransfer`、不改配额公式、绝壁 drain 或 failure/flee 释放。现有失败/逃遁/JueBi 真元路径必须保持单次执行并继续通过 ledger 守恒；任何 cleanup helper 不得顺手重复释放真元。
 
