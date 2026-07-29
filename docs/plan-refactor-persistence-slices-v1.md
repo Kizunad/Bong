@@ -31,14 +31,14 @@
 
 - **进料**：SQLite（`bong.db`，沿用每次操作开连接的 ownership）、JSON 状态文件、`shutdown.rs` 的 `AppExit` 链路、各域 runtime clock 与 wall-clock snapshot。
 - **出料**：统一 Slice contract 供各域声明 `load_policy / autosave_policy / shutdown_flush / time_basis / write_domain`；R1 的 session 持久化钩子和各域运行态逐批接入。
-- **共享类型**：`server/src/persistence/slice.rs` 的公开 `PersistenceSlice`、`SliceDescriptor`、`SliceLoad`、`GuardedSlice`、`DirtyTracker` 与 tick rebase helper；`PersistenceSliceRegistry` 及其 activation token 属于 `crate::persistence` 内部 trust boundary，不向 gameplay 暴露构造/Resource 访问能力。
-- **跨仓库契约**：零 wire 改动。
+- **共享类型**：`server/src/persistence/slice.rs` 的公开 `PersistenceSlice`、`SliceDescriptor`、`SliceLoad`、`GuardedSlice`、`DirtyTracker` 与 tick rebase helper；`PersistenceSliceRegistry` 及其 activation token 属于 `crate::persistence` 内部 trust boundary，不向 gameplay 暴露构造/Resource 访问能力。server、agent、client 三端均不新增、不修改且不复用任何 event/schema。
+- **跨仓库契约**：零 wire 改动；server、agent、client 三端均无 event/schema 新增、变更或复用，不扩大现有 IPC/CustomPayload 边界。
 - **worldview 锚点**：`docs/worldview.md §一 L17-L22` 的全服灵气总量/压强法则、`§二 L30-L55` 的正负灵域时间与区域语义、`§十三 L1209-L1268` 的固定区域身份。Slice 只保存/恢复既有状态，不创造灵气、不重解释区域，也不得绕过 qi ledger。
 - **qi_physics 锚点**：任何带 qi 的快照持久化/恢复不得造成账面变化；`qi_runtime_accounts` 的缺行/失败继续 fail-closed，恢复兜底不得把未知余额解释为 0。P2/P5 以 `qi_physics::ledger::{summarize_world_qi, assert_conservation}` 对保存→重启/同 tick handoff/失败加载前后做 `era_decay = 0` 守恒验收，并锁定原 account/zone 身份不被 fallback 重解释。
 
 ## 阶段
 
-- ✅ 2026-07-28 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save→hydrate→rebase、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；17 个 contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败隔离、写资格、重连顺序/阻断、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
+- ✅ 2026-07-28 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save→teardown→lease preflight→hydrate→rebase（后序失败则逆序 abort）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；19 个 contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败隔离、写资格、重连顺序/阻断/旧 activation 残留/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
 - ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
 - ⬜ P3 关服 flush + tick rebase 批次：shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
@@ -147,9 +147,9 @@
 
 **决议**：
 1. 同一持久化主体在同一 schedule tick 内出现 disconnect 与 reconnect 时，必须同步完成旧实体的 disconnect save，成功后才允许新实体 hydrate；保存失败则跳过载入并保留失败，禁止从旧 durable row 重建后继续运行。
-2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才开始任何 `hydrate`；所有 hydrate 成功后才按同一时钟快照运行 rebase。入口消费 persistence-private 的一次性 `ReconnectHandoffToken`，同一 generation 不可重复执行；任一阶段失败或返回 `SkippedBlocked` 都会跳过全部后续阶段。
+2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才开始任何 `hydrate`；所有 hydrate 成功后才按同一时钟快照运行 rebase。入口消费 persistence-private 的一次性 `ReconnectHandoffToken`，同一 generation 不可重复执行；save/teardown 阶段失败或返回 `SkippedBlocked` 会跳过全部后续阶段；hydrate/rebase 阶段失败或 blocked 则以 `ReconnectAbort` 逆序调用已尝试新 activation 的幂等 teardown，确保零残留 lease 后才允许同一稳定主体重试。
 3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。一次性 generation 只约束已经 mint 的 token；真实 lifecycle adapter 必须按稳定 reconnect event ID 去重，同一上游事件只 mint/dispatch 一次。
-4. 所有该主体/domain 的 disconnect save 成功后、任何 hydrate 前，adapter 必须同步 teardown/drop 旧实体持有的 `GuardedSlice + DirtyTracker + PersistedRevisionFence` activation state；若任一旧 state 仍存活，新 activation 必须以 `DuplicateSubject` fail-closed，禁止框架强制 revoke 后并存双 writer。多 slice 主体只能在全部保存完成后统一 teardown，或逐 slice 只释放对应 state，不得首个 save hook 便销毁后续保存所需实体。
+4. 所有该主体/domain 的 disconnect save 成功后、任何 hydrate 前，adapter 必须同步 teardown/drop 旧实体持有的 `GuardedSlice + DirtyTracker + PersistedRevisionFence` activation state；若任一旧 state 仍存活，新 activation 必须以 `DuplicateSubject` fail-closed，禁止框架强制 revoke 后并存双 writer。多 slice 主体只能在全部保存完成后统一 teardown，或逐 slice 只释放对应 state，不得首个 save hook 便销毁后续保存所需实体。`reconnect_teardown` 必须幂等，并同时处理 `ReconnectTeardown`（释放旧 activation）与 `ReconnectAbort`（回滚本轮已尝试的新 activation）。
 
 **落点**：`server/src/persistence/slice.rs:124-149,191-203,488-578,1562-1653` 的 `SliceRunReason::{DisconnectSave,ReconnectLoad}`、`SliceDescriptor::disconnect_save`、`dispatch_reconnect_handoff` 与 all-save-before-any-load contract pin；plan §阶段 P0/P2、§bot 验收场景 #1。
 
@@ -171,7 +171,7 @@
 4. **PR-P4 遗漏运行态持久化**：依赖 P3；补 ActiveEvents、TiandaoAttention、长期 consumable/buff、realm taint、season override、supply cooldown、灵眼等真实 Slice；实体重建、所有权与守恒仍归领域 owner。
 5. **PR-P5 restart Bot 验收 + 吸收归档**：依赖 P4；跑 `restart_player_slices`、`same_tick_reconnect_handoff`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`、`restart_qi_conservation`，核验 25 项吸收清单后补 `## Finish Evidence` 并归档到 `docs/finished_plans/`。
 
-每个 PR 由独立 fresh-context `claude` 实施 subagent 在本 R3 worktree 完成实现、测试、commit/push/PR；主线协调器只接收 200–500 token 结论并负责跨 PR 编排与 review 等待，实施 subagent 不跨调用等待 review，也不得并行实施相邻阶段。启动配置遵循 `Agent(subagent_type: "claude", model: "opus", prompt: "<本 PR 精确范围、前置依赖、门禁与禁改边界>\n\nultrathink")`；共享本 worktree，不创建 nested worktree。返工使用新的独立 subagent，从 PR 精确 HEAD 继续且不得重复 promotion/归档。
+每个 PR 由独立 fresh-context `claude` 实施 subagent 在本 R3 worktree 完成实现、测试、commit/push/PR；每个逻辑单元必须使用中文 atomic commit，每个 agent 生成的 commit 必须写入真实执行模型 ID 的 `Model:` trailer 与 `Co-Authored-By: Claude <noreply@anthropic.com>`，该 commit trailer 与启动配置中的 `model: "opus"` 是两项独立门禁、不得混用或省略。主线协调器只接收 200–500 token 结论并负责跨 PR 编排与 review 等待，实施 subagent 不跨调用等待 review，也不得并行实施相邻阶段。启动配置遵循 `Agent(subagent_type: "claude", model: "opus", prompt: "<本 PR 精确范围、前置依赖、门禁与禁改边界>\n\nultrathink")`；共享本 worktree，不创建 nested worktree。返工使用新的独立 subagent，从 PR 精确 HEAD 继续且不得重复 promotion/归档。
 
 每个 PR push 前执行 `git fetch origin && git merge origin/main`，重跑受影响栈门禁与 Bot E2E，并对精确 HEAD 启动 fresh-context adversarial validator。Push 后独立评论 `/review` 并等待 `/review` 与 CodeRabbit 收敛；CodeRabbit pending 时用 `ScheduleWakeup(1200)`，最多三轮无进展才交人工，禁止 sleep/busy poll。Review 有修改意见时由新返工 subagent 修复、对新 HEAD 重跑 validator/门禁/推送并重新触发 `/review`、等待复审；前一 PR 未收敛不得启动下一阶段。不得以 P0 contract test 代替后续生产接线验收。
 
