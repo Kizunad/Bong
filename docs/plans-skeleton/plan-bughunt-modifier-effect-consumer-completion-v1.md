@@ -93,7 +93,7 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 
 - [ ] `combat::resolve_attack_intents` 内建立唯一 typed `CanonicalWoundSink`（名称可等义）：该 sink 是本 pipeline 唯一允许最终构造/写入 `Wound` 与派生后果的位置；参与该 pipeline 的 damage producer必须调用它。门禁 pin sink **恰好一个**、production 可达，并拒绝重复 sink 与 sink 外直接写入。
 - [ ] sink 统一执行 `raw hit → armor → effective severity/grade → deterministic downgrade → health/bleeding/contamination/meridian/event consequences`，mapped 三个 wound modifier 只在这里消费。§8.1 冻结稳定 attack/hit identity，以及已结算 hit ledger 的 owner、持久化/保留与清理边界；sink 在同一原子边界内先 check、再提交全部后果并记录 identity。确定性 fracture roll 只负责结果稳定，去重 ledger 负责重放幂等；第二次投递必须对所有状态与事件计数零副作用，并覆盖同 tick 多 hit、输入重排、水合后重放与 0%/100%。
-- [ ] §8.1 逐项冻结 `bruise_threshold_multiplier`、`fracture_downgrade_chance`、`cut_pierce_downgrade`、`scar_forged_flow_bonus` 的单位、neutral、合法 finite 闭区间、非法值 fail-closed/reject、组合顺序/cap、持久化/水合/reset/到期。表驱动 pin 覆盖下界/等号/上界、越界、NaN/±Infinity、组合，以及 active→inactive 回 neutral。
+- [ ] §8.1 分类型冻结合同：`bruise_threshold_multiplier` 与 `fracture_downgrade_chance` 定义单位、neutral、合法 finite 闭区间、非法值 fail-closed/reject、组合顺序/cap；`cut_pierce_downgrade` 与 `scar_forged_flow_bonus` 是 bool marker，只允许 `false/true`，并覆盖非法反序列化。四字段共同 pin 持久化/水合/reset/到期与 active→inactive 回 neutral；另单独冻结 ScarForged marker 生效时 effective-flow 数值倍率的依据、finite 区间与组合/cap。表驱动测试按实际类型覆盖浮点下界/等号/上界、越界、NaN/±Infinity，以及布尔两态和非法 wire 值。
 - [ ] §8.1 的唯一 wound-grade 表按每个 wound kind/grade 阈值测试 `threshold-ε`、`threshold`、`threshold+ε`，同时断言最终 grade 与 health、bleeding、contamination、meridian、event 全后果，锁定等号归属。
 - [ ] `effective_meridian_sum_rate` 只在 `scar_forged_flow_bonus` active 时对 `ActiveScarCircuits` 涉及的去重经脉应用 §8.1 决定的倍率；共享经脉只加成一次，不持久改 `Meridian.flow_rate`。
 - [ ] 本批不声称迁移全仓所有历史 wound/health writer；未经过 `resolve_attack_intents` 的旁路属于附录观察，须独立 canonical finding 才能扩 scope。
@@ -112,8 +112,8 @@ Canonical 来源为 `docs/finished_plans/plan-bughunt-r8-findings-v1.md:21-27,61
 1. `ContaminationBoost` 的单位、stack/refresh/expiry 与 ledger 接缝是什么？
 2. JinZhongDan 的负面 kind、基础强度与 `neg_scale` 公式是什么？
 3. r7 五字段与 r8 #5 十三字段逐项的单位、neutral、finite 区间、组合/累计、消费时点、持久化/水合/reset 是什么？
-4. canonical wound grade 的阈值/等号归属是什么；三个 wound modifier 的单位、neutral、合法 finite 闭区间、非法值策略、组合/cap 与生命周期是什么；stable attack/hit identity、deterministic roll，以及已结算 hit ledger 的 owner、原子 check-and-record、持久化/保留/清理边界如何定义？
-5. ScarForged 倍率的 canonical 数值依据、单位、合法 finite 闭区间、非法值策略、适用经脉、组合/cap 与持久化/水合/reset/到期语义是什么？当前代码常数 1.05 不能在无决议时自动视为正典。
+4. canonical wound grade 的阈值/等号归属是什么；两个浮点 wound modifier 的单位、neutral、合法 finite 闭区间、非法值策略、组合/cap 与生命周期是什么；`cut_pierce_downgrade` bool marker 的两态、非法反序列化与生命周期是什么；stable attack/hit identity、deterministic roll，以及已结算 hit ledger 的 owner、原子 check-and-record、持久化/保留/清理边界如何定义？
+5. `scar_forged_flow_bonus` bool marker 的两态、非法反序列化与生命周期是什么；marker 生效时 effective-flow 倍率的 canonical 数值依据、合法 finite 闭区间、非法值策略、适用经脉、组合/cap 与持久化/水合/reset/到期语义是什么？当前代码注释中的 +5% 不能在无决议时自动视为正典。
 6. jump 选择哪条 authority 路线；字段表示 apex 还是 velocity、合法范围、权威 MC 1.20.1 源码/映射锚点、离散公式/容差，以及 client 路线 revision + explicit-neutral + ACK/future-effective-tick/重传/超时/过渡校验合同是什么？
 7. P0 的机械权威源采用 Rust AST、唯一声明宏还是同等方案；如何从 production 代码与真实 scheduler registration 导出全部 producer branch、consumer site 与 schedule site，并把 pending 检查接入实际归档命令/CI 入口？
 
