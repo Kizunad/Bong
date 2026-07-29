@@ -134,23 +134,34 @@ class R7FoundationContractTest {
     @Test
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
         List<OpenPolicyRow> rows = openPolicyRows();
-        assertEquals(14, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
+        assertEquals(19, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
         Set<String> requestKinds = Set.of("SOCIAL_INVITE", "HOTKEY", "INSIGHT", "SYSTEM_TERMINAL");
         Set<String> currentKinds = Set.of("NONE", "ORDINARY", "MODAL", "SYSTEM_TERMINAL");
+        Set<String> terminalPriorities = Set.of("NONE", "DEATH", "TERMINATE");
         Set<String> decisions = Set.of("OPEN", "PREEMPT", "NOOP_MATCHING", "DEFER_NOTIFY", "BLOCK_DROP", "EXPIRE");
         assertTrue(rows.stream().allMatch(row -> requestKinds.contains(row.requestKind())),
             "every vector request_kind must instantiate the frozen RequestKind enum");
         assertTrue(rows.stream().allMatch(row -> currentKinds.contains(row.currentKind())),
             "every vector current_kind must instantiate the frozen CurrentKind enum");
+        assertTrue(rows.stream().allMatch(row -> terminalPriorities.contains(row.requestPriority())
+            && terminalPriorities.contains(row.currentPriority())),
+            "every vector priority must instantiate the frozen TerminalPriority enum");
+        assertTrue(rows.stream().allMatch(row -> rowsUseValidPriorities(row)),
+            "only SYSTEM_TERMINAL request/current kinds may carry DEATH or TERMINATE priority");
         assertTrue(rows.stream().allMatch(row -> decisions.contains(row.decision())),
             "every vector decision must instantiate the frozen Decision enum");
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-combat").decision());
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-screen").decision());
-        assertEquals("EXPIRE", findPolicy(rows, "social-expired").decision());
+        assertEquals("EXPIRE", findPolicy(rows, "social-expired-boundary").decision());
         assertEquals("BLOCK_DROP", findPolicy(rows, "hotkey-blocked").decision());
+        assertEquals("BLOCK_DROP", findPolicy(rows, "hotkey-terminal").decision());
         assertEquals("PREEMPT", findPolicy(rows, "insight-preempt").decision());
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "insight-terminal").decision());
-        assertEquals("PREEMPT", findPolicy(rows, "terminal-preempt").decision());
+        assertEquals("OPEN", findPolicy(rows, "death-open").decision());
+        assertEquals("PREEMPT", findPolicy(rows, "death-preempt-ordinary").decision());
+        assertEquals("PREEMPT", findPolicy(rows, "terminate-preempt-death").decision());
+        assertEquals("BLOCK_DROP", findPolicy(rows, "death-blocked-terminate").decision());
+        assertEquals("BLOCK_DROP", findPolicy(rows, "death-blocked-peer").decision());
 
         assertTrue(rows.stream()
             .filter(row -> row.requestKind().equals("HOTKEY"))
@@ -281,6 +292,13 @@ class R7FoundationContractTest {
             .orElseThrow(() -> new AssertionError("missing keybind row " + action));
     }
 
+    private static boolean rowsUseValidPriorities(OpenPolicyRow row) {
+        boolean requestTerminal = row.requestKind().equals("SYSTEM_TERMINAL");
+        boolean currentTerminal = row.currentKind().equals("SYSTEM_TERMINAL");
+        return requestTerminal == !row.requestPriority().equals("NONE")
+            && currentTerminal == !row.currentPriority().equals("NONE");
+    }
+
     private static OpenPolicyRow findPolicy(List<OpenPolicyRow> rows, String scenario) {
         return rows.stream()
             .filter(row -> row.scenario().equals(scenario))
@@ -319,11 +337,13 @@ class R7FoundationContractTest {
                 columns[0],
                 columns[1],
                 columns[2],
-                Boolean.parseBoolean(columns[3]),
-                Boolean.parseBoolean(columns[4]),
+                columns[3],
+                columns[4],
                 Boolean.parseBoolean(columns[5]),
-                columns[6],
-                columns[7]
+                Boolean.parseBoolean(columns[6]),
+                Boolean.parseBoolean(columns[7]),
+                columns[8],
+                columns[9]
             ))
             .toList();
     }
@@ -356,7 +376,9 @@ class R7FoundationContractTest {
     private record OpenPolicyRow(
         String scenario,
         String requestKind,
+        String requestPriority,
         String currentKind,
+        String currentPriority,
         boolean combatActive,
         boolean matching,
         boolean unexpired,
