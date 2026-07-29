@@ -7,12 +7,12 @@
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | P0 | 框架 + 首批 4 场景 + CI Bot e2e stage | ✅ 2026-07-06（本骨架随 P0 PR 进库） |
-| P1 | 修炼模块：realm/qi/meridian dev 命令 + breakthrough intent 链路 | ⬜ |
-| P2 | 战斗模块：attack NPC → combat_hit/死亡链路；skill cast intent → 招式专属通道 | ⬜ |
-| P3 | 库存/物品：背包 intent、容器、装备、`/clearinv` 分支 | ⬜ |
-| P4 | 生产系统：炼丹 / 锻造 / 种植（lingtian）/ 采集 | ⬜ |
-| P5 | 多 bot 并发：同打一个 NPC、组队渡劫、贸易、chat→天道 narration | ⬜ |
-| P6 | `bong:server_data` protobuf 深断言（Python pb 生成，数值级 qi/HUD 校验） | ⬜ |
+| P1 | 修炼模块：realm/qi/meridian dev 命令 + breakthrough intent 链路 | ✅ 2026-07-29 |
+| P2 | 战斗模块：attack NPC → typed combat/death；skill cast intent → cast/VFX/SFX | ✅ 2026-07-29 |
+| P3 | 库存/物品：背包 intent、容器、装备、`/clearinv` 分支 | ✅ 2026-07-29 |
+| P4 | 生产系统：炼丹 / 锻造 / 制作 / 灵田 / 采集 | ✅ 2026-07-29 |
+| P5 | 多 bot 并发：可见性/共同 NPC/chat 隔离已落地；组队渡劫/贸易/Agent 回流待补 | ⏳ |
+| P6 | `bong:server_data` 零依赖 protobuf 深解码已落地；剩余 HUD oneof 全覆盖 | ⏳ |
 
 ## P0 — 框架 + 首批场景（本 PR）
 
@@ -22,34 +22,61 @@
 - `scripts/bot-e2e.sh` + e2e.yml「Bot e2e stage」（`BOT_E2E_KILL_STALE=1`）
 - `scripts/e2e-redis.sh` cleanup 改 `kill_tree`（孤儿 server 修复，见问题记录 #2）
 
-## P1 — 修炼模块（下一步建议）
+## P1 — 修炼模块 ✅ 2026-07-29
 
-- 场景 `cultivation_realm_qi.py`：`/realm set` + `/qi set` → chat 反馈断言；非法值分支
-- 场景 `cultivation_breakthrough.py`：dev 铺垫 → `intent({"type":"breakthrough"})` → `bong:breakthrough_*` payload 到达
-- 抓手：`server/src/cmd/dev/realm.rs`、`schema/client_request.rs` breakthrough variant
+- `scripts/bot/scenarios/cultivation_realm_qi.py`：`/realm set`、`/qi set`、`/qi max`、`/meridian open` 的成功、拒绝、钳制与重复状态反馈。
+- `scripts/bot/scenarios/cultivation_breakthrough.py`：`breakthrough_request` → typed `breakthrough_cinematic`，并锁定 production realm wire `Awaken → Induce`。
+- `scripts/bot/scenarios/cultivation_pill_consume.py`：双入口吃丹、`qi_current` 权威回升、库存扣除与空丹宽容。
+- 抓手：`server/src/cmd/dev/realm.rs`、`server/src/network/client_request_handler.rs`、`scripts/bot/proto_min.py`。
 
-## P2 — 战斗模块
+## P2 — 战斗模块 ✅ 2026-07-29
 
-- 场景：找最近 NPC（entity_spawn 观察）→ `attack_entity` → `bong:combat_hit` payload
-- 技能：`/technique add` → skill cast intent → 招式专属 `bong:<skill>` 通道到达
-- 依赖决策：cast intent 的精确 JSON 形状需从 `schema/client_request.rs` 逐 variant 对照
+- `scripts/bot/scenarios/combat_attack_hit.py`：确定性 passive NPC、原版攻击包、typed outgoing hit 与生产死亡链路精确销毁。
+- `scripts/bot/scenarios/combat_skill_cast.py`：`skill_bar_bind` / `skill_bar_cast` 的权威绑定、`cast_sync`、独立 VFX 与战斗反馈。
+- `scripts/bot/scenarios/combat_weapon_equip_damage.py`：空手基线与满耐久铁剑的 outgoing damage 契约。
+- `scripts/bot/scenarios/combat_respawn_stops_low_hp_heartbeat.py`、`combat_technique_sword_av.py`：重生收掉低血心跳，剑招三反馈与断脉拒因。
 
-## P3 — 库存/物品
+## P3 — 库存/物品 ✅ 2026-07-29
 
-- `/clearinv pack|all|naked` 三分支、背包穿脱 intent（`bong:inventory_pack_*`）、容器双击打开
+- `scripts/bot/scenarios/inventory_pack_move_intents.py`：权威 `inventory_snapshot`、动态 `pack_<owner_instance_id>`、`chest_worn` LIFO、同实例穿脱、容量与 `/clearinv pack|all|naked`。
+- `scripts/bot/scenarios/inventory_container_open_minimal.py`：真实 `trade_crate` 放置、typed open/snapshot、双向 move、拒绝回滚、无丢失复制与 close。
+- `scripts/bot/scenarios/inventory_equip_wearer_race_reject.py`、`inventory_supply_coffin_cross_dimension.py`：装备门拒因与跨维容器 session 门。
+- 抓手：`scripts/bot/scenarios/_inventory_helpers.py`、`server/src/inventory/mod.rs`、`server/src/network/client_request_handler.rs`。
 
-## P4 — 生产系统
+## P4 — 生产系统 ✅ 2026-07-29
 
-- 炼丹（`bong:alchemy_*` 通道族）、锻造（`bong:forge_*`）、灵田（`bong:lingtian_*`）、采集 tick 通道
+- `production_alchemy_brew_pill.py`：真炉放置、点火、投料、丹成入包与数量错误负分支。
+- `production_forge_station_real_place.py`：真砧放置、图谱、起炉拒因/受理、十次淬炼与成品入包。
+- `production_handcraft_stone_knife.py`、`production_craft_cancel_full_inventory_refund.py`、`production_craft_disconnect_resume.py`：制作完成、满包取消落地、断线恢复与 exactly-once 退款。
+- `production_lingtian_gathering_intents.py`、`production_spiritwood_full_inventory_drop.py`：权威地形开垦、深解码采集进度、240-tick 灵木采伐、freshness wire 保真与同实例拾回。
+- `scripts/bot/make_novice_raster_fixture.py` 从 `server/zones.json` 生产 `spawn_distribution` 派生草地 tiles，避免用户名 hash 落入 Stone fallback。
 
-## P5 — 多 bot 并发
+## P5 — 多 bot 并发 ⏳
 
-- 两 bot 同 server：互见 entity_spawn、同打 NPC 伤害归属、chat → `bong:player_chat` → 天道 narration 回流（需 agent 联跑，考虑挂在 smoke-e2e 后半）
+已落地：
 
-## P6 — server_data protobuf 深断言
+- `scripts/bot/scenarios/multibot_chat_visibility.py`：两 Bot 互见 `PlayerSpawn`，并对共同观察到的同一 passive NPC 各自产生 typed outgoing hit。
+- `scripts/bot/scenarios/network_chat_echo.py`：同 zone 广播（含发送者 echo）与跨 zone 隔离。
+- `scripts/bot/scenarios/agent_ui_realm_gate_private_narration.py`：真实 `AgentUiRuntime` 境界门拒绝只向目标 Bot 发送 `system_warning`。
 
-- 从 `proto/` 生成 Python bindings（CI 已装 protoc），对 `bong:server_data` 做数值级断言（qi 数值、HUD 状态）
-- 决策门：CI 是否引入 protobuf Python 依赖（目前框架零依赖）
+剩余验收（本 plan 保持 active）：
+
+- 真实双玩家交易。
+- 组队渡劫。
+- 完整 `chat → bong:player_chat → Tiandao → narration` Agent 联跑回流。
+
+## P6 — server_data protobuf 深断言 ⏳
+
+已落地：
+
+- `scripts/bot/proto_min.py`：纯 stdlib 的 protobuf wire decoder，不新增 CI Python 依赖；按 `Envelope` oneof tag 分发 typed payload。
+- `scripts/bot/server_data.py` 与 `scripts/bot/test_protocol.py`：数值级断言 `player_state.spirit_qi`、`breakthrough_cinematic`、`craft_session_state.elapsed_ticks`、库存/容器/战斗/生产 payload。
+- 真实场景不以 raw bytes/chat 假阳性替代 typed payload。
+
+剩余验收（本 plan 保持 active）：
+
+- 盘点并补齐所有仍未覆盖的 HUD oneof（含 `combat_hud_state`）。
+- 若未来改用生成式 Python bindings，需单独决定依赖与构建产物策略；本阶段当前选择零依赖 decoder，不虚报“已生成 bindings”。
 
 ## 问题记录（开发中实际踩到，后续阶段留意）
 
