@@ -99,6 +99,20 @@ class R7FoundationContractTest {
         Set<String> knownTargets = Set.of("UNKNOWN", "O", "U", "R");
         assertTrue(rows.stream().allMatch(row -> knownTargets.contains(row.targetDefault())),
             "target defaults must use the explicitly frozen P1 set");
+        assertEquals(expectedProductionKeySources().keySet(),
+            rows.stream().map(KeybindRow::action).collect(java.util.stream.Collectors.toSet()),
+            "every migration row must have one production declaration owner");
+        for (KeybindRow row : rows) {
+            Path source = CLIENT_ROOT.resolve(expectedProductionKeySources().get(row.action()));
+            String sourceText = R7SourceScan.read(source);
+            String code = R7SourceScan.codeOnly(sourceText);
+            assertTrue(sourceText.contains("\"" + row.translationKey() + "\""),
+                "migration translation key does not match production source " + source + ": "
+                    + row.translationKey());
+            assertTrue(containsCurrentDefault(code, row.currentDefault()),
+                "migration current default does not match production source " + source + ": "
+                    + row.currentDefault());
+        }
 
         Set<String> boundTargets = new TreeSet<>();
         for (KeybindRow row : rows) {
@@ -164,6 +178,29 @@ class R7FoundationContractTest {
         } catch (IOException exception) {
             throw new AssertionError("unable to scan R7 ownership boundary " + root, exception);
         }
+    }
+
+    private static boolean containsCurrentDefault(String code, String defaultKey) {
+        if (defaultKey.equals("UNKNOWN")) {
+            return code.contains("InputUtil.UNKNOWN_KEY.getCode()") || code.contains("GLFW.GLFW_KEY_UNKNOWN");
+        }
+        return code.contains("GLFW.GLFW_KEY_" + defaultKey);
+    }
+
+    private static Map<String, String> expectedProductionKeySources() {
+        return Map.ofEntries(
+            Map.entry("spirit_treasure_open", "spirittreasure/SpiritTreasureScreenBootstrap.java"),
+            Map.entry("lingtian_open", "lingtian/LingtianActionScreenBootstrap.java"),
+            Map.entry("identity_open", "identity/IdentityPanelScreenBootstrap.java"),
+            Map.entry("void_action_open", "cultivation/voidaction/VoidActionScreenBootstrap.java"),
+            Map.entry("forge_open", "forge/ForgeScreenBootstrap.java"),
+            Map.entry("extract_cancel", "tsy/ExtractInteractionBootstrap.java"),
+            Map.entry("botany_auto", "botany/BotanyHudBootstrap.java"),
+            Map.entry("spell_volume_hold", "combat/CombatKeybindings.java"),
+            Map.entry("dying_elder_give", "dying_elder/DyingElderInteractionKeybindings.java"),
+            Map.entry("dying_elder_refuse", "dying_elder/DyingElderInteractionKeybindings.java"),
+            Map.entry("dying_elder_delay", "dying_elder/DyingElderInteractionKeybindings.java")
+        );
     }
 
     private static KeybindRow find(List<KeybindRow> rows, String action) {
