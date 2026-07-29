@@ -13,7 +13,7 @@
 
 - **进料**：`server/src/cultivation/tribulation.rs:860-1023` 的 `start_tribulation_system` 计算 void quota，并在成功持久化渡虚 attempt 后于 `:939-957,983-987` 构造/插入 `JueBiAfterDuXuQuota`；`start_due_juebi_triggers_system` 另有 independent JueBi 入口。
 - **出料**：`tribulation_wave_system` 在渡虚最后一波读取 marker 并转入 `VoidQuotaExceeded` 绝壁；`juebi_settlement_system` 读取同一意图决定原子化虚晋升及结算 reason；DuXu 与 quota-origin JueBi 的 failure、disconnect-as-fled、boundary flee、intercept-death、普通成功与 reset/despawn 必须结束该 attempt 的 marker 所有权。
-- **共享类型 / event**：复用 `TribulationState`、`TribulationOriginDimension`、`JueBiAfterDuXuQuota`、`JueBiRuntimeContext`、`ActiveTribulationRecord`、`TribulationSource::VoidQuotaExceeded` 与既有 persistence API；禁止另造与 active tribulation 平行的第二套状态机。
+- **共享类型 / event**：复用 `TribulationState`、`TribulationOriginDimension`、`JueBiAfterDuXuQuota`、`JueBiRuntimeContext`、`ActiveTribulationRecord`、`JueBiTriggerSource::VoidQuotaExceeded` 与既有 persistence API；禁止另造与 active tribulation 平行的第二套状态机。
 - **跨仓库契约**：纯 server ECS + SQLite persistence 生命周期修复；不改 agent/client/public IPC，不新增 CustomPayload。若 P1 扩 `active_tribulations` 持久化形状，migration 与 join hydration 必须同 PR/同 bugfix 分支完成。
 - **worldview 锚点**：`worldview.md §三 L72,L81,L126-L130` 规定化虚名额稀缺且通灵→化虚必须渡虚；`docs/finished_plans/plan-tribulation-v2.md §6 L816-L826` 规定“超额 attempt 正常渡虚后追加绝壁，存活才由天道承认”。旧 marker 不得把过去的天道裁决嫁接到普通新 attempt，重启也不得抹掉当前超额裁决。
 - **qi_physics 锚点**：本 plan 只修 attempt metadata ownership，不新增 `QiTransfer`、不改配额公式、绝壁 drain 或 failure/flee 释放。现有失败/逃遁/JueBi 真元路径必须保持单次执行并继续通过 ledger 守恒；任何 cleanup helper 不得顺手重复释放真元。
@@ -41,9 +41,9 @@
 - [ ] accepted start 原子替换：只有新 DuXu 已通过全部校验且 `persist_active_state` 成功后才 mutate ECS；超额则 insert/replace 当前 snapshot，非超额则显式 remove 旧 marker。duplicate/rejected start、DB persist 失败或已有 active state 时不得清除合法当前 marker。
 - [ ] independent JueBi 成功接受并持久化时显式清理 DuXu quota marker；不得让旧 marker 把 independent JueBi settlement 误分类为 `void_quota_exceeded`。
 - [ ] 建立单一 `clear_tribulation_attempt_runtime` / `clear_duxu_quota_follow_up`（名称可等义）并接入所有真 terminal boundary：普通 DuXu success、DuXu/quota-origin JueBi failure、shared fled settlement（boundary + disconnect）、intercept death、JueBi settlement；不得在 DuXu 最终 wave → appended quota JueBi 的 intentional transition 清理。
-- [ ] cleanup helper 只清 attempt runtime component，不重复删 DB row、不重复发 lifecycle/qi event；terminal consumer 必须以 attempt terminal 状态/identity 建立 exactly-once 门，保证同 tick 重复 `TribulationFailed`、failure 与 flee/intercept/settlement 竞争以及 apply-deferred 前的重复事件只执行一次 DB 删除、惩罚、Qi 释放、settlement/lifecycle event。各终止系统保留现有“DB 删除失败 warning、ECS 仍终止”政策，除非 §8.1 另有双锚点决议。
+- [ ] cleanup helper 只清 attempt runtime component，不重复删 DB row、不重复发 lifecycle/qi event；各终止系统保留现有“DB 删除失败 warning、ECS 仍终止”政策。本 plan 的测试仅断言新增 marker cleanup 不会额外触发 DB/惩罚/Qi/settlement 副作用，不承接既有终态处理器的通用 exactly-once 重构。
 - [ ] orphan hardening：production invariant check 对 `marker + no TribulationState`、`marker + independent JueBi` fail-closed 清理并留可观测诊断；不得仅靠每 tick sweep 掩盖 terminal path 漏接，源码/测试仍须逐路径 pin。
-- [ ] 饱和测试：`accepted_non_over_quota_start_clears_stale_quota_marker`、`failed_over_quota_du_xu_retry_does_not_append_stale_juebi`、`failed_quota_origin_juebi_clears_follow_up_marker`、`fled_over_quota_du_xu_retry_does_not_append_stale_juebi`、`intercepted_over_quota_du_xu_clears_quota_marker`、`disconnect_fled_du_xu_clears_quota_marker_before_despawn`、`standard_duxu_success_clears_invalid_quota_marker`、`independent_juebi_start_clears_stale_duxu_quota_marker`、`quota_marker_survives_duxu_to_juebi_transition`、`quota_juebi_settlement_clears_follow_up_marker`、`duplicate_terminal_events_settle_quota_attempt_exactly_once`、`competing_failure_and_flee_settle_quota_attempt_exactly_once`，以及 rejected/persist-failure 保留合法 marker。真实 schedule 在 apply-deferred 前后都要断言 marker/state，且用 DB row、ledger/account delta 与 lifecycle/settlement event 数量锁定“每个 attempt 恰好一次”。
+- [ ] 饱和测试：`accepted_non_over_quota_start_clears_stale_quota_marker`、`failed_over_quota_du_xu_retry_does_not_append_stale_juebi`、`failed_quota_origin_juebi_clears_follow_up_marker`、`fled_over_quota_du_xu_retry_does_not_append_stale_juebi`、`intercepted_over_quota_du_xu_clears_quota_marker`、`disconnect_fled_du_xu_clears_quota_marker_before_despawn`、`standard_duxu_success_clears_invalid_quota_marker`、`independent_juebi_start_clears_stale_duxu_quota_marker`、`quota_marker_survives_duxu_to_juebi_transition`、`quota_juebi_settlement_clears_follow_up_marker`，以及 rejected/persist-failure 保留合法 marker。真实 schedule 在 apply-deferred 前后都要断言 marker/state，并用现有 DB row、ledger/account delta 与 lifecycle/settlement event 数量锁定“新增 cleanup 无额外副作用”。
 - [ ] 可核验 production symbols：`JueBiAfterDuXuQuota`、`start_tribulation_system`、`start_due_juebi_triggers_system`、`tribulation_failure_system`、`abort_du_xu_on_client_removed`、`tribulation_escape_boundary_system`、`settle_fled_tribulation`、`tribulation_intercept_death_system`、`tribulation_wave_system`、`juebi_settlement_system`、`clear_duxu_quota_follow_up`（名称可等义）。
 
 ## P1 — Durable quota follow-up intent + hydration
@@ -55,7 +55,7 @@
 - [ ] `total_world_qi` / `quota_k` 若不参与恢复或审计则删除；若保留则进入 typed durable shape 并有消费/diagnostic，禁止继续作为 marker 内永不读取的装饰字段。
 - [ ] 扩大 lifecycle hygiene 至 fresh-character reset（`server/src/combat/lifecycle.rs:1803,1959`）、dev reset（`server/src/cmd/dev/reset.rs:338-368`）及 NPC same-entity retry；NPC dormancy/rehydration 若不能保留 active attempt，则必须先走统一 terminal cleanup，不能脱水遗留或吞掉 follow-up intent。
 - [ ] 饱和测试：`over_quota_duxu_follow_up_intent_round_trips_persistence`、`restored_over_quota_duxu_still_appends_juebi`、`restored_quota_origin_juebi_can_complete_ascension`、`restored_normal_duxu_has_no_quota_follow_up_marker`、`restored_independent_juebi_has_no_quota_marker`、旧 row 缺字段、DB error、fresh/dev reset、NPC dormancy/rehydration、重复 hydration 幂等。
-- [ ] 可核验 symbols：`ActiveTribulationRecord`、`persist_active_state`、`attach_cultivation_to_joined_clients`、`JueBiRuntimeContext`、`TribulationSource::VoidQuotaExceeded`、`complete_tribulation_ascension` / `try_complete_tribulation_ascension`、`quota_follow_up`（最终字段名可等义）及上述 test symbols。
+- [ ] 可核验 symbols：`ActiveTribulationRecord`、`persist_active_state`、`attach_cultivation_to_joined_clients`、`JueBiRuntimeContext`、`JueBiTriggerSource::VoidQuotaExceeded`、`complete_tribulation_ascension` / `try_complete_tribulation_ascension`、`quota_follow_up`（最终字段名可等义）及上述 test symbols。
 
 ## 范围边界 / 已排除项
 
@@ -69,7 +69,7 @@
 
 1. `JueBiAfterDuXuQuota` 是否继续作为 ECS projection，还是改名为明确的 attempt runtime intent；是否需要 `started_tick`/attempt generation 作为防御性身份？
 2. accepted start 的 replace/remove 应集中在哪个“DB persist 成功后”helper，如何证明 rejected/duplicate/DB-failure 不会误清合法 marker？
-3. 哪一个 centralized cleanup helper 覆盖全部 terminal/reset 路径；orphan invariant check 是诊断+清理还是只 fail-fast 测试门；哪一个 attempt identity/terminal latch 在 deferred removal 前拒绝重复或竞争终态事件，并证明 DB delete、惩罚、Qi 释放、settlement/lifecycle event exactly-once？
+3. 哪一个 centralized cleanup helper 覆盖全部 terminal/reset 路径；orphan invariant check 是诊断+清理还是只 fail-fast 测试门；如何证明新增 marker cleanup 不重复触发现有 DB 删除、惩罚、Qi 释放、settlement/lifecycle event？
 4. durable shape 复用现有 `source`/`intensity`，还是给 `ActiveTribulationRecord` 新增 typed quota-follow-up 字段；SQLite migration 版本和旧 row 策略是什么？
 5. restart 后绝壁强度使用 start-time 完整 quota snapshot、precomputed intensity，还是重算；如何保持“强度用开始时裁决、最终名额用 settlement 原子检查”的现语义？
 6. `total_world_qi` / `quota_k` 是持久审计证据还是 dead fields；保留时哪个 production diagnostic 消费它们？
@@ -87,7 +87,7 @@
 ### §10.2 验收门
 
 - 每批实现必须同包接通 production caller/schedule/persistence/hydration，测试从真实 Bevy schedule 与 SQLite fixture 驱动；直接调用 cleanup helper 只能作单元补充。
-- 在 `server/` 下通过 `flock /tmp/bong-cargo.lock` 或 `scripts/build-token.sh` 运行 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`；严禁本地运行 `scripts/test-tmux-shutdown-order.sh` 或任何调用它的 suite，关停覆盖留给 GitHub e2e。
+- 在 `server/` 下通过 `flock /tmp/bong-cargo.lock -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 运行完整门禁；严禁本地运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh` 或任何调用它们的 suite，关停覆盖留给 GitHub e2e。
 - 全部 batch 完成后对显式 slot 绝对路径 + exact HEAD SHA 启动 fresh-context read-only validator；任何 HEAD 变化都重验。push 前紧邻 `git fetch origin && git merge origin/main`，merge 带进改动则重跑受影响 gate/validator。
 - push 唯一 bugfix 分支后开一个 PR 并独立评论 `/review`；返工留在同 PR，不重复 promotion/归档。提交均为中文原子 commit，带 `Model: <精确模型 id>` 与 `Co-Authored-By` trailer。
 
@@ -95,5 +95,5 @@
 
 - 同实体 stale-positive 链必须完整对拍：Attempt A 超额 → failure/flee/intercept → Attempt B 非超额 → final wave，不得追加 JueBi；marker 在每个 terminal apply-deferred 后均不存在。
 - restart false-negative 链必须完整对拍：超额 DuXu restart 后仍追加 quota JueBi；quota-origin JueBi restart 后存活仍走 atomic ascension；normal/independent attempt 不得生成 quota intent。
-- `JueBiAfterDuXuQuota` / durable projection 与 active attempt 的组合矩阵全部合法，unknown/legacy row fail-closed；DuXu/quota-origin JueBi 的 failure/flee/intercept/settlement 重复或竞争终态必须按 attempt exactly-once，DB 删除、惩罚、Qi 释放、settlement/lifecycle event 均不得重复。
+- `JueBiAfterDuXuQuota` / durable projection 与 active attempt 的组合矩阵全部合法，unknown/legacy row fail-closed；DuXu/quota-origin JueBi 的 failure/flee/intercept/settlement 路径都必须清 marker，且新增 cleanup 不得重复 DB 删除、惩罚、Qi 释放或 settlement/lifecycle event。
 - P0/P1 全部 ✅、server gate 与 exact-HEAD validator PASS 后，填写 `## Finish Evidence` 并迁入 `docs/finished_plans/`，再按 §10.2 push、开唯一 PR、评论 `/review`。`/review` 与 GitHub e2e 是 PR 后置门：出现 blocker/major 时在同 PR 返工，并仅原地更新已归档 Finish Evidence；不得要求尚未存在的 PR review 作为首次归档前置。
