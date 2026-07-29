@@ -134,7 +134,10 @@ pub fn register(app: &mut App) {
             autosave_player_lifespan_slices.after(autosave_player_cultivation_bundles),
             autosave_player_lifecycle_slices.after(autosave_player_lifespan_slices),
             flush_changed_player_skills.after(autosave_player_lifecycle_slices),
-            flush_changed_player_known_techniques.after(flush_changed_player_skills),
+            flush_changed_player_known_techniques
+                .after(flush_changed_player_skills)
+                .after(crate::cultivation::attach_cultivation_to_joined_clients)
+                .after(crate::combat::lifecycle::handle_revival_action_intents),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
                 .after(flush_changed_player_known_techniques)

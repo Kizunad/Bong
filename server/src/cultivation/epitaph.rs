@@ -981,7 +981,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1031,8 +1034,10 @@ mod tests {
                 NpcMarker,
             ))
             .id();
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: npc_entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: npc_entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1056,7 +1061,10 @@ mod tests {
 
         // 实体无 LifeRecord 也无 Lifecycle
         let entity = app.world_mut().spawn_empty().id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1100,7 +1108,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1141,7 +1152,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1179,7 +1193,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1217,7 +1234,10 @@ mod tests {
                 valence::prelude::Position(valence::prelude::DVec3::new(12.9, 64.1, -5.7)),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1253,7 +1273,10 @@ mod tests {
                 // 故意不附加 Position component
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1297,7 +1320,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1341,7 +1367,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1383,7 +1412,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1449,7 +1481,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1523,7 +1558,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1600,7 +1638,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1751,7 +1792,10 @@ mod tests {
                 // 故意不附加 Username component
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1787,7 +1831,10 @@ mod tests {
                 Username("Marco".to_string()),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1835,7 +1882,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();
@@ -1887,7 +1937,10 @@ mod tests {
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<WorldEpitaphRegistry>();

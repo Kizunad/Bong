@@ -1029,7 +1029,10 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let events = app

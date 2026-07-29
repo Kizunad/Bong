@@ -1,8 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
-use std::io;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+#[cfg(test)]
+use std::sync::MutexGuard;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use big_brain::prelude::{ActionState, Actor};
@@ -237,7 +241,25 @@ pub struct NewCharacterPersistenceBundle<'a> {
     pub inventory: Option<&'a crate::inventory::PlayerInventory>,
     pub lifespan: &'a crate::cultivation::lifespan::LifespanComponent,
     pub skill_set: &'a crate::skill::components::SkillSet,
+    pub lifecycle: &'a Lifecycle,
+    pub combat_clock_tick: u64,
     pub cultivation: PlayerCultivationBundle<'a>,
+    pub zone_runtime: Option<&'a ZoneRuntimeRecord>,
+    pub qi_ledger: Option<&'a WorldQiAccount>,
+}
+
+pub struct TerminationPlayerPersistenceBundle<'a> {
+    pub player_persistence: &'a crate::player::state::PlayerStatePersistence,
+    pub username: &'a str,
+    pub combat_clock_tick: u64,
+    pub cultivation: PlayerCultivationBundle<'a>,
+}
+
+pub struct TerminationPersistenceBundle<'a> {
+    pub player: Option<TerminationPlayerPersistenceBundle<'a>>,
+    pub zone_runtime: Option<&'a ZoneRuntimeRecord>,
+    pub qi_ledger: Option<&'a WorldQiAccount>,
+    pub release_void_quota: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -299,27 +321,6 @@ struct DeathInsightEventPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LifeEventPayload {
     biography_entry: BiographyEntry,
-}
-
-#[derive(Debug)]
-struct StagedDeceasedExport {
-    snapshot_path: PathBuf,
-    index_path: PathBuf,
-    previous_snapshot: Option<Vec<u8>>,
-    previous_index: Option<Vec<u8>>,
-    relative_snapshot_path: String,
-    _guard: MutexGuard<'static, ()>,
-}
-
-impl StagedDeceasedExport {
-    fn relative_snapshot_path(&self) -> &str {
-        self.relative_snapshot_path.as_str()
-    }
-
-    fn rollback(&self) {
-        rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
-        rollback_file(&self.index_path, self.previous_index.as_deref());
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -521,6 +522,11 @@ pub struct AscensionQuotaRelease {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RevivalTransitionOutcome {
+    pub quota_release: Option<AscensionQuotaRelease>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminationTransitionOutcome {
     pub quota_release: Option<AscensionQuotaRelease>,
 }
 
@@ -787,6 +793,12 @@ fn bootstrap_persistence_system(
     if let Err(error) = bootstrap_sqlite(settings.db_path(), settings.server_run_id()) {
         panic!(
             "[bong][persistence] failed to bootstrap sqlite at {}: {error}",
+            settings.db_path().display()
+        );
+    }
+    if let Err(error) = reconcile_public_deceased_exports(&settings) {
+        tracing::warn!(
+            "[bong][persistence] failed to reconcile public deceased exports from {}: {error}",
             settings.db_path().display()
         );
     }
@@ -4215,7 +4227,14 @@ pub fn persist_life_record_death_insight(
         wall_clock,
     )?;
 
-    transaction.commit().map_err(io::Error::other)
+    transaction.commit().map_err(io::Error::other)?;
+    if let Err(error) = reconcile_public_deceased_exports(settings) {
+        tracing::warn!(
+            "[bong][persistence] committed death insight for {} but failed to refresh public deceased exports: {error}",
+            life_record.character_id
+        );
+    }
+    Ok(())
 }
 
 pub fn persist_termination_transition(
@@ -4223,7 +4242,8 @@ pub fn persist_termination_transition(
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
 ) -> io::Result<()> {
-    persist_termination_transition_inner(settings, lifecycle, life_record, None, None)
+    persist_termination_transition_inner(settings, lifecycle, life_record, None, None, None)
+        .map(|_| ())
 }
 
 pub fn persist_termination_transition_with_death_context(
@@ -4239,6 +4259,38 @@ pub fn persist_termination_transition_with_death_context(
         life_record,
         death_registry_cause,
         lifespan_event,
+        None,
+    )
+    .map(|_| ())
+}
+
+pub fn persist_player_termination_transition_with_bundle(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<&LifespanEventRecord>,
+    bundle: TerminationPersistenceBundle<'_>,
+) -> io::Result<TerminationTransitionOutcome> {
+    if let Some(player) = bundle.player.as_ref() {
+        if settings.db_path() != player.player_persistence.db_path() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "persistence db paths differ for termination: lifecycle={} player={}",
+                    settings.db_path().display(),
+                    player.player_persistence.db_path().display()
+                ),
+            ));
+        }
+    }
+    persist_termination_transition_inner(
+        settings,
+        lifecycle,
+        life_record,
+        death_registry_cause,
+        lifespan_event,
+        Some(bundle),
     )
 }
 
@@ -4248,7 +4300,8 @@ fn persist_termination_transition_inner(
     life_record: &LifeRecord,
     death_registry_cause: Option<&str>,
     lifespan_event: Option<&LifespanEventRecord>,
-) -> io::Result<()> {
+    bundle: Option<TerminationPersistenceBundle<'_>>,
+) -> io::Result<TerminationTransitionOutcome> {
     let entry = latest_biography_entry(life_record)?;
     let wall_clock = current_unix_seconds();
     let died_at_tick = biography_tick(entry);
@@ -4264,21 +4317,18 @@ fn persist_termination_transition_inner(
     };
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let staged_export = if should_export_public_snapshot(life_record.character_id.as_str()) {
-        Some(stage_public_deceased_export(
-            settings,
-            life_record.character_id.as_str(),
-            snapshot_json.as_str(),
-            died_at_tick,
-            termination_category.as_str(),
-        )?)
-    } else {
-        None
-    };
+    let public_path = should_export_public_snapshot(life_record.character_id.as_str()).then(|| {
+        format!(
+            "deceased/{}.json",
+            sanitize_deceased_snapshot_stem(life_record.character_id.as_str())
+        )
+    });
 
     let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
-    let persisted = (|| -> io::Result<()> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(io::Error::other)?;
+    let persisted = (|| -> io::Result<TerminationTransitionOutcome> {
         upsert_life_record(&transaction, life_record, wall_clock)?;
         append_life_event(
             &transaction,
@@ -4307,23 +4357,79 @@ fn persist_termination_transition_inner(
             &transaction,
             life_record.character_id.as_str(),
             snapshot_json.as_str(),
-            staged_export
-                .as_ref()
-                .map(|export| export.relative_snapshot_path().to_string()),
+            public_path.clone(),
             died_at_tick,
             wall_clock,
         )?;
 
-        transaction.commit().map_err(io::Error::other)
+        let quota_release = if let Some(bundle) = bundle.as_ref() {
+            if let Some(player) = bundle.player.as_ref() {
+                crate::player::state::upsert_player_lifecycle_slice_in_transaction(
+                    &transaction,
+                    player.username,
+                    lifecycle,
+                    player.combat_clock_tick,
+                    wall_clock,
+                )?;
+                crate::player::state::clear_coffin_flag_in_transaction(
+                    &transaction,
+                    player.username,
+                    wall_clock,
+                )?;
+                upsert_player_cultivation_bundle_in_transaction(
+                    &transaction,
+                    settings.db_path(),
+                    player.username,
+                    player.cultivation.cultivation,
+                    player.cultivation.meridians,
+                    player.cultivation.qi_color,
+                    player.cultivation.karma,
+                    player.cultivation.contamination,
+                    player.cultivation.life_record,
+                    player.cultivation.practice_log,
+                    player.cultivation.insight_quota,
+                    player.cultivation.unlocked_perceptions,
+                    player.cultivation.insight_modifiers,
+                    player.cultivation.tutorial_state,
+                    player.cultivation.meridian_severed,
+                    player.cultivation.poison_toxicity,
+                    player.cultivation.digestion_load,
+                    Some(player.cultivation.nourishment),
+                    false,
+                    wall_clock,
+                )?;
+            }
+            if let Some(zone_runtime) = bundle.zone_runtime {
+                upsert_zone_runtime(&transaction, zone_runtime, wall_clock)?;
+            }
+            if let Some(qi_ledger) = bundle.qi_ledger {
+                upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+            }
+            if bundle.release_void_quota {
+                Some(release_ascension_quota_slot_in_transaction(
+                    &transaction,
+                    wall_clock,
+                )?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        fail_before_commit_if_armed(settings.db_path())?;
+        transaction.commit().map_err(io::Error::other)?;
+        Ok(TerminationTransitionOutcome { quota_release })
     })();
 
-    if persisted.is_err() {
-        if let Some(export) = staged_export.as_ref() {
-            export.rollback();
-        }
+    let outcome = persisted?;
+    if let Err(error) = reconcile_public_deceased_exports(settings) {
+        tracing::warn!(
+            "[bong][persistence] committed termination for {} but failed to refresh public deceased exports: {error}",
+            life_record.character_id
+        );
     }
-
-    persisted
+    Ok(outcome)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6411,6 +6517,8 @@ pub fn persist_revival_transition_with_bundle(
     release_void_quota: bool,
     zone_runtime: Option<&ZoneRuntimeRecord>,
     qi_ledger: Option<&WorldQiAccount>,
+    lifecycle: &Lifecycle,
+    combat_clock_tick: u64,
     bundle: PlayerCultivationBundle<'_>,
 ) -> io::Result<RevivalTransitionOutcome> {
     if settings.db_path() != player_persistence.db_path() {
@@ -6441,6 +6549,13 @@ pub fn persist_revival_transition_with_bundle(
         &transaction,
         username,
         revived_position,
+        wall_clock,
+    )?;
+    crate::player::state::upsert_player_lifecycle_slice_in_transaction(
+        &transaction,
+        username,
+        lifecycle,
+        combat_clock_tick,
         wall_clock,
     )?;
     upsert_player_cultivation_bundle_in_transaction(
@@ -6520,6 +6635,13 @@ pub fn persist_new_character_transition(
         },
         wall_clock,
     )?;
+    crate::player::state::upsert_player_lifecycle_slice_in_transaction(
+        &transaction,
+        username,
+        bundle.lifecycle,
+        bundle.combat_clock_tick,
+        wall_clock,
+    )?;
     upsert_life_record(&transaction, bundle.cultivation.life_record, wall_clock)?;
     upsert_player_cultivation_bundle_in_transaction(
         &transaction,
@@ -6543,6 +6665,12 @@ pub fn persist_new_character_transition(
         false,
         wall_clock,
     )?;
+    if let Some(zone_runtime) = bundle.zone_runtime {
+        upsert_zone_runtime(&transaction, zone_runtime, wall_clock)?;
+    }
+    if let Some(qi_ledger) = bundle.qi_ledger {
+        upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+    }
     transaction
         .execute(
             "DELETE FROM tribulations_active WHERE char_id = ?1",
@@ -8027,73 +8155,127 @@ fn deceased_export_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn stage_public_deceased_export(
-    settings: &PersistenceSettings,
-    char_id: &str,
-    snapshot_json: &str,
-    died_at_tick: u64,
-    termination_category: &str,
-) -> io::Result<StagedDeceasedExport> {
-    let guard = deceased_export_lock()
+pub fn reconcile_public_deceased_exports(settings: &PersistenceSettings) -> io::Result<()> {
+    let _guard = deceased_export_lock()
         .lock()
         .map_err(|_| io::Error::other("deceased public export lock poisoned"))?;
     fs::create_dir_all(settings.deceased_public_dir())?;
 
-    let snapshot_stem = sanitize_deceased_snapshot_stem(char_id);
-    let snapshot_path = settings
-        .deceased_public_dir()
-        .join(format!("{snapshot_stem}.json"));
-    let index_path = settings.deceased_public_dir().join("_index.json");
-    let previous_snapshot = fs::read(&snapshot_path).ok();
-    let previous_index = fs::read(&index_path).ok();
-    fs::write(&snapshot_path, snapshot_json.as_bytes())?;
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT char_id, snapshot_json, public_path, died_at_tick
+            FROM deceased_snapshots
+            WHERE public_path IS NOT NULL
+            ORDER BY died_at_tick ASC, char_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(io::Error::other)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)?;
 
-    let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
-    let mut entries = read_deceased_index(&index_path)?;
-    entries.retain(|entry| entry.char_id != char_id);
-    entries.push(DeceasedIndexEntry {
-        char_id: char_id.to_string(),
-        died_at_tick,
-        path: relative_snapshot_path.clone(),
-        termination_category: termination_category.to_string(),
-    });
-    entries.sort_by(|left, right| {
-        left.died_at_tick
-            .cmp(&right.died_at_tick)
-            .then_with(|| left.char_id.cmp(&right.char_id))
-    });
+    let mut entries = Vec::with_capacity(rows.len());
+    for (char_id, snapshot_json, public_path, died_at_tick) in rows {
+        let died_at_tick = sql_to_tick(died_at_tick)?;
+        let snapshot: DeceasedSnapshot = serde_json::from_str(&snapshot_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let expected_path = format!(
+            "deceased/{}.json",
+            sanitize_deceased_snapshot_stem(char_id.as_str())
+        );
+        if public_path != expected_path {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid deceased public path for {char_id}: expected {expected_path}, got {public_path}"
+                ),
+            ));
+        }
+        atomic_replace_file(
+            settings
+                .deceased_public_dir()
+                .join(format!(
+                    "{}.json",
+                    sanitize_deceased_snapshot_stem(char_id.as_str())
+                ))
+                .as_path(),
+            snapshot_json.as_bytes(),
+        )?;
+        entries.push(DeceasedIndexEntry {
+            char_id,
+            died_at_tick,
+            path: public_path,
+            termination_category: snapshot.termination_category,
+        });
+    }
+
     let index_json = serde_json::to_string_pretty(&entries)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    fs::write(&index_path, index_json.as_bytes())?;
-
-    Ok(StagedDeceasedExport {
-        snapshot_path,
-        index_path,
-        previous_snapshot,
-        previous_index,
-        relative_snapshot_path,
-        _guard: guard,
-    })
+    atomic_replace_file(
+        settings.deceased_public_dir().join("_index.json").as_path(),
+        index_json.as_bytes(),
+    )
 }
 
-fn read_deceased_index(index_path: &Path) -> io::Result<Vec<DeceasedIndexEntry>> {
-    match fs::read_to_string(index_path) {
-        Ok(contents) => serde_json::from_str(&contents)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error),
-    }
-}
+fn atomic_replace_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "atomic replacement path must have a parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+    let file_name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "atomic replacement path must name a file",
+        )
+    })?;
 
-fn rollback_file(path: &Path, previous: Option<&[u8]>) {
-    match previous {
-        Some(contents) => {
-            let _ = fs::write(path, contents);
+    for attempt in 0..32_u32 {
+        let temporary = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            attempt
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut temporary_file = match options.open(&temporary) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let result = (|| -> io::Result<()> {
+            temporary_file.write_all(contents)?;
+            temporary_file.sync_all()?;
+            fs::rename(&temporary, path)?;
+            File::open(parent)?.sync_all()
+        })();
+        drop(temporary_file);
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
         }
-        None => {
-            let _ = fs::remove_file(path);
-        }
+        return result;
     }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a deceased export temporary file",
+    ))
 }
 
 fn build_npc_blackboard_snapshot(
@@ -8315,6 +8497,17 @@ fn resolve_persistence_relative_path(
     }
 
     data_dir.join(relative_path)
+}
+
+fn rollback_file(path: &Path, previous: Option<&[u8]>) {
+    match previous {
+        Some(contents) => {
+            let _ = fs::write(path, contents);
+        }
+        None => {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 fn write_zstd_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
@@ -12575,6 +12768,153 @@ mod persistence_tests {
         assert_eq!(index[0].path, "deceased/offline_Ancestor.json");
         assert_eq!(index[0].termination_category, "横死");
         assert_eq!(public_path, "deceased/offline_Ancestor.json");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn termination_precommit_failure_does_not_publish_public_deceased_projection() {
+        let (settings, root) = persistence_settings("deceased-export-precommit-failure");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        let life_record = LifeRecord {
+            character_id: "offline:Uncommitted".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "fortune_exhausted".to_string(),
+                tick: 77,
+            }],
+            ..LifeRecord::default()
+        };
+        let lifecycle = Lifecycle {
+            character_id: life_record.character_id.clone(),
+            last_death_tick: Some(77),
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
+        };
+        let _failpoint = arm_fail_before_commit(settings.db_path());
+
+        let error = persist_termination_transition(&settings, &lifecycle, &life_record)
+            .expect_err("precommit failpoint must reject termination persistence");
+
+        assert!(error.to_string().contains("before SQLite commit"));
+        assert!(
+            !settings
+                .deceased_public_dir()
+                .join("offline_Uncommitted.json")
+                .exists(),
+            "uncommitted termination must never publish a public snapshot"
+        );
+        assert!(
+            !settings.deceased_public_dir().join("_index.json").exists(),
+            "uncommitted termination must never publish a public index"
+        );
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        let persisted_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM deceased_snapshots WHERE char_id = ?1",
+                params!["offline:Uncommitted"],
+                |row| row.get(0),
+            )
+            .expect("row count should load");
+        assert_eq!(persisted_rows, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reconcile_public_deceased_exports_rebuilds_projection_from_sqlite() {
+        let (settings, root) = persistence_settings("deceased-export-reconcile");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        let life_record = LifeRecord {
+            character_id: "offline:Recoverable".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "natural_end".to_string(),
+                tick: 88,
+            }],
+            ..LifeRecord::default()
+        };
+        let lifecycle = Lifecycle {
+            character_id: life_record.character_id.clone(),
+            last_death_tick: Some(88),
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
+        };
+        persist_termination_transition(&settings, &lifecycle, &life_record)
+            .expect("termination should commit and project");
+        let snapshot_path = settings
+            .deceased_public_dir()
+            .join("offline_Recoverable.json");
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        fs::remove_file(&snapshot_path).expect("test should remove projected snapshot");
+        fs::remove_file(&index_path).expect("test should remove projected index");
+
+        reconcile_public_deceased_exports(&settings)
+            .expect("durable SQLite rows should rebuild the missing projection");
+
+        let snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(&snapshot_path).expect("snapshot should be rebuilt"),
+        )
+        .expect("rebuilt snapshot should decode");
+        let index: Vec<DeceasedIndexEntry> = serde_json::from_str(
+            &fs::read_to_string(&index_path).expect("index should be rebuilt"),
+        )
+        .expect("rebuilt index should decode");
+        assert_eq!(snapshot.char_id, "offline:Recoverable");
+        assert_eq!(snapshot.termination_category, "善终");
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].path, "deceased/offline_Recoverable.json");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn death_insight_commit_refreshes_public_deceased_projection() {
+        let (settings, root) = persistence_settings("deceased-export-death-insight");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        let mut life_record = LifeRecord {
+            character_id: "offline:Insightful".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "fortune_exhausted".to_string(),
+                tick: 77,
+            }],
+            ..LifeRecord::default()
+        };
+        let lifecycle = Lifecycle {
+            character_id: life_record.character_id.clone(),
+            last_death_tick: Some(77),
+            state: LifecycleState::Terminated,
+            ..Lifecycle::default()
+        };
+        persist_termination_transition(&settings, &lifecycle, &life_record)
+            .expect("termination should commit and project");
+        life_record.death_insights.push(DeathInsightRecord {
+            tick: 78,
+            text: "临死方知饥渴亦会夺命。".to_string(),
+            style: "perception".to_string(),
+        });
+
+        persist_life_record_death_insight(&settings, &life_record)
+            .expect("death insight should commit and refresh projection");
+
+        let snapshot: DeceasedSnapshot = serde_json::from_str(
+            &fs::read_to_string(
+                settings
+                    .deceased_public_dir()
+                    .join("offline_Insightful.json"),
+            )
+            .expect("refreshed snapshot should exist"),
+        )
+        .expect("refreshed snapshot should decode");
+        assert_eq!(snapshot.life_record.death_insights.len(), 1);
+        assert_eq!(
+            snapshot.life_record.death_insights[0].text,
+            "临死方知饥渴亦会夺命。"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

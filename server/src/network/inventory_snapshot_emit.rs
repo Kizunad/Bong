@@ -1060,6 +1060,74 @@ mod tests {
     }
 
     #[test]
+    fn revive_inventory_resync_observes_post_death_drop_inventory() {
+        let mut app = App::new();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<DroppedItemEvent>();
+        app.insert_resource(ItemRegistry::default());
+        app.insert_resource(DroppedLootRegistry::default());
+        app.add_systems(
+            Update,
+            (
+                crate::inventory::apply_death_drop_on_revive,
+                emit_revive_inventory_resyncs.after(crate::inventory::apply_death_drop_on_revive),
+            ),
+        );
+
+        let initial_revision = 41;
+        let (entity, mut helper) = spawn_client_with_state_and_inventory(
+            &mut app,
+            "ReviveDropResync",
+            PlayerState::default(),
+            Cultivation::default(),
+            Some(make_inventory(initial_revision, true)),
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Position::new([0.0, 66.0, 0.0]));
+        app.world_mut()
+            .send_event(PlayerRevived::legacy_or_dev_pending(entity));
+
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        assert!(
+            !app.world()
+                .resource::<DroppedLootRegistry>()
+                .entries
+                .is_empty(),
+            "fixture must actually drop inventory so ordering is observable"
+        );
+        let final_inventory = app
+            .world()
+            .get::<PlayerInventory>(entity)
+            .expect("revived client must retain its post-drop inventory");
+        assert!(
+            final_inventory.revision.0 > initial_revision,
+            "death-drop mutation must advance the inventory revision"
+        );
+        let expected = build_inventory_snapshot(
+            final_inventory,
+            app.world().get::<PlayerState>(entity).unwrap(),
+            app.world().get::<Cultivation>(entity).unwrap(),
+        );
+        let payloads = collect_inventory_snapshot_payloads(&mut helper);
+        assert_eq!(
+            payloads.len(),
+            1,
+            "revival must emit exactly one corrective inventory snapshot"
+        );
+        let actual = match &payloads[0].payload {
+            ServerDataPayloadV1::InventorySnapshot(snapshot) => snapshot.as_ref(),
+            other => panic!("expected inventory_snapshot payload, got {other:?}"),
+        };
+        assert_eq!(
+            actual, &expected,
+            "revival resync must serialize the inventory after death-drop removal, not the pre-drop snapshot"
+        );
+    }
+
+    #[test]
     fn rejects_oversize_inventory_snapshot() {
         let mut app = setup_app();
         let state = PlayerState {

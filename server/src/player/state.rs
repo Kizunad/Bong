@@ -622,12 +622,16 @@ pub fn save_player_lifecycle_slice(
     combat_clock_tick: u64,
 ) -> io::Result<PathBuf> {
     let mut connection = open_player_connection(persistence)?;
-    persist_player_lifecycle_slice_in_sqlite(
-        &mut connection,
+    let last_updated_wall = current_unix_seconds();
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    upsert_player_lifecycle_slice_in_transaction(
+        &transaction,
         username,
         lifecycle,
         combat_clock_tick,
+        last_updated_wall,
     )?;
+    transaction.commit().map_err(io::Error::other)?;
     Ok(persistence.db_path().to_path_buf())
 }
 
@@ -851,6 +855,35 @@ pub(crate) fn upsert_new_character_player_slices_in_transaction(
     Ok(())
 }
 
+/// Clears the durable coffin flag as part of a caller-owned lifecycle transaction.
+/// A missing lifespan row is a valid no-op: termination must not synthesize an
+/// incomplete lifespan slice merely to record that the player is no longer in a coffin.
+pub(crate) fn clear_coffin_flag_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    transaction
+        .execute(
+            "
+            UPDATE player_lifespan
+            SET in_coffin = 0,
+                coffin_grade = ?2,
+                schema_version = ?3,
+                last_updated_wall = ?4
+            WHERE username = ?1
+            ",
+            params![
+                username,
+                CoffinGrade::default().as_db_str(),
+                PLAYER_ROW_SCHEMA_VERSION,
+                last_updated_wall
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 /// Persists the player-owned slices changed by Reincarnate through the lifecycle transaction.
 /// Position and the coffin flag must commit together with the Rebirth record and cultivation reset;
 /// otherwise a crash can revive the character while reconnect still loads the death location/coffin.
@@ -886,24 +919,7 @@ pub(crate) fn update_revival_player_slices_in_transaction(
             ],
         )
         .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
-            UPDATE player_lifespan
-            SET in_coffin = 0,
-                coffin_grade = ?2,
-                schema_version = ?3,
-                last_updated_wall = ?4
-            WHERE username = ?1
-            ",
-            params![
-                username,
-                CoffinGrade::default().as_db_str(),
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
+    clear_coffin_flag_in_transaction(transaction, username, last_updated_wall)?;
     Ok(())
 }
 
@@ -1134,11 +1150,17 @@ pub fn rotate_current_character_id(
     Ok(next_char_id)
 }
 
-pub fn set_current_character_id(
+fn set_current_character_id(
     persistence: &PlayerStatePersistence,
     username: &str,
     current_char_id: &str,
 ) -> io::Result<()> {
+    Uuid::parse_str(current_char_id).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("current_char_id must be a UUID: {error}"),
+        )
+    })?;
     let connection = open_player_connection(persistence)?;
     ensure_player_schema(&connection)?;
     let last_updated_wall = current_unix_seconds();
@@ -2504,17 +2526,17 @@ fn persist_player_known_techniques_slice_in_sqlite(
 ///
 /// `combat_clock_tick` 是落盘那一刻的 `CombatClock.tick`，写入 `combat_clock_tick_at_save`
 /// 列，作为读档时折算"绝对 tick" deadline 的锚点（见 `load_player_lifecycle_from_sqlite`）。
-fn persist_player_lifecycle_slice_in_sqlite(
-    connection: &mut Connection,
+pub(crate) fn upsert_player_lifecycle_slice_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
     username: &str,
     lifecycle: &crate::combat::components::Lifecycle,
     combat_clock_tick: u64,
+    last_updated_wall: i64,
 ) -> io::Result<()> {
     let lifecycle_json = serde_json::to_string(lifecycle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let last_updated_wall = current_unix_seconds();
 
-    connection
+    transaction
         .execute(
             "
             INSERT INTO player_lifecycle (

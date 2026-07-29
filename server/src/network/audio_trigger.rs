@@ -118,6 +118,7 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         stop_low_hp_heartbeat_on_revive
+            .after(crate::combat::lifecycle::emit_player_revived_completions)
             .after(emit_player_state_audio_triggers)
             .before(crate::network::audio_event_emit::emit_audio_stop_payloads),
     );

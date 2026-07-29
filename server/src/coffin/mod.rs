@@ -248,6 +248,22 @@ impl CoffinRegistry {
     }
 }
 
+/// Clears the runtime-only coffin occupancy after the caller's durable transaction commits.
+///
+/// Event publication remains caller-owned because lifecycle systems require an `EventWriter`,
+/// while join hydration intentionally tolerates a missing `CoffinStateChanged` event resource.
+pub(crate) fn clear_player_coffin_runtime(
+    player: Entity,
+    commands: &mut Commands,
+    registry: Option<&mut CoffinRegistry>,
+) -> bool {
+    let was_in_coffin = registry
+        .and_then(|registry| registry.clear_player(player))
+        .is_some();
+    commands.entity(player).remove::<CoffinComponent>();
+    was_in_coffin
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct CoffinPlaceRequest {
     pub player: Entity,
@@ -322,8 +338,8 @@ pub fn register(app: &mut App) {
         (
             handle_coffin_place_requests,
             handle_coffin_enter_requests,
-            handle_coffin_leave_requests,
             handle_sneak_leave_requests,
+            handle_coffin_leave_requests.after(handle_sneak_leave_requests),
             handle_coffin_breaks,
             handle_coffin_menu_reclaim,
             emit_coffin_ambient_audio,

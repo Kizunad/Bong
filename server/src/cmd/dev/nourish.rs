@@ -47,7 +47,7 @@ impl Command for NourishCmd {
     }
 }
 
-pub fn register(app: &mut App) {
+pub(super) fn register_enabled(app: &mut App) {
     app.add_command::<NourishCmd>()
         .add_systems(Update, handle_nourish);
 }
@@ -120,7 +120,7 @@ mod tests {
             valence::event_loop::EventLoopPlugin,
             valence::command::manager::CommandPlugin,
         ));
-        register(&mut app);
+        register_enabled(&mut app);
         app.finish();
         app.cleanup();
         app.update();

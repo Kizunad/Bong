@@ -2,6 +2,8 @@
 
 > **状态：Active（pre-P0 决策门已收口，2026-07-19）**。§8 原问题表保留作历史追溯；实施以 §8.1 决议为准。
 >
+> **决策门证据**：PR-1 历史首个 commit `bf259f654` 仅完成 skeleton → Active promotion 与 §8.1 决议；后续实现从 `77bfe436a` 起，未由实现反向改写验收边界。该提交顺序是本 PR-1 在单分支串行落地 pre-P0 门与 P0 的可核验基线。
+>
 > 一句话主题：给玩家加「饱食度 + 水分」双生理轴（0–120，出生 80），五段生理带驱动体力恢复加速 / 虚弱 / 极度虚弱 / 缓慢掉血 / 过饱移动呕吐；参考塔科夫（Energy/Hydration）在 Inventory Tab 放双状态条；**存量食物全量迁移**为「使用后加减食/水数值」（可为负，如干粮扣水）。
 
 ## 阶段总览
@@ -85,12 +87,13 @@ pub fn band_of(value: f32) -> NourishBand   // 阈值见下表，边界闭开约
 - **音效**：audio_recipe `vomit.json` 三层——L1 `entity.player.burp` pitch 0.6 vol 0.8 delay 0；L2 `entity.slime.squish` pitch 0.65 vol 0.9 delay 2；L3 `block.pointed_dripstone.drip_water` pitch 0.7 vol 0.5 delay 5
 - **动画**：`gen_vomit.py` 产 PlayerAnimator JSON——torso.pitch 0→0.55rad（6 tick，easeOutQuad）→ 保持 8 tick → 回正 6 tick，head.pitch +0.3rad 同步，body.z 前移 0.05；endTick 20 处**所有用到的 axis 补同值关键帧**（PlayerAnimator 循环衰减库坑 #1）；以 semantic priority `3000` 进入 `FULL_BODY` channel，client 通道覆盖只承担表现，server 的 `Stunned`/cast/盾/移动门才是权威互斥
 - **HUD**：`screenTint` `#4A5D2A` opacity 0.22，fade-in 10 tick / fade-out 15 tick，VISUAL 层（仿 `TiandaoPresenceHudPlanner`）
+- **环境**：无环境状态变化——不修改方块、流体、天气或光照；粒子与 HUD 仅是 client-side transient 表现，分别在各自 lifetime / fade-out 结束后自动清理，中断时也不得留下持久环境实体或状态，重复触发只新增独立 burst、不叠加任何环境层
 
 ## §4 P0 — server 底盘
 
-- `server/src/nourishment/{mod,tick,effects,vomit}.rs`：`Nourishment` / `NourishBand` / `band_of` / 常数表；sweep system 注册进主 schedule
+- `server/src/nourishment/{mod,tick,effects}.rs`：`Nourishment` / `NourishBand` / `band_of` / 常数表；sweep system 注册进主 schedule
 - **持久化**：仿 `DigestionLoad` 模板（`cultivation/poison_trait/components.rs`）——`persist_player_cultivation_bundle`（`persistence/mod.rs:6153`）bundle 加 `"nourishment"` 键；`cultivation/mod.rs:910` hydration 段加解码块；autosave / disconnect / shutdown query 与 cultivation 转世即时保存全部带上组件
-- **出生与生命周期重置**：join hydration 无存档时插入 80/80；正式复活把 80/80、处罚后的 cultivation bundle（含 `qi_current = 0`）、`LifeRecord`、棺材切片、化虚配额释放，以及同额真元的 `zones_runtime` 入账或 `pending_inflow_account` overflow 纳入同一个 SQLite transaction。提交成功后才同步发布 runtime zone / ledger audit、双轴并清空 session-only 活动窗口，最后 emit `PlayerRevived` 作为「完整复活状态已对消费者可见」的 completion event；复活前须具备可持久化的完整 cultivation sibling bundle、`DimensionLayers`，且正额真元回流须具备 `ZoneRegistry` / `WorldQiAccount`，缺失或 precommit 失败时保持 durable/runtime 旧状态、不发 `QiTransfer` / completion event 并允许显式重试。创建新角色/转世在 `reset_for_new_character` 独立路径重置 80/80，并遵守同样的 commit-before-runtime-publication 与缺依赖 fail-closed 契约。死亡瞬间、NearDeath 自救、登录、断线重连与普通持久化恢复均不得免费重置（§8.1 #3）
+- **出生与生命周期重置**：join hydration 无存档时插入 80/80；正式复活把 80/80、处罚后的 cultivation bundle（含 `qi_current = 0`）、`LifeRecord`、棺材切片、化虚配额释放，以及同额真元的 `zones_runtime` 入账或 `pending_inflow_account` overflow 纳入同一个 SQLite transaction。正额真元必须通过 `qi_release_to_zone` 计算 zone 接纳量，并以 `qi_physics::ledger::QiTransfer { from, to, amount, reason }` 分别记录 zone 入账与 pending overflow，守恒测试覆盖 `released == accepted + overflow`；不得直接改余额绕过 ledger。提交成功后才同步发布 runtime zone / ledger audit、`QiTransfer`、双轴并清空 session-only 活动窗口，最后 emit `PlayerRevived` 作为「完整复活状态已对消费者可见」的 completion event；复活前须具备可持久化的完整 cultivation sibling bundle、`DimensionLayers`，且正额真元回流须具备 `ZoneRegistry` / `WorldQiAccount`，缺失或 precommit 失败时保持 durable/runtime 旧状态、不发 `QiTransfer` / completion event 并允许显式重试；commit 已成功但 transient `QiTransfer` event resource 缺失时，SQLite zone/ledger 仍为权威且不得回滚已提交状态，运行时仅 warning。创建新角色/转世在 `reset_for_new_character` 独立路径重置 80/80，并遵守同样的 commit-before-runtime-publication 与缺依赖 fail-closed 契约。死亡瞬间、NearDeath 自救、登录、断线重连与普通持久化恢复均不得免费重置（§8.1 #3）
 - **dev 命令**：`/nourish set satiety|hydration <value>`、`/nourish show`（brigadier，dev-only 直写绕过消耗，对齐 `/qi set` 模式；CLAUDE.md dev 命令表更新交人工，本 plan 不改 CLAUDE.md）
 - **饱和测试**：五带边界逐点 pin（120.0/100.0/100.01/60.0/40.0/20.0/0.0，含 off-by-one）、消耗 clamp 0、活动与六境界乘数、持久化 roundtrip、断线重连保留、正式复活重置、新角色/转世重置、NearDeath 自救不重置、`band_of` 全带专属 case
 
@@ -116,7 +119,7 @@ hydration = 15.0
 | 陈酒 | +3 | +18 | 保留 |
 | 陈醋 | +2 | +10 | 保留 |
 
-**水囊实装**：`water_skin`（现为 `workbench_materials.toml:260`、`category = "misc"` 的材料）加「满水囊」`water_skin_filled` 真实物品，**沿用 `category = "misc"`；本 plan 不新增、不修改、也不依赖任何 `ItemCategory` 扩张**。满水囊 `hydration +55`，用后原子替换回空 `water_skin`；背包若无法容纳返回物，整笔消费失败，禁止先扣满水囊再丢空囊。注意：该 id 目前**仅**出现在过滤器单测的内存 fixture（`inventory/mod.rs:15134` `test_template(...)`，非生产注册）——P2 需**从零接线**（TOML 注册 + 消费事务 + icon），不存在“落地即接活”的捷径，命名沿用该 id 只为与测试语汇一致。灌装交互纳入 v1：client 准星检测发 `ClientRequestV1::WaterSkinFill { v, x, y, z, item_instance_id }`，server 复核存活/同维度/中心距离 ≤5/目标精确为 `BlockState::WATER`/实例仍是权威持有的空水囊后原子替换；灌装本身不恢复 hydration。新物品 icon 走 `/gen-image item`（跑不了则 `[BLOCKED: 需 /gen-image 生成 water_skin_filled.png]` + 占位接线）。
+**水囊实装**：`water_skin`（现为 `workbench_materials.toml:260`、`category = "misc"` 的材料）加「满水囊」`water_skin_filled` 真实物品，**沿用 `category = "misc"`；本 plan 不新增、不修改、也不依赖任何 `ItemCategory` 扩张**。满水囊 `hydration +55`，用后原子替换回空 `water_skin`；背包若无法容纳返回物，整笔消费失败，禁止先扣满水囊再丢空囊。此前过滤器单测曾借用 `water_skin_filled` 作为 `ItemCategory::Liquid` 内存 fixture，P0 已改成无生产语义的 `test_liquid`，避免预占并污染 P2 的正式 `Misc` 类别契约；P2 仍需从零接线 TOML 注册 + 消费事务 + icon，不存在“落地即接活”的捷径。灌装交互纳入 v1：client 准星检测发 `ClientRequestV1::WaterSkinFill { v, x, y, z, item_instance_id }`，server 复核存活/同维度/中心距离 ≤5/目标精确为 `BlockState::WATER`/实例仍是权威持有的空水囊后原子替换；灌装本身不恢复 hydration。新物品 icon 走 `/gen-image item`（跑不了则 `[BLOCKED: 需 /gen-image 生成 water_skin_filled.png]` + 占位接线）。
 
 **测试**：nourish 字段解析正反 sample、负值扣减、120 截断、无既有 effect 的 nourish-only 消费、freshness CriticalBlock 原子拒绝、满水囊饮用后空囊原子返回、背包无返回空间时整笔拒绝、水源请求 schema 正反 sample、服务端距离/维度/方块/实例权限负分支、5 存量食物逐项 pin、无 nourish 字段物品行为不变（向后兼容）。
 
@@ -233,4 +236,7 @@ hydration = 15.0
 - **每 PR 独立 subagent 实施**（context 隔离按 §6.4，强制配置显式落定）：`Agent(subagent_type: "claude", model: "opus", prompt: "...本 PR 范围 + 测试要求...\n\nultrathink")`——主线只调度不亲跑，subagent 只实施 + 提 PR 不等 review
 - **CR 等待协议**：按 §6.5 `ScheduleWakeup` 节奏，修完意见重等 re-review
 - **纯逻辑 commit 常规 atomic；无 NBT/layout 资产**，`<PROMISE>` 三轮打磨条款不适用（icon 走 `/gen-image` 批量豁免）
-- 用户 `/consume-plan` 后全自动到 merge；醒来看 `finished_plans/` 是否有本 plan
+
+### 单次 consume-plan 全自动到 merge
+
+用户提交一次 `/consume-plan` 后，流程按上述五个 PR 的依赖顺序自动实施、验证、审查并合并；全部阶段完成后补齐 `## Finish Evidence`，最终将本 plan 归档至 `docs/finished_plans/`。

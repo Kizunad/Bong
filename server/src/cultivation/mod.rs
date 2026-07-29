@@ -95,10 +95,11 @@ pub mod tribulation_balance;
 pub mod void;
 
 use valence::entity::entity::Flags;
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    Added, App, Client, Commands, Entity, EntityLayerId, EventReader, EventWriter, Events,
-    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username, VisibleChunkLayer,
-    VisibleEntityLayers, Without,
+    bevy_ecs, Added, App, Client, Commands, Component, Entity, EntityLayerId, EventReader,
+    EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username,
+    VisibleChunkLayer, VisibleEntityLayers, With, Without,
 };
 
 use self::breakthrough::{
@@ -138,6 +139,7 @@ use self::insight_flow::{
     insight_trigger_on_wind_candle, process_insight_request,
 };
 use self::karma::karma_decay_tick;
+use self::known_techniques::{KnownTechniques, KnownTechniquesLoadFailed};
 use self::life_record::{BiographyEntry, LifeRecord};
 use self::lifespan::{
     lifespan_aging_tick, process_lifespan_extension_intents, sync_frailty_status_effects,
@@ -198,7 +200,7 @@ use self::tribulation::{
     TribulationWaveCleared,
 };
 use crate::body_plan::RaceId;
-use crate::coffin::{CoffinComponent, CoffinRegistry, CoffinStateChanged};
+use crate::coffin::{clear_player_coffin_runtime, CoffinRegistry, CoffinStateChanged};
 use crate::combat::CombatClock;
 use crate::cultivation::components::Realm;
 use crate::nourishment::Nourishment;
@@ -212,13 +214,20 @@ use crate::player::state::{
     canonical_player_id, load_current_character_id, player_character_id, PlayerState,
     PlayerStatePersistence,
 };
+#[cfg(test)]
+use crate::qi_physics::{pending_inflow_account, QiAccountId};
+use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::skill::events::SkillCapChanged;
 use crate::tribulation::scorch_record::{
     record_tribulation_scorch_system, TribulationScorchRecords,
 };
-use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
+use crate::world::dimension::{
+    publish_overworld_runtime, CurrentDimension, DimensionKind, DimensionLayers,
+    OverworldVisibilityPolicy,
+};
 use crate::world::karma::{karma_weight_decay_tick, void_realm_karma_pressure_tick};
 use crate::world::spawn_tutorial::{TutorialState, TutorialTelemetry};
+use crate::world::zone::ZoneRegistry;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][cultivation] registering cultivation systems (plan P1–P5)");
@@ -373,7 +382,7 @@ pub fn register(app: &mut App) {
             contamination_tick.after(qi_regen_and_zone_drain_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §4 死亡/重生钩子
-            on_player_revived.after(crate::combat::lifecycle::handle_revival_action_intents),
+            on_player_revived.after(crate::combat::lifecycle::emit_player_revived_completions),
             on_player_terminated.after(crate::combat::lifecycle::handle_revival_action_intents),
             // plan §11-5 业力
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
@@ -556,9 +565,21 @@ pub fn register(app: &mut App) {
     );
 }
 
+/// Explicit admission for a client whose cultivation hydration failed before runtime publication.
+///
+/// The marker keeps transient SQLite/loadout failures retryable without treating every later
+/// `Without<Cultivation>` transition (notably deliberate termination cleanup) as a fresh join.
+#[derive(Debug, Component)]
+pub(crate) struct CultivationAttachRetry;
+
 type CultivationAttachFilter = (
-    Or<(Added<Client>, Added<CurrentDimension>)>,
+    With<Client>,
     Without<Cultivation>,
+    Or<(
+        Added<Client>,
+        Added<CurrentDimension>,
+        With<CultivationAttachRetry>,
+    )>,
 );
 type CultivationAttachQueryItem<'a> = (
     Entity,
@@ -581,6 +602,17 @@ fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
     }
 }
 
+#[derive(SystemParam)]
+pub(crate) struct CultivationAttachAuthorities<'w> {
+    zones: Option<ResMut<'w, ZoneRegistry>>,
+    qi_account: Option<ResMut<'w, WorldQiAccount>>,
+    qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
+    // plan-race-system-v1 P0 —— 持久化 `Cultivation.race` 拒载执行点：`Option<Res<...>>`
+    // 同 `body_plan::register()` 恒装载的既有约定（大量既有测试未插入该资源，缺失时
+    // 无法校验，退回本函数原有"信任解码结果"行为，不是新的宽松分支）。
+    race_registry: Option<Res<'w, crate::body_plan::RaceRegistry>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
@@ -597,10 +629,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     mut coffin_state_events: Option<ResMut<Events<CoffinStateChanged>>>,
     mut pending_juebi_triggers: Option<ResMut<PendingJueBiTriggers>>,
     mut halfstep_queue: Option<ResMut<HalfStepRechallengeQueue>>,
-    // plan-race-system-v1 P0 —— 持久化 `Cultivation.race` 拒载执行点：`Option<Res<...>>`
-    // 同 `body_plan::register()` 恒装载的既有约定（大量既有测试未插入该资源，缺失时
-    // 无法校验，退回本函数原有"信任解码结果"行为，不是新的宽松分支）。
-    race_registry: Option<Res<crate::body_plan::RaceRegistry>>,
+    mut authorities: CultivationAttachAuthorities,
     mut joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
     for (
@@ -608,11 +637,11 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         username,
         mut player_state,
         restored_lifespan,
-        mut layer_id,
-        mut visible_chunk_layer,
-        mut visible_entity_layers,
+        layer_id,
+        visible_chunk_layer,
+        visible_entity_layers,
         mut position,
-        mut current_dimension,
+        current_dimension,
         mut flags,
     ) in &mut joined_clients
     {
@@ -644,13 +673,14 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // 默认路径（缺失 race 字段的旧存档 `cultivation.race` 键本身不存在，
         // `as_str()` 拿不到值，不受影响，仍走既有 legacy 迁移路径）。
         let persisted_bundle = persisted_bundle.and_then(|bundle| {
-            let unknown_persisted_race = race_registry.as_deref().and_then(|registry| {
-                bundle
-                    .get("cultivation")
-                    .and_then(|cultivation_value| cultivation_value.get("race"))
-                    .and_then(|race_value| race_value.as_str())
-                    .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
-            });
+            let unknown_persisted_race =
+                authorities.race_registry.as_deref().and_then(|registry| {
+                    bundle
+                        .get("cultivation")
+                        .and_then(|cultivation_value| cultivation_value.get("race"))
+                        .and_then(|race_value| race_value.as_str())
+                        .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
+                });
             if unknown_persisted_race == Some(true) {
                 tracing::warn!(
                     "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
@@ -804,6 +834,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // fresh player slices、life record、cultivation+nourishment 在一个 IMMEDIATE transaction
         // 内完成，成功后才允许把新角色组件插入 ECS。
         let previous_character_id = canonical_id.clone();
+        let mut staged_old_qi_release = None;
         let reincarnation = if matches!(
             life_record.biography.last(),
             Some(BiographyEntry::Terminated { .. })
@@ -815,6 +846,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 || dimension_layers.is_none()
                 || pending_juebi_triggers.is_none()
                 || halfstep_queue.is_none()
+                || (cultivation.qi_current > 0.0
+                    && (authorities.zones.is_none() || authorities.qi_account.is_none()))
             {
                 tracing::warn!(
                     "[bong][cultivation] `{}` joined with a terminated character but atomic reincarnation or world-layer resources are incomplete; leaving the terminated record untouched",
@@ -822,6 +855,28 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 );
                 None
             } else {
+                let old_qi_release = match crate::combat::lifecycle::stage_lifecycle_qi_release(
+                    entity,
+                    cultivation.qi_current.max(0.0),
+                    previous_character_id.as_str(),
+                    current_dimension
+                        .as_deref()
+                        .zip(position.as_deref())
+                        .map(|(dimension, position)| (dimension.0, position.get().to_array())),
+                    authorities.zones.as_deref(),
+                    authorities.qi_account.as_deref(),
+                ) {
+                    Ok(staged) => staged,
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][cultivation] `{}` joined with a terminated character but old-life qi release cannot be staged atomically: {error}; leaving the terminated record untouched",
+                            username.0,
+                        );
+                        commands.entity(entity).insert(CultivationAttachRetry);
+                        continue;
+                    }
+                };
+                staged_old_qi_release = old_qi_release;
                 let bundle = self::character_select::prepare_new_character(username.0.as_str());
                 canonical_id = bundle.next_character_id.clone();
                 cultivation = Cultivation::default();
@@ -985,14 +1040,20 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                         "[bong][cultivation] refusing join reincarnation for `{}`: default loadout failed: {error}",
                         username.0,
                     );
+                    commands.entity(entity).insert(CultivationAttachRetry);
                     continue;
                 }
             };
             let fresh_player_state = PlayerState::default();
             let fresh_skill_set = crate::skill::components::SkillSet::default();
             let fresh_lifespan = LifespanComponent::new(bundle.spec.lifespan_cap);
-            let fresh_tutorial_state =
-                TutorialState::new(clock.as_deref().map(|clock| clock.tick).unwrap_or_default());
+            let combat_clock_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+            let fresh_tutorial_state = TutorialState::new(combat_clock_tick);
+            let fresh_lifecycle = crate::combat::components::Lifecycle {
+                character_id: bundle.next_character_id.clone(),
+                last_revive_tick: Some(combat_clock_tick),
+                ..Default::default()
+            };
             if let Err(error) = persist_new_character_transition(
                 &settings,
                 player_persistence,
@@ -1005,6 +1066,8 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                     inventory: Some(&fresh_inventory),
                     lifespan: &fresh_lifespan,
                     skill_set: &fresh_skill_set,
+                    lifecycle: &fresh_lifecycle,
+                    combat_clock_tick,
                     cultivation: PlayerCultivationBundle {
                         cultivation: &cultivation,
                         meridians: &meridians,
@@ -1022,13 +1085,42 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                         digestion_load: Some(&digestion_load),
                         nourishment: &nourishment,
                     },
+                    zone_runtime: staged_old_qi_release
+                        .as_ref()
+                        .and_then(|release| release.zone_runtime.as_ref()),
+                    qi_ledger: staged_old_qi_release
+                        .as_ref()
+                        .map(|release| &release.qi_account),
                 },
             ) {
                 tracing::warn!(
                     "[bong][cultivation] failed atomic join reincarnation for `{}`: {error}; leaving the terminated character untouched",
                     username.0,
                 );
+                commands.entity(entity).insert(CultivationAttachRetry);
                 continue;
+            }
+            if let Some(staged_release) = staged_old_qi_release.take() {
+                *authorities
+                    .zones
+                    .as_deref_mut()
+                    .expect("staged join reincarnation qi release requires ZoneRegistry") =
+                    staged_release.zones;
+                *authorities
+                    .qi_account
+                    .as_deref_mut()
+                    .expect("staged join reincarnation qi release requires WorldQiAccount") =
+                    staged_release.qi_account;
+                if let Some(events) = authorities.qi_transfers.as_deref_mut() {
+                    for transfer in staged_release.transfers {
+                        events.send(transfer);
+                    }
+                } else if !staged_release.transfers.is_empty() {
+                    tracing::warn!(
+                        "[bong][cultivation] committed join reincarnation qi release for `{}` without QiTransfer event resource",
+                        username.0,
+                    );
+                }
             }
             *allocator = staged_allocator;
             if let Some(telemetry) = tutorial_telemetry.as_deref_mut() {
@@ -1040,6 +1132,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 fresh_skill_set,
                 fresh_lifespan,
                 fresh_tutorial_state,
+                fresh_lifecycle,
             ))
         } else {
             None
@@ -1052,6 +1145,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // （recon 标定的最大孤岛：`IntrinsicRace` 定义了零处 insert）。
         let intrinsic_race = crate::body_plan::IntrinsicRace(cultivation.race.clone());
         let mut entity_commands = commands.entity(entity);
+        entity_commands.remove::<CultivationAttachRetry>();
         entity_commands.insert((
             cultivation,
             meridians,
@@ -1098,6 +1192,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 fresh_skill_set,
                 fresh_lifespan,
                 fresh_tutorial_state,
+                fresh_lifecycle,
             )),
         ) = (reincarnation, fresh_reincarnation_runtime)
         {
@@ -1111,7 +1206,10 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 fresh_skill_set,
                 fresh_lifespan,
                 fresh_tutorial_state,
+                fresh_lifecycle,
+                KnownTechniques::default(),
             ));
+            entity_commands.remove::<KnownTechniquesLoadFailed>();
 
             let target_position = Position::new(bundle.spec.spawn_pos);
             if let Some(position) = position.as_deref_mut() {
@@ -1126,49 +1224,17 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             let layers = dimension_layers
                 .as_deref()
                 .expect("atomic reincarnation checked DimensionLayers before commit");
-            let overworld_layer = layers.overworld;
-            match layer_id.as_deref_mut() {
-                Some(layer_id) => {
-                    let previous_layer = layer_id.0;
-                    layer_id.0 = overworld_layer;
-                    match visible_entity_layers.as_deref_mut() {
-                        Some(visible_layers) => {
-                            visible_layers.0.remove(&previous_layer);
-                            visible_layers.0.remove(&layers.tsy);
-                            visible_layers.0.insert(overworld_layer);
-                        }
-                        None => {
-                            let mut visible_layers = VisibleEntityLayers::default();
-                            visible_layers.0.insert(overworld_layer);
-                            entity_commands.insert(visible_layers);
-                        }
-                    }
-                }
-                None => {
-                    entity_commands.insert(EntityLayerId(overworld_layer));
-                    match visible_entity_layers.as_deref_mut() {
-                        Some(visible_layers) => {
-                            visible_layers.0.clear();
-                            visible_layers.0.insert(overworld_layer);
-                        }
-                        None => {
-                            let mut visible_layers = VisibleEntityLayers::default();
-                            visible_layers.0.insert(overworld_layer);
-                            entity_commands.insert(visible_layers);
-                        }
-                    }
-                }
-            }
-            if let Some(visible_chunk_layer) = visible_chunk_layer.as_deref_mut() {
-                visible_chunk_layer.0 = overworld_layer;
-            } else {
-                entity_commands.insert(VisibleChunkLayer(overworld_layer));
-            }
-            if let Some(current_dimension) = current_dimension.as_deref_mut() {
-                current_dimension.0 = DimensionKind::Overworld;
-            } else {
-                entity_commands.insert(CurrentDimension(DimensionKind::Overworld));
-            }
+            drop(entity_commands);
+            publish_overworld_runtime(
+                entity,
+                &mut commands,
+                layer_id,
+                visible_chunk_layer,
+                visible_entity_layers,
+                current_dimension,
+                layers,
+                OverworldVisibilityPolicy::PreserveUnrelatedLayers,
+            );
 
             pending_juebi_triggers
                 .as_deref_mut()
@@ -1178,16 +1244,14 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 .as_deref_mut()
                 .expect("atomic reincarnation checked HalfStepRechallengeQueue before commit")
                 .remove_character(entity, previous_character_id.as_str());
-            entity_commands
+            commands
+                .entity(entity)
                 .remove::<crate::craft::CraftSession>()
                 .remove::<crate::network::craft_emit::CraftSessionPersistenceDirty>()
                 .insert(crate::network::craft_emit::CraftSessionStateDirty);
 
-            let was_in_coffin = coffin_registry
-                .as_deref_mut()
-                .and_then(|registry| registry.clear_player(entity))
-                .is_some();
-            entity_commands.remove::<CoffinComponent>();
+            let was_in_coffin =
+                clear_player_coffin_runtime(entity, &mut commands, coffin_registry.as_deref_mut());
             if was_in_coffin {
                 if let Some(events) = coffin_state_events.as_deref_mut() {
                     events.send(CoffinStateChanged {
@@ -1981,10 +2045,11 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn seed_cultivation_bundle_with_tutorial(
+    fn seed_cultivation_bundle_with_tutorial_and_qi(
         settings: &PersistenceSettings,
         username: &str,
         realm: Realm,
+        qi_current: f64,
         life_record: &LifeRecord,
         tutorial_state: Option<&TutorialState>,
     ) {
@@ -1993,6 +2058,7 @@ mod tests {
             username,
             &Cultivation {
                 realm,
+                qi_current,
                 ..Default::default()
             },
             &MeridianSystem::default(),
@@ -2010,6 +2076,24 @@ mod tests {
             None,
         )
         .expect("seeding cultivation bundle should succeed");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_cultivation_bundle_with_tutorial(
+        settings: &PersistenceSettings,
+        username: &str,
+        realm: Realm,
+        life_record: &LifeRecord,
+        tutorial_state: Option<&TutorialState>,
+    ) {
+        seed_cultivation_bundle_with_tutorial_and_qi(
+            settings,
+            username,
+            realm,
+            0.0,
+            life_record,
+            tutorial_state,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2405,6 +2489,153 @@ mod tests {
     }
 
     #[test]
+    fn join_reincarnation_settles_positive_old_life_qi_before_identity_rotation() {
+        let (settings, root) = temp_persistence_settings("reincarnate-join-positive-qi");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let username = "QiBearingJoin";
+        let old_raw_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, username)
+                .expect("seeding current_char_id should succeed");
+        let old_canonical_id =
+            crate::player::state::player_character_id(username, old_raw_id.as_str());
+        let old_qi = 7.0;
+        seed_cultivation_bundle_with_tutorial_and_qi(
+            &settings,
+            username,
+            Realm::Spirit,
+            old_qi,
+            &terminated_life_record(old_canonical_id.as_str()),
+            None,
+        );
+
+        let mut app = App::new();
+        insert_test_dimension_layers(&mut app);
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        let (default_loadout, item_registry, allocator) = inventory_test_resources();
+        app.insert_resource(default_loadout);
+        app.insert_resource(item_registry);
+        app.insert_resource(allocator);
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<QiTransfer>();
+        insert_reincarnation_cleanup_resources(&mut app);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let spawn_zone_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback registry must include spawn")
+            .spirit_qi;
+        let (mut client_bundle, _helper) = create_mock_client(username);
+        client_bundle.player.position = Position::new([0.0, 66.0, 0.0]);
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, CurrentDimension(DimensionKind::Overworld)))
+            .id();
+
+        app.update();
+
+        let fresh_character_id = {
+            let lifecycle = app
+                .world()
+                .get::<Lifecycle>(entity)
+                .expect("join reincarnation must publish the fresh lifecycle");
+            assert_ne!(
+                lifecycle.character_id, old_canonical_id,
+                "the new identity must rotate only after old-life qi is accounted"
+            );
+            lifecycle.character_id.clone()
+        };
+        assert_eq!(
+            app.world()
+                .get::<Cultivation>(entity)
+                .expect("fresh cultivation must be attached")
+                .qi_current,
+            0.0
+        );
+        let spawn_zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("runtime spawn zone must remain available")
+            .spirit_qi;
+        let zone_qi_delta = (spawn_zone_after - spawn_zone_before)
+            * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        let pending_qi = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .balance(&pending_inflow_account());
+        let tolerance = old_qi * f64::EPSILON * 8.0;
+        assert!(
+            ((zone_qi_delta + pending_qi) - old_qi).abs() <= tolerance,
+            "old-life qi must equal zone + durable pending inflow before identity rotation: old={old_qi}, zone={zone_qi_delta}, pending={pending_qi}"
+        );
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert!(
+            !ledger.transfers().is_empty(),
+            "positive old-life qi must produce at least one release audit"
+        );
+        assert!(
+            ledger
+                .transfers()
+                .iter()
+                .all(|transfer| transfer.from == QiAccountId::player(old_canonical_id.clone())),
+            "every split release audit must remain owned by the terminated identity"
+        );
+        assert!(
+            (ledger
+                .transfers()
+                .iter()
+                .map(|transfer| transfer.amount)
+                .sum::<f64>()
+                - old_qi)
+                .abs()
+                <= tolerance,
+            "zone acceptance plus pending overflow audits must preserve all old-life qi"
+        );
+        let emitted: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Events<QiTransfer>>()
+            .drain()
+            .collect();
+        assert!(
+            !emitted.is_empty(),
+            "positive old-life qi must emit its release audits"
+        );
+        assert!(emitted
+            .iter()
+            .all(|transfer| transfer.from == QiAccountId::player(old_canonical_id.clone())));
+        assert!(
+            (emitted.iter().map(|transfer| transfer.amount).sum::<f64>() - old_qi).abs()
+                <= tolerance
+        );
+
+        let persisted_bundle =
+            crate::persistence::load_player_cultivation_bundle(&settings, username)
+                .expect("fresh cultivation bundle should reload")
+                .expect("join reincarnation must commit a fresh bundle");
+        assert_eq!(
+            serde_json::from_value::<Cultivation>(persisted_bundle["cultivation"].clone())
+                .expect("persisted cultivation should decode")
+                .qi_current,
+            0.0
+        );
+        let persisted_lifecycle =
+            crate::player::state::load_player_lifecycle_slice(&player_persistence, username, 0)
+                .expect("fresh lifecycle should reload")
+                .expect("join reincarnation must commit its lifecycle slice");
+        assert_eq!(
+            persisted_lifecycle.state,
+            crate::combat::components::LifecycleState::Alive
+        );
+        assert_eq!(persisted_lifecycle.character_id, fresh_character_id);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_join_reincarnation_replaces_old_tutorial_before_join_hydration() {
         let (settings, root) = temp_persistence_settings("reincarnate-join-tutorial-order");
         let player_persistence = player_state_persistence_for(&settings, &root);
@@ -2682,7 +2913,7 @@ mod tests {
     }
 
     #[test]
-    fn join_reincarnation_precommit_failure_preserves_sqlite_ecs_and_allocator() {
+    fn join_reincarnation_precommit_failure_rolls_back_then_retries_next_tick() {
         let (settings, root) = temp_persistence_settings("reincarnate-join-precommit");
         let player_persistence = player_state_persistence_for(&settings, &root);
         let username = "AtomicJoin";
@@ -2990,6 +3221,90 @@ mod tests {
             life_record_count, 0,
             "failed join reincarnation must not leak a fresh life_records row"
         );
+        drop(connection);
+
+        // The failpoint is one-shot. The same online entity must be admitted again through the
+        // explicit retry marker, without requiring a new `Added<Client>`/`Added<CurrentDimension>`
+        // edge; unrelated later `Without<Cultivation>` transitions must remain excluded.
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_some(),
+            "the next tick must retry and attach cultivation after the transient commit failure"
+        );
+        let fresh_lifecycle = app
+            .world()
+            .get::<crate::combat::components::Lifecycle>(entity)
+            .expect("successful retry must publish the fresh lifecycle");
+        assert_eq!(
+            fresh_lifecycle.state,
+            crate::combat::components::LifecycleState::Alive
+        );
+        assert_ne!(
+            fresh_lifecycle.character_id, old_canonical_id,
+            "successful retry must rotate away from the terminated identity"
+        );
+        assert_eq!(
+            app.world().resource::<TutorialTelemetry>().started,
+            1,
+            "only the committed retry may count the fresh tutorial"
+        );
+        assert!(
+            app.world().get::<CultivationAttachRetry>(entity).is_none(),
+            "successful retry must clear its one-shot hydration admission marker"
+        );
+        assert!(
+            app.world().get::<CoffinComponent>(entity).is_none(),
+            "successful retry must clear the inherited coffin runtime"
+        );
+        assert!(app.world().resource::<PendingJueBiTriggers>().is_empty());
+        assert_eq!(app.world().resource::<HalfStepRechallengeQueue>().len(), 0);
+        assert_ne!(
+            format!(
+                "{:?}",
+                app.world()
+                    .resource::<crate::inventory::InventoryInstanceIdAllocator>()
+            ),
+            allocator_before,
+            "only the committed retry may consume fresh inventory instance ids"
+        );
+        assert_ne!(
+            crate::player::state::load_current_character_id(&player_persistence, username)
+                .expect("fresh current_char_id should reload")
+                .expect("successful retry must persist a current_char_id"),
+            old_raw_id,
+            "successful retry must publish the rotated durable identity"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_client_without_cultivation_or_retry_marker_is_not_rehydrated() {
+        let (settings, root) = temp_persistence_settings("attach-retry-admission");
+        seed_cultivation_bundle(
+            &settings,
+            "TerminatedOnline",
+            Realm::Spirit,
+            &terminated_life_record("offline:TerminatedOnline"),
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("TerminatedOnline");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+        assert!(app.world().get::<Cultivation>(entity).is_some());
+
+        app.world_mut().entity_mut(entity).remove::<Cultivation>();
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "a deliberate later removal must not be mistaken for a join or transient hydration retry"
+        );
+        assert!(app.world().get::<CultivationAttachRetry>(entity).is_none());
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -883,7 +883,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            apply_death_drop_on_revive,
+            apply_death_drop_on_revive
+                .after(crate::combat::lifecycle::emit_player_revived_completions),
             apply_termination_drop_on_terminate
                 .after(crate::combat::lifecycle::handle_revival_action_intents),
             handle_remains_interactions,
@@ -12243,7 +12244,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<DroppedLootRegistry>();
@@ -12287,7 +12291,10 @@ cols = 4
                 },
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         let registry = app.world().resource::<DroppedLootRegistry>();
@@ -12374,8 +12381,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         // natural_end should not create world dropped loot entries.
@@ -12491,8 +12500,10 @@ cols = 4
                 },
             ))
             .id();
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         let (pose, custom_name, player_list_entry) = {
@@ -12591,8 +12602,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         let (remains_entity, remains_id, player_list_entry) = {
@@ -12690,8 +12703,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         let (remains_entity, remains_id) = {
@@ -12776,8 +12791,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         let (remains_entity, remains_id) = {
@@ -12860,8 +12877,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         let (remains_entity, remains_id) = {
@@ -12990,8 +13009,10 @@ cols = 4
             ))
             .id();
 
-        app.world_mut()
-            .send_event(PlayerTerminated { entity: terminated });
+        app.world_mut().send_event(PlayerTerminated {
+            entity: terminated,
+            settlement_committed: false,
+        });
         app.update();
 
         let (remains_entity, remains_id) = {
@@ -15135,7 +15156,7 @@ cols = 4
         let registry = registry_from_templates(vec![
             test_template("ore_iron", ItemCategory::Mineral, 1, 1, 64),
             test_template("spirit_herb", ItemCategory::Herb, 1, 1, 64),
-            test_template("water_skin_filled", ItemCategory::Liquid, 1, 1, 16),
+            test_template("test_liquid", ItemCategory::Liquid, 1, 1, 16),
             test_template("anqi_bone_chip", ItemCategory::Anqi, 1, 1, 32),
         ]);
         let mineral_filter = Some(vec![ContainerAcceptFilter::Category(ItemCategory::Mineral)]);
@@ -15170,7 +15191,7 @@ cols = 4
         ]);
         assert!(item_passes_filter(
             &union_filter,
-            &make_test_item_instance(5, "water_skin_filled"),
+            &make_test_item_instance(5, "test_liquid"),
             &registry
         ));
         assert!(!item_passes_filter(

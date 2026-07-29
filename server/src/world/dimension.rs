@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, ident, App, Component, DimensionType, DimensionTypeRegistry, Entity, PreStartup,
-    ResMut, Resource,
+    bevy_ecs, ident, App, Commands, Component, DimensionType, DimensionTypeRegistry, Entity,
+    EntityLayerId, Mut, PreStartup, ResMut, Resource, VisibleChunkLayer, VisibleEntityLayers,
 };
 use valence::registry::dimension_type::{DimensionEffects, MonsterSpawnLightLevel};
 
@@ -82,6 +82,73 @@ pub struct CurrentDimension(pub DimensionKind);
 impl Default for CurrentDimension {
     fn default() -> Self {
         Self(DimensionKind::Overworld)
+    }
+}
+
+/// How a lifecycle transition should publish the Overworld visibility set.
+///
+/// Formal revival and explicit new-character creation replace the entire runtime view, while
+/// join-time reincarnation preserves visibility layers unrelated to the dimension being left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverworldVisibilityPolicy {
+    ReplaceAll,
+    PreserveUnrelatedLayers,
+}
+
+/// Publishes an already-committed transition to the Overworld runtime layer.
+///
+/// Missing components are inserted through `Commands`; callers must establish `DimensionLayers`
+/// as a durable-transaction prerequisite before invoking this runtime-only publication helper.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn publish_overworld_runtime(
+    entity: Entity,
+    commands: &mut Commands,
+    layer_id: Option<Mut<'_, EntityLayerId>>,
+    visible_chunk_layer: Option<Mut<'_, VisibleChunkLayer>>,
+    visible_entity_layers: Option<Mut<'_, VisibleEntityLayers>>,
+    current_dimension: Option<Mut<'_, CurrentDimension>>,
+    layers: &DimensionLayers,
+    visibility_policy: OverworldVisibilityPolicy,
+) {
+    let overworld = layers.overworld;
+    let previous_layer = layer_id.as_ref().map(|layer_id| layer_id.0);
+
+    if let Some(mut layer_id) = layer_id {
+        layer_id.0 = overworld;
+    } else {
+        commands.entity(entity).insert(EntityLayerId(overworld));
+    }
+
+    if let Some(mut visible_layers) = visible_entity_layers {
+        match visibility_policy {
+            OverworldVisibilityPolicy::ReplaceAll => visible_layers.0.clear(),
+            OverworldVisibilityPolicy::PreserveUnrelatedLayers => {
+                if let Some(previous_layer) = previous_layer {
+                    visible_layers.0.remove(&previous_layer);
+                } else {
+                    visible_layers.0.clear();
+                }
+                visible_layers.0.remove(&layers.tsy);
+            }
+        }
+        visible_layers.0.insert(overworld);
+    } else {
+        let mut visible_layers = VisibleEntityLayers::default();
+        visible_layers.0.insert(overworld);
+        commands.entity(entity).insert(visible_layers);
+    }
+
+    if let Some(mut visible_chunk_layer) = visible_chunk_layer {
+        visible_chunk_layer.0 = overworld;
+    } else {
+        commands.entity(entity).insert(VisibleChunkLayer(overworld));
+    }
+    if let Some(mut current_dimension) = current_dimension {
+        current_dimension.0 = DimensionKind::Overworld;
+    } else {
+        commands
+            .entity(entity)
+            .insert(CurrentDimension(DimensionKind::Overworld));
     }
 }
 

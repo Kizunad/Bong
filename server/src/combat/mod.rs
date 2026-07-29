@@ -40,7 +40,7 @@ pub mod zhenmai_v2;
 
 use std::path::Path;
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, Entity, GameMode, IntoSystemConfigs,
+    apply_deferred, bevy_ecs, Added, App, Client, Commands, Entity, GameMode, IntoSystemConfigs,
     IntoSystemSetConfigs, Query, SystemSet, Update, Username, Without,
 };
 
@@ -255,6 +255,7 @@ pub fn register(app: &mut App) {
     app.insert_resource(anticheat_config);
 
     app.insert_resource(CombatClock::default());
+    app.init_resource::<lifecycle::PendingPlayerRevivedCompletions>();
     app.add_event::<AttackIntent>();
     app.add_event::<DefenseIntent>();
     app.add_event::<ApplyStatusEffectIntent>();
@@ -338,7 +339,7 @@ pub fn register(app: &mut App) {
                 .after(lifecycle::near_death_tick),
             lifecycle::auto_confirm_revival_decisions
                 .in_set(CombatSystemSet::Resolve)
-                .after(lifecycle::handle_revival_action_intents),
+                .after(lifecycle::emit_player_revived_completions),
             debug::drain_combat_events_for_debug
                 .in_set(CombatSystemSet::Emit)
                 .after(resolve::resolve_attack_intents),
@@ -351,6 +352,13 @@ pub fn register(app: &mut App) {
             // plan-armor-v1 §1.3: 装备槽(四护甲槽) → DerivedAttrs.defense_profile。
             armor_sync::sync_armor_to_derived_attrs.in_set(CombatSystemSet::Intent),
         ),
+    );
+    app.add_systems(
+        Update,
+        (apply_deferred, lifecycle::emit_player_revived_completions)
+            .chain()
+            .in_set(CombatSystemSet::Resolve)
+            .after(lifecycle::handle_revival_action_intents),
     );
     // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 2）：断线时正
     // 处于 AwaitingRevival 的角色重连后必须重新收到死亡屏/DeathCinematic，不能静默"裸奔"

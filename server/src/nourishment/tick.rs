@@ -7,7 +7,7 @@ use valence::prelude::{
 };
 
 use crate::combat::CombatClock;
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::movement::{MovementAction, MovementState};
 
 use super::{
@@ -161,7 +161,7 @@ pub fn tick_nourishment(
         (
             &mut Nourishment,
             &mut NourishmentActivityWindow,
-            &Cultivation,
+            Option<&Cultivation>,
         ),
         With<Client>,
     >,
@@ -171,10 +171,11 @@ pub fn tick_nourishment(
     }
 
     for (mut nourishment, mut activity_window, cultivation) in &mut players {
-        let (satiety_loss, hydration_loss) = sweep_losses(
-            *activity_window,
-            nourishment_loss_multiplier(cultivation.realm),
-        );
+        let realm = cultivation
+            .map(|cultivation| cultivation.realm)
+            .unwrap_or(Realm::Awaken);
+        let (satiety_loss, hydration_loss) =
+            sweep_losses(*activity_window, nourishment_loss_multiplier(realm));
         nourishment.apply_loss(satiety_loss, hydration_loss);
         activity_window.clear_flags_after_sweep();
     }
@@ -244,6 +245,47 @@ mod tests {
                 "CombatClock tick {tick} must use its natural global boundary semantics"
             );
         }
+    }
+
+    #[test]
+    fn boundary_sweep_without_cultivation_uses_awaken_baseline_and_clears_activity() {
+        let mut app = app_at(200);
+        let (client_bundle, _helper) = create_mock_client("HydrationGap");
+        let mut activity = NourishmentActivityWindow::default();
+        activity.observe(199, 0.2, true);
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                MovementState::default(),
+                Nourishment::spawn_default(),
+                activity,
+            ))
+            .id();
+
+        app.update();
+
+        let (expected_satiety_loss, expected_hydration_loss) =
+            sweep_losses(activity, nourishment_loss_multiplier(Realm::Awaken));
+        let nourishment = app.world().get::<Nourishment>(entity).unwrap();
+        assert!(
+            (nourishment.satiety - (NOURISH_SPAWN_VALUE - expected_satiety_loss)).abs() < 1e-6,
+            "a boundary must not exempt a temporarily unhydrated client from the Awaken baseline"
+        );
+        assert!(
+            (nourishment.hydration - (NOURISH_SPAWN_VALUE - expected_hydration_loss)).abs() < 1e-6,
+            "a boundary must settle both axes even before Cultivation hydration completes"
+        );
+        assert_eq!(
+            *app.world()
+                .get::<NourishmentActivityWindow>(entity)
+                .unwrap(),
+            NourishmentActivityWindow {
+                last_observed_tick: Some(200),
+                ..Default::default()
+            },
+            "a boundary must clear accumulated activity while retaining the monotonic sampling tick"
+        );
     }
 
     #[test]

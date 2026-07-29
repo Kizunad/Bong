@@ -20,7 +20,7 @@ use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
@@ -80,6 +80,9 @@ impl PlayerRevived {
 #[derive(Debug, Clone, Event)]
 pub struct PlayerTerminated {
     pub entity: Entity,
+    /// True when the lifecycle transaction already released qi, persisted the terminal
+    /// cultivation snapshot, and (for Void) released the ascension quota.
+    pub settlement_committed: bool,
 }
 
 type TerminatedPlayerQueryItem<'a> = (
@@ -255,7 +258,10 @@ pub fn on_player_terminated(
             continue;
         }
         let was_void;
-        if let Ok((cultivation, position, current_dimension, life_record)) = players.get(ev.entity)
+        if ev.settlement_committed {
+            was_void = false;
+        } else if let Ok((cultivation, position, current_dimension, life_record)) =
+            players.get(ev.entity)
         {
             was_void = cultivation.realm == Realm::Void;
             release_terminated_qi_to_zone(
@@ -335,7 +341,15 @@ pub fn release_qi_amount_to_zone(
     mut qi_transfers: Option<&mut Events<QiTransfer>>,
     source: &'static str,
 ) -> f64 {
-    if amount <= QI_EPSILON {
+    if !amount.is_finite() || amount < 0.0 {
+        tracing::warn!(
+            "[bong][cultivation] refusing invalid {source} qi release for {:?}: amount={}",
+            entity,
+            amount,
+        );
+        return 0.0;
+    }
+    if amount == 0.0 {
         return 0.0;
     }
     let Some(position) = position else {
@@ -411,7 +425,7 @@ pub fn release_qi_amount_to_zone(
         }
     }
     let mut accounted = outcome.accepted;
-    if outcome.overflow > QI_EPSILON {
+    if outcome.overflow > 0.0 {
         tracing::warn!(
             "[bong][cultivation] {source} qi release for {:?} overflowed zone cap by {}",
             entity,
@@ -441,7 +455,7 @@ fn release_qi_overflow_from(
     qi_transfers: &mut Option<&mut Events<QiTransfer>>,
     source: &'static str,
 ) -> f64 {
-    if amount <= QI_EPSILON {
+    if !amount.is_finite() || amount <= 0.0 {
         return 0.0;
     }
     let to = QiAccountId::overflow(format!("{source}:{entity:?}"));
@@ -505,6 +519,7 @@ mod tests {
         ActiveTribulationRecord,
     };
     use crate::player::state::canonical_player_id;
+    use crate::qi_physics::constants::QI_EPSILON;
     use crate::qi_physics::{QiAccountId, QiTransferReason};
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
@@ -819,7 +834,10 @@ mod tests {
                 Contamination::default(),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -829,6 +847,104 @@ mod tests {
         );
         assert!(app.world().get::<MeridianSystem>(entity).is_some());
         assert!(app.world().get::<Contamination>(entity).is_some());
+    }
+
+    #[test]
+    fn committed_termination_completion_does_not_repeat_qi_or_void_quota_settlement() {
+        let (settings, root) = temp_persistence_settings("committed-termination-settlement-once");
+        persist_active_tribulation(
+            &settings,
+            &ActiveTribulationRecord {
+                char_id: canonical_player_id("CommittedVoid"),
+                kind: "du_xu".to_string(),
+                source: String::new(),
+                origin_dimension: Some("minecraft:overworld".to_string()),
+                wave_current: 3,
+                waves_total: 3,
+                started_tick: 10,
+                epicenter: [0.0, 64.0, 0.0],
+                intensity: 0.0,
+            },
+        )
+        .expect("active DuXu should persist before quota setup");
+        complete_tribulation_ascension(&settings, canonical_player_id("CommittedVoid").as_str())
+            .expect("quota setup should succeed");
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        let mut zones = ZoneRegistry::fallback();
+        zones
+            .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi = 0.2;
+        app.insert_resource(zones);
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(valence::prelude::Update, on_player_terminated);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Lifecycle {
+                    state: LifecycleState::Terminated,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Void,
+                    qi_current: 10.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                Position::new([8.0, 66.0, 8.0]),
+                CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("CommittedVoid")),
+            ))
+            .id();
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: true,
+        });
+
+        app.update();
+
+        let zone_after = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .unwrap()
+            .spirit_qi;
+        assert!(
+            (zone_after - 0.2).abs() < 1e-9,
+            "committed completion must not release terminal qi a second time, got {zone_after}",
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<QiTransfer>>()
+                .drain()
+                .next()
+                .is_none(),
+            "committed completion must not emit a second qi transfer",
+        );
+        assert_eq!(
+            load_ascension_quota(&settings)
+                .expect("quota load should succeed")
+                .occupied_slots,
+            1,
+            "committed completion must not release the Void quota a second time",
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<AscensionQuotaOpened>>()
+                .drain()
+                .next()
+                .is_none(),
+            "committed completion must not emit a second quota-opened event",
+        );
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -870,7 +986,10 @@ mod tests {
                 Contamination::default(),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -907,7 +1026,10 @@ mod tests {
                 QiColor::default(),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -947,7 +1069,10 @@ mod tests {
                 LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -1006,8 +1131,14 @@ mod tests {
                 LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -1059,7 +1190,10 @@ mod tests {
                 CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -1108,7 +1242,10 @@ mod tests {
                 LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
 
         app.update();
 
@@ -1189,57 +1326,111 @@ mod tests {
         }
 
         #[test]
-        fn returns_zero_for_subepsilon_amount() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+        fn accounts_every_positive_epsilon_boundary_without_dust_loss() {
+            for amount in [QI_EPSILON / 2.0, QI_EPSILON, QI_EPSILON * 2.0] {
+                let entity = fresh_entity();
+                let mut zones = fresh_zones_with_qi(0.2);
+                let mut events = fresh_qi_transfer_events();
+                let position = pos_in_spawn_zone();
+                let dim = overworld_dim();
+                let before = zones
+                    .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi;
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                QI_EPSILON / 2.0,
-                Some(&position),
-                Some(&dim),
-                None,
-                Some(&mut zones),
-                Some(&mut events),
-                "unit-subepsilon",
-            );
-            assert_eq!(accounted, 0.0);
-            assert!(events.drain().next().is_none());
+                let accounted = release_qi_amount_to_zone(
+                    entity,
+                    amount,
+                    Some(&position),
+                    Some(&dim),
+                    None,
+                    Some(&mut zones),
+                    Some(&mut events),
+                    "unit-positive-dust",
+                );
+
+                assert_eq!(
+                    accounted, amount,
+                    "every finite positive amount must be fully accounted, including {amount}"
+                );
+                let collected: Vec<_> = events.drain().collect();
+                assert_eq!(collected.len(), 1);
+                assert_eq!(collected[0].amount, amount);
+                assert_eq!(collected[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+                let after = zones
+                    .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi;
+                assert!(
+                    (((after - before) * QI_ZONE_UNIT_CAPACITY) - amount).abs() < 1.0e-12,
+                    "the physical zone sink must receive the complete positive amount"
+                );
+            }
         }
 
-        /// NaN 不被 `<= QI_EPSILON` 截走（NaN 比较恒为 false），但会被
-        /// `qi_release_to_zone` 验证为 InvalidAmount → 路由到 overflow，
-        /// 后续 `release_qi_overflow_from` 又被 NaN 在 `<= QI_EPSILON` 拦下
-        /// （同样为 false），最终在 `QiTransfer::new` 验证 amount 处出错，
-        /// 走兜底 0.0。zone 不变，事件不发。
         #[test]
-        fn nan_amount_falls_through_to_zero_without_emitting_transfer_or_mutating_zone() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+        fn full_zone_routes_epsilon_boundaries_to_overflow_without_dust_loss() {
+            for amount in [QI_EPSILON / 2.0, QI_EPSILON, QI_EPSILON * 2.0] {
+                let entity = fresh_entity();
+                let mut zones = fresh_zones_with_qi(1.0);
+                let mut events = fresh_qi_transfer_events();
+                let position = pos_in_spawn_zone();
+                let dim = overworld_dim();
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                f64::NAN,
-                Some(&position),
-                Some(&dim),
-                None,
-                Some(&mut zones),
-                Some(&mut events),
-                "unit-nan",
-            );
-            assert_eq!(accounted, 0.0);
-            assert!(events.drain().next().is_none());
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!((zone_after - 0.2).abs() < 1e-9);
+                let accounted = release_qi_amount_to_zone(
+                    entity,
+                    amount,
+                    Some(&position),
+                    Some(&dim),
+                    None,
+                    Some(&mut zones),
+                    Some(&mut events),
+                    "unit-full-zone-dust",
+                );
+
+                assert_eq!(accounted, amount);
+                let collected: Vec<_> = events.drain().collect();
+                assert_eq!(collected.len(), 1);
+                assert_eq!(collected[0].amount, amount);
+                assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
+                assert_eq!(
+                    zones
+                        .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                        .unwrap()
+                        .spirit_qi,
+                    1.0
+                );
+            }
+        }
+
+        /// 非有限值和负额必须 fail closed：既不修改物理 sink，也不发 transfer。
+        #[test]
+        fn invalid_amounts_fail_closed_without_emitting_transfer_or_mutating_zone() {
+            for amount in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -QI_EPSILON] {
+                let entity = fresh_entity();
+                let mut zones = fresh_zones_with_qi(0.2);
+                let mut events = fresh_qi_transfer_events();
+                let position = pos_in_spawn_zone();
+                let dim = overworld_dim();
+
+                let accounted = release_qi_amount_to_zone(
+                    entity,
+                    amount,
+                    Some(&position),
+                    Some(&dim),
+                    None,
+                    Some(&mut zones),
+                    Some(&mut events),
+                    "unit-invalid",
+                );
+                assert_eq!(accounted, 0.0);
+                assert!(events.drain().next().is_none());
+                let zone_after = zones
+                    .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi;
+                assert_eq!(zone_after, 0.2);
+            }
         }
 
         #[test]
@@ -1658,7 +1849,10 @@ mod tests {
             .id();
 
         // 触发死亡清零
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         // PracticeLog 应完全移除（不是置空，是 remove component）
@@ -1706,7 +1900,10 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerTerminated { entity });
+        app.world_mut().send_event(PlayerTerminated {
+            entity,
+            settlement_committed: false,
+        });
         app.update();
 
         assert!(

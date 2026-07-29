@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn production_command_registry_does_not_expose_ambient_spawn() {
+    fn production_command_registry_does_not_expose_dev_mode_only_commands() {
         let app = test_command_app_for_dev_mode(false);
         let registry = app.world().resource::<CommandRegistry>();
         let roots = registry
@@ -83,10 +83,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert!(
-            !roots.contains(&"ambient_spawn"),
-            "production command tree must not expose /ambient_spawn when BONG_DEV_MODE is disabled; roots={roots:?}"
-        );
+        for command in ["ambient_spawn", "nourish"] {
+            assert!(
+                !roots.contains(&command),
+                "production command tree must not expose /{command} when BONG_DEV_MODE is disabled; roots={roots:?}"
+            );
+        }
     }
 
     #[test]

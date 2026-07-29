@@ -789,7 +789,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     app.add_systems(
         Update,
         cultivation_bridge::publish_rebirth_events
-            .after(crate::combat::lifecycle::death_arbiter_tick),
+            .after(crate::combat::lifecycle::emit_player_revived_completions),
     );
     app.add_systems(
         Update,
@@ -1007,8 +1007,11 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events)
                 .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
-            inventory_snapshot_emit::emit_revive_inventory_resyncs,
-            skill_snapshot_emit::emit_revive_skill_resyncs,
+            inventory_snapshot_emit::emit_revive_inventory_resyncs
+                .after(crate::combat::lifecycle::emit_player_revived_completions)
+                .after(crate::inventory::apply_death_drop_on_revive),
+            skill_snapshot_emit::emit_revive_skill_resyncs
+                .after(crate::combat::lifecycle::emit_player_revived_completions),
             inventory_event_emit::emit_dropped_item_inventory_events,
             inventory_event_emit::publish_armor_durability_changed_events
                 .after(crate::combat::resolve::resolve_attack_intents),

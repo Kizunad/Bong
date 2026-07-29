@@ -63,6 +63,7 @@ pub fn register(app: &mut App) {
 pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     if dev_mode_enabled {
         ambient_spawn::register_enabled(app);
+        nourish::register_enabled(app);
     }
     balance::register(app);
     baolongwang::register(app);
@@ -81,7 +82,6 @@ pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     health::register(app);
     kill::register(app);
     meridian::register(app);
-    nourish::register(app);
     qi::register(app);
     race::register(app);
     realm::register(app);
