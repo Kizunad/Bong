@@ -133,7 +133,8 @@ pub enum SliceRunReason {
     Rebase,
     Autosave,
     DisconnectSave,
-    ReconnectTeardown,
+    ReconnectPreflight,
+    ReconnectCleanup,
     ReconnectLoad,
     ReconnectAbort,
     Shutdown,
@@ -194,6 +195,12 @@ impl std::error::Error for SliceRunError {}
 
 pub type SliceRunResult = Result<SliceRunOutcome, SliceRunError>;
 pub type SliceHook = fn(&mut World, &SliceRunContext) -> SliceRunResult;
+/// Read-only reconnect check run before any old activation is destroyed.
+pub type SlicePreflightHook = fn(&World, &SliceRunContext) -> SliceRunResult;
+/// Destructive reconnect cleanup with no blocked/error return channel.
+///
+/// A panic is a descriptor contract violation and remains fail-fast.
+pub type SliceCleanupHook = fn(&mut World, &SliceRunContext);
 
 /// Static lifecycle declaration for one persistence slice.
 #[derive(Debug, Clone, Copy)]
@@ -207,14 +214,22 @@ pub struct SliceDescriptor {
     pub write_ordering: WriteOrdering,
     pub autosave: AutosavePolicy,
     pub hydrate: Option<SliceHook>,
-    /// Drops this slice's old runtime activation after every save has succeeded.
+    /// Checks whether this slice can release its old reconnect activation.
     ///
-    /// Required for every player slice that participates in reconnect save or
-    /// hydrate. The hook must synchronously release that slice's
-    /// `GuardedSlice`, `DirtyTracker`, and `PersistedRevisionFence` state. It must
-    /// be idempotent because the dispatcher invokes it again with
-    /// `ReconnectAbort` to roll back a partial hydrate or rebase failure.
-    pub reconnect_teardown: Option<SliceHook>,
+    /// The hook must be non-destructive: the dispatcher runs every preflight before
+    /// committing any cleanup, and a blocked or failed preflight preserves every old
+    /// `GuardedSlice`, `DirtyTracker`, and `PersistedRevisionFence` activation.
+    pub reconnect_preflight: Option<SlicePreflightHook>,
+    /// Drops this slice's activation after reconnect preflight commits.
+    ///
+    /// Required together with `reconnect_preflight` for every player slice that
+    /// participates in reconnect. There is deliberately no blocked/error return
+    /// channel; a panic is a descriptor contract violation and remains fail-fast.
+    /// After the hook returns, the dispatcher verifies that the subject/domain lease
+    /// was actually released. The dispatcher also invokes it in reverse order with
+    /// `ReconnectAbort` for every attempted hydrate descriptor, including a hook that
+    /// activated state before returning blocked or failed. It must be idempotent.
+    pub reconnect_cleanup: Option<SliceCleanupHook>,
     pub rebase: Option<SliceHook>,
     pub disconnect_save: Option<SliceHook>,
     pub shutdown_flush: Option<SliceHook>,
@@ -262,7 +277,10 @@ pub enum SliceRegistryError {
     MissingHydrateHook {
         slice_id: SliceId,
     },
-    MissingReconnectTeardownHook {
+    MissingReconnectPreflightHook {
+        slice_id: SliceId,
+    },
+    MissingReconnectCleanupHook {
         slice_id: SliceId,
     },
     MissingRebaseHook {
@@ -317,10 +335,16 @@ impl fmt::Display for SliceRegistryError {
                     "slice `{slice_id}` declares a time basis without a hydrate hook"
                 )
             }
-            Self::MissingReconnectTeardownHook { slice_id } => {
+            Self::MissingReconnectPreflightHook { slice_id } => {
                 write!(
                     formatter,
-                    "player slice `{slice_id}` declares reconnect hooks without a teardown hook"
+                    "player slice `{slice_id}` participates in reconnect without a non-destructive preflight hook"
+                )
+            }
+            Self::MissingReconnectCleanupHook { slice_id } => {
+                write!(
+                    formatter,
+                    "player slice `{slice_id}` participates in reconnect without a cleanup hook that has no blocked/error return channel"
                 )
             }
             Self::MissingRebaseHook { slice_id } => {
@@ -407,11 +431,13 @@ impl PersistenceSliceRegistry {
                 slice_id: descriptor.id,
             });
         }
-        if descriptor.scope == SliceScope::PlayerEntity
-            && (descriptor.disconnect_save.is_some() || descriptor.hydrate.is_some())
-            && descriptor.reconnect_teardown.is_none()
-        {
-            return Err(SliceRegistryError::MissingReconnectTeardownHook {
+        if player_reconnect_participant(descriptor) && descriptor.reconnect_preflight.is_none() {
+            return Err(SliceRegistryError::MissingReconnectPreflightHook {
+                slice_id: descriptor.id,
+            });
+        }
+        if player_reconnect_participant(descriptor) && descriptor.reconnect_cleanup.is_none() {
+            return Err(SliceRegistryError::MissingReconnectCleanupHook {
                 slice_id: descriptor.id,
             });
         }
@@ -524,6 +550,13 @@ impl PersistenceSliceRegistry {
             on_failed,
         ))
     }
+}
+
+fn player_reconnect_participant(descriptor: &SliceDescriptor) -> bool {
+    descriptor.scope == SliceScope::PlayerEntity
+        && (descriptor.disconnect_save.is_some()
+            || descriptor.hydrate.is_some()
+            || descriptor.rebase.is_some())
 }
 
 fn valid_stable_name(value: &str) -> bool {
@@ -640,7 +673,7 @@ pub fn dispatch_shutdown_flushes(
 /// One-shot authority to run a disconnect/reconnect handoff for one stable subject.
 ///
 /// Only persistence adapters can mint this token. Dispatch consumes it, so the
-/// save/teardown/hydrate/rebase lifecycle cannot run twice for one generation.
+/// save/preflight/cleanup/hydrate/rebase lifecycle cannot run twice for one generation.
 #[derive(Debug)]
 pub(in crate::persistence) struct ReconnectHandoffToken {
     generation: u64,
@@ -680,59 +713,85 @@ pub struct ReconnectHandoffReport {
     pub rebases_attempted: usize,
     pub rebases_completed: usize,
     pub blocked_rebases: Vec<SliceId>,
-    pub teardown_attempted: usize,
-    pub teardowns_completed: usize,
-    pub blocked_teardowns: Vec<SliceId>,
-    pub aborts_attempted: usize,
+    pub preflights_attempted: usize,
+    pub preflights_completed: usize,
+    pub blocked_preflights: Vec<SliceId>,
+    pub cleanups_completed: usize,
     pub aborts_completed: usize,
-    pub blocked_aborts: Vec<SliceId>,
     pub failures: Vec<ReconnectHandoffFailure>,
 }
 
-fn abort_reconnect_activations(
+fn active_reconnect_lease(
+    world: &World,
+    descriptors: &[&'static SliceDescriptor],
+    subject_key: &PersistenceSubjectKey,
+) -> Result<Option<SliceDispatchError>, SliceDispatchError> {
+    let registry = world
+        .get_resource::<PersistenceSliceRegistry>()
+        .ok_or(SliceDispatchError::MissingCanonicalRegistry)?;
+    Ok(descriptors.iter().find_map(|descriptor| {
+        registry
+            .active_subject_domain(subject_key, descriptor.write_binding.domain())
+            .then_some(SliceDispatchError::DuplicateSubject {
+                slice_id: descriptor.id,
+                domain: descriptor.write_binding.domain(),
+            })
+    }))
+}
+
+fn cleanup_reconnect_activations(
     world: &mut World,
     descriptors: &[&'static SliceDescriptor],
+    reason: SliceRunReason,
     runtime_tick: u64,
     wall_unix_millis: u64,
     handoff_key: &Option<String>,
-    report: &mut ReconnectHandoffReport,
-) {
-    for descriptor in descriptors.iter().rev() {
-        let Some(abort) = descriptor.reconnect_teardown else {
-            continue;
-        };
-        report.aborts_attempted += 1;
-        let context = SliceRunContext {
-            reason: SliceRunReason::ReconnectAbort,
-            runtime_tick,
-            wall_unix_millis,
-            handoff_key: handoff_key.clone(),
-        };
-        match abort(world, &context) {
-            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
-                report.aborts_completed += 1;
+) -> usize {
+    let context = SliceRunContext {
+        reason,
+        runtime_tick,
+        wall_unix_millis,
+        handoff_key: handoff_key.clone(),
+    };
+    let mut completed = 0;
+    match reason {
+        SliceRunReason::ReconnectCleanup => {
+            for descriptor in descriptors {
+                let cleanup = descriptor.reconnect_cleanup.expect(
+                    "player reconnect descriptors are registry-validated with cleanup hooks",
+                );
+                cleanup(world, &context);
+                completed += 1;
             }
-            Ok(SliceRunOutcome::SkippedBlocked) => {
-                report.blocked_aborts.push(descriptor.id);
-            }
-            Err(error) => report.failures.push(ReconnectHandoffFailure {
-                slice_id: descriptor.id,
-                reason: SliceRunReason::ReconnectAbort,
-                error,
-            }),
         }
+        SliceRunReason::ReconnectAbort => {
+            for descriptor in descriptors.iter().rev() {
+                let cleanup = descriptor.reconnect_cleanup.expect(
+                    "player reconnect descriptors are registry-validated with cleanup hooks",
+                );
+                cleanup(world, &context);
+                completed += 1;
+            }
+        }
+        _ => unreachable!("reconnect cleanup helper received a non-cleanup reason"),
     }
+    completed
 }
 
-/// Enforces all disconnect saves before teardown, global lease preflight,
-/// same-tick hydrate, and one rebase pass.
+/// Enforces all disconnect saves before a non-destructive global cleanup
+/// preflight, cleanup commit, same-tick hydrate, and one rebase pass.
 ///
-/// Hooks run synchronously in registry order through exclusive `World` access. Any
-/// blocked or failed phase prevents all later phases. Every old activation lease
-/// must be gone before the first hydrate. A failed hydrate or rebase invokes the
-/// idempotent teardown hook in reverse order with `ReconnectAbort`, so no partial
-/// activation survives and the stable subject can be retried. Consuming a one-shot
-/// token makes the lifecycle exactly once for that handoff generation.
+/// Hooks run synchronously in registry order. Saves, cleanup, hydrate, and rebase use
+/// exclusive `World` access; preflights receive only `&World`, statically preventing
+/// mutation of old activation state through the dispatcher contract. Any blocked or
+/// failed save/preflight prevents all later phases while preserving every old
+/// activation. Only after every preflight succeeds does cleanup irrevocably drop all
+/// old activation leases. Hydrate and rebase fail fast; on either failure, every
+/// attempted hydrate descriptor is cleaned in reverse order with `ReconnectAbort`,
+/// including a hook that activated state before returning blocked or failed. Cleanup
+/// has no blocked/error return channel (a panic is a descriptor contract violation),
+/// and the dispatcher verifies all subject/domain leases after cleanup and abort.
+/// Consuming a one-shot token makes the lifecycle exactly once for that generation.
 pub(in crate::persistence) fn dispatch_reconnect_handoff(
     world: &mut World,
     token: ReconnectHandoffToken,
@@ -742,7 +801,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         .get_resource::<PersistenceSliceRegistry>()
         .ok_or(SliceDispatchError::MissingCanonicalRegistry)?
         .descriptors()
-        .filter(|descriptor| descriptor.scope == SliceScope::PlayerEntity)
+        .filter(|descriptor| player_reconnect_participant(descriptor))
         .collect();
     let ReconnectHandoffToken {
         generation,
@@ -785,49 +844,45 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
     }
 
     for descriptor in &descriptors {
-        let Some(teardown) = descriptor.reconnect_teardown else {
-            continue;
-        };
-        report.teardown_attempted += 1;
+        let preflight = descriptor
+            .reconnect_preflight
+            .expect("player reconnect descriptors are registry-validated with preflight hooks");
+        report.preflights_attempted += 1;
         let context = SliceRunContext {
-            reason: SliceRunReason::ReconnectTeardown,
+            reason: SliceRunReason::ReconnectPreflight,
             runtime_tick,
             wall_unix_millis,
             handoff_key: handoff_key.clone(),
         };
-        match teardown(world, &context) {
+        match preflight(world, &context) {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
-                report.teardowns_completed += 1;
+                report.preflights_completed += 1;
             }
             Ok(SliceRunOutcome::SkippedBlocked) => {
-                report.blocked_teardowns.push(descriptor.id);
+                report.blocked_preflights.push(descriptor.id);
             }
             Err(error) => report.failures.push(ReconnectHandoffFailure {
                 slice_id: descriptor.id,
-                reason: SliceRunReason::ReconnectTeardown,
+                reason: SliceRunReason::ReconnectPreflight,
                 error,
             }),
         }
     }
 
-    if !report.blocked_teardowns.is_empty() || !report.failures.is_empty() {
+    if !report.blocked_preflights.is_empty() || !report.failures.is_empty() {
         return Ok(report);
     }
 
-    let active_subject = {
-        let registry = world
-            .get_resource::<PersistenceSliceRegistry>()
-            .ok_or(SliceDispatchError::MissingCanonicalRegistry)?;
-        descriptors.iter().find_map(|descriptor| {
-            registry
-                .active_subject_domain(&subject_key, descriptor.write_binding.domain())
-                .then_some(SliceDispatchError::DuplicateSubject {
-                    slice_id: descriptor.id,
-                    domain: descriptor.write_binding.domain(),
-                })
-        })
-    };
-    if let Some(error) = active_subject {
+    report.cleanups_completed = cleanup_reconnect_activations(
+        world,
+        &descriptors,
+        SliceRunReason::ReconnectCleanup,
+        runtime_tick,
+        wall_unix_millis,
+        &handoff_key,
+    );
+
+    if let Some(error) = active_reconnect_lease(world, &descriptors, &subject_key)? {
         return Err(error);
     }
 
@@ -855,18 +910,21 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 error,
             }),
         }
-    }
-
-    if !report.blocked_loads.is_empty() || !report.failures.is_empty() {
-        abort_reconnect_activations(
-            world,
-            &hydrated_descriptors,
-            runtime_tick,
-            wall_unix_millis,
-            &handoff_key,
-            &mut report,
-        );
-        return Ok(report);
+        if !report.blocked_loads.is_empty() || !report.failures.is_empty() {
+            report.aborts_completed = cleanup_reconnect_activations(
+                world,
+                &hydrated_descriptors,
+                SliceRunReason::ReconnectAbort,
+                runtime_tick,
+                wall_unix_millis,
+                &handoff_key,
+            );
+            if let Some(error) = active_reconnect_lease(world, &hydrated_descriptors, &subject_key)?
+            {
+                return Err(error);
+            }
+            return Ok(report);
+        }
     }
 
     for descriptor in &descriptors {
@@ -891,17 +949,21 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 error,
             }),
         }
-    }
-
-    if !report.blocked_rebases.is_empty() || !report.failures.is_empty() {
-        abort_reconnect_activations(
-            world,
-            &hydrated_descriptors,
-            runtime_tick,
-            wall_unix_millis,
-            &handoff_key,
-            &mut report,
-        );
+        if !report.blocked_rebases.is_empty() || !report.failures.is_empty() {
+            report.aborts_completed = cleanup_reconnect_activations(
+                world,
+                &hydrated_descriptors,
+                SliceRunReason::ReconnectAbort,
+                runtime_tick,
+                wall_unix_millis,
+                &handoff_key,
+            );
+            if let Some(error) = active_reconnect_lease(world, &hydrated_descriptors, &subject_key)?
+            {
+                return Err(error);
+            }
+            return Ok(report);
+        }
     }
 
     Ok(report)
@@ -1704,7 +1766,8 @@ mod tests {
         write_ordering: WriteOrdering::Serialized,
         autosave: AutosavePolicy::Disabled,
         hydrate: None,
-        reconnect_teardown: None,
+        reconnect_preflight: None,
+        reconnect_cleanup: None,
         rebase: None,
         disconnect_save: None,
         shutdown_flush: None,
@@ -1714,9 +1777,12 @@ mod tests {
         Ok(SliceRunOutcome::Clean)
     }
 
-    fn noop_teardown(_world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    fn noop_preflight(_world: &World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
         Ok(SliceRunOutcome::Clean)
     }
+
+    fn noop_cleanup(_world: &mut World, _context: &SliceRunContext) {}
 
     fn basic_descriptor(id: &'static str, order: u16) -> SliceDescriptor {
         SliceDescriptor {
@@ -1729,7 +1795,8 @@ mod tests {
             write_ordering: WriteOrdering::Serialized,
             autosave: AutosavePolicy::OnChange,
             hydrate: None,
-            reconnect_teardown: None,
+            reconnect_preflight: None,
+            reconnect_cleanup: None,
             rebase: None,
             disconnect_save: None,
             shutdown_flush: None,
@@ -1797,7 +1864,8 @@ mod tests {
         let valid_rebase = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             hydrate: Some(noop_rebase),
-            reconnect_teardown: Some(noop_teardown),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(noop_cleanup),
             rebase: Some(noop_rebase),
             ..basic_descriptor("player.valid_rebase", 60)
         }));
@@ -1807,11 +1875,18 @@ mod tests {
             rebase: Some(noop_rebase),
             ..basic_descriptor("world.missing_hydrate", 65)
         }));
-        let missing_teardown = Box::leak(Box::new(SliceDescriptor {
+        let missing_reconnect_hooks = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::None,
             hydrate: Some(noop_rebase),
             disconnect_save: Some(noop_rebase),
-            ..basic_descriptor("player.missing_teardown", 70)
+            ..basic_descriptor("player.missing_reconnect_hooks", 70)
+        }));
+        let missing_cleanup = Box::leak(Box::new(SliceDescriptor {
+            time_basis: TimeBasis::None,
+            hydrate: Some(noop_rebase),
+            disconnect_save: Some(noop_rebase),
+            reconnect_preflight: Some(noop_preflight),
+            ..basic_descriptor("player.missing_cleanup", 71)
         }));
         let mut registry = PersistenceSliceRegistry::empty();
 
@@ -1855,8 +1930,12 @@ mod tests {
             Err(SliceRegistryError::MissingHydrateHook { .. })
         ));
         assert!(matches!(
-            registry.register(missing_teardown),
-            Err(SliceRegistryError::MissingReconnectTeardownHook { .. })
+            registry.register(missing_reconnect_hooks),
+            Err(SliceRegistryError::MissingReconnectPreflightHook { .. })
+        ));
+        assert!(matches!(
+            registry.register(missing_cleanup),
+            Err(SliceRegistryError::MissingReconnectCleanupHook { .. })
         ));
         assert_eq!(registry.register(valid_rebase), Ok(()));
     }
@@ -2049,10 +2128,8 @@ mod tests {
         block_save: bool,
         fail_load: bool,
         block_load: bool,
-        fail_teardown: bool,
-        block_teardown: bool,
-        fail_abort: bool,
-        block_abort: bool,
+        fail_preflight: bool,
+        block_preflight: bool,
         fail_rebase: bool,
         block_rebase: bool,
     }
@@ -2093,29 +2170,29 @@ mod tests {
         }
     }
 
-    fn handoff_teardown(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
-        let mut trace = world.resource_mut::<HandoffTrace>();
-        trace.events.push((
+    fn handoff_preflight(world: &World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
+        let trace = world.resource::<HandoffTrace>();
+        if trace.fail_preflight {
+            Err(SliceRunError::new("reconnect preflight failed"))
+        } else if trace.block_preflight {
+            Ok(SliceRunOutcome::SkippedBlocked)
+        } else {
+            Ok(SliceRunOutcome::Clean)
+        }
+    }
+
+    fn handoff_cleanup(world: &mut World, context: &SliceRunContext) {
+        assert!(matches!(
+            context.reason,
+            SliceRunReason::ReconnectCleanup | SliceRunReason::ReconnectAbort
+        ));
+        world.resource_mut::<HandoffTrace>().events.push((
             context.reason,
             context.runtime_tick,
             context.wall_unix_millis,
             context.handoff_key.clone().unwrap(),
         ));
-        if context.reason == SliceRunReason::ReconnectAbort {
-            if trace.fail_abort {
-                Err(SliceRunError::new("reconnect abort failed"))
-            } else if trace.block_abort {
-                Ok(SliceRunOutcome::SkippedBlocked)
-            } else {
-                Ok(SliceRunOutcome::Clean)
-            }
-        } else if trace.fail_teardown {
-            Err(SliceRunError::new("reconnect teardown failed"))
-        } else if trace.block_teardown {
-            Ok(SliceRunOutcome::SkippedBlocked)
-        } else {
-            Ok(SliceRunOutcome::Clean)
-        }
     }
 
     fn handoff_rebase(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
@@ -2167,7 +2244,8 @@ mod tests {
         let handoff_descriptor = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             hydrate: Some(handoff_load),
-            reconnect_teardown: Some(handoff_teardown),
+            reconnect_preflight: Some(handoff_preflight),
+            reconnect_cleanup: Some(handoff_cleanup),
             rebase: Some(handoff_rebase),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.clock_once", 10)
@@ -2198,12 +2276,47 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_dispatch_skips_non_participating_player_descriptors() {
+        let non_participant = Box::leak(Box::new(SliceDescriptor {
+            shutdown_flush: Some(clean_hook),
+            ..basic_descriptor("player.shutdown_only", 5)
+        }));
+        let participant = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(handoff_load),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(handoff_cleanup),
+            disconnect_save: Some(handoff_save),
+            ..basic_descriptor("player.reconnect", 10)
+        }));
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(non_participant).unwrap();
+        registry.register(participant).unwrap();
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(HandoffTrace::default());
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let report =
+            dispatch_reconnect_handoff(&mut world, token("player:participant"), &clock).unwrap();
+
+        assert_eq!(report.saves_attempted, 1);
+        assert_eq!(report.preflights_attempted, 1);
+        assert_eq!(report.cleanups_completed, 1);
+        assert_eq!(report.loads_attempted, 1);
+        assert_eq!(report.rebases_attempted, 0);
+    }
+
+    #[test]
     fn reconnect_handoff_enforces_same_tick_all_saves_before_any_load() {
         let first = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
             hydrate: Some(handoff_load),
-            reconnect_teardown: Some(handoff_teardown),
+            reconnect_preflight: Some(handoff_preflight),
+            reconnect_cleanup: Some(handoff_cleanup),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.handoff_first", 10)
         }));
@@ -2211,7 +2324,8 @@ mod tests {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
             hydrate: Some(handoff_load),
-            reconnect_teardown: Some(handoff_teardown),
+            reconnect_preflight: Some(handoff_preflight),
+            reconnect_cleanup: Some(handoff_cleanup),
             disconnect_save: Some(handoff_save),
             write_binding: SECOND_TEST_BINDING,
             ..basic_descriptor("player.handoff_second", 20)
@@ -2242,12 +2356,11 @@ mod tests {
                 rebases_attempted: 2,
                 rebases_completed: 2,
                 blocked_rebases: Vec::new(),
-                teardown_attempted: 2,
-                teardowns_completed: 2,
-                blocked_teardowns: Vec::new(),
-                aborts_attempted: 0,
+                preflights_attempted: 2,
+                preflights_completed: 2,
+                blocked_preflights: Vec::new(),
+                cleanups_completed: 2,
                 aborts_completed: 0,
-                blocked_aborts: Vec::new(),
                 failures: Vec::new(),
             }
         );
@@ -2261,8 +2374,8 @@ mod tests {
             vec![
                 SliceRunReason::DisconnectSave,
                 SliceRunReason::DisconnectSave,
-                SliceRunReason::ReconnectTeardown,
-                SliceRunReason::ReconnectTeardown,
+                SliceRunReason::ReconnectCleanup,
+                SliceRunReason::ReconnectCleanup,
                 SliceRunReason::ReconnectLoad,
                 SliceRunReason::ReconnectLoad,
                 SliceRunReason::Rebase,
@@ -2317,94 +2430,77 @@ mod tests {
 
         world.resource_mut::<HandoffTrace>().events.clear();
         world.resource_mut::<HandoffTrace>().block_save = false;
-        world.resource_mut::<HandoffTrace>().block_teardown = true;
+        world.resource_mut::<HandoffTrace>().block_preflight = true;
         let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.teardown_attempted, 2);
-        assert_eq!(report.teardowns_completed, 0);
+        assert_eq!(report.preflights_attempted, 2);
+        assert_eq!(report.preflights_completed, 0);
         assert_eq!(
-            report.blocked_teardowns,
+            report.blocked_preflights,
             vec![
                 SliceId::new("player.handoff_first"),
                 SliceId::new("player.handoff_second"),
             ]
         );
+        assert_eq!(report.cleanups_completed, 0);
         assert_eq!(report.loads_attempted, 0);
         assert!(report.failures.is_empty());
 
         world.resource_mut::<HandoffTrace>().events.clear();
-        world.resource_mut::<HandoffTrace>().block_teardown = false;
-        world.resource_mut::<HandoffTrace>().fail_teardown = true;
+        world.resource_mut::<HandoffTrace>().block_preflight = false;
+        world.resource_mut::<HandoffTrace>().fail_preflight = true;
         let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.teardown_attempted, 2);
-        assert_eq!(report.teardowns_completed, 0);
+        assert_eq!(report.preflights_attempted, 2);
+        assert_eq!(report.preflights_completed, 0);
+        assert_eq!(report.cleanups_completed, 0);
         assert_eq!(report.loads_attempted, 0);
         assert_eq!(report.failures.len(), 2);
         assert!(report
             .failures
             .iter()
-            .all(|failure| failure.reason == SliceRunReason::ReconnectTeardown));
+            .all(|failure| failure.reason == SliceRunReason::ReconnectPreflight));
 
         world.resource_mut::<HandoffTrace>().events.clear();
-        world.resource_mut::<HandoffTrace>().fail_teardown = false;
+        world.resource_mut::<HandoffTrace>().fail_preflight = false;
         world.resource_mut::<HandoffTrace>().block_load = true;
         let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.loads_attempted, 2);
+        assert_eq!(report.loads_attempted, 1);
         assert_eq!(report.loads_completed, 0);
         assert_eq!(
             report.blocked_loads,
-            vec![
-                SliceId::new("player.handoff_first"),
-                SliceId::new("player.handoff_second"),
-            ]
+            vec![SliceId::new("player.handoff_first")]
         );
         assert_eq!(report.rebases_attempted, 0);
-        assert_eq!(report.aborts_attempted, 2);
-        assert_eq!(report.aborts_completed, 2);
-        assert_eq!(world.resource::<HandoffTrace>().events.len(), 8);
+        assert_eq!(report.aborts_completed, 1);
         assert_eq!(
             world
                 .resource::<HandoffTrace>()
                 .events
-                .iter()
-                .rev()
-                .take(2)
-                .map(|event| event.0)
-                .collect::<Vec<_>>(),
-            vec![
-                SliceRunReason::ReconnectAbort,
-                SliceRunReason::ReconnectAbort,
-            ]
+                .last()
+                .map(|event| event.0),
+            Some(SliceRunReason::ReconnectAbort)
         );
 
         world.resource_mut::<HandoffTrace>().events.clear();
         world.resource_mut::<HandoffTrace>().block_load = false;
         world.resource_mut::<HandoffTrace>().fail_load = true;
         let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.loads_attempted, 2);
+        assert_eq!(report.loads_attempted, 1);
         assert_eq!(report.loads_completed, 0);
         assert_eq!(report.rebases_attempted, 0);
-        assert_eq!(report.aborts_attempted, 2);
-        assert_eq!(report.aborts_completed, 2);
-        assert_eq!(report.failures.len(), 2);
-        assert!(report
-            .failures
-            .iter()
-            .all(|failure| failure.reason == SliceRunReason::ReconnectLoad));
+        assert_eq!(report.aborts_completed, 1);
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].reason, SliceRunReason::ReconnectLoad);
 
         world.resource_mut::<HandoffTrace>().events.clear();
         world.resource_mut::<HandoffTrace>().fail_load = false;
         world.resource_mut::<HandoffTrace>().block_rebase = true;
         let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.rebases_attempted, 2);
+        assert_eq!(report.rebases_attempted, 1);
         assert_eq!(report.rebases_completed, 0);
         assert_eq!(
             report.blocked_rebases,
-            vec![
-                SliceId::new("player.handoff_first"),
-                SliceId::new("player.handoff_second"),
-            ]
+            vec![SliceId::new("player.handoff_first")]
         );
-        assert_eq!(report.aborts_attempted, 2);
         assert_eq!(report.aborts_completed, 2);
         assert!(report.failures.is_empty());
 
@@ -2412,55 +2508,11 @@ mod tests {
         world.resource_mut::<HandoffTrace>().block_rebase = false;
         world.resource_mut::<HandoffTrace>().fail_rebase = true;
         let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.rebases_attempted, 2);
+        assert_eq!(report.rebases_attempted, 1);
         assert_eq!(report.rebases_completed, 0);
-        assert_eq!(report.aborts_attempted, 2);
         assert_eq!(report.aborts_completed, 2);
-        assert_eq!(report.failures.len(), 2);
-        assert!(report
-            .failures
-            .iter()
-            .all(|failure| failure.reason == SliceRunReason::Rebase));
-
-        world.resource_mut::<HandoffTrace>().events.clear();
-        {
-            let mut trace = world.resource_mut::<HandoffTrace>();
-            trace.fail_rebase = false;
-            trace.fail_load = true;
-            trace.fail_abort = true;
-        }
-        let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.aborts_attempted, 2);
-        assert_eq!(report.aborts_completed, 0);
-        assert!(report.blocked_aborts.is_empty());
-        assert_eq!(
-            report
-                .failures
-                .iter()
-                .filter(|failure| failure.reason == SliceRunReason::ReconnectAbort)
-                .count(),
-            2
-        );
-
-        world.resource_mut::<HandoffTrace>().events.clear();
-        {
-            let mut trace = world.resource_mut::<HandoffTrace>();
-            trace.fail_load = false;
-            trace.fail_abort = false;
-            trace.block_load = true;
-            trace.block_abort = true;
-        }
-        let report = dispatch_reconnect_handoff(&mut world, token("offline:test"), &clock).unwrap();
-        assert_eq!(report.aborts_attempted, 2);
-        assert_eq!(report.aborts_completed, 0);
-        assert_eq!(
-            report.blocked_aborts,
-            vec![
-                SliceId::new("player.handoff_second"),
-                SliceId::new("player.handoff_first"),
-            ]
-        );
-        assert!(report.failures.is_empty());
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].reason, SliceRunReason::Rebase);
     }
 
     #[derive(Debug)]
@@ -2535,15 +2587,15 @@ mod tests {
         }
     }
 
-    fn teardown_partial_activation(
+    fn cleanup_partial_activation(
         world: &mut World,
         context: &SliceRunContext,
         slice_id: SliceId,
         first: bool,
-    ) -> SliceRunResult {
+    ) {
         assert!(matches!(
             context.reason,
-            SliceRunReason::ReconnectTeardown | SliceRunReason::ReconnectAbort
+            SliceRunReason::ReconnectCleanup | SliceRunReason::ReconnectAbort
         ));
         let mut state = world.resource_mut::<PartialHydrateState>();
         state.transitions.push((context.reason, slice_id));
@@ -2552,15 +2604,14 @@ mod tests {
         } else {
             state.second = None;
         }
-        Ok(SliceRunOutcome::Clean)
     }
 
-    fn teardown_partial_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
-        teardown_partial_activation(world, context, SliceId::new("player.partial_first"), true)
+    fn cleanup_partial_first(world: &mut World, context: &SliceRunContext) {
+        cleanup_partial_activation(world, context, SliceId::new("player.partial_first"), true);
     }
 
-    fn teardown_partial_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
-        teardown_partial_activation(world, context, SliceId::new("player.partial_second"), false)
+    fn cleanup_partial_second(world: &mut World, context: &SliceRunContext) {
+        cleanup_partial_activation(world, context, SliceId::new("player.partial_second"), false);
     }
 
     fn rebase_partial_activation(_world: &mut World, context: &SliceRunContext) -> SliceRunResult {
@@ -2572,14 +2623,16 @@ mod tests {
     fn reconnect_handoff_aborts_partial_hydrate_and_allows_clean_retry() {
         let first = Box::leak(Box::new(SliceDescriptor {
             hydrate: Some(hydrate_partial_first),
-            reconnect_teardown: Some(teardown_partial_first),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_partial_first),
             rebase: Some(rebase_partial_activation),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.partial_first", 10)
         }));
         let second = Box::leak(Box::new(SliceDescriptor {
             hydrate: Some(hydrate_partial_second),
-            reconnect_teardown: Some(teardown_partial_second),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_partial_second),
             rebase: Some(rebase_partial_activation),
             disconnect_save: Some(handoff_save),
             write_binding: SECOND_TEST_BINDING,
@@ -2609,7 +2662,6 @@ mod tests {
             assert_eq!(report.loads_attempted, 2, "{name}");
             assert_eq!(report.loads_completed, 1, "{name}");
             assert_eq!(report.rebases_attempted, 0, "{name}");
-            assert_eq!(report.aborts_attempted, 2, "{name}");
             assert_eq!(report.aborts_completed, 2, "{name}");
             let transitions = &world.resource::<PartialHydrateState>().transitions;
             assert_eq!(
@@ -2636,8 +2688,323 @@ mod tests {
                 dispatch_reconnect_handoff(&mut world, token("player:partial"), &clock).unwrap();
             assert_eq!(retry.loads_completed, 2, "{name}");
             assert_eq!(retry.rebases_completed, 2, "{name}");
-            assert_eq!(retry.aborts_attempted, 0, "{name}");
+            assert_eq!(retry.aborts_completed, 0, "{name}");
         }
+    }
+
+    #[derive(Debug)]
+    struct RealReconnectActivation {
+        guarded: GuardedSlice<u32, &'static str>,
+        tracker: DirtyTracker,
+        fence: PersistedRevisionFence,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum InjectedHookResult {
+        Clean,
+        Blocked,
+        Error,
+    }
+
+    impl Default for InjectedHookResult {
+        fn default() -> Self {
+            Self::Clean
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct AtomicReconnectState {
+        old_first: Option<RealReconnectActivation>,
+        old_second: Option<RealReconnectActivation>,
+        new_first: Option<RealReconnectActivation>,
+        new_second: Option<RealReconnectActivation>,
+        second_preflight: InjectedHookResult,
+        second_hydrate: InjectedHookResult,
+        preserve_new_first_on_abort: bool,
+        hydrate_attempts: usize,
+    }
+
+    impl Resource for AtomicReconnectState {}
+
+    fn make_real_activation(
+        registry: &PersistenceSliceRegistry,
+        slice_id: SliceId,
+        subject: &str,
+    ) -> RealReconnectActivation {
+        let mut guarded = registry
+            .activate(
+                SliceLoad::<u32, &'static str>::Loaded(9),
+                slice_id,
+                subject_key(subject),
+                DirtyRevision::new(4),
+                || 0,
+                |_| 0,
+            )
+            .expect("test activation must be unique");
+        let (tracker, fence) = guarded
+            .restore_persistence_state()
+            .expect("test persistence state must be issued once");
+        RealReconnectActivation {
+            guarded,
+            tracker,
+            fence,
+        }
+    }
+
+    fn activation_keeps_all_leases(activation: &RealReconnectActivation) -> bool {
+        activation
+            .guarded
+            .subject
+            .is_same(&activation.tracker.subject)
+            && activation
+                .guarded
+                .subject
+                .is_same(&activation.fence.subject)
+    }
+
+    fn atomic_preflight_first(_world: &World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn atomic_preflight_second(world: &World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
+        match world.resource::<AtomicReconnectState>().second_preflight {
+            InjectedHookResult::Clean => Ok(SliceRunOutcome::Clean),
+            InjectedHookResult::Blocked => Ok(SliceRunOutcome::SkippedBlocked),
+            InjectedHookResult::Error => Err(SliceRunError::new("second preflight failed")),
+        }
+    }
+
+    fn atomic_cleanup_first(world: &mut World, context: &SliceRunContext) {
+        let mut state = world.resource_mut::<AtomicReconnectState>();
+        match context.reason {
+            SliceRunReason::ReconnectCleanup => state.old_first = None,
+            SliceRunReason::ReconnectAbort if !state.preserve_new_first_on_abort => {
+                state.new_first = None;
+            }
+            SliceRunReason::ReconnectAbort => {}
+            _ => panic!("unexpected reconnect cleanup reason"),
+        }
+    }
+
+    fn atomic_cleanup_second(world: &mut World, context: &SliceRunContext) {
+        let mut state = world.resource_mut::<AtomicReconnectState>();
+        match context.reason {
+            SliceRunReason::ReconnectCleanup => state.old_second = None,
+            SliceRunReason::ReconnectAbort => state.new_second = None,
+            _ => panic!("unexpected reconnect cleanup reason"),
+        }
+    }
+
+    fn atomic_hydrate_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
+        let activation = world.resource_scope(
+            |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                make_real_activation(
+                    &registry,
+                    SliceId::new("player.atomic_first"),
+                    "player:atomic",
+                )
+            },
+        );
+        let mut state = world.resource_mut::<AtomicReconnectState>();
+        state.hydrate_attempts += 1;
+        state.new_first = Some(activation);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn atomic_hydrate_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
+        let activation = world.resource_scope(
+            |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                make_real_activation(
+                    &registry,
+                    SliceId::new("player.atomic_second"),
+                    "player:atomic",
+                )
+            },
+        );
+        let mut state = world.resource_mut::<AtomicReconnectState>();
+        state.hydrate_attempts += 1;
+        state.new_second = Some(activation);
+        match state.second_hydrate {
+            InjectedHookResult::Clean => Ok(SliceRunOutcome::Clean),
+            InjectedHookResult::Blocked => Ok(SliceRunOutcome::SkippedBlocked),
+            InjectedHookResult::Error => Err(SliceRunError::new(
+                "second hydrate failed after real activation",
+            )),
+        }
+    }
+
+    fn atomic_descriptors() -> (&'static SliceDescriptor, &'static SliceDescriptor) {
+        let first = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(atomic_hydrate_first),
+            reconnect_preflight: Some(atomic_preflight_first),
+            reconnect_cleanup: Some(atomic_cleanup_first),
+            rebase: Some(rebase_partial_activation),
+            disconnect_save: Some(handoff_save),
+            ..basic_descriptor("player.atomic_first", 10)
+        }));
+        let second = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(atomic_hydrate_second),
+            reconnect_preflight: Some(atomic_preflight_second),
+            reconnect_cleanup: Some(atomic_cleanup_second),
+            rebase: Some(rebase_partial_activation),
+            disconnect_save: Some(handoff_save),
+            write_binding: SECOND_TEST_BINDING,
+            ..basic_descriptor("player.atomic_second", 20)
+        }));
+        (first, second)
+    }
+
+    fn atomic_reconnect_world(
+        first: &'static SliceDescriptor,
+        second: &'static SliceDescriptor,
+        second_preflight: InjectedHookResult,
+        second_hydrate: InjectedHookResult,
+    ) -> World {
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(first).unwrap();
+        registry.register(second).unwrap();
+        let old_first = make_real_activation(&registry, first.id, "player:atomic");
+        let old_second = make_real_activation(&registry, second.id, "player:atomic");
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(HandoffTrace::default());
+        world.insert_resource(AtomicReconnectState {
+            old_first: Some(old_first),
+            old_second: Some(old_second),
+            second_preflight,
+            second_hydrate,
+            ..AtomicReconnectState::default()
+        });
+        world
+    }
+
+    #[test]
+    fn reconnect_preflight_failure_preserves_all_old_real_activation_leases_until_clean_retry() {
+        let (first, second) = atomic_descriptors();
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        for injected in [InjectedHookResult::Blocked, InjectedHookResult::Error] {
+            let mut world =
+                atomic_reconnect_world(first, second, injected, InjectedHookResult::Clean);
+            let report =
+                dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+
+            assert_eq!(report.preflights_attempted, 2, "{injected:?}");
+            assert_eq!(report.preflights_completed, 1, "{injected:?}");
+            assert_eq!(report.cleanups_completed, 0, "{injected:?}");
+            assert_eq!(report.loads_attempted, 0, "{injected:?}");
+            {
+                let state = world.resource::<AtomicReconnectState>();
+                assert_eq!(state.hydrate_attempts, 0, "{injected:?}");
+                assert!(activation_keeps_all_leases(
+                    state
+                        .old_first
+                        .as_ref()
+                        .expect("first old activation retained")
+                ));
+                assert!(activation_keeps_all_leases(
+                    state
+                        .old_second
+                        .as_ref()
+                        .expect("second old activation retained")
+                ));
+                assert!(state.new_first.is_none() && state.new_second.is_none());
+            }
+
+            world
+                .resource_mut::<AtomicReconnectState>()
+                .second_preflight = InjectedHookResult::Clean;
+            let retry =
+                dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+            assert_eq!(retry.cleanups_completed, 2, "{injected:?}");
+            assert_eq!(retry.loads_completed, 2, "{injected:?}");
+            assert_eq!(retry.rebases_completed, 2, "{injected:?}");
+            let state = world.resource::<AtomicReconnectState>();
+            assert!(state.old_first.is_none() && state.old_second.is_none());
+            assert!(activation_keeps_all_leases(
+                state.new_first.as_ref().expect("first retry activation")
+            ));
+            assert!(activation_keeps_all_leases(
+                state.new_second.as_ref().expect("second retry activation")
+            ));
+        }
+    }
+
+    #[test]
+    fn reconnect_hydrate_failure_after_real_activation_rolls_back_all_and_retries_cleanly() {
+        let (first, second) = atomic_descriptors();
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        for injected in [InjectedHookResult::Blocked, InjectedHookResult::Error] {
+            let mut world =
+                atomic_reconnect_world(first, second, InjectedHookResult::Clean, injected);
+            let report =
+                dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+
+            assert_eq!(report.loads_attempted, 2, "{injected:?}");
+            assert_eq!(report.loads_completed, 1, "{injected:?}");
+            assert_eq!(report.aborts_completed, 2, "{injected:?}");
+            assert_eq!(report.rebases_attempted, 0, "{injected:?}");
+            {
+                let state = world.resource::<AtomicReconnectState>();
+                assert!(state.old_first.is_none() && state.old_second.is_none());
+                assert!(state.new_first.is_none() && state.new_second.is_none());
+            }
+            let subject = subject_key("player:atomic");
+            {
+                let registry = world.resource::<PersistenceSliceRegistry>();
+                assert!(!registry.active_subject_domain(&subject, first.write_binding.domain()));
+                assert!(!registry.active_subject_domain(&subject, second.write_binding.domain()));
+            }
+
+            world.resource_mut::<AtomicReconnectState>().second_hydrate = InjectedHookResult::Clean;
+            let retry =
+                dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+            assert_eq!(retry.loads_completed, 2, "{injected:?}");
+            assert_eq!(retry.rebases_completed, 2, "{injected:?}");
+            assert_eq!(retry.aborts_completed, 0, "{injected:?}");
+        }
+    }
+    #[test]
+    fn reconnect_abort_rejects_cleanup_that_retains_a_real_activation_lease() {
+        let (first, second) = atomic_descriptors();
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+        let mut world = atomic_reconnect_world(
+            first,
+            second,
+            InjectedHookResult::Clean,
+            InjectedHookResult::Error,
+        );
+        world
+            .resource_mut::<AtomicReconnectState>()
+            .preserve_new_first_on_abort = true;
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock)
+            .expect_err("a returned cleanup hook must still release every attempted activation");
+
+        assert_eq!(
+            error,
+            SliceDispatchError::DuplicateSubject {
+                slice_id: first.id,
+                domain: first.write_binding.domain(),
+            }
+        );
+        let state = world.resource::<AtomicReconnectState>();
+        assert!(state.new_first.is_some());
+        assert!(state.new_second.is_none());
     }
 
     #[derive(Debug, Default)]
@@ -2652,10 +3019,10 @@ mod tests {
 
     impl Resource for HandoffActivationState {}
 
-    fn teardown_activation(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+    fn cleanup_activation(world: &mut World, context: &SliceRunContext) {
         assert!(matches!(
             context.reason,
-            SliceRunReason::ReconnectTeardown | SliceRunReason::ReconnectAbort
+            SliceRunReason::ReconnectCleanup | SliceRunReason::ReconnectAbort
         ));
         let mut state = world.resource_mut::<HandoffActivationState>();
         if state.release_guarded {
@@ -2667,7 +3034,6 @@ mod tests {
         if state.release_fence {
             state.fence = None;
         }
-        Ok(SliceRunOutcome::Clean)
     }
 
     struct RetainedLeaseCase {
@@ -2716,7 +3082,8 @@ mod tests {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
             hydrate: Some(handoff_load),
-            reconnect_teardown: Some(teardown_activation),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_activation),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.activation_first", 10)
         }));
@@ -2724,7 +3091,8 @@ mod tests {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
             hydrate: Some(handoff_load),
-            reconnect_teardown: Some(teardown_activation),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_activation),
             disconnect_save: Some(handoff_save),
             write_binding: SECOND_TEST_BINDING,
             ..basic_descriptor("player.activation_second", 20)
@@ -2793,7 +3161,7 @@ mod tests {
         let report =
             dispatch_reconnect_handoff(&mut world, token("player:activation"), &clock).unwrap();
         assert_eq!(report.saves_completed, 2);
-        assert_eq!(report.teardowns_completed, 2);
+        assert_eq!(report.cleanups_completed, 2);
         assert_eq!(report.loads_completed, 2);
         assert_eq!(report.rebases_completed, 2);
         assert!(report.failures.is_empty());
