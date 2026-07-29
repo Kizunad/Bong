@@ -336,6 +336,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                                 {
                                     "anchor": [0.0, 70.0, 0.0],
                                     "radius": -1.0,
+                                    "weight": 1,
                                     "safe_y": 72.0,
                                 }
                             ],
@@ -353,6 +354,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                                 {
                                     "anchor": [0.0, 70.0, 0.0],
                                     "radius": 1.0,
+                                    "weight": 1,
                                     "safe_y": 73.0,
                                 }
                             ],
@@ -370,7 +372,55 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
                     make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
 
-    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
+    def test_spawn_fixture_tiles_matches_production_u32_weight_contract(self):
+        invalid_weights = (None, 0, -1, 1.0, True, 1 << 32)
+        for weight in invalid_weights:
+            cluster = {
+                "anchor": [0.0, 70.0, 0.0],
+                "radius": 1.0,
+                "safe_y": 72.0,
+            }
+            label = "missing"
+            if weight is not None:
+                cluster["weight"] = weight
+                label = repr(weight)
+            config = {
+                "zones": [
+                    {"name": "spawn", "spawn_distribution": [cluster]}
+                ]
+            }
+            with self.subTest(weight=label), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, re.escape("invalid spawn_distribution[0]")
+                ):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+        for weight in (1, (1 << 32) - 1):
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": [0.0, 70.0, 0.0],
+                                "radius": 1.0,
+                                "weight": weight,
+                                "safe_y": 72.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(weight=weight), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                self.assertEqual(
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path),
+                    {(-1, -1), (-1, 0), (0, -1), (0, 0)},
+                )
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
             manifest_path = self._generate(root)

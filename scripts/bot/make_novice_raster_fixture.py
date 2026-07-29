@@ -96,6 +96,12 @@ def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int,
     for index, cluster in enumerate(_spawn_distribution(zones_path)):
         anchor = cluster.get("anchor")
         radius = cluster.get("radius")
+        weight = cluster.get("weight")
+        valid_weight = (
+            isinstance(weight, int)
+            and not isinstance(weight, bool)
+            and 1 <= weight <= (1 << 32) - 1
+        )
         if (
             not isinstance(anchor, list)
             or len(anchor) != 3
@@ -104,6 +110,7 @@ def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int,
             or not isinstance(radius, (int, float))
             or not math.isfinite(float(radius))
             or radius < 0
+            or not valid_weight
             or cluster.get("safe_y") != SURFACE_Y
         ):
             raise ValueError(f"invalid spawn_distribution[{index}] in {zones_path}")
