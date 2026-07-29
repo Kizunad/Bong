@@ -816,6 +816,14 @@ public class BongNetworkHandlerTest {
                 """,
             """
                 final class BongNetworkHandler {
+                    static void clearClientStateOnDisconnect() { new Helper(); }
+                }
+                final class Helper {
+                    Helper() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class BongNetworkHandler {
                     static void clearClientStateOnDisconnect() {
                         Runnable cleaner = Helper::clear;
                     }

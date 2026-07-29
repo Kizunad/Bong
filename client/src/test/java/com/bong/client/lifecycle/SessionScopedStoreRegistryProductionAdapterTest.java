@@ -183,6 +183,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
@@ -970,6 +971,101 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 );
             }
         }
+    }
+
+    @Test
+    void productionManagedStoreCleanerCallsHaveOneRegistryOwner() throws Exception {
+        Path sourceRoot = productionSourceRoot();
+        Set<String> managedStores = ClientStoreScopeManifest.registryManagedSessionStores();
+        try (Stream<Path> paths = Files.walk(sourceRoot.resolve("com/bong/client"))) {
+            List<Path> sources = paths
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".java"))
+                .sorted()
+                .toList();
+            assertFalse(sources.isEmpty(), "Store single-owner guard 必须实际扫描 client production source");
+            for (Path source : sources) {
+                String identity = sourceRoot.relativize(source).toString().replace('\\', '/');
+                JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+                    Files.readString(source),
+                    identity,
+                    managedStores,
+                    identity.equals("com/bong/client/lifecycle/SessionScopedStoreRegistry.java")
+                );
+            }
+        }
+    }
+
+    @Test
+    void managedStoreCleanerSingleOwnerGuardRejectsHiddenCallsAndReferences() {
+        Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
+        for (String fixture : List.of(
+            """
+                package com.bong.client.hud;
+                final class AllowlistedAdjunct {
+                    static void clearOnDisconnect() {
+                        LootContainerStateStore.clearOnDisconnect();
+                    }
+                }
+                """,
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class Helper {
+                    Helper() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            """
+                final class Helper {
+                    Runnable cleaner = com.bong.client.hud.LootContainerStateStore::clearOnDisconnect;
+                }
+                """,
+            """
+                import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
+                final class Helper {
+                    static void clear() { clearOnDisconnect(); }
+                }
+                """
+        )) {
+            assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+                    fixture,
+                    "fixture/HiddenCleaner.java",
+                    managedStores,
+                    false
+                )
+            );
+        }
+    }
+
+    @Test
+    void managedStoreCleanerSingleOwnerGuardAllowsDeclarationsAndExactRegistryBinding() {
+        Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
+                package com.bong.client.hud;
+                final class LootContainerStateStore {
+                    public static void clearOnDisconnect() { }
+                }
+                """,
+            "com/bong/client/hud/LootContainerStateStore.java",
+            managedStores,
+            false
+        ));
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class SessionScopedStoreRegistry {
+                    Object handle = SessionStoreHandle.forStore(
+                        LootContainerStateStore.class,
+                        LootContainerStateStore::clearOnDisconnect
+                    );
+                }
+                """,
+            "com/bong/client/lifecycle/SessionScopedStoreRegistry.java",
+            managedStores,
+            true
+        ));
     }
 
     @Test

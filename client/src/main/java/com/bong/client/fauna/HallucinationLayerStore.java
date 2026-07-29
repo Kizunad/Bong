@@ -189,6 +189,10 @@ public final class HallucinationLayerStore {
      * 断线清理（由 BongNetworkHandler onDisconnect 调用）。
      */
     public static void clearOnDisconnect() {
+        clearSessionState();
+    }
+
+    private static void clearSessionState() {
         active = false;
         remainingTicks = 0;
         durationTicks = 0;

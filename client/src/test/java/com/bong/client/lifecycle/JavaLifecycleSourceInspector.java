@@ -8,9 +8,11 @@ import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.PrimitiveTypeTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
+import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.TreeScanner;
 
 import javax.lang.model.element.Modifier;
@@ -215,6 +217,12 @@ public final class JavaLifecycleSourceInspector {
             }
 
             @Override
+            public Void visitNewClass(NewClassTree expression, Void unused) {
+                rejectedCalls.add("new:" + expression.getIdentifier());
+                return super.visitNewClass(expression, unused);
+            }
+
+            @Override
             public Void visitIdentifier(IdentifierTree identifier, Void unused) {
                 if (importedStoreTypeNames.contains(identifier.getName().toString())) {
                     rejectedStoreReferences.add(identifier.getName().toString());
@@ -236,6 +244,225 @@ public final class JavaLifecycleSourceInspector {
                     + "，Store 引用=" + rejectedStoreReferences
             );
         }
+    }
+
+    public static void assertMethodContainsNoStoreReferences(
+        String source,
+        String className,
+        String methodName,
+        Set<String> storeFqcns
+    ) {
+        CompilationUnitTree unit = parse(className, source);
+        ClassTree owner = unit.getTypeDecls().stream()
+            .filter(ClassTree.class::isInstance)
+            .map(ClassTree.class::cast)
+            .filter(type -> type.getSimpleName().contentEquals(className))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("无法定位 production 类型：" + className));
+        List<MethodTree> methods = owner.getMembers().stream()
+            .filter(MethodTree.class::isInstance)
+            .map(MethodTree.class::cast)
+            .filter(method -> method.getName().contentEquals(methodName))
+            .toList();
+        if (methods.size() != 1) {
+            throw new AssertionError(
+                "production helper 必须恰好声明一次：" + className + "." + methodName
+                    + "；实际=" + methods.size()
+            );
+        }
+
+        String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+        Set<String> visibleStoreTypeNames = new TreeSet<>();
+        Set<String> staticImportedStoreMemberNames = new TreeSet<>();
+        for (String fqcn : storeFqcns) {
+            if (packageName(fqcn).equals(sourcePackage)) {
+                visibleStoreTypeNames.add(simpleName(fqcn));
+            }
+        }
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            for (String fqcn : storeFqcns) {
+                if (!importTree.isStatic() && imported.equals(fqcn)) {
+                    visibleStoreTypeNames.add(simpleName(fqcn));
+                }
+                if (importTree.isStatic() && imported.startsWith(fqcn + ".")) {
+                    String member = imported.substring(fqcn.length() + 1);
+                    if (!member.equals("*")) {
+                        staticImportedStoreMemberNames.add(member);
+                    }
+                }
+            }
+        }
+
+        Set<String> references = new TreeSet<>();
+        new TreeScanner<Void, Void>() {
+            @Override
+            public Void visitIdentifier(IdentifierTree identifier, Void unused) {
+                String identifierName = identifier.getName().toString();
+                if (visibleStoreTypeNames.contains(identifierName)) {
+                    references.add(identifierName);
+                }
+                if (staticImportedStoreMemberNames.contains(identifierName)) {
+                    references.add("static-import:" + identifierName);
+                }
+                return super.visitIdentifier(identifier, unused);
+            }
+
+            @Override
+            public Void visitMemberSelect(MemberSelectTree selection, Void unused) {
+                for (String fqcn : storeFqcns) {
+                    String expression = selection.toString();
+                    if (expression.equals(fqcn) || expression.startsWith(fqcn + ".")) {
+                        references.add(expression);
+                    }
+                }
+                return super.visitMemberSelect(selection, unused);
+            }
+        }.scan(methods.get(0).getBody(), null);
+
+        if (!references.isEmpty()) {
+            throw new AssertionError(
+                className + "." + methodName
+                    + " 不得直接拥有 registry-managed Store 引用：" + references
+            );
+        }
+    }
+
+    static void assertRegistryOwnsManagedStoreCleanerCalls(
+        String source,
+        String sourceIdentity,
+        Set<String> storeFqcns,
+        boolean registrySource
+    ) {
+        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+        String sourceFqcn = sourceIdentity
+            .replace('\\', '.')
+            .replace('/', '.')
+            .replaceFirst("\\.java$", "");
+        boolean sourceIsManagedStore = storeFqcns.contains(sourceFqcn);
+        Set<String> managedStoreTypeNames = storeFqcns.stream()
+            .map(JavaLifecycleSourceInspector::simpleName)
+            .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+        Set<String> visibleStoreTypeNames = new TreeSet<>();
+        Set<String> staticallyImportedCleaners = new TreeSet<>();
+        for (String fqcn : storeFqcns) {
+            if (packageName(fqcn).equals(sourcePackage)) {
+                visibleStoreTypeNames.add(simpleName(fqcn));
+            }
+        }
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            for (String fqcn : storeFqcns) {
+                if (!importTree.isStatic() && imported.equals(fqcn)) {
+                    visibleStoreTypeNames.add(simpleName(fqcn));
+                }
+                if (importTree.isStatic()
+                    && (imported.equals(fqcn + ".clearOnDisconnect")
+                        || imported.equals(fqcn + ".*"))) {
+                    staticallyImportedCleaners.add(fqcn);
+                }
+            }
+        }
+
+        Set<String> violations = new TreeSet<>();
+        new TreePathScanner<Void, Void>() {
+            private String enclosingMethod;
+
+            @Override
+            public Void visitMethod(MethodTree method, Void unused) {
+                String previousMethod = enclosingMethod;
+                enclosingMethod = method.getName().toString();
+                try {
+                    return super.visitMethod(method, unused);
+                } finally {
+                    enclosingMethod = previousMethod;
+                }
+            }
+
+            @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                String methodName = invokedMethodName(invocation.getMethodSelect());
+                if (!methodName.equals("clearOnDisconnect")) {
+                    return super.visitMethodInvocation(invocation, unused);
+                }
+                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
+                    String owner = selection.getExpression().toString();
+                    if (isManagedStoreOwner(
+                        owner,
+                        storeFqcns,
+                        visibleStoreTypeNames,
+                        managedStoreTypeNames,
+                        sourceIsManagedStore
+                    )) {
+                        violations.add("invoke:" + invocation.getMethodSelect());
+                    }
+                } else if (invocation.getMethodSelect() instanceof IdentifierTree
+                    && !staticallyImportedCleaners.isEmpty()) {
+                    violations.add("static-import:" + staticallyImportedCleaners);
+                }
+                return super.visitMethodInvocation(invocation, unused);
+            }
+
+            @Override
+            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                if (!reference.getName().contentEquals("clearOnDisconnect")
+                    || !isManagedStoreOwner(
+                        reference.getQualifierExpression().toString(),
+                        storeFqcns,
+                        visibleStoreTypeNames,
+                        managedStoreTypeNames,
+                        sourceIsManagedStore
+                    )) {
+                    return super.visitMemberReference(reference, unused);
+                }
+                Tree parent = getCurrentPath().getParentPath().getLeaf();
+                if (!registrySource || !isSanctionedRegistryBinding(reference, parent)) {
+                    violations.add(
+                        "reference:" + reference.getQualifierExpression() + "::" + reference.getName()
+                    );
+                }
+                return super.visitMemberReference(reference, unused);
+            }
+        }.scan(unit, null);
+
+        if (!violations.isEmpty()) {
+            throw new AssertionError(
+                sourceIdentity + " 不得绕过 SessionScopedStoreRegistry 清理 registry-managed Store："
+                    + violations
+            );
+        }
+    }
+
+    private static boolean isSanctionedRegistryBinding(
+        MemberReferenceTree reference,
+        Tree parent
+    ) {
+        if (!(parent instanceof MethodInvocationTree invocation)
+            || !invocation.getMethodSelect().toString().equals("SessionStoreHandle.forStore")
+            || invocation.getArguments().size() != 2
+            || invocation.getArguments().get(1) != reference
+            || !(invocation.getArguments().get(0) instanceof MemberSelectTree classToken)
+            || !classToken.getIdentifier().contentEquals("class")) {
+            return false;
+        }
+        return classToken.getExpression().toString()
+            .equals(reference.getQualifierExpression().toString());
+    }
+
+    private static boolean isManagedStoreOwner(
+        String owner,
+        Set<String> storeFqcns,
+        Set<String> visibleStoreTypeNames,
+        Set<String> managedStoreTypeNames,
+        boolean sourceIsManagedStore
+    ) {
+        if (storeFqcns.contains(owner) || visibleStoreTypeNames.contains(owner)) {
+            return true;
+        }
+        int separator = owner.lastIndexOf('.');
+        String terminalOwner = separator >= 0 ? owner.substring(separator + 1) : owner;
+        return !sourceIsManagedStore && managedStoreTypeNames.contains(terminalOwner);
     }
 
     private static String invokedMethodName(Tree methodSelect) {
