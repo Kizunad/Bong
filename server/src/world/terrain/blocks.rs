@@ -1,8 +1,9 @@
 //! Data-owned, intentionally closed worldgen block catalog.
 //!
-//! The checked-in TOML preserves the historical 213 logical keys. Production
-//! startup loads and validates it once; callers still use [`block_from_name`]
-//! and therefore cannot bypass the catalog with an arbitrary vanilla block.
+//! The checked-in TOML contains the historical 213 logical keys as a compatibility
+//! baseline, but the declared TOML entries are the sole production allow-list.
+//! Startup loads and validates that list once; callers still use [`block_from_name`]
+//! and therefore cannot bypass it with an arbitrary vanilla block.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -13,12 +14,6 @@ use valence::prelude::{BlockKind, BlockState, PropName, PropValue};
 
 pub const DEFAULT_BLOCK_CATALOG_RELATIVE_PATH: &str = "assets/worldgen/block_catalog.toml";
 const BLOCK_CATALOG_VERSION: u32 = 1;
-const CANONICAL_BLOCK_COUNT: usize = 213;
-const CANONICAL_DIRECT_COUNT: usize = 211;
-const CANONICAL_ALIAS_COUNT: usize = 2;
-const CANONICAL_KEY_SET_FINGERPRINT: u64 = 0xa83c_4d95_f677_9648;
-const CANONICAL_ALIASES: [(&str, &str); CANONICAL_ALIAS_COUNT] =
-    [("glowshroom", "shroomlight"), ("iron_nugget", "air")];
 
 static DEFAULT_BLOCK_CATALOG: OnceLock<BlockCatalog> = OnceLock::new();
 
@@ -59,18 +54,15 @@ impl BlockCatalog {
                 raw.version
             ));
         }
-        if raw.block.len() != CANONICAL_BLOCK_COUNT {
-            diagnostics.push(format!(
-                "catalog contains {} logical keys (expected exactly {CANONICAL_BLOCK_COUNT})",
-                raw.block.len()
-            ));
+        if raw.block.is_empty() {
+            diagnostics.push("catalog must contain at least one block".to_string());
         }
 
         let mut seen = HashSet::with_capacity(raw.block.len());
         let mut source_order = Vec::with_capacity(raw.block.len());
-        let mut states = HashMap::with_capacity(raw.block.len());
-        let mut aliases = Vec::new();
-        let mut direct_count = 0;
+        let mut direct_states = HashMap::with_capacity(raw.block.len());
+        let mut alias_entries = Vec::new();
+        let mut alias_names = HashSet::new();
 
         for (index, entry) in raw.block.into_iter().enumerate() {
             let position = index + 1;
@@ -95,71 +87,57 @@ impl BlockCatalog {
 
             match entry.alias_of {
                 Some(target) => {
-                    aliases.push((entry.name.clone(), target.clone()));
-                    match BlockKind::from_str(&target) {
-                        Some(kind) => {
-                            states.insert(entry.name, kind.to_state());
-                        }
-                        None => diagnostics.push(format!(
-                            "alias '{}' targets unknown vanilla block '{target}'",
-                            entry.name
-                        )),
-                    }
+                    alias_names.insert(entry.name.clone());
+                    alias_entries.push((entry.name, target));
                 }
-                None => {
-                    direct_count += 1;
-                    match BlockKind::from_str(&entry.name) {
-                        Some(kind) => {
-                            states.insert(entry.name, kind.to_state());
-                        }
-                        None => diagnostics.push(format!(
-                            "direct logical key '{}' is not a Valence BlockKind",
-                            entry.name
-                        )),
+                None => match BlockKind::from_str(&entry.name) {
+                    Some(kind) => {
+                        direct_states.insert(entry.name, kind.to_state());
                     }
-                }
+                    None => diagnostics.push(format!(
+                        "direct logical key '{}' is not a Valence BlockKind",
+                        entry.name
+                    )),
+                },
             }
         }
 
-        if direct_count != CANONICAL_DIRECT_COUNT {
-            diagnostics.push(format!(
-                "catalog contains {direct_count} direct entries (expected exactly {CANONICAL_DIRECT_COUNT})"
-            ));
-        }
-        if aliases.len() != CANONICAL_ALIAS_COUNT {
-            diagnostics.push(format!(
-                "catalog contains {} aliases (expected exactly {CANONICAL_ALIAS_COUNT})",
-                aliases.len()
-            ));
-        }
-
-        let actual_aliases: HashSet<(&str, &str)> = aliases
-            .iter()
-            .map(|(name, target)| (name.as_str(), target.as_str()))
-            .collect();
-        let expected_aliases: HashSet<(&str, &str)> = CANONICAL_ALIASES.into_iter().collect();
-        for (name, target) in expected_aliases.difference(&actual_aliases) {
-            diagnostics.push(format!("missing required alias '{name}' -> '{target}'"));
-        }
-        for (name, target) in actual_aliases.difference(&expected_aliases) {
-            diagnostics.push(format!("unexpected alias '{name}' -> '{target}'"));
-        }
-        for (name, target) in &aliases {
-            if !seen.contains(target) {
+        let direct_names: HashSet<&str> = direct_states.keys().map(String::as_str).collect();
+        let mut states = direct_states.clone();
+        for (name, target) in &alias_entries {
+            if target.is_empty() {
+                diagnostics.push(format!("alias '{name}' has an empty target"));
+                continue;
+            }
+            if target.contains(':') {
                 diagnostics.push(format!(
-                    "alias '{name}' target '{target}' is not itself declared as a direct catalog key"
+                    "alias '{name}' target '{target}' must be bare (namespaces are not allowed)"
                 ));
+                continue;
             }
+            if name == target {
+                diagnostics.push(format!("alias '{name}' cannot target itself"));
+                continue;
+            }
+            if alias_names.contains(target) {
+                diagnostics.push(format!(
+                    "alias '{name}' target '{target}' is another alias; alias chains are not supported"
+                ));
+                continue;
+            }
+            if !direct_names.contains(target.as_str()) {
+                diagnostics.push(format!(
+                    "alias '{name}' target '{target}' is not declared as a direct catalog key"
+                ));
+                continue;
+            }
+            let target_state = direct_states
+                .get(target)
+                .expect("validated direct catalog target must have a BlockState");
+            states.insert(name.clone(), *target_state);
         }
 
-        let actual_key_set_fingerprint = canonical_key_set_fingerprint(&seen);
-        if actual_key_set_fingerprint != CANONICAL_KEY_SET_FINGERPRINT {
-            diagnostics.push(format!(
-                "catalog logical key set fingerprint is {actual_key_set_fingerprint:#018x} (expected {CANONICAL_KEY_SET_FINGERPRINT:#018x})"
-            ));
-        }
-
-        if states.len() != raw_len_without_duplicates(&source_order) {
+        if states.len() != source_order.len() {
             diagnostics.push(format!(
                 "only {} of {} unique catalog entries resolved to BlockState",
                 states.len(),
@@ -181,9 +159,9 @@ impl BlockCatalog {
             #[cfg(test)]
             source_order,
             #[cfg(test)]
-            direct_count,
+            direct_count: direct_states.len(),
             #[cfg(test)]
-            alias_count: aliases.len(),
+            alias_count: alias_entries.len(),
         })
     }
 
@@ -210,23 +188,6 @@ impl BlockCatalog {
     pub fn alias_count(&self) -> usize {
         self.alias_count
     }
-}
-
-fn canonical_key_set_fingerprint(keys: &HashSet<String>) -> u64 {
-    let mut keys = keys.iter().map(String::as_str).collect::<Vec<_>>();
-    keys.sort_unstable();
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for key in keys {
-        for byte in key.bytes().chain(std::iter::once(0)) {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    hash
-}
-
-fn raw_len_without_duplicates(source_order: &[String]) -> usize {
-    source_order.len()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -562,19 +523,45 @@ pub(crate) mod tests {
         result
     }
 
-    #[test]
-    fn default_catalog_matches_pinned_legacy_table_field_for_field() {
-        let catalog = BlockCatalog::load(&default_catalog_path()).expect("default catalog loads");
-        assert_eq!(catalog.len(), CANONICAL_BLOCK_COUNT);
-        assert_eq!(catalog.direct_count(), CANONICAL_DIRECT_COUNT);
-        assert_eq!(catalog.alias_count(), CANONICAL_ALIAS_COUNT);
-        assert_eq!(
-            catalog.source_order(),
-            &LEGACY_BLOCK_ORACLE
+    fn validation_diagnostics(error: BlockCatalogError) -> Vec<String> {
+        match error {
+            BlockCatalogError::Validation { diagnostics, .. } => diagnostics,
+            other => panic!("expected validation error, got {other}"),
+        }
+    }
+
+    fn assert_validation_contains(tag: &str, text: &str, expected: &str) {
+        let error = write_and_load(tag, text).expect_err("catalog must fail validation");
+        let diagnostics = validation_diagnostics(error);
+        assert!(
+            diagnostics
                 .iter()
-                .map(|(name, _)| (*name).to_string())
-                .collect::<Vec<_>>(),
-            "catalog source order is a runtime contract and must match the pre-migration table"
+                .any(|diagnostic| diagnostic.contains(expected)),
+            "expected diagnostic containing {expected:?}, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn default_catalog_preserves_legacy_entries_as_an_ordered_compatibility_subset() {
+        let catalog = BlockCatalog::load(&default_catalog_path()).expect("default catalog loads");
+        let legacy_names = LEGACY_BLOCK_ORACLE
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<HashSet<_>>();
+        let current_legacy_order = catalog
+            .source_order()
+            .iter()
+            .map(String::as_str)
+            .filter(|name| legacy_names.contains(name))
+            .collect::<Vec<_>>();
+        let expected_legacy_order = LEGACY_BLOCK_ORACLE
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            current_legacy_order, expected_legacy_order,
+            "new data entries may be inserted, but historical entries must retain relative order"
         );
         for (name, target) in LEGACY_BLOCK_ORACLE {
             let actual = catalog
@@ -587,6 +574,93 @@ pub(crate) mod tests {
                 "catalog key '{name}' -> '{target}' changed its BlockState"
             );
         }
+    }
+
+    #[test]
+    fn loader_accepts_minimal_dynamic_direct_and_forward_alias_catalogs() {
+        let catalog = write_and_load(
+            "dynamic",
+            r#"
+version = 1
+
+[[block]]
+name = "custom_stone"
+alias_of = "stone"
+
+[[block]]
+name = "stone"
+
+[[block]]
+name = "gold_block"
+
+[[block]]
+name = "second_stone"
+alias_of = "stone"
+"#,
+        )
+        .expect("forward aliases and arbitrary valid direct entries must be data-owned");
+
+        assert_eq!(catalog.len(), 4);
+        assert_eq!(catalog.direct_count(), 2);
+        assert_eq!(catalog.alias_count(), 2);
+        assert_eq!(catalog.resolve("stone"), Some(BlockState::STONE));
+        assert_eq!(catalog.resolve("custom_stone"), Some(BlockState::STONE));
+        assert_eq!(catalog.resolve("second_stone"), Some(BlockState::STONE));
+        assert_eq!(
+            catalog.resolve("gold_block"),
+            BlockKind::from_str("gold_block").map(BlockKind::to_state)
+        );
+    }
+
+    #[test]
+    fn checked_in_catalog_can_be_extended_by_data_only() {
+        let mut text = default_asset_text();
+        text.push_str(
+            r#"
+
+[[block]]
+name = "gold_block"
+
+[[block]]
+name = "data_only_gold"
+alias_of = "gold_block"
+"#,
+        );
+        let catalog = write_and_load("extended", &text)
+            .expect("valid direct and alias additions must not require Rust changes");
+        let gold = BlockKind::from_str("gold_block")
+            .expect("gold_block is a vanilla block")
+            .to_state();
+
+        assert_eq!(catalog.resolve("gold_block"), Some(gold));
+        assert_eq!(catalog.resolve("data_only_gold"), Some(gold));
+        for (name, _) in LEGACY_BLOCK_ORACLE {
+            assert!(
+                catalog.resolve(name).is_some(),
+                "extending the catalog must retain legacy key '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn a_synthetic_catalog_remains_closed_to_undeclared_vanilla_blocks() {
+        let catalog = write_and_load(
+            "closed",
+            r#"
+version = 1
+
+[[block]]
+name = "stone"
+"#,
+        )
+        .expect("minimal non-empty catalog loads");
+
+        assert_eq!(catalog.resolve("stone"), Some(BlockState::STONE));
+        assert_eq!(
+            catalog.resolve("gold_block"),
+            None,
+            "a valid vanilla block omitted from TOML must remain unavailable"
+        );
     }
 
     #[test]
@@ -604,13 +678,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn default_resolver_is_closed_bare_only_and_preserves_two_aliases() {
+    fn default_resolver_preserves_historical_aliases_and_rejects_namespaces() {
         initialize_default_block_catalog().expect("default catalog initializes");
         assert_eq!(block_from_name("stone"), Some(BlockState::STONE));
         assert_eq!(block_from_name("glowshroom"), Some(BlockState::SHROOMLIGHT));
         assert_eq!(block_from_name("iron_nugget"), Some(BlockState::AIR));
         assert_eq!(block_from_name("minecraft:stone"), None);
-        assert_eq!(block_from_name("gold_block"), None);
         assert_eq!(block_from_name("not_a_real_block"), None);
     }
 
@@ -677,10 +750,11 @@ pub(crate) mod tests {
     fn failed_default_style_load_does_not_poison_success_cache() {
         static CACHE: OnceLock<BlockCatalog> = OnceLock::new();
 
-        let missing = temp_path("recover_after_missing");
+        let invalid = temp_path("recover_after_invalid");
+        fs::write(&invalid, "version = 1\nblock = []\n").expect("write invalid catalog");
         assert!(matches!(
-            load_catalog_once(&CACHE, &missing),
-            Err(BlockCatalogError::Read { .. })
+            load_catalog_once(&CACHE, &invalid),
+            Err(BlockCatalogError::Validation { .. })
         ));
         assert!(
             CACHE.get().is_none(),
@@ -688,11 +762,14 @@ pub(crate) mod tests {
         );
 
         let valid = temp_path("recover_with_valid");
-        fs::write(&valid, default_asset_text()).expect("write valid recovery catalog");
+        fs::write(&valid, "version = 1\n\n[[block]]\nname = \"stone\"\n")
+            .expect("write valid recovery catalog");
         let recovered = load_catalog_once(&CACHE, &valid)
             .expect("a later valid startup admission must recover after a failed attempt");
-        assert_eq!(recovered.len(), CANONICAL_BLOCK_COUNT);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered.resolve("stone"), Some(BlockState::STONE));
         assert!(CACHE.get().is_some());
+        let _ = fs::remove_file(invalid);
         let _ = fs::remove_file(valid);
     }
 
@@ -723,54 +800,155 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn loader_rejects_version_count_duplicate_direct_and_alias_drift() {
-        let version = default_asset_text().replacen("version = 1", "version = 2", 1);
-        assert!(matches!(
-            write_and_load("version", &version),
-            Err(BlockCatalogError::Validation { .. })
-        ));
-
-        let text = default_asset_text();
-        let truncated = text
-            .rsplit_once("[[block]]")
-            .expect("catalog has entries")
-            .0;
-        assert!(matches!(
-            write_and_load("count", truncated),
-            Err(BlockCatalogError::Validation { .. })
-        ));
-
-        let duplicate = text.replacen("name = \"smooth_stone\"", "name = \"stone\"", 1);
-        assert!(matches!(
-            write_and_load("duplicate", &duplicate),
-            Err(BlockCatalogError::Validation { .. })
-        ));
-
-        let valid_replacement =
-            text.replacen("name = \"smooth_stone\"", "name = \"gold_block\"", 1);
-        assert!(matches!(
-            write_and_load("valid_replacement", &valid_replacement),
-            Err(BlockCatalogError::Validation { .. })
-        ));
-
-        let invalid_direct = text.replacen(
-            "name = \"smooth_stone\"",
-            "name = \"not_a_valence_block\"",
-            1,
+    fn loader_rejects_version_empty_namespaced_and_unknown_direct_entries() {
+        assert_validation_contains(
+            "version",
+            "version = 2\n\n[[block]]\nname = \"stone\"\n",
+            "unsupported catalog version 2",
         );
-        assert!(matches!(
-            write_and_load("invalid_direct", &invalid_direct),
-            Err(BlockCatalogError::Validation { .. })
-        ));
-
-        let alias_drift = text.replacen(
-            "name = \"glowshroom\"\nalias_of = \"shroomlight\"",
-            "name = \"glowshroom\"\nalias_of = \"stone\"",
-            1,
+        assert_validation_contains("empty", "version = 1\nblock = []\n", "at least one block");
+        assert_validation_contains(
+            "empty_name",
+            "version = 1\n\n[[block]]\nname = \"\"\n",
+            "empty logical name",
         );
-        assert!(matches!(
-            write_and_load("alias_drift", &alias_drift),
-            Err(BlockCatalogError::Validation { .. })
-        ));
+        assert_validation_contains(
+            "namespaced_name",
+            "version = 1\n\n[[block]]\nname = \"minecraft:stone\"\n",
+            "must be bare",
+        );
+        assert_validation_contains(
+            "unknown_direct",
+            "version = 1\n\n[[block]]\nname = \"not_a_valence_block\"\n",
+            "is not a Valence BlockKind",
+        );
+    }
+
+    #[test]
+    fn loader_rejects_duplicates_across_all_entry_kind_pairs() {
+        let cases = [
+            (
+                "direct_direct",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "stone"
+"#,
+            ),
+            (
+                "alias_alias",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "same"
+alias_of = "stone"
+[[block]]
+name = "same"
+alias_of = "stone"
+"#,
+            ),
+            (
+                "direct_alias",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "same"
+[[block]]
+name = "same"
+alias_of = "stone"
+"#,
+            ),
+        ];
+
+        for (tag, text) in cases {
+            assert_validation_contains(tag, text, "duplicate logical block name");
+        }
+    }
+
+    #[test]
+    fn loader_rejects_every_invalid_alias_target_class() {
+        let cases = [
+            (
+                "empty_target",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "alias"
+alias_of = ""
+"#,
+                "empty target",
+            ),
+            (
+                "namespaced_target",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "alias"
+alias_of = "minecraft:stone"
+"#,
+                "must be bare",
+            ),
+            (
+                "self_target",
+                r#"
+version = 1
+[[block]]
+name = "alias"
+alias_of = "alias"
+"#,
+                "cannot target itself",
+            ),
+            (
+                "missing_target",
+                r#"
+version = 1
+[[block]]
+name = "alias"
+alias_of = "missing"
+"#,
+                "is not declared as a direct catalog key",
+            ),
+            (
+                "undeclared_vanilla_target",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "alias"
+alias_of = "gold_block"
+"#,
+                "is not declared as a direct catalog key",
+            ),
+            (
+                "alias_chain",
+                r#"
+version = 1
+[[block]]
+name = "stone"
+[[block]]
+name = "first"
+alias_of = "stone"
+[[block]]
+name = "second"
+alias_of = "first"
+"#,
+                "alias chains are not supported",
+            ),
+        ];
+
+        for (tag, text, expected) in cases {
+            assert_validation_contains(tag, text, expected);
+        }
     }
 }
