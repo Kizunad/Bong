@@ -18,7 +18,7 @@
 - **worldview 锚点**：`worldview.md §四 L353-L360` 明确过载撕裂会造成经脉裂缝与真元上限永久扣除/临时冻结；`worldview.md §三 L136-L155` 规定突破是修炼主循环。`docs/finished_plans/plan-cultivation-v1.md:323-330` 明确 canonical 公式 `qi_max_frozen += severity × 5.0`。
 - **qi_physics 锚点**：本 plan 不移动真元或灵气，只调整可用上限冻结量；突破扣费/zone ledger 路径不得改动。`qi_max_frozen` 是容量约束而非 ledger 账户，禁止把 5.0 误当 qi transfer amount 发起额外转账。
 
-## 第一性验真（`origin/main @ e2af0651bf2adc6e09328c75c6d1cded3954b346`，2026-07-29）
+## 第一性验真（`origin/main @ 2310f6fd6d950a865eb15f649cf364994d5f03e9`，2026-07-29）
 
 1. `server/src/cultivation/overload.rs:13-16,43-75` 的检测路径按 `severity * FREEZE_FACTOR` 累计冻结；`server/src/cultivation/overload.rs:140-163` 的 event-reader 路径也使用同一 `FREEZE_FACTOR`，并都 clamp 到 `qi_max * 0.5`。
 2. `server/src/cultivation/breakthrough.rs:571-591` 的 `try_breakthrough_with_profile` 对相同含义的 failure `severity` 却硬编码 `severity * 10.0`，是 canonical 5.0 的 2×；该值随后进入同一个 `Cultivation.qi_max_frozen`，不是独立状态或不同单位。
