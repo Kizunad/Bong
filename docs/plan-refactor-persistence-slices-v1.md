@@ -38,31 +38,50 @@
 
 ## 阶段
 
-- ✅ 2026-07-28 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→hydrate→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败隔离、写资格、重连顺序/阻断/旧 activation 原子保留/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
+- ✅ 2026-07-30 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、opaque load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→subject-bound capability hydrate→实际 lease 审计→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 token/foreign subject lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败 provenance 不可提取、写资格、重连顺序/阻断/旧 activation 原子保留/foreign-subject 拒绝/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
 - ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
-- ⬜ P3 关服 flush + tick rebase 批次：shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
+- ⬜ P3 真实 reconnect handoff + 关服 flush + tick rebase 批次：玩家 lifecycle 只从一次性 subject-bound capability 激活；shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
 - ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、长期 consumable/buff、realm taint、season override、supply cooldown、灵眼等逐个补 Slice；业务生命周期修复留在各自领域。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
-## 吸收清单验真（25 项）
+## 吸收清单验真（27 项）
 
-### R3 直接吸收
+下表以当前 production code 为准；`P0 契约`只说明本 PR 已提供框架原语，**不等于**对应生产 Slice 已接线。`—` 表示无独立 durable schema/file 或无该方向接线。
 
-- **仍缺、作为框架/迁移宿主**：active-events-restart-loss、mineral-respawn-tick-restart-drift、realm-taint-restart-amnesia、season-override-restart、spiritwood-shutdown-flush、status-effects-consumable-persistence（仅长期 consumable/buff）、supply-coffin-cooldown-restart-rollback、tiandao-attention-persistence、zone-influence-shutdown-flush（已有 hydrate/节流，范围仅为最终 flush）、dormant-redis-dirty-ack（异步 ACK/失败重脏）、coffin-autosave-inflight-race、identity-persist-key-mismatch、mineral-exhausted-log-corrupt-revival、spirit-eye-runtime-persistence、voidaction-cooldown-runtime-tick-restart。
-- **merged plan only、代码仍缺**：wounds-relog-full-heal（#1282）、player-slice-load-failure-clears（#1290）、shelflife-clock-restart-freshness（#1294）。Wounds/Lifecycle 生产接线已随 #1289 落地，但要等 #1259 解除精确文件避让后再迁入 Slice 框架。
-- **代码已闭环、P5 只归档**：recipe-unlock-shutdown-flush（#1261）。KnownTechniques #1288 不是清单项，但作为 load guard 基线。
+| # | 吸收项 | schema / file | save | load | relog / restart wiring | 当前代码锚点 | 剩余归属 |
+|---:|---|---|---|---|---|---|---|
+| 1 | `active-events-restart-loss` | —；`ActiveEventsResource` 仅内存 | — | — | restart `default()` | `server/src/world/events.rs:101-114,345-376,1625-1638` | P4 world-runtime Slice |
+| 2 | `mineral-respawn-tick-restart-drift` | JSON exhausted-minerals log | 有，但 `respawn_at_tick` 为旧进程绝对 tick | 有 | startup hydrate 已接 | `server/src/mineral/persistence.rs:57-70,115-173,177-259`；`server/src/mineral/mod.rs:69-108`；`server/src/mineral/respawn.rs:29-74` | P3 time rebase |
+| 3 | `realm-taint-restart-amnesia` | —；`RealmTaintState` 仅 ECS | — | — | 仅 Update event consumer | `server/src/cultivation/realm_taint.rs:16-107` | P4 player/runtime Slice |
+| 4 | `season-override-restart` | —；`WorldHeartbeat.overrides` 仅内存 | — | — | register 后 runtime apply/expiry | `server/src/world/heartbeat.rs:239-255,316-379,594-657,825-868` | P4 world-runtime Slice |
+| 5 | `spiritwood-shutdown-flush` | JSON harvested log | tmp+rename 节流写 | 有 | startup hydrate 已接；无 `Last`/`AppExit` 强制写 | `server/src/spiritwood/mod.rs:57-79`；`server/src/spiritwood/persistence.rs:78-205,208-287` | P3 shutdown registry/flush |
+| 6 | `status-effects-consumable-persistence` | —；`StatusEffects` 仅 component | — | — | join 插 `default()` | `server/src/combat/components.rs:404-415`；`server/src/combat/mod.rs:171-176` | P4 长期 buff/player Slice |
+| 7 | `supply-coffin-cooldown-restart-rollback` | —；`SupplyCoffinRegistry` 仅内存 | — | — | startup `new()` | `server/src/supply_coffin/mod.rs:111-220,252-294` | P4 supply-coffin runtime |
+| 8 | `tiandao-attention-persistence` | —；`TiandaoAttention` 仅 ECS | — | — | 缺 component 时插 `default()` | `server/src/world/tiandao_hunt.rs:53-75,479-496` | P4 player/runtime Slice |
+| 9 | `zone-influence-shutdown-flush` | SQLite `zone_influence` | periodic upsert 已有 | 有 | startup hydrate 已有；`Last` 只强刷 zone runtime，未强刷 influence | `server/src/persistence/mod.rs:698-712,723-847,926-977,2024-2042,3680-3820` | P3 shutdown registry/flush |
+| 10 | `dormant-redis-dirty-ack` | Redis HASH `NPC_DORMANT_REDIS_KEY` | `take_dirty()` 先清、fire-and-forget send | startup `HGETALL` restore | 写失败只 warn，无 ACK/re-dirty | `server/src/npc/dormant/mod.rs:392-450,588-645`；`server/src/network/mod.rs:1320-1344`；`server/src/network/redis_bridge.rs:562-565,1793-1829` | P3 Redis write authority/ACK |
+| 11 | `coffin-autosave-inflight-race` | 既有 player/coffin SQLite slices | 多条 direct save | 有 | disconnect/shutdown/autosave 已接；无 production revision/CAS handoff | `server/src/player/state.rs:652-830`；`server/src/player/mod.rs:463-506,535-688,703-884`；`server/src/coffin/mod.rs:661,716,823,973,1210-1263` | P3 write authority + revision/CAS |
+| 12 | `identity-persist-key-mismatch` | SQLite `player_identities` | command/revealed/social 按 runtime `Lifecycle.character_id` 写 | join 按 `canonical_player_id(username)` 读 | 两侧 key source 均存在，但尚无全链同值不变量 pin | `server/src/persistence/identity.rs:36-102`；`server/src/identity/mod.rs:307-333`；`server/src/identity/{command,revealed}.rs:311-441,79-109`；`server/src/social/mod.rs:1514-1524,1573-1603` | P2 identity key/load contract |
+| 13 | `mineral-exhausted-log-corrupt-revival` | 同 mineral JSON | 直写最终文件 | parse error 被当 empty log | startup hydrate 已接，损坏可令矿脉复活 | `server/src/mineral/persistence.rs:115-173,220-259`；`server/src/mineral/mod.rs:69-108` | P3 atomic/corrupt-safe persistence |
+| 14 | `spirit-eye-runtime-persistence` | —；`SpiritEyeRegistry` 仅 runtime | — | — | zones + `startup_salt()` 重建 | `server/src/world/spirit_eye.rs:40-69,109-145,232-268,350-363,592-606` | P4 world-runtime Slice |
+| 15 | `voidaction-cooldown-runtime-tick-restart` | SQLite `void_action_cooldowns` | 有 | 有 | startup hydrate 已接；`ready_at_tick` 是绝对 runtime tick | `server/src/persistence/mod.rs:723-775,1720-1729,2868-2957`；`server/src/cultivation/void/actions.rs:290-294` | P3 time rebase |
+| 16 | `r1-mechanical-fixes` P6 NPC deceased archive DB-open rollback | SQLite `npc_deceased_index` + zstd archive bundle | production `persist_npc_deceased_archive` 先写 bundle，再在 transaction 内 upsert index + 删除 hot rows；DB/transaction 失败回滚旧 bundle | `load_npc_deceased_archive` 可读 index + 解压/解码，但当前仅测试调用 | terminated NPC 由 periodic persistence system 归档；无 production archive rehydrate/restore consumer | `server/src/persistence/mod.rs:4415-4475,4635-4697` | P1 mechanical split 保持现有 rollback；NPC archive owner 决定 production restore 语义 |
+| 17 | `r10-findings` #1 mineral shutdown flush | 同 mineral JSON | Update interval 已有 | startup hydrate 已有 | register 无 `Last`/`AppExit` | `server/src/mineral/mod.rs:69-108`；`server/src/mineral/persistence.rs:177-218` | P3 shutdown registry/flush |
+| 18 | `wounds-relog-full-heal` | **无 Wounds durable schema** | **无** | **无** | join/rebirth 均 `Wounds::default()`，重连满血缺口仍在 | `server/src/combat/components.rs:73-102`；`server/src/combat/mod.rs:171-184,197-200`；`server/src/combat/lifecycle.rs` | P2 新建 player Slice/load guard；**不得与 Lifecycle 混记** |
+| 19 | `player-slice-load-failure-clears` | 既有 player SQLite tables | 有 | 部分：KnownTechniques 有 `Loaded/LoadFailed` marker，其余多处 fallback/default | failure 后仍可能默认值覆盖 durable row | `server/src/player/state.rs:158,434-573`；`server/src/player/mod.rs:228-236,269-278` | P2 load guard + aggregate `WriteSet` omit |
+| 20 | `shelflife-clock-restart-freshness` | `Freshness` 随 `ItemInstance`/SQLite `inventories.inventory_json` 持久化；无独立 clock schema | `save_player_inventory_slice`/玩家聚合保存序列化 `created_at_tick` | inventory load 原样反序列化 `Freshness` | relog 可恢复物品；restart 时 `GameplayTick::default()` 归零，`effective_dt_ticks` 的 `saturating_sub` 把旧绝对 tick 钳为 0；无 clock hydrate/rebase | `server/src/shelflife/types.rs:175-205`；`server/src/shelflife/compute.rs:246-256`；`server/src/player/state.rs:486-496,792-830,1372-1438`；`server/src/player/gameplay.rs:137-167` | P3 clock/time rebase |
+| 21 | `recipe-unlock-shutdown-flush` | JSON `recipe_unlocks.json` | atomic tmp+rename | 有 | `AppExit → Last` 强制 flush 已接 | `server/src/craft/unlock.rs:17-18,180-205,220-259,266-301` | 已闭环；P5 仅归档 |
+| 22 | `heiwushi-dormant-identity-loss` | Redis `NPC_DORMANT_REDIS_KEY` 序列化 `NpcDormantSnapshot`；snapshot 无黑武士专属字段 | 通用 dehydrate/Redis dirty flush 会保存 snapshot，但不捕获 `HeiwushiMarker/State`、`FaunaTag/VisualKind`、thinker | Redis restore + hydrate 已有；`NpcArchetype::Beast` 固定走普通 `spawn_beast_npc_at` | dormant/Redis restart wiring 存在，但 relog/hydrate 会把黑武士洗成普通 Beast | `server/src/npc/dormant/mod.rs:299-365,392-450`；`server/src/npc/hydrate/mod.rs:388-469,721-750`；`server/src/network/redis_bridge.rs:1793-1829` | NPC virtualization owner 补专属 roundtrip；R3 仅提供 adapter/ACK 原语 |
+| 23 | `placeable-entity-restart-loss` | 无 placed-entity durable schema；`WorkbenchBlock`/`ContainerBlock`/`ExternalContainer.items` 仅 ECS | 放置先扣 inventory 并 spawn entity，无 placed record/content save | 无 | startup persistence bootstrap 不 hydrate workbench/container；restart 后本体与箱内内容丢失 | `server/src/world/block_place.rs:213-275,463-500`；`server/src/craft/workbench.rs:34-43,89-112`；`server/src/world/container_block.rs:119-171`；`server/src/inventory/external_container.rs:36-58` | world/container lifecycle owner 建 schema、hydrate 与原子 move；R3 仅原语 |
+| 24 | `scatter-bead-burial-restart-loss` | 无 durable schema；`ScatterBeadBurials` 为内存 Resource | 埋设只 `insert` 内存 burial/ledger source，无 durable save | 无 | zhenfa register 每次 `ScatterBeadBurials::default()`；restart 后 trigger/excretion 均无记录 | `server/src/zhenfa/mod.rs:174-229,601-606,2489-2526,2570-2714` | zhenfa + qi-ledger owner 建稳定 owner/id、hydrate/flush 与守恒补算；R3 仅原语 |
+| 25 | `surface-stash-lifecycle-volatile` | 无 durable schema；`SurfaceStashPlayerLimit`、`PoiRespawnStore` 与 `LootContainer.depleted` 仅内存/ECS | 搜索完成只改 `depleted` + 内存计数 | 无 | 同进程 respawn 只 mark refreshed、不恢复容器；restart startup scatter 重建 `depleted=false` 且限频归零 | `server/src/world/tsy_container_search.rs:168-220,377-388,589-599`；`server/src/world/poi_respawn_tick.rs:45-115`；`server/src/world/poi_novice.rs:614-701`；`server/src/world/tsy_container.rs:124-158` | TSY/onboarding owner 建稳定 POI lifecycle/限频 Slice；R3 仅原语 |
+| 26 | `coffin-offline-reclaim-respawn-dup` | SQLite `player_lifespan.in_coffin/coffin_grade`；`CoffinRegistry` 本体仅内存 | disconnect `save_player_slices_with_coffin` 写 `in_coffin=true`，随后 runtime `clear_player` 清占用 | join load 后 `reclaim_occupied` 可从持久态重建 registry 记录 | relog wiring 存在但持久态与 runtime cleanup 冲突；缺棺时 `reclaim_occupied` 可凭空补 registry，marker 后续重生 | `server/src/player/state.rs:681-707`；`server/src/player/mod.rs:206-305,463-525`；`server/src/coffin/mod.rs:200-232,1040-1071` | coffin/session-lifecycle owner 裁决离线占用语义；P3 authority/handoff 只提供一致性原语 |
+| 27 | `stale-spirit-niche-lifecycle` | SQLite `social_spirit_niches` 已存在 | `persist_social_spirit_niche` 已 upsert | owner 单行 load + startup `load_all_social_spirit_niches` hydrate 已有 | restart 会恢复所有旧角色 niche；新角色只清 runtime `spawn_anchor`，未删旧 owner 行；旧 niche reveal 按 username 清当前 shrine anchor | `server/src/persistence/mod.rs:1608-1631`；`server/src/social/mod.rs:397-417,2189-2278,2851-2944,3205-3244`；`server/src/combat/lifecycle.rs:1803-1863` | social/new-character-lifecycle owner 修角色轮换/删除与 reveal 校验；R3 仅原语 |
 
-### R3 只提供 persistence adapter/原语，业务修复拆回领域 owner
+Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifecycle` 已具备 save/load、combat join hydrate、disconnect/`Last`/autosave wiring（`server/src/persistence/mod.rs:2350-2380`；`server/src/player/state.rs:603-632,1951-2022,2262-2281`；`server/src/combat/mod.rs:96-148`；`server/src/player/mod.rs:463-517,535-688,867-884`）。其剩余问题是 load error 仍 warn 后 default，待 P2 纳入 `Failed` provenance/`WriteBlocked`；这与第 18 项 **Wounds 完全未持久化** 是两条独立事实。
 
-- heiwushi-dormant-identity-loss → NPC virtualization；
-- placeable-entity-restart-loss → world/container lifecycle；
-- scatter-bead-burial-restart-loss → zhenfa + qi ledger；
-- surface-stash-lifecycle-volatile → TSY/onboarding；
-- coffin-offline-reclaim-respawn-dup → coffin/session lifecycle；
-- stale-spirit-niche-lifecycle → social/new-character lifecycle。
-
-这六项仍可使用 R3 的 snapshot/hydrate/flush 原语，但不得把实体重建、所有权、守恒或角色轮换语义塞进通用持久层。
+第 22–27 项可以使用 R3 的 snapshot/hydrate/flush 原语，但通用持久层不得自称已完成其 schema、实体重建、所有权、守恒或角色轮换语义；各领域 owner 必须在自己的 production 链与验收中闭环。
 
 ## 文件所有权与边界
 
@@ -101,11 +120,11 @@
 ### #2 Load guard：读取结果与写资格分离
 
 **决议**：
-1. 统一三态为 `SliceLoad<T, E> = Missing | Loaded(T) | Failed(E)`。只有连接成功、查询成功且确认无行才是 `Missing`；连接/SQL/解码/校验失败一律是 `Failed`。
+1. 统一三态由 opaque `SliceLoad<T, E>` 表达：公开 API 仅有 `missing`、`loaded`、`failed` 构造器与只读 `SliceLoadStatus` 查询；payload-bearing `Missing | Loaded(T) | Failed(E)` state 留在 persistence trust boundary 内。只有连接成功、查询成功且确认无行才是 `Missing`；连接/SQL/解码/校验失败一律是 `Failed`。
 2. `Missing` 与 `Loaded` 可写；`Failed` 即使为维持会话创建 runtime default，也必须携带 `WriteBlocked` provenance。即时 Changed、周期 autosave、disconnect、shutdown、export 与聚合 transaction 全部只能通过 `GuardedSlice::write_permit` 取得不可直接构造的 writer permit；公开 API 不提供丢弃 load provenance 的拆解入口，新会话成功重载才恢复写资格。
 3. 默认体验为**按 slice 降级**：展示/非关键 slice 可只读运行；core、inventory、craft、lifespan/Lifecycle、cultivation/qi 等高价值或跨 slice mutation 在依赖集读取失败时拒绝可变 gameplay。关键世界账本使用 `RefuseStartup`。自动回滚整库备份不进入在线加载路径，只保留人工审计恢复。
 
-**落点**：`server/src/player/state.rs:173-182`、`server/src/player/mod.rs:463-501,645-683`（KnownTechniques 正向范式）；`server/src/player/state.rs:434-573`（待推广 fallback）；plan §阶段 P2、§bot 验收场景 #3。
+**落点**：`server/src/player/state.rs:173-182`、`server/src/player/mod.rs:463-501,645-683`（KnownTechniques 正向范式）；`server/src/player/state.rs:434-573`（待推广 fallback）；plan §阶段 P2、§bot 验收场景 #4。
 
 ### #3 Shutdown registry：复用 `AppExit → Last`，失败隔离
 
@@ -114,7 +133,7 @@
 2. dispatcher 复制已排序 descriptor 列表后再逐个调用 hook，避免持有 registry 的 World borrow 时再次可变借用 World；返回汇总报告 `attempted/clean/flushed/blocked/failures`。
 3. 单个 hook 失败不得中断后续 slice；失败必须保留 dirty 和旧文件/旧行。P0 只冻结和测试 dispatcher，不注册生产 slice；P3 迁移时逐域“移除旧 hook → 注册 registry”，禁止双写。
 
-**落点**：`server/src/shutdown.rs:43-74,247-375`；`server/src/craft/unlock.rs:282-301,1209-1337`；`server/src/persistence/mod.rs:921-977`；plan §阶段 P3、§bot 验收场景 #2。
+**落点**：`server/src/shutdown.rs:43-74,247-375`；`server/src/craft/unlock.rs:282-301,1209-1337`；`server/src/persistence/mod.rs:921-977`；plan §阶段 P3、§bot 验收场景 #3。
 
 ### #4 Tick rebase：每个 Slice 声明时间语义
 
@@ -123,7 +142,7 @@
 2. deadline 持久化 `remaining_ticks + saved_at_wall + offline_policy`：online-only 重建为 `new_tick + remaining`；offline-continuous 先按 `MILLIS_PER_TICK` 扣除 wall elapsed，再重建本地 deadline。age/elapsed 使用 observed age + pending elapsed；history/audit tick 不参与新进程 deadline 比较。
 3. rebase 在 hydrate 后、首个 live Update 前只执行一次。旧 raw deadline 无法精确恢复时必须写明保守迁移，不得伪造精确值。
 
-**落点**：`server/src/time.rs:1`；`server/src/persistence/mod.rs:773-784,2860-2959`（void action hydrate 与存取/恢复反例）；`server/src/mineral/persistence.rs:57-71,180-259`（mineral 反例）；`server/src/world/heartbeat.rs:491-584,3025-3153`（正向范式）；plan §阶段 P3、§bot 验收场景 #4。
+**落点**：`server/src/time.rs:1`；`server/src/persistence/mod.rs:773-784,2860-2959`（void action hydrate 与存取/恢复反例）；`server/src/mineral/persistence.rs:57-71,180-259`（mineral 反例）；`server/src/world/heartbeat.rs:491-584,3025-3153`（正向范式）；plan §阶段 P3、§bot 验收场景 #5。
 
 ### #5 Autosave 竞态：write authority + dirty revision/CAS
 
@@ -148,10 +167,10 @@
 **决议**：
 1. 同一持久化主体在同一 schedule tick 内出现 disconnect 与 reconnect 时，必须同步完成旧实体的 disconnect save，成功后才允许新实体 hydrate；保存失败则跳过载入并保留失败，禁止从旧 durable row 重建后继续运行。
 2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才对所有参与玩家重连的 descriptor 执行**只读** `reconnect_preflight`。任一 preflight blocked/failed 时，旧 activation/lease 全部原样保留且零 hydrate；全量 preflight 成功后才用独立、无 blocked/error 返回通道的 `reconnect_cleanup` 提交删除旧 activation（panic 视为 adapter 契约违规并 fail-fast）。所有 hydrate 成功后才按同一时钟快照运行 rebase。入口消费 persistence-private 的一次性 `ReconnectHandoffToken`，同一 generation 不可重复执行；hydrate/rebase fail-fast，失败或 blocked 时对所有已尝试 hydrate descriptor（包括 hook 激活后才返回失败者）以 `ReconnectAbort` 逆序调用同一 cleanup，随后复核所有 subject/domain lease 均已释放；残留以 `DuplicateSubject` fail-closed，干净时才允许同一稳定主体重试。
-3. P1/P2 真实玩家接线必须使用该 handoff 入口，不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设。一次性 generation 只约束已经 mint 的 token；真实 lifecycle adapter 必须按稳定 reconnect event ID 去重，同一上游事件只 mint/dispatch 一次。
+3. P2 只把玩家 Slice adapter 改成消费 hook 生命周期内借用、不可克隆的 subject-bound activation capability；P3 才把真实 player lifecycle 接到一次性 handoff dispatcher，并按稳定 reconnect event ID 去重，使同一上游事件只 mint/dispatch 一次。两阶段都不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设；一次性 generation 只约束已经 mint 的 token。
 4. 所有该主体/domain 的 disconnect save 成功后、任何 hydrate 前，adapter 必须把“能否同步释放旧 activation”的可失败检查放进只读签名 `reconnect_preflight: fn(&World, ...)`；registry 校验所有参与玩家 reconnect 的 descriptor 必须同时提供 preflight 与无 blocked/error 返回通道的 `reconnect_cleanup`。只有全量 preflight 成功后 dispatcher 才统一 cleanup；cleanup 必须同步释放对应 state、可幂等处理 `ReconnectCleanup`（旧 activation 提交）与 `ReconnectAbort`（本轮新 activation 回滚），panic 视为 adapter 契约违规。cleanup/abort 返回后若仍残留 lease，以 `DuplicateSubject` fail-closed，禁止框架强制 revoke 后并存双 writer。
 
-**落点**：`server/src/persistence/slice.rs:129-235,555-560,724-971,2226-3135` 的 `SliceRunReason::{DisconnectSave,ReconnectPreflight,ReconnectCleanup,ReconnectLoad,ReconnectAbort}`、`SlicePreflightHook`、`SliceDescriptor::{disconnect_save,reconnect_preflight,reconnect_cleanup}`、`dispatch_reconnect_handoff` 与真实 activation contract pins；plan §阶段 P0/P2、§bot 验收场景 #2。
+**落点**：`server/src/persistence/slice.rs` 的 `SliceRunReason::{DisconnectSave,ReconnectPreflight,ReconnectCleanup,ReconnectLoad,ReconnectAbort}`、`ReconnectActivationCapability`、`SlicePreflightHook`、`SliceDescriptor::{disconnect_save,reconnect_preflight,reconnect_cleanup}`、`dispatch_reconnect_handoff` 与真实 activation contract pins；plan §阶段 P0/P2/P3、§bot 验收场景 #2。
 
 ### #8 时间 / deadline 测试：只用注入时钟（#1289 review 继承项）
 
@@ -159,7 +178,7 @@
 1. Slice dispatcher 不直接读取 wall clock；统一消费 `SliceClock` 注入的 `runtime_tick` 与 `wall_unix_millis`。测试使用 `FixedClock`，精确固定边界两侧的毫秒值。
 2. deadline rebase helper继续接受显式时间参数；contract pins 禁止调用 `SystemTime::now()`、`Instant::now()` 或依赖测试执行恰好未跨秒的 exact assertion。
 3. 生产 adapter 在调用边界采样一次时间后注入；同一 dispatch 内复用该快照，避免一次操作跨秒得到不一致字段。
-**落点**：`server/src/persistence/slice.rs:144-150,523-559,614-725,1389-1433,1441-1463,2397-2438` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #4。
+**落点**：`server/src/persistence/slice.rs` 的 `SliceClock`、`dispatch_shutdown_flushes`、`dispatch_reconnect_handoff`、显式时间参数 rebase helper、`FixedClock` 与 deadline contract pin；plan §阶段 P0/P3、§bot 验收场景 #5。
 
 ## §10 实施工作流
 
@@ -169,7 +188,7 @@
 2. **PR-P2 玩家 load guard 推广**：依赖 P1；按价值域逐批接 KnownTechniques、Lifecycle、Wounds、core/position/inventory/cultivation/craft 等真实 adapter，所有连接/SQL/解码失败保留 `Failed` provenance，聚合 transaction 按 `WriteSet` omit 被阻断 slice。
 3. **PR-P3 shutdown/reconnect/time/write authority**：依赖 P2；逐域执行“移除旧 hook → 注册 registry”，接入 `AppExit → Last`、一次性 reconnect handoff、deadline rebase、payload-bound snapshot 和 serialized/CAS writer，禁止新旧 hook 双注册。
 4. **PR-P4 遗漏运行态持久化**：依赖 P3；补 ActiveEvents、TiandaoAttention、长期 consumable/buff、realm taint、season override、supply cooldown、灵眼等真实 Slice；实体重建、所有权与守恒仍归领域 owner。
-5. **PR-P5 restart Bot 验收 + 吸收归档**：依赖 P4；跑 `restart_player_slices`、`same_tick_reconnect_handoff`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`、`restart_qi_conservation`，核验 25 项吸收清单后补 `## Finish Evidence` 并归档到 `docs/finished_plans/`。
+5. **PR-P5 restart Bot 验收 + 吸收归档**：依赖 P4；跑 `restart_player_slices`、`same_tick_reconnect_handoff`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`、`restart_qi_conservation`，核验 27 项吸收清单后补 `## Finish Evidence` 并归档到 `docs/finished_plans/`。
 
 每个 PR 由独立 fresh-context `claude` 实施 subagent 在本 R3 worktree 完成实现、测试、commit/push/PR；每个逻辑单元必须使用中文 atomic commit，每个 agent 生成的 commit 必须写入真实执行模型 ID 的 `Model:` trailer 与 `Co-Authored-By: Claude <noreply@anthropic.com>`，该 commit trailer 与启动配置中的 `model: "opus"` 是两项独立门禁、不得混用或省略。主线协调器只接收 200–500 token 结论并负责跨 PR 编排与 review 等待，实施 subagent 不跨调用等待 review，也不得并行实施相邻阶段。启动配置遵循 `Agent(subagent_type: "claude", model: "opus", prompt: "<本 PR 精确范围、前置依赖、门禁与禁改边界>\n\nultrathink")`；共享本 worktree，不创建 nested worktree。返工使用新的独立 subagent，从 PR 精确 HEAD 继续且不得重复 promotion/归档。
 
