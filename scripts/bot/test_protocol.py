@@ -57,6 +57,11 @@ from bot.scenarios.combat_skill_cast import (  # noqa: E402
     _is_dugu_audio_play,
     _wait_successful_cast_sequence,
 )
+from bot.scenarios.cultivation_breakthrough import (  # noqa: E402
+    PHASES as BREAKTHROUGH_PHASES,
+    _wait_authoritative_realm,
+    _wait_cinematic_terminal,
+)
 from bot.scenarios.cultivation_realm_qi import (  # noqa: E402
     _chat_after,
     _successful_command_and_chat,
@@ -2916,6 +2921,139 @@ class CombatSkillCastScenarioTest(unittest.TestCase):
             _assert_binding_feedback(_FakeBot([]), event)
 
 
+class CultivationBreakthroughScenarioTest(unittest.TestCase):
+    @staticmethod
+    def _cinematic(
+        t: float,
+        phase: str,
+        at_tick: int,
+        *,
+        actor_id: str = "offline:Break",
+        realm_from: str = "Awaken",
+        realm_to: str = "Induce",
+        result: str = "success",
+        interrupted: bool = False,
+    ) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "server_data",
+            {
+                "payload_type": "breakthrough_cinematic",
+                "payload": {
+                    "type": "breakthrough_cinematic",
+                    "actor_id": actor_id,
+                    "phase": phase,
+                    "phase_tick": 0,
+                    "realm_from": realm_from,
+                    "realm_to": realm_to,
+                    "result": result,
+                    "interrupted": interrupted,
+                    "at_tick": at_tick,
+                },
+            },
+        )
+
+    def test_terminal_wait_requires_same_identity_and_ordered_aftermath(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        ignored = [
+            self._cinematic(2.5, "charge", 160, actor_id="offline:Other"),
+            self._cinematic(2.6, "charge", 160, realm_to="Condense"),
+            self._cinematic(2.7, "charge", 160, result="failure"),
+        ]
+        phases = [
+            self._cinematic(float(index + 3), phase, 100 + index * 10)
+            for index, phase in enumerate(BREAKTHROUGH_PHASES[1:], 1)
+        ]
+
+        terminal = _wait_cinematic_terminal(_FakeBot(ignored + phases), initial)
+        self.assertEqual(terminal["phase"], "aftermath")
+        self.assertEqual(terminal["result"], "success")
+
+    def test_terminal_wait_rejects_identity_drift_on_remaining_chain(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        cases = (
+            {"realm_from": "Induce"},
+            {"realm_to": "Condense"},
+            {"result": "failure"},
+            {"interrupted": True},
+        )
+        for drift in cases:
+            with self.subTest(drift=drift):
+                phases = [
+                    self._cinematic(
+                        float(index + 3),
+                        phase,
+                        100 + index * 10,
+                        **(drift if phase == "charge" else {}),
+                    )
+                    for index, phase in enumerate(BREAKTHROUGH_PHASES[1:], 1)
+                ]
+                with self.assertRaisesRegex(AssertionError, "charge"):
+                    _wait_cinematic_terminal(_FakeBot(phases), initial)
+
+    def test_terminal_wait_accepts_failure_and_interrupted_identities(self):
+        for result, interrupted in (("failure", False), ("interrupted", True)):
+            with self.subTest(result=result, interrupted=interrupted):
+                initial = self._cinematic(
+                    2.0, "prelude", 100, result=result, interrupted=interrupted
+                )
+                phases = [
+                    self._cinematic(
+                        float(index + 3),
+                        phase,
+                        100 + index * 10,
+                        result=result,
+                        interrupted=interrupted,
+                    )
+                    for index, phase in enumerate(BREAKTHROUGH_PHASES[1:], 1)
+                ]
+                terminal = _wait_cinematic_terminal(_FakeBot(phases), initial)
+                self.assertEqual(terminal["result"], result)
+                self.assertIs(terminal["interrupted"], interrupted)
+
+    def test_terminal_wait_rejects_missing_or_out_of_order_phase(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        without_catalyze = [
+            self._cinematic(3.0, "charge", 110),
+            self._cinematic(4.0, "apex", 120),
+            self._cinematic(5.0, "aftermath", 130),
+        ]
+        with self.assertRaisesRegex(AssertionError, "catalyze"):
+            _wait_cinematic_terminal(_FakeBot(without_catalyze), initial)
+
+    def test_terminal_wait_rejects_non_monotonic_at_tick(self):
+        initial = self._cinematic(2.0, "prelude", 100)
+        phases = [
+            self._cinematic(3.0, "charge", 110),
+            self._cinematic(4.0, "catalyze", 110),
+            self._cinematic(5.0, "apex", 120),
+            self._cinematic(6.0, "aftermath", 130),
+        ]
+        with self.assertRaisesRegex(BotAssertionError, "at_tick 必须严格递增"):
+            _wait_cinematic_terminal(_FakeBot(phases), initial)
+
+    def test_authoritative_realm_wait_skips_old_and_wrong_realm(self):
+        old = _FakeEvent(
+            1.0,
+            "server_data",
+            {"payload_type": "player_state", "payload": {"realm": "Induce"}},
+        )
+        wrong = _FakeEvent(
+            2.0,
+            "server_data",
+            {"payload_type": "player_state", "payload": {"realm": "Awaken"}},
+        )
+        expected = _FakeEvent(
+            3.0,
+            "server_data",
+            {"payload_type": "player_state", "payload": {"realm": "Induce"}},
+        )
+        self.assertIs(
+            _wait_authoritative_realm(_FakeBot([old, wrong, expected]), 1.0, "Induce"),
+            expected,
+        )
+
+
 class InventoryContainerSourceKindTest(unittest.TestCase):
     def test_accepts_semantically_equivalent_storage_crate_json(self):
         bot = types.SimpleNamespace(username="Fake")
@@ -4948,6 +5086,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "Bot envelope 分发常量必须与权威 ServerDataEnvelope.player_state 对齐",
         )
         self.assertEqual(
+            _proto_field_signature(player_state, "realm"),
+            ("Realm", proto_min.PLAYER_STATE_REALM_FIELD),
+            "Bot realm 常量及 varint wire type 必须与权威 PlayerState 对齐",
+        )
+        self.assertEqual(
             _proto_field_signature(player_state, "spirit_qi"),
             ("double", proto_min.PLAYER_STATE_SPIRIT_QI_FIELD),
             "Bot spirit_qi 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
@@ -4958,10 +5101,56 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             "Bot spirit_qi_max 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
         )
 
+    def test_player_state_realm_decoder_matches_authoritative_enum(self):
+        common_proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/common.proto"
+        common_source = common_proto_path.read_text(encoding="utf-8")
+        realm_body = re.search(
+            r"\benum\s+Realm\s*\{(?P<body>.*?)\}",
+            common_source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(realm_body, "权威 common.proto 必须声明 Realm enum")
+        authoritative = {
+            int(number): name.removeprefix("REALM_").title()
+            for name, number in re.findall(
+                r"^\s*(REALM_[A-Z_]+)\s*=\s*(\d+)\s*;",
+                realm_body.group("body"),
+                flags=re.MULTILINE,
+            )
+        }
+        self.assertEqual(
+            proto_min.PLAYER_STATE_REALM_NAMES,
+            authoritative,
+            "Bot PlayerState realm 名称映射必须完全派生自权威 Realm enum",
+        )
+        for wire_value, expected_name in authoritative.items():
+            with self.subTest(wire_value=wire_value):
+                msg = _pb_varint_field(proto_min.PLAYER_STATE_REALM_FIELD, wire_value)
+                decoded = proto_min.decode_server_data_envelope(
+                    _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+                )
+                self.assertEqual(decoded["realm"], expected_name)
+
+    def test_player_state_unknown_realm_stays_observable(self):
+        msg = _pb_varint_field(proto_min.PLAYER_STATE_REALM_FIELD, 77)
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
+        self.assertEqual(decoded["realm"], "unknown_77")
+
+    def test_player_state_wrong_realm_wire_type_uses_default(self):
+        msg = _pb_len_field(proto_min.PLAYER_STATE_REALM_FIELD, b"Induce")
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
+        )
+        self.assertEqual(decoded["realm"], "Unspecified")
+
     def test_player_state_tag5_decodes_authoritative_qi(self):
-        msg = _pb_fixed64(
-            proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65.0
-        ) + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100.0)
+        msg = (
+            _pb_varint_field(proto_min.PLAYER_STATE_REALM_FIELD, 2)
+            + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_FIELD, 65.0)
+            + _pb_fixed64(proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD, 100.0)
+        )
         decoded = proto_min.decode_server_data_envelope(
             _pb_message(proto_min.SERVER_DATA_PLAYER_STATE_FIELD, msg)
         )
@@ -4973,6 +5162,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
             decoded["type"],
             "player_state",
             f"envelope tag 5 应分发到 player_state，实际 payload={decoded}",
+        )
+        self.assertEqual(
+            decoded["realm"],
+            "Induce",
+            f"PlayerState.realm 必须读取 varint field 2，实际 payload={decoded}",
         )
         self.assertEqual(
             decoded["spirit_qi"],
@@ -4992,6 +5186,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertIsNotNone(
             decoded,
             "空 player_state message 仍是合法 protobuf，实际返回 None",
+        )
+        self.assertEqual(
+            decoded["realm"],
+            "Unspecified",
+            f"缺失 varint field 2 应使用 protobuf 默认 0，实际 payload={decoded}",
         )
         self.assertEqual(
             decoded["spirit_qi"],

@@ -13,17 +13,19 @@ from bot.bot import BotAssertionError
 
 from ._combat_helpers import last_event_time
 
-DESCRIPTION = "breakthrough_request 产生结构化 breakthrough_cinematic，而非字节/chat 假阳性"
+DESCRIPTION = "breakthrough_request 产生完整 cinematic 阶段链，并与权威 player_state realm 一致"
 MODULES = ["cultivation", "network"]
 
 BREAKTHROUGH_REQUEST = {"type": "breakthrough_request", "v": 1}
+PHASES = ("prelude", "charge", "catalyze", "apex", "aftermath")
+TERMINAL_TIMEOUT_SECONDS = 35.0
 
 
 def _cinematic_after(event, sent_at: float) -> bool:
     return (
         event.kind == "server_data"
         and event.t > sent_at
-        and event.data["payload_type"] == "breakthrough_cinematic"
+        and event.data.get("payload_type") == "breakthrough_cinematic"
     )
 
 
@@ -81,6 +83,67 @@ def _assert_initial_cinematic(bot, payload: dict) -> None:
         )
 
 
+def _is_matching_phase(event, after: float, identity: dict, phase: str) -> bool:
+    if not _cinematic_after(event, after):
+        return False
+    payload = event.data.get("payload")
+    return (
+        isinstance(payload, dict)
+        and payload.get("actor_id") == identity["actor_id"]
+        and payload.get("realm_from") == identity["realm_from"]
+        and payload.get("realm_to") == identity["realm_to"]
+        and payload.get("result") == identity["result"]
+        and payload.get("interrupted") is identity["interrupted"]
+        and payload.get("phase") == phase
+        and payload.get("phase_tick") == 0
+    )
+
+
+def _wait_cinematic_terminal(bot, initial_event):
+    initial = initial_event.data["payload"]
+    identity = {
+        "actor_id": initial["actor_id"],
+        "realm_from": initial["realm_from"],
+        "realm_to": initial["realm_to"],
+        "result": initial["result"],
+        "interrupted": initial["interrupted"],
+    }
+    previous = initial_event
+    phases = [initial]
+    for phase in PHASES[1:]:
+        current = bot.wait_for(
+            lambda observed, expected=phase, after=previous.t: _is_matching_phase(
+                observed, after, identity, expected
+            ),
+            timeout=TERMINAL_TIMEOUT_SECONDS,
+            description=(
+                "同一 breakthrough_cinematic 身份必须按序推进至 "
+                f"{phase}/phase_tick=0"
+            ),
+        )
+        payload = current.data["payload"]
+        if payload.get("at_tick", 0) <= phases[-1].get("at_tick", 0):
+            raise BotAssertionError(
+                f"[{bot.username}] cinematic.at_tick 必须严格递增："
+                f"上一阶段={phases[-1].get('at_tick')!r}，"
+                f"{phase}={payload.get('at_tick')!r}"
+            )
+        phases.append(payload)
+        previous = current
+    return phases[-1]
+
+
+def _wait_authoritative_realm(bot, sent_at: float, realm: str):
+    return bot.wait_for(
+        lambda event: event.kind == "server_data"
+        and event.t > sent_at
+        and event.data.get("payload_type") == "player_state"
+        and event.data.get("payload", {}).get("realm") == realm,
+        timeout=15.0,
+        description=f"breakthrough_request 后新 player_state 须携带权威 realm={realm}",
+    )
+
+
 def run(env) -> None:
     with env.new_bot("Break") as bot:
         bot.expect_event("game_join", timeout=15.0)
@@ -110,4 +173,11 @@ def run(env) -> None:
             ),
         )
         _assert_initial_cinematic(bot, event.data["payload"])
-        bot.assert_alive("breakthrough_request 结构化 cinematic 链路执行后")
+        terminal = _wait_cinematic_terminal(bot, event)
+        if terminal.get("result") != "success" or terminal.get("interrupted") is not False:
+            raise BotAssertionError(
+                f"[{bot.username}] 固定铺垫的醒灵→引气突破应成功完成，实际 "
+                f"result={terminal.get('result')!r} interrupted={terminal.get('interrupted')!r}"
+            )
+        _wait_authoritative_realm(bot, sent_at, "Induce")
+        bot.assert_alive("breakthrough_request 完整 cinematic 与权威 realm 链路执行后")

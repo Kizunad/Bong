@@ -23,8 +23,19 @@ ZONE_INFO_ACTIVE_EVENTS_FIELD = 5
 ZONE_INFO_PERCEPTION_TEXT_FIELD = 6
 
 SERVER_DATA_PLAYER_STATE_FIELD = 5
+PLAYER_STATE_REALM_FIELD = 2
 PLAYER_STATE_SPIRIT_QI_FIELD = 3
 PLAYER_STATE_SPIRIT_QI_MAX_FIELD = 11
+
+PLAYER_STATE_REALM_NAMES = {
+    0: "Unspecified",
+    1: "Awaken",
+    2: "Induce",
+    3: "Condense",
+    4: "Solidify",
+    5: "Spirit",
+    6: "Void",
+}
 
 SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
 
@@ -115,9 +126,11 @@ def _zone_info(data: bytes) -> dict[str, Any]:
 
 def _player_state(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
+    realm = _varint(fields, PLAYER_STATE_REALM_FIELD)
     return {
         "v": 1,
         "type": "player_state",
+        "realm": PLAYER_STATE_REALM_NAMES.get(realm, f"unknown_{realm}"),
         "spirit_qi": _double(fields, PLAYER_STATE_SPIRIT_QI_FIELD),
         "spirit_qi_max": _double(fields, PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
     }
