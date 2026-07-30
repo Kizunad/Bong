@@ -5,7 +5,7 @@
 //! must preserve without changing the existing SQLite ownership model.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -150,13 +150,33 @@ pub trait SliceClock {
 }
 
 /// Value-only context shared with exclusive-world slice adapters.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The context is intentionally not cloneable: a reconnect hydrate may borrow its
+/// subject-bound activation capability only for the synchronous hook invocation and
+/// cannot retain authority for later replay.
+#[derive(Debug)]
 pub struct SliceRunContext {
     pub reason: SliceRunReason,
     pub runtime_tick: u64,
     pub wall_unix_millis: u64,
     /// Stable persisted subject (for example a player identity) during handoff.
     pub handoff_key: Option<String>,
+    reconnect_activation: Option<ReconnectActivationCapability>,
+}
+
+impl SliceRunContext {
+    /// Persistence-private subject authority for a reconnect hydrate.
+    ///
+    /// The capability is minted by the one-shot handoff and cannot be constructed by
+    /// gameplay. Registry activation derives the stable key from it instead of accepting
+    /// an adapter-selected key.
+    pub(in crate::persistence) fn reconnect_activation(
+        &self,
+    ) -> Result<&ReconnectActivationCapability, SliceRunError> {
+        self.reconnect_activation
+            .as_ref()
+            .ok_or_else(|| SliceRunError::new("reconnect activation capability is unavailable"))
+    }
 }
 
 /// Successful observable result of a slice hook.
@@ -491,6 +511,17 @@ impl PersistenceSliceRegistry {
         active_subjects.contains_key(&(domain, subject_key.clone()))
     }
 
+    pub(in crate::persistence) fn active_subject_leases(
+        &self,
+    ) -> Result<HashSet<(WriteDomain, PersistenceSubjectKey)>, SliceDispatchError> {
+        let mut active_subjects = self
+            .active_subjects
+            .lock()
+            .map_err(|_| SliceDispatchError::PoisonedSubjectRegistry)?;
+        active_subjects.retain(|_, subject| subject.strong_count() > 0);
+        Ok(active_subjects.keys().cloned().collect())
+    }
+
     pub(in crate::persistence) fn registered_descriptor(
         &self,
         slice_id: SliceId,
@@ -509,6 +540,45 @@ impl PersistenceSliceRegistry {
         &self,
         load: SliceLoad<T, E>,
         slice_id: SliceId,
+        subject: &ReconnectActivationCapability,
+        initial_revision: DirtyRevision,
+        on_missing: impl FnOnce() -> T,
+        on_failed: impl FnOnce(&E) -> T,
+    ) -> Result<GuardedSlice<T, E>, SliceActivationError<E>> {
+        self.activate_subject(
+            load,
+            slice_id,
+            subject.subject_key().clone(),
+            initial_revision,
+            on_missing,
+            on_failed,
+        )
+    }
+
+    #[cfg(test)]
+    fn activate_test_subject<T, E>(
+        &self,
+        load: SliceLoad<T, E>,
+        slice_id: SliceId,
+        subject_key: PersistenceSubjectKey,
+        initial_revision: DirtyRevision,
+        on_missing: impl FnOnce() -> T,
+        on_failed: impl FnOnce(&E) -> T,
+    ) -> Result<GuardedSlice<T, E>, SliceActivationError<E>> {
+        self.activate_subject(
+            load,
+            slice_id,
+            subject_key,
+            initial_revision,
+            on_missing,
+            on_failed,
+        )
+    }
+
+    fn activate_subject<T, E>(
+        &self,
+        load: SliceLoad<T, E>,
+        slice_id: SliceId,
         subject_key: PersistenceSubjectKey,
         initial_revision: DirtyRevision,
         on_missing: impl FnOnce() -> T,
@@ -518,9 +588,7 @@ impl PersistenceSliceRegistry {
             .registered_descriptor(slice_id)
             .expect("persistence adapter must activate a registered slice descriptor");
         let descriptor = registered.descriptor;
-        if matches!(load, SliceLoad::Failed(_))
-            && descriptor.load_failure == LoadFailurePolicy::RefuseStartup
-        {
+        if load.is_failed() && descriptor.load_failure == LoadFailurePolicy::RefuseStartup {
             return load.refuse_startup(descriptor.id);
         }
 
@@ -603,6 +671,11 @@ pub struct ShutdownFlushReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliceDispatchError {
     MissingCanonicalRegistry,
+    PoisonedSubjectRegistry,
+    UnexpectedHydrateSubject {
+        slice_id: SliceId,
+        domain: WriteDomain,
+    },
     DuplicateSubject {
         slice_id: SliceId,
         domain: WriteDomain,
@@ -615,6 +688,14 @@ impl fmt::Display for SliceDispatchError {
             Self::MissingCanonicalRegistry => {
                 formatter.write_str("canonical persistence slice registry is not installed")
             }
+            Self::PoisonedSubjectRegistry => {
+                formatter.write_str("canonical persistence subject registry is poisoned")
+            }
+            Self::UnexpectedHydrateSubject { slice_id, domain } => write!(
+                formatter,
+                "slice `{slice_id}` activated an unexpected reconnect subject in domain `{}`",
+                domain.as_str()
+            ),
             Self::DuplicateSubject { slice_id, domain } => write!(
                 formatter,
                 "slice `{slice_id}` cannot hydrate while subject domain `{}` remains active",
@@ -649,6 +730,7 @@ pub fn dispatch_shutdown_flushes(
         runtime_tick: clock.runtime_tick(),
         wall_unix_millis: clock.wall_unix_millis(),
         handoff_key: None,
+        reconnect_activation: None,
     };
     let mut report = ShutdownFlushReport::default();
 
@@ -670,10 +752,22 @@ pub fn dispatch_shutdown_flushes(
     Ok(report)
 }
 
-/// One-shot authority to run a disconnect/reconnect handoff for one stable subject.
+/// One-shot subject-bound authority borrowed only during one reconnect hydrate hook.
 ///
-/// Only persistence adapters can mint this token. Dispatch consumes it, so the
-/// save/preflight/cleanup/hydrate/rebase lifecycle cannot run twice for one generation.
+/// No constructor, subject getter, `Clone`, or public path crosses the persistence
+/// boundary. The canonical registry can derive the subject but an adapter cannot
+/// choose, retain, or replay it.
+#[derive(Debug)]
+pub(in crate::persistence) struct ReconnectActivationCapability {
+    subject_key: PersistenceSubjectKey,
+}
+
+impl ReconnectActivationCapability {
+    fn subject_key(&self) -> &PersistenceSubjectKey {
+        &self.subject_key
+    }
+}
+
 #[derive(Debug)]
 pub(in crate::persistence) struct ReconnectHandoffToken {
     generation: u64,
@@ -686,8 +780,9 @@ static NEXT_HANDOFF_GENERATION: AtomicU64 = AtomicU64::new(1);
 pub(in crate::persistence) fn reconnect_handoff_token(
     handoff_key: impl Into<String>,
 ) -> ReconnectHandoffToken {
+    let generation = NEXT_HANDOFF_GENERATION.fetch_add(1, Ordering::Relaxed);
     ReconnectHandoffToken {
-        generation: NEXT_HANDOFF_GENERATION.fetch_add(1, Ordering::Relaxed),
+        generation,
         subject_key: PersistenceSubjectKey::new(handoff_key),
     }
 }
@@ -739,6 +834,55 @@ fn active_reconnect_lease(
     }))
 }
 
+fn reconnect_lease_snapshot(
+    world: &World,
+) -> Result<HashSet<(WriteDomain, PersistenceSubjectKey)>, SliceDispatchError> {
+    world
+        .get_resource::<PersistenceSliceRegistry>()
+        .ok_or(SliceDispatchError::MissingCanonicalRegistry)?
+        .active_subject_leases()
+}
+
+fn unexpected_hydrate_lease(
+    world: &World,
+    leases_before_hydrate: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
+    descriptors: &[&'static SliceDescriptor],
+    expected_subject: &PersistenceSubjectKey,
+) -> Result<Option<SliceDispatchError>, SliceDispatchError> {
+    let active = reconnect_lease_snapshot(world)?;
+    Ok(descriptors.iter().find_map(|descriptor| {
+        let domain = descriptor.write_binding.domain();
+        active
+            .iter()
+            .find(|lease| {
+                lease.0 == domain
+                    && lease.1 != *expected_subject
+                    && !leases_before_hydrate.contains(lease)
+            })
+            .map(|_| SliceDispatchError::UnexpectedHydrateSubject {
+                slice_id: descriptor.id,
+                domain,
+            })
+    }))
+}
+
+fn audit_aborted_hydrate_leases(
+    world: &World,
+    leases_before_hydrate: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
+    descriptors: &[&'static SliceDescriptor],
+    expected_subject: &PersistenceSubjectKey,
+) -> Result<(), SliceDispatchError> {
+    if let Some(error) =
+        unexpected_hydrate_lease(world, leases_before_hydrate, descriptors, expected_subject)?
+    {
+        return Err(error);
+    }
+    if let Some(error) = active_reconnect_lease(world, descriptors, expected_subject)? {
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn cleanup_reconnect_activations(
     world: &mut World,
     descriptors: &[&'static SliceDescriptor],
@@ -752,6 +896,7 @@ fn cleanup_reconnect_activations(
         runtime_tick,
         wall_unix_millis,
         handoff_key: handoff_key.clone(),
+        reconnect_activation: None,
     };
     let mut completed = 0;
     match reason {
@@ -825,6 +970,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             runtime_tick,
             wall_unix_millis,
             handoff_key: handoff_key.clone(),
+            reconnect_activation: None,
         };
         match save(world, &context) {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
@@ -853,6 +999,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             runtime_tick,
             wall_unix_millis,
             handoff_key: handoff_key.clone(),
+            reconnect_activation: None,
         };
         match preflight(world, &context) {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
@@ -886,6 +1033,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         return Err(error);
     }
 
+    let leases_before_hydrate = reconnect_lease_snapshot(world)?;
     let mut hydrated_descriptors = Vec::new();
     for descriptor in &descriptors {
         let Some(load) = descriptor.hydrate else {
@@ -893,11 +1041,15 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         };
         hydrated_descriptors.push(*descriptor);
         report.loads_attempted += 1;
+        let activation = ReconnectActivationCapability {
+            subject_key: subject_key.clone(),
+        };
         let context = SliceRunContext {
             reason: SliceRunReason::ReconnectLoad,
             runtime_tick,
             wall_unix_millis,
             handoff_key: handoff_key.clone(),
+            reconnect_activation: Some(activation),
         };
         match load(world, &context) {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
@@ -910,6 +1062,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 error,
             }),
         }
+        drop(context);
         if !report.blocked_loads.is_empty() || !report.failures.is_empty() {
             report.aborts_completed = cleanup_reconnect_activations(
                 world,
@@ -919,11 +1072,35 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 wall_unix_millis,
                 &handoff_key,
             );
-            if let Some(error) = active_reconnect_lease(world, &hydrated_descriptors, &subject_key)?
-            {
-                return Err(error);
-            }
+            audit_aborted_hydrate_leases(
+                world,
+                &leases_before_hydrate,
+                &hydrated_descriptors,
+                &subject_key,
+            )?;
             return Ok(report);
+        }
+        if let Some(error) = unexpected_hydrate_lease(
+            world,
+            &leases_before_hydrate,
+            &hydrated_descriptors,
+            &subject_key,
+        )? {
+            report.aborts_completed = cleanup_reconnect_activations(
+                world,
+                &hydrated_descriptors,
+                SliceRunReason::ReconnectAbort,
+                runtime_tick,
+                wall_unix_millis,
+                &handoff_key,
+            );
+            audit_aborted_hydrate_leases(
+                world,
+                &leases_before_hydrate,
+                &hydrated_descriptors,
+                &subject_key,
+            )?;
+            return Err(error);
         }
     }
 
@@ -937,6 +1114,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             runtime_tick,
             wall_unix_millis,
             handoff_key: handoff_key.clone(),
+            reconnect_activation: None,
         };
         match rebase(world, &context) {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
@@ -958,10 +1136,12 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 wall_unix_millis,
                 &handoff_key,
             );
-            if let Some(error) = active_reconnect_lease(world, &hydrated_descriptors, &subject_key)?
-            {
-                return Err(error);
-            }
+            audit_aborted_hydrate_leases(
+                world,
+                &leases_before_hydrate,
+                &hydrated_descriptors,
+                &subject_key,
+            )?;
             return Ok(report);
         }
     }
@@ -969,24 +1149,101 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
     Ok(report)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SliceLoad<T, E> {
+pub struct SliceLoad<T, E> {
+    state: SliceLoadInner<T, E>,
+}
+
+enum SliceLoadInner<T, E> {
     Missing,
     Loaded(T),
     Failed(E),
 }
 
+impl<T, E> fmt::Debug for SliceLoad<T, E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SliceLoad")
+            .field("status", &self.status())
+            .finish()
+    }
+}
+
+/// Payload-free read-only view of durable load provenance.
+///
+/// The wrapper deliberately exposes no pattern-matchable payload or consuming getter:
+///
+/// ```compile_fail
+/// use bong_server::persistence::slice::SliceLoad;
+///
+/// let load = SliceLoad::<u32, String>::failed("corrupt".to_owned());
+/// let SliceLoad::Failed(cause) = load;
+/// drop(cause);
+/// ```
+///
+/// ```compile_fail
+/// use bong_server::persistence::slice::SliceLoad;
+///
+/// let load = SliceLoad::<u32, String>::failed("corrupt".to_owned());
+/// let _cause = load.state;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliceLoadStatus {
+    Missing,
+    Loaded,
+    Failed,
+}
+
+impl<T, E> SliceLoad<T, E> {
+    pub const fn missing() -> Self {
+        Self {
+            state: SliceLoadInner::Missing,
+        }
+    }
+
+    pub const fn loaded(value: T) -> Self {
+        Self {
+            state: SliceLoadInner::Loaded(value),
+        }
+    }
+
+    pub const fn failed(error: E) -> Self {
+        Self {
+            state: SliceLoadInner::Failed(error),
+        }
+    }
+
+    pub const fn status(&self) -> SliceLoadStatus {
+        match &self.state {
+            SliceLoadInner::Missing => SliceLoadStatus::Missing,
+            SliceLoadInner::Loaded(_) => SliceLoadStatus::Loaded,
+            SliceLoadInner::Failed(_) => SliceLoadStatus::Failed,
+        }
+    }
+
+    pub const fn is_missing(&self) -> bool {
+        matches!(&self.state, SliceLoadInner::Missing)
+    }
+
+    pub const fn is_loaded(&self) -> bool {
+        matches!(&self.state, SliceLoadInner::Loaded(_))
+    }
+
+    pub const fn is_failed(&self) -> bool {
+        matches!(&self.state, SliceLoadInner::Failed(_))
+    }
+}
+
 /// Durable provenance retained beside the runtime value.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SliceLoadState<E> {
+enum GuardedLoadState<E> {
     Missing,
     Loaded,
     Failed(E),
 }
 
-/// Activation failures preserve either load provenance or canonical subject ownership.
+/// Activation failures returned only by persistence-private registry transitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SliceActivationError<E> {
+pub(in crate::persistence) enum SliceActivationError<E> {
     LoadFailed {
         slice_id: SliceId,
         cause: E,
@@ -1001,7 +1258,7 @@ pub enum SliceActivationError<E> {
 }
 
 impl<E> SliceActivationError<E> {
-    pub const fn slice_id(&self) -> SliceId {
+    pub(in crate::persistence) const fn slice_id(&self) -> SliceId {
         match self {
             Self::LoadFailed { slice_id, .. }
             | Self::DuplicateSubject { slice_id, .. }
@@ -1009,14 +1266,7 @@ impl<E> SliceActivationError<E> {
         }
     }
 
-    pub fn cause(&self) -> Option<&E> {
-        match self {
-            Self::LoadFailed { cause, .. } => Some(cause),
-            Self::DuplicateSubject { .. } | Self::PoisonedSubjectRegistry { .. } => None,
-        }
-    }
-
-    pub fn into_cause(self) -> Option<E> {
+    pub(in crate::persistence) fn cause(&self) -> Option<&E> {
         match self {
             Self::LoadFailed { cause, .. } => Some(cause),
             Self::DuplicateSubject { .. } | Self::PoisonedSubjectRegistry { .. } => None,
@@ -1063,7 +1313,7 @@ impl Eq for SliceSubject {}
 #[derive(Debug)]
 pub struct GuardedSlice<T, E> {
     value: T,
-    load_state: SliceLoadState<E>,
+    load_state: GuardedLoadState<E>,
     binding: WriteBinding,
     write_ordering: WriteOrdering,
     subject_key: PersistenceSubjectKey,
@@ -1074,9 +1324,11 @@ pub struct GuardedSlice<T, E> {
 
 impl<T, E> SliceLoad<T, E> {
     fn refuse_startup<R>(self, slice_id: SliceId) -> Result<R, SliceActivationError<E>> {
-        match self {
-            Self::Failed(cause) => Err(SliceActivationError::LoadFailed { slice_id, cause }),
-            Self::Missing | Self::Loaded(_) => {
+        match self.state {
+            SliceLoadInner::Failed(cause) => {
+                Err(SliceActivationError::LoadFailed { slice_id, cause })
+            }
+            SliceLoadInner::Missing | SliceLoadInner::Loaded(_) => {
                 unreachable!("refuse_startup is only called for a failed load")
             }
         }
@@ -1097,12 +1349,12 @@ impl<T, E> SliceLoad<T, E> {
         on_failed: impl FnOnce(&E) -> T,
     ) -> GuardedSlice<T, E> {
         let descriptor = registered.descriptor;
-        let (value, load_state) = match self {
-            Self::Missing => (on_missing(), SliceLoadState::Missing),
-            Self::Loaded(value) => (value, SliceLoadState::Loaded),
-            Self::Failed(error) => {
+        let (value, load_state) = match self.state {
+            SliceLoadInner::Missing => (on_missing(), GuardedLoadState::Missing),
+            SliceLoadInner::Loaded(value) => (value, GuardedLoadState::Loaded),
+            SliceLoadInner::Failed(error) => {
                 let value = on_failed(&error);
-                (value, SliceLoadState::Failed(error))
+                (value, GuardedLoadState::Failed(error))
             }
         };
         GuardedSlice {
@@ -1175,8 +1427,12 @@ impl<T, E> GuardedSlice<T, E> {
         &self.value
     }
 
-    pub fn load_state(&self) -> &SliceLoadState<E> {
-        &self.load_state
+    pub fn load_status(&self) -> SliceLoadStatus {
+        match &self.load_state {
+            GuardedLoadState::Missing => SliceLoadStatus::Missing,
+            GuardedLoadState::Loaded => SliceLoadStatus::Loaded,
+            GuardedLoadState::Failed(_) => SliceLoadStatus::Failed,
+        }
     }
 
     pub const fn binding(&self) -> WriteBinding {
@@ -1222,7 +1478,7 @@ impl<T, E> GuardedSlice<T, E> {
         tracker: &mut DirtyTracker,
         mutate: impl FnOnce(&mut T) -> R,
     ) -> Result<(DirtyRevision, R), GuardedSliceMutationError> {
-        if matches!(self.load_state, SliceLoadState::Failed(_)) {
+        if matches!(&self.load_state, GuardedLoadState::Failed(_)) {
             return Err(GuardedSliceMutationError::LoadFailed);
         }
         tracker.ensure_subject(self.binding, &self.subject)?;
@@ -1237,7 +1493,7 @@ impl<T, E> GuardedSlice<T, E> {
         &self,
         outlet: WriteOutlet,
     ) -> Result<SliceWritePermit<'_, T>, SliceWriteBlocked> {
-        if matches!(self.load_state, SliceLoadState::Failed(_)) {
+        if matches!(&self.load_state, GuardedLoadState::Failed(_)) {
             return Err(SliceWriteBlocked { outlet });
         }
         Ok(SliceWritePermit {
@@ -1819,7 +2075,7 @@ mod tests {
         let mut registry = Box::new(PersistenceSliceRegistry::empty());
         registry.register(descriptor).unwrap();
         let guarded = registry
-            .activate(
+            .activate_test_subject(
                 load,
                 descriptor.id,
                 subject_key(subject),
@@ -2285,7 +2541,9 @@ mod tests {
             .resource::<HandoffTrace>()
             .events
             .iter()
-            .all(|event| event.1 == 400 && event.2 == 49_999));
+            .all(|event| {
+                event.1 == 400 && event.2 == 49_999 && event.3 == "offline:clock_once"
+            }));
     }
 
     #[test]
@@ -2548,15 +2806,16 @@ mod tests {
 
     fn activate_partial_handoff_slice(
         world: &mut World,
+        context: &SliceRunContext,
         slice_id: SliceId,
     ) -> Result<HydratedActivation, SliceRunError> {
         world.resource_scope(
             |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
                 let mut guarded = registry
                     .activate(
-                        SliceLoad::<u32, &'static str>::Loaded(9),
+                        SliceLoad::<u32, &'static str>::loaded(9),
                         slice_id,
-                        subject_key("player:partial"),
+                        context.reconnect_activation()?,
                         DirtyRevision::new(4),
                         || 0,
                         |_| 0,
@@ -2577,7 +2836,7 @@ mod tests {
     fn hydrate_partial_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
         assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
         let slice_id = SliceId::new("player.partial_first");
-        let activation = activate_partial_handoff_slice(world, slice_id)?;
+        let activation = activate_partial_handoff_slice(world, context, slice_id)?;
         let mut state = world.resource_mut::<PartialHydrateState>();
         state.transitions.push((context.reason, slice_id));
         state.first = Some(activation);
@@ -2587,7 +2846,7 @@ mod tests {
     fn hydrate_partial_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
         assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
         let slice_id = SliceId::new("player.partial_second");
-        let activation = activate_partial_handoff_slice(world, slice_id)?;
+        let activation = activate_partial_handoff_slice(world, context, slice_id)?;
         let mut state = world.resource_mut::<PartialHydrateState>();
         state.transitions.push((context.reason, slice_id));
         state.second = Some(activation);
@@ -2734,14 +2993,14 @@ mod tests {
 
     impl Resource for AtomicReconnectState {}
 
-    fn make_real_activation(
+    fn make_test_activation(
         registry: &PersistenceSliceRegistry,
         slice_id: SliceId,
         subject: &str,
     ) -> RealReconnectActivation {
         let mut guarded = registry
-            .activate(
-                SliceLoad::<u32, &'static str>::Loaded(9),
+            .activate_test_subject(
+                SliceLoad::<u32, &'static str>::loaded(9),
                 slice_id,
                 subject_key(subject),
                 DirtyRevision::new(4),
@@ -2757,6 +3016,31 @@ mod tests {
             tracker,
             fence,
         }
+    }
+
+    fn make_handoff_activation(
+        registry: &PersistenceSliceRegistry,
+        context: &SliceRunContext,
+        slice_id: SliceId,
+    ) -> Result<RealReconnectActivation, SliceRunError> {
+        let mut guarded = registry
+            .activate(
+                SliceLoad::<u32, &'static str>::loaded(9),
+                slice_id,
+                context.reconnect_activation()?,
+                DirtyRevision::new(4),
+                || 0,
+                |_| 0,
+            )
+            .map_err(|_| SliceRunError::new("handoff activation rejected"))?;
+        let (tracker, fence) = guarded
+            .restore_persistence_state()
+            .map_err(|_| SliceRunError::new("handoff persistence state already issued"))?;
+        Ok(RealReconnectActivation {
+            guarded,
+            tracker,
+            fence,
+        })
     }
 
     fn activation_keeps_all_leases(activation: &RealReconnectActivation) -> bool {
@@ -2809,13 +3093,9 @@ mod tests {
         assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
         let activation = world.resource_scope(
             |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
-                make_real_activation(
-                    &registry,
-                    SliceId::new("player.atomic_first"),
-                    "player:atomic",
-                )
+                make_handoff_activation(&registry, context, SliceId::new("player.atomic_first"))
             },
-        );
+        )?;
         let mut state = world.resource_mut::<AtomicReconnectState>();
         state.hydrate_attempts += 1;
         state.new_first = Some(activation);
@@ -2826,13 +3106,9 @@ mod tests {
         assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
         let activation = world.resource_scope(
             |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
-                make_real_activation(
-                    &registry,
-                    SliceId::new("player.atomic_second"),
-                    "player:atomic",
-                )
+                make_handoff_activation(&registry, context, SliceId::new("player.atomic_second"))
             },
-        );
+        )?;
         let mut state = world.resource_mut::<AtomicReconnectState>();
         state.hydrate_attempts += 1;
         state.new_second = Some(activation);
@@ -2875,8 +3151,8 @@ mod tests {
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(first).unwrap();
         registry.register(second).unwrap();
-        let old_first = make_real_activation(&registry, first.id, "player:atomic");
-        let old_second = make_real_activation(&registry, second.id, "player:atomic");
+        let old_first = make_test_activation(&registry, first.id, "player:atomic");
+        let old_second = make_test_activation(&registry, second.id, "player:atomic");
         let mut world = World::new();
         world.insert_resource(registry);
         world.insert_resource(HandoffTrace::default());
@@ -3016,6 +3292,126 @@ mod tests {
     }
 
     #[derive(Debug, Default)]
+    struct ForeignHydrateState {
+        retained: Option<RealReconnectActivation>,
+        retain_on_abort: bool,
+        hydrate_attempts: usize,
+    }
+
+    impl Resource for ForeignHydrateState {}
+
+    fn foreign_subject_hydrate(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
+        let activation = world.resource_scope(
+            |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                make_test_activation(
+                    &registry,
+                    SliceId::new("player.foreign_subject"),
+                    "player:foreign",
+                )
+            },
+        );
+        let mut state = world.resource_mut::<ForeignHydrateState>();
+        state.hydrate_attempts += 1;
+        state.retained = Some(activation);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn foreign_subject_cleanup(world: &mut World, context: &SliceRunContext) {
+        assert!(matches!(
+            context.reason,
+            SliceRunReason::ReconnectCleanup | SliceRunReason::ReconnectAbort
+        ));
+        let mut state = world.resource_mut::<ForeignHydrateState>();
+        if context.reason == SliceRunReason::ReconnectAbort && !state.retain_on_abort {
+            state.retained = None;
+        }
+    }
+
+    #[test]
+    fn reconnect_hydrate_cannot_escape_handoff_subject_or_report_clean_retry() {
+        let descriptor = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(foreign_subject_hydrate),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(foreign_subject_cleanup),
+            ..basic_descriptor("player.foreign_subject", 10)
+        }));
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(descriptor).unwrap();
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(ForeignHydrateState {
+            retain_on_abort: true,
+            ..ForeignHydrateState::default()
+        });
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:stable"), &clock)
+            .expect_err("a hydrate cannot choose a subject outside its handoff capability");
+        assert_eq!(
+            error,
+            SliceDispatchError::UnexpectedHydrateSubject {
+                slice_id: descriptor.id,
+                domain: descriptor.write_binding.domain(),
+            }
+        );
+        let state = world.resource::<ForeignHydrateState>();
+        assert_eq!(state.hydrate_attempts, 1);
+        assert!(state.retained.is_some());
+        let registry = world.resource::<PersistenceSliceRegistry>();
+        assert!(registry.active_subject_domain(
+            &subject_key("player:foreign"),
+            descriptor.write_binding.domain(),
+        ));
+        assert!(!registry.active_subject_domain(
+            &subject_key("player:stable"),
+            descriptor.write_binding.domain(),
+        ));
+    }
+
+    #[test]
+    fn reconnect_foreign_subject_attempt_is_aborted_without_leaking_a_writer() {
+        let descriptor = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(foreign_subject_hydrate),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(foreign_subject_cleanup),
+            ..basic_descriptor("player.foreign_subject", 10)
+        }));
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(descriptor).unwrap();
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(ForeignHydrateState::default());
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:stable"), &clock)
+            .expect_err("a foreign hydrate must fail closed even when abort releases its lease");
+        assert_eq!(
+            error,
+            SliceDispatchError::UnexpectedHydrateSubject {
+                slice_id: descriptor.id,
+                domain: descriptor.write_binding.domain(),
+            }
+        );
+        assert!(world.resource::<ForeignHydrateState>().retained.is_none());
+        let registry = world.resource::<PersistenceSliceRegistry>();
+        assert!(!registry.active_subject_domain(
+            &subject_key("player:foreign"),
+            descriptor.write_binding.domain(),
+        ));
+        assert!(!registry.active_subject_domain(
+            &subject_key("player:stable"),
+            descriptor.write_binding.domain(),
+        ));
+    }
+
+    #[derive(Debug, Default)]
     struct HandoffActivationState {
         guarded: Option<GuardedSlice<u32, &'static str>>,
         tracker: Option<DirtyTracker>,
@@ -3060,8 +3456,8 @@ mod tests {
         registry.register(first).unwrap();
         registry.register(second).unwrap();
         let mut guarded = registry
-            .activate(
-                SliceLoad::<u32, &'static str>::Loaded(9),
+            .activate_test_subject(
+                SliceLoad::<u32, &'static str>::loaded(9),
                 second.id,
                 subject_key("player:activation"),
                 DirtyRevision::new(4),
@@ -3180,7 +3576,7 @@ mod tests {
         let descriptor = basic_descriptor("player.failed", 10);
         let (_registry, mut guarded) = activate(
             &descriptor,
-            SliceLoad::<u32, _>::Failed("invalid json"),
+            SliceLoad::<u32, _>::failed("invalid json"),
             "player:failed",
             DirtyRevision::new(7),
             || 1,
@@ -3189,10 +3585,7 @@ mod tests {
         let (mut tracker, _fence) = guarded.restore_persistence_state().unwrap();
         let mut mutation_called = false;
 
-        assert_eq!(
-            guarded.load_state(),
-            &SliceLoadState::Failed("invalid json")
-        );
+        assert_eq!(guarded.load_status(), SliceLoadStatus::Failed);
         assert_eq!(
             guarded.mutate(&mut tracker, |value| {
                 mutation_called = true;
@@ -3230,8 +3623,8 @@ mod tests {
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(descriptor).unwrap();
         let mut fallback_called = false;
-        let result = registry.activate(
-            SliceLoad::<u32, _>::Failed("corrupt ledger"),
+        let result = registry.activate_test_subject(
+            SliceLoad::<u32, _>::failed("corrupt ledger"),
             descriptor.id,
             subject_key("world:ledger"),
             DirtyRevision::default(),
@@ -3253,7 +3646,7 @@ mod tests {
         let descriptor = basic_descriptor("player.writable", 10);
         let (_missing_registry, missing) = activate(
             &descriptor,
-            SliceLoad::<u32, &str>::Missing,
+            SliceLoad::<u32, &str>::missing(),
             "player:missing",
             DirtyRevision::default(),
             || 7,
@@ -3261,7 +3654,7 @@ mod tests {
         );
         let (_loaded_registry, loaded) = activate(
             &descriptor,
-            SliceLoad::<u32, &str>::Loaded(9),
+            SliceLoad::<u32, &str>::loaded(9),
             "player:loaded",
             DirtyRevision::default(),
             || 0,
@@ -3269,10 +3662,10 @@ mod tests {
         );
 
         assert_eq!(*missing.value(), 7);
-        assert_eq!(missing.load_state(), &SliceLoadState::Missing);
+        assert_eq!(missing.load_status(), SliceLoadStatus::Missing);
         assert!(missing.write_permit(WriteOutlet::Autosave).is_ok());
         assert_eq!(*loaded.value(), 9);
-        assert_eq!(loaded.load_state(), &SliceLoadState::Loaded);
+        assert_eq!(loaded.load_status(), SliceLoadStatus::Loaded);
         assert!(loaded.write_permit(WriteOutlet::Shutdown).is_ok());
     }
 
@@ -3285,8 +3678,8 @@ mod tests {
         registry.register(second_descriptor).unwrap();
 
         let mut first = registry
-            .activate(
-                SliceLoad::<u32, &str>::Loaded(9),
+            .activate_test_subject(
+                SliceLoad::<u32, &str>::loaded(9),
                 first_descriptor.id,
                 subject_key("player:stable"),
                 DirtyRevision::new(4),
@@ -3294,8 +3687,8 @@ mod tests {
                 |_| 0,
             )
             .unwrap();
-        let duplicate = registry.activate(
-            SliceLoad::<u32, &str>::Loaded(10),
+        let duplicate = registry.activate_test_subject(
+            SliceLoad::<u32, &str>::loaded(10),
             second_descriptor.id,
             subject_key("player:stable"),
             DirtyRevision::new(4),
@@ -3311,8 +3704,8 @@ mod tests {
         ));
 
         let other_subject = registry
-            .activate(
-                SliceLoad::<u32, &str>::Loaded(11),
+            .activate_test_subject(
+                SliceLoad::<u32, &str>::loaded(11),
                 second_descriptor.id,
                 subject_key("player:other"),
                 DirtyRevision::new(4),
@@ -3324,8 +3717,8 @@ mod tests {
         let (tracker, fence) = first.restore_persistence_state().unwrap();
         drop(first);
 
-        let retained_tracker = registry.activate(
-            SliceLoad::<u32, &str>::Loaded(12),
+        let retained_tracker = registry.activate_test_subject(
+            SliceLoad::<u32, &str>::loaded(12),
             second_descriptor.id,
             subject_key("player:stable"),
             DirtyRevision::new(7),
@@ -3338,8 +3731,8 @@ mod tests {
         ));
         drop(tracker);
 
-        let retained_fence = registry.activate(
-            SliceLoad::<u32, &str>::Loaded(12),
+        let retained_fence = registry.activate_test_subject(
+            SliceLoad::<u32, &str>::loaded(12),
             second_descriptor.id,
             subject_key("player:stable"),
             DirtyRevision::new(7),
@@ -3353,8 +3746,8 @@ mod tests {
         drop(fence);
 
         let reactivated = registry
-            .activate(
-                SliceLoad::<u32, &str>::Loaded(12),
+            .activate_test_subject(
+                SliceLoad::<u32, &str>::loaded(12),
                 second_descriptor.id,
                 subject_key("player:stable"),
                 DirtyRevision::new(7),
@@ -3370,7 +3763,7 @@ mod tests {
         let descriptor = basic_descriptor("player.subject", 10);
         let (_first_registry, mut first) = activate(
             &descriptor,
-            SliceLoad::<u32, &str>::Loaded(9),
+            SliceLoad::<u32, &str>::loaded(9),
             "player:first",
             DirtyRevision::default(),
             || 0,
@@ -3378,7 +3771,7 @@ mod tests {
         );
         let (_second_registry, mut second) = activate(
             &descriptor,
-            SliceLoad::<u32, &str>::Loaded(9),
+            SliceLoad::<u32, &str>::loaded(9),
             "player:second",
             DirtyRevision::default(),
             || 0,
@@ -3451,7 +3844,7 @@ mod tests {
         let descriptor = basic_descriptor("player.dirty", 10);
         let (_registry, mut guarded) = activate(
             &descriptor,
-            SliceLoad::<u32, &str>::Loaded(9),
+            SliceLoad::<u32, &str>::loaded(9),
             "player:dirty",
             DirtyRevision::default(),
             || 0,
@@ -3536,8 +3929,8 @@ mod tests {
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(descriptor).unwrap();
         let mut guarded = registry
-            .activate(
-                SliceLoad::<u32, &str>::Loaded(9),
+            .activate_test_subject(
+                SliceLoad::<u32, &str>::loaded(9),
                 descriptor.id,
                 subject_key("player:bound"),
                 DirtyRevision::new(41),
@@ -3555,7 +3948,7 @@ mod tests {
         };
         let (_other_registry, mut other) = activate(
             &other_descriptor,
-            SliceLoad::<u32, &str>::Loaded(9),
+            SliceLoad::<u32, &str>::loaded(9),
             "player:other-binding",
             DirtyRevision::default(),
             || 0,
@@ -3620,7 +4013,7 @@ mod tests {
         let descriptor = basic_descriptor("player.overflow", 10);
         let (_registry, mut guarded) = activate(
             &descriptor,
-            SliceLoad::<u32, &str>::Loaded(9),
+            SliceLoad::<u32, &str>::loaded(9),
             "player:overflow",
             DirtyRevision::default(),
             || 0,
