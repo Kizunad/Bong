@@ -17,6 +17,7 @@
 
 - **进料**：`server/src/cultivation/tribulation.rs:860-1023` `start_tribulation_system` 计算 quota，并在 `:939-957,983-987` 为 accepted over-quota DuXu 插入 marker。
 - **出料**：`tribulation_wave_system` 在 `:3166-3258` 读取 marker 并追加 quota-origin JueBi；`juebi_settlement_system` 在 `:1900-2080` 使用并清理 marker。
+- **生产调度**：`server/src/main.rs:112` 调用 `cultivation::register`；`server/src/cultivation/mod.rs:216,428-469` 注册 producer、wave consumer、settlement 与 terminal cleanup 的顺序。竞态回归必须走该生产注册入口（或从它抽出的同一 production-owned helper），不得在测试里手拼另一套顺序。
 - **共享类型 / event**：复用 `JueBiAfterDuXuQuota`、`TribulationState`、`JueBiRuntimeContext`、`JueBiTriggerSource::VoidQuotaExceeded`；不另造状态机。
 - **跨仓库契约**：纯 server ECS 生命周期修复；不改 public IPC、agent/client 或 SQLite shape。
 - **worldview / qi_physics**：维持现有“超额 DuXu 后追加绝壁”与 qi ledger 语义；不改配额公式、绝壁强度或任何真元流。
@@ -43,11 +44,13 @@
 - [ ] `accepted_last_available_slot_clears_stale_quota_marker`
 - [ ] `accepted_first_over_quota_start_replaces_stale_quota_marker`
 - [ ] `rejected_duplicate_and_persist_failed_start_preserve_current_quota_marker`
+- [ ] `mismatched_attempt_marker_cannot_trigger_quota_juebi`
 - [ ] `old_terminal_cleanup_cannot_remove_new_attempt_quota_marker`
 - [ ] `terminal_quota_marker_cleanup_and_retry_matrix`
 - [ ] `quota_marker_survives_duxu_to_juebi_transition`
 - [ ] `quota_juebi_settlement_clears_follow_up_marker`
-- [ ] 回归须从真实 Bevy schedule 驱动；边界样例显式固定为 start 前 `occupied_slots + 1 == quota_limit`（本次占最后一个合法名额，不得留 marker）与 `occupied_slots == quota_limit`（第一个超额 attempt，必须创建/替换当前 identity marker），并断言 marker identity、`TribulationState.kind`、`JueBiTriggeredEvent`；对 cleanup 接入路径分别断言既有 DB 删除、惩罚、Qi ledger transaction、settlement event 与 lifecycle event 数量未因 marker 修复增加。
+- [ ] 回归须从 `cultivation::register` 的生产注册路径驱动；边界样例显式固定为 start 前 `occupied_slots + 1 == quota_limit`（本次占最后一个合法名额，不得留 marker）与 `occupied_slots == quota_limit`（第一个超额 attempt，必须创建/替换当前 identity marker）。新旧 marker 使用可区分的 quota snapshot，逐字段对拍当前 marker，并断言 quota-origin `JueBiTriggeredEvent.source/intensity` 与 `JueBiRuntimeContext` 均从当前 snapshot 派生；generation 不匹配的 marker 必须被清除且不得触发/进入 JueBi。
+- [ ] success、failure、fled/disconnect、intercept death 与 JueBi settlement 各路径须把修复前既有副作用固定为精确基线（不适用为 0、适用为 1），并在修复后严格相等：DB active-row 删除、惩罚、settlement/lifecycle event 对拍关键 identity/payload；Qi ledger 对拍账户、reason、方向与 amount，并断言 marker-only cleanup 为零新交易、余额不变且守恒。
 
 ## 可核验 symbols
 
