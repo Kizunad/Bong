@@ -278,6 +278,7 @@ rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
 SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
 SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
 SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$SUPERVISOR" \
 BONG_E2E_BUILD_TOKEN="$build_token" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
@@ -343,6 +344,7 @@ run_failed_parent_mode() {
     rm -f -- "$fake_pid_file"
     if FAKE_SUPERVISOR_MODE="$mode" \
         FAKE_SUPERVISOR_PID_FILE="$fake_pid_file" \
+        BONG_E2E_SUPERVISOR_TEST_MODE=1 \
         BONG_E2E_SUPERVISOR="$fake_supervisor" \
         BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
         BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$after_commit_hook" \
@@ -396,6 +398,7 @@ chmod +x "$no_ack_supervisor"
 rm -f -- "$fake_pid_file"
 stop_marker="$TEST_ROOT/fake-supervisor.stopped"
 FAKE_SUPERVISOR_PID_FILE="$fake_pid_file" \
+BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$no_ack_supervisor" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
 BONG_TEST_STOP_MARKER="$stop_marker" \

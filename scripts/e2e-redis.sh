@@ -859,9 +859,21 @@ start_server_process_group() {
   local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
   cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  supervisor="${BONG_E2E_SUPERVISOR:-$ROOT/scripts/lib/bong-process-group-supervisor.py}"
-  build_token="${BONG_E2E_BUILD_TOKEN:-$ROOT/scripts/build-token.sh}"
-  local server_directory="${BONG_E2E_SERVER_DIRECTORY:-$ROOT/server}"
+  supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
+  build_token="$ROOT/scripts/build-token.sh"
+  local server_directory="$ROOT/server"
+  if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
+    [ "${GITHUB_ACTIONS:-}" != "true" ] || {
+      echo "FAIL: supervisor test overrides are forbidden in GitHub Actions" >&2
+      return 2
+    }
+    supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"
+    build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"
+    server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"
+  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_BUILD_TOKEN:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
+    echo "FAIL: e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1" >&2
+    return 2
+  fi
   SERVER_PID=""
   SERVER_PGID=""
   SERVER_OWNER_STARTTIME=""

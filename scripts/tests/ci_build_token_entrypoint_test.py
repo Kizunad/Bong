@@ -60,10 +60,17 @@ SPECS = {
     },
     "scripts/e2e-redis.sh": {
         "required": [
-            'build_token="${BONG_E2E_BUILD_TOKEN:-$ROOT/scripts/build-token.sh}"',
+            'build_token="$ROOT/scripts/build-token.sh"',
+            'BONG_E2E_SUPERVISOR_TEST_MODE:-0',
+            'supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"',
+            'build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"',
+            'server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"',
+            "supervisor test overrides are forbidden in GitHub Actions",
             'python3 "$supervisor" "$server_directory" "$build_token"',
         ],
-        "forbid": [],
+        "forbid": [
+            r'build_token="\$\{BONG_E2E_BUILD_TOKEN:-\$ROOT/scripts/build-token\.sh\}"'
+        ],
     },
     "scripts/lib/bong-process-group-supervisor.py": {
         "required": ['[sys.argv[2], "cargo", "run", "--release"]'],
@@ -169,8 +176,36 @@ def test_direct_build_detection() -> None:
             )
 
 
+def test_e2e_supervisor_overrides_are_test_only() -> None:
+    source = (ROOT / "scripts/e2e-redis.sh").read_text(encoding="utf-8")
+    start = source.index("start_server_process_group() {")
+    end = source.index("\n}\n\nstop_server() {", start)
+    function = source[start:end]
+
+    gate = function.index('if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then')
+    github_rejection = function.index(
+        "supervisor test overrides are forbidden in GitHub Actions", gate
+    )
+    override_assignment = function.index(
+        'build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"', github_rejection
+    )
+    production_rejection = function.index(
+        "e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1",
+        override_assignment,
+    )
+    supervisor_launch = function.index(
+        'python3 "$supervisor" "$server_directory" "$build_token"',
+        production_rejection,
+    )
+    if not gate < github_rejection < override_assignment < production_rejection < supervisor_launch:
+        raise AssertionError(
+            "e2e supervisor override gate must reject CI and production bypasses before launch"
+        )
+
+
 def main() -> int:
     test_direct_build_detection()
+    test_e2e_supervisor_overrides_are_test_only()
     failures: list[str] = []
     for relative, spec in SPECS.items():
         path = ROOT / relative
