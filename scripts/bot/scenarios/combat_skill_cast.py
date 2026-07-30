@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+
+from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import (
     is_outgoing_positive_hit,
     last_event_time,
@@ -15,7 +18,43 @@ DESCRIPTION = "/technique give 后用 skill_bar_bind/cast 施放 dugu.shoot_need
 MODULES = ["combat", "skill", "network", "cmd"]
 
 SKILL_ID = "dugu.shoot_needle"
+SKILL_ICON = "bong-client:textures/gui/items/skill_scroll_dugu_shoot_needle.png"
+ANIMATION_ID = "bong:dugu_needle_throw"
+PARTICLE_ID = "bong:dugu_needle_bolt"
+AUDIO_RECIPE_ID = "dugu_cast"
+AUDIO_FLAG = "dugu_shoot_needle"
 SLOT = 0
+
+
+def _is_dugu_audio_play(event, anchor: float) -> bool:
+    if (
+        event.kind != "payload"
+        or event.t <= anchor
+        or event.data.get("channel") != "bong:audio/play"
+    ):
+        return False
+    raw = event.data.get("data")
+    if not isinstance(raw, bytes):
+        return False
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("v") == 1
+        and payload.get("recipe_id") == AUDIO_RECIPE_ID
+        and payload.get("flag") == AUDIO_FLAG
+    )
+
+
+def _assert_binding_feedback(bot, event) -> None:
+    slot = event.data["payload"]["slots"][SLOT]
+    if slot.get("icon_texture") != SKILL_ICON:
+        raise BotAssertionError(
+            f"[{bot.username}] 凝针槽位 icon_texture 漂移：期望 {SKILL_ICON!r}，"
+            f"实际 {slot.get('icon_texture')!r}"
+        )
 
 
 def _wait_successful_cast_sequence(bot, anchor: float):
@@ -67,7 +106,8 @@ def run(env) -> None:
                 "binding": {"kind": "skill", "skill_id": SKILL_ID},
             }
         )
-        wait_for_skill_binding(bot, bind_anchor, SLOT, SKILL_ID)
+        binding = wait_for_skill_binding(bot, bind_anchor, SLOT, SKILL_ID)
+        _assert_binding_feedback(bot, binding)
 
         bot.cmd("qi set 0")
         bot.expect_chat("[dev] qi set", timeout=10.0)
@@ -109,9 +149,32 @@ def run(env) -> None:
         bot.wait_for(
             lambda event: event.kind == "vfx_event"
             and event.t > anchor
-            and event.data.get("event_id") == "bong:dugu_needle_bolt",
+            and event.data.get("type") == "play_anim"
+            and event.data.get("anim_id") == ANIMATION_ID,
             timeout=10.0,
-            description="凝针 skill cast 后 typed VFX event_id 精确等于 bong:dugu_needle_bolt",
+            description=(
+                "凝针 skill cast 后 typed VFX type=play_anim 且 anim_id 精确等于 "
+                f"{ANIMATION_ID}"
+            ),
+        )
+        bot.wait_for(
+            lambda event: event.kind == "vfx_event"
+            and event.t > anchor
+            and event.data.get("type") == "spawn_particle"
+            and event.data.get("event_id") == PARTICLE_ID,
+            timeout=10.0,
+            description=(
+                "凝针 skill cast 后 typed VFX type=spawn_particle 且 event_id 精确等于 "
+                f"{PARTICLE_ID}"
+            ),
+        )
+        bot.wait_for(
+            lambda event: _is_dugu_audio_play(event, anchor),
+            timeout=10.0,
+            description=(
+                "凝针 skill cast 后 bong:audio/play JSON 须同时匹配 "
+                f"recipe_id={AUDIO_RECIPE_ID} 与 flag={AUDIO_FLAG}"
+            ),
         )
         bot.wait_for(
             lambda event: event.t > anchor and is_outgoing_positive_hit(event),

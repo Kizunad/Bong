@@ -50,6 +50,11 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios.combat_skill_cast import (  # noqa: E402
+    AUDIO_FLAG,
+    AUDIO_RECIPE_ID,
+    SKILL_ICON,
+    _assert_binding_feedback,
+    _is_dugu_audio_play,
     _wait_successful_cast_sequence,
 )
 from bot.scenarios.cultivation_realm_qi import (  # noqa: E402
@@ -2839,6 +2844,76 @@ class CombatSkillCastScenarioTest(unittest.TestCase):
 
         with self.assertRaisesRegex(AssertionError, "phase=complete"):
             _wait_successful_cast_sequence(bot, 1.0)
+
+    @staticmethod
+    def _audio_event(
+        t: float,
+        *,
+        recipe_id: str = AUDIO_RECIPE_ID,
+        flag: str = AUDIO_FLAG,
+        channel: str = "bong:audio/play",
+    ) -> _FakeEvent:
+        return _FakeEvent(
+            t,
+            "payload",
+            {
+                "channel": channel,
+                "data": json.dumps(
+                    {"v": 1, "recipe_id": recipe_id, "flag": flag}
+                ).encode("utf-8"),
+            },
+        )
+
+    def test_dugu_audio_requires_exact_recipe_flag_channel_and_watermark(self):
+        accepted = self._audio_event(2.0)
+        self.assertTrue(_is_dugu_audio_play(accepted, 1.0))
+
+        rejected = (
+            self._audio_event(1.0),
+            self._audio_event(2.0, recipe_id="dugu_needle_hiss"),
+            self._audio_event(2.0, flag="dugu_infuse_poison"),
+            self._audio_event(2.0, channel="bong:audio/stop"),
+            _FakeEvent(
+                2.0,
+                "payload",
+                {"channel": "bong:audio/play", "data": b'{"v":1,"recipe_id":'},
+            ),
+            _FakeEvent(
+                2.0,
+                "payload",
+                {"channel": "bong:audio/play", "data": b"\xff"},
+            ),
+            _FakeEvent(
+                2.0,
+                "payload",
+                {
+                    "channel": "bong:audio/play",
+                    "data": json.dumps(
+                        {"v": 1, "recipe_id": AUDIO_RECIPE_ID}
+                    ).encode("utf-8"),
+                },
+            ),
+        )
+        for event in rejected:
+            with self.subTest(event=event):
+                self.assertFalse(_is_dugu_audio_play(event, 1.0))
+
+    def test_binding_feedback_requires_exact_dugu_icon(self):
+        slot = {
+            "kind": "skill",
+            "skill_id": "dugu.shoot_needle",
+            "icon_texture": SKILL_ICON,
+        }
+        event = _FakeEvent(
+            2.0,
+            "server_data",
+            {"payload": {"slots": [slot]}},
+        )
+        _assert_binding_feedback(_FakeBot([]), event)
+
+        event.data["payload"]["slots"][0]["icon_texture"] = "bong:wrong.png"
+        with self.assertRaisesRegex(BotAssertionError, "icon_texture 漂移"):
+            _assert_binding_feedback(_FakeBot([]), event)
 
 
 class InventoryContainerSourceKindTest(unittest.TestCase):
