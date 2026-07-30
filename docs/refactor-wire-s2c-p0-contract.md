@@ -72,7 +72,7 @@ pub enum EmitScope {
     Dimension(DimensionKind),
     Zone {
         dimension: DimensionKind,
-        zone: ZoneId,
+        zone: String,
     },
     Player(Entity),
 }
@@ -115,7 +115,7 @@ pub fn emit_server_data(
 |---|---|---|
 | `Global` | 发给所有当前 PLAY clients，允许跨维。只用于确实全服可见的叙事/系统状态。 | client 只要存在即可。 |
 | `Dimension(d)` | 仅 `CurrentDimension == d` 的 clients；空间距离不能替代维度相等。 | client 缺 `CurrentDimension` 时 fail closed，不发送并计入诊断。 |
-| `Zone { dimension, zone }` | 先要求同维度，再以权威 `ZoneRegistry` + client `Position` 求 zone，结果等于强类型 `ZoneId` 才发送。zone ID 不能跨维单独匹配。 | 缺 dimension/position/registry 或无法解析 zone 时 fail closed。 |
+| `Zone { dimension, zone }` | 先要求同维度，再以权威 `ZoneRegistry` + client `Position` 求 canonical zone ID，结果等于登记的 `String` zone ID 才发送。zone ID 不能跨维单独匹配。 | 缺 dimension/position/registry 或无法解析 zone 时 fail closed。 |
 | `Player(entity)` | 只发给目标 client entity；玩家换维不改变“发给该玩家”的语义。 | 目标不存在/不是 Client 时零发送；不得回退 broadcast。 |
 
 额外约束：radius/view-distance 是 scope 命中后的**附加过滤器**，不能替代 `Dimension`；因此 VFX/audio 的 P1 顺序必须是“同维 → 半径/视距”。

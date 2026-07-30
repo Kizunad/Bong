@@ -123,100 +123,156 @@ const TRANSPORT_CLASSES: &[(&str, usize)] = &[
     ("non_s2c", 1),
 ];
 
-const JOIN_SNAPSHOT_SYMBOLS: &[(&str, &str)] = &[
-    ("server/src/network/mod.rs", "send_welcome_payload_on_join"),
-    ("server/src/network/mod.rs", "emit_player_state_payloads"),
+const JOIN_SNAPSHOT_SYMBOLS: &[(&str, &str, &str, &str)] = &[
+    (
+        "server/src/network/mod.rs",
+        "send_welcome_payload_on_join",
+        "Added<Client>",
+        "server/src/network/mod.rs",
+    ),
+    (
+        "server/src/network/mod.rs",
+        "emit_player_state_payloads",
+        "PlayerStateEmitQueryFilter",
+        "server/src/network/mod.rs",
+    ),
     (
         "server/src/network/inventory_snapshot_emit.rs",
         "emit_join_inventory_snapshots",
+        "Added<PlayerInventory>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/skill_snapshot_emit.rs",
         "emit_join_skill_snapshots",
+        "Added<SkillSet>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/techniques_snapshot_emit.rs",
         "emit_join_techniques_snapshot_payloads",
+        "JoinTechniquesSnapshotFilter",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/craft_emit.rs",
         "emit_recipe_list_on_join",
+        "Local<HashMap<Entity, String>>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/cultivation_detail_emit.rs",
         "emit_cultivation_detail_payloads",
+        "CultivationDetailEmitState",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/cultivation_detail_emit.rs",
         "emit_body_plan_layout_payloads",
+        "LastSentBodyPlanLayout",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/race_gate_meta_emit.rs",
         "emit_race_gate_meta_payloads",
+        "LastSentRaceGateMeta",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/morph_state_emit.rs",
         "emit_morph_state_payloads",
+        "LastSentMorphStateJoin",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/dropped_loot_sync_emit.rs",
         "emit_join_dropped_loot_syncs",
+        "JoinedDropSyncClientFilter",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/remains_sync_emit.rs",
         "emit_join_remains_syncs",
+        "JoinedRemainsSyncClientFilter",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/extract_emit.rs",
         "emit_rift_portal_state_payloads_to_joined_clients",
+        "Added<Client>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/tsy_container_search_emit.rs",
         "emit_container_state_payloads_to_joined_clients",
+        "Added<Client>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/tribulation_state_emit.rs",
         "emit_tribulation_state_payloads",
+        "known_clients: Local<Option<HashSet<Entity>>>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/tribulation_broadcast_emit.rs",
         "emit_tribulation_broadcast_payloads",
+        "known_clients: Local<Option<HashSet<Entity>>>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/ascension_quota_emit.rs",
         "emit_ascension_quota_payloads",
+        "last_client_count",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/spider_disguise_emit.rs",
         "on_player_join_send_spider_disguise_list",
+        "Added<Client>",
+        "server/src/network/spider_disguise_emit.rs",
     ),
     (
         "server/src/network/daozhan_disguise_emit.rs",
         "on_player_join_send_daozhan_disguise_list",
+        "Added<Client>",
+        "server/src/network/daozhan_disguise_emit.rs",
     ),
     (
         "server/src/network/rat_qi_tier_emit.rs",
         "on_player_join_send_rat_qi_tiers",
+        "Added<Client>",
+        "server/src/network/rat_qi_tier_emit.rs",
     ),
     (
         "server/src/network/era_ambiance_emit.rs",
         "era_ambiance_on_join_system",
+        "Added<Client>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/network/zone_environment_bridge.rs",
         "mark_zone_environment_dirty_for_new_clients",
+        "Added<Client>",
+        "server/src/network/mod.rs",
     ),
     (
         "server/src/world/spawn_tutorial.rs",
         "send_tutorial_coffin_pos_on_join",
+        "UnsentTutorialCoffinPosFilter",
+        "server/src/world/spawn_tutorial.rs",
     ),
     (
         "server/src/coffin/mod.rs",
         "emit_coffin_state_to_joined_clients",
+        "Added<Client>",
+        "server/src/coffin/mod.rs",
     ),
     (
         "server/src/social/mod.rs",
         "emit_anonymity_payloads_for_joined_clients",
+        "Added<Anonymity>",
+        "server/src/social/mod.rs",
     ),
 ];
 
@@ -262,12 +318,30 @@ fn emit_file_inventory_and_transport_classification_stay_frozen() {
 #[test]
 fn join_snapshot_producer_symbols_stay_present() {
     let root = repository_root();
-    for (relative, symbol) in JOIN_SNAPSHOT_SYMBOLS {
+    for (relative, symbol, trigger_marker, registration_relative) in JOIN_SNAPSHOT_SYMBOLS {
         let source = fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        let function = function_source(&source, symbol).unwrap_or_else(|| {
+            panic!(
+                "join snapshot producer `{symbol}` disappeared from {relative}; update the authoritative R6 replay contract"
+            )
+        });
         assert!(
-            source.contains(symbol),
-            "join snapshot producer `{symbol}` disappeared from {relative}; update the authoritative R6 replay contract"
+            function.contains(trigger_marker),
+            "join snapshot producer `{symbol}` in {relative} lost trigger marker `{trigger_marker}`"
+        );
+
+        let registration = fs::read_to_string(root.join(registration_relative))
+            .unwrap_or_else(|error| panic!("read {registration_relative}: {error}"));
+        let expected_registration_occurrences = if relative == registration_relative {
+            2
+        } else {
+            1
+        };
+        assert!(
+            count_identifier_occurrences(&registration, symbol)
+                >= expected_registration_occurrences,
+            "join snapshot producer `{symbol}` is no longer registered by {registration_relative}"
         );
     }
 
@@ -283,6 +357,42 @@ fn join_snapshot_producer_symbols_stay_present() {
         forge.contains("join hydration placeholder"),
         "forge join emitter remains a documented placeholder until a real snapshot is implemented"
     );
+}
+
+fn function_source<'a>(source: &'a str, symbol: &str) -> Option<&'a str> {
+    let declaration = format!("fn {symbol}");
+    let start = source.find(&declaration)?;
+    let body_start = source[start..].find('{')? + start;
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    for (index, byte) in bytes.iter().enumerate().skip(body_start) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&source[start..=index]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn count_identifier_occurrences(source: &str, symbol: &str) -> usize {
+    source
+        .match_indices(symbol)
+        .filter(|(index, _)| {
+            let before = source[..*index].chars().next_back();
+            let after = source[*index + symbol.len()..].chars().next();
+            !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char)
+        })
+        .count()
+}
+
+fn is_identifier_char(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric()
 }
 
 fn classify_emit_transport(relative: &str, source: &str) -> &'static str {
