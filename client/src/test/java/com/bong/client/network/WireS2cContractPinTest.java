@@ -184,8 +184,114 @@ final class WireS2cContractPinTest {
         "YIDAO_SKILL_ID_"
     );
 
-    private static final Map<String, Integer> BRIDGE_PREFIX_LITERAL_COUNTS =
-        bridgePrefixLiteralCounts();
+    private static final List<String> RECEIVER_ARGUMENTS = List.of(
+        "new Identifier(NpcMetadataHandler.CHANNEL_NAMESPACE, NpcMetadataHandler.CHANNEL_PATH)",
+        "new Identifier(NpcLodHandler.CHANNEL_NAMESPACE, NpcLodHandler.CHANNEL_PATH)",
+        "new Identifier(NpcBubbleHandler.CHANNEL_NAMESPACE, NpcBubbleHandler.CHANNEL_PATH)",
+        "new Identifier(NpcMoodHandler.CHANNEL_NAMESPACE, NpcMoodHandler.CHANNEL_PATH)",
+        "new Identifier(TsyBossHealthHandler.CHANNEL_NAMESPACE, TsyBossHealthHandler.CHANNEL_PATH)",
+        "new Identifier(TsyDeathVfxHandler.CHANNEL_NAMESPACE, TsyDeathVfxHandler.CHANNEL_PATH)",
+        "new Identifier(\"bong\", \"server_data\")",
+        "new Identifier(\"bong\", \"locust_swarm_warning\")",
+        "new Identifier(\"bong\", \"vfx_event\")",
+        "QiAttritionVfxPlayer.CHANNEL",
+        "new Identifier(\"bong\", \"audio/play\")",
+        "new Identifier(\"bong\", \"audio/stop\")",
+        "new Identifier(\"bong\", \"tiandao_presence\")",
+        "new Identifier(\"bong\", \"audio/ambient_zone\")",
+        "new Identifier(\"bong\", \"zone_environment\")",
+        "new Identifier(\"bong\", \"mutation_visual\")",
+        "new Identifier(\"bong\", \"crack_reading\")",
+        "new Identifier(\"bong\", \"resonance_lock\")",
+        "new Identifier(\"bong\", \"resonance_lock_end\")",
+        "new Identifier(\"bong\", \"void_erosion_visual\")",
+        "new Identifier(SpiderDisguiseHandler.CHANNEL_NAMESPACE, SpiderDisguiseHandler.CHANNEL_PATH_ENTER)",
+        "new Identifier(SpiderDisguiseHandler.CHANNEL_NAMESPACE, SpiderDisguiseHandler.CHANNEL_PATH_AMBUSH)",
+        "new Identifier(RatQiTierHandler.CHANNEL_NAMESPACE, RatQiTierHandler.CHANNEL_PATH)",
+        "new Identifier(DaoZhanDisguiseHandler.CHANNEL_NAMESPACE, DaoZhanDisguiseHandler.CHANNEL_PATH_ENTER)",
+        "new Identifier(DaoZhanDisguiseHandler.CHANNEL_NAMESPACE, DaoZhanDisguiseHandler.CHANNEL_PATH_REVEAL)",
+        "new Identifier( com.bong.client.fauna.HallucinationLayerHandler.CHANNEL_NAMESPACE, com.bong.client.fauna.HallucinationLayerHandler.CHANNEL_PATH )",
+        "new Identifier( com.bong.client.dying_elder.DyingElderEncounterHandler.CHANNEL_NAMESPACE, com.bong.client.dying_elder.DyingElderEncounterHandler.CHANNEL_PATH )",
+        "new Identifier(\"bong\", \"agent_ui_request\")",
+        "com.bong.client.network.AgentUiPayloadHandler.AGENT_UI_CLOSE_CHANNEL",
+        "new Identifier(\"bong\", \"halfstep_rechallenge\")",
+        "new Identifier(\"bong\", \"era_ambiance\")",
+        "new Identifier(ShaderStateHandler.CHANNEL_NAMESPACE, ShaderStateHandler.CHANNEL_PATH)"
+    );
+
+    private record IndirectReceiverBinding(
+        String relativePath,
+        String channel,
+        List<String> declarations
+    ) {}
+
+    private static final List<IndirectReceiverBinding> INDIRECT_RECEIVER_BINDINGS = List.of(
+        binding("com/bong/client/npc/NpcMetadataHandler.java", "bong:npc_metadata",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"npc_metadata\";"),
+        binding("com/bong/client/npc/NpcLodHandler.java", "bong:npc_lod",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"npc_lod\";"),
+        binding("com/bong/client/npc/NpcBubbleHandler.java", "bong:npc_bubble",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"npc_bubble\";"),
+        binding("com/bong/client/npc/NpcMoodHandler.java", "bong:npc_mood",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"npc_mood\";"),
+        binding("com/bong/client/tsy/TsyBossHealthHandler.java", "bong:tsy_boss_health",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"tsy_boss_health\";"),
+        binding("com/bong/client/tsy/TsyDeathVfxHandler.java", "bong:tsy_death_vfx",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"tsy_death_vfx\";"),
+        binding("com/bong/client/visual/particle/QiAttritionVfxPlayer.java", "bong:vfx/qi_attrition",
+            "public static final Identifier CHANNEL = new Identifier(\"bong\", \"vfx/qi_attrition\");"),
+        binding("com/bong/client/spider/SpiderDisguiseHandler.java", "bong:spider_disguise_enter",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH_ENTER = \"spider_disguise_enter\";"),
+        binding("com/bong/client/spider/SpiderDisguiseHandler.java", "bong:spider_ambush_trigger",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH_AMBUSH = \"spider_ambush_trigger\";"),
+        binding("com/bong/client/fauna/RatQiTierHandler.java", "bong:rat_qi_tier",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"rat_qi_tier\";"),
+        binding("com/bong/client/daozhan/DaoZhanDisguiseHandler.java", "bong:daozhan_disguise_enter",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH_ENTER = \"daozhan_disguise_enter\";"),
+        binding("com/bong/client/daozhan/DaoZhanDisguiseHandler.java", "bong:daozhan_reveal",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH_REVEAL = \"daozhan_reveal\";"),
+        binding("com/bong/client/fauna/HallucinationLayerHandler.java", "bong:core_absorption_hallucination",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"core_absorption_hallucination\";"),
+        binding("com/bong/client/dying_elder/DyingElderEncounterHandler.java", "bong:elder_encounter",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"elder_encounter\";"),
+        binding("com/bong/client/network/AgentUiPayloadHandler.java", "bong:agent_ui_close",
+            "public static final Identifier AGENT_UI_CLOSE_CHANNEL =\n        new Identifier(\"bong\", \"agent_ui_close\");"),
+        binding("com/bong/client/iris/ShaderStateHandler.java", "bong:shader_state",
+            "public static final String CHANNEL_NAMESPACE = \"bong\";",
+            "public static final String CHANNEL_PATH = \"shader_state\";")
+    );
+
+    private static final Set<String> DIRECT_RECEIVER_CHANNELS = Set.of(
+        "bong:server_data",
+        "bong:locust_swarm_warning",
+        "bong:vfx_event",
+        "bong:audio/play",
+        "bong:audio/stop",
+        "bong:tiandao_presence",
+        "bong:audio/ambient_zone",
+        "bong:zone_environment",
+        "bong:mutation_visual",
+        "bong:crack_reading",
+        "bong:resonance_lock",
+        "bong:resonance_lock_end",
+        "bong:void_erosion_visual",
+        "bong:agent_ui_request",
+        "bong:halfstep_rechallenge",
+        "bong:era_ambiance"
+    );
 
     @Test
     void everyClientS2cReceiverIsCountedAndEveryBypassHasAMigrationDecision() throws IOException {
@@ -221,6 +327,45 @@ final class WireS2cContractPinTest {
         assertEquals(32, sitesByChannel.size(), "32 个 receiver 必须解析成 32 个唯一 channel ID");
         assertEquals(1, sitesByChannel.getOrDefault("bong:server_data", List.of()).size(),
             "目标轨 bong:server_data 必须且只能注册一次");
+
+        List<String> receiverArguments = new ArrayList<>();
+        Path sourceRoot = clientRoot.resolve("src/main/java");
+        try (Stream<Path> files = Files.walk(sourceRoot)) {
+            for (Path path : files.filter(file -> file.toString().endsWith(".java")).toList()) {
+                receiverArguments.addAll(receiverArguments(Files.readString(path)));
+            }
+        }
+        receiverArguments.sort(String::compareTo);
+        assertEquals(
+            RECEIVER_ARGUMENTS.stream().sorted().toList(),
+            receiverArguments,
+            "所有 receiver 的注册参数必须与 R6 channel 决策账本逐项对齐，间接常量也不能重定向"
+        );
+        assertEquals(16, DIRECT_RECEIVER_CHANNELS.size());
+        assertEquals(16, INDIRECT_RECEIVER_BINDINGS.size());
+        Set<String> indirectChannels = INDIRECT_RECEIVER_BINDINGS.stream()
+            .map(IndirectReceiverBinding::channel)
+            .collect(java.util.stream.Collectors.toSet());
+        assertEquals(16, indirectChannels.size(),
+            "间接 receiver channel 必须一对一，不能重复指向同一 ID");
+        Set<String> channelOverlap = new TreeSet<>(indirectChannels);
+        channelOverlap.retainAll(DIRECT_RECEIVER_CHANNELS);
+        assertEquals(Set.of(), channelOverlap,
+            "直接与间接 receiver channel 不能重复");
+        Set<String> allChannels = new TreeSet<>(DIRECT_RECEIVER_CHANNELS);
+        allChannels.addAll(indirectChannels);
+        assertEquals(new TreeSet<>(sitesByChannel.keySet()), allChannels,
+            "直接/间接 receiver ID 必须唯一解析成当前 32 个 production channel");
+        for (IndirectReceiverBinding binding : INDIRECT_RECEIVER_BINDINGS) {
+            String source = Files.readString(sourceRoot.resolve(binding.relativePath()));
+            for (String declaration : binding.declarations()) {
+                assertEquals(
+                    1,
+                    countOccurrences(source, declaration),
+                    () -> binding.relativePath() + " 必须精确声明一次 " + binding.channel()
+                );
+            }
+        }
 
         Set<String> actualSideChannels = new TreeSet<>(sitesByChannel.keySet());
         assertTrue(actualSideChannels.remove("bong:server_data"));
@@ -499,6 +644,64 @@ final class WireS2cContractPinTest {
     private static NormalizationSite site(String field, String prefix, NormalizationMode mode) {
         return new NormalizationSite(field, prefix, mode);
     }
+    private static IndirectReceiverBinding binding(
+        String relativePath,
+        String channel,
+        String... declarations
+    ) {
+        return new IndirectReceiverBinding(relativePath, channel, List.of(declarations));
+    }
+
+    private static int countOccurrences(String source, String needle) {
+        int count = 0;
+        int searchFrom = 0;
+        while ((searchFrom = source.indexOf(needle, searchFrom)) >= 0) {
+            count++;
+            searchFrom += needle.length();
+        }
+        return count;
+    }
+
+    private static List<String> receiverArguments(String source) {
+        List<String> arguments = new ArrayList<>();
+        String needle = "ClientPlayNetworking.registerGlobalReceiver";
+        int searchFrom = 0;
+        while ((searchFrom = source.indexOf(needle, searchFrom)) >= 0) {
+            int open = source.indexOf('(', searchFrom + needle.length());
+            assertTrue(open >= 0, "receiver call must have an argument list");
+            int argumentStart = open + 1;
+            int depth = 0;
+            boolean inString = false;
+            boolean escaped = false;
+            int index = argumentStart;
+            for (; index < source.length(); index++) {
+                char current = source.charAt(index);
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == '"') {
+                        inString = false;
+                    }
+                } else if (current == '"') {
+                    inString = true;
+                } else if (current == '(') {
+                    depth++;
+                } else if (current == ')') {
+                    assertTrue(depth > 0, "receiver identifier has balanced parentheses");
+                    depth--;
+                } else if (current == ',' && depth == 0) {
+                    break;
+                }
+            }
+            assertTrue(index < source.length(), "receiver call must separate identifier and callback");
+            arguments.add(source.substring(argumentStart, index).replaceAll("\\s+", " ").trim());
+            searchFrom = index + 1;
+        }
+        return arguments;
+    }
+
     private static Map<String, MigrationDecision> migrationDecisions() {
         Map<String, MigrationDecision> decisions = new LinkedHashMap<>();
         for (String channel : List.of(
