@@ -301,6 +301,9 @@ class R7FoundationContractTest {
         assertEquals(34, expected.stream().mapToInt(KeybindProductionSiteRow::runtimeCardinalityCount).sum(),
             "26 source constructors expand to exactly 34 runtime bindings (nine quick slots)");
         for (KeybindProductionSiteRow row : expected) {
+            String source = R7SourceScan.codeOnly(R7SourceScan.read(CLIENT_ROOT.resolve(row.sourcePath())));
+            assertTrue(source.contains(row.routeAnchor()),
+                "behavior route anchor drifted for " + row.ownerId());
             KeybindingSourceContract actual = keybindingSourceContract(row);
             assertEquals(row.sourceSite(), actual.sourceSite(),
                 "stable assignment target drifted for " + row.ownerId());
@@ -685,7 +688,7 @@ class R7FoundationContractTest {
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindProductionSiteRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],
-                columns[5], columns[6], columns[7], columns[8]
+                columns[5], columns[6], columns[7], columns[8], columns[9]
             ))
             .toList();
     }
@@ -751,7 +754,8 @@ class R7FoundationContractTest {
         String defaultContract,
         String categoryContract,
         String runtimeCardinality,
-        String consumerRoute
+        String consumerRoute,
+        String routeAnchor
     ) {
         int runtimeCardinalityCount() {
             return runtimeCardinality.startsWith("9 ") ? 9 : Integer.parseInt(runtimeCardinality);
