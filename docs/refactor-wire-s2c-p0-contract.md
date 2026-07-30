@@ -141,7 +141,7 @@ proto3 enum → legacy handler 字符串转换的目标态集中在 `ProtoServer
 3. `pascal_case`：剥前缀后多段 PascalCase（`ZHENFA_WARD_ALERT → ZhenfaWardAlert`）。
 4. `snake_lower_omit_unspecified`：与 1 相同，但 proto 默认 `*_UNSPECIFIED` 删除字段，让 legacy required-field gate fail closed。
 
-P0 bridge-local 盘点为 **43 个唯一前缀 / 57 处引用**。`InventoryEventHandler` 仍在嵌套 `inventory_event.from|to.equip.slot` 处理 `EQUIP_SLOT_`（1 个前缀 / 1 处引用），所以完整 production receive path 是 **44 个唯一前缀 / 58 处引用**。`WireS2cContractPinTest` 同时锁定 bridge-local 与 full-path 基线；P2 才把该 handler 逻辑迁回 bridge。
+P0 bridge-local 盘点为 **43 个唯一前缀 / 57 处 lexical literal 引用**；语义 pin 另以 prefix→field→mode 多重集冻结，因 helper 复用和 craft `qi_color_min[0]` 手写分支，语义操作共 **58 处**。`InventoryEventHandler` 仍在嵌套 `inventory_event.from|to.equip.slot` 处理 `EQUIP_SLOT_`（1 个前缀 / 1 处 production lexical 引用），所以完整 production receive path 是 **44 个唯一前缀 / 58 处 lexical literal 引用**，语义 pin 共 **59 处**。`WireS2cContractPinTest` 同时锁定 lexical multiset、bridge-local semantic multiset 与 full-path 文件归属；P2 才把该 handler 逻辑迁回 bridge。
 
 ## 5. join / reconnect replay 权威清单
 
