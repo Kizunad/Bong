@@ -76,8 +76,9 @@ public final class MusicStateMachine {
         );
     }
 
-    public static void clearSeasonModifierOnDisconnect() {
-        INSTANCE.seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
+    /** Clears only this state machine's season-derived modifier. */
+    public void clearSeasonModifierOnDisconnect() {
+        seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
     }
 
     public SeasonModifier seasonModifierForTests() {

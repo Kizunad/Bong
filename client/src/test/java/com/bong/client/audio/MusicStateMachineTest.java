@@ -102,6 +102,30 @@ class MusicStateMachineTest {
     }
 
     @Test
+    void seasonModifierDisconnectClearTargetsReceiverInstance() {
+        MusicStateMachine singleton = MusicStateMachine.instance();
+        singleton.setSeasonModifier(com.bong.client.state.SeasonState.Phase.WINTER, 0.75);
+
+        RecordingSink sink = new RecordingSink();
+        SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);
+        MusicStateMachine machine = new MusicStateMachine(player);
+        machine.setSeasonModifier(com.bong.client.state.SeasonState.Phase.SUMMER_TO_WINTER, 0.4);
+
+        machine.clearSeasonModifierOnDisconnect();
+
+        assertEquals(com.bong.client.state.SeasonState.Phase.SUMMER, machine.seasonModifierForTests().phase(),
+            "实例断线清理必须复位接收者自己的季节相位");
+        assertEquals(0.0, machine.seasonModifierForTests().progress(), 1e-6,
+            "实例断线清理必须复位接收者自己的季节进度");
+        assertEquals(com.bong.client.state.SeasonState.Phase.WINTER, singleton.seasonModifierForTests().phase(),
+            "清理注入实例不得误清全局 singleton");
+        assertEquals(0.75, singleton.seasonModifierForTests().progress(), 1e-6,
+            "清理注入实例不得改写全局 singleton 的季节进度");
+
+        singleton.clearSeasonModifierForTests();
+    }
+
+    @Test
     void clearDropsActiveMusicBeforeSinkRuntimeFailureSoSameUpdateCanRestart() {
         RuntimeFailingSink sink = new RuntimeFailingSink();
         SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);

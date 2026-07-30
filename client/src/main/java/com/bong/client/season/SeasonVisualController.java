@@ -81,7 +81,7 @@ public final class SeasonVisualController {
         lastPhase = null;
         SeasonBreakthroughOverlayHud.clearOnDisconnect();
         ZoneAtmosphereRenderer.clearSeasonOverrideOnDisconnect();
-        MusicStateMachine.clearSeasonModifierOnDisconnect();
+        MusicStateMachine.instance().clearSeasonModifierOnDisconnect();
     }
 
     public static void resetForTests() {

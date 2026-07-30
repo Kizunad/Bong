@@ -131,6 +131,7 @@ class AdjunctDisconnectOwnershipTest {
             {"audio/MusicStateMachine.java", "MusicStateMachine", "clearOnDisconnect"},
             {"audio/MusicStateMachine.java", "MusicStateMachine", "clear"},
             {"audio/MusicStateMachine.java", "MusicStateMachine", "stopActive", "1"},
+            {"audio/MusicStateMachine.java", "MusicStateMachine", "instance"},
             {"audio/MusicStateMachine.java", "MusicStateMachine", "clearSeasonModifierOnDisconnect"},
             {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "clearOnDisconnect"},
             {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "setMusicState", "1"},
