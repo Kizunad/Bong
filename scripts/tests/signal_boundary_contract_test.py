@@ -154,6 +154,63 @@ done
         self.assertIn('${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}', lifecycle_text)
         self.assertIn('BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"', workflow_text)
 
+    def test_pinned_rollback_never_signals_replacement_record(self):
+        script = f"""
+set -euo pipefail
+source {LIFECYCLE!s}
+runtime="$(mktemp -d)"
+trap 'rm -rf -- "$runtime"' EXIT
+chmod 700 "$runtime"
+export BONG_SERVER_PID_FILE="$runtime/server.pid"
+
+signaled=""
+bong_server_stop_pinned_process() {{
+    signaled="$1:$2:$3"
+    return 1
+}}
+bong_server_pinned_process_status() {{
+    return 1
+}}
+bong_server_clear_record_if_matches() {{
+    [ "$1:$2:$3:$4" = "200:20:/old/server:2:20" ] || return 2
+    return 1
+}}
+
+bong_server_rollback_pinned_managed_process \
+    200 20 /old/server 2:20 "old launch rollback"
+[ "$signaled" = "200:20:2:20" ] || {{
+    printf 'rollback signaled unexpected identity: %s\\n' "$signaled" >&2
+    exit 1
+}}
+"""
+        subprocess.run(["bash", "-c", script], check=True)
+
+    def test_pinned_rollback_preserves_matching_record_when_process_survives(self):
+        script = f"""
+set -euo pipefail
+source {LIFECYCLE!s}
+runtime="$(mktemp -d)"
+trap 'rm -rf -- "$runtime"' EXIT
+chmod 700 "$runtime"
+export BONG_SERVER_PID_FILE="$runtime/server.pid"
+
+cleared=0
+bong_server_stop_pinned_process() {{ return 1; }}
+bong_server_pinned_process_status() {{ return 0; }}
+bong_server_clear_record_if_matches() {{ cleared=1; return 0; }}
+
+if bong_server_rollback_pinned_managed_process \
+    200 20 /old/server 2:20 "surviving old launch rollback"; then
+    printf 'rollback accepted a pinned process that survived cleanup\n' >&2
+    exit 1
+fi
+[ "$cleared" -eq 0 ] || {{
+    printf 'rollback cleared authority for a process that remained alive\n' >&2
+    exit 1
+}}
+"""
+        subprocess.run(["bash", "-c", script], check=True)
+
 
 if __name__ == "__main__":
     unittest.main()

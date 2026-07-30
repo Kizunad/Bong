@@ -44,11 +44,15 @@ SPECS = {
     "scripts/preview/run-server-headless.sh": {
         "required": [
             '"$REPO_ROOT/scripts/build-token.sh" cargo "${BUILD_ARGS[@]}"',
-            'exec env "$SERVER_BINARY"',
+            'exec </dev/null\n    cd "$REPO_ROOT/server"\n    exec env "$SERVER_BINARY"',
             'bong_server_write_record "$SERVER_PID" "$SERVER_BINARY"',
+            'bong_server_rollback_pinned_managed_process',
             'bong_server_pinned_process_owns_ipv4_listener',
         ],
-        "forbid": [r"(?m)^\s*nohup\s+.*build-token\.sh.*cargo\s+run\b"],
+        "forbid": [
+            r"(?m)^\s*nohup\s+.*build-token\.sh.*cargo\s+run\b",
+            r"bong_server_stop_managed_for_replacement",
+        ],
     },
     "scripts/preview/stop-server-headless.sh": {
         "required": ['bong_server_stop_managed_for_replacement "preview cleanup"'],

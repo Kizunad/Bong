@@ -639,6 +639,74 @@ _bong_server_finish_managed_record_cleanup() {
     esac
 }
 
+# Roll back only the process identity captured by the caller that launched it.
+# The lifecycle record is cleanup authority, not signal authority here: another
+# launcher may already have published a successor by the time this rollback runs.
+# In that case status 1 from clear_record_if_matches means "replacement preserved"
+# and is a successful cleanup outcome for the old launch.
+_bong_server_rollback_pinned_managed_process() {
+    local pid="${1:-}" expected_starttime="${2:-}" expected_executable="${3:-}"
+    local expected_executable_identity="${4:-}" operation="${5:-preview rollback}"
+    local stop_status clear_status forced_stop=0
+
+    if bong_server_stop_pinned_process \
+        "$pid" "$expected_starttime" "$expected_executable_identity" 10 2; then
+        stop_status=0
+    else
+        stop_status=$?
+    fi
+    case "$stop_status" in
+        0) ;;
+        1)
+            # Status 1 also covers a pinned process that survived the final KILL
+            # wait. Distinguish that from ordinary absence/reuse before clearing
+            # any matching authority record.
+            if bong_server_pinned_process_status \
+                "$pid" "$expected_starttime" "$expected_executable_identity"; then
+                echo "FAIL: pinned bong-server remained alive during $operation; preserving its record" >&2
+                return 1
+            else
+                stop_status=$?
+            fi
+            [ "$stop_status" -eq 1 ] || {
+                echo "FAIL: pinned bong-server identity became uncertain during $operation; preserving its record" >&2
+                return 2
+            }
+            ;;
+        "$BONG_SERVER_STOP_FORCED") forced_stop=1 ;;
+        *)
+            echo "FAIL: could not safely stop the pinned bong-server identity during $operation (status=$stop_status); preserving its record" >&2
+            return "$stop_status"
+            ;;
+    esac
+
+    if bong_server_clear_record_if_matches \
+        "$pid" "$expected_starttime" "$expected_executable" "$expected_executable_identity"; then
+        clear_status=0
+    else
+        clear_status=$?
+    fi
+    case "$clear_status" in
+        0) ;;
+        1)
+            echo "INFO: pinned bong-server record was replaced before $operation; preserving the successor record" >&2
+            ;;
+        *)
+            echo "FAIL: could not safely clear the pinned bong-server record during $operation (status=$clear_status); preserving it for diagnosis" >&2
+            return "$clear_status"
+            ;;
+    esac
+
+    if [ "$forced_stop" -eq 1 ]; then
+        echo "WARN: pinned bong-server required identity-safe SIGKILL during $operation; the exact process is gone" >&2
+    fi
+    return 0
+}
+
+bong_server_rollback_pinned_managed_process() {
+    bong_server_with_lock _bong_server_rollback_pinned_managed_process "$@"
+}
+
 bong_server_read_ready_pid() {
     local ready_path="${1:-}" directory fd line extra ready_pid
 

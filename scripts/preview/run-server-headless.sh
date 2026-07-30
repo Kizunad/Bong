@@ -73,12 +73,14 @@ bong_server_refuse_existing_preview_record_locked() {
 rollback_preview_server() {
   local operation="$1" status
 
-  if bong_server_stop_managed_for_replacement "$operation"; then
+  if bong_server_rollback_pinned_managed_process \
+      "$SERVER_PID" "$SERVER_STARTTIME" "$SERVER_BINARY" \
+      "$SERVER_EXECUTABLE_IDENTITY" "$operation"; then
     return 0
   else
     status=$?
   fi
-  echo "❌ Preview server 回滚未确认 (status=$status); 保留权限记录供诊断" >&2
+  echo "❌ Preview server 回滚未确认 (status=$status); 保留匹配的权限记录供诊断" >&2
   return "$status"
 }
 
@@ -91,6 +93,7 @@ bong_server_launch_preview_locked() {
   (
     trap '' HUP
     exec </dev/null
+    cd "$REPO_ROOT/server"
     exec env "$SERVER_BINARY" >"$LOG_FILE" 2>&1
   ) &
   SERVER_PID=$!
@@ -187,9 +190,7 @@ while [ "$elapsed" -lt "$TIMEOUT_SECONDS" ]; do
     tail -n 30 "$LOG_FILE" >&2
     if [ "$status" -eq 1 ]; then
       echo "❌ Server 在权限记录发布后提前退出；安全清理匹配记录" >&2
-      if ! bong_server_stop_managed_for_replacement "preview failed-start cleanup"; then
-        echo "❌ Preview server 退出记录未确认清理；保留权限记录供诊断" >&2
-      fi
+      rollback_preview_server "preview failed-start cleanup" || true
     fi
     exit 1
   fi
