@@ -25,6 +25,7 @@
 
 - `JueBiAfterDuXuQuota` 定义于 `tribulation.rs:305-310`，没有 attempt identity。
 - `start_tribulation_system` 仅在本次判定为 `Some(marker)` 时 insert；accepted non-over-quota DuXu 不清旧 marker（`:939-957,983-987`）。
+- 配额检查接收的是**新 attempt 占位前**的 `occupied_slots`：`check_void_quota` 以 `occupied_slots >= quota_limit` 表示已无剩余名额（`:179-192`）。因此精确边界是 `occupied_slots + 1 == quota_limit` 仍合法且清旧 marker，`occupied_slots == quota_limit` 的下一次 accepted DuXu 才创建/替换 marker；不得误改为严格 `>`。
 - failure（`:3334-3427`）、disconnect/fled（`:3433-3670`）与 intercept death（`:3673-3749`）终止当前 attempt，但 cleanup tuple 未移除 marker。
 - 下一次 DuXu 完成最终 wave 时，`tribulation_wave_system` 无 attempt 对拍地读取残留 marker、按旧 snapshot 计算强度并追加 JueBi（`:3177,3216-3258`），因此错误行为可达。
 - 现有 marker 测试只 pin producer presence（如 `tribulation.rs:4477,4572,7128`），没有“终止 → 同实体重试”回归。
@@ -39,14 +40,14 @@
 
 ## P1 — Regression closure
 
-- [ ] `accepted_over_quota_start_replaces_stale_quota_marker`
-- [ ] `accepted_non_over_quota_start_clears_stale_quota_marker`
+- [ ] `accepted_last_available_slot_clears_stale_quota_marker`
+- [ ] `accepted_first_over_quota_start_replaces_stale_quota_marker`
 - [ ] `rejected_duplicate_and_persist_failed_start_preserve_current_quota_marker`
 - [ ] `old_terminal_cleanup_cannot_remove_new_attempt_quota_marker`
 - [ ] `terminal_quota_marker_cleanup_and_retry_matrix`
 - [ ] `quota_marker_survives_duxu_to_juebi_transition`
 - [ ] `quota_juebi_settlement_clears_follow_up_marker`
-- [ ] 回归须从真实 Bevy schedule 驱动，并断言 marker identity、`TribulationState.kind`、`JueBiTriggeredEvent`；对 cleanup 接入路径分别断言既有 DB 删除、惩罚、Qi ledger transaction、settlement event 与 lifecycle event 数量未因 marker 修复增加。
+- [ ] 回归须从真实 Bevy schedule 驱动；边界样例显式固定为 start 前 `occupied_slots + 1 == quota_limit`（本次占最后一个合法名额，不得留 marker）与 `occupied_slots == quota_limit`（第一个超额 attempt，必须创建/替换当前 identity marker），并断言 marker identity、`TribulationState.kind`、`JueBiTriggeredEvent`；对 cleanup 接入路径分别断言既有 DB 删除、惩罚、Qi ledger transaction、settlement event 与 lifecycle event 数量未因 marker 修复增加。
 
 ## 可核验 symbols
 
