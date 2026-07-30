@@ -1,9 +1,16 @@
 package com.bong.client.ui;
 
 import com.sun.source.tree.AssignmentTree;
+import com.sun.source.tree.BinaryTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.LiteralTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.VariableTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
@@ -282,39 +289,52 @@ class R7FoundationContractTest {
             "R7 P0 authorizes no physical-default conflict exemption");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
-        List<R7SourceScan.TokenOccurrence> actualSites = productionKeybindingConstructorSites();
+        List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
         assertEquals(26, actualSites.size(), "production KeyBinding constructor-site count changed");
         assertEquals(26, expected.size(), "each constructor source site must have one exact binding contract");
         assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "every logical binding needs one globally unique BindingOwner id");
-        Map<String, Long> actualByPath = new TreeMap<>();
-        for (R7SourceScan.TokenOccurrence occurrence : actualSites) {
-            actualByPath.merge(occurrence.path(), 1L, Long::sum);
+        Set<SourceSiteIdentity> expectedIdentities = expected.stream()
+            .map(row -> new SourceSiteIdentity(row.sourcePath(), row.sourceSite()))
+            .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+        Set<SourceSiteIdentity> actualIdentities = actualSites.stream()
+            .map(site -> new SourceSiteIdentity(site.sourcePath(), site.sourceSite()))
+            .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+        assertEquals(expectedIdentities, actualIdentities,
+            "fixture and production must match the exact (sourcePath, assignment target) set in both directions");
+        assertEquals(expectedKeybindProductionSiteFixtureLines(),
+            resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
+            "every per-binding owner, source, constructor, cardinality, and consumer contract must be exact-pinned");
+        assertEquals(34, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
+            "the AST-derived 26 constructors must expand to exactly 34 runtime bindings");
+        Set<String> expandedTranslationKeys = new TreeSet<>();
+        for (KeybindingSourceSite site : actualSites) {
+            expandedTranslationKeys.addAll(site.expandedTranslationKeys());
         }
-        Map<String, Long> expectedByPath = new TreeMap<>();
+        assertEquals(34, expandedTranslationKeys.size(),
+            "every AST-resolved runtime binding must have a unique effective translation key");
         for (KeybindProductionSiteRow row : expected) {
-            expectedByPath.merge(row.sourcePath(), 1L, Long::sum);
-        }
-        assertEquals(actualByPath, expectedByPath,
-            "the exact contract inventory must cover every production constructor source site");
-        assertEquals(34, expected.stream().mapToInt(KeybindProductionSiteRow::runtimeCardinalityCount).sum(),
-            "26 source constructors expand to exactly 34 runtime bindings (nine quick slots)");
-        for (KeybindProductionSiteRow row : expected) {
+            KeybindingSourceSite actual = actualSites.stream()
+                .filter(site -> site.sourcePath().equals(row.sourcePath())
+                    && site.sourceSite().equals(row.sourceSite()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing AST source site for " + row.ownerId()));
+            assertEquals(row.translationContract(), actual.translationContract(),
+                "effective translation contract drifted for " + row.ownerId());
+            assertEquals(row.inputType(), actual.inputType(),
+                "effective input type drifted for " + row.ownerId());
+            assertEquals(row.normalizedDefaultContract(), actual.defaultContract(),
+                "effective default key drifted for " + row.ownerId());
+            assertEquals(row.categoryContract(), actual.categoryContract(),
+                "effective category drifted for " + row.ownerId());
+            assertEquals(row.runtimeCardinalityCount(), actual.runtimeCardinality(),
+                "AST-derived runtime cardinality drifted for " + row.ownerId());
+            assertEquals(row.expandedTranslationKeys(), actual.expandedTranslationKeys(),
+                "expanded runtime translation keys drifted for " + row.ownerId());
             String source = R7SourceScan.codeOnly(R7SourceScan.read(CLIENT_ROOT.resolve(row.sourcePath())));
             assertTrue(source.contains(row.routeAnchor()),
                 "behavior route anchor drifted for " + row.ownerId());
-            KeybindingSourceContract actual = keybindingSourceContract(row);
-            assertEquals(row.sourceSite(), actual.sourceSite(),
-                "stable assignment target drifted for " + row.ownerId());
-            assertEquals(row.translationSourceContract(), actual.translationArgument(),
-                "translation constructor argument drifted for " + row.ownerId());
-            assertEquals("InputUtil.Type." + row.inputType(), actual.inputTypeArgument(),
-                "InputUtil.Type constructor argument drifted for " + row.ownerId());
-            assertEquals(row.defaultSourceContract(), actual.defaultArgument(),
-                "default-code constructor argument drifted for " + row.ownerId());
-            assertEquals(row.categorySourceContract(), actual.categoryArgument(),
-                "category constructor argument drifted for " + row.ownerId());
             assertFalse(row.consumerRoute().isBlank(),
                 "each binding must freeze its behavior-critical consumer route: " + row.ownerId());
         }
@@ -459,53 +479,205 @@ class R7FoundationContractTest {
             && currentTerminal == !row.currentPriority().equals("NONE");
     }
 
-    private static List<R7SourceScan.TokenOccurrence> productionKeybindingConstructorSites() throws IOException {
-        return R7SourceScan.tokenOccurrences(CLIENT_ROOT, "new KeyBinding(").stream()
-            .filter(R7SourceScan.TokenOccurrence::code)
-            .toList();
-    }
-
-    private static KeybindingSourceContract keybindingSourceContract(KeybindProductionSiteRow expected) {
-        Path path = CLIENT_ROOT.resolve(expected.sourcePath());
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertNotNull(compiler, "R7 keybinding contract scan requires a full Java 17 JDK");
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
-            JavacTask task = (JavacTask) compiler.getTask(
-                null, fileManager, diagnostics, List.of("-proc:none"), null, sources
-            );
-            List<KeybindingSourceContract> candidates = new java.util.ArrayList<>();
-            for (CompilationUnitTree unit : task.parse()) {
-                new TreePathScanner<Void, Void>() {
-                    @Override
-                    public Void visitNewClass(NewClassTree tree, Void unused) {
-                        if (tree.getIdentifier().toString().equals("KeyBinding") && tree.getArguments().size() == 4) {
-                            String site = enclosingAssignmentTarget(getCurrentPath());
-                            if (site != null && site.equals(expected.sourceSite())) {
-                                candidates.add(new KeybindingSourceContract(
-                                    site,
-                                    compactExpression(tree.getArguments().get(0)),
-                                    compactExpression(tree.getArguments().get(1)),
-                                    compactExpression(tree.getArguments().get(2)),
-                                    compactExpression(tree.getArguments().get(3))
+    private static List<KeybindingSourceSite> productionKeybindingSourceSites() throws IOException {
+        List<KeybindingSourceSite> result = new java.util.ArrayList<>();
+        for (Path path : productionKeybindingJavaFiles()) {
+            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+            assertNotNull(compiler, "R7 keybinding source scan requires a full Java 17 JDK");
+            DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+            try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+                Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
+                JavacTask task = (JavacTask) compiler.getTask(
+                    null, fileManager, diagnostics, List.of("-proc:none"), null, sources
+                );
+                for (CompilationUnitTree unit : task.parse()) {
+                    Map<String, ExpressionTree> constants = collectSourceConstants(unit);
+                    new TreePathScanner<Void, Void>() {
+                        @Override
+                        public Void visitNewClass(NewClassTree tree, Void unused) {
+                            if (tree.getIdentifier().toString().equals("KeyBinding")
+                                && tree.getArguments().size() == 4) {
+                                String sourceSite = enclosingAssignmentTarget(getCurrentPath());
+                                assertNotNull(sourceSite,
+                                    "every KeyBinding constructor needs a stable enclosing assignment target in " + path);
+                                List<String> translations = resolveTranslationKeys(tree.getArguments().get(0), constants);
+                                result.add(new KeybindingSourceSite(
+                                    CLIENT_ROOT.relativize(path).toString().replace('\\', '/'),
+                                    sourceSite,
+                                    translationContract(translations),
+                                    resolveInputType(tree.getArguments().get(1)),
+                                    resolveDefaultContract(tree.getArguments().get(2), constants),
+                                    resolveString(tree.getArguments().get(3), constants),
+                                    translations.size(),
+                                    translations
                                 ));
                             }
+                            return super.visitNewClass(tree, unused);
                         }
-                        return super.visitNewClass(tree, unused);
+                    }.scan(unit, null);
+                }
+                assertTrue(diagnostics.getDiagnostics().stream()
+                        .noneMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
+                    "unable to parse production keybinding source " + path + ": " + diagnostics.getDiagnostics());
+            }
+        }
+        result.sort(java.util.Comparator
+            .comparing(KeybindingSourceSite::sourcePath)
+            .thenComparing(KeybindingSourceSite::sourceSite));
+        return result;
+    }
+
+    private static List<Path> productionKeybindingJavaFiles() throws IOException {
+        try (var files = Files.walk(CLIENT_ROOT)) {
+            return files.filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".java"))
+                .filter(path -> R7SourceScan.codeOnly(R7SourceScan.read(path)).contains("new KeyBinding("))
+                .sorted()
+                .toList();
+        }
+    }
+
+    private static Map<String, ExpressionTree> collectSourceConstants(CompilationUnitTree unit) {
+        Map<String, ExpressionTree> constants = new java.util.HashMap<>();
+        new TreePathScanner<Void, Void>() {
+            @Override
+            public Void visitVariable(VariableTree variable, Void unused) {
+                if (variable.getInitializer() != null) {
+                    constants.putIfAbsent(variable.getName().toString(), variable.getInitializer());
+                }
+                return super.visitVariable(variable, unused);
+            }
+        }.scan(unit, null);
+        return constants;
+    }
+
+    private static List<String> resolveTranslationKeys(
+        ExpressionTree expression,
+        Map<String, ExpressionTree> constants
+    ) {
+        if (expression instanceof BinaryTree binary && binary.getKind() == Tree.Kind.PLUS) {
+            String prefix = resolveString(binary.getLeftOperand(), constants);
+            ExpressionTree right = binary.getRightOperand();
+            if (right instanceof com.sun.source.tree.ParenthesizedTree parenthesized) {
+                right = parenthesized.getExpression();
+            }
+            assertTrue(right instanceof BinaryTree indexExpression
+                    && indexExpression.getKind() == Tree.Kind.PLUS
+                    && indexExpression.getLeftOperand() instanceof IdentifierTree identifier
+                    && identifier.getName().contentEquals("i")
+                    && indexExpression.getRightOperand() instanceof LiteralTree literal
+                    && Integer.valueOf(1).equals(literal.getValue()),
+                "the only runtime-expanded key translation must be the quick-slot i + 1 expression");
+            int count = quickSlotCount();
+            return java.util.stream.IntStream.rangeClosed(1, count)
+                .mapToObj(index -> prefix + index)
+                .toList();
+        }
+        return List.of(resolveString(expression, constants));
+    }
+
+    private static int quickSlotCount() {
+        Path config = CLIENT_ROOT.resolve("combat/QuickSlotConfig.java");
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 quick-slot cardinality scan requires a full Java 17 JDK");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            JavacTask task = (JavacTask) compiler.getTask(
+                null, fileManager, diagnostics, List.of("-proc:none"), null,
+                fileManager.getJavaFileObjects(config.toFile())
+            );
+            for (CompilationUnitTree unit : task.parse()) {
+                final int[] count = {-1};
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitVariable(VariableTree variable, Void unused) {
+                        if (variable.getName().contentEquals("SLOT_COUNT")
+                            && variable.getInitializer() instanceof LiteralTree literal
+                            && literal.getValue() instanceof Integer value) {
+                            count[0] = value;
+                        }
+                        return super.visitVariable(variable, unused);
                     }
                 }.scan(unit, null);
+                assertEquals(9, count[0],
+                    "QuickSlotConfig.SLOT_COUNT is the production source of runtime keybind cardinality");
+                return count[0];
             }
-            assertTrue(diagnostics.getDiagnostics().stream()
-                    .noneMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
-                "unable to parse production keybinding source " + path + ": " + diagnostics.getDiagnostics());
-            assertEquals(1, candidates.size(),
-                "source-site identity must resolve exactly one KeyBinding constructor: "
-                    + expected.ownerId() + " in " + path);
-            return candidates.get(0);
         } catch (IOException exception) {
-            throw new AssertionError("unable to scan production keybinding source " + path, exception);
+            throw new AssertionError("unable to scan QuickSlotConfig.SLOT_COUNT", exception);
         }
+        throw new AssertionError("missing QuickSlotConfig.SLOT_COUNT");
+    }
+
+    private static String resolveString(ExpressionTree expression, Map<String, ExpressionTree> constants) {
+        if (expression instanceof LiteralTree literal && literal.getValue() instanceof String value) {
+            return value;
+        }
+        if (expression instanceof IdentifierTree identifier) {
+            ExpressionTree initializer = constants.get(identifier.getName().toString());
+            assertNotNull(initializer, "unresolved source constant " + identifier.getName());
+            return resolveString(initializer, constants);
+        }
+        throw new AssertionError("unsupported string contract expression: " + expression);
+    }
+
+    private static String resolveInputType(ExpressionTree expression) {
+        if (expression instanceof MemberSelectTree select
+            && select.getExpression() instanceof MemberSelectTree owner
+            && owner.getIdentifier().contentEquals("Type")
+            && owner.getExpression() instanceof IdentifierTree inputUtil
+            && inputUtil.getName().contentEquals("InputUtil")) {
+            return select.getIdentifier().toString();
+        }
+        throw new AssertionError("unsupported InputUtil.Type expression: " + expression);
+    }
+
+    private static String resolveDefaultContract(
+        ExpressionTree expression,
+        Map<String, ExpressionTree> constants
+    ) {
+        if (expression instanceof MethodInvocationTree invocation
+            && invocation.getMethodSelect() instanceof MemberSelectTree select
+            && select.getIdentifier().contentEquals("getCode")
+            && select.getExpression() instanceof MemberSelectTree unknown
+            && unknown.getIdentifier().contentEquals("UNKNOWN_KEY")) {
+            return "UNKNOWN";
+        }
+        if (expression instanceof MemberSelectTree select
+            && select.getIdentifier().contentEquals("GLFW_KEY_UNKNOWN")) {
+            return "UNKNOWN";
+        }
+        if (expression instanceof BinaryTree binary && binary.getKind() == Tree.Kind.PLUS) {
+            assertEquals("GLFW.GLFW_KEY_F1", compactExpression(binary.getLeftOperand()),
+                "only quick slots may use an arithmetic default-key expression");
+            assertEquals("i", compactExpression(binary.getRightOperand()),
+                "quick-slot defaults must remain F1 + i");
+            assertEquals(9, quickSlotCount());
+            return "F1..F9";
+        }
+        if (expression instanceof IdentifierTree identifier) {
+            ExpressionTree initializer = constants.get(identifier.getName().toString());
+            assertNotNull(initializer, "unresolved default-key constant " + identifier.getName());
+            return resolveDefaultContract(initializer, constants);
+        }
+        if (expression instanceof MemberSelectTree select) {
+            String key = select.getIdentifier().toString();
+            String prefix = "GLFW_KEY_";
+            if (key.startsWith(prefix)) {
+                return key.substring(prefix.length());
+            }
+        }
+        throw new AssertionError("unsupported default-key contract expression: " + expression);
+    }
+
+    private static String translationContract(List<String> translations) {
+        if (translations.size() == 1) {
+            return translations.get(0);
+        }
+        assertEquals(java.util.stream.IntStream.rangeClosed(1, translations.size())
+            .mapToObj(index -> "key.bong-client.quick_slot_" + index).toList(), translations,
+            "the only runtime-expanded translations are quick slots 1 through SLOT_COUNT");
+        return "key.bong-client.quick_slot_{1..9}";
     }
 
     private static String enclosingAssignmentTarget(TreePath path) {
@@ -539,6 +711,37 @@ class R7FoundationContractTest {
             result.merge(value, 1L, Long::sum);
         }
         return result;
+    }
+
+    private static List<String> expectedKeybindProductionSiteFixtureLines() {
+        return """
+            botany.auto_harvest	botany/BotanyHudBootstrap.java	autoHarvestKey	key.bong-client.botany_auto_harvest	KEYSYM	R	category.bong-client.controls	1	START_CLIENT_TICK gates on player+interactive+no screen before while(wasPressed); accepted presses dispatch AUTO to HarvestSessionStore and ClientRequestSender; rejected precondition returns retain queued presses.	while (autoHarvestKey().wasPressed())
+            combat.quick_slot	combat/CombatKeybindings.java	QUICK_SLOT_KEYS[i]	key.bong-client.quick_slot_{1..9}	KEYSYM	F1..F9	category.bong-client.combat	9 from one source constructor	install loop i=0..<QuickSlotConfig.SLOT_COUNT; consumeQuickSlotPresses iterates slots in order and drains each while(wasPressed), calling quickSlotHandler.accept(i) for every press.	while (QUICK_SLOT_KEYS[i].wasPressed())
+            combat.jiemai_react	combat/CombatKeybindings.java	jiemaiKey	key.bong-client.jiemai_react	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player, then drains while(wasPressed) and invokes jiemaiHandler for every press; no currentScreen gate.	while (jiemaiKey.wasPressed())
+            combat.spell_volume_hold	combat/CombatKeybindings.java	spellVolumeKey	key.bong-client.spell_volume_hold	KEYSYM	R	category.bong-client.combat	1	onTick requires player and polls isPressed edge; Botany input capture forces a release edge; handler receives hold true/false; no currentScreen gate.	spellVolumeKey.isPressed()
+            combat.event_stream_toggle	combat/CombatKeybindings.java	eventStreamToggleKey	key.bong-client.event_stream_toggle	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player, then drains while(wasPressed) and invokes eventStreamToggleHandler for every press; no currentScreen gate.	while (eventStreamToggleKey.wasPressed())
+            combat.shield_hold	combat/CombatKeybindings.java	shieldHoldKey	key.bong-client.shield_hold	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player and polls isPressed edge, invoking shieldHoldHandler with hold true/false; no currentScreen gate.	shieldHoldKey.isPressed()
+            combat.juice_multiplier_cycle	combat/juice/JuiceControls.java	cycleKey	key.bong-client.juice_multiplier_cycle	KEYSYM	UNKNOWN	category.bong-client.combat	1	END_CLIENT_TICK drains all while(wasPressed); absent player or open screen discards every queued press, otherwise each press cycles JuiceConfig and emits actionbar feedback.	consumeCyclePresses(
+            craft.open_screen	craft/CraftScreenBootstrap.java	openScreenKey	key.bong-client.open_craft_screen	KEYSYM	C	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each press uses client.execute and opens CraftScreen unless already current.	while (keyBinding().wasPressed())
+            void_action.open_screen	cultivation/voidaction/VoidActionScreenBootstrap.java	openScreenKey	key.bong-client.open_void_action_screen	KEYSYM	O	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each press uses client.execute and opens VoidActionScreen unless already current.	while (keyBinding().wasPressed())
+            dying_elder.give_dan	dying_elder/DyingElderInteractionKeybindings.java	giveDanKey	key.bong-client.dying_elder_give_dan	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1	END_CLIENT_TICK drains all three encounter queues when player absent, screen open, or encounter inactive; active give queue drains to one boolean then dispatches exact huiyuan_pill instance via sendGiveDanToElder.	consumeWasPressed(giveDanKey)
+            dying_elder.refuse	dying_elder/DyingElderInteractionKeybindings.java	refuseKey	key.bong-client.dying_elder_refuse	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1	END_CLIENT_TICK shares full gated drain; active refuse queue drains to one boolean and logs the no-protocol placeholder action.	consumeWasPressed(refuseKey)
+            dying_elder.delay	dying_elder/DyingElderInteractionKeybindings.java	delayKey	key.bong-client.dying_elder_delay	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1	END_CLIENT_TICK shares full gated drain; active delay queue drains to one boolean and logs the no-effect placeholder action.	consumeWasPressed(delayKey)
+            forge.open_screen	forge/ForgeScreenBootstrap.java	openScreenKey	key.bong-client.open_forge_screen	KEYSYM	U	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each press uses client.execute and opens ForgeScreen unless already current.	while (keyBinding().wasPressed())
+            hud.immersive_toggle	hud/HudImmersionControls.java	toggleKey	key.bong-client.hud_immersive_toggle	KEYSYM	UNKNOWN	category.bong-client	1	END_CLIENT_TICK has no player/screen gate; drains while(wasPressed) and toggles HudImmersionMode once per press.	consumeTogglePresses(
+            identity.open_panel	identity/IdentityPanelScreenBootstrap.java	openScreenKey	key.bong-client.open_identity_panel	KEYSYM	DEFAULT_KEY=O	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed), requestOpenScreen uses client.execute and opens IdentityPanelScreen unless already current; store listener refresh remains separate.	while (keyBinding().wasPressed())
+            interaction.unified_g	input/InteractionKeybindings.java	interactKey	key.bong-client.interact	KEYSYM	G	category.bong-client.controls	1	END_CLIENT_TICK returns before reading the queue when player absent or screen open; otherwise drains while(wasPressed) and routes each press through InteractKeyRouter.global().	while (interactKey != null && interactKey.wasPressed())
+            lingtian.open_action_screen	lingtian/LingtianActionScreenBootstrap.java	openScreenKey	key.bong-client.open_lingtian_action_screen	KEYSYM	L	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed), requestOpenScreen uses client.execute, snapshots crosshair BlockPos, and opens LingtianActionScreen.	while (keyBinding().wasPressed())
+            mineral.sense	mineral/MineralSenseBootstrap.java	senseKey	key.bong-client.mineral_sense	KEYSYM	N	category.bong-client.mineral	1	END_CLIENT_TICK returns before reading queue when player absent; otherwise drains while(wasPressed), sending one mineral probe per press with a block target and no-op for empty crosshair.	while (senseKey.wasPressed())
+            movement.dash	movement/MovementKeybindings.java	dashKey	key.bong-client.movement_dash	KEYSYM	V	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queue when player absent or screen open; otherwise drains the queue to one boolean, routes DASH once, and sends movement action with resolved yaw.	consumeWasPressed(dashKey)
+            npc.interaction_log	npc/NpcInteractionLogControls.java	key	key.bong-client.npc_interaction_log	KEYSYM	UNKNOWN	category.bong-client.controls	1	END_CLIENT_TICK returns without reading queue when player absent or screen open; otherwise drains while(wasPressed) and toggles NpcInteractionLogStore once per press.	consumeTogglePresses(
+            social.spirit_niche_mark	social/SpiritNicheRevealBootstrap.java	markKey	key.bong-client.spirit_niche_mark_coordinate	KEYSYM	M	category.bong-client.social	1	END_CLIENT_TICK returns before reading queue when player absent; otherwise drains while(wasPressed), sending gaze plus mark-coordinate for a block target and no-op for empty crosshair.	while (markKey.wasPressed())
+            spirittreasure.open_screen	spirittreasure/SpiritTreasureScreenBootstrap.java	openScreenKey	key.bong-client.open_spirit_treasure_screen	KEYSYM	DEFAULT_KEY=T	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed), requestOpenScreen uses client.execute and opens SpiritTreasureScreen unless already current.	while (keyBinding().wasPressed())
+            tsy.extract_start	tsy/ExtractInteractionBootstrap.java	extractKey	key.bong-client.tsy_extract	KEYSYM	Y	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queues when player/options absent; while(wasPressed && !extracting) sends start for nearest portal; when gate is false one queued press is consumed before loop exits and further queued presses remain.	while (extractKey.wasPressed() && !ExtractStateStore.snapshot().extracting())
+            tsy.extract_cancel	tsy/ExtractInteractionBootstrap.java	cancelKey	key.bong-client.tsy_extract_cancel	KEYSYM	U	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queues when player/options absent; while(wasPressed && extracting) sends cancel; when gate is false one queued press is consumed before loop exits and further queued presses remain.	while (cancelKey.wasPressed() && ExtractStateStore.snapshot().extracting())
+            tsy.search_cancel	tsy/SearchCancelInteractionBootstrap.java	cancelKey	key.bong-client.tsy_search_cancel	KEYSYM	H	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queue when player/options absent; while(wasPressed && SEARCHING) sends cancel; when gate is false one queued press is consumed before loop exits and further queued presses remain.	while (cancelKey.wasPressed() && SearchHudStateStore.snapshot().phase() == SearchHudState.Phase.SEARCHING)
+            ui.cultivation.open_screen	ui/CultivationScreenBootstrap.java	openScreenKey	key.bong-client.open_cultivation_screen	KEYSYM	K	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each accepted click uses client.execute, applies shouldOpen, then opens CultivationScreen from PlayerStateStore.snapshot().	while (consumeClick(keyBinding()))
+            """.strip().lines().toList();
     }
 
     private static List<String> expectedInsightSettlementFixtureLines() {
@@ -757,6 +960,12 @@ class R7FoundationContractTest {
         String consumerRoute,
         String routeAnchor
     ) {
+        String normalizedDefaultContract() {
+            return defaultContract.startsWith("DEFAULT_KEY=")
+                ? defaultContract.substring("DEFAULT_KEY=".length())
+                : defaultContract;
+        }
+
         int runtimeCardinalityCount() {
             return runtimeCardinality.startsWith("9 ") ? 9 : Integer.parseInt(runtimeCardinality);
         }
@@ -814,12 +1023,24 @@ class R7FoundationContractTest {
         }
     }
 
-    private record KeybindingSourceContract(
+    private record SourceSiteIdentity(String sourcePath, String sourceSite)
+        implements Comparable<SourceSiteIdentity> {
+        @Override
+        public int compareTo(SourceSiteIdentity other) {
+            int pathOrder = sourcePath.compareTo(other.sourcePath);
+            return pathOrder != 0 ? pathOrder : sourceSite.compareTo(other.sourceSite);
+        }
+    }
+
+    private record KeybindingSourceSite(
+        String sourcePath,
         String sourceSite,
-        String translationArgument,
-        String inputTypeArgument,
-        String defaultArgument,
-        String categoryArgument
+        String translationContract,
+        String inputType,
+        String defaultContract,
+        String categoryContract,
+        int runtimeCardinality,
+        List<String> expandedTranslationKeys
     ) {
     }
 
