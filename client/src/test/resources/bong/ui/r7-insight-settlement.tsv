@@ -1,8 +1,8 @@
 # terminal_cause	settlement	owner	identity_rule	observable_effect
-ACCEPT	accept(selectedOptionId)	InsightOfferScreen	settle only when current offer triggerId matches	Emit exactly one accepted InsightDecision and close this screen if still current.
-DECLINE	decline	InsightOfferScreen	settle only when current offer triggerId matches	Emit exactly one declined InsightDecision and close this screen if still current.
-TIMEOUT	timedOut	InsightOfferScreen	settle only when nowMs is greater than or equal to expiresAtMs for the same triggerId	Emit exactly one timed-out InsightDecision and close this screen if still current.
-ESC	decline	InsightOfferScreen	settle only when current offer triggerId matches	Emit exactly one declined InsightDecision; subsequent removed callback is ignored.
-REPLACED_BY_DIFFERENT_OFFER	decline	InsightOfferScreen + InsightOfferScreenBootstrap + ScreenTransitionController.CurrentScreenCancellationHandler	bootstrap compares outgoing and replacement triggerId before transition; handler settles the outgoing identity once	Emit exactly one declined InsightDecision before the new offer becomes authoritative.
-REMOVED_EXCEPTIONALLY	decline	InsightOfferScreen.removed	settle the same triggerId when no prior terminal cause won	Emit exactly one declined InsightDecision even if removal bypasses close.
+ACCEPT	InsightDecision.chosen(triggerId, choiceId)	InsightOfferScreen	settle only when current offer triggerId matches	Emit exactly one CHOSEN InsightDecision and close this screen if still current.
+DECLINE	InsightDecision.declined(triggerId)	InsightOfferScreen	settle only when current offer triggerId matches	Emit exactly one DECLINED InsightDecision and close this screen if still current.
+TIMEOUT	InsightDecision.timedOut(triggerId)	InsightOfferScreen	settle only when nowMs is greater than or equal to expiresAtMs for the same triggerId	Emit exactly one TIMED_OUT InsightDecision and close this screen if still current.
+ESC	InsightDecision.declined(triggerId)	InsightOfferScreen.close	settle only when current offer triggerId matches	Emit exactly one DECLINED InsightDecision; subsequent onRemoved callback is ignored.
+REPLACED_BY_DIFFERENT_OFFER	InsightDecision.declined(triggerId)	InsightOfferScreen + InsightOfferScreenBootstrap + ScreenTransitionController.CurrentScreenCancellationHandler	bootstrap compares outgoing and replacement triggerId before transition; handler settles the outgoing identity once	Emit exactly one DECLINED InsightDecision before the new offer becomes authoritative.
+REMOVED_EXCEPTIONALLY	InsightDecision.declined(triggerId)	InsightOfferScreen.onRemoved	settle the same triggerId when no prior terminal cause won	Emit exactly one DECLINED InsightDecision through the BongScreenBase removal hook even if removal bypasses close.
 DUPLICATE_TERMINAL	NOOP	InsightOfferScreen	settled triggerId and first terminal cause are immutable	Emit no second decision and do not mutate the winning cause.
