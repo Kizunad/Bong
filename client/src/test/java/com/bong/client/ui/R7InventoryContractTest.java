@@ -78,6 +78,13 @@ class R7InventoryContractTest {
             actual.stream().map(R7SourceScan.TokenOccurrence::sourceLine).toList(),
             "source context drifted; retain or explicitly reclassify each fill(100) occurrence"
         );
+        assertEquals(
+            expectedFillClassifications(),
+            expectedRows.stream()
+                .map(row -> row.stableKey() + "\t" + row.verdict() + "\t" + row.riskKind())
+                .toList(),
+            "every exact fill(100) token verdict and risk kind must be explicitly re-decided"
+        );
 
         Map<String, Long> verdicts = histogram(expectedRows.stream().map(FillInventoryRow::verdict).toList());
         assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L), verdicts,
@@ -316,6 +323,103 @@ class R7InventoryContractTest {
 
     private static String relative(Path path) {
         return PRODUCTION_ROOT.relativize(path).toString().replace('\\', '/');
+    }
+
+    private static List<String> expectedFillClassifications() {
+        return """
+            alchemy/AlchemyScreen.java#1\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#2\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#3\tRISK\tEVICTS_LATER_SIBLING
+            alchemy/AlchemyScreen.java#4\tRISK\tEVICTS_LATER_SIBLING
+            alchemy/AlchemyScreen.java#5\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#6\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#7\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#8\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#9\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#10\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#11\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#12\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#13\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#14\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#15\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#16\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#17\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#18\tRISK\tEVICTS_LATER_SIBLING
+            alchemy/AlchemyScreen.java#19\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#20\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#21\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#22\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#23\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#24\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#25\tRISK\tEVICTS_LATER_SIBLING
+            alchemy/AlchemyScreen.java#26\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#27\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#28\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#29\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#30\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#31\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#32\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#33\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#34\tRISK\tTERMINAL_ORDER_DEPENDENT
+            alchemy/AlchemyScreen.java#35\tLEGAL\tNONE
+            alchemy/AlchemyScreen.java#36\tLEGAL\tNONE
+            combat/inspect/SkillConfigFloatingWindow.java#1\tLEGAL\tNONE
+            combat/inspect/SkillConfigFloatingWindow.java#2\tLEGAL\tNONE
+            combat/inspect/SkillConfigFloatingWindow.java#3\tLEGAL\tNONE
+            combat/inspect/TechniqueRowComponent.java#1\tLEGAL\tNONE
+            combat/inspect/TechniquesTabPanel.java#1\tLEGAL\tNONE
+            combat/inspect/TechniquesTabPanel.java#2\tLEGAL\tNONE
+            craft/CraftActionBar.java#1\tLEGAL\tNONE
+            craft/CraftActionBar.java#2\tCOMMENT\tNONE
+            craft/CraftActionBar.java#3\tLEGAL\tTERMINAL_INTENTIONAL
+            craft/CraftMaterialGrid.java#1\tLEGAL\tNONE
+            craft/CraftMaterialGrid.java#2\tLEGAL\tNONE
+            craft/CraftOutputPreview.java#1\tLEGAL\tNONE
+            craft/CraftProgressBar.java#1\tLEGAL\tNONE
+            craft/CraftProgressBar.java#2\tLEGAL\tNONE
+            craft/CraftProgressBar.java#3\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#1\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#2\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#3\tCOMMENT\tNONE
+            craft/CraftRecipeListWidget.java#4\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#5\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#6\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#7\tLEGAL\tNONE
+            craft/CraftRecipeListWidget.java#8\tLEGAL\tNONE
+            craft/CraftScreen.java#1\tLEGAL\tNONE
+            craft/CraftScreen.java#2\tLEGAL\tNONE
+            craft/CraftScreen.java#3\tLEGAL\tTERMINAL_INTENTIONAL
+            craft/CraftScreenLayout.java#1\tCOMMENT\tNONE
+            craft/WorkbenchScreen.java#1\tLEGAL\tNONE
+            craft/WorkbenchScreen.java#2\tLEGAL\tNONE
+            craft/WorkbenchScreen.java#3\tLEGAL\tTERMINAL_INTENTIONAL
+            inventory/BlockPickerPanel.java#1\tLEGAL\tNONE
+            inventory/BlockPickerPanel.java#2\tLEGAL\tNONE
+            inventory/InspectScreen.java#1\tLEGAL\tNONE
+            inventory/InspectScreen.java#2\tLEGAL\tNONE
+            inventory/InspectScreen.java#3\tLEGAL\tNONE
+            inventory/InspectScreen.java#4\tLEGAL\tNONE
+            inventory/InspectScreen.java#5\tLEGAL\tNONE
+            inventory/InspectScreen.java#6\tLEGAL\tNONE
+            inventory/InspectScreen.java#7\tLEGAL\tNONE
+            inventory/InspectScreen.java#8\tLEGAL\tNONE
+            inventory/InspectScreen.java#9\tLEGAL\tNONE
+            inventory/component/EquipmentPanel.java#1\tCOMMENT\tNONE
+            lingtian/LingtianActionScreen.java#1\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#2\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#3\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#4\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#5\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#6\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#7\tLEGAL\tNONE
+            lingtian/LingtianActionScreen.java#8\tLEGAL\tNONE
+            npc/NpcTradeScreen.java#1\tLEGAL\tNONE
+            processing/ProcessingActionScreen.java#1\tLEGAL\tNONE
+            scroll/ScrollReadScreen.java#1\tCOMMENT\tNONE
+            scroll/ScrollReadScreen.java#2\tLEGAL\tNONE
+            scroll/ScrollReadScreen.java#3\tLEGAL\tNONE
+            skill/SkillRowComponent.java#1\tLEGAL\tNONE
+            """.strip().lines().toList();
     }
 
     private record ScreenInventoryRow(

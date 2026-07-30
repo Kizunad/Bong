@@ -1,6 +1,6 @@
 # scenario	request_kind	request_identity	expires_at_ms	request_priority	already_notified	current_kind	current_identity	current_priority	combat_active	now_ms	decision	rationale
 social-expired-past	SOCIAL_INVITE	invite-old	999	NONE	false	NONE		NONE	false	1000	EXPIRE	A finite passive offer whose expiry is before now never opens.
-social-expired-boundary	SOCIAL_INVITE	invite-boundary	1000	NONE	false	ORDINARY	inventory	NONE	false	1000	EXPIRE	A finite TTL expires when nowMs equals expiresAtMs and is never replayed later.
+social-expired-boundary	SOCIAL_INVITE	invite-boundary	1000	NONE	false	MODAL	invite-boundary	NONE	false	1000	EXPIRE	Expiry is evaluated before identity matching when nowMs equals expiresAtMs, so an expired matching offer is never retained.
 social-open	SOCIAL_INVITE	invite-live	1001	NONE	false	NONE		NONE	false	1000	OPEN	A live passive offer opens only when gameplay is not in combat and no screen is active.
 social-matching	SOCIAL_INVITE	invite-live	1001	NONE	false	MODAL	invite-live	NONE	false	1000	NOOP_MATCHING	Matching derives from equal non-empty request/current identities.
 social-combat-first	SOCIAL_INVITE	invite-live	1001	NONE	false	NONE		NONE	true	1000	DEFER_NOTIFY	First blocked observation defers the authoritative offer and requests one caller-owned notification.

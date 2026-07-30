@@ -1,7 +1,20 @@
 package com.bong.client.ui;
 
+import com.sun.source.tree.AssignmentTree;
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.Tree;
+import com.sun.source.util.JavacTask;
+import com.sun.source.util.TreePath;
+import com.sun.source.util.TreePathScanner;
 import org.junit.jupiter.api.Test;
 
+import javax.tools.Diagnostic;
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
@@ -34,9 +47,9 @@ class R7FoundationContractTest {
             "DiffListWidget",
             "ScreenOpenPolicy"
         ), components.keySet(), "P0 freezes one base plus four shared helper contracts");
-        assertEquals(36, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
-        assertEquals(36, Set.copyOf(rows).size(), "each frozen contract row must be unique");
-        assertEquals(36, rows.stream()
+        assertEquals(37, rows.size(), "foundation signature inventory changed without an explicit P0 decision");
+        assertEquals(37, Set.copyOf(rows).size(), "each frozen contract row must be unique");
+        assertEquals(37, rows.stream()
             .map(row -> row.component() + "::" + row.symbol())
             .collect(java.util.stream.Collectors.toSet()).size(),
             "each frozen contract symbol must have one unambiguous signature row");
@@ -154,6 +167,9 @@ class R7FoundationContractTest {
 
     @Test
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
+        List<String> fixtureLines = resourceLines("/bong/ui/r7-screen-open-policy.tsv");
+        assertEquals(expectedOpenPolicyFixtureLines(), fixtureLines,
+            "all 30 raw policy vectors and every input/output field must be explicitly re-decided");
         List<OpenPolicyRow> rows = openPolicyRows();
         assertEquals(30, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
         assertEquals(30, rows.stream().map(OpenPolicyRow::scenario)
@@ -183,9 +199,14 @@ class R7FoundationContractTest {
             .allMatch(OpenPolicyRow::matching),
             "NOOP_MATCHING must derive from equal non-empty request/current identities");
         assertTrue(rows.stream()
-            .filter(row -> !row.decision().equals("NOOP_MATCHING"))
+            .filter(row -> !Set.of("NOOP_MATCHING", "EXPIRE").contains(row.decision()))
             .noneMatch(OpenPolicyRow::matching),
-            "matching identity rows must use NOOP_MATCHING before priority arbitration");
+            "live matching identity rows must use NOOP_MATCHING before priority arbitration");
+        OpenPolicyRow expiryBeforeMatching = findPolicy(rows, "social-expired-boundary");
+        assertTrue(expiryBeforeMatching.expired() && expiryBeforeMatching.matching(),
+            "the precedence vector must make expiry and identity matching true simultaneously");
+        assertEquals("EXPIRE", expiryBeforeMatching.decision(),
+            "finite expiry wins before matching when both predicates hold");
         assertEquals("EXPIRE", findPolicy(rows, "social-expired-boundary").decision());
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-combat-first").decision());
         assertEquals("DEFER_SILENT", findPolicy(rows, "social-combat-repeat").decision());
@@ -213,62 +234,10 @@ class R7FoundationContractTest {
 
     @Test
     void insightSettlementFixtureFreezesEveryTerminalCauseAndOwner() {
+        List<String> lines = resourceLines("/bong/ui/r7-insight-settlement.tsv");
+        assertEquals(expectedInsightSettlementFixtureLines(), lines,
+            "every settlement, owner, identity guard, commit order, failure rule, and observable effect must be exact-pinned");
         List<InsightSettlementRow> rows = insightSettlementRows();
-        assertEquals(List.of(
-            new InsightSettlementRow(
-                "ACCEPT",
-                "InsightDecision.chosen(triggerId, choiceId)",
-                "InsightOfferScreen",
-                "settle only when current offer triggerId matches",
-                "Emit exactly one CHOSEN InsightDecision and close this screen if still current."
-            ),
-            new InsightSettlementRow(
-                "DECLINE",
-                "InsightDecision.declined(triggerId)",
-                "InsightOfferScreen",
-                "settle only when current offer triggerId matches",
-                "Emit exactly one DECLINED InsightDecision and close this screen if still current."
-            ),
-            new InsightSettlementRow(
-                "TIMEOUT",
-                "InsightDecision.timedOut(triggerId)",
-                "InsightOfferScreen",
-                "settle only when nowMs is greater than or equal to expiresAtMs for the same triggerId",
-                "Emit exactly one TIMED_OUT InsightDecision and close this screen if still current."
-            ),
-            new InsightSettlementRow(
-                "ESC",
-                "InsightDecision.declined(triggerId)",
-                "InsightOfferScreen.close",
-                "settle only when current offer triggerId matches",
-                "Emit exactly one DECLINED InsightDecision; subsequent onRemoved callback is ignored."
-            ),
-            new InsightSettlementRow(
-                "REPLACED_BY_DIFFERENT_OFFER",
-                "InsightDecision.declined(triggerId)",
-                "InsightOfferScreen + InsightOfferScreenBootstrap + "
-                    + "ScreenTransitionController.CurrentScreenCancellationHandler",
-                "bootstrap compares outgoing and replacement triggerId before transition; "
-                    + "handler settles the outgoing identity once",
-                "Emit exactly one DECLINED InsightDecision before the new offer becomes authoritative."
-            ),
-            new InsightSettlementRow(
-                "REMOVED_EXCEPTIONALLY",
-                "InsightDecision.declined(triggerId)",
-                "InsightOfferScreen.onRemoved",
-                "settle the same triggerId when no prior terminal cause won",
-                "Emit exactly one DECLINED InsightDecision through the BongScreenBase removal hook "
-                    + "even if removal bypasses close."
-            ),
-            new InsightSettlementRow(
-                "DUPLICATE_TERMINAL",
-                "NOOP",
-                "InsightOfferScreen",
-                "settled triggerId and first terminal cause are immutable",
-                "Emit no second decision and do not mutate the winning cause."
-            )
-        ), rows,
-            "every settlement method, owner, identity rule, and observable effect must be exact-pinned");
         assertEquals(Set.of(
             "ACCEPT", "DECLINE", "TIMEOUT", "ESC", "REPLACED_BY_DIFFERENT_OFFER",
             "REMOVED_EXCEPTIONALLY", "DUPLICATE_TERMINAL"
@@ -276,9 +245,21 @@ class R7FoundationContractTest {
             .collect(java.util.stream.Collectors.toSet()),
             "every insight terminal cause must have one exactly-once settlement contract");
         assertEquals(7, rows.size(), "insight terminal causes must be unique");
-        assertTrue(rows.stream().allMatch(row -> row.identityRule().contains("triggerId")
-            || row.terminalCause().equals("DUPLICATE_TERMINAL")),
+        assertTrue(rows.stream().allMatch(row -> row.identityRule().contains("triggerId")),
             "settlement must be identity guarded by the offer triggerId");
+        assertTrue(rows.stream()
+            .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
+            .allMatch(row -> row.commitOrder().contains("commit")
+                && row.commitOrder().contains("before sending")),
+            "the winning triggerId and cause must commit before any fallible decision send");
+        assertTrue(rows.stream()
+            .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
+            .allMatch(row -> row.sendFailure().contains("still attempted")
+                || row.terminalCause().equals("REMOVED_EXCEPTIONALLY")),
+            "a send failure cannot skip the following transition or removal lifecycle stage");
+        assertTrue(rows.stream().allMatch(row -> row.transitionFailure().contains("committed winner")
+            || row.transitionFailure().contains("winner committed")),
+            "transition failures and duplicate paths must preserve the first committed winner");
         assertEquals("NOOP", rows.stream()
             .filter(row -> row.terminalCause().equals("DUPLICATE_TERMINAL"))
             .findFirst().orElseThrow().settlement(),
@@ -301,18 +282,49 @@ class R7FoundationContractTest {
             "R7 P0 authorizes no physical-default conflict exemption");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
-        Map<String, Long> actual = productionKeybindingConstructorSites();
-        assertEquals(26L, actual.values().stream().mapToLong(Long::longValue).sum(),
-            "production KeyBinding constructor-site count changed");
-        assertEquals(expected.stream().collect(java.util.stream.Collectors.toMap(
-            KeybindProductionSiteRow::path,
-            row -> (long) row.constructorSites(),
-            (left, right) -> { throw new AssertionError("duplicate production-site fixture path"); },
-            TreeMap::new
-        )), actual,
-            "every production KeyBinding constructor site must have an explicit P1 global-registry owner");
-        assertTrue(expected.stream().allMatch(row -> row.p1Owner().contains("BongKeybindRegistry.global().register")),
-            "no bootstrap-local registration path may bypass conflict detection after P1");
+        List<R7SourceScan.TokenOccurrence> actualSites = productionKeybindingConstructorSites();
+        assertEquals(26, actualSites.size(), "production KeyBinding constructor-site count changed");
+        assertEquals(26, expected.size(), "each constructor source site must have one exact binding contract");
+        assertEquals(26, expected.stream().map(KeybindProductionSiteRow::ownerId)
+            .collect(java.util.stream.Collectors.toSet()).size(),
+            "every logical binding needs one globally unique BindingOwner id");
+        Map<String, Long> actualByPath = new TreeMap<>();
+        for (R7SourceScan.TokenOccurrence occurrence : actualSites) {
+            actualByPath.merge(occurrence.path(), 1L, Long::sum);
+        }
+        Map<String, Long> expectedByPath = new TreeMap<>();
+        for (KeybindProductionSiteRow row : expected) {
+            expectedByPath.merge(row.sourcePath(), 1L, Long::sum);
+        }
+        assertEquals(actualByPath, expectedByPath,
+            "the exact contract inventory must cover every production constructor source site");
+        assertEquals(34, expected.stream().mapToInt(KeybindProductionSiteRow::runtimeCardinalityCount).sum(),
+            "26 source constructors expand to exactly 34 runtime bindings (nine quick slots)");
+        for (KeybindProductionSiteRow row : expected) {
+            KeybindingSourceContract actual = keybindingSourceContract(row);
+            assertEquals(row.sourceSite(), actual.sourceSite(),
+                "stable assignment target drifted for " + row.ownerId());
+            assertEquals(row.translationSourceContract(), actual.translationArgument(),
+                "translation constructor argument drifted for " + row.ownerId());
+            assertEquals("InputUtil.Type." + row.inputType(), actual.inputTypeArgument(),
+                "InputUtil.Type constructor argument drifted for " + row.ownerId());
+            assertEquals(row.defaultSourceContract(), actual.defaultArgument(),
+                "default-code constructor argument drifted for " + row.ownerId());
+            assertEquals(row.categorySourceContract(), actual.categoryArgument(),
+                "category constructor argument drifted for " + row.ownerId());
+            assertFalse(row.consumerRoute().isBlank(),
+                "each binding must freeze its behavior-critical consumer route: " + row.ownerId());
+        }
+        KeybindProductionSiteRow quickSlots = expected.stream()
+            .filter(row -> row.ownerId().equals("combat.quick_slot"))
+            .findFirst().orElseThrow();
+        String combatSource = R7SourceScan.codeOnly(R7SourceScan.read(CLIENT_ROOT.resolve(quickSlots.sourcePath())))
+            .replaceAll("\\s+", " ");
+        assertTrue(combatSource.contains("i < QuickSlotConfig.SLOT_COUNT")
+            && combatSource.contains("QUICK_SLOT_KEYS[i]")
+            && combatSource.contains("while (QUICK_SLOT_KEYS[i].wasPressed())")
+            && combatSource.contains("quickSlotHandler.accept(i)"),
+            "quick-slot one-source/nine-runtime expansion and ordered full-drain route must stay frozen");
     }
 
     private static void assertNoFoundationReference(Path root) {
@@ -444,18 +456,72 @@ class R7FoundationContractTest {
             && currentTerminal == !row.currentPriority().equals("NONE");
     }
 
-    private static Map<String, Long> productionKeybindingConstructorSites() throws IOException {
-        Map<String, Long> result = new TreeMap<>();
-        for (R7SourceScan.TokenOccurrence occurrence : R7SourceScan.tokenOccurrences(
-            CLIENT_ROOT,
-            "new KeyBinding("
-        )) {
-            if (occurrence.code()) {
-                result.merge(occurrence.path(), 1L, Long::sum);
+    private static List<R7SourceScan.TokenOccurrence> productionKeybindingConstructorSites() throws IOException {
+        return R7SourceScan.tokenOccurrences(CLIENT_ROOT, "new KeyBinding(").stream()
+            .filter(R7SourceScan.TokenOccurrence::code)
+            .toList();
+    }
+
+    private static KeybindingSourceContract keybindingSourceContract(KeybindProductionSiteRow expected) {
+        Path path = CLIENT_ROOT.resolve(expected.sourcePath());
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 keybinding contract scan requires a full Java 17 JDK");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
+            JavacTask task = (JavacTask) compiler.getTask(
+                null, fileManager, diagnostics, List.of("-proc:none"), null, sources
+            );
+            List<KeybindingSourceContract> candidates = new java.util.ArrayList<>();
+            for (CompilationUnitTree unit : task.parse()) {
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitNewClass(NewClassTree tree, Void unused) {
+                        if (tree.getIdentifier().toString().equals("KeyBinding") && tree.getArguments().size() == 4) {
+                            String site = enclosingAssignmentTarget(getCurrentPath());
+                            if (site != null && site.equals(expected.sourceSite())) {
+                                candidates.add(new KeybindingSourceContract(
+                                    site,
+                                    compactExpression(tree.getArguments().get(0)),
+                                    compactExpression(tree.getArguments().get(1)),
+                                    compactExpression(tree.getArguments().get(2)),
+                                    compactExpression(tree.getArguments().get(3))
+                                ));
+                            }
+                        }
+                        return super.visitNewClass(tree, unused);
+                    }
+                }.scan(unit, null);
+            }
+            assertTrue(diagnostics.getDiagnostics().stream()
+                    .noneMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
+                "unable to parse production keybinding source " + path + ": " + diagnostics.getDiagnostics());
+            assertEquals(1, candidates.size(),
+                "source-site identity must resolve exactly one KeyBinding constructor: "
+                    + expected.ownerId() + " in " + path);
+            return candidates.get(0);
+        } catch (IOException exception) {
+            throw new AssertionError("unable to scan production keybinding source " + path, exception);
+        }
+    }
+
+    private static String enclosingAssignmentTarget(TreePath path) {
+        for (TreePath cursor = path.getParentPath(); cursor != null; cursor = cursor.getParentPath()) {
+            Tree leaf = cursor.getLeaf();
+            if (leaf instanceof AssignmentTree assignment) {
+                return compactExpression(assignment.getVariable());
+            }
+            if (leaf instanceof com.sun.source.tree.VariableTree variable) {
+                return variable.getName().toString();
             }
         }
-        return result;
+        return null;
     }
+
+    private static String compactExpression(Tree tree) {
+        return tree.toString().replaceAll("\\s+", " ").trim();
+    }
+
 
     private static OpenPolicyRow findPolicy(List<OpenPolicyRow> rows, String scenario) {
         return rows.stream()
@@ -470,6 +536,53 @@ class R7FoundationContractTest {
             result.merge(value, 1L, Long::sum);
         }
         return result;
+    }
+
+    private static List<String> expectedInsightSettlementFixtureLines() {
+        return """
+            ACCEPT\tInsightDecision.chosen(triggerId, choiceId)\tInsightOfferScreen\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and ACCEPT as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one CHOSEN InsightDecision; after either failure the offer remains terminal and cannot emit again.
+            DECLINE\tInsightDecision.declined(triggerId)\tInsightOfferScreen\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and DECLINE as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one DECLINED InsightDecision; after either failure the offer remains terminal and cannot emit again.
+            TIMEOUT\tInsightDecision.timedOut(triggerId)\tInsightOfferScreen\tsettle only when nowMs is greater than or equal to expiresAtMs for the same triggerId\tAtomically commit settled triggerId and TIMEOUT as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one TIMED_OUT InsightDecision; after either failure the offer remains terminal and cannot emit again.
+            ESC\tInsightDecision.declined(triggerId)\tInsightOfferScreen.close\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and ESC as the immutable winning cause before sending the decline; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close or removal-hook failure leaves the committed winner unchanged; the later onRemoved terminal path is NOOP.\tIf send and close or removal both fail, throw the first failure and add later failures as suppressed in execution order.\tEmit at most one DECLINED InsightDecision; subsequent onRemoved callback emits nothing and cannot replace ESC as winner.
+            REPLACED_BY_DIFFERENT_OFFER\tInsightDecision.declined(triggerId)\tInsightOfferScreen + InsightOfferScreenBootstrap + ScreenTransitionController.CurrentScreenCancellationHandler\tbootstrap compares outgoing and replacement triggerId before transition; handler settles the outgoing identity once\tAtomically commit the outgoing triggerId and REPLACED_BY_DIFFERENT_OFFER before sending its decline; then send; then switch to the different offer, which becomes authoritative only after the outgoing commit.\tA send failure is retained as primary and switching to the replacement is still attempted.\tA switch failure leaves the outgoing winner committed and the replacement non-authoritative; later terminal paths for the outgoing triggerId remain NOOP.\tIf send and switch both fail, throw the send failure and add the switch failure as suppressed in execution order.\tEmit at most one DECLINED InsightDecision for the outgoing triggerId; replacement cannot strand or re-settle the outgoing offer after either failure.
+            REMOVED_EXCEPTIONALLY\tInsightDecision.declined(triggerId)\tInsightOfferScreen.onRemoved\tsettle the same triggerId when no prior terminal cause won\tAtomically commit settled triggerId and REMOVED_EXCEPTIONALLY before sending the decline; then send; then allow BongScreenBase removal cleanup and super.removed to continue.\tA send failure is retained as primary and later removal lifecycle stages are still attempted.\tA later removal-stage failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tBongScreenBase throws the first failure and adds later removal failures as suppressed in execution order.\tEmit at most one DECLINED InsightDecision through the removal hook; exceptional removal cannot leave the offer unsettled or permit a retry.
+            DUPLICATE_TERMINAL\tNOOP\tInsightOfferScreen\tsettled triggerId and first terminal cause are immutable\tObserve the already committed winner and return before decision send or any screen transition.\tNo decision send is attempted.\tNo screen switch is attempted by the duplicate path; the committed winner remains unchanged.\tNo new exception is produced by the duplicate path.\tEmit no second decision, perform no second transition, and do not mutate the winning cause.
+            """.strip().lines().toList();
+    }
+
+    private static List<String> expectedOpenPolicyFixtureLines() {
+        return """
+            social-expired-past\tSOCIAL_INVITE\tinvite-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tA finite passive offer whose expiry is before now never opens.
+            social-expired-boundary\tSOCIAL_INVITE\tinvite-boundary\t1000\tNONE\tfalse\tMODAL\tinvite-boundary\tNONE\tfalse\t1000\tEXPIRE\tExpiry is evaluated before identity matching when nowMs equals expiresAtMs, so an expired matching offer is never retained.
+            social-open\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tA live passive offer opens only when gameplay is not in combat and no screen is active.
+            social-matching\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tMODAL\tinvite-live\tNONE\tfalse\t1000\tNOOP_MATCHING\tMatching derives from equal non-empty request/current identities.
+            social-combat-first\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tNONE\t\tNONE\ttrue\t1000\tDEFER_NOTIFY\tFirst blocked observation defers the authoritative offer and requests one caller-owned notification.
+            social-combat-repeat\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\ttrue\tNONE\t\tNONE\ttrue\t1000\tDEFER_SILENT\tThe same already-notified identity remains deferred without another notification.
+            social-screen-first\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tDEFER_NOTIFY\tAnother screen defers the offer until currentScreen becomes null and notifies once.
+            social-screen-repeat\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\ttrue\tORDINARY\tinventory\tNONE\tfalse\t1000\tDEFER_SILENT\tRepeated observation of the same blocked identity is silent.
+            social-new-identity\tSOCIAL_INVITE\tinvite-new\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tDEFER_NOTIFY\tA new caller-owned identity resets notification eligibility.
+            social-terminal\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tSYSTEM_TERMINAL\tdeath\tDEATH\tfalse\t1000\tDEFER_NOTIFY\tA passive social offer never displaces a system terminal.
+            hotkey-open\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tAn immediate user keypress may open when no screen blocks it.
+            hotkey-matching\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tORDINARY\tidentity-screen\tNONE\tfalse\t1000\tNOOP_MATCHING\tA matching screen is not recreated.
+            hotkey-ordinary\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tBLOCK_DROP\tAn ordinary nonmatching screen consumes the physical moment; the keypress is not queued.
+            hotkey-modal\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tBLOCK_DROP\tPhysical keypresses are never queued for future replay behind a modal.
+            hotkey-terminal\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tSYSTEM_TERMINAL\tdeath\tDEATH\tfalse\t1000\tBLOCK_DROP\tA hotkey never displaces or waits behind a system terminal.
+            insight-expired\tINSIGHT\tinsight-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tAn expired insight settles through its domain owner and never opens.
+            insight-open\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tA live insight opens when no UI is active.
+            insight-preempt\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tPREEMPT\tInsight may replace ordinary non-modal UI through transition arbitration.
+            insight-matching\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tMODAL\tinsight-live\tNONE\tfalse\t1000\tNOOP_MATCHING\tThe same insight identity is not reopened.
+            insight-modal-first\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tDEFER_NOTIFY\tInsight waits behind an equal or higher modal and notifies once.
+            insight-modal-repeat\tINSIGHT\tinsight-live\t1001\tNONE\ttrue\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tDEFER_SILENT\tRepeated blocked insight observation is silent.
+            insight-terminal\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tSYSTEM_TERMINAL\tdeath\tDEATH\tfalse\t1000\tDEFER_NOTIFY\tInsight never displaces death or termination UI.
+            death-open\tSYSTEM_TERMINAL\tdeath-1\t9223372036854775807\tDEATH\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tA death terminal opens when no screen is active.
+            death-matching\tSYSTEM_TERMINAL\tdeath-1\t9223372036854775807\tDEATH\tfalse\tSYSTEM_TERMINAL\tdeath-1\tDEATH\tfalse\t1000\tNOOP_MATCHING\tThe same terminal identity is not recreated.
+            death-preempt-ordinary\tSYSTEM_TERMINAL\tdeath-1\t9223372036854775807\tDEATH\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tPREEMPT\tDeath may displace lower-priority ordinary UI.
+            death-preempt-modal\tSYSTEM_TERMINAL\tdeath-1\t9223372036854775807\tDEATH\tfalse\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tPREEMPT\tDeath may displace lower-priority modal UI.
+            terminate-preempt-death\tSYSTEM_TERMINAL\tterminate-1\t9223372036854775807\tTERMINATE\tfalse\tSYSTEM_TERMINAL\tdeath-1\tDEATH\tfalse\t1000\tPREEMPT\tTerminate explicitly outranks Death.
+            death-blocked-terminate\tSYSTEM_TERMINAL\tdeath-1\t9223372036854775807\tDEATH\tfalse\tSYSTEM_TERMINAL\tterminate-1\tTERMINATE\tfalse\t1000\tBLOCK_DROP\tDeath cannot preempt a visible Terminate terminal.
+            death-blocked-peer\tSYSTEM_TERMINAL\tdeath-2\t9223372036854775807\tDEATH\tfalse\tSYSTEM_TERMINAL\tdeath-1\tDEATH\tfalse\t1000\tBLOCK_DROP\tA nonmatching equal-priority terminal is not replaced.
+            terminate-blocked-peer\tSYSTEM_TERMINAL\tterminate-2\t9223372036854775807\tTERMINATE\tfalse\tSYSTEM_TERMINAL\tterminate-1\tTERMINATE\tfalse\t1000\tBLOCK_DROP\tA nonmatching Terminate terminal cannot replace an equal-priority peer.
+            """.strip().lines().toList();
     }
 
     private static List<FoundationRow> expectedFoundationRows() {
@@ -494,13 +607,14 @@ class R7FoundationContractTest {
             new FoundationRow("BongKeybindRegistry", "type", "public final class BongKeybindRegistry", "R7", "Registrations are explicit and inspectable; no reflection or annotation discovery."),
             new FoundationRow("BongKeybindRegistry", "global", "public static BongKeybindRegistry global()", "R7", "Production has one registry instance so bootstrap-local registries cannot bypass conflict detection."),
             new FoundationRow("BongKeybindRegistry", "constructor", "BongKeybindRegistry(UnaryOperator<KeyBinding> registrar, List<ReservedDefault> reservedDefaults, Set<ConflictExemption> exemptions)", "R7", "The package seam injects Fabric registration plus explicit vanilla reservations and exact exemptions."),
-            new FoundationRow("BongKeybindRegistry", "register", "public KeyBinding register(BindingSpec spec)", "R7", "Duplicate translation keys always fail; UNKNOWN defaults do not collide physically."),
+            new FoundationRow("BongKeybindRegistry", "register", "public KeyBinding register(BindingSpec spec)", "R7", "Duplicate owner identities and translation keys always fail; UNKNOWN defaults do not collide physically."),
             new FoundationRow("BongKeybindRegistry", "registrations", "public List<Registration> registrations()", "R7", "Inspection is immutable and preserves registration order."),
-            new FoundationRow("BongKeybindRegistry", "binding-spec", "public record BindingSpec(String translationKey, InputUtil.Type type, int defaultCode, String category)", "R7", "Physical identity is the exact InputUtil.Type plus default code pair."),
-            new FoundationRow("BongKeybindRegistry", "registration", "public record Registration(BindingSpec spec, KeyBinding binding)", "R7", "A successful immutable registration pairs its exact spec with the Fabric binding."),
+            new FoundationRow("BongKeybindRegistry", "binding-owner", "public record BindingOwner(String id)", "R7", "A non-blank globally unique owner id identifies one logical binding independent of its source file or translation text."),
+            new FoundationRow("BongKeybindRegistry", "binding-spec", "public record BindingSpec(BindingOwner owner, String translationKey, InputUtil.Type type, int defaultCode, String category)", "R7", "Every binding carries its explicit owner identity; physical identity is the exact InputUtil.Type plus default code pair."),
+            new FoundationRow("BongKeybindRegistry", "registration", "public record Registration(BindingOwner owner, BindingSpec spec, KeyBinding binding)", "R7", "A successful immutable registration repeats the exact owner identity next to its spec and Fabric binding for unambiguous inspection."),
             new FoundationRow("BongKeybindRegistry", "physical-default", "public record PhysicalDefault(InputUtil.Type type, int code)", "R7", "Physical collision identity does not collapse different InputUtil types sharing one numeric code."),
-            new FoundationRow("BongKeybindRegistry", "reserved-default", "public record ReservedDefault(String owner, PhysicalDefault key)", "R7", "Vanilla-reserved defaults are an explicit manifest."),
-            new FoundationRow("BongKeybindRegistry", "conflict-exemption", "public record ConflictExemption(String firstOwner, String secondOwner, PhysicalDefault key, String reason)", "R7", "An exemption applies only to an exact owner pair and non-empty reason."),
+            new FoundationRow("BongKeybindRegistry", "reserved-default", "public record ReservedDefault(BindingOwner owner, PhysicalDefault key)", "R7", "Vanilla-reserved defaults use the same explicit owner identity namespace as Bong bindings."),
+            new FoundationRow("BongKeybindRegistry", "conflict-exemption", "public record ConflictExemption(BindingOwner firstOwner, BindingOwner secondOwner, PhysicalDefault key, String reason)", "R7", "An exemption applies only to an exact canonical owner-id pair, exact physical key, and non-empty reason."),
             new FoundationRow("ClientThreadMarshal", "run-production", "public static boolean run(Runnable task)", "R7", "Null MinecraftClient fails closed; accepted inline or queued work returns true and runs the task once."),
             new FoundationRow("ClientThreadMarshal", "run-seam", "static boolean run(Supplier<Boolean> onClientThread, Runnable task, Consumer<Runnable> clientExecutor)", "R7", "True runs once inline; false enqueues once; null predicate result performs neither and returns false; task failures propagate unchanged."),
             new FoundationRow("ScreenOpenPolicy", "decide", "public static Decision decide(Request request, Current current, long nowMs)", "R7", "The policy is pure; matching derives from request/current identity, expiry is nowMs greater than or equal to expiresAtMs, notification state selects notify versus silent defer, and it never calls MinecraftClient.setScreen or owns a second pending-offer store."),
@@ -570,7 +684,8 @@ class R7FoundationContractTest {
         return resourceLines("/bong/ui/r7-keybind-production-sites.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindProductionSiteRow(
-                columns[0], Integer.parseInt(columns[1]), columns[2]
+                columns[0], columns[1], columns[2], columns[3], columns[4],
+                columns[5], columns[6], columns[7], columns[8]
             ))
             .toList();
     }
@@ -579,7 +694,8 @@ class R7FoundationContractTest {
         return resourceLines("/bong/ui/r7-insight-settlement.tsv").stream()
             .map(line -> line.split("\\t", -1))
             .map(columns -> new InsightSettlementRow(
-                columns[0], columns[1], columns[2], columns[3], columns[4]
+                columns[0], columns[1], columns[2], columns[3], columns[4],
+                columns[5], columns[6], columns[7], columns[8]
             ))
             .toList();
     }
@@ -618,15 +734,89 @@ class R7FoundationContractTest {
     }
 
     private record ConflictExemptionRow(
-        String firstOwner,
-        String secondOwner,
+        String firstOwnerId,
+        String secondOwnerId,
         String inputType,
         String code,
         String reason
     ) {
     }
 
-    private record KeybindProductionSiteRow(String path, int constructorSites, String p1Owner) {
+    private record KeybindProductionSiteRow(
+        String ownerId,
+        String sourcePath,
+        String sourceSite,
+        String translationContract,
+        String inputType,
+        String defaultContract,
+        String categoryContract,
+        String runtimeCardinality,
+        String consumerRoute
+    ) {
+        int runtimeCardinalityCount() {
+            return runtimeCardinality.startsWith("9 ") ? 9 : Integer.parseInt(runtimeCardinality);
+        }
+
+        String translationSourceContract() {
+            return switch (ownerId) {
+                case "combat.quick_slot" -> "\"key.bong-client.quick_slot_\" + (i + 1)";
+                case "combat.jiemai_react", "combat.spell_volume_hold",
+                    "combat.event_stream_toggle", "combat.shield_hold" -> "\"" + translationContract + "\"";
+                default -> switch (sourceSite) {
+                    case "autoHarvestKey" -> "AUTO_KEY_TRANSLATION";
+                    case "giveDanKey" -> "KEY_GIVE_DAN";
+                    case "refuseKey" -> "KEY_REFUSE";
+                    case "delayKey" -> "KEY_DELAY";
+                    case "interactKey" -> "INTERACT_KEY_TRANSLATION";
+                    case "dashKey" -> "DASH_KEY_TRANSLATION";
+                    case "senseKey" -> "SENSE_KEY_TRANSLATION";
+                    case "markKey" -> "MARK_KEY_TRANSLATION";
+                    default -> switch (ownerId) {
+                        case "combat.juice_multiplier_cycle", "npc.interaction_log" -> "KEY_TRANSLATION";
+                        case "hud.immersive_toggle" -> "TOGGLE_KEY";
+                        case "tsy.extract_start" -> "EXTRACT_KEY_TRANSLATION";
+                        case "tsy.extract_cancel", "tsy.search_cancel" -> "CANCEL_KEY_TRANSLATION";
+                        default -> "OPEN_KEY_TRANSLATION";
+                    };
+                };
+            };
+        }
+
+        String defaultSourceContract() {
+            if (defaultContract.startsWith("DEFAULT_KEY=")) {
+                return "DEFAULT_KEY";
+            }
+            return switch (defaultContract) {
+                case "UNKNOWN" -> ownerId.startsWith("dying_elder.")
+                    ? "InputUtil.UNKNOWN_KEY.getCode()"
+                    : "GLFW.GLFW_KEY_UNKNOWN";
+                case "F1..F9" -> "GLFW.GLFW_KEY_F1 + i";
+                case "G" -> "DEFAULT_KEY_CODE";
+                default -> "GLFW.GLFW_KEY_" + defaultContract;
+            };
+        }
+
+        String categorySourceContract() {
+            return "CATEGORY";
+        }
+
+        List<String> expandedTranslationKeys() {
+            if (!translationContract.equals("key.bong-client.quick_slot_{1..9}")) {
+                return List.of(translationContract);
+            }
+            return java.util.stream.IntStream.rangeClosed(1, 9)
+                .mapToObj(index -> "key.bong-client.quick_slot_" + index)
+                .toList();
+        }
+    }
+
+    private record KeybindingSourceContract(
+        String sourceSite,
+        String translationArgument,
+        String inputTypeArgument,
+        String defaultArgument,
+        String categoryArgument
+    ) {
     }
 
     private record InsightSettlementRow(
@@ -634,6 +824,10 @@ class R7FoundationContractTest {
         String settlement,
         String owner,
         String identityRule,
+        String commitOrder,
+        String sendFailure,
+        String transitionFailure,
+        String exceptionRule,
         String observableEffect
     ) {
     }
