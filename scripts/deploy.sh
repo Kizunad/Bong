@@ -17,6 +17,11 @@ echo ""
 echo "=== [2/4] Rust server build ==="
 cd "$ROOT/server"
 "$ROOT/scripts/build-token.sh" cargo build --release 2>&1 | tail -5
+build_status=${PIPESTATUS[0]}
+if [ "$build_status" -ne 0 ]; then
+    echo "FAIL: cargo build --release failed (exit=$build_status)" >&2
+    exit "$build_status"
+fi
 echo "Server binary: $CARGO_TARGET_DIR/release/bong-server"
 
 echo ""

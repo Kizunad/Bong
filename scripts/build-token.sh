@@ -93,7 +93,10 @@ prepare_lock_file() {
     printf '[build-token] 槽位锁不是普通文件：%s\n' "$lock_file" >&2
     return 2
   fi
-  chmod 600 -- "$lock_file"
+  chmod 600 -- "$lock_file" || {
+    printf '[build-token] 无法将槽位锁权限收敛为 600：%s\n' "$lock_file" >&2
+    return 2
+  }
   local file_uid file_mode file_links
   read -r file_uid file_mode file_links < <(stat -Lc '%u %a %h' -- "$lock_file")
   if [[ $file_uid != "$expected_uid" || $file_mode != 600 || $file_links != 1 ]]; then

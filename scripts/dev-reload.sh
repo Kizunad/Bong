@@ -244,7 +244,14 @@ if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 
 set -euo pipefail
-ROOT="$(git rev-parse --show-toplevel)"
+ROOT="$(git rev-parse --show-toplevel)" || {
+    echo "FAIL: dev-reload.sh 必须在 git worktree 内运行" >&2
+    exit 1
+}
+if [ -z "$ROOT" ]; then
+    echo "FAIL: git rev-parse 返回了空仓库根目录" >&2
+    exit 1
+fi
 cd "$ROOT"
 
 SKIP_REGEN=false
