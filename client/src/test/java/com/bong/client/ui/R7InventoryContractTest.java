@@ -2,6 +2,12 @@ package com.bong.client.ui;
 
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.ParenthesizedTree;
+import com.sun.source.tree.TypeCastTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePathScanner;
 import io.wispforest.owo.ui.core.Sizing;
@@ -10,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
+import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import java.io.IOException;
@@ -159,7 +166,7 @@ class R7InventoryContractTest {
                         relative,
                         declaration.className(),
                         owo ? "BASE_OWO" : "VANILLA_SCREEN",
-                        owo ? adapterStyle(source) : "VANILLA",
+                        owo ? adapterStyle(path) : "VANILLA",
                         owo,
                         noteFor(relative)
                     ));
@@ -238,9 +245,159 @@ class R7InventoryContractTest {
     private record DirectScreenDeclaration(String className, String parent) {
     }
 
-    private static String adapterStyle(String source) {
-        String compact = R7SourceScan.codeOnly(source).replaceAll("\\s+", "");
-        return compact.contains("model.createAdapter(FlowLayout.class,this)") ? "XML_MODEL" : "CODE";
+    private static String adapterStyle(Path path) throws IOException {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 adapter classification requires a full Java 17 JDK, not a JRE");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
+            JavacTask task = (JavacTask) compiler.getTask(
+                null,
+                fileManager,
+                diagnostics,
+                List.of("-proc:none"),
+                null,
+                sources
+            );
+            List<AdapterInvocation> invocations = new ArrayList<>();
+            for (CompilationUnitTree unit : task.parse()) {
+                collectAdapterInvocations(unit, invocations);
+            }
+            assertTrue(diagnostics.getDiagnostics().stream()
+                    .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
+                "unable to parse production adapter source " + path + ": " + diagnostics.getDiagnostics());
+            assertEquals(1, invocations.size(),
+                "each direct owo Screen must expose one unambiguous adapter factory call in createAdapter(): " + path);
+            return classifyAdapterInvocation(invocations.get(0));
+        }
+    }
+
+    private static ExpressionTree unwrapReceiver(ExpressionTree receiver) {
+        ExpressionTree current = receiver;
+        while (true) {
+            if (current instanceof ParenthesizedTree parenthesized) {
+                current = parenthesized.getExpression();
+            } else if (current instanceof TypeCastTree cast) {
+                current = cast.getExpression();
+            } else {
+                return current;
+            }
+        }
+    }
+
+    private static String classifyAdapterInvocation(AdapterInvocation invocation) {
+        if (invocation.method().equals("createAdapter")
+            && invocation.arguments().equals(List.of("FlowLayout.class", "this"))) {
+            return "XML_MODEL";
+        }
+        if (invocation.method().equals("create") && invocation.arguments().size() == 2) {
+            return "CODE";
+        }
+        throw new AssertionError("unclassified owo adapter semantics: " + invocation);
+    }
+
+    @Test
+    void adapterClassifierUsesInvocationSemanticsAcrossReceiverExpressions() {
+        assertEquals("XML_MODEL", adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return model.createAdapter(FlowLayout.class, this);
+                }
+            }
+            """));
+        assertEquals("XML_MODEL", adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return provider().createAdapter(FlowLayout.class, this);
+                }
+            }
+            """));
+        assertEquals("XML_MODEL", adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return holder.current.createAdapter(FlowLayout.class, this);
+                }
+            }
+            """));
+        assertEquals("CODE", adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return OwoUIAdapter.create(this, Containers::verticalFlow);
+                }
+            }
+            """));
+    }
+
+    private static String adapterStyleFromSource(String source) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 adapter scanner test requires a full Java 17 JDK, not a JRE");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        JavaFileObject sourceFile = new SimpleJavaFileObject(
+            java.net.URI.create("string:///Probe.java"),
+            JavaFileObject.Kind.SOURCE
+        ) {
+            @Override
+            public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+                return source;
+            }
+        };
+        JavacTask task = (JavacTask) compiler.getTask(
+            null, null, diagnostics, List.of("-proc:none"), null, List.of(sourceFile)
+        );
+        List<AdapterInvocation> invocations = new ArrayList<>();
+        try {
+            for (CompilationUnitTree unit : task.parse()) {
+                collectAdapterInvocations(unit, invocations);
+            }
+        } catch (IOException exception) {
+            throw new AssertionError("unable to parse adapter scanner test source", exception);
+        }
+        assertTrue(diagnostics.getDiagnostics().stream()
+                .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
+            "unable to parse adapter scanner test source: " + diagnostics.getDiagnostics());
+        assertEquals(1, invocations.size(), "scanner fixture must expose one adapter factory call");
+        return classifyAdapterInvocation(invocations.get(0));
+    }
+
+    private static void collectAdapterInvocations(
+        CompilationUnitTree unit,
+        List<AdapterInvocation> invocations
+    ) {
+        new TreePathScanner<Void, Void>() {
+            private boolean inCreateAdapter;
+
+            @Override
+            public Void visitMethod(MethodTree methodTree, Void unused) {
+                boolean previous = inCreateAdapter;
+                inCreateAdapter = methodTree.getName().contentEquals("createAdapter")
+                    && methodTree.getParameters().isEmpty();
+                try {
+                    return super.visitMethod(methodTree, unused);
+                } finally {
+                    inCreateAdapter = previous;
+                }
+            }
+
+            @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                if (inCreateAdapter && invocation.getMethodSelect() instanceof MemberSelectTree select) {
+                    String method = select.getIdentifier().toString();
+                    if (method.equals("createAdapter") || method.equals("create")) {
+                        invocations.add(new AdapterInvocation(
+                            method,
+                            unwrapReceiver(select.getExpression()).getKind().name(),
+                            invocation.getArguments().stream()
+                                .map(argument -> argument.toString().replaceAll("\\s+", ""))
+                                .toList()
+                        ));
+                    }
+                }
+                return super.visitMethodInvocation(invocation, unused);
+            }
+        }.scan(unit, null);
+    }
+
+    private record AdapterInvocation(String method, String receiverKind, List<String> arguments) {
     }
 
     private static String noteFor(String path) {
