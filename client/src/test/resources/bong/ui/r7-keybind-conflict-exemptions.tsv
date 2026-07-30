@@ -1,2 +1,2 @@
-# first_owner	second_owner	input_type	code	reason
-# Intentionally empty: R7 P0 authorizes no default-key collision exemption.
+# first_owner_id	second_owner_id	input_type	code	reason
+# Intentionally empty: R7 P0 authorizes no default-key collision exemption; future rows use canonical BindingOwner ids.
