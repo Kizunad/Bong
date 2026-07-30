@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Pin shell harnesses to the canonical fallback-world readiness contract."""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+READY_PREFIX = r"\[bong\]\[world\] BOT_FALLBACK_FLAT_READY"
+READY_PATTERN = re.compile(
+    rf"^{READY_PREFIX} anchors=[0-9]+ chunks=[0-9]+ "
+    r"view_distance_chunks=[0-9]+$"
+)
+STALE_MARKER = "creating overworld test area"
+HARNESS_PATHS = (
+    pathlib.Path("scripts/e2e-redis.sh"),
+    pathlib.Path("scripts/e2e-offscreen-war.sh"),
+    pathlib.Path("scripts/smoke-test.sh"),
+    pathlib.Path("scripts/smoke-tiandao-fullstack.sh"),
+)
+
+
+class FallbackWorldReadinessContractTest(unittest.TestCase):
+    def test_accepts_complete_numeric_marker(self) -> None:
+        for line in (
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+            "view_distance_chunks=4",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=0 chunks=0 "
+            "view_distance_chunks=0",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=4294967295 "
+            "chunks=4096 view_distance_chunks=18446744073709551615",
+        ):
+            with self.subTest(line=line):
+                self.assertRegex(line, READY_PATTERN)
+
+    def test_rejects_stale_incomplete_and_near_markers(self) -> None:
+        for line in (
+            "",
+            "[bong][world] creating overworld test area (16x16 chunks)",
+            "[bong][world] BOT_FALLBACK_FLAT_READY",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+            "view_distance_chunks=four",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=-1 chunks=1530 "
+            "view_distance_chunks=4",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1.5 "
+            "view_distance_chunks=4",
+            "[bong][world] BOT_FALLBACK_FLAT_READYISH anchors=3 chunks=1530 "
+            "view_distance_chunks=4",
+            "prefix [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+            "view_distance_chunks=4",
+        ):
+            with self.subTest(line=line):
+                self.assertNotRegex(line, READY_PATTERN)
+
+    def test_shell_ere_matches_the_same_contract(self) -> None:
+        shell_pattern = (
+            r"\[bong\]\[world\] BOT_FALLBACK_FLAT_READY "
+            r"anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+"
+        )
+        cases = (
+            (
+                "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "view_distance_chunks=4\n",
+                0,
+            ),
+            (
+                "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "view_distance_chunks=four\n",
+                1,
+            ),
+            ("[bong][world] creating overworld test area (16x16 chunks)\n", 1),
+            ("", 1),
+        )
+        for contents, expected_status in cases:
+            with self.subTest(contents=contents):
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8") as log:
+                    log.write(contents)
+                    log.flush()
+                    matched = subprocess.run(
+                        ["grep", "-Eq", shell_pattern, log.name],
+                        check=False,
+                    )
+                self.assertEqual(matched.returncode, expected_status)
+
+    def test_all_fallback_harnesses_share_one_canonical_marker(self) -> None:
+        for relative in HARNESS_PATHS:
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative.as_posix()):
+                self.assertNotIn(
+                    STALE_MARKER,
+                    source,
+                    "已删除的 fallback 启服文案不得继续充当 readiness anchor",
+                )
+                self.assertIn(
+                    "BOT_FALLBACK_FLAT_READY",
+                    source,
+                    "所有 fallback harness 必须等待生产端 canonical marker",
+                )
+
+    def test_e2e_redis_reuses_one_pattern_for_both_servers(self) -> None:
+        source = (ROOT / "scripts/e2e-redis.sh").read_text(encoding="utf-8")
+        assignment = (
+            "FALLBACK_WORLD_READY_PATTERN='\\[bong\\]\\[world\\] "
+            "BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ "
+            "view_distance_chunks=[0-9]+'"
+        )
+        self.assertIn(assignment, source)
+        self.assertEqual(
+            source.count('wait_for_pattern "$SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN"'),
+            1,
+        )
+        self.assertEqual(
+            source.count(
+                'wait_for_pattern "$NORTH_RIFT_SERVER_LOG" '
+                '"$FALLBACK_WORLD_READY_PATTERN"'
+            ),
+            1,
+        )
+
+
+if __name__ == "__main__":
+    result = unittest.main(exit=False)
+    if result.result.wasSuccessful():
+        print(
+            "fallback world readiness contract PASS "
+            f"({result.result.testsRun} tests, {len(HARNESS_PATHS)} harnesses)"
+        )
+    sys.exit(not result.result.wasSuccessful())

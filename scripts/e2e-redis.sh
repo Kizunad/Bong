@@ -18,6 +18,7 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -1104,7 +1105,7 @@ if ! start_server_process_group "$SERVER_LOG" 0; then
   finalize_failure "server" "failed to establish dedicated server process group; see $SERVER_LOG"
 fi
 
-if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+if wait_for_pattern "$SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
   pass "server world bootstrap"
 else
   finalize_failure "server" "missing world bootstrap anchor in $SERVER_LOG"
@@ -1248,7 +1249,7 @@ run_north_rift_preview() {
       "north-rift-preview" \
       "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
   fi
-  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
     finalize_failure \
       "north-rift-preview" \
       "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"

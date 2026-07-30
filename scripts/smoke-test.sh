@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0
 FAIL=0
 export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 pass() { echo "  ✓ $1"; ((PASS+=1)); }
 fail() { echo "  ✗ $1"; ((FAIL+=1)); }
@@ -24,7 +25,7 @@ echo "=== [3/4] Server smoke run (30s) ==="
 if "$ROOT/scripts/build-token.sh" cargo build 2>/dev/null; then pass "cargo build"; else fail "cargo build"; fi
 timeout 30s "$ROOT/scripts/build-token.sh" cargo run 2>&1 | tee /tmp/bong-smoke.log || true
 grep -q "\[bong\]\[bridge\] tokio runtime started" /tmp/bong-smoke.log && pass "bridge startup" || fail "bridge startup"
-grep -q "\[bong\]\[world\] creating overworld test area" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
+grep -Eq "$FALLBACK_WORLD_READY_PATTERN" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
 grep -q "\[bong\]\[player\] registering player init/cleanup systems" /tmp/bong-smoke.log && pass "player system" || fail "player system"
 grep -q "\[bong\]\[redis\] connecting to" /tmp/bong-smoke.log && pass "redis bridge startup" || fail "redis bridge startup"
 
