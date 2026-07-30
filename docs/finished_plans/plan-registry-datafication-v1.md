@@ -176,17 +176,20 @@
 - `f968aff0f`（2026-07-29）：最终发布前再次 fetch 并合并最新 `origin/main`；仅带入一份无关 bughunt skeleton，随后仍按协议重跑全部受影响门禁。
 - `5af4be29a`（2026-07-30）：根据 fresh validator 结论移除方块目录的 213/211/2、固定 alias 与完整 key-set fingerprint 生产门，将历史集合降为 test-only compatibility baseline。
 - `06f8fe650`（2026-07-30）：移除功法 wiring 的固定 direct-generic ID 与 68/49/46/22 数量门，改为当前 registry 间逐条动态关系校验。
+- `0f517547c`（2026-07-30）：修复 PR #1315 e2e 揭示的 Bot raster fixture 严格 schema 漂移，显式接纳 producer 的完整六字段证据，同时保持运行时 ready marker 只发布 `kind/token`。
 
 **测试结果**：
 
 - fresh-context validator 在 `79efaf56b4fd552a97b5fa72086c000598f4ac40` 发现迁移实现仍以固定 count/ID/alias/fingerprint 拒绝合法数据扩展；上述两个 follow-up commit 将迁移数字降为 test-only compatibility evidence，并以 data-only 扩展正向测试及严格引用反向矩阵锁定动态生产契约。
 - 修复后 targeted Rust 门：block catalog `14 passed`；known techniques `13 passed`；无 resolver 的已定义 skill-bar cast generic fallback `1 passed`。
-- 修复后完整 server 门（`06f8fe650`）：`flock -x /tmp/bong-cargo.lock bash -lc 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 全绿——library `12191 passed / 0 failed / 2 ignored`；CLI `12 passed`；full-app startup `2 passed`；shutdown `2 passed`；Tarkov backpack e2e `4 passed`；doc tests `5 ignored`。
+- PR #1315 首次 e2e 在 canonical Bot novice raster 启动预检命中 `unknown field surface_y, expected kind or token`：Python producer 与 bot scenario 一直以 `kind/token/surface_y/support/feet_y/head_y` 六字段承载可独立核验的 raster 证据，而 Rust 嵌套 `deny_unknown_fields` schema 只声明前两项。`0f517547c` 将其修正为六字段均 required 且保持精确 JSON 类型，继续拒绝缺字段、错类型与未来未知字段；运行时 `BotRasterFixture` 仍只持有并发布自己消费的 `kind/token`。
+- Bot schema 修复 targeted 门：Rust `bot_fixture_metadata_is_optional_and_validated_before_ready_use` → `1 passed`；canonical Python `scripts.bot.test_protocol.NoviceRasterFixtureTest` → `4 passed`；真实 producer 生成的 fixture 经 server 可执行文件启动 45 秒（预期由 `timeout` 以 124 结束）无 panic，日志确认 `loaded 5 terrain tiles / 6 POIs`、`BOT_RASTER_FIXTURE_READY`、`decoration NBT registry: 54 templates resident`。
+- Bot schema 修复后完整 server 门（`0f517547c`）：`flock -x /tmp/bong-cargo.lock bash -lc 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'` 全绿——library `12191 passed / 0 failed / 2 ignored`（共发现 `12193`）；CLI `12 passed`；full-app startup `2 passed`；shutdown-signal Rust integration `2 passed`；Tarkov backpack e2e `4 passed`；doc tests `5 ignored`。
 - 修复后 worldgen 合同：`python -m unittest worldgen.tests.test_decoration_contract worldgen.tests.test_nbt_block_palette` → `22 passed`。
 - 修复后完整 raster 重新生成与后验：overworld `306 tiles / 84 POIs / 112 decorations / 138969 placements`、TSY `9 tiles / 56 POIs`；`validate_rasters` 分别为 overworld `306/306`、TSY `9/9` 全部通过。
 - 修复后可执行文件启动预检：经 `/tmp/bong-cargo.lock` 执行 `cargo build`，以生成的 overworld + TSY manifests 及 `BONG_SKIP_SKIN_PREFETCH=1` 启动 30 秒无 panic；日志确认 `loaded 306 terrain tiles`、`loaded TSY 9 terrain tiles`、`decoration NBT registry: 54 templates resident`。
 - 以上修复后门禁完成后紧邻执行 `git fetch origin && git merge origin/main`，结果 `Already up to date`；最终 fresh validator 的 PASS SHA 在下方补记。
-- **本地安全隔离**：未运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh` 或任何会调用前者的本地 suite；该覆盖留给 GitHub e2e。
+- **本地安全隔离**：未运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh`、`scripts/smoke-test-e2e.sh` 或任何会调用 quarantined shutdown 路径的本地 suite；该覆盖留给 GitHub e2e。
 
 **跨仓库核验**：
 
