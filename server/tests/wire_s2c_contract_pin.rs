@@ -927,6 +927,11 @@ fn emit_file_inventory_and_transport_classification_stay_frozen() {
 
     let mut counts = BTreeMap::new();
     let mut wire_counts = BTreeMap::new();
+    let helper_is_server_data = server_data_helper_is_server_data(&root);
+    assert!(
+        helper_is_server_data,
+        "send_server_data_payload must remain pinned to bong:server_data"
+    );
     for (relative, expected_api_shape, expected_wire_class) in EMIT_MANIFEST {
         let source = fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("read {relative}: {error}"));
@@ -936,7 +941,7 @@ fn emit_file_inventory_and_transport_classification_stay_frozen() {
             *expected_api_shape, actual_api_shape,
             "{relative} changed API call shape; update the R6 migration ledger deliberately"
         );
-        let actual_wire_class = classify_wire_transport(&scan);
+        let actual_wire_class = classify_wire_transport_with_helper(&scan, helper_is_server_data);
         assert_eq!(
             *expected_wire_class, actual_wire_class,
             "{relative} changed actual wire transport; update the per-emitter R6 migration ledger deliberately"
@@ -1055,6 +1060,22 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
     );
 }
 
+fn server_data_helper_is_server_data(root: &Path) -> bool {
+    let source = fs::read_to_string(root.join("server/src/network/mod.rs"))
+        .expect("read shared server-data sender");
+    let tokens = rust_tokens(&source);
+    let function = function_token_slice(&tokens, "send_server_data_payload")
+        .expect("send_server_data_payload must remain present");
+    let send_index = function
+        .windows(2)
+        .position(|window| window == ["send_custom_payload", "("])
+        .expect("send_server_data_payload must call Client::send_custom_payload");
+    let argument = first_call_argument(function, send_index + 1)
+        .expect("shared server-data sender must pass a channel argument");
+    let constants = channel_string_constants(&tokens);
+    is_server_data_channel(argument, &constants)
+}
+
 fn production_tokens_from_file(root: &Path, relative: &str) -> Vec<String> {
     let source = fs::read_to_string(root.join(relative))
         .unwrap_or_else(|error| panic!("read {relative}: {error}"));
@@ -1152,8 +1173,17 @@ fn classify_emit_api_shape(scan: &EmitScan) -> &'static str {
 }
 
 fn classify_wire_transport(scan: &EmitScan) -> &'static str {
-    let server_data = scan.helper_calls + scan.direct_server_data_calls;
-    let dedicated = scan.direct_calls - scan.direct_server_data_calls;
+    classify_wire_transport_with_helper(scan, scan.helper_calls > 0)
+}
+
+fn classify_wire_transport_with_helper(
+    scan: &EmitScan,
+    helper_is_server_data: bool,
+) -> &'static str {
+    let helper_server_data = usize::from(helper_is_server_data) * scan.helper_calls;
+    let helper_dedicated = usize::from(!helper_is_server_data) * scan.helper_calls;
+    let server_data = helper_server_data + scan.direct_server_data_calls;
+    let dedicated = helper_dedicated + scan.direct_calls - scan.direct_server_data_calls;
     match (server_data, dedicated, scan.redis_wanted_calls) {
         (0, 0, redis) if redis > 0 => "redis_only",
         (0, 0, 0) => "domain_only",
@@ -1173,6 +1203,7 @@ struct EmitScan {
 
 fn scan_production_emit_source(source: &str) -> EmitScan {
     let tokens = rust_tokens(source);
+    let channel_constants = channel_string_constants(&tokens);
     let mut scan = EmitScan::default();
     for index in 0..tokens.len() {
         if tokens[index] == "send_server_data_payload"
@@ -1188,12 +1219,9 @@ fn scan_production_emit_source(source: &str) -> EmitScan {
             && tokens.get(index + 1).is_some_and(|token| token == "(")
         {
             scan.direct_calls += 1;
-            if first_call_argument(&tokens, index + 1).is_some_and(|argument| {
-                argument.iter().any(|token| token == "SERVER_DATA_CHANNEL")
-                    || argument
-                        .iter()
-                        .any(|token| token.contains("bong:server_data"))
-            }) {
+            if first_call_argument(&tokens, index + 1)
+                .is_some_and(|argument| is_server_data_channel(argument, &channel_constants))
+            {
                 scan.direct_server_data_calls += 1;
             }
         }
@@ -1213,6 +1241,40 @@ fn scan_production_emit_source(source: &str) -> EmitScan {
         }
     }
     scan
+}
+
+fn channel_string_constants(tokens: &[String]) -> BTreeMap<&str, &str> {
+    let mut constants = BTreeMap::new();
+    for index in 0..tokens.len().saturating_sub(4) {
+        if tokens[index] != "const" || tokens[index + 1] == ":" {
+            continue;
+        }
+        let name = tokens[index + 1].as_str();
+        let Some(equal) = tokens[index + 2..]
+            .iter()
+            .position(|token| token == "=")
+            .map(|offset| index + 2 + offset)
+        else {
+            continue;
+        };
+        let Some(value) = tokens.get(equal + 1).map(String::as_str) else {
+            continue;
+        };
+        if value.starts_with('"') && value.ends_with('"') {
+            constants.insert(name, value.trim_matches('"'));
+        }
+    }
+    constants
+}
+
+fn is_server_data_channel(argument: &[String], constants: &BTreeMap<&str, &str>) -> bool {
+    argument.iter().any(|token| {
+        token == "SERVER_DATA_CHANNEL"
+            || token.contains("bong:server_data")
+            || constants
+                .get(token.as_str())
+                .is_some_and(|value| *value == "bong:server_data")
+    })
 }
 
 fn first_call_argument(tokens: &[String], open: usize) -> Option<&[String]> {
@@ -1468,18 +1530,76 @@ fn emitter_scanner_derives_redis_and_domain_only_without_path_exceptions() {
     assert_eq!(classify_wire_transport(&domain), "domain_only");
 }
 
+#[test]
+fn emitter_scanner_resolves_channel_constants_and_shared_helper_routing() {
+    let dedicated_constant = scan_production_emit_source(
+        r#"
+        const QI_ATTRITION_CHANNEL: &str = "bong:vfx/qi_attrition";
+        fn emit(client: &mut Client) {
+            let channel = Ident::new(QI_ATTRITION_CHANNEL).unwrap();
+            client.send_custom_payload(channel.as_str_ident(), bytes);
+        }
+        "#,
+    );
+    assert_eq!(
+        classify_wire_transport(&dedicated_constant),
+        "dedicated_only"
+    );
+
+    let server_data_constant = scan_production_emit_source(
+        r#"
+        const QI_ATTRITION_CHANNEL: &str = "bong:server_data";
+        fn emit(client: &mut Client) {
+            client.send_custom_payload(QI_ATTRITION_CHANNEL, bytes);
+        }
+        "#,
+    );
+    assert_eq!(
+        classify_wire_transport(&server_data_constant),
+        "server_data_only",
+        "changing a named channel constant to bong:server_data must change the scanned wire class"
+    );
+
+    let helper_only = scan_production_emit_source("send_server_data_payload(client, bytes);");
+    assert_eq!(
+        classify_wire_transport_with_helper(&helper_only, true),
+        "server_data_only"
+    );
+    assert_eq!(
+        classify_wire_transport_with_helper(&helper_only, false),
+        "dedicated_only",
+        "changing the shared helper away from bong:server_data must fail the helper contract pin"
+    );
+}
+
 fn assert_manifest_entry_matches(
     relative: &str,
     expected_api_shape: &str,
     expected_wire_class: &str,
     scan: &EmitScan,
 ) {
+    assert_manifest_entry_matches_with_helper(
+        relative,
+        expected_api_shape,
+        expected_wire_class,
+        scan,
+        true,
+    );
+}
+
+fn assert_manifest_entry_matches_with_helper(
+    relative: &str,
+    expected_api_shape: &str,
+    expected_wire_class: &str,
+    scan: &EmitScan,
+    helper_is_server_data: bool,
+) {
     let actual_api_shape = classify_emit_api_shape(scan);
     assert_eq!(
         expected_api_shape, actual_api_shape,
         "{relative} changed API call shape; update the R6 migration ledger deliberately"
     );
-    let actual_wire_class = classify_wire_transport(scan);
+    let actual_wire_class = classify_wire_transport_with_helper(scan, helper_is_server_data);
     assert_eq!(
         expected_wire_class, actual_wire_class,
         "{relative} changed actual wire transport; update the per-emitter R6 migration ledger deliberately"
