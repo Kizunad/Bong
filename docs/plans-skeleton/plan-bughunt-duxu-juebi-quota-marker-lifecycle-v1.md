@@ -32,7 +32,8 @@
 ## P0 — Accepted-attempt marker ownership
 
 - [ ] marker 仅可由当前 accepted over-quota DuXu 或其直接追加的 quota-origin JueBi 拥有。
-- [ ] accepted over-quota DuXu 替换旧 marker；accepted non-over-quota DuXu 与 independent JueBi 清除旧 marker；rejected、duplicate 或 persist-failed start 不得破坏当前合法 marker。
+- [ ] accepted over-quota DuXu 以当前 attempt 的 marker 完整替换旧 marker；accepted non-over-quota DuXu 清除旧 marker；rejected、duplicate 或 persist-failed start 不得破坏当前合法 marker。
+- [ ] marker ownership 必须绑定可对拍的 attempt identity/generation（字段名由实现收口），producer、consumer 与 terminal cleanup 仅操作匹配 attempt；真实 schedule 回归锁定旧终态 deferred cleanup 不会删除同实体新 accepted attempt 的 marker。
 - [ ] 在普通 DuXu success、failure、fled/disconnect、intercept death 与 JueBi settlement 清 marker；不得在 DuXu → quota-origin JueBi 的 intentional transition 清除。
 - [ ] marker cleanup 不得重复触发 DB 删除、惩罚、Qi 释放或 settlement/lifecycle event。
 
@@ -40,14 +41,16 @@
 
 - [ ] `accepted_over_quota_start_replaces_stale_quota_marker`
 - [ ] `accepted_non_over_quota_start_clears_stale_quota_marker`
+- [ ] `rejected_duplicate_and_persist_failed_start_preserve_current_quota_marker`
+- [ ] `old_terminal_cleanup_cannot_remove_new_attempt_quota_marker`
 - [ ] `terminal_quota_marker_cleanup_and_retry_matrix`
 - [ ] `quota_marker_survives_duxu_to_juebi_transition`
 - [ ] `quota_juebi_settlement_clears_follow_up_marker`
-- [ ] 回归须从真实 Bevy schedule 驱动，并断言 marker、`TribulationState.kind`、`JueBiTriggeredEvent` 与既有 settlement/Qi 副作用未重复。
+- [ ] 回归须从真实 Bevy schedule 驱动，并断言 marker identity、`TribulationState.kind`、`JueBiTriggeredEvent`；对 cleanup 接入路径分别断言既有 DB 删除、惩罚、Qi ledger transaction、settlement event 与 lifecycle event 数量未因 marker 修复增加。
 
 ## 可核验 symbols
 
-- `JueBiAfterDuXuQuota`、`start_tribulation_system`、`start_due_juebi_triggers_system`
+- `JueBiAfterDuXuQuota`、`start_tribulation_system`
 - `tribulation_wave_system`、`tribulation_failure_system`、`abort_du_xu_on_client_removed`
 - `tribulation_escape_boundary_system`、`settle_fled_tribulation`
 - `tribulation_intercept_death_system`、`juebi_settlement_system`
@@ -56,7 +59,7 @@
 
 以下是第一性复核发现的邻接风险，但不属于 PR #1304 Mapping 分配给本 successor 的 r6 #6；不得在本 plan 的实现 PR 顺手扩大范围：
 
-- `ActiveTribulationRecord`、migration、hydration 与 restart durability；合法 over-quota marker 当前无法跨进程恢复。
+- `JueBiAfterDuXuQuota` 的 cross-process durability，包括 `ActiveTribulationRecord`、migration 与 hydration；合法 over-quota marker 当前无法跨进程恢复。
 - terminal DB delete failure 后的 tombstone/retry/reconciliation 与“重启不得复活旧 attempt”。
 - fresh/dev reset、通用 despawn、NPC dormancy/rehydration 的统一 lifecycle 重构。
 - restart 后 start-time intensity / settlement-time quota 的双时点持久化契约。
