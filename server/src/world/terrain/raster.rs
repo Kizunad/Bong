@@ -610,6 +610,17 @@ struct RasterManifest {
 struct ManifestBotFixture {
     kind: String,
     token: String,
+    // The bot harness independently verifies these authored values against the
+    // raster bytes. Runtime only publishes kind/token, but strict manifest
+    // admission must still acknowledge the producer's complete evidence shape.
+    #[serde(rename = "surface_y")]
+    _surface_y: i32,
+    #[serde(rename = "support")]
+    _support: String,
+    #[serde(rename = "feet_y")]
+    _feet_y: i32,
+    #[serde(rename = "head_y")]
+    _head_y: i32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2395,7 +2406,7 @@ mod tests {
 
         let with_fixture = base.replace(
             "\n        }",
-            ",\n            \"bot_fixture\": {\"kind\":\"ambient-surface-v1\",\"token\":\"0123456789abcdef\"}\n        }",
+            ",\n            \"bot_fixture\": {\"kind\":\"ambient-surface-v1\",\"token\":\"0123456789abcdef\",\"surface_y\":72,\"support\":\"grass_block\",\"feet_y\":73,\"head_y\":74}\n        }",
         );
         let fixture_manifest: RasterManifest = serde_json::from_str(&with_fixture)
             .expect("valid bot_fixture metadata must deserialize");
@@ -2406,16 +2417,65 @@ mod tests {
         assert_eq!(fixture.kind, "ambient-surface-v1");
         assert_eq!(fixture.token, "0123456789abcdef");
 
+        let producer_fixture = serde_json::json!({
+            "kind": "ambient-surface-v1",
+            "token": "0123456789abcdef",
+            "surface_y": 72,
+            "support": "grass_block",
+            "feet_y": 73,
+            "head_y": 74,
+        });
+        for required_field in ["surface_y", "support", "feet_y", "head_y"] {
+            let mut missing = producer_fixture.clone();
+            missing
+                .as_object_mut()
+                .expect("fixture must be an object")
+                .remove(required_field);
+            let error = serde_json::from_value::<ManifestBotFixture>(missing)
+                .expect_err("every producer evidence field must remain required");
+            assert!(
+                error.to_string().contains(required_field),
+                "missing-field diagnostics must identify {required_field}: {error}"
+            );
+        }
+
+        for (field, wrong_value) in [
+            ("surface_y", serde_json::json!("72")),
+            ("support", serde_json::json!(72)),
+            ("feet_y", serde_json::json!("73")),
+            ("head_y", serde_json::json!("74")),
+        ] {
+            let mut wrong_type = producer_fixture.clone();
+            wrong_type[field] = wrong_value;
+            let error = serde_json::from_value::<ManifestBotFixture>(wrong_type)
+                .expect_err("producer evidence fields must retain their JSON types");
+            assert!(
+                error.to_string().contains("invalid type"),
+                "wrong-type diagnostics for {field} must explain the type mismatch: {error}"
+            );
+        }
+
+        let mut unknown = producer_fixture.clone();
+        unknown["future_unreviewed_field"] = serde_json::json!(true);
+        let error = serde_json::from_value::<ManifestBotFixture>(unknown)
+            .expect_err("unreviewed nested fixture fields must fail closed");
+        assert!(error.to_string().contains("future_unreviewed_field"));
+
         for (kind, token) in [
             ("other", "0123456789abcdef"),
             ("ambient-surface-v1", "short"),
             ("ambient-surface-v1", "0123456789abcde\n"),
             ("ambient-surface-v1", "0123456789abcde!"),
         ] {
-            let fixture = ManifestBotFixture {
-                kind: kind.to_string(),
-                token: token.to_string(),
-            };
+            let fixture: ManifestBotFixture = serde_json::from_value(serde_json::json!({
+                "kind": kind,
+                "token": token,
+                "surface_y": 72,
+                "support": "grass_block",
+                "feet_y": 73,
+                "head_y": 74,
+            }))
+            .expect("invalid kind/token must still satisfy the strict producer schema");
             assert!(
                 validate_bot_fixture(Some(fixture), Path::new("manifest.json")).is_err(),
                 "invalid fixture kind/token must fail before any ready marker: kind={kind:?} token={token:?}"
