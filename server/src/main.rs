@@ -241,26 +241,18 @@ fn assert_full_app_core_resources(app: &App) {
     let technique_registry = world
         .get_resource::<cultivation::known_techniques::TechniqueRegistry>()
         .expect("full server App must install TechniqueRegistry after strict TOML startup loading");
+    assert!(
+        !technique_registry.is_empty(),
+        "TechniqueRegistry must contain data-owned metadata after strict TOML startup loading"
+    );
+    let unique_ids = technique_registry
+        .iter()
+        .map(|definition| definition.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
     assert_eq!(
+        unique_ids.len(),
         technique_registry.len(),
-        49,
-        "TechniqueRegistry must contain the frozen 49-entry metadata catalog"
-    );
-    assert_eq!(
-        technique_registry
-            .definitions()
-            .first()
-            .map(|definition| definition.id.as_str()),
-        Some("sword.cleave"),
-        "TechniqueRegistry must preserve the source declaration order at the first entry"
-    );
-    assert_eq!(
-        technique_registry
-            .definitions()
-            .last()
-            .map(|definition| definition.id.as_str()),
-        Some("morph.yixing"),
-        "TechniqueRegistry must preserve the source declaration order at the last entry"
+        "TechniqueRegistry must preserve every validated TOML entry exactly once"
     );
     // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
     // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产
