@@ -1210,9 +1210,10 @@ mod tests {
                 Some(BlockState::STONE)
             );
         }
+        layer.insert_chunk([0, 0], UnloadedChunk::new());
         assert_eq!(
             block_state(&layer, 12, GRASS_Y + 1, 8),
-            None,
+            Some(BlockState::AIR),
             "资源必须随出生簇平移，不得继续固定写在世界原点附近"
         );
     }
