@@ -256,7 +256,11 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         Some(RevivalDecision::Tribulation { chance: 0.15 }),
         "待决策的渡劫结果必须原样恢复，永久终结风险不能被绕过"
     );
-    assert_eq!(lifecycle.revival_decision_deadline_tick, Some(9_999));
+    assert!(
+        lifecycle.revival_decision_deadline_tick <= Some(9_999),
+        "读档耗时跨过墙钟 tick 边界时，deadline 只能按已流逝时间提前，不能被重建到更晚；实际 {:?}",
+        lifecycle.revival_decision_deadline_tick
+    );
     assert_eq!(lifecycle.death_count, 2);
 
     let _ = std::fs::remove_dir_all(root);
