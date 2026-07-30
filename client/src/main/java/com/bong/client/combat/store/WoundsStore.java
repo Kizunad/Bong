@@ -108,20 +108,16 @@ public final class WoundsStore {
         INSTANCE.snapshot = Collections.unmodifiableMap(next);
     }
 
-    public static void onPlayerDeath() {
+    public static void clear() {
         INSTANCE.snapshot = Collections.emptyMap();
     }
 
-    public static void clear() {
-        onPlayerDeath();
-    }
-
     public static void clearOnDisconnect() {
-        onPlayerDeath();
+        clear();
     }
 
     public static void resetForTests() {
-        onPlayerDeath();
+        clear();
     }
 
     private static float clamp01(float v) {

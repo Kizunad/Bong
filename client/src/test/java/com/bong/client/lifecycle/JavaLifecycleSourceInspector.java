@@ -4,6 +4,7 @@ import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.ImportTree;
+import com.sun.source.tree.LambdaExpressionTree;
 import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
@@ -45,6 +46,7 @@ public final class JavaLifecycleSourceInspector {
         "clearAll",
         "reset"
     );
+    private static final String DISCONNECT_CLEANER_METHOD = "clearOnDisconnect";
 
     public record AuditedLifecycleEntry(
         String sourceIdentity,
@@ -369,15 +371,23 @@ public final class JavaLifecycleSourceInspector {
         }
 
         Set<String> auditedCalls = Set.copyOf(entriesByCall.keySet());
+        List<String> violations = new ArrayList<>();
         for (AuditedLifecycleEntry entry : entries) {
-            assertMethodClosureContainsNoStoreCleanupReferences(
-                entry.source(),
-                entry.className(),
-                entry.methodName(),
-                entry.parameterCount(),
-                storeFqcns,
-                auditedCalls
-            );
+            try {
+                assertMethodClosureContainsNoStoreCleanupReferences(
+                    entry.source(),
+                    entry.className(),
+                    entry.methodName(),
+                    entry.parameterCount(),
+                    storeFqcns,
+                    auditedCalls
+                );
+            } catch (AssertionError failure) {
+                violations.add(failure.getMessage());
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new AssertionError("audited lifecycle closure 校验失败：" + violations);
         }
     }
 
@@ -407,11 +417,7 @@ public final class JavaLifecycleSourceInspector {
         Set<String> allowedCrossClassCalls
     ) {
         CompilationUnitTree unit = parse(className, source);
-        ClassTree owner = unit.getTypeDecls().stream()
-            .filter(ClassTree.class::isInstance)
-            .map(ClassTree.class::cast)
-            .filter(type -> type.getSimpleName().contentEquals(className))
-            .findFirst()
+        ClassTree owner = findDeclaredType(unit, simpleName(className))
             .orElseThrow(() -> new AssertionError("无法定位 production 类型：" + className));
         Map<String, List<MethodTree>> methodsByName = new HashMap<>();
         for (Tree member : owner.getMembers()) {
@@ -421,33 +427,42 @@ public final class JavaLifecycleSourceInspector {
             }
         }
         Map<String, String> currentClassFieldTypes = new HashMap<>();
+        Map<String, String> currentClassFieldElementTypes = new HashMap<>();
         for (Tree member : owner.getMembers()) {
             if (member instanceof VariableTree variable && variable.getType() != null) {
+                String declaredType = variable.getType().toString();
                 currentClassFieldTypes.put(
                     variable.getName().toString(),
-                    rawTypeName(variable.getType().toString())
+                    rawTypeName(declaredType)
                 );
+                String elementType = singleGenericTypeArgument(declaredType);
+                if (elementType != null) {
+                    currentClassFieldElementTypes.put(variable.getName().toString(), elementType);
+                }
             }
         }
+        Map<String, Map<String, String>> localDataAccessors = new HashMap<>();
+        collectLocalDataAccessors(unit, localDataAccessors);
         List<MethodTree> entries = methodsByName.getOrDefault(methodName, List.of()).stream()
             .filter(method -> method.getParameters().size() == parameterCount)
             .toList();
+        if (entries.isEmpty()
+            && owner.getKind() == Tree.Kind.RECORD
+            && localDataAccessors.getOrDefault(className, Map.of()).containsKey(methodName)
+            && parameterCount == 0) {
+            return;
+        }
         if (entries.size() != 1) {
             throw new AssertionError(
                 "production helper 必须恰好声明一个匹配入口：" + className + "." + methodName
                     + "/" + parameterCount + "；实际=" + entries.size()
             );
         }
-        Map<String, Set<String>> localDataAccessors = new HashMap<>();
-        collectLocalDataAccessors(unit, localDataAccessors);
         Map<String, String> visibleTypeFqcns = new HashMap<>();
         String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
         for (Tree declaration : unit.getTypeDecls()) {
             if (declaration instanceof ClassTree type) {
-                String fqcn = sourcePackage.isBlank()
-                    ? type.getSimpleName().toString()
-                    : sourcePackage + "." + type.getSimpleName();
-                visibleTypeFqcns.put(type.getSimpleName().toString(), fqcn);
+                registerVisibleDeclaredTypes(type, sourcePackage, null, visibleTypeFqcns);
             }
         }
         Set<String> visibleStoreTypeNames = new TreeSet<>();
@@ -462,6 +477,7 @@ public final class JavaLifecycleSourceInspector {
             String imported = importTree.getQualifiedIdentifier().toString();
             if (!importTree.isStatic() && !imported.endsWith(".*")) {
                 visibleTypeFqcns.put(simpleName(imported), imported);
+                collectImportedDataAccessors(imported, localDataAccessors);
             }
             for (String fqcn : storeFqcns) {
                 if (!importTree.isStatic() && imported.equals(fqcn)) {
@@ -484,14 +500,20 @@ public final class JavaLifecycleSourceInspector {
         }
 
         Set<String> visited = new HashSet<>();
+        com.sun.source.util.TreePath methodPath = com.sun.source.util.TreePath.getPath(unit, entries.get(0));
+        if (methodPath == null) {
+            throw new AssertionError("无法定位 production helper AST path：" + className + "." + methodName);
+        }
         scanMethodClosure(
             entries.get(0),
+            methodPath,
             className,
             methodsByName,
             visited,
             storeFqcns,
             visibleStoreTypeNames,
             currentClassFieldTypes,
+            currentClassFieldElementTypes,
             localDataAccessors,
             visibleTypeFqcns,
             sourcePackage,
@@ -509,13 +531,15 @@ public final class JavaLifecycleSourceInspector {
 
     private static void scanMethodClosure(
         MethodTree method,
+        com.sun.source.util.TreePath methodPath,
         String className,
         Map<String, List<MethodTree>> methodsByName,
         Set<String> visited,
         Set<String> storeFqcns,
         Set<String> visibleStoreTypeNames,
         Map<String, String> currentClassFieldTypes,
-        Map<String, Set<String>> localDataAccessors,
+        Map<String, String> currentClassFieldElementTypes,
+        Map<String, Map<String, String>> localDataAccessors,
         Map<String, String> visibleTypeFqcns,
         String sourcePackage,
         Set<String> staticallyImportedCleanupMethods,
@@ -535,7 +559,7 @@ public final class JavaLifecycleSourceInspector {
                 );
             }
         }
-        new TreeScanner<Void, Void>() {
+        new TreePathScanner<Void, Void>() {
             @Override
             public Void visitVariable(VariableTree variable, Void unused) {
                 if (variable.getType() != null) {
@@ -548,20 +572,49 @@ public final class JavaLifecycleSourceInspector {
             }
 
             @Override
+            public Void visitLambdaExpression(LambdaExpressionTree expression, Void unused) {
+                if (expression.getParameters().size() != 1) {
+                    return super.visitLambdaExpression(expression, unused);
+                }
+                String parameterName = expression.getParameters().get(0).getName().toString();
+                String inferredType = inferLambdaParameterType(
+                    getCurrentPath(),
+                    currentClassFieldElementTypes
+                );
+                if (inferredType == null) {
+                    return super.visitLambdaExpression(expression, unused);
+                }
+                String previousType = localDataVariables.put(parameterName, inferredType);
+                try {
+                    return super.visitLambdaExpression(expression, unused);
+                } finally {
+                    if (previousType == null) {
+                        localDataVariables.remove(parameterName);
+                    } else {
+                        localDataVariables.put(parameterName, previousType);
+                    }
+                }
+            }
+
+            @Override
             public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
                 String invokedName = invokedMethodName(invocation.getMethodSelect());
                 if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
                     String owner = selection.getExpression().toString();
-                    String resolvedOwner = currentClassFieldTypes.getOrDefault(owner, owner);
-                    if (STORE_CLEANUP_METHODS.contains(invokedName)
-                        && isManagedStoreOwner(resolvedOwner, storeFqcns, visibleStoreTypeNames)) {
-                        violations.add("invoke:" + invocation.getMethodSelect());
+                    String resolvedOwner = resolveReceiverType(
+                        owner,
+                        currentClassFieldTypes,
+                        localDataVariables
+                    );
+                    if (isManagedStoreOwner(resolvedOwner, storeFqcns, visibleStoreTypeNames)) {
+                        violations.add("store-receiver:" + invocation.getMethodSelect());
                     } else if (owner.equals("this") || owner.equals(className) || resolvedOwner.equals(className)) {
                         recurseLocal(invokedName, invocation.getArguments().size());
                     } else {
                         String crossClassCall = normalizeCrossClassCall(
                             owner,
                             invokedName,
+                            invocation.getArguments().size(),
                             currentClassFieldTypes,
                             localDataVariables,
                             localDataAccessors,
@@ -588,14 +641,28 @@ public final class JavaLifecycleSourceInspector {
             public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
                 String referencedName = reference.getName().toString();
                 String qualifier = reference.getQualifierExpression().toString();
-                String resolvedQualifier = currentClassFieldTypes.getOrDefault(qualifier, qualifier);
-                if (STORE_CLEANUP_METHODS.contains(referencedName)
-                    && isManagedStoreOwner(resolvedQualifier, storeFqcns, visibleStoreTypeNames)) {
-                    violations.add("reference:" + qualifier + "::" + referencedName);
+                String resolvedQualifier = resolveReceiverType(
+                    qualifier,
+                    currentClassFieldTypes,
+                    localDataVariables
+                );
+                int referenceArity = memberReferenceTargetArity(
+                    qualifier,
+                    referencedName,
+                    currentClassFieldTypes,
+                    localDataVariables,
+                    localDataAccessors,
+                    visibleTypeFqcns,
+                    sourcePackage,
+                    allowedCrossClassCalls
+                );
+                if (isManagedStoreOwner(resolvedQualifier, storeFqcns, visibleStoreTypeNames)) {
+                    violations.add("store-receiver-reference:" + qualifier + "::" + referencedName);
                 } else {
                     String crossClassCall = normalizeCrossClassCall(
                         qualifier,
                         referencedName,
+                        referenceArity,
                         currentClassFieldTypes,
                         localDataVariables,
                         localDataAccessors,
@@ -629,14 +696,24 @@ public final class JavaLifecycleSourceInspector {
                     return;
                 }
                 if (candidates.size() == 1) {
+                    com.sun.source.util.TreePath candidatePath = com.sun.source.util.TreePath.getPath(
+                        methodPath.getCompilationUnit(),
+                        candidates.get(0)
+                    );
+                    if (candidatePath == null) {
+                        violations.add("unresolved-local-helper-path:" + name + "/" + parameterCount);
+                        return;
+                    }
                     scanMethodClosure(
                         candidates.get(0),
+                        candidatePath,
                         className,
                         methodsByName,
                         visited,
                         storeFqcns,
                         visibleStoreTypeNames,
                         currentClassFieldTypes,
+                        currentClassFieldElementTypes,
                         localDataAccessors,
                         visibleTypeFqcns,
                         sourcePackage,
@@ -646,34 +723,70 @@ public final class JavaLifecycleSourceInspector {
                     );
                 }
             }
-        }.scan(method.getBody(), null);
+        }.scan(methodPath, null);
+    }
+
+    private static int memberReferenceTargetArity(
+        String qualifier,
+        String methodName,
+        Map<String, String> currentClassFieldTypes,
+        Map<String, String> localDataVariables,
+        Map<String, Map<String, String>> localDataAccessors,
+        Map<String, String> visibleTypeFqcns,
+        String sourcePackage,
+        Set<String> allowedCrossClassCalls
+    ) {
+        String receiverType = resolveReceiverType(qualifier, currentClassFieldTypes, localDataVariables);
+        String targetType = localDataAccessors.getOrDefault(receiverType, Map.of()).get(methodName);
+        if (targetType != null) {
+            return Math.max(0, functionalInterfaceArity(targetType));
+        }
+        String resolvedReceiver = visibleTypeFqcns.getOrDefault(receiverType, receiverType);
+        if (resolvedReceiver.equals(receiverType)
+            && !receiverType.contains(".")
+            && isCrossClassStaticCallOwner(receiverType)) {
+            resolvedReceiver = sourcePackage.isBlank()
+                ? receiverType
+                : sourcePackage + "." + receiverType;
+        }
+        String prefix = resolvedReceiver + "." + methodName + "/";
+        List<Integer> allowedArities = allowedCrossClassCalls.stream()
+            .filter(call -> call.startsWith(prefix))
+            .map(call -> call.substring(prefix.length()))
+            .map(Integer::parseInt)
+            .toList();
+        if (allowedArities.size() == 1) {
+            return allowedArities.get(0);
+        }
+        return 0;
+    }
+
+    private static int functionalInterfaceArity(String ownerType) {
+        return switch (ownerType) {
+            case "Runnable", "Supplier", "BooleanSupplier", "IntSupplier", "LongSupplier", "DoubleSupplier" -> 0;
+            case "Consumer", "Predicate", "Function", "UnaryOperator" -> 1;
+            case "BiConsumer", "BiPredicate", "BiFunction", "BinaryOperator" -> 2;
+            default -> -1;
+        };
+    }
+
+    private static String resolveReceiverType(
+        String owner,
+        Map<String, String> currentClassFieldTypes,
+        Map<String, String> localDataVariables
+    ) {
+        String ownerType = currentClassFieldTypes.get(owner);
+        if (ownerType == null) {
+            ownerType = localDataVariables.get(owner);
+        }
+        return ownerType == null ? owner : ownerType;
     }
 
     private static boolean isAllowedCrossClassCall(
         String crossClassCall,
         Set<String> allowedCrossClassCalls
     ) {
-        if (allowedCrossClassCalls.contains(crossClassCall)) {
-            return true;
-        }
-        int methodSeparator = crossClassCall.lastIndexOf('.');
-        if (methodSeparator < 0) {
-            return false;
-        }
-        String owner = crossClassCall.substring(0, methodSeparator);
-        String methodName = crossClassCall.substring(methodSeparator + 1);
-        return allowedCrossClassCalls.stream().anyMatch(allowed -> {
-            int allowedArity = allowed.indexOf('/', methodSeparator + 1);
-            String allowedCall = allowedArity >= 0 ? allowed.substring(0, allowedArity) : allowed;
-            int allowedSeparator = allowedCall.lastIndexOf('.');
-            if (allowedSeparator < 0 || !allowedCall.substring(0, allowedSeparator).equals(owner)) {
-                return false;
-            }
-            if (allowedArity >= 0) {
-                return allowedCall.substring(allowedSeparator + 1).equals(methodName);
-            }
-            return allowedCall.endsWith(".clearOnDisconnect");
-        });
+        return allowedCrossClassCalls.contains(crossClassCall);
     }
 
     private static String lifecycleEntryCall(AuditedLifecycleEntry entry) {
@@ -682,15 +795,16 @@ public final class JavaLifecycleSourceInspector {
         String call = packageName.isBlank()
             ? entry.className() + "." + entry.methodName()
             : packageName + "." + entry.className() + "." + entry.methodName();
-        return entry.parameterCount() == 0 ? call : call + "/" + entry.parameterCount();
+        return call + "/" + entry.parameterCount();
     }
 
     private static String normalizeCrossClassCall(
         String owner,
         String methodName,
+        int parameterCount,
         Map<String, String> currentClassFieldTypes,
         Map<String, String> localDataVariables,
-        Map<String, Set<String>> localDataAccessors,
+        Map<String, Map<String, String>> localDataAccessors,
         Map<String, String> visibleTypeFqcns,
         String sourcePackage
     ) {
@@ -706,20 +820,48 @@ public final class JavaLifecycleSourceInspector {
                     rootType = localDataVariables.get(rootOwner);
                 }
                 if (rootType != null) {
+                    String resolvedChainType = resolveLocalDataChainType(
+                        owner,
+                        currentClassFieldTypes,
+                        localDataVariables,
+                        localDataAccessors
+                    );
+                    if (resolvedChainType != null) {
+                        return isFrameworkDataType(visibleTypeFqcns.getOrDefault(
+                            resolvedChainType,
+                            resolvedChainType
+                        )) || isStandardLibraryDataCall(resolvedChainType, methodName)
+                            ? null
+                            : unresolvedCrossClassCall(owner, methodName, parameterCount);
+                    }
                     String rootFqcn = visibleTypeFqcns.getOrDefault(rootType, rootType);
                     return isFrameworkDataType(rootFqcn)
                         ? null
-                        : unresolvedCrossClassCall(owner, methodName);
+                        : unresolvedCrossClassCall(owner, methodName, parameterCount);
+                }
+                String resolvedChainType = resolveLocalDataChainType(
+                    owner,
+                    currentClassFieldTypes,
+                    localDataVariables,
+                    localDataAccessors
+                );
+                if (resolvedChainType != null) {
+                    return isFrameworkDataType(visibleTypeFqcns.getOrDefault(
+                        resolvedChainType,
+                        resolvedChainType
+                    )) || isStandardLibraryDataCall(resolvedChainType, methodName)
+                        ? null
+                        : unresolvedCrossClassCall(owner, methodName, parameterCount);
                 }
             }
             ownerType = owner;
         }
+        if (isLocalDataCall(ownerType, methodName, localDataAccessors)) {
+            return null;
+        }
         int chainedCall = ownerType.indexOf('.');
         if (ownerType.endsWith("()") && chainedCall > 0) {
             ownerType = ownerType.substring(0, chainedCall);
-        }
-        if (isLocalDataCall(ownerType, methodName, localDataAccessors)) {
-            return null;
         }
         String ownerFqcn = visibleTypeFqcns.getOrDefault(ownerType, ownerType);
         if (ownerType.equals("BongClient.LOGGER")) {
@@ -735,10 +877,10 @@ public final class JavaLifecycleSourceInspector {
             if (ownerFqcn.equals(ownerType) && !ownerType.contains(".")) {
                 ownerFqcn = sourcePackage.isBlank() ? ownerType : sourcePackage + "." + ownerType;
             }
-            return ownerFqcn + "." + methodName;
+            return ownerFqcn + "." + methodName + "/" + parameterCount;
         }
         if (ownerType.matches("[a-z_$][A-Za-z0-9_$]*")) {
-            return unresolvedCrossClassCall(owner, methodName);
+            return unresolvedCrossClassCall(owner, methodName, parameterCount);
         }
         return null;
     }
@@ -746,10 +888,40 @@ public final class JavaLifecycleSourceInspector {
     private static boolean isLocalDataCall(
         String ownerType,
         String methodName,
-        Map<String, Set<String>> localDataAccessors
+        Map<String, Map<String, String>> localDataAccessors
     ) {
-        return localDataAccessors.getOrDefault(ownerType, Set.of()).contains(methodName)
+        return localDataAccessors.getOrDefault(ownerType, Map.of()).containsKey(methodName)
             || isStandardLibraryDataCall(ownerType, methodName);
+    }
+
+    private static String resolveLocalDataChainType(
+        String owner,
+        Map<String, String> currentClassFieldTypes,
+        Map<String, String> localDataVariables,
+        Map<String, Map<String, String>> localDataAccessors
+    ) {
+        String[] segments = owner.split("\\.");
+        if (segments.length < 2) {
+            return null;
+        }
+        String currentType = currentClassFieldTypes.get(segments[0]);
+        if (currentType == null) {
+            currentType = localDataVariables.get(segments[0]);
+        }
+        if (currentType == null) {
+            return null;
+        }
+        for (int index = 1; index < segments.length; index++) {
+            String accessor = segments[index];
+            if (accessor.endsWith("()")) {
+                accessor = accessor.substring(0, accessor.length() - 2);
+            }
+            currentType = localDataAccessors.getOrDefault(currentType, Map.of()).get(accessor);
+            if (currentType == null) {
+                return null;
+            }
+        }
+        return currentType;
     }
 
     private static boolean isStandardLibraryDataCall(String ownerType, String methodName) {
@@ -771,7 +943,8 @@ public final class JavaLifecycleSourceInspector {
     }
 
     private static boolean isFrameworkDataType(String fqcn) {
-        return fqcn.startsWith("java.")
+        return fqcn.equals("Math")
+            || fqcn.startsWith("java.")
             || fqcn.startsWith("javax.")
             || Set.of(
                 "ArithmeticException",
@@ -794,41 +967,121 @@ public final class JavaLifecycleSourceInspector {
         return separator >= 0 ? owner.substring(0, separator) : owner;
     }
 
-    private static String unresolvedCrossClassCall(String owner, String methodName) {
-        return "<unresolved>:" + owner + "." + methodName;
+    private static String unresolvedCrossClassCall(
+        String owner,
+        String methodName,
+        int parameterCount
+    ) {
+        return "<unresolved>:" + owner + "." + methodName + "/" + parameterCount;
     }
 
     private static void collectLocalDataAccessors(
         CompilationUnitTree unit,
-        Map<String, Set<String>> localDataAccessors
+        Map<String, Map<String, String>> localDataAccessors
     ) {
         for (Tree declaration : unit.getTypeDecls()) {
             if (declaration instanceof ClassTree type) {
-                collectLocalDataAccessors(type, localDataAccessors);
+                collectLocalDataAccessors(type, null, localDataAccessors);
             }
         }
     }
 
+    private static void collectImportedDataAccessors(
+        String importedFqcn,
+        Map<String, Map<String, String>> localDataAccessors
+    ) {
+        String relativePath = importedFqcn.replace('.', '/') + ".java";
+        PathSource source = findProductionSource(relativePath);
+        if (source == null) {
+            return;
+        }
+        CompilationUnitTree importedUnit = parse(simpleName(importedFqcn), source.content());
+        findDeclaredType(importedUnit, simpleName(importedFqcn))
+            .ifPresent(type -> collectLocalDataAccessors(type, null, localDataAccessors));
+    }
+
+    private static PathSource findProductionSource(String relativePath) {
+        java.nio.file.Path workingDirectory = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        for (java.nio.file.Path root : List.of(
+            workingDirectory.resolve("src/main/java"),
+            workingDirectory.resolve("client/src/main/java")
+        )) {
+            java.nio.file.Path candidate = root.resolve(relativePath);
+            if (java.nio.file.Files.isRegularFile(candidate)) {
+                try {
+                    return new PathSource(candidate, java.nio.file.Files.readString(candidate));
+                } catch (IOException exception) {
+                    throw new AssertionError("无法读取 imported data source：" + candidate, exception);
+                }
+            }
+        }
+        return null;
+    }
+
+    private record PathSource(java.nio.file.Path path, String content) {}
+
     private static void collectLocalDataAccessors(
         ClassTree type,
-        Map<String, Set<String>> localDataAccessors
+        String enclosingName,
+        Map<String, Map<String, String>> localDataAccessors
     ) {
-        Set<String> accessors = new HashSet<>();
+        String qualifiedName = enclosingName == null
+            ? type.getSimpleName().toString()
+            : enclosingName + "." + type.getSimpleName();
+        Map<String, String> accessors = new HashMap<>();
         for (Tree member : type.getMembers()) {
             if (type.getKind() == Tree.Kind.RECORD
                 && member instanceof MethodTree method
                 && method.getParameters().isEmpty()
-                && (method.getBody() == null || method.getModifiers().getFlags().contains(Modifier.STATIC))) {
-                accessors.add(method.getName().toString());
-            } else if (type.getKind() == Tree.Kind.RECORD && member instanceof VariableTree component) {
-                accessors.add(component.getName().toString());
+                && method.getReturnType() != null) {
+                accessors.put(
+                    method.getName().toString(),
+                    rawTypeName(method.getReturnType().toString())
+                );
+            } else if (member instanceof VariableTree component
+                && component.getType() != null
+                && type.getKind() == Tree.Kind.RECORD) {
+                accessors.put(
+                    component.getName().toString(),
+                    rawTypeName(component.getType().toString())
+                );
             } else if (member instanceof ClassTree nestedType) {
-                collectLocalDataAccessors(nestedType, localDataAccessors);
+                collectLocalDataAccessors(nestedType, qualifiedName, localDataAccessors);
             }
         }
         if (!accessors.isEmpty()) {
-            localDataAccessors.put(type.getSimpleName().toString(), Set.copyOf(accessors));
+            Map<String, String> immutableAccessors = Map.copyOf(accessors);
+            localDataAccessors.putIfAbsent(type.getSimpleName().toString(), immutableAccessors);
+            localDataAccessors.put(qualifiedName, immutableAccessors);
         }
+    }
+
+    private static String inferLambdaParameterType(
+        com.sun.source.util.TreePath lambdaPath,
+        Map<String, String> currentClassFieldElementTypes
+    ) {
+        com.sun.source.util.TreePath parentPath = lambdaPath.getParentPath();
+        if (parentPath == null || !(parentPath.getLeaf() instanceof MethodInvocationTree invocation)) {
+            return null;
+        }
+        if (!(invocation.getMethodSelect() instanceof MemberSelectTree selection)
+            || !selection.getIdentifier().contentEquals("removeIf")
+            || !invocation.getArguments().contains(lambdaPath.getLeaf())) {
+            return null;
+        }
+        return currentClassFieldElementTypes.get(selection.getExpression().toString());
+    }
+
+    private static String singleGenericTypeArgument(String declaredType) {
+        int start = declaredType.indexOf('<');
+        int end = declaredType.lastIndexOf('>');
+        if (start < 0 || end <= start + 1) {
+            return null;
+        }
+        String argument = declaredType.substring(start + 1, end).trim();
+        return argument.contains(",") || argument.contains("?")
+            ? null
+            : rawTypeName(argument);
     }
 
     private static String rawTypeName(String declaredType) {
@@ -882,11 +1135,8 @@ public final class JavaLifecycleSourceInspector {
                     forbiddenWildcardImports.add("static " + imported);
                 }
                 if (importTree.isStatic()
-                    && STORE_CLEANUP_METHODS.stream()
-                        .anyMatch(method -> imported.equals(fqcn + "." + method))) {
-                    staticallyImportedCleanupMethods.add(
-                        imported.substring(imported.lastIndexOf('.') + 1)
-                    );
+                    && imported.equals(fqcn + "." + DISCONNECT_CLEANER_METHOD)) {
+                    staticallyImportedCleanupMethods.add(DISCONNECT_CLEANER_METHOD);
                 }
             }
         }
@@ -910,7 +1160,7 @@ public final class JavaLifecycleSourceInspector {
             @Override
             public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
                 String methodName = invokedMethodName(invocation.getMethodSelect());
-                if (!STORE_CLEANUP_METHODS.contains(methodName)) {
+                if (!methodName.equals(DISCONNECT_CLEANER_METHOD)) {
                     return super.visitMethodInvocation(invocation, unused);
                 }
                 if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
@@ -936,7 +1186,7 @@ public final class JavaLifecycleSourceInspector {
 
             @Override
             public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                if (!STORE_CLEANUP_METHODS.contains(reference.getName().toString())
+                if (!reference.getName().contentEquals(DISCONNECT_CLEANER_METHOD)
                     || !isManagedStoreOwner(
                         reference.getQualifierExpression().toString(),
                         storeFqcns,
@@ -1017,6 +1267,51 @@ public final class JavaLifecycleSourceInspector {
                     + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
                     + " 调用或引用 test reset " + methodName
             );
+        }
+    }
+
+    private static java.util.Optional<ClassTree> findDeclaredType(
+        CompilationUnitTree unit,
+        String className
+    ) {
+        java.util.ArrayDeque<ClassTree> pending = new java.util.ArrayDeque<>();
+        for (Tree declaration : unit.getTypeDecls()) {
+            if (declaration instanceof ClassTree type) {
+                pending.add(type);
+            }
+        }
+        while (!pending.isEmpty()) {
+            ClassTree type = pending.removeFirst();
+            if (type.getSimpleName().contentEquals(className)) {
+                return java.util.Optional.of(type);
+            }
+            for (Tree member : type.getMembers()) {
+                if (member instanceof ClassTree nested) {
+                    pending.addLast(nested);
+                }
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
+    private static void registerVisibleDeclaredTypes(
+        ClassTree type,
+        String sourcePackage,
+        String enclosingName,
+        Map<String, String> visibleTypeFqcns
+    ) {
+        String qualifiedName = enclosingName == null
+            ? type.getSimpleName().toString()
+            : enclosingName + "." + type.getSimpleName();
+        String fqcn = sourcePackage.isBlank()
+            ? qualifiedName
+            : sourcePackage + "." + qualifiedName;
+        visibleTypeFqcns.putIfAbsent(type.getSimpleName().toString(), fqcn);
+        visibleTypeFqcns.put(qualifiedName, fqcn);
+        for (Tree member : type.getMembers()) {
+            if (member instanceof ClassTree nested) {
+                registerVisibleDeclaredTypes(nested, sourcePackage, qualifiedName, visibleTypeFqcns);
+            }
         }
     }
 

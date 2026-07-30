@@ -51,9 +51,9 @@ public final class MusicStateMachine {
         return true;
     }
 
-    /** 清除 MusicStateMachine 自己持有的旧 session transition key；真实播放资源由 SoundRecipePlayer 清理。 */
+    /** 断线时保留既有 clear() 的完整状态复位与活动音乐硬停语义。 */
     public static void clearOnDisconnect() {
-        INSTANCE.active = null;
+        INSTANCE.clear();
     }
 
     public void clear() {

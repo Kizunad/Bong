@@ -86,6 +86,22 @@ class MusicStateMachineTest {
     }
 
     @Test
+    void clearOnDisconnectDelegatesToFullBusinessClear() throws Exception {
+        java.nio.file.Path workingDirectory = java.nio.file.Path.of("").toAbsolutePath().normalize();
+        java.nio.file.Path clientRoot = java.nio.file.Files.isDirectory(workingDirectory.resolve("src"))
+            ? workingDirectory
+            : workingDirectory.resolve("client");
+        String source = java.nio.file.Files.readString(clientRoot.resolve(
+            "src/main/java/com/bong/client/audio/MusicStateMachine.java"
+        ));
+
+        assertTrue(
+            source.contains("public static void clearOnDisconnect() {\n        INSTANCE.clear();\n    }"),
+            "断线入口必须复用既有 clear()，保留 AMBIENT 复位与活动 transition 硬停语义"
+        );
+    }
+
+    @Test
     void clearDropsActiveMusicBeforeSinkRuntimeFailureSoSameUpdateCanRestart() {
         RuntimeFailingSink sink = new RuntimeFailingSink();
         SoundRecipePlayer player = new SoundRecipePlayer(sink, EnvironmentAudioLoopState::isActive);

@@ -34,7 +34,7 @@ public final class TribulationBroadcastHandler implements ServerDataHandler {
             readDouble(payload, "spectate_distance", 0d)
         );
         if (!active) {
-            TribulationBroadcastStore.remove(state);
+            TribulationBroadcastStore.clear(state);
             return ServerDataDispatch.handled(envelope.type(), "tribulation target cleared");
         }
         TribulationBroadcastStore.upsert(state);

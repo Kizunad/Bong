@@ -40,7 +40,7 @@ public final class TribulationStateHandler implements ServerDataHandler {
             TribulationStateStore.upsert(state);
             return ServerDataDispatch.handled(envelope.type(), "tribulation state updated");
         }
-        TribulationStateStore.complete(state);
+        TribulationStateStore.clear(state);
         return ServerDataDispatch.handled(envelope.type(), "tribulation state cleared");
     }
 

@@ -24,7 +24,7 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
             WeaponEquippedStore.putOrClear(slot, null);
             // plan-shield-block-v1 §P3：卸下时同步清空盾槽（若 off_hand 卸下则盾也消）
             if ("off_hand".equals(slot)) {
-                EquippedShieldStore.unequip();
+                EquippedShieldStore.clear();
             }
             return ServerDataDispatch.handled(envelope.type(), "Cleared slot " + slot);
         }
@@ -56,7 +56,7 @@ public final class WeaponEquippedHandler implements ServerDataHandler {
 
         // 非盾牌：清空盾槽（off_hand 改装其他武器时清除盾）
         if ("off_hand".equals(slot)) {
-            EquippedShieldStore.unequip();
+            EquippedShieldStore.clear();
         }
 
         WeaponEquippedStore.putOrClear(slot, new EquippedWeapon(

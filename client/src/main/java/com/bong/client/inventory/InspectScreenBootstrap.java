@@ -47,7 +47,7 @@ public final class InspectScreenBootstrap {
     }
 
     static void requestQiColorInspectForCrosshairTarget(MinecraftClient client) {
-        QiColorObservedStore.beginInspection();
+        QiColorObservedStore.clear();
         String target = crosshairEntityTarget(client);
         if (target != null) {
             ClientRequestSender.sendQiColorInspect(target);

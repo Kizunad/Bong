@@ -71,7 +71,7 @@ public final class BongHudCommand {
     }
 
     private static int clear(FabricClientCommandSource source) {
-        AnqiHudStateStore.hideAll();
+        AnqiHudStateStore.clear();
         source.sendFeedback(Text.literal("[bonghud] clear"));
         return 1;
     }

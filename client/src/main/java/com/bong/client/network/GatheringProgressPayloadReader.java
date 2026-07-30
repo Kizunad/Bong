@@ -36,7 +36,7 @@ final class GatheringProgressPayloadReader {
         boolean interrupted = readOptionalBoolean(payload, "interrupted") == Boolean.TRUE;
         boolean completed = readOptionalBoolean(payload, "completed") == Boolean.TRUE || progress >= 1.0;
         if (interrupted || completed) {
-            GatheringSessionStore.finish(sessionId);
+            GatheringSessionStore.clear(sessionId);
             return ServerDataDispatch.handled(
                 envelope.type(),
                 "Cleared gathering progress '" + sessionId.trim() + "' from " + envelope.type()

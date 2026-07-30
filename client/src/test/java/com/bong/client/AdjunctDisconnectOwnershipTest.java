@@ -129,10 +129,19 @@ class AdjunctDisconnectOwnershipTest {
             {"animation/BongAnimationRegistry.java", "BongAnimationRegistry", "clearOnDisconnect"},
             {"npc/NpcDialogueBubbleRenderer.java", "NpcDialogueBubbleRenderer", "clear"},
             {"audio/MusicStateMachine.java", "MusicStateMachine", "clearOnDisconnect"},
+            {"audio/MusicStateMachine.java", "MusicStateMachine", "clear"},
+            {"audio/MusicStateMachine.java", "MusicStateMachine", "stopActive", "1"},
             {"audio/MusicStateMachine.java", "MusicStateMachine", "clearSeasonModifierOnDisconnect"},
             {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "clearOnDisconnect"},
+            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "setMusicState", "1"},
+            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "stop", "1"},
+            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer.ActiveLoop", "deactivateOwnedFlag"},
+            {"network/AudioEventPayload.java", "AudioEventPayload.PlaySoundRecipe", "instanceId"},
+            {"audio/AudioBusMixer.java", "AudioBusMixer", "setMusicState", "1"},
+            {"environment/EnvironmentAudioLoopState.java", "EnvironmentAudioLoopState", "deactivate", "1"},
             {"audio/AudioBusMixer.java", "AudioBusMixer", "clearOnDisconnect"},
             {"audio/SoundSink.java", "SoundSink", "clearOnDisconnect"},
+            {"audio/SoundSink.java", "SoundSink", "stop", "2"},
             {"audio/MinecraftSoundSink.java", "MinecraftSoundSink", "clearOnDisconnect"},
             {"audio/FadeableSoundInstance.java", "FadeableSoundInstance", "beginFadeOut", "1"},
             {"animation/BongAnimationPlayer.java", "BongAnimationPlayer", "clearOnDisconnect"},
@@ -242,6 +251,16 @@ class AdjunctDisconnectOwnershipTest {
                 final class AllowlistedAdjunct {
                     static void clearOnDisconnect() { tearDown(); }
                     static void tearDown() { LootContainerStateStore.reset(); }
+                }
+                """,
+            """
+                package com.example;
+                import com.bong.client.hud.LootContainerStateStore;
+                final class AllowlistedAdjunct {
+                    static void clearOnDisconnect() {
+                        LootContainerStateStore store = null;
+                        store.discardAllVisuals();
+                    }
                 }
                 """,
             """
@@ -362,6 +381,75 @@ class AdjunctDisconnectOwnershipTest {
                 java.util.Set.of()
             )
         );
+    }
+
+    @Test
+    void adjunctClosureInfersCollectionLambdaReceiverTypes() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+            () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
+                """
+                    package com.example;
+                    import java.util.List;
+                    final class AllowlistedAdjunct {
+                        private static final List<Payload> pending = null;
+                        static void clearOnDisconnect() {
+                            pending.removeIf(queued -> queued.instanceId() == 1L);
+                        }
+                    }
+                    record Payload(long instanceId) { }
+                    """,
+                "AllowlistedAdjunct",
+                "clearOnDisconnect",
+                java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
+                java.util.Set.of()
+            )
+        );
+    }
+
+    @Test
+    void adjunctClosureRequiresExactCrossClassOwnerMethodAndArity() {
+        String owner = "com.example.AllowlistedHelper.clearOnDisconnect/0";
+        String entry = """
+            package com.example;
+            final class AllowlistedAdjunct {
+                static void clearOnDisconnect() { AllowlistedHelper.clearOnDisconnect(); }
+            }
+            """;
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+            () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
+                entry,
+                "AllowlistedAdjunct",
+                "clearOnDisconnect",
+                java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
+                java.util.Set.of(owner)
+            )
+        );
+
+        for (String fixture : new String[] {
+            """
+                package com.example;
+                final class AllowlistedAdjunct {
+                    static void clearOnDisconnect() { AllowlistedHelper.hiddenCleanup(); }
+                }
+                """,
+            """
+                package com.example;
+                final class AllowlistedAdjunct {
+                    static void clearOnDisconnect() { AllowlistedHelper.clearOnDisconnect(1); }
+                }
+                """
+        }) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
+                    fixture,
+                    "AllowlistedAdjunct",
+                    "clearOnDisconnect",
+                    java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
+                    java.util.Set.of(owner)
+                )
+            );
+        }
     }
 
     @Test

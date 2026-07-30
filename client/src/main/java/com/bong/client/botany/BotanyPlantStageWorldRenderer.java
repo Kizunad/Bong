@@ -38,7 +38,7 @@ public final class BotanyPlantStageWorldRenderer {
         VertexConsumerProvider consumers = context.consumers();
         MatrixStack matrices = context.matrixStack();
         if (world == null || consumers == null || matrices == null) {
-            BotanyPlantStageVisualStore.discardAllVisuals();
+            BotanyPlantStageVisualStore.clear();
             return;
         }
 

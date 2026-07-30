@@ -116,20 +116,16 @@ public final class StatusEffectStore {
         INSTANCE.snapshot = Collections.unmodifiableList(cleaned);
     }
 
-    public static void onPlayerDeath() {
+    public static void clear() {
         INSTANCE.snapshot = Collections.emptyList();
         INSTANCE.cultivationAcceleration = 1.0;
     }
 
-    public static void clear() {
-        onPlayerDeath();
-    }
-
     public static void clearOnDisconnect() {
-        onPlayerDeath();
+        clear();
     }
 
     public static void resetForTests() {
-        onPlayerDeath();
+        clear();
     }
 }

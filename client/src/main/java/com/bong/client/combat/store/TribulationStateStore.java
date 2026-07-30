@@ -92,11 +92,11 @@ public final class TribulationStateStore {
 
     public static void replace(State next) {
         if (next == null) {
-            discardAll();
+            clear();
             return;
         }
         if (!next.active()) {
-            complete(next);
+            clear(next);
             return;
         }
         LinkedHashMap<String, State> copy = new LinkedHashMap<>();
@@ -107,11 +107,11 @@ public final class TribulationStateStore {
 
     public static void upsert(State next) {
         if (next == null) {
-            discardAll();
+            clear();
             return;
         }
         if (!next.active()) {
-            complete(next);
+            clear(next);
             return;
         }
         LinkedHashMap<String, State> copy = new LinkedHashMap<>(snapshots);
@@ -120,9 +120,9 @@ public final class TribulationStateStore {
         lastTerminal = State.NONE;
     }
 
-    public static void complete(State next) {
+    public static void clear(State next) {
         if (next == null || !next.hasTargetKey()) {
-            discardAll();
+            clear();
             lastTerminal = next == null ? State.NONE : next;
             return;
         }
@@ -132,20 +132,16 @@ public final class TribulationStateStore {
         lastTerminal = next;
     }
 
-    private static void discardAll() {
+    public static void clear() {
         snapshots = Map.of();
         lastTerminal = State.NONE;
     }
 
-    public static void clear(State next) { complete(next); }
-
-    public static void clear() { discardAll(); }
-
     public static void clearOnDisconnect() {
-        discardAll();
+        clear();
     }
 
-    public static void resetForTests() { discardAll(); }
+    public static void resetForTests() { clear(); }
 
     private static State selectPrimary(Map<String, State> states) {
         State best = State.NONE;

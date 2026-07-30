@@ -22,7 +22,7 @@ import com.google.gson.JsonPrimitive;
  * retained for backward compatibility with existing unit tests that drive the handler directly
  * via a parsed {@link ServerDataEnvelope}.
  *
- * <p>Last-write-wins. {@code active=false} → {@link HalfStepRechallengeStore#hide()}.
+ * <p>Last-write-wins. {@code active=false} → {@link HalfStepRechallengeStore#clear()}.
  *
  * <pre>{@code
  * // Bare JSON sent on bong:halfstep_rechallenge channel (no ServerDataV1 wrapper):
@@ -51,7 +51,7 @@ public final class HalfStepRechallengeHandler implements ServerDataHandler {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
             boolean active = readBoolean(root, "active", true);
             if (!active) {
-                HalfStepRechallengeStore.hide();
+                HalfStepRechallengeStore.clear();
                 com.bong.client.BongClient.LOGGER.info(
                     "[bong][halfstep_rechallenge] HIDE received — store cleared");
                 return;
@@ -83,7 +83,7 @@ public final class HalfStepRechallengeHandler implements ServerDataHandler {
         JsonObject payload = envelope.payload();
         boolean active = readBoolean(payload, "active", true);
         if (!active) {
-            HalfStepRechallengeStore.hide();
+            HalfStepRechallengeStore.clear();
             return ServerDataDispatch.handled(envelope.type(), "halfstep rechallenge cleared");
         }
         String charId = readString(payload, "char_id");

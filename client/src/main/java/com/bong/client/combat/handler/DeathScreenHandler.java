@@ -100,9 +100,9 @@ public final class DeathScreenHandler implements ServerDataHandler {
     }
 
     private static void clearTransientCombatState() {
-        CombatHudStateStore.onPlayerDeath();
-        StatusEffectStore.onPlayerDeath();
-        WoundsStore.onPlayerDeath();
+        CombatHudStateStore.clear();
+        StatusEffectStore.clear();
+        WoundsStore.clear();
         WoundLayerBinding.apply();
     }
 

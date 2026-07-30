@@ -250,7 +250,7 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
             sendResponse("dismissed", Map.of());
         }
         AgentUiStore.clearIfActive(this);
-        AgentUiVfxStore.deactivate();
+        AgentUiVfxStore.clear();
         if (client != null) {
             super.close();
         }
@@ -264,7 +264,7 @@ public final class AgentUiScreen extends BaseOwoScreen<FlowLayout> {
             closed = true;
         }
         AgentUiStore.clearIfActive(this);
-        AgentUiVfxStore.deactivate();
+        AgentUiVfxStore.clear();
         if (client != null && client.currentScreen == this) {
             client.setScreen(null);
         }

@@ -19,19 +19,15 @@ public final class CombatHudStateStore {
         snapshot = next == null ? CombatHudState.empty() : next;
     }
 
-    public static void onPlayerDeath() {
+    public static void clear() {
         snapshot = CombatHudState.empty();
     }
 
-    public static void clear() {
-        onPlayerDeath();
-    }
-
     public static void clearOnDisconnect() {
-        onPlayerDeath();
+        clear();
     }
 
     public static void resetForTests() {
-        onPlayerDeath();
+        clear();
     }
 }
