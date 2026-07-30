@@ -101,6 +101,7 @@
 5. **raster-less 世界盖不住 spawn 散布区（server 侧真缺口，建议后续修）**：`server/src/world/mod.rs` fallback 平台日志自称 "16x16 chunks centered on spawn"，实际 centered on **origin**；spawn 迁移（#808）+ zone "spawn" 散布后，玩家/bot 常出生在平台外纯虚空（实测三连 join：chunk(11,3) 34 chunk / chunk(-15,-15) 0 chunk ×2）。影响：CI e2e 与本地 raster-less dev server 的玩家出生即虚空 + 坠落回弹；`terrain_join_chunk_delivery` 场景的 chunk 投递 leg 只能自适应跳过（已显式打印）。修法候选：fallback 平台以真实 spawn 点为中心生成、或覆盖整个 spawn zone；修好后把场景下限收紧 ≥8。
 6. **Bot.wait_for 的 predicate 持锁回调死锁**：predicate 在事件锁内执行，回调 `events_of()` 等同样拿锁的方法时非重入锁直接死锁（连 SIGTERM 都收不干净）。已改 `RLock` 修复；写框架新等待原语时沿用。
 7. **并发 orchestrator 环境下"端口开 ≠ server 就绪"**：本机 `CARGO_TARGET_DIR` 全局指向共享 target，别的 agent 的 cargo 会占 build lock 把 `cargo run` 卡住；同时 25565 上可能出现别人集成测试的瞬时 listener（接受 TCP 几秒后断），单看端口会误判就绪、Bot 连上直接 `connection_lost`。`bot-e2e.sh` 已改为「本轮 log bootstrap 锚点 + listener 属于本轮进程树」双门，并对 build lock 卡死给出提示；CI 单租户无此问题，本地多 agent 并发时仍须 fail closed。
+
 ## §9 开放问题（P5/P6 决策门）
 
 1. P5 的真实交易以哪条现有交易协议作为首个 Bot 验收入口？
@@ -164,3 +165,11 @@
 - review 修改带来新 HEAD 后重跑受影响门禁并重发 `/review`。
 - P5/P6 均完成后，由最后一轮实施补齐 `## Finish Evidence`（落地清单、commit、测试、跨仓 symbol、遗留），再 `git mv` 归档；任何阶段仍为 ⏳ 时禁止归档。
 - 单次 consume-plan 只编排当前未完成阶段；用户无需手工拆 plan，但 merge 仍遵守仓库授权边界。
+
+### §10.4 单次 consume-plan 全自动到 merge
+
+1. 用户提交 `/consume-plan` 后，orchestrator 只选择 §10.1 中最前一个尚未完成的 PR，不跨阶段并行，也不提前改 P5/P6 状态。
+2. 独立实施 subagent 从最新 `origin/main` 落地场景、decoder、饱和测试与 CI 注册；随后运行对应栈门禁，并对最终精确 HEAD 启动 fresh-context read-only validator。validator、门禁或 GitHub e2e 任一失败都回到实施步骤，HEAD 变化后旧结论作废。
+3. subagent push 并创建该阶段 PR；orchestrator 发送独立 `/review`，持续处理 `/review`、CodeRabbit 与 e2e 结论。返工 push 后重新验证并重发 `/review`，直到没有仍成立的阻塞意见。
+4. 仅 orchestrator 在既有授权边界内 merge 已收敛 PR；实施 subagent 不自行 merge。若当前会话无 merge 授权，则停在可合并状态交给获授权主体，不把“已开 PR”记成阶段完成。
+5. 前一 PR merge 后再消费下一个条目。只有 PR-P5a/P5b/P5c/P6 全部 merge，才更新 P5/P6 为 `✅ YYYY-MM-DD`，追加完整 `## Finish Evidence`，并通过独立归档 PR 把 plan 迁入 `docs/finished_plans/`；此前本 plan 必须保持 active。
