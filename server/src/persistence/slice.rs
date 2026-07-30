@@ -672,6 +672,14 @@ pub struct ShutdownFlushReport {
 pub enum SliceDispatchError {
     MissingCanonicalRegistry,
     PoisonedSubjectRegistry,
+    MissingHydrateLease {
+        slice_id: SliceId,
+        domain: WriteDomain,
+    },
+    UnexpectedHydrateLease {
+        slice_id: SliceId,
+        domain: WriteDomain,
+    },
     UnexpectedHydrateSubject {
         slice_id: SliceId,
         domain: WriteDomain,
@@ -691,6 +699,16 @@ impl fmt::Display for SliceDispatchError {
             Self::PoisonedSubjectRegistry => {
                 formatter.write_str("canonical persistence subject registry is poisoned")
             }
+            Self::MissingHydrateLease { slice_id, domain } => write!(
+                formatter,
+                "slice `{slice_id}` returned hydrate success without activating subject domain `{}`",
+                domain.as_str()
+            ),
+            Self::UnexpectedHydrateLease { slice_id, domain } => write!(
+                formatter,
+                "slice `{slice_id}` changed an unexpected reconnect lease in domain `{}`",
+                domain.as_str()
+            ),
             Self::UnexpectedHydrateSubject { slice_id, domain } => write!(
                 formatter,
                 "slice `{slice_id}` activated an unexpected reconnect subject in domain `{}`",
@@ -843,27 +861,52 @@ fn reconnect_lease_snapshot(
         .active_subject_leases()
 }
 
-fn unexpected_hydrate_lease(
-    world: &World,
-    leases_before_hydrate: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
-    descriptors: &[&'static SliceDescriptor],
+fn audit_successful_hydrate_lease(
+    descriptor: &'static SliceDescriptor,
     expected_subject: &PersistenceSubjectKey,
-) -> Result<Option<SliceDispatchError>, SliceDispatchError> {
-    let active = reconnect_lease_snapshot(world)?;
-    Ok(descriptors.iter().find_map(|descriptor| {
-        let domain = descriptor.write_binding.domain();
-        active
-            .iter()
-            .find(|lease| {
-                lease.0 == domain
-                    && lease.1 != *expected_subject
-                    && !leases_before_hydrate.contains(lease)
-            })
-            .map(|_| SliceDispatchError::UnexpectedHydrateSubject {
+    before: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
+    after: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
+) -> Result<(), SliceDispatchError> {
+    let target = (descriptor.write_binding.domain(), expected_subject.clone());
+    if before.contains(&target) {
+        return Err(SliceDispatchError::DuplicateSubject {
+            slice_id: descriptor.id,
+            domain: target.0,
+        });
+    }
+    if let Some((domain, subject)) = after.difference(before).find(|lease| **lease != target) {
+        return Err(if subject != expected_subject {
+            SliceDispatchError::UnexpectedHydrateSubject {
                 slice_id: descriptor.id,
-                domain,
-            })
-    }))
+                domain: *domain,
+            }
+        } else {
+            SliceDispatchError::UnexpectedHydrateLease {
+                slice_id: descriptor.id,
+                domain: *domain,
+            }
+        });
+    }
+    if !after.contains(&target) {
+        return Err(SliceDispatchError::MissingHydrateLease {
+            slice_id: descriptor.id,
+            domain: target.0,
+        });
+    }
+
+    let mut expected_after = before.clone();
+    expected_after.insert(target);
+    if after != &expected_after {
+        let domain = after
+            .symmetric_difference(&expected_after)
+            .next()
+            .map_or(descriptor.write_binding.domain(), |lease| lease.0);
+        return Err(SliceDispatchError::UnexpectedHydrateLease {
+            slice_id: descriptor.id,
+            domain,
+        });
+    }
+    Ok(())
 }
 
 fn audit_aborted_hydrate_leases(
@@ -871,16 +914,37 @@ fn audit_aborted_hydrate_leases(
     leases_before_hydrate: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
     descriptors: &[&'static SliceDescriptor],
     expected_subject: &PersistenceSubjectKey,
+    failed_descriptor: &'static SliceDescriptor,
 ) -> Result<(), SliceDispatchError> {
-    if let Some(error) =
-        unexpected_hydrate_lease(world, leases_before_hydrate, descriptors, expected_subject)?
+    let active = reconnect_lease_snapshot(world)?;
+    if active == *leases_before_hydrate {
+        return Ok(());
+    }
+    if let Some((domain, _)) = active
+        .difference(leases_before_hydrate)
+        .find(|lease| lease.1 != *expected_subject)
     {
-        return Err(error);
+        return Err(SliceDispatchError::UnexpectedHydrateSubject {
+            slice_id: failed_descriptor.id,
+            domain: *domain,
+        });
     }
-    if let Some(error) = active_reconnect_lease(world, descriptors, expected_subject)? {
-        return Err(error);
+    if let Some(descriptor) = descriptors.iter().find(|descriptor| {
+        active.contains(&(descriptor.write_binding.domain(), expected_subject.clone()))
+    }) {
+        return Err(SliceDispatchError::DuplicateSubject {
+            slice_id: descriptor.id,
+            domain: descriptor.write_binding.domain(),
+        });
     }
-    Ok(())
+    let domain = active
+        .symmetric_difference(leases_before_hydrate)
+        .next()
+        .map_or(failed_descriptor.write_binding.domain(), |lease| lease.0);
+    Err(SliceDispatchError::UnexpectedHydrateLease {
+        slice_id: failed_descriptor.id,
+        domain,
+    })
 }
 
 fn cleanup_reconnect_activations(
@@ -1041,6 +1105,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         };
         hydrated_descriptors.push(*descriptor);
         report.loads_attempted += 1;
+        let leases_before_call = reconnect_lease_snapshot(world)?;
         let activation = ReconnectActivationCapability {
             subject_key: subject_key.clone(),
         };
@@ -1051,10 +1116,26 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             handoff_key: handoff_key.clone(),
             reconnect_activation: Some(activation),
         };
-        match load(world, &context) {
+        let outcome = load(world, &context);
+        drop(context);
+        let leases_after_call = reconnect_lease_snapshot(world)?;
+        let lease_error = match &outcome {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
+                audit_successful_hydrate_lease(
+                    descriptor,
+                    &subject_key,
+                    &leases_before_call,
+                    &leases_after_call,
+                )
+                .err()
+            }
+            Ok(SliceRunOutcome::SkippedBlocked) | Err(_) => None,
+        };
+        match outcome {
+            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) if lease_error.is_none() => {
                 report.loads_completed += 1;
             }
+            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {}
             Ok(SliceRunOutcome::SkippedBlocked) => report.blocked_loads.push(descriptor.id),
             Err(error) => report.failures.push(ReconnectHandoffFailure {
                 slice_id: descriptor.id,
@@ -1062,8 +1143,8 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 error,
             }),
         }
-        drop(context);
-        if !report.blocked_loads.is_empty() || !report.failures.is_empty() {
+        if lease_error.is_some() || !report.blocked_loads.is_empty() || !report.failures.is_empty()
+        {
             report.aborts_completed = cleanup_reconnect_activations(
                 world,
                 &hydrated_descriptors,
@@ -1077,30 +1158,12 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 &leases_before_hydrate,
                 &hydrated_descriptors,
                 &subject_key,
+                descriptor,
             )?;
+            if let Some(error) = lease_error {
+                return Err(error);
+            }
             return Ok(report);
-        }
-        if let Some(error) = unexpected_hydrate_lease(
-            world,
-            &leases_before_hydrate,
-            &hydrated_descriptors,
-            &subject_key,
-        )? {
-            report.aborts_completed = cleanup_reconnect_activations(
-                world,
-                &hydrated_descriptors,
-                SliceRunReason::ReconnectAbort,
-                runtime_tick,
-                wall_unix_millis,
-                &handoff_key,
-            );
-            audit_aborted_hydrate_leases(
-                world,
-                &leases_before_hydrate,
-                &hydrated_descriptors,
-                &subject_key,
-            )?;
-            return Err(error);
         }
     }
 
@@ -1141,6 +1204,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 &leases_before_hydrate,
                 &hydrated_descriptors,
                 &subject_key,
+                descriptor,
             )?;
             return Ok(report);
         }
@@ -1968,6 +2032,10 @@ mod tests {
         WriteDomain::new("test.player.second"),
         WriteAuthority::new("test.player.second.writer"),
     );
+    const EXTRA_TEST_BINDING: WriteBinding = WriteBinding::new(
+        WriteDomain::new("test.player.extra"),
+        WriteAuthority::new("test.player.extra.writer"),
+    );
 
     #[derive(Debug, Clone, Copy)]
     struct FixedClock {
@@ -2403,9 +2471,17 @@ mod tests {
         assert_eq!(report.rebases_attempted, 0);
     }
 
+    #[derive(Debug)]
+    struct HandoffActivation {
+        _guarded: GuardedSlice<u32, &'static str>,
+        _tracker: DirtyTracker,
+        _fence: PersistedRevisionFence,
+    }
+
     #[derive(Debug, Default)]
     struct HandoffTrace {
         events: Vec<(SliceRunReason, u64, u64, String)>,
+        activations: HashMap<SliceId, HandoffActivation>,
         fail_save: bool,
         block_save: bool,
         fail_load: bool,
@@ -2435,21 +2511,91 @@ mod tests {
         }
     }
 
-    fn handoff_load(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
-        let mut trace = world.resource_mut::<HandoffTrace>();
-        trace.events.push((
-            context.reason,
-            context.runtime_tick,
-            context.wall_unix_millis,
-            context.handoff_key.clone().unwrap(),
-        ));
-        if trace.fail_load {
-            Err(SliceRunError::new("reconnect hydrate failed"))
-        } else if trace.block_load {
-            Ok(SliceRunOutcome::SkippedBlocked)
-        } else {
-            Ok(SliceRunOutcome::Clean)
+    fn trace_handoff_load(
+        world: &mut World,
+        context: &SliceRunContext,
+        slice_id: SliceId,
+    ) -> SliceRunResult {
+        {
+            let mut trace = world.resource_mut::<HandoffTrace>();
+            trace.events.push((
+                context.reason,
+                context.runtime_tick,
+                context.wall_unix_millis,
+                context.handoff_key.clone().unwrap(),
+            ));
+            if trace.fail_load {
+                return Err(SliceRunError::new("reconnect hydrate failed"));
+            }
+            if trace.block_load {
+                return Ok(SliceRunOutcome::SkippedBlocked);
+            }
         }
+        let activation = make_trace_activation(world, context, slice_id)?;
+        world
+            .resource_mut::<HandoffTrace>()
+            .activations
+            .insert(slice_id, activation);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn make_trace_activation(
+        world: &mut World,
+        context: &SliceRunContext,
+        slice_id: SliceId,
+    ) -> Result<HandoffActivation, SliceRunError> {
+        world.resource_scope(
+            |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                let mut guarded = registry
+                    .activate(
+                        SliceLoad::<u32, &'static str>::loaded(9),
+                        slice_id,
+                        context.reconnect_activation()?,
+                        DirtyRevision::new(4),
+                        || 0,
+                        |_| 0,
+                    )
+                    .map_err(|_| SliceRunError::new("handoff activation rejected"))?;
+                let (tracker, fence) = guarded
+                    .restore_persistence_state()
+                    .map_err(|_| SliceRunError::new("handoff persistence state already issued"))?;
+                Ok(HandoffActivation {
+                    _guarded: guarded,
+                    _tracker: tracker,
+                    _fence: fence,
+                })
+            },
+        )
+    }
+
+    fn handoff_load_clock(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        trace_handoff_load(world, context, SliceId::new("player.clock_once"))
+    }
+
+    fn handoff_load_participant(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        trace_handoff_load(world, context, SliceId::new("player.reconnect"))
+    }
+
+    fn handoff_load_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        trace_handoff_load(world, context, SliceId::new("player.handoff_first"))
+    }
+
+    fn handoff_load_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        trace_handoff_load(world, context, SliceId::new("player.handoff_second"))
+    }
+
+    fn handoff_load_activation_first(
+        world: &mut World,
+        context: &SliceRunContext,
+    ) -> SliceRunResult {
+        trace_handoff_load(world, context, SliceId::new("player.activation_first"))
+    }
+
+    fn handoff_load_activation_second(
+        world: &mut World,
+        context: &SliceRunContext,
+    ) -> SliceRunResult {
+        trace_handoff_load(world, context, SliceId::new("player.activation_second"))
     }
 
     fn handoff_preflight(world: &World, context: &SliceRunContext) -> SliceRunResult {
@@ -2464,17 +2610,35 @@ mod tests {
         }
     }
 
-    fn handoff_cleanup(world: &mut World, context: &SliceRunContext) {
+    fn handoff_cleanup_clock(world: &mut World, context: &SliceRunContext) {
+        handoff_cleanup_slice(world, context, SliceId::new("player.clock_once"));
+    }
+
+    fn handoff_cleanup_participant(world: &mut World, context: &SliceRunContext) {
+        handoff_cleanup_slice(world, context, SliceId::new("player.reconnect"));
+    }
+
+    fn handoff_cleanup_first(world: &mut World, context: &SliceRunContext) {
+        handoff_cleanup_slice(world, context, SliceId::new("player.handoff_first"));
+    }
+
+    fn handoff_cleanup_second(world: &mut World, context: &SliceRunContext) {
+        handoff_cleanup_slice(world, context, SliceId::new("player.handoff_second"));
+    }
+
+    fn handoff_cleanup_slice(world: &mut World, context: &SliceRunContext, slice_id: SliceId) {
         assert!(matches!(
             context.reason,
             SliceRunReason::ReconnectCleanup | SliceRunReason::ReconnectAbort
         ));
-        world.resource_mut::<HandoffTrace>().events.push((
+        let mut trace = world.resource_mut::<HandoffTrace>();
+        trace.events.push((
             context.reason,
             context.runtime_tick,
             context.wall_unix_millis,
             context.handoff_key.clone().unwrap(),
         ));
+        trace.activations.remove(&slice_id);
     }
 
     fn handoff_rebase(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
@@ -2525,9 +2689,9 @@ mod tests {
 
         let handoff_descriptor = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
-            hydrate: Some(handoff_load),
+            hydrate: Some(handoff_load_clock),
             reconnect_preflight: Some(handoff_preflight),
-            reconnect_cleanup: Some(handoff_cleanup),
+            reconnect_cleanup: Some(handoff_cleanup_clock),
             rebase: Some(handoff_rebase),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.clock_once", 10)
@@ -2566,9 +2730,9 @@ mod tests {
             ..basic_descriptor("player.shutdown_only", 5)
         }));
         let participant = Box::leak(Box::new(SliceDescriptor {
-            hydrate: Some(handoff_load),
+            hydrate: Some(handoff_load_participant),
             reconnect_preflight: Some(noop_preflight),
-            reconnect_cleanup: Some(handoff_cleanup),
+            reconnect_cleanup: Some(handoff_cleanup_participant),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.reconnect", 10)
         }));
@@ -2598,18 +2762,18 @@ mod tests {
         let first = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
-            hydrate: Some(handoff_load),
+            hydrate: Some(handoff_load_first),
             reconnect_preflight: Some(handoff_preflight),
-            reconnect_cleanup: Some(handoff_cleanup),
+            reconnect_cleanup: Some(handoff_cleanup_first),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.handoff_first", 10)
         }));
         let second = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
-            hydrate: Some(handoff_load),
+            hydrate: Some(handoff_load_second),
             reconnect_preflight: Some(handoff_preflight),
-            reconnect_cleanup: Some(handoff_cleanup),
+            reconnect_cleanup: Some(handoff_cleanup_second),
             disconnect_save: Some(handoff_save),
             write_binding: SECOND_TEST_BINDING,
             ..basic_descriptor("player.handoff_second", 20)
@@ -3305,6 +3469,210 @@ mod tests {
     }
 
     #[derive(Debug, Default)]
+    struct HydrateLeaseAuditState {
+        activations: HashMap<SliceId, RealReconnectActivation>,
+        aborts: Vec<SliceId>,
+    }
+
+    impl Resource for HydrateLeaseAuditState {}
+
+    fn empty_hydrate(_world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn hydrate_extra_domain(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
+        let activation = world.resource_scope(
+            |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                make_handoff_activation(&registry, context, SliceId::new("player.audit_extra"))
+            },
+        )?;
+        world
+            .resource_mut::<HydrateLeaseAuditState>()
+            .activations
+            .insert(SliceId::new("player.audit_extra"), activation);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn hydrate_audit_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::ReconnectLoad);
+        let slice_id = SliceId::new("player.audit_first");
+        let activation = world.resource_scope(
+            |_world, registry: valence::prelude::Mut<PersistenceSliceRegistry>| {
+                make_handoff_activation(&registry, context, slice_id)
+            },
+        )?;
+        world
+            .resource_mut::<HydrateLeaseAuditState>()
+            .activations
+            .insert(slice_id, activation);
+        Ok(SliceRunOutcome::Clean)
+    }
+
+    fn cleanup_audit_slice(world: &mut World, context: &SliceRunContext, slice_id: SliceId) {
+        let mut state = world.resource_mut::<HydrateLeaseAuditState>();
+        if context.reason == SliceRunReason::ReconnectAbort {
+            state.aborts.push(slice_id);
+        }
+        state.activations.remove(&slice_id);
+    }
+
+    fn cleanup_audit_first(world: &mut World, context: &SliceRunContext) {
+        cleanup_audit_slice(world, context, SliceId::new("player.audit_first"));
+    }
+
+    fn cleanup_audit_empty(world: &mut World, context: &SliceRunContext) {
+        cleanup_audit_slice(world, context, SliceId::new("player.audit_empty"));
+    }
+
+    fn cleanup_audit_extra(world: &mut World, context: &SliceRunContext) {
+        let mut state = world.resource_mut::<HydrateLeaseAuditState>();
+        if context.reason == SliceRunReason::ReconnectAbort {
+            state.aborts.push(SliceId::new("player.audit_target"));
+        }
+        state
+            .activations
+            .remove(&SliceId::new("player.audit_extra"));
+    }
+
+    #[test]
+    fn reconnect_empty_hydrate_fails_closed_without_completion_or_rebase() {
+        let descriptor = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(empty_hydrate),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_audit_empty),
+            rebase: Some(rebase_partial_activation),
+            disconnect_save: Some(handoff_save),
+            time_basis: TimeBasis::RemainingLogicalTicks,
+            ..basic_descriptor("player.audit_empty", 10)
+        }));
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(descriptor).unwrap();
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(HandoffTrace::default());
+        world.insert_resource(HydrateLeaseAuditState::default());
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:audit"), &clock)
+            .expect_err("a Clean result without the descriptor lease must fail closed");
+
+        assert_eq!(
+            error,
+            SliceDispatchError::MissingHydrateLease {
+                slice_id: descriptor.id,
+                domain: descriptor.write_binding.domain(),
+            }
+        );
+        let state = world.resource::<HydrateLeaseAuditState>();
+        assert_eq!(state.aborts, vec![descriptor.id]);
+        assert!(state.activations.is_empty());
+        let registry = world.resource::<PersistenceSliceRegistry>();
+        assert!(registry.active_subject_leases().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reconnect_empty_second_hydrate_aborts_every_attempt_in_reverse_order() {
+        let first = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(hydrate_audit_first),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_audit_first),
+            rebase: Some(rebase_partial_activation),
+            disconnect_save: Some(handoff_save),
+            time_basis: TimeBasis::RemainingLogicalTicks,
+            ..basic_descriptor("player.audit_first", 10)
+        }));
+        let second = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(empty_hydrate),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_audit_empty),
+            rebase: Some(rebase_partial_activation),
+            disconnect_save: Some(handoff_save),
+            time_basis: TimeBasis::RemainingLogicalTicks,
+            write_binding: SECOND_TEST_BINDING,
+            ..basic_descriptor("player.audit_empty", 20)
+        }));
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(first).unwrap();
+        registry.register(second).unwrap();
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(HandoffTrace::default());
+        world.insert_resource(HydrateLeaseAuditState::default());
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:audit"), &clock)
+            .expect_err("a later empty hydrate must roll back every attempted descriptor");
+
+        assert_eq!(
+            error,
+            SliceDispatchError::MissingHydrateLease {
+                slice_id: second.id,
+                domain: second.write_binding.domain(),
+            }
+        );
+        let state = world.resource::<HydrateLeaseAuditState>();
+        assert_eq!(state.aborts, vec![second.id, first.id]);
+        assert!(state.activations.is_empty());
+        assert!(world
+            .resource::<PersistenceSliceRegistry>()
+            .active_subject_leases()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn reconnect_hydrate_rejects_an_extra_domain_lease_and_cleans_it() {
+        let target = Box::leak(Box::new(SliceDescriptor {
+            hydrate: Some(hydrate_extra_domain),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(cleanup_audit_extra),
+            rebase: Some(rebase_partial_activation),
+            disconnect_save: Some(handoff_save),
+            time_basis: TimeBasis::RemainingLogicalTicks,
+            ..basic_descriptor("player.audit_target", 10)
+        }));
+        let extra = Box::leak(Box::new(SliceDescriptor {
+            write_binding: EXTRA_TEST_BINDING,
+            ..basic_descriptor("player.audit_extra", 20)
+        }));
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry.register(target).unwrap();
+        registry.register(extra).unwrap();
+        let mut world = World::new();
+        world.insert_resource(registry);
+        world.insert_resource(HandoffTrace::default());
+        world.insert_resource(HydrateLeaseAuditState::default());
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:audit"), &clock)
+            .expect_err("a hydrate must not activate a different write domain");
+
+        assert_eq!(
+            error,
+            SliceDispatchError::UnexpectedHydrateLease {
+                slice_id: target.id,
+                domain: extra.write_binding.domain(),
+            }
+        );
+        assert!(world
+            .resource::<PersistenceSliceRegistry>()
+            .active_subject_leases()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[derive(Debug, Default)]
     struct ForeignHydrateState {
         retained: Option<RealReconnectActivation>,
         retain_on_abort: bool,
@@ -3498,7 +3866,7 @@ mod tests {
         let first = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
-            hydrate: Some(handoff_load),
+            hydrate: Some(handoff_load_activation_first),
             reconnect_preflight: Some(noop_preflight),
             reconnect_cleanup: Some(cleanup_activation),
             disconnect_save: Some(handoff_save),
@@ -3507,7 +3875,7 @@ mod tests {
         let second = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(handoff_rebase),
-            hydrate: Some(handoff_load),
+            hydrate: Some(handoff_load_activation_second),
             reconnect_preflight: Some(noop_preflight),
             reconnect_cleanup: Some(cleanup_activation),
             disconnect_save: Some(handoff_save),
