@@ -146,6 +146,13 @@ class Reader:
 
     def string(self) -> str:
         length = self.varint()
+        if length < 0:
+            raise ValueError(f"string length {length} must be non-negative")
+        remaining = len(self.data) - self.pos
+        if length > remaining:
+            raise ValueError(
+                f"string length {length} exceeds remaining bytes {remaining}"
+            )
         raw = self.data[self.pos : self.pos + length]
         self.pos += length
         return raw.decode("utf-8", "replace")

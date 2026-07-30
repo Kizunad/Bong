@@ -4906,6 +4906,72 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
             "截断 PlayerList entry 不得残留 UUID→用户名映射",
         )
 
+    def test_player_list_rejects_truncated_username_without_partial_mapping(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.write_varint(5)
+            + b"Ali"
+        )
+
+        with self.assertRaisesRegex(ValueError, "string length 5 exceeds remaining bytes 3"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "截断 username 不得产出 player_list 事件")
+        self.assertEqual(bot.player_names, {}, "截断 username 不得污染 UUID→用户名映射")
+
+    def test_player_list_rejects_negative_property_string_length(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(1)
+            + mc.write_varint(-1)
+        )
+
+        with self.assertRaisesRegex(ValueError, "string length -1 must be non-negative"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "负 property string 长度不得产出 player_list 事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "负 property string 长度不得残留 UUID→用户名映射",
+        )
+
+    def test_player_list_rejects_truncated_display_name_transactionally(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x21"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(0)
+            + b"\x01"
+            + mc.write_varint(8)
+            + b'{"text"'
+        )
+
+        with self.assertRaisesRegex(ValueError, "string length 8 exceeds remaining bytes 7"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "截断 display name 不得产出 player_list 事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "AddPlayer 同包的截断 display name 不得提前提交 UUID→用户名映射",
+        )
+
     def test_combined_actions_follow_authoritative_valence_field_order(self):
         bot = _bare_bot()
         raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
