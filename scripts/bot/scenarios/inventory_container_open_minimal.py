@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 from bot.bot import BotAssertionError
 
+from ._combat_helpers import last_event_time
 from ._inventory_helpers import (
     container_location,
     find_item,
@@ -117,11 +119,7 @@ def run(env) -> None:
         opened = _server_data_after(bot, "loot_container_open", opened_at)
         payload = opened.data["payload"]
         session_id = int(payload["session_id"])
-        if payload["source_kind"] != '{"storage_crate":{"is_herb":false}}':
-            raise BotAssertionError(
-                "trade_crate open 必须声明非灵草 storage_crate source_kind；"
-                f"actual={payload['source_kind']!r}"
-            )
+        _parse_storage_crate_source_kind(bot, payload.get("source_kind"))
         if (payload["rows"], payload["cols"]) != (4, 4):
             raise BotAssertionError(
                 "trade_crate 权威 grid 必须为 4x4；"
@@ -381,8 +379,25 @@ def run(env) -> None:
         bot.assert_alive("世界货箱双向权威链路完成后")
 
 
+def _parse_storage_crate_source_kind(bot, raw_source_kind) -> dict:
+    try:
+        source_kind = json.loads(raw_source_kind)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise BotAssertionError(
+            "trade_crate open 必须携带可解析的 source_kind JSON；"
+            f"actual={raw_source_kind!r}"
+        ) from error
+    expected = {"storage_crate": {"is_herb": False}}
+    if source_kind != expected:
+        raise BotAssertionError(
+            "trade_crate open 必须声明非灵草 storage_crate source_kind；"
+            f"actual={source_kind!r}"
+        )
+    return source_kind
+
+
 def _event_watermark(bot) -> float:
-    return bot.events[-1].t if bot.events else 0.0
+    return last_event_time(bot)
 
 
 def _server_data_after(bot, payload_type: str, after: float, timeout: float = 10.0):

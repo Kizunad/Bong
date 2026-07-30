@@ -72,6 +72,9 @@ from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     _set_qi_max_and_wait,
     _snapshot_after_server_tick_fence,
 )
+from bot.scenarios.inventory_container_open_minimal import (  # noqa: E402
+    _parse_storage_crate_source_kind,
+)
 from bot.scenarios.inventory_pack_move_intents import _uncover_pack  # noqa: E402
 from bot.scenarios.npc_ambient_surface_resolution import (  # noqa: E402
     FIXTURE_MANIFEST_ENV,
@@ -2836,6 +2839,31 @@ class CombatSkillCastScenarioTest(unittest.TestCase):
 
         with self.assertRaisesRegex(AssertionError, "phase=complete"):
             _wait_successful_cast_sequence(bot, 1.0)
+
+
+class InventoryContainerSourceKindTest(unittest.TestCase):
+    def test_accepts_semantically_equivalent_storage_crate_json(self):
+        bot = types.SimpleNamespace(username="Fake")
+        self.assertEqual(
+            _parse_storage_crate_source_kind(
+                bot, '{ "storage_crate" : { "is_herb" : false } }'
+            ),
+            {"storage_crate": {"is_herb": False}},
+        )
+
+    def test_rejects_malformed_or_wrong_source_kind(self):
+        bot = types.SimpleNamespace(username="Fake")
+        for raw_source_kind in (
+            None,
+            "not-json",
+            '{"storage_crate":{"is_herb":true}}',
+            '{"other":{"is_herb":false}}',
+            '{"storage_crate":{}}',
+        ):
+            with self.subTest(raw_source_kind=raw_source_kind), self.assertRaises(
+                BotAssertionError
+            ):
+                _parse_storage_crate_source_kind(bot, raw_source_kind)
 
 
 class CultivationRealmQiScenarioTest(unittest.TestCase):

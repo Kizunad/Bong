@@ -11,6 +11,8 @@ import math
 
 from bot.bot import BotAssertionError
 
+from ._combat_helpers import last_event_time
+
 DESCRIPTION = "breakthrough_request 产生结构化 breakthrough_cinematic，而非字节/chat 假阳性"
 MODULES = ["cultivation", "network"]
 
@@ -97,7 +99,7 @@ def run(env) -> None:
         bot.cmd("zone_qi set spawn 1.00")
         bot.expect_chat("[dev] zone_qi `spawn`", timeout=10.0)
 
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        sent_at = last_event_time(bot)
         bot.intent(BREAKTHROUGH_REQUEST)
         event = bot.wait_for(
             lambda observed: _cinematic_after(observed, sent_at),

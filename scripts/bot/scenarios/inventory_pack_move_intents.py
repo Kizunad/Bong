@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from bot.bot import BotAssertionError
 
+from ._combat_helpers import last_event_time
 from ._inventory_helpers import (
     container_location,
     equip_location,
@@ -192,7 +193,7 @@ def _uncover_pack(bot, snapshot: dict, pack_id: int, pack_container_id: str) -> 
 
 def _clearinv(bot, snapshot, scope, feedback_scope, predicate, description) -> dict:
     previous_revision = int(snapshot["revision"])
-    anchor = bot.events[-1].t if bot.events else 0.0
+    anchor = last_event_time(bot)
     bot.cmd(f"clearinv {scope}")
     bot.wait_for(
         lambda event: event.kind == "chat"
