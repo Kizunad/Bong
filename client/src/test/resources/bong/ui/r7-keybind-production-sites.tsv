@@ -1,0 +1,20 @@
+# path	constructor_sites	p1_owner
+botany/BotanyHudBootstrap.java	1	BongKeybindRegistry.global().register
+combat/CombatKeybindings.java	5	BongKeybindRegistry.global().register; quick-slot constructor site remains one source site but expands to all runtime slot bindings
+combat/juice/JuiceControls.java	1	BongKeybindRegistry.global().register
+craft/CraftScreenBootstrap.java	1	BongKeybindRegistry.global().register
+cultivation/voidaction/VoidActionScreenBootstrap.java	1	BongKeybindRegistry.global().register
+dying_elder/DyingElderInteractionKeybindings.java	3	BongKeybindRegistry.global().register
+forge/ForgeScreenBootstrap.java	1	BongKeybindRegistry.global().register
+hud/HudImmersionControls.java	1	BongKeybindRegistry.global().register
+identity/IdentityPanelScreenBootstrap.java	1	BongKeybindRegistry.global().register
+input/InteractionKeybindings.java	1	BongKeybindRegistry.global().register
+lingtian/LingtianActionScreenBootstrap.java	1	BongKeybindRegistry.global().register
+mineral/MineralSenseBootstrap.java	1	BongKeybindRegistry.global().register
+movement/MovementKeybindings.java	1	BongKeybindRegistry.global().register
+npc/NpcInteractionLogControls.java	1	BongKeybindRegistry.global().register
+social/SpiritNicheRevealBootstrap.java	1	BongKeybindRegistry.global().register
+spirittreasure/SpiritTreasureScreenBootstrap.java	1	BongKeybindRegistry.global().register
+tsy/ExtractInteractionBootstrap.java	2	BongKeybindRegistry.global().register
+tsy/SearchCancelInteractionBootstrap.java	1	BongKeybindRegistry.global().register
+ui/CultivationScreenBootstrap.java	1	BongKeybindRegistry.global().register
