@@ -1073,7 +1073,8 @@ fn server_data_helper_is_server_data(root: &Path) -> bool {
     let argument = first_call_argument(function, send_index + 1)
         .expect("shared server-data sender must pass a channel argument");
     let constants = channel_string_constants(&tokens);
-    is_server_data_channel(argument, &constants)
+    let bindings = channel_ident_bindings(&tokens, &constants);
+    is_server_data_channel(argument, &constants, &bindings)
 }
 
 fn production_tokens_from_file(root: &Path, relative: &str) -> Vec<String> {
@@ -1204,6 +1205,7 @@ struct EmitScan {
 fn scan_production_emit_source(source: &str) -> EmitScan {
     let tokens = rust_tokens(source);
     let channel_constants = channel_string_constants(&tokens);
+    let channel_bindings = channel_ident_bindings(&tokens, &channel_constants);
     let mut scan = EmitScan::default();
     for index in 0..tokens.len() {
         if tokens[index] == "send_server_data_payload"
@@ -1219,9 +1221,9 @@ fn scan_production_emit_source(source: &str) -> EmitScan {
             && tokens.get(index + 1).is_some_and(|token| token == "(")
         {
             scan.direct_calls += 1;
-            if first_call_argument(&tokens, index + 1)
-                .is_some_and(|argument| is_server_data_channel(argument, &channel_constants))
-            {
+            if first_call_argument(&tokens, index + 1).is_some_and(|argument| {
+                is_server_data_channel(argument, &channel_constants, &channel_bindings)
+            }) {
                 scan.direct_server_data_calls += 1;
             }
         }
@@ -1267,11 +1269,61 @@ fn channel_string_constants(tokens: &[String]) -> BTreeMap<&str, &str> {
     constants
 }
 
-fn is_server_data_channel(argument: &[String], constants: &BTreeMap<&str, &str>) -> bool {
+fn channel_ident_bindings<'a>(
+    tokens: &'a [String],
+    constants: &BTreeMap<&'a str, &'a str>,
+) -> BTreeMap<&'a str, &'a str> {
+    let mut bindings = BTreeMap::new();
+    for index in 0..tokens.len().saturating_sub(6) {
+        if tokens[index] != "let" {
+            continue;
+        }
+        let mut name_index = index + 1;
+        if tokens.get(name_index).is_some_and(|token| token == "mut") {
+            name_index += 1;
+        }
+        let Some(name) = tokens.get(name_index).map(String::as_str) else {
+            continue;
+        };
+        let Some(equal) = tokens[name_index + 1..]
+            .iter()
+            .position(|token| token == "=")
+            .map(|offset| name_index + 1 + offset)
+        else {
+            continue;
+        };
+        let Some(statement_end) = tokens[equal + 1..]
+            .iter()
+            .position(|token| token == ";")
+            .map(|offset| equal + 1 + offset)
+        else {
+            continue;
+        };
+        let initializer = &tokens[equal + 1..statement_end];
+        let Some(source_constant) = initializer
+            .iter()
+            .map(String::as_str)
+            .find(|token| constants.contains_key(token))
+        else {
+            continue;
+        };
+        bindings.insert(name, constants[source_constant]);
+    }
+    bindings
+}
+
+fn is_server_data_channel(
+    argument: &[String],
+    constants: &BTreeMap<&str, &str>,
+    bindings: &BTreeMap<&str, &str>,
+) -> bool {
     argument.iter().any(|token| {
         token == "SERVER_DATA_CHANNEL"
             || token.contains("bong:server_data")
             || constants
+                .get(token.as_str())
+                .is_some_and(|value| *value == "bong:server_data")
+            || bindings
                 .get(token.as_str())
                 .is_some_and(|value| *value == "bong:server_data")
     })
@@ -1550,7 +1602,8 @@ fn emitter_scanner_resolves_channel_constants_and_shared_helper_routing() {
         r#"
         const QI_ATTRITION_CHANNEL: &str = "bong:server_data";
         fn emit(client: &mut Client) {
-            client.send_custom_payload(QI_ATTRITION_CHANNEL, bytes);
+            let channel = Ident::new(QI_ATTRITION_CHANNEL).unwrap();
+            client.send_custom_payload(channel.as_str_ident(), bytes);
         }
         "#,
     );
