@@ -23,7 +23,7 @@ ERROR_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-error.log"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
-RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+SERVER_BINARY="${CARGO_TARGET_DIR:-/tmp/bong-target}/release/bong-server"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -166,16 +166,22 @@ clear_dormant_key >>"$OBSERVE_LOG" 2>&1 || finalize_failure "seed" "clear dorman
 pass "cleared bong:npc/dormant (server default-seeds factioned rogues)"
 
 CURRENT_STAGE="server"
-(
-  export PATH="$RUST_PATH"
+if ! (
+  export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  cd "$ROOT/server"
+  "$ROOT/scripts/build-token.sh" cargo build --release
+) >>"$SERVER_LOG" 2>&1; then
+  finalize_failure "server" "server build failed; see $SERVER_LOG"
+fi
+(
   export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-8}"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_SIM_SEED="$SIM_SEED"
   export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
   cd "$ROOT/server"
-  "$ROOT/scripts/build-token.sh" cargo run --release
-) >"$SERVER_LOG" 2>&1 &
+  exec "$SERVER_BINARY"
+) >>"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"
 
 if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[redis\\] subscribed to bong:agent_command" 300; then

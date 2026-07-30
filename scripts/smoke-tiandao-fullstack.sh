@@ -359,11 +359,20 @@ else
   fail "redis ping"
 fi
 
-(
+if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  "$ROOT/scripts/build-token.sh" cargo run >"$FULLSTACK_SERVER_LOG" 2>&1
+  "$ROOT/scripts/build-token.sh" cargo build
+) >>"$FULLSTACK_SERVER_LOG" 2>&1; then
+  pass "server build"
+else
+  fail "server build"
+fi
+(
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  cd "$ROOT/server"
+  exec "$CARGO_TARGET_DIR/debug/bong-server" >>"$FULLSTACK_SERVER_LOG" 2>&1
 ) &
 SERVER_PID="$!"
 
