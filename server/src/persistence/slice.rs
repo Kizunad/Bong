@@ -1310,7 +1310,6 @@ impl PartialEq for SliceSubject {
 impl Eq for SliceSubject {}
 
 /// Runtime value plus the write barrier implied by its load result.
-#[derive(Debug)]
 pub struct GuardedSlice<T, E> {
     value: T,
     load_state: GuardedLoadState<E>,
@@ -1320,6 +1319,20 @@ pub struct GuardedSlice<T, E> {
     subject: SliceSubject,
     initial_revision: DirtyRevision,
     persistence_state_issued: bool,
+}
+
+impl<T: fmt::Debug, E> fmt::Debug for GuardedSlice<T, E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GuardedSlice")
+            .field("value", &self.value)
+            .field("load_status", &self.load_status())
+            .field("binding", &self.binding)
+            .field("write_ordering", &self.write_ordering)
+            .field("initial_revision", &self.initial_revision)
+            .field("persistence_state_issued", &self.persistence_state_issued)
+            .finish()
+    }
 }
 
 impl<T, E> SliceLoad<T, E> {
@@ -3597,6 +3610,13 @@ mod tests {
         assert_eq!(*guarded.value(), 0);
         assert_eq!(tracker.current_revision(), DirtyRevision::new(7));
         assert!(!tracker.is_dirty());
+
+        let debug = format!("{guarded:?}");
+        assert!(debug.contains("load_status: Failed"));
+        assert!(
+            !debug.contains("invalid json"),
+            "GuardedSlice Debug must not disclose failed-load provenance: {debug}"
+        );
 
         for outlet in [
             WriteOutlet::Changed,
