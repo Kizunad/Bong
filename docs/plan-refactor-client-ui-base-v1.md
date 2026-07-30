@@ -24,10 +24,10 @@
 ## 阶段总览
 
 - ✅ 2026-07-30 **P0 设计收口 + 吸收清单验真**：29 Screen/92 fill 全量 fixture、五类型 API/策略/默认键目标冻结、R2/R6 边界 pin；仅 docs/tests/resources，ZERO production behavior change。
-- ⬜ **P1 基础组件落地**：五个 R7 类型上线；默认键冲突按 frozen migration manifest 收口。
-- ⬜ **P2 Screen 迁移批次 A**：炼丹/手搓/交易等迁基类；随迁修 fill 风险和 identity-sensitive clearChildren。
+- ⬜ **P1 基础组件落地**：五个 R7 类型上线；全部 production keybind constructor sites 经 global registry；默认键、vanilla reservation、空 exemption manifest 收口；botany backlog 与 dying-elder effective-binding 显示按 fixture 验收。
+- ⬜ **P2 Screen 迁移批次 A**：炼丹/手搓/交易等迁基类；随迁修 fill 风险和 identity-sensitive clearChildren；outgoing trade 在 `TradeOfferIntentHandler`/`TradeOfferScreenBootstrap` 改为显式 picker。
 - ⬜ **P3 InspectScreen tab-first 拆解**：shell + tab panel + oversized section leaf，行为不变。
-- ⬜ **P4 Screen 迁移批次 B + R7-owned UI thread/open-policy 强制 + 删旧**。
+- ⬜ **P4 Screen 迁移批次 B + R7-owned UI thread/open-policy 强制 + 删旧**：验真四个 `client.execute` consumer；Insight settlement 接 `ScreenTransitionController`；`BongHudOrchestrator` 恢复 qi radar main path。
 - ⬜ **P5 验收 + 被完整吸收 plan 批量归档**。
 
 ## P0 冻结契约
@@ -35,34 +35,34 @@
 ### 1. `BongScreenBase<R extends ParentComponent>`
 
 - 继承 `BaseOwoScreen<R>`，保留 abstract `createAdapter()` 与 `build(R)`；不能硬编码 `Containers::verticalFlow`，因为 `AgentUiScreen` / `DynamicXmlScreen` 使用 `UIModel.createAdapter(...)`。
-- 只拥有 **Screen-local listener/unsubscriber** `Runnable`：登记顺序确定、关闭时 LIFO、异常隔离、exactly once；绝不能把 R2 的 `SessionScopedStore.clearOnDisconnect()` 当 Screen teardown。
-- `removed()` 必须让业务 terminal hook、cleanup 与 `super.removed()` 在异常路径仍可达；`tick()` final 后只在 open 状态调用 protected hook；`runWhileOpen(Runnable)` 丢弃 removal 后到达的 late refresh。
+- 只拥有 **Screen-local listener/unsubscriber** `Runnable`：登记顺序确定、关闭时 LIFO、exactly once；绝不能把 R2 的 `SessionScopedStore.clearOnDisconnect()` 当 Screen teardown。
+- `removed()` 先标 closed，再依序执行 business `onRemoved()`、LIFO cleanup、`super.removed()`；即使任何一步抛错，后续阶段仍执行一次。首个异常为 primary，后续异常按执行顺序 `addSuppressed`，最终抛 primary；重复 `removed()` 为 no-op，不吞异常。
 - P1 行为 pin：正常 removed、重复 removed、cleanup 抛异常、business hook 抛异常、LIFO、late refresh、XML adapter preservation。
 
 ### 2. `DiffListWidget<T, K, C extends Component>`
 
 - `keyOf` 以 constructor-injected `Function<? super T, ? extends K>` 提供，组件保持 `final`；同时注入 row factory 与 idempotent patcher。相同 key + 相同顺序只 patch 已 mounted rows，结构变更才 rebuild。
 - equal-key patch 必须保留 component identity、selection/callback 和 scroll（通过“不 clear children”实现，不虚构 owo 0.11.2 没公开的 scroll-offset getter/setter）。
-- null list/item/key 和 duplicate key 在 mutation 前 fail-fast；P1 pin empty→items、equal keys、reorder/add/remove、duplicate/null 和 patch failure。
+- null list/item/key 和 duplicate key 在 mutation 前 fail-fast。equal-key patch 的 generic `BiConsumer` 不可事务回滚：patch 异常原样抛出，已经执行的 component 外部 mutation 可以保留；但 widget 内部 committed ordered keys/items 只在全部 patch 成功后提交，`renderedKeys()` 失败后仍返回上一 committed sequence，下一次 `update()` 从第一行重试整列，因此 patcher 必须 idempotent。P1 pin empty→items、equal keys、reorder/add/remove、duplicate/null 和 patch failure/partial-mutation/full-retry。
 
 ### 3. `BongKeybindRegistry`
 
-- 显式注册、可 grep，无 annotation/reflection discovery；translation key 永不重复，物理默认冲突 identity 为 `(InputUtil.Type, defaultCode)`；UNKNOWN/unbound 不参与物理唯一性。
-- vanilla reserved defaults 和 deliberate exemptions 必须进入显式 manifest，不靠注释豁免。
-- P0 只冻结 `r7-keybind-migration.tsv`，不改生产键位。P1 目标：保留 identity=O、forge=U、spell-volume=R；将 spirit-treasure T、lingtian L、void-action O、extract-cancel U、botany-auto R 改 UNKNOWN。垂死大能 G/H/J 继续 UNKNOWN，HUD 改为读取 effective binding，未绑定时明确显示“未绑定”；统一 G router 仍是唯一默认 G owner。
+- 显式注册、可 grep，无 annotation/reflection discovery；translation key 永不重复，物理默认冲突 identity 为 `(InputUtil.Type, defaultCode)`；UNKNOWN/unbound 不参与物理唯一性。`r7-keybind-production-sites.tsv` 冻结当前 26 个 production constructor sites（含 Combat quick-slot loop 的一个 source site），P1 必须全部改经 `BongKeybindRegistry.global().register(...)`，不能只迁 11 个冲突项。
+- vanilla reserved defaults 与 deliberate exemptions 必须进入显式 manifest：P0 冻结 `vanilla.chat = KEYSYM+T`、`vanilla.advancements = KEYSYM+L`，且授权 exemption 集为空；未来每条 exemption 都必须是 exact owner pair + exact type/code + non-empty reason。
+- P0 的 `r7-keybind-migration.tsv` 同时冻结 current/target `InputUtil.Type`、code、production owner 和 behavior resolution，不改生产键位。P1 目标：保留 identity=KEYSYM+O、forge=KEYSYM+U、spell-volume=KEYSYM+R；将 spirit-treasure T、lingtian L、void-action O、extract-cancel U、botany-auto R 改 UNKNOWN。botany blocked/inactive 路径必须 drain queued presses 并证明稍后不 replay；垂死大能 G/H/J 继续 UNKNOWN，HUD 从 effective binding 生成标签，未绑定明确显示“未绑定”；统一 G router 仍是唯一默认 G owner。
 
 ### 4. `ClientThreadMarshal`
 
 - 纯 helper：already client thread 时同步执行一次；off-thread 时 enqueue 一次；注入 predicate/executor 供测试；null/unknown client state fail closed，不得在未知线程 inline。
-- **R6 接缝边界**：网络 bridge/router/handler 的公共 receive-boundary 已在 client executor 内，R7 不增加第二层 marshal，不修改 `BongNetworkHandler`、`ServerDataRouter`、`ProtoServerDataBridge` 或 channel 注册。P4 的“强制”只扫描 R7-owned Screen/HUD 异步来源；若必须改 R6 owner，先停并协调。
+- **R6 接缝边界**：网络 bridge/router/handler 的公共 receive-boundary 已在 client executor 内，R7 不增加第二层 marshal，不修改 `BongNetworkHandler`、`ServerDataRouter`、`ProtoServerDataBridge` 或 channel 注册。P4 只在 R7-owned `ui/CultivationScreenBootstrap`、`inventory/InspectScreenBootstrap`、`inventory/LootContainerScreenBootstrap`、`insight/InsightOfferScreenBootstrap` 四个现有 `client.execute(...)` 来源中验真并迁移真实 consumer；没有真实 consumer 的 helper 不得以 dead production class 落地。若必须改 R6 owner，先停并协调。
 
 ### 5. `ScreenOpenPolicy`
 
-- pure decision layer：输入 request/current/combat/time，输出 `OPEN | PREEMPT | NOOP_MATCHING | DEFER_NOTIFY | BLOCK_DROP | EXPIRE`；policy 不直接 `setScreen()`，不新建第二份 pending offer store，并与 `ScreenTransitionController` 的 pending/current cancellation protocol 组合而非绕过。
-- passive social invite：domain Store 保持权威；战斗中或已有屏时 `DEFER_NOTIFY`，同 identity 最多提示一次；战斗结束且 `currentScreen == null`、TTL 仍有效才 `OPEN`；先到 TTL 则 `EXPIRE`。
-- ordinary hotkey：无屏 `OPEN`、同屏 `NOOP_MATCHING`、modal block 时 `BLOCK_DROP`；**物理按键永不排队重放**。
-- insight：可 `PREEMPT` 普通 non-modal UI；同 offer no-op；在 equal/higher modal 或 death/terminate system terminal 后 `DEFER_NOTIFY`。close/timeout/replacement/exceptional removal 必须收敛到同一 exactly-once settlement。
-- system terminal：`TerminateScreen > DeathScreen > lower-priority UI`；可抢占普通 UI。P0 decision vectors 在 `r7-screen-open-policy.tsv`。
+- pure decision layer：输入 raw `Request(kind, identity, expiresAtMs, terminalPriority, alreadyNotified)`、raw `Current(kind, identity, terminalPriority, combatActive)` 与 `nowMs`，policy 自行按非空 identity 相等推导 matching、按 `nowMs >= expiresAtMs` 推导 finite expiry；输出 `OPEN | PREEMPT | NOOP_MATCHING | DEFER_NOTIFY | DEFER_SILENT | BLOCK_DROP | EXPIRE`。policy 不直接 `setScreen()`，不新建第二份 pending offer store；`alreadyNotified` 由现有 domain/bootstrap owner 按 identity 持有，并与 `ScreenTransitionController` 的 pending/current cancellation protocol 组合而非绕过。
+- passive social invite：domain Store 保持权威；战斗中或已有屏时，首次同 identity 阻塞 `DEFER_NOTIFY`，已经通知过则 `DEFER_SILENT`；新 identity 重新取得通知资格。战斗结束且 `currentScreen == null`、TTL 仍有效才 `OPEN`；先到 TTL 则 `EXPIRE`。
+- ordinary hotkey：无屏 `OPEN`、同屏 `NOOP_MATCHING`、任何 nonmatching ordinary/modal/system-terminal block 都 `BLOCK_DROP`；**物理按键永不排队重放**。
+- insight：可 `PREEMPT` 普通 non-modal UI；同 trigger id no-op；在 equal/higher modal 或 death/terminate system terminal 后按 caller-owned 状态 `DEFER_NOTIFY/DEFER_SILENT`；过期 `EXPIRE`。`InsightOfferScreen` 是 settlement owner，以 trigger id identity guard 收敛 ACCEPT/DECLINE/TIMEOUT/ESC/replacement/exceptional removal，replacement 组合 `ScreenTransitionController.CurrentScreenCancellationHandler`，首个 terminal cause 赢、后续 terminal path NOOP；完整冻结于 `r7-insight-settlement.tsv`。
+- system terminal：同 identity `NOOP_MATCHING`；`TerminateScreen > DeathScreen > ordinary/modal`，可抢占低优先 UI；非 matching equal-priority peer 与更高优先 terminal 都 `BLOCK_DROP`。P0 raw decision vectors 在 `r7-screen-open-policy.tsv`。
 
 ## InspectScreen P3 决议
 
@@ -107,7 +107,10 @@
 ## 验收
 
 - P0 pin：`R7InventoryContractTest` 对拍 29 Screen、92 fill lexical inventory、owo inflate 语义和 production-zero-change；`R7FoundationContractTest` 对拍五类型签名、keybind target、ScreenOpenPolicy vectors、plan anchors、R2/R6 ownership。
-- P1-P4 单测只 pin 契约：base lifecycle、ordered-key list identity、registry uniqueness、marshal exactly-once、open-policy state table、Inspect shell one-intake。
+- P1 behavior gate：`BongKeybindRegistryTest` 覆盖 translation/physical duplicate、vanilla reservation、空/精确 exemption、UNKNOWN 非冲突与 registrations immutable/order；production-site source gate 确认 26 个 constructor sites 全部迁 global registry；`BotanyHudBootstrapTest` 覆盖 blocked/inactive drain 后不 replay；dying-elder HUD 测试覆盖 rebound key 与“未绑定”。
+- P2 trade gate：`TradeOfferIntentHandlerTest` + picker test 必须证明多 item 时只有 explicit selection 的 exact `instance_id` 被 dispatch；grid/hotbar/sort 不得替用户决定；无 selection 拒绝 dispatch 或打开 picker；P5 e2e 对拍 target 收到相同 instance/displayName。
+- P4 thread/open/HUD gate：四个命名 `client.execute` 来源逐个给出迁移或“不需要 helper”的证据；`InsightOfferScreenTest` 覆盖所有 `r7-insight-settlement.tsv` terminal causes；`BongHudOrchestratorTest` 必须证明凝脉及以上 main path 产出 `HudRenderLayer.QI_RADAR`、低境界隐藏，并经 main path 命中 negative-qi、TSY false-signal、nearby-cultivator markers。
+- P5 汇总 gate：上述 keybind/trade/insight/radar acceptance 全部在 Java 17 `test build` 与 UI C2S/e2e 可达证据中闭环后，才可归档对应 absorbed findings。
 - 完整 client gate：Java 17 下 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；人工 `./gradlew runClient` 验五大屏留到实际生产迁移 PR。
 - bot 配合：`ui_c2s_smoke` 只证明各屏原 C2S 动作链路仍可达；bot 无法替代 client UI contract tests。
 
@@ -128,7 +131,7 @@
 
 ### #2 只 deferred passive offer，不 replay physical hotkey
 
-**决议**：被 combat/屏幕挡住的 passive social offer 保留在既有 domain Store，按 identity 一次通知，空屏且未过 TTL 时打开；普通 hotkey 被 modal 挡住即 drop。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；所有 modal terminal path exactly-once settlement。
+**决议**：被 combat/屏幕挡住的 passive social offer 保留在既有 domain Store；bootstrap 按 identity 持有 `alreadyNotified`，首次阻塞 `DEFER_NOTIFY`，重复同 identity `DEFER_SILENT`，新 identity 恢复通知资格；空屏且未过 TTL 时打开。普通 hotkey 被任意 nonmatching screen 挡住即 drop。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；`InsightOfferScreen` + `CurrentScreenCancellationHandler` 以 trigger id 将所有 terminal path 收敛为 exactly-once settlement。
 
 **落点**：`client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java:42-57`；`client/src/main/java/com/bong/client/insight/InsightOfferScreenBootstrap.java:35-53`；本 plan §ScreenOpenPolicy；`client/src/test/resources/bong/ui/r7-screen-open-policy.tsv`。
 
@@ -141,11 +144,11 @@
 ### §10.2 多 PR 依赖顺序
 
 1. **PR-1 / P0 contract freeze**：docs + R7 tests/resources only，ZERO production behavior change。
-2. **PR-2 / P1 foundations + keybind**：五类型与 conflict migration；不接 R6 network files。
-3. **PR-3 / P2 migration A**：alchemy/craft/trade 等，随迁 fill/list defects。
+2. **PR-2 / P1 foundations + keybind**：五类型；所有 production KeyBinding sites 迁 global registry；vanilla reserved/空 exemption、botany backlog、dying-elder effective binding 全部按 P1 gate 收口；不接 R6 network files。
+3. **PR-3 / P2 migration A**：alchemy/craft/trade 等，随迁 fill/list defects；outgoing trade 显式 picker 必须通过 exact instance-id gate。
 4. **PR-4 / P3 Inspect split**：tab-first shell/panels，行为不变。
-5. **PR-5 / P4 migration B + R7-owned enforcement**。
-6. **PR-6 / P5 acceptance + absorbed-plan archive**。
+5. **PR-5 / P4 migration B + R7-owned enforcement**：只验真四个命名 UI `client.execute` 来源；Insight settlement 接 transition cancellation；qi radar 恢复 `BongHudOrchestrator` main path。
+6. **PR-6 / P5 acceptance + absorbed-plan archive**：keybind/trade/insight/radar 四组 acceptance 绿后才归档。
 
 前一 PR 的最终 HEAD 未通过 Java 17 gate、fresh-context SHA validator、`/review`、e2e 与 CodeRabbit 并 merge 前，不提前实施下一阶段。
 

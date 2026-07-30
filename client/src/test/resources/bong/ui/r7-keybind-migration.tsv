@@ -1,12 +1,12 @@
-# action	translation_key	current_default	target_default	conflict	p1_resolution
-spirit_treasure_open	key.bong-client.open_spirit_treasure_screen	T	UNKNOWN	VANILLA_CHAT	Leave passive/open action unbound by default; player may bind explicitly.
-lingtian_open	key.bong-client.open_lingtian_action_screen	L	UNKNOWN	VANILLA_ADVANCEMENTS	Leave screen hotkey unbound by default; interaction entry remains available.
-identity_open	key.bong-client.open_identity_panel	O	O	BONG_O_DUPLICATE	Keep the established identity entry point.
-void_action_open	key.bong-client.open_void_action_screen	O	UNKNOWN	BONG_O_DUPLICATE	Leave the secondary O action unbound by default.
-forge_open	key.bong-client.open_forge_screen	U	U	BONG_U_DUPLICATE	Keep the established forge entry point.
-extract_cancel	key.bong-client.tsy_extract_cancel	U	UNKNOWN	BONG_U_DUPLICATE	Leave cancellation unbound; active interaction UI remains authoritative.
-botany_auto	key.bong-client.botany_auto_harvest	R	UNKNOWN	BONG_R_DUPLICATE	Remove the passive automation default and drain stale press backlog.
-spell_volume_hold	key.bong-client.spell_volume_hold	R	R	BONG_R_DUPLICATE	Keep the combat hold action on R.
-dying_elder_give	key.bong-client.dying_elder_give_dan	UNKNOWN	UNKNOWN	HUD_LABEL_MISMATCH	HUD must resolve the effective binding instead of promising G; the unified G router remains unique.
-dying_elder_refuse	key.bong-client.dying_elder_refuse	UNKNOWN	UNKNOWN	HUD_LABEL_MISMATCH	HUD must resolve the effective binding and show unbound when absent.
-dying_elder_delay	key.bong-client.dying_elder_delay	UNKNOWN	UNKNOWN	HUD_LABEL_MISMATCH	HUD must resolve the effective binding and show unbound when absent.
+# action	translation_key	current_type	current_default	target_type	target_default	conflict	production_owner	p1_resolution
+spirit_treasure_open	key.bong-client.open_spirit_treasure_screen	KEYSYM	T	KEYSYM	UNKNOWN	VANILLA_CHAT	spirittreasure/SpiritTreasureScreenBootstrap.java	Leave passive/open action unbound by default; player may bind explicitly.
+lingtian_open	key.bong-client.open_lingtian_action_screen	KEYSYM	L	KEYSYM	UNKNOWN	VANILLA_ADVANCEMENTS	lingtian/LingtianActionScreenBootstrap.java	Leave screen hotkey unbound by default; interaction entry remains available.
+identity_open	key.bong-client.open_identity_panel	KEYSYM	O	KEYSYM	O	BONG_O_DUPLICATE	identity/IdentityPanelScreenBootstrap.java	Keep the established identity entry point.
+void_action_open	key.bong-client.open_void_action_screen	KEYSYM	O	KEYSYM	UNKNOWN	BONG_O_DUPLICATE	cultivation/voidaction/VoidActionScreenBootstrap.java	Leave the secondary O action unbound by default.
+forge_open	key.bong-client.open_forge_screen	KEYSYM	U	KEYSYM	U	BONG_U_DUPLICATE	forge/ForgeScreenBootstrap.java	Keep the established forge entry point.
+extract_cancel	key.bong-client.tsy_extract_cancel	KEYSYM	U	KEYSYM	UNKNOWN	BONG_U_DUPLICATE	tsy/ExtractInteractionBootstrap.java	Leave cancellation unbound; active interaction UI remains authoritative.
+botany_auto	key.bong-client.botany_auto_harvest	KEYSYM	R	KEYSYM	UNKNOWN	BONG_R_DUPLICATE	botany/BotanyHudBootstrap.java	Remove the passive automation default; drain queued presses while session/screen preconditions reject dispatch; prove no later replay.
+spell_volume_hold	key.bong-client.spell_volume_hold	KEYSYM	R	KEYSYM	R	BONG_R_DUPLICATE	combat/CombatKeybindings.java	Keep the combat hold action on R.
+dying_elder_give	key.bong-client.dying_elder_give_dan	KEYSYM	UNKNOWN	KEYSYM	UNKNOWN	HUD_LABEL_MISMATCH	dying_elder/DyingElderInteractionKeybindings.java	HUD must resolve the effective binding instead of promising G; show unbound explicitly; the unified G router remains unique.
+dying_elder_refuse	key.bong-client.dying_elder_refuse	KEYSYM	UNKNOWN	KEYSYM	UNKNOWN	HUD_LABEL_MISMATCH	dying_elder/DyingElderInteractionKeybindings.java	HUD must resolve the effective binding and show unbound when absent.
+dying_elder_delay	key.bong-client.dying_elder_delay	KEYSYM	UNKNOWN	KEYSYM	UNKNOWN	HUD_LABEL_MISMATCH	dying_elder/DyingElderInteractionKeybindings.java	HUD must resolve the effective binding and show unbound when absent.

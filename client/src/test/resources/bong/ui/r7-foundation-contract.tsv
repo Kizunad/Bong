@@ -4,15 +4,15 @@ BongScreenBase	constructor-empty	protected BongScreenBase()	R7	Supports existing
 BongScreenBase	constructor-title	protected BongScreenBase(Text title)	R7	Rejects a null title and delegates the title to BaseOwoScreen.
 BongScreenBase	adapter	protected abstract @NotNull OwoUIAdapter<R> createAdapter()	R7	The base never hard-codes OwoUIAdapter.create or a vertical-flow root factory.
 BongScreenBase	build	protected abstract void build(R rootComponent)	R7	The base delegates layout construction to the concrete screen.
-BongScreenBase	cleanup	protected final void registerCleanup(Runnable cleanup)	R7	Screen-local cleanup runs exactly once in LIFO order and is not Store lifecycle clearing.
+BongScreenBase	cleanup	protected final void registerCleanup(Runnable cleanup)	R7	Screen-local cleanup runs exactly once in LIFO order; removal still reaches every lifecycle stage; first failure is primary and later failures are suppressed in execution order; repeated removal is a no-op and this is not Store lifecycle clearing.
 BongScreenBase	refresh	protected final void runWhileOpen(Runnable task)	R7	A queued refresh is discarded after removal and cannot touch a detached screen.
 BongScreenBase	tick	public final void tick()	R7	Tick dispatch reaches the protected hook only while the screen is open.
 BongScreenBase	tick-hook	protected void onScreenTick()	R7	Subclasses extend tick behavior without bypassing the open-state guard.
-BongScreenBase	removed	public final void removed()	R7	Removal marks closed first; business hook, LIFO cleanup, and super.removed remain reachable after failures.
+BongScreenBase	removed	public final void removed()	R7	Removal marks closed first; business hook, LIFO cleanup, and super.removed remain reachable after failures; the first failure is thrown with later failures suppressed; repeated removal is a no-op.
 BongScreenBase	removed-hook	protected void onRemoved()	R7	Business terminal effects run once without allowing cleanup bypass.
 DiffListWidget	type	public final class DiffListWidget<T, K, C extends Component>	R7	The generic list owns ordered-key diffing without imposing an owo scroll-offset API.
 DiffListWidget	constructor	public DiffListWidget(FlowLayout rows, Function<? super T, ? extends K> keyOf, Function<? super T, ? extends C> createRow, BiConsumer<? super C, ? super T> patchRow)	R7	A final widget receives key extraction and row lifecycle functions by constructor injection.
-DiffListWidget	update	public UpdateResult update(List<? extends T> items)	R7	Equal ordered keys patch mounted rows; structural key changes rebuild rows.
+DiffListWidget	update	public UpdateResult update(List<? extends T> items)	R7	Null list/item/key and duplicate keys fail before mutation; equal ordered keys patch mounted rows; patch failure propagates unchanged, preserves the previous committed key sequence, and the next update retries the full list; structural key changes rebuild rows.
 DiffListWidget	rendered-keys	public List<K> renderedKeys()	R7	Inspection returns the immutable current ordered key sequence.
 DiffListWidget	row-lookup	public Optional<C> rowForKey(K key)	R7	Inspection exposes mounted identity without leaking mutable ownership.
 DiffListWidget	result	public enum UpdateResult { REBUILT, PATCHED }	R7	The caller can distinguish structural rebuild from identity-preserving patch.
@@ -26,12 +26,12 @@ BongKeybindRegistry	registration	public record Registration(BindingSpec spec, Ke
 BongKeybindRegistry	physical-default	public record PhysicalDefault(InputUtil.Type type, int code)	R7	Physical collision identity does not collapse different InputUtil types sharing one numeric code.
 BongKeybindRegistry	reserved-default	public record ReservedDefault(String owner, PhysicalDefault key)	R7	Vanilla-reserved defaults are an explicit manifest.
 BongKeybindRegistry	conflict-exemption	public record ConflictExemption(String firstOwner, String secondOwner, PhysicalDefault key, String reason)	R7	An exemption applies only to an exact owner pair and non-empty reason.
-ClientThreadMarshal	run-production	public static boolean run(Runnable task)	R7	Null MinecraftClient fails closed; accepted inline or queued work returns true.
-ClientThreadMarshal	run-seam	static boolean run(Supplier<Boolean> onClientThread, Runnable task, Consumer<Runnable> clientExecutor)	R7	True runs once inline; false enqueues once; null predicate result performs neither and returns false.
-ScreenOpenPolicy	decide	public static Decision decide(Request request, Current current, long nowMs)	R7	The policy is pure; it never calls MinecraftClient.setScreen or owns a second pending-offer store.
+ClientThreadMarshal	run-production	public static boolean run(Runnable task)	R7	Null MinecraftClient fails closed; accepted inline or queued work returns true and runs the task once.
+ClientThreadMarshal	run-seam	static boolean run(Supplier<Boolean> onClientThread, Runnable task, Consumer<Runnable> clientExecutor)	R7	True runs once inline; false enqueues once; null predicate result performs neither and returns false; task failures propagate unchanged.
+ScreenOpenPolicy	decide	public static Decision decide(Request request, Current current, long nowMs)	R7	The policy is pure; matching derives from request/current identity, expiry is nowMs greater than or equal to expiresAtMs, notification state selects notify versus silent defer, and it never calls MinecraftClient.setScreen or owns a second pending-offer store.
 ScreenOpenPolicy	request-kind	public enum RequestKind { SOCIAL_INVITE, HOTKEY, INSIGHT, SYSTEM_TERMINAL }	R7	Request kinds have distinct defer, drop, and preemption semantics.
 ScreenOpenPolicy	current-kind	public enum CurrentKind { NONE, ORDINARY, MODAL, SYSTEM_TERMINAL }	R7	Current UI priority is explicit and independent of concrete Screen classes.
 ScreenOpenPolicy	terminal-priority	public enum TerminalPriority { NONE, DEATH, TERMINATE }	R7	TERMINATE outranks DEATH by explicit comparison rather than enum ordinal.
-ScreenOpenPolicy	decision	public enum Decision { OPEN, PREEMPT, NOOP_MATCHING, DEFER_NOTIFY, BLOCK_DROP, EXPIRE }	R7	System-terminal and higher-priority modal screens preempt lower UI; passive social offers defer until safe or expiry.
-ScreenOpenPolicy	request	public record Request(RequestKind kind, String identity, long expiresAtMs, TerminalPriority terminalPriority)	R7	Matching derives from identity and finite TTL expires at nowMs greater than or equal to expiresAtMs.
+ScreenOpenPolicy	decision	public enum Decision { OPEN, PREEMPT, NOOP_MATCHING, DEFER_NOTIFY, DEFER_SILENT, BLOCK_DROP, EXPIRE }	R7	System-terminal and higher-priority modal screens preempt lower UI; passive social offers defer until safe or expiry; repeated blocked identities defer silently; physical hotkeys drop.
+ScreenOpenPolicy	request	public record Request(RequestKind kind, String identity, long expiresAtMs, TerminalPriority terminalPriority, boolean alreadyNotified)	R7	Matching derives from identity and finite TTL expires at nowMs greater than or equal to expiresAtMs; notification state belongs to the caller/domain owner.
 ScreenOpenPolicy	current	public record Current(CurrentKind kind, String identity, TerminalPriority terminalPriority, boolean combatActive)	R7	NONE has empty identity; only system terminal state may carry DEATH or TERMINATE priority.

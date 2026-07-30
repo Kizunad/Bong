@@ -1,8 +1,17 @@
 package com.bong.client.ui;
 
+import com.sun.source.tree.ClassTree;
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.util.JavacTask;
+import com.sun.source.util.TreePathScanner;
 import io.wispforest.owo.ui.core.Sizing;
 import org.junit.jupiter.api.Test;
 
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
@@ -13,8 +22,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,10 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7InventoryContractTest {
-    private static final Pattern SCREEN_DECLARATION = Pattern.compile(
-        "\\b(?:public\\s+)?(?:final\\s+)?class\\s+(\\w+)\\s+extends\\s+"
-            + "(BaseOwoScreen\\s*<\\s*FlowLayout\\s*>|Screen)"
-    );
     private static final Path PRODUCTION_ROOT = R7SourceScan.productionRoot();
 
     @Test
@@ -133,36 +136,37 @@ class R7InventoryContractTest {
 
     private static List<ScreenInventoryRow> discoverDirectScreensAndSuffixHelpers() throws IOException {
         List<ScreenInventoryRow> result = new ArrayList<>();
-        try (var files = Files.walk(PRODUCTION_ROOT)) {
-            for (Path path : files.filter(Files::isRegularFile)
-                .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
-                .sorted()
-                .toList()) {
-                String relative = relative(path);
-                String source = R7SourceScan.read(path);
-                Matcher matcher = SCREEN_DECLARATION.matcher(R7SourceScan.codeOnly(source));
-                if (matcher.find()) {
-                    String parent = matcher.group(2).replaceAll("\\s+", "");
-                    boolean owo = parent.equals("BaseOwoScreen<FlowLayout>");
+        for (Path path : productionJavaFiles()) {
+            String relative = relative(path);
+            String source = R7SourceScan.read(path);
+            List<DirectScreenDeclaration> declarations = directScreenDeclarations(path);
+            if (!declarations.isEmpty()) {
+                for (DirectScreenDeclaration declaration : declarations) {
+                    boolean owo = declaration.parent().startsWith("BaseOwoScreen<");
+                    if (owo) {
+                        assertEquals("BaseOwoScreen<FlowLayout>", declaration.parent(),
+                            "a new direct BaseOwoScreen root must be classified explicitly before migration: "
+                                + relative + "#" + declaration.className());
+                    }
                     result.add(new ScreenInventoryRow(
                         relative,
-                        matcher.group(1),
+                        declaration.className(),
                         owo ? "BASE_OWO" : "VANILLA_SCREEN",
                         owo ? adapterStyle(source) : "VANILLA",
                         owo,
                         noteFor(relative)
                     ));
-                } else if (path.getFileName().toString().endsWith("Screen.java")) {
-                    String simpleName = path.getFileName().toString().replaceFirst("\\.java$", "");
-                    result.add(new ScreenInventoryRow(
-                        relative,
-                        simpleName,
-                        "NON_SCREEN_HELPER",
-                        "NONE",
-                        false,
-                        noteFor(relative)
-                    ));
                 }
+            } else if (path.getFileName().toString().endsWith("Screen.java")) {
+                String simpleName = path.getFileName().toString().replaceFirst("\\.java$", "");
+                result.add(new ScreenInventoryRow(
+                    relative,
+                    simpleName,
+                    "NON_SCREEN_HELPER",
+                    "NONE",
+                    false,
+                    noteFor(relative)
+                ));
             }
         }
         result.sort((left, right) -> {
@@ -174,6 +178,57 @@ class R7InventoryContractTest {
             return left.path().compareTo(right.path());
         });
         return result;
+    }
+
+    private static List<Path> productionJavaFiles() throws IOException {
+        try (var files = Files.walk(PRODUCTION_ROOT)) {
+            return files.filter(Files::isRegularFile)
+                .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
+                .sorted()
+                .toList();
+        }
+    }
+
+    private static List<DirectScreenDeclaration> directScreenDeclarations(Path path) throws IOException {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 Screen inventory requires a full Java 17 JDK, not a JRE");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
+            JavacTask task = (JavacTask) compiler.getTask(
+                null,
+                fileManager,
+                diagnostics,
+                List.of("-proc:none"),
+                null,
+                sources
+            );
+            List<DirectScreenDeclaration> declarations = new ArrayList<>();
+            for (CompilationUnitTree unit : task.parse()) {
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitClass(ClassTree classTree, Void unused) {
+                        if (classTree.getExtendsClause() != null) {
+                            String parent = classTree.getExtendsClause().toString().replaceAll("\\s+", "");
+                            if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")) {
+                                declarations.add(new DirectScreenDeclaration(
+                                    classTree.getSimpleName().toString(),
+                                    parent
+                                ));
+                            }
+                        }
+                        return super.visitClass(classTree, unused);
+                    }
+                }.scan(unit, null);
+            }
+            assertTrue(diagnostics.getDiagnostics().stream()
+                    .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
+                "unable to parse production Screen source " + path + ": " + diagnostics.getDiagnostics());
+            return declarations;
+        }
+    }
+
+    private record DirectScreenDeclaration(String className, String parent) {
     }
 
     private static String adapterStyle(String source) {

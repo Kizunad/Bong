@@ -1,21 +1,31 @@
-# scenario	request_kind	request_priority	current_kind	current_priority	combat_active	matching	unexpired	decision	rationale
-social-clear	SOCIAL_INVITE	NONE	NONE	NONE	false	false	false	EXPIRE	Missing or expired passive offer is terminal and never opens.
-social-open	SOCIAL_INVITE	NONE	NONE	NONE	false	false	true	OPEN	A live passive offer opens only when gameplay is not in combat and no screen is active.
-social-matching	SOCIAL_INVITE	NONE	MODAL	NONE	false	true	true	NOOP_MATCHING	The already-open matching modal keeps component and protocol identity.
-social-combat	SOCIAL_INVITE	NONE	NONE	NONE	true	false	true	DEFER_NOTIFY	Combat defers the authoritative domain-store offer and emits at most one notification per identity.
-social-screen	SOCIAL_INVITE	NONE	ORDINARY	NONE	false	false	true	DEFER_NOTIFY	Another screen defers the authoritative domain-store offer until currentScreen becomes null.
-social-expired-boundary	SOCIAL_INVITE	NONE	ORDINARY	NONE	false	false	false	EXPIRE	A finite TTL expires when nowMs equals expiresAtMs and is never replayed later.
-hotkey-open	HOTKEY	NONE	NONE	NONE	false	false	true	OPEN	An immediate user keypress may open when no screen blocks it.
-hotkey-matching	HOTKEY	NONE	ORDINARY	NONE	false	true	true	NOOP_MATCHING	A matching screen is not recreated.
-hotkey-blocked	HOTKEY	NONE	MODAL	NONE	false	false	true	BLOCK_DROP	Physical keypresses are never queued for future replay.
-hotkey-terminal	HOTKEY	NONE	SYSTEM_TERMINAL	DEATH	false	false	true	BLOCK_DROP	A hotkey never displaces or waits behind a system terminal.
-insight-preempt	INSIGHT	NONE	ORDINARY	NONE	false	false	true	PREEMPT	Insight may replace ordinary non-modal UI through transition arbitration.
-insight-matching	INSIGHT	NONE	MODAL	NONE	false	true	true	NOOP_MATCHING	The same insight offer is not reopened.
-insight-modal	INSIGHT	NONE	MODAL	NONE	false	false	true	DEFER_NOTIFY	Insight waits behind equal or higher modal UI.
-insight-terminal	INSIGHT	NONE	SYSTEM_TERMINAL	DEATH	false	false	true	DEFER_NOTIFY	Insight never displaces death or termination UI.
-death-open	SYSTEM_TERMINAL	DEATH	NONE	NONE	false	false	true	OPEN	A death terminal opens when no screen is active.
-death-preempt-ordinary	SYSTEM_TERMINAL	DEATH	ORDINARY	NONE	false	false	true	PREEMPT	Death may displace lower-priority ordinary UI.
-terminate-preempt-death	SYSTEM_TERMINAL	TERMINATE	SYSTEM_TERMINAL	DEATH	false	false	true	PREEMPT	Terminate explicitly outranks Death.
-death-blocked-terminate	SYSTEM_TERMINAL	DEATH	SYSTEM_TERMINAL	TERMINATE	false	false	true	BLOCK_DROP	Death cannot preempt a visible Terminate terminal.
-death-blocked-peer	SYSTEM_TERMINAL	DEATH	SYSTEM_TERMINAL	DEATH	false	false	true	BLOCK_DROP	A non-matching equal-priority terminal is not replaced.
-terminate-blocked-peer	SYSTEM_TERMINAL	TERMINATE	SYSTEM_TERMINAL	TERMINATE	false	false	true	BLOCK_DROP	A non-matching Terminate terminal cannot replace an equal-priority peer.
+# scenario	request_kind	request_identity	expires_at_ms	request_priority	already_notified	current_kind	current_identity	current_priority	combat_active	now_ms	decision	rationale
+social-expired-past	SOCIAL_INVITE	invite-old	999	NONE	false	NONE		NONE	false	1000	EXPIRE	A finite passive offer whose expiry is before now never opens.
+social-expired-boundary	SOCIAL_INVITE	invite-boundary	1000	NONE	false	ORDINARY	inventory	NONE	false	1000	EXPIRE	A finite TTL expires when nowMs equals expiresAtMs and is never replayed later.
+social-open	SOCIAL_INVITE	invite-live	1001	NONE	false	NONE		NONE	false	1000	OPEN	A live passive offer opens only when gameplay is not in combat and no screen is active.
+social-matching	SOCIAL_INVITE	invite-live	1001	NONE	false	MODAL	invite-live	NONE	false	1000	NOOP_MATCHING	Matching derives from equal non-empty request/current identities.
+social-combat-first	SOCIAL_INVITE	invite-live	1001	NONE	false	NONE		NONE	true	1000	DEFER_NOTIFY	First blocked observation defers the authoritative offer and requests one caller-owned notification.
+social-combat-repeat	SOCIAL_INVITE	invite-live	1001	NONE	true	NONE		NONE	true	1000	DEFER_SILENT	The same already-notified identity remains deferred without another notification.
+social-screen-first	SOCIAL_INVITE	invite-live	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	DEFER_NOTIFY	Another screen defers the offer until currentScreen becomes null and notifies once.
+social-screen-repeat	SOCIAL_INVITE	invite-live	1001	NONE	true	ORDINARY	inventory	NONE	false	1000	DEFER_SILENT	Repeated observation of the same blocked identity is silent.
+social-new-identity	SOCIAL_INVITE	invite-new	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	DEFER_NOTIFY	A new caller-owned identity resets notification eligibility.
+social-terminal	SOCIAL_INVITE	invite-live	1001	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	DEFER_NOTIFY	A passive social offer never displaces a system terminal.
+hotkey-open	HOTKEY	identity-screen	9223372036854775807	NONE	false	NONE		NONE	false	1000	OPEN	An immediate user keypress may open when no screen blocks it.
+hotkey-matching	HOTKEY	identity-screen	9223372036854775807	NONE	false	ORDINARY	identity-screen	NONE	false	1000	NOOP_MATCHING	A matching screen is not recreated.
+hotkey-ordinary	HOTKEY	identity-screen	9223372036854775807	NONE	false	ORDINARY	inventory	NONE	false	1000	BLOCK_DROP	An ordinary nonmatching screen consumes the physical moment; the keypress is not queued.
+hotkey-modal	HOTKEY	identity-screen	9223372036854775807	NONE	false	MODAL	trade-offer	NONE	false	1000	BLOCK_DROP	Physical keypresses are never queued for future replay behind a modal.
+hotkey-terminal	HOTKEY	identity-screen	9223372036854775807	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	BLOCK_DROP	A hotkey never displaces or waits behind a system terminal.
+insight-expired	INSIGHT	insight-old	999	NONE	false	NONE		NONE	false	1000	EXPIRE	An expired insight settles through its domain owner and never opens.
+insight-open	INSIGHT	insight-live	1001	NONE	false	NONE		NONE	false	1000	OPEN	A live insight opens when no UI is active.
+insight-preempt	INSIGHT	insight-live	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	PREEMPT	Insight may replace ordinary non-modal UI through transition arbitration.
+insight-matching	INSIGHT	insight-live	1001	NONE	false	MODAL	insight-live	NONE	false	1000	NOOP_MATCHING	The same insight identity is not reopened.
+insight-modal-first	INSIGHT	insight-live	1001	NONE	false	MODAL	trade-offer	NONE	false	1000	DEFER_NOTIFY	Insight waits behind an equal or higher modal and notifies once.
+insight-modal-repeat	INSIGHT	insight-live	1001	NONE	true	MODAL	trade-offer	NONE	false	1000	DEFER_SILENT	Repeated blocked insight observation is silent.
+insight-terminal	INSIGHT	insight-live	1001	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	DEFER_NOTIFY	Insight never displaces death or termination UI.
+death-open	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	NONE		NONE	false	1000	OPEN	A death terminal opens when no screen is active.
+death-matching	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	SYSTEM_TERMINAL	death-1	DEATH	false	1000	NOOP_MATCHING	The same terminal identity is not recreated.
+death-preempt-ordinary	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	ORDINARY	inventory	NONE	false	1000	PREEMPT	Death may displace lower-priority ordinary UI.
+death-preempt-modal	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	MODAL	trade-offer	NONE	false	1000	PREEMPT	Death may displace lower-priority modal UI.
+terminate-preempt-death	SYSTEM_TERMINAL	terminate-1	9223372036854775807	TERMINATE	false	SYSTEM_TERMINAL	death-1	DEATH	false	1000	PREEMPT	Terminate explicitly outranks Death.
+death-blocked-terminate	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	SYSTEM_TERMINAL	terminate-1	TERMINATE	false	1000	BLOCK_DROP	Death cannot preempt a visible Terminate terminal.
+death-blocked-peer	SYSTEM_TERMINAL	death-2	9223372036854775807	DEATH	false	SYSTEM_TERMINAL	death-1	DEATH	false	1000	BLOCK_DROP	A nonmatching equal-priority terminal is not replaced.
+terminate-blocked-peer	SYSTEM_TERMINAL	terminate-2	9223372036854775807	TERMINATE	false	SYSTEM_TERMINAL	terminate-1	TERMINATE	false	1000	BLOCK_DROP	A nonmatching Terminate terminal cannot replace an equal-priority peer.
