@@ -1271,44 +1271,46 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // 换种族事务里才 insert 本组件）时会读到组件缺失——这是本 PR 关闭的孤岛
         // （recon 标定的最大孤岛：`IntrinsicRace` 定义了零处 insert）。
         let intrinsic_race = crate::body_plan::IntrinsicRace(cultivation.race.clone());
-        let mut entity_commands = commands.entity(entity);
-        entity_commands.remove::<CultivationAttachRetry>();
-        entity_commands.insert((
-            cultivation,
-            meridians,
-            qi_color,
-            karma,
-            practice_log,
-            contamination,
-            life_record,
-            DeathRegistry::new(canonical_id.clone()),
-            LifespanExtensionLedger::default(),
-            insight_quota,
-            unlocked_perceptions,
-            insight_modifiers,
-            DuguPractice::default(),
-            severed_permanent,
-        ));
-        entity_commands.insert((
-            poison_toxicity,
-            digestion_load,
-            nourishment,
-            crate::nourishment::tick::NourishmentActivityWindow::default(),
-            intrinsic_race,
-        ));
-        // 普通登录仅在持久化寿元缺失时补默认值；转世的新寿元由下方 fresh runtime
-        // bundle 在事务成功后覆盖，避免同一 flush 内重复插入 LifespanComponent。
-        if restored_lifespan.is_none() && !is_reincarnating {
-            entity_commands.insert(default_lifespan.clone());
-        }
-        if let Some(restored_tribulation) = restored_tribulation {
-            entity_commands.insert(restored_tribulation);
-        }
-        if let Some(restored_origin_dimension) = restored_origin_dimension {
-            entity_commands.insert(TribulationOriginDimension(restored_origin_dimension));
-        }
-        if let Some(restored_juebi_runtime) = restored_juebi_runtime {
-            entity_commands.insert(restored_juebi_runtime);
+        {
+            let mut entity_commands = commands.entity(entity);
+            entity_commands.remove::<CultivationAttachRetry>();
+            entity_commands.insert((
+                cultivation,
+                meridians,
+                qi_color,
+                karma,
+                practice_log,
+                contamination,
+                life_record,
+                DeathRegistry::new(canonical_id.clone()),
+                LifespanExtensionLedger::default(),
+                insight_quota,
+                unlocked_perceptions,
+                insight_modifiers,
+                DuguPractice::default(),
+                severed_permanent,
+            ));
+            entity_commands.insert((
+                poison_toxicity,
+                digestion_load,
+                nourishment,
+                crate::nourishment::tick::NourishmentActivityWindow::default(),
+                intrinsic_race,
+            ));
+            // 普通登录仅在持久化寿元缺失时补默认值；转世的新寿元由下方 fresh runtime
+            // bundle 在事务成功后覆盖，避免同一 flush 内重复插入 LifespanComponent。
+            if restored_lifespan.is_none() && !is_reincarnating {
+                entity_commands.insert(default_lifespan.clone());
+            }
+            if let Some(restored_tribulation) = restored_tribulation {
+                entity_commands.insert(restored_tribulation);
+            }
+            if let Some(restored_origin_dimension) = restored_origin_dimension {
+                entity_commands.insert(TribulationOriginDimension(restored_origin_dimension));
+            }
+            if let Some(restored_juebi_runtime) = restored_juebi_runtime {
+                entity_commands.insert(restored_juebi_runtime);
+            }
         }
 
         if let (
@@ -1323,26 +1325,29 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             )),
         ) = (reincarnation, fresh_reincarnation_runtime)
         {
-            if let Some(player_state) = player_state.as_deref_mut() {
-                *player_state = fresh_player_state;
-            } else {
-                entity_commands.insert(fresh_player_state);
-            }
-            entity_commands.insert((
-                fresh_inventory,
-                fresh_skill_set,
-                fresh_lifespan,
-                fresh_tutorial_state,
-                fresh_lifecycle,
-                KnownTechniques::default(),
-            ));
-            entity_commands.remove::<KnownTechniquesLoadFailed>();
+            {
+                let mut entity_commands = commands.entity(entity);
+                if let Some(player_state) = player_state.as_deref_mut() {
+                    *player_state = fresh_player_state;
+                } else {
+                    entity_commands.insert(fresh_player_state);
+                }
+                entity_commands.insert((
+                    fresh_inventory,
+                    fresh_skill_set,
+                    fresh_lifespan,
+                    fresh_tutorial_state,
+                    fresh_lifecycle,
+                    KnownTechniques::default(),
+                ));
+                entity_commands.remove::<KnownTechniquesLoadFailed>();
 
-            let target_position = Position::new(bundle.spec.spawn_pos);
-            if let Some(position) = position.as_deref_mut() {
-                position.set(bundle.spec.spawn_pos);
-            } else {
-                entity_commands.insert(target_position);
+                let target_position = Position::new(bundle.spec.spawn_pos);
+                if let Some(position) = position.as_deref_mut() {
+                    position.set(bundle.spec.spawn_pos);
+                } else {
+                    entity_commands.insert(target_position);
+                }
             }
             if let Some(flags) = flags.as_deref_mut() {
                 flags.set_invisible(false);
@@ -1351,7 +1356,6 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             let layers = dimension_layers
                 .as_deref()
                 .expect("atomic reincarnation checked DimensionLayers before commit");
-            drop(entity_commands);
             publish_overworld_runtime(
                 entity,
                 &mut commands,
@@ -5063,6 +5067,11 @@ mod tests {
                     legacy_activity.clone(),
                 );
             }
+            bundle.insert(
+                "life_record".to_string(),
+                serde_json::to_value(LifeRecord::new(canonical_player_id(case.username)))
+                    .expect("current life record should serialize"),
+            );
             seed_raw_cultivation_bundle(
                 &settings,
                 case.username,

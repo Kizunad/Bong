@@ -1492,6 +1492,12 @@ mod tests {
             sqlite_persistence("nourishment-disconnect-round-trip");
         crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
             .expect("baseline player state should persist");
+        let current_char_id =
+            crate::player::state::load_current_character_id(&persistence, "Azure")
+                .expect("baseline current character id should load")
+                .expect("baseline player state should create a current character id");
+        let current_character_id =
+            crate::player::state::player_character_id("Azure", &current_char_id);
         let settings = PersistenceSettings::with_paths(
             &db_path,
             data_dir.join("deceased"),
@@ -1516,7 +1522,7 @@ mod tests {
             Karma::default(),
             PracticeLog::default(),
             Contamination::default(),
-            LifeRecord::new(canonical_player_id("Azure")),
+            LifeRecord::new(current_character_id),
             InsightQuota::default(),
             UnlockedPerceptions::default(),
             InsightModifiers::new(),

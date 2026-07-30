@@ -1262,6 +1262,9 @@ mod tests {
             &deceased_dir,
             "npc-full-death-chain",
         ));
+        app.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+        app.add_event::<crate::qi_physics::QiTransfer>();
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();

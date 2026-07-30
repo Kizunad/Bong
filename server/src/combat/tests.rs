@@ -1,6 +1,6 @@
 use crate::combat::{
     attach_combat_bundle_to_joined_clients,
-    components::{Lifecycle, LifecycleState, RevivalDecision},
+    components::{Lifecycle, LifecycleState, RevivalDecision, TICKS_PER_SECOND},
     is_damageable,
 };
 use crate::cultivation::components::Cultivation;
@@ -334,7 +334,13 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         Some(RevivalDecision::Tribulation { chance: 0.15 }),
         "待决策的渡劫结果必须原样恢复，永久终结风险不能被绕过"
     );
-    assert_eq!(lifecycle.revival_decision_deadline_tick, Some(9_999));
+    let restored_deadline = lifecycle
+        .revival_decision_deadline_tick
+        .expect("pending revival decision should keep a deadline");
+    assert!(
+        (9_999 - TICKS_PER_SECOND..=9_999).contains(&restored_deadline),
+        "same-process reload may consume at most one wall-clock second while preserving the pending deadline: actual={restored_deadline}"
+    );
     assert_eq!(lifecycle.death_count, 2);
 
     let _ = std::fs::remove_dir_all(root);

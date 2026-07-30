@@ -538,7 +538,7 @@ mod tests {
             &crate::cultivation::components::Karma::default(),
             &crate::cultivation::components::Contamination::default(),
             &crate::cultivation::life_record::LifeRecord::new(
-                "player:join-at-boundary".to_string(),
+                crate::player::state::canonical_player_id("JoinAtBoundary"),
             ),
             &crate::cultivation::color::PracticeLog::default(),
             &crate::cultivation::insight::InsightQuota::default(),

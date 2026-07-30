@@ -3554,18 +3554,20 @@ mod tests {
 
     impl valence::prelude::Resource for RevivalObservation {}
 
+    type RevivalRuntimeQueryItem<'a> = (
+        &'a Nourishment,
+        &'a NourishmentActivityWindow,
+        &'a CurrentDimension,
+        &'a EntityLayerId,
+        &'a VisibleChunkLayer,
+        &'a VisibleEntityLayers,
+        &'a Flags,
+        Option<&'a crate::coffin::CoffinComponent>,
+    );
+
     fn observe_revival_completion(
         mut events: EventReader<PlayerRevived>,
-        states: Query<(
-            &Nourishment,
-            &NourishmentActivityWindow,
-            &CurrentDimension,
-            &EntityLayerId,
-            &VisibleChunkLayer,
-            &VisibleEntityLayers,
-            &Flags,
-            Option<&crate::coffin::CoffinComponent>,
-        )>,
+        states: Query<RevivalRuntimeQueryItem<'_>>,
         mut observation: ResMut<RevivalObservation>,
     ) {
         for event in events.read() {
