@@ -58,16 +58,11 @@ def run(env) -> None:
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)
 
-        realm = _successful_command_and_chat(
+        _successful_command_and_chat(
             bot,
             "realm set induce",
             "[dev] realm set Awaken -> Induce",
         )
-        if "Induce" not in realm.data["text"]:
-            raise BotAssertionError(
-                f"[{bot.username}] realm set 成功反馈必须带目标 Induce，实际 "
-                + realm.data["text"]
-            )
 
         _command_and_chat(
             bot,
@@ -87,16 +82,11 @@ def run(env) -> None:
             "qi set 11",
             "[dev] qi set 0.0 -> 11.0",
         )
-        clamped = _successful_command_and_chat(
+        _successful_command_and_chat(
             bot,
             "qi max 4",
             "[dev] qi max 12.0 -> 4.0; current=4.0",
         )
-        if "current=4.0" not in clamped.data["text"]:
-            raise BotAssertionError(
-                f"[{bot.username}] 降低 qi max 必须同步钳制 qi_current 到 4.0，实际 "
-                + clamped.data["text"]
-            )
         _command_and_chat(
             bot,
             "qi set -1",
