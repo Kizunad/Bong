@@ -1165,6 +1165,7 @@ mod tests {
                 }
             }
         }
+        layer.insert_chunk([0, 0], UnloadedChunk::new());
 
         super::scatter_spawn_resources(&mut layer, &anchors);
 
@@ -1210,7 +1211,6 @@ mod tests {
                 Some(BlockState::STONE)
             );
         }
-        layer.insert_chunk([0, 0], UnloadedChunk::new());
         assert_eq!(
             block_state(&layer, 12, GRASS_Y + 1, 8),
             Some(BlockState::AIR),
