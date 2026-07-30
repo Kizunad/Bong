@@ -62,7 +62,7 @@ cleanup_active_owner() {
     # Reuse production's per-member pidfd teardown. The protocol fixture never
     # owns a TCP listener, so port release is an invariant rather than a signal
     # authority and is kept deterministic here.
-    original_port_check="$(declare -f bong_server_port_is_open)"
+    original_port_check="$(declare -f bong_server_port_is_open || true)"
     bong_server_port_is_open() { return 1; }
     if bong_server_stop_owned_process_group_and_release_port \
         "$ACTIVE_OWNER_PID" "$ACTIVE_OWNER_STARTTIME" "$ACTIVE_OWNER_IDENTITY" \
@@ -71,8 +71,12 @@ cleanup_active_owner() {
     else
         stop_status=$?
     fi
-    unset -f bong_server_port_is_open
-    eval "$original_port_check"
+    if [ -n "$original_port_check" ]; then
+        unset -f bong_server_port_is_open
+        eval "$original_port_check"
+    else
+        unset -f bong_server_port_is_open
+    fi
     case "$stop_status" in
         0|"$BONG_SERVER_STOP_FORCED") wait "$ACTIVE_OWNER_PID" 2>/dev/null || true ;;
         *) printf 'WARN: pinned fixture cleanup failed closed (status=%s)\n' "$stop_status" >&2 ;;

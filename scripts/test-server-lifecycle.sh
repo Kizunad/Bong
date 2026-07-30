@@ -2378,11 +2378,15 @@ start_supervisor_fixture() {
         || fail "startup supervisor fixture published malformed READY"
     SUPERVISOR_FIXTURE_OWNER_PID="${ready_line#READY pid=}"
     for _ in $(seq 1 100); do
-        [ -s "$supervisor_fixture_descendant" ] && break
+        [ -s "$supervisor_fixture_descendant" ] \
+            && [ -s "$supervisor_fixture_build_token_args" ] \
+            && break
         sleep 0.01
     done
     [ -s "$supervisor_fixture_descendant" ] \
         || fail "startup supervisor fixture did not publish its descendant"
+    [ -s "$supervisor_fixture_build_token_args" ] \
+        || fail "startup supervisor build-token fixture did not publish argv"
     [ "$(tr '\n' ' ' < "$supervisor_fixture_build_token_args")" = "cargo run --release " ] \
         || fail "startup supervisor must route exact cargo run --release argv through build-token"
 }
