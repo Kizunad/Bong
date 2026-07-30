@@ -12,6 +12,7 @@ import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePathScanner;
 import io.wispforest.owo.ui.core.Sizing;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -93,6 +94,14 @@ class R7InventoryContractTest {
             "every exact fill(100) token verdict and risk kind must be explicitly re-decided"
         );
 
+        assertEquals(
+            readFillStructuralContext(),
+            R7SourceScan.structuralTokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)"),
+            "code fill(100) context drifted: re-audit the enclosing class/method and every sibling or parent edit"
+        );
+        assertEquals(87, readFillStructuralContext().size(),
+            "all 87 executable fill(100) tokens must carry a structural method snapshot");
+
         Map<String, Long> verdicts = histogram(expectedRows.stream().map(FillInventoryRow::verdict).toList());
         assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L), verdicts,
             "P0 context-aware classification is frozen at 82 accepted, 5 risks, and 5 comments");
@@ -107,6 +116,36 @@ class R7InventoryContractTest {
         ), risks, "main-axis overflow classification drifted");
         assertEquals(20, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
             "fill(100) token file count changed");
+    }
+
+    @Test
+    void fillStructuralContextChangesWhenAnAdjacentSiblingChanges(@TempDir Path directory) throws IOException {
+        Path source = directory.resolve("Probe.java");
+        Files.writeString(source, """
+            class Probe {
+                void build() {
+                    root.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
+                }
+            }
+            """);
+        String before = R7SourceScan.structuralTokenOccurrences(directory, "Sizing.fill(100)")
+            .get(0)
+            .enclosingMethodDigest();
+
+        Files.writeString(source, """
+            class Probe {
+                void build() {
+                    root.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
+                    root.child(nextSibling);
+                }
+            }
+            """);
+        String after = R7SourceScan.structuralTokenOccurrences(directory, "Sizing.fill(100)")
+            .get(0)
+            .enclosingMethodDigest();
+
+        assertFalse(before.equals(after),
+            "an unchanged fill token must still detect sibling-order changes in its enclosing layout method");
     }
 
     @Test
@@ -462,6 +501,18 @@ class R7InventoryContractTest {
                 columns[3],
                 columns[4],
                 columns[5]
+            ))
+            .toList();
+    }
+
+    private static List<R7SourceScan.StructuralTokenOccurrence> readFillStructuralContext() {
+        return resourceLines("/bong/ui/r7-fill100-structural-context.tsv").stream()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new R7SourceScan.StructuralTokenOccurrence(
+                columns[0],
+                columns[1],
+                columns[2],
+                columns[3]
             ))
             .toList();
     }
