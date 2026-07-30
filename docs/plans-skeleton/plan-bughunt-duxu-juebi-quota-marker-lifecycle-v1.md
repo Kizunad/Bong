@@ -33,34 +33,39 @@
 
 ## P0 — Accepted-attempt marker ownership
 
-- [ ] marker 仅可由当前 accepted over-quota DuXu 或其直接追加的 quota-origin JueBi 拥有。
-- [ ] 以进程内单调且不复用的 `attempt_id`（等义命名可）作为 accepted attempt 的 identity：仅在 candidate 通过 rejected/duplicate 门并成功 persist 后分配，随同 accepted `TribulationState` 与 marker 提交；被拒绝或 persist-failed 的 candidate 不获得 identity，也不得触发 marker cleanup。ECS entity 被复用时不得复用旧 identity。
-- [ ] marker 的权威 owner token 必须是 `(entity, attempt_id, owner_phase)`，其中至少区分 `DuXu` 与 `QuotaJueBi`；accepted over-quota marker 初始为 `DuXu` phase。producer、consumer、terminal cleanup 与 deferred cleanup 都必须携带/捕获完整 token，不能只按 entity + attempt_id 或 entity 操作。
-- [ ] accepted over-quota DuXu 以当前 identity + quota snapshot 的 marker 完整替换旧 marker；accepted non-over-quota DuXu 清除旧 marker。cleanup 必须以完整 token compare-and-remove；旧 DuXu deferred cleanup 不能匹配已转交为 `QuotaJueBi` phase 的同 identity marker。
+- [ ] 本 successor 只处理 **DuXu accepted attempt**；本域没有其他 accepted attempt kind 能拥有该 marker。`TribulationKind::DuXu` 是 producer 的唯一合法 owner kind；`JueBi` 仅是该 DuXu 的 quota-origin continuation，不是新的 accepted start。P1 必须 pin：`TribulationKind::{ZoneCollapse,Targeted,JueBi}` 既不分配也不清除该 DuXu marker，只有 quota-origin `JueBi` settlement 按完整 token 清理它。
+- [ ] 以进程内单调且不复用的 `attempt_id`（等义命名可）作为 accepted attempt 的 identity：这是**易失 ECS identity**，不写入 `ActiveTribulationRecord`、SQLite 或其他跨进程持久化；重启后不承诺复原，属于本 plan 明确排除的 durability。`attempt_id` 仅在 candidate 通过 rejected/duplicate 门、分配器 checked allocation 成功且 `persist_active_state` 成功后分配，随后与 accepted `TribulationState` 和 marker 一起提交；被拒绝、分配失败或 persist-failed 的 candidate 不获得 identity，也不得触发 marker cleanup。ECS entity 被复用时不得复用旧 identity。
+- [ ] checked allocator 是由 `cultivation::register` 注册的进程级 Resource/helper；耗尽、分配失败或并发冲突均 fail-closed，且顺序必须是：候选门禁 → checked allocation（不消耗不可逆 ECS/DB 状态）→ `persist_active_state` 成功 → 分配并提交 identity + state + marker；任何 allocation failure 在 DB 写入前拒绝，禁止留下半提交 attempt。P1 必须覆盖 exhaustion、allocation failure 与 concurrent request 三个错误分支。
+- [ ] marker 的完整权威类型由实现 PR 具体落地为 `JueBiAfterDuXuQuota { attempt_id, owner_phase, occupied_slots, quota_limit, total_world_qi, quota_k }`（字段可用等义命名但不得缺失）；`owner_phase` 为 `JueBiMarkerOwnerPhase::{DuXu, QuotaJueBi}`。`TribulationState` 必须携带同一 `attempt_id` 字段；owner token 是 `(entity, attempt_id, owner_phase)`。producer、consumer、terminal cleanup 与 deferred cleanup 都必须携带/捕获完整 token，不能只按 entity + attempt_id 或 entity 操作。
+- [ ] accepted over-quota DuXu 以当前 identity + quota snapshot 的 marker 完整替换旧 marker；accepted non-over-quota DuXu 清除旧 marker。cleanup 必须以完整 token compare-and-remove；旧 DuXu deferred cleanup 不能匹配已转交为 `QuotaJueBi` phase 的同 identity marker。marker replace、compare-remove、phase-transfer 必须分别由明确 helper/API 承载；只有 quota-origin transition helper 可以修改 `owner_phase`，其他 producer/cleanup 只能 replace 或 compare-remove。
 - [ ] identity mismatch 只相对于**当前已 accepted 且正在运行**的 `TribulationState` 与其期望 owner phase 判定：consumer 清除该 stale marker 并拒绝追加 JueBi；尚未 accepted 的候选 start 不参与判定。
-- [ ] 最终 wave 的 quota-origin 分支须在同一 atomic transition 内先把匹配 identity 的 `TribulationState`/`JueBiRuntimeContext` 切为 JueBi owner，并把 marker 的 owner phase 从 `DuXu` 原子更新为 `QuotaJueBi`，保留同一 identity + snapshot，再退出普通 DuXu success cleanup；普通 success、failure、fled/disconnect、intercept death 仅 compare-remove 匹配的 `DuXu` token，JueBi settlement 最终只清一次 `QuotaJueBi` token。
+- [ ] 最终 wave 的 quota-origin 分支须在同一 atomic transition 内先把匹配 identity 的 `TribulationState`/`JueBiRuntimeContext` 切为 JueBi owner，并调用唯一 phase-transfer helper 把 marker 从 `DuXu` 原子更新为 `QuotaJueBi`，保留同一 identity + snapshot，再退出普通 DuXu success cleanup；普通 success、failure、fled/disconnect、intercept death 仅 compare-remove 匹配的 `DuXu` token，JueBi settlement 最终只清一次 `QuotaJueBi` token。
 - [ ] marker cleanup 不得重复触发 DB 删除、惩罚、Qi 释放或 settlement/lifecycle event。
 
 ## P1 — Regression closure
 
+- [ ] P1 的 schedule 回归落在 `server/src/cultivation/mod.rs:1577` 的 `#[cfg(test)] mod tests`（必要时由该模块调用 `tribulation.rs:4104` 的 `#[cfg(test)] mod tests` helper）；测试必须以 `App::new(); cultivation::register(&mut app)` 构建 production-owned schedule，不得手工 add 一套替代顺序。断言 registration order 包含 `start_tribulation_system → tribulation_wave_system → terminal cleanup → juebi_settlement_system` 的现有 `.after/.before` 关系，并逐帧推进每个状态转换。
 - [ ] `accepted_last_available_slot_clears_stale_quota_marker`
 - [ ] `accepted_first_over_quota_start_replaces_stale_quota_marker`
 - [ ] `rejected_duplicate_and_persist_failed_start_do_not_allocate_identity_or_touch_marker`
+- [ ] `allocator_exhaustion_allocation_failure_and_concurrent_request_fail_closed_before_persist`
 - [ ] `accepted_attempt_identity_is_monotonic_across_entity_reuse`
+- [ ] `non_duxu_attempt_kinds_do_not_allocate_or_clear_duxu_marker`
 - [ ] `mismatched_current_attempt_marker_is_cleared_without_quota_juebi`
 - [ ] `old_terminal_cleanup_compare_remove_cannot_remove_new_attempt_marker`
 - [ ] `terminal_quota_marker_cleanup_and_retry_matrix`
 - [ ] `quota_juebi_transition_transfers_owner_before_duxu_cleanup`
 - [ ] `quota_juebi_settlement_clears_follow_up_marker_once`
-- [ ] 回归须从 `cultivation::register` 的生产注册路径驱动，并覆盖同帧/跨帧 deferred cleanup 与 owner transfer；边界样例显式固定为 start 前 `occupied_slots + 1 == quota_limit`（本次占最后一个合法名额，不得留 marker）与 `occupied_slots == quota_limit`（第一个超额 attempt，必须创建/替换当前 identity marker）。新旧 marker 使用可区分的 quota snapshot，逐字段对拍当前 marker，并断言 quota-origin `JueBiTriggeredEvent.source/intensity` 与 `JueBiRuntimeContext` 均从当前 snapshot 派生；专门回归 `QuotaJueBi owner transfer → 旧 DuXu cleanup → JueBi settlement` 顺序与最终 marker 只清一次。
+- [ ] 回归须覆盖同帧/跨帧 deferred cleanup 与 owner transfer；边界样例显式固定为 start 前 `occupied_slots + 1 == quota_limit`（本次占最后一个合法名额，不得留 marker）与 `occupied_slots == quota_limit`（第一个超额 attempt，必须创建/替换当前 identity marker）。新旧 marker 使用可区分的 quota snapshot，逐字段对拍当前 marker，并断言 quota-origin `JueBiTriggeredEvent.source/intensity` 与 `JueBiRuntimeContext` 均从当前 snapshot 派生；专门回归 `QuotaJueBi owner transfer → 旧 DuXu cleanup → JueBi settlement` 顺序与最终 marker 只清一次。
 - [ ] success、failure、fled/disconnect、intercept death 与 JueBi settlement 各路径须把修复前既有副作用固定为精确基线（不适用为 0、适用为 1），并在修复后严格相等：DB active-row 删除、惩罚、settlement/lifecycle event 对拍关键 identity/payload；Qi ledger 对拍账户、reason、方向与 amount，并断言 marker-only cleanup 为零新交易、余额不变且守恒。
 
 ## 可核验 symbols
 
-- `JueBiAfterDuXuQuota`、`start_tribulation_system`
+- `JueBiAfterDuXuQuota`、`JueBiMarkerOwnerPhase`、`AttemptIdAllocator`、`start_tribulation_system`
 - `tribulation_wave_system`、`tribulation_failure_system`、`abort_du_xu_on_client_removed`
 - `tribulation_escape_boundary_system`、`settle_fled_tribulation`
 - `tribulation_intercept_death_system`、`juebi_settlement_system`
+- `replace_quota_marker`、`compare_remove_quota_marker`、`transfer_quota_marker_owner`
 
 ## 非本 plan 交付物
 
