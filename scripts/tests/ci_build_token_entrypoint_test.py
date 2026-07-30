@@ -99,16 +99,78 @@ DIRECT_COMMAND_EXEMPTIONS = {
 }
 DIRECT_BUILD_PATTERNS = (
     re.compile(
-        r"(?m)^(?!\s*(?:#|echo\b|info\b|check\b))(?!.*build-token\.sh).*"
         r"(?:^|[;&|()]\s*|\bexec\s+|\bnohup\s+|\btimeout\s+\S+\s+)"
         r"cargo\s+(?:build|check|clippy|fmt|metadata|new|run|test)\b"
     ),
-    re.compile(r"(?m)^(?!\s*(?:#|echo\b))(?!.*build-token\.sh).*\./gradlew\s+"),
+    re.compile(r"\./gradlew\s+"),
 )
 
 
+def _line_is_ignored(line: str) -> bool:
+    return bool(re.match(r"^\s*(?:#|echo\b|info\b|check\b)", line))
+
+
+def _tokenized_shell_command_start(line: str) -> int | None:
+    shell_start = line.find("bash -lc")
+    if shell_start < 0:
+        return None
+    shell_command = line[shell_start:]
+    token_start = shell_command.find("build-token.sh")
+    if token_start < 0:
+        return None
+    token_tail = shell_command[token_start + len("build-token.sh") :]
+    if not re.search(r"\s+(?:cargo|gradle)\s+", token_tail):
+        return None
+    return shell_start
+
+
+def direct_build_failures(relative: str, text: str) -> list[str]:
+    failures: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if _line_is_ignored(line):
+            continue
+        tokenized_start = _tokenized_shell_command_start(line)
+        for pattern in DIRECT_BUILD_PATTERNS:
+            match = pattern.search(line)
+            if match and (tokenized_start is None or match.start() >= tokenized_start):
+                failures.append(
+                    f"{relative}:{line_number}: direct build entrypoint bypasses build-token"
+                )
+                break
+    return failures
+
+
+def test_direct_build_detection() -> None:
+    cases = (
+        ("cargo test # build-token.sh", True),
+        ("./gradlew test # build-token.sh", True),
+        ('"$ROOT/scripts/build-token.sh" cargo test', False),
+        ('"$ROOT/scripts/build-token.sh" gradle test', False),
+        (
+            'run_or_fail "server" "cargo test" bash -lc '
+            '"cd server && scripts/build-token.sh cargo test"',
+            False,
+        ),
+        (
+            'run_or_fail "server" "cargo test" bash -lc '
+            '"cd server && echo build-token.sh && cargo test"',
+            True,
+        ),
+        ("# cargo test", False),
+        ('echo "cargo test"', False),
+    )
+    for source, expected_failure in cases:
+        actual_failure = bool(direct_build_failures("fixture.sh", source))
+        if actual_failure != expected_failure:
+            raise AssertionError(
+                "direct build fixture mismatch: "
+                f"source={source!r}, expected_failure={expected_failure}, "
+                f"actual_failure={actual_failure}"
+            )
+
 
 def main() -> int:
+    test_direct_build_detection()
     failures: list[str] = []
     for relative, spec in SPECS.items():
         path = ROOT / relative
@@ -129,13 +191,7 @@ def main() -> int:
         if relative in DIRECT_COMMAND_EXEMPTIONS:
             continue
         text = path.read_text(encoding="utf-8")
-        for pattern in DIRECT_BUILD_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                line = text.count("\n", 0, match.start()) + 1
-                failures.append(
-                    f"{relative}:{line}: direct build entrypoint bypasses build-token"
-                )
+        failures.extend(direct_build_failures(relative, text))
 
     if failures:
         print("CI build-token entrypoint contract FAILED", file=sys.stderr)
