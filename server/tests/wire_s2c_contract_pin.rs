@@ -2,117 +2,347 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const EMIT_MANIFEST: &[(&str, &str)] = &[
-    ("server/src/identity/wanted_player_emit.rs", "redis_only"),
-    ("server/src/lingtian/network_emit.rs", "helper_only"),
-    ("server/src/network/alchemy_snapshot_emit.rs", "helper_only"),
-    ("server/src/network/anqi_hud_emit.rs", "helper_only"),
-    ("server/src/network/ascension_quota_emit.rs", "helper_only"),
-    ("server/src/network/audio_event_emit.rs", "direct_only"),
-    ("server/src/network/burst_event_emit.rs", "helper_only"),
-    ("server/src/network/carrier_state_emit.rs", "helper_only"),
-    ("server/src/network/cast_emit.rs", "helper_only"),
-    ("server/src/network/combat_event_emit.rs", "helper_only"),
-    ("server/src/network/combat_hud_state_emit.rs", "helper_only"),
-    ("server/src/network/craft_emit.rs", "helper_only"),
-    ("server/src/network/cultivation_detail_emit.rs", "both"),
+const EMIT_MANIFEST: &[(&str, &str, &str)] = &[
+    (
+        "server/src/identity/wanted_player_emit.rs",
+        "redis_only",
+        "redis_only",
+    ),
+    (
+        "server/src/lingtian/network_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/alchemy_snapshot_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/anqi_hud_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/ascension_quota_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/audio_event_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/burst_event_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/carrier_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/cast_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/combat_event_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/combat_hud_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/craft_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/cultivation_detail_emit.rs",
+        "both",
+        "server_data_only",
+    ),
     (
         "server/src/network/cultivation_insight_offer_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
-    ("server/src/network/daozhan_disguise_emit.rs", "direct_only"),
-    ("server/src/network/defense_window_emit.rs", "helper_only"),
-    ("server/src/network/derived_attrs_emit.rs", "helper_only"),
+    (
+        "server/src/network/daozhan_disguise_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/defense_window_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/derived_attrs_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
     (
         "server/src/network/dropped_loot_sync_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
-    ("server/src/network/dugu_state_emit.rs", "helper_only"),
-    ("server/src/network/elder_encounter_emit.rs", "direct_only"),
-    ("server/src/network/era_ambiance_emit.rs", "direct_only"),
-    ("server/src/network/event_stream_emit.rs", "helper_only"),
-    ("server/src/network/extract_emit.rs", "helper_only"),
-    ("server/src/network/false_skin_state_emit.rs", "helper_only"),
-    ("server/src/network/forge_snapshot_emit.rs", "helper_only"),
-    ("server/src/network/freshness_probe_emit.rs", "helper_only"),
-    ("server/src/network/full_power_emit.rs", "helper_only"),
+    (
+        "server/src/network/dugu_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/elder_encounter_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/era_ambiance_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/event_stream_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/extract_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/false_skin_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/forge_snapshot_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/freshness_probe_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/full_power_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
     (
         "server/src/network/halfstep_rechallenge_emit.rs",
         "direct_only",
+        "dedicated_only",
     ),
-    ("server/src/network/identity_panel_emit.rs", "helper_only"),
-    ("server/src/network/inventory_event_emit.rs", "helper_only"),
+    (
+        "server/src/network/identity_panel_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/inventory_event_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
     (
         "server/src/network/inventory_move_rejected_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
     (
         "server/src/network/inventory_snapshot_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
-    ("server/src/network/knockback_sync_emit.rs", "helper_only"),
+    (
+        "server/src/network/knockback_sync_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
     (
         "server/src/network/meridian_severed_emit.rs",
         "no_client_send",
+        "domain_only",
     ),
-    ("server/src/network/mineral_probe_emit.rs", "helper_only"),
-    ("server/src/network/morph_state_emit.rs", "helper_only"),
-    ("server/src/network/mutation_visual_emit.rs", "direct_only"),
-    ("server/src/network/npc_lod_emit.rs", "direct_only"),
-    ("server/src/network/poison_trait_emit.rs", "helper_only"),
-    ("server/src/network/qi_attrition_emit.rs", "direct_only"),
+    (
+        "server/src/network/mineral_probe_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/morph_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/mutation_visual_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/npc_lod_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/poison_trait_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/qi_attrition_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
     (
         "server/src/network/qi_color_observed_emit.rs",
         "direct_only",
+        "server_data_only",
     ),
-    ("server/src/network/quickslot_config_emit.rs", "helper_only"),
-    ("server/src/network/race_gate_meta_emit.rs", "helper_only"),
-    ("server/src/network/rat_qi_tier_emit.rs", "direct_only"),
-    ("server/src/network/remains_sync_emit.rs", "helper_only"),
-    ("server/src/network/scroll_open_emit.rs", "helper_only"),
-    ("server/src/network/skill_config_emit.rs", "helper_only"),
-    ("server/src/network/skill_emit.rs", "helper_only"),
-    ("server/src/network/skill_snapshot_emit.rs", "helper_only"),
-    ("server/src/network/skillbar_config_emit.rs", "helper_only"),
-    ("server/src/network/spider_disguise_emit.rs", "direct_only"),
-    ("server/src/network/spirit_treasure_emit.rs", "helper_only"),
-    ("server/src/network/status_snapshot_emit.rs", "helper_only"),
-    ("server/src/network/sword_bond_state_emit.rs", "helper_only"),
+    (
+        "server/src/network/quickslot_config_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/race_gate_meta_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/rat_qi_tier_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/remains_sync_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/scroll_open_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/skill_config_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/skill_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/skill_snapshot_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/skillbar_config_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/spider_disguise_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
+    (
+        "server/src/network/spirit_treasure_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/status_snapshot_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/sword_bond_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
     (
         "server/src/network/techniques_snapshot_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
     (
         "server/src/network/treasure_equipped_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
     (
         "server/src/network/tribulation_broadcast_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
     (
         "server/src/network/tribulation_heart_demon_offer_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
     (
         "server/src/network/tribulation_state_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
     (
         "server/src/network/tsy_container_search_emit.rs",
         "helper_only",
+        "server_data_only",
     ),
-    ("server/src/network/tuike_ash_emit.rs", "no_client_send"),
-    ("server/src/network/unlocks_sync_emit.rs", "helper_only"),
-    ("server/src/network/vfx_event_emit.rs", "direct_only"),
+    (
+        "server/src/network/tuike_ash_emit.rs",
+        "no_client_send",
+        "domain_only",
+    ),
+    (
+        "server/src/network/unlocks_sync_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/vfx_event_emit.rs",
+        "direct_only",
+        "dedicated_only",
+    ),
     (
         "server/src/network/void_erosion_visual_emit.rs",
         "direct_only",
+        "dedicated_only",
     ),
-    ("server/src/network/weapon_equipped_emit.rs", "helper_only"),
-    ("server/src/network/woliu_state_emit.rs", "helper_only"),
-    ("server/src/network/wounds_snapshot_emit.rs", "helper_only"),
-    ("server/src/network/yidao_state_emit.rs", "helper_only"),
+    (
+        "server/src/network/weapon_equipped_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/woliu_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/wounds_snapshot_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
+    (
+        "server/src/network/yidao_state_emit.rs",
+        "helper_only",
+        "server_data_only",
+    ),
 ];
 
 const API_SHAPES: &[(&str, usize)] = &[
@@ -683,7 +913,7 @@ fn emit_file_inventory_and_transport_classification_stay_frozen() {
 
     let expected_paths: Vec<String> = EMIT_MANIFEST
         .iter()
-        .map(|(path, _)| (*path).to_string())
+        .map(|(path, _, _)| (*path).to_string())
         .collect();
     assert_eq!(
         expected_paths, actual_paths,
@@ -697,19 +927,22 @@ fn emit_file_inventory_and_transport_classification_stay_frozen() {
 
     let mut counts = BTreeMap::new();
     let mut wire_counts = BTreeMap::new();
-    for (relative, expected_class) in EMIT_MANIFEST {
+    for (relative, expected_api_shape, expected_wire_class) in EMIT_MANIFEST {
         let source = fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("read {relative}: {error}"));
         let scan = scan_production_emit_source(&source);
-        let actual_shape = classify_emit_api_shape(&scan);
+        let actual_api_shape = classify_emit_api_shape(&scan);
         assert_eq!(
-            *expected_class, actual_shape,
+            *expected_api_shape, actual_api_shape,
             "{relative} changed API call shape; update the R6 migration ledger deliberately"
         );
-        *counts.entry(actual_shape).or_insert(0usize) += 1;
-        *wire_counts
-            .entry(classify_wire_transport(&scan))
-            .or_insert(0usize) += 1;
+        let actual_wire_class = classify_wire_transport(&scan);
+        assert_eq!(
+            *expected_wire_class, actual_wire_class,
+            "{relative} changed actual wire transport; update the per-emitter R6 migration ledger deliberately"
+        );
+        *counts.entry(actual_api_shape).or_insert(0usize) += 1;
+        *wire_counts.entry(actual_wire_class).or_insert(0usize) += 1;
     }
     assert_eq!(
         counts,
@@ -1235,6 +1468,59 @@ fn emitter_scanner_derives_redis_and_domain_only_without_path_exceptions() {
     assert_eq!(classify_wire_transport(&domain), "domain_only");
 }
 
+fn assert_manifest_entry_matches(
+    relative: &str,
+    expected_api_shape: &str,
+    expected_wire_class: &str,
+    scan: &EmitScan,
+) {
+    let actual_api_shape = classify_emit_api_shape(scan);
+    assert_eq!(
+        expected_api_shape, actual_api_shape,
+        "{relative} changed API call shape; update the R6 migration ledger deliberately"
+    );
+    let actual_wire_class = classify_wire_transport(scan);
+    assert_eq!(
+        expected_wire_class, actual_wire_class,
+        "{relative} changed actual wire transport; update the per-emitter R6 migration ledger deliberately"
+    );
+}
+
+#[test]
+fn emitter_manifest_pins_wire_transport_per_file_not_only_in_aggregate() {
+    let direct_server_data =
+        scan_production_emit_source(r#"client.send_custom_payload(SERVER_DATA_CHANNEL, payload);"#);
+    let direct_dedicated = scan_production_emit_source(
+        r#"client.send_custom_payload(ident!("bong:vfx_event"), payload);"#,
+    );
+
+    assert_manifest_entry_matches(
+        "direct_server_data_emit.rs",
+        "direct_only",
+        "server_data_only",
+        &direct_server_data,
+    );
+    assert_manifest_entry_matches(
+        "direct_dedicated_emit.rs",
+        "direct_only",
+        "dedicated_only",
+        &direct_dedicated,
+    );
+
+    let mismatch = std::panic::catch_unwind(|| {
+        assert_manifest_entry_matches(
+            "direct_server_data_emit.rs",
+            "direct_only",
+            "dedicated_only",
+            &direct_server_data,
+        );
+    });
+    assert!(
+        mismatch.is_err(),
+        "a per-file transport swap must fail even when API shape and aggregate wire counts remain unchanged"
+    );
+}
+
 fn collect_emit_files(directory: &Path, root: &Path, output: &mut Vec<String>) {
     for entry in fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("read directory {}: {error}", directory.display()))
@@ -1267,6 +1553,6 @@ fn repository_root() -> PathBuf {
 
 #[test]
 fn manifest_has_no_duplicate_paths() {
-    let paths: BTreeSet<_> = EMIT_MANIFEST.iter().map(|(path, _)| *path).collect();
+    let paths: BTreeSet<_> = EMIT_MANIFEST.iter().map(|(path, _, _)| *path).collect();
     assert_eq!(paths.len(), EMIT_MANIFEST.len());
 }
