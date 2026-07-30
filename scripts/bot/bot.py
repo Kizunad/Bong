@@ -200,27 +200,42 @@ class Bot:
         elif packet_id == mc.S2C_PLAYER_LIST:
             actions = reader.u8()
             count = reader.varint()
+            if count < 0:
+                raise ValueError(f"player-list entry count {count} must be non-negative")
             entries = []
+            pending_player_names: dict[str, str] = {}
             for _ in range(count):
                 player_uuid = reader.uuid()
                 entry = {"uuid": player_uuid}
                 if actions & 0x01:  # add_player
                     username = reader.string()
                     entry["username"] = username
-                    self.player_names[player_uuid] = username
                     properties = reader.varint()
+                    if properties < 0:
+                        raise ValueError(
+                            f"player-list property count {properties} must be non-negative"
+                        )
                     for _ in range(properties):
                         reader.string()  # property name
                         reader.string()  # property value
                         if reader.boolean():
                             reader.string()  # property signature
+                    pending_player_names[player_uuid] = username
                 if actions & 0x02:  # initialize_chat
                     if reader.boolean():
                         reader.uuid()
                         reader.i64()
                         key_length = reader.varint()
+                        if key_length < 0 or key_length > len(reader.data) - reader.pos:
+                            raise ValueError(
+                                f"player-list chat key length {key_length} exceeds remaining bytes"
+                            )
                         reader.pos += key_length
                         signature_length = reader.varint()
+                        if signature_length < 0 or signature_length > len(reader.data) - reader.pos:
+                            raise ValueError(
+                                f"player-list chat signature length {signature_length} exceeds remaining bytes"
+                            )
                         reader.pos += signature_length
                 if actions & 0x04:  # update_game_mode
                     reader.varint()
@@ -232,6 +247,7 @@ class Bot:
                     if reader.boolean():
                         reader.string()
                 entries.append(entry)
+            self.player_names.update(pending_player_names)
             self._emit("player_list", {"actions": actions, "entries": entries})
         elif packet_id == mc.S2C_PLAYER_REMOVE:
             count = reader.varint()

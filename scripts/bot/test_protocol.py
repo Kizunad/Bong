@@ -96,8 +96,13 @@ from bot.scenarios.production_craft_disconnect_resume import (  # noqa: E402
     CRAFT_PROGRESS_OBSERVATION_TIMEOUT_SECONDS,
 )
 from bot.scenarios.production_lingtian_gathering_intents import (  # noqa: E402
+    BOTANY_FIXTURE_PREFIX,
     HERB_ID,
+    _is_matching_gathering_terminal,
+    _is_matching_harvest,
+    _parse_botany_fixture,
     _surface_candidates,
+    _valid_target_pos,
     _wait_gather_progress,
 )
 from bot.scenarios.production_spiritwood_full_inventory_drop import (  # noqa: E402
@@ -3117,18 +3122,84 @@ class CultivationRealmQiScenarioTest(unittest.TestCase):
 
 
 class LingtianScenarioFilteringTest(unittest.TestCase):
+    PLAYER_POS = (10.0, 64.0, -4.0)
+    FIXTURE_ID = "plant-42"
+    FIXTURE_POS = [11.0, 64.0, -4.0]
+
+    def test_fixture_parser_requires_exact_identity_fields(self):
+        text = (
+            f"{BOTANY_FIXTURE_PREFIX}plant-42 kind=spirit_grass "
+            "pos=[11.00000000000000000,64.00000000000000000,-4.00000000000000000] zone=spawn"
+        )
+        self.assertEqual(
+            _parse_botany_fixture(text), (self.FIXTURE_ID, self.FIXTURE_POS, "spawn")
+        )
+        with self.assertRaises(BotAssertionError):
+            _parse_botany_fixture("[dev] botany_spawn accepted: plant_id=plant-nope")
+        with self.assertRaises(BotAssertionError):
+            _parse_botany_fixture(
+                f"{BOTANY_FIXTURE_PREFIX}plant-42 kind=spirit_grass pos=[nan,64,-4] zone=spawn"
+            )
+
+    def test_harvest_predicate_requires_real_fixture_and_finite_in_range_position(self):
+        def event(payload, t=4.0):
+            return _FakeEvent(
+                t,
+                "server_data",
+                {"payload_type": "botany_harvest_progress", "payload": payload},
+            )
+
+        base = {
+            "session_id": "offline:Fake",
+            "target_id": self.FIXTURE_ID,
+            "target_name": HERB_ID,
+            "plant_kind": HERB_ID,
+            "target_pos": self.FIXTURE_POS,
+            "completed": False,
+            "interrupted": False,
+            "progress": 0.25,
+        }
+        self.assertTrue(
+            _is_matching_harvest(
+                event(base), 1.0, self.FIXTURE_ID, self.FIXTURE_POS, self.PLAYER_POS
+            )
+        )
+        for key, value in (
+            ("session_id", ""),
+            ("target_id", "plant-99"),
+            ("target_name", "other_herb"),
+            ("target_pos", [float("nan"), 64.0, -4.0]),
+            ("target_pos", [18.0, 64.0, -4.0]),
+        ):
+            rejected = dict(base)
+            rejected[key] = value
+            self.assertFalse(
+                _is_matching_harvest(
+                    event(rejected),
+                    1.0,
+                    self.FIXTURE_ID,
+                    self.FIXTURE_POS,
+                    self.PLAYER_POS,
+                ),
+                f"invalid {key} must not satisfy fixture predicate: {rejected}",
+            )
+        self.assertFalse(_valid_target_pos({"target_pos": [None, None, None]}, self.PLAYER_POS))
+
     def test_gather_progress_skips_unrelated_session_and_herb(self):
         target = _FakeEvent(
             4.0,
             "server_data",
             {
-                "payload_type": "gathering_session",
+                "payload_type": "botany_harvest_progress",
                 "payload": {
-                    "type": "gathering_session",
-                    "target_type": "herb",
+                    "session_id": "offline:Fake",
+                    "target_id": self.FIXTURE_ID,
                     "target_name": HERB_ID,
-                    "total_ticks": 20,
-                    "progress_ticks": 1,
+                    "plant_kind": HERB_ID,
+                    "target_pos": self.FIXTURE_POS,
+                    "progress": 0.25,
+                    "completed": False,
+                    "interrupted": False,
                 },
             },
         )
@@ -3139,13 +3210,7 @@ class LingtianScenarioFilteringTest(unittest.TestCase):
                     "server_data",
                     {
                         "payload_type": "gathering_session",
-                        "payload": {
-                            "type": "gathering_session",
-                            "target_type": "ore",
-                            "target_name": "iron_ore",
-                            "total_ticks": 20,
-                            "progress_ticks": 1,
-                        },
+                        "payload": {"session_id": "other", "target_type": "ore"},
                     },
                 ),
                 _FakeEvent(
@@ -3154,9 +3219,11 @@ class LingtianScenarioFilteringTest(unittest.TestCase):
                     {
                         "payload_type": "botany_harvest_progress",
                         "payload": {
-                            "type": "botany_harvest_progress",
-                            "plant_kind": "other_herb",
+                            "session_id": "other",
+                            "target_id": "plant-99",
                             "target_name": "other_herb",
+                            "plant_kind": "other_herb",
+                            "target_pos": self.FIXTURE_POS,
                             "progress": 0.2,
                         },
                     },
@@ -3164,8 +3231,44 @@ class LingtianScenarioFilteringTest(unittest.TestCase):
                 target,
             ]
         )
+        self.assertEqual(
+            _wait_gather_progress(
+                bot, 1.0, self.FIXTURE_ID, self.FIXTURE_POS, self.PLAYER_POS
+            ),
+            target.data["payload"],
+        )
 
-        self.assertEqual(_wait_gather_progress(bot, 1.0), target.data["payload"])
+    def test_gathering_terminal_requires_same_session_and_completed_progress(self):
+        good_payload = {
+            "session_id": "s1",
+            "target_type": "herb",
+            "target_name": HERB_ID,
+            "progress_ticks": 40,
+            "total_ticks": 40,
+            "completed": True,
+            "interrupted": False,
+        }
+        good = _FakeEvent(
+            6.0,
+            "server_data",
+            {"payload_type": "gathering_session", "payload": good_payload},
+        )
+        self.assertTrue(_is_matching_gathering_terminal(good, 1.0, "s1"))
+        self.assertFalse(_is_matching_gathering_terminal(good, 6.0, "s1"))
+        for key, value in (("session_id", "s2"), ("interrupted", True)):
+            wrong = dict(good_payload)
+            wrong[key] = value
+            self.assertFalse(
+                _is_matching_gathering_terminal(
+                    _FakeEvent(
+                        7.0,
+                        "server_data",
+                        {"payload_type": "gathering_session", "payload": wrong},
+                    ),
+                    1.0,
+                    "s1",
+                )
+            )
 
 
 class CultivationPillScenarioTest(unittest.TestCase):
@@ -4746,6 +4849,63 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
         self.assertEqual(bot.events[-1].kind, "player_remove")
         self.assertEqual(bot.events[-1].data["uuids"], [self.PLAYER_UUID])
 
+    def test_player_list_rejects_negative_entry_count_without_emitting_event(self):
+        bot = _bare_bot()
+
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(-1)
+        )
+        with self.assertRaisesRegex(ValueError, "entry count -1"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "负 PlayerList entry count 不得产出事件")
+        self.assertEqual(bot.player_names, {}, "负 entry count 不得污染 UUID→用户名映射")
+
+    def test_player_list_rejects_negative_property_count_without_partial_name(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(-1)
+        )
+        with self.assertRaisesRegex(ValueError, "property count -1"):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "负 property count 不得产出 player_list 事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "完整 PlayerList entry 校验失败前不得写入 UUID→用户名映射",
+        )
+
+    def test_player_list_truncation_does_not_leave_partial_name_mapping(self):
+        bot = _bare_bot()
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x01"
+            + mc.write_varint(1)
+            + raw_uuid
+            + mc.mc_string("Alice")
+            + mc.write_varint(1)
+            + mc.mc_string("textures")
+        )
+        with self.assertRaises((IndexError, ValueError)):
+            bot._dispatch(body)
+
+        self.assertEqual(bot.events, [], "截断 PlayerList entry 不得产出事件")
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "截断 PlayerList entry 不得残留 UUID→用户名映射",
+        )
+
     def test_combined_actions_follow_authoritative_valence_field_order(self):
         bot = _bare_bot()
         raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
@@ -4784,6 +4944,94 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
         self.assertEqual(
             bot.events[-1].data["entries"],
             [{"uuid": self.PLAYER_UUID, "username": "Alice"}],
+        )
+
+    def _initialize_chat_body(
+        self,
+        *,
+        key_length: int,
+        key_bytes: bytes = b"",
+        signature_length: int | None = None,
+        signature_bytes: bytes = b"",
+    ) -> bytes:
+        raw_uuid = uuid.UUID(self.PLAYER_UUID).bytes
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + b"\x02"
+            + mc.write_varint(1)
+            + raw_uuid
+            + b"\x01"
+            + raw_uuid
+            + struct.pack(">q", 1234)
+            + mc.write_varint(key_length)
+            + key_bytes
+        )
+        if signature_length is not None:
+            body += mc.write_varint(signature_length) + signature_bytes
+        return body
+
+    def test_initialize_chat_rejects_negative_key_length_without_emitting_entry(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat key length -1"):
+            bot._dispatch(self._initialize_chat_body(key_length=-1))
+
+        self.assertEqual(bot.events, [], "畸形 chat key 长度不得产出 player_list 事件")
+
+    def test_initialize_chat_rejects_key_length_beyond_remaining_bytes(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat key length 4"):
+            bot._dispatch(self._initialize_chat_body(key_length=4, key_bytes=b"key"))
+
+        self.assertEqual(bot.events, [], "截断 chat key 不得产出 player_list 事件")
+
+    def test_initialize_chat_rejects_negative_signature_length(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat signature length -1"):
+            bot._dispatch(
+                self._initialize_chat_body(
+                    key_length=3,
+                    key_bytes=b"key",
+                    signature_length=-1,
+                )
+            )
+
+        self.assertEqual(bot.events, [], "负 chat signature 长度不得产出 player_list 事件")
+
+    def test_initialize_chat_rejects_signature_length_beyond_remaining_bytes(self):
+        bot = _bare_bot()
+
+        with self.assertRaisesRegex(ValueError, "chat signature length 4"):
+            bot._dispatch(
+                self._initialize_chat_body(
+                    key_length=3,
+                    key_bytes=b"key",
+                    signature_length=4,
+                    signature_bytes=b"sig",
+                )
+            )
+
+        self.assertEqual(bot.events, [], "截断 chat signature 不得产出 player_list 事件")
+
+    def test_initialize_chat_accepts_exact_key_and_signature_boundaries(self):
+        bot = _bare_bot()
+
+        bot._dispatch(
+            self._initialize_chat_body(
+                key_length=3,
+                key_bytes=b"key",
+                signature_length=3,
+                signature_bytes=b"sig",
+            )
+        )
+
+        self.assertEqual(bot.events[-1].kind, "player_list")
+        self.assertEqual(bot.events[-1].data["actions"], 0x02)
+        self.assertEqual(
+            bot.events[-1].data["entries"],
+            [{"uuid": self.PLAYER_UUID}],
         )
 
 
