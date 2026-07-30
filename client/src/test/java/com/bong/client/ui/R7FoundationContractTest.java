@@ -214,6 +214,61 @@ class R7FoundationContractTest {
     @Test
     void insightSettlementFixtureFreezesEveryTerminalCauseAndOwner() {
         List<InsightSettlementRow> rows = insightSettlementRows();
+        assertEquals(List.of(
+            new InsightSettlementRow(
+                "ACCEPT",
+                "InsightDecision.chosen(triggerId, choiceId)",
+                "InsightOfferScreen",
+                "settle only when current offer triggerId matches",
+                "Emit exactly one CHOSEN InsightDecision and close this screen if still current."
+            ),
+            new InsightSettlementRow(
+                "DECLINE",
+                "InsightDecision.declined(triggerId)",
+                "InsightOfferScreen",
+                "settle only when current offer triggerId matches",
+                "Emit exactly one DECLINED InsightDecision and close this screen if still current."
+            ),
+            new InsightSettlementRow(
+                "TIMEOUT",
+                "InsightDecision.timedOut(triggerId)",
+                "InsightOfferScreen",
+                "settle only when nowMs is greater than or equal to expiresAtMs for the same triggerId",
+                "Emit exactly one TIMED_OUT InsightDecision and close this screen if still current."
+            ),
+            new InsightSettlementRow(
+                "ESC",
+                "InsightDecision.declined(triggerId)",
+                "InsightOfferScreen.close",
+                "settle only when current offer triggerId matches",
+                "Emit exactly one DECLINED InsightDecision; subsequent onRemoved callback is ignored."
+            ),
+            new InsightSettlementRow(
+                "REPLACED_BY_DIFFERENT_OFFER",
+                "InsightDecision.declined(triggerId)",
+                "InsightOfferScreen + InsightOfferScreenBootstrap + "
+                    + "ScreenTransitionController.CurrentScreenCancellationHandler",
+                "bootstrap compares outgoing and replacement triggerId before transition; "
+                    + "handler settles the outgoing identity once",
+                "Emit exactly one DECLINED InsightDecision before the new offer becomes authoritative."
+            ),
+            new InsightSettlementRow(
+                "REMOVED_EXCEPTIONALLY",
+                "InsightDecision.declined(triggerId)",
+                "InsightOfferScreen.onRemoved",
+                "settle the same triggerId when no prior terminal cause won",
+                "Emit exactly one DECLINED InsightDecision through the BongScreenBase removal hook "
+                    + "even if removal bypasses close."
+            ),
+            new InsightSettlementRow(
+                "DUPLICATE_TERMINAL",
+                "NOOP",
+                "InsightOfferScreen",
+                "settled triggerId and first terminal cause are immutable",
+                "Emit no second decision and do not mutate the winning cause."
+            )
+        ), rows,
+            "every settlement method, owner, identity rule, and observable effect must be exact-pinned");
         assertEquals(Set.of(
             "ACCEPT", "DECLINE", "TIMEOUT", "ESC", "REPLACED_BY_DIFFERENT_OFFER",
             "REMOVED_EXCEPTIONALLY", "DUPLICATE_TERMINAL"
