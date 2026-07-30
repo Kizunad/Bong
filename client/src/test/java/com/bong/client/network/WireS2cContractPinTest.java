@@ -1,13 +1,44 @@
 package com.bong.client.network;
 
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.LiteralTree;
+import com.sun.source.tree.MemberReferenceTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.ParenthesizedTree;
+import com.sun.source.tree.Tree;
+import com.sun.source.tree.VariableTree;
+import com.sun.source.util.JavacTask;
+import com.sun.source.util.TreePath;
+import com.sun.source.util.TreePathScanner;
+import com.sun.source.util.Trees;
 import org.junit.jupiter.api.Test;
 
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.tools.Diagnostic;
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -16,163 +47,23 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 final class WireS2cContractPinTest {
-    private static final Pattern RECEIVER_CALL = Pattern.compile(
-        "ClientPlayNetworking\\.registerGlobalReceiver\\s*\\("
-    );
+    private static final String RECEIVER_OWNER =
+        "net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking";
+    private static final String IDENTIFIER_OWNER = "net.minecraft.util.Identifier";
     private static final Pattern PREFIX_LITERAL = Pattern.compile(
         "\\\"([A-Z][A-Z0-9_]*_)\\\""
     );
 
-    private static final List<String> SIDE_CHANNELS = List.of(
-        "bong:npc_metadata",
-        "bong:npc_lod",
-        "bong:npc_bubble",
-        "bong:npc_mood",
-        "bong:tsy_boss_health",
-        "bong:tsy_death_vfx",
-        "bong:locust_swarm_warning",
-        "bong:vfx_event",
-        "bong:vfx/qi_attrition",
-        "bong:audio/play",
-        "bong:audio/stop",
-        "bong:tiandao_presence",
-        "bong:audio/ambient_zone",
-        "bong:zone_environment",
-        "bong:mutation_visual",
-        "bong:crack_reading",
-        "bong:resonance_lock",
-        "bong:resonance_lock_end",
-        "bong:void_erosion_visual",
-        "bong:spider_disguise_enter",
-        "bong:spider_ambush_trigger",
-        "bong:rat_qi_tier",
-        "bong:daozhan_disguise_enter",
-        "bong:daozhan_reveal",
-        "bong:core_absorption_hallucination",
-        "bong:elder_encounter",
-        "bong:era_ambiance",
-        "bong:agent_ui_request",
-        "bong:agent_ui_close",
-        "bong:halfstep_rechallenge",
-        "bong:shader_state"
-    );
+    private enum MigrationDecision {
+        MIGRATE,
+        EXEMPT
+    }
 
-    private static final List<String> RECEIVER_ARGUMENTS = List.of(
-        "new Identifier(NpcMetadataHandler.CHANNEL_NAMESPACE, NpcMetadataHandler.CHANNEL_PATH)",
-        "new Identifier(NpcLodHandler.CHANNEL_NAMESPACE, NpcLodHandler.CHANNEL_PATH)",
-        "new Identifier(NpcBubbleHandler.CHANNEL_NAMESPACE, NpcBubbleHandler.CHANNEL_PATH)",
-        "new Identifier(NpcMoodHandler.CHANNEL_NAMESPACE, NpcMoodHandler.CHANNEL_PATH)",
-        "new Identifier(TsyBossHealthHandler.CHANNEL_NAMESPACE, TsyBossHealthHandler.CHANNEL_PATH)",
-        "new Identifier(TsyDeathVfxHandler.CHANNEL_NAMESPACE, TsyDeathVfxHandler.CHANNEL_PATH)",
-        "new Identifier(\"bong\", \"server_data\")",
-        "new Identifier(\"bong\", \"locust_swarm_warning\")",
-        "new Identifier(\"bong\", \"vfx_event\")",
-        "QiAttritionVfxPlayer.CHANNEL",
-        "new Identifier(\"bong\", \"audio/play\")",
-        "new Identifier(\"bong\", \"audio/stop\")",
-        "new Identifier(\"bong\", \"tiandao_presence\")",
-        "new Identifier(\"bong\", \"audio/ambient_zone\")",
-        "new Identifier(\"bong\", \"zone_environment\")",
-        "new Identifier(\"bong\", \"mutation_visual\")",
-        "new Identifier(\"bong\", \"crack_reading\")",
-        "new Identifier(\"bong\", \"resonance_lock\")",
-        "new Identifier(\"bong\", \"resonance_lock_end\")",
-        "new Identifier(\"bong\", \"void_erosion_visual\")",
-        "new Identifier(SpiderDisguiseHandler.CHANNEL_NAMESPACE, SpiderDisguiseHandler.CHANNEL_PATH_ENTER)",
-        "new Identifier(SpiderDisguiseHandler.CHANNEL_NAMESPACE, SpiderDisguiseHandler.CHANNEL_PATH_AMBUSH)",
-        "new Identifier(RatQiTierHandler.CHANNEL_NAMESPACE, RatQiTierHandler.CHANNEL_PATH)",
-        "new Identifier(DaoZhanDisguiseHandler.CHANNEL_NAMESPACE, DaoZhanDisguiseHandler.CHANNEL_PATH_ENTER)",
-        "new Identifier(DaoZhanDisguiseHandler.CHANNEL_NAMESPACE, DaoZhanDisguiseHandler.CHANNEL_PATH_REVEAL)",
-        "new Identifier( com.bong.client.fauna.HallucinationLayerHandler.CHANNEL_NAMESPACE, com.bong.client.fauna.HallucinationLayerHandler.CHANNEL_PATH )",
-        "new Identifier( com.bong.client.dying_elder.DyingElderEncounterHandler.CHANNEL_NAMESPACE, com.bong.client.dying_elder.DyingElderEncounterHandler.CHANNEL_PATH )",
-        "new Identifier(\"bong\", \"agent_ui_request\")",
-        "com.bong.client.network.AgentUiPayloadHandler.AGENT_UI_CLOSE_CHANNEL",
-        "new Identifier(\"bong\", \"halfstep_rechallenge\")",
-        "new Identifier(\"bong\", \"era_ambiance\")",
-        "new Identifier(ShaderStateHandler.CHANNEL_NAMESPACE, ShaderStateHandler.CHANNEL_PATH)"
-    );
-
-    private record IndirectReceiverBinding(
-        String relativePath,
-        String channel,
-        List<String> declarations
-    ) {}
-
-    private static final List<IndirectReceiverBinding> INDIRECT_RECEIVER_BINDINGS = List.of(
-        binding("com/bong/client/npc/NpcMetadataHandler.java", "bong:npc_metadata",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"npc_metadata\";"),
-        binding("com/bong/client/npc/NpcLodHandler.java", "bong:npc_lod",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"npc_lod\";"),
-        binding("com/bong/client/npc/NpcBubbleHandler.java", "bong:npc_bubble",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"npc_bubble\";"),
-        binding("com/bong/client/npc/NpcMoodHandler.java", "bong:npc_mood",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"npc_mood\";"),
-        binding("com/bong/client/tsy/TsyBossHealthHandler.java", "bong:tsy_boss_health",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"tsy_boss_health\";"),
-        binding("com/bong/client/tsy/TsyDeathVfxHandler.java", "bong:tsy_death_vfx",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"tsy_death_vfx\";"),
-        binding("com/bong/client/visual/particle/QiAttritionVfxPlayer.java", "bong:vfx/qi_attrition",
-            "public static final Identifier CHANNEL = new Identifier(\"bong\", \"vfx/qi_attrition\");"),
-        binding("com/bong/client/spider/SpiderDisguiseHandler.java", "bong:spider_disguise_enter",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH_ENTER = \"spider_disguise_enter\";"),
-        binding("com/bong/client/spider/SpiderDisguiseHandler.java", "bong:spider_ambush_trigger",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH_AMBUSH = \"spider_ambush_trigger\";"),
-        binding("com/bong/client/fauna/RatQiTierHandler.java", "bong:rat_qi_tier",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"rat_qi_tier\";"),
-        binding("com/bong/client/daozhan/DaoZhanDisguiseHandler.java", "bong:daozhan_disguise_enter",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH_ENTER = \"daozhan_disguise_enter\";"),
-        binding("com/bong/client/daozhan/DaoZhanDisguiseHandler.java", "bong:daozhan_reveal",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH_REVEAL = \"daozhan_reveal\";"),
-        binding("com/bong/client/fauna/HallucinationLayerHandler.java", "bong:core_absorption_hallucination",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"core_absorption_hallucination\";"),
-        binding("com/bong/client/dying_elder/DyingElderEncounterHandler.java", "bong:elder_encounter",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"elder_encounter\";"),
-        binding("com/bong/client/network/AgentUiPayloadHandler.java", "bong:agent_ui_close",
-            "public static final Identifier AGENT_UI_CLOSE_CHANNEL =\n        new Identifier(\"bong\", \"agent_ui_close\");"),
-        binding("com/bong/client/iris/ShaderStateHandler.java", "bong:shader_state",
-            "public static final String CHANNEL_NAMESPACE = \"bong\";",
-            "public static final String CHANNEL_PATH = \"shader_state\";")
-    );
-
-    private static final Set<String> DIRECT_RECEIVER_CHANNELS = Set.of(
-        "bong:server_data",
-        "bong:locust_swarm_warning",
-        "bong:vfx_event",
-        "bong:audio/play",
-        "bong:audio/stop",
-        "bong:tiandao_presence",
-        "bong:audio/ambient_zone",
-        "bong:zone_environment",
-        "bong:mutation_visual",
-        "bong:crack_reading",
-        "bong:resonance_lock",
-        "bong:resonance_lock_end",
-        "bong:void_erosion_visual",
-        "bong:agent_ui_request",
-        "bong:halfstep_rechallenge",
-        "bong:era_ambiance"
-    );
-
-    private static final Set<String> EXEMPT_SIDE_CHANNELS = Set.of(
-        "bong:agent_ui_request",
-        "bong:agent_ui_close",
-        "bong:shader_state"
-    );
+    private static final Map<String, MigrationDecision> SIDE_CHANNEL_DECISIONS =
+        migrationDecisions();
 
     private static final Set<String> ENUM_PREFIXES = Set.of(
         "ALCHEMY_OUTCOME_BUCKET_",
@@ -223,185 +114,478 @@ final class WireS2cContractPinTest {
     @Test
     void everyClientS2cReceiverIsCountedAndEveryBypassHasAMigrationDecision() throws IOException {
         Path sourceRoot = clientRoot().resolve("src/main/java");
-        List<Path> receiverFiles = new ArrayList<>();
-        List<String> receiverArguments = new ArrayList<>();
-        int receiverCount = 0;
-        try (Stream<Path> files = Files.walk(sourceRoot)) {
-            for (Path path : files.filter(path -> path.toString().endsWith(".java")).toList()) {
-                String source = Files.readString(path);
-                int count = countMatches(RECEIVER_CALL, source);
-                if (count > 0) {
-                    receiverFiles.add(sourceRoot.relativize(path));
-                    receiverCount += count;
-                    receiverArguments.addAll(receiverArguments(source));
-                }
-            }
-        }
+        JavaSourceModel sourceModel = JavaSourceModel.parse(sourceRoot);
+        List<ReceiverSite> receiverSites = sourceModel.receiverSites();
 
-        receiverFiles.sort(Comparator.comparing(Path::toString));
+        assertEquals(32, receiverSites.size(),
+            "P0 基线为 32 个真实 Java receiver 调用（server_data 1 + side channels 31）");
         assertEquals(
             List.of(
                 Path.of("com/bong/client/BongNetworkHandler.java"),
                 Path.of("com/bong/client/iris/IrisBootstrap.java")
             ),
-            receiverFiles,
-            "新增 receiver 文件必须进入 R6 旁路普查，而不是绕过 BongNetworkHandler"
-        );
-        assertEquals(32, receiverCount,
-            "P0 基线为 32 个 global receiver（server_data 1 + side channels 31）");
-        receiverArguments.sort(String::compareTo);
-        assertEquals(
-            RECEIVER_ARGUMENTS.stream().sorted().toList(),
-            receiverArguments,
-            "所有 receiver 的注册参数必须与 R6 channel 决策账本逐项对齐，间接常量也不能重定向"
-        );
-        assertEquals(31, SIDE_CHANNELS.size());
-        assertEquals(3, EXEMPT_SIDE_CHANNELS.size());
-        assertEquals(28, SIDE_CHANNELS.size() - EXEMPT_SIDE_CHANNELS.size());
-        assertEquals(16, DIRECT_RECEIVER_CHANNELS.size());
-        assertEquals(16, INDIRECT_RECEIVER_BINDINGS.size());
-        Set<String> indirectChannels = INDIRECT_RECEIVER_BINDINGS.stream()
-            .map(IndirectReceiverBinding::channel)
-            .collect(java.util.stream.Collectors.toSet());
-        assertEquals(16, indirectChannels.size(),
-            "间接 receiver channel 必须一对一，不能重复指向同一 ID");
-        Set<String> allChannels = new TreeSet<>(DIRECT_RECEIVER_CHANNELS);
-        Set<String> channelOverlap = new TreeSet<>(indirectChannels);
-        channelOverlap.retainAll(DIRECT_RECEIVER_CHANNELS);
-        assertEquals(Set.of(), channelOverlap,
-            "直接与间接 receiver channel 不能重复");
-        allChannels.addAll(indirectChannels);
-        assertTrue(allChannels.remove("bong:server_data"));
-        assertEquals(
-            Set.copyOf(SIDE_CHANNELS),
-            allChannels,
-            "直接/间接 receiver ID 必须唯一解析成 server_data 外的 31 个旁路"
+            receiverSites.stream()
+                .map(ReceiverSite::relativePath)
+                .distinct()
+                .sorted(Comparator.comparing(Path::toString))
+                .toList(),
+            "新增 receiver 文件必须进入 R6 旁路普查，而不是绕过既有 bootstrap"
         );
 
-        for (IndirectReceiverBinding binding : INDIRECT_RECEIVER_BINDINGS) {
-            String source = Files.readString(sourceRoot.resolve(binding.relativePath()));
-            for (String declaration : binding.declarations()) {
-                assertEquals(
-                    1,
-                    countOccurrences(source, declaration),
-                    () -> binding.relativePath() + " 必须精确声明一次 " + binding.channel()
-                );
-            }
+        Map<String, List<ReceiverSite>> sitesByChannel = new LinkedHashMap<>();
+        for (ReceiverSite site : receiverSites) {
+            sitesByChannel.computeIfAbsent(site.channel(), ignored -> new ArrayList<>()).add(site);
         }
+        List<String> duplicates = sitesByChannel.entrySet().stream()
+            .filter(entry -> entry.getValue().size() > 1)
+            .map(entry -> entry.getKey() + " -> " + entry.getValue())
+            .toList();
+        assertEquals(List.of(), duplicates,
+            "每个 production receiver channel 必须唯一；重复项需同时报告 call site");
+        assertEquals(32, sitesByChannel.size(), "32 个 receiver 必须解析成 32 个唯一 channel ID");
+        assertEquals(1, sitesByChannel.getOrDefault("bong:server_data", List.of()).size(),
+            "目标轨 bong:server_data 必须且只能注册一次");
 
-        String allProductionSource = readAllProductionSource(sourceRoot);
-        for (String channel : SIDE_CHANNELS) {
-            String path = channel.substring("bong:".length());
-            assertTrue(
-                allProductionSource.contains("\"" + path + "\""),
-                () -> "旁路清单 channel 已不在 production source：" + channel
-            );
-        }
+        Set<String> actualSideChannels = new TreeSet<>(sitesByChannel.keySet());
+        assertTrue(actualSideChannels.remove("bong:server_data"));
+        assertEquals(
+            SIDE_CHANNEL_DECISIONS.keySet(),
+            actualSideChannels,
+            "实际解析出的 31 个旁路必须由唯一 migration decision 账本完整覆盖"
+        );
+        assertEquals(31, SIDE_CHANNEL_DECISIONS.size());
+        assertEquals(28, decisionCount(MigrationDecision.MIGRATE));
+        assertEquals(3, decisionCount(MigrationDecision.EXEMPT));
+        assertEquals(
+            Set.of("bong:agent_ui_request", "bong:agent_ui_close", "bong:shader_state"),
+            channelsWithDecision(MigrationDecision.EXEMPT),
+            "豁免必须是实际旁路的精确子集，不能靠 31-3 的算术掩盖 stale exemption"
+        );
+
+        sourceModel.assertReceiverBootstrapsAreReachable();
     }
 
     @Test
     void protoEnumPrefixInventoryAndNormalizationModesStayFrozen() throws IOException {
-        String source = Files.readString(clientRoot().resolve(
-            "src/main/java/com/bong/client/network/ProtoServerDataBridge.java"
-        ));
-        Set<String> actualPrefixes = new TreeSet<>();
-        Matcher matcher = PREFIX_LITERAL.matcher(source);
-        int prefixLiteralReferences = 0;
-        while (matcher.find()) {
-            actualPrefixes.add(matcher.group(1));
-            prefixLiteralReferences++;
-        }
+        Path networkRoot = clientRoot().resolve("src/main/java/com/bong/client/network");
+        String bridgeSource = Files.readString(networkRoot.resolve("ProtoServerDataBridge.java"));
+        PrefixInventory bridge = prefixInventory(bridgeSource);
 
-        assertEquals(ENUM_PREFIXES, actualPrefixes,
-            "新增/删除 proto enum 前缀必须更新 R6 bridge normalization 账本");
-        assertEquals(43, actualPrefixes.size());
-        assertEquals(57, prefixLiteralReferences,
-            "P0 冻结 57 处 enum prefix literal 引用；迁到 registry 时要原子更新该断言");
+        assertEquals(ENUM_PREFIXES, bridge.prefixes(),
+            "ProtoServerDataBridge 新增/删除 enum 前缀必须更新 R6 normalization 账本");
+        assertEquals(43, bridge.prefixes().size());
+        assertEquals(57, bridge.references(),
+            "P0 冻结 bridge-local 的 57 处 enum prefix literal 引用");
         for (String helper : List.of(
             "stripEnumPrefix(",
             "stripEnumPrefixCapitalized(",
             "stripEnumPrefixPascalCase(",
             "bridgeStripEnumsOmittingUnspecified("
         )) {
-            assertTrue(source.contains(helper),
+            assertTrue(bridgeSource.contains(helper),
                 () -> "R6 冻结的 enum normalization mode 消失：" + helper);
         }
+
+        String inventorySource = Files.readString(networkRoot.resolve("InventoryEventHandler.java"));
+        PrefixInventory handler = prefixInventory(inventorySource);
+        assertEquals(Set.of("EQUIP_SLOT_"), handler.prefixes(),
+            "P0 当前态只有 InventoryEventHandler 的嵌套 equip.slot 在 bridge 外剥前缀");
+        assertEquals(1, handler.references());
+        assertTrue(inventorySource.contains("slotName.startsWith(PROTO_EQUIP_SLOT_PREFIX)"));
+        assertTrue(inventorySource.contains("slotName.substring(PROTO_EQUIP_SLOT_PREFIX.length())"));
+
+        Set<String> fullReceivePath = new TreeSet<>(bridge.prefixes());
+        fullReceivePath.addAll(handler.prefixes());
+        assertEquals(44, fullReceivePath.size(),
+            "完整 production receive path 基线为 44 个 enum 前缀");
+        assertEquals(58, bridge.references() + handler.references(),
+            "完整 production receive path 基线为 58 处 enum prefix 引用");
     }
 
-    private static IndirectReceiverBinding binding(
-        String relativePath,
-        String channel,
-        String... declarations
-    ) {
-        return new IndirectReceiverBinding(relativePath, channel, List.of(declarations));
-    }
-
-    private static int countOccurrences(String source, String needle) {
-        int count = 0;
-        int searchFrom = 0;
-        while ((searchFrom = source.indexOf(needle, searchFrom)) >= 0) {
-            count++;
-            searchFrom += needle.length();
+    private static PrefixInventory prefixInventory(String source) {
+        Set<String> prefixes = new TreeSet<>();
+        Matcher matcher = PREFIX_LITERAL.matcher(source);
+        int references = 0;
+        while (matcher.find()) {
+            prefixes.add(matcher.group(1));
+            references++;
         }
-        return count;
+        return new PrefixInventory(Set.copyOf(prefixes), references);
     }
 
-    private static List<String> receiverArguments(String source) {
-        List<String> arguments = new ArrayList<>();
-        String needle = "ClientPlayNetworking.registerGlobalReceiver";
-        int searchFrom = 0;
-        while ((searchFrom = source.indexOf(needle, searchFrom)) >= 0) {
-            int argumentStart = source.indexOf('(', searchFrom + needle.length()) + 1;
-            assertTrue(argumentStart > 0, "receiver call must have an argument list");
-            int depth = 0;
-            boolean inString = false;
-            boolean escaped = false;
-            int index = argumentStart;
-            for (; index < source.length(); index++) {
-                char current = source.charAt(index);
-                if (inString) {
-                    if (escaped) {
-                        escaped = false;
-                    } else if (current == '\\') {
-                        escaped = true;
-                    } else if (current == '"') {
-                        inString = false;
+    private static Map<String, MigrationDecision> migrationDecisions() {
+        Map<String, MigrationDecision> decisions = new LinkedHashMap<>();
+        for (String channel : List.of(
+            "bong:npc_metadata",
+            "bong:npc_lod",
+            "bong:npc_bubble",
+            "bong:npc_mood",
+            "bong:tsy_boss_health",
+            "bong:tsy_death_vfx",
+            "bong:locust_swarm_warning",
+            "bong:vfx_event",
+            "bong:vfx/qi_attrition",
+            "bong:audio/play",
+            "bong:audio/stop",
+            "bong:tiandao_presence",
+            "bong:audio/ambient_zone",
+            "bong:zone_environment",
+            "bong:mutation_visual",
+            "bong:crack_reading",
+            "bong:resonance_lock",
+            "bong:resonance_lock_end",
+            "bong:void_erosion_visual",
+            "bong:spider_disguise_enter",
+            "bong:spider_ambush_trigger",
+            "bong:rat_qi_tier",
+            "bong:daozhan_disguise_enter",
+            "bong:daozhan_reveal",
+            "bong:core_absorption_hallucination",
+            "bong:elder_encounter",
+            "bong:era_ambiance",
+            "bong:halfstep_rechallenge"
+        )) {
+            decisions.put(channel, MigrationDecision.MIGRATE);
+        }
+        decisions.put("bong:agent_ui_request", MigrationDecision.EXEMPT);
+        decisions.put("bong:agent_ui_close", MigrationDecision.EXEMPT);
+        decisions.put("bong:shader_state", MigrationDecision.EXEMPT);
+        return Map.copyOf(decisions);
+    }
+
+    private static long decisionCount(MigrationDecision decision) {
+        return SIDE_CHANNEL_DECISIONS.values().stream().filter(decision::equals).count();
+    }
+
+    private static Set<String> channelsWithDecision(MigrationDecision decision) {
+        return SIDE_CHANNEL_DECISIONS.entrySet().stream()
+            .filter(entry -> entry.getValue() == decision)
+            .map(Map.Entry::getKey)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    private record PrefixInventory(Set<String> prefixes, int references) {}
+
+    private record ReceiverSite(
+        Path relativePath,
+        long line,
+        String channel,
+        ExecutableElement enclosingMethod
+    ) {
+        @Override
+        public String toString() {
+            return relativePath + ":" + line;
+        }
+    }
+
+    private static final class JavaSourceModel {
+        private final Path sourceRoot;
+        private final Trees trees;
+        private final List<ReceiverSite> receiverSites = new ArrayList<>();
+        private final List<String> forbiddenReferences = new ArrayList<>();
+        private final Map<ExecutableElement, List<ExecutableElement>> calls = new HashMap<>();
+        private final Map<String, ExecutableElement> sourceMethods = new HashMap<>();
+
+        private JavaSourceModel(Path sourceRoot, Trees trees) {
+            this.sourceRoot = sourceRoot;
+            this.trees = trees;
+        }
+
+        static JavaSourceModel parse(Path sourceRoot) throws IOException {
+            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+            assertTrue(compiler != null, "R6 source pin requires a full Java 17 JDK, not a JRE");
+            List<Path> sourceFiles;
+            try (Stream<Path> files = Files.walk(sourceRoot)) {
+                sourceFiles = files
+                    .filter(path -> path.toString().endsWith(".java"))
+                    .sorted()
+                    .toList();
+            }
+
+            DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+            try (StandardJavaFileManager fileManager =
+                     compiler.getStandardFileManager(diagnostics, null, null)) {
+                Iterable<? extends JavaFileObject> javaFiles =
+                    fileManager.getJavaFileObjectsFromPaths(sourceFiles);
+                List<String> options = List.of(
+                    "-proc:none",
+                    "--release", "17",
+                    "-classpath", System.getProperty("java.class.path")
+                );
+                JavacTask task = (JavacTask) compiler.getTask(
+                    null, fileManager, diagnostics, options, null, javaFiles
+                );
+                List<CompilationUnitTree> units = new ArrayList<>();
+                task.parse().forEach(units::add);
+                task.analyze();
+
+                List<String> errors = diagnostics.getDiagnostics().stream()
+                    .filter(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR)
+                    .filter(diagnostic -> isFatalAttributionDiagnostic(diagnostic, sourceRoot))
+                    .map(JavaSourceModel::formatDiagnostic)
+                    .toList();
+                assertEquals(List.of(), errors,
+                    "production Java AST attribution must succeed before receiver census can be trusted");
+
+                JavaSourceModel model = new JavaSourceModel(sourceRoot, Trees.instance(task));
+                for (CompilationUnitTree unit : units) {
+                    model.scan(unit);
+                }
+                assertEquals(List.of(), model.forbiddenReferences,
+                    "registerGlobalReceiver method references are dynamic registration forms; R6 fails closed");
+                return model;
+            }
+        }
+
+        List<ReceiverSite> receiverSites() {
+            return List.copyOf(receiverSites);
+        }
+
+        void assertReceiverBootstrapsAreReachable() {
+            ExecutableElement initializer = requireSourceMethod(
+                "com.bong.client.BongClient", "onInitializeClient", 0
+            );
+            ExecutableElement networkRegister = requireSourceMethod(
+                "com.bong.client.BongNetworkHandler", "register", 0
+            );
+            ExecutableElement irisRegister = requireSourceMethod(
+                "com.bong.client.iris.IrisBootstrap", "register", 0
+            );
+
+            assertEquals(1, callCount(initializer, networkRegister),
+                "BongClient.onInitializeClient 必须恰好调用一次 BongNetworkHandler.register");
+            assertEquals(1, callCount(initializer, irisRegister),
+                "BongClient.onInitializeClient 必须恰好调用一次 IrisBootstrap.register");
+
+            Set<ExecutableElement> reachable = reachableFrom(Set.of(networkRegister, irisRegister));
+            List<ReceiverSite> unreachable = receiverSites.stream()
+                .filter(site -> !reachable.contains(site.enclosingMethod()))
+                .toList();
+            assertEquals(List.of(), unreachable,
+                "每个 receiver 调用都必须从两个 production register bootstrap 可达，不能藏在 dead helper");
+        }
+
+        private void scan(CompilationUnitTree unit) {
+            new TreePathScanner<Void, ExecutableElement>() {
+                @Override
+                public Void visitMethod(MethodTree node, ExecutableElement ignored) {
+                    Element element = trees.getElement(getCurrentPath());
+                    ExecutableElement method = element instanceof ExecutableElement executable
+                        ? executable : null;
+                    if (method != null) {
+                        sourceMethods.put(methodKey(method), method);
                     }
-                } else if (current == '"') {
-                    inString = true;
-                } else if (current == '(') {
-                    depth++;
-                } else if (current == ')') {
-                    assertTrue(depth > 0, "receiver identifier has balanced parentheses");
-                    depth--;
-                } else if (current == ',' && depth == 0) {
-                    break;
+                    return super.visitMethod(node, method);
+                }
+
+                @Override
+                public Void visitMethodInvocation(
+                    MethodInvocationTree node,
+                    ExecutableElement enclosingMethod
+                ) {
+                    Element element = trees.getElement(
+                        new TreePath(getCurrentPath(), node.getMethodSelect())
+                    );
+                    boolean receiverSyntax = isReceiverSyntax(node.getMethodSelect());
+                    assertTrue(!receiverSyntax || element instanceof ExecutableElement,
+                        () -> "registerGlobalReceiver syntax could not be attributed at " + site(unit, node));
+                    assertTrue(!receiverSyntax || isReceiverMethod((ExecutableElement) element),
+                        () -> "registerGlobalReceiver must resolve to Fabric's exact owner at "
+                            + site(unit, node));
+                    if (enclosingMethod != null && element instanceof ExecutableElement called) {
+                        calls.computeIfAbsent(enclosingMethod, ignored -> new ArrayList<>()).add(called);
+                    }
+                    if (element instanceof ExecutableElement called && isReceiverMethod(called)) {
+                        assertTrue(enclosingMethod != null,
+                            "receiver invocation must be enclosed by a production method");
+                        assertTrue(!node.getArguments().isEmpty(),
+                            "registerGlobalReceiver must have an Identifier first argument");
+                        TreePath argumentPath = new TreePath(getCurrentPath(), node.getArguments().get(0));
+                        String channel = resolveIdentifier(argumentPath, new HashSet<>());
+                        assertTrue(channel != null,
+                            () -> "receiver channel must be statically resolvable at " + site(unit, node));
+                        receiverSites.add(new ReceiverSite(
+                            relativePath(unit),
+                            line(unit, node),
+                            channel,
+                            enclosingMethod
+                        ));
+                    }
+                    return super.visitMethodInvocation(node, enclosingMethod);
+                }
+
+                @Override
+                public Void visitMemberReference(
+                    MemberReferenceTree node,
+                    ExecutableElement enclosingMethod
+                ) {
+                    Element element = trees.getElement(getCurrentPath());
+                    if (element instanceof ExecutableElement called && isReceiverMethod(called)) {
+                        forbiddenReferences.add(site(unit, node));
+                    }
+                    return super.visitMemberReference(node, enclosingMethod);
+                }
+            }.scan(unit, null);
+        }
+
+        private String resolveIdentifier(TreePath path, Set<Element> resolving) {
+            Tree leaf = path.getLeaf();
+            if (leaf instanceof ParenthesizedTree parenthesized) {
+                return resolveIdentifier(new TreePath(path, parenthesized.getExpression()), resolving);
+            }
+            if (leaf instanceof NewClassTree constructor) {
+                Element type = trees.getElement(new TreePath(path, constructor.getIdentifier()));
+                if (!(type instanceof TypeElement typeElement)
+                    || !IDENTIFIER_OWNER.contentEquals(typeElement.getQualifiedName())
+                    || constructor.getArguments().size() != 2) {
+                    return null;
+                }
+                String namespace = resolveString(
+                    new TreePath(path, constructor.getArguments().get(0)), resolving
+                );
+                String channelPath = resolveString(
+                    new TreePath(path, constructor.getArguments().get(1)), resolving
+                );
+                return namespace == null || channelPath == null
+                    ? null : namespace + ":" + channelPath;
+            }
+
+            Element element = trees.getElement(path);
+            if (!(element instanceof VariableElement variable) || !resolving.add(variable)) {
+                return null;
+            }
+            try {
+                TreePath declarationPath = trees.getPath(variable);
+                if (declarationPath == null || !(declarationPath.getLeaf() instanceof VariableTree declaration)
+                    || declaration.getInitializer() == null) {
+                    return null;
+                }
+                return resolveIdentifier(
+                    new TreePath(declarationPath, declaration.getInitializer()), resolving
+                );
+            } finally {
+                resolving.remove(variable);
+            }
+        }
+
+        private String resolveString(TreePath path, Set<Element> resolving) {
+            Tree leaf = path.getLeaf();
+            if (leaf instanceof ParenthesizedTree parenthesized) {
+                return resolveString(new TreePath(path, parenthesized.getExpression()), resolving);
+            }
+            if (leaf instanceof LiteralTree literal && literal.getValue() instanceof String value) {
+                return value;
+            }
+            Element element = trees.getElement(path);
+            if (element instanceof VariableElement variable
+                && variable.getConstantValue() instanceof String value) {
+                return value;
+            }
+            if (!(element instanceof VariableElement variable) || !resolving.add(variable)) {
+                return null;
+            }
+            try {
+                TreePath declarationPath = trees.getPath(variable);
+                if (declarationPath == null || !(declarationPath.getLeaf() instanceof VariableTree declaration)
+                    || declaration.getInitializer() == null) {
+                    return null;
+                }
+                return resolveString(new TreePath(declarationPath, declaration.getInitializer()), resolving);
+            } finally {
+                resolving.remove(variable);
+            }
+        }
+
+        private ExecutableElement requireSourceMethod(String owner, String name, int parameterCount) {
+            String key = owner + "#" + name + "/" + parameterCount;
+            ExecutableElement method = sourceMethods.get(key);
+            if (method == null) {
+                fail("production bootstrap method disappeared: " + key);
+            }
+            return method;
+        }
+
+        private int callCount(ExecutableElement caller, ExecutableElement callee) {
+            return (int) calls.getOrDefault(caller, List.of()).stream()
+                .filter(callee::equals)
+                .count();
+        }
+
+        private Set<ExecutableElement> reachableFrom(Set<ExecutableElement> roots) {
+            Set<ExecutableElement> reachable = new HashSet<>();
+            ArrayDeque<ExecutableElement> pending = new ArrayDeque<>(roots);
+            while (!pending.isEmpty()) {
+                ExecutableElement method = pending.removeFirst();
+                if (!reachable.add(method)) {
+                    continue;
+                }
+                for (ExecutableElement called : calls.getOrDefault(method, List.of())) {
+                    if (sourceMethods.containsValue(called)) {
+                        pending.addLast(called);
+                    }
                 }
             }
-            assertTrue(index < source.length(), "receiver call must separate identifier and callback");
-            arguments.add(source.substring(argumentStart, index).replaceAll("\\s+", " ").trim());
-            searchFrom = index + 1;
+            return reachable;
         }
-        return arguments;
-    }
 
-    private static String readAllProductionSource(Path sourceRoot) throws IOException {
-        try (Stream<Path> files = Files.walk(sourceRoot)) {
-            StringBuilder joined = new StringBuilder();
-            for (Path path : files.filter(path -> path.toString().endsWith(".java")).toList()) {
-                joined.append(Files.readString(path)).append('\n');
+        private boolean isReceiverMethod(ExecutableElement method) {
+            return method.getSimpleName().contentEquals("registerGlobalReceiver")
+                && method.getEnclosingElement() instanceof TypeElement owner
+                && RECEIVER_OWNER.contentEquals(owner.getQualifiedName());
+        }
+
+        private static boolean isReceiverSyntax(ExpressionTree methodSelect) {
+            if (methodSelect instanceof MemberSelectTree memberSelect) {
+                return memberSelect.getIdentifier().contentEquals("registerGlobalReceiver");
             }
-            return joined.toString();
+            return methodSelect instanceof IdentifierTree identifier
+                && identifier.getName().contentEquals("registerGlobalReceiver");
         }
-    }
 
-    private static int countMatches(Pattern pattern, String source) {
-        int count = 0;
-        Matcher matcher = pattern.matcher(source);
-        while (matcher.find()) {
-            count++;
+        private static boolean isFatalAttributionDiagnostic(
+            Diagnostic<? extends JavaFileObject> diagnostic,
+            Path sourceRoot
+        ) {
+            JavaFileObject source = diagnostic.getSource();
+            if (source == null) {
+                return true;
+            }
+            Path sourcePath = Path.of(source.toUri()).normalize();
+            if (!sourcePath.startsWith(sourceRoot)) {
+                return true;
+            }
+            Path relative = sourceRoot.relativize(sourcePath);
+            return relative.equals(Path.of("com/bong/client/BongClient.java"))
+                || relative.equals(Path.of("com/bong/client/BongNetworkHandler.java"))
+                || relative.equals(Path.of("com/bong/client/iris/IrisBootstrap.java"));
         }
-        return count;
+
+        private Path relativePath(CompilationUnitTree unit) {
+            return sourceRoot.relativize(Path.of(unit.getSourceFile().toUri()));
+        }
+
+        private long line(CompilationUnitTree unit, Tree tree) {
+            long position = trees.getSourcePositions().getStartPosition(unit, tree);
+            return unit.getLineMap().getLineNumber(position);
+        }
+
+        private String site(CompilationUnitTree unit, Tree tree) {
+            return relativePath(unit) + ":" + line(unit, tree);
+        }
+
+        private static String methodKey(ExecutableElement method) {
+            Element owner = method.getEnclosingElement();
+            String ownerName = owner instanceof TypeElement type
+                ? type.getQualifiedName().toString() : owner.toString();
+            return ownerName + "#" + method.getSimpleName() + "/" + method.getParameters().size();
+        }
+
+        private static String formatDiagnostic(Diagnostic<? extends JavaFileObject> diagnostic) {
+            JavaFileObject source = diagnostic.getSource();
+            String location = source == null ? "<unknown>" : source.getName();
+            return location + ":" + diagnostic.getLineNumber() + ": "
+                + diagnostic.getMessage(null);
+        }
     }
 
     private static Path clientRoot() {

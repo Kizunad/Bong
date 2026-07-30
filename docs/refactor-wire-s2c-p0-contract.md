@@ -6,11 +6,13 @@
 
 ### 1.1 client receiver 口径
 
-权威口径是 `client/src/main/java/**/*.java` 中所有 `ClientPlayNetworking.registerGlobalReceiver(...)`，不只看 `BongNetworkHandler.register()`。扫描基线共 **32 个 receiver**：
+权威口径是 `client/src/main/java/**/*.java` 中所有经 JDK AST + symbol attribution 解析的 `ClientPlayNetworking.registerGlobalReceiver(...)` 真实调用，不只看 `BongNetworkHandler.register()`。扫描基线共 **32 个 receiver**：
 
 - `BongNetworkHandler.java`：31 个（含唯一目标轨 `bong:server_data`）。
 - `IrisBootstrap.java`：1 个（`bong:shader_state`）。
-- 扣除 `bong:server_data` 后，旁路基线是 **31 个**。plan 侦察中的“28”是近似旧值，后续验收以测试锁定的 31 为准。
+- 扣除 `bong:server_data` 后，旁路基线是 **31 个**。
+
+扫描同时冻结：每个 channel ID 唯一、调用解析到 Fabric API 的精确 owner、所有 receiver 从 `BongClient.onInitializeClient()` 的两个 production bootstrap（`BongNetworkHandler.register` / `IrisBootstrap.register`）可达。动态/不可解析 ID、receiver method reference、错误 owner 或 dead helper 均 fail closed。
 
 所有旁路都必须出现在下表；新增 receiver 未登记、删除 receiver 未清账均由 `WireS2cContractPinTest` 阻断。
 
@@ -50,17 +52,27 @@
 
 结论：**28 收编，3 豁免**。P3 不做双轨兼容；每个收编项在同一提交内完成 server sender → proto envelope → bridge/router → 删除专用 receiver 的一次性切换。
 
-### 1.2 server emit 文件口径
+### 1.2 server emit 文件口径：API 形状与实际 wire 分轴
 
-权威口径是 `server/src/**/*_emit.rs`（递归，不把普通 `bridge.rs`/`resourcepack.rs` 算作 emit 文件）。基线共 **68 个**：
+权威口径是 `server/src/**/*_emit.rs`（递归，不把普通 `bridge.rs`/`resourcepack.rs` 算作 emit 文件）。基线共 **68 个**。P0 pin 用 production-only lexical scanner 排除 import、注释、doc comment、字符串/字符字面量与 `#[cfg(test)]` 项，只识别真实 call shape，并冻结两条不能混为一谈的轴：
 
-- 51 个仅走 `send_server_data_payload`。
-- 13 个仅走专用 `send_custom_payload`。
-- 1 个混合文件（`cultivation_detail_emit.rs`，其中 direct send 仍是 `bong:server_data`）。
-- 2 个只发内部/Redis/VFX domain event（`meridian_severed_emit.rs`、`tuike_ash_emit.rs`）。
-- 1 个纯 Redis sender（`identity/wanted_player_emit.rs`）。
+**API call shape：**
 
-P0 pin 测试冻结文件名全集与分类，避免把非 S2C 的 `*_emit.rs` 错迁，也避免新文件绕过 builder 迁移账本。
+- 51 个 `helper_only`：仅调用 `send_server_data_payload`。
+- 13 个 `direct_only`：仅调用 `Client::send_custom_payload`。
+- 1 个 `both`：`cultivation_detail_emit.rs` 同时调用两种 API。
+- 2 个 `no_client_send`：`meridian_severed_emit.rs`、`tuike_ash_emit.rs`。
+- 1 个 `redis_only`：`identity/wanted_player_emit.rs`。
+
+**实际 wire channel：**
+
+- 53 个 `server_data_only`。
+- 12 个 `dedicated_only`。
+- 0 个 `channel_mixed`。
+- 2 个 `domain_only`。
+- 1 个 `redis_only`。
+
+`cultivation_detail_emit.rs` 与 `qi_color_observed_emit.rs` 虽使用 direct API，实际 channel 仍是 `bong:server_data`，不能按 API 名称误判为专用旁路。P0 pin 同时冻结文件全集、API shape、wire class；scanner regression tests 覆盖 import、注释/doc comment、string/raw string、`#[cfg(test)]`、multiline call 与真实 call。
 
 ## 2. emit builder API 冻结（P1 实现目标）
 
@@ -122,54 +134,49 @@ pub fn emit_server_data(
 
 ## 4. proto enum normalization 冻结
 
-所有 proto3 enum → legacy handler 字符串转换只允许发生在 `ProtoServerDataBridge`。冻结四种模式：
+proto3 enum → legacy handler 字符串转换的目标态集中在 `ProtoServerDataBridge`；P0 同时登记当前 production receive path 唯一的 handler-side 例外，不能把 P2 目标态冒充 P0 现状。冻结四种模式：
 
 1. `snake_lower`：剥前缀后 `SCREAMING_SNAKE_CASE → snake_case`。
 2. `capitalized`：剥前缀后单词首字母大写（`SHARP → Sharp`）；仅 Realm/Color 的既有 legacy consumer。
 3. `pascal_case`：剥前缀后多段 PascalCase（`ZHENFA_WARD_ALERT → ZhenfaWardAlert`）。
 4. `snake_lower_omit_unspecified`：与 1 相同，但 proto 默认 `*_UNSPECIFIED` 删除字段，让 legacy required-field gate fail closed。
 
-P0 盘点到 **43 个唯一前缀字面量 / 57 处字面量引用**。`WireS2cContractPinTest` 锁定唯一前缀全集以及四个 helper/策略入口；P2 必须把 payload-specific 调用声明收敛成 bridge 内的单一 registry，禁止 handler 二次剥前缀。
+P0 bridge-local 盘点为 **43 个唯一前缀 / 57 处引用**。`InventoryEventHandler` 仍在嵌套 `inventory_event.from|to.equip.slot` 处理 `EQUIP_SLOT_`（1 个前缀 / 1 处引用），所以完整 production receive path 是 **44 个唯一前缀 / 58 处引用**。`WireS2cContractPinTest` 同时锁定 bridge-local 与 full-path 基线；P2 才把该 handler 逻辑迁回 bridge。
 
-## 5. join / reconnect 首包快照权威清单
+## 5. join / reconnect replay 权威清单
 
-权威清单由 R6 的 `server/tests/wire_s2c_contract_pin.rs` 维护，登记 producer symbol 与触发模型。不得放进 R2 的 Store lifecycle 文件，也不得让 R3 persistence 自己声明网络 replay。当前冻结项：
+权威清单由 `server/tests/wire_s2c_contract_pin.rs::REPLAY_PINS` 维护。每项冻结 source function、trigger/cache marker、production registration function 以及 `app.add_systems(...)` 内的 exact callee path；测试基于剥除 comments/strings/`#[cfg(test)]` 的 token 结构，而非 raw substring occurrence。P0 基线共 55 个分类项（同一 producer 可同时承担 cache-first 与 periodic convergence）：
 
-| producer | trigger | 首包内容 |
-|---|---|---|
-| `send_welcome_payload_on_join` | `Added<Client>` | welcome/协议握手状态 |
-| `emit_player_state_payloads` | attach 后 `Added<PlayerState/Cultivation/...>` | player_state + season projection |
-| `emit_join_inventory_snapshots` | `Added<PlayerInventory>` | inventory_snapshot |
-| `emit_join_skill_snapshots` | `Added<SkillSet>` | skill_snapshot |
-| `emit_join_techniques_snapshot_payloads` | `Added<KnownTechniques>` | techniques_snapshot |
-| `emit_recipe_list_on_join` | per-client sent cache | craft recipe list + idle/active craft session |
-| `emit_cultivation_detail_payloads` | 周期 emitter（在线后首个周期） | cultivation_detail |
-| `emit_body_plan_layout_payloads` | `LastSentBodyPlanLayout` 缺失 | body_plan_layout |
-| `emit_race_gate_meta_payloads` | `LastSentRaceGateMeta` 缺失 | race_gate_meta |
-| `emit_morph_state_payloads` | `LastSentMorphStateJoin` 缺失 | morph full snapshot |
-| `emit_join_dropped_loot_syncs` | `Added<Client>` | 当前世界掉落物全量 |
-| `emit_join_remains_syncs` | `Added<Client>` | 当前遗骸全量 |
-| `emit_rift_portal_state_payloads_to_joined_clients` | `Added<Client>` | 当前裂隙门全量 |
-| `emit_container_state_payloads_to_joined_clients` | `Added<Client>` | 当前 TSY 容器全量 |
-| `emit_tribulation_state_payloads` | known-client diff | 所有 active tribulation state |
-| `emit_tribulation_broadcast_payloads` | known-client diff | 所有 active tribulation broadcasts |
-| `emit_ascension_quota_payloads` | client count change | 当前化虚名额状态 |
-| `on_player_join_send_spider_disguise_list` | `Added<Client>` | 视距内拟态蛛全量 |
-| `on_player_join_send_daozhan_disguise_list` | `Added<Client>` | 视距内道伥伪装全量 |
-| `on_player_join_send_rat_qi_tiers` | `Added<Client>` | 视距内噬元鼠档位全量 |
-| `era_ambiance_on_join_system` | `Added<Client>` + realm gate | 当前时代天象 |
-| `mark_zone_environment_dirty_for_new_clients` | `Added<Client>` | 标脏后由 env broadcaster 重发 |
-| `send_tutorial_coffin_pos_on_join` | 延迟就绪 marker | 出生引导棺坐标 |
-| `emit_coffin_state_to_joined_clients` | `Added<Client>` | 玩家棺状态 |
-| `emit_anonymity_payloads_for_joined_clients` | `Added<Anonymity>` | 社交匿名状态 |
+| 分类 | 数量 | producer / 语义 |
+|---|---:|---|
+| `ProtocolHandshake` | 1 | `send_welcome_payload_on_join`：`Added<Client>` welcome。 |
+| `StrictJoin` | 10 | dropped loot、remains、rift portal、TSY container、spider/Daozhan/rat 全量、era ambiance、coffin、`AwaitingRevival` death-screen reconnect。 |
+| `JoinDerived` | 21 | player state、inventory、skill、techniques、realm vision、anonymity、zone dirty→broadcast、identity、quickslot、skillbar、unlocks、combat HUD、wounds、derived attrs、status、weapon、treasure、spirit treasure、false-skin stack、material discovery。 |
+| `ActiveReplay` | 2 | tribulation state / broadcast 以 `known_clients: HashSet<Entity>` 的 identity set difference 向新 entity 重放 active state。 |
+| `DefectiveReplay` | 1 | ascension quota 只比较全局 `last_client_count`：同数量 disconnect/reconnect 替换可能漏发 newcomer，数量变化又会重发旧 client。P0 只登记缺陷，不改生产行为。 |
+| `CacheMissImmediate` | 10 | craft recipe、body plan、race gate、morph、zone info、tutorial coffin、skill config、ambient audio、healer AI、carrier。 |
+| `CacheMissAtCadence` | 2 | NPC mood、TSY boss health；首次 cache miss 要等各自 cadence。 |
+| `PeriodicConvergence` | 8 | cultivation detail、morph、NPC LOD、spider/Daozhan/rat periodic sync、craft session dirty/convergence、carrier periodic refresh；**不是 strict first-packet guarantee**。 |
 
-明确非快照：
+关键边界：
 
-- `emit_join_alchemy_snapshots` 当前仅显式 mock env 启用时发送，不能宣称生产 join hydration。
-- `emit_join_forge_snapshots` 当前是空 placeholder，真实 forge 快照只在打开界面时发送。
-- `resourcepack::prompt_resource_pack_on_join` 是协议 prompt，不属于 ServerData join snapshot，保留专用流程。
+1. `reemit_death_screen_for_reconnected_awaiting_revival_clients` 正确重放 `AwaitingRevival`；`NearDeath` 没有独立 death-screen，重连时 `Wounds::default()` 可能使其静默回 `Alive`。后者是已知 active-state 缺陷，属于 lifecycle/wounds 所有权，不在 R6 P0 改行为。
+2. `mark_zone_environment_dirty_for_new_clients` 只是 dirty marker，实际 dedicated `bong:zone_environment` sender 是 `zone_environment_broadcast_system`；两者都需 pin，不能把 marker 冒充 sender。
+3. realm vision、identity/quickslot/skillbar/unlocks、HUD/wounds/derived/status、weapon/treasure/spirit-treasure/false-skin/material-discovery 均由 join-time component attach/change 派生，不是直接 `Added<Client>`。
+4. body/race/morph/craft/zone/tutorial/skill-config/audio/healer/carrier 依赖 per-client marker/cache miss；NPC mood / TSY boss health 还受 cadence 限制。
+5. `emit_cultivation_detail_payloads`、morph periodic 等只能提供 eventual convergence，不能在 P1 被升级成首包承诺。
 
-P1 实现 `JoinSnapshotKey` 时必须覆盖上表 ServerData/待收编项；迁移不能借机改变 producer 的业务触发时序。
+### 5.1 明确 exclusions
+
+- `emit_join_alchemy_snapshots`：只在 `alchemy_join_mocks_enabled` 显式 mock 环境下发送。
+- `emit_join_forge_snapshots`：`join hydration placeholder`，真实 forge snapshot 仍由 UI-open/request path 触发。
+- `resourcepack::prompt_resource_pack_on_join`：原版资源包 prompt，不属于 ServerData replay。
+- `identity/wanted_player_emit.rs`：Redis-only；`meridian_severed_emit.rs` / `tuike_ash_emit.rs`：domain-only。
+- `client_request_handler.rs` 下的 C2S/request-response paths 归 R4；R6 不编辑。
+- command/chunk/skin/native Valence state 及三个 client channel exemptions（agent UI request/close、dev shader）不进入 ServerData replay。
+- 普通 event/change arms（break/attack/cast/VFX/audio delta、world add/remove 等）不因命名含 `emit` 就被当成 join guarantee。
+
+P1 `JoinSnapshotKey` 只覆盖真正的 strict/join-derived/cache-driven 项；迁移不得借机改变 trigger 时序，也不得把 periodic convergence 标成 first-packet guarantee。
 
 ## 6. 所有权与 P0 不变量
 
@@ -177,3 +184,10 @@ P1 实现 `JoinSnapshotKey` 时必须覆盖上表 ServerData/待收编项；迁�
 - R2 独占 `clearClientStateOnDisconnect`、Store lifecycle/gate；R6 的 receiver 扫描只读源码，不编辑这些区段。
 - R3 独占 `server/src/persistence/**` 与 autosave；join 清单只登记网络 producer，不改变 hydration。
 - R4 独占 `client_request_handler.rs`；`core_absorption_hallucination` 的 sender 等 R4 交付 API 后迁移。
+
+## 7. P0 本地验收边界
+
+- client：Java 17 下执行 `./gradlew test build -x runGametest --no-daemon`，完整 gate 通过。
+- server：`wire_s2c_contract_pin` standalone lexical tests 6/6 通过；最终仍须在共享 `/tmp/bong-cargo.lock` 下完成 Cargo target test 与 server 全门禁。
+- 安全隔离：本地未运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh`，也未运行会间接调用两者的 suite；该覆盖留给 GitHub e2e。
+- P0 不改 production `.rs` / `.java`，只改 contract 文档与 source/contract pin tests。
