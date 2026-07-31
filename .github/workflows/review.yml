@@ -40,7 +40,7 @@ jobs:
       # 创建并维护独立熔断状态 issue 及其事件评论。
       issues: write
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     outputs:
       should_run: ${{ steps.circuit.outputs.should_run }}
       circuit_outcome: ${{ steps.circuit.outcome }}
@@ -83,7 +83,7 @@ jobs:
       contents: read
       pull-requests: read
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     outputs:
       checkout_outcome: ${{ steps.checkout.outcome }}
       review_outcome: ${{ steps.review_run.outcome }}
@@ -184,7 +184,7 @@ jobs:
       pull-requests: write
       issues: write
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
