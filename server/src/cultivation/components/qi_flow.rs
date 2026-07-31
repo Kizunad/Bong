@@ -113,25 +113,6 @@ impl ActorQiIdentity {
     }
 }
 
-#[derive(Debug)]
-pub struct ActorQiTarget<'a> {
-    cultivation: &'a mut Cultivation,
-    identity: ActorQiIdentity,
-}
-
-impl<'a> ActorQiTarget<'a> {
-    pub fn new(cultivation: &'a mut Cultivation, identity: ActorQiIdentity) -> Self {
-        Self {
-            cultivation,
-            identity,
-        }
-    }
-
-    fn into_parts(self) -> (&'a mut Cultivation, QiAccountId) {
-        (self.cultivation, self.identity.account)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersistentQiSink {
     PendingInflow,
@@ -153,12 +134,6 @@ impl PersistentQiSink {
             }
         }
     }
-}
-
-#[derive(Debug)]
-pub enum QiFlowTarget<'a> {
-    Actor(ActorQiTarget<'a>),
-    Persistent(PersistentQiSink),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -387,11 +362,11 @@ impl Cultivation {
         )
     }
 
-    /// 从活体转入另一活体或稳定 ledger owner。活体目标容量不足时余量留在 source；
-    /// 稳定账户接收全部请求量。外部 source 扣减只在目标真实入账 / audit 可确定成功后提交。
+    /// 从活体转入稳定 ledger owner。稳定账户接收全部请求量；外部 source 扣减只在
+    /// 目标真实入账 / audit 可确定成功后提交。
     pub(crate) fn transfer_to(
         &mut self,
-        target: QiFlowTarget<'_>,
+        sink: PersistentQiSink,
         ledger: &mut WorldQiAccount,
         source: &ActorQiIdentity,
         requested: f64,
@@ -411,84 +386,37 @@ impl Cultivation {
         }
 
         let source_account = source.account();
-        match target {
-            QiFlowTarget::Actor(target) => {
-                let (cultivation, target_account) = target.into_parts();
-                cultivation.validate_qi_state()?;
-                if source_account == target_account {
-                    return Err(QiFlowError::SameAccount {
-                        account: source_account.to_string(),
-                    });
-                }
-
-                let credited = requested.min(cultivation.qi_room());
-                if credited == 0.0 {
-                    return Ok(QiFlowOutcome::noop(requested));
-                }
-                let source_after = if credited == self.qi_current {
-                    0.0
-                } else {
-                    checked_sub_progress(
-                        self.qi_current,
-                        credited,
-                        "cultivation.qi_current.source",
-                    )?
-                };
-                let target_after = checked_add_progress(
-                    cultivation.qi_current,
-                    credited,
-                    "cultivation.qi_current.target",
-                )?;
-                let transfer = QiTransfer::new(source_account, target_account, credited, reason)?;
-
-                self.qi_current = source_after;
-                cultivation.qi_current = target_after;
-                ledger.push_transfer_audit(transfer.clone());
-
-                Ok(QiFlowOutcome {
-                    requested,
-                    source_debited: credited,
-                    target_credited: credited,
-                    zone_accepted: 0.0,
-                    overflow_credited: 0.0,
-                    untransferred: requested - credited,
-                    transfers: vec![transfer],
-                })
-            }
-            QiFlowTarget::Persistent(sink) => {
-                let target_account = sink.account();
-                if source_account == target_account {
-                    return Err(QiFlowError::SameAccount {
-                        account: source_account.to_string(),
-                    });
-                }
-                let transfer = QiTransfer::new(source_account, target_account, requested, reason)?;
-
-                let source_after = if requested == self.qi_current {
-                    0.0
-                } else {
-                    checked_sub_progress(self.qi_current, requested, "cultivation.qi_current")?
-                };
-                transfer_external_qi_to_ledger(
-                    ledger,
-                    transfer.from.clone(),
-                    transfer.to.clone(),
-                    transfer.amount,
-                    transfer.reason,
-                )?;
-                self.qi_current = source_after;
-
-                Ok(QiFlowOutcome {
-                    requested,
-                    source_debited: requested,
-                    target_credited: requested,
-                    zone_accepted: 0.0,
-                    overflow_credited: 0.0,
-                    untransferred: 0.0,
-                    transfers: vec![transfer],
-                })
-            }
+        let target_account = sink.account();
+        if source_account == target_account {
+            return Err(QiFlowError::SameAccount {
+                account: source_account.to_string(),
+            });
         }
+        let transfer = QiTransfer::new(source_account, target_account, requested, reason)?;
+
+        let source_after = if requested == self.qi_current {
+            0.0
+        } else {
+            checked_sub_progress(self.qi_current, requested, "cultivation.qi_current")?
+        };
+        transfer_external_qi_to_ledger(
+            ledger,
+            transfer.from.clone(),
+            transfer.to.clone(),
+            transfer.amount,
+            transfer.reason,
+        )?;
+        self.qi_current = source_after;
+
+        Ok(QiFlowOutcome {
+            requested,
+            source_debited: requested,
+            target_credited: requested,
+            zone_accepted: 0.0,
+            overflow_credited: 0.0,
+            untransferred: 0.0,
+            transfers: vec![transfer],
+        })
     }
 
     /// Transfer qi from this live actor into a canonical actor whose physical reserve is held in
@@ -945,14 +873,10 @@ mod tests {
         assert!(exact_release_ledger.transfers().is_empty());
 
         let mut source = cultivation(1.0, 2.0);
-        let mut target = cultivation(1.0, 2.0);
         let mut transfer_ledger = WorldQiAccount::default();
         assert!(matches!(
             source.transfer_to(
-                QiFlowTarget::Actor(ActorQiTarget::new(
-                    &mut target,
-                    ActorQiIdentity::for_test(QiAccountId::player("target")),
-                )),
+                PersistentQiSink::QiFlowOverflow,
                 &mut transfer_ledger,
                 &actor_id,
                 tiny,
@@ -961,7 +885,6 @@ mod tests {
             Err(QiFlowError::UnrepresentableFlow { .. })
         ));
         assert_eq!(source.qi_current(), 1.0);
-        assert_eq!(target.qi_current(), 1.0);
         assert!(transfer_ledger.transfers().is_empty());
     }
 
@@ -1168,13 +1091,9 @@ mod tests {
             assert_eq!(ledger.total(), 0.0);
             assert!(ledger.transfers().is_empty());
             let mut transfer_source = cultivation(5.0, 10.0);
-            let mut transfer_target = cultivation(1.0, 10.0);
             assert!(matches!(
                 transfer_source.transfer_to(
-                    QiFlowTarget::Actor(ActorQiTarget::new(
-                        &mut transfer_target,
-                        ActorQiIdentity::for_test(QiAccountId::player("target")),
-                    )),
+                    PersistentQiSink::QiFlowOverflow,
                     &mut ledger,
                     &ActorQiIdentity::for_test(QiAccountId::player("source")),
                     1.0,
@@ -1183,7 +1102,6 @@ mod tests {
                 Err(QiFlowError::Physics(QiPhysicsError::AuditOnlyReason { .. }))
             ));
             assert_eq!(transfer_source.qi_current(), 5.0);
-            assert_eq!(transfer_target.qi_current(), 1.0);
             assert_eq!(ledger.total(), 0.0);
             assert!(ledger.transfers().is_empty());
 
@@ -1243,13 +1161,9 @@ mod tests {
                 Err(QiFlowError::Physics(QiPhysicsError::AuditOnlyReason { .. }))
             ));
 
-            let mut target = cultivation(1.0, 10.0);
             assert!(matches!(
                 actor.transfer_to(
-                    QiFlowTarget::Actor(ActorQiTarget::new(
-                        &mut target,
-                        ActorQiIdentity::for_test(QiAccountId::player("target")),
-                    )),
+                    PersistentQiSink::QiFlowOverflow,
                     &mut ledger,
                     &ActorQiIdentity::for_test(QiAccountId::player("source")),
                     0.0,
@@ -1271,7 +1185,6 @@ mod tests {
 
             assert_eq!(actor.qi_current(), 5.0);
             assert_eq!(actor.qi_max(), 10.0);
-            assert_eq!(target.qi_current(), 1.0);
             assert_eq!(zone.spirit_qi, 0.5);
             assert_eq!(ledger.total(), 0.0);
             assert!(ledger.transfers().is_empty());
@@ -1375,7 +1288,7 @@ mod tests {
     }
 
     #[test]
-    fn actor_target_binds_audit_identity_to_life_record() {
+    fn actor_identity_binds_audit_account_to_life_record() {
         let player_record = LifeRecord::new("offline:target:incarnation-2");
         let player =
             ActorQiIdentity::from_life_record(&player_record, ActorQiKind::Player).unwrap();
@@ -1400,8 +1313,13 @@ mod tests {
     }
 
     #[test]
-    fn actor_target_rejects_blank_or_unassigned_life_record_identity() {
-        for invalid_id in ["   ", "unassigned:life_record"] {
+    fn actor_identity_rejects_blank_placeholder_or_noncanonical_life_record_identity() {
+        for invalid_id in [
+            "   ",
+            "unassigned:life_record",
+            " npc:rogue:7",
+            "npc:rogue:7 ",
+        ] {
             let invalid_record = LifeRecord::new(invalid_id);
 
             assert!(matches!(
@@ -1439,29 +1357,52 @@ mod tests {
     }
 
     #[test]
-    fn transfer_to_near_cap_target_leaves_remainder_in_source() {
-        let mut source = cultivation(8.0, 10.0);
-        let mut target = cultivation(9.0, 10.0);
-        let mut ledger = WorldQiAccount::default();
+    fn zone_gain_rounding_past_effective_cap_fails_atomically() {
+        const TARGET_CURRENT: f64 = 6.761_984_549_338_739e132;
+        const EFFECTIVE_CAP: f64 = 1.942_838_657_673_836e133;
+        const REQUESTED_ROOM: f64 = 1.266_640_202_739_962_2e133;
 
-        let outcome = source
-            .transfer_to(
-                QiFlowTarget::Actor(ActorQiTarget::new(
-                    &mut target,
-                    ActorQiIdentity::for_test(QiAccountId::player("target")),
-                )),
-                &mut ledger,
-                &ActorQiIdentity::for_test(QiAccountId::player("source")),
-                4.0,
-                QiTransferReason::Healing,
-            )
-            .unwrap();
+        for frozen in [None, Some(EFFECTIVE_CAP)] {
+            let target_max = if frozen.is_some() {
+                EFFECTIVE_CAP * 2.0
+            } else {
+                EFFECTIVE_CAP
+            };
+            let mut actor = cultivation(TARGET_CURRENT, target_max);
+            actor
+                .set_for_init(CultivationQiInit {
+                    current: TARGET_CURRENT,
+                    max: target_max,
+                    frozen,
+                })
+                .unwrap();
+            let mut zone = zone("extreme", REQUESTED_ROOM / QI_ZONE_UNIT_CAPACITY);
+            let zone_before = zone.spirit_qi;
+            let actor_before = actor.qi_snapshot();
+            let mut ledger = WorldQiAccount::default();
 
-        assert_eq!(source.qi_current(), 7.0);
-        assert_eq!(target.qi_current(), 10.0);
-        assert_eq!(outcome.source_debited, 1.0);
-        assert_eq!(outcome.untransferred, 3.0);
-        assert_eq!(ledger.transfers().len(), 1);
+            let error = actor
+                .gain_from_zone(
+                    &mut zone,
+                    &mut ledger,
+                    &ActorQiIdentity::for_test(QiAccountId::player("target")),
+                    REQUESTED_ROOM,
+                    QiTransferReason::CultivationRegen,
+                )
+                .unwrap_err();
+
+            assert!(matches!(
+                error,
+                QiFlowError::UnrepresentableFlow {
+                    field: "cultivation.qi_current",
+                    ..
+                }
+            ));
+            assert_eq!(actor.qi_snapshot(), actor_before);
+            assert_eq!(zone.spirit_qi, zone_before);
+            assert!(ledger.transfers().is_empty());
+            assert_eq!(ledger.total(), 0.0);
+        }
     }
 
     #[test]
@@ -1472,7 +1413,7 @@ mod tests {
 
         let outcome = source
             .transfer_to(
-                QiFlowTarget::Persistent(PersistentQiSink::QiFlowOverflow),
+                PersistentQiSink::QiFlowOverflow,
                 &mut ledger,
                 &ActorQiIdentity::for_test(QiAccountId::player("source")),
                 3.0,
@@ -1496,7 +1437,7 @@ mod tests {
 
         assert!(source
             .transfer_to(
-                QiFlowTarget::Persistent(PersistentQiSink::QiFlowOverflow),
+                PersistentQiSink::QiFlowOverflow,
                 &mut ledger,
                 &ActorQiIdentity::for_test(QiAccountId::player("source")),
                 1.0,
@@ -1509,29 +1450,36 @@ mod tests {
     }
 
     #[test]
-    fn transfer_rejects_overdraft_and_same_account_without_mutation() {
-        let cases = [(9.0, "target"), (1.0, "source")];
-        for (requested, target_id) in cases {
-            let mut source = cultivation(8.0, 10.0);
-            let mut target = cultivation(1.0, 10.0);
-            let mut ledger = WorldQiAccount::default();
+    fn transfer_to_stable_account_rejects_overdraft_and_same_account_without_mutation() {
+        let mut source = cultivation(8.0, 10.0);
+        let mut ledger = WorldQiAccount::default();
 
-            assert!(source
-                .transfer_to(
-                    QiFlowTarget::Actor(ActorQiTarget::new(
-                        &mut target,
-                        ActorQiIdentity::for_test(QiAccountId::player(target_id)),
-                    )),
-                    &mut ledger,
-                    &ActorQiIdentity::for_test(QiAccountId::player("source")),
-                    requested,
-                    QiTransferReason::Healing,
-                )
-                .is_err());
-            assert_eq!(source.qi_current(), 8.0);
-            assert_eq!(target.qi_current(), 1.0);
-            assert!(ledger.transfers().is_empty());
-        }
+        assert!(matches!(
+            source.transfer_to(
+                PersistentQiSink::QiFlowOverflow,
+                &mut ledger,
+                &ActorQiIdentity::for_test(QiAccountId::player("source")),
+                9.0,
+                QiTransferReason::Healing,
+            ),
+            Err(QiFlowError::InsufficientCurrent { .. })
+        ));
+        assert_eq!(source.qi_current(), 8.0);
+        assert!(ledger.transfers().is_empty());
+
+        assert!(matches!(
+            source.transfer_to(
+                PersistentQiSink::QiFlowOverflow,
+                &mut ledger,
+                &ActorQiIdentity::for_test(qi_flow_overflow_account()),
+                1.0,
+                QiTransferReason::Healing,
+            ),
+            Err(QiFlowError::SameAccount { .. })
+        ));
+        assert_eq!(source.qi_current(), 8.0);
+        assert_eq!(ledger.balance(&qi_flow_overflow_account()), 0.0);
+        assert!(ledger.transfers().is_empty());
     }
 
     #[test]

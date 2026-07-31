@@ -2949,6 +2949,95 @@ mod tests {
         .expect("seeding cultivation bundle with a custom race should succeed");
     }
 
+    fn seed_cultivation_bundle_with_qi(
+        settings: &PersistenceSettings,
+        username: &str,
+        qi_current: f64,
+        qi_max: f64,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle(
+            settings,
+            username,
+            &Cultivation {
+                realm: Realm::Condense,
+                qi_current,
+                qi_max,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            &LifeRecord::new(canonical_player_id(username)),
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation qi snapshot should succeed");
+    }
+
+    #[test]
+    fn joined_clients_restore_validated_non_default_cultivation_qi_snapshot() {
+        let (settings, root) = temp_persistence_settings("restore-validated-cultivation-qi");
+        seed_cultivation_bundle_with_qi(&settings, "RestoredQi", 4.0, 12.0);
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("RestoredQi");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("joined client should receive persisted cultivation");
+        assert_eq!(cultivation.realm, Realm::Condense);
+        assert_eq!(cultivation.qi_current, 4.0);
+        assert_eq!(cultivation.qi_max, 12.0);
+        assert_eq!(cultivation.qi_max_frozen, None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_reject_invalid_persisted_cultivation_qi_without_partial_restore() {
+        for (test_name, qi_current, qi_max) in [
+            ("negative-current", -1.0, 12.0),
+            ("current-over-max", 13.0, 12.0),
+        ] {
+            let (settings, root) = temp_persistence_settings(test_name);
+            let username = format!("InvalidQi-{}", test_name.replace('-', ""));
+            seed_cultivation_bundle_with_qi(&settings, &username, qi_current, qi_max);
+
+            let mut app = App::new();
+            app.insert_resource(settings);
+            app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+            let (client_bundle, _helper) = create_mock_client(&username);
+            let entity = app.world_mut().spawn(client_bundle).id();
+            app.update();
+
+            let cultivation = app
+                .world()
+                .get::<Cultivation>(entity)
+                .expect("joined client should still receive a safe default cultivation");
+            assert_eq!(
+                cultivation,
+                &Cultivation::default(),
+                "invalid persisted qi current={qi_current} max={qi_max} must be rejected before any live field is restored"
+            );
+
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
     /// 手写 SQL 插入模拟"race 字段加入前"的旧存档形状：`persist_player_cultivation_bundle`
     /// 恒序列化完整 `Cultivation`（`race` 字段总在场），无法产出缺 race 字段的 bundle，
     /// 所以这里绕开它直接拼一份不含 "race" key 的 JSON 落库。
