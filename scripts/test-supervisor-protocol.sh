@@ -282,7 +282,7 @@ BONG_E2E_SUPERVISOR_TEST_MODE=1 \
 BONG_E2E_SUPERVISOR="$SUPERVISOR" \
 BONG_E2E_BUILD_TOKEN="$build_token" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
-start_server_process_group "$TEST_ROOT/parent-normal.log" 0 \
+start_server_process_group "$TEST_ROOT/parent-normal.log" 0 1 \
     || fail "parent rejected the production READY -> C -> COMMITTED protocol"
 [ "$SERVER_AUTHORITY_UNCERTAIN" -eq 0 ] \
     || fail "successful startup must publish certain authority"
@@ -349,7 +349,7 @@ run_failed_parent_mode() {
         BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
         BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$after_commit_hook" \
         BONG_E2E_TEST_AFTER_ACK_HOOK="$after_ack_hook" \
-        start_server_process_group "$TEST_ROOT/parent-$mode.log" 0; then
+        start_server_process_group "$TEST_ROOT/parent-$mode.log" 0 1; then
         fail "parent unexpectedly accepted failed supervisor mode $mode"
     fi
     assert_parent_unpublished
@@ -403,7 +403,7 @@ BONG_E2E_SUPERVISOR="$no_ack_supervisor" \
 BONG_E2E_SERVER_DIRECTORY="$fixture_server" \
 BONG_TEST_STOP_MARKER="$stop_marker" \
 BONG_E2E_TEST_AFTER_COMMIT_WRITE_HOOK="$stop_before_commit_hook" \
-start_server_process_group "$TEST_ROOT/parent-stopped.log" 0 &
+start_server_process_group "$TEST_ROOT/parent-stopped.log" 0 1 &
 stopped_parent_pid=$!
 wait_for_file "$stop_marker" || fail "SIGSTOP fixture did not stop the supervisor after C write"
 wait_for_file "$fake_pid_file" || fail "SIGSTOP fixture did not publish owner PID"

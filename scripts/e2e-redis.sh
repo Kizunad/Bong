@@ -854,7 +854,8 @@ port_open() {
 }
 
 start_server_process_group() {
-  local log_file="$1" preview_mode="$2" actual_pgid="" cargo_target owner_pid=""
+  local log_file="$1" preview_mode="$2" test_override_mode="${3:-0}"
+  local actual_pgid="" cargo_target owner_pid=""
   local owner_starttime="" owner_executable_identity="" supervisor="" build_token="" ready_line="" committed_line=""
   local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
@@ -862,9 +863,10 @@ start_server_process_group() {
   supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
   build_token="$ROOT/scripts/build-token.sh"
   local server_directory="$ROOT/server"
+  # Only the in-repo supervisor protocol fixture may opt into replacement binaries.
   if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
-    [ "${GITHUB_ACTIONS:-}" != "true" ] || {
-      echo "FAIL: supervisor test overrides are forbidden in GitHub Actions" >&2
+    [ "$test_override_mode" = "1" ] || {
+      echo "FAIL: e2e supervisor test overrides require an explicit harness mode" >&2
       return 2
     }
     supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"

@@ -65,7 +65,7 @@ SPECS = {
             'supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"',
             'build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"',
             'server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"',
-            "supervisor test overrides are forbidden in GitHub Actions",
+            "e2e supervisor test overrides require an explicit harness mode",
             'python3 "$supervisor" "$server_directory" "$build_token"',
         ],
         "forbid": [
@@ -183,8 +183,11 @@ def test_e2e_supervisor_overrides_are_test_only() -> None:
     function = source[start:end]
 
     gate = function.index('if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then')
+    harness_mode = function.index(
+        'test_override_mode="${3:-0}"'
+    )
     github_rejection = function.index(
-        "supervisor test overrides are forbidden in GitHub Actions", gate
+        'e2e supervisor test overrides require an explicit harness mode', gate
     )
     override_assignment = function.index(
         'build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"', github_rejection
@@ -197,7 +200,7 @@ def test_e2e_supervisor_overrides_are_test_only() -> None:
         'python3 "$supervisor" "$server_directory" "$build_token"',
         production_rejection,
     )
-    if not gate < github_rejection < override_assignment < production_rejection < supervisor_launch:
+    if not harness_mode < gate < github_rejection < override_assignment < production_rejection < supervisor_launch:
         raise AssertionError(
             "e2e supervisor override gate must reject CI and production bypasses before launch"
         )
