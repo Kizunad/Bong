@@ -41,6 +41,10 @@
 - [ ] `screen_open_release_without_drag_is_noop`
 - [ ] `normal_panel_release_still_ends_and_consumes_drag`
 - [ ] `panel_outside_press_then_release_cannot_consume_stale_drag`
+- [ ] `mixin_mouse_transition_lock_preserves_arbitration_priority`：通过同一 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback，在 `ScreenTransitionController.inputLocked()` 为 true 时断言 LEFT PRESS 被消费且 `BotanyDragState` 不改变；断言 LEFT RELEASE 不被 `TransitionInputPolicy.shouldBlockMouse` 拦截并继续到 screen/vanilla。测试只断言 `CallbackInfo` 的取消结果与 drag ownership，不断言内部调用顺序。
+- [ ] `mixin_mouse_right_shield_press_release_preserves_arbitration`：通过同一 HEAD callback，在无 screen 且 off-hand 为公开盾牌时断言 RIGHT PRESS 消费事件并产生一次 RaiseShield、`bong$shieldRightHeld` 取得 ownership；随后 RIGHT RELEASE 消费事件并产生一次 LowerShield、ownership 清除；同时断言 Botany drag state 不被右键改变。
+- [ ] `mixin_mouse_screen_open_right_release_lowers_without_consuming`：沿同一 callback 先建立右键盾牌 ownership，再打开 screen 发送 RIGHT RELEASE；断言产生 LowerShield、ownership 清除且事件继续交给 screen/vanilla。
+- [ ] 上述三条必须从 `MixinMouse.bong$captureHarvestPanelDrag` 的真实仲裁边界取得可观察结果：测试可增加唯一的 package-private `MixinMouse` callback harness，生命周期仅限 client test invocation，不拥有第二份 drag/shield 状态、不复制分支条件；若 Fabric mixin callback 无法 headless 驱动，P1 evidence 必须记录具体阻塞原因与该 seam 的生产接线 pin，不能以孤立的 `TransitionInputPolicy` 或 payload encoder 测试替代。
 - [ ] 若 mixin 无法直接 headless 驱动，可抽最小纯 policy 供行为测试；仍须用接线 pin 证明 `MixinMouse` 生产路径调用该 policy/non-consuming teardown，不能只测孤立 state helper。
 
 ## 可核验 symbols
