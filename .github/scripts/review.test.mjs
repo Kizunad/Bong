@@ -1177,6 +1177,205 @@ test("Chat Completions SSE: content:null 是无文本首帧，随后 content 与
   assert.equal(result.stdout, "content");
 });
 
+test("Chat Completions SSE: frame contract is a closed envelope and transition table", async () => {
+  const completion = (content, finishReason = null) => JSON.stringify({
+    choices: [{ delta: { content }, finish_reason: finishReason }],
+  });
+  const rawFrame = (lines) => `${lines.join("\n")}\n\n`;
+  const frame = ({ event, data, extraFields = [] }) => {
+    const lines = [];
+    if (event !== undefined) lines.push(`event: ${event}`);
+    for (const [field, value] of extraFields) lines.push(value === undefined ? field : `${field}: ${value}`);
+    if (data !== undefined) {
+      for (const line of Array.isArray(data) ? data : [data]) lines.push(`data: ${line}`);
+    }
+    return rawFrame(lines);
+  };
+  const stopped = (content) => frame({ data: completion(content, "stop") });
+  const usage = frame({ data: JSON.stringify({ choices: [], usage: { total_tokens: 1 } }) });
+  const done = chatSseDone();
+  const cases = [
+    {
+      name: "unnamed data frame 的 choice → stop → DONE",
+      stream: [stopped("unnamed"), done],
+      output: "unnamed",
+    },
+    {
+      name: "event: message 的 choice → stop → DONE",
+      stream: [
+        frame({ event: "message", data: completion("message", "stop") }),
+        frame({ event: "message", data: "[DONE]" }),
+      ],
+      output: "message",
+    },
+    {
+      name: "多个 data field 按 SSE 规则拼接为一个 completion",
+      stream: [
+        frame({
+          data: [
+            '{"choices":[{"delta":{"content":"split"},',
+            '"finish_reason":"stop"}]}',
+          ],
+        }),
+        done,
+      ],
+      output: "split",
+    },
+    {
+      name: "data 后出现 event field 拒绝",
+      stream: [
+        rawFrame([
+          `data: ${completion("bad", "stop")}`,
+          "event: message",
+        ]),
+        done,
+      ],
+      error: /event field 必须位于所有 data field 之前/,
+    },
+    {
+      name: "未结束 frame 内的 comment 拒绝",
+      stream: [
+        rawFrame([
+          "event: message",
+          ": misplaced",
+          `data: ${completion("bad", "stop")}`,
+        ]),
+        done,
+      ],
+      error: /comment 必须位于 SSE frame 边界/,
+    },
+    {
+      name: "comment 后未分帧直接出现 data 拒绝",
+      stream: [
+        rawFrame([
+          ": misplaced",
+          `data: ${completion("bad", "stop")}`,
+        ]),
+        done,
+      ],
+      error: /comment 必须位于 SSE frame 边界/,
+    },
+    {
+      name: "open 阶段允许 comment",
+      stream: [": keepalive\n\n", stopped("comment"), done],
+      output: "comment",
+    },
+    {
+      name: "stop 后允许一次 usage-only 再 DONE",
+      stream: [stopped("usage"), usage, done],
+      output: "usage",
+    },
+    {
+      name: "event: error 即使承载完整 stop payload 和 DONE 也作为 provider failure",
+      stream: [frame({ event: "error", data: completion("laundered", "stop") }), done],
+      error: /provider error event/,
+      stdout: "",
+    },
+    {
+      name: "usage-only 后 event: error 仍作为 provider failure",
+      stream: [stopped("partial"), usage, frame({ event: "error", data: "not-json" })],
+      error: /provider error event/,
+      stdout: "partial",
+    },
+    {
+      name: "event: error 即使没有 data 也作为 provider failure",
+      stream: [frame({ event: "error" })],
+      error: /provider error event/,
+      stdout: "",
+    },
+    {
+      name: "未知 event 名即使承载完整 stop payload 和 DONE 也拒绝",
+      stream: [frame({ event: "chunk", data: completion("laundered", "stop") }), done],
+      error: /不支持的 SSE event 名：chunk/,
+      stdout: "",
+    },
+    {
+      name: "未知 SSE field 拒绝",
+      stream: [frame({ data: completion("bad", "stop"), extraFields: [["id", "7"]] }), done],
+      error: /不支持的 SSE field：id/,
+    },
+    {
+      name: "一个 frame 的重复 event field 拒绝",
+      stream: [frame({ event: "message", data: completion("bad", "stop"), extraFields: [["event", "message"]] }), done],
+      error: /只能包含一个 event field/,
+    },
+    {
+      name: "只有 event field 而没有 data field 拒绝",
+      stream: [frame({ event: "message" }), done],
+      error: /缺少 data field/,
+    },
+    {
+      name: "空 data field 拒绝",
+      stream: [frame({ data: "" }), done],
+      error: /data 不得为空/,
+    },
+    {
+      name: "open 阶段的 DONE 拒绝",
+      stream: [done],
+      error: /缺少 finish_reason=stop/,
+    },
+    {
+      name: "stop 后普通 choice 拒绝",
+      stream: [stopped("partial"), frame({ data: completion("tail") }), done],
+      error: /finish_reason 后不得再出现普通 choice event/,
+      stdout: "partial",
+    },
+    {
+      name: "usage-only 后普通 choice 拒绝",
+      stream: [stopped("partial"), usage, frame({ data: completion("tail") }), done],
+      error: /usage-only event 后只允许 \[DONE\]/,
+      stdout: "partial",
+    },
+    {
+      name: "usage-only 后第二个 usage-only 拒绝",
+      stream: [stopped("partial"), usage, usage, done],
+      error: /usage-only event 后只允许 \[DONE\]/,
+      stdout: "partial",
+    },
+    {
+      name: "stop 后 comment 拒绝",
+      stream: [stopped("partial"), ": late\n\n", done],
+      error: /不允许的 comment frame 状态转换/,
+      stdout: "partial",
+    },
+    {
+      name: "DONE 后任何 data frame 拒绝",
+      stream: [stopped("complete"), done, frame({ data: completion("tail") })],
+      error: /\[DONE\] 后不得再出现任何 frame/,
+      stdout: "complete",
+    },
+    {
+      name: "DONE 后 comment 拒绝",
+      stream: [stopped("complete"), done, ": late\n\n"],
+      error: /\[DONE\] 后不得再出现任何 frame/,
+      stdout: "complete",
+    },
+    {
+      name: "DONE 后 event: error 拒绝",
+      stream: [stopped("complete"), done, frame({ event: "error", data: "not-json" })],
+      error: /\[DONE\] 后不得再出现任何 frame/,
+      stdout: "complete",
+    },
+  ];
+
+  for (const scenario of cases) {
+    const result = await requestChatCompletions("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => sseResponse(scenario.stream),
+    });
+    if (scenario.error) {
+      assert.equal(result.code, 1, scenario.name);
+      assert.equal(isSuccessfulCodexResponse(result), false, scenario.name);
+      assert.match(result.stderr, scenario.error, scenario.name);
+      if (scenario.stdout !== undefined) assert.equal(result.stdout, scenario.stdout, scenario.name);
+    } else {
+      assert.equal(result.code, 0, scenario.name);
+      assert.equal(result.stdout, scenario.output, scenario.name);
+    }
+  }
+});
+
 test("Chat Completions SSE: stop 和 DONE 后仍无 content 时 fail-closed", async () => {
   const result = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",

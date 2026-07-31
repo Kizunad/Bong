@@ -1029,24 +1029,107 @@ function isUsageOnlyEvent(payload) {
   );
 }
 
-function reduceChatCompletionsSseEvent(state, event) {
-  const data = String(event?.data ?? "");
-  if (data === "[DONE]") {
-    state.done = true;
-    if (state.finishReason !== "stop") {
-      throw chatCompletionsSseError(
-        state.finishReason
-          ? `finish_reason=${state.finishReason} 不允许完成。`
-          : "缺少 finish_reason=stop。",
-      );
+const CHAT_COMPLETIONS_SSE_FRAME_CONTRACT = Object.freeze({
+  fieldNames: Object.freeze(["event", "data"]),
+  eventNames: Object.freeze(["", "message"]),
+  errorEventName: "error",
+  eventFieldMustPrecedeData: true,
+  commentsMustBeStandalone: true,
+  transitions: Object.freeze({
+    open: Object.freeze(["comment", "choice", "provider_error"]),
+    stopped: Object.freeze(["usage", "done", "provider_error"]),
+    usage_seen: Object.freeze(["done", "provider_error"]),
+    done: Object.freeze([]),
+  }),
+});
+
+function chatCompletionsSsePhase(state) {
+  if (state.done) return "done";
+  if (state.usageSeen) return "usage_seen";
+  return state.finishReason === "stop" ? "stopped" : "open";
+}
+
+function requireChatCompletionsSseTransition(state, type) {
+  const phase = chatCompletionsSsePhase(state);
+  if (CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.transitions[phase].includes(type)) return;
+  if (phase === "done") throw chatCompletionsSseError("[DONE] 后不得再出现任何 frame。");
+  if (phase === "usage_seen") throw chatCompletionsSseError("usage-only event 后只允许 [DONE]。");
+  if (type === "usage") throw chatCompletionsSseError("usage-only event 必须出现在 finish_reason=stop 之后。");
+  if (type === "done") {
+    throw chatCompletionsSseError(
+      state.finishReason
+        ? `finish_reason=${state.finishReason} 不允许完成。`
+        : "缺少 finish_reason=stop。",
+    );
+  }
+  if (type === "choice" && phase === "stopped") {
+    throw chatCompletionsSseError("finish_reason 后不得再出现普通 choice event。");
+  }
+  throw chatCompletionsSseError(`不允许的 ${type} frame 状态转换。`);
+}
+
+function chatCompletionsSseProviderErrorDetail(data) {
+  try {
+    return responseErrorDetail(JSON.parse(String(data ?? "")), "Chat Completions provider error event");
+  } catch {
+    return "Chat Completions provider error event";
+  }
+}
+
+function validateChatCompletionsSseEnvelope(state, event) {
+  const fields = Array.isArray(event?.fields) ? event.fields : [];
+  if (event?.comment === true) {
+    if (CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.commentsMustBeStandalone && fields.length > 0) {
+      throw chatCompletionsSseError("comment 必须位于 SSE frame 边界。");
     }
-    state.completed = true;
-    return state;
+    requireChatCompletionsSseTransition(state, "comment");
+    return { type: "comment" };
   }
-  if (state.usageSeen) {
-    throw chatCompletionsSseError("usage-only event 后只允许 [DONE]。");
+
+  if (fields.length === 0) throw chatCompletionsSseError("SSE frame 缺少 field。");
+
+  let eventFieldCount = 0;
+  let dataFieldCount = 0;
+  let seenDataField = false;
+  for (const field of fields) {
+    if (!CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.fieldNames.includes(field)) {
+      throw chatCompletionsSseError(`不支持的 SSE field：${String(field)}。`);
+    }
+    if (field === "event") {
+      eventFieldCount += 1;
+      if (CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.eventFieldMustPrecedeData && seenDataField) {
+        throw chatCompletionsSseError("event field 必须位于所有 data field 之前。");
+      }
+    }
+    if (field === "data") {
+      dataFieldCount += 1;
+      seenDataField = true;
+    }
   }
-  if (!data.trim()) return state;
+  if (eventFieldCount > 1) throw chatCompletionsSseError("一个 frame 只能包含一个 event field。");
+
+  const eventName = String(event?.event ?? "");
+  if (eventName === CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.errorEventName) {
+    requireChatCompletionsSseTransition(state, "provider_error");
+    return { type: "provider_error", detail: chatCompletionsSseProviderErrorDetail(event?.data) };
+  }
+  if (dataFieldCount === 0) throw chatCompletionsSseError("SSE frame 缺少 data field。");
+  if (!CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.eventNames.includes(eventName)) {
+    throw chatCompletionsSseError(`不支持的 SSE event 名：${eventName || "<empty>"}。`);
+  }
+  return { type: "data", data: String(event?.data ?? "") };
+}
+
+function validateChatCompletionsSseFrame(state, event) {
+  const envelope = validateChatCompletionsSseEnvelope(state, event);
+  if (envelope.type !== "data") return envelope;
+
+  const { data } = envelope;
+  if (data === "[DONE]") {
+    requireChatCompletionsSseTransition(state, "done");
+    return { type: "done" };
+  }
+  if (!data.trim()) throw chatCompletionsSseError("SSE frame data 不得为空。");
 
   let payload;
   try {
@@ -1058,24 +1141,19 @@ function reduceChatCompletionsSseEvent(state, event) {
     throw chatCompletionsSseError("事件必须是 JSON 对象。");
   }
   if (payload.error) {
-    state.failure = responseErrorDetail(payload, "Chat Completions provider error");
-    state.terminal = true;
-    return state;
+    requireChatCompletionsSseTransition(state, "provider_error");
+    return { type: "provider_error", detail: responseErrorDetail(payload, "Chat Completions provider error") };
   }
   if (!Array.isArray(payload.choices)) throw chatCompletionsSseError("chat completion choices 非法。");
   if (payload.choices.length === 0) {
     if (!isUsageOnlyEvent(payload)) {
       throw chatCompletionsSseError("chat completion choices 为空且缺少合法 usage-only event。");
     }
-    if (state.finishReason !== "stop") {
-      throw chatCompletionsSseError("usage-only event 必须出现在 finish_reason=stop 之后。");
-    }
-    state.usageSeen = true;
-    return state;
+    requireChatCompletionsSseTransition(state, "usage");
+    return { type: "usage" };
   }
-  if (state.finishReason) {
-    throw chatCompletionsSseError("finish_reason 后不得再出现普通 choice event。");
-  }
+
+  requireChatCompletionsSseTransition(state, "choice");
   if (payload.choices.length !== 1) throw chatCompletionsSseError("chat completion choices 数量非法。");
   const choice = payload.choices[0];
   if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
@@ -1089,16 +1167,46 @@ function reduceChatCompletionsSseEvent(state, event) {
   if (content !== undefined && content !== null && typeof content !== "string") {
     throw chatCompletionsSseError("chat completion delta.content 必须是字符串。");
   }
-  if (typeof content === "string") state.deltaText += content;
+
+  let finishReason = null;
+  let finishReasonFailure = "";
   if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
     if (typeof choice.finish_reason !== "string" || !choice.finish_reason) {
-      throw chatCompletionsSseError("chat completion finish_reason 非法。");
-    }
-    state.finishReason = choice.finish_reason;
-    if (choice.finish_reason !== "stop") {
-      throw chatCompletionsSseError(`finish_reason=${choice.finish_reason} 不允许完成。`);
+      finishReasonFailure = "chat completion finish_reason 非法。";
+    } else if (choice.finish_reason !== "stop") {
+      finishReasonFailure = `finish_reason=${choice.finish_reason} 不允许完成。`;
+    } else {
+      finishReason = choice.finish_reason;
     }
   }
+  return {
+    type: "choice",
+    content: typeof content === "string" ? content : "",
+    finishReason,
+    finishReasonFailure,
+  };
+}
+
+function reduceChatCompletionsSseEvent(state, event) {
+  const frame = validateChatCompletionsSseFrame(state, event);
+  if (frame.type === "comment") return state;
+  if (frame.type === "provider_error") {
+    state.failure = frame.detail;
+    state.terminal = true;
+    return state;
+  }
+  if (frame.type === "done") {
+    state.done = true;
+    state.completed = true;
+    return state;
+  }
+  if (frame.type === "usage") {
+    state.usageSeen = true;
+    return state;
+  }
+  state.deltaText += frame.content;
+  if (frame.finishReasonFailure) throw chatCompletionsSseError(frame.finishReasonFailure);
+  if (frame.finishReason) state.finishReason = frame.finishReason;
   return state;
 }
 
@@ -1110,8 +1218,10 @@ async function consumeChatCompletionsSse(body, state = {}) {
   let bufferBytes = 0;
   let scanOffset = 0;
   let eventName = "";
+  let eventFields = [];
+  let commentSeen = false;
   let dataLines = [];
-  let dataBytes = 0;
+  let frameBytes = 0;
   let totalDataBytes = 0;
   let stopped = false;
   const streamState = state;
@@ -1125,12 +1235,19 @@ async function consumeChatCompletionsSse(body, state = {}) {
 
   const resetEvent = () => {
     eventName = "";
+    eventFields = [];
+    commentSeen = false;
     dataLines = [];
-    dataBytes = 0;
+    frameBytes = 0;
   };
   const dispatch = () => {
-    if (!eventName && dataLines.length === 0) return;
-    const event = { event: eventName, data: dataLines.join("\n") };
+    if (eventFields.length === 0 && !commentSeen) return;
+    const event = {
+      comment: commentSeen,
+      event: eventName,
+      fields: eventFields,
+      data: dataLines.join("\n"),
+    };
     resetEvent();
     reduceChatCompletionsSseEvent(streamState, event);
   };
@@ -1139,18 +1256,24 @@ async function consumeChatCompletionsSse(body, state = {}) {
       dispatch();
       return;
     }
-    if (line.startsWith(":")) return;
+    frameBytes += chatCompletionsSseEncoder.encode(`${line}\n`).byteLength;
+    if (frameBytes > MAX_CHAT_COMPLETIONS_SSE_EVENT_BYTES) {
+      throw chatCompletionsSseError("单个事件超过大小上限。");
+    }
+    if (line.startsWith(":")) {
+      commentSeen = true;
+      return;
+    }
     const colon = line.indexOf(":");
     const field = colon < 0 ? line : line.slice(0, colon);
     let value = colon < 0 ? "" : line.slice(colon + 1);
     if (value.startsWith(" ")) value = value.slice(1);
+    eventFields.push(field);
     if (field === "event") {
       eventName = value;
     } else if (field === "data") {
       const valueBytes = chatCompletionsSseEncoder.encode(value).byteLength + 1;
-      dataBytes += valueBytes;
       totalDataBytes += valueBytes;
-      if (dataBytes > MAX_CHAT_COMPLETIONS_SSE_EVENT_BYTES) throw chatCompletionsSseError("单个事件超过大小上限。");
       if (totalDataBytes > MAX_CHAT_COMPLETIONS_SSE_TOTAL_DATA_BYTES) throw chatCompletionsSseError("累计事件数据超过大小上限。");
       dataLines.push(value);
     }
@@ -1190,30 +1313,32 @@ async function consumeChatCompletionsSse(body, state = {}) {
       bufferBytes -= chatCompletionsSseEncoder.encode(consumed).byteLength;
       scanOffset = 0;
       processLine(line);
-      if (streamState.completed || streamState.terminal) return;
+      if (streamState.terminal) return;
     }
   };
 
   try {
-    while (!streamState.completed && !streamState.terminal) {
+    while (!streamState.terminal) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!(value instanceof Uint8Array)) throw chatCompletionsSseError("收到非字节 chunk。");
       processText(decoder.decode(value, { stream: true }));
     }
-    if (!streamState.completed && !streamState.terminal) {
+    if (!streamState.terminal) {
       processText(decoder.decode());
-      if (!streamState.completed && !streamState.terminal) {
-        if (buffer.length > 0) {
-          if (buffer.endsWith("\r")) {
-            processLine(buffer.slice(0, -1));
-          } else {
-            processLine(buffer);
-          }
+      if (buffer.length > 0) {
+        if (buffer.endsWith("\r")) {
+          processLine(buffer.slice(0, -1));
+        } else {
+          processLine(buffer);
         }
-        if (!streamState.completed && !streamState.terminal) {
-          throw chatCompletionsSseError("stream disconnected before completion");
-        }
+      }
+      if (eventFields.length > 0 || commentSeen) {
+        if (streamState.completed) throw chatCompletionsSseError("[DONE] 后不得存在未完成 SSE frame。");
+        throw chatCompletionsSseError("stream disconnected before completion");
+      }
+      if (!streamState.completed) {
+        throw chatCompletionsSseError("stream disconnected before completion");
       }
     }
     return streamState;
