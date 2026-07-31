@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   applyPlanIntentGate,
   boundedAttemptTimeout,
-  buildResponsesEndpoint,
+  buildChatCompletionsEndpoint,
   buildCircuitStateSearchQuery,
   circuitGhTimeout,
   circuitOperationDeadlines,
@@ -24,7 +24,7 @@ import {
   ensureCircuitStateIssues,
   excerptLog,
   extractJSON,
-  extractResponsesOutputText,
+  extractChatCompletionsOutputText,
   findCircuitStateIssues,
   findPlanName,
   isCircuitBypassTrigger,
@@ -32,6 +32,7 @@ import {
   isSuccessfulCodexResponse,
   isZeroConfidenceWithoutCodeFindings,
   localPrDiff,
+  loadPrContext,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
@@ -43,7 +44,7 @@ import {
   redactRuntimeSecrets,
   readWorkspaceRegularFile,
   renderComment,
-  requestResponses,
+  requestChatCompletions,
   runReviewPanel,
   renderCircuitSkipComment,
   renderHiddenMarker,
@@ -607,26 +608,38 @@ test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理�
   assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
 });
 
-test("local PR diff: fork head 通过 PR ref fetch，不从 base origin 拉同名 branch", () => {
+test("local PR diff: fork head 通过 PR ref fetch、锁定 metadata OID，并以 merge-base 生成三点语义 diff", () => {
   const directory = mkdtempSync(join(tmpdir(), "bong-review-git-"));
   const gitPath = join(directory, "git");
   const logPath = join(directory, "git.log");
   const fetchedPath = join(directory, "fetched");
+  const baseOid = "a".repeat(40);
+  const headOid = "b".repeat(40);
+  const mergeBase = "c".repeat(40);
   writeFileSync(
     gitPath,
     `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.GIT_TEST_LOG, JSON.stringify(args) + "\\n");
-if (args[0] === "rev-parse" && args[2] === "base-oid^{commit}") {
-  process.stdout.write("base-commit\\n");
+const baseOid = ${JSON.stringify(baseOid)};
+const headOid = ${JSON.stringify(headOid)};
+const mergeBase = ${JSON.stringify(mergeBase)};
+if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
+  process.stdout.write(baseOid + "\\n");
+} else if (args[0] === "rev-parse" && args[2] === headOid + "^{commit}") {
+  process.exit(1);
 } else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
   if (!fs.existsSync(process.env.GIT_TEST_FETCHED)) process.exit(1);
-  process.stdout.write("head-commit\\n");
+  process.stdout.write(headOid + "\\n");
 } else if (args[0] === "fetch") {
   if (args[3] !== "refs/pull/42/head:refs/review/pr-42-head") process.exit(2);
   fs.writeFileSync(process.env.GIT_TEST_FETCHED, "yes");
+} else if (args[0] === "merge-base") {
+  if (args[1] !== baseOid || args[2] !== headOid) process.exit(4);
+  process.stdout.write(mergeBase + "\\n");
 } else if (args[0] === "diff") {
+  if (args[2] !== mergeBase || args[3] !== headOid) process.exit(5);
   process.stdout.write("diff --git a/fork.txt b/fork.txt\\n");
 } else {
   process.exit(3);
@@ -643,9 +656,9 @@ if (args[0] === "rev-parse" && args[2] === "base-oid^{commit}") {
   try {
     assert.equal(
       localPrDiff("42", {
-        baseRefOid: "base-oid",
+        baseRefOid: baseOid,
         baseRefName: "main",
-        headRefOid: "head-oid",
+        headRefOid: headOid,
         headRefName: "feature",
       }),
       "diff --git a/fork.txt b/fork.txt\n",
@@ -660,6 +673,8 @@ if (args[0] === "rev-parse" && args[2] === "base-oid^{commit}") {
       "origin",
       "refs/pull/42/head:refs/review/pr-42-head",
     ]);
+    assert.deepEqual(calls.find((args) => args[0] === "merge-base"), ["merge-base", baseOid, headOid]);
+    assert.deepEqual(calls.find((args) => args[0] === "diff"), ["diff", "--no-ext-diff", mergeBase, headOid]);
     assert.equal(calls.some((args) => args.includes("feature")), false, "fork fallback 不得 fetch base origin 的同名 branch");
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
@@ -672,21 +687,138 @@ if (args[0] === "rev-parse" && args[2] === "base-oid^{commit}") {
   }
 });
 
-test("Chat Completions endpoint: 规范化 root/v1/chat/completions 并拒绝凭据与非 HTTPS", () => {
-  assert.equal(buildResponsesEndpoint("https://api.example.com"), "https://api.example.com/v1/chat/completions");
-  assert.equal(buildResponsesEndpoint("https://api.example.com/v1/"), "https://api.example.com/v1/chat/completions");
+test("local PR diff: metadata OID 与 fetch 后 ref 漂移时 fail-closed", () => {
+  const baseOid = "a".repeat(40);
+  const headOid = "b".repeat(40);
+  const actualOid = "c".repeat(40);
+  for (const [label, expectedOid, ref] of [
+    ["base", baseOid, "refs/review/pr-42-base"],
+    ["head", headOid, "refs/review/pr-42-head"],
+  ]) {
+    const directory = mkdtempSync(join(tmpdir(), "bong-review-git-drift-"));
+    const gitPath = join(directory, "git");
+    writeFileSync(
+      gitPath,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const baseOid = ${JSON.stringify(baseOid)};
+const headOid = ${JSON.stringify(headOid)};
+const label = ${JSON.stringify(label)};
+const ref = ${JSON.stringify(ref)};
+const actual = ${JSON.stringify(actualOid)};
+if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
+  if (label === "base") process.exit(1);
+  process.stdout.write(baseOid + "\\n");
+} else if (args[0] === "rev-parse" && args[2] === headOid + "^{commit}") {
+  if (label === "head") process.exit(1);
+  process.stdout.write(headOid + "\\n");
+} else if (args[0] === "fetch") {
+  process.exit(0);
+} else if (args[0] === "rev-parse" && args[2] === ref + "^{commit}") {
+  process.stdout.write(actual + "\\n");
+} else {
+  process.exit(3);
+}
+`,
+    );
+    chmodSync(gitPath, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${directory}:${previousPath || ""}`;
+    try {
+      assert.throws(
+        () => localPrDiff("42", {
+          baseRefOid: baseOid,
+          baseRefName: "main",
+          headRefOid: headOid,
+          headRefName: "feature",
+        }),
+        new RegExp(`PR ${label} OID 漂移：expected=${expectedOid} actual=${actualOid}`),
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("loadPrContext: API 成功、406/普通失败均可回退本地，双路径失败保留两端原因", () => {
+  const meta = {
+    title: "review infra",
+    body: "",
+    headRefName: "fix/review",
+    baseRefName: "main",
+    baseRefOid: "a".repeat(40),
+    headRefOid: "b".repeat(40),
+    files: [{ path: ".github/scripts/review.mjs", additions: 3, deletions: 1 }],
+  };
+  const scenarios = [
+    { name: "api", apiDiff: "diff --git a/a b/a\n", expectedSource: "api", localCalls: 0 },
+    { name: "406", apiDiff: "HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000)", expectedSource: "local", localCalls: 1 },
+    { name: "ordinary API failure", apiError: new Error("HTTP 502 upstream"), expectedSource: "local", localCalls: 1 },
+  ];
+  for (const scenario of scenarios) {
+    let localCalls = 0;
+    const logs = [];
+    const context = loadPrContext("42", {
+      runGh(args) {
+        if (args[1] === "view") return JSON.stringify(meta);
+        if (scenario.apiError) throw scenario.apiError;
+        return scenario.apiDiff;
+      },
+      localDiff(pr, receivedMeta) {
+        localCalls += 1;
+        assert.equal(pr, "42");
+        assert.deepEqual(receivedMeta, meta);
+        return "diff --git a/local b/local\n";
+      },
+      log(message) {
+        logs.push(message);
+      },
+    });
+    assert.equal(context.diffSource, scenario.expectedSource, scenario.name);
+    assert.equal(localCalls, scenario.localCalls, scenario.name);
+    assert.deepEqual(logs, [`Review diff source: ${scenario.expectedSource}`]);
+  }
+
+  assert.throws(
+    () => loadPrContext("42", {
+      runGh(args) {
+        if (args[1] === "view") return JSON.stringify(meta);
+        throw new Error("HTTP 502 upstream");
+      },
+      localDiff() {
+        throw new Error("merge-base unavailable");
+      },
+      log() {
+        throw new Error("both paths must fail before logging source");
+      },
+    }),
+    /PR diff acquisition failed \(api: HTTP 502 upstream; local: merge-base unavailable\)/,
+  );
+});
+
+
+test("Chat Completions endpoint: 规范化 root/v1/responses/chat/completions 并拒绝凭据与非 HTTPS", () => {
+  assert.equal(buildChatCompletionsEndpoint("https://api.example.com"), "https://api.example.com/v1/chat/completions");
+  assert.equal(buildChatCompletionsEndpoint("https://api.example.com/v1/"), "https://api.example.com/v1/chat/completions");
+  assert.equal(buildChatCompletionsEndpoint("https://api.example.com/v1/responses"), "https://api.example.com/v1/chat/completions");
   assert.equal(
-    buildResponsesEndpoint("https://api.example.com/custom/chat/completions"),
+    buildChatCompletionsEndpoint("https://api.example.com/custom/responses/"),
     "https://api.example.com/custom/chat/completions",
   );
-  assert.equal(buildResponsesEndpoint("http://127.0.0.1:3000", true), "http://127.0.0.1:3000/v1/chat/completions");
+  assert.equal(
+    buildChatCompletionsEndpoint("https://api.example.com/custom/chat/completions"),
+    "https://api.example.com/custom/chat/completions",
+  );
+  assert.equal(buildChatCompletionsEndpoint("http://127.0.0.1:3000", true), "http://127.0.0.1:3000/v1/chat/completions");
   for (const url of [
     "http://api.example.com",
     "https://user:pass@api.example.com",
     "https://api.example.com?token=x",
     "https://api.example.com/#secret",
   ]) {
-    assert.throws(() => buildResponsesEndpoint(url), /HTTPS|凭据/);
+    assert.throws(() => buildChatCompletionsEndpoint(url), /HTTPS|凭据/);
   }
 });
 
@@ -697,7 +829,7 @@ test("Chat Completions request: SSE、user message、high reasoning，并解析 
     id: "chat-1",
     choices: [{ delta: content === null ? { role: "assistant", content: null } : { content }, finish_reason }],
   })}\n\n`;
-  const result = await requestResponses("审查提示", 1_000, {
+  const result = await requestChatCompletions("审查提示", 1_000, {
     apiKey: "provider-secret",
     baseUrl: "https://api.example.com/v1",
     model: "gpt-5.6-sol",
@@ -719,14 +851,15 @@ test("Chat Completions request: SSE、user message、high reasoning，并解析 
   });
   assert.equal(Object.hasOwn(request.body, "store"), false, "Chat Completions 请求不得携带 store");
   assert.equal(Object.hasOwn(request.body, "tools"), false, "生产 reviewer 不得获得 shell 或其他 tool");
-  assert.equal(extractResponsesOutputText({ choices: [{ message: { content: "chat output" } }] }), "chat output");
+  assert.equal(extractChatCompletionsOutputText({ choices: [{ message: { content: "chat output" } }] }), "chat output");
+  assert.equal(extractChatCompletionsOutputText({ choices: [{ message: { content: "second output" } }] }), "second output");
 });
 
 test("Chat Completions SSE: content:null 是无文本首帧，随后 content 与 DONE 可成功", async () => {
-  const result = await requestResponses("prompt", 1_000, {
+  const result = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
-    fetchImpl: async () => sseResponse([chatSseChunk(null), chatSseChunk("content"), chatSseDone()]),
+    fetchImpl: async () => sseResponse([chatSseChunk(null), chatSseChunk("content", "stop"), chatSseDone()]),
   });
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "content");
@@ -742,7 +875,7 @@ test("Chat Completions SSE: choices/choice/delta 结构损坏时，即使随后 
     JSON.stringify({ choices: [{ delta: { content: 42 } }] }),
   ];
   for (const data of malformedEvents) {
-    const result = await requestResponses("prompt", 1_000, {
+    const result = await requestChatCompletions("prompt", 1_000, {
       apiKey: "key",
       baseUrl: "https://api.example.com",
       fetchImpl: async () => sseResponse([chatSseChunk("partial"), `data: ${data}\n\n`, chatSseDone()]),
@@ -754,19 +887,19 @@ test("Chat Completions SSE: choices/choice/delta 结构损坏时，即使随后 
 });
 
 test("Chat Completions SSE: choices 空数组只接受 usage-only event", async () => {
-  const result = await requestResponses("prompt", 1_000, {
+  const result = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse([
       `data: ${JSON.stringify({ choices: [], usage: { total_tokens: 1 } })}\n\n`,
-      chatSseChunk("content"),
+      chatSseChunk("content", "stop"),
       chatSseDone(),
     ]),
   });
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "content");
 
-  const malformed = await requestResponses("prompt", 1_000, {
+  const malformed = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse(["data: {\"choices\":[]}\n\n", chatSseDone()]),
@@ -775,26 +908,51 @@ test("Chat Completions SSE: choices 空数组只接受 usage-only event", async 
   assert.match(malformed.stderr, /choices 为空/);
 });
 
-test("Chat Completions SSE: finish_reason 不提前结束，DONE 才能完成", async () => {
-  const result = await requestResponses("prompt", 1_000, {
+test("Chat Completions SSE: finish_reason 只接受 stop，stop 后仅可 usage-only 再 DONE", async () => {
+  const stopped = await requestChatCompletions("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([
+      chatSseChunk("complete", "stop"),
+      `data: ${JSON.stringify({ choices: [], usage: { total_tokens: 1 } })}\n\n`,
+      chatSseDone(),
+    ]),
+  });
+  assert.equal(stopped.code, 0);
+  assert.equal(stopped.stdout, "complete");
+
+  for (const finishReason of ["length", "content_filter", "unknown"]) {
+    const result = await requestChatCompletions("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => sseResponse([chatSseChunk("partial", finishReason), chatSseDone()]),
+    });
+    assert.equal(result.code, 1, `${finishReason} 不得成功`);
+    assert.equal(result.stdout, "partial");
+    assert.match(result.stderr, new RegExp(`finish_reason=${finishReason}`));
+  }
+
+  const afterStop = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse([chatSseChunk("partial", "stop"), chatSseChunk("tail"), chatSseDone()]),
   });
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, "partialtail");
+  assert.equal(afterStop.code, 1);
+  assert.equal(afterStop.stdout, "partial");
+  assert.match(afterStop.stderr, /finish_reason 后不得再出现普通 choice event/);
 
-  const disconnected = await requestResponses("prompt", 1_000, {
+  const noFinishReason = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
-    fetchImpl: async () => sseResponse([chatSseChunk("partial", "stop")]),
+    fetchImpl: async () => sseResponse([chatSseChunk("partial"), chatSseDone()]),
   });
-  assert.equal(disconnected.code, 1);
-  assert.match(disconnected.stderr, /disconnected/);
+  assert.equal(noFinishReason.code, 1);
+  assert.equal(noFinishReason.stdout, "partial");
+  assert.match(noFinishReason.stderr, /缺少 finish_reason=stop/);
 });
 
 test("Chat Completions request: HTTP 错误保留 final text，malformed 与 timeout 可分类", async () => {
-  const finalOn503 = await requestResponses("prompt", 1_000, {
+  const finalOn503 = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => ({
@@ -828,7 +986,7 @@ test("Chat Completions request: HTTP 错误保留 final text，malformed 与 tim
       },
     },
   ]) {
-    const failed = await requestResponses("prompt", 1_000, {
+    const failed = await requestChatCompletions("prompt", 1_000, {
       apiKey: "key",
       baseUrl: "https://api.example.com",
       fetchImpl: async () => ({
@@ -851,7 +1009,7 @@ test("Chat Completions request: HTTP 错误保留 final text，malformed 与 tim
     true,
   );
 
-  const malformed = await requestResponses("prompt", 1_000, {
+  const malformed = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse(["data: not-json\n\n"]),
@@ -859,7 +1017,7 @@ test("Chat Completions request: HTTP 错误保留 final text，malformed 与 tim
   assert.equal(malformed.code, 1);
   assert.match(malformed.stderr, /不是合法 JSON/);
 
-  const timedOut = await requestResponses("prompt", 10, {
+  const timedOut = await requestChatCompletions("prompt", 10, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
@@ -883,7 +1041,7 @@ test("Chat Completions SSE: UTF-8 分片、CRLF/comment 与 content", async () =
   const cut = bytes.indexOf(0x9f);
   assert.ok(cut > 0, "fixture 必须把 emoji 的 UTF-8 字节拆到两个网络 chunk");
 
-  const result = await requestResponses("prompt", 1_000, {
+  const result = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse([bytes.slice(0, cut), bytes.slice(cut)]),
@@ -902,7 +1060,7 @@ test("Chat Completions SSE: provider error、断流与 malformed 均不得假成
     { stream: ["data: not-json\n\n"], error: /不是合法 JSON/ },
   ];
   for (const scenario of cases) {
-    const result = await requestResponses("prompt", 1_000, {
+    const result = await requestChatCompletions("prompt", 1_000, {
       apiKey: "key",
       baseUrl: "https://api.example.com",
       fetchImpl: async () => sseResponse(scenario.stream),
@@ -911,16 +1069,16 @@ test("Chat Completions SSE: provider error、断流与 malformed 均不得假成
     assert.equal(isSuccessfulCodexResponse(result), false);
     assert.match(result.stderr, scenario.error);
   }
-  const doneOnly = await requestResponses("prompt", 1_000, {
+  const doneOnly = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse(["data: [DONE]\n\n"]),
   });
   assert.equal(doneOnly.code, 1, "空 content 不得以 code 0 伪装成 genuine completion");
   assert.equal(doneOnly.stdout, "");
-  assert.match(doneOnly.stderr, /未返回 content/);
+  assert.match(doneOnly.stderr, /缺少 finish_reason=stop/);
 
-  const disconnected = await requestResponses("prompt", 1_000, {
+  const disconnected = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => sseResponse([`data: ${JSON.stringify({ choices: [{ delta: {} }] })}`]),
@@ -931,7 +1089,7 @@ test("Chat Completions SSE: provider error、断流与 malformed 均不得假成
 
 test("Chat Completions SSE: reader error 与绝对 timeout 保留 partial stdout", async () => {
   const partialFrame = `data: ${JSON.stringify({ choices: [{ delta: { content: "partial" }, finish_reason: null }] })}\n\n`;
-  const readerFailed = await requestResponses("prompt", 1_000, {
+  const readerFailed = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async () => ({
@@ -954,7 +1112,7 @@ test("Chat Completions SSE: reader error 与绝对 timeout 保留 partial stdout
   assert.equal(readerFailed.stdout, "partial");
   assert.match(readerFailed.stderr, /reader boom/);
 
-  const timedOut = await requestResponses("prompt", 20, {
+  const timedOut = await requestChatCompletions("prompt", 20, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
     fetchImpl: async (_url, init) => ({

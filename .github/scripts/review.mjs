@@ -23,7 +23,7 @@ const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
 const CODEX_RETRY_MS = intEnv("REVIEW_CODEX_RETRY_MS", 15_000, 1_000);
-const RESPONSES_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://api.claudeopus.world";
+const CHAT_COMPLETIONS_BASE_URL = process.env.REVIEW_CODEX_BASE_URL || "https://api.claudeopus.world";
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.REVIEW_DRY_RUN || "").trim());
 const FAIL_ON_GATE = process.env.REVIEW_FAIL_ON_GATE !== "0";
 const CIRCUIT_MARKER = "bong-review-circuit";
@@ -651,22 +651,22 @@ async function workflowFinalize() {
   return decision.kind === "gate_failure" ? 1 : 0;
 }
 
-function loadPrContext(pr) {
+export function loadPrContext(pr, { runGh = gh, localDiff = localPrDiff, log = console.error } = {}) {
   const meta = JSON.parse(
-    gh(["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,baseRefOid,headRefOid,files"]),
+    runGh(["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,baseRefOid,headRefOid,files"]),
   );
   let diff;
   let diffSource;
   let apiFailure = null;
   try {
-    diff = gh(["pr", "diff", pr]);
+    diff = runGh(["pr", "diff", pr]);
     if (!diff.trim()) throw new Error("GitHub PR diff returned empty output");
     if (isGitHubDiffLimitFailure(diff)) throw new Error("GitHub PR diff returned HTTP 406 line-limit response");
     diffSource = "api";
   } catch (error) {
     apiFailure = error;
     try {
-      diff = localPrDiff(pr, meta);
+      diff = localDiff(pr, meta);
       diffSource = "local";
     } catch (localError) {
       throw new Error(
@@ -674,7 +674,7 @@ function loadPrContext(pr) {
       );
     }
   }
-  console.error(`Review diff source: ${diffSource}`);
+  log(`Review diff source: ${diffSource}`);
   let diffTruncated = false;
   if (diff.length > MAX_DIFF) {
     diff = diff.slice(0, MAX_DIFF);
@@ -706,31 +706,53 @@ function isGitHubDiffLimitFailure(value) {
 }
 
 export function localPrDiff(pr, meta) {
-  const base = String(meta.baseRefOid || meta.baseRefName || "").trim();
-  const head = String(meta.headRefOid || meta.headRefName || "HEAD").trim();
-  if (!base) throw new Error("PR metadata 缺少 base ref");
-  const baseCommit = resolveLocalCommit(base, meta.baseRefName, `refs/review/pr-${pr}-base`);
-  const headCommit = resolveLocalCommit(head, `refs/pull/${pr}/head`, `refs/review/pr-${pr}-head`);
-  const diff = git(["diff", "--no-ext-diff", baseCommit, headCommit]);
+  const expectedBase = requireMetadataOid(meta.baseRefOid, "base");
+  const expectedHead = requireMetadataOid(meta.headRefOid, "head");
+  const baseRefName = String(meta.baseRefName || "").trim();
+  const baseCommit = resolveMetadataCommit({
+    expectedOid: expectedBase,
+    fetchRef: baseRefName ? `refs/heads/${baseRefName}` : null,
+    localRef: `refs/review/pr-${pr}-base`,
+    label: "base",
+  });
+  const headCommit = resolveMetadataCommit({
+    expectedOid: expectedHead,
+    fetchRef: `refs/pull/${pr}/head`,
+    localRef: `refs/review/pr-${pr}-head`,
+    label: "head",
+  });
+  const mergeBase = git(["merge-base", baseCommit, headCommit]).trim();
+  if (!mergeBase) throw new Error("本地 Git 未找到 PR base/head 的 merge-base");
+  const diff = git(["diff", "--no-ext-diff", mergeBase, headCommit]);
   if (!diff.trim()) throw new Error("本地 Git diff 返回空输出");
   return diff;
 }
 
-function resolveLocalCommit(ref, fetchRef = ref, localRef = null) {
+function requireMetadataOid(value, label) {
+  const oid = String(value || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(oid)) throw new Error(`PR metadata 缺少合法 ${label} OID`);
+  return oid;
+}
+
+function resolveMetadataCommit({ expectedOid, fetchRef, localRef, label }) {
+  let actual;
   try {
-    return git(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
-  } catch (error) {
-    if (fetchRef) {
-      try {
-        const fetchArgs = ["fetch", "--no-tags", "origin", localRef ? `${fetchRef}:${localRef}` : fetchRef];
-        git(fetchArgs);
-        return git(["rev-parse", "--verify", `${localRef || ref}^{commit}`]).trim();
-      } catch (fetchError) {
-        throw new Error(`本地 ref ${ref} 不存在且 fetch 失败：${errorText(fetchError)}`);
-      }
+    actual = git(["rev-parse", "--verify", `${expectedOid}^{commit}`]).trim();
+  } catch (localError) {
+    if (!fetchRef) {
+      throw new Error(`本地 ${label} OID ${expectedOid} 不存在且缺少可 fetch ref：${errorText(localError)}`);
     }
-    throw new Error(`本地 ref ${ref} 不存在：${errorText(error)}`);
+    try {
+      git(["fetch", "--no-tags", "origin", `${fetchRef}:${localRef}`]);
+      actual = git(["rev-parse", "--verify", `${localRef}^{commit}`]).trim();
+    } catch (fetchError) {
+      throw new Error(`本地 ${label} OID ${expectedOid} 不存在且 fetch 失败：${errorText(fetchError)}`);
+    }
   }
+  if (actual.toLowerCase() !== expectedOid) {
+    throw new Error(`PR ${label} OID 漂移：expected=${expectedOid} actual=${actual || "<empty>"}`);
+  }
+  return actual;
 }
 
 function findPlan(meta) {
@@ -903,7 +925,7 @@ async function runCodexChatCompletions(prompt, label) {
       };
     }
 
-    const result = await requestResponses(prompt, attemptTimeoutMs);
+    const result = await requestChatCompletions(prompt, attemptTimeoutMs);
     const text = redactRuntimeSecrets(result.stdout || "");
     const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
     if (isSuccessfulCodexResponse(result, text)) return { raw: text, executionFailure: false };
@@ -932,22 +954,26 @@ export function isSuccessfulCodexResponse(result, text = result?.stdout || "") {
   return result?.code === 0 && String(text).trim().length > 0 && !isZeroConfidenceWithoutCodeFindings(text);
 }
 
-export function buildResponsesEndpoint(baseUrl, allowHttp = false) {
+export function buildChatCompletionsEndpoint(baseUrl, allowHttp = false) {
   const url = new URL(String(baseUrl || "").trim());
-  if (url.username || url.password || url.search || url.hash) throw new Error("Review Responses base URL 不得含凭据、查询或 fragment。");
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("Review Chat Completions base URL 不得含凭据、查询或 fragment。");
+  }
   if (url.protocol !== "https:" && !(allowHttp && url.protocol === "http:")) {
-    throw new Error("Review Responses base URL 必须使用 HTTPS。");
+    throw new Error("Review Chat Completions base URL 必须使用 HTTPS。");
   }
   const path = url.pathname.replace(/\/+$/, "");
   url.pathname = path.endsWith("/chat/completions")
     ? path
-    : path.endsWith("/v1")
-      ? `${path}/chat/completions`
-      : `${path}/v1/chat/completions`;
+    : path.endsWith("/responses")
+      ? `${path.slice(0, -"/responses".length)}/chat/completions`
+      : path.endsWith("/v1")
+        ? `${path}/chat/completions`
+        : `${path}/v1/chat/completions`;
   return url.toString();
 }
 
-export function extractResponsesOutputText(payload) {
+export function extractChatCompletionsOutputText(payload) {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text;
   const chunks = [];
   for (const item of payload?.output || []) {
@@ -964,12 +990,12 @@ export function extractResponsesOutputText(payload) {
   return chunks.join("\n");
 }
 
-const MAX_RESPONSES_SSE_EVENT_BYTES = 4 * 1024 * 1024;
-const MAX_RESPONSES_SSE_TOTAL_DATA_BYTES = 16 * 1024 * 1024;
-const MAX_RESPONSES_SSE_BUFFER_BYTES = MAX_RESPONSES_SSE_EVENT_BYTES * 2;
-const responsesSseEncoder = new TextEncoder();
+const MAX_CHAT_COMPLETIONS_SSE_EVENT_BYTES = 4 * 1024 * 1024;
+const MAX_CHAT_COMPLETIONS_SSE_TOTAL_DATA_BYTES = 16 * 1024 * 1024;
+const MAX_CHAT_COMPLETIONS_SSE_BUFFER_BYTES = MAX_CHAT_COMPLETIONS_SSE_EVENT_BYTES * 2;
+const chatCompletionsSseEncoder = new TextEncoder();
 
-function responsesSseError(message) {
+function chatCompletionsSseError(message) {
   return new Error(`Chat Completions SSE ${message}`);
 }
 
@@ -984,10 +1010,27 @@ function responseErrorDetail(payload, fallback) {
   return incompleteReason ? String(incompleteReason) : fallback;
 }
 
-function reduceResponsesSseEvent(state, event) {
+function isUsageOnlyEvent(payload) {
+  const usageOnlyKeys = new Set(["choices", "created", "id", "model", "object", "system_fingerprint", "usage"]);
+  return (
+    payload.usage &&
+    typeof payload.usage === "object" &&
+    !Array.isArray(payload.usage) &&
+    Object.keys(payload).every((key) => usageOnlyKeys.has(key))
+  );
+}
+
+function reduceChatCompletionsSseEvent(state, event) {
   const data = String(event?.data ?? "");
   if (data === "[DONE]") {
     state.done = true;
+    if (state.finishReason !== "stop") {
+      throw chatCompletionsSseError(
+        state.finishReason
+          ? `finish_reason=${state.finishReason} 不允许完成。`
+          : "缺少 finish_reason=stop。",
+      );
+    }
     state.completed = true;
     return state;
   }
@@ -997,53 +1040,57 @@ function reduceResponsesSseEvent(state, event) {
   try {
     payload = JSON.parse(data);
   } catch {
-    throw responsesSseError("事件 data 不是合法 JSON。");
+    throw chatCompletionsSseError("事件 data 不是合法 JSON。");
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw responsesSseError("事件必须是 JSON 对象。");
+    throw chatCompletionsSseError("事件必须是 JSON 对象。");
   }
   if (payload.error) {
     state.failure = responseErrorDetail(payload, "Chat Completions provider error");
     state.terminal = true;
     return state;
   }
-  if (!Array.isArray(payload.choices)) throw responsesSseError("chat completion choices 非法。");
+  if (!Array.isArray(payload.choices)) throw chatCompletionsSseError("chat completion choices 非法。");
   if (payload.choices.length === 0) {
-    const usageOnlyKeys = new Set(["choices", "created", "id", "model", "object", "system_fingerprint", "usage"]);
-    if (
-      !payload.usage ||
-      typeof payload.usage !== "object" ||
-      Array.isArray(payload.usage) ||
-      Object.keys(payload).some((key) => !usageOnlyKeys.has(key))
-    ) {
-      throw responsesSseError("chat completion choices 为空且缺少合法 usage-only event。");
+    if (!isUsageOnlyEvent(payload)) {
+      throw chatCompletionsSseError("chat completion choices 为空且缺少合法 usage-only event。");
+    }
+    if (state.finishReason && state.finishReason !== "stop") {
+      throw chatCompletionsSseError(`finish_reason=${state.finishReason} 不允许完成。`);
     }
     return state;
   }
-  if (payload.choices.length !== 1) throw responsesSseError("chat completion choices 数量非法。");
+  if (state.finishReason) {
+    throw chatCompletionsSseError("finish_reason 后不得再出现普通 choice event。");
+  }
+  if (payload.choices.length !== 1) throw chatCompletionsSseError("chat completion choices 数量非法。");
   const choice = payload.choices[0];
   if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
-    throw responsesSseError("chat completion choice 非法。");
+    throw chatCompletionsSseError("chat completion choice 非法。");
   }
   const delta = choice.delta;
   if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
-    throw responsesSseError("chat completion delta 非法。");
+    throw chatCompletionsSseError("chat completion delta 非法。");
   }
   const content = delta.content;
   if (content !== undefined && content !== null && typeof content !== "string") {
-    throw responsesSseError("chat completion delta.content 必须是字符串。");
+    throw chatCompletionsSseError("chat completion delta.content 必须是字符串。");
   }
   if (typeof content === "string") state.deltaText += content;
   if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
     if (typeof choice.finish_reason !== "string" || !choice.finish_reason) {
-      throw responsesSseError("chat completion finish_reason 非法。");
+      throw chatCompletionsSseError("chat completion finish_reason 非法。");
+    }
+    state.finishReason = choice.finish_reason;
+    if (choice.finish_reason !== "stop") {
+      throw chatCompletionsSseError(`finish_reason=${choice.finish_reason} 不允许完成。`);
     }
   }
   return state;
 }
 
-async function consumeResponsesSse(body, state = {}) {
-  if (!body || typeof body.getReader !== "function") throw responsesSseError("响应缺少可读 body。");
+async function consumeChatCompletionsSse(body, state = {}) {
+  if (!body || typeof body.getReader !== "function") throw chatCompletionsSseError("响应缺少可读 body。");
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let buffer = "";
@@ -1060,6 +1107,7 @@ async function consumeResponsesSse(body, state = {}) {
   streamState.completed ??= false;
   streamState.terminal ??= false;
   streamState.failure ??= "";
+  streamState.finishReason ??= null;
 
   const resetEvent = () => {
     eventName = "";
@@ -1070,7 +1118,7 @@ async function consumeResponsesSse(body, state = {}) {
     if (!eventName && dataLines.length === 0) return;
     const event = { event: eventName, data: dataLines.join("\n") };
     resetEvent();
-    reduceResponsesSseEvent(streamState, event);
+    reduceChatCompletionsSseEvent(streamState, event);
   };
   const processLine = (line) => {
     if (line === "") {
@@ -1085,17 +1133,17 @@ async function consumeResponsesSse(body, state = {}) {
     if (field === "event") {
       eventName = value;
     } else if (field === "data") {
-      const valueBytes = responsesSseEncoder.encode(value).byteLength + 1;
+      const valueBytes = chatCompletionsSseEncoder.encode(value).byteLength + 1;
       dataBytes += valueBytes;
       totalDataBytes += valueBytes;
-      if (dataBytes > MAX_RESPONSES_SSE_EVENT_BYTES) throw responsesSseError("单个事件超过大小上限。");
-      if (totalDataBytes > MAX_RESPONSES_SSE_TOTAL_DATA_BYTES) throw responsesSseError("累计事件数据超过大小上限。");
+      if (dataBytes > MAX_CHAT_COMPLETIONS_SSE_EVENT_BYTES) throw chatCompletionsSseError("单个事件超过大小上限。");
+      if (totalDataBytes > MAX_CHAT_COMPLETIONS_SSE_TOTAL_DATA_BYTES) throw chatCompletionsSseError("累计事件数据超过大小上限。");
       dataLines.push(value);
     }
   };
   const processText = (text) => {
     buffer += text;
-    bufferBytes += responsesSseEncoder.encode(text).byteLength;
+    bufferBytes += chatCompletionsSseEncoder.encode(text).byteLength;
     while (true) {
       let end = -1;
       let separatorLength = 0;
@@ -1117,15 +1165,15 @@ async function consumeResponsesSse(body, state = {}) {
         }
       }
       if (end < 0) {
-        if (bufferBytes > MAX_RESPONSES_SSE_BUFFER_BYTES) {
-          throw responsesSseError("未完成 frame 超过大小上限。");
+        if (bufferBytes > MAX_CHAT_COMPLETIONS_SSE_BUFFER_BYTES) {
+          throw chatCompletionsSseError("未完成 frame 超过大小上限。");
         }
         return;
       }
       const line = buffer.slice(0, end);
       const consumed = buffer.slice(0, end + separatorLength);
       buffer = buffer.slice(end + separatorLength);
-      bufferBytes -= responsesSseEncoder.encode(consumed).byteLength;
+      bufferBytes -= chatCompletionsSseEncoder.encode(consumed).byteLength;
       scanOffset = 0;
       processLine(line);
       if (streamState.completed || streamState.terminal) return;
@@ -1136,7 +1184,7 @@ async function consumeResponsesSse(body, state = {}) {
     while (!streamState.completed && !streamState.terminal) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!(value instanceof Uint8Array)) throw responsesSseError("收到非字节 chunk。");
+      if (!(value instanceof Uint8Array)) throw chatCompletionsSseError("收到非字节 chunk。");
       processText(decoder.decode(value, { stream: true }));
     }
     if (!streamState.completed && !streamState.terminal) {
@@ -1150,7 +1198,7 @@ async function consumeResponsesSse(body, state = {}) {
           }
         }
         if (!streamState.completed && !streamState.terminal) {
-          throw responsesSseError("stream disconnected before completion");
+          throw chatCompletionsSseError("stream disconnected before completion");
         }
       }
     }
@@ -1168,11 +1216,11 @@ async function consumeResponsesSse(body, state = {}) {
   }
 }
 
-export async function requestResponses(prompt, timeoutMs, options = {}) {
+export async function requestChatCompletions(prompt, timeoutMs, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const apiKey = options.apiKey ?? process.env.REVIEW_CODEX_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
-  const endpoint = buildResponsesEndpoint(
-    options.baseUrl || RESPONSES_BASE_URL,
+  const endpoint = buildChatCompletionsEndpoint(
+    options.baseUrl || CHAT_COMPLETIONS_BASE_URL,
     options.allowHttp === true,
   );
   const controller = new AbortController();
@@ -1184,6 +1232,7 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
     terminal: false,
     failure: "",
     done: false,
+    finishReason: null,
   };
   try {
     const response = await fetchImpl(endpoint, {
@@ -1209,12 +1258,12 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
       } catch {
         /* HTTP error text or malformed provider response is reported below. */
       }
-      const output = extractResponsesOutputText(payload);
+      const output = extractChatCompletionsOutputText(payload);
       const detail = payload?.error?.message || raw || response.statusText || "unknown provider error";
       return { code: response.status, signal: null, stdout: output, stderr: `HTTP ${response.status}: ${detail}` };
     }
 
-    const state = await consumeResponsesSse(response.body, streamState);
+    const state = await consumeChatCompletionsSse(response.body, streamState);
     const output = state.stdout || state.deltaText || "";
     if (state.failure) return { code: 1, signal: null, stdout: output, stderr: state.failure };
     if (!state.completed) return { code: 1, signal: null, stdout: output, stderr: "Chat Completions SSE stream disconnected before completion" };
