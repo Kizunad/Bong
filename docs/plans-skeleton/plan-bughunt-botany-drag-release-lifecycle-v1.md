@@ -29,7 +29,7 @@
 
 ## P0 — LEFT RELEASE ownership closure
 
-- [ ] 为 `BotanyDragState` 提供幂等的 non-consuming drag teardown（名称可等义）：仅结束 `dragging`，保留当前 session 已提交的 delta/bounds。
+- [ ] 为 `BotanyDragState` 提供幂等的 non-consuming drag teardown（名称可等义）。具体 owner 是该类现有的静态 `volatile boolean dragging`；该 helper 是 screen-open RELEASE 路径唯一允许执行的 non-consuming teardown 写入点，只把 `dragging` 置为 `false`，保留当前 session 已提交的 delta/bounds。`MixinMouse` 只能调用该 helper，不得直接改写 drag state。
 - [ ] `MixinMouse` 收到 LEFT RELEASE 且 `currentScreen != null` 时先 teardown，再直接放行 screen/vanilla；不得调用会返回“应 cancel”的消费型 `onLeftButton(0, ...)`。
 - [ ] screen-open LEFT PRESS 仍完全归 screen，不启动 Botany drag；无 active drag 的 screen-open RELEASE 为 no-op。
 - [ ] 保持 `TransitionInputPolicy` 既有优先级与右键盾牌路径不变。
