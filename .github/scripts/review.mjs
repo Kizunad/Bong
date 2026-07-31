@@ -743,7 +743,7 @@ function resolveMetadataCommit({ expectedOid, fetchRef, localRef, label }) {
       throw new Error(`本地 ${label} OID ${expectedOid} 不存在且缺少可 fetch ref：${errorText(localError)}`);
     }
     try {
-      git(["fetch", "--no-tags", "origin", `${fetchRef}:${localRef}`]);
+      git(["fetch", "--no-tags", "origin", `+${fetchRef}:${localRef}`]);
       actual = git(["rev-parse", "--verify", `${localRef}^{commit}`]).trim();
     } catch (fetchError) {
       throw new Error(`本地 ${label} OID ${expectedOid} 不存在且 fetch 失败：${errorText(fetchError)}`);
@@ -1246,6 +1246,7 @@ export async function requestChatCompletions(prompt, timeoutMs, options = {}) {
         model: options.model || MODEL,
         messages: [{ role: "user", content: prompt }],
         reasoning_effort: "high",
+        store: false,
         stream: true,
       }),
       signal: controller.signal,

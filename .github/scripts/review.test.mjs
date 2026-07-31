@@ -633,7 +633,7 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
   if (!fs.existsSync(process.env.GIT_TEST_FETCHED)) process.exit(1);
   process.stdout.write(headOid + "\\n");
 } else if (args[0] === "fetch") {
-  if (args[3] !== "refs/pull/42/head:refs/review/pr-42-head") process.exit(2);
+  if (args[3] !== "+refs/pull/42/head:refs/review/pr-42-head") process.exit(2);
   fs.writeFileSync(process.env.GIT_TEST_FETCHED, "yes");
 } else if (args[0] === "merge-base") {
   if (args[1] !== baseOid || args[2] !== headOid) process.exit(4);
@@ -671,7 +671,7 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
       "fetch",
       "--no-tags",
       "origin",
-      "refs/pull/42/head:refs/review/pr-42-head",
+      "+refs/pull/42/head:refs/review/pr-42-head",
     ]);
     assert.deepEqual(calls.find((args) => args[0] === "merge-base"), ["merge-base", baseOid, headOid]);
     assert.deepEqual(calls.find((args) => args[0] === "diff"), ["diff", "--no-ext-diff", mergeBase, headOid]);
@@ -683,6 +683,94 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
     else process.env.GIT_TEST_LOG = previousLog;
     if (previousFetched === undefined) delete process.env.GIT_TEST_FETCHED;
     else process.env.GIT_TEST_FETCHED = previousFetched;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("local PR diff: script-owned ref 用强制 refspec 刷新 force-push 后的 stale head", () => {
+  const directory = mkdtempSync(join(tmpdir(), "bong-review-git-force-push-"));
+  const gitPath = join(directory, "git");
+  const logPath = join(directory, "git.log");
+  const refStatePath = join(directory, "head-ref");
+  const baseOid = "a".repeat(40);
+  const headOid = "b".repeat(40);
+  const mergeBase = "c".repeat(40);
+  const staleHeadOid = "d".repeat(40);
+  writeFileSync(refStatePath, `${staleHeadOid}\n`);
+  writeFileSync(
+    gitPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const baseOid = ${JSON.stringify(baseOid)};
+const headOid = ${JSON.stringify(headOid)};
+const mergeBase = ${JSON.stringify(mergeBase)};
+const staleHeadOid = ${JSON.stringify(staleHeadOid)};
+const refStatePath = process.env.GIT_TEST_REF_STATE;
+fs.appendFileSync(process.env.GIT_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
+  process.stdout.write(baseOid + "\\n");
+} else if (args[0] === "rev-parse" && args[2] === headOid + "^{commit}") {
+  process.exit(1);
+} else if (args[0] === "fetch") {
+  if (fs.readFileSync(refStatePath, "utf8").trim() !== staleHeadOid) process.exit(2);
+  if (args[3] !== "+refs/pull/42/head:refs/review/pr-42-head") {
+    process.stderr.write("non-fast-forward update rejected\\n");
+    process.exit(3);
+  }
+  fs.writeFileSync(refStatePath, headOid + "\\n");
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
+  process.stdout.write(fs.readFileSync(refStatePath, "utf8").trim() + "\\n");
+} else if (args[0] === "merge-base") {
+  if (args[1] !== baseOid || args[2] !== headOid) process.exit(4);
+  process.stdout.write(mergeBase + "\\n");
+} else if (args[0] === "diff") {
+  if (args[2] !== mergeBase || args[3] !== headOid) process.exit(5);
+  process.stdout.write("diff --git a/force-push.txt b/force-push.txt\\n");
+} else {
+  process.exit(6);
+}
+`,
+  );
+  chmodSync(gitPath, 0o755);
+  const previousPath = process.env.PATH;
+  const previousLog = process.env.GIT_TEST_LOG;
+  const previousRefState = process.env.GIT_TEST_REF_STATE;
+  process.env.PATH = `${directory}:${previousPath || ""}`;
+  process.env.GIT_TEST_LOG = logPath;
+  process.env.GIT_TEST_REF_STATE = refStatePath;
+  try {
+    assert.equal(
+      localPrDiff("42", {
+        baseRefOid: baseOid,
+        baseRefName: "main",
+        headRefOid: headOid,
+        headRefName: "feature",
+      }),
+      "diff --git a/force-push.txt b/force-push.txt\n",
+    );
+    assert.equal(
+      readFileSync(refStatePath, "utf8").trim(),
+      headOid,
+      "force-push 后必须把 script-owned ref 更新到 metadata head OID",
+    );
+    const calls = readFileSync(logPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(calls.find((args) => args[0] === "fetch"), [
+      "fetch",
+      "--no-tags",
+      "origin",
+      "+refs/pull/42/head:refs/review/pr-42-head",
+    ]);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousLog === undefined) delete process.env.GIT_TEST_LOG;
+    else process.env.GIT_TEST_LOG = previousLog;
+    if (previousRefState === undefined) delete process.env.GIT_TEST_REF_STATE;
+    else process.env.GIT_TEST_REF_STATE = previousRefState;
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -847,9 +935,9 @@ test("Chat Completions request: SSE、user message、high reasoning，并解析 
     model: "gpt-5.6-sol",
     messages: [{ role: "user", content: "审查提示" }],
     reasoning_effort: "high",
+    store: false,
     stream: true,
   });
-  assert.equal(Object.hasOwn(request.body, "store"), false, "Chat Completions 请求不得携带 store");
   assert.equal(Object.hasOwn(request.body, "tools"), false, "生产 reviewer 不得获得 shell 或其他 tool");
   assert.equal(extractChatCompletionsOutputText({ choices: [{ message: { content: "chat output" } }] }), "chat output");
   assert.equal(extractChatCompletionsOutputText({ choices: [{ message: { content: "second output" } }] }), "second output");
@@ -863,6 +951,17 @@ test("Chat Completions SSE: content:null 是无文本首帧，随后 content 与
   });
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "content");
+});
+
+test("Chat Completions SSE: stop 和 DONE 后仍无 content 时 fail-closed", async () => {
+  const result = await requestChatCompletions("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([chatSseChunk(null), chatSseChunk("", "stop"), chatSseDone()]),
+  });
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Chat Completions 未返回 content。/);
 });
 
 test("Chat Completions SSE: choices/choice/delta 结构损坏时，即使随后 DONE 也 fail-closed", async () => {
