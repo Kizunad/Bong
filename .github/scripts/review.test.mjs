@@ -1177,7 +1177,7 @@ test("Chat Completions SSE: content:null 是无文本首帧，随后 content 与
   assert.equal(result.stdout, "content");
 });
 
-test("Chat Completions SSE: frame contract is a closed envelope and transition table", async () => {
+test("Chat Completions SSE: transport compatibility and semantic transition table", async () => {
   const completion = (content, finishReason = null) => JSON.stringify({
     choices: [{ delta: { content }, finish_reason: finishReason }],
   });
@@ -1222,43 +1222,27 @@ test("Chat Completions SSE: frame contract is a closed envelope and transition t
       output: "split",
     },
     {
-      name: "data 后出现 event field 拒绝",
+      name: "标准 SSE 注释、metadata、扩展字段、重复 event 与任意字段顺序均兼容",
       stream: [
         rawFrame([
-          `data: ${completion("bad", "stop")}`,
+          ": keepalive",
+          `data: ${completion("compatible", "stop")}`,
+          "id: 42",
+          "event: ignored-first",
+          "retry: 1000",
+          "x-provider-extension: future",
+          "event: message",
+          ": still ignored",
+        ]),
+        rawFrame([
+          "id: 43",
+          "event: ignored-first",
+          "data: [DONE]",
+          "retry: 2000",
           "event: message",
         ]),
-        done,
       ],
-      error: /event field 必须位于所有 data field 之前/,
-    },
-    {
-      name: "未结束 frame 内的 comment 拒绝",
-      stream: [
-        rawFrame([
-          "event: message",
-          ": misplaced",
-          `data: ${completion("bad", "stop")}`,
-        ]),
-        done,
-      ],
-      error: /comment 必须位于 SSE frame 边界/,
-    },
-    {
-      name: "comment 后未分帧直接出现 data 拒绝",
-      stream: [
-        rawFrame([
-          ": misplaced",
-          `data: ${completion("bad", "stop")}`,
-        ]),
-        done,
-      ],
-      error: /comment 必须位于 SSE frame 边界/,
-    },
-    {
-      name: "open 阶段允许 comment",
-      stream: [": keepalive\n\n", stopped("comment"), done],
-      output: "comment",
+      output: "compatible",
     },
     {
       name: "stop 后允许一次 usage-only 再 DONE",
@@ -1266,8 +1250,15 @@ test("Chat Completions SSE: frame contract is a closed envelope and transition t
       output: "usage",
     },
     {
-      name: "event: error 即使承载完整 stop payload 和 DONE 也作为 provider failure",
-      stream: [frame({ event: "error", data: completion("laundered", "stop") }), done],
+      name: "最后一个 event: error 即使承载完整 stop payload 和 DONE 也作为 provider failure",
+      stream: [
+        rawFrame([
+          `data: ${completion("laundered", "stop")}`,
+          "event: message",
+          "event: error",
+        ]),
+        done,
+      ],
       error: /provider error event/,
       stdout: "",
     },
@@ -1278,36 +1269,49 @@ test("Chat Completions SSE: frame contract is a closed envelope and transition t
       stdout: "partial",
     },
     {
-      name: "event: error 即使没有 data 也作为 provider failure",
-      stream: [frame({ event: "error" })],
-      error: /provider error event/,
-      stdout: "",
+      name: "event: error 携带 data 才作为 provider failure",
+      stream: [frame({ event: "error" }), stopped("metadata"), done],
+      output: "metadata",
     },
     {
-      name: "未知 event 名即使承载完整 stop payload 和 DONE 也拒绝",
-      stream: [frame({ event: "chunk", data: completion("laundered", "stop") }), done],
+      name: "最后一个未知 event 名即使承载完整 stop payload 和 DONE 也拒绝",
+      stream: [
+        rawFrame([
+          "event: message",
+          `data: ${completion("laundered", "stop")}`,
+          "event: chunk",
+        ]),
+        done,
+      ],
       error: /不支持的 SSE event 名：chunk/,
       stdout: "",
     },
     {
-      name: "未知 SSE field 拒绝",
-      stream: [frame({ data: completion("bad", "stop"), extraFields: [["id", "7"]] }), done],
-      error: /不支持的 SSE field：id/,
+      name: "未知 SSE field 作为 transport metadata 忽略",
+      stream: [frame({ data: completion("metadata", "stop"), extraFields: [["id", "7"]] }), done],
+      output: "metadata",
     },
     {
-      name: "一个 frame 的重复 event field 拒绝",
-      stream: [frame({ event: "message", data: completion("bad", "stop"), extraFields: [["event", "message"]] }), done],
-      error: /只能包含一个 event field/,
+      name: "一个 frame 允许重复 event field 且最后一个值生效",
+      stream: [
+        frame({
+          event: "ignored-first",
+          data: completion("last-event", "stop"),
+          extraFields: [["event", "message"]],
+        }),
+        done,
+      ],
+      output: "last-event",
     },
     {
-      name: "只有 event field 而没有 data field 拒绝",
-      stream: [frame({ event: "message" }), done],
-      error: /缺少 data field/,
+      name: "只有 event field 而没有 data field 的 metadata frame 忽略",
+      stream: [frame({ event: "message" }), stopped("metadata"), done],
+      output: "metadata",
     },
     {
-      name: "空 data field 拒绝",
+      name: "空 data field 的 payload 语义拒绝",
       stream: [frame({ data: "" }), done],
-      error: /data 不得为空/,
+      error: /SSE frame data 不得为空/,
     },
     {
       name: "open 阶段的 DONE 拒绝",
@@ -1333,28 +1337,19 @@ test("Chat Completions SSE: frame contract is a closed envelope and transition t
       stdout: "partial",
     },
     {
-      name: "stop 后 comment 拒绝",
+      name: "stop 后的 comment 作为传输 keepalive 忽略",
       stream: [stopped("partial"), ": late\n\n", done],
-      error: /不允许的 comment frame 状态转换/,
-      stdout: "partial",
+      output: "partial",
     },
     {
-      name: "DONE 后任何 data frame 拒绝",
-      stream: [stopped("complete"), done, frame({ data: completion("tail") })],
-      error: /\[DONE\] 后不得再出现任何 frame/,
-      stdout: "complete",
-    },
-    {
-      name: "DONE 后 comment 拒绝",
-      stream: [stopped("complete"), done, ": late\n\n"],
-      error: /\[DONE\] 后不得再出现任何 frame/,
-      stdout: "complete",
-    },
-    {
-      name: "DONE 后 event: error 拒绝",
-      stream: [stopped("complete"), done, frame({ event: "error", data: "not-json" })],
-      error: /\[DONE\] 后不得再出现任何 frame/,
-      stdout: "complete",
+      name: "DONE 立即终止并忽略同一缓冲区后续帧",
+      stream: [
+        stopped("complete"),
+        done,
+        frame({ event: "chunk", data: "not-json" }),
+        frame({ event: "error", data: "not-json" }),
+      ],
+      output: "complete",
     },
   ];
 
@@ -1374,6 +1369,27 @@ test("Chat Completions SSE: frame contract is a closed envelope and transition t
       assert.equal(result.stdout, scenario.output, scenario.name);
     }
   }
+});
+
+test("Chat Completions SSE: DONE 立即完成并取消保持开启的 reader", async () => {
+  let cancelled = false;
+  const response = sseResponse([chatSseChunk("complete", "stop"), chatSseDone()], {
+    neverClose: true,
+    cancel: () => {
+      cancelled = true;
+    },
+  });
+  const result = await Promise.race([
+    requestChatCompletions("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => response,
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("[DONE] 后仍在等待 EOF")), 100)),
+  ]);
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "complete");
+  assert.equal(cancelled, true);
 });
 
 test("Chat Completions SSE: stop 和 DONE 后仍无 content 时 fail-closed", async () => {
