@@ -634,8 +634,8 @@ pub use persisted::{
 };
 pub(crate) use qi_flow::release_external_qi_to_zone;
 pub use qi_flow::{
-    ActorQiIdentity, ActorQiKind, ActorQiTarget, CultivationQiInit, CultivationQiSnapshot,
-    PersistentQiSink, QiFlowError, QiFlowOutcome, QiFlowTarget, QiResizeOutcome,
+    ActorQiIdentity, ActorQiKind, CultivationQiInit, CultivationQiSnapshot, PersistentQiSink,
+    QiFlowError, QiFlowOutcome, QiResizeOutcome,
 };
 
 /// 修为主组件。`qi_max_frozen` 用于 QiZeroDecay 窗口期（plan §2）。

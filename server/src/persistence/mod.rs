@@ -31,7 +31,9 @@ use crate::player::state::canonical_player_id;
 #[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 #[cfg(test)]
-use crate::qi_physics::ledger::pending_inflow_account;
+use crate::qi_physics::ledger::{
+    assert_conservation, pending_inflow_account, qi_flow_overflow_account, WorldQiSnapshot,
+};
 use crate::qi_physics::ledger::{
     persistent_runtime_qi_accounts, QiAccountId, WorldQiAccount, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
@@ -16189,6 +16191,60 @@ mod persistence_tests {
     }
 
     #[test]
+    fn v40_migration_initializes_qi_flow_overflow_without_mutating_existing_runtime_balances() {
+        let db_path = database_path("v40-qi-flow-overflow-account");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v40-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DELETE FROM qi_runtime_accounts WHERE account_id = 'qi_flow_overflow';
+                UPDATE qi_runtime_accounts
+                SET balance = 12.5
+                WHERE account_id = 'pending_inflow';
+                PRAGMA user_version = 39;
+                ",
+            )
+            .expect("fixture should emulate a v39 database with a real pending balance");
+
+        apply_migrations(&mut connection).expect("v40 migration should succeed");
+
+        let qi_flow_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![QI_FLOW_OVERFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("v40 must initialize the new qi_flow_overflow row");
+        assert_eq!(
+            qi_flow_balance, 0.0,
+            "a pre-v40 database has no recoverable R5 overflow history, so the new account starts at known zero"
+        );
+        let pending_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("existing pending balance should remain readable");
+        assert_eq!(
+            pending_balance, 12.5,
+            "v40 must not overwrite existing stable runtime balances while adding qi_flow_overflow"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
         let (settings, root) = persistence_settings("runtime-qi-four-account-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -16205,7 +16261,9 @@ mod persistence_tests {
                 crate::qi_physics::ledger::dying_elder_release_overflow_account(),
                 33.75,
             ),
+            (qi_flow_overflow_account(), 44.0),
         ];
+        let expected_total = expected.iter().map(|(_, balance)| balance).sum::<f64>();
         let mut source = WorldQiAccount::default();
         for (account, balance) in &expected {
             source
@@ -16235,6 +16293,29 @@ mod persistence_tests {
             assert_eq!(hydrated.balance(&account), balance, "account={account}");
         }
         assert_eq!(hydrated.balance(&QiAccountId::zone("spawn")), 0.0);
+        let before = WorldQiSnapshot {
+            player_qi: 0.0,
+            zone_qi: 0.0,
+            container_qi: 0.0,
+            ledger_qi: expected_total,
+            era_decay_accum: 0.0,
+            budget_initial_total: 0.0,
+            budget_current_total: 0.0,
+        };
+        let after = WorldQiSnapshot {
+            ledger_qi: hydrated.total(),
+            ..before
+        };
+        assert_conservation(&before, &after, 0.0)
+            .expect("runtime account restart must preserve the stable-pool qi total");
+        assert!(
+            hydrated.has_account(&qi_flow_overflow_account()),
+            "qi_flow_overflow must hydrate as a real stable ledger owner"
+        );
+        assert!(
+            !hydrated.has_account(&QiAccountId::zone("spawn")),
+            "non-whitelist ledger accounts must not hydrate from runtime pools"
+        );
         assert!(
             hydrated.transfers().is_empty(),
             "restart must not restore audit history"
@@ -16971,6 +17052,7 @@ mod persistence_tests {
             (QI_FLOW_OVERFLOW_ACCOUNT_ID, 17.0),
             (DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, 22.0),
             (DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, 33.0),
+            (QI_FLOW_OVERFLOW_ACCOUNT_ID, 44.0),
         ];
         let mut connection = open_persistence_connection(&settings).expect("db should open");
         {
@@ -17004,6 +17086,9 @@ mod persistence_tests {
         source
             .set_balance(release_account.clone(), 333.0)
             .expect("release overflow staged balance should be valid");
+        source
+            .set_balance(qi_flow_overflow_account(), 444.0)
+            .expect("qi flow overflow staged balance should be valid");
 
         // 账本现在 fail-closed 拒绝不可表示的余额；用 SQLite 的测试专用触发器在第四个
         // 白名单账户写入时注入持久化失败，继续覆盖前缀写入必须随事务整体回滚的契约。
@@ -17012,9 +17097,9 @@ mod persistence_tests {
                 "
                 CREATE TRIGGER runtime_qi_atomic_rollback_fail_fourth
                 BEFORE UPDATE OF balance ON qi_runtime_accounts
-                WHEN OLD.account_id = 'dying_elder_release'
+                WHEN OLD.account_id = 'qi_flow_overflow'
                 BEGIN
-                    SELECT RAISE(ABORT, 'fixture rejects dying_elder_release');
+                    SELECT RAISE(ABORT, 'fixture rejects qi_flow_overflow');
                 END;
                 ",
             )
@@ -17027,9 +17112,7 @@ mod persistence_tests {
             let error = upsert_runtime_qi_account_balances(&transaction, &source, 456)
                 .expect_err("the fourth whitelist update must fail inside the transaction");
             assert!(
-                error
-                    .to_string()
-                    .contains(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
+                error.to_string().contains(QI_FLOW_OVERFLOW_ACCOUNT_ID),
                 "error should identify the rejected fourth account, actual={error}"
             );
             drop(transaction);
@@ -17062,6 +17145,7 @@ mod persistence_tests {
             ("qi-flow-overflow", QI_FLOW_OVERFLOW_ACCOUNT_ID),
             ("dan-excess", DYING_ELDER_DAN_EXCESS_ACCOUNT_ID),
             ("death-overflow", DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
+            ("qi-flow-overflow", QI_FLOW_OVERFLOW_ACCOUNT_ID),
         ] {
             for corruption in ["missing", "negative"] {
                 let test_name = format!("runtime-qi-{case}-{corruption}");
