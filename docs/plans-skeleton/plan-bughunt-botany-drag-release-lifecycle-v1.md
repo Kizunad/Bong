@@ -65,5 +65,5 @@
 
 - Client gate：若实现时 `scripts/build-token.sh` 已存在，按其真实 CLI 运行；否则用 `flock /tmp/bong-gradle.lock -c './gradlew test build'`。只触 client 栈。
 - 严禁本地运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh` 或任何调用它们的 suite；GitHub e2e 保留该覆盖。
-- push 前 `git fetch origin && git merge origin/main`；exact-HEAD fresh-context read-only validator PASS 后才能 push。每次 push 后在同一 PR 发新的 `/review` 评论。
+- push 前 `git fetch origin && git merge origin/main`；exact-HEAD fresh-context read-only validator PASS 后才能 push；本轮不触发 `/review`，由调度方统一收集 verdict。
 - P0/P1 全部 ✅ 后补 `## Finish Evidence` 并归档；实现与归档仍保持唯一 BugFix PR。
