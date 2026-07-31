@@ -651,9 +651,16 @@ async function workflowFinalize() {
   return decision.kind === "gate_failure" ? 1 : 0;
 }
 
-export function loadPrContext(pr, { runGh = gh, localDiff = localPrDiff, log = console.error } = {}) {
+export function loadPrContext(
+  pr,
+  { runGh = gh, localDiff = localPrDiff, log = console.error, repository = resolveRepository(runGh) } = {},
+) {
   const meta = JSON.parse(
-    runGh(["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,baseRefOid,headRefOid,files"]),
+    runGh(["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,headRefOid,files"]),
+  );
+  meta.baseRefOid = requireMetadataOid(
+    runGh(["api", `repos/${repository}/pulls/${pr}`, "--jq", ".base.sha"]),
+    "base",
   );
   let diff;
   let diffSource;
@@ -1735,9 +1742,9 @@ function postIssueComment(issue, body, deadlineMs = Date.now() + GH_TIMEOUT_MS) 
   gh(["api", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}`], circuitGhTimeout(deadlineMs));
 }
 
-function resolveRepository() {
+function resolveRepository(runGh = gh) {
   if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
-  return gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).trim();
+  return runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).trim();
 }
 
 function writeOutcome(kind, extra = {}) {

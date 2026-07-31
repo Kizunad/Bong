@@ -1013,13 +1013,67 @@ ${scenario.gitScript}
   }
 });
 
-test("loadPrContext: 成功 API diff 的文本不参与 406 判定，只有失败命令才可回退本地", () => {
+test("loadPrContext: gh pr view 仅请求受支持字段，base OID 来自 GitHub REST", () => {
+  const baseOid = "a".repeat(40);
   const meta = {
     title: "review infra",
     body: "",
     headRefName: "fix/review",
     baseRefName: "main",
-    baseRefOid: "a".repeat(40),
+    headRefOid: "b".repeat(40),
+    files: [],
+  };
+  const supportedGhPrViewFields = new Set([
+    "title",
+    "body",
+    "headRefName",
+    "baseRefName",
+    "headRefOid",
+    "files",
+  ]);
+  let viewArgs;
+  let restArgs;
+  const context = loadPrContext("42", {
+    repository: "Kizunad/Bong",
+    runGh(args) {
+      if (args[0] === "pr" && args[1] === "view") {
+        viewArgs = args;
+        return JSON.stringify(meta);
+      }
+      if (args[0] === "api") {
+        restArgs = args;
+        return `${baseOid}\n`;
+      }
+      if (args[0] === "pr" && args[1] === "diff") throw new Error("GitHub diff unavailable");
+      throw new Error(`unexpected gh invocation: ${args.join(" ")}`);
+    },
+    localDiff(pr, receivedMeta) {
+      assert.equal(pr, "42");
+      assert.deepEqual(receivedMeta, { ...meta, baseRefOid: baseOid });
+      return "diff --git a/local b/local\n";
+    },
+    log() {},
+  });
+
+  const jsonIndex = viewArgs.indexOf("--json");
+  assert.notEqual(jsonIndex, -1);
+  const requestedFields = viewArgs[jsonIndex + 1].split(",");
+  assert.deepEqual(requestedFields, ["title", "body", "headRefName", "baseRefName", "headRefOid", "files"]);
+  assert.ok(
+    requestedFields.every((field) => supportedGhPrViewFields.has(field)),
+    `gh pr view 请求了不受支持字段：${requestedFields.filter((field) => !supportedGhPrViewFields.has(field)).join(", ")}`,
+  );
+  assert.deepEqual(restArgs, ["api", "repos/Kizunad/Bong/pulls/42", "--jq", ".base.sha"]);
+  assert.equal(context.diffSource, "local");
+});
+
+test("loadPrContext: 成功 API diff 的文本不参与 406 判定，只有失败命令才可回退本地", () => {
+  const baseOid = "a".repeat(40);
+  const meta = {
+    title: "review infra",
+    body: "",
+    headRefName: "fix/review",
+    baseRefName: "main",
     headRefOid: "b".repeat(40),
     files: [{ path: ".github/scripts/review.mjs", additions: 3, deletions: 1 }],
   };
@@ -1044,15 +1098,20 @@ test("loadPrContext: 成功 API diff 的文本不参与 406 判定，只有失�
     let localCalls = 0;
     const logs = [];
     const context = loadPrContext("42", {
+      repository: "Kizunad/Bong",
       runGh(args) {
-        if (args[1] === "view") return JSON.stringify(meta);
-        if (scenario.apiError) throw scenario.apiError;
-        return scenario.apiDiff;
+        if (args[0] === "pr" && args[1] === "view") return JSON.stringify(meta);
+        if (args[0] === "api") return `${baseOid}\n`;
+        if (args[0] === "pr" && args[1] === "diff") {
+          if (scenario.apiError) throw scenario.apiError;
+          return scenario.apiDiff;
+        }
+        throw new Error(`unexpected gh invocation: ${args.join(" ")}`);
       },
       localDiff(pr, receivedMeta) {
         localCalls += 1;
         assert.equal(pr, "42");
-        assert.deepEqual(receivedMeta, meta);
+        assert.deepEqual(receivedMeta, { ...meta, baseRefOid: baseOid });
         return "diff --git a/local b/local\n";
       },
       log(message) {
@@ -1066,12 +1125,12 @@ test("loadPrContext: 成功 API diff 的文本不参与 406 判定，只有失�
 });
 
 test("loadPrContext: fallback 的所有声明失败保留原因并合并为 diff acquisition failure", () => {
+  const baseOid = "a".repeat(40);
   const meta = {
     title: "review infra",
     body: "",
     headRefName: "fix/review",
     baseRefName: "main",
-    baseRefOid: "a".repeat(40),
     headRefOid: "b".repeat(40),
     files: [],
   };
@@ -1083,9 +1142,9 @@ test("loadPrContext: fallback 的所有声明失败保留原因并合并为 diff
   });
   const localFailures = [
     "PR metadata 缺少合法 base OID",
-    `本地 base OID ${meta.baseRefOid} fetch 失败：network unavailable`,
+    `本地 base OID ${baseOid} fetch 失败：network unavailable`,
     `本地 head OID ${meta.headRefOid} fetch 后 ref 不可读：missing ref`,
-    `PR base OID 漂移：expected=${meta.baseRefOid} actual=${"c".repeat(40)}`,
+    `PR base OID 漂移：expected=${baseOid} actual=${"c".repeat(40)}`,
     "本地 Git 未找到 PR base/head 的 merge-base：no common ancestor",
     "本地 Git diff 失败：git diff returned 128",
     "本地 Git diff 返回空输出",
@@ -1093,9 +1152,12 @@ test("loadPrContext: fallback 的所有声明失败保留原因并合并为 diff
   for (const localReason of localFailures) {
     assert.throws(
       () => loadPrContext("42", {
+        repository: "Kizunad/Bong",
         runGh(args) {
-          if (args[1] === "view") return JSON.stringify(meta);
-          throw apiError;
+          if (args[0] === "pr" && args[1] === "view") return JSON.stringify(meta);
+          if (args[0] === "api") return `${baseOid}\n`;
+          if (args[0] === "pr" && args[1] === "diff") throw apiError;
+          throw new Error(`unexpected gh invocation: ${args.join(" ")}`);
         },
         localDiff() {
           throw new Error(localReason);
