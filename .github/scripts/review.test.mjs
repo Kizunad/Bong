@@ -1269,8 +1269,14 @@ test("Chat Completions SSE: transport compatibility and semantic transition tabl
       stdout: "partial",
     },
     {
-      name: "event: error 携带 data 才作为 provider failure",
-      stream: [frame({ event: "error" }), stopped("metadata"), done],
+      name: "bare event: error 即使后续 completion 与 DONE 完整也 fail-closed",
+      stream: [frame({ event: "error" }), stopped("laundered"), done],
+      error: /provider error frame 未携带 detail/,
+      stdout: "",
+    },
+    {
+      name: "无 data 的 event: message 作为 transport metadata 忽略",
+      stream: [frame({ event: "message" }), stopped("metadata"), done],
       output: "metadata",
     },
     {
@@ -1302,11 +1308,6 @@ test("Chat Completions SSE: transport compatibility and semantic transition tabl
         done,
       ],
       output: "last-event",
-    },
-    {
-      name: "只有 event field 而没有 data field 的 metadata frame 忽略",
-      stream: [frame({ event: "message" }), stopped("metadata"), done],
-      output: "metadata",
     },
     {
       name: "空 data field 的 payload 语义拒绝",

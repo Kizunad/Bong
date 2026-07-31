@@ -1063,8 +1063,10 @@ function requireChatCompletionsSseTransition(state, type) {
 }
 
 function chatCompletionsSseProviderErrorDetail(data) {
+  const raw = String(data ?? "");
+  if (!raw.trim()) return "Chat Completions provider error frame 未携带 detail。";
   try {
-    return responseErrorDetail(JSON.parse(String(data ?? "")), "Chat Completions provider error event");
+    return responseErrorDetail(JSON.parse(raw), "Chat Completions provider error event");
   } catch {
     return "Chat Completions provider error event";
   }
@@ -1199,12 +1201,17 @@ async function consumeChatCompletionsSse(body, state = {}) {
     dataBytes = 0;
   };
   const dispatch = () => {
-    if (dataLines.length === 0) {
-      resetEvent();
+    const event = { event: eventName, data: dataLines.join("\n") };
+    const hasData = dataLines.length > 0;
+    resetEvent();
+    if (event.event === CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.errorEventName) {
+      reduceChatCompletionsSseEvent(streamState, event);
       return;
     }
-    const event = { event: eventName, data: dataLines.join("\n") };
-    resetEvent();
+    if (!hasData) {
+      // error 已优先作为语义失败；其余无 data frame（含空名/message）只是 transport metadata。
+      return;
+    }
     reduceChatCompletionsSseEvent(streamState, event);
   };
   const processLine = (line) => {
