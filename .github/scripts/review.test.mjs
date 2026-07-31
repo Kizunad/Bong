@@ -1192,7 +1192,9 @@ test("Chat Completions SSE: transport compatibility and semantic transition tabl
     return rawFrame(lines);
   };
   const stopped = (content) => frame({ data: completion(content, "stop") });
-  const usage = frame({ data: JSON.stringify({ choices: [], usage: { total_tokens: 1 } }) });
+  const usage = frame({
+    data: JSON.stringify({ choices: [], usage: { total_tokens: 1 }, service_tier: "priority" }),
+  });
   const done = chatSseDone();
   const cases = [
     {
@@ -1245,7 +1247,7 @@ test("Chat Completions SSE: transport compatibility and semantic transition tabl
       output: "compatible",
     },
     {
-      name: "stop 后允许一次 usage-only 再 DONE",
+      name: "stop 后允许含 service_tier 的一次 usage-only 再 DONE",
       stream: [stopped("usage"), usage, done],
       output: "usage",
     },

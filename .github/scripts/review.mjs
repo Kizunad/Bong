@@ -1020,12 +1020,12 @@ function responseErrorDetail(payload, fallback) {
 }
 
 function isUsageOnlyEvent(payload) {
-  const usageOnlyKeys = new Set(["choices", "created", "id", "model", "object", "system_fingerprint", "usage"]);
   return (
+    Array.isArray(payload.choices) &&
+    payload.choices.length === 0 &&
     payload.usage &&
     typeof payload.usage === "object" &&
-    !Array.isArray(payload.usage) &&
-    Object.keys(payload).every((key) => usageOnlyKeys.has(key))
+    !Array.isArray(payload.usage)
   );
 }
 
