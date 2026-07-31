@@ -2,12 +2,10 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{
-    App, Client, EventReader, EventWriter, IntoSystemConfigs, Query, Res, Update,
-};
+use valence::prelude::{App, Client, EventReader, EventWriter, Query, Res, Update};
 
 use crate::combat::components::{Lifecycle, LifecycleState, Wounds};
-use crate::cultivation::death_hooks::CultivationReviveRequested;
+use crate::cultivation::death_hooks::PlayerRevived;
 use crate::cultivation::tick::CultivationClock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,18 +24,15 @@ impl Command for ReviveCmd {
 }
 
 pub fn register(app: &mut App) {
-    app.add_event::<CultivationReviveRequested>()
+    app.add_event::<PlayerRevived>()
         .add_command::<ReviveCmd>()
-        .add_systems(
-            Update,
-            handle_revive.before(crate::cultivation::death_hooks::on_cultivation_revive_requested),
-        );
+        .add_systems(Update, handle_revive);
 }
 
 pub fn handle_revive(
     mut events: EventReader<CommandResultEvent<ReviveCmd>>,
     clock: Option<Res<CultivationClock>>,
-    mut revive_requests: EventWriter<CultivationReviveRequested>,
+    mut revived: EventWriter<PlayerRevived>,
     mut players: Query<(&mut Lifecycle, Option<&mut Wounds>, &mut Client)>,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
@@ -54,11 +49,11 @@ pub fn handle_revive(
         if let Some(mut wounds) = wounds {
             wounds.health_current = wounds.health_max.max(1.0);
         }
-        revive_requests.send(CultivationReviveRequested {
+        revived.send(PlayerRevived {
             entity: event.executor,
         });
         tracing::warn!("[dev-cmd] force revive self at tick {tick}");
-        client.send_chat_message("[dev] revive self queued CultivationReviveRequested");
+        client.send_chat_message("[dev] revive self queued PlayerRevived");
     }
 }
 
@@ -72,7 +67,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 88 });
         app.add_event::<CommandResultEvent<ReviveCmd>>();
-        app.add_event::<CultivationReviveRequested>();
+        app.add_event::<PlayerRevived>();
         app.add_systems(Update, handle_revive);
         app
     }
@@ -99,97 +94,8 @@ mod tests {
             });
     }
 
-    fn setup_integration_app() -> App {
-        let mut app = App::new();
-        app.insert_resource(CultivationClock { tick: 88 });
-        app.insert_resource(crate::persistence::PersistenceSettings::default());
-        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
-        app.add_event::<CommandResultEvent<ReviveCmd>>();
-        app.add_event::<CultivationReviveRequested>();
-        app.add_event::<crate::cultivation::death_hooks::PlayerRevived>();
-        app.add_event::<crate::cultivation::tribulation::AscensionQuotaOpened>();
-        app.add_event::<crate::skill::events::SkillCapChanged>();
-        app.add_event::<crate::qi_physics::QiTransfer>();
-        app.add_systems(
-            Update,
-            (
-                handle_revive
-                    .before(crate::cultivation::death_hooks::on_cultivation_revive_requested),
-                crate::cultivation::death_hooks::on_cultivation_revive_requested,
-            ),
-        );
-        app
-    }
-
     #[test]
-    fn revive_self_runs_request_handler_and_emits_completed_notification_same_update() {
-        let mut app = setup_integration_app();
-        let mut lifecycle = Lifecycle::default();
-        lifecycle.terminate(10);
-        let player = spawn_player(
-            &mut app,
-            lifecycle,
-            Wounds {
-                health_current: 0.0,
-                ..Default::default()
-            },
-        );
-        app.world_mut().entity_mut(player).insert((
-            crate::cultivation::components::Cultivation {
-                realm: crate::cultivation::components::Realm::Induce,
-                qi_current: 8.0,
-                qi_max: 24.0,
-                ..Default::default()
-            },
-            crate::cultivation::components::MeridianSystem::default(),
-            crate::cultivation::components::Contamination::default(),
-            crate::cultivation::life_record::LifeRecord::new(
-                crate::player::state::canonical_player_id("Alice"),
-            ),
-        ));
-
-        send(&mut app, player);
-        run_update(&mut app);
-
-        assert_eq!(
-            app.world().get::<Lifecycle>(player).unwrap().state,
-            LifecycleState::Alive
-        );
-        let cultivation = app
-            .world()
-            .get::<crate::cultivation::components::Cultivation>(player)
-            .expect("dev revive should retain cultivation");
-        assert_eq!(
-            cultivation.realm,
-            crate::cultivation::components::Realm::Awaken
-        );
-        assert_eq!(cultivation.qi_current, 0.0);
-        assert_eq!(
-            app.world()
-                .resource::<Events<CultivationReviveRequested>>()
-                .len(),
-            1,
-            "the request remains in its event buffer after the same-frame reader consumes it"
-        );
-        assert_eq!(
-            app.world()
-                .resource::<Events<crate::cultivation::death_hooks::PlayerRevived>>()
-                .len(),
-            1,
-            "the completed notification must be emitted in the command update"
-        );
-        assert!(matches!(
-            app.world()
-                .get::<crate::cultivation::life_record::LifeRecord>(player)
-                .unwrap()
-                .biography
-                .last(),
-            Some(crate::cultivation::life_record::BiographyEntry::Rebirth { tick: 88, .. })
-        ));
-    }
-
-    #[test]
-    fn revive_self_emits_cultivation_request_and_restores_alive_lifecycle() {
+    fn revive_self_emits_player_revived_and_restores_alive_lifecycle() {
         let mut app = setup_app();
         let mut lifecycle = Lifecycle::default();
         lifecycle.terminate(10);
@@ -217,12 +123,7 @@ mod tests {
             app.world().get::<Wounds>(player).unwrap().health_current,
             app.world().get::<Wounds>(player).unwrap().health_max
         );
-        assert_eq!(
-            app.world()
-                .resource::<Events<CultivationReviveRequested>>()
-                .len(),
-            1
-        );
+        assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 1);
     }
 
     #[test]
@@ -233,12 +134,7 @@ mod tests {
         send(&mut app, player);
         run_update(&mut app);
 
-        assert_eq!(
-            app.world()
-                .resource::<Events<CultivationReviveRequested>>()
-                .len(),
-            0
-        );
+        assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 0);
         assert_eq!(
             app.world()
                 .get::<Lifecycle>(player)

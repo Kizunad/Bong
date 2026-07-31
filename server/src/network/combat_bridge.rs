@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use valence::prelude::{
-    bevy_ecs, Entity, EventReader, Query, Res, ResMut, Resource, Username, With,
-};
+use valence::prelude::{Entity, EventReader, Query, Res, ResMut, Resource, Username, With};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
@@ -12,7 +10,6 @@ use crate::combat::events::{
     CombatEvent, DeathCinematicPublished, DeathEvent, DeathInsightRequested,
 };
 use crate::npc::brain::canonical_npc_id;
-use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
 use crate::npc::spawn::NpcMarker;
 use crate::player::state::canonical_player_id;
 use crate::schema::combat_event::{
@@ -31,29 +28,18 @@ pub struct CombatSummaryAccumulator {
 
 impl Resource for CombatSummaryAccumulator {}
 
-#[derive(bevy_ecs::system::SystemParam)]
-pub struct CombatRealtimeReaders<'w, 's> {
-    combat: EventReader<'w, 's, CombatEvent>,
-    death: EventReader<'w, 's, DeathEvent>,
-    npc_settlements: EventReader<'w, 's, NpcTerminalSettlementSucceeded>,
-}
-
-#[derive(bevy_ecs::system::SystemParam)]
-pub struct CombatIdentityQueries<'w, 's> {
-    lifecycle: Query<'w, 's, &'static Lifecycle>,
-    clients: Query<'w, 's, &'static Username, With<valence::prelude::Client>>,
-    npcs: Query<'w, 's, (), With<NpcMarker>>,
-}
-
 pub fn publish_combat_realtime_events(
     redis: Res<RedisBridgeResource>,
     mut summary: ResMut<CombatSummaryAccumulator>,
-    mut readers: CombatRealtimeReaders<'_, '_>,
-    identities: CombatIdentityQueries<'_, '_>,
+    mut combat_reader: EventReader<CombatEvent>,
+    mut death_reader: EventReader<DeathEvent>,
+    lifecycle_q: Query<&Lifecycle>,
+    client_q: Query<&Username, With<valence::prelude::Client>>,
+    npc_q: Query<(), With<NpcMarker>>,
 ) {
     let mut identity_cache = HashMap::new();
 
-    for ev in readers.combat.read() {
+    for ev in combat_reader.read() {
         summary.window_start_tick.get_or_insert(ev.resolved_at_tick);
         summary.combat_event_count = summary.combat_event_count.saturating_add(1);
         summary.damage_total += ev.damage;
@@ -61,18 +47,18 @@ pub fn publish_combat_realtime_events(
 
         let Some(target_id) = resolve_canonical_id(
             ev.target,
-            &identities.lifecycle,
-            &identities.clients,
-            &identities.npcs,
+            &lifecycle_q,
+            &client_q,
+            &npc_q,
             &mut identity_cache,
         ) else {
             continue;
         };
         let attacker_id = resolve_canonical_id(
             ev.attacker,
-            &identities.lifecycle,
-            &identities.clients,
-            &identities.npcs,
+            &lifecycle_q,
+            &client_q,
+            &npc_q,
             &mut identity_cache,
         );
 
@@ -101,75 +87,44 @@ pub fn publish_combat_realtime_events(
             .send(RedisOutbound::CombatRealtime(payload));
     }
 
-    for ev in readers.death.read() {
-        if identities.npcs.get(ev.target).is_ok() {
-            continue;
-        }
+    for ev in death_reader.read() {
         summary.window_start_tick.get_or_insert(ev.at_tick);
         summary.death_event_count = summary.death_event_count.saturating_add(1);
 
         let Some(target_id) = resolve_canonical_id(
             ev.target,
-            &identities.lifecycle,
-            &identities.clients,
-            &identities.npcs,
+            &lifecycle_q,
+            &client_q,
+            &npc_q,
             &mut identity_cache,
         ) else {
             continue;
         };
 
-        publish_death_realtime(
-            &redis,
-            ev.at_tick,
+        let payload = CombatRealtimeEventV1 {
+            v: 1,
+            kind: CombatRealtimeKindV1::DeathEvent,
+            tick: ev.at_tick,
             target_id,
-            attacker_id_from_cause(ev.cause.as_str()),
-            ev.cause.clone(),
-        );
+            attacker_id: attacker_id_from_cause(ev.cause.as_str()),
+            body_part: None,
+            wound_kind: None,
+            source: None,
+            damage: None,
+            physical_damage: None,
+            contam_delta: None,
+            description: None,
+            cause: Some(ev.cause.clone()),
+            defense_kind: None,
+            defense_effectiveness: None,
+            defense_contam_reduced: None,
+            defense_wound_severity: None,
+        };
+
+        let _ = redis
+            .tx_outbound
+            .send(RedisOutbound::CombatRealtime(payload));
     }
-
-    for settlement in readers.npc_settlements.read() {
-        summary.window_start_tick.get_or_insert(settlement.at_tick);
-        summary.death_event_count = summary.death_event_count.saturating_add(1);
-        publish_death_realtime(
-            &redis,
-            settlement.at_tick,
-            settlement.actor_qi_identity.account().id,
-            settlement.attacker_player_id.clone(),
-            settlement.cause.clone(),
-        );
-    }
-}
-
-fn publish_death_realtime(
-    redis: &RedisBridgeResource,
-    tick: u64,
-    target_id: String,
-    attacker_id: Option<String>,
-    cause: String,
-) {
-    let payload = CombatRealtimeEventV1 {
-        v: 1,
-        kind: CombatRealtimeKindV1::DeathEvent,
-        tick,
-        target_id,
-        attacker_id,
-        body_part: None,
-        wound_kind: None,
-        source: None,
-        damage: None,
-        physical_damage: None,
-        contam_delta: None,
-        description: None,
-        cause: Some(cause),
-        defense_kind: None,
-        defense_effectiveness: None,
-        defense_contam_reduced: None,
-        defense_wound_severity: None,
-    };
-
-    let _ = redis
-        .tx_outbound
-        .send(RedisOutbound::CombatRealtime(payload));
 }
 
 pub fn publish_combat_summary_on_interval(
@@ -384,7 +339,6 @@ mod tests {
         app.insert_resource(crate::network::WorldStateTimer::default());
         app.add_event::<CombatEvent>();
         app.add_event::<DeathEvent>();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<DeathInsightRequested>();
         app.add_event::<DeathCinematicPublished>();
         (app, rx_outbound)
@@ -593,84 +547,6 @@ mod tests {
         assert_eq!(summary.death_event_count, 1);
         assert_eq!(summary.damage_total, 20.0);
         assert_eq!(summary.contam_delta_total, 5.0);
-    }
-
-    #[test]
-    fn npc_death_realtime_waits_for_terminal_commit() {
-        let (mut app, rx_outbound) = setup_app();
-        app.add_systems(Update, publish_combat_realtime_events);
-
-        let target_id = "npc:combat-bridge:terminal";
-        let target = app
-            .world_mut()
-            .spawn((
-                Lifecycle {
-                    character_id: target_id.to_string(),
-                    ..Default::default()
-                },
-                NpcMarker,
-            ))
-            .id();
-        app.world_mut().send_event(DeathEvent {
-            target,
-            cause: "attack_intent:offline:Azure".to_string(),
-            attacker: None,
-            attacker_player_id: Some("offline:Azure".to_string()),
-            at_tick: 34,
-        });
-
-        app.update();
-        assert!(
-            rx_outbound.try_recv().is_err(),
-            "raw NPC lethal edge must not publish terminal telemetry"
-        );
-        assert_eq!(
-            app.world()
-                .resource::<CombatSummaryAccumulator>()
-                .death_event_count,
-            0,
-            "raw NPC lethal edge must not increment committed death summary"
-        );
-
-        let life_record = crate::cultivation::life_record::LifeRecord::new(target_id);
-        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
-            entity: target,
-            at_tick: 34,
-            cause: "attack_intent:offline:Azure".to_string(),
-            reason: crate::npc::lifecycle::NpcDeathReason::Combat,
-            attacker: None,
-            attacker_player_id: Some("offline:Azure".to_string()),
-            authorize_loot: true,
-            actor_qi_identity: crate::cultivation::components::ActorQiIdentity::from_life_record(
-                &life_record,
-                crate::cultivation::components::ActorQiKind::Npc,
-            )
-            .expect("combat bridge fixture must use canonical NPC identity"),
-        });
-        app.update();
-
-        let outbound = rx_outbound
-            .try_recv()
-            .expect("committed NPC death should publish realtime telemetry");
-        match outbound {
-            RedisOutbound::CombatRealtime(payload) => {
-                assert_eq!(payload.kind, CombatRealtimeKindV1::DeathEvent);
-                assert_eq!(payload.target_id, target_id);
-                assert_eq!(payload.attacker_id.as_deref(), Some("offline:Azure"));
-                assert_eq!(
-                    payload.cause.as_deref(),
-                    Some("attack_intent:offline:Azure")
-                );
-            }
-            other => panic!("expected CombatRealtime outbound, got {other:?}"),
-        }
-        assert!(rx_outbound.try_recv().is_err());
-        assert_eq!(
-            app.world()
-                .resource::<CombatSummaryAccumulator>()
-                .death_event_count,
-            1
-        );
     }
 
     #[test]

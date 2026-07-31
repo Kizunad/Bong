@@ -95,56 +95,6 @@ impl ActorQiIdentity {
         self.account.clone()
     }
 
-    pub(crate) fn transfer_from_external(
-        &self,
-        source: QiAccountId,
-        cultivation: &mut Cultivation,
-        ledger: &mut WorldQiAccount,
-        requested: f64,
-        reason: QiTransferReason,
-    ) -> Result<QiFlowOutcome, QiFlowError> {
-        cultivation.validate_qi_state()?;
-        let requested = finite_non_negative(requested, "transfer_from_external.requested")?;
-        reject_audit_only_qi_reason(reason)?;
-        if requested == 0.0 {
-            return Ok(QiFlowOutcome::noop(0.0));
-        }
-        let target = self.account();
-        if source == target {
-            return Err(QiFlowError::SameAccount {
-                account: source.to_string(),
-            });
-        }
-        let room = cultivation.qi_room();
-        if requested > room {
-            return Err(QiFlowError::InsufficientCapacity { room, requested });
-        }
-        let target_after = checked_add_progress(
-            cultivation.qi_current,
-            requested,
-            "cultivation.qi_current.external_target",
-        )?;
-        let transfer = QiTransfer::new(source, target, requested, reason)?;
-
-        cultivation.qi_current = target_after;
-        ledger.push_transfer_audit(transfer.clone());
-
-        Ok(QiFlowOutcome {
-            requested,
-            source_debited: requested,
-            target_credited: requested,
-            zone_accepted: 0.0,
-            overflow_credited: 0.0,
-            untransferred: 0.0,
-            transfers: vec![transfer],
-        })
-    }
-
-    pub(crate) fn matches_life_record(&self, life_record: &LifeRecord, kind: ActorQiKind) -> bool {
-        Self::from_life_record(life_record, kind)
-            .is_ok_and(|identity| identity.account == self.account)
-    }
-
     #[cfg(test)]
     fn for_test(account: QiAccountId) -> Self {
         Self { account }
@@ -172,25 +122,13 @@ impl<'a> ActorQiTarget<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersistentQiSink {
-    PendingInflow,
     QiFlowOverflow,
-    DyingElderDanExcess,
-    DyingElderReleaseOverflow,
-    RiftDrain,
 }
 
 impl PersistentQiSink {
     pub fn account(self) -> QiAccountId {
         match self {
-            Self::PendingInflow => crate::qi_physics::ledger::pending_inflow_account(),
             Self::QiFlowOverflow => qi_flow_overflow_account(),
-            Self::DyingElderDanExcess => {
-                crate::qi_physics::ledger::dying_elder_dan_excess_account()
-            }
-            Self::DyingElderReleaseOverflow => {
-                crate::qi_physics::ledger::dying_elder_release_overflow_account()
-            }
-            Self::RiftDrain => crate::qi_physics::ledger::rift_drain_account(),
         }
     }
 }
@@ -230,10 +168,6 @@ pub enum QiFlowError {
     },
     InsufficientCurrent {
         available: f64,
-        requested: f64,
-    },
-    InsufficientCapacity {
-        room: f64,
         requested: f64,
     },
     SameAccount {
@@ -276,10 +210,6 @@ impl fmt::Display for QiFlowError {
             } => write!(
                 f,
                 "insufficient cultivation qi: available {available}, requested {requested}"
-            ),
-            Self::InsufficientCapacity { room, requested } => write!(
-                f,
-                "insufficient cultivation qi capacity: room {room}, requested {requested}"
             ),
             Self::SameAccount { account } => {
                 write!(f, "qi transfer source and target are identical: {account}")
@@ -429,7 +359,7 @@ impl Cultivation {
         reason: QiTransferReason,
     ) -> Result<QiFlowOutcome, QiFlowError> {
         self.validate_qi_state()?;
-        release_external_qi_to_zone(&mut self.qi_current, actor, zone, ledger, requested, reason)
+        release_qi_to_zone(&mut self.qi_current, actor, zone, ledger, requested, reason)
     }
 
     /// 从活体转入另一活体或稳定 ledger owner。活体目标容量不足时余量留在 source；
@@ -538,69 +468,7 @@ impl Cultivation {
         }
     }
 
-    /// Transfer qi from this live actor into a canonical actor whose physical reserve is held in
-    /// the ledger rather than another `Cultivation` component (for example a devour rat's swallowed
-    /// reserve). Both endpoints remain typed actor capabilities; callers cannot supply an arbitrary
-    /// ledger account. The source field is debited only after the ledger owner was credited.
-    pub(crate) fn transfer_to_external_actor(
-        &mut self,
-        target: &ActorQiIdentity,
-        ledger: &mut WorldQiAccount,
-        source: &ActorQiIdentity,
-        requested: f64,
-        reason: QiTransferReason,
-    ) -> Result<QiFlowOutcome, QiFlowError> {
-        self.validate_qi_state()?;
-        let requested = finite_non_negative(requested, "transfer_to_external_actor.requested")?;
-        reject_audit_only_qi_reason(reason)?;
-        if requested > self.qi_current {
-            return Err(QiFlowError::InsufficientCurrent {
-                available: self.qi_current,
-                requested,
-            });
-        }
-        if requested == 0.0 {
-            return Ok(QiFlowOutcome::noop(0.0));
-        }
-
-        let source_account = source.account();
-        let target_account = target.account();
-        if source_account == target_account {
-            return Err(QiFlowError::SameAccount {
-                account: source_account.to_string(),
-            });
-        }
-        let source_after = if requested == self.qi_current {
-            0.0
-        } else {
-            checked_sub_progress(
-                self.qi_current,
-                requested,
-                "cultivation.qi_current.external_actor_source",
-            )?
-        };
-        let transfer = transfer_external_qi_to_ledger(
-            ledger,
-            source_account,
-            target_account,
-            requested,
-            reason,
-        )?
-        .expect("positive validated actor transfer must produce a transfer");
-        self.qi_current = source_after;
-
-        Ok(QiFlowOutcome {
-            requested,
-            source_debited: requested,
-            target_credited: requested,
-            zone_accepted: 0.0,
-            overflow_credited: 0.0,
-            untransferred: 0.0,
-            transfers: vec![transfer],
-        })
-    }
-
-    /// 普通 gameplay 修改 raw `qi_max` 的唯一入口。缩容前先把 excess 守恒释放；
+    /// 普通 gameplay 修改 raw `qi_max` 的唯一入口。缩容前先把 excess 守恒释放。
     /// release 失败时 max/current/zone/ledger 全部保持原样。
     pub(crate) fn resize_qi_max_and_release_excess(
         &mut self,
@@ -652,7 +520,7 @@ impl Cultivation {
 /// source 字段、signed zone、稳定 overflow 与审计共用活体事务的同一失败原子性边界；
 /// source 必须是从 canonical [`LifeRecord`] 构造的 actor capability，禁止调用者传入任意
 /// `QiAccountId` 或从 `Entity` debug 文本兜底。
-pub(crate) fn release_external_qi_to_zone(
+fn release_qi_to_zone(
     source_current: &mut f64,
     source: &ActorQiIdentity,
     zone: Option<&mut Zone>,
@@ -1010,22 +878,6 @@ mod tests {
         assert_eq!(exact_release_ledger.total(), 0.0);
         assert!(exact_release_ledger.transfers().is_empty());
 
-        let mut external_target = cultivation(1.0, 2.0);
-        let mut external_ledger = WorldQiAccount::default();
-        let external_before = external_target.qi_snapshot();
-        assert!(matches!(
-            actor_id.transfer_from_external(
-                QiAccountId::container("tiny"),
-                &mut external_target,
-                &mut external_ledger,
-                tiny,
-                QiTransferReason::TradeDan,
-            ),
-            Err(QiFlowError::UnrepresentableFlow { .. })
-        ));
-        assert_eq!(external_target.qi_snapshot(), external_before);
-        assert!(external_ledger.transfers().is_empty());
-
         let mut source = cultivation(1.0, 2.0);
         let mut target = cultivation(1.0, 2.0);
         let mut transfer_ledger = WorldQiAccount::default();
@@ -1132,118 +984,6 @@ mod tests {
             ));
             assert_eq!(cultivation.qi_snapshot(), before);
         }
-    }
-
-    #[test]
-    fn external_source_credit_commits_actor_and_audit_together() {
-        let actor = ActorQiIdentity::for_test(QiAccountId::npc("elder-1"));
-        let source = QiAccountId::container("pill-1");
-        let mut cultivation = cultivation(2.0, 10.0);
-        let mut ledger = WorldQiAccount::default();
-
-        let outcome = actor
-            .transfer_from_external(
-                source.clone(),
-                &mut cultivation,
-                &mut ledger,
-                3.0,
-                QiTransferReason::TradeDan,
-            )
-            .expect("valid external credit should commit");
-
-        assert_eq!(cultivation.qi_current(), 5.0);
-        assert_eq!(outcome.source_debited, 3.0);
-        assert_eq!(outcome.target_credited, 3.0);
-        assert_eq!(ledger.total(), 0.0, "external owners must not be mirrored");
-        assert_eq!(ledger.transfers(), outcome.transfers);
-        assert_eq!(outcome.transfers[0].from, source);
-        assert_eq!(outcome.transfers[0].to, actor.account());
-    }
-
-    #[test]
-    fn external_source_credit_zero_is_true_noop() {
-        let actor = ActorQiIdentity::for_test(QiAccountId::npc("elder-1"));
-        let mut cultivation = cultivation(2.0, 10.0);
-        let before = cultivation.qi_snapshot();
-        let mut ledger = WorldQiAccount::default();
-
-        let outcome = actor
-            .transfer_from_external(
-                QiAccountId::container("pill-1"),
-                &mut cultivation,
-                &mut ledger,
-                0.0,
-                QiTransferReason::TradeDan,
-            )
-            .expect("zero credit should be a valid no-op");
-
-        assert_eq!(cultivation.qi_snapshot(), before);
-        assert_eq!(outcome, QiFlowOutcome::noop(0.0));
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn external_source_credit_rejects_every_invalid_boundary_atomically() {
-        let actor = ActorQiIdentity::for_test(QiAccountId::npc("elder-1"));
-        let cases = [
-            (
-                QiAccountId::container("pill-over-capacity"),
-                3.0,
-                QiTransferReason::TradeDan,
-            ),
-            (actor.account(), 1.0, QiTransferReason::TradeDan),
-            (
-                QiAccountId::container("pill-negative"),
-                -1.0,
-                QiTransferReason::TradeDan,
-            ),
-            (
-                QiAccountId::container("pill-nan"),
-                f64::NAN,
-                QiTransferReason::TradeDan,
-            ),
-            (
-                QiAccountId::container("pill-audit-only"),
-                0.0,
-                QiTransferReason::HalfStepBuff,
-            ),
-        ];
-
-        for (source, requested, reason) in cases {
-            let mut cultivation = cultivation(8.0, 10.0);
-            let before = cultivation.qi_snapshot();
-            let mut ledger = WorldQiAccount::default();
-            assert!(actor
-                .transfer_from_external(source, &mut cultivation, &mut ledger, requested, reason,)
-                .is_err());
-            assert_eq!(cultivation.qi_snapshot(), before);
-            assert_eq!(ledger.total(), 0.0);
-            assert!(ledger.transfers().is_empty());
-        }
-    }
-
-    #[test]
-    fn external_source_credit_rejects_invalid_actor_snapshot_atomically() {
-        let actor = ActorQiIdentity::for_test(QiAccountId::npc("elder-1"));
-        let mut cultivation = Cultivation {
-            qi_current: f64::NAN,
-            qi_max: 10.0,
-            ..Cultivation::default()
-        };
-        let mut ledger = WorldQiAccount::default();
-
-        assert!(matches!(
-            actor.transfer_from_external(
-                QiAccountId::container("pill-1"),
-                &mut cultivation,
-                &mut ledger,
-                1.0,
-                QiTransferReason::TradeDan,
-            ),
-            Err(QiFlowError::InvalidCultivationState { .. })
-        ));
-        assert!(cultivation.qi_current.is_nan());
-        assert!(ledger.transfers().is_empty());
     }
 
     #[test]

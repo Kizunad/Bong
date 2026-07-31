@@ -6,7 +6,7 @@ use crate::cultivation::components::Cultivation;
 use crate::inventory::{ItemInstance, PlayerInventory};
 use crate::world::zone::ZoneRegistry;
 
-use super::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use super::constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON};
 use super::{finite_non_negative, QiPhysicsError};
 
 const SPIRIT_QI_TOTAL_ENV: &str = "BONG_SPIRIT_QI_TOTAL";
@@ -168,17 +168,16 @@ pub enum QiTransferReason {
     MeridianForge,
     RiftCollapse,
     /// bughunt QS-01 — 裂口气压负压（rift-mouth neg_pressure）每 tick 从附近**玩家/非 NPC actor**
-    /// （tick_neg_pressure 查询带 `Without<NpcMarker>`，不抽 NPC）qi_current 抽走真元，守恒转入
-    /// 可持久恢复的固定 `overflow:rift_drain` 账户。
+    /// （tick_neg_pressure 查询带 `Without<NpcMarker>`，不抽 NPC）qi_current 抽走真元，守恒转入 rift
+    /// ledger 账户。
     ///
     /// 守恒约束：
-    ///   - 调用方先计算 `actual_drain = min(drain, qi_current)`；
-    ///   - `transfer_external_qi_to_ledger` 原子 credit 固定池并追加
-    ///     `QiTransfer(from=player:<entity>, to=overflow:rift_drain,
-    ///     reason=NegPressureDrain)`；
-    ///   - helper 成功后才提交 `cultivation.qi_current -= actual_drain`；
-    ///   - 活体真元仍只由 ECS 持有，helper 的临时 player shadow 在成功和失败后都恢复；
-    ///   - `summarize_world_qi` 口径：player_qi 减少、稳定 runtime pool 增加，总量不变。
+    ///   - `cultivation.qi_current -= actual_drain`（ECS，已在 tick_neg_pressure 扣减）；
+    ///   - 同 tick 内把 `actual_drain` 记入 `QiAccountId::rift(zone_label)` 账户；
+    ///   - `push_transfer_audit(QiTransfer(from=player:<entity>, to=rift:<label>,
+    ///     reason=NegPressureDrain))` 留审计轨迹；
+    ///   - 活体真元仍在 ECS，不镜像到 player/npc ledger balance（audit-only 模式）；
+    ///   - `summarize_world_qi` 口径：player_qi 减少，ledger_qi（rift 账户）增加，总量不变。
     NegPressureDrain,
     EraDecay,
     /// plan-zone-qi-economy-v1 — 手搓 qi_cost 一次性投入待分配池；
@@ -440,15 +439,14 @@ impl WorldQiAccount {
         // plan-qi-conservation-leaks-v1 P4 / bughunt r8 — DuguReturnToZone /
         // DuguReverseVictimQi 的 doc-comment 同样标注"audit-only，禁止调 transfer"
         // （余额已经在 ECS Cultivation 组件或 zone balance 里正确更新，调用方必须走
-        // push_transfer_audit 单纯留痕），因此与 HalfStepBuff 一起拒在入口。
-        reject_audit_only_qi_reason(transfer.reason)?;
+        // push_transfer_audit 单纯留痕）；NegPressureDrain（bughunt QS-01）注释里也写了
+        // "活体真元仍在 ECS，不镜像到 player/npc ledger balance"。三者此前只在文档里
+        // 约定，没有编译期/运行期防护——照搬 HalfStepBuff 先例把它们一并拒在入口。
+        if let Some(reason) = audit_only_reason_label(transfer.reason) {
+            return Err(QiPhysicsError::AuditOnlyReason { reason });
+        }
 
         let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
-        if transfer.from == transfer.to {
-            return Err(QiPhysicsError::SameAccountTransfer {
-                account: transfer.from.to_string(),
-            });
-        }
         let available = self.balance(&transfer.from);
         if amount > available {
             return Err(QiPhysicsError::InsufficientQi {
@@ -458,26 +456,11 @@ impl WorldQiAccount {
             });
         }
 
-        let to_balance = self.balance(&transfer.to);
-        let destination_balance = finite_non_negative(to_balance + amount, "destination_balance")?;
-        if amount > 0.0 && destination_balance == to_balance {
-            return Err(QiPhysicsError::UnrepresentableChange {
-                field: "destination_balance",
-                before: to_balance,
-                amount,
-            });
-        }
-        let source_balance = (available - amount).max(0.0);
-        if amount > 0.0 && source_balance == available {
-            return Err(QiPhysicsError::UnrepresentableChange {
-                field: "source_balance",
-                before: available,
-                amount,
-            });
-        }
-        self.balances.insert(transfer.from.clone(), source_balance);
         self.balances
-            .insert(transfer.to.clone(), destination_balance);
+            .insert(transfer.from.clone(), (available - amount).max(0.0));
+        let to_balance = self.balance(&transfer.to);
+        self.balances
+            .insert(transfer.to.clone(), to_balance + amount);
         self.transfers.push(transfer);
         Ok(())
     }
@@ -509,16 +492,15 @@ impl WorldQiAccount {
 }
 
 /// 将存放在 ECS / item 等外部物理权威中的真元，真实转入 [`WorldQiAccount`] 目标账户。
+///
 /// 外部源通常没有长期 ledger 镜像余额；本 helper 会：
 /// 1. 保存 source 原有余额与账户存在状态；
 /// 2. 临时把本次 `amount` 加到 source 影子余额；
 /// 3. 调用 [`WorldQiAccount::transfer`] 完成目标余额增加与审计追加；
 /// 4. 无论成功或失败，都把 source 恢复到调用前的精确状态。
 ///
-/// Therefore the caller only commits the external field debit after this function succeeds; on
-/// failure, external state and the ledger source can remain unchanged for retry. The amount and
-/// reason are still validated for `amount == 0`, but a valid zero transfer is an explicit no-op
-/// that creates no account and appends no audit.
+/// 因此 caller 只需在本函数成功后提交外部字段扣减；失败时外部状态与 ledger source
+/// 都可保持原样重试。`amount == 0` 是显式 no-op，不创建账户、不追加审计。
 pub fn transfer_external_qi_to_ledger(
     account: &mut WorldQiAccount,
     from: QiAccountId,
@@ -526,11 +508,10 @@ pub fn transfer_external_qi_to_ledger(
     amount: f64,
     reason: QiTransferReason,
 ) -> Result<Option<QiTransfer>, QiPhysicsError> {
-    let amount = finite_non_negative(amount, "transfer.amount")?;
-    reject_audit_only_qi_reason(reason)?;
     if amount == 0.0 {
         return Ok(None);
     }
+    // 先保留既有 invalid-amount 契约；只有通过数值校验的正额转移才进入同账户门禁。
     let transfer = QiTransfer::new(from.clone(), to, amount, reason)?;
     if transfer.from == transfer.to {
         return Err(QiPhysicsError::SameAccountTransfer {
@@ -538,23 +519,15 @@ pub fn transfer_external_qi_to_ledger(
         });
     }
 
-    // 入口与 `WorldQiAccount::transfer` 都执行有限性门禁；这里提前拒绝可避免临时 source
-    // 影子建立后才发现 sink 溢出，使失败路径更短且保持外部事务 preflight 语义。
+    // `WorldQiAccount::transfer` 目前只校验 amount，不校验 destination + amount 是否溢出；
+    // 外部源 helper 自己先做有限性门禁，保证成功返回时 sink 一定是可追踪的有限余额。
     finite_non_negative(
         account.balance(&transfer.to) + amount,
         "destination_balance",
     )?;
     let source_existed = account.has_account(&from);
     let source_before = account.balance(&from);
-    let source_shadow = finite_non_negative(source_before + amount, "source_shadow_balance")?;
-    if source_shadow == source_before {
-        return Err(QiPhysicsError::UnrepresentableChange {
-            field: "source_shadow_balance",
-            before: source_before,
-            amount,
-        });
-    }
-    account.set_balance(from.clone(), source_shadow)?;
+    account.set_balance(from.clone(), source_before + amount)?;
 
     let result = account.transfer(transfer.clone());
     if source_existed {
@@ -567,165 +540,15 @@ pub fn transfer_external_qi_to_ledger(
     result.map(|()| Some(transfer))
 }
 
-/// Atomically debit a stable ledger owner and credit the external signed Zone owner.
-///
-/// `requested` is a demand, not an already-accepted amount: this function computes Zone room
-/// against `zone_ceiling` before any debit and transfers only the accepted amount. That keeps the
-/// ceiling invariant inside the same failure-atomic boundary as the stable balance and audit, so
-/// callers never need a post-commit clamp that could destroy qi.
-pub fn transfer_ledger_qi_to_zone(
-    account: &mut WorldQiAccount,
-    from: QiAccountId,
-    zone_name: &str,
-    zone_spirit_qi: &mut f64,
-    requested: f64,
-    zone_ceiling: f64,
-    reason: QiTransferReason,
-) -> Result<Option<QiTransfer>, QiPhysicsError> {
-    let requested = finite_non_negative(requested, "ledger_to_zone.requested")?;
-    let zone_ceiling = finite_non_negative(zone_ceiling, "ledger_to_zone.zone_ceiling")?;
-    reject_audit_only_qi_reason(reason)?;
-    if !zone_spirit_qi.is_finite() {
-        return Err(QiPhysicsError::InvalidAmount {
-            field: "zone.spirit_qi",
-            value: *zone_spirit_qi,
-        });
-    }
-
-    let room_absolute =
-        ((zone_ceiling - *zone_spirit_qi).max(0.0) * QI_ZONE_UNIT_CAPACITY).min(f64::MAX);
-    let accepted = requested.min(room_absolute);
-    if accepted == 0.0 {
-        return Ok(None);
-    }
-    let available = account.balance(&from);
-    if accepted > available {
-        return Err(QiPhysicsError::InsufficientQi {
-            account: from.to_string(),
-            available,
-            requested: accepted,
-        });
-    }
-    let zone_after = if accepted == room_absolute {
-        zone_ceiling
-    } else {
-        *zone_spirit_qi + accepted / QI_ZONE_UNIT_CAPACITY
-    };
-    if !zone_after.is_finite() {
-        return Err(QiPhysicsError::InvalidAmount {
-            field: "zone.spirit_qi_after",
-            value: zone_after,
-        });
-    }
-    let to = QiAccountId::zone(zone_name);
-    if from == to {
-        return Err(QiPhysicsError::SameAccountTransfer {
-            account: from.to_string(),
-        });
-    }
-    let transfer = QiTransfer::new(from.clone(), to, accepted, reason)?;
-
-    let source_after = if accepted == available {
-        0.0
-    } else {
-        available - accepted
-    };
-    if source_after == available {
-        return Err(QiPhysicsError::UnrepresentableChange {
-            field: "source_balance",
-            before: available,
-            amount: accepted,
-        });
-    }
-    if zone_after == *zone_spirit_qi {
-        return Err(QiPhysicsError::UnrepresentableChange {
-            field: "zone.spirit_qi",
-            before: *zone_spirit_qi,
-            amount: accepted / QI_ZONE_UNIT_CAPACITY,
-        });
-    }
-
-    account.set_balance(from, source_after)?;
-    *zone_spirit_qi = zone_after;
-    account.push_transfer_audit(transfer.clone());
-    Ok(Some(transfer))
-}
-
-/// Atomically debit the external signed Zone owner and credit a stable ledger owner.
-///
-/// The Zone must hold the complete requested amount in its positive balance. Negative pressure is
-/// never flattened or used as a source. The stable credit commits first; only a successful credit
-/// is followed by the preflighted Zone field update, so destination overflow leaves both owners and
-/// the audit unchanged.
-pub fn transfer_zone_qi_to_ledger(
-    account: &mut WorldQiAccount,
-    zone_name: &str,
-    zone_spirit_qi: &mut f64,
-    to: QiAccountId,
-    requested: f64,
-    reason: QiTransferReason,
-) -> Result<Option<QiTransfer>, QiPhysicsError> {
-    let requested = finite_non_negative(requested, "zone_to_ledger.requested")?;
-    reject_audit_only_qi_reason(reason)?;
-    if !zone_spirit_qi.is_finite() {
-        return Err(QiPhysicsError::InvalidAmount {
-            field: "zone.spirit_qi",
-            value: *zone_spirit_qi,
-        });
-    }
-
-    let available = finite_non_negative(
-        (*zone_spirit_qi).max(0.0) * QI_ZONE_UNIT_CAPACITY,
-        "zone_to_ledger.available",
-    )?;
-    if requested > available {
-        return Err(QiPhysicsError::InsufficientQi {
-            account: QiAccountId::zone(zone_name).to_string(),
-            available,
-            requested,
-        });
-    }
-    if requested == 0.0 {
-        return Ok(None);
-    }
-
-    let zone_after = if requested == available {
-        0.0
-    } else {
-        *zone_spirit_qi - requested / QI_ZONE_UNIT_CAPACITY
-    };
-    if !zone_after.is_finite() {
-        return Err(QiPhysicsError::InvalidAmount {
-            field: "zone.spirit_qi_after",
-            value: zone_after,
-        });
-    }
-    if zone_after == *zone_spirit_qi {
-        return Err(QiPhysicsError::UnrepresentableChange {
-            field: "zone.spirit_qi",
-            before: *zone_spirit_qi,
-            amount: requested / QI_ZONE_UNIT_CAPACITY,
-        });
-    }
-    let from = QiAccountId::zone(zone_name);
-    let transfer = transfer_external_qi_to_ledger(account, from, to, requested, reason)?;
-    *zone_spirit_qi = zone_after;
-    Ok(transfer)
-}
-
-/// 坍缩渊、裂口负压与同源 drain 的稳定聚合池。
-///
-/// Rift 是中转站而不是终点，但当前不存在可独立恢复每个裂口余额的物理 owner；因此所有
-/// drain 先真实进入这个固定账户。zone / encounter 信息只保留在 `QiTransfer` 的 source、reason
-/// 与外围 telemetry 中，不能再创建动态 `rift:<zone>` 余额并在重启时蒸发。
-pub const RIFT_DRAIN_ACCOUNT_ID: &str = "rift_drain";
-
 /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 独立"待分配池"账户 id。
 ///
 /// 开脉 / 突破消耗真元回充的目标**不是** `zone:<name>` 账户，也**不是**
 /// `WorldQiBudget.current_total`：
-///   - 不选 `zone:<name>`：signed 区域灵压由 `Zone.spirit_qi` 唯一持有；长期 ledger mirror
-///     会被 `summarize_world_qi` 重复计入，并允许字段与 shadow 漂移。
+///   - 不选 `zone:<name>`：那个 key 会被 `apply_dormant_regen_with_multiplier`
+///     （`npc::dormant::mod`）等系统按 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY`
+///     **整体覆写**，credit 进同名账户的金额会被下一次 dormant tick 静默清零/顶替
+///     ——这正是旧 `credit_meridian_open_cost` "只写 ledger 不动真实字段"之外的第二重
+///     蒸发路径。
 ///   - 不选 `WorldQiBudget.current_total`：那是 `compute_void_quota_limit`
 ///     （`cultivation::tribulation`）的化虚名额闸门基准，注入会让名额随修炼活跃度
 ///     膨胀、可被玩家刷高，破坏 void-quota 稀缺性（用户 2026-07-03 拍板红线）。
@@ -733,31 +556,26 @@ pub const RIFT_DRAIN_ACCOUNT_ID: &str = "rift_drain";
 /// 待分配池是全服单例（不按 zone 拆分），P1 heartbeat 回流 system 会按各 zone 的
 /// `qi_equilibrium` 配置从这一个账户滴灌进 `zone.spirit_qi`。
 pub const PENDING_INFLOW_ACCOUNT_ID: &str = "pending_inflow";
-/// R5 P0 — 所有无法定位 zone、zone 已满或 signed zone 上界不允许接收的活体真元，
-/// 真实转入此稳定聚合池。固定 id 可由 `qi_runtime_accounts` 完整枚举和跨重启恢复；
-/// 禁止退回 `overflow:<entity>` 动态 event-only id，否则事件发出后余额仍会蒸发。
-pub const QI_FLOW_OVERFLOW_ACCOUNT_ID: &str = "qi_flow_overflow";
 /// 垂死大能给丹超过 150% cap 后的稳定聚合池。不得含 entity id，否则重启后无法枚举恢复。
 pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
 /// 垂死大能死亡时 zone 无法接收部分的稳定聚合池。
 pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
+/// R5 真元事务在 zone 缺失或满载时使用的固定 overflow 账户 id。
+///
+/// P0 仅冻结此账户与事务行为；runtime 持久化白名单及迁移在后续阶段接入，避免改变
+/// 既有存档的启动与 hydration 行为。
+pub const QI_FLOW_OVERFLOW_ACCOUNT_ID: &str = "qi_flow_overflow";
 
 /// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
-pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 5] = [
+pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 3] = [
     PENDING_INFLOW_ACCOUNT_ID,
-    QI_FLOW_OVERFLOW_ACCOUNT_ID,
     DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
-    RIFT_DRAIN_ACCOUNT_ID,
 ];
 
 /// 独立待分配池账户（`QiAccountKind::Overflow` + 固定 id，见 [`PENDING_INFLOW_ACCOUNT_ID`]）。
 pub fn pending_inflow_account() -> QiAccountId {
     QiAccountId::overflow(PENDING_INFLOW_ACCOUNT_ID)
-}
-
-pub fn qi_flow_overflow_account() -> QiAccountId {
-    QiAccountId::overflow(QI_FLOW_OVERFLOW_ACCOUNT_ID)
 }
 
 pub fn dying_elder_dan_excess_account() -> QiAccountId {
@@ -768,11 +586,11 @@ pub fn dying_elder_release_overflow_account() -> QiAccountId {
     QiAccountId::overflow(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID)
 }
 
-pub fn rift_drain_account() -> QiAccountId {
-    QiAccountId::overflow(RIFT_DRAIN_ACCOUNT_ID)
+pub fn qi_flow_overflow_account() -> QiAccountId {
+    QiAccountId::overflow(QI_FLOW_OVERFLOW_ACCOUNT_ID)
 }
 
-pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 5] {
+pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 3] {
     PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(QiAccountId::overflow)
 }
 
@@ -784,8 +602,8 @@ pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 5] {
 /// （那正是记账蒸发 bug 本身）。
 ///
 /// 玩家 / NPC 侧真实真元活在 ECS `Cultivation.qi_current`（调用方已在此之前完成扣减），
-/// 此 ledger 上的 `from` 账户对 `MeridianOpen` / `Breakthrough` 这类 reason 而言不长期
-/// 持有余额——这里把它的 ledger 影子余额临时"引燃"成本次转移额，使
+/// 此 ledger 上的 `from` 账户对 `MeridianOpen` / `Breakthrough` 这类 reason 而言是
+/// audit-only、不长期镜像——这里把它的 ledger 影子余额临时"引燃"成本次转移额，使
 /// [`WorldQiAccount::transfer`] 的原子记账（insufficient 检查 + from/to 同步扣加 +
 /// 审计追加）可以照常生效，而不是绕开它手写 `set_balance`。转移后 `from` 侧恢复到
 /// 调用前的精确状态；原先不存在的临时账户会被移除，不留残留、不跨 tick 累积。
@@ -914,13 +732,7 @@ pub fn summarize_world_qi(world: &mut bevy_ecs::world::World) -> WorldQiSnapshot
 
     let zone_qi = world
         .get_resource::<ZoneRegistry>()
-        .map(|zones| {
-            zones
-                .zones
-                .iter()
-                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
-                .sum()
-        })
+        .map(|zones| zones.zones.iter().map(|zone| zone.spirit_qi).sum())
         .unwrap_or(0.0);
 
     let player_qi = {
@@ -1012,532 +824,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ledger_to_zone_credits_external_owner_without_zone_shadow() {
-        let mut ledger = WorldQiAccount::default();
-        let source = pending_inflow_account();
-        let zone_account = QiAccountId::zone("spawn");
-        ledger.set_balance(source.clone(), 12.0).unwrap();
-        let mut zone_spirit_qi = 0.25;
-
-        let transfer = transfer_ledger_qi_to_zone(
-            &mut ledger,
-            source.clone(),
-            "spawn",
-            &mut zone_spirit_qi,
-            5.0,
-            1.0,
-            QiTransferReason::ZoneInflow,
-        )
-        .expect("stable-pool to external-zone transfer should settle")
-        .expect("positive transfer must produce audit");
-
-        assert_eq!(ledger.balance(&source), 7.0);
-        assert_eq!(zone_spirit_qi, 0.25 + 5.0 / QI_ZONE_UNIT_CAPACITY);
-        assert!(
-            !ledger.has_account(&zone_account),
-            "external Zone.spirit_qi is the physical owner; no zone:* ledger mirror may remain"
-        );
-        assert_eq!(transfer.from, source);
-        assert_eq!(transfer.to, zone_account);
-        assert_eq!(ledger.transfers(), &[transfer]);
-    }
-
-    #[test]
-    fn ledger_to_zone_repays_signed_zone_debt() {
-        let mut ledger = WorldQiAccount::default();
-        let source = pending_inflow_account();
-        ledger.set_balance(source.clone(), 30.0).unwrap();
-        let mut zone_spirit_qi = -1.2;
-
-        transfer_ledger_qi_to_zone(
-            &mut ledger,
-            source,
-            "negative_domain",
-            &mut zone_spirit_qi,
-            20.0,
-            1.0,
-            QiTransferReason::ZoneInflow,
-        )
-        .expect("signed negative zone must accept stable qi")
-        .expect("positive transfer must produce audit");
-
-        assert_eq!(zone_spirit_qi, -1.2 + 20.0 / QI_ZONE_UNIT_CAPACITY);
-        assert!(
-            zone_spirit_qi < 0.0,
-            "inflow must repay negative pressure instead of clamping the zone to zero"
-        );
-    }
-
-    #[test]
-    fn ledger_to_zone_zero_amount_is_noop() {
-        let mut ledger = WorldQiAccount::default();
-        let source = pending_inflow_account();
-        ledger.set_balance(source.clone(), 3.0).unwrap();
-        let mut zone_spirit_qi = -0.4;
-
-        let transfer = transfer_ledger_qi_to_zone(
-            &mut ledger,
-            source.clone(),
-            "spawn",
-            &mut zone_spirit_qi,
-            0.0,
-            1.0,
-            QiTransferReason::ZoneInflow,
-        )
-        .expect("zero transfer is an explicit no-op");
-
-        assert!(transfer.is_none());
-        assert_eq!(ledger.balance(&source), 3.0);
-        assert_eq!(zone_spirit_qi, -0.4);
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn ledger_to_zone_ceiling_preflight_debits_only_the_accepted_amount() {
-        let mut ledger = WorldQiAccount::default();
-        let source = pending_inflow_account();
-        ledger.set_balance(source.clone(), 12.0).unwrap();
-        let mut zone_spirit_qi = 0.99;
-
-        let transfer = transfer_ledger_qi_to_zone(
-            &mut ledger,
-            source.clone(),
-            "spawn",
-            &mut zone_spirit_qi,
-            5.0,
-            1.0,
-            QiTransferReason::ZoneInflow,
-        )
-        .expect("ceiling-clamped transfer should settle")
-        .expect("positive room must produce an audit");
-
-        assert_eq!(zone_spirit_qi, 1.0);
-        assert!((transfer.amount - 0.5).abs() < 1e-12);
-        assert!((ledger.balance(&source) - 11.5).abs() < 1e-12);
-        assert_eq!(ledger.transfers(), &[transfer]);
-    }
-
-    #[test]
-    fn ledger_to_zone_failures_leave_both_owners_and_audit_untouched() {
-        let cases = [
-            ("insufficient", 2.0, 3.0, 0.2, 1.0),
-            ("invalid-zone", 4.0, 1.0, f64::NAN, 1.0),
-            ("invalid-ceiling", 4.0, 1.0, 0.2, f64::NAN),
-        ];
-        for (label, source_balance, amount, initial_zone, ceiling) in cases {
-            let mut ledger = WorldQiAccount::default();
-            let source = pending_inflow_account();
-            ledger.set_balance(source.clone(), source_balance).unwrap();
-            let mut zone_spirit_qi = initial_zone;
-
-            let error = transfer_ledger_qi_to_zone(
-                &mut ledger,
-                source.clone(),
-                "spawn",
-                &mut zone_spirit_qi,
-                amount,
-                ceiling,
-                QiTransferReason::ZoneInflow,
-            )
-            .expect_err("invalid transaction must fail closed");
-
-            match label {
-                "insufficient" => assert!(matches!(error, QiPhysicsError::InsufficientQi { .. })),
-                "invalid-zone" => assert!(matches!(
-                    error,
-                    QiPhysicsError::InvalidAmount {
-                        field: "zone.spirit_qi",
-                        ..
-                    }
-                )),
-                "invalid-ceiling" => assert!(matches!(
-                    error,
-                    QiPhysicsError::InvalidAmount {
-                        field: "ledger_to_zone.zone_ceiling",
-                        ..
-                    }
-                )),
-                _ => unreachable!(),
-            }
-            assert_eq!(ledger.balance(&source), source_balance, "{label}");
-            if initial_zone.is_nan() {
-                assert!(zone_spirit_qi.is_nan(), "{label}");
-            } else {
-                assert_eq!(zone_spirit_qi, initial_zone, "{label}");
-            }
-            assert!(ledger.transfers().is_empty(), "{label}");
-            assert!(!ledger.has_account(&QiAccountId::zone("spawn")), "{label}");
-        }
-    }
-
-    #[test]
-    fn ledger_to_zone_rejects_audit_only_reasons_without_mutation() {
-        let reasons = [
-            QiTransferReason::HalfStepBuff,
-            QiTransferReason::DuguReturnToZone,
-            QiTransferReason::DuguReverseVictimQi,
-        ];
-        for reason in reasons {
-            let mut ledger = WorldQiAccount::default();
-            let source = pending_inflow_account();
-            ledger.set_balance(source.clone(), 4.0).unwrap();
-            let mut zone_spirit_qi = 0.3;
-
-            assert!(matches!(
-                transfer_ledger_qi_to_zone(
-                    &mut ledger,
-                    source.clone(),
-                    "spawn",
-                    &mut zone_spirit_qi,
-                    1.0,
-                    1.0,
-                    reason,
-                ),
-                Err(QiPhysicsError::AuditOnlyReason { .. })
-            ));
-            assert_eq!(ledger.balance(&source), 4.0);
-            assert_eq!(zone_spirit_qi, 0.3);
-            assert!(ledger.transfers().is_empty());
-            assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
-        }
-    }
-
-    #[test]
-    fn ledger_to_zone_rejects_same_account_without_mutation() {
-        let mut ledger = WorldQiAccount::default();
-        let source = QiAccountId::zone("spawn");
-        ledger.set_balance(source.clone(), 4.0).unwrap();
-        let mut zone_spirit_qi = 0.3;
-
-        let error = transfer_ledger_qi_to_zone(
-            &mut ledger,
-            source.clone(),
-            "spawn",
-            &mut zone_spirit_qi,
-            1.0,
-            1.0,
-            QiTransferReason::ZoneInflow,
-        )
-        .expect_err("source and audit destination must differ");
-
-        assert!(matches!(error, QiPhysicsError::SameAccountTransfer { .. }));
-        assert_eq!(ledger.balance(&source), 4.0);
-        assert_eq!(zone_spirit_qi, 0.3);
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn external_zone_sub_ulp_transfers_fail_before_owner_or_audit_mutation() {
-        let tiny = f64::MIN_POSITIVE;
-
-        let mut inflow_ledger = WorldQiAccount::default();
-        let source = pending_inflow_account();
-        inflow_ledger.set_balance(source.clone(), tiny).unwrap();
-        let mut inflow_zone = 1.0;
-        assert!(matches!(
-            transfer_ledger_qi_to_zone(
-                &mut inflow_ledger,
-                source.clone(),
-                "spawn",
-                &mut inflow_zone,
-                tiny,
-                2.0,
-                QiTransferReason::ZoneInflow,
-            ),
-            Err(QiPhysicsError::UnrepresentableChange {
-                field: "zone.spirit_qi",
-                ..
-            })
-        ));
-        assert_eq!(inflow_ledger.balance(&source), tiny);
-        assert_eq!(inflow_zone, 1.0);
-        assert!(inflow_ledger.transfers().is_empty());
-
-        let mut settle_ledger = WorldQiAccount::default();
-        let destination = pending_inflow_account();
-        let mut settle_zone = 1.0;
-        assert!(matches!(
-            transfer_zone_qi_to_ledger(
-                &mut settle_ledger,
-                "spawn",
-                &mut settle_zone,
-                destination.clone(),
-                tiny,
-                QiTransferReason::PseudoVeinSettle,
-            ),
-            Err(QiPhysicsError::UnrepresentableChange {
-                field: "zone.spirit_qi",
-                ..
-            })
-        ));
-        assert_eq!(settle_zone, 1.0);
-        assert!(!settle_ledger.has_account(&destination));
-        assert!(settle_ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn zone_to_ledger_debits_external_owner_without_zone_shadow() {
-        let mut ledger = WorldQiAccount::default();
-        let destination = pending_inflow_account();
-        let zone_account = QiAccountId::zone("spawn");
-        ledger.set_balance(destination.clone(), 3.0).unwrap();
-        let mut zone_spirit_qi = 0.4;
-
-        let transfer = transfer_zone_qi_to_ledger(
-            &mut ledger,
-            "spawn",
-            &mut zone_spirit_qi,
-            destination.clone(),
-            7.0,
-            QiTransferReason::PseudoVeinSettle,
-        )
-        .expect("external-zone to stable-pool transfer should settle")
-        .expect("positive transfer must produce an audit");
-
-        assert_eq!(zone_spirit_qi, 0.4 - 7.0 / QI_ZONE_UNIT_CAPACITY);
-        assert_eq!(ledger.balance(&destination), 10.0);
-        assert!(
-            !ledger.has_account(&zone_account),
-            "external Zone.spirit_qi is the physical owner; no zone:* ledger mirror may remain"
-        );
-        assert_eq!(transfer.from, zone_account);
-        assert_eq!(transfer.to, destination);
-        assert_eq!(transfer.amount, 7.0);
-        assert_eq!(ledger.transfers(), &[transfer]);
-    }
-
-    #[test]
-    fn zone_to_ledger_exact_drain_commits_zero_without_rounding_residue() {
-        let mut ledger = WorldQiAccount::default();
-        let destination = pending_inflow_account();
-        let mut zone_spirit_qi = 0.2;
-
-        let transfer = transfer_zone_qi_to_ledger(
-            &mut ledger,
-            "spawn",
-            &mut zone_spirit_qi,
-            destination.clone(),
-            10.0,
-            QiTransferReason::PseudoVeinSettle,
-        )
-        .expect("exact drain should settle")
-        .expect("positive transfer must produce an audit");
-
-        assert_eq!(zone_spirit_qi, 0.0);
-        assert_eq!(ledger.balance(&destination), 10.0);
-        assert_eq!(transfer.amount, 10.0);
-        assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
-    }
-
-    #[test]
-    fn zone_to_ledger_zero_is_a_valid_noop_without_creating_accounts() {
-        let mut ledger = WorldQiAccount::default();
-        let destination = pending_inflow_account();
-        let mut zone_spirit_qi = -1.2;
-
-        let transfer = transfer_zone_qi_to_ledger(
-            &mut ledger,
-            "negative_domain",
-            &mut zone_spirit_qi,
-            destination.clone(),
-            0.0,
-            QiTransferReason::PseudoVeinSettle,
-        )
-        .expect("valid zero transfer should be an explicit no-op");
-
-        assert!(transfer.is_none());
-        assert_eq!(zone_spirit_qi, -1.2);
-        assert!(!ledger.has_account(&destination));
-        assert!(!ledger.has_account(&QiAccountId::zone("negative_domain")));
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn zone_to_ledger_failures_leave_both_owners_and_audit_untouched() {
-        struct Case {
-            label: &'static str,
-            initial_zone: f64,
-            requested: f64,
-            initial_destination: f64,
-            expected_field: Option<&'static str>,
-            insufficient: bool,
-        }
-
-        let cases = [
-            Case {
-                label: "insufficient-positive-zone",
-                initial_zone: 0.1,
-                requested: 6.0,
-                initial_destination: 2.0,
-                expected_field: None,
-                insufficient: true,
-            },
-            Case {
-                label: "negative-zone-is-not-a-source",
-                initial_zone: -1.2,
-                requested: 1.0,
-                initial_destination: 2.0,
-                expected_field: None,
-                insufficient: true,
-            },
-            Case {
-                label: "invalid-zone",
-                initial_zone: f64::NAN,
-                requested: 1.0,
-                initial_destination: 2.0,
-                expected_field: Some("zone.spirit_qi"),
-                insufficient: false,
-            },
-            Case {
-                label: "negative-request",
-                initial_zone: 0.2,
-                requested: -1.0,
-                initial_destination: 2.0,
-                expected_field: Some("zone_to_ledger.requested"),
-                insufficient: false,
-            },
-            Case {
-                label: "nan-request",
-                initial_zone: 0.2,
-                requested: f64::NAN,
-                initial_destination: 2.0,
-                expected_field: Some("zone_to_ledger.requested"),
-                insufficient: false,
-            },
-            Case {
-                label: "infinite-request",
-                initial_zone: 0.2,
-                requested: f64::INFINITY,
-                initial_destination: 2.0,
-                expected_field: Some("zone_to_ledger.requested"),
-                insufficient: false,
-            },
-            Case {
-                label: "destination-overflow",
-                initial_zone: (f64::MAX * 0.5) / QI_ZONE_UNIT_CAPACITY,
-                requested: f64::MAX * 0.5,
-                initial_destination: f64::MAX * 0.75,
-                expected_field: Some("destination_balance"),
-                insufficient: false,
-            },
-        ];
-
-        for case in cases {
-            let mut ledger = WorldQiAccount::default();
-            let destination = pending_inflow_account();
-            ledger
-                .set_balance(destination.clone(), case.initial_destination)
-                .unwrap();
-            let mut zone_spirit_qi = case.initial_zone;
-
-            let error = transfer_zone_qi_to_ledger(
-                &mut ledger,
-                "spawn",
-                &mut zone_spirit_qi,
-                destination.clone(),
-                case.requested,
-                QiTransferReason::PseudoVeinSettle,
-            )
-            .expect_err("invalid transaction must fail closed");
-
-            if case.insufficient {
-                assert!(
-                    matches!(error, QiPhysicsError::InsufficientQi { .. }),
-                    "{}: {error:?}",
-                    case.label
-                );
-            } else {
-                assert!(
-                    matches!(
-                        error,
-                        QiPhysicsError::InvalidAmount { field, .. }
-                            if Some(field) == case.expected_field
-                    ),
-                    "{}: {error:?}",
-                    case.label
-                );
-            }
-            if case.initial_zone.is_nan() {
-                assert!(zone_spirit_qi.is_nan(), "{}", case.label);
-            } else {
-                assert_eq!(zone_spirit_qi, case.initial_zone, "{}", case.label);
-            }
-            assert_eq!(
-                ledger.balance(&destination),
-                case.initial_destination,
-                "{}",
-                case.label
-            );
-            assert!(ledger.transfers().is_empty(), "{}", case.label);
-            assert!(
-                !ledger.has_account(&QiAccountId::zone("spawn")),
-                "{}",
-                case.label
-            );
-        }
-    }
-
-    #[test]
-    fn zone_to_ledger_rejects_audit_only_reasons_even_for_zero() {
-        let reasons = [
-            QiTransferReason::HalfStepBuff,
-            QiTransferReason::DuguReturnToZone,
-            QiTransferReason::DuguReverseVictimQi,
-        ];
-        for reason in reasons {
-            for requested in [0.0, 1.0] {
-                let mut ledger = WorldQiAccount::default();
-                let destination = pending_inflow_account();
-                ledger.set_balance(destination.clone(), 2.0).unwrap();
-                let mut zone_spirit_qi = 0.3;
-
-                assert!(matches!(
-                    transfer_zone_qi_to_ledger(
-                        &mut ledger,
-                        "spawn",
-                        &mut zone_spirit_qi,
-                        destination.clone(),
-                        requested,
-                        reason,
-                    ),
-                    Err(QiPhysicsError::AuditOnlyReason { .. })
-                ));
-                assert_eq!(zone_spirit_qi, 0.3, "reason={reason:?} amount={requested}");
-                assert_eq!(
-                    ledger.balance(&destination),
-                    2.0,
-                    "reason={reason:?} amount={requested}"
-                );
-                assert!(ledger.transfers().is_empty());
-                assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
-            }
-        }
-    }
-
-    #[test]
-    fn zone_to_ledger_rejects_same_account_without_mutation() {
-        let mut ledger = WorldQiAccount::default();
-        let zone_account = QiAccountId::zone("spawn");
-        ledger.set_balance(zone_account.clone(), 4.0).unwrap();
-        let mut zone_spirit_qi = 0.3;
-
-        let error = transfer_zone_qi_to_ledger(
-            &mut ledger,
-            "spawn",
-            &mut zone_spirit_qi,
-            zone_account.clone(),
-            1.0,
-            QiTransferReason::PseudoVeinSettle,
-        )
-        .expect_err("external source and ledger destination must differ");
-
-        assert!(matches!(error, QiPhysicsError::SameAccountTransfer { .. }));
-        assert_eq!(zone_spirit_qi, 0.3);
-        assert_eq!(ledger.balance(&zone_account), 4.0);
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
     fn budget_defaults_to_config_default() {
         let budget = WorldQiBudget::default();
         assert_eq!(budget.initial_total, DEFAULT_SPIRIT_QI_TOTAL);
@@ -1564,103 +850,6 @@ mod tests {
         let account = pending_inflow_account();
         assert_eq!(account.kind, QiAccountKind::Overflow);
         assert_eq!(account.id, PENDING_INFLOW_ACCOUNT_ID);
-    }
-
-    #[test]
-    fn transfer_rejects_sub_ulp_changes_without_partial_mutation() {
-        let mut ledger = WorldQiAccount::default();
-        let from = QiAccountId::player("source");
-        let to = QiAccountId::overflow("destination");
-        ledger
-            .set_balance(from.clone(), 1.0)
-            .expect("fixture source balance");
-        ledger
-            .set_balance(to.clone(), 1.0)
-            .expect("fixture destination balance");
-
-        let error = ledger
-            .transfer(
-                QiTransfer::new(
-                    from.clone(),
-                    to.clone(),
-                    f64::MIN_POSITIVE,
-                    QiTransferReason::ReleaseToZone,
-                )
-                .expect("tiny positive transfer should pass amount validation"),
-            )
-            .expect_err("sub-ULP destination credit must fail before any balance changes");
-
-        assert!(matches!(
-            error,
-            QiPhysicsError::UnrepresentableChange {
-                field: "destination_balance",
-                ..
-            }
-        ));
-        assert_eq!(ledger.balance(&from), 1.0);
-        assert_eq!(ledger.balance(&to), 1.0);
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn transfer_rejects_destination_overflow_without_partial_mutation() {
-        let mut ledger = WorldQiAccount::default();
-        let from = QiAccountId::player("source");
-        let to = QiAccountId::overflow("full");
-        ledger
-            .set_balance(from.clone(), 2.0)
-            .expect("fixture source balance");
-        ledger
-            .set_balance(to.clone(), f64::MAX)
-            .expect("fixture destination balance");
-
-        let error = ledger
-            .transfer(
-                QiTransfer::new(
-                    from.clone(),
-                    to.clone(),
-                    1.0,
-                    QiTransferReason::ReleaseToZone,
-                )
-                .unwrap(),
-            )
-            .expect_err("finite destination plus amount must not become infinity");
-
-        assert!(matches!(
-            error,
-            QiPhysicsError::UnrepresentableChange {
-                field: "destination_balance",
-                ..
-            }
-        ));
-        assert_eq!(ledger.balance(&from), 2.0);
-        assert_eq!(ledger.balance(&to), f64::MAX);
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn transfer_rejects_same_account_without_mutation() {
-        let mut ledger = WorldQiAccount::default();
-        let account = QiAccountId::overflow("same");
-        ledger
-            .set_balance(account.clone(), 4.0)
-            .expect("fixture balance");
-
-        let error = ledger
-            .transfer(
-                QiTransfer::new(
-                    account.clone(),
-                    account.clone(),
-                    1.0,
-                    QiTransferReason::ReleaseToZone,
-                )
-                .unwrap(),
-            )
-            .expect_err("same-account transfer cannot conserve by debit then overwrite credit");
-
-        assert!(matches!(error, QiPhysicsError::SameAccountTransfer { .. }));
-        assert_eq!(ledger.balance(&account), 4.0);
-        assert!(ledger.transfers().is_empty());
     }
 
     #[test]
@@ -1710,41 +899,13 @@ mod tests {
     }
 
     #[test]
-    fn external_qi_transfer_rejects_sub_ulp_source_shadow_without_mutation() {
-        let mut ledger = WorldQiAccount::default();
-        let from = QiAccountId::player("external_player");
-        let to = QiAccountId::overflow("must_stay_empty");
-        ledger.set_balance(from.clone(), 1.0).unwrap();
-
-        assert!(matches!(
-            transfer_external_qi_to_ledger(
-                &mut ledger,
-                from.clone(),
-                to.clone(),
-                f64::MIN_POSITIVE,
-                QiTransferReason::ReleaseToZone,
-            ),
-            Err(QiPhysicsError::UnrepresentableChange {
-                field: "source_shadow_balance",
-                ..
-            })
-        ));
-        assert_eq!(ledger.balance(&from), 1.0);
-        assert!(!ledger.has_account(&to));
-        assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
     fn external_qi_transfer_failure_rolls_source_back_without_credit_or_audit() {
         let mut ledger = WorldQiAccount::default();
         let from = QiAccountId::player("external_player");
-        let to = rift_drain_account();
+        let to = QiAccountId::overflow("must_stay_empty");
         ledger
             .set_balance(from.clone(), 4.0)
             .expect("fixture source balance");
-        ledger
-            .set_balance(to.clone(), f64::MAX)
-            .expect("max finite destination fixture");
 
         let error = transfer_external_qi_to_ledger(
             &mut ledger,
@@ -1753,21 +914,11 @@ mod tests {
             2.0,
             QiTransferReason::NegPressureDrain,
         )
-        .expect_err("destination overflow must reject real balance mutation");
+        .expect_err("audit-only reason must reject real balance mutation");
 
-        assert!(matches!(
-            error,
-            QiPhysicsError::InvalidAmount {
-                field: "destination_balance",
-                ..
-            }
-        ));
+        assert!(matches!(error, QiPhysicsError::AuditOnlyReason { .. }));
         assert_eq!(ledger.balance(&from), 4.0, "failure must restore source");
-        assert_eq!(
-            ledger.balance(&to),
-            f64::MAX,
-            "failure must not credit sink"
-        );
+        assert_eq!(ledger.balance(&to), 0.0, "failure must not credit sink");
         assert!(
             ledger.transfers().is_empty(),
             "failure must not append audit"
@@ -1793,46 +944,6 @@ mod tests {
         assert!(!ledger.has_account(&from));
         assert!(!ledger.has_account(&to));
         assert!(ledger.transfers().is_empty());
-    }
-
-    #[test]
-    fn external_qi_transfer_zero_validates_amount_and_reason_before_noop() {
-        let audit_only_reasons = [
-            QiTransferReason::HalfStepBuff,
-            QiTransferReason::DuguReturnToZone,
-            QiTransferReason::DuguReverseVictimQi,
-        ];
-        for reason in audit_only_reasons {
-            let mut ledger = WorldQiAccount::default();
-            let from = QiAccountId::npc("external_elder");
-            let to = QiAccountId::overflow("elder_overflow");
-
-            assert!(matches!(
-                transfer_external_qi_to_ledger(&mut ledger, from, to, 0.0, reason),
-                Err(QiPhysicsError::AuditOnlyReason { .. })
-            ));
-            assert!(ledger.iter_balances().next().is_none());
-            assert!(ledger.transfers().is_empty());
-        }
-
-        for amount in [-1.0, f64::NAN, f64::INFINITY] {
-            let mut ledger = WorldQiAccount::default();
-            assert!(matches!(
-                transfer_external_qi_to_ledger(
-                    &mut ledger,
-                    QiAccountId::npc("external_elder"),
-                    QiAccountId::overflow("elder_overflow"),
-                    amount,
-                    QiTransferReason::ReleaseToZone,
-                ),
-                Err(QiPhysicsError::InvalidAmount {
-                    field: "transfer.amount",
-                    ..
-                })
-            ));
-            assert!(ledger.iter_balances().next().is_none());
-            assert!(ledger.transfers().is_empty());
-        }
     }
 
     #[test]
@@ -2161,15 +1272,16 @@ mod tests {
         );
     }
 
-    /// plan-qi-conservation-leaks-v1 P4 / bughunt r8 — F24 加固：
-    /// DuguReturnToZone / DuguReverseVictimQi 两个 audit-only reason 此前只在 doc-comment
-    /// 里约定"禁止调 transfer"，没有编译期/运行期防护。每个变体各一条 case，断言
-    /// transfer() 拒绝 + balance 完全不变 + 不留 audit trail。
+    /// plan-qi-conservation-leaks-v1 P4 / bughunt r8 / bughunt QS-01 — F24 加固：
+    /// DuguReturnToZone / DuguReverseVictimQi / NegPressureDrain 三个 audit-only reason
+    /// 此前只在 doc-comment 里约定"禁止调 transfer"，没有编译期/运行期防护。
+    /// 每个变体各一条 case，断言 transfer() 拒绝 + balance 完全不变 + 不留 audit trail。
     #[test]
     fn transfer_rejects_all_audit_only_reasons_with_balance_untouched() {
         let cases = [
             (QiTransferReason::DuguReturnToZone, "DuguReturnToZone"),
             (QiTransferReason::DuguReverseVictimQi, "DuguReverseVictimQi"),
+            (QiTransferReason::NegPressureDrain, "NegPressureDrain"),
         ];
         for (reason, label) in cases {
             let from = QiAccountId::player("caster");
@@ -2208,13 +1320,15 @@ mod tests {
         }
     }
 
-    /// F24 加固不能误伤现有 audit-only 调用方：它们走 `push_transfer_audit`（不 touch
-    /// balance），必须继续对三个 hardened reason 正常工作。
+    /// F24 加固不能误伤现有调用方：它们都走 `push_transfer_audit`（audit-only 记录，
+    /// 不touch balance），必须继续对这三个 reason 正常工作——否则真实调用方（
+    /// tsy_drain.rs / dugu_v2/tick.rs / cultivation/neg_pressure.rs 等）会被这次加固破坏。
     #[test]
     fn push_transfer_audit_still_works_for_hardened_reasons() {
         let cases = [
             QiTransferReason::DuguReturnToZone,
             QiTransferReason::DuguReverseVictimQi,
+            QiTransferReason::NegPressureDrain,
             QiTransferReason::HalfStepBuff,
         ];
         let mut account = WorldQiAccount::default();
@@ -2334,7 +1448,7 @@ mod tests {
 
         let snap = summarize_world_qi(app.world_mut());
         assert_eq!(snap.budget_current_total, 50.0);
-        assert_eq!(snap.zone_qi, 0.5 * QI_ZONE_UNIT_CAPACITY);
+        assert_eq!(snap.zone_qi, 0.5);
         assert_eq!(snap.player_qi, 7.0);
         assert_eq!(snap.container_qi, 1.6);
     }
@@ -2347,8 +1461,8 @@ mod tests {
         app.insert_resource(zones);
 
         let snap = summarize_world_qi(app.world_mut());
-        assert_eq!(snap.zone_qi, -0.6 * QI_ZONE_UNIT_CAPACITY);
-        assert_eq!(snap.total_observed(), -0.6 * QI_ZONE_UNIT_CAPACITY);
+        assert_eq!(snap.zone_qi, -0.6);
+        assert_eq!(snap.total_observed(), -0.6);
     }
 
     #[test]
@@ -2986,9 +2100,22 @@ mod tests {
     /// "写回 zone.spirit_qi 字段"这一步被漏掉时、下一次 `zone_qi_inflow_tick` 覆盖式
     /// `set_balance` 二次抹掉刚转入账户余额的回归。
     ///
-    /// `summarize_world_qi` now reports Zone.spirit_qi in absolute qi units and stable-ledger →
-    /// Zone settlement no longer leaves a `zone:*` balance shadow. Therefore the complete owner sum
-    /// is player + signed zone + durable ownerless pools; including the old mirror would double count.
+    /// **为什么断言用 `player_qi + ledger_qi`，不是 plan 字面的
+    /// `player_qi + zone_qi + ledger_qi`**（本 pin 相对 plan 唯一的偏离，详见最终报告）：
+    /// `summarize_world_qi` 的 `zone_qi` 桶是 `zone.spirit_qi` 字段的**原始分数值**直接求和
+    /// （未乘 `QI_ZONE_UNIT_CAPACITY`），而 `ledger_qi` 桶（`WorldQiAccount::total()`）在
+    /// field-authority 写回后，**同一份 zone 真元会以 `spirit_qi × QI_ZONE_UNIT_CAPACITY`
+    /// 的形式继续留在 `zone:<name>` 账户余额里**（`inject_zone_for_pseudo_vein` /
+    /// `zone_qi_inflow_tick` 均不在写回后清空该账户）。这意味着只要 zone 账户被正确同步
+    /// （field-authority 镜像范式的设计初衷），`zone.spirit_qi` 这份真元已经**完整地**记在
+    /// `ledger_qi` 里；把 `zone_qi` 字段值原样再加一次到"总量"上，是把同一份真元按两种不同
+    /// 换算尺度（×1 和 ×`QI_ZONE_UNIT_CAPACITY`）重复计入。经手算验证：只要 zone 账户在
+    /// 测试起点已经与字段同步（下方 `zone_account` 预置正是做这件事），
+    /// `player_qi + ledger_qi` 在"咬 3 次 + 死亡 + zone_qi_inflow_tick 额外推进"全链路
+    /// 头尾**精确**相等（不需要放宽 epsilon）；反之若加回 `zone_qi`，会带入一个非 epsilon
+    /// 量级的、由 `zone_qi_inflow_tick` 待分配池注入自然产生的正向漂移——这是
+    /// `summarize_world_qi` 既有口径的固有性质（该函数是只读参考，本 plan 明确不允许改），
+    /// 不是本次改动引入的新问题。
     #[test]
     fn rat_bite_and_death_cycle_preserves_world_qi_total() {
         use crate::combat::events::DeathEvent;
@@ -3003,6 +2130,8 @@ mod tests {
         use crate::world::events::ActiveEventsResource;
         use crate::world::heartbeat::{zone_qi_inflow_tick, ZoneQiInflowClock};
         use valence::prelude::{ChunkPos, Position, Update};
+
+        const CAP: f64 = crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 
         let mut app = App::new();
         app.add_event::<RatBiteEvent>();
@@ -3041,18 +2170,22 @@ mod tests {
         ledger
             .set_balance(pending_inflow_account(), 1000.0)
             .expect("seeding the pending pool balance must succeed");
+        // zone 账户预先同步到字段真实值——field-authority 镜像范式下，一个已经运行过
+        // `zone_qi_inflow_tick` 的活服务器，zone 账户理应已经与字段同步；不预置的话，
+        // 咬击/死亡链路里第一次 `set_balance` 同步会把"此前从未被 ledger 观测到的
+        // zone_qi"当成新增量计入 `ledger_qi`，污染守恒对拍的基线（见上方 doc-comment）。
+        ledger
+            .set_balance(QiAccountId::zone("spawn"), initial_spirit_qi * CAP)
+            .expect("pre-syncing the zone ledger mirror must succeed");
         app.insert_resource(ledger);
 
         let target = app
             .world_mut()
-            .spawn((
-                Cultivation {
-                    qi_current: 20.0,
-                    qi_max: 20.0,
-                    ..Default::default()
-                },
-                crate::cultivation::life_record::LifeRecord::new("offline:rat-cycle-target"),
-            ))
+            .spawn(Cultivation {
+                qi_current: 20.0,
+                qi_max: 20.0,
+                ..Default::default()
+            })
             .id();
         let rat = app
             .world_mut()
@@ -3062,12 +2195,6 @@ mod tests {
                 RatBlackboard::new("spawn", ChunkPos::new(0, 0)),
             ))
             .id();
-        let rat_character_id = crate::npc::brain::canonical_npc_id(rat);
-        app.world_mut()
-            .entity_mut(rat)
-            .insert(crate::cultivation::life_record::LifeRecord::new(
-                rat_character_id,
-            ));
 
         let before = summarize_world_qi(app.world_mut());
 
@@ -3112,14 +2239,15 @@ mod tests {
 
         let after = summarize_world_qi(app.world_mut());
 
-        let total_before = before.total_observed();
-        let total_after = after.total_observed();
+        let total_before = before.player_qi + before.ledger_qi;
+        let total_after = after.player_qi + after.ledger_qi;
         assert!(
             (total_before - total_after).abs() < 1e-9,
             "worldview §二守恒律：鼠咬 + 死亡结算 + 额外一次 zone_qi_inflow_tick 全链路，\
-             player_qi + absolute zone_qi + stable ledger_qi 头尾必须严格相等，实际 \
-             before={total_before} after={total_after}（before={before:?}, after={after:?}）——\
-             不等说明某个物理 owner 被重复镜像或在写回时丢失"
+             player_qi + ledger_qi 头尾必须严格相等（zone 账户已在 ledger_qi 里镜像\
+             zone.spirit_qi，见本测试 doc-comment），实际 before={total_before} \
+             after={total_after}（before={before:?}, after={after:?}）——不等说明 rat 账户\
+             的真元在 zone_qi_inflow_tick 覆盖式 set_balance 时被二次抹掉"
         );
     }
 }

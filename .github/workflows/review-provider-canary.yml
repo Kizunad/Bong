@@ -9,7 +9,7 @@ jobs:
   canary:
     permissions:
       actions: read
-    uses: Kizunad/review/.github/workflows/provider-canary.yml@a353d8df3759887083739952f5a7932ea02b3a7d
+    uses: Kizunad/review/.github/workflows/provider-canary.yml@9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784
     with:
       review_base_url: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
       worker_timeout_ms: 60000

@@ -22,24 +22,17 @@
 //! 4. **夺舍**（P1）：player qi_current → elder `QiTransfer{SoulSeize}`；
 //!    qi_max 永久 debuff 是容量变化，**不** 重复计入 transfer。
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use bevy_transform::components::{GlobalTransform, Transform};
 use serde::{Deserialize, Serialize};
 use valence::client::ClientMarker;
 use valence::entity::marker::MarkerEntityBundle;
 use valence::entity::EntityId;
 use valence::prelude::{
-    bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EntityKind, EntityLayerId,
-    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update,
-    With, Without,
+    bevy_ecs, App, Commands, Component, DVec3, Entity, EntityKind, EntityLayerId, EventReader,
+    EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update, With, Without,
 };
 
-use crate::cultivation::components::{
-    ActorQiIdentity, ActorQiKind, ActorQiTarget, Cultivation, CultivationQiInit, QiFlowTarget,
-};
-use crate::cultivation::life_record::LifeRecord;
-use crate::cultivation::lifespan::ZoneDeathKind;
+use crate::cultivation::components::Cultivation;
 use crate::inventory::freshness::GAME_DAY_TICKS;
 use crate::inventory::{
     consume_item_instance_once, inventory_item_by_instance_borrow, DroppedLootRegistry,
@@ -47,21 +40,15 @@ use crate::inventory::{
 };
 use crate::network::redis_bridge::RedisOutbound;
 use crate::network::RedisBridgeResource;
-use crate::npc::lifecycle::{
-    npc_runtime_bundle, NpcArchetype, NpcDeathReason, NpcTerminalSettlementSucceeded,
-    NpcTerminalSystemSet, PendingNpcTermination,
-};
+use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
-use crate::persistence::{
-    load_npc_terminal_narration_outbox, NpcTerminalLootOutboxRecord,
-    NpcTerminalNarrationOutboxRecord, PersistenceBootstrapSet, PersistenceSettings,
-};
-use crate::qi_physics::constants::QI_EPSILON;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::ledger::{
-    dying_elder_dan_excess_account, rift_drain_account, transfer_external_qi_to_ledger,
-    QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+    dying_elder_dan_excess_account, dying_elder_release_overflow_account,
+    transfer_external_qi_to_ledger, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
+use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::elder_encounter::{ElderEncounterEventKindV1, ElderEncounterEventV1};
 use crate::social::components::Renown;
 use crate::world::dimension::{DimensionKind, DimensionLayers};
@@ -400,16 +387,11 @@ pub(crate) fn dying_elder_apply_spawn_system(
         let bb = req.blackboard.clone();
         let pos = req.spawn_pos;
 
-        // ── 构建大能 Cultivation（化虚境界；额外容量承接最多 5 颗回元丹）
+        // ── 构建大能 Cultivation（化虚境界，qi_current = qi_max = DYING_ELDER_INITIAL_QI）
         let mut cultivation = Cultivation::default();
         cultivation.realm = crate::cultivation::components::Realm::Void;
-        cultivation
-            .set_for_init(CultivationQiInit {
-                current: DYING_ELDER_INITIAL_QI,
-                max: DYING_ELDER_INITIAL_QI * 1.5,
-                frozen: None,
-            })
-            .expect("dying elder spawn qi constants must form a valid snapshot");
+        cultivation.qi_current = DYING_ELDER_INITIAL_QI;
+        cultivation.qi_max = DYING_ELDER_INITIAL_QI;
 
         // ── Bug3 修复：MarkerEntityBundle 提供 EntityKind + EntityLayerId，让 Valence 向客户端发包
         // EntityKind::VILLAGER 在 MC 1.20.1 是 120，用于标识大能外观（P4 可换自定义 skin）
@@ -428,7 +410,6 @@ pub(crate) fn dying_elder_apply_spawn_system(
                     DyingElderState::Plea,
                     bb.clone(),
                     NpcArchetype::DyingElder,
-                    crate::world::dimension::CurrentDimension(DimensionKind::Tsy),
                 ))
                 .id()
         } else {
@@ -440,7 +421,6 @@ pub(crate) fn dying_elder_apply_spawn_system(
                     DyingElderState::Plea,
                     bb.clone(),
                     NpcArchetype::DyingElder,
-                    crate::world::dimension::CurrentDimension(DimensionKind::Tsy),
                 ))
                 .id()
         };
@@ -559,8 +539,8 @@ pub struct PendingSoulSeize {
 /// 1. 校验 elder state、`Cultivation.qi_current` 与 cap；
 /// 2. 权威重验玩家 inventory instance / `huiyuan_pill` template / ItemRegistry effect；
 /// 3. 在本系统的 EventReader 顺序内真实消费丹，保证同 tick 第 5/6 颗只扣成功事务；
-/// 4. 在 clone 上同时 stage inventory、actor qi、稳定 overflow 与 ledger audit；任一步失败均不消费丹；
-/// 5. 原子发布 inventory / Cultivation / Blackboard / ledger，随后 emit `DyingElderDanAcceptedEvent`；
+/// 4. cap 内写入大能，cap 外真实转入稳定 overflow；ledger 失败则完整 qi 暂存大能；
+/// 5. 同步 Blackboard mirror、记录 QiTransfer，并 emit `DyingElderDanAcceptedEvent`；
 /// 6. 更新 `DyingElderState`：
 ///    - Plea → Recovering { dan_received: 1 }
 ///    - Recovering { n } → Recovering { n+1 }
@@ -575,7 +555,6 @@ pub(crate) fn dying_elder_give_dan_system(
             &mut DyingElderBlackboard,
             &mut DyingElderState,
             &mut Cultivation,
-            &LifeRecord,
         ),
         (With<NpcMarker>, Without<ClientMarker>),
     >,
@@ -591,9 +570,7 @@ pub(crate) fn dying_elder_give_dan_system(
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
     for intent in intents.read() {
-        let Ok((mut bb, mut state, mut cultivation, elder_life_record)) =
-            elders.get_mut(intent.elder)
-        else {
+        let Ok((mut bb, mut state, mut cultivation)) = elders.get_mut(intent.elder) else {
             tracing::warn!(
                 "[bong][dying_elder] give_dan_system: elder entity {:?} missing blackboard/state/cultivation",
                 intent.elder
@@ -622,30 +599,7 @@ pub(crate) fn dying_elder_give_dan_system(
             }
         };
 
-        let elder_identity = match ActorQiIdentity::from_life_record(
-            elder_life_record,
-            ActorQiKind::Npc,
-        ) {
-            Ok(identity) => identity,
-            Err(error) => {
-                tracing::warn!(
-                    "[bong][dying_elder] give_dan_system: elder {:?} missing canonical identity: {error}; keep inventory/state unchanged",
-                    intent.elder,
-                );
-                continue;
-            }
-        };
-
         // Cultivation.qi_current 是物理权威；Blackboard 只做 encounter/UI 镜像。
-        // 必须先验证完整 actor snapshot（含 current <= max / frozen 合法性），避免把
-        // corrupted owner 状态误判成“actor room=0，整颗丹合法进入 excess 池”。
-        if let Err(error) = cultivation.validate_qi_state() {
-            tracing::warn!(
-                "[bong][dying_elder] give_dan_system: invalid cultivation state elder={:?}: {error}; keep inventory/state unchanged",
-                intent.elder,
-            );
-            continue;
-        }
         let qi_before = cultivation.qi_current;
         let qi_cap = bb.qi_max_cache * 1.5;
         if !qi_before.is_finite()
@@ -705,31 +659,23 @@ pub(crate) fn dying_elder_give_dan_system(
             continue;
         };
         let qi_gain = *qi_gain;
-        if !qi_gain.is_finite() || qi_gain <= 0.0 {
+        let fallback_qi_after = qi_before + qi_gain;
+        let fallback_qi_gain = fallback_qi_after - qi_before;
+        if !qi_gain.is_finite()
+            || qi_gain <= 0.0
+            || !fallback_qi_after.is_finite()
+            || (fallback_qi_gain - qi_gain).abs() > QI_EPSILON
+        {
             tracing::warn!(
-                "[bong][dying_elder] give_dan_system: invalid canonical pill qi={} elder={:?}; keep inventory/state unchanged",
+                "[bong][dying_elder] give_dan_system: invalid canonical pill qi={} or unrepresentable fallback sum={} actual_gain={} elder={:?}; keep inventory/state unchanged",
                 qi_gain,
+                fallback_qi_after,
+                fallback_qi_gain,
                 intent.elder,
             );
             continue;
         }
-        let Some(account) = qi_account.as_deref_mut() else {
-            tracing::warn!(
-                "[bong][dying_elder] give_dan_system: WorldQiAccount missing; keep pill/state unchanged elder={:?}",
-                intent.elder,
-            );
-            continue;
-        };
-
-        // inventory、actor、稳定 overflow 与 audit 先全部在 clone 上演算；任一步失败时不消费丹，
-        // 也不留下半条 ledger。全部成功后再一次性覆盖 ECS/Resource 权威。
-        let mut staged_inventory = inventory.clone();
-        let mut staged_cultivation = cultivation.clone();
-        let mut staged_bb = bb.clone();
-        let mut staged_account = account.clone();
-        if let Err(error) =
-            consume_item_instance_once(&mut staged_inventory, intent.pill_instance_id)
-        {
+        if let Err(error) = consume_item_instance_once(&mut inventory, intent.pill_instance_id) {
             tracing::warn!(
                 "[bong][dying_elder] give_dan_system: consume pill {} failed for player {:?}: {error}; keep state unchanged",
                 intent.pill_instance_id,
@@ -738,118 +684,146 @@ pub(crate) fn dying_elder_give_dan_system(
             continue;
         }
 
+        // 首颗丹的声名调整也延迟到消费成功后，前置拒绝不得污染 encounter。
         if first_dan {
             if let Ok(renown) = player_renowns.get(intent.player) {
-                staged_bb.apply_renown_adjustment(renown.fame);
+                bb.apply_renown_adjustment(renown.fame);
+                tracing::debug!(
+                    "[bong][dying_elder] give_dan_system: player {:?} fame={} applied renown adjustment → betray_prob={:.3}",
+                    intent.player,
+                    renown.fame,
+                    bb.betray_probability,
+                );
             }
         }
 
-        let encounter_room = (qi_cap - qi_before).max(0.0);
-        let actor_qi_added = qi_gain
-            .min(encounter_room)
-            .min(staged_cultivation.qi_room());
-        let excess_qi = qi_gain - actor_qi_added;
+        // ── 守恒：优先把 cap 内真元写入大能；cap 外部分真实进入稳定 overflow ──
+        let room = (qi_cap - qi_before).max(0.0);
+        let capped_qi_added = qi_gain.min(room);
+        let excess_qi = (qi_gain - capped_qi_added).max(0.0);
+
         let pill_account =
             QiAccountId::container(format!("hui_yuan_pill:{}", intent.pill_instance_id));
-        let mut committed_transfers = Vec::with_capacity(2);
+        let elder_account = QiAccountId::npc(format!("dying_elder:{}", intent.elder.to_bits()));
+        let mut actual_qi_added = capped_qi_added;
 
-        if actor_qi_added > 0.0 {
-            match elder_identity.transfer_from_external(
-                pill_account.clone(),
-                &mut staged_cultivation,
-                &mut staged_account,
-                actor_qi_added,
-                QiTransferReason::TradeDan,
-            ) {
-                Ok(outcome) => committed_transfers.extend(outcome.transfers),
-                Err(error) => {
-                    tracing::warn!(
-                        "[bong][dying_elder] give_dan_system: canonical actor credit failed elder={:?}: {error}; keep pill/state/ledger unchanged",
-                        intent.elder,
-                    );
-                    continue;
+        if excess_qi > QI_EPSILON {
+            let overflow_account = dying_elder_dan_excess_account();
+            let overflow_result = match qi_account.as_deref_mut() {
+                Some(account) => transfer_external_qi_to_ledger(
+                    account,
+                    pill_account.clone(),
+                    overflow_account,
+                    excess_qi,
+                    QiTransferReason::TradeDan,
+                )
+                .map_err(|error| error.to_string()),
+                None => Err("WorldQiAccount missing".to_string()),
+            };
+
+            match overflow_result {
+                Ok(Some(transfer)) => {
+                    qi_transfer_events.send(transfer);
                 }
-            }
-        }
-        if excess_qi > 0.0 {
-            match transfer_external_qi_to_ledger(
-                &mut staged_account,
-                pill_account,
-                dying_elder_dan_excess_account(),
-                excess_qi,
-                QiTransferReason::TradeDan,
-            ) {
-                Ok(Some(transfer)) => committed_transfers.push(transfer),
                 Ok(None) => {}
                 Err(error) => {
+                    // 丹已由本事务消费，无法回滚 item。ledger 不可用时把 full qi 留在
+                    // Cultivation 物理权威中（允许临时越 cap），绝不丢弃 cap 外部分。
+                    actual_qi_added = qi_gain;
                     tracing::warn!(
-                        "[bong][dying_elder] give_dan_system: excess qi credit failed elder={:?} excess={} error={error}; keep pill/state/ledger unchanged",
+                        "[bong][dying_elder] give_dan_system: excess qi ledger failed elder={:?} excess={} error={}; keep full pill qi in elder",
                         intent.elder,
                         excess_qi,
+                        error,
                     );
-                    continue;
                 }
             }
         }
-        staged_bb.qi_current = staged_cultivation.qi_current();
 
-        let new_dan_received = dan_received + 1;
-        let betrayal = new_dan_received >= DYING_ELDER_DAN_THRESHOLD
-            && betray_roll(
-                staged_bb.betray_probability,
-                intent.player.to_bits()
-                    ^ intent.elder.to_bits()
-                    ^ tick.wrapping_mul(0x517C_C1B7_2722_0A95),
-            );
-        let staged_state = if new_dan_received >= DYING_ELDER_DAN_THRESHOLD {
-            if betrayal {
-                DyingElderState::Betrayal
-            } else {
-                DyingElderState::Dead {
-                    dead_by_betrayal: false,
-                }
-            }
-        } else {
-            DyingElderState::Recovering {
-                dan_received: new_dan_received,
-            }
-        };
-        let qi_fraction = if staged_bb.qi_max_cache > 0.0 {
-            (staged_bb.qi_current / staged_bb.qi_max_cache).clamp(0.0, 1.0) as f32
-        } else {
-            0.0
-        };
+        cultivation.qi_current = qi_before + actual_qi_added;
+        bb.qi_current = cultivation.qi_current;
 
-        // Commit point：到这里所有可失败计算均已结束。
-        *inventory = staged_inventory;
-        *cultivation = staged_cultivation;
-        *bb = staged_bb;
-        *state = staged_state;
-        *account = staged_account;
-        for transfer in committed_transfers {
+        // ── 守恒：进入大能物理池的部分用 TradeDan audit + event 留痕 ─────────
+        if actual_qi_added > 0.0 {
+            let transfer = QiTransfer {
+                from: pill_account,
+                to: elder_account,
+                amount: actual_qi_added,
+                reason: QiTransferReason::TradeDan,
+            };
+            if let Some(ref mut account) = qi_account {
+                account.push_transfer_audit(transfer.clone());
+            }
             qi_transfer_events.send(transfer);
         }
 
+        // ── 状态更新：dan_received + 1 → 检查是否达到阈值 ───────────────────
+        let new_dan_received = dan_received + 1;
         tracing::info!(
-            "[bong][dying_elder] give_dan_system: elder {:?} received dan #{}/{} (qi_gain={:.2} actor={:.2} overflow={:.2}) tick={tick}",
+            "[bong][dying_elder] give_dan_system: elder {:?} received dan #{}/{} (qi_gain={:.2} actual={:.2}) tick={tick}",
             intent.elder,
             new_dan_received,
             DYING_ELDER_DAN_THRESHOLD,
             qi_gain,
-            actor_qi_added,
-            excess_qi,
+            actual_qi_added,
         );
-        if betrayal {
-            commands.entity(intent.elder).insert(PendingSoulSeize {
-                victim: intent.player,
-            });
-            soul_seize_events.send(SoulSeizeEvent {
-                elder: intent.elder,
-                player: intent.player,
-                qi_transferred: 0.0,
-                qi_max_drain: 0.0,
-            });
+
+        if new_dan_received >= DYING_ELDER_DAN_THRESHOLD {
+            // ── 结局判定 ──────────────────────────────────────────────────────
+            // 用 (player entity bits ^ elder entity bits ^ tick) 作为确定性 seed
+            let seed = intent.player.to_bits()
+                ^ intent.elder.to_bits()
+                ^ tick.wrapping_mul(0x517C_C1B7_2722_0A95);
+            let betrayal = betray_roll(bb.betray_probability, seed);
+
+            if betrayal {
+                // 翻脸夺舍
+                *state = DyingElderState::Betrayal;
+
+                // 先留下可重试权威，再发本帧事件。若 betray system 因非法/缺失组件
+                // fail-closed，PendingSoulSeize 会在下一 tick 重新驱动同一事务。
+                commands.entity(intent.elder).insert(PendingSoulSeize {
+                    victim: intent.player,
+                });
+
+                // qi_max_drain 永久减损量（= qi_max_cache × DYING_ELDER_SOUL_SEIZE_RATIO）
+                let qi_max_drain = bb.qi_max_cache * DYING_ELDER_SOUL_SEIZE_RATIO;
+
+                soul_seize_events.send(SoulSeizeEvent {
+                    elder: intent.elder,
+                    player: intent.player,
+                    // 兼容字段不携权威数值，betray system 必须重读双方组件。
+                    qi_transferred: 0.0,
+                    qi_max_drain: 0.0,
+                });
+
+                tracing::info!(
+                    "[bong][dying_elder] give_dan_system: BETRAYAL! elder {:?} → player {:?} soul seize qi_max_drain={:.2}",
+                    intent.elder,
+                    intent.player,
+                    qi_max_drain,
+                );
+            } else {
+                // 守信自裁
+                *state = DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                };
+                tracing::info!(
+                    "[bong][dying_elder] give_dan_system: HONORABLE DEATH elder {:?} self-destructs after {new_dan_received} dan",
+                    intent.elder,
+                );
+            }
+        } else {
+            *state = DyingElderState::Recovering {
+                dan_received: new_dan_received,
+            };
         }
+
+        let qi_fraction = if bb.qi_max_cache > 0.0 {
+            (bb.qi_current / bb.qi_max_cache).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
         accepted_events.send(DyingElderDanAcceptedEvent {
             player: intent.player,
             elder: intent.elder,
@@ -901,15 +875,15 @@ pub(crate) fn dying_elder_betray_system(
     mut commands: Commands,
     mut events: EventReader<SoulSeizeEvent>,
     mut elders: Query<
-        (&mut DyingElderBlackboard, &mut DyingElderState, &LifeRecord),
+        (&mut DyingElderBlackboard, &mut DyingElderState),
         (With<NpcMarker>, Without<ClientMarker>),
     >,
-    mut cultivations: Query<(&mut Cultivation, &LifeRecord)>,
+    mut cultivations: Query<&mut Cultivation>,
     mut qi_transfer_events: EventWriter<QiTransfer>,
     mut qi_account: Option<ResMut<WorldQiAccount>>,
 ) {
     for ev in events.read() {
-        let Ok((mut bb, mut state, elder_life_record)) = elders.get_mut(ev.elder) else {
+        let Ok((mut bb, mut state)) = elders.get_mut(ev.elder) else {
             tracing::warn!(
                 "[bong][dying_elder] betray_system: elder entity {:?} not found",
                 ev.elder
@@ -923,7 +897,7 @@ pub(crate) fn dying_elder_betray_system(
         }
 
         // 一次取得玩家与大能两个物理权威，任一缺失都 fail-closed，避免半边先扣后另一边失败。
-        let Ok([(mut elder_cultivation, _), (mut cultivation, player_life_record)]) =
+        let Ok([mut elder_cultivation, mut cultivation]) =
             cultivations.get_many_mut([ev.elder, ev.player])
         else {
             tracing::warn!(
@@ -933,37 +907,10 @@ pub(crate) fn dying_elder_betray_system(
             );
             continue;
         };
-        let Ok(player_identity) =
-            ActorQiIdentity::from_life_record(player_life_record, ActorQiKind::Player)
-        else {
-            tracing::warn!(
-                "[bong][dying_elder] betray_system: player {:?} missing canonical identity; keep Betrayal pending",
-                ev.player,
-            );
-            continue;
-        };
-        let Ok(elder_identity) =
-            ActorQiIdentity::from_life_record(elder_life_record, ActorQiKind::Npc)
-        else {
-            tracing::warn!(
-                "[bong][dying_elder] betray_system: elder {:?} missing canonical identity; keep Betrayal pending",
-                ev.elder,
-            );
-            continue;
-        };
-
-        let Some(account) = qi_account.as_deref_mut() else {
-            tracing::warn!(
-                "[bong][dying_elder] betray_system: qi ledger unavailable; keep Betrayal pending"
-            );
-            continue;
-        };
-
-        let mut staged_elder = elder_cultivation.clone();
-        let mut staged_player = cultivation.clone();
-        let mut staged_account = account.clone();
-        let elder_qi_before = staged_elder.qi_current;
-        let player_qi_before = staged_player.qi_current;
+        // 在任何组件/审计写入前先把完整新状态算完并校验。NaN/Inf/负真元或求和溢出
+        // 一律 fail-closed，保持 Betrayal 供修复后重试，绝不先清玩家再毒化大能。
+        let elder_qi_before = elder_cultivation.qi_current;
+        let player_qi_before = cultivation.qi_current;
         let elder_qi_after = elder_qi_before + player_qi_before;
         if !elder_qi_before.is_finite()
             || elder_qi_before < 0.0
@@ -982,33 +929,15 @@ pub(crate) fn dying_elder_betray_system(
             continue;
         }
 
-        // 夺舍后的真元仍由 elder Cultivation 承载，因此 capacity 必须随交易一起扩到
-        // 足够容纳被夺真元。这里不是凭空造真元，只是扩大即将死亡实体的短暂容量。
-        let elder_qi_max_after = staged_elder.qi_max.max(elder_qi_after);
-        if staged_elder
-            .set_for_init(CultivationQiInit {
-                current: elder_qi_before,
-                max: elder_qi_max_after,
-                frozen: staged_elder.qi_max_frozen,
-            })
-            .is_err()
-        {
-            tracing::warn!(
-                "[bong][dying_elder] betray_system: elder {:?} has invalid capacity; keep Betrayal pending",
-                ev.elder,
-            );
-            continue;
-        }
-
         // qi_max debuff 是容量变化，但也必须与真元提交同一原子边界，避免非法容量输入
         // 在玩家真元已清零后才产生 NaN/Inf。
-        let frozen_qi_max = staged_player.qi_max_frozen.unwrap_or(0.0);
+        let frozen_qi_max = cultivation.qi_max_frozen.unwrap_or(0.0);
         let qi_max_drain = bb.qi_max_cache * DYING_ELDER_SOUL_SEIZE_RATIO;
-        let raw_qi_max_after = staged_player.qi_max - qi_max_drain;
+        let raw_qi_max_after = cultivation.qi_max - qi_max_drain;
         if !bb.qi_max_cache.is_finite()
             || bb.qi_max_cache < 0.0
-            || !staged_player.qi_max.is_finite()
-            || staged_player.qi_max < 0.0
+            || !cultivation.qi_max.is_finite()
+            || cultivation.qi_max < 0.0
             || !frozen_qi_max.is_finite()
             || frozen_qi_max < 0.0
             || !qi_max_drain.is_finite()
@@ -1020,7 +949,7 @@ pub(crate) fn dying_elder_betray_system(
                 ev.elder,
                 bb.qi_max_cache,
                 ev.player,
-                staged_player.qi_max,
+                cultivation.qi_max,
                 frozen_qi_max,
                 qi_max_drain,
             );
@@ -1028,52 +957,25 @@ pub(crate) fn dying_elder_betray_system(
         }
         let player_qi_max_after = raw_qi_max_after.max(0.0);
 
-        let outcome = match staged_player.transfer_to(
-            QiFlowTarget::Actor(ActorQiTarget::new(&mut staged_elder, elder_identity)),
-            &mut staged_account,
-            &player_identity,
-            player_qi_before,
-            QiTransferReason::SoulSeize,
-        ) {
-            Ok(outcome) if outcome.untransferred <= QI_EPSILON => outcome,
-            Ok(outcome) => {
-                tracing::warn!(
-                    "[bong][dying_elder] betray_system: elder {:?} could not accept {} qi; keep unchanged",
-                    ev.elder,
-                    outcome.untransferred,
-                );
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "[bong][dying_elder] betray_system: qi transfer failed elder={:?} player={:?} error={error}; keep unchanged",
-                    ev.elder,
-                    ev.player,
-                );
-                continue;
-            }
-        };
-        if staged_player
-            .set_for_init(CultivationQiInit {
-                current: staged_player.qi_current,
-                max: player_qi_max_after,
-                frozen: staged_player.qi_max_frozen,
-            })
-            .is_err()
-        {
-            tracing::warn!(
-                "[bong][dying_elder] betray_system: player {:?} capacity debuff is invalid; keep unchanged",
-                ev.player,
-            );
-            continue;
-        }
+        // 所有可失败计算已完成；从这里开始一次提交双方物理权威、mirror 与状态。
+        cultivation.qi_current = 0.0;
+        cultivation.qi_max = player_qi_max_after;
+        elder_cultivation.qi_current = elder_qi_after;
+        bb.qi_current = elder_qi_after;
 
-        // Commit point：双方物理权威、稳定审计、mirror 与状态一起发布。
-        *elder_cultivation = staged_elder;
-        *cultivation = staged_player;
-        *account = staged_account;
-        bb.qi_current = elder_cultivation.qi_current;
-        for transfer in outcome.transfers {
+        // ── 守恒：QiTransfer{SoulSeize} 审计（从玩家到大能）────────────────────
+        if player_qi_before > 0.0 {
+            let player_account = QiAccountId::player(format!("entity:{}", ev.player.to_bits()));
+            let elder_account = QiAccountId::npc(format!("dying_elder:{}", ev.elder.to_bits()));
+            let transfer = QiTransfer {
+                from: player_account,
+                to: elder_account,
+                amount: player_qi_before,
+                reason: QiTransferReason::SoulSeize,
+            };
+            if let Some(ref mut account) = qi_account {
+                account.push_transfer_audit(transfer.clone());
+            }
             qi_transfer_events.send(transfer);
         }
 
@@ -1146,18 +1048,12 @@ pub fn betray_roll(betray_probability: f64, seed: u64) -> bool {
 #[derive(Debug, Clone, Copy, Component)]
 pub struct DyingElderDeathProcessed;
 
-/// 垂死大能死亡叙事的 durable outbox 位于 SQLite；当前实体不再承担交付状态。
-/// Durable terminal narration rows loaded from SQLite and retried until the Redis bridge
-/// confirms that `PUBLISH` completed. Queue admission is not delivery confirmation.
-#[derive(Debug, Default, Resource)]
-pub struct DyingElderDeathBroadcastOutbox {
-    pending: BTreeMap<String, NpcTerminalNarrationOutboxRecord>,
-    inflight: BTreeSet<String>,
-    receipt_tx:
-        Option<crossbeam_channel::Sender<crate::network::redis_bridge::RedisDeliveryReceipt>>,
-    receipt_rx:
-        Option<crossbeam_channel::Receiver<crate::network::redis_bridge::RedisDeliveryReceipt>>,
-}
+/// 垂死大能死亡叙事已广播。
+///
+/// 叙事发送与真元/loot 结算是两个独立副作用：结算失败时允许下一 tick 重试，
+/// 但死亡叙事只应对外广播一次。
+#[derive(Debug, Clone, Copy, Component)]
+pub struct DyingElderDeathBroadcast;
 
 // ── P2：offered_skill_id → scroll template_id 映射 ────────────────────────────
 
@@ -1188,7 +1084,7 @@ pub fn skill_id_to_scroll_template(skill_id: &str) -> Option<&'static str> {
 ///
 /// ## 守恒执行
 /// 1. 用生产 `Cultivation` 物理权威计算本 tick 扣减量；
-/// 2. 先把 `actual_drain` 真实转入固定 `overflow:rift_drain` ledger；
+/// 2. 先把 `actual_drain` 真实转入 `rift:<zone_name>` ledger；
 /// 3. ledger 成功后才扣 `Cultivation.qi_current`，并同步 Blackboard mirror；
 /// 4. `qi_current <= 0` → state 变 `Dead { dead_by_betrayal: false }`（自然力竭）；
 ///
@@ -1201,7 +1097,6 @@ pub(crate) fn dying_elder_drain_system(
             &mut DyingElderBlackboard,
             &mut DyingElderState,
             &mut Cultivation,
-            &LifeRecord,
         ),
         (
             With<NpcMarker>,
@@ -1217,7 +1112,7 @@ pub(crate) fn dying_elder_drain_system(
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
     let Some(zones) = zones else { return };
 
-    for (entity, mut bb, mut state, mut cultivation, life_record) in &mut elders {
+    for (entity, mut bb, mut state, mut cultivation) in &mut elders {
         // 只在 Plea / Recovering 状态 drain（Betrayal/Dead 不走此系统）
         match *state {
             DyingElderState::Plea | DyingElderState::Recovering { .. } => {}
@@ -1259,19 +1154,10 @@ pub(crate) fn dying_elder_drain_system(
         let before_qi = cultivation.qi_current.max(0.0);
         let actual_drain = drain.min(before_qi);
 
-        let Ok(elder_identity) = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
-        else {
-            tracing::warn!(
-                "[bong][dying_elder] drain_system: elder {:?} missing canonical identity; keep qi unchanged",
-                entity,
-            );
-            continue;
-        };
-
         // ── 守恒：先真实 credit rift，失败时双组件均不扣、下一 tick 重试 ──────
         if actual_drain > QI_EPSILON {
-            let elder_account = elder_identity.account();
-            let rift_account = rift_drain_account();
+            let elder_account = QiAccountId::npc(format!("dying_elder:{}", entity.to_bits()));
+            let rift_account = QiAccountId::rift(bb.home_zone.clone());
             let Some(account) = qi_account.as_deref_mut() else {
                 tracing::warn!(
                     "[bong][dying_elder] drain_system: WorldQiAccount missing for elder {:?}; keep qi unchanged",
@@ -1319,350 +1205,338 @@ pub(crate) fn dying_elder_drain_system(
 
 // ── P2：DyingElderDeathSystem ─────────────────────────────────────────────────
 
-/// `Dead` 只冻结终结意图；真元、zone、durable ledger、lifecycle 与 biography 由
-/// `settle_pending_npc_termination` 在同一个可重试 transaction 中提交。loot / Redis / S2C
-/// 只能消费随后发布的 `NpcTerminalSettlementSucceeded`。
-#[allow(clippy::type_complexity)]
+/// plan-dying-elder-v1 P2 — 统一处理垂死大能死亡（自然力竭 / 守信自裁 / 翻脸夺舍力竭）。
+///
+/// ## 两条死亡路线
+/// - **守信 / 自然死亡**（`dead_by_betrayal = false`）：大能守约传承自裁 or 真元耗尽，
+///   zone spirit_qi 瞬时跃升（全额 qi release），loot 质量较好（secondary_honorable 附加池）。
+/// - **背叛路线**（`dead_by_betrayal = true`）：夺舍后力竭，loot 质量稍差（secondary_betrayal 池）。
+///
+/// ## 守恒执行
+/// 1. `qi_release_to_zone(amount=elder.qi_current, from=npc:dying_elder:<id>, zone=zone:<home_zone>)`
+///    → zone spirit_qi 瞬时跃升（化虚级 ~500 真元直接注入负灵域 → 区域灵气快速复苏）；
+/// 2. 更新 ZoneRegistry 中对应 zone 的 spirit_qi；
+/// 3. 生成 loot：
+///    a. 地阶功法残卷（by offered_skill_id → scroll template_id）；
+///    b. 通过 loot pool 生成附加掉落（dead_by_betrayal 分档）；
+/// 4. 插入 `DyingElderDeathProcessed`（避免下一 tick 重复处理）。
+///
+/// **注意**：本系统在 `Update` 阶段运行，elder entity 不在本帧 despawn（由 NPC lifecycle 处理）。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn dying_elder_death_system(
     mut commands: Commands,
-    elders: Query<
+    mut elders: Query<
         (
             Entity,
-            &EntityId,
-            &DyingElderBlackboard,
+            &mut DyingElderBlackboard,
             &DyingElderState,
-            &LifeRecord,
-            &crate::combat::components::Lifecycle,
-            &crate::cultivation::lifespan::DeathRegistry,
+            &mut Cultivation,
         ),
         (
             With<NpcMarker>,
             Without<ClientMarker>,
-            Without<PendingNpcTermination>,
             Without<DyingElderDeathProcessed>,
-            Without<Despawned>,
         ),
     >,
-    game_tick: Option<Res<GameTick>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
     item_registry: Option<Res<ItemRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
+    mut loot_registry: Option<ResMut<DroppedLootRegistry>>,
+    mut qi_transfer_events: EventWriter<QiTransfer>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
+    game_tick: Option<Res<GameTick>>,
 ) {
     let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
-    for (entity, entity_id, bb, state, life_record, lifecycle, death_registry) in &elders {
+    for (entity, mut bb, state, mut cultivation) in &mut elders {
         let dead_by_betrayal = match *state {
             DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
-            _ => continue,
+            _ => continue, // 只处理 Dead 态
         };
-        let Ok(actor_qi_identity) =
-            ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
-        else {
+
+        // ── 守恒：qi_release_to_zone 全额释放大能真元 ────────────────────────
+        if !cultivation.qi_current.is_finite() {
             tracing::warn!(
-                "[bong][dying_elder] retained Dead elder {:?} because canonical identity is missing",
-                entity,
-            );
-            continue;
-        };
-        if lifecycle.character_id != life_record.character_id
-            || death_registry.char_id != life_record.character_id
-        {
-            tracing::warn!(
-                "[bong][dying_elder] retained Dead elder {:?} because terminal identity diverged",
+                "[bong][dying_elder] death_system: invalid Cultivation.qi_current={} for elder {:?}; keep pending for retry",
+                cultivation.qi_current,
                 entity,
             );
             continue;
         }
-
-        let actor_account = actor_qi_identity.account().to_string();
-        let event_kind = if dead_by_betrayal {
-            ElderEncounterEventKindV1::Betrayal
-        } else {
-            ElderEncounterEventKindV1::DeadNatural
-        };
-        let outbox_id = format!("dying_elder_terminal:{actor_account}:{tick}");
-        let narration_outbox = NpcTerminalNarrationOutboxRecord {
-            outbox_id: outbox_id.clone(),
-            actor_account,
-            payload: ElderEncounterEventV1 {
-                event_id: Some(outbox_id),
-                zone_name: bb.home_zone.clone(),
-                elder_entity_id: entity_id.get(),
-                event_kind,
-                betray_probability: 0.0,
-                dan_count: 0,
-                offered_skill_id: String::new(),
-                qi_fraction: 0.0,
-                server_tick: tick,
-            },
-            created_tick: tick,
-        };
-
-        let Some(item_reg) = item_registry.as_deref() else {
+        let release_amount = cultivation.qi_current.max(0.0);
+        if release_amount > 0.0 && qi_account.is_none() {
             tracing::warn!(
-                target = ?entity,
-                "[bong][dying_elder] retained Dead elder because ItemRegistry is unavailable for frozen terminal loot"
+                "[bong][dying_elder] death_system: positive release={} but WorldQiAccount missing for elder {:?}; keep zone/components/marker unchanged",
+                release_amount,
+                entity,
             );
             continue;
-        };
-        let Some(allocator) = allocator.as_deref_mut() else {
-            tracing::warn!(
-                target = ?entity,
-                "[bong][dying_elder] retained Dead elder because loot allocator is unavailable"
-            );
-            continue;
-        };
-        let Ok((loot_outbox, staged_allocator)) =
-            freeze_dying_elder_loot(bb, state, &actor_qi_identity, tick, item_reg, allocator)
-        else {
-            tracing::warn!(
-                target = ?entity,
-                "[bong][dying_elder] retained Dead elder because terminal loot could not be frozen"
-            );
-            continue;
-        };
-        *allocator = staged_allocator;
-
-        commands.entity(entity).insert(PendingNpcTermination {
-            cause: if dead_by_betrayal {
-                "dying_elder_betrayal"
-            } else {
-                "dying_elder_death"
-            }
-            .to_string(),
-            at_tick: tick,
-            death_zone: ZoneDeathKind::Negative,
-            lifespan_event: None,
-            death_insight: None,
-            reason: if dead_by_betrayal {
-                NpcDeathReason::DuoShe
-            } else {
-                NpcDeathReason::NaturalAging
-            },
-            attacker: None,
-            attacker_player_id: None,
-            authorize_loot: true,
-            actor_qi_identity,
-            reproduction: None,
-            narration_outbox: Some(narration_outbox),
-            loot_outbox: Some(loot_outbox),
-        });
-    }
-}
-
-fn freeze_dying_elder_loot(
-    bb: &DyingElderBlackboard,
-    state: &DyingElderState,
-    identity: &ActorQiIdentity,
-    tick: u64,
-    item_reg: &ItemRegistry,
-    allocator: &InventoryInstanceIdAllocator,
-) -> Result<(NpcTerminalLootOutboxRecord, InventoryInstanceIdAllocator), String> {
-    let dead_by_betrayal = matches!(
-        state,
-        DyingElderState::Dead {
-            dead_by_betrayal: true
         }
-    );
-    let account_key = identity.account().to_string();
-    let secondary_seed = account_key.bytes().fold(tick, |seed, byte| {
-        seed.wrapping_mul(0x517C_C1B7_2722_0A95)
-            .wrapping_add(u64::from(byte))
-    });
-    let (secondary_roll, _) = splitmix64_f64(secondary_seed);
-    let secondary_template_id = if dead_by_betrayal {
-        if secondary_roll < 0.80 {
-            "jing_sui"
-        } else {
-            "jing_hun_yu"
-        }
-    } else if secondary_roll < 0.60 {
-        "jing_sui"
-    } else {
-        "jing_hun_yu"
-    };
-    let scroll_template_id = skill_id_to_scroll_template(bb.offered_skill_id)
-        .ok_or_else(|| format!("skill '{}' has no scroll mapping", bb.offered_skill_id))?;
-    let scroll_template = item_reg
-        .get(scroll_template_id)
-        .ok_or_else(|| format!("scroll template '{scroll_template_id}' is missing"))?;
-    let secondary_template = item_reg
-        .get(secondary_template_id)
-        .ok_or_else(|| format!("secondary template '{secondary_template_id}' is missing"))?;
-    let mut staged_allocator = allocator.clone();
-    let scroll_instance_id = staged_allocator.next_id()?;
-    let secondary_instance_id = staged_allocator.next_id()?;
-    let drop_pos = [bb.home_pos.x, bb.home_pos.y, bb.home_pos.z];
-    let make_entry =
-        |instance_id: u64,
-         template: &crate::inventory::ItemTemplate,
-         source_container_id: String| crate::inventory::DroppedLootEntry {
-            instance_id,
-            source_container_id,
-            source_row: 0,
-            source_col: 0,
-            world_pos: drop_pos,
-            dimension: DimensionKind::Tsy,
-            item: ItemInstance {
-                instance_id,
-                template_id: template.id.clone(),
-                display_name: template.display_name.clone(),
-                grid_w: template.grid_w,
-                grid_h: template.grid_h,
-                weight: template.base_weight,
-                rarity: template.rarity,
-                description: template.description.clone(),
-                stack_count: 1,
-                spirit_quality: template.spirit_quality_initial,
-                durability: 1.0,
-                freshness: None,
-                mineral_id: None,
-                charges: None,
-                forge_quality: None,
-                forge_color: None,
-                forge_side_effects: Vec::new(),
-                forge_achieved_tier: None,
-                alchemy: None,
-                lingering_owner_qi: None,
-            },
-        };
-    let entries = vec![
-        make_entry(
-            scroll_instance_id,
-            scroll_template,
-            format!("dying_elder:{}", identity.account()),
-        ),
-        make_entry(
-            secondary_instance_id,
-            secondary_template,
-            format!(
-                "dying_elder_secondary:{}:{}",
-                if dead_by_betrayal {
-                    "betrayal"
-                } else {
-                    "honorable"
-                },
-                identity.account()
-            ),
-        ),
-    ];
-    Ok((
-        NpcTerminalLootOutboxRecord {
-            outbox_id: format!("dying_elder_loot:{}:{}", identity.account(), tick),
-            actor_account: identity.account().to_string(),
-            entries,
-            created_tick: tick,
-        },
-        staged_allocator,
-    ))
-}
+        let elder_account = QiAccountId::npc(format!("dying_elder:{}", entity.to_bits()));
+        let zone_account = QiAccountId::zone(bb.home_zone.clone());
 
-/// Commit 后只投影 Stage 冻结且已写入 durable dropped_loot 的 loot。
-/// durable `dropped_loot` 是 restart 后唯一 runtime 权威；terminal outbox 是不可变终结收据，
-/// 不参与 startup hydration，避免已拾取的 ground row 在重启后复活。事件消费失败时本队列继续重试。
-#[derive(Debug, Default, Resource)]
-pub struct DyingElderLootProjectionQueue {
-    pending: BTreeMap<String, NpcTerminalLootOutboxRecord>,
-    entities: BTreeMap<String, Entity>,
-}
+        // 只有真实存在的 zone 才能接收 accepted 腿；缺资源或 home_zone 漂移时，
+        // 全量进入 overflow，绝不根据虚构浓度制造无法写回世界状态的 accepted。
+        let zone_current_qi = zones
+            .as_ref()
+            .and_then(|zr| zr.zones.iter().find(|z| z.name == bb.home_zone))
+            .map(|z| z.spirit_qi * QI_ZONE_UNIT_CAPACITY);
 
-pub(crate) fn dying_elder_post_commit_system(
-    mut commands: Commands,
-    mut settlements: EventReader<NpcTerminalSettlementSucceeded>,
-    elders: Query<&PendingNpcTermination, (With<NpcMarker>, Without<DyingElderDeathProcessed>)>,
-    settings: Option<Res<PersistenceSettings>>,
-    mut queue: ResMut<DyingElderLootProjectionQueue>,
-    mut loot_registry: Option<ResMut<DroppedLootRegistry>>,
-) {
-    for settlement in settlements.read() {
-        if !settlement.authorize_loot {
-            continue;
-        }
-        let Ok(pending) = elders.get(settlement.entity) else {
-            continue;
-        };
-        let Some(loot_outbox) = pending.loot_outbox.as_ref() else {
-            tracing::warn!(
-                target = ?settlement.entity,
-                "[bong][dying_elder] terminal settlement lacks frozen loot outbox"
-            );
-            continue;
-        };
-        queue
-            .pending
-            .insert(loot_outbox.outbox_id.clone(), loot_outbox.clone());
-        queue
-            .entities
-            .insert(loot_outbox.outbox_id.clone(), settlement.entity);
-    }
-
-    let Some(settings) = settings.as_deref() else {
-        if !queue.pending.is_empty() {
-            tracing::warn!(
-                "[bong][dying_elder] terminal loot projection retained until persistence is available"
-            );
-        }
-        return;
-    };
-    let Some(loot_reg) = loot_registry.as_deref_mut() else {
-        if !queue.pending.is_empty() {
-            tracing::warn!(
-                "[bong][dying_elder] durable loot committed but runtime registry is unavailable"
-            );
-        }
-        return;
-    };
-
-    let durable = match crate::persistence::load_durable_dropped_loot(settings) {
-        Ok(entries) => entries,
-        Err(error) => {
-            tracing::error!(
-                "[bong][dying_elder] retained terminal loot projection because durable drops could not be loaded: {error}"
-            );
-            return;
-        }
-    };
-    let mut completed = Vec::new();
-    for (outbox_id, outbox) in &queue.pending {
-        let mut projected = true;
-        for entry in &outbox.entries {
-            if durable.get(&entry.instance_id) != Some(entry) {
-                tracing::error!(
-                    instance_id = entry.instance_id,
-                    outbox_id,
-                    "[bong][dying_elder] refused terminal loot projection without an exact durable owner"
-                );
-                projected = false;
-                break;
-            }
-            match loot_reg.entries.get(&entry.instance_id) {
-                Some(existing) if existing != entry => {
-                    tracing::error!(
-                        instance_id = entry.instance_id,
-                        outbox_id,
-                        "[bong][dying_elder] refused conflicting terminal loot projection"
+        let outcome = if release_amount > 0.0 {
+            match qi_release_to_zone(
+                release_amount,
+                elder_account.clone(),
+                zone_account.clone(),
+                zone_current_qi.unwrap_or(QI_ZONE_UNIT_CAPACITY),
+                QI_ZONE_UNIT_CAPACITY,
+            ) {
+                Ok(outcome) => Some(outcome),
+                Err(e) => {
+                    tracing::warn!(
+                        "[bong][dying_elder] death_system: qi_release_to_zone error for elder {:?}: {e:?}",
+                        entity
                     );
-                    projected = false;
-                    break;
+                    continue;
                 }
-                Some(_) => {}
-                None => {
-                    loot_reg.entries.insert(entry.instance_id, entry.clone());
+            }
+        } else {
+            None
+        };
+
+        // overflow 没有 ZoneRegistry 字段承载，必须在任何 zone/组件提交前先真实入账。
+        // 缺账本或 transfer 失败时，bb/cultivation/zone/processed 全量保持原样重试。
+        let mut overflow_transfer = None;
+        if let Some(ref outcome) = outcome {
+            if outcome.overflow > QI_EPSILON {
+                let Some(account) = qi_account.as_deref_mut() else {
+                    tracing::warn!(
+                        "[bong][dying_elder] death_system: overflow={} but WorldQiAccount missing for elder {:?}; keep pending",
+                        outcome.overflow,
+                        entity,
+                    );
+                    continue;
+                };
+                match transfer_external_qi_to_ledger(
+                    account,
+                    elder_account.clone(),
+                    dying_elder_release_overflow_account(),
+                    outcome.overflow,
+                    QiTransferReason::ReleaseToZone,
+                ) {
+                    Ok(transfer) => overflow_transfer = transfer,
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][dying_elder] death_system: overflow ledger failed elder={:?} amount={} error={error}; keep pending",
+                            entity,
+                            outcome.overflow,
+                        );
+                        continue;
+                    }
                 }
             }
         }
-        if projected {
-            completed.push(outbox_id.clone());
+
+        // 到这里所有可失败的守恒步骤都已完成，开始提交 field-authority 与双组件状态。
+        if let Some(outcome) = outcome {
+            if let Some(ref mut zr) = zones {
+                if let Some(zone) = zr.zones.iter_mut().find(|z| z.name == bb.home_zone) {
+                    zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
+                }
+            }
+
+            if let Some(transfer) = overflow_transfer {
+                qi_transfer_events.send(transfer);
+            }
+            if let Some(transfer) = outcome.transfer {
+                if let Some(ref mut account) = qi_account {
+                    account.push_transfer_audit(transfer.clone());
+                }
+                qi_transfer_events.send(transfer);
+            }
+            tracing::info!(
+                "[bong][dying_elder] death_system: elder {:?} released qi={:.2} to zone '{}' overflow={:.2} zone_after={:.4} tick={tick}",
+                entity,
+                outcome.accepted,
+                bb.home_zone,
+                outcome.overflow,
+                outcome.zone_after / QI_ZONE_UNIT_CAPACITY,
+            );
         }
-    }
-    for outbox_id in completed {
-        queue.pending.remove(&outbox_id);
-        if let Some(entity) = queue.entities.remove(&outbox_id) {
-            if let Some(mut entity_commands) = commands.get_entity(entity) {
-                entity_commands.insert(DyingElderDeathProcessed);
+
+        cultivation.qi_current = 0.0;
+        bb.qi_current = cultivation.qi_current;
+
+        // ── loot 生成 ──────────────────────────────────────────────────────
+        let drop_pos: [f64; 3] = [bb.home_pos.x, bb.home_pos.y, bb.home_pos.z];
+        let dim = DimensionKind::Tsy;
+
+        if let (Some(item_reg), Some(allocator), Some(loot_reg)) = (
+            item_registry.as_deref(),
+            allocator.as_deref_mut(),
+            loot_registry.as_deref_mut(),
+        ) {
+            // ── a. 地阶功法残卷（核心 loot，由 offered_skill_id 决定） ──────
+            let scroll_template = skill_id_to_scroll_template(bb.offered_skill_id);
+            if let Some(template_id) = scroll_template {
+                if let Some(template) = item_reg.get(template_id) {
+                    match allocator.next_id() {
+                        Ok(instance_id) => {
+                            let scroll = ItemInstance {
+                                instance_id,
+                                template_id: template.id.clone(),
+                                display_name: template.display_name.clone(),
+                                grid_w: template.grid_w,
+                                grid_h: template.grid_h,
+                                weight: template.base_weight,
+                                rarity: template.rarity,
+                                description: template.description.clone(),
+                                stack_count: 1,
+                                spirit_quality: template.spirit_quality_initial,
+                                durability: 1.0,
+                                freshness: None,
+                                mineral_id: None,
+                                charges: None,
+                                forge_quality: None,
+                                forge_color: None,
+                                forge_side_effects: Vec::new(),
+                                forge_achieved_tier: None,
+                                alchemy: None,
+                                lingering_owner_qi: None,
+                            };
+                            loot_reg.entries.insert(
+                                instance_id,
+                                crate::inventory::DroppedLootEntry {
+                                    instance_id,
+                                    source_container_id: format!(
+                                        "dying_elder:{}",
+                                        entity.to_bits()
+                                    ),
+                                    source_row: 0,
+                                    source_col: 0,
+                                    world_pos: drop_pos,
+                                    dimension: dim,
+                                    item: scroll,
+                                },
+                            );
+                            tracing::info!(
+                                "[bong][dying_elder] death_system: elder {:?} dropped scroll '{}' betrayal={dead_by_betrayal} tick={tick}",
+                                entity,
+                                template_id,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[bong][dying_elder] death_system: allocator overflow for scroll: {e}"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "[bong][dying_elder] death_system: scroll template '{}' not in ItemRegistry (offered_skill='{}')",
+                        template_id,
+                        bb.offered_skill_id,
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "[bong][dying_elder] death_system: unknown offered_skill_id '{}' has no scroll mapping",
+                    bb.offered_skill_id,
+                );
+            }
+
+            // ── b. 附加掉落（dead_by_betrayal 分档） ──────────────────────────
+            let secondary_pool_id = if dead_by_betrayal {
+                "dying_elder_secondary_betrayal"
+            } else {
+                "dying_elder_secondary_honorable"
+            };
+
+            // 内联 loot pool 滚动（避免循环依赖 world::loot_pool，直接用 item_reg）
+            // P2 简化：附加掉落统一从 jing_sui/jing_hun_yu 选一个，不依赖 LootPoolRegistry
+            // （LootPoolRegistry 在生产路径通过 roll_loot_pool 使用，测试路径此处简化）
+            let secondary_seed = entity
+                .to_bits()
+                .wrapping_add(tick)
+                .wrapping_mul(0x517C_C1B7_2722_0A95);
+            let (secondary_roll, _) = splitmix64_f64(secondary_seed);
+
+            // 守信结局：60%机率掉 jing_sui（1-2个）+ 40%机率掉 jing_hun_yu（1个）
+            // 背叛结局：80%机率掉 jing_sui（1个）+ 20%机率掉 jing_hun_yu（1个）
+            let (secondary_template, secondary_count) = if !dead_by_betrayal {
+                if secondary_roll < 0.60 {
+                    ("jing_sui", 1u32)
+                } else {
+                    ("jing_hun_yu", 1)
+                }
+            } else if secondary_roll < 0.80 {
+                ("jing_sui", 1u32)
+            } else {
+                ("jing_hun_yu", 1)
+            };
+
+            if let Some(template) = item_reg.get(secondary_template) {
+                match allocator.next_id() {
+                    Ok(instance_id) => {
+                        let secondary_item = ItemInstance {
+                            instance_id,
+                            template_id: template.id.clone(),
+                            display_name: template.display_name.clone(),
+                            grid_w: template.grid_w,
+                            grid_h: template.grid_h,
+                            weight: template.base_weight,
+                            rarity: template.rarity,
+                            description: template.description.clone(),
+                            stack_count: secondary_count,
+                            spirit_quality: template.spirit_quality_initial,
+                            durability: 1.0,
+                            freshness: None,
+                            mineral_id: None,
+                            charges: None,
+                            forge_quality: None,
+                            forge_color: None,
+                            forge_side_effects: Vec::new(),
+                            forge_achieved_tier: None,
+                            alchemy: None,
+                            lingering_owner_qi: None,
+                        };
+                        loot_reg.entries.insert(
+                            instance_id,
+                            crate::inventory::DroppedLootEntry {
+                                instance_id,
+                                source_container_id: format!(
+                                    "dying_elder_secondary:{}:{}",
+                                    secondary_pool_id,
+                                    entity.to_bits()
+                                ),
+                                source_row: 0,
+                                source_col: 0,
+                                world_pos: drop_pos,
+                                dimension: dim,
+                                item: secondary_item,
+                            },
+                        );
+                        tracing::debug!(
+                            "[bong][dying_elder] death_system: elder {:?} secondary loot '{}' ×{} pool={} tick={tick}",
+                            entity,
+                            secondary_template,
+                            secondary_count,
+                            secondary_pool_id,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[bong][dying_elder] death_system: allocator overflow for secondary: {e}"
+                        );
+                    }
+                }
             }
         }
+
+        // ── 标记已处理（防重复） ──────────────────────────────────────────────
+        commands.entity(entity).insert(DyingElderDeathProcessed);
     }
 }
+
 // ── Bevy 注册 P2 ──────────────────────────────────────────────────────────────
 
 /// Bevy 注册：P2 drain 系统 + 死亡结算系统。
@@ -1672,7 +1546,6 @@ pub(crate) fn dying_elder_post_commit_system(
 /// - `betray_system`（P1 注册）→ `death_system`：夺舍判定先于死亡结算，
 ///   确保同 tick 内 Betrayal → Dead 的路径能在死亡系统之前完成状态写入。
 pub fn register_p2(app: &mut App) {
-    app.init_resource::<DyingElderLootProjectionQueue>();
     app.add_systems(
         Update,
         (
@@ -1682,9 +1555,7 @@ pub fn register_p2(app: &mut App) {
             // 同时也在 betray_system 之后（betray_system 在 P1 注册，此处跨 register 声明 ordering）
             dying_elder_death_system
                 .after(dying_elder_drain_system)
-                .after(dying_elder_betray_system)
-                .in_set(NpcTerminalSystemSet::Stage),
-            dying_elder_post_commit_system.in_set(NpcTerminalSystemSet::PostCommit),
+                .after(dying_elder_betray_system),
         ),
     );
 }
@@ -1716,7 +1587,6 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
         // qi_fraction = 1.0：大能刚出现时真元满值（DYING_ELDER_INITIAL_QI / DYING_ELDER_INITIAL_QI）
         let qi_fraction = 1.0_f32;
         let event = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: ev.zone_name.clone(),
             elder_entity_id: protocol_id, // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -1740,110 +1610,74 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
     }
 }
 
-fn load_dying_elder_terminal_outbox_system(
-    settings: Res<PersistenceSettings>,
-    mut outbox: ResMut<DyingElderDeathBroadcastOutbox>,
-) {
-    let records = load_npc_terminal_narration_outbox(&settings).unwrap_or_else(|error| {
-        panic!(
-            "[bong][dying_elder] failed to load terminal narration outbox at {}: {error}",
-            settings.db_path().display()
-        )
-    });
-    outbox.pending = records
-        .into_iter()
-        .map(|record| (record.outbox_id.clone(), record))
-        .collect();
-    outbox.inflight.clear();
-}
-
-/// plan-dying-elder-v1 P3 — 驱动 durable terminal narration outbox。
+/// plan-dying-elder-v1 P3 — 检测新进入 Dead 态的大能，向 agent 广播死亡叙事事件。
 ///
-/// 终结 payload 已在 Stage 冻结并与 owner transaction 同一 SQLite commit；本系统只负责
-/// restart redrive 与 publish receipt 收口。只有 bridge 确认 Redis `PUBLISH` 返回成功后才删行。
+/// 本系统用 `DyingElderDeathBroadcast` 独立保证叙事幂等，不依赖死亡结算是否成功。
+///
+/// 广播的 `event_kind` 按死亡原因区分：
+/// - `dead_by_betrayal = false` → `DeadNatural`（自然力竭 / 守信自裁）
+/// - `dead_by_betrayal = true` → `Betrayal`（翻脸夺舍力竭）
+///
+/// **注意**：被玩家直接击杀（外部 kill system emit `Dead{dead_by_betrayal:false}`）在游戏中
+/// 目前无专属路径区分，暂时统一归为 `DeadNatural`；后续如引入外部击杀标记可分档。
 #[allow(clippy::type_complexity)]
 pub(crate) fn dying_elder_p3_emit_death_event_system(
-    mut settlements: EventReader<NpcTerminalSettlementSucceeded>,
-    mut outbox: ResMut<DyingElderDeathBroadcastOutbox>,
-    settings: Res<PersistenceSettings>,
+    mut commands: Commands,
+    elders: Query<
+        (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
+        (
+            With<NpcMarker>,
+            Without<ClientMarker>,
+            Without<DyingElderDeathBroadcast>,
+        ),
+    >,
     redis: Option<Res<RedisBridgeResource>>,
+    game_tick: Option<Res<GameTick>>,
 ) {
-    for settlement in settlements.read() {
-        let Ok(records) = load_npc_terminal_narration_outbox(&settings) else {
-            tracing::warn!(
-                "[bong][dying_elder] failed to refresh durable terminal narration after settlement {:?}",
-                settlement.entity,
-            );
-            continue;
-        };
-        for record in records {
-            outbox
-                .pending
-                .entry(record.outbox_id.clone())
-                .or_insert(record);
-        }
-    }
-
-    if outbox.receipt_tx.is_none() || outbox.receipt_rx.is_none() {
-        let (tx, rx) = crossbeam_channel::unbounded();
-        outbox.receipt_tx = Some(tx);
-        outbox.receipt_rx = Some(rx);
-    }
-
-    let receipts = outbox
-        .receipt_rx
-        .as_ref()
-        .map(|rx| rx.try_iter().collect::<Vec<_>>())
-        .unwrap_or_default();
-    for receipt in receipts {
-        outbox.inflight.remove(&receipt.delivery_id);
-        match receipt.outcome {
-            Ok(()) => {
-                match crate::persistence::delete_npc_terminal_narration_outbox(
-                    &settings,
-                    receipt.delivery_id.as_str(),
-                ) {
-                    Ok(_) => {
-                        outbox.pending.remove(&receipt.delivery_id);
-                    }
-                    Err(error) => tracing::warn!(
-                        "[bong][dying_elder] publish confirmed but durable outbox delete failed id={} error={error}",
-                        receipt.delivery_id,
-                    ),
-                }
-            }
-            Err(error) => tracing::warn!(
-                "[bong][dying_elder] terminal narration publish failed id={} error={error}; retrying",
-                receipt.delivery_id,
-            ),
-        }
-    }
-
+    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
     let Some(redis) = redis else { return };
-    let Some(receipt_tx) = outbox.receipt_tx.clone() else {
-        return;
-    };
-    let ready = outbox
-        .pending
-        .iter()
-        .filter(|(id, _)| !outbox.inflight.contains(*id))
-        .map(|(id, record)| (id.clone(), record.payload.clone()))
-        .collect::<Vec<_>>();
-    for (delivery_id, event) in ready {
+
+    for (entity, entity_id, bb, state) in elders.iter() {
+        let dead_by_betrayal = match *state {
+            DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
+            _ => continue,
+        };
+
+        let event_kind = if dead_by_betrayal {
+            ElderEncounterEventKindV1::Betrayal
+        } else {
+            ElderEncounterEventKindV1::DeadNatural
+        };
+
+        let event = ElderEncounterEventV1 {
+            zone_name: bb.home_zone.clone(),
+            elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
+            event_kind,
+            betray_probability: 0.0,
+            dan_count: 0,
+            offered_skill_id: String::new(),
+            qi_fraction: 0.0, // 死亡时真元耗尽
+            server_tick: tick,
+        };
         match redis
             .tx_outbound
-            .send(RedisOutbound::ElderEncounterTerminal {
-                delivery_id: delivery_id.clone(),
-                event,
-                receipt_tx: receipt_tx.clone(),
-            }) {
+            .send(RedisOutbound::ElderEncounterEvent(event))
+        {
             Ok(()) => {
-                outbox.inflight.insert(delivery_id);
+                commands.entity(entity).insert(DyingElderDeathBroadcast);
+                tracing::info!(
+                    "[bong][dying_elder] P3 emit death event: entity={:?} zone='{}' kind={:?} tick={tick}",
+                    entity,
+                    bb.home_zone,
+                    event_kind,
+                );
             }
-            Err(error) => tracing::warn!(
-                "[bong][dying_elder] retained durable death narration {}: {error}",
-                delivery_id,
-            ),
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][dying_elder] P3 death event send failed for entity {:?}; retry next tick: {error}",
+                    entity,
+                );
+            }
         }
     }
 }
@@ -1872,7 +1706,6 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
             continue;
         };
         let event = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::DanReceived,
@@ -1898,11 +1731,6 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
 
 /// Bevy 注册：P3 Redis 叙事事件系统（appear / death / dan_received broadcast）。
 pub fn register_p3(app: &mut App) {
-    app.init_resource::<DyingElderDeathBroadcastOutbox>();
-    app.add_systems(
-        valence::prelude::Startup,
-        load_dying_elder_terminal_outbox_system.after(PersistenceBootstrapSet),
-    );
     app.add_systems(
         Update,
         (
@@ -1910,8 +1738,10 @@ pub fn register_p3(app: &mut App) {
             // 第五颗丹同帧产生收丹与终态反馈：先广播收丹，终态必须最后到达，
             // 避免 client/agent 被后到的 DanReceived 覆盖死亡状态。
             dying_elder_p3_emit_death_event_system
-                .in_set(NpcTerminalSystemSet::PostCommit)
-                .after(dying_elder_p3_emit_dan_received_event_system),
+                .after(dying_elder_drain_system)
+                .after(dying_elder_betray_system)
+                .after(dying_elder_p3_emit_dan_received_event_system)
+                .before(dying_elder_death_system),
             // dan_received broadcast 在 give_dan_system 之后（状态已更新后再广播）
             dying_elder_p3_emit_dan_received_event_system.after(dying_elder_give_dan_system),
         ),
@@ -1923,11 +1753,6 @@ pub fn register_p3(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::PersistenceSettings;
-    use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-    use crate::qi_physics::qi_flow_overflow_account;
-    use crate::world::dimension::CurrentDimension;
-    use uuid::Uuid;
 
     // ── 常数 pin 测试 ─────────────────────────────────────────────────────────
 
@@ -2566,7 +2391,7 @@ mod tests {
     }
 
     #[test]
-    fn give_dan_missing_ledger_is_fully_atomic() {
+    fn give_dan_over_cap_without_ledger_keeps_full_consumed_pill_qi_in_elder() {
         use valence::prelude::App;
 
         let mut app = App::new();
@@ -2579,16 +2404,11 @@ mod tests {
 
         let player = app
             .world_mut()
-            .spawn((
-                ClientMarker,
-                inventory_with_huiyuan_pills(&[(99, 1)]),
-                player_life_record("missing-ledger"),
-            ))
+            .spawn((ClientMarker, inventory_with_huiyuan_pills(&[(99, 1)])))
             .id();
         let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
         bb.betray_probability = 0.0;
         bb.qi_current = 740.0;
-        let life_record = LifeRecord::new("npc:dying-elder-missing-ledger");
         let elder = app
             .world_mut()
             .spawn((
@@ -2599,12 +2419,12 @@ mod tests {
                 },
                 Cultivation {
                     qi_current: 740.0,
-                    qi_max: DYING_ELDER_INITIAL_QI * 1.5,
+                    qi_max: DYING_ELDER_INITIAL_QI,
                     ..Cultivation::default()
                 },
-                life_record,
             ))
             .id();
+        let qi_gain = huiyuan_pill_qi_gain_from_registry();
 
         app.world_mut().send_event(GiveDanToElderIntent {
             player,
@@ -2614,47 +2434,54 @@ mod tests {
         app.update();
 
         let elder_ref = app.world().entity(elder);
+        let expected_qi = 740.0 + qi_gain;
+        assert!((expected_qi - 800.0).abs() <= QI_EPSILON);
         assert!(
-            (elder_ref.get::<Cultivation>().unwrap().qi_current - 740.0).abs() <= QI_EPSILON,
-            "缺 ledger 时不得先 credit 大能 Cultivation"
+            (elder_ref.get::<Cultivation>().unwrap().qi_current - expected_qi).abs() <= QI_EPSILON,
+            "丹已消费且 overflow 无法入账时，完整 60 真元必须留在物理权威"
         );
         assert!(
-            (elder_ref.get::<DyingElderBlackboard>().unwrap().qi_current - 740.0).abs()
+            (elder_ref.get::<DyingElderBlackboard>().unwrap().qi_current - expected_qi).abs()
                 <= QI_EPSILON,
-            "缺 ledger 时不得改 Blackboard mirror"
+            "Blackboard mirror 必须同步临时越 cap 的物理权威"
         );
         assert_eq!(
             *elder_ref.get::<DyingElderState>().unwrap(),
-            DyingElderState::Recovering {
-                dan_received: DYING_ELDER_DAN_THRESHOLD - 1,
+            DyingElderState::Dead {
+                dead_by_betrayal: false
             },
-            "缺 ledger 时不得推进第五丹结局"
+            "ledger 缺失只影响 excess 落点，不得阻断第五丹结局推进"
         );
 
-        let inventory = app.world().entity(player).get::<PlayerInventory>().unwrap();
-        assert_eq!(inventory.hotbar[0].as_ref().unwrap().stack_count, 1);
-        assert_eq!(
-            inventory.revision.0, 0,
-            "失败事务不得 bump inventory revision"
-        );
         let emitted = app
             .world_mut()
             .resource_mut::<bevy_ecs::event::Events<QiTransfer>>()
             .drain()
             .collect::<Vec<_>>();
-        assert!(emitted.is_empty(), "缺 ledger 时不得伪造 transfer event");
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].reason, QiTransferReason::TradeDan);
+        assert!((emitted[0].amount - qi_gain).abs() <= QI_EPSILON);
+        assert_eq!(
+            emitted[0].to,
+            QiAccountId::npc(format!("dying_elder:{}", elder.to_bits()))
+        );
+        let inventory = app.world().entity(player).get::<PlayerInventory>().unwrap();
+        assert!(inventory.hotbar[0].is_none());
+        assert_eq!(inventory.revision.0, 1);
         let accepted = app
             .world_mut()
             .resource_mut::<bevy_ecs::event::Events<DyingElderDanAcceptedEvent>>()
             .drain()
             .collect::<Vec<_>>();
-        assert!(accepted.is_empty(), "失败事务不得伪造 Accepted");
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].dan_count, DYING_ELDER_DAN_THRESHOLD);
+        assert!((accepted[0].qi_gain - qi_gain).abs() <= QI_EPSILON);
         let soul_seize = app
             .world_mut()
             .resource_mut::<bevy_ecs::event::Events<SoulSeizeEvent>>()
             .drain()
             .collect::<Vec<_>>();
-        assert!(soul_seize.is_empty(), "失败事务不得进入夺舍路径");
+        assert!(soul_seize.is_empty(), "守信结局不得误发夺舍事件");
     }
 
     fn give_dan_test_app() -> valence::prelude::App {
@@ -2667,76 +2494,6 @@ mod tests {
         app.insert_resource(crate::inventory::load_item_registry().expect("真实 registry"));
         app.add_systems(valence::prelude::Update, dying_elder_give_dan_system);
         app
-    }
-
-    fn player_life_record(label: impl std::fmt::Display) -> LifeRecord {
-        LifeRecord::new(format!("player:dying-elder-test:{label}"))
-    }
-
-    fn elder_life_record(label: impl std::fmt::Display) -> LifeRecord {
-        LifeRecord::new(format!("npc:dying-elder-test:{label}"))
-    }
-
-    fn test_terminal_outbox_record(
-        settlement: &NpcTerminalSettlementSucceeded,
-        elder_entity_id: i32,
-        event_kind: ElderEncounterEventKindV1,
-    ) -> NpcTerminalNarrationOutboxRecord {
-        let actor_account = settlement.actor_qi_identity.account().to_string();
-        let outbox_id = format!(
-            "dying_elder_terminal:{actor_account}:{}",
-            settlement.at_tick
-        );
-        NpcTerminalNarrationOutboxRecord {
-            outbox_id: outbox_id.clone(),
-            actor_account,
-            payload: ElderEncounterEventV1 {
-                event_id: Some(outbox_id),
-                zone_name: "tsy_deep".to_string(),
-                elder_entity_id,
-                event_kind,
-                betray_probability: 0.0,
-                dan_count: 0,
-                offered_skill_id: String::new(),
-                qi_fraction: 0.0,
-                server_tick: settlement.at_tick,
-            },
-            created_tick: settlement.at_tick,
-        }
-    }
-
-    fn persist_test_terminal_outbox(
-        settings: &PersistenceSettings,
-        record: &NpcTerminalNarrationOutboxRecord,
-    ) {
-        let mut connection = rusqlite::Connection::open(settings.db_path())
-            .expect("terminal outbox fixture db should open");
-        let transaction = connection
-            .transaction()
-            .expect("terminal outbox fixture transaction should start");
-        crate::persistence::upsert_npc_terminal_narration_outbox(&transaction, record, 0)
-            .expect("terminal outbox fixture insert should succeed");
-        transaction
-            .commit()
-            .expect("terminal outbox fixture should commit");
-    }
-
-    fn test_terminal_settlement(
-        elder: Entity,
-        reason: NpcDeathReason,
-    ) -> NpcTerminalSettlementSucceeded {
-        let life_record = elder_life_record(format!("settlement-{}", elder.to_bits()));
-        NpcTerminalSettlementSucceeded {
-            entity: elder,
-            at_tick: 73,
-            cause: reason.as_str().to_string(),
-            reason,
-            attacker: None,
-            attacker_player_id: None,
-            authorize_loot: true,
-            actor_qi_identity: ActorQiIdentity::from_life_record(&life_record, ActorQiKind::Npc)
-                .expect("settlement fixture must have canonical NPC identity"),
-        }
     }
 
     fn spawn_recovering_elder(
@@ -2754,10 +2511,9 @@ mod tests {
                 DyingElderState::Recovering { dan_received },
                 Cultivation {
                     qi_current,
-                    qi_max: DYING_ELDER_INITIAL_QI * 1.5,
+                    qi_max: DYING_ELDER_INITIAL_QI,
                     ..Cultivation::default()
                 },
-                elder_life_record(format!("recovering-{dan_received}-{qi_current}")),
             ))
             .id()
     }
@@ -2767,11 +2523,7 @@ mod tests {
         let mut app = give_dan_test_app();
         let player = app
             .world_mut()
-            .spawn((
-                ClientMarker,
-                inventory_with_huiyuan_pills(&[(10, 2)]),
-                player_life_record("same-tick-stack"),
-            ))
+            .spawn((ClientMarker, inventory_with_huiyuan_pills(&[(10, 2)])))
             .id();
         let elder = spawn_recovering_elder(&mut app, DYING_ELDER_DAN_THRESHOLD - 1, 100.0);
 
@@ -2825,19 +2577,11 @@ mod tests {
         let mut app = give_dan_test_app();
         let first = app
             .world_mut()
-            .spawn((
-                ClientMarker,
-                inventory_with_huiyuan_pills(&[(20, 1)]),
-                player_life_record("same-tick-first"),
-            ))
+            .spawn((ClientMarker, inventory_with_huiyuan_pills(&[(20, 1)])))
             .id();
         let second = app
             .world_mut()
-            .spawn((
-                ClientMarker,
-                inventory_with_huiyuan_pills(&[(21, 1)]),
-                player_life_record("same-tick-second"),
-            ))
+            .spawn((ClientMarker, inventory_with_huiyuan_pills(&[(21, 1)])))
             .id();
         let elder = spawn_recovering_elder(&mut app, DYING_ELDER_DAN_THRESHOLD - 1, 100.0);
 
@@ -2893,7 +2637,6 @@ mod tests {
             .spawn((
                 ClientMarker,
                 inventory_with_huiyuan_pills(&[(30, 1), (31, 1)]),
-                player_life_record("same-tick-before-threshold"),
             ))
             .id();
         let elder = spawn_recovering_elder(&mut app, 2, 100.0);
@@ -3177,13 +2920,7 @@ mod tests {
             }
             app.add_systems(valence::prelude::Update, dying_elder_give_dan_system);
 
-            let player = app
-                .world_mut()
-                .spawn((
-                    ClientMarker,
-                    player_life_record(format!("rejection-{label}")),
-                ))
-                .id();
+            let player = app.world_mut().spawn(ClientMarker).id();
             let inventory = match inventory_case {
                 InventoryCase::Missing => None,
                 InventoryCase::Valid => Some(inventory_with_huiyuan_pills(&[(60, 1)])),
@@ -3219,7 +2956,6 @@ mod tests {
                         qi_max: DYING_ELDER_INITIAL_QI,
                         ..Cultivation::default()
                     },
-                    elder_life_record(format!("rejection-{label}")),
                 ))
                 .id();
 
@@ -3417,23 +3153,11 @@ mod tests {
 
     #[test]
     fn give_dan_precedes_last_breath_drain_in_same_tick() {
-        use valence::prelude::IntoSystemSetConfigs;
-
         let mut app = valence::prelude::App::new();
         app.add_event::<GiveDanToElderIntent>();
         app.add_event::<DyingElderDanAcceptedEvent>();
         app.add_event::<SoulSeizeEvent>();
         app.add_event::<QiTransfer>();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
-        app.configure_sets(
-            valence::prelude::Update,
-            (
-                NpcTerminalSystemSet::Stage,
-                NpcTerminalSystemSet::Commit,
-                NpcTerminalSystemSet::PostCommit,
-            )
-                .chain(),
-        );
         app.insert_resource(crate::inventory::load_item_registry().expect("真实 registry"));
         app.insert_resource(WorldQiAccount::default());
         let mut zones = ZoneRegistry::fallback();
@@ -3458,11 +3182,7 @@ mod tests {
 
         let player = app
             .world_mut()
-            .spawn((
-                ClientMarker,
-                player_life_record("last-breath"),
-                inventory_with_huiyuan_pills(&[(41, 1)]),
-            ))
+            .spawn((ClientMarker, inventory_with_huiyuan_pills(&[(41, 1)])))
             .id();
         let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
         bb.betray_probability = 0.0;
@@ -3478,7 +3198,6 @@ mod tests {
                     qi_max: DYING_ELDER_INITIAL_QI,
                     ..Cultivation::default()
                 },
-                elder_life_record("last-breath"),
             ))
             .id();
 
@@ -3610,13 +3329,7 @@ mod tests {
         bb.qi_current = cultivation.qi_current;
         let elder = app
             .world_mut()
-            .spawn((
-                NpcMarker,
-                bb,
-                DyingElderState::Plea,
-                cultivation,
-                elder_life_record("drain-credit"),
-            ))
+            .spawn((NpcMarker, bb, DyingElderState::Plea, cultivation))
             .id();
 
         app.update();
@@ -3629,7 +3342,7 @@ mod tests {
         assert!((cultivation_qi - expected_after).abs() <= QI_EPSILON);
         assert!((blackboard_qi - cultivation_qi).abs() <= QI_EPSILON);
 
-        let rift_account = rift_drain_account();
+        let rift_account = QiAccountId::rift("tsy_deep");
         let elder_source = QiAccountId::npc(format!("dying_elder:{}", elder.to_bits()));
         let account = app.world().resource::<WorldQiAccount>();
         assert!((account.balance(&rift_account) - expected_drain).abs() <= QI_EPSILON);
@@ -3673,7 +3386,6 @@ mod tests {
                     qi_max: DYING_ELDER_INITIAL_QI,
                     ..Cultivation::default()
                 },
-                elder_life_record("drain-missing-ledger"),
             ))
             .id();
 
@@ -3703,28 +3415,12 @@ mod tests {
     struct DeathReleaseRun {
         zone_after: Option<f64>,
         blackboard_qi_after: f64,
-        cultivation_qi_after: Option<f64>,
-        pending: bool,
-        despawned: bool,
+        cultivation_qi_after: f64,
         processed: bool,
-        settlements: Vec<NpcTerminalSettlementSucceeded>,
         emitted: Vec<QiTransfer>,
         audited: Vec<QiTransfer>,
         overflow_balance: f64,
         elder_source_present: bool,
-    }
-
-    fn terminal_test_persistence(label: &str) -> PersistenceSettings {
-        let root = std::env::temp_dir().join(format!(
-            "bong-r5-dying-elder-{label}-{}-{}",
-            std::process::id(),
-            Uuid::now_v7()
-        ));
-        let db_path = root.join("data").join("bong.db");
-        let deceased_dir = root.join("deceased");
-        crate::persistence::bootstrap_sqlite(&db_path, label)
-            .expect("dying elder terminal sqlite bootstrap must succeed");
-        PersistenceSettings::with_paths(db_path, deceased_dir, label)
     }
 
     fn run_death_release(
@@ -3732,49 +3428,20 @@ mod tests {
         release_amount: f64,
         with_account: bool,
     ) -> DeathReleaseRun {
-        use valence::prelude::{App, Despawned, IntoSystemSetConfigs};
+        use valence::prelude::App;
 
         let mut app = App::new();
         app.add_event::<QiTransfer>();
-        app.add_event::<crate::cultivation::death_hooks::PlayerTerminated>();
-        app.add_event::<crate::npc::lifecycle::NpcDeathNotice>();
-        app.add_event::<crate::npc::lifecycle::NpcReproductionRequest>();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
-        app.init_resource::<DyingElderDeathBroadcastOutbox>();
-        app.init_resource::<DyingElderLootProjectionQueue>();
-        app.insert_resource(crate::inventory::load_item_registry().expect("真实 registry"));
-        app.init_resource::<InventoryInstanceIdAllocator>();
-        app.init_resource::<DroppedLootRegistry>();
-        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
-        app.configure_sets(
-            valence::prelude::Update,
-            (
-                NpcTerminalSystemSet::Stage,
-                NpcTerminalSystemSet::Commit,
-                NpcTerminalSystemSet::PostCommit,
-            )
-                .chain(),
-        );
         if let Some(zone_fraction) = zone_fraction {
             let mut zones = ZoneRegistry::fallback();
             zones.zones[0].name = "tsy_deep".to_string();
-            zones.zones[0].dimension = DimensionKind::Tsy;
             zones.zones[0].spirit_qi = zone_fraction;
             app.insert_resource(zones);
         }
         if with_account {
             app.insert_resource(WorldQiAccount::default());
         }
-        app.insert_resource(terminal_test_persistence("death-release"));
-        app.add_systems(
-            valence::prelude::Update,
-            (
-                dying_elder_death_system.in_set(NpcTerminalSystemSet::Stage),
-                crate::npc::lifecycle::settle_pending_npc_termination
-                    .in_set(NpcTerminalSystemSet::Commit),
-                dying_elder_post_commit_system.in_set(NpcTerminalSystemSet::PostCommit),
-            ),
-        );
+        app.add_systems(valence::prelude::Update, dying_elder_death_system);
 
         let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
         bb.qi_current = release_amount;
@@ -3782,34 +3449,17 @@ mod tests {
             .world_mut()
             .spawn((
                 NpcMarker,
-                EntityId::default(),
-                Position(DVec3::new(0.0, 66.0, 0.0)),
-                CurrentDimension(DimensionKind::Tsy),
                 bb,
+                Cultivation {
+                    qi_current: release_amount,
+                    qi_max: DYING_ELDER_INITIAL_QI,
+                    ..Cultivation::default()
+                },
                 DyingElderState::Dead {
                     dead_by_betrayal: false,
                 },
             ))
             .id();
-        let mut bundle = npc_runtime_bundle(
-            elder,
-            NpcArchetype::DyingElder,
-            crate::cultivation::components::Realm::Void,
-        );
-        bundle.cultivation = Cultivation {
-            qi_current: release_amount,
-            qi_max: if release_amount.is_finite() {
-                release_amount.max(DYING_ELDER_INITIAL_QI * 1.5)
-            } else {
-                DYING_ELDER_INITIAL_QI * 1.5
-            },
-            ..Cultivation::default()
-        };
-        let elder_account =
-            ActorQiIdentity::from_life_record(&bundle.life_record, ActorQiKind::Npc)
-                .expect("terminal elder fixture must have canonical identity")
-                .account();
-        app.world_mut().entity_mut(elder).insert(bundle);
 
         app.update();
 
@@ -3820,23 +3470,20 @@ mod tests {
         let elder_ref = app.world().entity(elder);
         let blackboard_qi_after = elder_ref
             .get::<DyingElderBlackboard>()
-            .expect("terminal consumer must retain dying elder blackboard")
+            .expect("死亡系统不应在本帧删除大能 blackboard")
             .qi_current;
-        let cultivation_qi_after = elder_ref.get::<Cultivation>().map(Cultivation::qi_current);
-        let pending = elder_ref.contains::<PendingNpcTermination>();
-        let despawned = elder_ref.contains::<Despawned>();
+        let cultivation_qi_after = elder_ref
+            .get::<Cultivation>()
+            .expect("死亡系统不应在本帧删除大能 Cultivation")
+            .qi_current;
         let processed = elder_ref.contains::<DyingElderDeathProcessed>();
-        let settlements = app
-            .world_mut()
-            .resource_mut::<bevy_ecs::event::Events<NpcTerminalSettlementSucceeded>>()
-            .drain()
-            .collect::<Vec<_>>();
         let emitted = app
             .world_mut()
             .resource_mut::<bevy_ecs::event::Events<QiTransfer>>()
             .drain()
             .collect::<Vec<_>>();
-        let overflow_account = qi_flow_overflow_account();
+        let elder_account = QiAccountId::npc(format!("dying_elder:{}", elder.to_bits()));
+        let overflow_account = dying_elder_release_overflow_account();
         let (audited, overflow_balance, elder_source_present) = app
             .world()
             .get_resource::<WorldQiAccount>()
@@ -3852,10 +3499,7 @@ mod tests {
             zone_after,
             blackboard_qi_after,
             cultivation_qi_after,
-            pending,
-            despawned,
             processed,
-            settlements,
             emitted,
             audited,
             overflow_balance,
@@ -3867,19 +3511,13 @@ mod tests {
     struct FifthDanRun {
         state: DyingElderState,
         blackboard_qi_after: f64,
-        cultivation_qi_after: Option<f64>,
+        cultivation_qi_after: f64,
         player_qi_after: f64,
         zone_after: f64,
-        processed: bool,
-        despawned: bool,
-        pending: bool,
-        settlement_count: usize,
         transfers: Vec<QiTransfer>,
         dan_overflow_balance: f64,
-        release_overflow_balance: f64,
+        death_overflow_balance: f64,
         temporary_sources_present: bool,
-        offered_skill_id: &'static str,
-        loot_count: usize,
     }
 
     fn huiyuan_pill_instance(instance_id: u64, stack_count: u32) -> ItemInstance {
@@ -3946,50 +3584,25 @@ mod tests {
     }
 
     fn run_fifth_dan_chain(betray_probability: f64, player_qi: f64) -> FifthDanRun {
-        use valence::prelude::{App, Despawned, IntoSystemSetConfigs};
+        use valence::prelude::App;
 
         let mut app = App::new();
         app.add_event::<GiveDanToElderIntent>();
         app.add_event::<DyingElderDanAcceptedEvent>();
         app.add_event::<SoulSeizeEvent>();
         app.add_event::<QiTransfer>();
-        app.add_event::<crate::cultivation::death_hooks::PlayerTerminated>();
-        app.add_event::<crate::npc::lifecycle::NpcDeathNotice>();
-        app.add_event::<crate::npc::lifecycle::NpcReproductionRequest>();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
-        app.init_resource::<DyingElderDeathBroadcastOutbox>();
-        app.init_resource::<DyingElderLootProjectionQueue>();
-        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
-        app.configure_sets(
-            valence::prelude::Update,
-            (
-                NpcTerminalSystemSet::Stage,
-                NpcTerminalSystemSet::Commit,
-                NpcTerminalSystemSet::PostCommit,
-            )
-                .chain(),
-        );
         let mut zones = ZoneRegistry::fallback();
         zones.zones[0].name = "tsy_deep".to_string();
-        zones.zones[0].dimension = DimensionKind::Tsy;
         zones.zones[0].spirit_qi = -0.6;
         app.insert_resource(zones);
         app.insert_resource(WorldQiAccount::default());
-        app.insert_resource(terminal_test_persistence("fifth-dan-chain"));
         app.insert_resource(crate::inventory::load_item_registry().expect("真实 registry"));
-        app.init_resource::<InventoryInstanceIdAllocator>();
-        app.init_resource::<DroppedLootRegistry>();
         app.add_systems(
             valence::prelude::Update,
             (
                 dying_elder_give_dan_system,
                 dying_elder_betray_system.after(dying_elder_give_dan_system),
-                dying_elder_death_system
-                    .after(dying_elder_betray_system)
-                    .in_set(NpcTerminalSystemSet::Stage),
-                crate::npc::lifecycle::settle_pending_npc_termination
-                    .in_set(NpcTerminalSystemSet::Commit),
-                dying_elder_post_commit_system.in_set(NpcTerminalSystemSet::PostCommit),
+                dying_elder_death_system.after(dying_elder_betray_system),
             ),
         );
 
@@ -4003,39 +3616,24 @@ mod tests {
                     ..Cultivation::default()
                 },
                 inventory_with_huiyuan_pills(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1)]),
-                player_life_record("fifth-dan-chain"),
             ))
             .id();
         let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
         bb.betray_probability = betray_probability;
-        bb.qi_current = DYING_ELDER_INITIAL_QI;
+        bb.qi_current = 500.0;
         let elder = app
             .world_mut()
             .spawn((
                 NpcMarker,
-                EntityId::default(),
-                Position(DVec3::new(0.0, 66.0, 0.0)),
-                CurrentDimension(DimensionKind::Tsy),
                 bb,
+                Cultivation {
+                    qi_current: DYING_ELDER_INITIAL_QI,
+                    qi_max: DYING_ELDER_INITIAL_QI,
+                    ..Cultivation::default()
+                },
                 DyingElderState::Plea,
             ))
             .id();
-        let mut bundle = npc_runtime_bundle(
-            elder,
-            NpcArchetype::DyingElder,
-            crate::cultivation::components::Realm::Void,
-        );
-        bundle.cultivation = Cultivation {
-            realm: crate::cultivation::components::Realm::Void,
-            qi_current: DYING_ELDER_INITIAL_QI,
-            qi_max: DYING_ELDER_INITIAL_QI * 1.5,
-            ..Cultivation::default()
-        };
-        let elder_account =
-            ActorQiIdentity::from_life_record(&bundle.life_record, ActorQiKind::Npc)
-                .expect("fifth dan elder fixture must have canonical identity")
-                .account();
-        app.world_mut().entity_mut(elder).insert(bundle);
 
         for pill_instance_id in 1..=DYING_ELDER_DAN_THRESHOLD as u64 {
             app.world_mut().send_event(GiveDanToElderIntent {
@@ -4049,31 +3647,34 @@ mod tests {
                 .get::<DyingElderBlackboard>()
                 .expect("大能应保留 blackboard")
                 .qi_current;
-            if let Some(cultivation) = elder_ref.get::<Cultivation>() {
-                assert!(
-                    (blackboard_qi - cultivation.qi_current).abs() <= QI_EPSILON,
-                    "第 {pill_instance_id} 颗丹结算后 Blackboard mirror 必须与 Cultivation 权威一致"
-                );
-            } else {
-                assert_eq!(
-                    pill_instance_id,
-                    u64::from(DYING_ELDER_DAN_THRESHOLD),
-                    "只有第五丹 terminal commit 后才能移除 Cultivation"
-                );
-            }
+            let cultivation_qi = elder_ref
+                .get::<Cultivation>()
+                .expect("大能应保留 Cultivation")
+                .qi_current;
+            assert!(
+                (blackboard_qi - cultivation_qi).abs() <= QI_EPSILON,
+                "第 {pill_instance_id} 颗丹结算后 Blackboard mirror 必须与 Cultivation 权威一致"
+            );
         }
 
-        let elder_ref = app.world().entity(elder);
-        let state = *elder_ref.get::<DyingElderState>().unwrap();
-        let blackboard_qi_after = elder_ref.get::<DyingElderBlackboard>().unwrap().qi_current;
-        let cultivation_qi_after = elder_ref.get::<Cultivation>().map(Cultivation::qi_current);
-        let processed = elder_ref.contains::<DyingElderDeathProcessed>();
-        let offered_skill_id = elder_ref
+        let state = app
+            .world()
+            .entity(elder)
+            .get::<DyingElderState>()
+            .copied()
+            .unwrap();
+        let blackboard_qi_after = app
+            .world()
+            .entity(elder)
             .get::<DyingElderBlackboard>()
-            .expect("elder fixture retains blackboard")
-            .offered_skill_id;
-        let despawned = elder_ref.contains::<Despawned>();
-        let pending = elder_ref.contains::<PendingNpcTermination>();
+            .unwrap()
+            .qi_current;
+        let cultivation_qi_after = app
+            .world()
+            .entity(elder)
+            .get::<Cultivation>()
+            .unwrap()
+            .qi_current;
         let player_qi_after = app
             .world()
             .entity(player)
@@ -4081,36 +3682,26 @@ mod tests {
             .unwrap()
             .qi_current;
         let zone_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
-        let settlement_count = app
-            .world()
-            .resource::<bevy_ecs::event::Events<NpcTerminalSettlementSucceeded>>()
-            .len();
         let account = app.world().resource::<WorldQiAccount>();
         let dan_overflow_account = dying_elder_dan_excess_account();
-        let release_overflow_account = qi_flow_overflow_account();
-        let temporary_sources_present = account.has_account(&elder_account)
+        let death_overflow_account = dying_elder_release_overflow_account();
+        let elder_source = QiAccountId::npc(format!("dying_elder:{}", elder.to_bits()));
+        let temporary_sources_present = account.has_account(&elder_source)
             || (1..=DYING_ELDER_DAN_THRESHOLD as u64).any(|pill_instance_id| {
                 account.has_account(&QiAccountId::container(format!(
                     "hui_yuan_pill:{pill_instance_id}"
                 )))
             });
-        let loot_count = app.world().resource::<DroppedLootRegistry>().entries.len();
         FifthDanRun {
             state,
             blackboard_qi_after,
             cultivation_qi_after,
             player_qi_after,
             zone_after,
-            processed,
-            despawned,
-            pending,
-            settlement_count,
             transfers: account.transfers().to_vec(),
             dan_overflow_balance: account.balance(&dan_overflow_account),
-            release_overflow_balance: account.balance(&release_overflow_account),
+            death_overflow_balance: account.balance(&death_overflow_account),
             temporary_sources_present,
-            offered_skill_id,
-            loot_count,
         }
     }
 
@@ -4124,21 +3715,7 @@ mod tests {
             }
         );
         assert!(run.blackboard_qi_after.abs() <= QI_EPSILON);
-        assert!(run.cultivation_qi_after.is_none());
-        assert!(
-            run.processed && run.despawned && !run.pending,
-            "terminal state: processed={} despawned={} pending={} cultivation={:?} blackboard={} settlements={} skill={} loot={} transfers={:?}",
-            run.processed,
-            run.despawned,
-            run.pending,
-            run.cultivation_qi_after,
-            run.blackboard_qi_after,
-            run.settlement_count,
-            run.offered_skill_id,
-            run.loot_count,
-            run.transfers,
-        );
-        assert_eq!(run.settlement_count, 1);
+        assert!(run.cultivation_qi_after.abs() <= QI_EPSILON);
         assert!((run.player_qi_after - 40.0).abs() <= QI_EPSILON);
         assert!(!run.temporary_sources_present);
 
@@ -4169,13 +3746,14 @@ mod tests {
             "死亡只释放 cap 内大能真元 {elder_cap}，丹 excess 已单独稳定入账"
         );
         assert!((run.dan_overflow_balance - dan_excess).abs() <= QI_EPSILON);
-        assert!((run.release_overflow_balance - death_overflow).abs() <= QI_EPSILON);
+        assert!((run.death_overflow_balance - death_overflow).abs() <= QI_EPSILON);
         assert!((run.zone_after - 1.0).abs() <= QI_EPSILON);
 
         let total_before = -0.6 * QI_ZONE_UNIT_CAPACITY + DYING_ELDER_INITIAL_QI + pill_total;
         let total_after = run.zone_after * QI_ZONE_UNIT_CAPACITY
             + run.dan_overflow_balance
-            + run.release_overflow_balance;
+            + run.death_overflow_balance
+            + run.cultivation_qi_after;
         assert!(
             (total_after - total_before).abs() <= QI_EPSILON,
             "绝对量头尾守恒：before={total_before} after={total_after}"
@@ -4193,9 +3771,7 @@ mod tests {
             }
         );
         assert!(run.blackboard_qi_after.abs() <= QI_EPSILON);
-        assert!(run.cultivation_qi_after.is_none());
-        assert!(run.processed && run.despawned && !run.pending);
-        assert_eq!(run.settlement_count, 1);
+        assert!(run.cultivation_qi_after.abs() <= QI_EPSILON);
         assert!(
             run.player_qi_after.abs() <= QI_EPSILON,
             "夺舍应抽空玩家当前真元"
@@ -4233,14 +3809,15 @@ mod tests {
             "死亡释放只包含 cap 内大能真元与被夺玩家真元"
         );
         assert!((run.dan_overflow_balance - dan_excess).abs() <= QI_EPSILON);
-        assert!((run.release_overflow_balance - death_overflow).abs() <= QI_EPSILON);
+        assert!((run.death_overflow_balance - death_overflow).abs() <= QI_EPSILON);
         assert!((run.zone_after - 1.0).abs() <= QI_EPSILON);
 
         let total_before =
             -0.6 * QI_ZONE_UNIT_CAPACITY + DYING_ELDER_INITIAL_QI + pill_total + player_before;
         let total_after = run.zone_after * QI_ZONE_UNIT_CAPACITY
             + run.dan_overflow_balance
-            + run.release_overflow_balance
+            + run.death_overflow_balance
+            + run.cultivation_qi_after
             + run.player_qi_after;
         assert!(
             (total_after - total_before).abs() <= QI_EPSILON,
@@ -4303,7 +3880,6 @@ mod tests {
                     qi_max_frozen: fixture.player_qi_max_frozen,
                     ..Cultivation::default()
                 },
-                player_life_record("invalid-betray"),
             ))
             .id();
         let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
@@ -4320,7 +3896,6 @@ mod tests {
                     qi_max: DYING_ELDER_INITIAL_QI,
                     ..Cultivation::default()
                 },
-                elder_life_record("invalid-betray"),
             ))
             .id();
         app.world_mut().send_event(SoulSeizeEvent {
@@ -4567,7 +4142,6 @@ mod tests {
                     ..Cultivation::default()
                 },
                 inventory_with_huiyuan_pills(&[(50, 1)]),
-                player_life_record("pending-soul-seize"),
             ))
             .id();
         let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
@@ -4583,10 +4157,9 @@ mod tests {
                 },
                 Cultivation {
                     qi_current: 100.0,
-                    qi_max: DYING_ELDER_INITIAL_QI * 1.5,
+                    qi_max: DYING_ELDER_INITIAL_QI,
                     ..Cultivation::default()
                 },
-                elder_life_record("pending-soul-seize"),
             ))
             .id();
 
@@ -4712,17 +4285,10 @@ mod tests {
             "成功释放后 Blackboard mirror 应归零"
         );
         assert!(
-            run.cultivation_qi_after.is_none(),
-            "成功终结后 Cultivation 物理权威必须被移除"
+            run.cultivation_qi_after.abs() <= QI_EPSILON,
+            "成功释放后 Cultivation 物理权威应归零"
         );
         assert!(run.processed, "死亡结算后必须插入幂等处理标记");
-        assert!(run.despawned, "成功终结必须插入 Despawned");
-        assert!(!run.pending, "成功终结必须移除 pending marker");
-        assert_eq!(
-            run.settlements.len(),
-            1,
-            "成功终结必须发布一次 commit capability"
-        );
         assert!(
             (run.zone_after.expect("fixture 安装了 zone") - 1.0).abs() <= QI_EPSILON,
             "负灵域应按绝对容量回暖到比例上限 1.0"
@@ -4752,7 +4318,9 @@ mod tests {
         );
 
         let total_before = -0.6 * QI_ZONE_UNIT_CAPACITY + 500.0;
-        let total_after = run.zone_after.unwrap() * QI_ZONE_UNIT_CAPACITY + run.overflow_balance;
+        let total_after = run.zone_after.unwrap() * QI_ZONE_UNIT_CAPACITY
+            + run.overflow_balance
+            + run.cultivation_qi_after;
         assert!((total_after - total_before).abs() <= QI_EPSILON);
     }
 
@@ -4802,17 +4370,8 @@ mod tests {
             "缺 ledger 时不得部分写 zone"
         );
         assert!((run.blackboard_qi_after - 500.0).abs() <= QI_EPSILON);
-        assert!(run.cultivation_qi_after == Some(500.0));
+        assert!((run.cultivation_qi_after - 500.0).abs() <= QI_EPSILON);
         assert!(!run.processed, "缺 ledger 时不得插入 processed marker");
-        assert!(
-            run.pending,
-            "缺 ledger 时必须保留 terminal pending 以便重试"
-        );
-        assert!(!run.despawned, "缺 ledger 时不得插入 Despawned");
-        assert!(
-            run.settlements.is_empty(),
-            "commit 失败不得发布成功 capability"
-        );
         assert!(run.overflow_balance.abs() <= QI_EPSILON);
     }
 
@@ -4826,11 +4385,8 @@ mod tests {
             "即使 zone 可全量接收，缺 ledger 也不得先写 field-authority"
         );
         assert!((run.blackboard_qi_after - 10.0).abs() <= QI_EPSILON);
-        assert!(run.cultivation_qi_after == Some(10.0));
+        assert!((run.cultivation_qi_after - 10.0).abs() <= QI_EPSILON);
         assert!(!run.processed);
-        assert!(run.pending);
-        assert!(!run.despawned);
-        assert!(run.settlements.is_empty());
     }
 
     #[test]
@@ -4841,11 +4397,8 @@ mod tests {
             run.blackboard_qi_after.abs() <= QI_EPSILON,
             "全量 overflow 后 Blackboard mirror 应归零"
         );
-        assert!(run.cultivation_qi_after.is_none());
+        assert!(run.cultivation_qi_after.abs() <= QI_EPSILON);
         assert!(run.processed);
-        assert!(run.despawned);
-        assert!(!run.pending);
-        assert_eq!(run.settlements.len(), 1);
         assert_eq!(
             run.emitted.len(),
             1,
@@ -4865,7 +4418,7 @@ mod tests {
             "释放失败不得清零 Blackboard mirror"
         );
         assert!(
-            run.cultivation_qi_after == Some(500.0),
+            (run.cultivation_qi_after - 500.0).abs() <= QI_EPSILON,
             "释放失败不得清零 Cultivation 物理权威"
         );
         assert!(
@@ -4874,9 +4427,6 @@ mod tests {
         );
         assert!(run.emitted.is_empty(), "失败调用不得发 transfer");
         assert!(run.audited.is_empty(), "失败调用不得写 audit");
-        assert!(run.pending, "失败必须保留 pending 供后续重试");
-        assert!(!run.despawned, "失败不得不可逆终结实体");
-        assert!(run.settlements.is_empty(), "失败不得发布成功 capability");
         assert!(run.overflow_balance.abs() <= QI_EPSILON);
     }
 
@@ -4888,31 +4438,26 @@ mod tests {
             "非法 mirror 不得被静默改写"
         );
         assert!(
-            run.cultivation_qi_after.is_some_and(f64::is_nan),
+            run.cultivation_qi_after.is_nan(),
             "非法物理权威不得被 max(0) 静默改写"
         );
         assert!(!run.processed, "非法真元不得封死后续修复与重试");
-        assert!(run.pending, "非法真元必须保留 pending 供修复后重试");
-        assert!(!run.despawned, "非法真元不得终结实体");
-        assert!(
-            run.settlements.is_empty(),
-            "非法真元不得发布成功 capability"
-        );
         assert!(run.emitted.is_empty(), "非法真元不得发 transfer");
         assert!(run.audited.is_empty(), "非法真元不得写 audit");
     }
 
     #[test]
-    fn death_broadcast_is_post_commit_and_deleted_only_after_publish_receipt() {
-        use crate::network::redis_bridge::{RedisDeliveryReceipt, RedisInbound, RedisOutbound};
+    fn death_broadcasts_once_while_release_retries_until_single_success() {
+        use crate::network::redis_bridge::{RedisInbound, RedisOutbound};
         use valence::prelude::App;
 
-        let settings = terminal_test_persistence("death-broadcast-receipt");
         let mut app = App::new();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
-        app.init_resource::<DyingElderDeathBroadcastOutbox>();
-        app.init_resource::<DyingElderLootProjectionQueue>();
-        app.insert_resource(settings.clone());
+        app.add_event::<QiTransfer>();
+        let mut zones = ZoneRegistry::fallback();
+        zones.zones[0].name = "tsy_deep".to_string();
+        zones.zones[0].spirit_qi = f64::NAN;
+        app.insert_resource(zones);
+        app.insert_resource(WorldQiAccount::default());
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded::<RedisInbound>();
         app.insert_resource(RedisBridgeResource {
@@ -4921,89 +4466,118 @@ mod tests {
         });
         app.add_systems(
             valence::prelude::Update,
-            dying_elder_p3_emit_death_event_system,
+            (
+                dying_elder_p3_emit_death_event_system,
+                dying_elder_death_system,
+            )
+                .chain(),
         );
 
-        let elder = app.world_mut().spawn_empty().id();
-        app.update();
-        assert!(rx_outbound.try_recv().is_err(), "commit 前不得广播死亡叙事");
+        let mut bb = DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0);
+        bb.qi_current = 500.0;
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                bb,
+                Cultivation {
+                    qi_current: 500.0,
+                    qi_max: DYING_ELDER_INITIAL_QI,
+                    ..Cultivation::default()
+                },
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
 
-        let settlement = test_terminal_settlement(elder, NpcDeathReason::NaturalAging);
-        let record =
-            test_terminal_outbox_record(&settlement, 42, ElderEncounterEventKindV1::DeadNatural);
-        persist_test_terminal_outbox(&settings, &record);
-        app.world_mut().send_event(settlement.clone());
         app.update();
-        let (delivery_id, receipt_tx) = match rx_outbound
-            .try_recv()
-            .expect("committed outbox should queue durable publish")
-        {
-            RedisOutbound::ElderEncounterTerminal {
-                delivery_id,
-                event,
-                receipt_tx,
-            } => {
-                assert_eq!(event, record.payload);
-                (delivery_id, receipt_tx)
-            }
-            other => panic!("expected durable terminal outbound, got {other:?}"),
-        };
-        assert_eq!(delivery_id, record.outbox_id);
+        let first = app.world().entity(elder);
+        assert!(
+            first.contains::<DyingElderDeathBroadcast>(),
+            "首次失败 tick 也必须立即记录叙事已广播"
+        );
+        assert!(
+            !first.contains::<DyingElderDeathProcessed>(),
+            "首次释放失败后结算必须保持可重试"
+        );
+        assert!(
+            (first.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON
+        );
+        assert!(
+            (first.get::<Cultivation>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON,
+            "首次失败不得扣 Cultivation 物理权威"
+        );
+
+        app.update();
+        let second = app.world().entity(elder);
+        assert!(second.contains::<DyingElderDeathBroadcast>());
+        assert!(
+            !second.contains::<DyingElderDeathProcessed>(),
+            "连续第二次失败仍不得封死结算重试"
+        );
+        assert!(
+            (second.get::<DyingElderBlackboard>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON
+        );
+        assert!(
+            (second.get::<Cultivation>().unwrap().qi_current - 500.0).abs() <= QI_EPSILON,
+            "连续失败不得扣 Cultivation 物理权威"
+        );
+
+        app.world_mut().resource_mut::<ZoneRegistry>().zones[0].spirit_qi = -0.6;
+        app.update();
+        let succeeded = app.world().entity(elder);
+        assert!(succeeded.contains::<DyingElderDeathBroadcast>());
+        assert!(
+            succeeded.contains::<DyingElderDeathProcessed>(),
+            "zone 恢复后结算应最终成功并记录独立 marker"
+        );
+        assert!(
+            succeeded
+                .get::<DyingElderBlackboard>()
+                .unwrap()
+                .qi_current
+                .abs()
+                <= QI_EPSILON
+        );
+        assert!(
+            succeeded.get::<Cultivation>().unwrap().qi_current.abs() <= QI_EPSILON,
+            "最终成功后 Cultivation 与 Blackboard 应同时归零"
+        );
+
+        app.update();
+        let broadcasts = std::iter::from_fn(|| rx_outbound.try_recv().ok())
+            .filter(|outbound| matches!(outbound, RedisOutbound::ElderEncounterEvent(_)))
+            .count();
         assert_eq!(
-            load_npc_terminal_narration_outbox(&settings)
-                .expect("queued outbox should remain durable"),
-            vec![record.clone()],
-            "in-process queue admission is not Redis delivery confirmation"
+            broadcasts, 1,
+            "连续失败、最终成功及成功后 tick 全程只能广播一次"
         );
-        app.update();
-        assert!(
-            rx_outbound.try_recv().is_err(),
-            "inflight row must not enqueue twice before a receipt"
+        let transfers = app.world().resource::<WorldQiAccount>().transfers();
+        assert_eq!(
+            transfers.len(),
+            2,
+            "最终成功只能落一组 accepted + overflow 两腿"
         );
-
-        receipt_tx
-            .send(RedisDeliveryReceipt {
-                delivery_id,
-                outcome: Ok(()),
-            })
-            .expect("publish receipt should reach ECS outbox");
-        app.update();
         assert!(
-            load_npc_terminal_narration_outbox(&settings)
-                .expect("confirmed outbox should reload")
-                .is_empty(),
-            "only a successful Redis PUBLISH receipt may delete the durable row"
-        );
-
-        app.world_mut().send_event(settlement);
-        app.update();
-        assert!(
-            rx_outbound.try_recv().is_err(),
-            "重复 capability 不得重建或重复广播已确认 outbox"
+            (transfers
+                .iter()
+                .map(|transfer| transfer.amount)
+                .sum::<f64>()
+                - 500.0)
+                .abs()
+                <= QI_EPSILON,
+            "最终成功的一组两腿必须完整结算 500 真元"
         );
     }
 
     #[test]
-    fn death_broadcast_queue_failure_and_negative_receipt_both_retry() {
-        use crate::network::redis_bridge::{RedisDeliveryReceipt, RedisInbound, RedisOutbound};
+    fn death_broadcast_send_failure_retries_before_marking_success() {
+        use crate::network::redis_bridge::{RedisInbound, RedisOutbound};
         use valence::prelude::App;
 
-        let settings = terminal_test_persistence("death-broadcast-retry");
         let mut app = App::new();
-        let elder = app.world_mut().spawn_empty().id();
-        let settlement = test_terminal_settlement(elder, NpcDeathReason::NaturalAging);
-        let record =
-            test_terminal_outbox_record(&settlement, 42, ElderEncounterEventKindV1::DeadNatural);
-        persist_test_terminal_outbox(&settings, &record);
-
-        app.add_event::<NpcTerminalSettlementSucceeded>();
-        app.init_resource::<DyingElderDeathBroadcastOutbox>();
-        app.init_resource::<DyingElderLootProjectionQueue>();
-        app.insert_resource(settings.clone());
-        app.world_mut()
-            .resource_mut::<DyingElderDeathBroadcastOutbox>()
-            .pending
-            .insert(record.outbox_id.clone(), record.clone());
         let (failed_tx, failed_rx) = crossbeam_channel::unbounded();
         drop(failed_rx);
         let (_failed_in_tx, failed_in_rx) = crossbeam_channel::unbounded::<RedisInbound>();
@@ -5015,10 +4589,25 @@ mod tests {
             valence::prelude::Update,
             dying_elder_p3_emit_death_event_system,
         );
+
+        let elder = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                EntityId::default(),
+                DyingElderBlackboard::new("tsy_deep", DVec3::ZERO, 7, 0),
+                DyingElderState::Dead {
+                    dead_by_betrayal: false,
+                },
+            ))
+            .id();
+
         app.update();
-        assert_eq!(
-            load_npc_terminal_narration_outbox(&settings).expect("failed queue row should remain"),
-            vec![record.clone()]
+        assert!(
+            !app.world()
+                .entity(elder)
+                .contains::<DyingElderDeathBroadcast>(),
+            "发送失败时不得误记已广播"
         );
 
         let (live_tx, live_rx) = crossbeam_channel::unbounded();
@@ -5028,37 +4617,18 @@ mod tests {
             rx_inbound: live_in_rx,
         });
         app.update();
-        let receipt_tx = match live_rx
-            .try_recv()
-            .expect("bridge recovery should enqueue durable publish")
-        {
-            RedisOutbound::ElderEncounterTerminal {
-                delivery_id,
-                receipt_tx,
-                ..
-            } => {
-                assert_eq!(delivery_id, record.outbox_id);
-                receipt_tx
-            }
-            other => panic!("expected durable terminal outbound, got {other:?}"),
-        };
-        receipt_tx
-            .send(RedisDeliveryReceipt {
-                delivery_id: record.outbox_id.clone(),
-                outcome: Err("fixture publish failed".to_string()),
-            })
-            .expect("negative receipt should reach ECS outbox");
-        app.update();
+
+        assert!(
+            app.world()
+                .entity(elder)
+                .contains::<DyingElderDeathBroadcast>(),
+            "bridge 恢复后应成功广播并落 marker"
+        );
         assert!(matches!(
             live_rx.try_recv(),
-            Ok(RedisOutbound::ElderEncounterTerminal { .. })
+            Ok(RedisOutbound::ElderEncounterEvent(_))
         ));
-        assert_eq!(
-            load_npc_terminal_narration_outbox(&settings)
-                .expect("negative receipt row should remain"),
-            vec![record],
-            "publish failure receipt must clear inflight only, not delete durable state"
-        );
+        assert!(live_rx.try_recv().is_err(), "恢复 tick 只能广播一次");
     }
 
     #[test]
@@ -5066,14 +4636,9 @@ mod tests {
         use crate::network::redis_bridge::{RedisInbound, RedisOutbound};
         use valence::prelude::App;
 
-        let settings = terminal_test_persistence("fifth-dan-redis-order");
         let mut app = App::new();
         app.add_event::<DyingElderAppearedEvent>();
         app.add_event::<DyingElderDanAcceptedEvent>();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
-        app.init_resource::<DyingElderDeathBroadcastOutbox>();
-        app.init_resource::<DyingElderLootProjectionQueue>();
-        app.insert_resource(settings.clone());
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded::<RedisInbound>();
         app.insert_resource(RedisBridgeResource {
@@ -5102,18 +4667,12 @@ mod tests {
             dan_count: DYING_ELDER_DAN_THRESHOLD,
             qi_fraction: 1.0,
         });
-        let settlement = test_terminal_settlement(elder, NpcDeathReason::NaturalAging);
-        let terminal =
-            test_terminal_outbox_record(&settlement, 42, ElderEncounterEventKindV1::DeadNatural);
-        persist_test_terminal_outbox(&settings, &terminal);
-        app.world_mut().send_event(settlement);
 
         app.update();
 
         let kinds = std::iter::from_fn(|| rx_outbound.try_recv().ok())
             .filter_map(|outbound| match outbound {
                 RedisOutbound::ElderEncounterEvent(event) => Some(event.event_kind),
-                RedisOutbound::ElderEncounterTerminal { event, .. } => Some(event.event_kind),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -5132,11 +4691,8 @@ mod tests {
         let run = run_death_release(Some(-0.6), 0.0, true);
         assert!((run.zone_after.expect("fixture 安装了 zone") + 0.6).abs() <= QI_EPSILON);
         assert!(run.blackboard_qi_after.abs() <= QI_EPSILON);
-        assert!(run.cultivation_qi_after.is_none());
+        assert!(run.cultivation_qi_after.abs() <= QI_EPSILON);
         assert!(run.processed, "零真元死亡仍应完成幂等死亡结算");
-        assert!(run.despawned);
-        assert!(!run.pending);
-        assert_eq!(run.settlements.len(), 1);
         assert!(run.emitted.is_empty(), "零真元死亡不得发假 transfer event");
         assert!(run.audited.is_empty(), "零真元死亡不得写假 audit");
         assert!(run.overflow_balance.abs() <= QI_EPSILON);
@@ -5348,7 +4904,6 @@ mod tests {
 
         // 模拟构建 appeared 事件（qi_fraction=1.0：刚出现时真元满值；elder_entity_id 为 placeholder）
         let event = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: 1, // 最小合法 MC protocol entity_id
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -5390,7 +4945,6 @@ mod tests {
         ];
         for kind in kinds {
             let event = ElderEncounterEventV1 {
-                event_id: None,
                 zone_name: "tsy_deep".to_string(),
                 elder_entity_id: 1, // MC protocol entity_id（最小合法值=1）
                 event_kind: kind,
@@ -5476,7 +5030,8 @@ mod tests {
     /// plan-npc-realm-distribution-v1 P0 回归锁：dying_elder 的化虚 `Cultivation`
     /// 字面量构造（:391-394）经 `:429-430` 整体覆盖 `npc_runtime_bundle` 产出的
     /// Cultivation，不受 P0 choke-point 修复影响——realm 必须仍是 `Realm::Void`，
-    /// `Cultivation.qi_max` 同时预留五丹 encounter 容量，保证给丹事务不制造越界 snapshot。
+    /// qi_current/qi_max 必须仍是 `DYING_ELDER_INITIAL_QI`（满灵，大能特例，
+    /// 不适用"NPC spawn 不满灵"的通用红线，因为它走的是覆盖分支非通用 bundle 输出）。
     #[test]
     fn apply_spawn_system_keeps_void_realm_and_full_qi_regression_lock() {
         use valence::prelude::App;
@@ -5516,8 +5071,8 @@ mod tests {
             cultivation.qi_current
         );
         assert!(
-            (cultivation.qi_max - DYING_ELDER_INITIAL_QI * 1.5).abs() < f64::EPSILON,
-            "大能 qi_max 必须预留五丹 encounter 容量，实际 = {}",
+            (cultivation.qi_max - DYING_ELDER_INITIAL_QI).abs() < f64::EPSILON,
+            "大能 qi_max 必须等于 DYING_ELDER_INITIAL_QI，实际 = {}",
             cultivation.qi_max
         );
         // realm↔经脉双源回归锁：meridian_system 必须由真实 Realm::Void 派生

@@ -2,7 +2,6 @@ package com.bong.client.scroll;
 
 import com.bong.client.BongClient;
 import com.bong.client.ui.ScreenTransitionController;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 
@@ -13,8 +12,8 @@ import java.util.function.Consumer;
  * {@code InsightOfferScreenBootstrap}）：
  * <ul>
  *   <li>有新 ScrollOpen 推入 → 自动打开 {@link ScrollReadScreen}。</li>
- *   <li>store 被清空（玩家自己关屏 / 断线兜底）→ 若当前正显示阅读屏则关闭。</li>
- *   <li>断线 → 重置 store。</li>
+ *   <li>store 被清空（玩家自己关屏 / 中央 token-gated 断线清理）→ 若当前正显示阅读屏则关闭。</li>
+ *   <li>本 bootstrap 不持有独立断线回调，避免旧 handler 的迟到 DISCONNECT 失活新会话。</li>
  * </ul>
  */
 public final class ScrollReadScreenBootstrap {
@@ -23,10 +22,6 @@ public final class ScrollReadScreenBootstrap {
 
     public static void register() {
         ScrollReadStore.addSessionListener(ScrollReadScreenBootstrap::onStoreChanged);
-
-        // Invalidate the atomic session inside the disconnect callback, before any already
-        // queued open task can run. The store listener still marshals visual cleanup to client.
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> onDisconnect());
 
         BongClient.LOGGER.info("Registered scroll read screen bootstrap via store listener");
     }
@@ -37,10 +32,6 @@ public final class ScrollReadScreenBootstrap {
             return;
         }
         client.execute(() -> applyStoreChange(client, session));
-    }
-
-    static void onDisconnect() {
-        ScrollReadStore.clearOnDisconnect();
     }
 
     static void applyStoreChange(MinecraftClient client, ScrollReadStore.ActiveSession session) {

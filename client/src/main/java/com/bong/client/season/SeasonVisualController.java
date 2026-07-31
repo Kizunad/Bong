@@ -71,13 +71,23 @@ public final class SeasonVisualController {
         transitionSink = Objects.requireNonNull(sink, "sink");
     }
 
-    public static void resetForTests() {
+    /**
+     * 断线时仅清掉上一会话派生出的季节表现状态。
+     *
+     * <p>不触碰 client tick 注册、{@link #bootstrapped}、跨会话提示门闩或测试 transition sink；
+     * 新会话可复用同一进程内的 wiring，并由首个季节快照重新建立表现。</p>
+     */
+    public static void clearOnDisconnect() {
         lastPhase = null;
+        SeasonBreakthroughOverlayHud.clearOnDisconnect();
+        ZoneAtmosphereRenderer.clearSeasonOverrideOnDisconnect();
+        MusicStateMachine.instance().clearSeasonModifierOnDisconnect();
+    }
+
+    public static void resetForTests() {
+        clearOnDisconnect();
         firstHintShown = false;
         transitionSink = event -> {};
-        SeasonBreakthroughOverlayHud.resetForTests();
-        ZoneAtmosphereRenderer.clearSeasonOverrideForTests();
-        MusicStateMachine.instance().clearSeasonModifierForTests();
     }
 
     private static double progress(SeasonState state) {

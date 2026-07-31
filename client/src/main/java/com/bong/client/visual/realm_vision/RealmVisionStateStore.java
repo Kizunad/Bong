@@ -13,6 +13,11 @@ public final class RealmVisionStateStore {
         return STATE.get();
     }
 
+    /** 断线时恢复境界视界的既有空初值。 */
+    public static void clearOnDisconnect() {
+        STATE.set(RealmVisionState.empty());
+    }
+
     public static void replace(RealmVisionState state) {
         STATE.set(state == null ? RealmVisionState.empty() : state);
     }

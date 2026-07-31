@@ -54,6 +54,27 @@ public class VoidActionClientTest {
     }
 
     @Test
+    void clearOnDisconnect_replacesEmptySnapshotAndNotifiesLongLivedListeners() {
+        List<VoidActionStore.Snapshot> notifications = new ArrayList<>();
+        VoidActionStore.addListener(notifications::add);
+        VoidActionStore.setLegacyDraft("old-heir", List.of(7L), "旧会话");
+        notifications.clear();
+
+        VoidActionStore.clearOnDisconnect();
+
+        assertEquals(VoidActionStore.Snapshot.empty(), VoidActionStore.snapshot(),
+            "断线必须清掉旧会话的化虚 action 草稿与冷却状态");
+        assertEquals(List.of(VoidActionStore.Snapshot.empty()), notifications,
+            "断线必须经 replace(empty) 通知现有 listener，使已挂载 UI 同步收起旧会话状态");
+
+        VoidActionStore.setTargetZone("fresh-zone");
+
+        assertEquals(2, notifications.size(),
+            "断线清理不得删除长期 listener；新会话写入仍必须通知同一 listener");
+        assertEquals("fresh-zone", notifications.get(1).targetZoneId());
+    }
+
+    @Test
     void legacyParserAcceptsCommaSeparatedIds() {
         assertEquals(List.of(1001L, 1002L, 1003L), LegacyAssignPanel.parseIds("1001, 1002,,1003"));
     }

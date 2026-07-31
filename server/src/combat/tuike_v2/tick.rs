@@ -5,9 +5,8 @@ use crate::combat::CombatClock;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Cultivation, QiColor};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
-use crate::cultivation::life_record::LifeRecord;
 use crate::inventory::{consume_item_instance_once, PlayerInventory, EQUIP_SLOT_CHEST};
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -36,7 +35,6 @@ type MaintenanceFalseSkinItem<'a> = (
     Option<&'a mut PlayerInventory>,
     Option<&'a Position>,
     Option<&'a CurrentDimension>,
-    Option<&'a LifeRecord>,
 );
 
 pub fn sync_false_skin_stack_from_inventory(
@@ -109,7 +107,6 @@ pub fn false_skin_maintenance_tick(
     mut query: Query<MaintenanceFalseSkinItem<'_>>,
     mut shed_events: EventWriter<FalseSkinSheddedEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
@@ -126,7 +123,6 @@ pub fn false_skin_maintenance_tick(
         inventory,
         position,
         current_dimension,
-        life_record,
     ) in &mut query
     {
         let cost = maintenance_qi_per_sec(&stack, practice, qi_color);
@@ -145,23 +141,18 @@ pub fn false_skin_maintenance_tick(
             );
             continue;
         }
-        let outcome = release_qi_amount_to_zone(
-            &mut cultivation,
+        cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+        // 守恒：扣除的维护真元回灌 zone（同 skills.rs spend_qi → emit_spent_qi_release 路径）
+        release_qi_amount_to_zone(
+            entity,
             cost,
             position,
             current_dimension,
-            life_record,
+            None,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             "false_skin_maintenance",
         );
-        if let Err(error) = outcome {
-            tracing::warn!(
-                ?error,
-                "[bong][combat] false-skin maintenance qi release failed closed"
-            );
-        }
     }
 }
 

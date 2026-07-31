@@ -18,7 +18,7 @@ use valence::prelude::{
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
+use crate::cultivation::components::{Cultivation, Realm};
 use crate::cultivation::life_record::{BiographyEntry, DeathInsightRecord, LifeRecord};
 use crate::cultivation::tick::CultivationClock;
 use crate::cultivation::void::components::{VoidActionCooldowns, VoidActionKind};
@@ -28,17 +28,14 @@ use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::player::state::canonical_player_id;
-#[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 #[cfg(test)]
 use crate::qi_physics::ledger::pending_inflow_account;
 use crate::qi_physics::ledger::{
     persistent_runtime_qi_accounts, QiAccountId, WorldQiAccount, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
-    QI_FLOW_OVERFLOW_ACCOUNT_ID, RIFT_DRAIN_ACCOUNT_ID,
 };
 use crate::schema::common::NpcStateKind;
-use crate::schema::elder_encounter::ElderEncounterEventV1;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::social::{
     ExposureKindV1, FactionMembershipSnapshotV1, RelationshipKindV1, RelationshipSnapshotV1,
@@ -59,9 +56,10 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
 /// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池；
-/// v39 由 player_lifecycle 占用；v40 新增 R5 通用 qi flow overflow 稳定池；
-/// v41 新增 R5 裂隙抽取稳定池；v42 新增 NPC terminal Redis narration durable outbox。
-const CURRENT_USER_VERSION: i32 = 43;
+/// v39 新增 `player_lifecycle`（bughunt player-lifecycle-relog-death-consequence-wipe：
+/// 断线重连此前从未持久化 `Lifecycle` 死亡/复活状态机，`fortune_remaining`/
+/// `awaiting_decision`/`state` 全部被 `Lifecycle::default()` 抹回满状态新角色）。
+const CURRENT_USER_VERSION: i32 = 39;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -201,22 +199,6 @@ impl PersistenceSettings {
     pub fn server_run_id(&self) -> &str {
         self.server_run_id.as_str()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct NpcTerminalNarrationOutboxRecord {
-    pub outbox_id: String,
-    pub actor_account: String,
-    pub payload: ElderEncounterEventV1,
-    pub created_tick: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct NpcTerminalLootOutboxRecord {
-    pub outbox_id: String,
-    pub actor_account: String,
-    pub entries: Vec<DroppedLootEntry>,
-    pub created_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -800,6 +782,7 @@ fn bootstrap_persistence_system(
         }
     }
 
+    let mut restored_pseudo_vein_zone_ids = Vec::new();
     if let Some(zone_registry) = zones.as_deref_mut() {
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
             match hydrate_heartbeat_pseudo_veins(
@@ -810,6 +793,7 @@ fn bootstrap_persistence_system(
                 wall_clock,
             ) {
                 Ok(count) if count > 0 => {
+                    restored_pseudo_vein_zone_ids = heartbeat.active_pseudo_vein_zone_ids();
                     tracing::info!(
                         "[bong][persistence] hydrated {count} heartbeat pseudo-vein runtime record(s) from sqlite"
                     );
@@ -830,9 +814,24 @@ fn bootstrap_persistence_system(
         if let Some(heartbeat) = heartbeat.as_deref_mut() {
             heartbeat.sync_active_pseudo_vein_qi_from_zones(zone_registry);
         }
-        // Zone balances are restored only into Zone.spirit_qi. Dynamic pseudo-veins use the same
-        // external owner and settle through typed Zone↔stable-pool transactions; recreating a
-        // `zone:*` ledger balance here would double-count every restored pseudo-vein.
+        // zone 余额从 zones_runtime 重建；三项稳定 runtime 池没有 ECS/zone 物理字段
+        // 承载，已由 qi_runtime_accounts 白名单恢复。这里仅建立动态 zone 镜像，
+        // 不发生转账、不重复借款；后续消散通过 PseudoVeinSettle 归还到已恢复的池。
+        for zone_id in restored_pseudo_vein_zone_ids {
+            let Some(zone) = zone_registry.find_zone_by_name(zone_id.as_str()) else {
+                continue;
+            };
+            let absolute_qi = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+            if let Err(error) =
+                qi_ledger.set_balance(QiAccountId::zone(zone_id.as_str()), absolute_qi)
+            {
+                panic!(
+                    "[bong][persistence] refusing startup after pseudo-vein ledger mirror failure zone={} qi={}: {error}",
+                    zone_id,
+                    absolute_qi
+                );
+            }
+        }
         if let Err(error) = hydrate_zone_overlays(&settings, zone_registry) {
             tracing::warn!(
                 "[bong][persistence] failed to hydrate zone overlays from sqlite at {}: {error}",
@@ -2344,77 +2343,36 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
 
     let current_version: i32 =
         connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-    if current_version < 40 {
+    if current_version < 39 {
         let transaction = connection.transaction()?;
-        // R5 前不存在通用稳定 overflow 余额，旧动态 overflow 也只是 event-only、无可恢复
-        // 物理状态，因此 v40 唯一诚实的迁移起点是已知 0；后续每次快照都由完整白名单持久化。
-        transaction.execute(
-            "
-            INSERT INTO qi_runtime_accounts (
-                account_id, balance, schema_version, last_updated_wall
-            ) VALUES (?1, 0.0, ?2, 0)
-            ON CONFLICT(account_id) DO NOTHING
-            ",
-            params![QI_FLOW_OVERFLOW_ACCOUNT_ID, CURRENT_SCHEMA_VERSION],
-        )?;
-        transaction.execute_batch("PRAGMA user_version = 40;")?;
-        transaction.commit()?;
-    }
-
-    let current_version: i32 =
-        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-    if current_version < 41 {
-        let transaction = connection.transaction()?;
-        // R5 前的裂隙抽取只写动态 rift 账户且没有 restart 枚举边界，旧余额无法可靠恢复；
-        // v41 从已知 0 建立固定聚合池，此后由完整 runtime 白名单原子 snapshot/hydrate。
-        transaction.execute(
-            "
-            INSERT INTO qi_runtime_accounts (
-                account_id, balance, schema_version, last_updated_wall
-            ) VALUES (?1, 0.0, ?2, 0)
-            ON CONFLICT(account_id) DO NOTHING
-            ",
-            params![RIFT_DRAIN_ACCOUNT_ID, CURRENT_SCHEMA_VERSION],
-        )?;
-        transaction.execute_batch("PRAGMA user_version = 41;")?;
-        transaction.commit()?;
-    }
-
-    let current_version: i32 =
-        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-    if current_version < 42 {
-        let transaction = connection.transaction()?;
+        // bughunt player-lifecycle-relog-death-consequence-wipe：`combat::components::
+        // Lifecycle`（死亡/复活状态机：state/fortune_remaining/awaiting_decision/各 deadline
+        // tick）此前从未落盘，断线重连时 `attach_combat_bundle_to_joined_clients` 只能盲插
+        // `Lifecycle::default()`，把 NearDeath/AwaitingRevival 玩家的运气次数与渡劫决策全部
+        // 抹回满状态"新角色"。单 JSON 列镜像整个组件（同 `player_known_techniques` 的
+        // `known_techniques_json` 模式），键仍是 `username`（与其余 per-character slice 表一致，
+        // 代表"当前存活角色"）。
+        //
+        // `combat_clock_tick_at_save` 是 OPUS 返工要求的跨重启锚点：`CombatClock` 每次进程
+        // 重启都从 0 重新计数（`combat::mod::register` 里 `insert_resource(CombatClock::
+        // default())`），而 `near_death_deadline_tick`/`revival_decision_deadline_tick`/
+        // `weakened_until_tick` 都是"绝对 tick"——落盘时刻的 CombatClock.tick 值。跨重启直接
+        // 复用这些绝对值毫无意义（新进程 tick=0 时，旧 deadline 动辄百万级，等价于几十小时后
+        // 才会被 near_death_tick/auto_confirm_revival_decisions 结算，期间玩家卡在
+        // AwaitingRevival 无敌状态）。这里把落盘时刻的 CombatClock.tick 一并记录，配合既有的
+        // `last_updated_wall`，在读档时按真实流逝墙钟秒数把 deadline 折算到读档当刻的 tick
+        // 空间（见 `player::state::translate_lifecycle_deadline_tick_across_restart`），
+        // 镜像 `player_lifespan.offline_pause_wall` 的按墙钟折算模式。
         transaction.execute_batch(
             "
-            CREATE TABLE IF NOT EXISTS npc_terminal_narration_outbox (
-                outbox_id          TEXT PRIMARY KEY,
-                actor_account      TEXT NOT NULL,
-                payload_json       TEXT NOT NULL,
-                created_tick       INTEGER NOT NULL CHECK (created_tick >= 0),
-                schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
-                last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            CREATE TABLE IF NOT EXISTS player_lifecycle (
+                username TEXT PRIMARY KEY,
+                lifecycle_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall INTEGER NOT NULL CHECK (last_updated_wall >= 0),
+                combat_clock_tick_at_save INTEGER NOT NULL DEFAULT 0
             );
-            PRAGMA user_version = 42;
-            ",
-        )?;
-        transaction.commit()?;
-    }
-
-    let current_version: i32 =
-        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-    if current_version < 43 {
-        let transaction = connection.transaction()?;
-        transaction.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS npc_terminal_loot_outbox (
-                outbox_id          TEXT PRIMARY KEY,
-                actor_account      TEXT NOT NULL,
-                entries_json       TEXT NOT NULL,
-                created_tick       INTEGER NOT NULL CHECK (created_tick >= 0),
-                schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
-                last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
-            );
-            PRAGMA user_version = 43;
+            PRAGMA user_version = 39;
             ",
         )?;
         transaction.commit()?;
@@ -2477,14 +2435,12 @@ fn backfill_legacy_player_cultivation(
             cultivation.qi_max = spirit_qi_max;
         }
 
-        let persisted_cultivation =
-            crate::cultivation::components::encode_persisted_cultivation(&cultivation);
         let bundle = serde_json::json!({
             // plan-race-system-v1 P1a：写入的是当前形态 `MeridianSystem::default()`
             // （snake_case channel id），必须标当前 bundle 版本号，否则加载时会误走
             // legacy 迁移分支去解析本就不是 legacy 形态的数据。
             "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
-            "cultivation": persisted_cultivation,
+            "cultivation": cultivation,
             "meridians": crate::cultivation::components::MeridianSystem::default(),
             "qi_color": crate::cultivation::components::QiColor::default(),
             "karma": crate::cultivation::components::Karma::default(),
@@ -3402,21 +3358,6 @@ pub fn release_ascension_quota_slot(
     Ok(AscensionQuotaRelease { quota, opened_slot })
 }
 
-pub fn persist_zone_and_runtime_qi_snapshot(
-    settings: &PersistenceSettings,
-    zones: Option<&crate::world::zone::ZoneRegistry>,
-    qi_ledger: &WorldQiAccount,
-) -> io::Result<()> {
-    let wall_clock = current_unix_seconds();
-    let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
-    if let Some(zones) = zones {
-        persist_zone_runtime_records(&transaction, zones, wall_clock)?;
-    }
-    upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
-    transaction.commit().map_err(io::Error::other)
-}
-
 pub fn persist_zone_runtime_snapshot(
     settings: &PersistenceSettings,
     zones: &crate::world::zone::ZoneRegistry,
@@ -4167,273 +4108,6 @@ pub fn persist_near_death_transition(
     transaction.commit().map_err(io::Error::other)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn persist_revival_qi_transaction(
-    settings: &PersistenceSettings,
-    username: &str,
-    cultivation: &Cultivation,
-    meridians: &MeridianSystem,
-    contamination: &Contamination,
-    life_record: &LifeRecord,
-    zones: Option<&crate::world::zone::ZoneRegistry>,
-    qi_ledger: &WorldQiAccount,
-    release_void_quota: bool,
-) -> io::Result<Option<AscensionQuotaRelease>> {
-    let entry = latest_biography_entry(life_record)?;
-    if !matches!(entry, BiographyEntry::Rebirth { .. }) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "revival qi transaction requires the latest biography entry to be Rebirth",
-        ));
-    }
-
-    let wall_clock = current_unix_seconds();
-    let mut connection = open_persistence_connection(settings)?;
-    // Revival owns the actor bundle, biography, signed zone pressure, stable ownerless qi pools
-    // and the optional 化虚 quota release as one durable transition. IMMEDIATE serializes the
-    // quota read-modify-write with all other quota writers; every write below rolls back if a
-    // later owner fails validation or persistence.
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(io::Error::other)?;
-    let updated_bundle = prepare_revival_player_cultivation_bundle(
-        &transaction,
-        username,
-        cultivation,
-        meridians,
-        contamination,
-        life_record,
-    )?;
-
-    update_revival_player_cultivation_bundle(&transaction, username, &updated_bundle, wall_clock)?;
-    upsert_life_record(&transaction, life_record, wall_clock)?;
-    append_life_event(
-        &transaction,
-        life_record.character_id.as_str(),
-        entry,
-        wall_clock,
-    )?;
-    if let Some(zones) = zones {
-        persist_zone_runtime_records(&transaction, zones, wall_clock)?;
-    }
-    upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
-
-    let quota_release = if release_void_quota {
-        let mut quota = load_ascension_quota_from_transaction(&transaction)?;
-        let opened_slot = quota.occupied_slots > 0;
-        quota.occupied_slots = quota.occupied_slots.saturating_sub(1);
-        upsert_ascension_quota(&transaction, &quota, wall_clock)?;
-        Some(AscensionQuotaRelease { quota, opened_slot })
-    } else {
-        None
-    };
-
-    transaction.commit().map_err(io::Error::other)?;
-    Ok(quota_release)
-}
-
-/// Build the revival replacement blob only from an existing, fully decodable player bundle.
-///
-/// This is intentionally stricter than `upsert_player_cultivation_slice`: revival is a durable
-/// owner transfer, so it may not manufacture a partial bundle or overwrite corrupt sibling state.
-/// Only the four staged owner slices (and the bundle version needed for the current meridian
-/// wire shape) change; every other sibling value is retained bit-for-bit in the JSON object.
-fn prepare_revival_player_cultivation_bundle(
-    transaction: &rusqlite::Transaction<'_>,
-    username: &str,
-    cultivation: &Cultivation,
-    meridians: &MeridianSystem,
-    contamination: &Contamination,
-    life_record: &LifeRecord,
-) -> io::Result<String> {
-    let existing: Option<String> = transaction
-        .query_row(
-            "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-            params![username],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(io::Error::other)?;
-    let existing = existing.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("revival requires an existing player_cultivation bundle for `{username}`"),
-        )
-    })?;
-    let mut bundle: serde_json::Value = serde_json::from_str(&existing)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let object = bundle.as_object_mut().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("player_cultivation for `{username}` must be a JSON object"),
-        )
-    })?;
-    let bundle_version = match object.get("v") {
-        Some(version) => version.as_i64().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("player_cultivation for `{username}` has a non-integer bundle version"),
-            )
-        })?,
-        None => 1,
-    };
-    if bundle_version < 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "player_cultivation for `{username}` has invalid bundle version {bundle_version}"
-            ),
-        ));
-    }
-
-    {
-        let required_slice = |name: &str| {
-            object.get(name).cloned().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "player_cultivation for `{username}` is missing required `{name}` slice"
-                    ),
-                )
-            })
-        };
-        crate::cultivation::components::decode_persisted_cultivation(required_slice(
-            "cultivation",
-        )?)
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "player_cultivation for `{username}` has invalid cultivation slice: {error}"
-                ),
-            )
-        })?;
-        crate::cultivation::legacy_meridian_bundle::decode_meridian_system(
-            required_slice("meridians")?,
-            bundle_version,
-        )
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("player_cultivation for `{username}` has invalid meridians slice: {error}"),
-            )
-        })?;
-        serde_json::from_value::<Contamination>(required_slice("contamination")?).map_err(
-            |error| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "player_cultivation for `{username}` has invalid contamination slice: {error}"
-                    ),
-                )
-            },
-        )?;
-        let persisted_life_record = serde_json::from_value::<LifeRecord>(required_slice(
-            "life_record",
-        )?)
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "player_cultivation for `{username}` has invalid life_record slice: {error}"
-                ),
-            )
-        })?;
-        if persisted_life_record.character_id != life_record.character_id {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "player_cultivation identity mismatch for `{username}`: persisted={} staged={}",
-                    persisted_life_record.character_id, life_record.character_id
-                ),
-            ));
-        }
-    }
-
-    let staged_cultivation = serde_json::to_value(
-        crate::cultivation::components::encode_persisted_cultivation(cultivation),
-    )
-    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    crate::cultivation::components::decode_persisted_cultivation(staged_cultivation.clone())
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("staged revival cultivation is invalid: {error}"),
-            )
-        })?;
-    let staged_meridians = serde_json::to_value(meridians)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    crate::cultivation::legacy_meridian_bundle::decode_meridian_system(
-        staged_meridians.clone(),
-        crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
-    )
-    .map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("staged revival meridians are invalid: {error}"),
-        )
-    })?;
-    let staged_contamination = serde_json::to_value(contamination)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    serde_json::from_value::<Contamination>(staged_contamination.clone()).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("staged revival contamination is invalid: {error}"),
-        )
-    })?;
-    let staged_life_record = serde_json::to_value(life_record)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    serde_json::from_value::<LifeRecord>(staged_life_record.clone()).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("staged revival life_record is invalid: {error}"),
-        )
-    })?;
-
-    object.insert(
-        "v".to_string(),
-        serde_json::json!(crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION),
-    );
-    object.insert("cultivation".to_string(), staged_cultivation);
-    object.insert("meridians".to_string(), staged_meridians);
-    object.insert("contamination".to_string(), staged_contamination);
-    object.insert("life_record".to_string(), staged_life_record);
-    serde_json::to_string(&bundle)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-}
-
-fn update_revival_player_cultivation_bundle(
-    transaction: &rusqlite::Transaction<'_>,
-    username: &str,
-    cultivation_json: &str,
-    wall_clock: i64,
-) -> io::Result<()> {
-    let updated = transaction
-        .execute(
-            "
-            UPDATE player_cultivation
-            SET cultivation_json = ?2,
-                schema_version = ?3,
-                last_updated_wall = ?4
-            WHERE username = ?1
-            ",
-            params![
-                username,
-                cultivation_json,
-                CURRENT_SCHEMA_VERSION,
-                wall_clock
-            ],
-        )
-        .map_err(io::Error::other)?;
-    if updated != 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("revival player_cultivation row disappeared for `{username}`"),
-        ));
-    }
-    Ok(())
-}
-
 pub fn persist_revival_transition(
     settings: &PersistenceSettings,
     life_record: &LifeRecord,
@@ -4500,27 +4174,12 @@ pub fn persist_life_record_death_insight(
     transaction.commit().map_err(io::Error::other)
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct TerminalPersistencePayload<'a> {
-    pub death_registry_cause: Option<&'a str>,
-    pub lifespan_event: Option<&'a LifespanEventRecord>,
-    pub zones: Option<&'a crate::world::zone::ZoneRegistry>,
-    pub qi_ledger: Option<&'a WorldQiAccount>,
-    pub narration_outbox: Option<&'a NpcTerminalNarrationOutboxRecord>,
-    pub loot_outbox: Option<&'a NpcTerminalLootOutboxRecord>,
-}
-
 pub fn persist_termination_transition(
     settings: &PersistenceSettings,
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
 ) -> io::Result<()> {
-    persist_termination_transition_inner(
-        settings,
-        lifecycle,
-        life_record,
-        TerminalPersistencePayload::default(),
-    )
+    persist_termination_transition_inner(settings, lifecycle, life_record, None, None)
 }
 
 pub fn persist_termination_transition_with_death_context(
@@ -4534,30 +4193,17 @@ pub fn persist_termination_transition_with_death_context(
         settings,
         lifecycle,
         life_record,
-        TerminalPersistencePayload {
-            death_registry_cause,
-            lifespan_event,
-            ..Default::default()
-        },
+        death_registry_cause,
+        lifespan_event,
     )
-}
-
-/// NPC 终结的 durable owner transaction：lifecycle / biography / death snapshot、signed
-/// zone 余额与固定 runtime ledger owner 在同一个 SQLite transaction 中提交。
-pub fn persist_npc_terminal_qi_transaction(
-    settings: &PersistenceSettings,
-    lifecycle: &Lifecycle,
-    life_record: &LifeRecord,
-    payload: TerminalPersistencePayload<'_>,
-) -> io::Result<()> {
-    persist_termination_transition_inner(settings, lifecycle, life_record, payload)
 }
 
 fn persist_termination_transition_inner(
     settings: &PersistenceSettings,
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
-    payload: TerminalPersistencePayload<'_>,
+    death_registry_cause: Option<&str>,
+    lifespan_event: Option<&LifespanEventRecord>,
 ) -> io::Result<()> {
     let entry = latest_biography_entry(life_record)?;
     let wall_clock = current_unix_seconds();
@@ -4596,7 +4242,7 @@ fn persist_termination_transition_inner(
             entry,
             wall_clock,
         )?;
-        if let Some(death_registry_cause) = payload.death_registry_cause {
+        if let Some(death_registry_cause) = death_registry_cause {
             upsert_death_registry(
                 &transaction,
                 life_record.character_id.as_str(),
@@ -4605,26 +4251,13 @@ fn persist_termination_transition_inner(
                 wall_clock,
             )?;
         }
-        if let Some(lifespan_event) = payload.lifespan_event {
+        if let Some(lifespan_event) = lifespan_event {
             append_lifespan_event(
                 &transaction,
                 life_record.character_id.as_str(),
                 lifespan_event,
                 wall_clock,
             )?;
-        }
-        if let Some(zones) = payload.zones {
-            persist_zone_runtime_records(&transaction, zones, wall_clock)?;
-        }
-        if let Some(qi_ledger) = payload.qi_ledger {
-            upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
-        }
-        if let Some(narration_outbox) = payload.narration_outbox {
-            upsert_npc_terminal_narration_outbox(&transaction, narration_outbox, wall_clock)?;
-        }
-        if let Some(loot_outbox) = payload.loot_outbox {
-            upsert_npc_terminal_loot_outbox(&transaction, loot_outbox, wall_clock)?;
-            upsert_dropped_loot_entries(&transaction, &loot_outbox.entries, wall_clock)?;
         }
         upsert_deceased_snapshot(
             &transaction,
@@ -5903,153 +5536,6 @@ fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn upsert_npc_terminal_narration_outbox(
-    transaction: &rusqlite::Transaction<'_>,
-    record: &NpcTerminalNarrationOutboxRecord,
-    wall_clock: i64,
-) -> io::Result<()> {
-    if record.outbox_id.trim().is_empty() || record.actor_account.trim().is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "npc terminal narration outbox identity must be non-empty",
-        ));
-    }
-    if record.payload.event_id.as_deref() != Some(record.outbox_id.as_str()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "npc terminal narration payload event_id must equal outbox_id",
-        ));
-    }
-    if record.payload.server_tick != record.created_tick {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "npc terminal narration payload server_tick must equal created_tick",
-        ));
-    }
-    let created_tick = i64::try_from(record.created_tick).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "npc terminal narration outbox tick exceeds SQLite INTEGER: {}",
-                record.created_tick
-            ),
-        )
-    })?;
-    let payload_json = serde_json::to_string(&record.payload)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    transaction
-        .execute(
-            "
-            INSERT INTO npc_terminal_narration_outbox (
-                outbox_id,
-                actor_account,
-                payload_json,
-                created_tick,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(outbox_id) DO UPDATE SET
-                actor_account = excluded.actor_account,
-                payload_json = excluded.payload_json,
-                created_tick = excluded.created_tick,
-                schema_version = excluded.schema_version,
-                last_updated_wall = excluded.last_updated_wall
-            ",
-            params![
-                record.outbox_id,
-                record.actor_account,
-                payload_json,
-                created_tick,
-                CURRENT_SCHEMA_VERSION,
-                wall_clock,
-            ],
-        )
-        .map_err(io::Error::other)?;
-    Ok(())
-}
-
-pub fn load_npc_terminal_narration_outbox(
-    settings: &PersistenceSettings,
-) -> io::Result<Vec<NpcTerminalNarrationOutboxRecord>> {
-    let connection = open_persistence_connection(settings)?;
-    let mut statement = connection
-        .prepare(
-            "
-            SELECT outbox_id, actor_account, payload_json, created_tick
-            FROM npc_terminal_narration_outbox
-            ORDER BY created_tick ASC, outbox_id ASC
-            ",
-        )
-        .map_err(io::Error::other)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
-        })
-        .map_err(io::Error::other)?;
-    let mut records = Vec::new();
-    for row in rows {
-        let (outbox_id, actor_account, payload_json, created_tick) =
-            row.map_err(io::Error::other)?;
-        if outbox_id.trim().is_empty() || actor_account.trim().is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "persisted npc terminal narration outbox identity must be non-empty",
-            ));
-        }
-        let payload = serde_json::from_str::<ElderEncounterEventV1>(&payload_json)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let created_tick = u64::try_from(created_tick).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("negative npc terminal narration outbox tick: {created_tick}"),
-            )
-        })?;
-        if payload.event_id.as_deref() != Some(outbox_id.as_str())
-            || payload.server_tick != created_tick
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "persisted npc terminal narration identity mismatch outbox_id={outbox_id} event_id={:?} created_tick={created_tick} server_tick={}",
-                    payload.event_id, payload.server_tick,
-                ),
-            ));
-        }
-        records.push(NpcTerminalNarrationOutboxRecord {
-            outbox_id,
-            actor_account,
-            payload,
-            created_tick,
-        });
-    }
-    Ok(records)
-}
-
-pub fn delete_npc_terminal_narration_outbox(
-    settings: &PersistenceSettings,
-    outbox_id: &str,
-) -> io::Result<bool> {
-    if outbox_id.trim().is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "npc terminal narration outbox id must be non-empty",
-        ));
-    }
-    let connection = open_persistence_connection(settings)?;
-    connection
-        .execute(
-            "DELETE FROM npc_terminal_narration_outbox WHERE outbox_id = ?1",
-            params![outbox_id],
-        )
-        .map(|count| count > 0)
-        .map_err(io::Error::other)
-}
-
 pub(crate) fn upsert_runtime_qi_account_balances(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
@@ -6118,10 +5604,8 @@ pub(crate) fn upsert_player_cultivation_slice(
     })?;
     object.insert(
         "cultivation".to_string(),
-        serde_json::to_value(
-            crate::cultivation::components::encode_persisted_cultivation(cultivation),
-        )
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        serde_json::to_value(cultivation)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
     );
     let cultivation_json = serde_json::to_string(&bundle)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -6147,192 +5631,6 @@ pub(crate) fn upsert_player_cultivation_slice(
     Ok(())
 }
 
-pub(crate) fn upsert_npc_terminal_loot_outbox(
-    transaction: &rusqlite::Transaction<'_>,
-    record: &NpcTerminalLootOutboxRecord,
-    wall_clock: i64,
-) -> io::Result<()> {
-    validate_npc_terminal_loot_outbox_with_kind(record, io::ErrorKind::InvalidInput)?;
-    let created_tick = i64::try_from(record.created_tick).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "npc terminal loot outbox tick exceeds SQLite INTEGER: {}",
-                record.created_tick
-            ),
-        )
-    })?;
-    let entries_json = serde_json::to_string(&record.entries)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let existing = transaction
-        .query_row(
-            "
-            SELECT actor_account, entries_json, created_tick
-            FROM npc_terminal_loot_outbox
-            WHERE outbox_id = ?1
-            ",
-            params![record.outbox_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(io::Error::other)?;
-    if let Some((actor_account, persisted_entries_json, persisted_tick)) = existing {
-        if actor_account == record.actor_account
-            && persisted_entries_json == entries_json
-            && persisted_tick == created_tick
-        {
-            return Ok(());
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!(
-                "npc terminal loot outbox `{}` already contains a different immutable record",
-                record.outbox_id
-            ),
-        ));
-    }
-    transaction
-        .execute(
-            "
-            INSERT INTO npc_terminal_loot_outbox (
-                outbox_id,
-                actor_account,
-                entries_json,
-                created_tick,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            ",
-            params![
-                record.outbox_id,
-                record.actor_account,
-                entries_json,
-                created_tick,
-                CURRENT_SCHEMA_VERSION,
-                wall_clock,
-            ],
-        )
-        .map_err(io::Error::other)?;
-    Ok(())
-}
-
-pub fn load_npc_terminal_loot_outbox(
-    settings: &PersistenceSettings,
-) -> io::Result<Vec<NpcTerminalLootOutboxRecord>> {
-    let connection = open_persistence_connection(settings)?;
-    let mut statement = connection
-        .prepare(
-            "
-            SELECT outbox_id, actor_account, entries_json, created_tick
-            FROM npc_terminal_loot_outbox
-            ORDER BY created_tick ASC, outbox_id ASC
-            ",
-        )
-        .map_err(io::Error::other)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
-        })
-        .map_err(io::Error::other)?;
-    let mut records = Vec::new();
-    for row in rows {
-        let (outbox_id, actor_account, entries_json, created_tick) =
-            row.map_err(io::Error::other)?;
-        if outbox_id.trim().is_empty() || actor_account.trim().is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "persisted npc terminal loot outbox identity must be non-empty",
-            ));
-        }
-        let entries = serde_json::from_str::<Vec<DroppedLootEntry>>(&entries_json)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let created_tick = u64::try_from(created_tick).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("negative npc terminal loot outbox tick: {created_tick}"),
-            )
-        })?;
-        let record = NpcTerminalLootOutboxRecord {
-            outbox_id,
-            actor_account,
-            entries,
-            created_tick,
-        };
-        validate_npc_terminal_loot_outbox(&record)?;
-        records.push(record);
-    }
-    Ok(records)
-}
-
-fn validate_npc_terminal_loot_outbox(record: &NpcTerminalLootOutboxRecord) -> io::Result<()> {
-    validate_npc_terminal_loot_outbox_with_kind(record, io::ErrorKind::InvalidData)
-}
-
-fn validate_npc_terminal_loot_outbox_with_kind(
-    record: &NpcTerminalLootOutboxRecord,
-    error_kind: io::ErrorKind,
-) -> io::Result<()> {
-    if record.outbox_id.trim().is_empty() || record.actor_account.trim().is_empty() {
-        return Err(io::Error::new(
-            error_kind,
-            "persisted npc terminal loot outbox identity must be non-empty",
-        ));
-    }
-    if record.entries.is_empty() {
-        return Err(io::Error::new(
-            error_kind,
-            "persisted npc terminal loot outbox must contain at least one entry",
-        ));
-    }
-    let mut ids = HashSet::with_capacity(record.entries.len());
-    for entry in &record.entries {
-        if entry.instance_id != entry.item.instance_id
-            || entry.instance_id > JS_SAFE_INTEGER_MAX
-            || !ids.insert(entry.instance_id)
-        {
-            return Err(io::Error::new(
-                error_kind,
-                format!(
-                    "persisted npc terminal loot outbox contains invalid or duplicate instance id {}",
-                    entry.instance_id
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-pub fn delete_npc_terminal_loot_outbox(
-    settings: &PersistenceSettings,
-    outbox_id: &str,
-) -> io::Result<bool> {
-    if outbox_id.trim().is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "npc terminal loot outbox id must be non-empty",
-        ));
-    }
-    let connection = open_persistence_connection(settings)?;
-    connection
-        .execute(
-            "DELETE FROM npc_terminal_loot_outbox WHERE outbox_id = ?1",
-            params![outbox_id],
-        )
-        .map(|count| count > 0)
-        .map_err(io::Error::other)
-}
-
 pub(crate) fn upsert_dropped_loot_entries(
     transaction: &rusqlite::Transaction<'_>,
     entries: &[DroppedLootEntry],
@@ -6350,35 +5648,23 @@ pub(crate) fn upsert_dropped_loot_entries(
         }
         let entry_json = serde_json::to_string(entry)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let id = i64::try_from(entry.instance_id).map_err(io::Error::other)?;
-        let existing: Option<String> = transaction
-            .query_row(
-                "SELECT entry_json FROM dropped_loot WHERE instance_id = ?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(io::Error::other)?;
-        if let Some(existing) = existing {
-            if existing != entry_json {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!(
-                        "durable dropped loot instance id {} already contains a different entry",
-                        entry.instance_id
-                    ),
-                ));
-            }
-            continue;
-        }
         transaction
             .execute(
                 "
                 INSERT INTO dropped_loot (
                     instance_id, entry_json, schema_version, last_updated_wall
                 ) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    entry_json = excluded.entry_json,
+                    schema_version = excluded.schema_version,
+                    last_updated_wall = excluded.last_updated_wall
                 ",
-                params![id, entry_json, CURRENT_SCHEMA_VERSION, wall_clock],
+                params![
+                    i64::try_from(entry.instance_id).map_err(io::Error::other)?,
+                    entry_json,
+                    CURRENT_SCHEMA_VERSION,
+                    wall_clock
+                ],
             )
             .map_err(io::Error::other)?;
     }
@@ -6389,45 +5675,12 @@ pub(crate) fn delete_dropped_loot_entry(
     transaction: &rusqlite::Transaction<'_>,
     instance_id: u64,
 ) -> io::Result<()> {
-    let instance_id_sql = i64::try_from(instance_id).map_err(io::Error::other)?;
     transaction
         .execute(
             "DELETE FROM dropped_loot WHERE instance_id = ?1",
-            params![instance_id_sql],
+            params![i64::try_from(instance_id).map_err(io::Error::other)?],
         )
         .map_err(io::Error::other)?;
-
-    // Terminal loot outbox is an immutable receipt, not a second source of ground loot.
-    // Once any entry from a committed terminal drop is accepted by a player, the whole
-    // receipt is no longer needed for runtime projection; delete it in the same pickup
-    // transaction so a restart cannot resurrect the consumed sibling entries.
-    let mut statement = transaction
-        .prepare("SELECT outbox_id, entries_json FROM npc_terminal_loot_outbox")
-        .map_err(io::Error::other)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(io::Error::other)?;
-    let mut consumed_outboxes = Vec::new();
-    for row in rows {
-        let (outbox_id, entries_json) = row.map_err(io::Error::other)?;
-        let entries = serde_json::from_str::<Vec<DroppedLootEntry>>(&entries_json)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if entries.iter().any(|entry| entry.instance_id == instance_id) {
-            consumed_outboxes.push(outbox_id);
-        }
-    }
-    drop(statement);
-
-    for outbox_id in consumed_outboxes {
-        transaction
-            .execute(
-                "DELETE FROM npc_terminal_loot_outbox WHERE outbox_id = ?1",
-                params![outbox_id],
-            )
-            .map_err(io::Error::other)?;
-    }
     Ok(())
 }
 
@@ -6520,14 +5773,6 @@ pub fn persisted_inventory_instance_id_high_water(
     let durable = load_durable_dropped_loot(settings)?;
     for id in durable.keys().copied() {
         high_water = Some(high_water.map_or(id, |current| current.max(id)));
-    }
-    let terminal_loot = load_npc_terminal_loot_outbox(settings)?;
-    for record in terminal_loot {
-        for entry in record.entries {
-            high_water = Some(
-                high_water.map_or(entry.instance_id, |current| current.max(entry.instance_id)),
-            );
-        }
     }
     Ok(high_water)
 }
@@ -6964,8 +6209,6 @@ pub fn persist_player_cultivation_bundle(
     digestion_load: Option<&crate::cultivation::poison_trait::DigestionLoad>,
 ) -> io::Result<()> {
     let wall_clock = current_unix_seconds();
-    let persisted_cultivation =
-        crate::cultivation::components::encode_persisted_cultivation(cultivation);
     let bundle = serde_json::json!({
         // plan-race-system-v1 P1a —— bump 1→2：`meridians`/`meridian_severed` 子字段
         // channel id 从 `MeridianId` PascalCase 枚举名换轨为 humanoid.json 声明的
@@ -6973,7 +6216,7 @@ pub fn persist_player_cultivation_bundle(
         // `crate::cultivation::legacy_meridian_bundle`）。旧存档（v1 或缺失 `"v"`）
         // 载入时在该模块显式迁移，此处只负责新写入必须标最新版本号。
         "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
-        "cultivation": persisted_cultivation,
+        "cultivation": cultivation,
         "meridians": meridians,
         "qi_color": qi_color,
         "karma": karma,
@@ -7187,13 +6430,11 @@ pub(crate) fn hydrate_runtime_qi_accounts(
     qi_ledger: &mut WorldQiAccount,
 ) -> io::Result<usize> {
     let balances = load_runtime_qi_account_balances(settings)?;
-    let mut staged = qi_ledger.clone();
     for (account, balance) in &balances {
-        staged
+        qi_ledger
             .set_balance(account.clone(), *balance)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     }
-    *qi_ledger = staged;
     Ok(balances.len())
 }
 
@@ -8873,9 +8114,7 @@ pub fn load_epitaph(
 mod persistence_tests {
     use super::*;
     use crate::combat::components::LifecycleState;
-    use crate::cultivation::components::{
-        ColorKind, ContamSource, Contamination, Cultivation, Karma, MeridianSystem, QiColor, Realm,
-    };
+    use crate::cultivation::components::{Cultivation, Realm};
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
@@ -12363,11 +11602,12 @@ mod persistence_tests {
             restored_records[0].qi_current, 0.33,
             "expected zones_runtime physical balance to realign the restored lifecycle qi"
         );
-        assert!(
-            !app.world()
+        assert_eq!(
+            app.world()
                 .resource::<WorldQiAccount>()
-                .has_account(&QiAccountId::zone("pseudo_vein_heartbeat_7")),
-            "Startup hydration must restore dynamic pseudo-vein qi only into Zone.spirit_qi"
+                .balance(&QiAccountId::zone("pseudo_vein_heartbeat_7")),
+            0.33 * QI_ZONE_UNIT_CAPACITY,
+            "expected Startup hydration to sync the persisted pseudo-vein field into its ledger mirror"
         );
         assert!(
             restored_zone
@@ -12406,9 +11646,12 @@ mod persistence_tests {
         let zone_absolute = record.qi_current * QI_ZONE_UNIT_CAPACITY;
         let mut seed_ledger = WorldQiAccount::default();
         seed_ledger
+            .set_balance(QiAccountId::zone(record.zone_id.as_str()), zone_absolute)
+            .expect("seed dynamic zone ledger balance should be finite");
+        seed_ledger
             .set_balance(pending_inflow_account(), SPIRIT_QI_TOTAL - zone_absolute)
             .expect("seed pending inflow balance should be finite");
-        let total_before_restart = zone_absolute + seed_ledger.total();
+        let total_before_restart = seed_ledger.total();
         persist_zone_runtime_snapshot_with_heartbeat(
             &settings,
             &seed_zones,
@@ -12477,12 +11720,11 @@ mod persistence_tests {
             SPIRIT_QI_TOTAL - zone_absolute,
             "expected restart to restore the pending pool that backs the active pseudo-vein loan"
         );
-        assert!(
-            (record.qi_current * QI_ZONE_UNIT_CAPACITY + restored_ledger.total()
-                - total_before_restart)
-                .abs()
-                < 1e-9,
-            "expected pending pool plus external dynamic Zone owner to conserve across restart"
+        assert_eq!(
+            restored_ledger.total(),
+            total_before_restart,
+            "expected pending pool plus dynamic zone balance to conserve across restart, actual {}",
+            restored_ledger.total()
         );
         let persisted_heartbeat_record = persisted_after_update
             .iter()
@@ -12492,11 +11734,12 @@ mod persistence_tests {
             persisted_heartbeat_record.qi_current, persisted_pseudo_vein.spirit_qi,
             "expected first Update to persist identical lifecycle and zone qi values"
         );
-        assert!(
-            !app.world()
+        assert_eq!(
+            app.world()
                 .resource::<WorldQiAccount>()
-                .has_account(&QiAccountId::zone(record.zone_id.as_str())),
-            "expected restored pseudo-vein qi to remain solely in the external Zone owner"
+                .balance(&QiAccountId::zone(record.zone_id.as_str())),
+            record.qi_current * QI_ZONE_UNIT_CAPACITY,
+            "expected restored pseudo-vein zone field to be mirrored into the fresh ledger"
         );
 
         let _ = fs::remove_dir_all(root);
@@ -16600,7 +15843,7 @@ mod persistence_tests {
     }
 
     #[test]
-    fn v38_v40_and_v41_migrations_initialize_new_stable_overflow_accounts() {
+    fn v38_migration_initializes_only_new_dying_elder_overflow_accounts() {
         let db_path = database_path("v38-dying-elder-overflow-accounts");
         let root = db_path
             .parent()
@@ -16617,13 +15860,11 @@ mod persistence_tests {
             )
             .expect("fixture should emulate v37 with unknown pending inflow");
 
-        apply_migrations(&mut connection).expect("v37 to v41 migration should succeed");
+        apply_migrations(&mut connection).expect("v37 to v38 migration should succeed");
 
         for account_id in [
             DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
             DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
-            QI_FLOW_OVERFLOW_ACCOUNT_ID,
-            RIFT_DRAIN_ACCOUNT_ID,
         ] {
             let balance: f64 = connection
                 .query_row(
@@ -16631,10 +15872,10 @@ mod persistence_tests {
                     params![account_id],
                     |row| row.get(0),
                 )
-                .unwrap_or_else(|error| panic!("migration should add {account_id}: {error}"));
+                .unwrap_or_else(|error| panic!("v38 should add {account_id}: {error}"));
             assert_eq!(
                 balance, 0.0,
-                "new stable account {account_id} must start at known zero"
+                "new v38 account {account_id} must start at known zero"
             );
         }
         let pending_rows: i64 = connection
@@ -16646,7 +15887,7 @@ mod persistence_tests {
             .expect("pending row count should query");
         assert_eq!(
             pending_rows, 0,
-            "v40/v41 must not invent zero for a missing pre-v34 pending inflow balance"
+            "v38 must not invent zero for a missing pre-v34 pending inflow balance"
         );
         let user_version: i32 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -16658,13 +15899,12 @@ mod persistence_tests {
 
     #[test]
     fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
-        let (settings, root) = persistence_settings("runtime-qi-five-account-roundtrip");
+        let (settings, root) = persistence_settings("runtime-qi-three-account-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("fixture sqlite should bootstrap");
 
         let expected = [
             (pending_inflow_account(), 11.25),
-            (crate::qi_physics::ledger::qi_flow_overflow_account(), 17.0),
             (
                 crate::qi_physics::ledger::dying_elder_dan_excess_account(),
                 22.5,
@@ -16673,7 +15913,6 @@ mod persistence_tests {
                 crate::qi_physics::ledger::dying_elder_release_overflow_account(),
                 33.75,
             ),
-            (crate::qi_physics::ledger::rift_drain_account(), 44.5),
         ];
         let mut source = WorldQiAccount::default();
         for (account, balance) in &expected {
@@ -16692,13 +15931,13 @@ mod persistence_tests {
             None,
             &source,
         )
-        .expect("production snapshot path should persist five runtime balances");
+        .expect("production snapshot path should persist three runtime balances");
 
         let mut hydrated = WorldQiAccount::default();
         assert_eq!(
             hydrate_runtime_qi_accounts(&settings, &mut hydrated)
                 .expect("fresh ledger should hydrate all stable runtime accounts"),
-            5
+            3
         );
         for (account, balance) in expected {
             assert_eq!(hydrated.balance(&account), balance, "account={account}");
@@ -16712,1029 +15951,10 @@ mod persistence_tests {
     }
 
     #[test]
-    fn revival_qi_transaction_rolls_back_every_durable_owner_on_late_quota_failure() {
-        use crate::qi_physics::ledger::{
-            dying_elder_dan_excess_account, dying_elder_release_overflow_account,
-            qi_flow_overflow_account,
-        };
-        use crate::world::zone::ZoneRegistry;
-
-        let (settings, root) = persistence_settings("revival-qi-late-quota-rollback");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("fixture sqlite should bootstrap");
-        let char_id = "offline:RevivalRollback";
-        let username = "RevivalRollback";
-        let baseline_life = LifeRecord {
-            character_id: char_id.to_string(),
-            created_at: 1,
-            biography: vec![BiographyEntry::NearDeath {
-                cause: "fixture".to_string(),
-                tick: 40,
-            }],
-            ..LifeRecord::default()
-        };
-        let staged_life = LifeRecord {
-            biography: vec![
-                BiographyEntry::NearDeath {
-                    cause: "fixture".to_string(),
-                    tick: 40,
-                },
-                BiographyEntry::Rebirth {
-                    prior_realm: Realm::Void,
-                    new_realm: Realm::Spirit,
-                    tick: 41,
-                },
-            ],
-            ..baseline_life.clone()
-        };
-        let baseline_cultivation = Cultivation {
-            realm: Realm::Void,
-            qi_current: 7.0,
-            qi_max: 12.0,
-            ..Cultivation::default()
-        };
-        let staged_cultivation = Cultivation {
-            realm: Realm::Spirit,
-            qi_current: 3.0,
-            qi_max: 9.0,
-            ..Cultivation::default()
-        };
-        let baseline_meridians = MeridianSystem::default();
-        let mut staged_meridians = MeridianSystem::default();
-        staged_meridians.regular[0].opened = true;
-        staged_meridians.regular[0].opened_at = 41;
-        let baseline_contamination = Contamination::default();
-        let staged_contamination = Contamination {
-            entries: vec![ContamSource {
-                amount: 1.25,
-                color: ColorKind::Sharp,
-                meridian_id: None,
-                attacker_id: Some("fixture-attacker".to_string()),
-                introduced_at: 41,
-            }],
-        };
-        let baseline_qi_color = QiColor {
-            secondary: Some(ColorKind::Heavy),
-            ..QiColor::default()
-        };
-        let baseline_karma = Karma { weight: 42.5 };
-        let baseline_bundle = serde_json::json!({
-            "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
-            "cultivation": crate::cultivation::components::encode_persisted_cultivation(&baseline_cultivation),
-            "meridians": baseline_meridians,
-            "qi_color": baseline_qi_color,
-            "karma": baseline_karma,
-            "qi_accumulator": { "pending": 7.25, "ticks": 40 },
-            "future_sibling": { "must": ["survive", 1] },
-            "contamination": baseline_contamination,
-            "life_record": baseline_life,
-        });
-        let baseline_bundle_json = serde_json::to_string(&baseline_bundle)
-            .expect("baseline player cultivation bundle should serialize");
-        let baseline_life =
-            serde_json::from_value::<LifeRecord>(baseline_bundle["life_record"].clone())
-                .expect("baseline bundle life record should decode");
-        let baseline_zones = ZoneRegistry::fallback();
-        let mut staged_zones = baseline_zones.clone();
-        staged_zones.zones[0].spirit_qi = -0.35;
-        staged_zones.zones[0].danger_level = 6;
-        let stale_dynamic_zone_id = "pseudo_vein_heartbeat_42";
-
-        let old_values = [
-            (pending_inflow_account(), 11.0),
-            (qi_flow_overflow_account(), 17.0),
-            (dying_elder_dan_excess_account(), 22.0),
-            (dying_elder_release_overflow_account(), 33.0),
-        ];
-        let new_values = [
-            (pending_inflow_account(), 111.0),
-            (qi_flow_overflow_account(), 117.0),
-            (dying_elder_dan_excess_account(), 222.0),
-            (dying_elder_release_overflow_account(), 333.0),
-        ];
-        let mut baseline_ledger = WorldQiAccount::default();
-        let mut staged_ledger = WorldQiAccount::default();
-        for (account, balance) in old_values.iter().cloned() {
-            baseline_ledger
-                .set_balance(account, balance)
-                .expect("baseline runtime qi balance should be valid");
-        }
-        for (account, balance) in new_values.iter().cloned() {
-            staged_ledger
-                .set_balance(account, balance)
-                .expect("staged runtime qi balance should be valid");
-        }
-
-        let mut connection = open_persistence_connection(&settings).expect("db should open");
-        {
-            let transaction = connection
-                .transaction()
-                .expect("baseline transaction should start");
-            transaction
-                .execute(
-                    "
-                    INSERT INTO player_cultivation (
-                        username, cultivation_json, schema_version, last_updated_wall
-                    ) VALUES (?1, ?2, ?3, ?4)
-                    ",
-                    params![
-                        username,
-                        baseline_bundle_json,
-                        CURRENT_SCHEMA_VERSION,
-                        100_i64
-                    ],
-                )
-                .expect("baseline player cultivation bundle should persist");
-            upsert_life_record(&transaction, &baseline_life, 100)
-                .expect("baseline life record should persist");
-            persist_zone_runtime_records(&transaction, &baseline_zones, 100)
-                .expect("baseline Zone owner should persist");
-            upsert_zone_runtime(
-                &transaction,
-                &ZoneRuntimeRecord {
-                    zone_id: stale_dynamic_zone_id.to_string(),
-                    spirit_qi: 0.45,
-                    danger_level: 2,
-                },
-                100,
-            )
-            .expect("stale dynamic Zone row should persist");
-            upsert_runtime_qi_account_balances(&transaction, &baseline_ledger, 100)
-                .expect("baseline stable qi owners should persist");
-            upsert_ascension_quota(
-                &transaction,
-                &AscensionQuotaRecord { occupied_slots: 1 },
-                100,
-            )
-            .expect("baseline quota should persist");
-            transaction.commit().expect("baseline rows should commit");
-        }
-        let baseline_bundle_json: String = connection
-            .query_row(
-                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-                params![username],
-                |row| row.get(0),
-            )
-            .expect("baseline player cultivation bundle should query");
-        let baseline_life_json: String = connection
-            .query_row(
-                "SELECT life_record_json FROM life_records WHERE char_id = ?1",
-                params![char_id],
-                |row| row.get(0),
-            )
-            .expect("baseline life record should query");
-        let baseline_event_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1",
-                params![char_id],
-                |row| row.get(0),
-            )
-            .expect("baseline life event count should query");
-        connection
-            .execute_batch(
-                "
-                CREATE TRIGGER reject_revival_quota_update
-                BEFORE UPDATE ON ascension_quota
-                WHEN NEW.row_id = 1
-                BEGIN
-                    SELECT RAISE(ABORT, 'fixture rejects late revival quota update');
-                END;
-                ",
-            )
-            .expect("late-failure trigger should install");
-        drop(connection);
-
-        let error = persist_revival_qi_transaction(
-            &settings,
-            username,
-            &staged_cultivation,
-            &staged_meridians,
-            &staged_contamination,
-            &staged_life,
-            Some(&staged_zones),
-            &staged_ledger,
-            true,
-        )
-        .expect_err("late quota failure must abort the entire revival transaction");
-        assert!(
-            error
-                .to_string()
-                .contains("fixture rejects late revival quota update"),
-            "error should expose the forced final-write failure, actual={error}"
-        );
-
-        let connection = open_persistence_connection(&settings).expect("db should reopen");
-        let actual_bundle_json: String = connection
-            .query_row(
-                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-                params![username],
-                |row| row.get(0),
-            )
-            .expect("rolled-back player cultivation bundle should query");
-        assert_eq!(
-            actual_bundle_json, baseline_bundle_json,
-            "late quota failure must roll back the revival player bundle before any restart can observe staged actor qi"
-        );
-        let actual_life_json: String = connection
-            .query_row(
-                "SELECT life_record_json FROM life_records WHERE char_id = ?1",
-                params![char_id],
-                |row| row.get(0),
-            )
-            .expect("rolled-back life record should query");
-        assert_eq!(actual_life_json, baseline_life_json);
-        let actual_event_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1",
-                params![char_id],
-                |row| row.get(0),
-            )
-            .expect("rolled-back life event count should query");
-        assert_eq!(actual_event_count, baseline_event_count);
-        let rebirth_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1 AND event_type = 'rebirth'",
-                params![char_id],
-                |row| row.get(0),
-            )
-            .expect("rebirth event count should query");
-        assert_eq!(rebirth_count, 0);
-
-        let persisted_zones = load_zone_runtime_snapshot_from_connection(&connection)
-            .expect("rolled-back Zone rows should load");
-        let spawn = persisted_zones
-            .iter()
-            .find(|record| record.zone_id == baseline_zones.zones[0].name)
-            .expect("baseline spawn Zone row must remain");
-        assert_eq!(spawn.spirit_qi, baseline_zones.zones[0].spirit_qi);
-        assert_eq!(spawn.danger_level, baseline_zones.zones[0].danger_level);
-        let stale_dynamic = persisted_zones
-            .iter()
-            .find(|record| record.zone_id == stale_dynamic_zone_id)
-            .expect("rolled-back prefix deletion must restore the stale dynamic Zone row");
-        assert_eq!(stale_dynamic.spirit_qi, 0.45);
-        assert_eq!(stale_dynamic.danger_level, 2);
-
-        for (account, expected_balance) in old_values {
-            let actual_balance: f64 = connection
-                .query_row(
-                    "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
-                    params![account.id],
-                    |row| row.get(0),
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "rolled-back qi balance should query {}: {error}",
-                        account.id
-                    )
-                });
-            assert_eq!(actual_balance, expected_balance, "account={account}");
-        }
-        assert_eq!(
-            load_ascension_quota_from_connection(&connection)
-                .expect("rolled-back quota should load")
-                .occupied_slots,
-            1
-        );
-
-        drop(connection);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn revival_qi_transaction_replaces_owner_slices_and_preserves_bundle_siblings_for_restart() {
-        let (settings, root) = persistence_settings("revival-qi-bundle-restart-roundtrip");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("fixture sqlite should bootstrap");
-
-        let username = "RevivalRoundtrip";
-        let baseline_life = LifeRecord {
-            character_id: "offline:RevivalRoundtrip".to_string(),
-            created_at: 7,
-            biography: vec![BiographyEntry::NearDeath {
-                cause: "fixture".to_string(),
-                tick: 70,
-            }],
-            ..LifeRecord::default()
-        };
-        let staged_life = LifeRecord {
-            biography: vec![
-                BiographyEntry::NearDeath {
-                    cause: "fixture".to_string(),
-                    tick: 70,
-                },
-                BiographyEntry::Rebirth {
-                    prior_realm: Realm::Void,
-                    new_realm: Realm::Spirit,
-                    tick: 71,
-                },
-            ],
-            ..baseline_life.clone()
-        };
-        let baseline_cultivation = Cultivation {
-            realm: Realm::Void,
-            qi_current: 8.0,
-            qi_max: 13.0,
-            ..Cultivation::default()
-        };
-        let staged_cultivation = Cultivation {
-            realm: Realm::Spirit,
-            qi_current: 2.0,
-            qi_max: 8.0,
-            ..Cultivation::default()
-        };
-        let baseline_meridians = MeridianSystem::default();
-        let mut staged_meridians = MeridianSystem::default();
-        staged_meridians.regular[0].opened = true;
-        staged_meridians.regular[0].opened_at = 71;
-        let baseline_contamination = Contamination::default();
-        let staged_contamination = Contamination {
-            entries: vec![ContamSource {
-                amount: 2.5,
-                color: ColorKind::Sharp,
-                meridian_id: None,
-                attacker_id: Some("roundtrip-attacker".to_string()),
-                introduced_at: 71,
-            }],
-        };
-        let qi_color = QiColor {
-            secondary: Some(ColorKind::Heavy),
-            ..QiColor::default()
-        };
-        let karma = Karma { weight: 19.0 };
-        let qi_accumulator = serde_json::json!({ "pending": 3.5, "ticks": 70 });
-        let future_sibling = serde_json::json!({ "schema": "future", "values": [1, 2] });
-        let baseline_bundle = serde_json::json!({
-            "v": crate::cultivation::legacy_meridian_bundle::CURRENT_BUNDLE_VERSION,
-            "cultivation": crate::cultivation::components::encode_persisted_cultivation(&baseline_cultivation),
-            "meridians": baseline_meridians,
-            "qi_color": qi_color,
-            "karma": karma,
-            "qi_accumulator": qi_accumulator,
-            "future_sibling": future_sibling,
-            "contamination": baseline_contamination,
-            "life_record": baseline_life,
-        });
-        let baseline_bundle_json = serde_json::to_string(&baseline_bundle)
-            .expect("baseline player cultivation bundle should serialize");
-        let connection = open_persistence_connection(&settings).expect("fixture db should open");
-        connection
-            .execute(
-                "
-                INSERT INTO player_cultivation (
-                    username, cultivation_json, schema_version, last_updated_wall
-                ) VALUES (?1, ?2, ?3, ?4)
-                ",
-                params![
-                    username,
-                    baseline_bundle_json,
-                    CURRENT_SCHEMA_VERSION,
-                    70_i64
-                ],
-            )
-            .expect("baseline player cultivation bundle should persist");
-        drop(connection);
-
-        let staged_ledger = WorldQiAccount::default();
-        let quota_release = persist_revival_qi_transaction(
-            &settings,
-            username,
-            &staged_cultivation,
-            &staged_meridians,
-            &staged_contamination,
-            &staged_life,
-            None,
-            &staged_ledger,
-            false,
-        )
-        .expect("revival transaction should persist every staged owner slice");
-        assert!(
-            quota_release.is_none(),
-            "no quota release was requested for this roundtrip"
-        );
-
-        let bundle = load_player_cultivation_bundle(&settings, username)
-            .expect("restart loader should read the persisted bundle")
-            .expect("revival must retain the existing player bundle row");
-        let bundle_version = bundle["v"]
-            .as_i64()
-            .expect("revival bundle must retain an integer wire version");
-        let restored_cultivation = crate::cultivation::components::decode_persisted_cultivation(
-            bundle["cultivation"].clone(),
-        )
-        .expect("restart cultivation decoder should accept the staged owner slice");
-        assert_eq!(
-            restored_cultivation, staged_cultivation,
-            "restart must observe the staged cultivation rather than pre-revival qi"
-        );
-        let restored_meridians =
-            crate::cultivation::legacy_meridian_bundle::decode_meridian_system(
-                bundle["meridians"].clone(),
-                bundle_version,
-            )
-            .expect("restart meridian decoder should accept the staged owner slice");
-        assert_eq!(
-            restored_meridians, staged_meridians,
-            "restart must observe staged meridian state"
-        );
-        assert_eq!(
-            bundle["contamination"],
-            serde_json::to_value(&staged_contamination)
-                .expect("staged contamination should serialize"),
-            "restart bundle must contain staged contamination"
-        );
-        assert_eq!(
-            bundle["life_record"],
-            serde_json::to_value(&staged_life).expect("staged life record should serialize"),
-            "restart bundle must contain the rebirth life record"
-        );
-        assert_eq!(
-            bundle["qi_color"], baseline_bundle["qi_color"],
-            "revival must preserve the qi_color sibling"
-        );
-        assert_eq!(
-            bundle["karma"], baseline_bundle["karma"],
-            "revival must preserve the karma sibling"
-        );
-        assert_eq!(
-            bundle["qi_accumulator"], baseline_bundle["qi_accumulator"],
-            "revival must preserve the qi_accumulator sibling"
-        );
-        assert_eq!(
-            bundle["future_sibling"], baseline_bundle["future_sibling"],
-            "revival must preserve unknown future sibling slices"
-        );
-
-        let connection = open_persistence_connection(&settings).expect("db should reopen");
-        let persisted_life_json: String = connection
-            .query_row(
-                "SELECT life_record_json FROM life_records WHERE char_id = ?1",
-                params![staged_life.character_id],
-                |row| row.get(0),
-            )
-            .expect("life record should commit with the bundle");
-        assert_eq!(
-            serde_json::from_str::<Value>(&persisted_life_json)
-                .expect("persisted life record should be valid JSON"),
-            serde_json::to_value(&staged_life).expect("staged life record should serialize"),
-            "life_records row must commit the same rebirth state as the player bundle"
-        );
-        let rebirth_events: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM life_events WHERE char_id = ?1 AND event_type = 'rebirth'",
-                params![staged_life.character_id],
-                |row| row.get(0),
-            )
-            .expect("rebirth event count should query");
-        assert_eq!(
-            rebirth_events, 1,
-            "successful revival must append one rebirth event"
-        );
-
-        drop(connection);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn revival_qi_transaction_rejects_missing_or_corrupt_bundle_without_durable_prefix() {
-        use crate::qi_physics::ledger::{
-            dying_elder_dan_excess_account, dying_elder_release_overflow_account,
-            qi_flow_overflow_account,
-        };
-        use crate::world::zone::ZoneRegistry;
-
-        for (case, existing_bundle, expected_kind) in [
-            ("missing", None, std::io::ErrorKind::NotFound),
-            (
-                "malformed-json",
-                Some("{not-json"),
-                std::io::ErrorKind::InvalidData,
-            ),
-            ("non-object", Some("[]"), std::io::ErrorKind::InvalidData),
-        ] {
-            let (settings, root) =
-                persistence_settings(&format!("revival-qi-invalid-bundle-{case}"));
-            bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-                .expect("fixture sqlite should bootstrap");
-            let username = format!("RevivalInvalid{case}");
-            let char_id = format!("offline:RevivalInvalid{case}");
-            let baseline_life = LifeRecord {
-                character_id: char_id.clone(),
-                created_at: 9,
-                biography: vec![BiographyEntry::NearDeath {
-                    cause: "fixture".to_string(),
-                    tick: 90,
-                }],
-                ..LifeRecord::default()
-            };
-            let staged_life = LifeRecord {
-                biography: vec![
-                    BiographyEntry::NearDeath {
-                        cause: "fixture".to_string(),
-                        tick: 90,
-                    },
-                    BiographyEntry::Rebirth {
-                        prior_realm: Realm::Void,
-                        new_realm: Realm::Spirit,
-                        tick: 91,
-                    },
-                ],
-                ..baseline_life.clone()
-            };
-            let staged_cultivation = Cultivation {
-                realm: Realm::Spirit,
-                qi_current: 2.0,
-                qi_max: 8.0,
-                ..Cultivation::default()
-            };
-            let staged_meridians = MeridianSystem::default();
-            let staged_contamination = Contamination::default();
-            let baseline_zones = ZoneRegistry::fallback();
-            let mut staged_zones = baseline_zones.clone();
-            staged_zones.zones[0].spirit_qi = -0.7;
-            staged_zones.zones[0].danger_level = 7;
-            let old_values = [
-                (pending_inflow_account(), 11.0),
-                (qi_flow_overflow_account(), 17.0),
-                (dying_elder_dan_excess_account(), 22.0),
-                (dying_elder_release_overflow_account(), 33.0),
-            ];
-            let mut baseline_ledger = WorldQiAccount::default();
-            let mut staged_ledger = WorldQiAccount::default();
-            for (account, balance) in old_values.iter().cloned() {
-                baseline_ledger
-                    .set_balance(account.clone(), balance)
-                    .expect("baseline runtime qi balance should be valid");
-                staged_ledger
-                    .set_balance(account, balance + 100.0)
-                    .expect("staged runtime qi balance should be valid");
-            }
-
-            let mut connection =
-                open_persistence_connection(&settings).expect("fixture db should open");
-            {
-                let transaction = connection
-                    .transaction()
-                    .expect("baseline transaction should start");
-                if let Some(existing_bundle) = existing_bundle {
-                    transaction
-                        .execute(
-                            "
-                            INSERT INTO player_cultivation (
-                                username, cultivation_json, schema_version, last_updated_wall
-                            ) VALUES (?1, ?2, ?3, ?4)
-                            ",
-                            params![username, existing_bundle, CURRENT_SCHEMA_VERSION, 90_i64],
-                        )
-                        .expect("corrupt fixture bundle should persist as raw text");
-                }
-                upsert_life_record(&transaction, &baseline_life, 90)
-                    .expect("baseline life record should persist");
-                persist_zone_runtime_records(&transaction, &baseline_zones, 90)
-                    .expect("baseline zones should persist");
-                upsert_runtime_qi_account_balances(&transaction, &baseline_ledger, 90)
-                    .expect("baseline stable accounts should persist");
-                upsert_ascension_quota(
-                    &transaction,
-                    &AscensionQuotaRecord { occupied_slots: 1 },
-                    90,
-                )
-                .expect("baseline quota should persist");
-                transaction.commit().expect("baseline rows should commit");
-            }
-            let baseline_bundle: Option<String> = connection
-                .query_row(
-                    "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-                    params![username],
-                    |row| row.get(0),
-                )
-                .optional()
-                .expect("baseline bundle row should query");
-            let baseline_life_json: String = connection
-                .query_row(
-                    "SELECT life_record_json FROM life_records WHERE char_id = ?1",
-                    params![char_id],
-                    |row| row.get(0),
-                )
-                .expect("baseline life record should query");
-            let baseline_event_count: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM life_events WHERE char_id = ?1",
-                    params![char_id],
-                    |row| row.get(0),
-                )
-                .expect("baseline life event count should query");
-            drop(connection);
-
-            let error = persist_revival_qi_transaction(
-                &settings,
-                username.as_str(),
-                &staged_cultivation,
-                &staged_meridians,
-                &staged_contamination,
-                &staged_life,
-                Some(&staged_zones),
-                &staged_ledger,
-                true,
-            )
-            .expect_err("missing or corrupt player bundle must fail closed");
-            assert_eq!(
-                error.kind(),
-                expected_kind,
-                "case={case} must reject before any durable owner write, error={error}"
-            );
-
-            let connection = open_persistence_connection(&settings).expect("db should reopen");
-            let actual_bundle: Option<String> = connection
-                .query_row(
-                    "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-                    params![username],
-                    |row| row.get(0),
-                )
-                .optional()
-                .expect("rolled-back bundle row should query");
-            assert_eq!(
-                actual_bundle, baseline_bundle,
-                "case={case} must not manufacture or overwrite a player bundle"
-            );
-            let actual_life_json: String = connection
-                .query_row(
-                    "SELECT life_record_json FROM life_records WHERE char_id = ?1",
-                    params![char_id],
-                    |row| row.get(0),
-                )
-                .expect("rolled-back life record should query");
-            assert_eq!(
-                actual_life_json, baseline_life_json,
-                "case={case} must not update life_records before bundle validation"
-            );
-            let actual_event_count: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM life_events WHERE char_id = ?1",
-                    params![char_id],
-                    |row| row.get(0),
-                )
-                .expect("rolled-back life event count should query");
-            assert_eq!(
-                actual_event_count, baseline_event_count,
-                "case={case} must not append a rebirth event before bundle validation"
-            );
-            let persisted_zones = load_zone_runtime_snapshot_from_connection(&connection)
-                .expect("rolled-back zone rows should load");
-            let spawn = persisted_zones
-                .iter()
-                .find(|record| record.zone_id == baseline_zones.zones[0].name)
-                .expect("baseline spawn zone must remain");
-            assert_eq!(
-                spawn.spirit_qi, baseline_zones.zones[0].spirit_qi,
-                "case={case} must not change signed zone qi"
-            );
-            assert_eq!(
-                spawn.danger_level, baseline_zones.zones[0].danger_level,
-                "case={case} must not change zone danger"
-            );
-            for (account, expected_balance) in old_values {
-                let actual_balance: f64 = connection
-                    .query_row(
-                        "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
-                        params![account.id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "case={case} should retain stable account {}: {error}",
-                            account.id
-                        )
-                    });
-                assert_eq!(
-                    actual_balance, expected_balance,
-                    "case={case} must not partially update stable account={account}"
-                );
-            }
-            assert_eq!(
-                load_ascension_quota_from_connection(&connection)
-                    .expect("rolled-back quota should load")
-                    .occupied_slots,
-                1,
-                "case={case} must not release the quota"
-            );
-
-            drop(connection);
-            let _ = fs::remove_dir_all(root);
-        }
-    }
-
-    fn terminal_narration_outbox_record(id: &str, tick: u64) -> NpcTerminalNarrationOutboxRecord {
-        NpcTerminalNarrationOutboxRecord {
-            outbox_id: id.to_string(),
-            actor_account: "npc:terminal-outbox".to_string(),
-            payload: ElderEncounterEventV1 {
-                event_id: Some(id.to_string()),
-                zone_name: "tsy_deep".to_string(),
-                elder_entity_id: 42,
-                event_kind: crate::schema::elder_encounter::ElderEncounterEventKindV1::DeadNatural,
-                betray_probability: 0.0,
-                dan_count: 0,
-                offered_skill_id: String::new(),
-                qi_fraction: 0.0,
-                server_tick: tick,
-            },
-            created_tick: tick,
-        }
-    }
-
-    #[test]
-    fn npc_terminal_narration_outbox_roundtrips_upserts_and_deletes() {
-        let (settings, root) = persistence_settings("terminal-narration-outbox-roundtrip");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("terminal narration fixture should bootstrap");
-        let mut connection = Connection::open(settings.db_path()).expect("fixture db should open");
-        let mut record = terminal_narration_outbox_record("terminal:npc:42:91", 91);
-        {
-            let transaction = connection.transaction().expect("transaction should start");
-            upsert_npc_terminal_narration_outbox(&transaction, &record, 100)
-                .expect("initial outbox insert should succeed");
-            transaction.commit().expect("initial insert should commit");
-        }
-        assert_eq!(
-            load_npc_terminal_narration_outbox(&settings).expect("outbox should load"),
-            vec![record.clone()],
-            "durable terminal payload must roundtrip without identity drift"
-        );
-
-        record.payload.event_kind =
-            crate::schema::elder_encounter::ElderEncounterEventKindV1::Betrayal;
-        {
-            let transaction = connection.transaction().expect("transaction should start");
-            upsert_npc_terminal_narration_outbox(&transaction, &record, 101)
-                .expect("same outbox id should update idempotently");
-            transaction.commit().expect("upsert should commit");
-        }
-        assert_eq!(
-            load_npc_terminal_narration_outbox(&settings).expect("updated outbox should load"),
-            vec![record],
-            "idempotent upsert must retain one row and the latest frozen payload"
-        );
-        assert!(
-            delete_npc_terminal_narration_outbox(&settings, "terminal:npc:42:91")
-                .expect("existing outbox delete should succeed")
-        );
-        assert!(
-            !delete_npc_terminal_narration_outbox(&settings, "terminal:npc:42:91")
-                .expect("missing outbox delete should be a no-op")
-        );
-        assert!(load_npc_terminal_narration_outbox(&settings)
-            .expect("empty outbox should load")
-            .is_empty());
-
-        drop(connection);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn npc_terminal_narration_outbox_rejects_identity_mismatch_and_corrupt_rows() {
-        let (settings, root) = persistence_settings("terminal-narration-outbox-invalid");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("terminal narration fixture should bootstrap");
-        let mut connection = Connection::open(settings.db_path()).expect("fixture db should open");
-        for (case, mutate) in [
-            ("missing_event_id", 0_u8),
-            ("wrong_event_id", 1_u8),
-            ("wrong_tick", 2_u8),
-        ] {
-            let mut record = terminal_narration_outbox_record("terminal:npc:42:91", 91);
-            match mutate {
-                0 => record.payload.event_id = None,
-                1 => record.payload.event_id = Some("different-id".to_string()),
-                2 => record.payload.server_tick = 92,
-                _ => unreachable!(),
-            }
-            let transaction = connection.transaction().expect("transaction should start");
-            let error = upsert_npc_terminal_narration_outbox(&transaction, &record, 100)
-                .expect_err("outbox identity drift must fail closed");
-            assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "case={case}");
-        }
-
-        connection
-            .execute(
-                "INSERT INTO npc_terminal_narration_outbox (outbox_id, actor_account, payload_json, created_tick, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-                params!["terminal:npc:corrupt", "npc:corrupt", "not-json", 7_i64, CURRENT_SCHEMA_VERSION],
-            )
-            .expect("corrupt fixture row should insert at SQL layer");
-        assert_eq!(
-            load_npc_terminal_narration_outbox(&settings)
-                .expect_err("corrupt payload must fail startup load")
-                .kind(),
-            io::ErrorKind::InvalidData
-        );
-        assert_eq!(
-            delete_npc_terminal_narration_outbox(&settings, " ")
-                .expect_err("empty delete identity must fail")
-                .kind(),
-            io::ErrorKind::InvalidInput
-        );
-
-        drop(connection);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn npc_terminal_late_failure_rolls_back_narration_outbox_with_owner_state() {
-        let (settings, root) = persistence_settings("terminal-narration-outbox-rollback");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("terminal narration fixture should bootstrap");
-        let connection = Connection::open(settings.db_path()).expect("fixture db should open");
-        connection
-            .execute_batch(&format!(
-                "
-                CREATE TRIGGER reject_terminal_runtime_owner_after_outbox
-                BEFORE UPDATE ON qi_runtime_accounts
-                WHEN NEW.account_id = '{}'
-                BEGIN
-                    SELECT RAISE(ABORT, 'fixture rejects terminal runtime owner after outbox');
-                END;
-                ",
-                DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID
-            ))
-            .expect("late terminal trigger should install");
-
-        let character_id = "npc:terminal:outbox-rollback";
-        let mut lifecycle = Lifecycle {
-            character_id: character_id.to_string(),
-            ..Lifecycle::default()
-        };
-        lifecycle.terminate(91);
-        let mut life_record = LifeRecord::new(character_id);
-        life_record.push(BiographyEntry::Terminated {
-            cause: "terminal_outbox_rollback".to_string(),
-            tick: 91,
-        });
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(
-                crate::qi_physics::ledger::dying_elder_release_overflow_account(),
-                19.0,
-            )
-            .expect("staged runtime owner should be valid");
-        let outbox = terminal_narration_outbox_record("terminal:npc:rollback:91", 91);
-
-        persist_npc_terminal_qi_transaction(
-            &settings,
-            &lifecycle,
-            &life_record,
-            TerminalPersistencePayload {
-                death_registry_cause: Some("terminal_outbox_rollback"),
-                qi_ledger: Some(&ledger),
-                narration_outbox: Some(&outbox),
-                ..Default::default()
-            },
-        )
-        .expect_err("late runtime owner failure must roll back every prior table write");
-        let outbox_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM npc_terminal_narration_outbox WHERE outbox_id = ?1",
-                params![outbox.outbox_id],
-                |row| row.get(0),
-            )
-            .expect("rolled-back outbox count should query");
-        assert_eq!(
-            outbox_count, 0,
-            "failed owner commit must not strand narration row"
-        );
-        let lifecycle_count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM life_records WHERE char_id = ?1",
-                params![character_id],
-                |row| row.get(0),
-            )
-            .expect("rolled-back lifecycle count should query");
-        assert_eq!(
-            lifecycle_count, 0,
-            "failed owner commit must roll back lifecycle too"
-        );
-
-        drop(connection);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn npc_terminal_late_runtime_owner_failure_rolls_back_metadata_zone_and_ledger() {
-        let (settings, root) = persistence_settings("npc-terminal-late-owner-rollback");
-        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
-            .expect("terminal fixture sqlite should bootstrap");
-        let connection = Connection::open(settings.db_path()).expect("terminal db should open");
-        connection
-            .execute(
-                "UPDATE zones_runtime SET spirit_qi = ?2 WHERE zone_id = ?1",
-                params!["spawn", 0.25_f64],
-            )
-            .expect("baseline zone should seed");
-        connection
-            .execute(
-                "UPDATE qi_runtime_accounts SET balance = ?2 WHERE account_id = ?1",
-                params![PENDING_INFLOW_ACCOUNT_ID, 7.0_f64],
-            )
-            .expect("baseline runtime owner should seed");
-        connection
-            .execute_batch(&format!(
-                "
-                CREATE TRIGGER reject_terminal_runtime_owner
-                BEFORE UPDATE ON qi_runtime_accounts
-                WHEN NEW.account_id = '{}'
-                BEGIN
-                    SELECT RAISE(ABORT, 'fixture rejects terminal runtime owner');
-                END;
-                ",
-                DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID
-            ))
-            .expect("late terminal trigger should install");
-
-        let character_id = "npc:terminal:atomic-rollback";
-        let mut lifecycle = Lifecycle {
-            character_id: character_id.to_string(),
-            ..Lifecycle::default()
-        };
-        lifecycle.terminate(91);
-        let mut life_record = LifeRecord::new(character_id);
-        life_record.push(BiographyEntry::Terminated {
-            cause: "terminal_atomicity_test".to_string(),
-            tick: 91,
-        });
-        let mut zones = crate::world::zone::ZoneRegistry::fallback();
-        zones.zones[0].spirit_qi = 0.75;
-        let mut ledger = WorldQiAccount::default();
-        ledger
-            .set_balance(pending_inflow_account(), 17.0)
-            .expect("staged pending owner should be valid");
-        ledger
-            .set_balance(
-                crate::qi_physics::ledger::dying_elder_release_overflow_account(),
-                19.0,
-            )
-            .expect("staged release owner should be valid");
-
-        let error = persist_npc_terminal_qi_transaction(
-            &settings,
-            &lifecycle,
-            &life_record,
-            TerminalPersistencePayload {
-                death_registry_cause: Some("terminal_atomicity_test"),
-                zones: Some(&zones),
-                qi_ledger: Some(&ledger),
-                ..Default::default()
-            },
-        )
-        .expect_err("late runtime-owner trigger must reject terminal transaction");
-        assert!(
-            error
-                .to_string()
-                .contains("fixture rejects terminal runtime owner"),
-            "forced late failure should surface its trigger reason, actual={error}"
-        );
-
-        for table in [
-            "life_records",
-            "life_events",
-            "death_registry",
-            "deceased_snapshots",
-        ] {
-            let sql = format!("SELECT COUNT(*) FROM {table} WHERE char_id = ?1");
-            let count: i64 = connection
-                .query_row(sql.as_str(), params![character_id], |row| row.get(0))
-                .unwrap_or_else(|query_error| {
-                    panic!("rolled-back table {table} should query: {query_error}")
-                });
-            assert_eq!(count, 0, "late failure must roll back {table}");
-        }
-        let zone_qi: f64 = connection
-            .query_row(
-                "SELECT spirit_qi FROM zones_runtime WHERE zone_id = ?1",
-                params!["spawn"],
-                |row| row.get(0),
-            )
-            .expect("rolled-back zone should query");
-        assert_eq!(zone_qi, 0.25, "late failure must roll back signed zone qi");
-        let pending_balance: f64 = connection
-            .query_row(
-                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
-                params![PENDING_INFLOW_ACCOUNT_ID],
-                |row| row.get(0),
-            )
-            .expect("rolled-back runtime owner should query");
-        assert_eq!(
-            pending_balance, 7.0,
-            "late failure must roll back earlier runtime owner updates"
-        );
-
-        drop(connection);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn runtime_qi_account_persist_failure_rolls_back_staged_prefix() {
         use crate::qi_physics::ledger::{
-            dying_elder_dan_excess_account, dying_elder_release_overflow_account,
-            qi_flow_overflow_account, rift_drain_account,
+            dying_elder_dan_excess_account, dying_elder_release_overflow_account, QiTransfer,
+            QiTransferReason,
         };
 
         let (settings, root) = persistence_settings("runtime-qi-persist-atomic-rollback");
@@ -17743,10 +15963,8 @@ mod persistence_tests {
 
         let old_values = [
             (PENDING_INFLOW_ACCOUNT_ID, 11.0),
-            (QI_FLOW_OVERFLOW_ACCOUNT_ID, 17.0),
             (DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, 22.0),
             (DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, 33.0),
-            (RIFT_DRAIN_ACCOUNT_ID, 44.0),
         ];
         let mut connection = open_persistence_connection(&settings).expect("db should open");
         {
@@ -17771,43 +15989,44 @@ mod persistence_tests {
             .set_balance(pending_inflow_account(), 111.0)
             .expect("pending staged balance should be valid");
         source
-            .set_balance(qi_flow_overflow_account(), 117.0)
-            .expect("qi flow overflow staged balance should be valid");
-        source
             .set_balance(dying_elder_dan_excess_account(), 222.0)
             .expect("dan excess staged balance should be valid");
-        source
-            .set_balance(dying_elder_release_overflow_account(), 333.0)
-            .expect("release overflow staged balance should be valid");
-        source
-            .set_balance(rift_drain_account(), 444.0)
-            .expect("rift drain staged balance should be valid");
 
-        connection
-            .execute_batch(&format!(
-                "
-                CREATE TRIGGER reject_rift_drain_update
-                BEFORE UPDATE ON qi_runtime_accounts
-                WHEN NEW.account_id = '{}'
-                BEGIN
-                    SELECT RAISE(ABORT, 'fixture rejects final runtime qi account');
-                END;
-                ",
-                RIFT_DRAIN_ACCOUNT_ID
-            ))
-            .expect("fixture trigger should install");
+        // `WorldQiAccount::transfer` 当前不会拒绝 destination + amount 溢出。利用这个
+        // 既有契约构造第三个 whitelist 账户的 +Inf，避免为测试放宽生产可见性。
+        let release_account = dying_elder_release_overflow_account();
+        let overflow_source = QiAccountId::overflow("runtime-qi-inf-fixture-source");
+        source
+            .set_balance(release_account.clone(), f64::MAX)
+            .expect("finite destination fixture should be valid");
+        source
+            .set_balance(overflow_source.clone(), f64::MAX)
+            .expect("finite source fixture should be valid");
+        source
+            .transfer(QiTransfer {
+                from: overflow_source,
+                to: release_account.clone(),
+                amount: f64::MAX,
+                reason: QiTransferReason::ReleaseToZone,
+            })
+            .expect("fixture transfer should expose the existing destination overflow behavior");
+        assert!(
+            source.balance(&release_account).is_infinite()
+                && source.balance(&release_account).is_sign_positive(),
+            "fixture third whitelist account must be +Inf"
+        );
 
         {
             let transaction = connection
                 .transaction()
                 .expect("failing persist transaction should start");
             let error = upsert_runtime_qi_account_balances(&transaction, &source, 456)
-                .expect_err("fifth whitelist update must reject the whole persist");
+                .expect_err("+Inf third whitelist balance must reject the whole persist");
             assert!(
                 error
                     .to_string()
-                    .contains("fixture rejects final runtime qi account"),
-                "error should expose the forced final-account failure, actual={error}"
+                    .contains(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
+                "error should identify the invalid third account, actual={error}"
             );
             drop(transaction);
         }
@@ -17836,10 +16055,8 @@ mod persistence_tests {
     fn runtime_qi_accounts_missing_or_invalid_row_fail_closed_without_partial_hydrate() {
         for (case, account_id) in [
             ("pending", PENDING_INFLOW_ACCOUNT_ID),
-            ("qi-flow-overflow", QI_FLOW_OVERFLOW_ACCOUNT_ID),
             ("dan-excess", DYING_ELDER_DAN_EXCESS_ACCOUNT_ID),
             ("death-overflow", DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
-            ("rift-drain", RIFT_DRAIN_ACCOUNT_ID),
         ] {
             for corruption in ["missing", "negative"] {
                 let test_name = format!("runtime-qi-{case}-{corruption}");

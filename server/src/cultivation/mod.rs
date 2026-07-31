@@ -95,8 +95,8 @@ pub mod tribulation_balance;
 pub mod void;
 
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, Component, Entity, EventReader, EventWriter,
-    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username, Without,
+    Added, App, Client, Commands, Entity, EventReader, EventWriter, IntoSystemConfigs, Or,
+    Position, Query, Res, ResMut, Update, Username, Without,
 };
 
 use self::breakthrough::{
@@ -111,15 +111,13 @@ use self::color::{
     qi_color_evolution_tick, record_cultivation_session_practice_events,
     CultivationSessionPracticeEvent, PracticeLog,
 };
-use self::components::{
-    decode_persisted_cultivation, Contamination, Cultivation, Karma, MeridianSystem, QiColor,
-};
+use self::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use self::composure::composure_tick;
 use self::contamination::contamination_tick;
 use self::dead_zone::{dead_zone_silent_qi_loss_tick, DeadZoneTickHandler};
 use self::death_hooks::{
-    on_cultivation_revive_requested, on_player_terminated, CultivationDeathTrigger,
-    CultivationReviveRequested, PlayerRevived, PlayerTerminated,
+    on_player_revived, on_player_terminated, CultivationDeathTrigger, PlayerRevived,
+    PlayerTerminated,
 };
 use self::dugu::{
     dugu_poison_ambient_vfx_tick, dugu_poison_tick, expire_dugu_state,
@@ -286,7 +284,6 @@ pub fn register(app: &mut App) {
     app.add_event::<ForgeOutcome>();
     app.add_event::<RealmRegressed>();
     app.add_event::<CultivationDeathTrigger>();
-    app.add_event::<CultivationReviveRequested>();
     app.add_event::<PlayerRevived>();
     app.add_event::<PlayerTerminated>();
     app.add_event::<LifespanEventEmitted>();
@@ -369,8 +366,7 @@ pub fn register(app: &mut App) {
             contamination_tick.after(qi_regen_and_zone_drain_tick),
             negative_zone_siphon_tick.after(qi_regen_and_zone_drain_tick),
             // plan §4 死亡/重生钩子
-            on_cultivation_revive_requested
-                .after(crate::combat::lifecycle::handle_revival_action_intents),
+            on_player_revived,
             on_player_terminated,
             // plan §11-5 业力
             karma_weight_decay_tick.after(qi_regen_and_zone_drain_tick),
@@ -512,7 +508,7 @@ pub fn register(app: &mut App) {
             // plan-perception-v1.1 §4.1 server authoritative realm vision.
             push_initial_realm_vision.after(attach_cultivation_to_joined_clients),
             push_realm_vision_on_breakthrough.after(breakthrough_system),
-            push_realm_vision_on_revive.after(on_cultivation_revive_requested),
+            push_realm_vision_on_revive.after(on_player_revived),
             view_distance_ramp_system,
             push_spiritual_sense_targets.after(qi_regen_and_zone_drain_tick),
             cleanup_spiritual_sense_push_state,
@@ -546,9 +542,6 @@ pub fn register(app: &mut App) {
         ),
     );
 }
-
-#[derive(Component, Debug, Default)]
-pub struct CultivationBundleLoadFailed;
 
 type CultivationAttachFilter = (
     Or<(Added<Client>, Added<CurrentDimension>)>,
@@ -585,49 +578,56 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
     for (entity, username, player_state, restored_lifespan) in &joined_clients {
-        let (persisted_bundle, mut cultivation_bundle_load_failed) =
-            match load_player_cultivation_bundle(&settings, username.0.as_str()) {
-                Ok(None) => (None, false),
-                Ok(Some(bundle)) => {
-                    let unknown_persisted_race = race_registry.as_deref().and_then(|registry| {
-                        bundle
-                            .get("cultivation")
-                            .and_then(|cultivation_value| cultivation_value.get("race"))
-                            .and_then(|race_value| race_value.as_str())
-                            .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
-                    });
-                    let cultivation_error = bundle
-                        .get("cultivation")
-                        .ok_or_else(|| "missing required cultivation slice".to_string())
-                        .and_then(|value| decode_persisted_cultivation(value.clone()).map(|_| ()));
-                    if unknown_persisted_race == Some(true) {
-                        tracing::warn!(
-                            "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
-                             unknown race id in persisted `cultivation.race` is not found in \
-                             RaceRegistry — refusing every sibling slice and writeback",
-                            username.0,
-                        );
-                        (None, true)
-                    } else if let Err(error) = cultivation_error {
-                        tracing::warn!(
-                            "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
-                             {error}; refusing every sibling slice and writeback",
-                            username.0,
-                        );
-                        (None, true)
-                    } else {
-                        (Some(bundle), false)
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: \
-                         {error}; refusing writeback for this session",
-                        username.0,
-                    );
-                    (None, true)
-                }
-            };
+        let persisted_bundle = match load_player_cultivation_bundle(&settings, username.0.as_str())
+        {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][cultivation] failed to load persisted cultivation bundle for `{}`: {error}",
+                    username.0,
+                );
+                None
+            }
+        };
+
+        // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知 race id 必须
+        // 拒载**整份** bundle，不只是 `cultivation` 这一个 slice：此前的实现只在下面
+        // `cultivation` 字段的解码分支里做校验，一旦拒绝也只把 `cultivation` 变量留在
+        // `Cultivation::default()`，但 `meridians`/`qi_color`/`karma`/`practice_log`/
+        // `contamination`/`life_record`/`insight_quota`/`unlocked_perceptions`/
+        // `insight_modifiers`/`meridian_severed`/`poison_toxicity`/`digestion_load`
+        // 这 12 个 sibling slice 全部照常从同一份不可信 bundle 里正常水合——一份来自
+        // 不兼容部署（race 在当前 RaceRegistry 里根本不存在）的存档，其经脉拓扑/
+        // 真元/毒性等字段同样不可信，"只挡 race 字段本身"等于开了个后门：醒灵后
+        // 立刻嵌合体全通经脉、满毒素抗性表白跳突破。这里在任何字段解码之前先窥探
+        // 原始 JSON 里的 `cultivation.race`，一旦命中未知 race 就把整份 bundle 提前
+        // 归零成 `None`，让下面所有 slice 的 hydration 分支统一走"无持久化数据"的
+        // 默认路径（缺失 race 字段的旧存档 `cultivation.race` 键本身不存在，
+        // `as_str()` 拿不到值，不受影响，仍走既有 legacy 迁移路径）。
+        let persisted_bundle = persisted_bundle.and_then(|bundle| {
+            let unknown_persisted_race = race_registry.as_deref().and_then(|registry| {
+                bundle
+                    .get("cultivation")
+                    .and_then(|cultivation_value| cultivation_value.get("race"))
+                    .and_then(|race_value| race_value.as_str())
+                    .map(|race_str| registry.get(&RaceId::new(race_str)).is_none())
+            });
+            if unknown_persisted_race == Some(true) {
+                tracing::warn!(
+                    "[bong][cultivation] rejecting entire persisted cultivation bundle for `{}`: \
+                     unknown race id in persisted `cultivation.race` is not found in \
+                     RaceRegistry — falling back to default state for every slice \
+                     (cultivation/meridians/qi_color/karma/practice_log/contamination/\
+                     life_record/insight_quota/unlocked_perceptions/insight_modifiers/\
+                     meridian_severed/poison_toxicity/digestion_load), not just the \
+                     `cultivation` field",
+                    username.0,
+                );
+                None
+            } else {
+                Some(bundle)
+            }
+        });
 
         // plan-race-system-v1 P1a —— bundle 内嵌版本号（`persist_player_cultivation_bundle`
         // 的 `"v"` 字段，与全局 `CURRENT_SCHEMA_VERSION`/`CURRENT_USER_VERSION` 是两套
@@ -670,114 +670,78 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 // `persisted_bundle` 归零成 `None`（见该处注释），本分支只在 race
                 // 已知（或缺失、经 `#[serde(default = "default_race_id")]` 落
                 // "human"）时才会执行，不再需要重复校验 `decoded.race`。
-                match decode_persisted_cultivation(value.clone()) {
+                match serde_json::from_value::<Cultivation>(value.clone()) {
                     Ok(decoded) => cultivation = decoded,
-                    Err(error) => warn_cultivation_wire_decode(
-                        username.0.as_str(),
-                        "cultivation",
-                        error.as_str(),
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "cultivation", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("meridians") {
                 match legacy_meridian_bundle::decode_meridian_system(value.clone(), bundle_version)
                 {
                     Ok(decoded) => meridians = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "meridians",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "meridians", error),
                 }
             }
             if let Some(value) = persisted_bundle.get("qi_color") {
                 match serde_json::from_value::<QiColor>(value.clone()) {
                     Ok(decoded) => qi_color = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "qi_color",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "qi_color", error),
                 }
             }
             if let Some(value) = persisted_bundle.get("karma") {
                 match serde_json::from_value::<Karma>(value.clone()) {
                     Ok(decoded) => karma = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "karma",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => warn_cultivation_decode(username.0.as_str(), "karma", error),
                 }
             }
             if let Some(value) = persisted_bundle.get("practice_log") {
                 match serde_json::from_value::<PracticeLog>(value.clone()) {
                     Ok(decoded) => practice_log = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "practice_log",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "practice_log", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("contamination") {
                 match serde_json::from_value::<Contamination>(value.clone()) {
                     Ok(decoded) => contamination = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "contamination",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "contamination", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("life_record") {
                 match serde_json::from_value::<LifeRecord>(value.clone()) {
                     Ok(decoded) => life_record = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "life_record",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "life_record", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("insight_quota") {
                 match serde_json::from_value::<InsightQuota>(value.clone()) {
                     Ok(decoded) => insight_quota = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "insight_quota",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "insight_quota", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("unlocked_perceptions") {
                 match serde_json::from_value::<UnlockedPerceptions>(value.clone()) {
                     Ok(decoded) => unlocked_perceptions = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "unlocked_perceptions",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "unlocked_perceptions", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("insight_modifiers") {
                 match serde_json::from_value::<InsightModifiers>(value.clone()) {
                     Ok(decoded) => insight_modifiers = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "insight_modifiers",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "insight_modifiers", error)
+                    }
                 }
             }
         } else if player_state.is_some() {
@@ -928,12 +892,9 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 match legacy_meridian_bundle::decode_meridian_severed(value.clone(), bundle_version)
                 {
                     Ok(decoded) => severed_permanent = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "meridian_severed",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "meridian_severed", error)
+                    }
                 }
             }
         }
@@ -944,12 +905,9 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             if let Some(value) = persisted_bundle.get("poison_toxicity") {
                 match serde_json::from_value::<PoisonToxicity>(value.clone()) {
                     Ok(decoded) => poison_toxicity = decoded,
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "poison_toxicity",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "poison_toxicity", error)
+                    }
                 }
             }
             if let Some(value) = persisted_bundle.get("digestion_load") {
@@ -960,12 +918,9 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                             .capacity
                             .max(DigestionLoad::for_realm(cultivation.realm).capacity);
                     }
-                    Err(error) => warn_cultivation_decode_and_block_writeback(
-                        username.0.as_str(),
-                        "digestion_load",
-                        error,
-                        &mut cultivation_bundle_load_failed,
-                    ),
+                    Err(error) => {
+                        warn_cultivation_decode(username.0.as_str(), "digestion_load", error)
+                    }
                 }
             }
         }
@@ -1032,9 +987,6 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             severed_permanent,
         ));
         entity_commands.insert((poison_toxicity, digestion_load, intrinsic_race));
-        if cultivation_bundle_load_failed {
-            entity_commands.insert(CultivationBundleLoadFailed);
-        }
         // 转世必须无条件换掉寿元组件——`restored_lifespan` 里躺着的是刚才那个已终结角色
         // 耗尽的 120/120，`restored_lifespan.is_none()` 在这条分支恒为 false（attach_player_state
         // 已经把它挂上了），若不加 `|| reincarnation.is_some()` 这份 exhausted 值会原样留在
@@ -1120,22 +1072,9 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     }
 }
 
-fn warn_cultivation_decode_and_block_writeback(
-    username: &str,
-    slice: &str,
-    error: serde_json::Error,
-    load_failed: &mut bool,
-) {
-    *load_failed = true;
+fn warn_cultivation_decode(username: &str, slice: &str, error: serde_json::Error) {
     tracing::warn!(
-        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}; refusing cultivation bundle writeback for this session"
-    );
-}
-
-fn warn_cultivation_wire_decode(username: &str, slice: &str, error: &str, load_failed: &mut bool) {
-    *load_failed = true;
-    tracing::warn!(
-        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}; refusing cultivation bundle writeback for this session"
+        "[bong][cultivation] failed to decode persisted {slice} slice for `{username}`: {error}"
     );
 }
 
@@ -1641,7 +1580,7 @@ mod tests {
 
     use crate::body_plan::{RaceId, RaceRegistry};
     use crate::combat::components::Lifecycle;
-    use crate::cultivation::components::{encode_persisted_cultivation, ColorKind, ContamSource};
+    use crate::cultivation::components::{ColorKind, ContamSource};
     use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
         load_active_tribulation, load_ascension_quota, persist_active_tribulation,
@@ -1653,76 +1592,6 @@ mod tests {
     use crate::world::dimension::DimensionKind;
     use valence::prelude::App;
     use valence::testing::create_mock_client;
-
-    #[test]
-    fn cultivation_wire_accepts_valid_snapshot_and_preserves_non_qi_fields() {
-        let value = serde_json::json!({
-            "realm": "Solidify",
-            "qi_current": 4.0,
-            "qi_max": 10.0,
-            "qi_max_frozen": 2.0,
-            "last_qi_zero_at": 99,
-            "pending_material_bonus": 1.5,
-            "composure": 0.6,
-            "composure_recover_rate": 0.002,
-            "race": "human"
-        });
-
-        let decoded = decode_persisted_cultivation(value).expect("valid wire should hydrate");
-        assert_eq!(decoded.realm, Realm::Solidify);
-        assert_eq!(decoded.qi_snapshot().current, 4.0);
-        assert_eq!(decoded.qi_snapshot().max, 10.0);
-        assert_eq!(decoded.qi_snapshot().frozen, Some(2.0));
-        assert_eq!(decoded.last_qi_zero_at, Some(99));
-        assert_eq!(decoded.pending_material_bonus, 1.5);
-        assert_eq!(decoded.composure, 0.6);
-        assert_eq!(decoded.race, RaceId::new(crate::body_plan::HUMAN_RACE_ID));
-    }
-
-    #[test]
-    fn cultivation_wire_defaults_missing_legacy_race_to_human() {
-        let value = serde_json::json!({
-            "realm": "Awaken",
-            "qi_current": 0.0,
-            "qi_max": 10.0,
-            "qi_max_frozen": null,
-            "last_qi_zero_at": null,
-            "pending_material_bonus": 0.0,
-            "composure": 1.0,
-            "composure_recover_rate": 0.001
-        });
-
-        let decoded = decode_persisted_cultivation(value).expect("legacy wire should hydrate");
-        assert_eq!(decoded.race, RaceId::new(crate::body_plan::HUMAN_RACE_ID));
-    }
-
-    #[test]
-    fn cultivation_wire_rejects_every_invalid_qi_snapshot() {
-        let invalid_qi = [
-            (-1.0, 10.0, None),
-            (11.0, 10.0, None),
-            (1.0, -1.0, None),
-            (1.0, 10.0, Some(5.000_001)),
-        ];
-
-        for (current, max, frozen) in invalid_qi {
-            let value = serde_json::json!({
-                "realm": "Awaken",
-                "qi_current": current,
-                "qi_max": max,
-                "qi_max_frozen": frozen,
-                "last_qi_zero_at": null,
-                "pending_material_bonus": 0.0,
-                "composure": 1.0,
-                "composure_recover_rate": 0.001,
-                "race": "human"
-            });
-            assert!(
-                decode_persisted_cultivation(value).is_err(),
-                "invalid snapshot current={current} max={max} frozen={frozen:?} must fail closed"
-            );
-        }
-    }
 
     fn temp_persistence_settings(test_name: &str) -> (PersistenceSettings, std::path::PathBuf) {
         let temp_root = std::env::temp_dir().join(format!(
@@ -1836,85 +1705,6 @@ mod tests {
             .expect("joined client should receive a LifespanComponent");
 
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
-    }
-
-    #[test]
-    fn joined_client_marks_any_corrupt_known_sibling_and_preserves_durable_bundle() {
-        let (settings, root) = temp_persistence_settings("corrupt-sibling-writeback-guard");
-        let username = "CorruptSibling";
-        let life_record = LifeRecord::new(canonical_player_id(username));
-        crate::persistence::persist_player_cultivation_bundle(
-            &settings,
-            username,
-            &Cultivation {
-                realm: Realm::Spirit,
-                ..Default::default()
-            },
-            &MeridianSystem::default(),
-            &QiColor::default(),
-            &Karma::default(),
-            &Contamination::default(),
-            &life_record,
-            &PracticeLog::default(),
-            &InsightQuota::default(),
-            &UnlockedPerceptions::default(),
-            &InsightModifiers::new(),
-            None,
-            &MeridianSeveredPermanent::default(),
-            None,
-            None,
-        )
-        .expect("seeding cultivation bundle should succeed");
-
-        let connection =
-            rusqlite::Connection::open(settings.db_path()).expect("fixture sqlite should open");
-        let baseline_json: String = connection
-            .query_row(
-                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
-                rusqlite::params![username],
-                |row| row.get(0),
-            )
-            .expect("seeded cultivation bundle should query");
-        let mut corrupt_bundle: serde_json::Value =
-            serde_json::from_str(&baseline_json).expect("seeded bundle should be valid JSON");
-        corrupt_bundle["karma"] = serde_json::json!({ "weight": "not-a-number" });
-        let corrupt_json =
-            serde_json::to_string(&corrupt_bundle).expect("corrupt fixture should serialize");
-        connection
-            .execute(
-                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
-                rusqlite::params![corrupt_json, username],
-            )
-            .expect("corrupt sibling fixture should persist");
-        drop(connection);
-
-        let mut app = App::new();
-        app.insert_resource(settings.clone());
-        app.add_systems(Update, attach_cultivation_to_joined_clients);
-        let (client_bundle, _helper) = create_mock_client(username);
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.update();
-
-        assert!(
-            app.world()
-                .get::<CultivationBundleLoadFailed>(entity)
-                .is_some(),
-            "a corrupt known sibling must mark the whole cultivation bundle non-writable"
-        );
-        assert_eq!(
-            app.world().get::<Cultivation>(entity).unwrap().realm,
-            Realm::Spirit,
-            "valid siblings may hydrate for play, but the marker must prevent default fallback writeback"
-        );
-        let durable_after = crate::persistence::load_player_cultivation_bundle(&settings, username)
-            .expect("durable bundle should remain readable")
-            .expect("durable bundle row must remain");
-        assert_eq!(
-            durable_after["karma"], corrupt_bundle["karma"],
-            "join-time hydration must not overwrite a corrupt sibling with its default value"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2957,12 +2747,11 @@ mod tests {
         username: &str,
         realm: Realm,
     ) {
-        let mut cultivation_value =
-            serde_json::to_value(encode_persisted_cultivation(&Cultivation {
-                realm,
-                ..Default::default()
-            }))
-            .expect("persisted cultivation must serialize to JSON");
+        let mut cultivation_value = serde_json::to_value(Cultivation {
+            realm,
+            ..Default::default()
+        })
+        .expect("Cultivation must serialize to JSON");
         cultivation_value
             .as_object_mut()
             .expect("Cultivation serializes to a JSON object")

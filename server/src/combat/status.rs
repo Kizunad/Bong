@@ -10,7 +10,7 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::LifeRecord;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZHENMAI_PARRY_RECOVERY_MOVE_SPEED_MULTIPLIER};
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -325,7 +325,6 @@ pub fn combat_pill_stamina_status_tick(
     clock: Res<CombatClock>,
     mut actors: Query<StaminaStatusActorItem<'_>>,
     mut zones: Option<valence::prelude::ResMut<ZoneRegistry>>,
-    mut ledger: valence::prelude::ResMut<WorldQiAccount>,
     mut qi_transfers: Option<valence::prelude::ResMut<valence::prelude::Events<QiTransfer>>>,
 ) {
     if !clock.tick.is_multiple_of(STATUS_EFFECT_TICK_INTERVAL_TICKS) {
@@ -335,7 +334,7 @@ pub fn combat_pill_stamina_status_tick(
     let dt = STATUS_EFFECT_TICK_INTERVAL_TICKS as f32
         / crate::combat::components::TICKS_PER_SECOND as f32;
     for (
-        _entity,
+        entity,
         status_effects,
         mut stamina,
         position,
@@ -432,25 +431,20 @@ pub fn combat_pill_stamina_status_tick(
         };
         let drained = cultivation.qi_current.min(amount);
         if drained <= QI_EPSILON {
+            cultivation.qi_current = 0.0;
             continue;
         }
-        let outcome = release_qi_amount_to_zone(
-            &mut cultivation,
+        cultivation.qi_current = (cultivation.qi_current - drained).max(0.0);
+        release_qi_amount_to_zone(
+            entity,
             drained,
             position,
             current_dimension,
             life_record,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             "combat_pill_stamina_status",
         );
-        if let Err(error) = outcome {
-            tracing::warn!(
-                ?error,
-                "[bong][combat] stamina status qi release failed closed"
-            );
-        }
     }
 }
 
@@ -1156,7 +1150,6 @@ mod tests {
         });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<crate::qi_physics::QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, combat_pill_stamina_status_tick);
         let zone_before = app
             .world()
@@ -1235,7 +1228,6 @@ mod tests {
         app.insert_resource(CombatClock {
             tick: STATUS_EFFECT_TICK_INTERVAL_TICKS,
         });
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, combat_pill_stamina_status_tick);
 
         let entity = app

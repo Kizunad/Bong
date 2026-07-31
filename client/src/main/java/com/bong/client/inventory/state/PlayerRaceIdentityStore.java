@@ -91,6 +91,15 @@ public final class PlayerRaceIdentityStore {
         return !formRaceId.isBlank();
     }
 
+    /** 断线时清空本会话身份快照。 */
+    public static void clearOnDisconnect() {
+        raceId = "";
+        formRaceId = "";
+        formBodyPlanId = "";
+        intrinsicIsHumanoid = false;
+        formIsHumanoid = false;
+    }
+
     public static void resetForTests() {
         raceId = "";
         formRaceId = "";

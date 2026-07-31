@@ -1,23 +1,38 @@
 package com.bong.client;
 
+import com.bong.client.animation.AnimationLayerManager;
+import com.bong.client.animation.BongAnimationPlayer;
+import com.bong.client.animation.BongAnimationRegistry;
+import com.bong.client.animation.BongPunchCombo;
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.fauna.FaunaActionBridge;
 import com.bong.client.fauna.RatQiTierHandler;
 import com.bong.client.daozhan.DaoZhanDisguiseHandler;
 import com.bong.client.spider.SpiderDisguiseHandler;
+import com.bong.client.audio.NpcFootstepAudioController;
 import com.bong.client.audio.SoundRecipePlayer;
-import com.bong.client.craft.CraftStore;
+import com.bong.client.botany.BotanyHudBootstrap;
+import com.bong.client.combat.CombatHudBootstrap;
+import com.bong.client.combat.inspect.TechniquesListPanel;
+import com.bong.client.combat.inspect.WeaponTreasurePanel;
+import com.bong.client.combat.juice.CastFovController;
+import com.bong.client.combat.juice.CombatJuiceSystem;
 import com.bong.client.dandao.MutationPayloadHandler;
 import com.bong.client.dandao.MutationVisualState;
 import com.bong.client.environment.EnvironmentEffectController;
 import com.bong.client.hud.BongHudStateSnapshot;
 import com.bong.client.hud.BongHudStateStore;
 import com.bong.client.hud.BongToast;
-import com.bong.client.hud.DuguV2HudStateStore;
-import com.bong.client.hud.SearchHudStateStore;
+import com.bong.client.hud.MorphCastVignetteState;
+import com.bong.client.hud.PillBuffHudPlanner;
 import com.bong.client.identity.IdentityPanelStateStore;
+import com.bong.client.iris.BongShaderState;
+import com.bong.client.lifecycle.SessionScopedStoreRegistry;
+import com.bong.client.loop.HomeSequence;
+import com.bong.client.movement.MovementKeybindings;
 import com.bong.client.network.AmbientZoneHandler;
 import com.bong.client.network.AudioEventRouter;
+import com.bong.client.network.InventoryMoveRejectedHandler;
 import com.bong.client.network.LocustSwarmWarningHandler;
 import com.bong.client.network.QiAttritionPayload;
 import com.bong.client.network.ServerDataDispatch;
@@ -25,15 +40,11 @@ import com.bong.client.network.ServerDataEnvelope;
 import com.bong.client.network.ServerDataRouter;
 import com.bong.client.network.VfxEventRouter;
 import com.bong.client.npc.NpcLodHandler;
-import com.bong.client.npc.NpcLodStore;
 import com.bong.client.npc.NpcMetadataHandler;
-import com.bong.client.npc.NpcMetadataStore;
 import com.bong.client.npc.NpcBubbleHandler;
 import com.bong.client.npc.NpcDialogueBubbleRenderer;
 import com.bong.client.npc.NpcMoodHandler;
-import com.bong.client.npc.NpcMoodStore;
-import com.bong.client.visual.particle.BongVfxParticleBridge;
-import com.bong.client.visual.particle.QiAttritionVfxPlayer;
+import com.bong.client.season.SeasonVisualController;
 import com.bong.client.state.NarrationState;
 import com.bong.client.state.PlayerStateStore;
 import com.bong.client.state.RealmCollapseHudStateStore;
@@ -43,12 +54,15 @@ import com.bong.client.state.VisualEffectState;
 import com.bong.client.state.ZoneState;
 import com.bong.client.tiandao.TiandaoPresencePayloadHandler;
 import com.bong.client.tsy.TsyBossHealthHandler;
-import com.bong.client.tsy.TsyBossHealthStore;
 import com.bong.client.tsy.TsyDeathVfxHandler;
-import com.bong.client.tsy.TsyDeathVfxStore;
 import com.bong.client.ui.ClientConnectionStatusStore;
+import com.bong.client.ui.ScreenTransitionController;
 import com.bong.client.ui.UiOpenScreens;
 import com.bong.client.visual.VisualEffectController;
+import com.bong.client.visual.particle.BongVfxParticleBridge;
+import com.bong.client.visual.particle.DeadDropBreakPlayer;
+import com.bong.client.visual.particle.QiAttritionVfxPlayer;
+import com.bong.client.visual.particle.WorldVfxDemoBootstrap;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -1117,86 +1131,55 @@ public class BongNetworkHandler {
     }
 
     static void clearClientStateOnDisconnect() {
-        RealmCollapseHudStateStore.clearOnDisconnect();
-        NpcMetadataStore.clearAll();
-        NpcLodStore.clearAll();
-        NpcMoodStore.clearAll();
-        NpcDialogueBubbleRenderer.clear();
-        TsyBossHealthStore.reset();
-        TsyDeathVfxStore.reset();
-        com.bong.client.hud.CoffinStateStore.clear();
-        com.bong.client.gathering.GatheringSessionStore.clearOnDisconnect();
-        com.bong.client.audio.MusicStateMachine.instance().clear();
-        MutationVisualState.reset();
-        com.bong.client.combat.baomai.v4.CrackReadingHudStateStore.clear();
-        com.bong.client.combat.baomai.v4.ResonanceLockHudStateStore.clear();
-        // plan-combat-skill-feedback-bridges-v1 P3 — 断线时清理虚蚀视觉状态
-        com.bong.client.visual.VoidErosionVisualStore.reset();
-        // plan-fauna-mimic-spider-v1 P2 — 断线时清理伪装蛛列表
-        SpiderDisguiseHandler.clearOnDisconnect();
-        // plan-devour-rat-model P2 — 断线时清理噬元鼠吸元档位表
-        // （entity id 会被下个 session 重新分配给别的实体，留着会串档）
-        RatQiTierHandler.clearOnDisconnect();
-        // plan-daozhan-v1 P1 — 断线时清理道伥伪装列表
-        DaoZhanDisguiseHandler.clearOnDisconnect();
-        // plan-fauna-stitched-beast-v1 P3 — 断线时清理幻觉层状态
-        com.bong.client.fauna.HallucinationLayerStore.clearOnDisconnect();
-        // plan-dying-elder-v1 P3 — 断线时清理垂死大能遭遇状态
-        com.bong.client.dying_elder.DyingElderEncounterStore.clearOnDisconnect();
-        // F19 fix — 断线时清理天道临在状态；此前十余个 store 都在这里清理，唯独
-        // TiandaoPresenceStore 漏掉，导致断线重连后旧 presence（watch/pressure/
-        // tribulation/annihilate vignette）继续渲染/播放。
-        com.bong.client.tiandao.TiandaoPresenceStore.clear();
-        // plan-bughunt-hud-state-session-reset — 断线时重置生产 HUD snapshot（zoneState +
-        // visualEffectState）；此前 static BongHudStateStore 不在这份清理清单里，导致上一
-        // server 的区域 overlay/atmosphere 与 HUD tint/相机/FOV 视觉特效跨 session 残留，
-        // 直到新服首个 zone_info 到达或旧 visual effect 自然过期。
-        BongHudStateStore.clear();
-        // plan-bughunt-search-hud-stuck-v1 — 搜刮 HUD 是静态 store；断线时无 server
-        // payload 能替新 session 主动清掉旧 SEARCHING/terminal flash，必须随统一清理链复位。
-        SearchHudStateStore.clearOnDisconnect();
-        // plan-era-state-v1 P3 — 断线时重置时代天象状态
-        com.bong.client.era.EraAmbianceState.reset();
-        // plan-agent-ui-data-v1 P1 — 断线时清理天道 UI 面板状态
-        com.bong.client.agentui.AgentUiStore.clear();
-        // plan-halfstep-rechallenge-integration-v1 P0 — 断线时清理半步重渡触发状态
-        com.bong.client.combat.store.HalfStepRechallengeStore.clear();
-        // F9 跨层修复 — 断线时清理出生引导棺坐标缓存；不同 server 的棺位置不同，
-        // 留着旧坐标会让 reconnect 后短暂窗口内用错误坐标误判/漏判引导棺。
-        com.bong.client.coffin.TutorialCoffinPosStore.clearOnDisconnect();
-        // plan-remains-suite P0 — 断线时清理遗骸缓存；不同 server 的遗骸完全无关，
-        // 留着旧快照会让 reconnect 后 G 键短暂命中一具已经不存在的遗骸。
-        com.bong.client.inventory.state.RemainsStore.clearOnDisconnect();
-        // plan-bughunt-dropped-loot-session-leak — 断线时清理地面掉落物缓存；此前
-        // DroppedItemStore.clearOnDisconnect() 定义了却从未被调用，导致切服/重连后
-        // 在新 server 首个 dropped_loot_sync 抵达前，旧 server 的掉落物坐标会被当
-        // 前 world 渲染 billboard、G 键还会带着旧 instanceId 发 pickup 请求。
-        com.bong.client.inventory.state.DroppedItemStore.clearOnDisconnect();
-        // plan-craft-session-reconnect-lock-v1 P0 — craft store 是静态跨屏状态；
-        // 断线不清会把旧 active session 带进新连接，导致手搓/制作台主操作永久灰掉。
-        CraftStore.clear();
-        // plan-bughunt-client-toast-cross-session-leak-v1 P0 — BongToast.activeToast
-        // 是静态单槽，只在自然过期后自清；断线不清会让上一 server 未过期的 warning/
-        // era/event/inventory toast 在 reconnect 后的首几秒继续渲染，串成跨 session 泄漏。
-        BongToast.clearOnDisconnect();
-        // plan-bughunt-client-identity-panel-stale-session-v1 — IdentityPanelStateStore
-        // 此前没有生产态清理入口，断线不清会让 HUD 角标和刚打开的身份面板短暂展示上一局
-        // 身份数据；面板一旦在旧快照上 init 完，按钮回调还会冻结在旧 identityId 上。
-        IdentityPanelStateStore.clearOnDisconnect();
-        // plan-bughunt-client-false-skin-cross-session-v1 — FalseSkinHudStateStore 此前只有
-        // resetForTests()，生产态断线清理清单里完全没有它。server 的 false_skin_state 只在
-        // Changed/RemovedComponents 时增量发包，断线切 session 不会有任何 payload 覆盖旧
-        // 快照，会让上一局的伪皮层数块（FalseSkinStackHud）和污染负载条（ContamLoadHud）
-        // 无限跨 session 残留，直到再次收到一条 false_skin_state。
-        com.bong.client.combat.store.FalseSkinHudStateStore.clearOnDisconnect();
-        // plan-bughunt-dugu-v2-hud-disconnect-bleed-v1 P0 — DuguV2HudStateStore 此前只有
-        // resetForTests()，生产态断线清理清单里完全没有它。server 的 dugu_v2_skill_cast /
-        // dugu_v2_self_cure / dugu_v2_shroud_active / permanent_qi_max_decay_applied bridge
-        // 只在毒蛊 v2 事件发生时推增量/状态，没有 join/disconnect reset payload；revealRisk
-        // 无 expiry 字段、selfRevealed 是 sticky merge，新 session 若没再触发毒蛊 v2 事件也不
-        // 会有 payload 覆盖旧快照，导致上一局的“暴露 xx%”“自蕴 xx% 已露”或遮蔽 tint 无限期
-        // 跨 session 残留到下一局。
-        DuguV2HudStateStore.clearOnDisconnect();
+        SessionScopedStoreRegistry.clearAllOnDisconnect();
+
+        runDisconnectCleanups(
+            () -> EnvironmentEffectController.clearOnDisconnect(),
+            () -> BongShaderState.clearOnDisconnect(),
+            () -> CastFovController.clearOnDisconnect(),
+            () -> CombatJuiceSystem.clearOnDisconnect(),
+            () -> CombatHudBootstrap.clearOnDisconnect(),
+            () -> MovementKeybindings.clearOnDisconnect(),
+            () -> BotanyHudBootstrap.clearOnDisconnect(),
+            () -> TechniquesListPanel.clearOnDisconnect(),
+            () -> WeaponTreasurePanel.clearOnDisconnect(),
+            () -> HomeSequence.clearOnDisconnect(),
+            () -> InventoryMoveRejectedHandler.clearOnDisconnect(),
+            () -> PillBuffHudPlanner.clearOnDisconnect(),
+            () -> MorphCastVignetteState.clearOnDisconnect(),
+            () -> SeasonVisualController.clearOnDisconnect(),
+            () -> ScreenTransitionController.clearOnDisconnect(),
+            () -> WorldVfxDemoBootstrap.clearOnDisconnect(),
+            () -> DeadDropBreakPlayer.clearOnDisconnect(),
+            () -> NpcFootstepAudioController.clearOnDisconnect(),
+            () -> BongAnimationRegistry.clearOnDisconnect(),
+            () -> NpcDialogueBubbleRenderer.clear(),
+            () -> com.bong.client.audio.MusicStateMachine.instance().clear(),
+            () -> SoundRecipePlayer.instance().clearOnDisconnect(),
+            () -> BongAnimationPlayer.clearOnDisconnect(),
+            () -> AnimationLayerManager.clearOnDisconnect(),
+            () -> BongPunchCombo.clearOnDisconnect(),
+            () -> MutationVisualState.reset(),
+            () -> SpiderDisguiseHandler.clearOnDisconnect(),
+            () -> RatQiTierHandler.clearOnDisconnect(),
+            () -> DaoZhanDisguiseHandler.clearOnDisconnect(),
+            () -> com.bong.client.era.EraAmbianceState.reset(),
+            () -> BongToast.clearOnDisconnect()
+        );
+    }
+
+    static void runDisconnectCleanups(Runnable... cleanups) {
+        for (int index = 0; index < cleanups.length; index++) {
+            try {
+                cleanups[index].run();
+            } catch (RuntimeException exception) {
+                BongClient.LOGGER.error(
+                    "Failed to clear client disconnect adjunct at index {}",
+                    index,
+                    exception
+                );
+            }
+        }
     }
 
     private static void logNoOp(ServerDataRouter.RouteResult result) {

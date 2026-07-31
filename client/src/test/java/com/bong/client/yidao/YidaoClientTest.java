@@ -4,6 +4,8 @@ import com.bong.client.network.ServerDataRouter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -13,6 +15,27 @@ class YidaoClientTest {
     void resetStores() {
         YidaoHudStateStore.resetForTests();
         YidaoNpcAiStateStore.resetForTests();
+    }
+
+    @Test
+    void clearOnDisconnect_clearsHudAndNpcAiSnapshots() {
+        YidaoHudStateStore.replace(new YidaoHudStateStore.Snapshot(
+            "npc:old-doctor", 7, 48.0f, 3.5, "life_extension", List.of("old-patient"),
+            0.5f, 1.25, 1, 2, 0
+        ));
+        YidaoNpcAiStateStore.upsert(new YidaoNpcAiStateStore.Snapshot(
+            "npc:old-doctor", "meridian_repair", 3, 9, false
+        ));
+
+        YidaoHudStateStore.clearOnDisconnect();
+        YidaoNpcAiStateStore.clearOnDisconnect();
+
+        assertFalse(YidaoHudStateStore.snapshot().active(),
+            "断线必须清掉旧会话的医道 HUD，避免新会话显示旧患者、业力或技能");
+        assertEquals(YidaoHudStateStore.Snapshot.EMPTY, YidaoHudStateStore.snapshot());
+        assertEquals(0, YidaoNpcAiStateStore.activeCount(),
+            "断线必须清掉所有旧会话医者 NPC AI 快照");
+        assertEquals(YidaoNpcAiStateStore.Snapshot.EMPTY, YidaoNpcAiStateStore.snapshot("npc:old-doctor"));
     }
 
     @Test

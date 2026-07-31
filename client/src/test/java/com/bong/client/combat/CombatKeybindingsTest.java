@@ -80,6 +80,46 @@ class CombatKeybindingsTest {
             "tick consumer 必须读取 registrar 返回并安装的同一 F9 绑定");
     }
 
+
+    @Test
+    void disconnectCleanupDropsOldPressesButPreservesBindingsAndIntentHandler() {
+        Map<String, KeyBinding> installedByDefinition = new LinkedHashMap<>();
+        CombatKeybindings.installBindings(definition -> {
+            KeyBinding installed = new KeyBinding(
+                "test.reconnect." + definition.getTranslationKey(),
+                definition.getDefaultKey().getCategory(),
+                definition.getDefaultKey().getCode(),
+                definition.getCategory()
+            );
+            installedByDefinition.put(definition.getTranslationKey(), installed);
+            return installed;
+        });
+        List<Integer> dispatchedSlots = new ArrayList<>();
+        CombatKeybindings.setQuickSlotHandler(dispatchedSlots::add);
+        CombatKeybindings.setHeldEdgesForTests(true, true);
+        KeyBinding installedQuickSlot = installedByDefinition.get("key.bong-client.quick_slot_1");
+        KeyBinding.onKeyPressed(installedQuickSlot.getDefaultKey());
+
+        CombatKeybindings.clearOnDisconnect();
+        CombatKeybindings.clearOnDisconnect();
+
+        assertEquals(false, CombatKeybindings.spellVolumeHeldLastTickForTests(),
+            "断线清理必须清掉旧 session 的 spell-volume held edge");
+        assertEquals(false, CombatKeybindings.shieldHeldLastTickForTests(),
+            "断线清理必须清掉旧 session 的 shield held edge");
+        assertEquals(0, CombatKeybindings.consumeQuickSlotPresses(),
+            "旧 session 已排队但未消费的快捷槽按键不得跨重连派发");
+        assertEquals(List.of(), dispatchedSlots,
+            "排空旧 session 按键时不得调用长期 quick-slot handler");
+
+        KeyBinding.onKeyPressed(installedQuickSlot.getDefaultKey());
+
+        assertEquals(1, CombatKeybindings.consumeQuickSlotPresses(),
+            "断线后既有 keybinding wiring 仍须消费 fresh session 的快捷槽按键");
+        assertEquals(List.of(0), dispatchedSlots,
+            "data-only cleanup 不得清掉长期 quick-slot handler");
+    }
+
     private static boolean usesReservedFunctionKey(KeyBinding binding) {
         int code = binding.getDefaultKey().getCode();
         return code >= GLFW.GLFW_KEY_F1 && code <= GLFW.GLFW_KEY_F9;

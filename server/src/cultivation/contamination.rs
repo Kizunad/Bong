@@ -21,7 +21,7 @@ use super::components::{Contamination, CrackCause, Cultivation, MeridianCrack, M
 use super::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
 use super::tick::CultivationClock;
 use crate::qi_physics::constants::QI_EPSILON;
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 use valence::prelude::Res;
@@ -96,7 +96,6 @@ fn apply_purge_cost(contam: &mut super::components::ContamSource, accepted_cost:
 #[allow(clippy::type_complexity)]
 pub fn contamination_tick(
     clock: Res<CultivationClock>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
@@ -157,26 +156,16 @@ pub fn contamination_tick(
             let want_cost = purge_rate.min(entry.amount) * DRAIN_RATIO;
             let (_purge, planned_cost, _cleared) =
                 preview_purge_step(entry.amount, budget, purge_rate);
-            let accepted_cost = match release_qi_amount_to_zone(
-                &mut cultivation,
+            let accepted_cost = release_qi_amount_to_zone(
+                entity,
                 planned_cost,
                 position,
                 current_dimension,
                 life_record,
                 zones.as_deref_mut(),
-                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 "contamination_purge",
-            ) {
-                Ok(outcome) => outcome.source_debited,
-                Err(error) => {
-                    tracing::warn!(
-                        ?error,
-                        "[bong][cultivation] contamination purge qi release failed closed"
-                    );
-                    0.0
-                }
-            };
+            );
             if accepted_cost + QI_EPSILON < want_cost {
                 any_qi_deficit = true;
                 if let Some(target_id) = resolve_crack_target(entry.meridian_id.clone(), &meridians)
@@ -195,6 +184,7 @@ pub fn contamination_tick(
                 continue;
             }
             apply_purge_cost(entry, accepted_cost);
+            cultivation.qi_current -= accepted_cost;
         }
 
         contam.entries.retain(|e| e.amount > 1e-9);
@@ -278,7 +268,6 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
 
         let baseline = app
@@ -360,7 +349,6 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
         let before = app
             .world()
@@ -411,7 +399,6 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<CultivationDeathTrigger>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
         let entity = app
             .world_mut()
@@ -449,7 +436,6 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 42 });
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
         let entity = app
             .world_mut()
@@ -533,7 +519,6 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
 
         let before = app
@@ -608,7 +593,6 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
         let entity = spawn_contaminated_player(
             &mut app,
@@ -644,7 +628,6 @@ mod tests {
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, contamination_tick);
         let before = app
             .world()

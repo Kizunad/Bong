@@ -1,4 +1,7 @@
-# plan-bughunt-r10-findings-v1（骨架）
+# plan-bughunt-r10-findings-v1（已归档）
+
+> **归档说明（2026-07-28）**：除本说明与文末 Round bundle triage 外，下列正文完整保留本 plan 在冻结基线 `origin/main @ c625d5a5` 上的原始阶段、决议、测试与审计记录；正文里的 “Active / 骨架 / ⬜ / 开放问题” 是历史状态。当前唯一实施归属以文末 `Finding Mapping` 为准，移交 successor 的条目仍未实施，不因本 bundle 归档而视为完成。
+
 
 > **骨架（草案）**。一句话主题：代码库自检 bug-hunt **round10（末轮）**（fresh origin/main worktree ROOT，角度：HUD 数据喂给完整性 · persistence 往返 · schema sample 对拍 · 最近合并 plan 深挖 · e2e 玩法链）确认的 **6 个新真 bug**——含 **critical：盾牌破盾后 ShieldBlock/ShieldBlocking 状态不清理（破碎盾仍 50% 减伤 + 持续扣体力 + Exhausted 反受硬直惩罚）** + body.guangbo_ticao 熟练度闭环断裂（揭示 r8 jump_height 失效根因）+ 两处关服刷盘盲区 + 2 处 schema source-of-truth 漂移。已对 r1-r9 去重，全部 real-on-main。
 
@@ -49,3 +52,28 @@
 ## 审计来源
 
 bug-hunt round10（**末轮**，workflow，5 系统性角度 finder + 怀疑者对抗 + opus 逐条全树复核，7 候选）。**ROOT = fresh origin/main worktree**（方法论修正后第八轮，也是末轮）。已对 r1-r9 去重。**report-only**：critical 破盾状态泄漏（shield-block-v1）优先；#6 guangbo_ticao 闭环断裂（揭 r8 jump_height 根因）+ #1/#2 关服刷盘 + #3/#4 schema 漂移均局部明确可 fix_pr。**末轮收尾**：HUD/persistence/schema/recent-plan/e2e 系统性角度仍挖出 critical + broken-loop，证明全新角度持续有效；10 轮累计为后续 consume 提供完整 roadmap。
+
+---
+
+## 2026-07-28 Round bundle finding triage
+
+本节是 master §6.16 / §7 一次性 docs-only 归档移交记录；上文未实施 finding 只有在下表登记唯一 owner 后才退出原聚合队列。
+
+## Finding Mapping
+
+| Finding | 当前裁决 / current `file:line` | 分类 | Canonical owner / merged evidence | Absorb list / 文档动作 |
+|---|---|---|---|---|
+| #5 shield-break state leak | `server/src/combat/resolve.rs:1234-1264` 空 offhand fallback wooden shield；`server/src/combat/resolve.rs:1347-1359` 破盾只删物品/emit；`server/src/combat/lifecycle.rs:291-312` stale state 仍 drain | `independent-domain-fix` | successor 短名 `plan-bughunt-shield-break-state-cleanup-v1` | 后续单独 docs PR 立 skeleton；本 PR 不改 defense-hardening 正文 |
+| #6 Guangbo practice producer | `server/src/network/cast_emit.rs:349-353` 当前发送 `GuangboTicaoPracticeEvent`，`server/src/combat/body_conditioning.rs:112-154` 消费并按守恒门增长熟练度 | `already-fixed/invalid`（already-fixed） | `67c647346` / PR #652 | 不归 R9/R10 重构 |
+| #1 mineral exhausted shutdown flush | `server/src/mineral/mod.rs:93-102` 仍只在 Update 注册；节流 persistence 无 Last/AppExit 强刷 | `absorbed-by-track` | `docs/plans-skeleton/plan-refactor-persistence-slices-v1.md`（R3 shutdown-flush 域） | 最小 absorb-list 行补录 mineral finding |
+| #2 zone influence shutdown flush | `server/src/persistence/mod.rs:698-710` 只把 influence persist 注册在 Update、Last 仅刷 zone runtime；`server/src/persistence/mod.rs:953-980` 的 influence snapshot 仍按 300 秒节流 | `absorbed-by-track` | 同一 R3 域 | 既有 absorb-list 已含 `zone-influence-shutdown-flush`；本 PR 不改 active plan 正文 |
+| #3 `DyingElderQi` TypeBox | `agent/packages/schema/src/spiritual-sense.ts:17` 当前含 `DyingElderQi`；`agent/packages/schema/samples/server-data.spiritual-sense-targets.sample.json:12` pin wire literal | `already-fixed/invalid`（already-fixed） | `a64b9f7e1` / PR #704 | 仅归档 |
+| #4 tribulation kind inline union | `agent/packages/schema/src/server-data.ts:105,991-1005` 当前复用 `agent/packages/schema/src/tribulation.ts:7-14` 的 canonical `TribulationKindV1`；`agent/packages/schema/samples/server-data.tribulation-state.jue-bi.sample.json:7` pin `jue_bi` | `already-fixed/invalid`（already-fixed） | `c09de7228` / PR #705 | 仅归档 |
+
+## Finish Evidence
+
+- **落地清单**：shield 记录后续 successor 短名；R3 absorb-list 最小补录 mineral，确认 zone influence 已在既有 absorb-list；不改 defense-hardening 或 standalone active plan 正文；三条 merged 修复结案；bundle 迁入本路径。
+- **关键 commit / PR**：`67c647346`/#652、`a64b9f7e1`/#704、`c09de7228`/#705 均为目标 HEAD 祖先且当前修复存在。
+- **测试结果**：docs-only triage；最终执行 docs static gate + exact-HEAD validator。
+- **跨仓库核验**：shield 为 server 状态+既有 client feedback；shutdown 为 server R3；schema 两项 TypeBox/Rust/client literal 当前对齐。
+- **遗留 / 后续**：#5 等待独立 docs PR 建立 shield successor；#1/#2 由 R3 shutdown-flush 域承接。graceful `Last + AppExit` 只保证 SIGINT/SIGTERM 等正常停服，不宣称覆盖 SIGKILL、进程崩溃或断电。

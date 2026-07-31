@@ -1,5 +1,6 @@
 package com.bong.client.tiandao;
 
+import com.bong.client.lifecycle.SessionScopedStoreRegistry;
 import com.bong.client.network.ServerDataEnvelope;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -87,74 +88,32 @@ class TiandaoPresencePayloadHandlerTest {
         assertFalse(TiandaoPresenceStore.snapshot().active());
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // F19 fix — BongNetworkHandler's DISCONNECT block cleared a dozen-plus
-    // stores but forgot TiandaoPresenceStore, so a stale presence (watch/
-    // pressure/tribulation/annihilate vignette+shake) kept rendering across a
-    // disconnect/reconnect. BongNetworkHandler.register() wires a Fabric
-    // ClientPlayConnectionEvents.DISCONNECT callback that requires a live
-    // Minecraft client instance and cannot be invoked directly from a unit
-    // test; mirrors DyingElderEncounterTest's source-scan pattern used for
-    // the same class of unreachable-from-unit-test wiring.
-    // ──────────────────────────────────────────────────────────────────────
-
     @Test
-    void bongNetworkHandlerClearsTiandaoPresenceStoreOnDisconnect() throws Exception {
-        java.nio.file.Path testClasses = java.nio.file.Path.of("").toAbsolutePath().normalize();
-        java.nio.file.Path clientRoot;
-        if (java.nio.file.Files.isDirectory(testClasses.resolve("src"))) {
-            clientRoot = testClasses;
-        } else if (java.nio.file.Files.isDirectory(testClasses.resolve("client").resolve("src"))) {
-            clientRoot = testClasses.resolve("client");
-        } else {
-            clientRoot = testClasses;
-        }
-        java.nio.file.Path handlerSrc = clientRoot.resolve(
-            "src/main/java/com/bong/client/BongNetworkHandler.java"
-        );
+    void registryClearsTiandaoPresenceAndAllowsTheNextSessionPayload() {
+        String oldSessionPayload = """
+            {"v":1,"type":"tiandao_presence","response":"annihilate","level":88.0,"zone":"old_zone","zone_spirit_qi":0.1,"vignette_rgb":4196352,"vignette_alpha":0.5,"shake_intensity":0.8,"saturation":0.6,"tick":200}
+            """;
         assertTrue(
-            java.nio.file.Files.exists(handlerSrc),
-            "BongNetworkHandler.java must exist at " + handlerSrc.toAbsolutePath()
-                + " — cannot verify F19 fix without source file"
+            TiandaoPresencePayloadHandler.handle(oldSessionPayload, oldSessionPayload.length()).handled(),
+            "测试前必须建立旧 session 的 active presence"
         );
-        String src = java.nio.file.Files.readString(handlerSrc);
+        assertTrue(TiandaoPresenceStore.snapshot().active());
 
-        int disconnectBlockStart = src.indexOf("ClientPlayConnectionEvents.DISCONNECT.register(");
-        assertTrue(
-            disconnectBlockStart >= 0,
-            "expected a ClientPlayConnectionEvents.DISCONNECT.register(...) block in BongNetworkHandler, "
-                + "actual: not found in source"
-        );
-        int disconnectBlockEnd = src.indexOf("ClientPlayConnectionEvents.JOIN.register(", disconnectBlockStart);
-        assertTrue(
-            disconnectBlockEnd > disconnectBlockStart,
-            "expected a JOIN.register(...) block after DISCONNECT.register(...) to bound the disconnect block"
-        );
-        String disconnectBlock = src.substring(disconnectBlockStart, disconnectBlockEnd);
+        SessionScopedStoreRegistry.clearAllOnDisconnect();
 
-        assertTrue(
-            disconnectBlock.contains("clearClientStateOnDisconnect"),
-            "expected the DISCONNECT block to route through BongNetworkHandler.clearClientStateOnDisconnect() "
-                + "so every cross-session store is cleared from one audited helper, actual: helper call not found"
+        assertFalse(
+            TiandaoPresenceStore.snapshot().active(),
+            "P1 registry 必须通过 TiandaoPresenceStore::clear 清掉旧 vignette/shake 状态"
         );
-        int clearHelperStart = src.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(
-            clearHelperStart >= 0,
-            "expected BongNetworkHandler.clearClientStateOnDisconnect() helper to exist after disconnect cleanup "
-                + "was extracted from the Fabric callback"
-        );
-        int clearHelperEnd = src.indexOf("private static void logNoOp", clearHelperStart);
-        assertTrue(
-            clearHelperEnd > clearHelperStart,
-            "expected logNoOp(...) after clearClientStateOnDisconnect() to bound the disconnect cleanup helper"
-        );
-        String clearHelper = src.substring(clearHelperStart, clearHelperEnd);
 
+        String newSessionPayload = """
+            {"v":1,"type":"tiandao_presence","response":"watch","level":12.0,"zone":"new_zone","zone_spirit_qi":0.8,"vignette_rgb":4196352,"vignette_alpha":0.03,"shake_intensity":0.0,"saturation":1.0,"tick":1}
+            """;
         assertTrue(
-            clearHelper.contains("TiandaoPresenceStore.clear()"),
-            "expected clearClientStateOnDisconnect() to call TiandaoPresenceStore.clear() because without it "
-                + "a stale presence vignette/shake survives across disconnect/reconnect (F19 fix), actual: call "
-                + "not found inside the disconnect cleanup helper"
+            TiandaoPresencePayloadHandler.handle(newSessionPayload, newSessionPayload.length()).handled(),
+            "registry 清理不得变成 one-shot gate；新 session payload 必须仍可写入"
         );
+        assertEquals("new_zone", TiandaoPresenceStore.snapshot().zone());
+        assertEquals("watch", TiandaoPresenceStore.snapshot().response());
     }
 }

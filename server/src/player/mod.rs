@@ -5,13 +5,15 @@ pub mod state;
 
 use self::state::{
     canonical_player_id, load_player_slices, save_player_core_slice, save_player_inventory_slice,
-    save_player_known_techniques_slice, save_player_lifespan_slice_with_coffin,
-    save_player_skill_slice, save_player_slices_with_coffin, save_player_slow_slice,
-    LoadedKnownTechniques, PlayerState, PlayerStateAutosaveTimer, PlayerStatePersistence,
+    save_player_known_techniques_slice, save_player_lifecycle_slice,
+    save_player_lifespan_slice_with_coffin, save_player_skill_slice,
+    save_player_slices_with_coffin, save_player_slow_slice, LoadedKnownTechniques, PlayerState,
+    PlayerStateAutosaveTimer, PlayerStatePersistence,
 };
 use crate::coffin::{coffin_lower_from_player_position, CoffinComponent, CoffinRegistry};
-use crate::combat::components::{UnlockedStyles, TICKS_PER_SECOND};
+use crate::combat::components::{Lifecycle, UnlockedStyles, TICKS_PER_SECOND};
 use crate::combat::woliu_v2::erosion::VoidErosion;
+use crate::combat::CombatClock;
 use crate::craft::CraftSession;
 use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
@@ -45,6 +47,10 @@ const CORE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 5 * TICKS_PER_SECOND;
 const SLOW_UI_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 const CULTIVATION_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
+// bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 5）：镜像兄弟 slice
+// 的 60s autosave 节奏——硬崩（非 AppExit，没有 flush_connected_players_on_shutdown 兜底）
+// 后该行最多陈旧 60s，而不是任意陈旧到"上一次断线/关服"为止。
+const LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS: u64 = 60 * TICKS_PER_SECOND;
 
 type ClientInitQueryItem<'a> = (
     Entity,
@@ -102,11 +108,6 @@ type CultivationBundleQueryItem<'a> = (
     Option<&'a DigestionLoad>,
 );
 
-type CultivationBundleQueryFilter = (
-    With<Client>,
-    Without<crate::cultivation::CultivationBundleLoadFailed>,
-);
-
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
     app.insert_resource(PlayerStatePersistence::default());
@@ -124,7 +125,8 @@ pub fn register(app: &mut App) {
             autosave_player_slow_and_ui_slices.after(autosave_player_core_slices),
             autosave_player_cultivation_bundles.after(autosave_player_slow_and_ui_slices),
             autosave_player_lifespan_slices.after(autosave_player_cultivation_bundles),
-            flush_changed_player_skills.after(autosave_player_lifespan_slices),
+            autosave_player_lifecycle_slices.after(autosave_player_lifespan_slices),
+            flush_changed_player_skills.after(autosave_player_lifecycle_slices),
             flush_changed_player_known_techniques.after(flush_changed_player_skills),
             flush_changed_player_inventories
                 .after(attach_inventory_to_joined_clients)
@@ -344,13 +346,18 @@ fn tick_player_persistence_timer(mut timer: ResMut<PlayerStateAutosaveTimer>) {
     timer.ticks += 1;
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn despawn_disconnected_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
     mut coffin_registry: Option<ResMut<CoffinRegistry>>,
     mut disconnected_clients: RemovedComponents<Client>,
     settings: Res<PersistenceSettings>,
+    // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：落盘
+    // Lifecycle 时必须记录断连那一刻的 CombatClock.tick 作为跨重启折算 deadline 的锚点
+    // （见 player::state::save_player_lifecycle_slice）。缺省（未注册 CombatClock 的最小化
+    // 测试 app）时按 0 处理。
+    combat_clock: Option<Res<CombatClock>>,
     core_players: Query<(
         &Username,
         &PlayerState,
@@ -363,27 +370,26 @@ pub(crate) fn despawn_disconnected_clients(
         Has<KnownTechniquesLoadFailed>,
         Option<&CoffinComponent>,
         Option<&CraftSession>,
+        Option<&Lifecycle>,
     )>,
-    cultivation_bundle: Query<
-        (
-            &Cultivation,
-            &MeridianSystem,
-            &QiColor,
-            &Karma,
-            &PracticeLog,
-            &Contamination,
-            &LifeRecord,
-            &InsightQuota,
-            &UnlockedPerceptions,
-            &InsightModifiers,
-            Option<&TutorialState>,
-            Option<&MeridianSeveredPermanent>,
-            Option<&PoisonToxicity>,
-            Option<&DigestionLoad>,
-        ),
-        Without<crate::cultivation::CultivationBundleLoadFailed>,
-    >,
+    cultivation_bundle: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &QiColor,
+        &Karma,
+        &PracticeLog,
+        &Contamination,
+        &LifeRecord,
+        &InsightQuota,
+        &UnlockedPerceptions,
+        &InsightModifiers,
+        Option<&TutorialState>,
+        Option<&MeridianSeveredPermanent>,
+        Option<&PoisonToxicity>,
+        Option<&DigestionLoad>,
+    )>,
 ) {
+    let combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
     for entity in disconnected_clients.read() {
         // plan-race-system-v1 P4（决议 §6）—— 下线三条解除易形触发路径之一：断线即刻
         // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
@@ -405,6 +411,7 @@ pub(crate) fn despawn_disconnected_clients(
             known_techniques_load_failed,
             coffin,
             craft_session,
+            lifecycle,
         )) = core_players.get(entity)
         {
             let last_dimension = current_dimension
@@ -492,6 +499,22 @@ pub(crate) fn despawn_disconnected_clients(
                     );
                 }
             }
+            // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须落盘死亡/
+            // 复活状态机，否则重连时 attach_combat_bundle_to_joined_clients 只能盲插
+            // Lifecycle::default()，把 NearDeath/AwaitingRevival 玩家重置成满状态新角色。
+            if let Some(lifecycle) = lifecycle {
+                if let Err(error) = save_player_lifecycle_slice(
+                    &persistence,
+                    username.0.as_str(),
+                    lifecycle,
+                    combat_clock_tick,
+                ) {
+                    tracing::warn!(
+                        "[bong][player] failed to save lifecycle state for disconnected client `{}`: {error}",
+                        username.0,
+                    );
+                }
+            }
         } else {
             tracing::warn!(
                 "[bong][player] disconnected client entity {entity:?} had no username/PlayerState/Position to persist before cleanup"
@@ -513,6 +536,10 @@ fn flush_connected_players_on_shutdown(
     persistence: Res<PlayerStatePersistence>,
     mut app_exit: EventReader<AppExit>,
     settings: Res<PersistenceSettings>,
+    // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：同
+    // despawn_disconnected_clients，关服 flush 落盘 Lifecycle 时同样要记录 CombatClock.tick
+    // 锚点。
+    combat_clock: Option<Res<CombatClock>>,
     players: Query<
         (
             Entity,
@@ -527,33 +554,32 @@ fn flush_connected_players_on_shutdown(
             Has<KnownTechniquesLoadFailed>,
             Option<&CoffinComponent>,
             Option<&CraftSession>,
+            Option<&Lifecycle>,
         ),
         With<Client>,
     >,
-    cultivation_bundle: Query<
-        (
-            &Cultivation,
-            &MeridianSystem,
-            &QiColor,
-            &Karma,
-            &PracticeLog,
-            &Contamination,
-            &LifeRecord,
-            &InsightQuota,
-            &UnlockedPerceptions,
-            &InsightModifiers,
-            Option<&TutorialState>,
-            Option<&MeridianSeveredPermanent>,
-            Option<&PoisonToxicity>,
-            Option<&DigestionLoad>,
-        ),
-        Without<crate::cultivation::CultivationBundleLoadFailed>,
-    >,
+    cultivation_bundle: Query<(
+        &Cultivation,
+        &MeridianSystem,
+        &QiColor,
+        &Karma,
+        &PracticeLog,
+        &Contamination,
+        &LifeRecord,
+        &InsightQuota,
+        &UnlockedPerceptions,
+        &InsightModifiers,
+        Option<&TutorialState>,
+        Option<&MeridianSeveredPermanent>,
+        Option<&PoisonToxicity>,
+        Option<&DigestionLoad>,
+    )>,
 ) {
     if app_exit.read().next().is_none() {
         return;
     }
 
+    let combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
     for (
         entity,
         username,
@@ -567,6 +593,7 @@ fn flush_connected_players_on_shutdown(
         known_techniques_load_failed,
         coffin,
         craft_session,
+        lifecycle,
     ) in &players
     {
         let last_dimension = current_dimension
@@ -654,6 +681,22 @@ fn flush_connected_players_on_shutdown(
                 );
             }
         }
+        // bughunt player-lifecycle-relog-death-consequence-wipe：关服时同样要落盘死亡/
+        // 复活状态机（同 despawn_disconnected_clients 的写路径），否则重启后重连会命中
+        // 老档缺失行、回退到 Lifecycle::default() 抹掉关服前的濒死/待复活状态。
+        if let Some(lifecycle) = lifecycle {
+            if let Err(error) = save_player_lifecycle_slice(
+                &persistence,
+                username.0.as_str(),
+                lifecycle,
+                combat_clock_tick,
+            ) {
+                tracing::warn!(
+                    "[bong][player] failed to save lifecycle state during shutdown flush for `{}`: {error}",
+                    username.0,
+                );
+            }
+        }
     }
 }
 
@@ -723,7 +766,7 @@ fn autosave_player_slow_and_ui_slices(
 fn autosave_player_cultivation_bundles(
     settings: Res<PersistenceSettings>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<CultivationBundleQueryItem<'_>, CultivationBundleQueryFilter>,
+    players: Query<CultivationBundleQueryItem<'_>, With<Client>>,
 ) {
     if !timer.ticks.is_multiple_of(CULTIVATION_FLUSH_INTERVAL_TICKS) {
         return;
@@ -812,6 +855,48 @@ fn autosave_player_lifespan_slices(
 
     tracing::info!(
         "[bong][player] flushed {saved_count} lifespan slice(s) after {LIFESPAN_SLICE_FLUSH_INTERVAL_TICKS} ticks"
+    );
+}
+
+/// bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 5）：Lifecycle 之前
+/// 只在断线 (`despawn_disconnected_clients`) / 关服 (`flush_connected_players_on_shutdown`)
+/// 两条路径落盘，硬崩（进程被杀、非 `AppExit` 的正常关服路径）时这两条路径都不会触发，
+/// 该行会残留到"上一次真正的断线/关服"为止——可能是几小时前的死亡状态。镜像兄弟 slice
+/// （lifespan/core/cultivation）既有的 autosave 节奏，每 60s 兜底落盘一次，硬崩后最多陈旧
+/// 60s。
+fn autosave_player_lifecycle_slices(
+    persistence: Res<PlayerStatePersistence>,
+    timer: Res<PlayerStateAutosaveTimer>,
+    combat_clock: Option<Res<CombatClock>>,
+    players: Query<(&Username, &Lifecycle), With<Client>>,
+) {
+    if !timer
+        .ticks
+        .is_multiple_of(LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS)
+    {
+        return;
+    }
+
+    let combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
+    let mut saved_count = 0usize;
+
+    for (username, lifecycle) in &players {
+        match save_player_lifecycle_slice(
+            &persistence,
+            username.0.as_str(),
+            lifecycle,
+            combat_clock_tick,
+        ) {
+            Ok(_) => saved_count += 1,
+            Err(error) => tracing::warn!(
+                "[bong][player] 60s lifecycle flush failed for `{}`: {error}",
+                username.0,
+            ),
+        }
+    }
+
+    tracing::info!(
+        "[bong][player] flushed {saved_count} lifecycle slice(s) after {LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS} ticks"
     );
 }
 
@@ -1096,46 +1181,6 @@ mod tests {
             .expect("player_cultivation row should exist")
     }
 
-    fn insert_cultivation_bundle_fixture(app: &mut App, entity: Entity, cultivation: Cultivation) {
-        app.world_mut().entity_mut(entity).insert((
-            cultivation,
-            MeridianSystem::default(),
-            QiColor::default(),
-            Karma::default(),
-            PracticeLog::default(),
-            Contamination::default(),
-            LifeRecord::new(crate::player::state::canonical_player_id("Azure")),
-            InsightQuota::default(),
-            UnlockedPerceptions::default(),
-            InsightModifiers::new(),
-        ));
-    }
-
-    fn persist_cultivation_bundle_fixture(
-        settings: &PersistenceSettings,
-        cultivation: &Cultivation,
-    ) {
-        persist_player_cultivation_bundle(
-            settings,
-            "Azure",
-            cultivation,
-            &MeridianSystem::default(),
-            &QiColor::default(),
-            &Karma::default(),
-            &Contamination::default(),
-            &LifeRecord::new(crate::player::state::canonical_player_id("Azure")),
-            &PracticeLog::default(),
-            &InsightQuota::default(),
-            &UnlockedPerceptions::default(),
-            &InsightModifiers::new(),
-            None,
-            &MeridianSeveredPermanent::default(),
-            None,
-            None,
-        )
-        .expect("baseline cultivation bundle should persist");
-    }
-
     #[test]
     fn player_flushes_core_slow_inventory_and_ui_slices() {
         let (persistence, data_dir, db_path) = sqlite_persistence("flush-slices");
@@ -1261,163 +1306,116 @@ mod tests {
         let _ = fs::remove_dir_all(&data_dir);
     }
 
+    // ── bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 5）──
+    //
+    // Lifecycle 之前只在断线/关服两条路径落盘；硬崩（非 AppExit）时两条路径都不触发，该行
+    // 会残留到"上一次真正的断线/关服"为止。镜像兄弟 slice 的 60s autosave 节奏兜底。
+
     #[test]
-    fn cultivation_bundle_load_failure_blocks_periodic_autosave_writeback() {
-        let (_persistence, data_dir, db_path) =
-            sqlite_persistence("cultivation-load-failed-autosave");
-        let settings = PersistenceSettings::with_paths(
+    fn lifecycle_slice_flushes_periodically_at_interval_boundary() {
+        use crate::combat::components::LifecycleState;
+
+        let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-autosave-flush");
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
             &db_path,
             data_dir.join("deceased"),
-            "player-cultivation-load-failed-autosave",
-        );
-        let persisted = Cultivation {
-            qi_current: 7.0,
-            qi_max: 21.0,
-            ..Default::default()
-        };
-        persist_cultivation_bundle_fixture(&settings, &persisted);
-        let durable_before = read_cultivation_json(&db_path);
-
-        let mut app = App::new();
-        app.insert_resource(settings);
+            "player-lifecycle-autosave-flush",
+        ));
         app.insert_resource(PlayerStateAutosaveTimer {
-            ticks: CULTIVATION_FLUSH_INTERVAL_TICKS - 1,
+            ticks: LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS - 1,
+        });
+        app.insert_resource(CombatClock { tick: 999 });
+        app.add_systems(
+            Update,
+            (
+                tick_player_persistence_timer,
+                autosave_player_lifecycle_slices.after(tick_player_persistence_timer),
+            ),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            fortune_remaining: 2,
+            near_death_deadline_tick: Some(1_020),
+            ..Lifecycle::default()
+        });
+
+        // timer.ticks 恰好落在 INTERVAL_TICKS 边界上（LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS - 1
+        // + tick_player_persistence_timer 的 +1 = LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS），
+        // 60s autosave 必须在这一 tick 触发落盘。
+        app.update();
+
+        let lifecycle_json = read_lifecycle_json(&db_path);
+        let persisted: Lifecycle =
+            serde_json::from_str(&lifecycle_json).expect("persisted lifecycle_json should decode");
+        assert_eq!(
+            persisted.state,
+            LifecycleState::NearDeath,
+            "60s autosave 边界 tick 必须落盘当前 Lifecycle 状态"
+        );
+        assert_eq!(persisted.fortune_remaining, 2);
+        assert_eq!(
+            read_lifecycle_combat_clock_tick_at_save(&db_path),
+            999,
+            "autosave 落盘时也必须记录当时的 CombatClock.tick 锚点"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn lifecycle_slice_does_not_flush_before_interval_boundary() {
+        use crate::combat::components::LifecycleState;
+
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("lifecycle-autosave-no-early-flush");
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-autosave-no-early-flush",
+        ));
+        // ticks - 1 后面还差 2 才到 INTERVAL_TICKS，tick_player_persistence_timer 的 +1
+        // 只能凑到 INTERVAL_TICKS - 1，不该触发落盘。
+        app.insert_resource(PlayerStateAutosaveTimer {
+            ticks: LIFECYCLE_SLICE_FLUSH_INTERVAL_TICKS.saturating_sub(2),
         });
         app.add_systems(
             Update,
             (
                 tick_player_persistence_timer,
-                autosave_player_cultivation_bundles.after(tick_player_persistence_timer),
+                autosave_player_lifecycle_slices.after(tick_player_persistence_timer),
             ),
         );
+
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
-        insert_cultivation_bundle_fixture(
-            &mut app,
-            entity,
-            Cultivation {
-                qi_current: 19.0,
-                qi_max: 30.0,
-                ..Default::default()
-            },
-        );
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(crate::cultivation::CultivationBundleLoadFailed);
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            ..Lifecycle::default()
+        });
 
         app.update();
 
+        let connection = Connection::open(&db_path).expect("sqlite db should open");
+        let row_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM player_lifecycle WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("row count query should succeed");
         assert_eq!(
-            read_cultivation_json(&db_path),
-            durable_before,
-            "periodic autosave must not overwrite a bundle after any known sibling failed to load"
+            row_count, 0,
+            "距 60s autosave 边界还差 1 tick，不应该提前落盘（否则边界判定逻辑被破坏，\
+             要么漏判要么误判）"
         );
-        let _ = fs::remove_dir_all(&data_dir);
-    }
 
-    #[test]
-    fn cultivation_bundle_load_failure_blocks_disconnect_writeback() {
-        let (persistence, data_dir, db_path) =
-            sqlite_persistence("cultivation-load-failed-disconnect");
-        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-        let settings = PersistenceSettings::with_paths(
-            &db_path,
-            data_dir.join("deceased"),
-            "player-cultivation-load-failed-disconnect",
-        );
-        let persisted = Cultivation {
-            qi_current: 7.0,
-            qi_max: 21.0,
-            ..Default::default()
-        };
-        persist_cultivation_bundle_fixture(&settings, &persisted);
-        let durable_before = read_cultivation_json(&db_path);
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.insert_resource(settings);
-        app.add_systems(Update, despawn_disconnected_clients);
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(PlayerState::default());
-        insert_cultivation_bundle_fixture(
-            &mut app,
-            entity,
-            Cultivation {
-                qi_current: 19.0,
-                qi_max: 30.0,
-                ..Default::default()
-            },
-        );
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(crate::cultivation::CultivationBundleLoadFailed)
-            .remove::<Client>();
-
-        app.update();
-
-        assert_eq!(
-            read_cultivation_json(&db_path),
-            durable_before,
-            "disconnect cleanup must preserve the durable bundle after a join-time sibling decode failure"
-        );
-        assert!(app.world().get::<Despawned>(entity).is_some());
-        let _ = fs::remove_dir_all(&data_dir);
-    }
-
-    #[test]
-    fn cultivation_bundle_load_failure_blocks_shutdown_writeback() {
-        let (persistence, data_dir, db_path) =
-            sqlite_persistence("cultivation-load-failed-shutdown");
-        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
-            .expect("baseline player state should persist");
-        let settings = PersistenceSettings::with_paths(
-            &db_path,
-            data_dir.join("deceased"),
-            "player-cultivation-load-failed-shutdown",
-        );
-        let persisted = Cultivation {
-            qi_current: 7.0,
-            qi_max: 21.0,
-            ..Default::default()
-        };
-        persist_cultivation_bundle_fixture(&settings, &persisted);
-        let durable_before = read_cultivation_json(&db_path);
-
-        let mut app = App::new();
-        app.insert_resource(persistence);
-        app.insert_resource(settings);
-        app.add_event::<AppExit>();
-        app.add_systems(Last, flush_connected_players_on_shutdown);
-        let (client_bundle, _helper) = create_mock_client("Azure");
-        let entity = app.world_mut().spawn(client_bundle).id();
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(PlayerState::default());
-        insert_cultivation_bundle_fixture(
-            &mut app,
-            entity,
-            Cultivation {
-                qi_current: 19.0,
-                qi_max: 30.0,
-                ..Default::default()
-            },
-        );
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(crate::cultivation::CultivationBundleLoadFailed);
-        app.world_mut().send_event(AppExit::Success);
-
-        app.update();
-
-        assert_eq!(
-            read_cultivation_json(&db_path),
-            durable_before,
-            "shutdown flush must preserve the durable bundle after a join-time sibling decode failure"
-        );
         let _ = fs::remove_dir_all(&data_dir);
     }
 
@@ -1551,6 +1549,202 @@ mod tests {
                 .is_none(),
             "下线（RemovedComponents<Client>）应通过 release_morph_state 的 deferred \
              command 移除 MorphState，实测组件仍在场"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    fn read_lifecycle_json(db_path: &PathBuf) -> String {
+        let connection = Connection::open(db_path).expect("sqlite db should open");
+        connection
+            .query_row(
+                "SELECT lifecycle_json FROM player_lifecycle WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_lifecycle row should exist")
+    }
+
+    // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：读取
+    // `combat_clock_tick_at_save` 锚点列——落盘时的 CombatClock.tick，用于跨重启折算 deadline
+    // （见 player::state::translate_lifecycle_deadline_tick_across_restart）。
+    fn read_lifecycle_combat_clock_tick_at_save(db_path: &PathBuf) -> u64 {
+        let connection = Connection::open(db_path).expect("sqlite db should open");
+        connection
+            .query_row(
+                "SELECT combat_clock_tick_at_save FROM player_lifecycle WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("player_lifecycle row should exist")
+    }
+
+    #[test]
+    fn disconnect_flush_persists_lifecycle_state_before_cleanup() {
+        // bughunt player-lifecycle-relog-death-consequence-wipe：断线必须把死亡/复活
+        // 状态机落盘（同 disconnect_auto_releases_morph_state_before_persist_snapshot 的
+        // RemovedComponents<Client> 触发模式），否则重连时
+        // attach_combat_bundle_to_joined_clients 只能盲插 Lifecycle::default()，把
+        // AwaitingRevival + fortune_remaining=0 的濒死玩家重置成满状态新角色，完全绕过
+        // 渡劫概率判定与永久终结风险。
+        use crate::combat::components::{LifecycleState, RevivalDecision};
+
+        let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-disconnect-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-disconnect-flush",
+        ));
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([1.0, 70.0, 1.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            character_id: "offline:Azure:char-1".to_string(),
+            death_count: 4,
+            fortune_remaining: 0,
+            last_death_tick: Some(1_000),
+            last_revive_tick: Some(500),
+            spawn_anchor: Some([9.0, 64.0, -3.0]),
+            spawn_anchor_damaged: true,
+            near_death_deadline_tick: None,
+            awaiting_decision: Some(RevivalDecision::Tribulation { chance: 0.2 }),
+            revival_decision_deadline_tick: Some(1_600),
+            weakened_until_tick: None,
+            state: LifecycleState::AwaitingRevival,
+        });
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        let lifecycle_json = read_lifecycle_json(&db_path);
+        let persisted: Lifecycle =
+            serde_json::from_str(&lifecycle_json).expect("persisted lifecycle_json should decode");
+
+        assert_eq!(persisted.character_id, "offline:Azure:char-1");
+        assert_eq!(persisted.death_count, 4);
+        assert_eq!(
+            persisted.fortune_remaining, 0,
+            "断线前 fortune_remaining=0（运气已耗尽）必须原样落盘，不能被写路径悄悄补回默认值 3"
+        );
+        assert_eq!(
+            persisted.state,
+            LifecycleState::AwaitingRevival,
+            "断线前的 AwaitingRevival 决策窗口状态必须落盘，不能丢失/降级"
+        );
+        assert_eq!(
+            persisted.awaiting_decision,
+            Some(RevivalDecision::Tribulation { chance: 0.2 }),
+            "待决策的渡劫结果（含永久终结风险）必须原样落盘"
+        );
+        assert_eq!(persisted.revival_decision_deadline_tick, Some(1_600));
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn disconnect_flush_persists_combat_clock_tick_anchor_for_deadline_translation() {
+        // bughunt player-lifecycle-relog-death-consequence-wipe（OPUS 返工要求 1）：断线
+        // flush 必须把断连那一刻的 CombatClock.tick 写进 combat_clock_tick_at_save 列——
+        // 这是跨重启折算 deadline 的锚点，缺了它 `load_player_lifecycle_slice` 就没法把
+        // 落盘时的绝对 tick 换算到重启后的新 tick 空间。
+        use crate::combat::components::{LifecycleState, RevivalDecision};
+
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("lifecycle-disconnect-clock-anchor");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-disconnect-clock-anchor",
+        ));
+        app.insert_resource(CombatClock { tick: 500_000 });
+        app.add_systems(Update, despawn_disconnected_clients);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([1.0, 70.0, 1.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            state: LifecycleState::AwaitingRevival,
+            awaiting_decision: Some(RevivalDecision::Fortune { chance: 1.0 }),
+            revival_decision_deadline_tick: Some(501_200),
+            ..Lifecycle::default()
+        });
+
+        app.world_mut().entity_mut(entity).remove::<Client>();
+        app.update();
+
+        assert_eq!(
+            read_lifecycle_combat_clock_tick_at_save(&db_path),
+            500_000,
+            "断线 flush 必须把当时的 CombatClock.tick(500_000) 写进 combat_clock_tick_at_save，\
+             否则重连读档时无法折算 deadline 是否已跨重启过期"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn shutdown_flush_persists_combat_clock_tick_anchor_for_deadline_translation() {
+        // 同上，覆盖 flush_connected_players_on_shutdown 这条写路径（关服而非断线）。
+        use crate::combat::components::LifecycleState;
+
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("lifecycle-shutdown-clock-anchor");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::default();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-shutdown-clock-anchor",
+        ));
+        app.insert_resource(CombatClock { tick: 777_000 });
+        app.add_systems(Last, flush_connected_players_on_shutdown);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([64.0, 80.0, -12.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            near_death_deadline_tick: Some(777_600),
+            ..Lifecycle::default()
+        });
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        assert_eq!(
+            read_lifecycle_combat_clock_tick_at_save(&db_path),
+            777_000,
+            "关服 flush 必须把当时的 CombatClock.tick(777_000) 写进 combat_clock_tick_at_save"
         );
 
         let _ = fs::remove_dir_all(&data_dir);
@@ -1876,6 +2070,64 @@ mod tests {
             &dash_known_techniques(0.42),
             "DB 恢复后的新 join 应完整加载原功法行（dash 0.42）"
         );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn shutdown_flush_persists_lifecycle_state_without_disconnect() {
+        // bughunt player-lifecycle-relog-death-consequence-wipe：关服时的 flush 路径
+        // （flush_connected_players_on_shutdown）与断线路径共享同一个漏洞面，必须同样
+        // 落盘 Lifecycle，否则重启后重连会命中老档缺失行、回退到 Lifecycle::default()
+        // 抹掉关服前的濒死/待复活状态。这里专注 NearDeath 分支（AwaitingRevival +
+        // RevivalDecision 已由 disconnect_flush_persists_lifecycle_state_before_cleanup
+        // 覆盖，避免重复断言）。
+        use crate::combat::components::LifecycleState;
+
+        let (persistence, data_dir, db_path) = sqlite_persistence("lifecycle-shutdown-flush");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut app = App::default();
+        app.insert_resource(persistence);
+        app.insert_resource(PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-lifecycle-shutdown-flush",
+        ));
+        app.add_systems(Last, flush_connected_players_on_shutdown);
+
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([64.0, 80.0, -12.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(entity).insert(PlayerState {
+            karma: 0.0,
+            inventory_score: 0.0,
+        });
+        app.world_mut().entity_mut(entity).insert(make_inventory());
+        app.world_mut().entity_mut(entity).insert(Lifecycle {
+            state: LifecycleState::NearDeath,
+            fortune_remaining: 1,
+            near_death_deadline_tick: Some(2_000),
+            awaiting_decision: None,
+            ..Lifecycle::default()
+        });
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        let lifecycle_json = read_lifecycle_json(&db_path);
+        let persisted: Lifecycle =
+            serde_json::from_str(&lifecycle_json).expect("persisted lifecycle_json should decode");
+
+        assert_eq!(
+            persisted.state,
+            LifecycleState::NearDeath,
+            "关服前的 NearDeath 濒死状态必须落盘"
+        );
+        assert_eq!(persisted.fortune_remaining, 1);
+        assert_eq!(persisted.near_death_deadline_tick, Some(2_000));
+        assert_eq!(persisted.awaiting_decision, None);
 
         let _ = fs::remove_dir_all(&data_dir);
     }

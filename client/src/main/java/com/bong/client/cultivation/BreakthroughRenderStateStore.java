@@ -24,6 +24,11 @@ public final class BreakthroughRenderStateStore {
         return STATE.get();
     }
 
+    /** 断线时仅清除本会话的渲染快照。 */
+    public static void clearOnDisconnect() {
+        STATE.set(null);
+    }
+
     public static void resetForTests() {
         STATE.set(null);
     }

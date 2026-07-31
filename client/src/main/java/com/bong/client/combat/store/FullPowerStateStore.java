@@ -41,6 +41,12 @@ public final class FullPowerStateStore {
         INSTANCE.lastRelease = event == null ? ReleaseEvent.empty() : event;
     }
 
+    public static void clearOnDisconnect() {
+        INSTANCE.charging = ChargingState.inactive();
+        INSTANCE.exhausted = ExhaustedState.inactive();
+        INSTANCE.lastRelease = ReleaseEvent.empty();
+    }
+
     public static void resetForTests() {
         INSTANCE.charging = ChargingState.inactive();
         INSTANCE.exhausted = ExhaustedState.inactive();

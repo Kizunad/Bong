@@ -7,9 +7,27 @@ import path from 'node:path';
 const workflowPath = new URL('../workflows/review-next.yml', import.meta.url);
 const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.yml', import.meta.url);
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
-const policyPath = new URL('../review-policy/bong.v1.json', import.meta.url);
-const centralSha = '417e55e55737b8fe42803b97f85b59fce8bbfb2a';
-const centralWorkflowSha256 = '498aa3dc8d6d7258ccb34787a4127cf54d848473fe9e21ffd512fb81ee65c8c4';
+const canaryContractPath = '.github/workflows/provider-canary.yml';
+const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
+const centralSha = '3683431a33465c4fd62fb5c1dfd4fb2b8cef9421';
+const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
+const centralWorkflowSha256 = '66ef54e4ff879c1041d4697da74e3667115dfdab373693dfc9fab6089972eac3';
+
+const expectedCanaryInterface = `  workflow_call:
+    inputs:
+      review_base_url:
+        description: Claude-compatible provider base URL
+        required: true
+        type: string
+      worker_timeout_ms:
+        description: Per-model canary timeout
+        required: false
+        default: 60000
+        type: number
+    secrets:
+      review_api_key:
+        description: Caller-owned provider credential
+        required: true`;
 
 const expectedCentralInterface = `  workflow_call:
     inputs:
@@ -70,6 +88,35 @@ const expectedCentralJobs = Object.freeze({
       issues: write`,
 });
 
+const expectedPolicyLevels = Object.freeze({
+  'plan-intent': 'major',
+  'production-wiring': 'major',
+  'three-layer-contract': 'major',
+  'schema-source-of-truth': 'major',
+  'wire-format-bridge': 'major',
+  'qi-conservation': 'blocker',
+  'qi-constants': 'major',
+  'qi-era-decay': 'blocker',
+  'worldview-realms': 'major',
+  'worldview-economy': 'major',
+  'worldview-naming': 'major',
+  'zone-identity': 'major',
+  'layer-registry': 'major',
+  'raster-contract': 'major',
+  'bevy-ecs-boundary': 'major',
+  'no-vanilla-entity-hack': 'major',
+  'bot-client-tolerance': 'major',
+  'skill-full-stack-av': 'major',
+  'conditional-hud': 'major',
+  'player-animation-contract': 'major',
+  'resourcepack-binding': 'major',
+  'inventory-category': 'major',
+  'saturated-tests': 'major',
+  'test-failure-honesty': 'major',
+  'minimal-maintainable-change': 'major',
+  'quality-improvements': 'suggestion',
+});
+
 const expectedCallerJobs = `jobs:
   central-review-shadow:
     if: >-
@@ -82,10 +129,10 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@417e55e55737b8fe42803b97f85b59fce8bbfb2a
+    uses: Kizunad/review/.github/workflows/review.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
-      policy_path: .github/review-policy/bong.v1.json
+      policy_path: .github/review-policy/bong.v2.json
       review_base_url: \${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
       shadow: true
       max_diff_chars: 40000
@@ -124,9 +171,13 @@ function exactSection(yaml, startMarker, endMarker, name) {
   return yaml.slice(start, end).trimEnd();
 }
 
+function assertExactWorkflowCall(yaml, expected, name) {
+  const actual = exactSection(yaml, '  workflow_call:', '\npermissions:', `${name} workflow_call`);
+  assert.equal(actual, expected, `${name} workflow_call interface drifted`);
+}
+
 function assertExactCentralInterface(yaml) {
-  const actual = exactSection(yaml, '  workflow_call:', '\npermissions:', 'central workflow_call');
-  assert.equal(actual, expectedCentralInterface, 'central workflow_call interface drifted');
+  assertExactWorkflowCall(yaml, expectedCentralInterface, 'central');
 }
 
 function topLevelJobNames(yaml) {
@@ -202,14 +253,14 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@417e55e55737b8fe42803b97f85b59fce8bbfb2a/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
   assert.match(yaml, /shadow: true/);
   assert.match(yaml, /worker_timeout_ms: 120000/);
   assert.match(yaml, /circuit_manual_retry: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/);
-  assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v1\.json/);
+  assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v2\.json/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
 });
 
@@ -229,6 +280,13 @@ test('consumer CI checks out and tests the exact central workflow contract', asy
     yaml.includes(`[[ "$(git -C _central-contract rev-parse HEAD)" == '${centralSha}' ]]`),
     'consumer CI must verify the checked-out central OID',
   );
+  assert.match(yaml, new RegExp(`ref: ${providerCanarySha}`));
+  assert.match(yaml, new RegExp(`path: ${providerCanarySha}`));
+  assert.ok(
+    yaml.includes(`[[ "$(git -C ${providerCanarySha} rev-parse HEAD)" == '${providerCanarySha}' ]]`),
+    'consumer CI must verify the checked-out provider canary OID',
+  );
+  assert.match(yaml, new RegExp(`PROVIDER_CANARY_CONTRACT_DIR=${providerCanarySha}`));
   assert.match(yaml, /bubblewrap_0\.9\.0-1ubuntu0\.1_amd64\.deb/);
   assert.match(yaml, /1b506492bd9c7fd0cdb4f02ac822f1d3e336b0aead5113c1239baf8db5db562a/);
   assert.match(yaml, /sha256sum --check --strict/);
@@ -290,10 +348,10 @@ test('central publication contract rejects every input and secret set drift', ()
 test('caller publication contract rejects mapping, secret, and permission drift', () => {
   assert.doesNotThrow(() => assertExactCallerJobs(callerFixture()));
   for (const [name, mutation] of [
-    ['missing input', expectedCallerJobs.replace('      policy_path: .github/review-policy/bong.v1.json\n', '')],
+    ['missing input', expectedCallerJobs.replace('      policy_path: .github/review-policy/bong.v2.json\n', '')],
     ['unknown input', expectedCallerJobs.replace(
-      '      policy_path: .github/review-policy/bong.v1.json',
-      '      policy_path: .github/review-policy/bong.v1.json\n      unknown_input: value',
+      '      policy_path: .github/review-policy/bong.v2.json',
+      '      policy_path: .github/review-policy/bong.v2.json\n      unknown_input: value',
     )],
     ['missing secret', expectedCallerJobs.replace('      review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}', '')],
     ['unknown secret', expectedCallerJobs.replace(
@@ -356,6 +414,56 @@ ${expectedCentralJobs.finalize}
   }
 });
 
+test('checked-out provider canary release matches its caller interface', async (context) => {
+  const canaryRoot = process.env.PROVIDER_CANARY_CONTRACT_DIR;
+  if (!canaryRoot) {
+    context.skip('PROVIDER_CANARY_CONTRACT_DIR is required for the provider canary contract check');
+    return;
+  }
+  assert.equal(
+    path.basename(canaryRoot),
+    providerCanarySha,
+    'provider canary contract directory must be named for the immutable release SHA',
+  );
+  const centralYaml = await readFile(path.join(canaryRoot, canaryContractPath), 'utf8');
+  assertExactWorkflowCall(centralYaml, expectedCanaryInterface, 'provider canary');
+  assert.match(centralYaml, /^permissions: \{\}$/m);
+  assert.match(centralYaml, /^    permissions:\n      # Used only to resolve this reusable workflow's immutable referenced_workflows SHA\.\n      actions: read$/m);
+  assert.doesNotMatch(centralYaml, /contents:|pull-requests:|issues:/);
+});
+
+test('provider canary publication contract rejects every input and secret set drift', () => {
+  const fixture = `name: fixture\n\non:\n${expectedCanaryInterface}\n\npermissions: {}\n`;
+  assert.doesNotThrow(() => assertExactWorkflowCall(fixture, expectedCanaryInterface, 'provider canary'));
+  for (const [name, mutation] of [
+    ['required input addition', expectedCanaryInterface.replace(
+      '      worker_timeout_ms:',
+      '      added_required_input:\n        required: true\n        type: string\n      worker_timeout_ms:',
+    )],
+    ['input removal', expectedCanaryInterface.replace(
+      '      worker_timeout_ms:\n        description: Per-model canary timeout\n        required: false\n        default: 60000\n        type: number\n',
+      '',
+    )],
+    ['input type drift', expectedCanaryInterface.replace('        type: number', '        type: string')],
+    ['input default drift', expectedCanaryInterface.replace('        default: 60000', '        default: 120000')],
+    ['required secret addition', expectedCanaryInterface.replace(
+      '      review_api_key:',
+      '      added_required_secret:\n        required: true\n      review_api_key:',
+    )],
+    ['secret removal', expectedCanaryInterface.replace(
+      '    secrets:\n      review_api_key:\n        description: Caller-owned provider credential\n        required: true',
+      '    secrets: {}',
+    )],
+  ]) {
+    const mutated = fixture.replace(expectedCanaryInterface, mutation);
+    assert.throws(
+      () => assertExactWorkflowCall(mutated, expectedCanaryInterface, 'provider canary'),
+      { message: /provider canary workflow_call interface drifted/ },
+      name,
+    );
+  }
+});
+
 test('provider canary remains dispatch-only, minimally permissioned, and secret-isolated', async () => {
   const yaml = await canaryWorkflow();
   assert.match(yaml, /^  workflow_dispatch:$/m);
@@ -365,7 +473,12 @@ test('provider canary remains dispatch-only, minimally permissioned, and secret-
   assert.doesNotMatch(yaml, /contents:|pull-requests:|issues:/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/,
+    new RegExp(`^    uses: Kizunad/review/\\.github/workflows/provider-canary\\.yml@${providerCanarySha}$`, 'm'),
+  );
+  assert.equal(
+    (yaml.match(/uses: Kizunad\/review\/\.github\/workflows\/provider-canary\.yml@[0-9a-f]{40}/g) ?? []).length,
+    1,
+    'provider canary must use exactly one immutable central release',
   );
   assert.doesNotMatch(yaml, /provider-canary\.yml@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
@@ -379,18 +492,18 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
   assert.deepEqual(Object.keys(value).sort(), [
     'minorFindingsRequestChanges', 'project', 'rules', 'version',
   ]);
-  assert.equal(value.version, 'project-review-policy.v1');
+  assert.equal(value.version, 'project-review-policy.v2');
   assert.equal(value.project, 'Kizunad/Bong');
-  assert.equal(value.minorFindingsRequestChanges, true);
+  assert.equal(value.minorFindingsRequestChanges, false);
   assert.ok(value.rules.length >= 20 && value.rules.length <= 256);
 
   const ids = new Set();
   for (const rule of value.rules) {
-    assert.deepEqual(Object.keys(rule).sort(), ['id', 'severity', 'text']);
+    assert.deepEqual(Object.keys(rule).sort(), ['id', 'level', 'text']);
     assert.match(rule.id, /^[a-z][a-z0-9-]{0,79}$/);
     assert.ok(!ids.has(rule.id), `duplicate policy rule: ${rule.id}`);
     ids.add(rule.id);
-    assert.ok(['blocker', 'major', 'minor'].includes(rule.severity));
+    assert.ok(['blocker', 'major', 'minor', 'suggestion'].includes(rule.level));
     assert.ok(rule.text.length >= 1 && rule.text.length <= 4000);
   }
 
@@ -405,14 +518,80 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
     'layer-registry',
     'skill-full-stack-av',
     'saturated-tests',
+    'quality-improvements',
   ]) {
     assert.ok(ids.has(required), `missing Bong policy rule: ${required}`);
   }
+
+  const byId = Object.fromEntries(
+    value.rules.map((rule) => [rule.id, rule]),
+  );
+  assert.deepEqual(
+    Object.fromEntries(value.rules.map((rule) => [rule.id, rule.level])),
+    expectedPolicyLevels,
+    'Bong policy rule set and levels must remain explicit',
+  );
+  assert.equal(byId['qi-conservation'].level, 'blocker');
+  assert.match(
+    byId['qi-conservation'].text,
+    /conservation.*merge blockers/i,
+  );
+  assert.equal(byId['saturated-tests'].level, 'major');
+  for (const requiredContract of [
+    /happy paths/i,
+    /boundaries.*empty.*maximum.*off-by-one/i,
+    /invalid inputs.*every error branch/i,
+    /permission and state preconditions/i,
+    /every enum variant/i,
+    /every state transition.*self or no-op transitions/i,
+    /Schema, enum, and state-machine changes require dedicated positive and negative pin tests/i,
+    /producer-to-wire-to-consumer.*integration test/i,
+    /concrete incorrect implementation/,
+    /falsely claim nonexistent coverage/,
+    /Finer assertions.*already fully protected.*suggestions/i,
+  ]) {
+    assert.match(
+      byId['saturated-tests'].text,
+      requiredContract,
+      `saturated-tests must preserve ${requiredContract}`,
+    );
+  }
+  assert.equal(byId['minimal-maintainable-change'].level, 'major');
+  for (const requiredRisk of [
+    /Compatibility layers without an explicit migration need/i,
+    /speculative abstractions without a present requirement/i,
+    /inconsistent duplicate sources of truth/i,
+    /broad refactors unrelated to the requested outcome/i,
+    /major defects.*before a production failure is observed/i,
+    /unreachable production wiring/i,
+    /non-atomic state/i,
+    /unbounded resource paths/i,
+  ]) {
+    assert.match(
+      byId['minimal-maintainable-change'].text,
+      requiredRisk,
+      `minimal-maintainable-change must preserve ${requiredRisk}`,
+    );
+  }
+  assert.equal(byId['quality-improvements'].level, 'suggestion');
+  assert.match(
+    byId['quality-improvements'].text,
+    /merely restate obvious code.*clearer naming.*optional helper extraction.*finer assertions/s,
+  );
+  assert.match(
+    byId['quality-improvements'].text,
+    /bounded improvements do not gate the review/,
+  );
+  assert.match(
+    byId['quality-improvements'].text,
+    /does not downgrade.*speculative abstractions.*compatibility layers.*duplicate sources of truth.*unrelated scope growth.*missing required contract tests/s,
+  );
 
   const serialized = JSON.stringify(value);
   assert.match(serialized, /醒灵.*引气.*凝脉.*固元.*通灵.*化虚/);
   assert.match(serialized, /骨币/);
   assert.match(serialized, /SPIRIT_QI_TOTAL/);
   assert.match(serialized, /LAYER_REGISTRY/);
+  assert.doesNotMatch(serialized, /"severity"/);
   assert.doesNotMatch(serialized, /(?:^|\W)(?:command|shell|runner|action ref|MCP server)(?:\W|$)/i);
 });

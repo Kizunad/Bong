@@ -163,6 +163,36 @@ public final class CombatKeybindings {
         return consumed;
     }
 
+    /**
+     * Clears only session-bound key state.
+     *
+     * <p>Registered bindings and intent handlers are process-lifetime wiring. They must survive
+     * reconnect; pending presses and held-edge observations belong to the previous session and must
+     * be discarded before a fresh session can consume input.</p>
+     */
+    public static void clearOnDisconnect() {
+        for (KeyBinding quickSlotKey : QUICK_SLOT_KEYS) {
+            while (quickSlotKey != null && quickSlotKey.wasPressed()) {
+                // Drain old-session presses without dispatching them.
+            }
+        }
+        spellVolumeHeldLastTick = false;
+        shieldHeldLastTick = false;
+    }
+
+    static boolean spellVolumeHeldLastTickForTests() {
+        return spellVolumeHeldLastTick;
+    }
+
+    static boolean shieldHeldLastTickForTests() {
+        return shieldHeldLastTick;
+    }
+
+    static void setHeldEdgesForTests(boolean spellVolumeHeld, boolean shieldHeld) {
+        spellVolumeHeldLastTick = spellVolumeHeld;
+        shieldHeldLastTick = shieldHeld;
+    }
+
     static void resetForTests() {
         for (int i = 0; i < QUICK_SLOT_KEYS.length; i++) {
             QUICK_SLOT_KEYS[i] = null;

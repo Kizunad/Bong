@@ -36,7 +36,7 @@ use self::events::{
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::combat::events::{ApplyStatusEffectIntent, DeathEvent, StatusEffectKind};
 use crate::combat::CombatClock;
-use crate::cultivation::components::{Cultivation, Karma, QiFlowError, Realm};
+use crate::cultivation::components::{Cultivation, Karma, Realm};
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::LifespanComponent;
@@ -58,7 +58,7 @@ use crate::player::state::{
     player_username_from_character_id, save_player_shrine_anchor_slice, PlayerState,
     PlayerStatePersistence,
 };
-use crate::qi_physics::ledger::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::ledger::QiTransfer;
 use crate::schema::common::NarrationStyle;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 use crate::schema::social::{
@@ -1802,7 +1802,6 @@ fn handle_spirit_niche_place_requests(
     mut registry: ResMut<SpiritNicheRegistry>,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut vfx_events: Option<ResMut<Events<VfxEventRequest>>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for event in events.read() {
@@ -1871,8 +1870,7 @@ fn handle_spirit_niche_place_requests(
             );
             continue;
         }
-        let mut staged_inventory = inventory.clone();
-        if let Err(error) = consume_item_instance_once(&mut staged_inventory, item_instance_id) {
+        if let Err(error) = consume_item_instance_once(&mut inventory, item_instance_id) {
             tracing::warn!(
                 "[bong][social] spirit niche place rejected for `{}`: consume failed: {error}",
                 lifecycle.character_id
@@ -1900,24 +1898,17 @@ fn handle_spirit_niche_place_requests(
             .find_zone(lookup_dim, position.get())
             .map(|z| z.spirit_qi);
         if let Some(cultivation) = cultivation.as_deref_mut() {
-            if let Err(error) = apply_spirit_niche_negative_qi_cost(
+            apply_spirit_niche_negative_qi_cost(
                 zone_qi,
+                entity,
                 position,
                 current_dimension,
                 life_record,
                 zone_registry.as_deref_mut(),
-                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 cultivation,
-            ) {
-                tracing::warn!(
-                    ?error,
-                    "[bong][social] spirit niche placement qi cost failed closed"
-                );
-                continue;
-            }
+            );
         }
-        *inventory = staged_inventory;
         if let Some(mut lifespan) = lifespan {
             apply_spirit_niche_negative_lifespan_cost(zone_qi, &mut lifespan);
         }
@@ -2295,16 +2286,16 @@ fn niche_place_target_is_close(position: &Position, target: [i32; 3]) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn apply_spirit_niche_negative_qi_cost(
     zone_qi: Option<f64>,
+    entity: Entity,
     position: &Position,
     current_dimension: Option<&CurrentDimension>,
     life_record: Option<&LifeRecord>,
     zones: Option<&mut ZoneRegistry>,
-    ledger: &mut WorldQiAccount,
     qi_transfers: Option<&mut Events<QiTransfer>>,
     cultivation: &mut Cultivation,
-) -> Result<(), QiFlowError> {
+) {
     if !zone_qi.is_some_and(|qi| qi < 0.0) {
-        return Ok(());
+        return;
     }
     let realm_factor = match cultivation.realm {
         Realm::Awaken => 1.0,
@@ -2318,18 +2309,21 @@ fn apply_spirit_niche_negative_qi_cost(
     // 守恒（CodeRabbit #699 Critical）：qi_current clamp 到 0，实际扣减 = min(damage, qi_current)；
     // 必须只回灌实际扣减量，否则 qi_current<damage 时向 zone 多记、凭空创生真元。
     let actual_damage = damage.min(cultivation.qi_current.max(0.0));
+    // Deduct qi from the player, then credit the SAME (actual) amount back to the negative zone so
+    // the ledger stays balanced.  Negative-pressure zones act as sinks and accept incoming
+    // qi (spirit_qi rises toward 0).  This mirrors the pattern used for jiemai_parry and
+    // other skill-cost conservation fixes (see combat/resolve.rs).
+    cultivation.qi_current = (cultivation.qi_current - damage).max(0.0);
     release_qi_amount_to_zone(
-        cultivation,
+        entity,
         actual_damage,
         Some(position),
         current_dimension,
         life_record,
         zones,
-        ledger,
         qi_transfers,
         "spirit_niche_penalty",
-    )?;
-    Ok(())
+    );
 }
 
 fn apply_spirit_niche_negative_lifespan_cost(

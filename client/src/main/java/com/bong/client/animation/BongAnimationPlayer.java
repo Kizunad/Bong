@@ -56,8 +56,8 @@ public final class BongAnimationPlayer {
      *  避免 fade 最后一帧和 removeLayer 撞在同一 tick 上。 */
     private static final int REMOVAL_SAFETY_MARGIN_TICKS = 1;
 
-    /** 嵌套 Map：玩家 UUID → (动画 id → 当前激活的 ModifierLayer)。 */
-    private static final Map<UUID, Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>>> ACTIVE_LAYERS =
+    /** 嵌套 Map：玩家 UUID → (动画 id → 其原始 AnimationStack 上的当前激活层)。 */
+    private static final Map<UUID, Map<Identifier, ActiveLayer>> ACTIVE_LAYERS =
         new HashMap<>();
 
     /**
@@ -142,13 +142,13 @@ public final class BongAnimationPlayer {
         KeyframeAnimationPlayer framePlayer = new KeyframeAnimationPlayer(anim);
         applyFirstPersonRendering(framePlayer, resolution.useFpvArms());
 
-        Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer =
+        Map<Identifier, ActiveLayer> perPlayer =
             ACTIVE_LAYERS.computeIfAbsent(pid, k -> new HashMap<>());
-        ModifierLayer<KeyframeAnimationPlayer> existing = perPlayer.get(animId);
+        ActiveLayer existing = perPlayer.get(animId);
         if (existing != null) {
             // 同 id 重触发：在现有层上淡入替换，连击时这条路径保证平滑过渡——
-            // 不新增 AnimationStack 条目，避免同 animId 叠 N 层
-            existing.replaceAnimationWithFade(
+            // 不新增 AnimationStack 条目，避免同 animId 叠 N 层。
+            existing.layer.replaceAnimationWithFade(
                 AbstractFadeModifier.standardFadeIn(Math.max(0, fadeInTicks), Ease.INOUTSINE),
                 framePlayer
             );
@@ -161,7 +161,7 @@ public final class BongAnimationPlayer {
             layer.addModifierLast(AbstractFadeModifier.standardFadeIn(fadeInTicks, Ease.INOUTSINE));
         }
         stack.addAnimLayer(priority, layer);
-        perPlayer.put(animId, layer);
+        perPlayer.put(animId, new ActiveLayer(stack, layer));
         return true;
     }
 
@@ -282,39 +282,63 @@ public final class BongAnimationPlayer {
         if (stack == null || pid == null || animId == null) {
             return false;
         }
-        Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer = ACTIVE_LAYERS.get(pid);
+        Map<Identifier, ActiveLayer> perPlayer = ACTIVE_LAYERS.get(pid);
         if (perPlayer == null) {
             return false;
         }
-        ModifierLayer<KeyframeAnimationPlayer> layer = perPlayer.remove(animId);
-        if (layer == null) {
+        ActiveLayer active = perPlayer.remove(animId);
+        if (active == null) {
             return false;
+        }
+        if (perPlayer.isEmpty()) {
+            ACTIVE_LAYERS.remove(pid);
         }
         if (fadeOutTicks > 0) {
             // fade 到 null 等价于淡出到默认姿态
-            layer.replaceAnimationWithFade(
+            active.layer.replaceAnimationWithFade(
                 AbstractFadeModifier.standardFadeIn(fadeOutTicks, Ease.INOUTSINE),
                 null
             );
             // fade 完成后再摘层，避免 fade 过程中 AnimationStack 突然没了这条
-            // 引用导致渲染瞬间跳帧
+            // 引用导致渲染瞬间跳帧。层必须从自己的原始 stack 移除。
             PENDING_REMOVALS.add(new PendingRemoval(
-                stack, layer, fadeOutTicks + REMOVAL_SAFETY_MARGIN_TICKS
+                active.stack, active.layer, fadeOutTicks + REMOVAL_SAFETY_MARGIN_TICKS
             ));
         } else {
-            // 无淡出：立刻摘层，保持 AnimationStack 清洁
-            try {
-                stack.removeLayer(layer);
-            } catch (RuntimeException ex) {
-                LOGGER.warn("[bong/anim] 立即 removeLayer 抛错（可忽略）: {}", ex.toString());
-            }
+            // 无淡出：立刻从层自己的原始 stack 摘除，保持 AnimationStack 清洁。
+            removeLayer(active.stack, active.layer, "立即");
         }
         return true;
     }
 
+    /**
+     * 断线时终结旧会话的 PlayerAnimator 绑定。
+     *
+     * <p>静态缓存同时持有旧 player 的 {@link AnimationStack} 和延迟淡出层；只清 Map/List 会让
+     * 旧 stack 继续持有层，且 pending closure 保留到下一次 tick。断线时不需要淡出，因此逐一从
+     * 各自的原始 stack 立即摘除，再清空会话数据。{@link #initialized}、tick hook 与本地玩家
+     * 判定 seam 都是客户端进程级 wiring，必须保留。
+     */
+    public static void clearOnDisconnect() {
+        synchronized (ACTIVE_LAYERS) {
+            for (Map<Identifier, ActiveLayer> perPlayer : ACTIVE_LAYERS.values()) {
+                for (ActiveLayer active : perPlayer.values()) {
+                    removeLayer(active.stack, active.layer, "断线 active");
+                }
+            }
+            ACTIVE_LAYERS.clear();
+        }
+        synchronized (PENDING_REMOVALS) {
+            for (PendingRemoval pending : PENDING_REMOVALS) {
+                removeLayer(pending.stack, pending.layer, "断线 pending");
+            }
+            PENDING_REMOVALS.clear();
+        }
+    }
+
     /** 测试/诊断用：玩家当前正在播的动画 id 集合。 */
     public static java.util.Set<Identifier> activeAnimations(UUID playerId) {
-        Map<Identifier, ModifierLayer<KeyframeAnimationPlayer>> perPlayer = ACTIVE_LAYERS.get(playerId);
+        Map<Identifier, ActiveLayer> perPlayer = ACTIVE_LAYERS.get(playerId);
         return perPlayer == null ? java.util.Set.of() : java.util.Set.copyOf(perPlayer.keySet());
     }
 
@@ -363,17 +387,33 @@ public final class BongAnimationPlayer {
                 p.remainingTicks--;
                 if (p.remainingTicks <= 0) {
                     it.remove();
-                    try {
-                        p.stack.removeLayer(p.layer);
-                    } catch (RuntimeException ex) {
-                        // player 卸载 / stack GC → 悬空引用；log 一次后丢弃
-                        LOGGER.warn(
-                            "[bong/anim] 延迟 removeLayer 抛错（可能玩家已卸载）: {}",
-                            ex.toString()
-                        );
-                    }
+                    removeLayer(p.stack, p.layer, "延迟");
                 }
             }
+        }
+    }
+
+    /** 统一容错摘层：world 卸载期间旧 stack 可能已失效，清理不得导致客户端崩溃。 */
+    private static void removeLayer(
+        AnimationStack stack,
+        ModifierLayer<KeyframeAnimationPlayer> layer,
+        String context
+    ) {
+        try {
+            stack.removeLayer(layer);
+        } catch (RuntimeException ex) {
+            LOGGER.warn("[bong/anim] {} removeLayer 抛错（可忽略）: {}", context, ex.toString());
+        }
+    }
+
+    /** 活跃动画层及其所属 stack，供断线时从原始 stack 物理摘除。 */
+    private static final class ActiveLayer {
+        final AnimationStack stack;
+        final ModifierLayer<KeyframeAnimationPlayer> layer;
+
+        ActiveLayer(AnimationStack stack, ModifierLayer<KeyframeAnimationPlayer> layer) {
+            this.stack = stack;
+            this.layer = layer;
         }
     }
 

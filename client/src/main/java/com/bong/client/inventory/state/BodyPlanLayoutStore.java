@@ -81,6 +81,15 @@ public final class BodyPlanLayoutStore {
         }
     }
 
+    /**
+     * 断线时清空本会话布局缓存与当前指针，保留长期 UI listener wiring。
+     */
+    public static void clearOnDisconnect() {
+        cache.clear();
+        currentPlanId = null;
+        notifyListeners();
+    }
+
     public static void resetForTests() {
         cache.clear();
         currentPlanId = null;

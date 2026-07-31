@@ -39,6 +39,11 @@ public final class BlueprintScrollStore {
         return learned.get(currentIndex);
     }
 
+    public static void clearOnDisconnect() {
+        learned = new CopyOnWriteArrayList<>();
+        currentIndex = 0;
+    }
+
     public static void resetForTests() {
         learned = new CopyOnWriteArrayList<>();
         currentIndex = 0;

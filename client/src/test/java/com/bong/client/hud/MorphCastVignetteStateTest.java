@@ -81,6 +81,23 @@ class MorphCastVignetteStateTest {
     }
 
     @Test
+    void disconnectClearDropsOldCastWindowAndAllowsFreshCast() {
+        long oldCast = 7_000_000L;
+        MorphCastVignetteState.trigger(oldCast);
+        assertEquals(0.15, MorphCastVignetteState.alphaAt(oldCast + 400L), 1e-9,
+            "old cast must be visible before disconnect cleanup");
+
+        MorphCastVignetteState.clearOnDisconnect();
+
+        assertEquals(0.0, MorphCastVignetteState.alphaAt(oldCast + 400L), 1e-9,
+            "old cast vignette must not bleed into a new connection");
+        long freshCast = oldCast + 10_000L;
+        MorphCastVignetteState.trigger(freshCast);
+        assertEquals(0.15, MorphCastVignetteState.alphaAt(freshCast + 400L), 1e-9,
+            "fresh cast must keep the normal vignette timing after teardown");
+    }
+
+    @Test
     void retriggerResetsWindow() {
         long t0 = 6_000_000L;
         MorphCastVignetteState.trigger(t0);

@@ -29,8 +29,8 @@ use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
 use crate::qi_physics::{
-    constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON},
-    EnvField, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
+    constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
+    EnvField, QiAccountId, QiTransfer, QiTransferReason, WorldQiBudget,
 };
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
@@ -47,9 +47,7 @@ use crate::world::karma::KarmaWeightStore;
 use crate::world::zone::ZoneRegistry;
 
 use super::breakthrough::skill_cap_for_realm;
-use super::components::{
-    ActorQiIdentity, ActorQiKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
-};
+use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm};
 use super::death_hooks::release_qi_amount_to_zone;
 use super::meridian::severed::{MeridianSeveredEvent, SeveredSource};
 use super::qi_zero_decay::{close_meridian, pick_closures};
@@ -1387,7 +1385,6 @@ pub fn tribulation_aoe_system(
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (tribulator_entity, state, heart_demon, tribulator_dimension, origin_dimension) in
@@ -1432,25 +1429,19 @@ pub fn tribulation_aoe_system(
                 failed.send(TribulationFailed { entity, wave });
                 continue;
             }
-            let actual_drain = profile.qi_drain.min(cultivation.qi_current.max(0.0));
-            let release = release_qi_amount_to_zone(
-                &mut cultivation,
+            let qi_before = cultivation.qi_current;
+            cultivation.qi_current = (cultivation.qi_current - profile.qi_drain).max(0.0);
+            let actual_drain = qi_before - cultivation.qi_current;
+            release_qi_amount_to_zone(
+                entity,
                 actual_drain,
                 Some(pos),
                 current_dimension,
                 life_record,
                 zones.as_deref_mut(),
-                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 "tribulation_wave_aoe",
             );
-            if let Err(error) = release {
-                tracing::warn!(
-                    ?error,
-                    "[bong][cultivation] tribulation wave qi drain failed closed"
-                );
-                continue;
-            }
             if profile.qi_max_freeze_ratio > 0.0 {
                 let frozen = cultivation.qi_max_frozen.unwrap_or(0.0);
                 cultivation.qi_max_frozen = Some(
@@ -1522,7 +1513,6 @@ pub fn juebi_phase_effect_system(
     >,
     mut deaths: EventWriter<DeathEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     null_fields.fields.clear();
@@ -1589,32 +1579,26 @@ pub fn juebi_phase_effect_system(
                     if factor <= 0.0 {
                         continue;
                     }
-                    let before = cultivation.qi_current;
-                    let actual_drain =
-                        before * JUEBI_PRESSURE_DRAIN_PER_TICK * intensity_scale * factor;
-                    let release = release_qi_amount_to_zone(
-                        &mut cultivation,
-                        actual_drain.min(before),
-                        Some(position),
-                        target_dimension,
-                        life_record,
-                        zones.as_deref_mut(),
-                        &mut ledger,
-                        qi_transfers.as_deref_mut(),
-                        "juebi_pressure_collapse",
-                    );
-                    if let Err(error) = release {
-                        tracing::warn!(
-                            ?error,
-                            "[bong][cultivation] juebi pressure qi drain failed closed"
-                        );
-                        continue;
-                    }
                     commands.entity(entity).insert(JueBiPressureCollapse {
                         epicenter: epicenter_block,
                         phase_start_tick: state.phase_started_tick,
                         distance,
                     });
+                    let before = cultivation.qi_current;
+                    cultivation.qi_current = (cultivation.qi_current
+                        * (1.0 - JUEBI_PRESSURE_DRAIN_PER_TICK * intensity_scale * factor))
+                        .max(0.0);
+                    let actual_drain = before - cultivation.qi_current;
+                    release_qi_amount_to_zone(
+                        entity,
+                        actual_drain,
+                        Some(position),
+                        target_dimension,
+                        life_record,
+                        zones.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
+                        "juebi_pressure_collapse",
+                    );
                     if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
                         deaths.send(DeathEvent {
                             target: entity,
@@ -1646,46 +1630,40 @@ pub fn juebi_phase_effect_system(
                     if distance > radius {
                         continue;
                     }
-                    let decay = juebi_null_decay_for_realm(cultivation.realm) * intensity_scale;
-                    if decay > 0.0 {
-                        let before = cultivation.qi_current;
-                        let actual_drain = (before * decay).min(before);
-                        let release = release_qi_amount_to_zone(
-                            &mut cultivation,
-                            actual_drain,
-                            Some(position),
-                            target_dimension,
-                            life_record,
-                            zones.as_deref_mut(),
-                            &mut ledger,
-                            qi_transfers.as_deref_mut(),
-                            "juebi_null_field",
-                        );
-                        if let Err(error) = release {
-                            tracing::warn!(
-                                ?error,
-                                "[bong][cultivation] juebi null qi drain failed closed"
-                            );
-                            continue;
-                        }
-                        if cultivation.realm == Realm::Void
-                            && before > 0.0
-                            && cultivation.qi_current <= f64::EPSILON
-                        {
-                            deaths.send(DeathEvent {
-                                target: entity,
-                                cause: "绝壁劫·凡躯崩解".to_string(),
-                                attacker: None,
-                                attacker_player_id: None,
-                                at_tick: clock.tick,
-                            });
-                        }
-                    }
                     commands.entity(entity).insert(JueBiNullified {
                         entered_tick: clock.tick,
                         accumulated_null_time: clock.tick.saturating_sub(state.phase_started_tick)
                             as f64,
                     });
+                    let decay = juebi_null_decay_for_realm(cultivation.realm) * intensity_scale;
+                    if decay <= 0.0 {
+                        continue;
+                    }
+                    let before = cultivation.qi_current;
+                    cultivation.qi_current = (cultivation.qi_current * (1.0 - decay)).max(0.0);
+                    let actual_drain = before - cultivation.qi_current;
+                    release_qi_amount_to_zone(
+                        entity,
+                        actual_drain,
+                        Some(position),
+                        target_dimension,
+                        life_record,
+                        zones.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
+                        "juebi_null_field",
+                    );
+                    if cultivation.realm == Realm::Void
+                        && before > 0.0
+                        && cultivation.qi_current <= f64::EPSILON
+                    {
+                        deaths.send(DeathEvent {
+                            target: entity,
+                            cause: "绝壁劫·凡躯崩解".to_string(),
+                            attacker: None,
+                            attacker_player_id: None,
+                            at_tick: clock.tick,
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -2871,7 +2849,6 @@ pub fn heart_demon_choice_system(
         Option<&CurrentDimension>,
     )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for choice in choices.read() {
@@ -2903,7 +2880,6 @@ pub fn heart_demon_choice_system(
             position,
             current_dimension,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
         );
     }
@@ -2923,7 +2899,6 @@ pub fn heart_demon_timeout_system(
         Option<&CurrentDimension>,
     )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (
@@ -2958,7 +2933,6 @@ pub fn heart_demon_timeout_system(
             position,
             current_dimension,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
         );
     }
@@ -2975,7 +2949,6 @@ fn resolve_heart_demon_choice(
     position: Option<&Position>,
     current_dimension: Option<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
-    ledger: &mut WorldQiAccount,
     qi_transfers: Option<&mut Events<QiTransfer>>,
 ) {
     if existing_resolution.is_some() {
@@ -2990,96 +2963,34 @@ fn resolve_heart_demon_choice(
         HeartDemonOutcome::Steadfast => {
             let effective_qi_max =
                 (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
+            // Desired grant = 10% of effective_qi_max, capped by room to reach effective_qi_max.
             let desired_grant =
                 (effective_qi_max * 0.10).min((effective_qi_max - cultivation.qi_current).max(0.0));
-            if desired_grant > QI_EPSILON {
-                let Some(life_record_ref) = life_record.as_deref() else {
-                    tracing::warn!(
-                        "[bong][cultivation] HeartDemon Steadfast missing canonical LifeRecord; qi grant failed closed"
-                    );
-                    return;
-                };
-                let actor = match ActorQiIdentity::from_life_record(
-                    life_record_ref,
-                    ActorQiKind::Player,
-                ) {
-                    Ok(actor) => actor,
-                    Err(error) => {
-                        tracing::warn!(
-                            ?error,
-                            "[bong][cultivation] HeartDemon Steadfast invalid actor identity; qi grant failed closed"
-                        );
-                        return;
-                    }
-                };
-                let Some(position) = position else {
-                    tracing::warn!(
-                        "[bong][cultivation] HeartDemon Steadfast missing Position; qi grant failed closed"
-                    );
-                    return;
-                };
-                let Some(current_dimension) = current_dimension else {
-                    tracing::warn!(
-                        "[bong][cultivation] HeartDemon Steadfast missing CurrentDimension; qi grant failed closed"
-                    );
-                    return;
-                };
-                let Some(zones) = zones else {
-                    tracing::warn!(
-                        "[bong][cultivation] HeartDemon Steadfast missing ZoneRegistry; qi grant failed closed"
-                    );
-                    return;
-                };
-                let Some(zone) = zones.find_zone_mut_by_pos(current_dimension.0, position.0) else {
-                    tracing::warn!(
-                        "[bong][cultivation] HeartDemon Steadfast outside known zone; qi grant failed closed"
-                    );
-                    return;
-                };
-                let gain = cultivation.gain_from_zone(
-                    zone,
-                    ledger,
-                    &actor,
-                    desired_grant,
-                    QiTransferReason::CultivationRegen,
-                );
-                let outcome = match gain {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        tracing::warn!(
-                            ?error,
-                            "[bong][cultivation] HeartDemon Steadfast qi gain failed closed"
-                        );
-                        return;
-                    }
-                };
-                if let Some(qi_transfers) = qi_transfers {
-                    for transfer in outcome.transfers {
-                        qi_transfers.send(transfer);
-                    }
-                }
-            }
+            // Debit exactly that amount from the player's zone so total world qi is conserved.
+            // If the zone cannot be located (no Position / CurrentDimension / ZoneRegistry, or
+            // zone depleted) the grant is suppressed to zero rather than creating qi from nothing.
+            let actual_grant = debit_zone_for_heart_demon_steadfast(
+                desired_grant,
+                position,
+                current_dimension,
+                zones,
+            );
+            cultivation.qi_current += actual_grant;
         }
         HeartDemonOutcome::Obsession => {
-            let actual_drain = cultivation.qi_current * DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO;
-            let release = release_qi_amount_to_zone(
-                cultivation,
+            let qi_before = cultivation.qi_current;
+            cultivation.qi_current *= 1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO;
+            let actual_drain = qi_before - cultivation.qi_current;
+            release_qi_amount_to_zone(
+                decision.entity,
                 actual_drain,
                 position,
                 current_dimension,
                 life_record.as_deref(),
                 zones,
-                ledger,
                 qi_transfers,
                 "heart_demon_obsession",
             );
-            if let Err(error) = release {
-                tracing::warn!(
-                    ?error,
-                    "[bong][cultivation] heart demon qi drain failed closed"
-                );
-                return;
-            }
             next_wave_multiplier = DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER;
         }
         HeartDemonOutcome::NoSolution => {}
@@ -3099,6 +3010,59 @@ fn resolve_heart_demon_choice(
             tick: decision.tick,
             next_wave_multiplier,
         });
+}
+
+/// Debit `desired_grant` qi units from the player's zone and return the actual amount debited.
+///
+/// Zone stores qi as `spirit_qi` ∈ [-1.0, 1.0] where each unit = `QI_ZONE_UNIT_CAPACITY`.
+/// The zone floor is -1.0; we only take what is available above that floor so the debit
+/// never silently disappears while the player still gains qi (which would create qi).
+///
+/// Returns 0.0 if the zone cannot be resolved (no Position / CurrentDimension / ZoneRegistry,
+/// or player outside all zones, or zone fully depleted). In that case the caller must NOT
+/// apply any grant to `cultivation.qi_current`.
+fn debit_zone_for_heart_demon_steadfast(
+    desired_grant: f64,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    zones: Option<&mut ZoneRegistry>,
+) -> f64 {
+    if desired_grant <= QI_EPSILON {
+        return 0.0;
+    }
+    let Some(position) = position else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: no Position; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    let Some(current_dimension) = current_dimension else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: no CurrentDimension; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    let Some(zones) = zones else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: no ZoneRegistry; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    let dim = current_dimension.0;
+    let Some(zone) = zones.find_zone_mut_by_pos(dim, position.0) else {
+        tracing::warn!(
+            "[bong][tribulation] HeartDemon Steadfast: player outside known zone; qi grant suppressed to preserve conservation"
+        );
+        return 0.0;
+    };
+    // Available headroom above the zone floor of -1.0 (in raw qi units).
+    let available = ((zone.spirit_qi + 1.0) * QI_ZONE_UNIT_CAPACITY).max(0.0);
+    let actual_grant = desired_grant.min(available);
+    if actual_grant <= QI_EPSILON {
+        return 0.0;
+    }
+    zone.spirit_qi -= actual_grant / QI_ZONE_UNIT_CAPACITY;
+    actual_grant
 }
 
 fn heart_demon_outcome_for_choice(choice_idx: Option<u32>) -> HeartDemonOutcome {
@@ -3384,7 +3348,6 @@ pub fn tribulation_failure_system(
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -3400,25 +3363,6 @@ pub fn tribulation_failure_system(
             life_record,
         )) = players.get_mut(ev.entity)
         {
-            let released_qi = cultivation.qi_current.max(0.0);
-            let release = release_qi_amount_to_zone(
-                &mut cultivation,
-                released_qi,
-                position,
-                current_dimension,
-                life_record,
-                zones.as_deref_mut(),
-                &mut ledger,
-                qi_transfers.as_deref_mut(),
-                "tribulation_failure",
-            );
-            if let Err(error) = release {
-                tracing::warn!(
-                    ?error,
-                    "[bong][cultivation] tribulation failure qi release failed closed"
-                );
-                continue;
-            }
             if let Some(mut state) = state {
                 state.failed = true;
                 state.phase = TribulationPhase::Settle;
@@ -3426,8 +3370,18 @@ pub fn tribulation_failure_system(
             // plan-meridian-severed-v1 §4 #5：渡劫失败爆脉降境 → emit
             // MeridianSeveredEvent { TribulationFail } 让永久 SEVERED component 落档。
             // severed_events 用 Option<ResMut<Events<...>>> 以便测试 app 未注册 event 也能跑通。
-            let (_, severed_ids) =
+            let (released_qi, severed_ids) =
                 apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
+            release_qi_amount_to_zone(
+                ev.entity,
+                released_qi,
+                position,
+                current_dimension,
+                life_record,
+                zones.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+                "tribulation_failure",
+            );
             if let Some(ref mut sink) = severed_events {
                 let now_tick = clock.as_deref().map(|c| c.tick).unwrap_or_default();
                 for id in severed_ids {
@@ -3494,7 +3448,6 @@ pub fn abort_du_xu_on_client_removed(
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -3532,7 +3485,6 @@ pub fn abort_du_xu_on_client_removed(
             &mut settled,
             &mut fled,
             severed_events.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             zones.as_deref_mut(),
             position,
@@ -3562,7 +3514,6 @@ pub fn tribulation_escape_boundary_system(
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -3599,7 +3550,6 @@ pub fn tribulation_escape_boundary_system(
                 &mut settled,
                 &mut fled,
                 severed_events.as_deref_mut(),
-                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 zones.as_deref_mut(),
                 Some(position),
@@ -3626,7 +3576,6 @@ pub fn tribulation_escape_boundary_system(
             &mut settled,
             &mut fled,
             severed_events.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             zones.as_deref_mut(),
             Some(position),
@@ -3651,33 +3600,11 @@ fn settle_fled_tribulation(
     settled: &mut EventWriter<TribulationSettled>,
     fled: &mut EventWriter<TribulationFled>,
     severed_events: Option<&mut Events<MeridianSeveredEvent>>,
-    ledger: &mut WorldQiAccount,
     qi_transfers: Option<&mut Events<QiTransfer>>,
     zones: Option<&mut ZoneRegistry>,
     position: Option<&Position>,
     current_dimension: Option<&CurrentDimension>,
 ) {
-    // 先结算真元；失败时不提交降境、断脉、传记、事件或删除 active record。
-    let released_qi = cultivation.qi_current.max(0.0);
-    let release = release_qi_amount_to_zone(
-        cultivation,
-        released_qi,
-        position,
-        current_dimension,
-        life_record.as_deref(),
-        zones,
-        ledger,
-        qi_transfers,
-        "tribulation_fled",
-    );
-    if let Err(error) = release {
-        tracing::warn!(
-            ?error,
-            "[bong][cultivation] fled tribulation qi release failed closed"
-        );
-        return;
-    }
-
     state.failed = true;
     state.phase = TribulationPhase::Settle;
     let waves_survived = state.wave_current;
@@ -3688,7 +3615,18 @@ fn settle_fled_tribulation(
         });
     }
     // plan-meridian-severed-v1 §4 #5：渡劫逃跑也算失败，关闭的经脉同样写永久 SEVERED
-    let (_, severed_ids) = apply_tribulation_failure_penalty(cultivation, meridians, wounds);
+    let (released_qi, severed_ids) =
+        apply_tribulation_failure_penalty(cultivation, meridians, wounds);
+    release_qi_amount_to_zone(
+        entity,
+        released_qi,
+        position,
+        current_dimension,
+        life_record.as_deref(),
+        zones,
+        qi_transfers,
+        "tribulation_fled",
+    );
     if let Some(sink) = severed_events {
         for id in severed_ids {
             sink.send(MeridianSeveredEvent {
