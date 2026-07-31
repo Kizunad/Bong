@@ -31,6 +31,7 @@ import {
   isRetryableCodexFailure,
   isSuccessfulCodexResponse,
   isZeroConfidenceWithoutCodeFindings,
+  localPrDiff,
   mergeFindings,
   normalizePlanStatus,
   normalizeResult,
@@ -69,7 +70,8 @@ const reviewScript = fileURLToPath(new URL("./review.mjs", import.meta.url));
 const textEncoder = new TextEncoder();
 
 function chatSseChunk(content, finish_reason = null, lineEnding = "\n") {
-  return `data: ${JSON.stringify({ choices: [{ delta: content === null ? {} : { content }, finish_reason }] })}${lineEnding}${lineEnding}`;
+  const delta = content === null ? { role: "assistant", content: null } : { content };
+  return `data: ${JSON.stringify({ choices: [{ delta, finish_reason }] })}${lineEnding}${lineEnding}`;
 }
 
 function chatSseDone(lineEnding = "\n") {
@@ -605,6 +607,71 @@ test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理�
   assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
 });
 
+test("local PR diff: fork head 通过 PR ref fetch，不从 base origin 拉同名 branch", () => {
+  const directory = mkdtempSync(join(tmpdir(), "bong-review-git-"));
+  const gitPath = join(directory, "git");
+  const logPath = join(directory, "git.log");
+  const fetchedPath = join(directory, "fetched");
+  writeFileSync(
+    gitPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.GIT_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "rev-parse" && args[2] === "base-oid^{commit}") {
+  process.stdout.write("base-commit\\n");
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
+  if (!fs.existsSync(process.env.GIT_TEST_FETCHED)) process.exit(1);
+  process.stdout.write("head-commit\\n");
+} else if (args[0] === "fetch") {
+  if (args[3] !== "refs/pull/42/head:refs/review/pr-42-head") process.exit(2);
+  fs.writeFileSync(process.env.GIT_TEST_FETCHED, "yes");
+} else if (args[0] === "diff") {
+  process.stdout.write("diff --git a/fork.txt b/fork.txt\\n");
+} else {
+  process.exit(3);
+}
+`,
+  );
+  chmodSync(gitPath, 0o755);
+  const previousPath = process.env.PATH;
+  const previousLog = process.env.GIT_TEST_LOG;
+  const previousFetched = process.env.GIT_TEST_FETCHED;
+  process.env.PATH = `${directory}:${previousPath || ""}`;
+  process.env.GIT_TEST_LOG = logPath;
+  process.env.GIT_TEST_FETCHED = fetchedPath;
+  try {
+    assert.equal(
+      localPrDiff("42", {
+        baseRefOid: "base-oid",
+        baseRefName: "main",
+        headRefOid: "head-oid",
+        headRefName: "feature",
+      }),
+      "diff --git a/fork.txt b/fork.txt\n",
+    );
+    const calls = readFileSync(logPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(calls.find((args) => args[0] === "fetch"), [
+      "fetch",
+      "--no-tags",
+      "origin",
+      "refs/pull/42/head:refs/review/pr-42-head",
+    ]);
+    assert.equal(calls.some((args) => args.includes("feature")), false, "fork fallback 不得 fetch base origin 的同名 branch");
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousLog === undefined) delete process.env.GIT_TEST_LOG;
+    else process.env.GIT_TEST_LOG = previousLog;
+    if (previousFetched === undefined) delete process.env.GIT_TEST_FETCHED;
+    else process.env.GIT_TEST_FETCHED = previousFetched;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("Chat Completions endpoint: 规范化 root/v1/chat/completions 并拒绝凭据与非 HTTPS", () => {
   assert.equal(buildResponsesEndpoint("https://api.example.com"), "https://api.example.com/v1/chat/completions");
   assert.equal(buildResponsesEndpoint("https://api.example.com/v1/"), "https://api.example.com/v1/chat/completions");
@@ -628,7 +695,7 @@ test("Chat Completions request: SSE、user message、high reasoning，并解析 
   const output = '{"vote":"APPROVE"}';
   const chunk = (content, finish_reason = null) => `data: ${JSON.stringify({
     id: "chat-1",
-    choices: [{ delta: content === null ? {} : { content }, finish_reason }],
+    choices: [{ delta: content === null ? { role: "assistant", content: null } : { content }, finish_reason }],
   })}\n\n`;
   const result = await requestResponses("审查提示", 1_000, {
     apiKey: "provider-secret",
@@ -655,14 +722,67 @@ test("Chat Completions request: SSE、user message、high reasoning，并解析 
   assert.equal(extractResponsesOutputText({ choices: [{ message: { content: "chat output" } }] }), "chat output");
 });
 
-test("Chat Completions SSE: DONE 是终端 marker，finish_reason 记录 choice 结束", async () => {
+test("Chat Completions SSE: content:null 是无文本首帧，随后 content 与 DONE 可成功", async () => {
   const result = await requestResponses("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
-    fetchImpl: async () => sseResponse([chatSseChunk("partial", "stop"), chatSseDone()]),
+    fetchImpl: async () => sseResponse([chatSseChunk(null), chatSseChunk("content"), chatSseDone()]),
   });
   assert.equal(result.code, 0);
-  assert.equal(result.stdout, "partial");
+  assert.equal(result.stdout, "content");
+});
+
+test("Chat Completions SSE: choices/choice/delta 结构损坏时，即使随后 DONE 也 fail-closed", async () => {
+  const malformedEvents = [
+    JSON.stringify({ id: "missing-choices" }),
+    JSON.stringify({ choices: "not-an-array" }),
+    JSON.stringify({ choices: ["not-an-object"] }),
+    JSON.stringify({ choices: [{}] }),
+    JSON.stringify({ choices: [{ delta: "not-an-object" }] }),
+    JSON.stringify({ choices: [{ delta: { content: 42 } }] }),
+  ];
+  for (const data of malformedEvents) {
+    const result = await requestResponses("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => sseResponse([chatSseChunk("partial"), `data: ${data}\n\n`, chatSseDone()]),
+    });
+    assert.equal(result.code, 1, `malformed event 不得成功：${data}`);
+    assert.equal(result.stdout, "partial");
+    assert.match(result.stderr, /Chat Completions SSE/);
+  }
+});
+
+test("Chat Completions SSE: choices 空数组只接受 usage-only event", async () => {
+  const result = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([
+      `data: ${JSON.stringify({ choices: [], usage: { total_tokens: 1 } })}\n\n`,
+      chatSseChunk("content"),
+      chatSseDone(),
+    ]),
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "content");
+
+  const malformed = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse(["data: {\"choices\":[]}\n\n", chatSseDone()]),
+  });
+  assert.equal(malformed.code, 1);
+  assert.match(malformed.stderr, /choices 为空/);
+});
+
+test("Chat Completions SSE: finish_reason 不提前结束，DONE 才能完成", async () => {
+  const result = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([chatSseChunk("partial", "stop"), chatSseChunk("tail"), chatSseDone()]),
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "partialtail");
 
   const disconnected = await requestResponses("prompt", 1_000, {
     apiKey: "key",
@@ -774,7 +894,7 @@ test("Chat Completions SSE: UTF-8 分片、CRLF/comment 与 content", async () =
 
 test("Chat Completions SSE: provider error、断流与 malformed 均不得假成功", async () => {
   const chunk = (content, finish_reason = null) => `data: ${JSON.stringify({
-    choices: [{ delta: content === null ? {} : { content }, finish_reason }],
+    choices: [{ delta: content === null ? { role: "assistant", content: null } : { content }, finish_reason }],
   })}\n\n`;
   const cases = [
     { stream: [`data: ${JSON.stringify({ error: { message: "provider exploded" } })}\n\n`], error: /provider exploded/ },
@@ -803,7 +923,7 @@ test("Chat Completions SSE: provider error、断流与 malformed 均不得假成
   const disconnected = await requestResponses("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
-    fetchImpl: async () => sseResponse([`data: ${JSON.stringify({ choices: [] })}`]),
+    fetchImpl: async () => sseResponse([`data: ${JSON.stringify({ choices: [{ delta: {} }] })}`]),
   });
   assert.equal(disconnected.code, 1);
   assert.match(disconnected.stderr, /disconnected/);

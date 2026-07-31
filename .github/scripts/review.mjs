@@ -666,7 +666,7 @@ function loadPrContext(pr) {
   } catch (error) {
     apiFailure = error;
     try {
-      diff = localPrDiff(meta);
+      diff = localPrDiff(pr, meta);
       diffSource = "local";
     } catch (localError) {
       throw new Error(
@@ -705,25 +705,26 @@ function isGitHubDiffLimitFailure(value) {
   return /(?:HTTP|status)\s*406|exceeded the maximum number of lines\s*\(\s*20000\s*\)/i.test(String(value || ""));
 }
 
-function localPrDiff(meta) {
+export function localPrDiff(pr, meta) {
   const base = String(meta.baseRefOid || meta.baseRefName || "").trim();
   const head = String(meta.headRefOid || meta.headRefName || "HEAD").trim();
   if (!base) throw new Error("PR metadata 缺少 base ref");
-  const baseCommit = resolveLocalCommit(base, meta.baseRefName);
-  const headCommit = resolveLocalCommit(head, meta.headRefName);
+  const baseCommit = resolveLocalCommit(base, meta.baseRefName, `refs/review/pr-${pr}-base`);
+  const headCommit = resolveLocalCommit(head, `refs/pull/${pr}/head`, `refs/review/pr-${pr}-head`);
   const diff = git(["diff", "--no-ext-diff", baseCommit, headCommit]);
   if (!diff.trim()) throw new Error("本地 Git diff 返回空输出");
   return diff;
 }
 
-function resolveLocalCommit(ref, fetchRef = ref) {
+function resolveLocalCommit(ref, fetchRef = ref, localRef = null) {
   try {
     return git(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
   } catch (error) {
     if (fetchRef) {
       try {
-        git(["fetch", "--no-tags", "origin", fetchRef]);
-        return git(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
+        const fetchArgs = ["fetch", "--no-tags", "origin", localRef ? `${fetchRef}:${localRef}` : fetchRef];
+        git(fetchArgs);
+        return git(["rev-parse", "--verify", `${localRef || ref}^{commit}`]).trim();
       } catch (fetchError) {
         throw new Error(`本地 ref ${ref} 不存在且 fetch 失败：${errorText(fetchError)}`);
       }
@@ -1006,19 +1007,37 @@ function reduceResponsesSseEvent(state, event) {
     state.terminal = true;
     return state;
   }
-  const choice = payload.choices?.[0];
-  if (choice && typeof choice !== "object") throw responsesSseError("chat completion choice 非法。");
-  const content = choice?.delta?.content;
-  if (content !== undefined && typeof content !== "string") {
+  if (!Array.isArray(payload.choices)) throw responsesSseError("chat completion choices 非法。");
+  if (payload.choices.length === 0) {
+    const usageOnlyKeys = new Set(["choices", "created", "id", "model", "object", "system_fingerprint", "usage"]);
+    if (
+      !payload.usage ||
+      typeof payload.usage !== "object" ||
+      Array.isArray(payload.usage) ||
+      Object.keys(payload).some((key) => !usageOnlyKeys.has(key))
+    ) {
+      throw responsesSseError("chat completion choices 为空且缺少合法 usage-only event。");
+    }
+    return state;
+  }
+  if (payload.choices.length !== 1) throw responsesSseError("chat completion choices 数量非法。");
+  const choice = payload.choices[0];
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
+    throw responsesSseError("chat completion choice 非法。");
+  }
+  const delta = choice.delta;
+  if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+    throw responsesSseError("chat completion delta 非法。");
+  }
+  const content = delta.content;
+  if (content !== undefined && content !== null && typeof content !== "string") {
     throw responsesSseError("chat completion delta.content 必须是字符串。");
   }
   if (typeof content === "string") state.deltaText += content;
-  if (choice?.finish_reason !== undefined && choice.finish_reason !== null) {
+  if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
     if (typeof choice.finish_reason !== "string" || !choice.finish_reason) {
       throw responsesSseError("chat completion finish_reason 非法。");
     }
-    state.finishReason = choice.finish_reason;
-    if (state.done) state.completed = true;
   }
   return state;
 }
@@ -1165,7 +1184,6 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
     terminal: false,
     failure: "",
     done: false,
-    finishReason: "",
   };
   try {
     const response = await fetchImpl(endpoint, {
