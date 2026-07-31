@@ -633,8 +633,8 @@ pub use persisted::{
     decode_persisted_cultivation, encode_persisted_cultivation, PersistedCultivationV1,
 };
 pub use qi_flow::{
-    ActorQiIdentity, ActorQiKind, ActorQiTarget, CultivationQiInit, CultivationQiSnapshot,
-    PersistentQiSink, QiFlowError, QiFlowOutcome, QiFlowTarget, QiResizeOutcome,
+    ActorQiIdentity, ActorQiKind, CultivationQiInit, CultivationQiSnapshot, PersistentQiSink,
+    QiFlowError, QiFlowOutcome, QiResizeOutcome,
 };
 
 /// 修为主组件。`qi_max_frozen` 用于 QiZeroDecay 窗口期（plan §2）。

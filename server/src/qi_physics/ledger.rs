@@ -469,6 +469,11 @@ impl WorldQiAccount {
         }
 
         let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
+        if transfer.from == transfer.to {
+            return Err(QiPhysicsError::SameAccountTransfer {
+                account: transfer.from.to_string(),
+            });
+        }
         let available = self.balance(&transfer.from);
         if amount > available {
             return Err(QiPhysicsError::InsufficientQi {
@@ -580,16 +585,14 @@ pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
 /// 垂死大能死亡时 zone 无法接收部分的稳定聚合池。
 pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
 /// R5 真元事务在 zone 缺失或满载时使用的固定 overflow 账户 id。
-///
-/// P0 仅冻结此账户与事务行为；runtime 持久化白名单及迁移在后续阶段接入，避免改变
-/// 既有存档的启动与 hydration 行为。
 pub const QI_FLOW_OVERFLOW_ACCOUNT_ID: &str = "qi_flow_overflow";
 
 /// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
-pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 3] = [
+pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 4] = [
     PENDING_INFLOW_ACCOUNT_ID,
     DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+    QI_FLOW_OVERFLOW_ACCOUNT_ID,
 ];
 
 /// 独立待分配池账户（`QiAccountKind::Overflow` + 固定 id，见 [`PENDING_INFLOW_ACCOUNT_ID`]）。
@@ -609,7 +612,7 @@ pub fn qi_flow_overflow_account() -> QiAccountId {
     QiAccountId::overflow(QI_FLOW_OVERFLOW_ACCOUNT_ID)
 }
 
-pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 3] {
+pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 4] {
     PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(QiAccountId::overflow)
 }
 
@@ -1235,6 +1238,102 @@ mod tests {
             .unwrap();
         assert_eq!(account.balance(&from), 7.0);
         assert_eq!(account.balance(&to), 4.0);
+    }
+
+    #[test]
+    fn transfer_rejects_same_account_before_any_mutation() {
+        let account_id = QiAccountId::overflow("same-account");
+        let mut account = WorldQiAccount::default();
+        account
+            .set_balance(account_id.clone(), 9.0)
+            .expect("fixture balance should be valid");
+        let before_accounts = account
+            .iter_balances()
+            .map(|(id, balance)| (id.clone(), balance))
+            .collect::<Vec<_>>();
+
+        let error = account
+            .transfer(
+                QiTransfer::new(
+                    account_id.clone(),
+                    account_id.clone(),
+                    3.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .unwrap(),
+            )
+            .expect_err("same-account direct transfer must fail closed");
+
+        assert!(matches!(
+            error,
+            QiPhysicsError::SameAccountTransfer { account: ref id }
+                if id == "overflow:same-account"
+        ));
+        assert_eq!(
+            account
+                .iter_balances()
+                .map(|(id, balance)| (id.clone(), balance))
+                .collect::<Vec<_>>(),
+            before_accounts,
+            "same-account rejection must preserve every balance"
+        );
+        assert_eq!(account.total(), 9.0);
+        assert!(account.transfers().is_empty());
+    }
+
+    #[test]
+    fn transfer_rejects_same_account_zero_after_amount_validation() {
+        let account_id = QiAccountId::overflow("same-account-zero");
+        let mut account = WorldQiAccount::default();
+        account
+            .set_balance(account_id.clone(), 9.0)
+            .expect("fixture balance should be valid");
+
+        let before_accounts = account
+            .iter_balances()
+            .map(|(id, balance)| (id.clone(), balance))
+            .collect::<Vec<_>>();
+        let error = account
+            .transfer(
+                QiTransfer::new(
+                    account_id.clone(),
+                    account_id,
+                    0.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .unwrap(),
+            )
+            .expect_err("direct zero same-account transfer must not silently succeed");
+
+        assert!(matches!(error, QiPhysicsError::SameAccountTransfer { .. }));
+        assert_eq!(
+            account
+                .iter_balances()
+                .map(|(id, balance)| (id.clone(), balance))
+                .collect::<Vec<_>>(),
+            before_accounts,
+            "zero same-account rejection must preserve every balance"
+        );
+        assert_eq!(account.total(), 9.0);
+        assert!(account.transfers().is_empty());
+    }
+
+    #[test]
+    fn transfer_same_account_invalid_amount_still_reports_invalid_amount() {
+        let account_id = QiAccountId::overflow("same-account-invalid");
+        let mut account = WorldQiAccount::default();
+        let error = account
+            .transfer(QiTransfer {
+                from: account_id.clone(),
+                to: account_id,
+                amount: f64::NAN,
+                reason: QiTransferReason::ReleaseToZone,
+            })
+            .expect_err("invalid amount validation must precede same-account rejection");
+
+        assert!(matches!(error, QiPhysicsError::InvalidAmount { .. }));
+        assert!(account.iter_balances().next().is_none());
+        assert!(account.transfers().is_empty());
     }
 
     #[test]
