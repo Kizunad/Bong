@@ -32,21 +32,21 @@
 - [ ] 为 `BotanyDragState` 提供幂等的 non-consuming drag teardown（名称可等义）。具体 owner 是该类现有的静态 `volatile boolean dragging`；该 helper 是 screen-open RELEASE 路径唯一允许执行的 non-consuming teardown 写入点，只把 `dragging` 置为 `false`，保留当前 session 已提交的 delta/bounds。`MixinMouse` 只能调用该 helper，不得直接改写 drag state。
 - [ ] `MixinMouse` 收到 LEFT RELEASE 且 `currentScreen != null` 时先 teardown，再直接放行 screen/vanilla；不得调用会返回“应 cancel”的消费型 `onLeftButton(0, ...)`。
 - [ ] screen-open LEFT PRESS 仍完全归 screen，不启动 Botany drag；无 active drag 的 screen-open RELEASE 为 no-op。
+- [ ] 仲裁优先级固定为 `TransitionInputPolicy.shouldBlockMouse` 先于 screen/drag 分支：当 `currentScreen != null` 且 `inputLocked == true` 时，LEFT PRESS 由 transition lock 消费，Botany drag state 不改变；同样条件下 LEFT RELEASE 不被该 policy 拦截，随后执行 non-consuming teardown 并放行 screen/vanilla。P1 必须锁定这两个可观察结果。
 - [ ] 不修改 `TransitionInputPolicy` 或右键盾牌路径的行为与设计 authority；P1 仅经共享 `MixinMouse` 仲裁边界锁定它们当前的可观察结果，作为本次左键改动的 no-regression guard。
 
 ## P1 — Regression closure
 
-- [ ] `screen_open_release_ends_drag_without_consuming_event`
-- [ ] `screen_open_press_never_starts_botany_drag`
-- [ ] `screen_open_release_without_drag_is_noop`
-- [ ] `normal_panel_release_still_ends_and_consumes_drag`
-- [ ] `panel_outside_press_then_release_cannot_consume_stale_drag`
-- [ ] `screen_open_release_preserves_committed_drag_geometry`：经同一 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback，先建立并 `tickDrag` 提交非零 delta 与有效 rendered bounds，再在 screen-open LEFT RELEASE 后断言事件未取消、`dragging` 已结束，且 teardown 前后的 `deltaX`、`deltaY`、panel bounds 完全相同。
-- [ ] `mixin_mouse_transition_lock_preserves_arbitration_priority`：通过同一 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback，在 `ScreenTransitionController.inputLocked()` 为 true 时断言 LEFT PRESS 被消费且 `BotanyDragState` 不改变；断言 LEFT RELEASE 不被 `TransitionInputPolicy.shouldBlockMouse` 拦截并继续到 screen/vanilla。测试只断言 `CallbackInfo` 的取消结果与 drag ownership，不断言内部调用顺序。
-- [ ] `mixin_mouse_right_shield_press_release_preserves_arbitration`：通过同一 HEAD callback，在无 screen 且 off-hand 为公开盾牌时断言 RIGHT PRESS 消费事件并产生一次 RaiseShield、`bong$shieldRightHeld` 取得 ownership；随后 RIGHT RELEASE 消费事件并产生一次 LowerShield、ownership 清除；同时断言 Botany drag state 不被右键改变。
-- [ ] `mixin_mouse_screen_open_right_release_lowers_without_consuming`：沿同一 callback 先建立右键盾牌 ownership，再打开 screen 发送 RIGHT RELEASE；断言产生 LowerShield、ownership 清除且事件继续交给 screen/vanilla。
-- [ ] 上述三条必须从 `MixinMouse.bong$captureHarvestPanelDrag` 的真实仲裁边界取得可观察结果：测试可增加唯一的 package-private `MixinMouse` callback harness，生命周期仅限 client test invocation，不拥有第二份 drag/shield 状态、不复制分支条件；若 Fabric mixin callback 无法 headless 驱动，P1 evidence 必须记录具体阻塞原因与该 seam 的生产接线 pin，不能以孤立的 `TransitionInputPolicy` 或 payload encoder 测试替代。
-- [ ] 若 mixin 无法直接 headless 驱动，可抽最小纯 policy 供行为测试；仍须用接线 pin 证明 `MixinMouse` 生产路径调用该 policy/non-consuming teardown，不能只测孤立 state helper。
+- [ ] `screen_open_release_ends_drag_without_consuming_event`：前置为 interactive harvest session、有效 rendered bounds、无 transition lock；先在无 screen 时经 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback 发送 panel 内 LEFT PRESS 建立 drag，再打开 screen 发送 LEFT RELEASE。断言该 RELEASE 的 `CallbackInfo` 未取消且 `BotanyDragState.isDragging()` 变为 false；除 drag ownership 外 session identity、delta/bounds 不得改变。
+- [ ] `screen_open_press_never_starts_botany_drag`：前置为 interactive session、有效 bounds、`currentScreen != null`、`inputLocked == false`、鼠标位于 panel 内且当前未拖拽；经同一 HEAD callback 发送 LEFT PRESS。断言 `CallbackInfo` 未取消、`isDragging()` 仍为 false；delta/bounds、session identity 和 transition state 不得改变。
+- [ ] `screen_open_release_without_drag_is_noop`：前置为 interactive session、`currentScreen != null`、`inputLocked == false`、`isDragging() == false`，并经同一 HEAD callback 发送 LEFT RELEASE。断言 `CallbackInfo` 未取消、drag ownership 仍为 false；delta/bounds、session identity 和 transition state 不得改变。
+- [ ] `normal_panel_release_still_ends_and_consumes_drag`：前置为 interactive session、`currentScreen == null`、`inputLocked == false`、有效 bounds；经同一 HEAD callback 发送 panel 内 LEFT PRESS 后发送 LEFT RELEASE。断言 PRESS 与 RELEASE 的 `CallbackInfo` 均取消，PRESS 后 ownership 为 true、RELEASE 后为 false；已提交 delta/bounds、session identity 和 transition state 不得改变。
+- [ ] `panel_outside_press_then_release_cannot_consume_stale_drag`：前置为同一 interactive session 先经真实 callback 建立 panel drag，再打开 screen 经真实 callback 发送 LEFT RELEASE 清 ownership，随后关闭 screen；在 panel 外经同一 callback 发送 LEFT PRESS 与 LEFT RELEASE。断言这两个外部事件的 `CallbackInfo` 均未取消、ownership 始终为 false；delta/bounds、session identity 和 transition state 不得改变。
+- [ ] `screen_open_release_preserves_committed_drag_geometry`：前置为 interactive session、`inputLocked == false`、有效 rendered bounds；经同一 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback 先建立 drag 并用 `tickDrag` 提交非零 delta，再打开 screen发送 LEFT RELEASE。断言 `CallbackInfo` 未取消、`dragging` 已结束，且 teardown 前后的 `deltaX`、`deltaY`、panel bounds 完全相同。
+- [ ] `mixin_mouse_transition_lock_preserves_arbitration_priority`：前置为 interactive session、有效 bounds、`currentScreen != null`、`inputLocked == true`，并经同一 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback 分别发送 LEFT PRESS 与 LEFT RELEASE。断言 PRESS 的 `CallbackInfo` 被取消且 Botany ownership 不改变；断言 RELEASE 的 `CallbackInfo` 未取消、ownership 结束且 delta/bounds 不变，从而锁定 transition-first、screen-open-second 的优先级。只断言取消结果、ownership 和 geometry，不断言内部调用顺序。
+- [ ] `mixin_mouse_right_shield_press_release_preserves_arbitration`：前置为 `currentScreen == null`、`inputLocked == false`、off-hand 为 `InventoryEquipRules.isShieldPublic` 的公开盾牌；经同一 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback 发送 RIGHT PRESS 后 RIGHT RELEASE。断言 PRESS 的 `CallbackInfo` 被取消、RaiseShield observable outcome 出现且 `bong$shieldRightHeld` 为 true；断言 RELEASE 的 `CallbackInfo` 被取消、LowerShield observable outcome 出现且 ownership 清除；Botany drag state、session identity 和 transition state 不得因右键改变。
+- [ ] `mixin_mouse_screen_open_right_release_lowers_without_consuming`：前置为无 screen、`inputLocked == false`、公开盾牌，经同一 HEAD callback 建立 RIGHT shield ownership 后打开 screen发送 RIGHT RELEASE。断言 LowerShield observable outcome 出现、`bong$shieldRightHeld` 清除且 RELEASE 的 `CallbackInfo` 未取消并继续交给 screen/vanilla；Botany drag state、session identity 和 transition state 不得改变。
+- [ ] 所有上述测试声明都必须从 `MixinMouse.bong$captureHarvestPanelDrag` 的真实仲裁边界取得可观察结果；可增加唯一的 package-private `MixinMouse` callback harness，生命周期仅限 client test invocation，不拥有第二份 drag/shield 状态、不复制分支条件。若 Fabric mixin callback 无法 headless 驱动，P1 evidence 必须记录具体阻塞原因与该 seam 的生产接线 pin，不能以孤立的 `TransitionInputPolicy` 或 payload encoder 测试替代。
 
 ## 可核验 symbols
 
@@ -58,7 +58,7 @@
 
 ## 非本 plan 交付物
 
-以下是邻接观察，不属于 PR #1304 Mapping 分配给本 successor 的 r7 #10；不得在实现 PR 顺手扩大范围：
+以下是邻接观察，不属于 `docs/finished_plans/plan-bughunt-r7-findings-v1.md:53-67` Finding Mapping #10 分配给本 successor 的 r7 #10；不得在实现 PR 顺手扩大范围：
 
 - window focus loss、terminal session 无 RELEASE 与 hidden-panel tick drag 的通用 hardening。
 - disconnect store registry、`BotanyHudBootstrap` / `BotanyHudPlanner` 生命周期重构。
