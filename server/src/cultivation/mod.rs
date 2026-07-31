@@ -2032,6 +2032,14 @@ mod tests {
         app.insert_resource(HalfStepRechallengeQueue::default());
     }
 
+    fn first_join_hydration_app(test_name: &str) -> (App, std::path::PathBuf) {
+        let (settings, root) = temp_persistence_settings(test_name);
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        (app, root)
+    }
+
     fn reincarnation_hydration_app(
         settings: &PersistenceSettings,
         player_persistence: &crate::player::state::PlayerStatePersistence,
@@ -2079,9 +2087,7 @@ mod tests {
 
     #[test]
     fn joined_clients_receive_canonical_player_character_id() {
-        let mut app = App::new();
-        app.insert_resource(PersistenceSettings::default());
-        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (mut app, root) = first_join_hydration_app("first-join-character-id");
 
         let (client_bundle, _helper) = create_mock_client("Alice");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -2104,6 +2110,8 @@ mod tests {
         assert_eq!(life_record.character_id, canonical_player_id("Alice"));
         assert_eq!(death_registry.char_id, canonical_player_id("Alice"));
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// plan-race-system-v1 P5/PR-6c —— `IntrinsicRace` 曾经零处 insert（6a 只在
@@ -2112,9 +2120,7 @@ mod tests {
     /// 这是本 PR 关闭的孤岛核心断言。
     #[test]
     fn joined_client_receives_intrinsic_race_matching_cultivation_race_on_first_join() {
-        let mut app = App::new();
-        app.insert_resource(PersistenceSettings::default());
-        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (mut app, root) = first_join_hydration_app("first-join-intrinsic-race");
 
         let (client_bundle, _helper) = create_mock_client("FreshJoiner");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -2141,13 +2147,13 @@ mod tests {
             RaceId::new(crate::body_plan::HUMAN_RACE_ID),
             "brand-new character with no persisted bundle must default to the human race"
         );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn joined_client_defaults_to_awaken_lifespan_cap() {
-        let mut app = App::new();
-        app.insert_resource(PersistenceSettings::default());
-        app.add_systems(Update, attach_cultivation_to_joined_clients);
+        let (mut app, root) = first_join_hydration_app("first-join-lifespan-cap");
 
         let (client_bundle, _helper) = create_mock_client("Novice");
         let entity = app
@@ -2169,6 +2175,8 @@ mod tests {
             .expect("joined client should receive a LifespanComponent");
 
         assert_eq!(lifespan.cap_by_realm, LifespanCapTable::AWAKEN);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
