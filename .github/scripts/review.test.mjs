@@ -68,17 +68,13 @@ const realRequestChanges = {
 const reviewScript = fileURLToPath(new URL("./review.mjs", import.meta.url));
 const textEncoder = new TextEncoder();
 
-function responseSseEvent(type, payload = {}, lineEnding = "\n") {
-  return `event: ${type}${lineEnding}data: ${JSON.stringify({ type, ...payload })}${lineEnding}${lineEnding}`;
+function chatSseChunk(content, finish_reason = null, lineEnding = "\n") {
+  return `data: ${JSON.stringify({ choices: [{ delta: content === null ? {} : { content }, finish_reason }] })}${lineEnding}${lineEnding}`;
 }
 
-function completedSse(output, lineEnding = "\n") {
-  const response = typeof output === "string"
-    ? { output: [{ type: "message", content: [{ type: "output_text", text: output }] }] }
-    : output;
-  return responseSseEvent("response.completed", { response }, lineEnding);
+function chatSseDone(lineEnding = "\n") {
+  return `data: [DONE]${lineEnding}${lineEnding}`;
 }
-
 function byteStream(chunks, { neverClose = false, cancel } = {}) {
   return new ReadableStream({
     start(controller) {
@@ -609,11 +605,14 @@ test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理�
   assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
 });
 
-test("Responses endpoint: 规范化 root/v1/responses 并拒绝凭据与非 HTTPS", () => {
-  assert.equal(buildResponsesEndpoint("https://api.example.com"), "https://api.example.com/v1/responses");
-  assert.equal(buildResponsesEndpoint("https://api.example.com/v1/"), "https://api.example.com/v1/responses");
-  assert.equal(buildResponsesEndpoint("https://api.example.com/custom/responses"), "https://api.example.com/custom/responses");
-  assert.equal(buildResponsesEndpoint("http://127.0.0.1:3000", true), "http://127.0.0.1:3000/v1/responses");
+test("Chat Completions endpoint: 规范化 root/v1/chat/completions 并拒绝凭据与非 HTTPS", () => {
+  assert.equal(buildResponsesEndpoint("https://api.example.com"), "https://api.example.com/v1/chat/completions");
+  assert.equal(buildResponsesEndpoint("https://api.example.com/v1/"), "https://api.example.com/v1/chat/completions");
+  assert.equal(
+    buildResponsesEndpoint("https://api.example.com/custom/chat/completions"),
+    "https://api.example.com/custom/chat/completions",
+  );
+  assert.equal(buildResponsesEndpoint("http://127.0.0.1:3000", true), "http://127.0.0.1:3000/v1/chat/completions");
   for (const url of [
     "http://api.example.com",
     "https://user:pass@api.example.com",
@@ -624,42 +623,57 @@ test("Responses endpoint: 规范化 root/v1/responses 并拒绝凭据与非 HTTP
   }
 });
 
-test("Responses request: SSE、无 tools、high reasoning、store false，并解析 typed output", async () => {
+test("Chat Completions request: SSE、user message、high reasoning，并解析 content", async () => {
   let request;
   const output = '{"vote":"APPROVE"}';
+  const chunk = (content, finish_reason = null) => `data: ${JSON.stringify({
+    id: "chat-1",
+    choices: [{ delta: content === null ? {} : { content }, finish_reason }],
+  })}\n\n`;
   const result = await requestResponses("审查提示", 1_000, {
     apiKey: "provider-secret",
     baseUrl: "https://api.example.com/v1",
     model: "gpt-5.6-sol",
     fetchImpl: async (url, init) => {
       request = { url, init, body: JSON.parse(init.body) };
-      return sseResponse([
-        responseSseEvent("response.created", { response: { id: "resp-1" } }),
-        responseSseEvent("response.output_text.delta", { delta: '{"vote":' }),
-        responseSseEvent("response.output_text.done", { text: output }),
-        responseSseEvent("response.output_text.delta", { delta: '"APPROVE"}' }),
-        completedSse(output),
-      ]);
+      return sseResponse([chunk('{"vote":"'), chunk('APPROVE"}'), chunk(null, "stop"), "data: [DONE]\n\n"]);
     },
   });
   assert.equal(result.code, 0);
-  assert.equal(result.stdout, output, "completed 信封优先且不得与 delta 重复");
-  assert.equal(request.url, "https://api.example.com/v1/responses");
+  assert.equal(result.stdout, output);
+  assert.equal(request.url, "https://api.example.com/v1/chat/completions");
   assert.equal(request.init.headers.Authorization, "Bearer provider-secret");
   assert.equal(request.init.headers.Accept, "text/event-stream");
   assert.deepEqual(request.body, {
     model: "gpt-5.6-sol",
-    input: "审查提示",
-    reasoning: { effort: "high" },
-    store: false,
+    messages: [{ role: "user", content: "审查提示" }],
+    reasoning_effort: "high",
     stream: true,
   });
+  assert.equal(Object.hasOwn(request.body, "store"), false, "Chat Completions 请求不得携带 store");
   assert.equal(Object.hasOwn(request.body, "tools"), false, "生产 reviewer 不得获得 shell 或其他 tool");
-  assert.equal(extractResponsesOutputText({ output_text: "兼容输出" }), "兼容输出");
-  assert.equal(extractResponsesOutputText({ output: [{ type: "reasoning" }] }), "");
+  assert.equal(extractResponsesOutputText({ choices: [{ message: { content: "chat output" } }] }), "chat output");
 });
 
-test("Responses request: HTTP 错误保留 final text，malformed 与 timeout 可分类", async () => {
+test("Chat Completions SSE: DONE 是终端 marker，finish_reason 记录 choice 结束", async () => {
+  const result = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([chatSseChunk("partial", "stop"), chatSseDone()]),
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, "partial");
+
+  const disconnected = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([chatSseChunk("partial", "stop")]),
+  });
+  assert.equal(disconnected.code, 1);
+  assert.match(disconnected.stderr, /disconnected/);
+});
+
+test("Chat Completions request: HTTP 错误保留 final text，malformed 与 timeout 可分类", async () => {
   const finalOn503 = await requestResponses("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",
@@ -741,10 +755,11 @@ test("Responses request: HTTP 错误保留 final text，malformed 与 timeout �
 });
 
 
-test("Responses SSE: UTF-8 分片、CRLF/comment 与 completed fallback", async () => {
-  const delta = `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "中文🙂" })}\r\n\r\n`;
-  const completed = completedSse({ output: [] }, "\r\n").replaceAll("\r\n", "\r");
-  const bytes = textEncoder.encode(`: ping\r\n\r\n${delta}${completed}`);
+test("Chat Completions SSE: UTF-8 分片、CRLF/comment 与 content", async () => {
+  const chunk = `data: ${JSON.stringify({ choices: [{ delta: { content: "中文🙂" }, finish_reason: null }] })}\r\n\r\n`;
+  const end = `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\r\n\r\n`;
+  const done = "data: [DONE]\r\n\r\n";
+  const bytes = textEncoder.encode(`: ping\r\n\r\n${chunk}${end}${done}`);
   const cut = bytes.indexOf(0x9f);
   assert.ok(cut > 0, "fixture 必须把 emoji 的 UTF-8 字节拆到两个网络 chunk");
 
@@ -757,14 +772,14 @@ test("Responses SSE: UTF-8 分片、CRLF/comment 与 completed fallback", async 
   assert.equal(result.stdout, "中文🙂");
 });
 
-test("Responses SSE: failed/incomplete/error、断流与 malformed 均不得假成功", async () => {
+test("Chat Completions SSE: provider error、断流与 malformed 均不得假成功", async () => {
+  const chunk = (content, finish_reason = null) => `data: ${JSON.stringify({
+    choices: [{ delta: content === null ? {} : { content }, finish_reason }],
+  })}\n\n`;
   const cases = [
-    { stream: [responseSseEvent("response.output_text.delta", { delta: '{"vote":"APPROVE"}' }), responseSseEvent("response.failed", { response: { error: { message: "model failed" } } })], error: /model failed/ },
-    { stream: [responseSseEvent("response.incomplete", { response: { incomplete_details: { reason: "max_output_tokens" } } })], error: /max_output_tokens/ },
-    { stream: [responseSseEvent("error", { error: { message: "provider exploded" } })], error: /provider exploded/ },
-    { stream: [responseSseEvent("response.output_text.delta", { delta: "partial" })], error: /disconnected/ },
+    { stream: [`data: ${JSON.stringify({ error: { message: "provider exploded" } })}\n\n`], error: /provider exploded/ },
+    { stream: [chatSseChunk("partial")], error: /disconnected/ },
     { stream: ["data: not-json\n\n"], error: /不是合法 JSON/ },
-    { stream: ["data: [DONE]\n\n"], error: /disconnected/ },
   ];
   for (const scenario of cases) {
     const result = await requestResponses("prompt", 1_000, {
@@ -776,10 +791,26 @@ test("Responses SSE: failed/incomplete/error、断流与 malformed 均不得假�
     assert.equal(isSuccessfulCodexResponse(result), false);
     assert.match(result.stderr, scenario.error);
   }
+  const doneOnly = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse(["data: [DONE]\n\n"]),
+  });
+  assert.equal(doneOnly.code, 1, "空 content 不得以 code 0 伪装成 genuine completion");
+  assert.equal(doneOnly.stdout, "");
+  assert.match(doneOnly.stderr, /未返回 content/);
+
+  const disconnected = await requestResponses("prompt", 1_000, {
+    apiKey: "key",
+    baseUrl: "https://api.example.com",
+    fetchImpl: async () => sseResponse([`data: ${JSON.stringify({ choices: [] })}`]),
+  });
+  assert.equal(disconnected.code, 1);
+  assert.match(disconnected.stderr, /disconnected/);
 });
 
-test("Responses SSE: reader error 与绝对 timeout 保留 partial stdout", async () => {
-  const partialFrame = responseSseEvent("response.output_text.delta", { delta: "partial" });
+test("Chat Completions SSE: reader error 与绝对 timeout 保留 partial stdout", async () => {
+  const partialFrame = `data: ${JSON.stringify({ choices: [{ delta: { content: "partial" }, finish_reason: null }] })}\n\n`;
   const readerFailed = await requestResponses("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",

@@ -7,7 +7,7 @@
 // 3. 把首轮意见互相公开，4 个 reviewer 复投最终票。
 // 4. 只有 3/1 或 4/0 APPROVE 才通过；2/2 直接视为未通过。
 //
-// 依赖：Node 内置模块 + gh + OpenAI-compatible Responses 端点。无 npm runtime dependency。
+// 依赖：Node 内置模块 + gh + OpenAI-compatible Chat Completions 端点。无 npm runtime dependency。
 
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -514,7 +514,12 @@ async function runReview() {
     return finishInfrastructureFailure("provider_config", "缺 REVIEW_CODEX_API_KEY / OPENAI_API_KEY");
   }
 
-  const context = loadPrContext(PR);
+  let context;
+  try {
+    context = loadPrContext(PR);
+  } catch (error) {
+    return finishInfrastructureFailure("diff_acquisition", errorText(error));
+  }
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
   const { firstRound, finalRound, outcome } = await runReviewPanel(context);
   if (outcome === "infra_failure") {
@@ -647,8 +652,29 @@ async function workflowFinalize() {
 }
 
 function loadPrContext(pr) {
-  const meta = JSON.parse(gh(["pr", "view", pr, "--json", "title,body,headRefName,files"]));
-  let diff = gh(["pr", "diff", pr]);
+  const meta = JSON.parse(
+    gh(["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,baseRefOid,headRefOid,files"]),
+  );
+  let diff;
+  let diffSource;
+  let apiFailure = null;
+  try {
+    diff = gh(["pr", "diff", pr]);
+    if (!diff.trim()) throw new Error("GitHub PR diff returned empty output");
+    if (isGitHubDiffLimitFailure(diff)) throw new Error("GitHub PR diff returned HTTP 406 line-limit response");
+    diffSource = "api";
+  } catch (error) {
+    apiFailure = error;
+    try {
+      diff = localPrDiff(meta);
+      diffSource = "local";
+    } catch (localError) {
+      throw new Error(
+        `PR diff acquisition failed (api: ${errorText(apiFailure)}; local: ${errorText(localError)})`,
+      );
+    }
+  }
+  console.error(`Review diff source: ${diffSource}`);
   let diffTruncated = false;
   if (diff.length > MAX_DIFF) {
     diff = diff.slice(0, MAX_DIFF);
@@ -669,9 +695,41 @@ function loadPrContext(pr) {
     changedFiles,
     changedLines,
     diff,
+    diffSource,
     diffTruncated,
     plan,
   };
+}
+
+function isGitHubDiffLimitFailure(value) {
+  return /(?:HTTP|status)\s*406|exceeded the maximum number of lines\s*\(\s*20000\s*\)/i.test(String(value || ""));
+}
+
+function localPrDiff(meta) {
+  const base = String(meta.baseRefOid || meta.baseRefName || "").trim();
+  const head = String(meta.headRefOid || meta.headRefName || "HEAD").trim();
+  if (!base) throw new Error("PR metadata 缺少 base ref");
+  const baseCommit = resolveLocalCommit(base, meta.baseRefName);
+  const headCommit = resolveLocalCommit(head, meta.headRefName);
+  const diff = git(["diff", "--no-ext-diff", baseCommit, headCommit]);
+  if (!diff.trim()) throw new Error("本地 Git diff 返回空输出");
+  return diff;
+}
+
+function resolveLocalCommit(ref, fetchRef = ref) {
+  try {
+    return git(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
+  } catch (error) {
+    if (fetchRef) {
+      try {
+        git(["fetch", "--no-tags", "origin", fetchRef]);
+        return git(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
+      } catch (fetchError) {
+        throw new Error(`本地 ref ${ref} 不存在且 fetch 失败：${errorText(fetchError)}`);
+      }
+    }
+    throw new Error(`本地 ref ${ref} 不存在：${errorText(error)}`);
+  }
 }
 
 function findPlan(meta) {
@@ -829,17 +887,17 @@ function compactResultForPrompt(result) {
 }
 
 async function runCodex(prompt, label) {
-  return runCodexResponses(prompt, label);
+  return runCodexChatCompletions(prompt, label);
 }
 
-async function runCodexResponses(prompt, label) {
-  console.error(`▶ responses ${label}`);
+async function runCodexChatCompletions(prompt, label) {
+  console.error(`▶ chat/completions ${label}`);
   for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
     const remainingMs = reviewDeadlineMs - Date.now();
     const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
     if (attemptTimeoutMs <= 0) {
       return {
-        raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止新的 Responses 请求"),
+        raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止新的 Chat Completions 请求"),
         executionFailure: true,
       };
     }
@@ -854,13 +912,13 @@ async function runCodexResponses(prompt, label) {
     if (attempt < CODEX_RETRIES && retryableFailure) {
       const waitMs = codexRetryDelayMs(result, attempt, CODEX_RETRY_MS);
       if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
-        console.error(`  responses ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
+        console.error(`  chat/completions ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
         await delay(waitMs);
         continue;
       }
     }
 
-    console.error(`  responses ${label} failed: ${failure}`);
+    console.error(`  chat/completions ${label} failed: ${failure}`);
     const parsed = extractJSON(text);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return { raw: text, executionFailure: true };
@@ -880,7 +938,11 @@ export function buildResponsesEndpoint(baseUrl, allowHttp = false) {
     throw new Error("Review Responses base URL 必须使用 HTTPS。");
   }
   const path = url.pathname.replace(/\/+$/, "");
-  url.pathname = path.endsWith("/responses") ? path : path.endsWith("/v1") ? `${path}/responses` : `${path}/v1/responses`;
+  url.pathname = path.endsWith("/chat/completions")
+    ? path
+    : path.endsWith("/v1")
+      ? `${path}/chat/completions`
+      : `${path}/v1/chat/completions`;
   return url.toString();
 }
 
@@ -895,6 +957,9 @@ export function extractResponsesOutputText(payload) {
       }
     }
   }
+  for (const choice of payload?.choices || []) {
+    if (typeof choice?.message?.content === "string") chunks.push(choice.message.content);
+  }
   return chunks.join("\n");
 }
 
@@ -904,7 +969,7 @@ const MAX_RESPONSES_SSE_BUFFER_BYTES = MAX_RESPONSES_SSE_EVENT_BYTES * 2;
 const responsesSseEncoder = new TextEncoder();
 
 function responsesSseError(message) {
-  return new Error(`Responses SSE ${message}`);
+  return new Error(`Chat Completions SSE ${message}`);
 }
 
 function responseErrorDetail(payload, fallback) {
@@ -920,7 +985,11 @@ function responseErrorDetail(payload, fallback) {
 
 function reduceResponsesSseEvent(state, event) {
   const data = String(event?.data ?? "");
-  if (data === "[DONE]") return state;
+  if (data === "[DONE]") {
+    state.done = true;
+    state.completed = true;
+    return state;
+  }
   if (!data.trim()) return state;
 
   let payload;
@@ -929,42 +998,29 @@ function reduceResponsesSseEvent(state, event) {
   } catch {
     throw responsesSseError("事件 data 不是合法 JSON。");
   }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.type !== "string" || !payload.type) {
-    throw responsesSseError("事件必须是带非空 type 的 JSON 对象。");
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw responsesSseError("事件必须是 JSON 对象。");
   }
-  const eventName = String(event?.event || "");
-  if (eventName && eventName !== "message" && eventName !== payload.type) {
-    throw responsesSseError(`event 字段与 type 不一致：${eventName} != ${payload.type}`);
+  if (payload.error) {
+    state.failure = responseErrorDetail(payload, "Chat Completions provider error");
+    state.terminal = true;
+    return state;
   }
-
-  switch (payload.type) {
-    case "response.output_text.delta":
-      if (typeof payload.delta !== "string") throw responsesSseError("output_text.delta 缺少字符串 delta。");
-      state.deltaText += payload.delta;
-      return state;
-    case "response.completed": {
-      if (!payload.response || typeof payload.response !== "object" || Array.isArray(payload.response)) {
-        throw responsesSseError("response.completed 缺少 response 信封。");
-      }
-      state.stdout = extractResponsesOutputText(payload.response) || state.deltaText;
-      state.completed = true;
-      return state;
+  const choice = payload.choices?.[0];
+  if (choice && typeof choice !== "object") throw responsesSseError("chat completion choice 非法。");
+  const content = choice?.delta?.content;
+  if (content !== undefined && typeof content !== "string") {
+    throw responsesSseError("chat completion delta.content 必须是字符串。");
+  }
+  if (typeof content === "string") state.deltaText += content;
+  if (choice?.finish_reason !== undefined && choice.finish_reason !== null) {
+    if (typeof choice.finish_reason !== "string" || !choice.finish_reason) {
+      throw responsesSseError("chat completion finish_reason 非法。");
     }
-    case "response.failed":
-      state.failure = responseErrorDetail(payload, "response.failed");
-      state.terminal = true;
-      return state;
-    case "response.incomplete":
-      state.failure = responseErrorDetail(payload, "response.incomplete");
-      state.terminal = true;
-      return state;
-    case "error":
-      state.failure = responseErrorDetail(payload, "Responses provider error");
-      state.terminal = true;
-      return state;
-    default:
-      return state;
+    state.finishReason = choice.finish_reason;
+    if (state.done) state.completed = true;
   }
+  return state;
 }
 
 async function consumeResponsesSse(body, state = {}) {
@@ -1108,6 +1164,8 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
     completed: false,
     terminal: false,
     failure: "",
+    done: false,
+    finishReason: "",
   };
   try {
     const response = await fetchImpl(endpoint, {
@@ -1119,9 +1177,8 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
       },
       body: JSON.stringify({
         model: options.model || MODEL,
-        input: prompt,
-        reasoning: { effort: "high" },
-        store: false,
+        messages: [{ role: "user", content: prompt }],
+        reasoning_effort: "high",
         stream: true,
       }),
       signal: controller.signal,
@@ -1142,12 +1199,13 @@ export async function requestResponses(prompt, timeoutMs, options = {}) {
     const state = await consumeResponsesSse(response.body, streamState);
     const output = state.stdout || state.deltaText || "";
     if (state.failure) return { code: 1, signal: null, stdout: output, stderr: state.failure };
-    if (!state.completed) return { code: 1, signal: null, stdout: output, stderr: "Responses SSE stream disconnected before completion" };
+    if (!state.completed) return { code: 1, signal: null, stdout: output, stderr: "Chat Completions SSE stream disconnected before completion" };
+    if (!output.trim()) return { code: 1, signal: null, stdout: output, stderr: "Chat Completions 未返回 content。" };
     return {
       code: 0,
       signal: null,
       stdout: output,
-      stderr: output ? "" : "Responses 未返回 output_text。",
+      stderr: "",
     };
   } catch (error) {
     const timedOut = error?.name === "AbortError" || controller.signal.aborted;
@@ -1553,6 +1611,11 @@ export function circuitGhTimeout(deadlineMs, nowMs = Date.now()) {
 function gh(args, timeoutMs = GH_TIMEOUT_MS) {
   const timeout = Math.max(1, Math.min(GH_TIMEOUT_MS, Math.floor(timeoutMs)));
   return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout });
+}
+
+function git(args, timeoutMs = GH_TIMEOUT_MS) {
+  const timeout = Math.max(1, Math.min(GH_TIMEOUT_MS, Math.floor(timeoutMs)));
+  return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout });
 }
 
 function normalizeFindings(value) {
