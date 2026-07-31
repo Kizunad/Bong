@@ -612,7 +612,8 @@ test("local PR diff: fork head 通过 PR ref fetch、锁定 metadata OID，并�
   const directory = mkdtempSync(join(tmpdir(), "bong-review-git-"));
   const gitPath = join(directory, "git");
   const logPath = join(directory, "git.log");
-  const fetchedPath = join(directory, "fetched");
+  const fetchedBasePath = join(directory, "fetched-base");
+  const fetchedHeadPath = join(directory, "fetched-head");
   const baseOid = "a".repeat(40);
   const headOid = "b".repeat(40);
   const mergeBase = "c".repeat(40);
@@ -625,16 +626,20 @@ fs.appendFileSync(process.env.GIT_TEST_LOG, JSON.stringify(args) + "\\n");
 const baseOid = ${JSON.stringify(baseOid)};
 const headOid = ${JSON.stringify(headOid)};
 const mergeBase = ${JSON.stringify(mergeBase)};
-if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
+if (args[0] === "fetch") {
+  if (args[3] === "+refs/heads/main:refs/review/pr-42-base") {
+    fs.writeFileSync(process.env.GIT_TEST_FETCHED_BASE, "yes");
+  } else if (args[3] === "+refs/pull/42/head:refs/review/pr-42-head") {
+    fs.writeFileSync(process.env.GIT_TEST_FETCHED_HEAD, "yes");
+  } else {
+    process.exit(2);
+  }
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  if (!fs.existsSync(process.env.GIT_TEST_FETCHED_BASE)) process.exit(1);
   process.stdout.write(baseOid + "\\n");
-} else if (args[0] === "rev-parse" && args[2] === headOid + "^{commit}") {
-  process.exit(1);
 } else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
-  if (!fs.existsSync(process.env.GIT_TEST_FETCHED)) process.exit(1);
+  if (!fs.existsSync(process.env.GIT_TEST_FETCHED_HEAD)) process.exit(1);
   process.stdout.write(headOid + "\\n");
-} else if (args[0] === "fetch") {
-  if (args[3] !== "+refs/pull/42/head:refs/review/pr-42-head") process.exit(2);
-  fs.writeFileSync(process.env.GIT_TEST_FETCHED, "yes");
 } else if (args[0] === "merge-base") {
   if (args[1] !== baseOid || args[2] !== headOid) process.exit(4);
   process.stdout.write(mergeBase + "\\n");
@@ -649,10 +654,10 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
   chmodSync(gitPath, 0o755);
   const previousPath = process.env.PATH;
   const previousLog = process.env.GIT_TEST_LOG;
-  const previousFetched = process.env.GIT_TEST_FETCHED;
   process.env.PATH = `${directory}:${previousPath || ""}`;
   process.env.GIT_TEST_LOG = logPath;
-  process.env.GIT_TEST_FETCHED = fetchedPath;
+  process.env.GIT_TEST_FETCHED_BASE = fetchedBasePath;
+  process.env.GIT_TEST_FETCHED_HEAD = fetchedHeadPath;
   try {
     assert.equal(
       localPrDiff("42", {
@@ -667,11 +672,13 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    assert.deepEqual(calls.find((args) => args[0] === "fetch"), [
-      "fetch",
-      "--no-tags",
-      "origin",
-      "+refs/pull/42/head:refs/review/pr-42-head",
+    assert.deepEqual(calls.filter((args) => args[0] === "fetch"), [
+      ["fetch", "--no-tags", "origin", "+refs/heads/main:refs/review/pr-42-base"],
+      ["fetch", "--no-tags", "origin", "+refs/pull/42/head:refs/review/pr-42-head"],
+    ]);
+    assert.deepEqual(calls.filter((args) => args[0] === "rev-parse"), [
+      ["rev-parse", "--verify", "refs/review/pr-42-base^{commit}"],
+      ["rev-parse", "--verify", "refs/review/pr-42-head^{commit}"],
     ]);
     assert.deepEqual(calls.find((args) => args[0] === "merge-base"), ["merge-base", baseOid, headOid]);
     assert.deepEqual(calls.find((args) => args[0] === "diff"), ["diff", "--no-ext-diff", mergeBase, headOid]);
@@ -681,8 +688,8 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
     else process.env.PATH = previousPath;
     if (previousLog === undefined) delete process.env.GIT_TEST_LOG;
     else process.env.GIT_TEST_LOG = previousLog;
-    if (previousFetched === undefined) delete process.env.GIT_TEST_FETCHED;
-    else process.env.GIT_TEST_FETCHED = previousFetched;
+    delete process.env.GIT_TEST_FETCHED_BASE;
+    delete process.env.GIT_TEST_FETCHED_HEAD;
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -708,17 +715,19 @@ const mergeBase = ${JSON.stringify(mergeBase)};
 const staleHeadOid = ${JSON.stringify(staleHeadOid)};
 const refStatePath = process.env.GIT_TEST_REF_STATE;
 fs.appendFileSync(process.env.GIT_TEST_LOG, JSON.stringify(args) + "\\n");
-if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
-  process.stdout.write(baseOid + "\\n");
-} else if (args[0] === "rev-parse" && args[2] === headOid + "^{commit}") {
-  process.exit(1);
-} else if (args[0] === "fetch") {
-  if (fs.readFileSync(refStatePath, "utf8").trim() !== staleHeadOid) process.exit(2);
-  if (args[3] !== "+refs/pull/42/head:refs/review/pr-42-head") {
-    process.stderr.write("non-fast-forward update rejected\\n");
-    process.exit(3);
+if (args[0] === "fetch") {
+  if (args[3] === "+refs/heads/main:refs/review/pr-42-base") {
+    process.exit(0);
   }
-  fs.writeFileSync(refStatePath, headOid + "\\n");
+  if (args[3] === "+refs/pull/42/head:refs/review/pr-42-head") {
+    if (fs.readFileSync(refStatePath, "utf8").trim() !== staleHeadOid) process.exit(2);
+    fs.writeFileSync(refStatePath, headOid + "\\n");
+    process.exit(0);
+  }
+  process.stderr.write("unexpected refspec\\n");
+  process.exit(3);
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  process.stdout.write(baseOid + "\\n");
 } else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
   process.stdout.write(fs.readFileSync(refStatePath, "utf8").trim() + "\\n");
 } else if (args[0] === "merge-base") {
@@ -758,11 +767,11 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    assert.deepEqual(calls.find((args) => args[0] === "fetch"), [
-      "fetch",
-      "--no-tags",
-      "origin",
-      "+refs/pull/42/head:refs/review/pr-42-head",
+    assert.deepEqual(calls.slice(0, 4), [
+      ["fetch", "--no-tags", "origin", "+refs/heads/main:refs/review/pr-42-base"],
+      ["fetch", "--no-tags", "origin", "+refs/pull/42/head:refs/review/pr-42-head"],
+      ["rev-parse", "--verify", "refs/review/pr-42-base^{commit}"],
+      ["rev-parse", "--verify", "refs/review/pr-42-head^{commit}"],
     ]);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
@@ -775,13 +784,70 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
   }
 });
 
+test("local PR diff: force-push 后即使 metadata OID 对象已在本地，也始终刷新并从 refs 核验", () => {
+  const directory = mkdtempSync(join(tmpdir(), "bong-review-git-existing-object-"));
+  const gitPath = join(directory, "git");
+  const logPath = join(directory, "git.log");
+  const baseOid = "a".repeat(40);
+  const headOid = "b".repeat(40);
+  const staleHeadOid = "d".repeat(40);
+  const refStatePath = join(directory, "head-ref");
+  writeFileSync(refStatePath, `${staleHeadOid}\n`);
+  writeFileSync(gitPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const baseOid = ${JSON.stringify(baseOid)};
+const staleHeadOid = ${JSON.stringify(staleHeadOid)};
+const refStatePath = ${JSON.stringify(refStatePath)};
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
+if (args[0] === "fetch") {
+  if (args[3] === "+refs/heads/main:refs/review/pr-42-base") process.exit(0);
+  if (args[3] === "+refs/pull/42/head:refs/review/pr-42-head") process.exit(0);
+  process.exit(2);
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  process.stdout.write(baseOid + "\\n");
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
+  process.stdout.write(fs.readFileSync(refStatePath, "utf8"));
+} else if (args[0] === "merge-base" || args[0] === "diff") {
+  process.exit(7);
+} else {
+  process.exit(3);
+}
+`);
+  chmodSync(gitPath, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${directory}:${previousPath || ""}`;
+  try {
+    assert.throws(
+      () => localPrDiff("42", {
+        baseRefOid: baseOid,
+        baseRefName: "main",
+        headRefOid: headOid,
+        headRefName: "feature",
+      }),
+      new RegExp(`PR head OID 漂移：expected=${headOid} actual=${staleHeadOid}`),
+    );
+    const calls = readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(calls.slice(0, 4), [
+      ["fetch", "--no-tags", "origin", "+refs/heads/main:refs/review/pr-42-base"],
+      ["fetch", "--no-tags", "origin", "+refs/pull/42/head:refs/review/pr-42-head"],
+      ["rev-parse", "--verify", "refs/review/pr-42-base^{commit}"],
+      ["rev-parse", "--verify", "refs/review/pr-42-head^{commit}"],
+    ]);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("local PR diff: metadata OID 与 fetch 后 ref 漂移时 fail-closed", () => {
   const baseOid = "a".repeat(40);
   const headOid = "b".repeat(40);
   const actualOid = "c".repeat(40);
-  for (const [label, expectedOid, ref] of [
-    ["base", baseOid, "refs/review/pr-42-base"],
-    ["head", headOid, "refs/review/pr-42-head"],
+  for (const [label, expectedOid, ref, refspec] of [
+    ["base", baseOid, "refs/review/pr-42-base", "+refs/heads/main:refs/review/pr-42-base"],
+    ["head", headOid, "refs/review/pr-42-head", "+refs/pull/42/head:refs/review/pr-42-head"],
   ]) {
     const directory = mkdtempSync(join(tmpdir(), "bong-review-git-drift-"));
     const gitPath = join(directory, "git");
@@ -793,17 +859,19 @@ const baseOid = ${JSON.stringify(baseOid)};
 const headOid = ${JSON.stringify(headOid)};
 const label = ${JSON.stringify(label)};
 const ref = ${JSON.stringify(ref)};
+const refspec = ${JSON.stringify(refspec)};
 const actual = ${JSON.stringify(actualOid)};
-if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
-  if (label === "base") process.exit(1);
-  process.stdout.write(baseOid + "\\n");
-} else if (args[0] === "rev-parse" && args[2] === headOid + "^{commit}") {
-  if (label === "head") process.exit(1);
-  process.stdout.write(headOid + "\\n");
-} else if (args[0] === "fetch") {
-  process.exit(0);
-} else if (args[0] === "rev-parse" && args[2] === ref + "^{commit}") {
-  process.stdout.write(actual + "\\n");
+if (args[0] === "fetch") {
+  const expectedRefspec = args[3];
+  if (
+    expectedRefspec === "+refs/heads/main:refs/review/pr-42-base" ||
+    expectedRefspec === "+refs/pull/42/head:refs/review/pr-42-head"
+  ) process.exit(0);
+  process.exit(2);
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  process.stdout.write(label === "base" ? actual + "\\n" : baseOid + "\\n");
+} else if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
+  process.stdout.write(label === "head" ? actual + "\\n" : headOid + "\\n");
 } else {
   process.exit(3);
 }
@@ -820,7 +888,7 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
           headRefOid: headOid,
           headRefName: "feature",
         }),
-        new RegExp(`PR ${label} OID 漂移：expected=${expectedOid} actual=${actualOid}`),
+        (error) => error?.message === `PR ${label} OID 漂移：expected=${expectedOid} actual=${actualOid}`,
       );
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
@@ -830,7 +898,122 @@ if (args[0] === "rev-parse" && args[2] === baseOid + "^{commit}") {
   }
 });
 
-test("loadPrContext: API 成功、406/普通失败均可回退本地，双路径失败保留两端原因", () => {
+test("local PR diff: fallback 的声明失败均 fail-closed 且保留原因", () => {
+  const baseOid = "a".repeat(40);
+  const headOid = "b".repeat(40);
+  const meta = { baseRefOid: baseOid, baseRefName: "main", headRefOid: headOid };
+  const cases = [
+    {
+      name: "metadata OID 非法",
+      meta: { ...meta, baseRefOid: "not-an-oid" },
+      expected: "PR metadata 缺少合法 base OID",
+    },
+    {
+      name: "fetch 失败",
+      gitScript: `
+if (args[0] === "fetch") {
+  process.stderr.write("network unavailable\\n");
+  process.exit(2);
+}
+process.exit(3);`,
+      expected: `本地 base OID ${baseOid} fetch 失败：network unavailable`,
+    },
+    {
+      name: "fetch 后 ref 不可读",
+      gitScript: `
+if (args[0] === "fetch") process.exit(0);
+if (args[0] === "rev-parse") {
+  process.stderr.write("missing ref\\n");
+  process.exit(4);
+}
+process.exit(3);`,
+      expected: `本地 base OID ${baseOid} fetch 后 ref 不可读：missing ref`,
+    },
+    {
+      name: "OID 漂移",
+      gitScript: `
+if (args[0] === "fetch") process.exit(0);
+if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  process.stdout.write(${JSON.stringify("c".repeat(40) + "\n")});
+  process.exit(0);
+}
+process.exit(3);`,
+      expected: `PR base OID 漂移：expected=${baseOid} actual=${"c".repeat(40)}`,
+    },
+    {
+      name: "没有 merge-base",
+      gitScript: `
+if (args[0] === "fetch") process.exit(0);
+if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  process.stdout.write(${JSON.stringify(baseOid + "\n")});
+  process.exit(0);
+}
+if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
+  process.stdout.write(${JSON.stringify(headOid + "\n")});
+  process.exit(0);
+}
+if (args[0] === "merge-base") {
+  process.stderr.write("no common ancestor\\n");
+  process.exit(5);
+}
+process.exit(3);`,
+      expected: "本地 Git 未找到 PR base/head 的 merge-base：no common ancestor",
+    },
+    {
+      name: "local diff 为空",
+      gitScript: `
+if (args[0] === "fetch") process.exit(0);
+if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-base^{commit}") {
+  process.stdout.write(${JSON.stringify(baseOid + "\n")});
+  process.exit(0);
+}
+if (args[0] === "rev-parse" && args[2] === "refs/review/pr-42-head^{commit}") {
+  process.stdout.write(${JSON.stringify(headOid + "\n")});
+  process.exit(0);
+}
+if (args[0] === "merge-base") {
+  process.stdout.write(${JSON.stringify("d".repeat(40) + "\n")});
+  process.exit(0);
+}
+if (args[0] === "diff") process.exit(0);
+process.exit(3);`,
+      expected: "本地 Git diff 返回空输出",
+    },
+  ];
+  for (const scenario of cases) {
+    const scenarioMeta = scenario.meta || meta;
+    if (!scenario.gitScript) {
+      assert.throws(
+        () => localPrDiff("42", scenarioMeta),
+        (error) => error?.message === scenario.expected,
+        scenario.name,
+      );
+      continue;
+    }
+    const directory = mkdtempSync(join(tmpdir(), "bong-review-git-failure-"));
+    const gitPath = join(directory, "git");
+    writeFileSync(gitPath, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+${scenario.gitScript}
+`);
+    chmodSync(gitPath, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${directory}:${previousPath || ""}`;
+    try {
+      assert.throws(
+        () => localPrDiff("42", scenarioMeta),
+        (error) => error?.message === scenario.expected,
+        scenario.name,
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("loadPrContext: 成功 API diff 的文本不参与 406 判定，只有失败命令才可回退本地", () => {
   const meta = {
     title: "review infra",
     body: "",
@@ -840,9 +1023,21 @@ test("loadPrContext: API 成功、406/普通失败均可回退本地，双路径
     headRefOid: "b".repeat(40),
     files: [{ path: ".github/scripts/review.mjs", additions: 3, deletions: 1 }],
   };
+  const error406 = Object.assign(new Error("gh pr diff failed"), {
+    code: 1,
+    signal: null,
+    stdout: "",
+    stderr: "HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000)",
+  });
   const scenarios = [
-    { name: "api", apiDiff: "diff --git a/a b/a\n", expectedSource: "api", localCalls: 0 },
-    { name: "406", apiDiff: "HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000)", expectedSource: "local", localCalls: 1 },
+    { name: "ordinary API success", apiDiff: "diff --git a/a b/a\n", expectedSource: "api", localCalls: 0 },
+    {
+      name: "successful diff body mentioning the line limit",
+      apiDiff: "diff --git a/a b/a\n+HTTP 406\n+exceeded the maximum number of lines (20000)\n",
+      expectedSource: "api",
+      localCalls: 0,
+    },
+    { name: "failed command 406", apiError: error406, expectedSource: "local", localCalls: 1 },
     { name: "ordinary API failure", apiError: new Error("HTTP 502 upstream"), expectedSource: "local", localCalls: 1 },
   ];
   for (const scenario of scenarios) {
@@ -868,22 +1063,51 @@ test("loadPrContext: API 成功、406/普通失败均可回退本地，双路径
     assert.equal(localCalls, scenario.localCalls, scenario.name);
     assert.deepEqual(logs, [`Review diff source: ${scenario.expectedSource}`]);
   }
+});
 
-  assert.throws(
-    () => loadPrContext("42", {
-      runGh(args) {
-        if (args[1] === "view") return JSON.stringify(meta);
-        throw new Error("HTTP 502 upstream");
-      },
-      localDiff() {
-        throw new Error("merge-base unavailable");
-      },
-      log() {
-        throw new Error("both paths must fail before logging source");
-      },
-    }),
-    /PR diff acquisition failed \(api: HTTP 502 upstream; local: merge-base unavailable\)/,
-  );
+test("loadPrContext: fallback 的所有声明失败保留原因并合并为 diff acquisition failure", () => {
+  const meta = {
+    title: "review infra",
+    body: "",
+    headRefName: "fix/review",
+    baseRefName: "main",
+    baseRefOid: "a".repeat(40),
+    headRefOid: "b".repeat(40),
+    files: [],
+  };
+  const apiError = Object.assign(new Error("gh pr diff failed"), {
+    code: 1,
+    signal: null,
+    stdout: "",
+    stderr: "HTTP 406: line limit",
+  });
+  const localFailures = [
+    "PR metadata 缺少合法 base OID",
+    `本地 base OID ${meta.baseRefOid} fetch 失败：network unavailable`,
+    `本地 head OID ${meta.headRefOid} fetch 后 ref 不可读：missing ref`,
+    `PR base OID 漂移：expected=${meta.baseRefOid} actual=${"c".repeat(40)}`,
+    "本地 Git 未找到 PR base/head 的 merge-base：no common ancestor",
+    "本地 Git diff 失败：git diff returned 128",
+    "本地 Git diff 返回空输出",
+  ];
+  for (const localReason of localFailures) {
+    assert.throws(
+      () => loadPrContext("42", {
+        runGh(args) {
+          if (args[1] === "view") return JSON.stringify(meta);
+          throw apiError;
+        },
+        localDiff() {
+          throw new Error(localReason);
+        },
+        log() {
+          throw new Error("both paths must fail before logging source");
+        },
+      }),
+      new RegExp(`PR diff acquisition failed \\(api: HTTP 406: line limit; local: ${localReason.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\)`),
+      localReason,
+    );
+  }
 });
 
 
@@ -985,19 +1209,47 @@ test("Chat Completions SSE: choices/choice/delta 结构损坏时，即使随后 
   }
 });
 
-test("Chat Completions SSE: choices 空数组只接受 usage-only event", async () => {
-  const result = await requestChatCompletions("prompt", 1_000, {
-    apiKey: "key",
-    baseUrl: "https://api.example.com",
-    fetchImpl: async () => sseResponse([
-      `data: ${JSON.stringify({ choices: [], usage: { total_tokens: 1 } })}\n\n`,
-      chatSseChunk("content", "stop"),
-      chatSseDone(),
-    ]),
-  });
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, "content");
+test("Chat Completions SSE: usage-only 仅允许 stop 后一次且随后必须 DONE", async () => {
+  const usageOnly = `data: ${JSON.stringify({ choices: [], usage: { total_tokens: 1 } })}\n\n`;
+  const cases = [
+    {
+      name: "content 前 usage-only",
+      stream: [usageOnly, chatSseChunk("content", "stop"), chatSseDone()],
+      error: /usage-only event 必须出现在 finish_reason=stop 之后/,
+    },
+    {
+      name: "stop 后一次 usage-only 再 DONE",
+      stream: [chatSseChunk("content", "stop"), usageOnly, chatSseDone()],
+      output: "content",
+    },
+    {
+      name: "usage-only 后普通 choice",
+      stream: [chatSseChunk("content", "stop"), usageOnly, chatSseChunk("tail"), chatSseDone()],
+      error: /usage-only event 后只允许 \[DONE\]/,
+    },
+    {
+      name: "usage-only 后第二个 usage-only",
+      stream: [chatSseChunk("content", "stop"), usageOnly, usageOnly, chatSseDone()],
+      error: /usage-only event 后只允许 \[DONE\]/,
+    },
+  ];
+  for (const scenario of cases) {
+    const result = await requestChatCompletions("prompt", 1_000, {
+      apiKey: "key",
+      baseUrl: "https://api.example.com",
+      fetchImpl: async () => sseResponse(scenario.stream),
+    });
+    if (scenario.error) {
+      assert.equal(result.code, 1, scenario.name);
+      assert.match(result.stderr, scenario.error, scenario.name);
+    } else {
+      assert.equal(result.code, 0, scenario.name);
+      assert.equal(result.stdout, scenario.output, scenario.name);
+    }
+  }
+});
 
+test("Chat Completions SSE: choices 空数组拒绝非 usage-only 形态", async () => {
   const malformed = await requestChatCompletions("prompt", 1_000, {
     apiKey: "key",
     baseUrl: "https://api.example.com",

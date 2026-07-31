@@ -661,7 +661,6 @@ export function loadPrContext(pr, { runGh = gh, localDiff = localPrDiff, log = c
   try {
     diff = runGh(["pr", "diff", pr]);
     if (!diff.trim()) throw new Error("GitHub PR diff returned empty output");
-    if (isGitHubDiffLimitFailure(diff)) throw new Error("GitHub PR diff returned HTTP 406 line-limit response");
     diffSource = "api";
   } catch (error) {
     apiFailure = error;
@@ -701,29 +700,39 @@ export function loadPrContext(pr, { runGh = gh, localDiff = localPrDiff, log = c
   };
 }
 
-function isGitHubDiffLimitFailure(value) {
-  return /(?:HTTP|status)\s*406|exceeded the maximum number of lines\s*\(\s*20000\s*\)/i.test(String(value || ""));
-}
-
 export function localPrDiff(pr, meta) {
-  const expectedBase = requireMetadataOid(meta.baseRefOid, "base");
-  const expectedHead = requireMetadataOid(meta.headRefOid, "head");
-  const baseRefName = String(meta.baseRefName || "").trim();
-  const baseCommit = resolveMetadataCommit({
-    expectedOid: expectedBase,
-    fetchRef: baseRefName ? `refs/heads/${baseRefName}` : null,
-    localRef: `refs/review/pr-${pr}-base`,
-    label: "base",
-  });
-  const headCommit = resolveMetadataCommit({
-    expectedOid: expectedHead,
-    fetchRef: `refs/pull/${pr}/head`,
-    localRef: `refs/review/pr-${pr}-head`,
-    label: "head",
-  });
-  const mergeBase = git(["merge-base", baseCommit, headCommit]).trim();
+  const refs = [
+    {
+      expectedOid: requireMetadataOid(meta.baseRefOid, "base"),
+      fetchRef: String(meta.baseRefName || "").trim() ? `refs/heads/${String(meta.baseRefName).trim()}` : null,
+      localRef: `refs/review/pr-${pr}-base`,
+      label: "base",
+    },
+    {
+      expectedOid: requireMetadataOid(meta.headRefOid, "head"),
+      fetchRef: `refs/pull/${pr}/head`,
+      localRef: `refs/review/pr-${pr}-head`,
+      label: "head",
+    },
+  ];
+  for (const ref of refs) {
+    if (!ref.fetchRef) throw new Error(`PR metadata 缺少可 fetch 的 ${ref.label} ref`);
+  }
+  for (const ref of refs) fetchMetadataRef(ref);
+  const [baseCommit, headCommit] = refs.map(resolveMetadataCommit);
+  let mergeBase;
+  try {
+    mergeBase = git(["merge-base", baseCommit, headCommit]).trim();
+  } catch (mergeBaseError) {
+    throw new Error(`本地 Git 未找到 PR base/head 的 merge-base：${errorText(mergeBaseError)}`);
+  }
   if (!mergeBase) throw new Error("本地 Git 未找到 PR base/head 的 merge-base");
-  const diff = git(["diff", "--no-ext-diff", mergeBase, headCommit]);
+  let diff;
+  try {
+    diff = git(["diff", "--no-ext-diff", mergeBase, headCommit]);
+  } catch (diffError) {
+    throw new Error(`本地 Git diff 失败：${errorText(diffError)}`);
+  }
   if (!diff.trim()) throw new Error("本地 Git diff 返回空输出");
   return diff;
 }
@@ -734,20 +743,20 @@ function requireMetadataOid(value, label) {
   return oid;
 }
 
-function resolveMetadataCommit({ expectedOid, fetchRef, localRef, label }) {
+function fetchMetadataRef({ expectedOid, fetchRef, localRef, label }) {
+  try {
+    git(["fetch", "--no-tags", "origin", `+${fetchRef}:${localRef}`]);
+  } catch (fetchError) {
+    throw new Error(`本地 ${label} OID ${expectedOid} fetch 失败：${errorText(fetchError)}`);
+  }
+}
+
+function resolveMetadataCommit({ expectedOid, localRef, label }) {
   let actual;
   try {
-    actual = git(["rev-parse", "--verify", `${expectedOid}^{commit}`]).trim();
-  } catch (localError) {
-    if (!fetchRef) {
-      throw new Error(`本地 ${label} OID ${expectedOid} 不存在且缺少可 fetch ref：${errorText(localError)}`);
-    }
-    try {
-      git(["fetch", "--no-tags", "origin", `+${fetchRef}:${localRef}`]);
-      actual = git(["rev-parse", "--verify", `${localRef}^{commit}`]).trim();
-    } catch (fetchError) {
-      throw new Error(`本地 ${label} OID ${expectedOid} 不存在且 fetch 失败：${errorText(fetchError)}`);
-    }
+    actual = git(["rev-parse", "--verify", `${localRef}^{commit}`]).trim();
+  } catch (refError) {
+    throw new Error(`本地 ${label} OID ${expectedOid} fetch 后 ref 不可读：${errorText(refError)}`);
   }
   if (actual.toLowerCase() !== expectedOid) {
     throw new Error(`PR ${label} OID 漂移：expected=${expectedOid} actual=${actual || "<empty>"}`);
@@ -1034,6 +1043,9 @@ function reduceChatCompletionsSseEvent(state, event) {
     state.completed = true;
     return state;
   }
+  if (state.usageSeen) {
+    throw chatCompletionsSseError("usage-only event 后只允许 [DONE]。");
+  }
   if (!data.trim()) return state;
 
   let payload;
@@ -1055,9 +1067,10 @@ function reduceChatCompletionsSseEvent(state, event) {
     if (!isUsageOnlyEvent(payload)) {
       throw chatCompletionsSseError("chat completion choices 为空且缺少合法 usage-only event。");
     }
-    if (state.finishReason && state.finishReason !== "stop") {
-      throw chatCompletionsSseError(`finish_reason=${state.finishReason} 不允许完成。`);
+    if (state.finishReason !== "stop") {
+      throw chatCompletionsSseError("usage-only event 必须出现在 finish_reason=stop 之后。");
     }
+    state.usageSeen = true;
     return state;
   }
   if (state.finishReason) {
@@ -1108,6 +1121,7 @@ async function consumeChatCompletionsSse(body, state = {}) {
   streamState.terminal ??= false;
   streamState.failure ??= "";
   streamState.finishReason ??= null;
+  streamState.usageSeen ??= false;
 
   const resetEvent = () => {
     eventName = "";
@@ -1233,6 +1247,7 @@ export async function requestChatCompletions(prompt, timeoutMs, options = {}) {
     failure: "",
     done: false,
     finishReason: null,
+    usageSeen: false,
   };
   try {
     const response = await fetchImpl(endpoint, {
