@@ -35,9 +35,10 @@ use crate::qi_physics::ledger::pending_inflow_account;
 use crate::qi_physics::ledger::{
     persistent_runtime_qi_accounts, QiAccountId, WorldQiAccount, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
-    QI_FLOW_OVERFLOW_ACCOUNT_ID,
+    QI_FLOW_OVERFLOW_ACCOUNT_ID, RIFT_DRAIN_ACCOUNT_ID,
 };
 use crate::schema::common::NpcStateKind;
+use crate::schema::elder_encounter::ElderEncounterEventV1;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
 use crate::schema::social::{
     ExposureKindV1, FactionMembershipSnapshotV1, RelationshipKindV1, RelationshipSnapshotV1,
@@ -58,8 +59,9 @@ pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 /// v33 新增伪灵脉 runtime；v34 持久化 pending inflow；v35 保存年龄/调度相位；
 /// v36/v37 分别持久化锻造会话与掉落；v38 新增两项垂死大能稳定 overflow 池；
-/// v39 新增 R5 通用 qi flow overflow 稳定池。
-const CURRENT_USER_VERSION: i32 = 39;
+/// v39 由 player_lifecycle 占用；v40 新增 R5 通用 qi flow overflow 稳定池；
+/// v41 新增 R5 裂隙抽取稳定池；v42 新增 NPC terminal Redis narration durable outbox。
+const CURRENT_USER_VERSION: i32 = 43;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -199,6 +201,22 @@ impl PersistenceSettings {
     pub fn server_run_id(&self) -> &str {
         self.server_run_id.as_str()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NpcTerminalNarrationOutboxRecord {
+    pub outbox_id: String,
+    pub actor_account: String,
+    pub payload: ElderEncounterEventV1,
+    pub created_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NpcTerminalLootOutboxRecord {
+    pub outbox_id: String,
+    pub actor_account: String,
+    pub entries: Vec<DroppedLootEntry>,
+    pub created_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2326,10 +2344,10 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
 
     let current_version: i32 =
         connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-    if current_version < 39 {
+    if current_version < 40 {
         let transaction = connection.transaction()?;
         // R5 前不存在通用稳定 overflow 余额，旧动态 overflow 也只是 event-only、无可恢复
-        // 物理状态，因此 v39 唯一诚实的迁移起点是已知 0；后续每次快照都由完整白名单持久化。
+        // 物理状态，因此 v40 唯一诚实的迁移起点是已知 0；后续每次快照都由完整白名单持久化。
         transaction.execute(
             "
             INSERT INTO qi_runtime_accounts (
@@ -2339,7 +2357,66 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
             ",
             params![QI_FLOW_OVERFLOW_ACCOUNT_ID, CURRENT_SCHEMA_VERSION],
         )?;
-        transaction.execute_batch("PRAGMA user_version = 39;")?;
+        transaction.execute_batch("PRAGMA user_version = 40;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 41 {
+        let transaction = connection.transaction()?;
+        // R5 前的裂隙抽取只写动态 rift 账户且没有 restart 枚举边界，旧余额无法可靠恢复；
+        // v41 从已知 0 建立固定聚合池，此后由完整 runtime 白名单原子 snapshot/hydrate。
+        transaction.execute(
+            "
+            INSERT INTO qi_runtime_accounts (
+                account_id, balance, schema_version, last_updated_wall
+            ) VALUES (?1, 0.0, ?2, 0)
+            ON CONFLICT(account_id) DO NOTHING
+            ",
+            params![RIFT_DRAIN_ACCOUNT_ID, CURRENT_SCHEMA_VERSION],
+        )?;
+        transaction.execute_batch("PRAGMA user_version = 41;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 42 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS npc_terminal_narration_outbox (
+                outbox_id          TEXT PRIMARY KEY,
+                actor_account      TEXT NOT NULL,
+                payload_json       TEXT NOT NULL,
+                created_tick       INTEGER NOT NULL CHECK (created_tick >= 0),
+                schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 42;
+            ",
+        )?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 43 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS npc_terminal_loot_outbox (
+                outbox_id          TEXT PRIMARY KEY,
+                actor_account      TEXT NOT NULL,
+                entries_json       TEXT NOT NULL,
+                created_tick       INTEGER NOT NULL CHECK (created_tick >= 0),
+                schema_version     INTEGER NOT NULL CHECK (schema_version >= 1),
+                last_updated_wall  INTEGER NOT NULL CHECK (last_updated_wall >= 0)
+            );
+            PRAGMA user_version = 43;
+            ",
+        )?;
         transaction.commit()?;
     }
 
@@ -4423,12 +4500,27 @@ pub fn persist_life_record_death_insight(
     transaction.commit().map_err(io::Error::other)
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct TerminalPersistencePayload<'a> {
+    pub death_registry_cause: Option<&'a str>,
+    pub lifespan_event: Option<&'a LifespanEventRecord>,
+    pub zones: Option<&'a crate::world::zone::ZoneRegistry>,
+    pub qi_ledger: Option<&'a WorldQiAccount>,
+    pub narration_outbox: Option<&'a NpcTerminalNarrationOutboxRecord>,
+    pub loot_outbox: Option<&'a NpcTerminalLootOutboxRecord>,
+}
+
 pub fn persist_termination_transition(
     settings: &PersistenceSettings,
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
 ) -> io::Result<()> {
-    persist_termination_transition_inner(settings, lifecycle, life_record, None, None)
+    persist_termination_transition_inner(
+        settings,
+        lifecycle,
+        life_record,
+        TerminalPersistencePayload::default(),
+    )
 }
 
 pub fn persist_termination_transition_with_death_context(
@@ -4442,17 +4534,30 @@ pub fn persist_termination_transition_with_death_context(
         settings,
         lifecycle,
         life_record,
-        death_registry_cause,
-        lifespan_event,
+        TerminalPersistencePayload {
+            death_registry_cause,
+            lifespan_event,
+            ..Default::default()
+        },
     )
+}
+
+/// NPC 终结的 durable owner transaction：lifecycle / biography / death snapshot、signed
+/// zone 余额与固定 runtime ledger owner 在同一个 SQLite transaction 中提交。
+pub fn persist_npc_terminal_qi_transaction(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    payload: TerminalPersistencePayload<'_>,
+) -> io::Result<()> {
+    persist_termination_transition_inner(settings, lifecycle, life_record, payload)
 }
 
 fn persist_termination_transition_inner(
     settings: &PersistenceSettings,
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
-    death_registry_cause: Option<&str>,
-    lifespan_event: Option<&LifespanEventRecord>,
+    payload: TerminalPersistencePayload<'_>,
 ) -> io::Result<()> {
     let entry = latest_biography_entry(life_record)?;
     let wall_clock = current_unix_seconds();
@@ -4491,7 +4596,7 @@ fn persist_termination_transition_inner(
             entry,
             wall_clock,
         )?;
-        if let Some(death_registry_cause) = death_registry_cause {
+        if let Some(death_registry_cause) = payload.death_registry_cause {
             upsert_death_registry(
                 &transaction,
                 life_record.character_id.as_str(),
@@ -4500,13 +4605,26 @@ fn persist_termination_transition_inner(
                 wall_clock,
             )?;
         }
-        if let Some(lifespan_event) = lifespan_event {
+        if let Some(lifespan_event) = payload.lifespan_event {
             append_lifespan_event(
                 &transaction,
                 life_record.character_id.as_str(),
                 lifespan_event,
                 wall_clock,
             )?;
+        }
+        if let Some(zones) = payload.zones {
+            persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+        }
+        if let Some(qi_ledger) = payload.qi_ledger {
+            upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+        }
+        if let Some(narration_outbox) = payload.narration_outbox {
+            upsert_npc_terminal_narration_outbox(&transaction, narration_outbox, wall_clock)?;
+        }
+        if let Some(loot_outbox) = payload.loot_outbox {
+            upsert_npc_terminal_loot_outbox(&transaction, loot_outbox, wall_clock)?;
+            upsert_dropped_loot_entries(&transaction, &loot_outbox.entries, wall_clock)?;
         }
         upsert_deceased_snapshot(
             &transaction,
@@ -5785,6 +5903,153 @@ fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
     Ok(())
 }
 
+pub(crate) fn upsert_npc_terminal_narration_outbox(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &NpcTerminalNarrationOutboxRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    if record.outbox_id.trim().is_empty() || record.actor_account.trim().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "npc terminal narration outbox identity must be non-empty",
+        ));
+    }
+    if record.payload.event_id.as_deref() != Some(record.outbox_id.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "npc terminal narration payload event_id must equal outbox_id",
+        ));
+    }
+    if record.payload.server_tick != record.created_tick {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "npc terminal narration payload server_tick must equal created_tick",
+        ));
+    }
+    let created_tick = i64::try_from(record.created_tick).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "npc terminal narration outbox tick exceeds SQLite INTEGER: {}",
+                record.created_tick
+            ),
+        )
+    })?;
+    let payload_json = serde_json::to_string(&record.payload)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    transaction
+        .execute(
+            "
+            INSERT INTO npc_terminal_narration_outbox (
+                outbox_id,
+                actor_account,
+                payload_json,
+                created_tick,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(outbox_id) DO UPDATE SET
+                actor_account = excluded.actor_account,
+                payload_json = excluded.payload_json,
+                created_tick = excluded.created_tick,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
+            ",
+            params![
+                record.outbox_id,
+                record.actor_account,
+                payload_json,
+                created_tick,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+pub fn load_npc_terminal_narration_outbox(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<NpcTerminalNarrationOutboxRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT outbox_id, actor_account, payload_json, created_tick
+            FROM npc_terminal_narration_outbox
+            ORDER BY created_tick ASC, outbox_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(io::Error::other)?;
+    let mut records = Vec::new();
+    for row in rows {
+        let (outbox_id, actor_account, payload_json, created_tick) =
+            row.map_err(io::Error::other)?;
+        if outbox_id.trim().is_empty() || actor_account.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "persisted npc terminal narration outbox identity must be non-empty",
+            ));
+        }
+        let payload = serde_json::from_str::<ElderEncounterEventV1>(&payload_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let created_tick = u64::try_from(created_tick).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("negative npc terminal narration outbox tick: {created_tick}"),
+            )
+        })?;
+        if payload.event_id.as_deref() != Some(outbox_id.as_str())
+            || payload.server_tick != created_tick
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "persisted npc terminal narration identity mismatch outbox_id={outbox_id} event_id={:?} created_tick={created_tick} server_tick={}",
+                    payload.event_id, payload.server_tick,
+                ),
+            ));
+        }
+        records.push(NpcTerminalNarrationOutboxRecord {
+            outbox_id,
+            actor_account,
+            payload,
+            created_tick,
+        });
+    }
+    Ok(records)
+}
+
+pub fn delete_npc_terminal_narration_outbox(
+    settings: &PersistenceSettings,
+    outbox_id: &str,
+) -> io::Result<bool> {
+    if outbox_id.trim().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "npc terminal narration outbox id must be non-empty",
+        ));
+    }
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "DELETE FROM npc_terminal_narration_outbox WHERE outbox_id = ?1",
+            params![outbox_id],
+        )
+        .map(|count| count > 0)
+        .map_err(io::Error::other)
+}
+
 pub(crate) fn upsert_runtime_qi_account_balances(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
@@ -5882,6 +6147,192 @@ pub(crate) fn upsert_player_cultivation_slice(
     Ok(())
 }
 
+pub(crate) fn upsert_npc_terminal_loot_outbox(
+    transaction: &rusqlite::Transaction<'_>,
+    record: &NpcTerminalLootOutboxRecord,
+    wall_clock: i64,
+) -> io::Result<()> {
+    validate_npc_terminal_loot_outbox_with_kind(record, io::ErrorKind::InvalidInput)?;
+    let created_tick = i64::try_from(record.created_tick).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "npc terminal loot outbox tick exceeds SQLite INTEGER: {}",
+                record.created_tick
+            ),
+        )
+    })?;
+    let entries_json = serde_json::to_string(&record.entries)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let existing = transaction
+        .query_row(
+            "
+            SELECT actor_account, entries_json, created_tick
+            FROM npc_terminal_loot_outbox
+            WHERE outbox_id = ?1
+            ",
+            params![record.outbox_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(io::Error::other)?;
+    if let Some((actor_account, persisted_entries_json, persisted_tick)) = existing {
+        if actor_account == record.actor_account
+            && persisted_entries_json == entries_json
+            && persisted_tick == created_tick
+        {
+            return Ok(());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "npc terminal loot outbox `{}` already contains a different immutable record",
+                record.outbox_id
+            ),
+        ));
+    }
+    transaction
+        .execute(
+            "
+            INSERT INTO npc_terminal_loot_outbox (
+                outbox_id,
+                actor_account,
+                entries_json,
+                created_tick,
+                schema_version,
+                last_updated_wall
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ",
+            params![
+                record.outbox_id,
+                record.actor_account,
+                entries_json,
+                created_tick,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
+pub fn load_npc_terminal_loot_outbox(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<NpcTerminalLootOutboxRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT outbox_id, actor_account, entries_json, created_tick
+            FROM npc_terminal_loot_outbox
+            ORDER BY created_tick ASC, outbox_id ASC
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(io::Error::other)?;
+    let mut records = Vec::new();
+    for row in rows {
+        let (outbox_id, actor_account, entries_json, created_tick) =
+            row.map_err(io::Error::other)?;
+        if outbox_id.trim().is_empty() || actor_account.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "persisted npc terminal loot outbox identity must be non-empty",
+            ));
+        }
+        let entries = serde_json::from_str::<Vec<DroppedLootEntry>>(&entries_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let created_tick = u64::try_from(created_tick).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("negative npc terminal loot outbox tick: {created_tick}"),
+            )
+        })?;
+        let record = NpcTerminalLootOutboxRecord {
+            outbox_id,
+            actor_account,
+            entries,
+            created_tick,
+        };
+        validate_npc_terminal_loot_outbox(&record)?;
+        records.push(record);
+    }
+    Ok(records)
+}
+
+fn validate_npc_terminal_loot_outbox(record: &NpcTerminalLootOutboxRecord) -> io::Result<()> {
+    validate_npc_terminal_loot_outbox_with_kind(record, io::ErrorKind::InvalidData)
+}
+
+fn validate_npc_terminal_loot_outbox_with_kind(
+    record: &NpcTerminalLootOutboxRecord,
+    error_kind: io::ErrorKind,
+) -> io::Result<()> {
+    if record.outbox_id.trim().is_empty() || record.actor_account.trim().is_empty() {
+        return Err(io::Error::new(
+            error_kind,
+            "persisted npc terminal loot outbox identity must be non-empty",
+        ));
+    }
+    if record.entries.is_empty() {
+        return Err(io::Error::new(
+            error_kind,
+            "persisted npc terminal loot outbox must contain at least one entry",
+        ));
+    }
+    let mut ids = HashSet::with_capacity(record.entries.len());
+    for entry in &record.entries {
+        if entry.instance_id != entry.item.instance_id
+            || entry.instance_id > JS_SAFE_INTEGER_MAX
+            || !ids.insert(entry.instance_id)
+        {
+            return Err(io::Error::new(
+                error_kind,
+                format!(
+                    "persisted npc terminal loot outbox contains invalid or duplicate instance id {}",
+                    entry.instance_id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn delete_npc_terminal_loot_outbox(
+    settings: &PersistenceSettings,
+    outbox_id: &str,
+) -> io::Result<bool> {
+    if outbox_id.trim().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "npc terminal loot outbox id must be non-empty",
+        ));
+    }
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "DELETE FROM npc_terminal_loot_outbox WHERE outbox_id = ?1",
+            params![outbox_id],
+        )
+        .map(|count| count > 0)
+        .map_err(io::Error::other)
+}
+
 pub(crate) fn upsert_dropped_loot_entries(
     transaction: &rusqlite::Transaction<'_>,
     entries: &[DroppedLootEntry],
@@ -5899,23 +6350,35 @@ pub(crate) fn upsert_dropped_loot_entries(
         }
         let entry_json = serde_json::to_string(entry)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let id = i64::try_from(entry.instance_id).map_err(io::Error::other)?;
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT entry_json FROM dropped_loot WHERE instance_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(io::Error::other)?;
+        if let Some(existing) = existing {
+            if existing != entry_json {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "durable dropped loot instance id {} already contains a different entry",
+                        entry.instance_id
+                    ),
+                ));
+            }
+            continue;
+        }
         transaction
             .execute(
                 "
                 INSERT INTO dropped_loot (
                     instance_id, entry_json, schema_version, last_updated_wall
                 ) VALUES (?1, ?2, ?3, ?4)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                    entry_json = excluded.entry_json,
-                    schema_version = excluded.schema_version,
-                    last_updated_wall = excluded.last_updated_wall
                 ",
-                params![
-                    i64::try_from(entry.instance_id).map_err(io::Error::other)?,
-                    entry_json,
-                    CURRENT_SCHEMA_VERSION,
-                    wall_clock
-                ],
+                params![id, entry_json, CURRENT_SCHEMA_VERSION, wall_clock],
             )
             .map_err(io::Error::other)?;
     }
@@ -5926,12 +6389,45 @@ pub(crate) fn delete_dropped_loot_entry(
     transaction: &rusqlite::Transaction<'_>,
     instance_id: u64,
 ) -> io::Result<()> {
+    let instance_id_sql = i64::try_from(instance_id).map_err(io::Error::other)?;
     transaction
         .execute(
             "DELETE FROM dropped_loot WHERE instance_id = ?1",
-            params![i64::try_from(instance_id).map_err(io::Error::other)?],
+            params![instance_id_sql],
         )
         .map_err(io::Error::other)?;
+
+    // Terminal loot outbox is an immutable receipt, not a second source of ground loot.
+    // Once any entry from a committed terminal drop is accepted by a player, the whole
+    // receipt is no longer needed for runtime projection; delete it in the same pickup
+    // transaction so a restart cannot resurrect the consumed sibling entries.
+    let mut statement = transaction
+        .prepare("SELECT outbox_id, entries_json FROM npc_terminal_loot_outbox")
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(io::Error::other)?;
+    let mut consumed_outboxes = Vec::new();
+    for row in rows {
+        let (outbox_id, entries_json) = row.map_err(io::Error::other)?;
+        let entries = serde_json::from_str::<Vec<DroppedLootEntry>>(&entries_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if entries.iter().any(|entry| entry.instance_id == instance_id) {
+            consumed_outboxes.push(outbox_id);
+        }
+    }
+    drop(statement);
+
+    for outbox_id in consumed_outboxes {
+        transaction
+            .execute(
+                "DELETE FROM npc_terminal_loot_outbox WHERE outbox_id = ?1",
+                params![outbox_id],
+            )
+            .map_err(io::Error::other)?;
+    }
     Ok(())
 }
 
@@ -6024,6 +6520,14 @@ pub fn persisted_inventory_instance_id_high_water(
     let durable = load_durable_dropped_loot(settings)?;
     for id in durable.keys().copied() {
         high_water = Some(high_water.map_or(id, |current| current.max(id)));
+    }
+    let terminal_loot = load_npc_terminal_loot_outbox(settings)?;
+    for record in terminal_loot {
+        for entry in record.entries {
+            high_water = Some(
+                high_water.map_or(entry.instance_id, |current| current.max(entry.instance_id)),
+            );
+        }
     }
     Ok(high_water)
 }
@@ -6683,11 +7187,13 @@ pub(crate) fn hydrate_runtime_qi_accounts(
     qi_ledger: &mut WorldQiAccount,
 ) -> io::Result<usize> {
     let balances = load_runtime_qi_account_balances(settings)?;
+    let mut staged = qi_ledger.clone();
     for (account, balance) in &balances {
-        qi_ledger
+        staged
             .set_balance(account.clone(), *balance)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     }
+    *qi_ledger = staged;
     Ok(balances.len())
 }
 
@@ -16094,7 +16600,7 @@ mod persistence_tests {
     }
 
     #[test]
-    fn v38_and_v39_migrations_initialize_new_stable_overflow_accounts() {
+    fn v38_v40_and_v41_migrations_initialize_new_stable_overflow_accounts() {
         let db_path = database_path("v38-dying-elder-overflow-accounts");
         let root = db_path
             .parent()
@@ -16111,12 +16617,13 @@ mod persistence_tests {
             )
             .expect("fixture should emulate v37 with unknown pending inflow");
 
-        apply_migrations(&mut connection).expect("v37 to v39 migration should succeed");
+        apply_migrations(&mut connection).expect("v37 to v41 migration should succeed");
 
         for account_id in [
             DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
             DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
             QI_FLOW_OVERFLOW_ACCOUNT_ID,
+            RIFT_DRAIN_ACCOUNT_ID,
         ] {
             let balance: f64 = connection
                 .query_row(
@@ -16139,7 +16646,7 @@ mod persistence_tests {
             .expect("pending row count should query");
         assert_eq!(
             pending_rows, 0,
-            "v39 must not invent zero for a missing pre-v34 pending inflow balance"
+            "v40/v41 must not invent zero for a missing pre-v34 pending inflow balance"
         );
         let user_version: i32 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -16151,7 +16658,7 @@ mod persistence_tests {
 
     #[test]
     fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
-        let (settings, root) = persistence_settings("runtime-qi-four-account-roundtrip");
+        let (settings, root) = persistence_settings("runtime-qi-five-account-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("fixture sqlite should bootstrap");
 
@@ -16166,6 +16673,7 @@ mod persistence_tests {
                 crate::qi_physics::ledger::dying_elder_release_overflow_account(),
                 33.75,
             ),
+            (crate::qi_physics::ledger::rift_drain_account(), 44.5),
         ];
         let mut source = WorldQiAccount::default();
         for (account, balance) in &expected {
@@ -16184,13 +16692,13 @@ mod persistence_tests {
             None,
             &source,
         )
-        .expect("production snapshot path should persist four runtime balances");
+        .expect("production snapshot path should persist five runtime balances");
 
         let mut hydrated = WorldQiAccount::default();
         assert_eq!(
             hydrate_runtime_qi_accounts(&settings, &mut hydrated)
                 .expect("fresh ledger should hydrate all stable runtime accounts"),
-            4
+            5
         );
         for (account, balance) in expected {
             assert_eq!(hydrated.balance(&account), balance, "account={account}");
@@ -16916,11 +17424,317 @@ mod persistence_tests {
         }
     }
 
+    fn terminal_narration_outbox_record(id: &str, tick: u64) -> NpcTerminalNarrationOutboxRecord {
+        NpcTerminalNarrationOutboxRecord {
+            outbox_id: id.to_string(),
+            actor_account: "npc:terminal-outbox".to_string(),
+            payload: ElderEncounterEventV1 {
+                event_id: Some(id.to_string()),
+                zone_name: "tsy_deep".to_string(),
+                elder_entity_id: 42,
+                event_kind: crate::schema::elder_encounter::ElderEncounterEventKindV1::DeadNatural,
+                betray_probability: 0.0,
+                dan_count: 0,
+                offered_skill_id: String::new(),
+                qi_fraction: 0.0,
+                server_tick: tick,
+            },
+            created_tick: tick,
+        }
+    }
+
+    #[test]
+    fn npc_terminal_narration_outbox_roundtrips_upserts_and_deletes() {
+        let (settings, root) = persistence_settings("terminal-narration-outbox-roundtrip");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("terminal narration fixture should bootstrap");
+        let mut connection = Connection::open(settings.db_path()).expect("fixture db should open");
+        let mut record = terminal_narration_outbox_record("terminal:npc:42:91", 91);
+        {
+            let transaction = connection.transaction().expect("transaction should start");
+            upsert_npc_terminal_narration_outbox(&transaction, &record, 100)
+                .expect("initial outbox insert should succeed");
+            transaction.commit().expect("initial insert should commit");
+        }
+        assert_eq!(
+            load_npc_terminal_narration_outbox(&settings).expect("outbox should load"),
+            vec![record.clone()],
+            "durable terminal payload must roundtrip without identity drift"
+        );
+
+        record.payload.event_kind =
+            crate::schema::elder_encounter::ElderEncounterEventKindV1::Betrayal;
+        {
+            let transaction = connection.transaction().expect("transaction should start");
+            upsert_npc_terminal_narration_outbox(&transaction, &record, 101)
+                .expect("same outbox id should update idempotently");
+            transaction.commit().expect("upsert should commit");
+        }
+        assert_eq!(
+            load_npc_terminal_narration_outbox(&settings).expect("updated outbox should load"),
+            vec![record],
+            "idempotent upsert must retain one row and the latest frozen payload"
+        );
+        assert!(
+            delete_npc_terminal_narration_outbox(&settings, "terminal:npc:42:91")
+                .expect("existing outbox delete should succeed")
+        );
+        assert!(
+            !delete_npc_terminal_narration_outbox(&settings, "terminal:npc:42:91")
+                .expect("missing outbox delete should be a no-op")
+        );
+        assert!(load_npc_terminal_narration_outbox(&settings)
+            .expect("empty outbox should load")
+            .is_empty());
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_terminal_narration_outbox_rejects_identity_mismatch_and_corrupt_rows() {
+        let (settings, root) = persistence_settings("terminal-narration-outbox-invalid");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("terminal narration fixture should bootstrap");
+        let mut connection = Connection::open(settings.db_path()).expect("fixture db should open");
+        for (case, mutate) in [
+            ("missing_event_id", 0_u8),
+            ("wrong_event_id", 1_u8),
+            ("wrong_tick", 2_u8),
+        ] {
+            let mut record = terminal_narration_outbox_record("terminal:npc:42:91", 91);
+            match mutate {
+                0 => record.payload.event_id = None,
+                1 => record.payload.event_id = Some("different-id".to_string()),
+                2 => record.payload.server_tick = 92,
+                _ => unreachable!(),
+            }
+            let transaction = connection.transaction().expect("transaction should start");
+            let error = upsert_npc_terminal_narration_outbox(&transaction, &record, 100)
+                .expect_err("outbox identity drift must fail closed");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "case={case}");
+        }
+
+        connection
+            .execute(
+                "INSERT INTO npc_terminal_narration_outbox (outbox_id, actor_account, payload_json, created_tick, schema_version, last_updated_wall) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                params!["terminal:npc:corrupt", "npc:corrupt", "not-json", 7_i64, CURRENT_SCHEMA_VERSION],
+            )
+            .expect("corrupt fixture row should insert at SQL layer");
+        assert_eq!(
+            load_npc_terminal_narration_outbox(&settings)
+                .expect_err("corrupt payload must fail startup load")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            delete_npc_terminal_narration_outbox(&settings, " ")
+                .expect_err("empty delete identity must fail")
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_terminal_late_failure_rolls_back_narration_outbox_with_owner_state() {
+        let (settings, root) = persistence_settings("terminal-narration-outbox-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("terminal narration fixture should bootstrap");
+        let connection = Connection::open(settings.db_path()).expect("fixture db should open");
+        connection
+            .execute_batch(&format!(
+                "
+                CREATE TRIGGER reject_terminal_runtime_owner_after_outbox
+                BEFORE UPDATE ON qi_runtime_accounts
+                WHEN NEW.account_id = '{}'
+                BEGIN
+                    SELECT RAISE(ABORT, 'fixture rejects terminal runtime owner after outbox');
+                END;
+                ",
+                DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID
+            ))
+            .expect("late terminal trigger should install");
+
+        let character_id = "npc:terminal:outbox-rollback";
+        let mut lifecycle = Lifecycle {
+            character_id: character_id.to_string(),
+            ..Lifecycle::default()
+        };
+        lifecycle.terminate(91);
+        let mut life_record = LifeRecord::new(character_id);
+        life_record.push(BiographyEntry::Terminated {
+            cause: "terminal_outbox_rollback".to_string(),
+            tick: 91,
+        });
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(
+                crate::qi_physics::ledger::dying_elder_release_overflow_account(),
+                19.0,
+            )
+            .expect("staged runtime owner should be valid");
+        let outbox = terminal_narration_outbox_record("terminal:npc:rollback:91", 91);
+
+        persist_npc_terminal_qi_transaction(
+            &settings,
+            &lifecycle,
+            &life_record,
+            TerminalPersistencePayload {
+                death_registry_cause: Some("terminal_outbox_rollback"),
+                qi_ledger: Some(&ledger),
+                narration_outbox: Some(&outbox),
+                ..Default::default()
+            },
+        )
+        .expect_err("late runtime owner failure must roll back every prior table write");
+        let outbox_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM npc_terminal_narration_outbox WHERE outbox_id = ?1",
+                params![outbox.outbox_id],
+                |row| row.get(0),
+            )
+            .expect("rolled-back outbox count should query");
+        assert_eq!(
+            outbox_count, 0,
+            "failed owner commit must not strand narration row"
+        );
+        let lifecycle_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM life_records WHERE char_id = ?1",
+                params![character_id],
+                |row| row.get(0),
+            )
+            .expect("rolled-back lifecycle count should query");
+        assert_eq!(
+            lifecycle_count, 0,
+            "failed owner commit must roll back lifecycle too"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_terminal_late_runtime_owner_failure_rolls_back_metadata_zone_and_ledger() {
+        let (settings, root) = persistence_settings("npc-terminal-late-owner-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("terminal fixture sqlite should bootstrap");
+        let connection = Connection::open(settings.db_path()).expect("terminal db should open");
+        connection
+            .execute(
+                "UPDATE zones_runtime SET spirit_qi = ?2 WHERE zone_id = ?1",
+                params!["spawn", 0.25_f64],
+            )
+            .expect("baseline zone should seed");
+        connection
+            .execute(
+                "UPDATE qi_runtime_accounts SET balance = ?2 WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID, 7.0_f64],
+            )
+            .expect("baseline runtime owner should seed");
+        connection
+            .execute_batch(&format!(
+                "
+                CREATE TRIGGER reject_terminal_runtime_owner
+                BEFORE UPDATE ON qi_runtime_accounts
+                WHEN NEW.account_id = '{}'
+                BEGIN
+                    SELECT RAISE(ABORT, 'fixture rejects terminal runtime owner');
+                END;
+                ",
+                DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID
+            ))
+            .expect("late terminal trigger should install");
+
+        let character_id = "npc:terminal:atomic-rollback";
+        let mut lifecycle = Lifecycle {
+            character_id: character_id.to_string(),
+            ..Lifecycle::default()
+        };
+        lifecycle.terminate(91);
+        let mut life_record = LifeRecord::new(character_id);
+        life_record.push(BiographyEntry::Terminated {
+            cause: "terminal_atomicity_test".to_string(),
+            tick: 91,
+        });
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.75;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(pending_inflow_account(), 17.0)
+            .expect("staged pending owner should be valid");
+        ledger
+            .set_balance(
+                crate::qi_physics::ledger::dying_elder_release_overflow_account(),
+                19.0,
+            )
+            .expect("staged release owner should be valid");
+
+        let error = persist_npc_terminal_qi_transaction(
+            &settings,
+            &lifecycle,
+            &life_record,
+            TerminalPersistencePayload {
+                death_registry_cause: Some("terminal_atomicity_test"),
+                zones: Some(&zones),
+                qi_ledger: Some(&ledger),
+                ..Default::default()
+            },
+        )
+        .expect_err("late runtime-owner trigger must reject terminal transaction");
+        assert!(
+            error
+                .to_string()
+                .contains("fixture rejects terminal runtime owner"),
+            "forced late failure should surface its trigger reason, actual={error}"
+        );
+
+        for table in [
+            "life_records",
+            "life_events",
+            "death_registry",
+            "deceased_snapshots",
+        ] {
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE char_id = ?1");
+            let count: i64 = connection
+                .query_row(sql.as_str(), params![character_id], |row| row.get(0))
+                .unwrap_or_else(|query_error| {
+                    panic!("rolled-back table {table} should query: {query_error}")
+                });
+            assert_eq!(count, 0, "late failure must roll back {table}");
+        }
+        let zone_qi: f64 = connection
+            .query_row(
+                "SELECT spirit_qi FROM zones_runtime WHERE zone_id = ?1",
+                params!["spawn"],
+                |row| row.get(0),
+            )
+            .expect("rolled-back zone should query");
+        assert_eq!(zone_qi, 0.25, "late failure must roll back signed zone qi");
+        let pending_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("rolled-back runtime owner should query");
+        assert_eq!(
+            pending_balance, 7.0,
+            "late failure must roll back earlier runtime owner updates"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn runtime_qi_account_persist_failure_rolls_back_staged_prefix() {
         use crate::qi_physics::ledger::{
             dying_elder_dan_excess_account, dying_elder_release_overflow_account,
-            qi_flow_overflow_account,
+            qi_flow_overflow_account, rift_drain_account,
         };
 
         let (settings, root) = persistence_settings("runtime-qi-persist-atomic-rollback");
@@ -16932,6 +17746,7 @@ mod persistence_tests {
             (QI_FLOW_OVERFLOW_ACCOUNT_ID, 17.0),
             (DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, 22.0),
             (DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, 33.0),
+            (RIFT_DRAIN_ACCOUNT_ID, 44.0),
         ];
         let mut connection = open_persistence_connection(&settings).expect("db should open");
         {
@@ -16964,18 +17779,21 @@ mod persistence_tests {
         source
             .set_balance(dying_elder_release_overflow_account(), 333.0)
             .expect("release overflow staged balance should be valid");
+        source
+            .set_balance(rift_drain_account(), 444.0)
+            .expect("rift drain staged balance should be valid");
 
         connection
             .execute_batch(&format!(
                 "
-                CREATE TRIGGER reject_release_overflow_update
+                CREATE TRIGGER reject_rift_drain_update
                 BEFORE UPDATE ON qi_runtime_accounts
                 WHEN NEW.account_id = '{}'
                 BEGIN
                     SELECT RAISE(ABORT, 'fixture rejects final runtime qi account');
                 END;
                 ",
-                DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID
+                RIFT_DRAIN_ACCOUNT_ID
             ))
             .expect("fixture trigger should install");
 
@@ -16984,7 +17802,7 @@ mod persistence_tests {
                 .transaction()
                 .expect("failing persist transaction should start");
             let error = upsert_runtime_qi_account_balances(&transaction, &source, 456)
-                .expect_err("fourth whitelist update must reject the whole persist");
+                .expect_err("fifth whitelist update must reject the whole persist");
             assert!(
                 error
                     .to_string()
@@ -17021,6 +17839,7 @@ mod persistence_tests {
             ("qi-flow-overflow", QI_FLOW_OVERFLOW_ACCOUNT_ID),
             ("dan-excess", DYING_ELDER_DAN_EXCESS_ACCOUNT_ID),
             ("death-overflow", DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
+            ("rift-drain", RIFT_DRAIN_ACCOUNT_ID),
         ] {
             for corruption in ["missing", "negative"] {
                 let test_name = format!("runtime-qi-{case}-{corruption}");

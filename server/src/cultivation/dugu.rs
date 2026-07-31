@@ -896,6 +896,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -926,6 +927,7 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-infuse-test"),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -968,6 +970,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1004,6 +1007,7 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-infuse-test"),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -1059,6 +1063,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1085,6 +1090,7 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-infuse-test"),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -1119,6 +1125,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 300 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1147,6 +1154,7 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-infuse-test"),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -1202,6 +1210,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 400 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1230,6 +1239,7 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-infuse-test"),
                 Position::new([8.0, 66.0, 8.0]),
                 // No CurrentDimension intentionally.
             ))
@@ -1288,6 +1298,7 @@ mod tests {
     #[test]
     fn pending_needle_poison_attaches_state_and_records_biography() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<CombatEvent>();
         app.add_systems(Update, on_attack_resolved_dugu_handler);
         let attacker = app
@@ -1358,6 +1369,7 @@ mod tests {
     #[test]
     fn pending_needle_poison_does_not_attach_to_plain_melee() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.add_event::<CombatEvent>();
         app.add_systems(Update, on_attack_resolved_dugu_handler);
         let attacker = app
@@ -1404,6 +1416,7 @@ mod tests {
     #[test]
     fn poison_tick_permanently_reduces_flow_capacity_and_qi_max() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock {
             tick: DUGU_POISON_TICK_INTERVAL,
         });
@@ -1447,6 +1460,7 @@ mod tests {
     #[test]
     fn poison_tick_waits_full_interval_from_attachment_tick() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock {
             tick: DUGU_POISON_TICK_INTERVAL,
         });
@@ -1502,6 +1516,7 @@ mod tests {
     #[test]
     fn poison_tick_reports_only_actual_drained_capacity() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock {
             tick: DUGU_POISON_TICK_INTERVAL,
         });
@@ -1543,6 +1558,7 @@ mod tests {
     #[test]
     fn poison_tick_emits_mist_vfx() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock {
             tick: DUGU_POISON_TICK_INTERVAL,
         });
@@ -1593,6 +1609,7 @@ mod tests {
     #[test]
     fn poison_ambient_emits_mist_vfx_every_sixty_ticks() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock {
             tick: DUGU_POISON_VFX_INTERVAL,
         });
@@ -1642,6 +1659,7 @@ mod tests {
         // Option B 去目标门禁：凝针是投射物，无锁定目标照样沿视线发射
         // （intent 消费端本就支持 target=None 直飞）。无 Look 组件时方向兜底 +Z。
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<ShootNeedleIntent>();
         let caster = app
@@ -1684,6 +1702,7 @@ mod tests {
         // 修复回归锁：dir_unit 此前写死 [0,0,1]（针永远朝正南飞、无视准星）——
         // 现在必须取施法者 Look 视线方向。yaw=-90 => 朝东（+X）。
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<ShootNeedleIntent>();
         let caster = app
@@ -1721,6 +1740,7 @@ mod tests {
         // 有锁定目标时 intent.target 透传 Some——命中结算（AttackIntent）仍由
         // resolve_shoot_needle_intents 在 Some 分支补发，语义与改动前一致。
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 100 });
         app.add_event::<ShootNeedleIntent>();
         let caster = app
@@ -1748,6 +1768,7 @@ mod tests {
     #[test]
     fn antidote_success_removes_poison_without_restoring_capacity() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 30 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1773,6 +1794,7 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-antidote-test"),
                 inventory,
             ))
             .id();
@@ -1797,6 +1819,7 @@ mod tests {
     #[test]
     fn antidote_failure_severs_meridian_without_near_death() {
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 31 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1822,6 +1845,7 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-antidote-test"),
                 inventory,
             ))
             .id();
@@ -1852,6 +1876,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 50 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1897,6 +1922,7 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-antidote-test"),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -1956,6 +1982,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 60 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1989,6 +2016,7 @@ mod tests {
                     loss_per_tick: 0.5,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-antidote-test"),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -2025,6 +2053,7 @@ mod tests {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(CombatClock { tick: 70 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -2060,6 +2089,7 @@ mod tests {
                     loss_per_tick: 0.5,
                 },
                 Lifecycle::default(),
+                LifeRecord::new("player:dugu-antidote-test"),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),

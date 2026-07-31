@@ -1,31 +1,47 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use uuid::Uuid;
 use valence::prelude::{
     bevy_ecs, Added, App, Bundle, Commands, Component, DVec3, Despawned, Entity, Event,
-    EventReader, EventWriter, IntoSystemConfigs, Position, Query, Res, ResMut, Resource, Update,
-    With, Without,
+    EventReader, EventWriter, IntoSystemConfigs, IntoSystemSetConfigs, Position, Query, Res,
+    ResMut, Resource, SystemSet, Update, With, Without,
 };
 
 use crate::combat::components::{
     CombatState, DerivedAttrs, Lifecycle, LifecycleState, Stamina, StatusEffects, Wounds,
 };
+use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::qi_max_for_realm;
-use crate::cultivation::components::{Contamination, Cultivation, MeridianSystem, Realm};
-use crate::cultivation::death_hooks::{
-    CultivationDeathCause, CultivationDeathTrigger, PlayerTerminated,
+use crate::cultivation::color::PracticeLog;
+use crate::cultivation::components::{
+    release_external_qi_to_zone, ActorQiIdentity, ActorQiKind, Contamination, Cultivation,
+    MeridianSystem, QiColor, QiFlowError, Realm,
 };
+use crate::cultivation::death_hooks::{CultivationDeathTrigger, PlayerTerminated};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{
-    DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
+    DeathRegistry, LifespanCapTable, LifespanComponent, LifespanEventEmitted,
+    LifespanExtensionLedger, ZoneDeathKind,
 };
 use crate::cultivation::possession::PossessedVictim;
+use crate::fauna::daozhan::DaoZhangBehaviorBlackboard;
+use crate::fauna::mimic_spider::MimicSpiderBlackboard;
+use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
+#[cfg(test)]
 use crate::npc::brain::canonical_npc_id;
 use crate::npc::faction::{FactionId, FactionMembership};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::NpcMarker;
+use crate::npc::spawn_rat::RatBlackboard;
 use crate::npc::technique::NpcCooldownMap;
+use crate::persistence::{
+    persist_npc_terminal_qi_transaction, LifespanEventRecord, NpcTerminalLootOutboxRecord,
+    NpcTerminalNarrationOutboxRecord, PersistenceSettings, TerminalPersistencePayload,
+};
+use crate::qi_physics::{QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::world::dimension::{CurrentDimension, DimensionKind};
+use crate::world::zone::ZoneRegistry;
 
 type RegistryNpcQuery<'w, 's> = Query<
     'w,
@@ -53,16 +69,36 @@ type SharedAgingNpcQuery<'w, 's> = Query<
     ),
     ActiveNpcFilter,
 >;
-type TerminatedNpcQuery<'w, 's> = Query<
+type TerminatedNpcReadQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static NpcArchetype,
         &'static NpcLifespan,
         Option<&'static PendingRetirement>,
         Option<&'static LifespanComponent>,
         Option<&'static FactionMembership>,
-        Option<&'static LifeRecord>,
+        &'static LifeRecord,
+        &'static Lifecycle,
+        &'static DeathRegistry,
+        Option<&'static Position>,
+        Option<&'static CurrentDimension>,
+        Option<&'static crate::skin::NpcVisualProfile>,
+        &'static PendingNpcTermination,
+    ),
+    With<NpcMarker>,
+>;
+
+type TerminatedNpcOwnerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Cultivation,
+        Option<&'static mut RatBlackboard>,
+        Option<&'static mut DaoZhangBehaviorBlackboard>,
+        Option<&'static mut MimicSpiderBlackboard>,
+        Option<&'static mut crate::fauna::dying_elder::DyingElderBlackboard>,
     ),
     With<NpcMarker>,
 >;
@@ -76,7 +112,7 @@ type DespawnedNpcNoticeQuery<'w, 's> = Query<
         &'static NpcLifespan,
         Option<&'static LifespanComponent>,
         Option<&'static FactionMembership>,
-        Option<&'static LifeRecord>,
+        &'static LifeRecord,
         Option<&'static PossessedVictim>,
     ),
     (
@@ -465,8 +501,50 @@ impl NpcRegistry {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+pub enum NpcTerminalSystemSet {
+    Stage,
+    Commit,
+    PostCommit,
+}
+
 #[derive(Clone, Copy, Debug, Component)]
 pub struct PendingRetirement;
+
+/// NPC 的可重试终结意图。任何 lifecycle / biography / persistence / telemetry / loot /
+/// reproduction / despawn 副作用都必须等同一 owner transaction 成功后才提交。
+#[derive(Clone, Debug, Component)]
+pub struct PendingNpcTermination {
+    pub cause: String,
+    pub at_tick: u64,
+    pub death_zone: ZoneDeathKind,
+    pub lifespan_event: Option<LifespanEventRecord>,
+    pub death_insight: Option<crate::schema::death_insight::DeathInsightRequestV1>,
+    pub reason: NpcDeathReason,
+    pub attacker: Option<Entity>,
+    pub attacker_player_id: Option<String>,
+    pub authorize_loot: bool,
+    pub actor_qi_identity: ActorQiIdentity,
+    pub reproduction: Option<NpcReproductionRequest>,
+    /// 终结前冻结的 Redis 死亡叙事 payload；与 owner transaction 同一 SQLite commit。
+    pub narration_outbox: Option<NpcTerminalNarrationOutboxRecord>,
+    /// 终结前冻结的 loot payload；必须和 owner transaction 同一 SQLite commit。
+    pub loot_outbox: Option<NpcTerminalLootOutboxRecord>,
+}
+
+/// NPC 终结事务已成功提交；所有 loot consumer 只消费此授权事件，不能消费 raw
+/// `DeathEvent` 抢跑。`at_tick` 保留原始致死 tick，保证掉落 RNG 在 retry 后仍稳定。
+#[derive(Clone, Debug, Event)]
+pub struct NpcTerminalSettlementSucceeded {
+    pub entity: Entity,
+    pub at_tick: u64,
+    pub cause: String,
+    pub reason: NpcDeathReason,
+    pub attacker: Option<Entity>,
+    pub attacker_player_id: Option<String>,
+    pub authorize_loot: bool,
+    pub actor_qi_identity: ActorQiIdentity,
+}
 
 #[derive(Clone, Debug, Event)]
 pub struct NpcRetireRequest {
@@ -513,7 +591,7 @@ impl NpcSpawnSource {
 
 #[derive(Clone, Debug, Event)]
 pub struct NpcSpawnNotice {
-    pub npc_id: String,
+    pub entity: Entity,
     pub archetype: NpcArchetype,
     pub source: NpcSpawnSource,
     pub home_zone: String,
@@ -571,14 +649,24 @@ pub fn register(app: &mut App) {
         .add_event::<NpcReproductionRequest>()
         .add_event::<NpcSpawnNotice>()
         .add_event::<NpcDeathNotice>()
+        .add_event::<NpcTerminalSettlementSucceeded>()
+        .configure_sets(
+            Update,
+            (
+                NpcTerminalSystemSet::Stage,
+                NpcTerminalSystemSet::Commit,
+                NpcTerminalSystemSet::PostCommit,
+            )
+                .chain(),
+        )
         .add_systems(
             Update,
             (
                 update_npc_registry,
                 age_npcs,
-                process_npc_retire_requests,
-                handle_npc_terminated,
-                emit_npc_despawn_notices.after(handle_npc_terminated),
+                process_npc_retire_requests.in_set(NpcTerminalSystemSet::Stage),
+                settle_pending_npc_termination.in_set(NpcTerminalSystemSet::Commit),
+                emit_npc_despawn_notices.in_set(NpcTerminalSystemSet::PostCommit),
             ),
         );
 }
@@ -611,12 +699,12 @@ pub fn npc_runtime_bundle(
 }
 
 pub fn npc_runtime_bundle_with_age(
-    entity: Entity,
+    _entity: Entity,
     archetype: NpcArchetype,
     realm: Realm,
     initial_age_ticks: f64,
 ) -> NpcRuntimeBundle {
-    let char_id = canonical_npc_id(entity);
+    let char_id = format!("npc:{}", Uuid::now_v7());
     let cultivation = Cultivation {
         realm,
         qi_current: 0.0,
@@ -713,6 +801,8 @@ fn age_npcs(config: Res<NpcAgingConfig>, mut npcs: SharedAgingNpcQuery<'_, '_>) 
 
 #[allow(clippy::type_complexity)]
 pub(crate) fn process_npc_retire_requests(
+    clock: Res<CombatClock>,
+    mut commands: Commands,
     mut retire_requests: EventReader<NpcRetireRequest>,
     npcs: Query<
         (
@@ -720,88 +810,443 @@ pub(crate) fn process_npc_retire_requests(
             &NpcLifespan,
             Option<&Position>,
             Option<&crate::npc::patrol::NpcPatrol>,
+            Option<&LifeRecord>,
+            Option<&Lifecycle>,
+            Option<&DeathRegistry>,
+            Option<&PendingNpcTermination>,
         ),
         With<NpcMarker>,
     >,
-    mut cultivation_deaths: EventWriter<CultivationDeathTrigger>,
-    mut reproduction_requests: EventWriter<NpcReproductionRequest>,
 ) {
     for request in retire_requests.read() {
-        let Ok((archetype, lifespan, position, patrol)) = npcs.get(request.entity) else {
+        let Ok((
+            archetype,
+            _lifespan,
+            position,
+            patrol,
+            life_record,
+            lifecycle,
+            death_registry,
+            pending,
+        )) = npcs.get(request.entity)
+        else {
+            continue;
+        };
+        if pending.is_some() {
+            continue;
+        }
+        let (Some(life_record), Some(lifecycle), Some(death_registry)) =
+            (life_record, lifecycle, death_registry)
+        else {
+            tracing::warn!(
+                target = ?request.entity,
+                "[bong][npc] retained retiring NPC because canonical terminal identity is missing"
+            );
+            continue;
+        };
+        let Ok(actor_qi_identity) =
+            validate_npc_terminal_identity(lifecycle, life_record, death_registry)
+        else {
+            tracing::warn!(
+                target = ?request.entity,
+                "[bong][npc] retained retiring NPC because terminal identity diverged"
+            );
             continue;
         };
 
-        cultivation_deaths.send(CultivationDeathTrigger {
-            entity: request.entity,
-            cause: CultivationDeathCause::NaturalAging,
-            context: json!({
-                "npc_id": canonical_npc_id(request.entity),
-                "archetype": archetype.as_str(),
-                "age_ticks": lifespan.age_ticks,
-                "max_age_ticks": lifespan.max_age_ticks,
-                "age_ratio": lifespan.age_ratio(),
-                "reason": "retire_action",
-            }),
-        });
-
-        // plan §3.3 — 凡人老死即邻居生子。由 spawn 侧消费事件并通过
-        // `NpcRegistry::reserve_spawn_batch` 统一占配额，避免击穿上限。
-        if *archetype == NpcArchetype::Commoner {
-            if let (Some(pos), Some(patrol)) = (position, patrol) {
-                reproduction_requests.send(NpcReproductionRequest {
+        let reproduction = if *archetype == NpcArchetype::Commoner {
+            match (position, patrol) {
+                (Some(pos), Some(patrol)) => Some(NpcReproductionRequest {
                     archetype: NpcArchetype::Commoner,
                     position: pos.get(),
                     home_zone: patrol.home_zone.clone(),
                     initial_age_ticks: 0.0,
                     territory_center: None,
                     territory_radius: None,
-                });
+                }),
+                _ => None,
             }
-        }
+        } else {
+            None
+        };
+        commands
+            .entity(request.entity)
+            .insert(PendingNpcTermination {
+                cause: "natural_aging".to_string(),
+                at_tick: clock.tick,
+                death_zone: ZoneDeathKind::Ordinary,
+                lifespan_event: None,
+                death_insight: None,
+                reason: NpcDeathReason::NaturalAging,
+                attacker: None,
+                attacker_player_id: None,
+                authorize_loot: false,
+                actor_qi_identity,
+                reproduction,
+                narration_outbox: None,
+                loot_outbox: None,
+            });
     }
 }
 
-fn handle_npc_terminated(
+fn validate_npc_terminal_identity(
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry: &DeathRegistry,
+) -> Result<ActorQiIdentity, QiFlowError> {
+    let identity = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)?;
+    let canonical = life_record.character_id.as_str();
+    if lifecycle.character_id != canonical || death_registry.char_id != canonical {
+        return Err(QiFlowError::InvalidActorIdentity);
+    }
+    Ok(identity)
+}
+
+fn settlement_zone_mut(
+    zones: &mut ZoneRegistry,
+    position: Option<DVec3>,
+    dimension: Option<DimensionKind>,
+) -> Option<&mut crate::world::zone::Zone> {
+    let (Some(position), Some(dimension)) = (position, dimension) else {
+        return None;
+    };
+    let zone_name = zones
+        .find_zone(dimension, position)
+        .map(|zone| zone.name.clone());
+    zone_name.and_then(|zone_name| zones.find_zone_mut(zone_name.as_str()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_npc_qi_owners(
+    cultivation: &mut Cultivation,
+    rat: Option<&mut RatBlackboard>,
+    daozhan: Option<&mut DaoZhangBehaviorBlackboard>,
+    spider: Option<&mut MimicSpiderBlackboard>,
+    position: Option<DVec3>,
+    dimension: Option<DimensionKind>,
+    life_record: &LifeRecord,
+    zones: Option<&mut ZoneRegistry>,
+    ledger: &mut WorldQiAccount,
+) -> Result<Vec<QiTransfer>, QiFlowError> {
+    let identity = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)?;
+    let account = identity.account();
+    let mut staged_cultivation = cultivation.clone();
+    let mut staged_rat = rat.as_deref().cloned();
+    let mut staged_daozhan = daozhan.as_deref().cloned();
+    let mut staged_spider = spider.as_deref().cloned();
+    let mut staged_zones = zones.as_deref().cloned();
+    let mut staged_ledger = ledger.clone();
+    let audit_start = staged_ledger.transfers().len();
+
+    let cultivation_amount = staged_cultivation.qi_current();
+    staged_cultivation.release_to_zone(
+        staged_zones
+            .as_mut()
+            .and_then(|zones| settlement_zone_mut(zones, position, dimension)),
+        &mut staged_ledger,
+        &identity,
+        cultivation_amount,
+        QiTransferReason::ReleaseToZone,
+    )?;
+
+    if staged_rat.is_some() {
+        transfer_rat_drained_qi_to_zone(
+            &mut staged_ledger,
+            staged_zones
+                .as_mut()
+                .and_then(|zones| settlement_zone_mut(zones, position, dimension)),
+            &identity,
+        )?;
+        if let Some(rat) = staged_rat.as_mut() {
+            rat.drained_qi = staged_ledger.balance(&account);
+        }
+    }
+
+    if let Some(daozhan) = staged_daozhan.as_mut() {
+        let amount = daozhan.daozhan_qi;
+        release_external_qi_to_zone(
+            &mut daozhan.daozhan_qi,
+            &identity,
+            staged_zones
+                .as_mut()
+                .and_then(|zones| settlement_zone_mut(zones, position, dimension)),
+            &mut staged_ledger,
+            amount,
+            QiTransferReason::ReleaseToZone,
+        )?;
+    }
+
+    if let Some(spider) = staged_spider.as_mut() {
+        spider.drained_qi = 0.0;
+    }
+
+    let transfers = staged_ledger.transfers()[audit_start..].to_vec();
+    *cultivation = staged_cultivation;
+    if let (Some(rat), Some(staged_rat)) = (rat, staged_rat) {
+        *rat = staged_rat;
+    }
+    if let (Some(daozhan), Some(staged_daozhan)) = (daozhan, staged_daozhan) {
+        *daozhan = staged_daozhan;
+    }
+    if let (Some(spider), Some(staged_spider)) = (spider, staged_spider) {
+        *spider = staged_spider;
+    }
+    if let (Some(zones), Some(staged_zones)) = (zones, staged_zones) {
+        *zones = staged_zones;
+    }
+    *ledger = staged_ledger;
+    Ok(transfers)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn settle_pending_npc_termination(
     mut commands: Commands,
-    mut terminated: EventReader<PlayerTerminated>,
-    npcs: TerminatedNpcQuery<'_, '_>,
+    npcs: TerminatedNpcReadQuery<'_, '_>,
+    mut owners: TerminatedNpcOwnerQuery<'_, '_>,
+    persistence: Res<PersistenceSettings>,
     mut notices: EventWriter<NpcDeathNotice>,
+    mut succeeded: EventWriter<NpcTerminalSettlementSucceeded>,
+    mut terminated: EventWriter<PlayerTerminated>,
+    mut reproduction: EventWriter<NpcReproductionRequest>,
+    mut death_insights: Option<
+        ResMut<bevy_ecs::event::Events<crate::combat::events::DeathInsightRequested>>,
+    >,
+    mut lifespan_events: Option<ResMut<bevy_ecs::event::Events<LifespanEventEmitted>>>,
     cooldowns: Option<ResMut<NpcCooldownMap>>,
+    mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+    mut vfx_events: EventWriter<crate::network::vfx_event_emit::VfxEventRequest>,
 ) {
     let mut cooldowns = cooldowns;
-    for event in terminated.read() {
-        let Ok((archetype, lifespan, pending_retirement, shared_lifespan, faction, life_record)) =
-            npcs.get(event.entity)
+    for (
+        entity,
+        archetype,
+        lifespan,
+        pending_retirement,
+        shared_lifespan,
+        faction,
+        life_record,
+        lifecycle,
+        death_registry,
+        position,
+        dimension,
+        visual_profile,
+        pending,
+    ) in &npcs
+    {
+        let Some(ledger) = ledger.as_deref_mut() else {
+            tracing::warn!(
+                target = ?entity,
+                "[bong][npc] retained pending NPC until qi ledger is available"
+            );
+            continue;
+        };
+        let Ok(actor_qi_identity) =
+            validate_npc_terminal_identity(lifecycle, life_record, death_registry)
+        else {
+            tracing::warn!(
+                target = ?entity,
+                "[bong][npc] retained pending NPC after terminal identity failed closed"
+            );
+            continue;
+        };
+        if actor_qi_identity != pending.actor_qi_identity
+            || !pending
+                .actor_qi_identity
+                .matches_life_record(life_record, ActorQiKind::Npc)
+        {
+            tracing::warn!(
+                target = ?entity,
+                "[bong][npc] retained pending NPC after staged terminal identity changed"
+            );
+            continue;
+        }
+        if let Some(narration_outbox) = pending.narration_outbox.as_ref() {
+            if narration_outbox.actor_account != pending.actor_qi_identity.account().to_string()
+                || narration_outbox.created_tick != pending.at_tick
+                || narration_outbox.payload.server_tick != pending.at_tick
+            {
+                tracing::warn!(
+                    target = ?entity,
+                    "[bong][npc] retained pending NPC after staged narration identity changed"
+                );
+                continue;
+            }
+        }
+        if let Some(loot_outbox) = pending.loot_outbox.as_ref() {
+            let actor_account = pending.actor_qi_identity.account().to_string();
+            let expected_prefix = format!("dying_elder_loot:{actor_account}:");
+            if loot_outbox.actor_account != actor_account
+                || loot_outbox.created_tick != pending.at_tick
+                || loot_outbox.outbox_id != format!("{expected_prefix}{}", pending.at_tick)
+            {
+                tracing::warn!(
+                    target = ?entity,
+                    "[bong][npc] retained pending NPC after staged loot identity changed"
+                );
+                continue;
+            }
+        }
+        let Ok((mut cultivation, mut rat, mut daozhan, mut spider, mut dying_elder)) =
+            owners.get_mut(entity)
         else {
             continue;
         };
 
-        let reason = if pending_retirement.is_some()
-            || lifespan.is_expired()
-            || shared_lifespan.is_some_and(|lifespan| lifespan.remaining_years() <= f64::EPSILON)
-        {
-            NpcDeathReason::NaturalAging
-        } else {
-            NpcDeathReason::Combat
+        let mut staged_cultivation = cultivation.clone();
+        let mut staged_rat = rat.as_deref().cloned();
+        let mut staged_daozhan = daozhan.as_deref().cloned();
+        let mut staged_spider = spider.as_deref().cloned();
+        let mut staged_zones = zones.as_deref().cloned();
+        let mut staged_ledger = ledger.clone();
+        let transfers = match settle_npc_qi_owners(
+            &mut staged_cultivation,
+            staged_rat.as_mut(),
+            staged_daozhan.as_mut(),
+            staged_spider.as_mut(),
+            position.map(|position| position.get()),
+            dimension.map(|dimension| dimension.0),
+            life_record,
+            staged_zones.as_mut(),
+            &mut staged_ledger,
+        ) {
+            Ok(transfers) => transfers,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    target = ?entity,
+                    "[bong][npc] retained pending NPC after qi settlement failed closed"
+                );
+                continue;
+            }
         };
 
+        let mut staged_lifecycle = lifecycle.clone();
+        let mut staged_life_record = life_record.clone();
+        let mut staged_death_registry = death_registry.clone();
+        staged_death_registry.record_death(pending.at_tick, pending.death_zone);
+        if !matches!(
+            staged_lifecycle.state,
+            LifecycleState::NearDeath | LifecycleState::AwaitingRevival
+        ) {
+            staged_lifecycle.death_count = staged_lifecycle.death_count.saturating_add(1);
+        }
+        staged_lifecycle.terminate(pending.at_tick);
+        staged_life_record.push(
+            crate::cultivation::life_record::BiographyEntry::Terminated {
+                cause: pending.cause.clone(),
+                tick: pending.at_tick,
+            },
+        );
+        if let Err(error) = persist_npc_terminal_qi_transaction(
+            &persistence,
+            &staged_lifecycle,
+            &staged_life_record,
+            TerminalPersistencePayload {
+                death_registry_cause: Some(pending.cause.as_str()),
+                lifespan_event: pending.lifespan_event.as_ref(),
+                zones: staged_zones.as_ref(),
+                qi_ledger: Some(&staged_ledger),
+                narration_outbox: pending.narration_outbox.as_ref(),
+                loot_outbox: pending.loot_outbox.as_ref(),
+            },
+        ) {
+            tracing::warn!(
+                target = ?entity,
+                "[bong][persistence] retained pending NPC after terminal persistence failed: {error}"
+            );
+            continue;
+        }
+
+        *cultivation = staged_cultivation;
+        if let Some(dying_elder) = dying_elder.as_deref_mut() {
+            dying_elder.qi_current = cultivation.qi_current();
+        }
+        if let (Some(rat), Some(staged_rat)) = (rat.as_deref_mut(), staged_rat) {
+            *rat = staged_rat;
+        }
+        if let (Some(daozhan), Some(staged_daozhan)) = (daozhan.as_deref_mut(), staged_daozhan) {
+            *daozhan = staged_daozhan;
+        }
+        if let (Some(spider), Some(staged_spider)) = (spider.as_deref_mut(), staged_spider) {
+            *spider = staged_spider;
+        }
+        if let (Some(zones), Some(staged_zones)) = (zones.as_deref_mut(), staged_zones) {
+            *zones = staged_zones;
+        }
+        *ledger = staged_ledger;
+
         notices.send(build_npc_death_notice(
-            event.entity,
             *archetype,
             lifespan,
             faction,
-            life_record,
-            reason,
+            &staged_life_record,
+            pending.reason,
         ));
-
-        if let Some(ref mut cd) = cooldowns {
-            cd.remove_all_for(event.entity);
+        for transfer in transfers {
+            qi_transfers.send(transfer);
         }
+        if let Some(reproduction_request) = pending.reproduction.clone() {
+            reproduction.send(reproduction_request);
+        }
+        if let (Some(death_insights), Some(payload)) =
+            (death_insights.as_deref_mut(), pending.death_insight.clone())
+        {
+            death_insights.send(crate::combat::events::DeathInsightRequested { payload });
+        }
+        if let (Some(lifespan_events), Some(lifespan_event)) = (
+            lifespan_events.as_deref_mut(),
+            pending.lifespan_event.as_ref(),
+        ) {
+            lifespan_events.send(LifespanEventEmitted {
+                payload: crate::cultivation::lifespan::lifespan_event_payload_from_record(
+                    staged_life_record.character_id.clone(),
+                    lifespan_event,
+                ),
+            });
+        }
+        crate::combat::lifecycle::emit_terminal_vfx(
+            position,
+            true,
+            visual_profile,
+            &mut vfx_events,
+        );
+        terminated.send(PlayerTerminated { entity });
+        succeeded.send(NpcTerminalSettlementSucceeded {
+            entity,
+            at_tick: pending.at_tick,
+            cause: pending.cause.clone(),
+            reason: pending.reason,
+            attacker: pending.attacker,
+            attacker_player_id: pending.attacker_player_id.clone(),
+            authorize_loot: pending.authorize_loot,
+            actor_qi_identity: pending.actor_qi_identity.clone(),
+        });
 
-        if let Some(mut entity_commands) = commands.get_entity(event.entity) {
-            entity_commands.insert((Despawned, NpcDeathNoticeEmitted));
+        if let Some(ref mut cooldowns) = cooldowns {
+            cooldowns.remove_all_for(entity);
+        }
+        if let Some(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.insert((
+                Despawned,
+                NpcDeathNoticeEmitted,
+                staged_lifecycle,
+                staged_life_record,
+                staged_death_registry,
+            ));
             entity_commands.remove::<PendingRetirement>();
+            entity_commands.remove::<PendingNpcTermination>();
+            entity_commands.remove::<Cultivation>();
+            entity_commands.remove::<MeridianSystem>();
+            entity_commands.remove::<Contamination>();
+            entity_commands.remove::<PracticeLog>();
+            entity_commands.remove::<QiColor>();
+            entity_commands
+                .remove::<crate::cultivation::meridian::severed::MeridianSeveredPermanent>();
         }
+
+        let _ = (pending_retirement, shared_lifespan);
     }
 }
 
@@ -819,7 +1264,6 @@ fn emit_npc_despawn_notices(
             NpcDeathReason::Despawned
         };
         notices.send(build_npc_death_notice(
-            entity,
             *archetype,
             lifespan,
             faction,
@@ -833,20 +1277,18 @@ fn emit_npc_despawn_notices(
 }
 
 fn build_npc_death_notice(
-    entity: Entity,
     archetype: NpcArchetype,
     lifespan: &NpcLifespan,
     faction: Option<&FactionMembership>,
-    life_record: Option<&LifeRecord>,
+    life_record: &LifeRecord,
     reason: NpcDeathReason,
 ) -> NpcDeathNotice {
     NpcDeathNotice {
-        npc_id: canonical_npc_id(entity),
+        npc_id: life_record.character_id.clone(),
         archetype,
         reason,
         faction_id: faction.map(|membership| membership.faction_id),
-        life_record_snapshot: life_record
-            .map(|record| record.recent_summary_text(8))
+        life_record_snapshot: Some(life_record.recent_summary_text(8))
             .filter(|summary| !summary.is_empty()),
         age_ticks: lifespan.age_ticks,
         max_age_ticks: lifespan.max_age_ticks,
@@ -861,6 +1303,84 @@ mod tests {
     use super::*;
 
     use valence::prelude::{App, Update};
+
+    use crate::fauna::mimic_spider::MimicSpiderBlackboard;
+    use crate::fauna::rat_phase::{chunk_pos_from_world, RatGroupId};
+    use crate::qi_physics::{qi_flow_overflow_account, QiAccountId};
+    use crate::world::zone::{Zone, ZoneRegistry};
+
+    fn terminal_test_zone(spirit_qi: f64) -> ZoneRegistry {
+        ZoneRegistry {
+            zones: vec![Zone {
+                name: "terminal-test".to_string(),
+                dimension: DimensionKind::Overworld,
+                bounds: (DVec3::new(-32.0, 0.0, -32.0), DVec3::new(32.0, 128.0, 32.0)),
+                spirit_qi,
+                danger_level: 0,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        }
+    }
+
+    fn terminal_test_persistence(label: &str) -> PersistenceSettings {
+        let root = std::env::temp_dir().join(format!(
+            "bong-r5-terminal-{label}-{}-{}",
+            std::process::id(),
+            Uuid::now_v7()
+        ));
+        let db_path = root.join("data").join("bong.db");
+        let deceased_dir = root.join("deceased");
+        crate::persistence::bootstrap_sqlite(&db_path, label)
+            .expect("terminal fixture sqlite bootstrap must succeed");
+        PersistenceSettings::with_paths(db_path, deceased_dir, label)
+    }
+
+    fn terminal_pending_with(
+        reason: NpcDeathReason,
+        attacker: Option<Entity>,
+        authorize_loot: bool,
+        life_record: &LifeRecord,
+    ) -> PendingNpcTermination {
+        PendingNpcTermination {
+            cause: reason.as_str().to_string(),
+            at_tick: 100,
+            death_zone: ZoneDeathKind::Ordinary,
+            lifespan_event: None,
+            death_insight: None,
+            reason,
+            attacker,
+            attacker_player_id: None,
+            authorize_loot,
+            actor_qi_identity: ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+                .expect("terminal fixture must carry canonical NPC identity"),
+            reproduction: None,
+            narration_outbox: None,
+            loot_outbox: None,
+        }
+    }
+
+    fn terminal_pending(reason: NpcDeathReason, life_record: &LifeRecord) -> PendingNpcTermination {
+        terminal_pending_with(reason, None, false, life_record)
+    }
+
+    fn terminal_app(zone_qi: f64) -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(terminal_test_zone(zone_qi));
+        app.insert_resource(terminal_test_persistence("terminal-app"));
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<NpcDeathNotice>();
+        app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, settle_pending_npc_termination);
+        app
+    }
 
     #[test]
     fn registry_hysteresis_pauses_at_cap_and_resumes_below_low_watermark() {
@@ -943,92 +1463,123 @@ mod tests {
     }
 
     #[test]
-    fn process_retire_requests_emits_natural_aging_trigger() {
+    fn process_retire_requests_stages_natural_aging_without_side_effects() {
         let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 73 });
         app.add_event::<NpcRetireRequest>();
-        app.add_event::<CultivationDeathTrigger>();
         app.add_event::<NpcReproductionRequest>();
         app.add_systems(Update, process_npc_retire_requests);
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                NpcArchetype::Zombie,
-                NpcLifespan::new(99.0, 100.0),
-            ))
-            .id();
+        let entity = app.world_mut().spawn(NpcMarker).id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Zombie, Realm::Awaken);
+        bundle.lifespan = NpcLifespan::new(99.0, 100.0);
+        app.world_mut().entity_mut(entity).insert(bundle);
 
         app.world_mut().send_event(NpcRetireRequest { entity });
         app.update();
 
-        let events = app
+        let pending = app
             .world()
-            .resource::<bevy_ecs::event::Events<CultivationDeathTrigger>>();
-        assert_eq!(events.len(), 1);
-
-        let births = app
-            .world()
-            .resource::<bevy_ecs::event::Events<NpcReproductionRequest>>();
+            .get::<PendingNpcTermination>(entity)
+            .expect("retirement must stage one terminal transaction");
+        assert_eq!(pending.cause, "natural_aging");
+        assert_eq!(pending.at_tick, 73);
+        assert_eq!(pending.reason, NpcDeathReason::NaturalAging);
+        assert!(pending.reproduction.is_none());
+        assert!(
+            app.world().get::<Despawned>(entity).is_none(),
+            "retirement intent must not despawn before terminal settlement commits"
+        );
         assert_eq!(
-            births.len(),
+            app.world()
+                .resource::<bevy_ecs::event::Events<NpcReproductionRequest>>()
+                .len(),
             0,
-            "zombie retirement must not trigger reproduction"
+            "zombie retirement must not authorize reproduction"
         );
     }
 
     #[test]
-    fn process_retire_requests_triggers_commoner_reproduction() {
+    fn process_retire_requests_defers_commoner_reproduction_until_commit() {
         let mut app = App::new();
+        app.insert_resource(CombatClock { tick: 91 });
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(terminal_test_zone(0.5));
+        app.insert_resource(terminal_test_persistence("retire-commoner"));
         app.add_event::<NpcRetireRequest>();
-        app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<PlayerTerminated>();
+        app.add_event::<NpcDeathNotice>();
         app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
+        app.add_event::<QiTransfer>();
         app.add_systems(Update, process_npc_retire_requests);
 
         let entity = app
             .world_mut()
             .spawn((
                 NpcMarker,
-                NpcArchetype::Commoner,
-                NpcLifespan::new(89_999.0, 90_000.0),
                 Position::new([42.0, 66.0, 17.5]),
+                CurrentDimension(DimensionKind::Overworld),
                 crate::npc::patrol::NpcPatrol::new("forest", DVec3::new(42.0, 66.0, 17.5)),
             ))
             .id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Commoner, Realm::Awaken);
+        bundle.lifespan = NpcLifespan::new(89_999.0, 90_000.0);
+        app.world_mut().entity_mut(entity).insert(bundle);
 
         app.world_mut().send_event(NpcRetireRequest { entity });
+        app.update();
+
+        assert!(app.world().get::<PendingNpcTermination>(entity).is_some());
+        assert!(app.world().get::<Despawned>(entity).is_none());
+        assert_eq!(
+            app.world()
+                .resource::<bevy_ecs::event::Events<NpcReproductionRequest>>()
+                .len(),
+            0,
+            "commoner reproduction must remain invisible before terminal commit"
+        );
+
+        app.add_systems(Update, settle_pending_npc_termination);
         app.update();
 
         let births = app
             .world()
             .resource::<bevy_ecs::event::Events<NpcReproductionRequest>>();
         let all: Vec<_> = births.iter_current_update_events().collect();
-        assert_eq!(all.len(), 1);
+        assert_eq!(
+            all.len(),
+            1,
+            "successful terminal commit must reproduce once"
+        );
         let req = all[0];
         assert_eq!(req.archetype, NpcArchetype::Commoner);
         assert_eq!(req.home_zone, "forest");
         assert_eq!(req.position, DVec3::new(42.0, 66.0, 17.5));
         assert_eq!(req.initial_age_ticks, 0.0);
+        assert!(app.world().get::<Despawned>(entity).is_some());
     }
 
     #[test]
-    fn handle_npc_terminated_emits_notice_and_marks_despawned() {
-        let mut app = App::new();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<NpcDeathNotice>();
-        app.add_systems(Update, handle_npc_terminated);
+    fn settle_pending_npc_termination_emits_notice_and_marks_despawned() {
+        let mut app = terminal_app(0.5);
 
         let entity = app
             .world_mut()
             .spawn((
                 NpcMarker,
-                NpcArchetype::Zombie,
-                NpcLifespan::new(120.0, 100.0),
-                PendingRetirement,
+                Position(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
             ))
             .id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Zombie, Realm::Awaken);
+        bundle.lifespan = NpcLifespan::new(120.0, 100.0);
+        let pending = terminal_pending(NpcDeathReason::NaturalAging, &bundle.life_record);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((bundle, PendingRetirement, pending));
 
-        app.world_mut().send_event(PlayerTerminated { entity });
         app.update();
 
         let events = app
@@ -1036,6 +1587,365 @@ mod tests {
             .resource::<bevy_ecs::event::Events<NpcDeathNotice>>();
         assert_eq!(events.len(), 1);
         assert!(app.world().get::<Despawned>(entity).is_some());
+        assert!(app.world().get::<Cultivation>(entity).is_none());
+    }
+
+    #[test]
+    fn terminal_settlement_commits_all_npc_owners_before_despawn() {
+        let mut app = terminal_app(0.5);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
+        bundle.cultivation.qi_current = 4.0;
+        let character_id = bundle.life_record.character_id.clone();
+        let account = QiAccountId::npc(character_id);
+        let mut rat = RatBlackboard::new("terminal-test", chunk_pos_from_world(DVec3::ZERO));
+        rat.group_id = RatGroupId(9);
+        rat.drained_qi = 3.0;
+        let mut daozhan =
+            DaoZhangBehaviorBlackboard::new("terminal-test", DVec3::ZERO, Some(Realm::Spirit));
+        daozhan.daozhan_qi = 2.0;
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(account.clone(), 3.0)
+            .expect("rat reserve fixture should be valid");
+        let pending = terminal_pending(NpcDeathReason::Combat, &bundle.life_record);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((bundle, rat, daozhan, pending));
+
+        app.update();
+
+        assert!(app.world().get::<Despawned>(entity).is_some());
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&account),
+            0.0,
+            "canonical rat reserve must be empty before despawn"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .iter()
+                .find(|zone| zone.name == "terminal-test")
+                .expect("zone fixture should remain")
+                .spirit_qi,
+            0.68,
+            "4 cultivation + 3 rat + 2 daozhan qi must all reach the zone"
+        );
+        let transfers = app.world().resource::<WorldQiAccount>().transfers();
+        assert_eq!(transfers.len(), 3);
+        assert!(transfers.iter().all(|transfer| transfer.from == account));
+        assert!(transfers
+            .iter()
+            .all(|transfer| transfer.reason == QiTransferReason::ReleaseToZone));
+    }
+
+    #[test]
+    fn terminal_settlement_releases_spider_owner_once_and_clears_telemetry() {
+        let mut app = terminal_app(0.5);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
+        bundle.cultivation.qi_current = 4.0;
+        let account = QiAccountId::npc(bundle.life_record.character_id.clone());
+        let mut spider = MimicSpiderBlackboard::new("terminal-test", DVec3::ZERO);
+        spider.drained_qi = 9.0;
+        let pending = terminal_pending(NpcDeathReason::Combat, &bundle.life_record);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((bundle, spider, pending));
+
+        app.update();
+
+        assert!(app.world().get::<Despawned>(entity).is_some());
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .first()
+                .expect("zone fixture should remain")
+                .spirit_qi,
+            0.54,
+            "only Cultivation's physical 4 qi may reach the zone; telemetry must not double-release"
+        );
+        let transfers = app.world().resource::<WorldQiAccount>().transfers();
+        assert_eq!(transfers.len(), 1);
+        assert_eq!(transfers[0].from, account);
+        assert_eq!(transfers[0].amount, 4.0);
+        assert_eq!(
+            app.world()
+                .get::<MimicSpiderBlackboard>(entity)
+                .expect("post-commit telemetry component should remain inspectable")
+                .drained_qi,
+            0.0,
+            "successful settlement must clear the non-owner telemetry mirror"
+        );
+    }
+
+    #[test]
+    fn terminal_settlement_failure_is_retryable_and_atomic() {
+        let mut app = terminal_app(1.0);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
+        bundle.cultivation.qi_current = 4.0;
+        let character_id = bundle.life_record.character_id.clone();
+        let account = QiAccountId::npc(character_id);
+        let mut rat = RatBlackboard::new("terminal-test", chunk_pos_from_world(DVec3::ZERO));
+        rat.drained_qi = 3.0;
+        let mut daozhan =
+            DaoZhangBehaviorBlackboard::new("terminal-test", DVec3::ZERO, Some(Realm::Spirit));
+        daozhan.daozhan_qi = 2.0;
+        {
+            let mut ledger = app.world_mut().resource_mut::<WorldQiAccount>();
+            ledger
+                .set_balance(account.clone(), 3.0)
+                .expect("rat reserve fixture should be valid");
+            ledger
+                .set_balance(qi_flow_overflow_account(), f64::MAX)
+                .expect("saturated overflow fixture should be valid");
+        }
+        let pending = terminal_pending(NpcDeathReason::Combat, &bundle.life_record);
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((bundle, rat, daozhan, pending));
+
+        app.update();
+
+        assert!(app.world().get::<Despawned>(entity).is_none());
+        assert!(app.world().get::<PendingNpcTermination>(entity).is_some());
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current(),
+            4.0
+        );
+        assert_eq!(
+            app.world().get::<RatBlackboard>(entity).unwrap().drained_qi,
+            3.0
+        );
+        assert_eq!(
+            app.world()
+                .get::<DaoZhangBehaviorBlackboard>(entity)
+                .unwrap()
+                .daozhan_qi,
+            2.0
+        );
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&account),
+            3.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .first()
+                .unwrap()
+                .spirit_qi,
+            1.0
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(qi_flow_overflow_account(), 0.0)
+            .expect("clearing overflow should be valid");
+        app.update();
+
+        assert!(
+            app.world().get::<Despawned>(entity).is_some(),
+            "pending marker must retry without a second terminal intent"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .balance(&qi_flow_overflow_account()),
+            9.0
+        );
+    }
+
+    #[test]
+    fn terminal_settlement_publishes_attacker_and_loot_only_after_commit() {
+        let mut app = terminal_app(1.0);
+        let attacker = app.world_mut().spawn_empty().id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
+            ))
+            .id();
+        let mut bundle = npc_runtime_bundle(entity, NpcArchetype::Beast, Realm::Awaken);
+        bundle.cultivation.qi_current = 1.0;
+        let pending = terminal_pending_with(
+            NpcDeathReason::Combat,
+            Some(attacker),
+            true,
+            &bundle.life_record,
+        );
+        app.world_mut().entity_mut(entity).insert((bundle, pending));
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(qi_flow_overflow_account(), f64::MAX)
+            .expect("saturated overflow fixture should be valid");
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<bevy_ecs::event::Events<NpcTerminalSettlementSucceeded>>()
+                .len(),
+            0,
+            "failed qi settlement must not authorize loot or publish attacker attribution"
+        );
+        assert!(app.world().get::<Despawned>(entity).is_none());
+
+        app.world_mut()
+            .resource_mut::<WorldQiAccount>()
+            .set_balance(qi_flow_overflow_account(), 0.0)
+            .expect("clearing overflow should be valid");
+        app.update();
+
+        let successes = app
+            .world()
+            .resource::<bevy_ecs::event::Events<NpcTerminalSettlementSucceeded>>();
+        let all: Vec<_> = successes.iter_current_update_events().collect();
+        assert_eq!(
+            all.len(),
+            1,
+            "retrying terminal settlement must publish once"
+        );
+        assert_eq!(all[0].entity, entity);
+        assert_eq!(all[0].attacker, Some(attacker));
+        assert!(all[0].authorize_loot);
+    }
+
+    #[test]
+    fn terminal_settlement_missing_identity_retries_without_mutation() {
+        let mut app = terminal_app(0.5);
+        let staged_life_record = LifeRecord::new("npc:staged-terminal-owner");
+        let pending = terminal_pending(NpcDeathReason::Combat, &staged_life_record);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Zombie,
+                NpcLifespan::new(0.0, 100.0),
+                LifeRecord::new("unassigned:life_record"),
+                Lifecycle {
+                    character_id: "unassigned:life_record".to_string(),
+                    ..Default::default()
+                },
+                DeathRegistry::new("unassigned:life_record"),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 4.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                pending,
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<Despawned>(entity).is_none());
+        assert!(app.world().get::<PendingNpcTermination>(entity).is_some());
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current(),
+            4.0
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .first()
+                .unwrap()
+                .spirit_qi,
+            0.5
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+    }
+
+    #[test]
+    fn terminal_settlement_rejects_collective_identity_drift_from_frozen_pending() {
+        let mut app = terminal_app(0.5);
+        let original_record = LifeRecord::new("npc:terminal:frozen-original");
+        let pending = terminal_pending(NpcDeathReason::Combat, &original_record);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Zombie,
+                NpcLifespan::new(0.0, 100.0),
+                LifeRecord::new("npc:terminal:drifted-together"),
+                Lifecycle {
+                    character_id: "npc:terminal:drifted-together".to_string(),
+                    ..Default::default()
+                },
+                DeathRegistry::new("npc:terminal:drifted-together"),
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 4.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                Position(DVec3::ZERO),
+                CurrentDimension(DimensionKind::Overworld),
+                pending,
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<PendingNpcTermination>(entity).is_some(),
+            "three current identity mirrors drifting together must not bypass the frozen capability"
+        );
+        assert!(app.world().get::<Despawned>(entity).is_none());
+        assert_eq!(
+            app.world().get::<Cultivation>(entity).unwrap().qi_current(),
+            4.0,
+            "identity drift rejection must keep the physical owner unchanged"
+        );
+        assert_eq!(
+            app.world().resource::<ZoneRegistry>().zones[0].spirit_qi,
+            0.5,
+            "identity drift rejection must not mutate the signed zone"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .is_empty(),
+            "identity drift rejection must not publish an audit projection"
+        );
     }
 
     #[test]
@@ -1089,6 +1999,82 @@ mod tests {
             "默认构造点不是离屏 dormant 互殴"
         );
         assert_eq!(notice.pos, None);
+    }
+
+    #[test]
+    fn build_death_notice_uses_life_record_durable_identity() {
+        let life_record = LifeRecord::new("npc:stable:death-notice");
+        let notice = build_npc_death_notice(
+            NpcArchetype::Zombie,
+            &NpcLifespan::new(12.0, 100.0),
+            None,
+            &life_record,
+            NpcDeathReason::Combat,
+        );
+
+        assert_eq!(notice.npc_id, "npc:stable:death-notice");
+        assert_eq!(notice.reason, NpcDeathReason::Combat);
+    }
+
+    #[test]
+    fn despawn_notice_requires_canonical_life_record() {
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.add_systems(Update, emit_npc_despawn_notices);
+        let entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                NpcArchetype::Zombie,
+                NpcLifespan::new(12.0, 100.0),
+                Despawned,
+            ))
+            .id();
+
+        app.update();
+
+        assert!(
+            app.world().get::<NpcDeathNoticeEmitted>(entity).is_none(),
+            "despawn telemetry must fail closed when no durable LifeRecord owner exists"
+        );
+        assert!(
+            app.world()
+                .resource::<bevy_ecs::event::Events<NpcDeathNotice>>()
+                .is_empty(),
+            "despawn telemetry must not invent an Entity-derived NPC identity"
+        );
+    }
+
+    #[test]
+    fn npc_runtime_bundle_allocates_unique_durable_identity_for_all_owner_components() {
+        let mut app = App::new();
+        let first_entity = app.world_mut().spawn_empty().id();
+        let second_entity = app.world_mut().spawn_empty().id();
+        let first = npc_runtime_bundle(first_entity, NpcArchetype::Beast, Realm::Awaken);
+        let second = npc_runtime_bundle(second_entity, NpcArchetype::Beast, Realm::Awaken);
+
+        for bundle in [&first, &second] {
+            let character_id = &bundle.life_record.character_id;
+            assert!(character_id.starts_with("npc:"));
+            assert!(Uuid::parse_str(character_id.trim_start_matches("npc:")).is_ok());
+            assert_eq!(bundle.death_registry.char_id, *character_id);
+            assert_eq!(bundle.lifecycle.character_id, *character_id);
+            assert!(
+                ActorQiIdentity::from_life_record(&bundle.life_record, ActorQiKind::Npc).is_ok()
+            );
+        }
+        assert_ne!(
+            first.life_record.character_id, second.life_record.character_id,
+            "separate initial spawns must never share a durable qi owner identity"
+        );
+        assert_ne!(
+            first.life_record.character_id,
+            canonical_npc_id(first_entity)
+        );
+        assert_ne!(
+            second.life_record.character_id,
+            canonical_npc_id(second_entity)
+        );
     }
 
     #[test]
@@ -1199,6 +2185,11 @@ mod tests {
     fn register_ages_lifespan_once_per_update_tick() {
         let mut app = App::new();
         register(&mut app);
+        app.insert_resource(CombatClock { tick: 0 });
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(terminal_test_persistence("register-aging"));
+        app.add_event::<QiTransfer>();
+        app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
 
         let entity = app
             .world_mut()
@@ -1221,7 +2212,7 @@ mod tests {
 
     /// 端到端：致命 AttackIntent → resolve → DeathEvent → death_arbiter
     /// → NearDeath → near_death_tick 立即 Terminated（NPC 跳过等待窗口）
-    /// → handle_npc_terminated → `Despawned`.
+    /// → settle_pending_npc_termination → `Despawned`.
     #[test]
     fn npc_full_death_chain_from_attack_to_despawned() {
         use crate::combat::events::{
@@ -1253,6 +2244,8 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 100 });
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(PersistenceSettings::with_paths(
             &db_path,
             &deceased_dir,
@@ -1272,13 +2265,16 @@ mod tests {
         app.add_event::<DeathCinematicPublished>();
         app.add_event::<CultivationDeathTrigger>();
         app.add_event::<NpcDeathNotice>();
+        app.add_event::<NpcReproductionRequest>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
+        app.add_event::<QiTransfer>();
         app.add_systems(
             Update,
             (
                 resolve_attack_intents,
                 death_arbiter_tick.after(resolve_attack_intents),
                 near_death_tick.after(death_arbiter_tick),
-                handle_npc_terminated.after(near_death_tick),
+                settle_pending_npc_termination.after(near_death_tick),
             ),
         );
 
@@ -1307,7 +2303,19 @@ mod tests {
             .world()
             .get::<crate::cultivation::life_record::LifeRecord>(victim)
             .expect("death lifecycle NPC bundle should carry LifeRecord");
-        assert_eq!(victim_record.character_id, canonical_npc_id(victim));
+        assert!(
+            victim_record.character_id.starts_with("npc:"),
+            "live NPC qi owner must use a durable character id rather than Bevy Entity identity"
+        );
+        assert!(
+            Uuid::parse_str(victim_record.character_id.trim_start_matches("npc:")).is_ok(),
+            "live NPC character id must carry a valid UUID"
+        );
+        assert_ne!(
+            victim_record.character_id,
+            canonical_npc_id(victim),
+            "durable NPC character id must not reuse the runtime Entity key"
+        );
 
         // 一击致命。
         app.world_mut().send_event(AttackIntent {
@@ -1324,7 +2332,7 @@ mod tests {
         // All NPCs skip the NearDeath wait window and terminate immediately.
         // Tick 1: resolve 写 Wounds + DeathEvent
         // Tick 2: death_arbiter → NearDeath → near_death_tick 立即 Terminated
-        // Tick 3: handle_npc_terminated 插 Despawned + 发 NpcDeathNotice
+        // Tick 3: settle_pending_npc_termination 插 Despawned + 发 NpcDeathNotice
         app.update();
         app.update();
         app.update();

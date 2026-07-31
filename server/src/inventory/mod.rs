@@ -923,6 +923,8 @@ fn hydrate_durable_inventory_state(
             panic!("[bong][inventory] invalid persisted instance allocator high-water: {error}")
         });
     }
+    // `dropped_loot` 是唯一 runtime ground-loot 权威；terminal outbox 是不可变收据，
+    // 不再作为启动 hydration 来源，避免已拾取物品在重启后复活。
     dropped_loot.entries = entries;
 }
 

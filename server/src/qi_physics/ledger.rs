@@ -168,16 +168,17 @@ pub enum QiTransferReason {
     MeridianForge,
     RiftCollapse,
     /// bughunt QS-01 — 裂口气压负压（rift-mouth neg_pressure）每 tick 从附近**玩家/非 NPC actor**
-    /// （tick_neg_pressure 查询带 `Without<NpcMarker>`，不抽 NPC）qi_current 抽走真元，守恒转入 rift
-    /// ledger 账户。
+    /// （tick_neg_pressure 查询带 `Without<NpcMarker>`，不抽 NPC）qi_current 抽走真元，守恒转入
+    /// 可持久恢复的固定 `overflow:rift_drain` 账户。
     ///
     /// 守恒约束：
-    ///   - `cultivation.qi_current -= actual_drain`（ECS，已在 tick_neg_pressure 扣减）；
-    ///   - 同 tick 内把 `actual_drain` 记入 `QiAccountId::rift(zone_label)` 账户；
-    ///   - `push_transfer_audit(QiTransfer(from=player:<entity>, to=rift:<label>,
-    ///     reason=NegPressureDrain))` 留审计轨迹；
-    ///   - 活体真元仍在 ECS，不镜像到 player/npc ledger balance（audit-only 模式）；
-    ///   - `summarize_world_qi` 口径：player_qi 减少，ledger_qi（rift 账户）增加，总量不变。
+    ///   - 调用方先计算 `actual_drain = min(drain, qi_current)`；
+    ///   - `transfer_external_qi_to_ledger` 原子 credit 固定池并追加
+    ///     `QiTransfer(from=player:<entity>, to=overflow:rift_drain,
+    ///     reason=NegPressureDrain)`；
+    ///   - helper 成功后才提交 `cultivation.qi_current -= actual_drain`；
+    ///   - 活体真元仍只由 ECS 持有，helper 的临时 player shadow 在成功和失败后都恢复；
+    ///   - `summarize_world_qi` 口径：player_qi 减少、稳定 runtime pool 增加，总量不变。
     NegPressureDrain,
     EraDecay,
     /// plan-zone-qi-economy-v1 — 手搓 qi_cost 一次性投入待分配池；
@@ -439,9 +440,7 @@ impl WorldQiAccount {
         // plan-qi-conservation-leaks-v1 P4 / bughunt r8 — DuguReturnToZone /
         // DuguReverseVictimQi 的 doc-comment 同样标注"audit-only，禁止调 transfer"
         // （余额已经在 ECS Cultivation 组件或 zone balance 里正确更新，调用方必须走
-        // push_transfer_audit 单纯留痕）；NegPressureDrain（bughunt QS-01）注释里也写了
-        // "活体真元仍在 ECS，不镜像到 player/npc ledger balance"。三者此前只在文档里
-        // 约定，没有编译期/运行期防护——照搬 HalfStepBuff 先例把它们一并拒在入口。
+        // push_transfer_audit 单纯留痕），因此与 HalfStepBuff 一起拒在入口。
         reject_audit_only_qi_reason(transfer.reason)?;
 
         let amount = finite_non_negative(transfer.amount, "transfer.amount")?;
@@ -714,6 +713,13 @@ pub fn transfer_zone_qi_to_ledger(
     Ok(transfer)
 }
 
+/// 坍缩渊、裂口负压与同源 drain 的稳定聚合池。
+///
+/// Rift 是中转站而不是终点，但当前不存在可独立恢复每个裂口余额的物理 owner；因此所有
+/// drain 先真实进入这个固定账户。zone / encounter 信息只保留在 `QiTransfer` 的 source、reason
+/// 与外围 telemetry 中，不能再创建动态 `rift:<zone>` 余额并在重启时蒸发。
+pub const RIFT_DRAIN_ACCOUNT_ID: &str = "rift_drain";
+
 /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 独立"待分配池"账户 id。
 ///
 /// 开脉 / 突破消耗真元回充的目标**不是** `zone:<name>` 账户，也**不是**
@@ -737,11 +743,12 @@ pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
 pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
 
 /// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
-pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 4] = [
+pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 5] = [
     PENDING_INFLOW_ACCOUNT_ID,
     QI_FLOW_OVERFLOW_ACCOUNT_ID,
     DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+    RIFT_DRAIN_ACCOUNT_ID,
 ];
 
 /// 独立待分配池账户（`QiAccountKind::Overflow` + 固定 id，见 [`PENDING_INFLOW_ACCOUNT_ID`]）。
@@ -761,7 +768,11 @@ pub fn dying_elder_release_overflow_account() -> QiAccountId {
     QiAccountId::overflow(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID)
 }
 
-pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 4] {
+pub fn rift_drain_account() -> QiAccountId {
+    QiAccountId::overflow(RIFT_DRAIN_ACCOUNT_ID)
+}
+
+pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 5] {
     PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(QiAccountId::overflow)
 }
 
@@ -1165,7 +1176,6 @@ mod tests {
             QiTransferReason::HalfStepBuff,
             QiTransferReason::DuguReturnToZone,
             QiTransferReason::DuguReverseVictimQi,
-            QiTransferReason::NegPressureDrain,
         ];
         for reason in reasons {
             let mut ledger = WorldQiAccount::default();
@@ -1473,7 +1483,6 @@ mod tests {
             QiTransferReason::HalfStepBuff,
             QiTransferReason::DuguReturnToZone,
             QiTransferReason::DuguReverseVictimQi,
-            QiTransferReason::NegPressureDrain,
         ];
         for reason in reasons {
             for requested in [0.0, 1.0] {
@@ -1729,10 +1738,13 @@ mod tests {
     fn external_qi_transfer_failure_rolls_source_back_without_credit_or_audit() {
         let mut ledger = WorldQiAccount::default();
         let from = QiAccountId::player("external_player");
-        let to = QiAccountId::overflow("must_stay_empty");
+        let to = rift_drain_account();
         ledger
             .set_balance(from.clone(), 4.0)
             .expect("fixture source balance");
+        ledger
+            .set_balance(to.clone(), f64::MAX)
+            .expect("max finite destination fixture");
 
         let error = transfer_external_qi_to_ledger(
             &mut ledger,
@@ -1741,11 +1753,21 @@ mod tests {
             2.0,
             QiTransferReason::NegPressureDrain,
         )
-        .expect_err("audit-only reason must reject real balance mutation");
+        .expect_err("destination overflow must reject real balance mutation");
 
-        assert!(matches!(error, QiPhysicsError::AuditOnlyReason { .. }));
+        assert!(matches!(
+            error,
+            QiPhysicsError::InvalidAmount {
+                field: "destination_balance",
+                ..
+            }
+        ));
         assert_eq!(ledger.balance(&from), 4.0, "failure must restore source");
-        assert_eq!(ledger.balance(&to), 0.0, "failure must not credit sink");
+        assert_eq!(
+            ledger.balance(&to),
+            f64::MAX,
+            "failure must not credit sink"
+        );
         assert!(
             ledger.transfers().is_empty(),
             "failure must not append audit"
@@ -1779,7 +1801,6 @@ mod tests {
             QiTransferReason::HalfStepBuff,
             QiTransferReason::DuguReturnToZone,
             QiTransferReason::DuguReverseVictimQi,
-            QiTransferReason::NegPressureDrain,
         ];
         for reason in audit_only_reasons {
             let mut ledger = WorldQiAccount::default();
@@ -2140,16 +2161,15 @@ mod tests {
         );
     }
 
-    /// plan-qi-conservation-leaks-v1 P4 / bughunt r8 / bughunt QS-01 — F24 加固：
-    /// DuguReturnToZone / DuguReverseVictimQi / NegPressureDrain 三个 audit-only reason
-    /// 此前只在 doc-comment 里约定"禁止调 transfer"，没有编译期/运行期防护。
-    /// 每个变体各一条 case，断言 transfer() 拒绝 + balance 完全不变 + 不留 audit trail。
+    /// plan-qi-conservation-leaks-v1 P4 / bughunt r8 — F24 加固：
+    /// DuguReturnToZone / DuguReverseVictimQi 两个 audit-only reason 此前只在 doc-comment
+    /// 里约定"禁止调 transfer"，没有编译期/运行期防护。每个变体各一条 case，断言
+    /// transfer() 拒绝 + balance 完全不变 + 不留 audit trail。
     #[test]
     fn transfer_rejects_all_audit_only_reasons_with_balance_untouched() {
         let cases = [
             (QiTransferReason::DuguReturnToZone, "DuguReturnToZone"),
             (QiTransferReason::DuguReverseVictimQi, "DuguReverseVictimQi"),
-            (QiTransferReason::NegPressureDrain, "NegPressureDrain"),
         ];
         for (reason, label) in cases {
             let from = QiAccountId::player("caster");
@@ -2188,15 +2208,13 @@ mod tests {
         }
     }
 
-    /// F24 加固不能误伤现有调用方：它们都走 `push_transfer_audit`（audit-only 记录，
-    /// 不touch balance），必须继续对这三个 reason 正常工作——否则真实调用方（
-    /// tsy_drain.rs / dugu_v2/tick.rs / cultivation/neg_pressure.rs 等）会被这次加固破坏。
+    /// F24 加固不能误伤现有 audit-only 调用方：它们走 `push_transfer_audit`（不 touch
+    /// balance），必须继续对三个 hardened reason 正常工作。
     #[test]
     fn push_transfer_audit_still_works_for_hardened_reasons() {
         let cases = [
             QiTransferReason::DuguReturnToZone,
             QiTransferReason::DuguReverseVictimQi,
-            QiTransferReason::NegPressureDrain,
             QiTransferReason::HalfStepBuff,
         ];
         let mut account = WorldQiAccount::default();
@@ -3027,11 +3045,14 @@ mod tests {
 
         let target = app
             .world_mut()
-            .spawn(Cultivation {
-                qi_current: 20.0,
-                qi_max: 20.0,
-                ..Default::default()
-            })
+            .spawn((
+                Cultivation {
+                    qi_current: 20.0,
+                    qi_max: 20.0,
+                    ..Default::default()
+                },
+                crate::cultivation::life_record::LifeRecord::new("offline:rat-cycle-target"),
+            ))
             .id();
         let rat = app
             .world_mut()
@@ -3041,6 +3062,12 @@ mod tests {
                 RatBlackboard::new("spawn", ChunkPos::new(0, 0)),
             ))
             .id();
+        let rat_character_id = crate::npc::brain::canonical_npc_id(rat);
+        app.world_mut()
+            .entity_mut(rat)
+            .insert(crate::cultivation::life_record::LifeRecord::new(
+                rat_character_id,
+            ));
 
         let before = summarize_world_qi(app.world_mut());
 
