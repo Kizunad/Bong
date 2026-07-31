@@ -412,6 +412,28 @@ pub fn reject_audit_only_qi_reason(reason: QiTransferReason) -> Result<(), QiPhy
     }
 }
 
+fn checked_destination_credit(before: f64, amount: f64) -> Result<f64, QiPhysicsError> {
+    let after = before + amount;
+    if !after.is_finite() || (amount > 0.0 && after == before) {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "destination_balance",
+            value: after,
+        });
+    }
+    Ok(after)
+}
+
+fn checked_source_debit(before: f64, amount: f64) -> Result<f64, QiPhysicsError> {
+    let after = before - amount;
+    if !after.is_finite() || (amount > 0.0 && after == before) {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "source_balance",
+            value: after,
+        });
+    }
+    Ok(after)
+}
+
 impl WorldQiAccount {
     pub fn set_balance(&mut self, account: QiAccountId, amount: f64) -> Result<(), QiPhysicsError> {
         let amount = finite_non_negative(amount, "balance")?;
@@ -456,11 +478,12 @@ impl WorldQiAccount {
             });
         }
 
-        self.balances
-            .insert(transfer.from.clone(), (available - amount).max(0.0));
         let to_balance = self.balance(&transfer.to);
-        self.balances
-            .insert(transfer.to.clone(), to_balance + amount);
+        let to_after = checked_destination_credit(to_balance, amount)?;
+        let from_after = checked_source_debit(available, amount)?;
+
+        self.balances.insert(transfer.from.clone(), from_after);
+        self.balances.insert(transfer.to.clone(), to_after);
         self.transfers.push(transfer);
         Ok(())
     }
@@ -519,12 +542,8 @@ pub fn transfer_external_qi_to_ledger(
         });
     }
 
-    // `WorldQiAccount::transfer` 目前只校验 amount，不校验 destination + amount 是否溢出；
-    // 外部源 helper 自己先做有限性门禁，保证成功返回时 sink 一定是可追踪的有限余额。
-    finite_non_negative(
-        account.balance(&transfer.to) + amount,
-        "destination_balance",
-    )?;
+    // 外部 source 会临时镜像入账本；预检必须在写入该影子余额前拒绝不可表示的 sink credit。
+    checked_destination_credit(account.balance(&transfer.to), amount)?;
     let source_existed = account.has_account(&from);
     let source_before = account.balance(&from);
     account.set_balance(from.clone(), source_before + amount)?;
@@ -1216,6 +1235,69 @@ mod tests {
             .unwrap();
         assert_eq!(account.balance(&from), 7.0);
         assert_eq!(account.balance(&to), 4.0);
+    }
+
+    #[test]
+    fn transfer_rejects_destination_credit_that_cannot_advance() {
+        let from = QiAccountId::player("a");
+        let to = QiAccountId::overflow("saturated");
+        let mut account = WorldQiAccount::default();
+        account.set_balance(from.clone(), 1.0).unwrap();
+        account.set_balance(to.clone(), f64::MAX).unwrap();
+
+        let error = account
+            .transfer(
+                QiTransfer::new(
+                    from.clone(),
+                    to.clone(),
+                    1.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .unwrap(),
+            )
+            .expect_err("a positive credit that leaves the destination unchanged must fail closed");
+
+        assert!(matches!(
+            error,
+            QiPhysicsError::InvalidAmount {
+                field: "destination_balance",
+                ..
+            }
+        ));
+        assert_eq!(account.balance(&from), 1.0);
+        assert_eq!(account.balance(&to), f64::MAX);
+        assert!(account.transfers().is_empty());
+    }
+
+    #[test]
+    fn transfer_rejects_source_debit_that_cannot_advance() {
+        let from = QiAccountId::player("saturated");
+        let to = QiAccountId::zone("spawn");
+        let mut account = WorldQiAccount::default();
+        account.set_balance(from.clone(), f64::MAX).unwrap();
+
+        let error = account
+            .transfer(
+                QiTransfer::new(
+                    from.clone(),
+                    to.clone(),
+                    1.0,
+                    QiTransferReason::ReleaseToZone,
+                )
+                .unwrap(),
+            )
+            .expect_err("a positive debit that leaves the source unchanged must fail closed");
+
+        assert!(matches!(
+            error,
+            QiPhysicsError::InvalidAmount {
+                field: "source_balance",
+                ..
+            }
+        ));
+        assert_eq!(account.balance(&from), f64::MAX);
+        assert_eq!(account.balance(&to), 0.0);
+        assert!(account.transfers().is_empty());
     }
 
     #[test]
