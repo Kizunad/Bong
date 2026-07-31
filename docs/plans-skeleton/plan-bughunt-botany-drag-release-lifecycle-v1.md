@@ -37,7 +37,7 @@
 
 ## P1 — Regression closure
 
-- [ ] `screen_open_release_ends_drag_without_consuming_event`：前置为 interactive harvest session、有效 rendered bounds、无 transition lock；先在无 screen 时经 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback 发送 panel 内 LEFT PRESS 建立 drag，再打开 screen 发送 LEFT RELEASE。断言该 RELEASE 的 `CallbackInfo` 未取消且 `BotanyDragState.isDragging()` 变为 false；除 drag ownership 外 session identity、delta/bounds 不得改变。
+- [ ] `screen_open_release_ends_drag_without_consuming_event`：前置为 interactive harvest session、有效 rendered bounds、无 transition lock；先在无 screen 时经 `MixinMouse.bong$captureHarvestPanelDrag` HEAD callback 发送 panel 内 LEFT PRESS 建立 drag，再打开 screen 发送 LEFT RELEASE。断言该 RELEASE 的 `CallbackInfo` 未取消且 `BotanyDragState.isDragging()` 变为 false；除 drag ownership 外 session identity、delta/bounds 和 transition state 不得改变。
 - [ ] `screen_open_press_never_starts_botany_drag`：前置为 interactive session、有效 bounds、`currentScreen != null`、`inputLocked == false`、鼠标位于 panel 内且当前未拖拽；经同一 HEAD callback 发送 LEFT PRESS。断言 `CallbackInfo` 未取消、`isDragging()` 仍为 false；delta/bounds、session identity 和 transition state 不得改变。
 - [ ] `screen_open_release_without_drag_is_noop`：前置为 interactive session、`currentScreen != null`、`inputLocked == false`、`isDragging() == false`，并经同一 HEAD callback 发送 LEFT RELEASE。断言 `CallbackInfo` 未取消、drag ownership 仍为 false；delta/bounds、session identity 和 transition state 不得改变。
 - [ ] `normal_panel_release_still_ends_and_consumes_drag`：前置为 interactive session、`currentScreen == null`、`inputLocked == false`、有效 bounds；经同一 HEAD callback 发送 panel 内 LEFT PRESS 后发送 LEFT RELEASE。断言 PRESS 与 RELEASE 的 `CallbackInfo` 均取消，PRESS 后 ownership 为 true、RELEASE 后为 false；已提交 delta/bounds、session identity 和 transition state 不得改变。
