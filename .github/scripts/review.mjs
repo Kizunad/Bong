@@ -1036,12 +1036,10 @@ const CHAT_COMPLETIONS_SSE_FRAME_CONTRACT = Object.freeze({
     open: Object.freeze(["choice", "provider_error"]),
     stopped: Object.freeze(["usage", "done", "provider_error"]),
     usage_seen: Object.freeze(["done", "provider_error"]),
-    done: Object.freeze([]),
   }),
 });
 
 function chatCompletionsSsePhase(state) {
-  if (state.done) return "done";
   if (state.usageSeen) return "usage_seen";
   return state.finishReason === "stop" ? "stopped" : "open";
 }
@@ -1049,7 +1047,6 @@ function chatCompletionsSsePhase(state) {
 function requireChatCompletionsSseTransition(state, type) {
   const phase = chatCompletionsSsePhase(state);
   if (CHAT_COMPLETIONS_SSE_FRAME_CONTRACT.transitions[phase].includes(type)) return;
-  if (phase === "done") throw chatCompletionsSseError("[DONE] 后不得再出现任何 frame。");
   if (phase === "usage_seen") throw chatCompletionsSseError("usage-only event 后只允许 [DONE]。");
   if (type === "usage") throw chatCompletionsSseError("usage-only event 必须出现在 finish_reason=stop 之后。");
   if (type === "done") {
@@ -1092,6 +1089,7 @@ function validateChatCompletionsSseFrame(state, event) {
   const { data } = envelope;
   if (data === "[DONE]") {
     requireChatCompletionsSseTransition(state, "done");
+    // [DONE] 是终止标记：停止消费，读取循环退出后在 finally 取消 reader。
     return { type: "done" };
   }
   if (!data.trim()) throw chatCompletionsSseError("SSE frame data 不得为空。");
@@ -1161,7 +1159,6 @@ function reduceChatCompletionsSseEvent(state, event) {
     return state;
   }
   if (frame.type === "done") {
-    state.done = true;
     state.completed = true;
     return state;
   }
@@ -1321,7 +1318,6 @@ export async function requestChatCompletions(prompt, timeoutMs, options = {}) {
     completed: false,
     terminal: false,
     failure: "",
-    done: false,
     finishReason: null,
     usageSeen: false,
   };
