@@ -15953,8 +15953,7 @@ mod persistence_tests {
     #[test]
     fn runtime_qi_account_persist_failure_rolls_back_staged_prefix() {
         use crate::qi_physics::ledger::{
-            dying_elder_dan_excess_account, dying_elder_release_overflow_account, QiTransfer,
-            QiTransferReason,
+            dying_elder_dan_excess_account, dying_elder_release_overflow_account,
         };
 
         let (settings, root) = persistence_settings("runtime-qi-persist-atomic-rollback");
@@ -15991,42 +15990,37 @@ mod persistence_tests {
         source
             .set_balance(dying_elder_dan_excess_account(), 222.0)
             .expect("dan excess staged balance should be valid");
-
-        // `WorldQiAccount::transfer` 当前不会拒绝 destination + amount 溢出。利用这个
-        // 既有契约构造第三个 whitelist 账户的 +Inf，避免为测试放宽生产可见性。
         let release_account = dying_elder_release_overflow_account();
-        let overflow_source = QiAccountId::overflow("runtime-qi-inf-fixture-source");
         source
-            .set_balance(release_account.clone(), f64::MAX)
-            .expect("finite destination fixture should be valid");
-        source
-            .set_balance(overflow_source.clone(), f64::MAX)
-            .expect("finite source fixture should be valid");
-        source
-            .transfer(QiTransfer {
-                from: overflow_source,
-                to: release_account.clone(),
-                amount: f64::MAX,
-                reason: QiTransferReason::ReleaseToZone,
-            })
-            .expect("fixture transfer should expose the existing destination overflow behavior");
-        assert!(
-            source.balance(&release_account).is_infinite()
-                && source.balance(&release_account).is_sign_positive(),
-            "fixture third whitelist account must be +Inf"
-        );
+            .set_balance(release_account.clone(), 333.0)
+            .expect("release overflow staged balance should be valid");
+
+        // 账本现在 fail-closed 拒绝不可表示的余额；用 SQLite 的测试专用触发器在第三个
+        // 白名单账户写入时注入持久化失败，继续覆盖前缀写入必须随事务整体回滚的契约。
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER runtime_qi_atomic_rollback_fail_third
+                BEFORE UPDATE OF balance ON qi_runtime_accounts
+                WHEN OLD.account_id = 'dying_elder_release'
+                BEGIN
+                    SELECT RAISE(ABORT, 'fixture rejects dying_elder_release');
+                END;
+                ",
+            )
+            .expect("fixture persistence failure trigger should create");
 
         {
             let transaction = connection
                 .transaction()
                 .expect("failing persist transaction should start");
             let error = upsert_runtime_qi_account_balances(&transaction, &source, 456)
-                .expect_err("+Inf third whitelist balance must reject the whole persist");
+                .expect_err("the third whitelist update must fail inside the transaction");
             assert!(
                 error
                     .to_string()
                     .contains(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID),
-                "error should identify the invalid third account, actual={error}"
+                "error should identify the rejected third account, actual={error}"
             );
             drop(transaction);
         }
