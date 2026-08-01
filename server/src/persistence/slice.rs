@@ -1863,11 +1863,110 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
             .map_err(DurableWriteExecuteError::Sql)
     }
 
+    fn requires_single_statement(&self, sql: &str) -> Result<(), DurableWriteExecuteError> {
+        if sql.is_empty() {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::ReadOnlyStatement,
+            ));
+        }
+        if sql.as_bytes().contains(&0) {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::MultipleStatements,
+            ));
+        }
+
+        // SAFETY: the fence owns this live connection while it preflights SQL without stepping it.
+        let database = unsafe { self.transaction.handle() };
+        let mut remaining = sql.as_bytes();
+        let mut found_statement = false;
+        loop {
+            let (has_statement, tail_offset) = Self::prepare_sql_tail(database, remaining)?;
+            if has_statement {
+                if found_statement {
+                    return Err(DurableWriteExecuteError::Proof(
+                        DurableWriteProofError::MultipleStatements,
+                    ));
+                }
+                found_statement = true;
+            }
+            if tail_offset == remaining.len() {
+                break;
+            }
+            remaining = &remaining[tail_offset..];
+        }
+
+        if found_statement {
+            Ok(())
+        } else {
+            Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::ReadOnlyStatement,
+            ))
+        }
+    }
+
+    fn prepare_sql_tail(
+        database: *mut ffi::sqlite3,
+        sql: &[u8],
+    ) -> Result<(bool, usize), DurableWriteExecuteError> {
+        let length = std::os::raw::c_int::try_from(sql.len()).map_err(|_| {
+            DurableWriteExecuteError::Sql(rusqlite::Error::SqliteFailure(
+                ffi::Error::new(ffi::SQLITE_TOOBIG),
+                None,
+            ))
+        })?;
+        let mut statement = std::ptr::null_mut();
+        let mut tail: *const std::os::raw::c_char = std::ptr::null();
+        // SAFETY: `sql` stays live throughout prepare, and the returned statement is finalized
+        // before this helper returns without being stepped or bound.
+        let result = unsafe {
+            ffi::sqlite3_prepare_v2(
+                database,
+                sql.as_ptr().cast(),
+                length,
+                &mut statement,
+                &mut tail,
+            )
+        };
+        let has_statement = !statement.is_null();
+        if has_statement {
+            // SAFETY: SQLite returned this statement for `database` in the preceding call.
+            unsafe { ffi::sqlite3_finalize(statement) };
+        }
+        if result != ffi::SQLITE_OK {
+            return Err(DurableWriteExecuteError::Sql(
+                rusqlite::Error::SqliteFailure(ffi::Error::new(result), None),
+            ));
+        }
+
+        let tail_offset = if tail.is_null() {
+            sql.len()
+        } else {
+            (tail as usize)
+                .checked_sub(sql.as_ptr() as usize)
+                .filter(|offset| *offset <= sql.len())
+                .ok_or_else(|| {
+                    DurableWriteExecuteError::Sql(rusqlite::Error::SqliteFailure(
+                        ffi::Error::new(ffi::SQLITE_MISUSE),
+                        None,
+                    ))
+                })?
+        };
+        Ok((
+            has_statement,
+            if tail_offset == 0 || tail_offset >= sql.len() {
+                sql.len()
+            } else {
+                tail_offset
+            },
+        ))
+    }
+
     fn execute_durable<Q: Params>(
         &self,
         sql: &str,
         params: Q,
     ) -> Result<usize, DurableWriteExecuteError> {
+        self.requires_single_statement(sql)?;
         self.requires_canonical_database()?;
         let schema_version_before = self.schema_version()?;
         let statement = self
@@ -1964,6 +2063,7 @@ pub(in crate::persistence) enum DurableWriteProofError {
     ReadOnlyStatement,
     MissingCurrentTransactionWrite,
     NonCanonicalDatabase,
+    MultipleStatements,
     SchemaMutationDetected,
     CasRejected {
         affected_rows: usize,
@@ -4636,6 +4736,135 @@ mod tests {
                 .unwrap(),
             9,
             "a stale connection-level change count must not acknowledge this snapshot"
+        );
+    }
+
+    #[test]
+    fn durable_commit_accepts_single_statement_with_trivia_tail() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.sql_trivia", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:sql_trivia",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_trivia (subject TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let receipt = fence
+            .commit(&mut connection, snapshot, |request| {
+                request
+                    .execute_serialized(
+                        "INSERT INTO durable_trivia (subject, value) VALUES (?1, ?2); -- audit-safe trailing comment\n",
+                        (request.subject_key().0.as_str(), *request.payload()),
+                    )
+                    .map_err(|_| "one statement plus trivia must remain durable")
+            })
+            .unwrap();
+
+        assert_eq!(fence.persisted_revision(), DirtyRevision::new(1));
+        assert_eq!(
+            tracker.acknowledge(receipt),
+            DirtyAcknowledgement::Acknowledged
+        );
+        assert!(!tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT value FROM durable_trivia WHERE subject = 'player:sql_trivia'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .unwrap(),
+            10
+        );
+    }
+
+    #[test]
+    fn durable_commit_rejects_dml_with_nontrivial_sql_tail() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.sql_tail", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:sql_tail",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_tail (subject TEXT PRIMARY KEY, value INTEGER NOT NULL);\
+                 CREATE TABLE unrelated_tail (value INTEGER NOT NULL);\
+                 INSERT INTO unrelated_tail (value) VALUES (9)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            let error = request
+                .execute_serialized(
+                    "INSERT INTO durable_tail (subject, value) VALUES (?1, ?2); DELETE FROM unrelated_tail",
+                    (request.subject_key().0.as_str(), *request.payload()),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error,
+                DurableWriteExecuteError::Proof(DurableWriteProofError::MultipleStatements)
+            );
+            Err::<(), _>("nontrivial SQL tail must not mint a durable receipt")
+        });
+
+        assert_eq!(
+            result,
+            Err(DurableCommitError::WriteFailed(
+                "nontrivial SQL tail must not mint a durable receipt"
+            ))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM durable_tail", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            0,
+            "the rejected multi-statement request must roll back its DML prefix"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM unrelated_tail", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            9,
+            "the ignored tail must not become an alternate write path"
         );
     }
 
