@@ -35,7 +35,7 @@ const DEFAULT_UNLOCK_PATH: &str = "data/craft/recipe_unlocks.json";
 
 /// 基线常显配方 — 不经任何解锁渠道，对所有玩家恒可见、恒可做，死亡重生也不清。
 ///
-/// 目前仅制作台自身（`workbench_recipes::register_workbench_self_recipe`）：
+/// 目前仅制作台自身（`craft.tool.workbench`）：
 /// 它是整棵 workbench 配方树的物理入口。若连它也走材料发现，玩家没摸过
 /// spirit_wood / iron_ingot / shu_gu 之前根本不知道"制作台"这条路存在，
 /// 入口配方被入口自身的原料锁死。秘传配方（残卷/师承/顿悟）不属于此列。
@@ -662,7 +662,7 @@ mod tests {
         // 常量与真实注册表对拍：BASELINE_RECIPES 里的每个 id 必须真实存在于
         // registry，防止配方改名后豁免名单静默漂移成空挂。
         let mut registry = super::super::registry::CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        crate::craft::register_workbench_recipes(&mut registry).unwrap();
         for id in BASELINE_RECIPES {
             let rid = RecipeId::new(*id);
             assert!(is_baseline_recipe(&rid));
