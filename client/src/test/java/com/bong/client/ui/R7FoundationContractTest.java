@@ -35,6 +35,7 @@ import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7FoundationContractTest {
@@ -257,7 +258,8 @@ class R7FoundationContractTest {
         assertTrue(rows.stream()
             .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
             .allMatch(row -> row.commitOrder().contains("commit")
-                && row.commitOrder().contains("before sending")),
+                && row.commitOrder().contains("before")
+                && row.commitOrder().contains("send")),
             "the winning triggerId and cause must commit before any fallible decision send");
         assertTrue(rows.stream()
             .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
@@ -275,6 +277,126 @@ class R7FoundationContractTest {
             .filter(row -> row.terminalCause().equals("REPLACED_BY_DIFFERENT_OFFER"))
             .findFirst().orElseThrow().owner().contains("CurrentScreenCancellationHandler"),
             "replacement settlement must compose with ScreenTransitionController cancellation");
+        InsightSettlementRow timeout = rows.stream()
+            .filter(row -> row.terminalCause().equals("TIMEOUT"))
+            .findFirst().orElseThrow();
+        assertTrue(timeout.owner().contains("InsightOfferScreenBootstrap")
+            && timeout.owner().contains("InsightOfferScreen"),
+            "TIMEOUT must have an executable owner before and after screen construction");
+        assertTrue(timeout.identityRule().contains("same triggerId")
+            && timeout.commitOrder().contains("before sending any fallible decision")
+            && timeout.observableEffect().contains("pre-open expiry never creates a screen"),
+            "TIMEOUT must freeze one trigger-level claim across pre-open and open paths");
+    }
+
+    @Test
+    void insightSettlementTransitionsPinPreOpenExpiryAndExactlyOnceClaim() {
+        InsightSettlementModel preOpen = new InsightSettlementModel("insight-old", 1_000);
+        assertEquals("DEFER", preOpen.observePreOpen(999, false),
+            "a live deferred offer must remain pending before its expiry boundary");
+        assertEquals("TIMEOUT", preOpen.observePreOpen(1_000, false),
+            "the bootstrap owner must settle an expired offer before constructing a screen");
+        assertEquals("TIMEOUT", preOpen.winner(),
+            "the terminal winner must be committed before the pre-open send can complete");
+        assertEquals(0, preOpen.screenConstructionCount(),
+            "pre-open expiry must not construct an InsightOfferScreen");
+        assertEquals(1, preOpen.sendCount(),
+            "pre-open expiry must send exactly one timeout decision");
+        assertEquals(0, preOpen.transitionCount(),
+            "pre-open expiry cannot attempt a screen transition");
+        assertEquals("NOOP", preOpen.constructScreen(),
+            "a pre-open terminal winner must prevent any later screen construction");
+        assertEquals(0, preOpen.screenConstructionCount(),
+            "a blocked post-settlement construction attempt must not change the zero-screen invariant");
+        assertEquals("NOOP", preOpen.observePreOpen(1_001, false),
+            "repeat observation after pre-open settlement must be a no-op");
+        assertEquals("NOOP", preOpen.observeScreenRemoval(),
+            "a later screen-removal callback cannot double-settle a pre-open winner");
+        assertEquals(1, preOpen.sendCount(),
+            "repeat observation and removal must not send a second decision");
+        assertEquals(List.of(
+            "pre-open:DEFER:insight-old",
+            "claim:TIMEOUT:bootstrap:insight-old",
+            "send:TIMEOUT:insight-old:ok",
+            "screen:NOOP:insight-old",
+            "pre-open:NOOP:insight-old",
+            "removal:NOOP:insight-old"
+        ), preOpen.events(), "pre-open expiry must commit before its single decision and block every later terminal path");
+
+        InsightSettlementModel failedSend = new InsightSettlementModel("insight-send-failure", 1_000);
+        SettlementFailure preOpenSendFailure = assertThrows(SettlementFailure.class,
+            () -> failedSend.observePreOpen(1_000, true),
+            "a pre-open send failure must surface after its terminal winner is committed");
+        assertEquals("send failed", preOpenSendFailure.getMessage(),
+            "pre-open send failure must remain the observable primary failure");
+        assertEquals(0, preOpenSendFailure.getSuppressed().length,
+            "pre-open expiry has no screen transition that could become a suppressed failure");
+        assertTrue(failedSend.sendFailureObserved(),
+            "the transition model must expose the fallible send branch");
+        assertEquals("TIMEOUT", failedSend.winner(),
+            "send failure must preserve the first terminal winner");
+        assertEquals("NOOP", failedSend.observePreOpen(2_000, false),
+            "send failure must not permit a retry or a second terminal claim");
+        assertEquals(1, failedSend.sendCount(),
+            "send failure must still be exactly-once at trigger scope");
+        assertEquals(List.of(
+            "claim:TIMEOUT:bootstrap:insight-send-failure",
+            "send:TIMEOUT:insight-send-failure:failed",
+            "pre-open:NOOP:insight-send-failure"
+        ), failedSend.events(), "a failed pre-open send must still commit before it becomes observable");
+
+        InsightSettlementModel openScreen = new InsightSettlementModel("insight-open", 1_000);
+        assertEquals("OPEN", openScreen.constructScreen(),
+            "a live offer may construct its screen before the timeout tick");
+        assertEquals("TIMEOUT", openScreen.observeOpenScreen(1_000, false, false),
+            "an already-open screen must share the same timeout winner contract");
+        assertEquals(1, openScreen.screenConstructionCount(),
+            "post-open timeout starts from exactly one constructed screen");
+        assertEquals(1, openScreen.transitionCount(),
+            "post-open timeout attempts its close/transition stage once");
+        assertEquals("NOOP", openScreen.observeScreenRemoval(),
+            "screen removal after timeout cannot replace the committed timeout winner");
+        assertEquals("NOOP", openScreen.observePreOpen(1_001, false),
+            "bootstrap and screen paths must converge on the same trigger-level winner");
+        assertEquals(1, openScreen.sendCount(),
+            "post-open timeout and removal must emit one decision total");
+        assertEquals(List.of(
+            "screen:OPEN:insight-open",
+            "claim:TIMEOUT:screen:insight-open",
+            "send:TIMEOUT:insight-open:ok",
+            "transition:TIMEOUT:insight-open:ok",
+            "removal:NOOP:insight-open",
+            "pre-open:NOOP:insight-open"
+        ), openScreen.events(), "open-screen timeout must use the same claim before send and transition");
+    }
+
+    @Test
+    void insightSettlementTransitionsKeepWinnerWhenPostOpenSendAndTransitionFail() {
+        InsightSettlementModel model = new InsightSettlementModel("insight-open-failure", 1_000);
+        assertEquals("OPEN", model.constructScreen(), "failure branch requires an open screen state");
+        SettlementFailure failure = assertThrows(SettlementFailure.class,
+            () -> model.observeOpenScreen(1_000, true, true),
+            "post-open timeout must surface the send failure only after attempting transition");
+        assertEquals("send failed", failure.getMessage(),
+            "send failure must remain primary when send and transition both fail");
+        assertEquals(1, failure.getSuppressed().length,
+            "the later transition failure must be retained as one suppressed failure");
+        assertEquals("transition failed", failure.getSuppressed()[0].getMessage(),
+            "suppressed failure order must preserve the transition stage");
+        assertTrue(model.sendFailureObserved(), "post-open send failure must be observable");
+        assertTrue(model.transitionFailureObserved(), "post-open transition failure must be observable");
+        assertEquals("TIMEOUT", model.winner(),
+            "neither post-open failure may replace the committed timeout winner");
+        assertEquals(1, model.sendCount(), "post-open send failure must not trigger retry");
+        assertEquals(1, model.transitionCount(), "post-open transition failure is attempted once");
+        assertEquals(List.of(
+            "screen:OPEN:insight-open-failure",
+            "claim:TIMEOUT:screen:insight-open-failure",
+            "send:TIMEOUT:insight-open-failure:failed",
+            "transition:TIMEOUT:insight-open-failure:failed"
+        ), model.events(), "even dual failure must retain claim-send-transition execution order");
+        assertEquals("NOOP", model.observeScreenRemoval(),
+            "removal after two failures must not create a second terminal cause");
     }
 
     @Test
@@ -283,10 +405,22 @@ class R7FoundationContractTest {
             new ReservedDefaultRow("vanilla.chat", "KEYSYM", "T",
                 "Minecraft chat default is reserved before Bong registrations."),
             new ReservedDefaultRow("vanilla.advancements", "KEYSYM", "L",
-                "Minecraft advancements default is reserved before Bong registrations.")
+                "Minecraft advancements default is reserved before Bong registrations."),
+            new ReservedDefaultRow("vanilla.screenshot", "KEYSYM", "F2",
+                "Minecraft screenshot default is reserved before Bong registrations."),
+            new ReservedDefaultRow("vanilla.toggle_perspective", "KEYSYM", "F5",
+                "Minecraft perspective-toggle default is reserved before Bong registrations.")
         ), reservedDefaultRows(), "vanilla reservation manifest drifted");
-        assertTrue(conflictExemptionRows().isEmpty(),
-            "R7 P0 authorizes no physical-default conflict exemption");
+        assertEquals(List.of(
+            new ConflictExemptionRow(
+                "combat.quick_slot_2", "vanilla.screenshot", "KEYSYM", "F2",
+                "Quick slot 2 intentionally retains the frozen F2 default while the vanilla screenshot reservation remains explicit; a future key migration must re-decide this exemption."
+            ),
+            new ConflictExemptionRow(
+                "combat.quick_slot_5", "vanilla.toggle_perspective", "KEYSYM", "F5",
+                "Quick slot 5 intentionally retains the frozen F5 default while the vanilla perspective reservation remains explicit; a future key migration must re-decide this exemption."
+            )
+        ), conflictExemptionRows(), "physical-default exemptions drifted");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
@@ -348,6 +482,95 @@ class R7FoundationContractTest {
             && combatSource.contains("while (QUICK_SLOT_KEYS[i].wasPressed())")
             && combatSource.contains("quickSlotHandler.accept(i)"),
             "quick-slot one-source/nine-runtime expansion and ordered full-drain route must stay frozen");
+
+        List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
+            expected, actualSites, keybindRows()
+        );
+        assertEquals(34, expandedDefaults.size(),
+            "the collision audit must inspect every expanded runtime production default, including UNKNOWN entries");
+        Set<DefaultCollision> collisions = new TreeSet<>();
+        for (ExpandedProductionDefault production : expandedDefaults) {
+            if (production.defaultCode().equals("UNKNOWN")) {
+                continue;
+            }
+            for (ReservedDefaultRow reserved : reservedDefaultRows()) {
+                if (production.inputType().equals(reserved.inputType())
+                    && production.defaultCode().equals(reserved.code())) {
+                    collisions.add(new DefaultCollision(
+                        production.ownerId(), reserved.owner(), reserved.inputType(), reserved.code()
+                    ));
+                }
+            }
+        }
+        Set<DefaultCollision> expectedCollisions = Set.of(
+            new DefaultCollision("combat.quick_slot_2", "vanilla.screenshot", "KEYSYM", "F2"),
+            new DefaultCollision("combat.quick_slot_5", "vanilla.toggle_perspective", "KEYSYM", "F5")
+        );
+        assertEquals(expectedCollisions, collisions,
+            "the 34 expanded target defaults must detect exactly the two explicitly exempted vanilla collisions");
+
+        Set<DefaultCollision> exemptions = conflictExemptionRows().stream()
+            .map(row -> new DefaultCollision(row.firstOwnerId(), row.secondOwnerId(), row.inputType(), row.code()))
+            .collect(java.util.stream.Collectors.toSet());
+        assertEquals(collisions, exemptions,
+            "every detected collision needs one exact owner/type/code exemption and no stale exemption may remain");
+        assertTrue(conflictExemptionRows().stream().allMatch(row -> !row.reason().isBlank()),
+            "every physical-default exemption must carry an actionable reason");
+    }
+
+    private static List<ExpandedProductionDefault> expandedProductionDefaults(
+        List<KeybindProductionSiteRow> expected,
+        List<KeybindingSourceSite> actualSites,
+        List<KeybindRow> migrationRows
+    ) {
+        List<ExpandedProductionDefault> result = new java.util.ArrayList<>();
+        for (KeybindProductionSiteRow row : expected) {
+            KeybindingSourceSite actual = actualSites.stream()
+                .filter(site -> site.sourcePath().equals(row.sourcePath())
+                    && site.sourceSite().equals(row.sourceSite()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing AST source site for " + row.ownerId()));
+            List<String> owners = row.ownerId().equals("combat.quick_slot")
+                ? java.util.stream.IntStream.rangeClosed(1, actual.runtimeCardinality())
+                    .mapToObj(index -> "combat.quick_slot_" + index)
+                    .toList()
+                : List.of(row.ownerId());
+            String effectiveDefaultContract = effectiveDefaultContract(row, migrationRows);
+            List<String> defaults = expandedDefaultCodes(effectiveDefaultContract, actual.runtimeCardinality());
+            assertEquals(owners.size(), defaults.size(),
+                "expanded owner/default cardinality must agree for " + row.ownerId());
+            for (int index = 0; index < owners.size(); index++) {
+                result.add(new ExpandedProductionDefault(
+                    owners.get(index), actual.inputType(), defaults.get(index)
+                ));
+            }
+        }
+        return result;
+    }
+
+    private static String effectiveDefaultContract(
+        KeybindProductionSiteRow production,
+        List<KeybindRow> migrationRows
+    ) {
+        return migrationRows.stream()
+            .filter(row -> row.productionOwner().equals(production.sourcePath())
+                && row.translationKey().equals(production.translationContract()))
+            .map(KeybindRow::targetDefault)
+            .findFirst()
+            .orElse(production.normalizedDefaultContract());
+    }
+
+    private static List<String> expandedDefaultCodes(String defaultContract, int runtimeCardinality) {
+        if (defaultContract.equals("F1..F9")) {
+            assertEquals(9, runtimeCardinality,
+                "quick-slot default expansion must retain its nine runtime bindings");
+            return java.util.stream.IntStream.rangeClosed(1, 9)
+                .mapToObj(index -> "F" + index)
+                .toList();
+        }
+        assertEquals(1, runtimeCardinality,
+            "non-quick-slot source sites must expand to one physical default");
+        return List.of(defaultContract);
     }
 
     private static void assertNoFoundationReference(Path root) {
@@ -748,7 +971,7 @@ class R7FoundationContractTest {
         return """
             ACCEPT\tInsightDecision.chosen(triggerId, choiceId)\tInsightOfferScreen\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and ACCEPT as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one CHOSEN InsightDecision; after either failure the offer remains terminal and cannot emit again.
             DECLINE\tInsightDecision.declined(triggerId)\tInsightOfferScreen\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and DECLINE as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one DECLINED InsightDecision; after either failure the offer remains terminal and cannot emit again.
-            TIMEOUT\tInsightDecision.timedOut(triggerId)\tInsightOfferScreen\tsettle only when nowMs is greater than or equal to expiresAtMs for the same triggerId\tAtomically commit settled triggerId and TIMEOUT as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one TIMED_OUT InsightDecision; after either failure the offer remains terminal and cannot emit again.
+            TIMEOUT\tInsightDecision.timedOut(triggerId)\tInsightOfferScreenBootstrap + InsightOfferScreen\tA shared exactly-once terminal claim keyed by the same triggerId is accepted from pre-open bootstrap or the open screen only once\tAtomically commit the shared triggerId and TIMEOUT as the immutable winning cause before sending any fallible decision; pre-open bootstrap may settle without constructing a screen, while an open screen uses the same claim and then closes if still current.\tA send failure is retained as primary; the committed TIMEOUT winner remains terminal and the applicable close/transition stage is still attempted.\tA transition or screen-removal failure leaves the committed winner unchanged; later bootstrap, screen, or removal observations remain NOOP.\tIf send and transition both fail, throw the send failure and add the transition failure as suppressed in execution order.\tEmit at most one TIMED_OUT InsightDecision for the triggerId; pre-open expiry never creates a screen and no later path can double-settle it.
             ESC\tInsightDecision.declined(triggerId)\tInsightOfferScreen.close\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and ESC as the immutable winning cause before sending the decline; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close or removal-hook failure leaves the committed winner unchanged; the later onRemoved terminal path is NOOP.\tIf send and close or removal both fail, throw the first failure and add later failures as suppressed in execution order.\tEmit at most one DECLINED InsightDecision; subsequent onRemoved callback emits nothing and cannot replace ESC as winner.
             REPLACED_BY_DIFFERENT_OFFER\tInsightDecision.declined(triggerId)\tInsightOfferScreen + InsightOfferScreenBootstrap + ScreenTransitionController.CurrentScreenCancellationHandler\tbootstrap compares outgoing and replacement triggerId before transition; handler settles the outgoing identity once\tAtomically commit the outgoing triggerId and REPLACED_BY_DIFFERENT_OFFER before sending its decline; then send; then switch to the different offer, which becomes authoritative only after the outgoing commit.\tA send failure is retained as primary and switching to the replacement is still attempted.\tA switch failure leaves the outgoing winner committed and the replacement non-authoritative; later terminal paths for the outgoing triggerId remain NOOP.\tIf send and switch both fail, throw the send failure and add the switch failure as suppressed in execution order.\tEmit at most one DECLINED InsightDecision for the outgoing triggerId; replacement cannot strand or re-settle the outgoing offer after either failure.
             REMOVED_EXCEPTIONALLY\tInsightDecision.declined(triggerId)\tInsightOfferScreen.onRemoved\tsettle the same triggerId when no prior terminal cause won\tAtomically commit settled triggerId and REMOVED_EXCEPTIONALLY before sending the decline; then send; then allow BongScreenBase removal cleanup and super.removed to continue.\tA send failure is retained as primary and later removal lifecycle stages are still attempted.\tA later removal-stage failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tBongScreenBase throws the first failure and adds later removal failures as suppressed in execution order.\tEmit at most one DECLINED InsightDecision through the removal hook; exceptional removal cannot leave the offer unsettled or permit a retry.
@@ -773,7 +996,7 @@ class R7FoundationContractTest {
             hotkey-ordinary\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tBLOCK_DROP\tAn ordinary nonmatching screen consumes the physical moment; the keypress is not queued.
             hotkey-modal\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tBLOCK_DROP\tPhysical keypresses are never queued for future replay behind a modal.
             hotkey-terminal\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tSYSTEM_TERMINAL\tdeath\tDEATH\tfalse\t1000\tBLOCK_DROP\tA hotkey never displaces or waits behind a system terminal.
-            insight-expired\tINSIGHT\tinsight-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tAn expired insight settles through its domain owner and never opens.
+            insight-expired\tINSIGHT\tinsight-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tInsightOfferScreenBootstrap settles the expired trigger before screen creation and the policy never opens a screen.
             insight-open\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tA live insight opens when no UI is active.
             insight-preempt\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tPREEMPT\tInsight may replace ordinary non-modal UI through transition arbitration.
             insight-matching\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tMODAL\tinsight-live\tNONE\tfalse\t1000\tNOOP_MATCHING\tThe same insight identity is not reopened.
@@ -917,6 +1140,140 @@ class R7FoundationContractTest {
         }
     }
 
+    private static final class InsightSettlementModel {
+        private final String triggerId;
+        private final long expiresAtMs;
+        private final List<String> events = new java.util.ArrayList<>();
+        private String winner;
+        private boolean screenConstructed;
+        private int screenConstructionCount;
+        private int sendCount;
+        private int transitionCount;
+        private boolean sendFailureObserved;
+        private boolean transitionFailureObserved;
+
+        private InsightSettlementModel(String triggerId, long expiresAtMs) {
+            this.triggerId = triggerId;
+            this.expiresAtMs = expiresAtMs;
+        }
+
+        private String observePreOpen(long nowMs, boolean sendFails) {
+            if (winner != null) {
+                events.add("pre-open:NOOP:" + triggerId);
+                return "NOOP";
+            }
+            if (nowMs < expiresAtMs) {
+                events.add("pre-open:DEFER:" + triggerId);
+                return "DEFER";
+            }
+            claimTimeout("bootstrap");
+            SettlementFailure sendFailure = send(sendFails);
+            if (sendFailure != null) {
+                throw sendFailure;
+            }
+            return "TIMEOUT";
+        }
+
+        private String constructScreen() {
+            if (winner != null) {
+                events.add("screen:NOOP:" + triggerId);
+                return "NOOP";
+            }
+            screenConstructed = true;
+            screenConstructionCount++;
+            events.add("screen:OPEN:" + triggerId);
+            return "OPEN";
+        }
+
+        private String observeOpenScreen(long nowMs, boolean sendFails, boolean transitionFails) {
+            if (winner != null) {
+                events.add("screen-timeout:NOOP:" + triggerId);
+                return "NOOP";
+            }
+            if (!screenConstructed || nowMs < expiresAtMs) {
+                events.add("screen-timeout:NOOP:" + triggerId);
+                return "NOOP";
+            }
+            claimTimeout("screen");
+            SettlementFailure sendFailure = send(sendFails);
+            SettlementFailure transitionFailure = transition(transitionFails);
+            if (sendFailure != null) {
+                if (transitionFailure != null) {
+                    sendFailure.addSuppressed(transitionFailure);
+                }
+                throw sendFailure;
+            }
+            if (transitionFailure != null) {
+                throw transitionFailure;
+            }
+            return "TIMEOUT";
+        }
+
+        private String observeScreenRemoval() {
+            if (winner == null) {
+                events.add("removal:REMOVED_EXCEPTIONALLY:" + triggerId);
+                return "REMOVED_EXCEPTIONALLY";
+            }
+            events.add("removal:NOOP:" + triggerId);
+            return "NOOP";
+        }
+
+        private void claimTimeout(String owner) {
+            if (winner == null) {
+                winner = "TIMEOUT";
+                events.add("claim:TIMEOUT:" + owner + ":" + triggerId);
+            }
+        }
+
+        private SettlementFailure send(boolean fails) {
+            sendCount++;
+            sendFailureObserved |= fails;
+            events.add("send:TIMEOUT:" + triggerId + ":" + (fails ? "failed" : "ok"));
+            return fails ? new SettlementFailure("send failed") : null;
+        }
+
+        private SettlementFailure transition(boolean fails) {
+            transitionCount++;
+            transitionFailureObserved |= fails;
+            events.add("transition:TIMEOUT:" + triggerId + ":" + (fails ? "failed" : "ok"));
+            return fails ? new SettlementFailure("transition failed") : null;
+        }
+
+        private String winner() {
+            return winner;
+        }
+
+        private int screenConstructionCount() {
+            return screenConstructionCount;
+        }
+
+        private int sendCount() {
+            return sendCount;
+        }
+
+        private int transitionCount() {
+            return transitionCount;
+        }
+
+        private boolean sendFailureObserved() {
+            return sendFailureObserved;
+        }
+
+        private boolean transitionFailureObserved() {
+            return transitionFailureObserved;
+        }
+
+        private List<String> events() {
+            return List.copyOf(events);
+        }
+    }
+
+    private static final class SettlementFailure extends RuntimeException {
+        private SettlementFailure(String message) {
+            super(message);
+        }
+    }
+
     private record FoundationRow(String component, String symbol, String signature, String owner, String invariant) {
     }
 
@@ -934,6 +1291,26 @@ class R7FoundationContractTest {
     }
 
     private record PhysicalDefault(String type, String code) {
+    }
+
+    private record ExpandedProductionDefault(String ownerId, String inputType, String defaultCode) {
+    }
+
+    private record DefaultCollision(String productionOwnerId, String reservedOwnerId, String inputType, String code)
+        implements Comparable<DefaultCollision> {
+        @Override
+        public int compareTo(DefaultCollision other) {
+            int ownerOrder = productionOwnerId.compareTo(other.productionOwnerId);
+            if (ownerOrder != 0) {
+                return ownerOrder;
+            }
+            int reservedOrder = reservedOwnerId.compareTo(other.reservedOwnerId);
+            if (reservedOrder != 0) {
+                return reservedOrder;
+            }
+            int typeOrder = inputType.compareTo(other.inputType);
+            return typeOrder != 0 ? typeOrder : code.compareTo(other.code);
+        }
     }
 
     private record ReservedDefaultRow(String owner, String inputType, String code, String reason) {
