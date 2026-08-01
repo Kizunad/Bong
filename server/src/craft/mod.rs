@@ -26,6 +26,7 @@
 //!   * #5 = A：手搓 tab 不收 vanilla，凡器破例（5 个示例之一）
 //!   * #6 = B：requirements 软 gate（UI 灰显 + 服务端硬校验防作弊）
 
+pub mod data;
 pub mod events;
 pub mod recipe;
 pub mod reclaim;
@@ -33,10 +34,16 @@ pub mod registry;
 pub mod session;
 pub mod unlock;
 pub mod workbench;
-pub mod workbench_recipes;
+#[cfg(test)]
+mod workbench_recipes;
 
 use valence::prelude::{App, Last, Update};
 
+#[allow(unused_imports)]
+pub use data::{
+    load_craft_recipes_from_dir, load_default_craft_recipes, load_legacy_example_recipes,
+    load_workbench_recipes, CraftDataError, DEFAULT_CRAFT_RECIPES_DIR,
+};
 #[allow(unused_imports)]
 pub use events::{
     CraftCancelIntent, CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartIntent,
@@ -71,17 +78,14 @@ pub use workbench::{
     WorkbenchOpenRequest, WORKBENCH_BREAK_AUDIO_RECIPE_ID, WORKBENCH_INTERACT_RANGE,
     WORKBENCH_ITEM_TEMPLATE, WORKBENCH_OPEN_AUDIO_RECIPE_ID, WORKBENCH_PLACE_AUDIO_RECIPE_ID,
 };
-#[allow(unused_imports)]
-pub use workbench_recipes::register_workbench_recipes;
 
 use crate::cultivation::components::{ColorKind, Realm};
 
 /// 注册 craft 子系统到主 App。
 ///
-/// 当前 P0+P1：
-///   * 注册 5 个示例配方到 `CraftRegistry`（流派 plan 接入前的 P1 验收基线）
-///   * 注册 4 类事件
-///   * 注册 `CraftRegistry` / `RecipeUnlockState` resources
+///   * 启动期加载 95 条 legacy/workbench 数据配方并校验全部物品引用
+///   * 继续注册各所属模块维护的 code-owned 配方
+///   * 注册事件与 `CraftRegistry` / `RecipeUnlockState` resources
 ///
 /// P2/P3 阶段补：UI tab + agent narration + 三渠道 hook（接 inventory ItemUse / social
 /// dialog / cultivation BreakthroughEvent）。
@@ -89,8 +93,17 @@ pub fn register(app: &mut App) {
     tracing::info!("[bong][craft] registering craft subsystem (plan-craft-v1 P0+P1)");
 
     let mut registry = CraftRegistry::new();
-    register_examples(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register example recipes: {err}");
+    let item_registry = app
+        .world()
+        .get_resource::<crate::inventory::ItemRegistry>()
+        .unwrap_or_else(|| {
+            panic!(
+                "[bong][craft] ItemRegistry must be registered before craft::register so craft \
+                 recipe TOML references can be validated"
+            )
+        });
+    data::load_default_craft_recipes(&mut registry, item_registry).unwrap_or_else(|err| {
+        panic!("[bong][craft] failed to load data-owned craft recipes: {err}");
     });
     register_anqi_v2_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register anqi-v2 recipes: {err}");
@@ -109,9 +122,6 @@ pub fn register(app: &mut App) {
     });
     crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register armor-visual-v1 recipes: {err}");
-    });
-    workbench_recipes::register_workbench_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register workbench-recipes-v1 recipes: {err}");
     });
     register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
@@ -154,130 +164,40 @@ pub fn register(app: &mut App) {
     app.add_systems(Last, flush_recipe_unlocks_on_shutdown);
 }
 
-/// P1 验收基线：注册 5 个示例配方覆盖全 6 类（除 Misc 外）。
+/// Test-only data-backed seam for the five legacy example recipes.
 ///
-/// 命名约定：`craft.example.<物品>.<档位>` —— `craft.example.*` 命名空间
-/// 标识"plan-craft-v1 自带的示例"，流派 plan vN+1 接入时用各自命名空间
-/// （`dugu.*` / `tuike.*` / `zhenfa.*` / `tools.*`）。
-///
-/// 5 个示例分布（plan §2 UI Mockup / plan §1 P1 验收清单）：
-///   1. AnqiCarrier — 蚀针（凡铁）
-///   2. DuguPotion  — 毒源煎汤（凡毒）
-///   3. TuikeSkin   — 伪灵皮（轻档）
-///   4. ZhenfaTrap  — 真元诡雷（凡铁）
-///   5. Tool        — 采药刀（凡铁）— §5 决策门 #5 凡器破例收录
+/// Production startup loads the complete TOML directory once. Existing unit tests keep their
+/// narrow fixture semantics without retaining a second Rust recipe table.
+#[cfg(test)]
 pub fn register_examples(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
-    // 1. 蚀针（凡铁）— AnqiCarrier
-    registry.register(CraftRecipe {
-        id: RecipeId::new("craft.example.eclipse_needle.iron"),
-        category: CraftCategory::AnqiCarrier,
-        display_name: "蚀针（凡铁档）".into(),
-        materials: vec![
-            ("iron_needle".into(), 3),
-            ("chi_sui_cao".into(), 1), // 赤髓草（plan-botany / 现有 herbalism 词条）
-        ],
-        qi_cost: 8.0,
-        time_ticks: 3 * 60 * 20, // 3 min in-game
-        output: ("eclipse_needle_iron".into(), 3),
-        requirements: CraftRequirements {
-            realm_min: None, // 不强制 — worldview §五:537 流派由组合涌现
-            qi_color_min: Some((ColorKind::Insidious, 0.05)),
-            skill_lv_min: None,
-        },
-        unlock_sources: vec![],
-        station: None,
-    })?;
+    data::load_legacy_example_recipes_for_parity(registry).map_err(craft_data_error_for_test)
+}
 
-    // 2. 毒源煎汤（凡毒）— DuguPotion
-    registry.register(CraftRecipe {
-        id: RecipeId::new("craft.example.poison_decoction.fan"),
-        category: CraftCategory::DuguPotion,
-        display_name: "毒源煎汤（凡毒）".into(),
-        materials: vec![
-            ("shao_hou_man".into(), 2), // 烧候蔓
-            ("clay_pot".into(), 1),
-        ],
-        qi_cost: 4.0,
-        time_ticks: 90 * 20, // 1.5 min in-game
-        output: ("poison_decoction_fan".into(), 1),
-        requirements: CraftRequirements::default(),
-        unlock_sources: vec![],
-        station: None,
-    })?;
+/// Test-only data-backed seam for the former workbench registrar.
+///
+/// The seam keeps legacy behavior tests focused on parsing/parity without requiring an
+/// `ItemRegistry`. Strict reference validation is exercised directly by `craft::data` tests and is
+/// never bypassed in production startup.
+#[cfg(test)]
+pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
+    data::load_workbench_recipes_for_parity(registry).map_err(craft_data_error_for_test)
+}
 
-    // 3. 伪灵皮（轻档）— TuikeSkin
-    registry.register(CraftRecipe {
-        id: RecipeId::new("craft.example.fake_skin.light"),
-        category: CraftCategory::TuikeSkin,
-        display_name: "伪灵皮（轻档）".into(),
-        materials: vec![
-            ("rabbit_pelt".into(), 4),
-            ("yu_yi_zhi".into(), 1), // 鱼衣脂
-        ],
-        qi_cost: 2.0,
-        time_ticks: 2 * 60 * 20, // 2 min in-game
-        output: ("fake_skin_light".into(), 1),
-        requirements: CraftRequirements {
-            realm_min: Some(Realm::Induce), // 引气起步 — 替尸需要灵气过渡
-            qi_color_min: None,
-            skill_lv_min: None,
-        },
-        unlock_sources: vec![
-            UnlockSource::Scroll {
-                item_template: "scroll_fake_skin_light".into(),
-            },
-            UnlockSource::Insight {
-                trigger: InsightTrigger::NearDeath,
-            },
-        ],
-        station: None,
-    })?;
-
-    // 4. 真元诡雷（凡铁）— ZhenfaTrap
-    registry.register(CraftRecipe {
-        id: RecipeId::new("craft.example.zhenfa_trap.iron"),
-        category: CraftCategory::ZhenfaTrap,
-        display_name: "真元诡雷（凡铁芯）".into(),
-        materials: vec![
-            ("iron_ingot".into(), 2),
-            ("zhenfa_blank_array".into(), 1), // 阵法白纸
-        ],
-        qi_cost: 6.0,
-        time_ticks: 4 * 60 * 20, // 4 min in-game
-        output: ("zhenfa_trap_iron".into(), 1),
-        requirements: CraftRequirements {
-            realm_min: Some(Realm::Induce),
-            qi_color_min: None,
-            skill_lv_min: None,
-        },
-        unlock_sources: vec![
-            UnlockSource::Scroll {
-                item_template: "scroll_zhenfa_trap_iron".into(),
-            },
-            UnlockSource::Mentor {
-                npc_archetype: "array_scribe".into(),
-            },
-        ],
-        station: None,
-    })?;
-
-    // 5. 采药刀（凡铁）— Tool（§5 决策门 #5 凡器破例收录手搓 tab）
-    registry.register(CraftRecipe {
-        id: RecipeId::new("craft.example.herb_knife.iron"),
-        category: CraftCategory::Tool,
-        display_name: "采药刀（凡铁）".into(),
-        materials: vec![("iron_ingot".into(), 1), ("wood_handle".into(), 1)],
-        qi_cost: 0.0,        // 凡器不投入真元
-        time_ticks: 30 * 20, // 30 sec in-game
-        output: ("herb_knife_iron".into(), 1),
-        requirements: CraftRequirements::default(),
-        unlock_sources: vec![UnlockSource::Scroll {
-            item_template: "scroll_herb_knife_iron".into(),
-        }],
-        station: None,
-    })?;
-
-    Ok(())
+#[cfg(test)]
+fn craft_data_error_for_test(error: CraftDataError) -> RegistryError {
+    match error {
+        CraftDataError::DuplicateId { recipe_id, .. } => {
+            RegistryError::DuplicateId(RecipeId::new(recipe_id))
+        }
+        CraftDataError::MissingItemReferences { references } => {
+            panic!(
+                "data-backed craft test registrar found {} missing item reference(s): {}",
+                references.len(),
+                CraftDataError::MissingItemReferences { references }
+            )
+        }
+        other => panic!("data-backed craft test registrar failed: {other}"),
+    }
 }
 
 /// plan-anqi-v2 §3：6 档暗器载体 + 3 个容器配方。
@@ -923,6 +843,10 @@ mod tests {
     #[test]
     fn register_wires_recipe_unlock_flushes_to_update_and_last() {
         let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry()
+                .expect("craft registration test requires ItemRegistry"),
+        );
         register(&mut app);
 
         let runtime_flush = std::any::type_name_of_val(&tick_recipe_unlock_flush);
@@ -938,11 +862,29 @@ mod tests {
         );
     }
 
+    fn p0_legacy_baseline_count() -> usize {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "fixtures/registry_datafication_p0_baseline.json"
+        ))
+        .expect("P0 baseline fixture must stay valid JSON");
+        fixture["recipes"]
+            .as_array()
+            .expect("P0 baseline fixture must contain a recipes array")
+            .iter()
+            .filter(|recipe| {
+                recipe["id"]
+                    .as_str()
+                    .expect("baseline recipe id must be a string")
+                    .starts_with("craft.example.")
+            })
+            .count()
+    }
+
     #[test]
     fn register_examples_succeeds() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
-        assert_eq!(registry.len(), 5);
+        assert_eq!(registry.len(), p0_legacy_baseline_count());
     }
 
     #[test]
@@ -1437,14 +1379,10 @@ mod tests {
         assert_eq!(recipe.output, ("iron_ingot".into(), 1));
     }
 
-    /// 回归测试：所有非 workbench 的 legacy 注册器注册的配方 station 必须为 None。
-    ///
-    /// plan-workbench-recipes-v1 新增 `CraftStationKind` 字段后，既有配方写了
-    /// `station: None`，此测试锁定该行为，防止误将 legacy 手搓配方绑到 workbench。
+    /// 回归测试：继续由 Rust registrar 持有的非 workbench 配方 station 必须为 None。
     #[test]
-    fn legacy_recipe_registrars_keep_station_none() {
+    fn code_owned_recipe_registrars_keep_station_none() {
         let mut registry = CraftRegistry::new();
-        register_examples(&mut registry).unwrap();
         register_anqi_v2_recipes(&mut registry).unwrap();
         register_zhenfa_v2_recipes(&mut registry).unwrap();
         register_zhenfa_content_recipes(&mut registry).unwrap();
@@ -1458,8 +1396,7 @@ mod tests {
         for recipe in registry.iter() {
             assert!(
                 recipe.station.is_none(),
-                "legacy recipe `{}` must have station=None (hand-craft without workbench); \
-                 only workbench_recipes registrar should set station=Some",
+                "code-owned recipe `{}` must have station=None (hand-craft without workbench)",
                 recipe.id
             );
         }

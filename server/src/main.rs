@@ -223,6 +223,21 @@ fn assert_full_app_core_resources(app: &App) {
         world.contains_resource::<PersistenceSettings>(),
         "full server App must install PersistenceSettings"
     );
+    let craft_registry = world
+        .get_resource::<craft::CraftRegistry>()
+        .expect("full server App must install CraftRegistry (craft::register())");
+    assert!(
+        craft_registry
+            .get(&craft::RecipeId::new("craft.example.eclipse_needle.iron"))
+            .is_some(),
+        "CraftRegistry must contain data-owned legacy recipes after strict TOML startup loading"
+    );
+    assert!(
+        craft_registry
+            .get(&craft::RecipeId::new("craft.tool.workbench"))
+            .is_some(),
+        "CraftRegistry must contain data-owned workbench recipes after strict TOML startup loading"
+    );
     // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
     // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产
     // `network::register()` 从未 `init_resource::<MorphStateEmitState>()`（只在

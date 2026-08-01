@@ -2850,7 +2850,7 @@ mod tests {
         // state 的新玩家必须直接出现在列表里且 unlocked=true —— 它是 workbench
         // 配方树的入口，被材料发现藏住会让玩家不知道有制作台这条路。
         let mut registry = CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        crate::craft::register_workbench_recipes(&mut registry).unwrap();
 
         let empty = RecipeUnlockState::new();
         let payload = build_recipe_list_payload("offline:Newbie", &registry, &empty);
@@ -3006,6 +3006,10 @@ mod tests {
         // 分页 / 增量下发来根治。这是 plan-craft-v1 既有的 payload 设计待办，材料发现
         // 改动并未抬高这一上限（终态全表集合与改动前一致）。
         let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry()
+                .expect("craft emission test requires ItemRegistry"),
+        );
         crate::craft::register(&mut app);
         let registry = app.world().resource::<CraftRegistry>();
         let mut unlock_state = RecipeUnlockState::new();

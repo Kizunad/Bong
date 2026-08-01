@@ -1,0 +1,2458 @@
+{
+  "recipes": [
+    {
+      "id": "coffin.bronze_coffin",
+      "category": "misc",
+      "display_name": "青铜棺",
+      "materials": [
+        {
+          "template_id": "xuan_iron",
+          "count": 3
+        },
+        {
+          "template_id": "ling_mu_ban",
+          "count": 3
+        },
+        {
+          "template_id": "gu_tong_pian",
+          "count": 4
+        },
+        {
+          "template_id": "zhen_shi_chu",
+          "count": 2
+        }
+      ],
+      "qi_cost": 6.0,
+      "time_ticks": 3600,
+      "output": {
+        "template_id": "bronze_coffin",
+        "count": 1
+      },
+      "requirements": {
+        "realm_min": "induce"
+      },
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_bronze_coffin"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "hermit_builder"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "coffin.jade_coffin",
+      "category": "misc",
+      "display_name": "寒玉棺",
+      "materials": [
+        {
+          "template_id": "ling_mu_ban",
+          "count": 4
+        },
+        {
+          "template_id": "yu_sui",
+          "count": 3
+        },
+        {
+          "template_id": "xue_po_lian",
+          "count": 2
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 2400,
+      "output": {
+        "template_id": "jade_coffin",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_jade_coffin"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "coffin.stone_coffin",
+      "category": "misc",
+      "display_name": "玄石棺",
+      "materials": [
+        {
+          "template_id": "xuan_iron",
+          "count": 4
+        },
+        {
+          "template_id": "zhen_shi_chu",
+          "count": 2
+        },
+        {
+          "template_id": "wu_yao",
+          "count": 2
+        }
+      ],
+      "qi_cost": 4.0,
+      "time_ticks": 3000,
+      "output": {
+        "template_id": "stone_coffin",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_stone_coffin"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "array_scribe"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "craft.example.eclipse_needle.iron",
+      "category": "anqi_carrier",
+      "display_name": "蚀针（凡铁档）",
+      "materials": [
+        {
+          "template_id": "iron_needle",
+          "count": 3
+        },
+        {
+          "template_id": "chi_sui_cao",
+          "count": 1
+        }
+      ],
+      "qi_cost": 8.0,
+      "time_ticks": 3600,
+      "output": {
+        "template_id": "eclipse_needle_iron",
+        "count": 3
+      },
+      "requirements": {
+        "qi_color_min": {
+          "kind": "insidious",
+          "min_share": 0.05
+        }
+      },
+      "unlock_sources": [],
+      "station": "none"
+    },
+    {
+      "id": "craft.example.fake_skin.light",
+      "category": "tuike_skin",
+      "display_name": "伪灵皮（轻档）",
+      "materials": [
+        {
+          "template_id": "rabbit_pelt",
+          "count": 4
+        },
+        {
+          "template_id": "yu_yi_zhi",
+          "count": 1
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 2400,
+      "output": {
+        "template_id": "fake_skin_light",
+        "count": 1
+      },
+      "requirements": {
+        "realm_min": "induce"
+      },
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_fake_skin_light"
+        },
+        {
+          "kind": "insight",
+          "trigger": "near_death"
+        }
+      ],
+      "station": "none"
+    },
+    {
+      "id": "craft.example.herb_knife.iron",
+      "category": "tool",
+      "display_name": "采药刀（凡铁）",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "herb_knife_iron",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_herb_knife_iron"
+        }
+      ],
+      "station": "none"
+    },
+    {
+      "id": "craft.example.poison_decoction.fan",
+      "category": "dugu_potion",
+      "display_name": "毒源煎汤（凡毒）",
+      "materials": [
+        {
+          "template_id": "shao_hou_man",
+          "count": 2
+        },
+        {
+          "template_id": "clay_pot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 4.0,
+      "time_ticks": 1800,
+      "output": {
+        "template_id": "poison_decoction_fan",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "none"
+    },
+    {
+      "id": "craft.example.zhenfa_trap.iron",
+      "category": "zhenfa_trap",
+      "display_name": "真元诡雷（凡铁芯）",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        },
+        {
+          "template_id": "zhenfa_blank_array",
+          "count": 1
+        }
+      ],
+      "qi_cost": 6.0,
+      "time_ticks": 4800,
+      "output": {
+        "template_id": "zhenfa_trap_iron",
+        "count": 1
+      },
+      "requirements": {
+        "realm_min": "induce"
+      },
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_zhenfa_trap_iron"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "array_scribe"
+        }
+      ],
+      "station": "none"
+    },
+    {
+      "id": "craft.tool.workbench",
+      "category": "tool",
+      "display_name": "制作台",
+      "materials": [
+        {
+          "template_id": "spirit_wood",
+          "count": 4
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        },
+        {
+          "template_id": "shu_gu",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1200,
+      "output": {
+        "template_id": "workbench_item",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "none"
+    },
+    {
+      "id": "workbench.armor.armor_hide_boots",
+      "category": "armor_craft",
+      "display_name": "皮甲·脚",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 2
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "armor_hide_boots",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.armor_hide_helmet",
+      "category": "armor_craft",
+      "display_name": "皮甲·头",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 2
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "armor_hide_helmet",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.armor_straw_boots",
+      "category": "armor_craft",
+      "display_name": "草甲·脚",
+      "materials": [
+        {
+          "template_id": "dried_grass",
+          "count": 4
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "armor_straw_boots",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.armor_straw_helmet",
+      "category": "armor_craft",
+      "display_name": "草甲·头",
+      "materials": [
+        {
+          "template_id": "dried_grass",
+          "count": 5
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "armor_straw_helmet",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.hide_chest",
+      "category": "armor_craft",
+      "display_name": "皮甲·胸",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 4
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1300,
+      "output": {
+        "template_id": "armor_hide_chestplate",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.hide_legs",
+      "category": "armor_craft",
+      "display_name": "皮甲·腿",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 3
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1100,
+      "output": {
+        "template_id": "armor_hide_leggings",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.straw_chest",
+      "category": "armor_craft",
+      "display_name": "草甲·胸",
+      "materials": [
+        {
+          "template_id": "dried_grass",
+          "count": 8
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "armor_straw_chestplate",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.armor.straw_legs",
+      "category": "armor_craft",
+      "display_name": "草甲·腿",
+      "materials": [
+        {
+          "template_id": "dried_grass",
+          "count": 6
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "armor_straw_leggings",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.bait_stake",
+      "category": "zhenfa_trap",
+      "display_name": "诱饵桩",
+      "materials": [
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        },
+        {
+          "template_id": "dried_grass",
+          "count": 3
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        },
+        {
+          "template_id": "raw_beast_hide",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "bait_stake",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.beast_trap",
+      "category": "zhenfa_trap",
+      "display_name": "困兽圈",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 3
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1000,
+      "output": {
+        "template_id": "beast_trap",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.blank_paper",
+      "category": "misc",
+      "display_name": "阵法白纸",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        },
+        {
+          "template_id": "powder_dan_sha",
+          "count": 1
+        },
+        {
+          "template_id": "rat_tail_oil",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "zhenfa_blank_array",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.decoy_stake",
+      "category": "zhenfa_trap",
+      "display_name": "欺天阵木桩",
+      "materials": [
+        {
+          "template_id": "spirit_wood",
+          "count": 2
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        },
+        {
+          "template_id": "shu_gu",
+          "count": 1
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 1300,
+      "output": {
+        "template_id": "decoy_stake",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_decoy_stake"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "array_scribe"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.eye_basic",
+      "category": "zhenfa_trap",
+      "display_name": "阵眼·凡",
+      "materials": [
+        {
+          "template_id": "ling_jing",
+          "count": 1
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        }
+      ],
+      "qi_cost": 3.0,
+      "time_ticks": 1300,
+      "output": {
+        "template_id": "array_eye_basic",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_array_eye"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.flag_basic",
+      "category": "zhenfa_trap",
+      "display_name": "阵旗·凡",
+      "materials": [
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        },
+        {
+          "template_id": "powder_dan_sha",
+          "count": 1
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 1000,
+      "output": {
+        "template_id": "array_flag_basic",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_array_flag"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.gather_base",
+      "category": "zhenfa_trap",
+      "display_name": "聚灵阵基座",
+      "materials": [
+        {
+          "template_id": "ling_tie",
+          "count": 2
+        },
+        {
+          "template_id": "zhenfa_blank_array",
+          "count": 2
+        },
+        {
+          "template_id": "ling_jing",
+          "count": 1
+        }
+      ],
+      "qi_cost": 5.0,
+      "time_ticks": 2600,
+      "output": {
+        "template_id": "gather_array_base",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_gather_base"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "array_scribe"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.scatter_bead",
+      "category": "zhenfa_trap",
+      "display_name": "散真元珠",
+      "materials": [
+        {
+          "template_id": "ling_jing",
+          "count": 1
+        },
+        {
+          "template_id": "bone_meal_mat",
+          "count": 1
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "qi_scatter_bead",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_scatter_bead"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.array.trip_wire",
+      "category": "zhenfa_trap",
+      "display_name": "预警绊线",
+      "materials": [
+        {
+          "template_id": "spider_silk_cord",
+          "count": 2
+        },
+        {
+          "template_id": "iron_needle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "trip_wire",
+        "count": 3
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.dead_drop",
+      "category": "container",
+      "display_name": "死信箱",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 6
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        },
+        {
+          "template_id": "zhenfa_blank_array",
+          "count": 1
+        }
+      ],
+      "qi_cost": 4.0,
+      "time_ticks": 2400,
+      "output": {
+        "template_id": "dead_drop_box",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_dead_drop"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "smuggler"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.herb_crate",
+      "category": "container",
+      "display_name": "灵草箱",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 4
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "herb_crate",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.herb_pouch",
+      "category": "container",
+      "display_name": "灵草囊",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "herb_pouch",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.herb_vial",
+      "category": "container",
+      "display_name": "药瓶",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 2
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "herb_vial",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.moisture_guard",
+      "category": "container",
+      "display_name": "防潮包",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        },
+        {
+          "template_id": "hui_jin_tai",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "moisture_guard",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.ore_sack",
+      "category": "container",
+      "display_name": "矿石袋",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        },
+        {
+          "template_id": "tanned_hide",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "ore_sack",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.projectile_bag",
+      "category": "container",
+      "display_name": "暗器袋",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 2
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "projectile_bag",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.seal_box",
+      "category": "container",
+      "display_name": "封灵匣",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 4
+        },
+        {
+          "template_id": "ling_tie",
+          "count": 1
+        }
+      ],
+      "qi_cost": 3.0,
+      "time_ticks": 1800,
+      "output": {
+        "template_id": "spirit_seal_box",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_seal_box"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.sealed_envelope",
+      "category": "container",
+      "display_name": "密封信封",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        },
+        {
+          "template_id": "rat_tail_oil",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "sealed_envelope",
+        "count": 3
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.sealed_vial",
+      "category": "container",
+      "display_name": "密封药瓶",
+      "materials": [
+        {
+          "template_id": "herb_vial",
+          "count": 1
+        },
+        {
+          "template_id": "spider_silk_cord",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "sealed_vial",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_sealed_vial"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.trade_crate",
+      "category": "container",
+      "display_name": "货箱",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 6
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1300,
+      "output": {
+        "template_id": "trade_crate",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.container.water_skin",
+      "category": "container",
+      "display_name": "水囊",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 1
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "water_skin",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.anti_gu",
+      "category": "dugu_potion",
+      "display_name": "解蛊散",
+      "materials": [
+        {
+          "template_id": "jie_gu_rui",
+          "count": 3
+        },
+        {
+          "template_id": "xiong_huang",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "anti_gu_powder",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_anti_gu"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.bandage",
+      "category": "misc",
+      "display_name": "止血绷带",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 200,
+      "output": {
+        "template_id": "bandage",
+        "count": 4
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.calming_tea",
+      "category": "misc",
+      "display_name": "安神茶",
+      "materials": [
+        {
+          "template_id": "an_shen_guo",
+          "count": 2
+        },
+        {
+          "template_id": "clay_pot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "calming_tea",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.huiyuan_soup",
+      "category": "misc",
+      "display_name": "回元芷煎汤",
+      "materials": [
+        {
+          "template_id": "hui_yuan_zhi",
+          "count": 2
+        },
+        {
+          "template_id": "clay_pot",
+          "count": 1
+        },
+        {
+          "template_id": "spirit_charcoal",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1200,
+      "output": {
+        "template_id": "huiyuan_decoction",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.meditation_mat",
+      "category": "misc",
+      "display_name": "蒲团",
+      "materials": [
+        {
+          "template_id": "dried_grass",
+          "count": 6
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "meditation_mat",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.meridian_rub",
+      "category": "misc",
+      "display_name": "经脉图拓片",
+      "materials": [
+        {
+          "template_id": "zhenfa_blank_array",
+          "count": 1
+        },
+        {
+          "template_id": "spirit_grass",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "meridian_rubbing",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_meridian_rub"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.meridian_salve",
+      "category": "misc",
+      "display_name": "养经膏",
+      "materials": [
+        {
+          "template_id": "yang_jing_tai",
+          "count": 2
+        },
+        {
+          "template_id": "rat_tail_oil",
+          "count": 1
+        },
+        {
+          "template_id": "herb_vial",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 1000,
+      "output": {
+        "template_id": "meridian_salve",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_meridian_salve"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.ningmai_prep",
+      "category": "misc",
+      "display_name": "凝脉散预制包",
+      "materials": [
+        {
+          "template_id": "ning_mai_cao",
+          "count": 3
+        },
+        {
+          "template_id": "powder_dan_sha",
+          "count": 1
+        },
+        {
+          "template_id": "herb_vial",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "ningmai_prep_kit",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_ningmai_prep"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.qi_talisman",
+      "category": "misc",
+      "display_name": "灵气引导符",
+      "materials": [
+        {
+          "template_id": "zhenfa_blank_array",
+          "count": 1
+        },
+        {
+          "template_id": "powder_dan_sha",
+          "count": 1
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 1000,
+      "output": {
+        "template_id": "qi_guide_talisman",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_qi_talisman"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.qingzhuo",
+      "category": "dugu_potion",
+      "display_name": "清浊散",
+      "materials": [
+        {
+          "template_id": "qing_zhuo_cao",
+          "count": 2
+        },
+        {
+          "template_id": "powder_dan_sha",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "qingzhuo_powder",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_qingzhuo"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.cultivation.spirit_rack",
+      "category": "misc",
+      "display_name": "灵石架",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 2
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "spirit_stone_rack",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.economy.coin_box",
+      "category": "container",
+      "display_name": "骨币匣",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 4
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        },
+        {
+          "template_id": "powder_dan_sha",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1100,
+      "output": {
+        "template_id": "coin_box",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.economy.disguise_wrap",
+      "category": "tuike_skin",
+      "display_name": "伪装包裹",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        },
+        {
+          "template_id": "hui_jin_tai",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "disguise_wrap",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.economy.niche_repair",
+      "category": "misc",
+      "display_name": "灵龛修补料",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 3
+        },
+        {
+          "template_id": "ling_tie",
+          "count": 1
+        }
+      ],
+      "qi_cost": 2.0,
+      "time_ticks": 1300,
+      "output": {
+        "template_id": "niche_repair_kit",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_niche_repair"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.medical.arm_splint",
+      "category": "misc",
+      "display_name": "夹板·臂",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 2
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 300,
+      "output": {
+        "template_id": "arm_splint",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.medical.leg_splint",
+      "category": "misc",
+      "display_name": "夹板·腿",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 3
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "leg_splint",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.prep.forge_station",
+      "category": "tool",
+      "display_name": "锻造台组件",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 4
+        },
+        {
+          "template_id": "spirit_wood",
+          "count": 2
+        },
+        {
+          "template_id": "stone_chunk",
+          "count": 6
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 2000,
+      "output": {
+        "template_id": "fan_iron_anvil",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.prep.furnace_kit",
+      "category": "tool",
+      "display_name": "凡铁炉组件",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 6
+        },
+        {
+          "template_id": "spirit_charcoal",
+          "count": 2
+        },
+        {
+          "template_id": "stone_chunk",
+          "count": 4
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 2400,
+      "output": {
+        "template_id": "furnace_fantie",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.bone_chip",
+      "category": "misc",
+      "display_name": "骨片",
+      "materials": [
+        {
+          "template_id": "shu_gu",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 200,
+      "output": {
+        "template_id": "bone_chip_mat",
+        "count": 4
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.bone_meal",
+      "category": "misc",
+      "display_name": "骨粉",
+      "materials": [
+        {
+          "template_id": "shu_gu",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "bone_meal_mat",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.clay_pot",
+      "category": "misc",
+      "display_name": "陶罐",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 3
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "clay_pot",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.dan_sha_powder",
+      "category": "misc",
+      "display_name": "丹砂粉",
+      "materials": [
+        {
+          "template_id": "dan_sha",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 300,
+      "output": {
+        "template_id": "powder_dan_sha",
+        "count": 3
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.dried_grass",
+      "category": "misc",
+      "display_name": "干草",
+      "materials": [
+        {
+          "template_id": "grass_fiber",
+          "count": 5
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "dried_grass",
+        "count": 3
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.herb_bundle",
+      "category": "misc",
+      "display_name": "灵草束",
+      "materials": [
+        {
+          "template_id": "spirit_grass",
+          "count": 5
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 200,
+      "output": {
+        "template_id": "herb_bundle",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.iron_ingot",
+      "category": "misc",
+      "display_name": "粗铁锭",
+      "materials": [
+        {
+          "template_id": "cu_tie",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1000,
+      "output": {
+        "template_id": "iron_ingot",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.needle_batch",
+      "category": "misc",
+      "display_name": "铁针",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "iron_needle",
+        "count": 5
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.rat_tail_oil",
+      "category": "misc",
+      "display_name": "鼠尾油",
+      "materials": [
+        {
+          "template_id": "rat_tail",
+          "count": 3
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "rat_tail_oil",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.rope",
+      "category": "misc",
+      "display_name": "草绳",
+      "materials": [
+        {
+          "template_id": "grass_fiber",
+          "count": 3
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "grass_rope",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.rough_cloth",
+      "category": "misc",
+      "display_name": "粗布",
+      "materials": [
+        {
+          "template_id": "ash_spider_silk",
+          "count": 5
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "rough_cloth",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.salt_crystal",
+      "category": "misc",
+      "display_name": "盐蓬晶",
+      "materials": [
+        {
+          "template_id": "bai_yan_peng",
+          "count": 3
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "salt_crystal",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.spider_cord",
+      "category": "misc",
+      "display_name": "蛛丝绳",
+      "materials": [
+        {
+          "template_id": "ash_spider_silk",
+          "count": 4
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "spider_silk_cord",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.spirit_charcoal",
+      "category": "misc",
+      "display_name": "灵木炭",
+      "materials": [
+        {
+          "template_id": "spirit_wood",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1200,
+      "output": {
+        "template_id": "spirit_charcoal",
+        "count": 3
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.tanned_hide",
+      "category": "misc",
+      "display_name": "熟皮",
+      "materials": [
+        {
+          "template_id": "raw_beast_hide",
+          "count": 1
+        },
+        {
+          "template_id": "hui_jin_tai",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1200,
+      "output": {
+        "template_id": "tanned_hide",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.wood_handle",
+      "category": "misc",
+      "display_name": "木柄",
+      "materials": [
+        {
+          "template_id": "spirit_wood",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 300,
+      "output": {
+        "template_id": "wood_handle",
+        "count": 4
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.process.wood_plank",
+      "category": "misc",
+      "display_name": "木板",
+      "materials": [
+        {
+          "template_id": "spirit_wood",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 300,
+      "output": {
+        "template_id": "wood_plank",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.camo_net",
+      "category": "tuike_skin",
+      "display_name": "伪装网",
+      "materials": [
+        {
+          "template_id": "rough_cloth",
+          "count": 3
+        },
+        {
+          "template_id": "spirit_grass",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1100,
+      "output": {
+        "template_id": "camouflage_net",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.door_bolt",
+      "category": "misc",
+      "display_name": "门闩",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 3
+        },
+        {
+          "template_id": "wood_plank",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "door_bolt",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.lantern",
+      "category": "misc",
+      "display_name": "灯笼",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        },
+        {
+          "template_id": "spirit_charcoal",
+          "count": 1
+        },
+        {
+          "template_id": "ling_jing",
+          "count": 1
+        }
+      ],
+      "qi_cost": 1.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "lantern_item",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_lantern"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.moisture_base",
+      "category": "misc",
+      "display_name": "防潮地基",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 4
+        },
+        {
+          "template_id": "hui_jin_tai",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "moisture_base",
+        "count": 4
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.niche_base",
+      "category": "misc",
+      "display_name": "灵龛基座",
+      "materials": [
+        {
+          "template_id": "spirit_niche_stone",
+          "count": 1
+        },
+        {
+          "template_id": "ling_tie",
+          "count": 2
+        },
+        {
+          "template_id": "wood_plank",
+          "count": 4
+        }
+      ],
+      "qi_cost": 5.0,
+      "time_ticks": 3600,
+      "output": {
+        "template_id": "niche_base",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [
+        {
+          "kind": "scroll",
+          "item_template": "scroll_workbench_niche_base"
+        },
+        {
+          "kind": "mentor",
+          "npc_archetype": "hermit_builder"
+        },
+        {
+          "kind": "insight",
+          "trigger": "breakthrough"
+        }
+      ],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.simple_bed",
+      "category": "misc",
+      "display_name": "简易床铺",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 4
+        },
+        {
+          "template_id": "dried_grass",
+          "count": 4
+        },
+        {
+          "template_id": "rough_cloth",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1200,
+      "output": {
+        "template_id": "simple_bed",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.torch",
+      "category": "misc",
+      "display_name": "火把",
+      "materials": [
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        },
+        {
+          "template_id": "spirit_charcoal",
+          "count": 1
+        },
+        {
+          "template_id": "rat_tail_oil",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 200,
+      "output": {
+        "template_id": "torch_item",
+        "count": 4
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shelter.window_grate",
+      "category": "misc",
+      "display_name": "窗栅",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 4
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "window_grate",
+        "count": 2
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shield.bone_shield",
+      "category": "armor_craft",
+      "display_name": "骨盾",
+      "materials": [
+        {
+          "template_id": "shu_gu",
+          "count": 6
+        },
+        {
+          "template_id": "grass_rope",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1100,
+      "output": {
+        "template_id": "bone_shield",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.shield.wooden_shield",
+      "category": "armor_craft",
+      "display_name": "木盾",
+      "materials": [
+        {
+          "template_id": "wood_plank",
+          "count": 4
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1200,
+      "output": {
+        "template_id": "wooden_shield",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.axe_iron",
+      "category": "tool",
+      "display_name": "铁斧",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "axe_iron",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.hoe_iron",
+      "category": "tool",
+      "display_name": "铁锄",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 700,
+      "output": {
+        "template_id": "hoe_iron",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.ice_gauntlet",
+      "category": "tool",
+      "display_name": "冰甲手套",
+      "materials": [
+        {
+          "template_id": "tanned_hide",
+          "count": 2
+        },
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 1000,
+      "output": {
+        "template_id": "bing_jia_shou_tao",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.pickaxe_iron",
+      "category": "tool",
+      "display_name": "铁镐",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 3
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 900,
+      "output": {
+        "template_id": "pickaxe_iron",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.scraper",
+      "category": "tool",
+      "display_name": "刮刀",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        },
+        {
+          "template_id": "bone_chip_mat",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 600,
+      "output": {
+        "template_id": "gua_dao",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.sickle",
+      "category": "tool",
+      "display_name": "草镰",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 2
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "cao_lian",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.tool.stone_axe",
+      "category": "tool",
+      "display_name": "石斧",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 2
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "stone_axe",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "none"
+    },
+    {
+      "id": "workbench.tool.stone_pickaxe",
+      "category": "tool",
+      "display_name": "石镐",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 3
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 500,
+      "output": {
+        "template_id": "stone_pickaxe",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "none"
+    },
+    {
+      "id": "workbench.weapon.bone_spike_crude",
+      "category": "anqi_carrier",
+      "display_name": "粗骨刺",
+      "materials": [
+        {
+          "template_id": "shu_gu",
+          "count": 2
+        },
+        {
+          "template_id": "stone_chunk",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "bone_spike_crude",
+        "count": 3
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.weapon.iron_dagger",
+      "category": "misc",
+      "display_name": "凡铁匕首",
+      "materials": [
+        {
+          "template_id": "iron_ingot",
+          "count": 1
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 800,
+      "output": {
+        "template_id": "iron_dagger",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    },
+    {
+      "id": "workbench.weapon.stone_knife",
+      "category": "misc",
+      "display_name": "石刃",
+      "materials": [
+        {
+          "template_id": "stone_chunk",
+          "count": 1
+        },
+        {
+          "template_id": "wood_handle",
+          "count": 1
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "stone_knife",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "none"
+    },
+    {
+      "id": "workbench.weapon.wooden_club",
+      "category": "misc",
+      "display_name": "木棍",
+      "materials": [
+        {
+          "template_id": "spirit_wood",
+          "count": 2
+        }
+      ],
+      "qi_cost": 0.0,
+      "time_ticks": 400,
+      "output": {
+        "template_id": "wooden_club",
+        "count": 1
+      },
+      "requirements": {},
+      "unlock_sources": [],
+      "station": "workbench"
+    }
+  ]
+}

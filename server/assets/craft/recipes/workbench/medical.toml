@@ -1,0 +1,45 @@
+[[recipes]]
+id = "workbench.medical.arm_splint"
+category = "misc"
+display_name = "夹板·臂"
+qi_cost = 0.0
+time_sec = 15
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 2
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[recipes.output]
+template_id = "arm_splint"
+count = 2
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.medical.leg_splint"
+category = "misc"
+display_name = "夹板·腿"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 3
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 2
+
+[recipes.output]
+template_id = "leg_splint"
+count = 2
+
+[recipes.requirements]

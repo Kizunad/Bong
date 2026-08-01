@@ -1,0 +1,253 @@
+[[recipes]]
+id = "workbench.array.bait_stake"
+category = "zhenfa_trap"
+display_name = "诱饵桩"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 3
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[[recipes.materials]]
+template_id = "raw_beast_hide"
+count = 1
+
+[recipes.output]
+template_id = "bait_stake"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.array.beast_trap"
+category = "zhenfa_trap"
+display_name = "困兽圈"
+qi_cost = 0.0
+time_sec = 50
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 3
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 2
+
+[recipes.output]
+template_id = "beast_trap"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.array.blank_paper"
+category = "misc"
+display_name = "阵法白纸"
+qi_cost = 1.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[[recipes.materials]]
+template_id = "powder_dan_sha"
+count = 1
+
+[[recipes.materials]]
+template_id = "rat_tail_oil"
+count = 1
+
+[recipes.output]
+template_id = "zhenfa_blank_array"
+count = 2
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.array.decoy_stake"
+category = "zhenfa_trap"
+display_name = "欺天阵木桩"
+qi_cost = 2.0
+time_sec = 65
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 2
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[[recipes.materials]]
+template_id = "shu_gu"
+count = 1
+
+[recipes.output]
+template_id = "decoy_stake"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_decoy_stake"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "array_scribe"
+
+[[recipes]]
+id = "workbench.array.eye_basic"
+category = "zhenfa_trap"
+display_name = "阵眼·凡"
+qi_cost = 3.0
+time_sec = 65
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ling_jing"
+count = 1
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[recipes.output]
+template_id = "array_eye_basic"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_array_eye"
+
+[[recipes]]
+id = "workbench.array.flag_basic"
+category = "zhenfa_trap"
+display_name = "阵旗·凡"
+qi_cost = 2.0
+time_sec = 50
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[[recipes.materials]]
+template_id = "powder_dan_sha"
+count = 1
+
+[recipes.output]
+template_id = "array_flag_basic"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_array_flag"
+
+[[recipes]]
+id = "workbench.array.gather_base"
+category = "zhenfa_trap"
+display_name = "聚灵阵基座"
+qi_cost = 5.0
+time_sec = 130
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ling_tie"
+count = 2
+
+[[recipes.materials]]
+template_id = "zhenfa_blank_array"
+count = 2
+
+[[recipes.materials]]
+template_id = "ling_jing"
+count = 1
+
+[recipes.output]
+template_id = "gather_array_base"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_gather_base"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "array_scribe"
+
+[[recipes]]
+id = "workbench.array.scatter_bead"
+category = "zhenfa_trap"
+display_name = "散真元珠"
+qi_cost = 2.0
+time_sec = 35
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ling_jing"
+count = 1
+
+[[recipes.materials]]
+template_id = "bone_meal_mat"
+count = 1
+
+[recipes.output]
+template_id = "qi_scatter_bead"
+count = 2
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_scatter_bead"
+
+[[recipes]]
+id = "workbench.array.trip_wire"
+category = "zhenfa_trap"
+display_name = "预警绊线"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "spider_silk_cord"
+count = 2
+
+[[recipes.materials]]
+template_id = "iron_needle"
+count = 1
+
+[recipes.output]
+template_id = "trip_wire"
+count = 3
+
+[recipes.requirements]

@@ -819,7 +819,7 @@ mod tests {
         // 基线常显豁免（unlock::BASELINE_RECIPES）：制作台自身配方对空 unlock
         // state 的新玩家必须直接可做 —— 不经材料发现、不经三渠道。
         let mut registry = CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        crate::craft::register_workbench_recipes(&mut registry).unwrap();
         let unlock = RecipeUnlockState::new(); // 从未解锁过任何配方
         let mut inv = make_inventory(&[("spirit_wood", 4), ("iron_ingot", 2), ("shu_gu", 2)]);
         let mut cult = Cultivation {
@@ -867,7 +867,7 @@ mod tests {
         // 对照组：同一注册表里其他空源配方（如石镐）对空 unlock state 仍应 NotUnlocked
         // —— 豁免名单精确到 craft.tool.workbench，不是放开整棵 workbench 树。
         let mut registry = CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        crate::craft::register_workbench_recipes(&mut registry).unwrap();
         let unlock = RecipeUnlockState::new();
         let mut inv = make_inventory(&[("stone_chunk", 3), ("wood_handle", 1)]);
         let mut cult = Cultivation {
