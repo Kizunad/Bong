@@ -13,6 +13,7 @@ use std::{
     },
 };
 
+use rusqlite::{Connection, Params, Transaction, TransactionBehavior};
 use valence::prelude::{Resource, World};
 
 use crate::time::MILLIS_PER_TICK;
@@ -281,15 +282,10 @@ pub enum SliceRegistryError {
         slice_id: SliceId,
     },
     DuplicateSliceId(SliceId),
-    ConflictingWriteAuthority {
+    DuplicateWriteDomain {
         domain: WriteDomain,
-        first: WriteAuthority,
-        conflicting: WriteAuthority,
-    },
-    ConflictingWriteOrdering {
-        domain: WriteDomain,
-        first: WriteOrdering,
-        conflicting: WriteOrdering,
+        first_slice_id: SliceId,
+        duplicate_slice_id: SliceId,
     },
     ZeroAutosaveCadence {
         slice_id: SliceId,
@@ -324,27 +320,14 @@ impl fmt::Display for SliceRegistryError {
             Self::DuplicateSliceId(id) => {
                 write!(formatter, "duplicate persistence slice id `{id}`")
             }
-            Self::ConflictingWriteAuthority {
+            Self::DuplicateWriteDomain {
                 domain,
-                first,
-                conflicting,
+                first_slice_id,
+                duplicate_slice_id,
             } => write!(
                 formatter,
-                "write domain `{}` has conflicting authorities `{}` and `{}`",
-                domain.as_str(),
-                first.as_str(),
-                conflicting.as_str()
-            ),
-            Self::ConflictingWriteOrdering {
-                domain,
-                first,
-                conflicting,
-            } => write!(
-                formatter,
-                "write domain `{}` has conflicting ordering {:?} and {:?}",
-                domain.as_str(),
-                first,
-                conflicting
+                "write domain `{}` is already owned by slice `{first_slice_id}` and cannot be registered by `{duplicate_slice_id}`",
+                domain.as_str()
             ),
             Self::ZeroAutosaveCadence { slice_id } => {
                 write!(formatter, "slice `{slice_id}` has a zero autosave cadence")
@@ -473,20 +456,11 @@ impl PersistenceSliceRegistry {
             .iter()
             .find(|registered| registered.write_binding.domain == descriptor.write_binding.domain)
         {
-            if registered.write_binding.authority != descriptor.write_binding.authority {
-                return Err(SliceRegistryError::ConflictingWriteAuthority {
-                    domain: descriptor.write_binding.domain,
-                    first: registered.write_binding.authority,
-                    conflicting: descriptor.write_binding.authority,
-                });
-            }
-            if registered.write_ordering != descriptor.write_ordering {
-                return Err(SliceRegistryError::ConflictingWriteOrdering {
-                    domain: descriptor.write_binding.domain,
-                    first: registered.write_ordering,
-                    conflicting: descriptor.write_ordering,
-                });
-            }
+            return Err(SliceRegistryError::DuplicateWriteDomain {
+                domain: descriptor.write_binding.domain,
+                first_slice_id: registered.id,
+                duplicate_slice_id: descriptor.id,
+            });
         }
 
         self.descriptors.push(descriptor);
@@ -1820,17 +1794,23 @@ impl DirtyTracker {
 }
 
 /// Request passed to the only durable writer adapter for a domain.
-pub struct DurableWriteRequest<'a, P> {
-    payload: &'a P,
-    subject_key: &'a PersistenceSubjectKey,
+///
+/// It owns the only transaction reference exposed to the adapter. The fence checks
+/// `executed` after the callback returns, so a callback cannot report success or
+/// replay evidence from an earlier rolled-back request.
+pub struct DurableWriteRequest<'transaction, 'connection, 'snapshot, P> {
+    transaction: &'transaction Transaction<'connection>,
+    payload: &'snapshot P,
+    subject_key: &'snapshot PersistenceSubjectKey,
     binding: WriteBinding,
     expected_persisted_revision: DirtyRevision,
     write_revision: DirtyRevision,
     outlet: WriteOutlet,
     ordering: WriteOrdering,
+    executed: std::cell::Cell<bool>,
 }
 
-impl<P> DurableWriteRequest<'_, P> {
+impl<P> DurableWriteRequest<'_, '_, '_, P> {
     pub fn payload(&self) -> &P {
         self.payload
     }
@@ -1858,6 +1838,78 @@ impl<P> DurableWriteRequest<'_, P> {
     pub const fn ordering(&self) -> WriteOrdering {
         self.ordering
     }
+
+    /// Executes a serialized durable statement through the fence-owned transaction.
+    pub(in crate::persistence) fn execute_serialized<Q: Params>(
+        &self,
+        sql: &str,
+        params: Q,
+    ) -> Result<(), DurableWriteExecuteError> {
+        if self.ordering != WriteOrdering::Serialized {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::WrongOrdering {
+                    expected: WriteOrdering::Serialized,
+                    actual: self.ordering,
+                },
+            ));
+        }
+        let affected_rows = self
+            .transaction
+            .execute(sql, params)
+            .map_err(DurableWriteExecuteError::Sql)?;
+        if affected_rows == 0 {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::SerializedWriteRejected,
+            ));
+        }
+        self.executed.set(true);
+        Ok(())
+    }
+
+    /// Executes one revision-CAS durable statement through the fence-owned transaction.
+    pub(in crate::persistence) fn execute_cas<Q: Params>(
+        &self,
+        sql: &str,
+        params: Q,
+    ) -> Result<(), DurableWriteExecuteError> {
+        if self.ordering != WriteOrdering::PersistedRevisionCas {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::WrongOrdering {
+                    expected: WriteOrdering::PersistedRevisionCas,
+                    actual: self.ordering,
+                },
+            ));
+        }
+        let affected_rows = self
+            .transaction
+            .execute(sql, params)
+            .map_err(DurableWriteExecuteError::Sql)?;
+        if affected_rows != 1 {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::CasRejected { affected_rows },
+            ));
+        }
+        self.executed.set(true);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::persistence) enum DurableWriteProofError {
+    WrongOrdering {
+        expected: WriteOrdering,
+        actual: WriteOrdering,
+    },
+    SerializedWriteRejected,
+    CasRejected {
+        affected_rows: usize,
+    },
+}
+
+#[derive(Debug, PartialEq)]
+pub(in crate::persistence) enum DurableWriteExecuteError {
+    Sql(rusqlite::Error),
+    Proof(DurableWriteProofError),
 }
 
 /// Receipt cannot be directly constructed outside this module.
@@ -1878,7 +1930,7 @@ impl DurableWriteReceipt {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum DurableCommitError<E> {
     WrongBinding(WriteBindingMismatch),
     WrongSubject,
@@ -1886,7 +1938,10 @@ pub enum DurableCommitError<E> {
         persisted: DirtyRevision,
         attempted: DirtyRevision,
     },
+    BeginTransaction(rusqlite::Error),
     WriteFailed(E),
+    MissingDurableWrite,
+    CommitFailed(rusqlite::Error),
 }
 
 /// Durable revision fence and receipt minter for one registered write authority.
@@ -1898,19 +1953,6 @@ pub struct PersistedRevisionFence {
     persisted: DirtyRevision,
 }
 
-/// Capability issued only inside persistence after a durable transaction commits.
-pub(in crate::persistence) mod durable_writer {
-    #[derive(Debug)]
-    pub struct Capability {
-        _private: (),
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::persistence) const fn acquire() -> Capability {
-        Capability { _private: () }
-    }
-}
-
 impl PersistedRevisionFence {
     pub const fn binding(&self) -> WriteBinding {
         self.binding
@@ -1920,16 +1962,14 @@ impl PersistedRevisionFence {
         self.persisted
     }
 
-    /// Executes the writer adapter and mints a receipt only after it returns the
-    /// persistence-private proof produced after its storage transaction or CAS.
-    ///
-    /// Subject checks happen before the adapter runs, so one player's permit or
-    /// snapshot can never advance another player's durable fence.
+    /// The adapter can only use request methods against this transaction; the fence
+    /// requires one such method to succeed before it commits and mints a receipt.
     #[allow(dead_code)]
     pub(in crate::persistence) fn commit<P, E>(
         &mut self,
+        connection: &mut Connection,
         snapshot: DirtySnapshot<P>,
-        write: impl FnOnce(DurableWriteRequest<'_, P>) -> Result<durable_writer::Capability, E>,
+        write: impl FnOnce(&DurableWriteRequest<'_, '_, '_, P>) -> Result<(), E>,
     ) -> Result<DurableWriteReceipt, DurableCommitError<E>> {
         if snapshot.binding != self.binding {
             return Err(DurableCommitError::WrongBinding(WriteBindingMismatch {
@@ -1947,7 +1987,11 @@ impl PersistedRevisionFence {
             });
         }
 
-        let _capability = write(DurableWriteRequest {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(DurableCommitError::BeginTransaction)?;
+        let request = DurableWriteRequest {
+            transaction: &transaction,
             payload: &snapshot.payload,
             subject_key: &snapshot.subject_key,
             binding: self.binding,
@@ -1955,8 +1999,15 @@ impl PersistedRevisionFence {
             write_revision: snapshot.revision,
             outlet: snapshot.outlet,
             ordering: self.ordering,
-        })
-        .map_err(DurableCommitError::WriteFailed)?;
+            executed: std::cell::Cell::new(false),
+        };
+        write(&request).map_err(DurableCommitError::WriteFailed)?;
+        if !request.executed.get() {
+            return Err(DurableCommitError::MissingDurableWrite);
+        }
+        transaction
+            .commit()
+            .map_err(DurableCommitError::CommitFailed)?;
 
         self.persisted = snapshot.revision;
         Ok(DurableWriteReceipt {
@@ -2128,7 +2179,7 @@ mod tests {
             order,
             load_failure: LoadFailurePolicy::BlockWrites,
             time_basis: TimeBasis::None,
-            write_binding: TEST_BINDING,
+            write_binding: WriteBinding::new(WriteDomain::new(id), WriteAuthority::new(id)),
             write_ordering: WriteOrdering::Serialized,
             autosave: AutosavePolicy::OnChange,
             hydrate: None,
@@ -2291,30 +2342,52 @@ mod tests {
     }
 
     #[test]
-    fn registry_rejects_conflicting_authority_or_ordering_for_one_domain() {
-        let first = Box::leak(Box::new(basic_descriptor("player.core", 10)));
-        let wrong_authority = Box::leak(Box::new(SliceDescriptor {
+    fn registry_rejects_every_second_descriptor_for_one_write_domain() {
+        let first = Box::leak(Box::new(SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.core", 10)
+        }));
+        let same_authority_and_ordering = Box::leak(Box::new(SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.inventory", 20)
+        }));
+        let different_authority = Box::leak(Box::new(SliceDescriptor {
             write_binding: WriteBinding::new(
                 TEST_BINDING.domain(),
                 WriteAuthority::new("test.player.competing_writer"),
             ),
-            ..basic_descriptor("player.inventory", 20)
-        }));
-        let wrong_ordering = Box::leak(Box::new(SliceDescriptor {
-            write_ordering: WriteOrdering::PersistedRevisionCas,
             ..basic_descriptor("player.craft", 30)
+        }));
+        let different_ordering = Box::leak(Box::new(SliceDescriptor {
+            write_binding: TEST_BINDING,
+            write_ordering: WriteOrdering::PersistedRevisionCas,
+            ..basic_descriptor("player.mail", 40)
         }));
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(first).unwrap();
 
-        assert!(matches!(
-            registry.register(wrong_authority),
-            Err(SliceRegistryError::ConflictingWriteAuthority { .. })
-        ));
-        assert!(matches!(
-            registry.register(wrong_ordering),
-            Err(SliceRegistryError::ConflictingWriteOrdering { .. })
-        ));
+        for duplicate in [
+            same_authority_and_ordering,
+            different_authority,
+            different_ordering,
+        ] {
+            assert_eq!(
+                registry.register(duplicate),
+                Err(SliceRegistryError::DuplicateWriteDomain {
+                    domain: TEST_BINDING.domain(),
+                    first_slice_id: first.id,
+                    duplicate_slice_id: duplicate.id,
+                })
+            );
+            assert_eq!(
+                registry
+                    .descriptors()
+                    .map(|descriptor| descriptor.id)
+                    .collect::<Vec<_>>(),
+                vec![first.id],
+                "a rejected duplicate must not remain registered"
+            );
+        }
     }
 
     #[test]
@@ -4058,17 +4131,18 @@ mod tests {
     }
 
     #[test]
-    fn stable_subject_activation_rejects_duplicate_domain_writer_until_release() {
-        let first_descriptor = Box::leak(Box::new(basic_descriptor("player.subject.first", 10)));
-        let second_descriptor = Box::leak(Box::new(basic_descriptor("player.subject.second", 20)));
+    fn stable_subject_activation_rejects_reactivation_until_every_lease_holder_releases() {
+        let descriptor = Box::leak(Box::new(SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.subject", 10)
+        }));
         let mut registry = PersistenceSliceRegistry::empty();
-        registry.register(first_descriptor).unwrap();
-        registry.register(second_descriptor).unwrap();
+        registry.register(descriptor).unwrap();
 
         let mut first = registry
             .activate_test_subject(
                 SliceLoad::<u32, &str>::loaded(9),
-                first_descriptor.id,
+                descriptor.id,
                 subject_key("player:stable"),
                 DirtyRevision::new(4),
                 || 0,
@@ -4077,7 +4151,7 @@ mod tests {
             .unwrap();
         let duplicate = registry.activate_test_subject(
             SliceLoad::<u32, &str>::loaded(10),
-            second_descriptor.id,
+            descriptor.id,
             subject_key("player:stable"),
             DirtyRevision::new(4),
             || 0,
@@ -4088,13 +4162,13 @@ mod tests {
             Err(SliceActivationError::DuplicateSubject {
                 slice_id,
                 domain,
-            }) if slice_id == second_descriptor.id && domain == TEST_BINDING.domain()
+            }) if slice_id == descriptor.id && domain == TEST_BINDING.domain()
         ));
 
         let other_subject = registry
             .activate_test_subject(
                 SliceLoad::<u32, &str>::loaded(11),
-                second_descriptor.id,
+                descriptor.id,
                 subject_key("player:other"),
                 DirtyRevision::new(4),
                 || 0,
@@ -4107,7 +4181,7 @@ mod tests {
 
         let retained_tracker = registry.activate_test_subject(
             SliceLoad::<u32, &str>::loaded(12),
-            second_descriptor.id,
+            descriptor.id,
             subject_key("player:stable"),
             DirtyRevision::new(7),
             || 0,
@@ -4121,7 +4195,7 @@ mod tests {
 
         let retained_fence = registry.activate_test_subject(
             SliceLoad::<u32, &str>::loaded(12),
-            second_descriptor.id,
+            descriptor.id,
             subject_key("player:stable"),
             DirtyRevision::new(7),
             || 0,
@@ -4136,7 +4210,7 @@ mod tests {
         let reactivated = registry
             .activate_test_subject(
                 SliceLoad::<u32, &str>::loaded(12),
-                second_descriptor.id,
+                descriptor.id,
                 subject_key("player:stable"),
                 DirtyRevision::new(7),
                 || 0,
@@ -4148,7 +4222,10 @@ mod tests {
 
     #[test]
     fn mutation_and_durable_receipts_remain_bound_to_one_guarded_subject() {
-        let descriptor = basic_descriptor("player.subject", 10);
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.subject", 10)
+        };
         let (_first_registry, mut first) = activate(
             &descriptor,
             SliceLoad::<u32, &str>::loaded(9),
@@ -4167,6 +4244,12 @@ mod tests {
         );
         let (mut first_tracker, mut first_fence) = first.restore_persistence_state().unwrap();
         let (mut second_tracker, _second_fence) = second.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_subject (subject TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+            )
+            .unwrap();
 
         let (revision, ()) = first
             .mutate(&mut first_tracker, |value| *value = 10)
@@ -4201,9 +4284,9 @@ mod tests {
             .unwrap();
         let mut wrong_subject_writer_called = false;
         assert_eq!(
-            first_fence.commit(second_snapshot, |_request| {
+            first_fence.commit(&mut connection, second_snapshot, |_request| {
                 wrong_subject_writer_called = true;
-                Ok::<_, &str>(durable_writer::acquire())
+                Err::<(), _>("wrong-subject writer must not run")
             }),
             Err(DurableCommitError::WrongSubject)
         );
@@ -4216,8 +4299,13 @@ mod tests {
             .unwrap()
             .unwrap();
         let first_receipt = first_fence
-            .commit(first_snapshot, |_request| {
-                Ok::<_, &str>(durable_writer::acquire())
+            .commit(&mut connection, first_snapshot, |request| {
+                request
+                    .execute_serialized(
+                        "INSERT INTO durable_subject (subject, value) VALUES (?1, ?2)",
+                        (request.subject_key().0.as_str(), *request.payload()),
+                    )
+                    .map_err(|_| "insert failed")
             })
             .unwrap();
         assert_eq!(
@@ -4225,79 +4313,257 @@ mod tests {
             DirtyAcknowledgement::WrongSubject
         );
         assert!(second_tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT value FROM durable_subject WHERE subject = 'player:first'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .unwrap(),
+            10
+        );
     }
 
     #[test]
-    fn failed_durable_write_and_stale_receipt_never_clear_dirty_state() {
-        let descriptor = basic_descriptor("player.dirty", 10);
+    fn durable_commit_rolls_back_adapter_failure_and_preserves_dirty_state() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.rollback", 10)
+        };
         let (_registry, mut guarded) = activate(
             &descriptor,
             SliceLoad::<u32, &str>::loaded(9),
-            "player:dirty",
+            "player:rollback",
             DirtyRevision::default(),
             || 0,
             |_| 0,
         );
         let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE durable_rollback (value INTEGER NOT NULL)")
+            .unwrap();
 
         guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
-        let first_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
-        let first = tracker
-            .begin_snapshot(first_permit, |value| *value)
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
             .unwrap()
             .unwrap();
-        assert_eq!(*first.payload(), 10);
-
-        guarded.mutate(&mut tracker, |value| *value = 11).unwrap();
-        let failed_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
-        let failed = tracker
-            .begin_snapshot(failed_permit, |value| *value)
-            .unwrap()
-            .unwrap();
-        let result = fence.commit(failed, |_request| {
-            Err::<durable_writer::Capability, _>("disk unavailable")
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            request
+                .execute_serialized("INSERT INTO durable_rollback (value) VALUES (?1)", [10])
+                .unwrap();
+            Err::<(), _>("disk unavailable")
         });
+
         assert_eq!(
             result,
             Err(DurableCommitError::WriteFailed("disk unavailable"))
         );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM durable_rollback", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            0,
+            "the fence-owned transaction must roll back adapter writes on callback failure"
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
         assert!(tracker.is_dirty());
         assert_eq!(
             guarded.restore_persistence_state(),
             Err(PersistenceStateAlreadyIssued),
             "a failed writer must not be bypassed by restoring a new clean tracker/fence"
         );
+    }
 
-        let stale_receipt = fence
-            .commit(first, |request| {
-                assert_eq!(*request.payload(), 10);
-                assert_eq!(request.write_revision(), DirtyRevision::new(1));
-                Ok::<_, &str>(durable_writer::acquire())
-            })
-            .unwrap();
-        assert_eq!(
-            tracker.acknowledge(stale_receipt),
-            DirtyAcknowledgement::Stale
+    #[test]
+    fn durable_commit_rejects_success_without_a_current_transaction_write() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.no_write", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:no_write",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
         );
-        assert!(tracker.is_dirty());
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
 
-        let latest_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
-        let latest = tracker
-            .begin_snapshot(latest_permit, |value| *value)
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |_request| Ok::<(), &str>(()));
+
+        assert_eq!(result, Err(DurableCommitError::MissingDurableWrite));
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+    }
+    #[test]
+    fn durable_commit_failure_mints_no_receipt_and_rolls_back_write() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.commit_failure", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:commit_failure",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE parent (id INTEGER PRIMARY KEY);\
+                 CREATE TABLE child (parent_id INTEGER NOT NULL REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            request
+                .execute_serialized(
+                    "INSERT INTO child (parent_id) VALUES (?1)",
+                    [*request.payload()],
+                )
+                .map_err(|_| "child insert failed")
+        });
+
+        assert!(matches!(result, Err(DurableCommitError::CommitFailed(_))));
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM child", [], |row| row.get::<_, u32>(0))
+                .unwrap(),
+            0,
+            "a failed SQLite commit must not leave a durable row or receipt"
+        );
+    }
+
+    #[test]
+    fn durable_revision_cas_rejection_keeps_dirty_until_one_row_write_commits() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            write_ordering: WriteOrdering::PersistedRevisionCas,
+            ..basic_descriptor("player.cas", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:cas",
+            DirtyRevision::new(41),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_cas (subject TEXT PRIMARY KEY, revision INTEGER NOT NULL, value INTEGER NOT NULL);\
+                 INSERT INTO durable_cas (subject, revision, value) VALUES ('player:cas', 40, 9)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let rejected_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let rejected_snapshot = tracker
+            .begin_snapshot(rejected_permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let rejected = fence.commit(&mut connection, rejected_snapshot, |request| {
+            request
+                .execute_cas(
+                    "UPDATE durable_cas SET revision = ?1, value = ?2 WHERE subject = ?3 AND revision = ?4",
+                    (
+                        request.write_revision().get() as i64,
+                        *request.payload() as i64,
+                        request.subject_key().0.as_str(),
+                        request.expected_persisted_revision().get() as i64,
+                    ),
+                )
+                .map_err(|_| "cas rejected")
+        });
+        assert_eq!(
+            rejected,
+            Err(DurableCommitError::WriteFailed("cas rejected"))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::new(41));
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision, value FROM durable_cas WHERE subject = 'player:cas'",
+                    [],
+                    |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u32>(1)?)),
+                )
+                .unwrap(),
+            (40, 9)
+        );
+
+        connection
+            .execute(
+                "UPDATE durable_cas SET revision = ?1 WHERE subject = 'player:cas'",
+                [DirtyRevision::new(41).get() as i64],
+            )
+            .unwrap();
+        let accepted_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let accepted_snapshot = tracker
+            .begin_snapshot(accepted_permit, |value| *value)
             .unwrap()
             .unwrap();
         let receipt = fence
-            .commit(latest, |request| {
-                assert_eq!(*request.payload(), 11);
-                assert_eq!(request.write_revision(), DirtyRevision::new(2));
-                Ok::<_, &str>(durable_writer::acquire())
+            .commit(&mut connection, accepted_snapshot, |request| {
+                request
+                    .execute_cas(
+                        "UPDATE durable_cas SET revision = ?1, value = ?2 WHERE subject = ?3 AND revision = ?4",
+                        (
+                            request.write_revision().get() as i64,
+                            *request.payload() as i64,
+                            request.subject_key().0.as_str(),
+                            request.expected_persisted_revision().get() as i64,
+                        ),
+                    )
+                    .map_err(|_| "cas rejected")
             })
             .unwrap();
+        assert_eq!(fence.persisted_revision(), DirtyRevision::new(42));
         assert_eq!(
             tracker.acknowledge(receipt),
             DirtyAcknowledgement::Acknowledged
         );
         assert!(!tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision, value FROM durable_cas WHERE subject = 'player:cas'",
+                    [],
+                    |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u32>(1)?)),
+                )
+                .unwrap(),
+            (42, 10)
+        );
     }
 
     #[test]
@@ -4307,6 +4573,7 @@ mod tests {
             WriteAuthority::new("test.other.writer"),
         );
         let descriptor = Box::leak(Box::new(SliceDescriptor {
+            write_binding: TEST_BINDING,
             write_ordering: WriteOrdering::PersistedRevisionCas,
             ..basic_descriptor("player.bound", 10)
         }));
@@ -4368,6 +4635,13 @@ mod tests {
         ));
 
         let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_bound (subject TEXT PRIMARY KEY, revision INTEGER NOT NULL, value INTEGER NOT NULL);\
+                 INSERT INTO durable_bound (subject, revision, value) VALUES ('player:bound', 41, 9)",
+            )
+            .unwrap();
         guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
         let permit = guarded.write_permit(WriteOutlet::Shutdown).unwrap();
         let snapshot = tracker
@@ -4375,7 +4649,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let receipt = fence
-            .commit(snapshot, |request| {
+            .commit(&mut connection, snapshot, |request| {
                 assert_eq!(request.binding(), TEST_BINDING);
                 assert_eq!(request.subject_key(), &subject_key("player:bound"));
                 assert_eq!(*request.payload(), 10);
@@ -4385,7 +4659,17 @@ mod tests {
                 );
                 assert_eq!(request.write_revision(), DirtyRevision::new(42));
                 assert_eq!(request.ordering(), WriteOrdering::PersistedRevisionCas);
-                Ok::<_, &str>(durable_writer::acquire())
+                request
+                    .execute_cas(
+                        "UPDATE durable_bound SET revision = ?1, value = ?2 WHERE subject = ?3 AND revision = ?4",
+                        (
+                            request.write_revision().get() as i64,
+                            *request.payload() as i64,
+                            request.subject_key().0.as_str(),
+                            request.expected_persisted_revision().get() as i64,
+                        ),
+                    )
+                    .map_err(|_| "cas rejected")
             })
             .unwrap();
         assert_eq!(fence.persisted_revision(), DirtyRevision::new(42));
@@ -4398,7 +4682,10 @@ mod tests {
 
     #[test]
     fn dirty_revision_overflow_rejects_mutation_without_changing_value() {
-        let descriptor = basic_descriptor("player.overflow", 10);
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.overflow", 10)
+        };
         let (_registry, mut guarded) = activate(
             &descriptor,
             SliceLoad::<u32, &str>::loaded(9),
