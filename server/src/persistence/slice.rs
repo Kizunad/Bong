@@ -13,7 +13,7 @@ use std::{
     },
 };
 
-use rusqlite::{Connection, Params, Transaction, TransactionBehavior};
+use rusqlite::{ffi, Connection, Params, Transaction, TransactionBehavior};
 use valence::prelude::{Resource, World};
 
 use crate::time::MILLIS_PER_TICK;
@@ -1839,6 +1839,59 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
         self.ordering
     }
 
+    fn requires_canonical_database(&self) -> Result<(), DurableWriteExecuteError> {
+        let schemas = self
+            .transaction
+            .prepare("PRAGMA database_list")
+            .map_err(DurableWriteExecuteError::Sql)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(DurableWriteExecuteError::Sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DurableWriteExecuteError::Sql)?;
+        if schemas == ["main"] {
+            Ok(())
+        } else {
+            Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::NonCanonicalDatabase,
+            ))
+        }
+    }
+
+    fn execute_durable<Q: Params>(
+        &self,
+        sql: &str,
+        params: Q,
+    ) -> Result<usize, DurableWriteExecuteError> {
+        self.requires_canonical_database()?;
+        let statement = self
+            .transaction
+            .prepare(sql)
+            .map_err(DurableWriteExecuteError::Sql)?;
+        if statement.readonly() {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::ReadOnlyStatement,
+            ));
+        }
+        drop(statement);
+        // SAFETY: the fence owns this live connection for the read-only SQLite query.
+        let total_changes_before =
+            unsafe { ffi::sqlite3_total_changes64(self.transaction.handle()) as u64 };
+        let affected_rows = self
+            .transaction
+            .execute(sql, params)
+            .map_err(DurableWriteExecuteError::Sql)?;
+        // SAFETY: the fence owns this live connection for the read-only SQLite query.
+        let total_changes_after =
+            unsafe { ffi::sqlite3_total_changes64(self.transaction.handle()) as u64 };
+        if total_changes_after <= total_changes_before {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::MissingCurrentTransactionWrite,
+            ));
+        }
+        self.requires_canonical_database()?;
+        Ok(affected_rows)
+    }
+
     /// Executes a serialized durable statement through the fence-owned transaction.
     pub(in crate::persistence) fn execute_serialized<Q: Params>(
         &self,
@@ -1853,10 +1906,7 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
                 },
             ));
         }
-        let affected_rows = self
-            .transaction
-            .execute(sql, params)
-            .map_err(DurableWriteExecuteError::Sql)?;
+        let affected_rows = self.execute_durable(sql, params)?;
         if affected_rows == 0 {
             return Err(DurableWriteExecuteError::Proof(
                 DurableWriteProofError::SerializedWriteRejected,
@@ -1880,10 +1930,7 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
                 },
             ));
         }
-        let affected_rows = self
-            .transaction
-            .execute(sql, params)
-            .map_err(DurableWriteExecuteError::Sql)?;
+        let affected_rows = self.execute_durable(sql, params)?;
         if affected_rows != 1 {
             return Err(DurableWriteExecuteError::Proof(
                 DurableWriteProofError::CasRejected { affected_rows },
@@ -1901,6 +1948,9 @@ pub(in crate::persistence) enum DurableWriteProofError {
         actual: WriteOrdering,
     },
     SerializedWriteRejected,
+    ReadOnlyStatement,
+    MissingCurrentTransactionWrite,
+    NonCanonicalDatabase,
     CasRejected {
         affected_rows: usize,
     },
@@ -4409,6 +4459,172 @@ mod tests {
         assert_eq!(fence.persisted_revision(), DirtyRevision::default());
         assert!(tracker.is_dirty());
     }
+
+    #[test]
+    fn durable_commit_rejects_write_to_attached_memory_database() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.attached_database", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:attached_database",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "ATTACH ':memory:' AS receipt_only;\
+                 CREATE TABLE receipt_only.rows (value INTEGER NOT NULL)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            request
+                .execute_serialized(
+                    "INSERT INTO receipt_only.rows (value) VALUES (?1)",
+                    [*request.payload()],
+                )
+                .map_err(|_| "attached database must not mint a durable receipt")
+        });
+
+        assert_eq!(
+            result,
+            Err(DurableCommitError::WriteFailed(
+                "attached database must not mint a durable receipt"
+            ))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM receipt_only.rows", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            0,
+            "the rejected callback must not write even the attached in-memory database"
+        );
+    }
+
+    #[test]
+    fn durable_commit_rejects_write_to_temp_database() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.temp_database", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:temp_database",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TEMP TABLE receipt_only (value INTEGER NOT NULL)")
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            request
+                .execute_serialized(
+                    "INSERT INTO receipt_only (value) VALUES (?1)",
+                    [*request.payload()],
+                )
+                .map_err(|_| "temp database must not mint a durable receipt")
+        });
+
+        assert_eq!(
+            result,
+            Err(DurableCommitError::WriteFailed(
+                "temp database must not mint a durable receipt"
+            ))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM receipt_only", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            0,
+            "the rejected callback must not write even the temporary database"
+        );
+    }
+
+    #[test]
+    fn durable_commit_rejects_stale_sqlite_change_count_from_non_dml_statement() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.stale_change_count", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:stale_change_count",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_change_count (value INTEGER NOT NULL);\
+                 INSERT INTO durable_change_count (value) VALUES (9)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            request
+                .execute_serialized("SAVEPOINT receipt_only", [])
+                .map_err(|_| "non-DML statement must not mint a durable receipt")
+        });
+
+        assert_eq!(
+            result,
+            Err(DurableCommitError::WriteFailed(
+                "non-DML statement must not mint a durable receipt"
+            ))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM durable_change_count", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            9,
+            "a stale connection-level change count must not acknowledge this snapshot"
+        );
+    }
+
     #[test]
     fn durable_commit_failure_mints_no_receipt_and_rolls_back_write() {
         let descriptor = SliceDescriptor {
