@@ -2,11 +2,11 @@
 
 > **一句话主题**：把三处最挡"横向扩内容"的硬编码注册表迁成扫盘数据文件——craft 手搓/制作台配方（pin 测试锁定 90 条 + 5 条 legacy 的 Rust 元组表）、功法元数据（49 条 const 数组）、terrain 方块名映射（`blocks.rs` + `raster.rs` 孪生双份 match）——**零新系统、零 wire 改动，有效数据的运行时语义零变化**（唯一有意变更：无效引用从运行时静默失败改为启动期 fail fast，错误契约见 P2），只搬装载来源不动消费方，让"加一条内容 = 加一个数据条目"的覆盖面从物品/丹方/锻造蓝图扩到配方/功法/地形材质。
 
-**状态**：Active（2026-07-27 pre-P0 决议已收口，实施以 §8.1 为准）。
+**状态**：Active（P0 已作为 PR-A 实现落盘，待完整本地门禁与 review；P1/P2 依序拆为后续 PR-B/PR-C，实施以 §8.1 为准）。
 
 | 阶段 | 主题 | 状态 |
 |------|------|------|
-| P0 | craft 配方数据化——workbench 90 条（pin 锁定）+ legacy 5 条 → `assets/craft/recipes/*.toml` 扫盘 + 对拍回归门 | ⬜ |
+| P0 | craft 配方数据化——workbench 90 条（pin 锁定）+ legacy 5 条 → `assets/craft/recipes/*.toml` 扫盘 + 对拍回归门 | ⏳ PR-A：实现已落盘，待门禁与 review |
 | P1 | 功法元数据数据化——`TECHNIQUE_DEFINITIONS` 49 条 → TOML + 双向 wiring 启动校验 | ⬜ |
 | P2 | 方块名映射查表化——`blocks.rs` + `raster.rs` 孪生表合一 + manifest 引用启动期 fail-fast（替代静默丢材质） | ⬜ |
 | P3 | 范围裁决项——矿物 registry / NPC 原型默认掉落 / 丹道 6 方包装（§8.1 #5 已裁决为本 plan 不实施） | ✅ 2026-07-27 |
@@ -34,7 +34,7 @@
 - **worldview 锚点**：纯基建无新玩法；数据条目 display_name 仍受 §三 L63 命名禁词约束（loader 可顺带 lint，§8 #6）。
 - **qi_physics 锚点**：qi_cost 数值只搬运不改，不新增常数不碰 ledger。
 
-## P0 craft 配方数据化 ⬜
+## P0 craft 配方数据化 ⏳ PR-A（实现已落盘，待门禁与 review）
 
 - 新 `server/assets/craft/recipes/` 目录，TOML 格式（文件粒度 §8 #1）：字段镜像 `CraftRecipe`（id / category / display_name / materials / qi_cost / time_sec / output / unlock_sources / station / requirements）。time 以秒存储、加载时 ×20 ticks（对齐 `workbench_recipes.rs:8` 现注释惯例）。
 - 新 loader `craft/data.rs`：`load_craft_recipes_from_dir` 启动扫盘 → 逐条 `registry.register()`。`deny_unknown_fields`；materials/output 引用的 item id 必须在 `ItemRegistry`（启动校验 fail fast）；重复 id 拒载（复用 `RegistryError::DuplicateId`）。
@@ -140,17 +140,17 @@
 
 **决议**：
 1. 实施期间每次修改旧配方表前先 `git fetch origin` 并检查开放 PR/最新 main 是否触碰 owned files；若有并行变更，先 merge 后重新生成 canonical baseline，禁止手工拼旧快照。
-2. 本次按用户授权的固定 claim 分支 `refactor/plan-registry-datafication-v1` 走**单 PR**闭环；P0/P1/P2 用独立 atomic commits 分层，不沿用骨架原“固定 3 PR”草案。
-3. 所有 cargo 命令在 `scripts/build-token.sh` 未落 main 前经 `flock /tmp/bong-cargo.lock -c "cargo ..."`；push 前紧邻执行 `git fetch origin && git merge origin/main`，任何合入变更后重跑完整 server 门与 P2 worldgen 门。
+2. 本 plan 按用户批准的有序 stack 实施：PR-A 仅交付 P0 craft，PR-B 以已合并的 PR-A 为 base 交付 P1 technique，PR-C 以已合并的 PR-B 为 base 交付 P2 block/terrain；每个 PR 都保持可单独审阅的原子范围。
+3. 所有 cargo 命令在 `scripts/build-token.sh` 未落 main 前经 `flock /tmp/bong-cargo.lock -c "cargo ..."`；push 前紧邻执行 `git fetch origin && git merge origin/main`，任何合入变更后重跑完整 server 门与该 PR 受影响的专项门禁。
 
 **落点**：本 plan §10、用户本轮 claim/worktree/gate 协议；plan P0-P2。
 
-## §10 实施工作流（单 PR，三阶段 atomic commits）
+## §10 实施工作流（PR-A → PR-B → PR-C 有序 stack）
 
-1. **P0 craft**：先从旧 `register_examples + register_workbench_recipes` 生成 canonical fixture，再落 TOML/loader/启动引用校验，逐条对拍后删除生产硬编码来源；其余模块 code-register 不动。
-2. **P1 technique**：先从旧 49 条 const 生成有序 canonical fixture，再落 owned `TechniqueRegistry`、迁移调用方与分类 wiring 校验；保住 NPC source order、icon/cast/race payload 快照。
-3. **P2 block**：先锁 213 catalog 与 39 fast-path 的逐条结果，再以 catalog + `BlockKind::from_str` + 两 alias 合一 resolver，删除 raster 镜像，补 manifest/NBT/placement 汇总 fail-fast。
-4. 每阶段独立中文 atomic commit；每个 commit 均带 `Model: gpt-5.6-sol-xhigh` 与 `Co-Authored-By: Claude <noreply@anthropic.com>` trailer。纯 server 基建，无视觉资产三轮要求。
-5. 每阶段先跑 targeted tests；push 前跑 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（全部经 flock），P2 追加 `bash scripts/dev-reload.sh`。管道不得吞退出码。
-6. push 前 `git fetch origin && git merge origin/main`；merge 带入任何变化则重新执行完整门禁，并针对最终 HEAD 启动 fresh-context、read-only、首步 SHA 对拍的对抗 validator。任何 HEAD 变化都使旧 PASS 失效。
-7. plan 全阶段完成后更新状态、补 `## Finish Evidence` 并迁入 `docs/finished_plans/`；push 固定 claim 分支，中文 PR 标题/body 含完整 `plan-registry-datafication-v1`，独立评论 `/review`，等待 e2e 与 review 收敛。
+1. **PR-A / P0 craft**：先从旧 `register_examples + register_workbench_recipes` 生成 canonical fixture，再落 TOML/loader/启动引用校验，逐条对拍后删除生产硬编码来源；其余模块 code-register 不动。
+2. **PR-B / P1 technique**：仅在 PR-A 合并且 review 收敛后，从旧 49 条 const 生成有序 canonical fixture，再落 owned `TechniqueRegistry`、迁移调用方与分类 wiring 校验；保住 NPC source order、icon/cast/race payload 快照。
+3. **PR-C / P2 block**：仅在 PR-B 合并且 review 收敛后，先锁 catalog 与 raster fast-path 的逐条结果，再以 catalog + `BlockKind::from_str` + alias 合一 resolver，删除 raster 镜像，补 manifest/NBT/placement 汇总 fail-fast。
+4. 每个阶段独立中文 atomic commit；每个 commit 均带 `Model: gpt-5.6-sol-xhigh` 与 `Co-Authored-By: Claude <noreply@anthropic.com>` trailer。纯 server 基建，无视觉资产三轮要求。
+5. 每个 PR 先跑 targeted tests；push 前跑 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`（全部经 flock），PR-C 追加 `bash scripts/dev-reload.sh`。管道不得吞退出码。
+6. push 前 `git fetch origin && git merge origin/main`；merge 带入任何变化则重新执行该 PR 的完整门禁，并针对最终 HEAD 启动 fresh-context、read-only、首步 SHA 对拍的对抗 validator。任何 HEAD 变化都使旧 PASS 失效。
+7. 仅全部阶段完成后更新状态、补 `## Finish Evidence` 并迁入 `docs/finished_plans/`。PR-A 当前只开普通 PR、不触发 `/review`；PR-B/PR-C 在前序 PR 合并并完成 review 前不得创建。
