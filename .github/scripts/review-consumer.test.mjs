@@ -136,10 +136,13 @@ const expectedCallerJobs = `jobs:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
       review_base_url: \${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
-      shadow: true
+      shadow: false
       max_diff_chars: 40000
       max_shard_chars: 12000
-      worker_timeout_ms: 120000
+      # 300s, not the 120s default: the relay's upstream routinely takes 60-135s
+      # per request under load, so 120s left no room for a single retry and the
+      # summary stage died to "timeout after 120000ms" while requests were live.
+      worker_timeout_ms: 300000
       circuit_manual_retry: \${{ github.event_name == 'workflow_dispatch' }}
     secrets:
       review_api_key: \${{ secrets.REVIEW_CLAUDE_API_KEY }}`;
@@ -259,8 +262,8 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
-  assert.match(yaml, /shadow: true/);
-  assert.match(yaml, /worker_timeout_ms: 120000/);
+  assert.match(yaml, /shadow: false/);
+  assert.match(yaml, /worker_timeout_ms: 300000/);
   assert.match(yaml, /circuit_manual_retry: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/);
   assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v2\.json/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
