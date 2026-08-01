@@ -1857,12 +1857,19 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
         }
     }
 
+    fn schema_version(&self) -> Result<i64, DurableWriteExecuteError> {
+        self.transaction
+            .query_row("PRAGMA schema_version", [], |row| row.get(0))
+            .map_err(DurableWriteExecuteError::Sql)
+    }
+
     fn execute_durable<Q: Params>(
         &self,
         sql: &str,
         params: Q,
     ) -> Result<usize, DurableWriteExecuteError> {
         self.requires_canonical_database()?;
+        let schema_version_before = self.schema_version()?;
         let statement = self
             .transaction
             .prepare(sql)
@@ -1880,6 +1887,12 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
             .transaction
             .execute(sql, params)
             .map_err(DurableWriteExecuteError::Sql)?;
+        let schema_version_after = self.schema_version()?;
+        if schema_version_after != schema_version_before {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::SchemaMutationDetected,
+            ));
+        }
         // SAFETY: the fence owns this live connection for the read-only SQLite query.
         let total_changes_after =
             unsafe { ffi::sqlite3_total_changes64(self.transaction.handle()) as u64 };
@@ -1951,6 +1964,7 @@ pub(in crate::persistence) enum DurableWriteProofError {
     ReadOnlyStatement,
     MissingCurrentTransactionWrite,
     NonCanonicalDatabase,
+    SchemaMutationDetected,
     CasRejected {
         affected_rows: usize,
     },
@@ -4622,6 +4636,91 @@ mod tests {
                 .unwrap(),
             9,
             "a stale connection-level change count must not acknowledge this snapshot"
+        );
+    }
+
+    #[test]
+    fn durable_commit_rejects_schema_mutating_cas_statement_with_cascade_changes() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            write_ordering: WriteOrdering::PersistedRevisionCas,
+            ..basic_descriptor("player.schema_cascade", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:schema_cascade",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE child (
+                     parent_id INTEGER NOT NULL REFERENCES parent(id) ON DELETE CASCADE
+                 );
+                 INSERT INTO parent (id) VALUES (1);
+                 INSERT INTO child (parent_id) VALUES (1);
+                 CREATE TABLE durable_schema_cascade (
+                     subject TEXT PRIMARY KEY,
+                     revision INTEGER NOT NULL,
+                     value INTEGER NOT NULL
+                 );
+                 INSERT INTO durable_schema_cascade (subject, revision, value)
+                 VALUES ('player:schema_cascade', 0, 9);",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let result = fence.commit(&mut connection, snapshot, |request| {
+            request
+                .execute_cas("DROP TABLE parent", [])
+                .map_err(|_| "schema mutation must not mint a durable receipt")
+        });
+
+        assert_eq!(
+            result,
+            Err(DurableCommitError::WriteFailed(
+                "schema mutation must not mint a durable receipt"
+            ))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::default());
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM parent", [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap(),
+            1,
+            "a schema-mutating statement must roll back before it can acknowledge the snapshot"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM child", [], |row| row.get::<_, u32>(0))
+                .unwrap(),
+            1,
+            "foreign-key cascade side effects must roll back with the rejected DDL"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision, value FROM durable_schema_cascade WHERE subject = 'player:schema_cascade'",
+                    [],
+                    |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u32>(1)?)),
+                )
+                .unwrap(),
+            (0, 9),
+            "the durable snapshot row must remain unchanged after DDL rejection"
         );
     }
 
