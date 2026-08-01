@@ -9,7 +9,7 @@ const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.ym
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const canaryContractPath = '.github/workflows/provider-canary.yml';
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
-const centralSha = '774217a8047ede0efefa5163d2365d5decf89bb3';
+const centralSha = '4f19ad28fa10530ddb9d8aa881b581244ee1426f';
 const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 // Hash of Kizunad/review/.github/workflows/review.yml; re-verify it on every pin bump.
 // It changes only when that workflow changes, which a central pin bump usually does not.
@@ -131,7 +131,7 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@774217a8047ede0efefa5163d2365d5decf89bb3
+    uses: Kizunad/review/.github/workflows/review.yml@4f19ad28fa10530ddb9d8aa881b581244ee1426f
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
@@ -255,7 +255,7 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@774217a8047ede0efefa5163d2365d5decf89bb3/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@4f19ad28fa10530ddb9d8aa881b581244ee1426f/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
