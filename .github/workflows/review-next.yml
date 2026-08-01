@@ -40,7 +40,10 @@ jobs:
       shadow: true
       max_diff_chars: 40000
       max_shard_chars: 12000
-      worker_timeout_ms: 120000
+      # 300s, not the 120s default: the relay's upstream routinely takes 60-135s
+      # per request under load, so 120s left no room for a single retry and the
+      # summary stage died to "timeout after 120000ms" while requests were live.
+      worker_timeout_ms: 300000
       circuit_manual_retry: ${{ github.event_name == 'workflow_dispatch' }}
     secrets:
       review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}
