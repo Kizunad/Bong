@@ -1,2 +1,3 @@
 # first_owner_id	second_owner_id	input_type	code	reason
-# Intentionally empty: R7 P0 authorizes no default-key collision exemption; future rows use canonical BindingOwner ids.
+combat.quick_slot_2	vanilla.screenshot	KEYSYM	F2	Quick slot 2 intentionally retains the frozen F2 default while the vanilla screenshot reservation remains explicit; a future key migration must re-decide this exemption.
+combat.quick_slot_5	vanilla.toggle_perspective	KEYSYM	F5	Quick slot 5 intentionally retains the frozen F5 default while the vanilla perspective reservation remains explicit; a future key migration must re-decide this exemption.
