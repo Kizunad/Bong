@@ -653,15 +653,9 @@ async function workflowFinalize() {
 
 export function loadPrContext(
   pr,
-  { runGh = gh, localDiff = localPrDiff, log = console.error, repository = resolveRepository(runGh) } = {},
+  { runGh = gh, localDiff = localPrDiff, log = console.error, repository } = {},
 ) {
-  const meta = JSON.parse(
-    runGh(["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,headRefOid,files"]),
-  );
-  meta.baseRefOid = requireMetadataOid(
-    runGh(["api", `repos/${repository}/pulls/${pr}`, "--jq", ".base.sha"]),
-    "base",
-  );
+  const viewArgs = ["pr", "view", pr, "--json", "title,body,headRefName,baseRefName,files"];
   let diff;
   let diffSource;
   let apiFailure = null;
@@ -671,7 +665,22 @@ export function loadPrContext(
     diffSource = "api";
   } catch (error) {
     apiFailure = error;
+  }
+
+  let meta;
+  if (apiFailure) {
     try {
+      meta = JSON.parse(runGh(viewArgs));
+      const snapshot = JSON.parse(
+        runGh([
+          "api",
+          `repos/${repository || resolveRepository(runGh)}/pulls/${pr}`,
+          "--jq",
+          "{base: .base.sha, head: .head.sha}",
+        ]),
+      );
+      meta.baseRefOid = requireMetadataOid(snapshot?.base, "base");
+      meta.headRefOid = requireMetadataOid(snapshot?.head, "head");
       diff = localDiff(pr, meta);
       diffSource = "local";
     } catch (localError) {
@@ -679,6 +688,8 @@ export function loadPrContext(
         `PR diff acquisition failed (api: ${errorText(apiFailure)}; local: ${errorText(localError)})`,
       );
     }
+  } else {
+    meta = JSON.parse(runGh(viewArgs));
   }
   log(`Review diff source: ${diffSource}`);
   let diffTruncated = false;
