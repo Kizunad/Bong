@@ -590,6 +590,16 @@ pub(crate) fn attach_cultivation_to_joined_clients(
             }
         };
 
+        let mut canonical_id = player_persistence
+            .as_deref()
+            .and_then(|persistence| {
+                load_current_character_id(persistence, username.0.as_str())
+                    .ok()
+                    .flatten()
+            })
+            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
+            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
+
         // plan-race-system-v1 P0 review r4（bughunt major-2 收口）—— 未知 race id 必须
         // 拒载**整份** bundle，不只是 `cultivation` 这一个 slice：此前的实现只在下面
         // `cultivation` 字段的解码分支里做校验，一旦拒绝也只把 `cultivation` 变量留在
@@ -625,7 +635,40 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 );
                 None
             } else {
-                Some(bundle)
+                let Some(value) = bundle.get("life_record") else {
+                    tracing::error!(
+                        "[bong][cultivation] rejecting persisted cultivation bundle for `{}`: \
+                         required life_record identity anchor is absent; falling back to the \
+                         canonical live record {}",
+                        username.0,
+                        canonical_id,
+                    );
+                    return None;
+                };
+                match serde_json::from_value::<LifeRecord>(value.clone()) {
+                    Ok(decoded) if decoded.character_id == canonical_id => Some(bundle),
+                    Ok(decoded) => {
+                        tracing::error!(
+                            "[bong][cultivation] rejecting persisted cultivation bundle for `{}`: \
+                             life_record character_id `{}` conflicts with canonical character `{}`; \
+                             falling back to default state",
+                            username.0,
+                            decoded.character_id,
+                            canonical_id,
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            "[bong][cultivation] rejecting persisted cultivation bundle for `{}`: \
+                             required life_record identity anchor is invalid: {error}; \
+                             falling back to canonical live record {}",
+                            username.0,
+                            canonical_id,
+                        );
+                        None
+                    }
+                }
             }
         });
 
@@ -648,15 +691,6 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         let mut karma = Karma::default();
         let mut practice_log = PracticeLog::default();
         let mut contamination = Contamination::default();
-        let mut canonical_id = player_persistence
-            .as_deref()
-            .and_then(|persistence| {
-                load_current_character_id(persistence, username.0.as_str())
-                    .ok()
-                    .flatten()
-            })
-            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
-            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
         let mut life_record = LifeRecord::new(canonical_id.clone());
         let mut insight_quota = InsightQuota::default();
         let mut unlocked_perceptions = UnlockedPerceptions::default();
@@ -1580,7 +1614,7 @@ mod tests {
 
     use crate::body_plan::{RaceId, RaceRegistry};
     use crate::combat::components::Lifecycle;
-    use crate::cultivation::components::{ColorKind, ContamSource};
+    use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, ColorKind, ContamSource};
     use crate::cultivation::lifespan::{DeathRegistry, LifespanCapTable, LifespanComponent};
     use crate::persistence::{
         load_active_tribulation, load_ascension_quota, persist_active_tribulation,
@@ -2739,11 +2773,12 @@ mod tests {
         .expect("seeding cultivation bundle with a custom race should succeed");
     }
 
-    fn seed_cultivation_bundle_with_qi(
+    fn seed_cultivation_bundle_with_qi_and_life_record(
         settings: &PersistenceSettings,
         username: &str,
         qi_current: f64,
         qi_max: f64,
+        life_record: &LifeRecord,
     ) {
         crate::persistence::persist_player_cultivation_bundle(
             settings,
@@ -2758,7 +2793,7 @@ mod tests {
             &QiColor::default(),
             &Karma::default(),
             &Contamination::default(),
-            &LifeRecord::new(canonical_player_id(username)),
+            life_record,
             &PracticeLog::default(),
             &InsightQuota::default(),
             &UnlockedPerceptions::default(),
@@ -2769,6 +2804,171 @@ mod tests {
             None,
         )
         .expect("seeding cultivation qi snapshot should succeed");
+    }
+
+    fn seed_cultivation_bundle_with_qi(
+        settings: &PersistenceSettings,
+        username: &str,
+        qi_current: f64,
+        qi_max: f64,
+    ) {
+        let life_record = LifeRecord::new(canonical_player_id(username));
+        seed_cultivation_bundle_with_qi_and_life_record(
+            settings,
+            username,
+            qi_current,
+            qi_max,
+            &life_record,
+        );
+    }
+
+    #[test]
+    fn joined_clients_reject_conflicting_persisted_life_record_before_live_qi_claim() {
+        let (settings, root) = temp_persistence_settings("reject-conflicting-life-record");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let raw_character_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "Canonical")
+                .expect("seeding current character id should succeed");
+        let canonical_id =
+            crate::player::state::player_character_id("Canonical", &raw_character_id);
+        let conflicting_life_record = LifeRecord::new(canonical_player_id("OtherPlayer"));
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "Canonical",
+            4.0,
+            12.0,
+            &conflicting_life_record,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(player_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("Canonical");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let world = app.world();
+        let life_record = world
+            .get::<LifeRecord>(entity)
+            .expect("rejected bundle must still attach a canonical LifeRecord");
+        let death_registry = world
+            .get::<DeathRegistry>(entity)
+            .expect("rejected bundle must still attach a canonical DeathRegistry");
+        let cultivation = world
+            .get::<Cultivation>(entity)
+            .expect("rejected bundle must still attach a safe cultivation state");
+        assert_eq!(
+            life_record.character_id, canonical_id,
+            "the persisted OtherPlayer record must never become Canonical's live identity"
+        );
+        assert_eq!(
+            death_registry.char_id, canonical_id,
+            "DeathRegistry must share the same canonical identity as LifeRecord"
+        );
+        assert_eq!(
+            cultivation,
+            &Cultivation::default(),
+            "the conflicting identity anchor must reject the whole bundle, including its persisted qi"
+        );
+        assert_eq!(
+            ActorQiIdentity::from_life_record(life_record, ActorQiKind::Player)
+                .expect("canonical live LifeRecord must make one valid actor identity")
+                .account(),
+            crate::qi_physics::ledger::QiAccountId::player(canonical_id),
+            "the only live actor qi claim after rejection must be canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_reject_persisted_bundle_missing_life_record_before_live_qi_claim() {
+        let (settings, root) = temp_persistence_settings("reject-missing-life-record");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let raw_character_id =
+            crate::player::state::rotate_current_character_id(&player_persistence, "MissingAnchor")
+                .expect("seeding current character id should succeed");
+        let canonical_id =
+            crate::player::state::player_character_id("MissingAnchor", &raw_character_id);
+        let life_record = LifeRecord::new(canonical_id.clone());
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "MissingAnchor",
+            4.0,
+            12.0,
+            &life_record,
+        );
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("open sqlite connection to remove the required identity anchor");
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                rusqlite::params!["MissingAnchor"],
+                |row| row.get(0),
+            )
+            .expect("seeded bundle should exist before removing its identity anchor");
+        let mut bundle: serde_json::Value = serde_json::from_str(cultivation_json.as_str())
+            .expect("seeded cultivation bundle must be valid JSON before mutation");
+        bundle
+            .as_object_mut()
+            .expect("cultivation bundle must be a JSON object")
+            .remove("life_record")
+            .expect("fixture must remove an existing life_record identity anchor");
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![
+                    serde_json::to_string(&bundle)
+                        .expect("mutated cultivation bundle must remain serializable"),
+                    "MissingAnchor"
+                ],
+            )
+            .expect("removing the identity anchor should update the persisted bundle");
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(player_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("MissingAnchor");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let world = app.world();
+        let live_life_record = world
+            .get::<LifeRecord>(entity)
+            .expect("missing persisted identity must still produce a canonical live LifeRecord");
+        let death_registry = world
+            .get::<DeathRegistry>(entity)
+            .expect("missing persisted identity must still produce a canonical DeathRegistry");
+        let cultivation = world
+            .get::<Cultivation>(entity)
+            .expect("missing persisted identity must still produce a safe cultivation state");
+        assert_eq!(
+            live_life_record.character_id, canonical_id,
+            "a bundle without LifeRecord must not invent a second identity from its other slices"
+        );
+        assert_eq!(
+            death_registry.char_id, canonical_id,
+            "DeathRegistry must bind the same canonical identity after rejecting the bundle"
+        );
+        assert_eq!(
+            cultivation,
+            &Cultivation::default(),
+            "a bundle without its required identity anchor must not restore its persisted qi"
+        );
+        assert_eq!(
+            ActorQiIdentity::from_life_record(live_life_record, ActorQiKind::Player)
+                .expect("canonical live LifeRecord must make one valid actor identity")
+                .account(),
+            crate::qi_physics::ledger::QiAccountId::player(canonical_id),
+            "the live actor qi claim after missing-anchor rejection must remain canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
