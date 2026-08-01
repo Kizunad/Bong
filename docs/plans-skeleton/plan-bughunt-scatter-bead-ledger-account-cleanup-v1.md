@@ -15,7 +15,7 @@
 - **进料**：现有 `ScatterBeadUseRequest` 经 `server/src/network/client_request_handler.rs:1687-1715` 进入 `server/src/zhenfa/mod.rs`；`handle_scatter_bead_use` 产生即时 source 或 `ScatterBeadBurials`。`handle_scatter_bead_trigger_requests` 当前只由 `server/src/zhenfa/mod.rs:5562,5576` 的测试直接注入 `ScatterBeadTriggerRequest`，而现有 client dispatch 只有 `ClientRequestV1::QiScatterBeadUse → ScatterBeadUseRequest`；因此 P1-B 明确把真实 client/protocol producer 与 dispatch 缺口纳入本 plan。`tick_scatter_bead_excretion` 处理自然逸散与 early-depleted。
 - **出料**：只复用 `release_scatter_qi_to_zone` / `qi_release_to_zone` / `WorldQiAccount::transfer` 向 zone 与 `QiAccountId::overflow` 转移真元；本 plan 唯一新增的账户操作是 terminal 成功后对**已存在且精确为 `0.0`**的临时 source 调用 `WorldQiAccount::remove_balance`。不删 zone、overflow 或 `WorldQiAccount::transfers` audit。
 - **共享类型 / event**：复用 `WorldQiAccount`、`QiAccountId`、`QiTransfer`、`QiTransferReason::ReleaseToZone`、`QI_EPSILON`、`QI_SCATTER_BEAD_CAPACITY`、`ScatterBeadBurials`、`ScatterBeadUseRequest`、`ScatterBeadTriggerRequest` 与既有 `CombatClock`/`ZhenfaSystemSet::Runtime`；P1-B 只补 owner-trigger 所需的真实 client/protocol producer 与 dispatch，不新增 ledger、epsilon、transfer event、tick resource、receipt、diagnostic bus 或平行账户表。
-- **跨仓库契约**：server runtime lifecycle cleanup，并纳入 P1-B 所需的窄范围 client/protocol owner-trigger producer；不改 agent Redis、VFX/audio/narration 或无关请求形状。
+- **跨仓库契约**：以 server runtime lifecycle cleanup 为主；P1-B 的唯一跨层例外限于「范围边界与相邻 owner」中逐项列明的 owner-trigger client/protocol C2S producer surface。除该例外外，不改 agent Redis、VFX/audio/narration、client/proto 或无关请求形状。
 - **worldview 锚点**：`worldview.md §五 L417-L421`（环境诡雷无人触发仍会随载体逸散）、`§五 L457-L465`（阵法主轴是真元逆逸散效率）、`§二 L30-L46`（灵压与环境交换）。
 - **qi_physics 锚点**：`server/src/qi_physics/ledger.rs:390-480` 是账户唯一权威，`server/src/qi_physics/constants.rs:52,122` 提供 capacity/epsilon。对每个 source，`ledger.balance(source) + Σ(source 发出的 ReleaseToZone transfer.amount) == QI_SCATTER_BEAD_CAPACITY`；terminal commit 仅转出其当时实际余额，成功后 `ledger.balance(source) == 0.0` 且 `!ledger.has_account(source)`。禁止用 `set_balance(source, 0.0)` 擦账或把 cleanup 冒充 transfer。
 
@@ -79,7 +79,8 @@
 - `docs/plans-skeleton/plan-bughunt-scatter-bead-burial-restart-loss-v1.md` 独占 burial persistence、跨重启 identity、hydrate/replay、`next_id` 与 shutdown flush；本 plan 不读写其 persistence schema。
 - 不修 active-use 已消费 item 后的 inventory rollback，也不为 failed terminal 加 runtime recovery、retry budget、attempt/completion receipt、anti-orphan guard、diagnostic event/resource、mutation fixture 或 terminal manifest。它们不是 r9 #1 的 zero-key retirement 交付；如第一性验真证明局部 full-preflight 无法保证提交前拒绝，必须另立 finding，而非扩张本 plan。
 - 不重构 `WorldQiAccount`、`summarize_world_qi`、per-account telemetry schema、transfer history retention 或所有 ephemeral account；只处理两个散灵珠 source namespace。
-- 不改散灵珠 capacity、`EmbeddedTrap` 逸散公式、zone cap、disturbance tag、VFX/audio/narration、owner 权限或 client/proto。
+- P1-B 是本 plan 唯一允许改变的 client/proto surface，且仅为 owner-trigger 的 C2S producer 闭环：`client/src/main/java/com/bong/client/mixin/MixinClientPlayerInteractionManagerAlchemy.java` 的 owner 触发交互入口、`client/src/main/java/com/bong/client/network/ClientRequestProtocol.java` 的编码、`ClientRequestSender.java` 的发送、`proto/bong/envelope.proto` 的 request envelope/message、`server/src/schema/client_request.rs` 的 `ClientRequestV1` variant、`server/src/schema/proto_convert.rs` 的双向 payload conversion，以及 `server/src/network/client_request_handler.rs` 的 `DispatchResources` event writer 与 dispatch arm。实现必须让该 C2S 链实际发出 `ScatterBeadTriggerRequest`，并以 client/protocol → handler → `zhenfa::register` Runtime 的真实路径覆盖 P2；不得借此改其他请求、agent Redis、VFX/audio/narration。
+- 不改散灵珠 capacity、`EmbeddedTrap` 逸散公式、zone cap、disturbance tag、无关的 client/proto 请求、owner 权限或 client/proto 的任何其他 surface。
 
 ## §8.1 决议（骨架实施合同，`origin/main @ de75f14e43daf1105ea978c43d187acbb7f12f14`）
 
