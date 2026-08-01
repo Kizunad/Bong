@@ -83,7 +83,7 @@ jobs:
       contents: read
       pull-requests: read
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 110
     outputs:
       checkout_outcome: ${{ steps.checkout.outcome }}
       review_outcome: ${{ steps.review_run.outcome }}
@@ -134,7 +134,7 @@ jobs:
         id: review_run
         if: steps.checkout.outcome == 'success'
         continue-on-error: true
-        timeout-minutes: 40
+        timeout-minutes: 70
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -145,7 +145,8 @@ jobs:
           REVIEW_MAX_DIFF: ${{ vars.REVIEW_MAX_DIFF || '40000' }}
           REVIEW_MAX_PLAN: ${{ vars.REVIEW_MAX_PLAN || '20000' }}
           REVIEW_CODEX_TIMEOUT_MS: ${{ vars.REVIEW_CODEX_TIMEOUT_MS || '900000' }}
-          REVIEW_TOTAL_TIMEOUT_MINUTES: ${{ vars.REVIEW_TOTAL_TIMEOUT_MINUTES || '35' }}
+          REVIEW_REVIEWER_FLOOR_MS: ${{ vars.REVIEW_REVIEWER_FLOOR_MS || '120000' }}
+          REVIEW_TOTAL_TIMEOUT_MINUTES: ${{ vars.REVIEW_TOTAL_TIMEOUT_MINUTES || '60' }}
           REVIEW_CODEX_CONCURRENCY: ${{ vars.REVIEW_CODEX_CONCURRENCY || '1' }}
           REVIEW_CODEX_RETRIES: ${{ vars.REVIEW_CODEX_RETRIES || '3' }}
           REVIEW_CODEX_RETRY_MS: ${{ vars.REVIEW_CODEX_RETRY_MS || '15000' }}

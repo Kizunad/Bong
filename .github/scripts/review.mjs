@@ -18,7 +18,10 @@ const MODEL = process.env.REVIEW_CODEX_MODEL || "gpt-5.6-sol";
 const MAX_DIFF = intEnv("REVIEW_MAX_DIFF", 40_000, 10_000);
 const MAX_PLAN = intEnv("REVIEW_MAX_PLAN", 20_000, 5_000);
 const CODEX_TIMEOUT_MS = intEnv("REVIEW_CODEX_TIMEOUT_MS", 900_000, 120_000);
-const REVIEW_TOTAL_TIMEOUT_MS = intEnv("REVIEW_TOTAL_TIMEOUT_MINUTES", 35, 5) * 60_000;
+const REVIEW_TOTAL_TIMEOUT_MS = intEnv("REVIEW_TOTAL_TIMEOUT_MINUTES", 60, 5) * 60_000;
+const REVIEWER_FLOOR_MS = intEnv("REVIEW_REVIEWER_FLOOR_MS", 120_000, 1_000);
+const REVIEW_CLEANUP_RESERVE_MS = 180_000;
+export const REVIEWER_BUDGET_STARVED = "REVIEWER_BUDGET_STARVED";
 const GH_TIMEOUT_MS = intEnv("REVIEW_GH_TIMEOUT_MS", 30_000, 1_000);
 const CODEX_CONCURRENCY = intEnv("REVIEW_CODEX_CONCURRENCY", 1, 1);
 const CODEX_RETRIES = intEnv("REVIEW_CODEX_RETRIES", 3, 1);
@@ -184,8 +187,90 @@ export function parseGitHubJsonLines(output) {
   return lines.map((line) => JSON.parse(line));
 }
 
-export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = 180_000) {
+export function boundedAttemptTimeout(configuredMs, remainingMs, cleanupReserveMs = REVIEW_CLEANUP_RESERVE_MS) {
   return Math.max(0, Math.min(configuredMs, remainingMs - cleanupReserveMs));
+}
+
+export function reviewerAttemptBudget({
+  configuredMs,
+  remainingMs,
+  queuedSlots,
+  floorMs = REVIEWER_FLOOR_MS,
+  cleanupReserveMs = REVIEW_CLEANUP_RESERVE_MS,
+}) {
+  if (![configuredMs, remainingMs, queuedSlots, floorMs, cleanupReserveMs].every(Number.isFinite)) {
+    throw new Error("Review reviewer 预算参数非法。");
+  }
+  if (!Number.isInteger(queuedSlots) || queuedSlots < 1 || floorMs <= 0 || cleanupReserveMs < 0) {
+    throw new Error("Review reviewer 预算参数非法。");
+  }
+  const futureReserveMs = (queuedSlots - 1) * floorMs;
+  const timeoutMs = boundedAttemptTimeout(configuredMs, remainingMs - futureReserveMs, cleanupReserveMs);
+  return {
+    timeoutMs,
+    futureReserveMs,
+    starvation: timeoutMs < floorMs,
+  };
+}
+
+export function reviewerSlotsForRound(
+  round,
+  reviewerIndex,
+  reviewerCount = REVIEWERS.length,
+  activeSlots = 0,
+) {
+  if (
+    ![reviewerIndex, reviewerCount, activeSlots].every(Number.isInteger) ||
+    reviewerIndex < 0 ||
+    reviewerIndex >= reviewerCount ||
+    activeSlots < 0
+  ) {
+    throw new Error("Review reviewer 槽位参数非法。");
+  }
+  const remainingRoundSlots = reviewerCount - reviewerIndex;
+  if (round === "initial") {
+    return activeSlots + remainingRoundSlots + reviewerCount;
+  }
+  if (round === "final") return activeSlots + remainingRoundSlots;
+  throw new Error(`Review reviewer round 非法：${round}`);
+}
+
+export function reviewerRetryBudget({
+  remainingMs,
+  queuedSlots,
+  retryDelayMs,
+  floorMs = REVIEWER_FLOOR_MS,
+  cleanupReserveMs = REVIEW_CLEANUP_RESERVE_MS,
+}) {
+  if (![remainingMs, queuedSlots, retryDelayMs, floorMs, cleanupReserveMs].every(Number.isFinite)) {
+    throw new Error("Review reviewer 重试预算参数非法。");
+  }
+  const afterWaitMs = remainingMs - retryDelayMs;
+  const budget = reviewerAttemptBudget({
+    configuredMs: floorMs,
+    remainingMs: afterWaitMs,
+    queuedSlots,
+    floorMs,
+    cleanupReserveMs,
+  });
+  return {
+    ...budget,
+    afterWaitMs,
+    retryAllowed: budget.timeoutMs >= floorMs,
+  };
+}
+
+export function isReviewerBudgetStarvation(result) {
+  return result?.reviewer_budget_starvation === true;
+}
+
+export function reviewerBudgetStarvationResult(label, budget) {
+  return {
+    raw: "",
+    executionFailure: false,
+    reviewerBudgetStarvation: true,
+    summary: `${REVIEWER_BUDGET_STARVED}: ${label} 未发起 Responses 请求；剩余 ${budget.remainingMs}ms 无法同时保留 ${budget.queuedSlots} 个 reviewer 的最低预算。`,
+  };
 }
 
 export function circuitOperationDeadlines(
@@ -238,11 +323,19 @@ export function classifyReviewRun(firstRound, finalRound) {
   if (
     firstResults.length !== REVIEWERS.length ||
     finalResults.length !== REVIEWERS.length ||
-    allResults.some((result) => result?.execution_failure === true)
+    allResults.some(isReviewInfrastructureFailure)
   ) {
     return "infra_failure";
   }
   return decideGate(finalResults).passed ? "passed" : "gate_failure";
+}
+
+function isReviewInfrastructureFailure(result) {
+  return result?.execution_failure === true || isReviewerBudgetStarvation(result);
+}
+
+function isPureReviewInfrastructureFailure(result) {
+  return isCodexExecutionFailure(result) || isReviewerBudgetStarvation(result);
 }
 
 export function decideReviewGate(results, findingResults = results) {
@@ -518,7 +611,11 @@ async function runReview() {
   console.error(`Review v3: PR #${PR} · ${context.changedLines} 行/${context.changedFiles} 文件 · 4×${MODEL} high`);
   const { firstRound, finalRound, outcome } = await runReviewPanel(context);
   if (outcome === "infra_failure") {
-    const failed = finalRound.filter(isCodexExecutionFailure);
+    const failed = [...new Map(
+      [...firstRound, ...finalRound]
+        .filter(isReviewInfrastructureFailure)
+        .map((result) => [`${result.reviewer}|${result.summary}`, result]),
+    ).values()];
     const reason = failed.map((result) => result.summary).filter(Boolean).join(" | ");
     return finishInfrastructureFailure("reviewer_execution", reason || "Codex reviewer 执行失败");
   }
@@ -544,23 +641,49 @@ async function runReview() {
   return 0;
 }
 
-export async function runReviewPanel(context, reviewerRunner = runCodex) {
-  const firstRound = await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-    reviewerRunner(initialPrompt(context, reviewer), `initial-${reviewer.id}`).then((result) =>
-      normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
-    ),
-  );
-
-  const debateContext = firstRound.map(compactResultForPrompt);
-  const finalRoundRaw = firstRound.every(isCodexExecutionFailure)
-    ? firstRound
-    : await mapLimit(REVIEWERS, CODEX_CONCURRENCY, (reviewer) =>
-        reviewerRunner(finalPrompt(context, reviewer, debateContext), `final-${reviewer.id}`).then((result) =>
-          normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure }),
+export async function runReviewPanel(
+  context,
+  reviewerRunner = runCodex,
+  { concurrency = CODEX_CONCURRENCY } = {},
+) {
+  const runRound = (round, promptForReviewer) =>
+    mapLimit(REVIEWERS, concurrency, (reviewer, reviewerIndex, activeSlots) =>
+      reviewerRunner(promptForReviewer(reviewer), `${round}-${reviewer.id}`, {
+        round,
+        reviewerIndex,
+        queuedSlots: reviewerSlotsForRound(
+          round,
+          reviewerIndex,
+          REVIEWERS.length,
+          activeSlots,
         ),
-      );
+      }).then((result) => normalizeReviewerResult(result, reviewer)),
+    );
+
+  const firstRound = await runRound("initial", (reviewer) => initialPrompt(context, reviewer));
+  const debateContext = firstRound.map(compactResultForPrompt);
+  const finalRoundRaw = firstRound.every(isPureReviewInfrastructureFailure)
+    ? firstRound
+    : await runRound("final", (reviewer) => finalPrompt(context, reviewer, debateContext));
   const finalRound = applyPlanIntentGate(finalRoundRaw, Boolean(context.plan));
   return { firstRound, finalRound, outcome: classifyReviewRun(firstRound, finalRound) };
+}
+
+function normalizeReviewerResult(result, reviewer) {
+  if (result.reviewerBudgetStarvation) {
+    return {
+      execution_failure: false,
+      reviewer_budget_starvation: true,
+      reviewer: reviewer.id,
+      name: reviewer.name,
+      vote: "REQUEST_CHANGES",
+      confidence: 0,
+      plan_intent: { status: "unclear", reason: REVIEWER_BUDGET_STARVED, missing: [] },
+      summary: result.summary,
+      findings: [],
+    };
+  }
+  return normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure });
 }
 
 async function finishInfrastructureFailure(phase, reason) {
@@ -828,34 +951,65 @@ function compactResultForPrompt(result) {
   };
 }
 
-async function runCodex(prompt, label) {
-  return runCodexResponses(prompt, label);
+async function runCodex(prompt, label, scheduling = {}) {
+  return runCodexResponses(prompt, label, scheduling);
 }
 
-async function runCodexResponses(prompt, label) {
+export async function runCodexResponses(
+  prompt,
+  label,
+  {
+    queuedSlots = 1,
+    now = Date.now,
+    request = requestResponses,
+    wait = delay,
+    deadlineMs = reviewDeadlineMs,
+    configuredMs = CODEX_TIMEOUT_MS,
+    floorMs = REVIEWER_FLOOR_MS,
+    cleanupReserveMs = REVIEW_CLEANUP_RESERVE_MS,
+    retries = CODEX_RETRIES,
+    retryMs = CODEX_RETRY_MS,
+  } = {},
+) {
   console.error(`▶ responses ${label}`);
-  for (let attempt = 1; attempt <= CODEX_RETRIES; attempt += 1) {
-    const remainingMs = reviewDeadlineMs - Date.now();
-    const attemptTimeoutMs = boundedAttemptTimeout(CODEX_TIMEOUT_MS, remainingMs);
-    if (attemptTimeoutMs <= 0) {
+  let requestStarted = false;
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    const remainingMs = deadlineMs - now();
+    const budget = reviewerAttemptBudget({
+      configuredMs,
+      remainingMs,
+      queuedSlots,
+      floorMs,
+      cleanupReserveMs,
+    });
+    if (budget.starvation) {
+      if (!requestStarted) return reviewerBudgetStarvationResult(label, { ...budget, remainingMs, queuedSlots });
       return {
-        raw: codexExecutionFailureJson(label, "Review reviewer 总预算已耗尽，停止新的 Responses 请求"),
+        raw: codexExecutionFailureJson(label, "Review reviewer 重试预算不足，停止新的 Responses 请求"),
         executionFailure: true,
       };
     }
 
-    const result = await requestResponses(prompt, attemptTimeoutMs);
+    requestStarted = true;
+    const result = await request(prompt, budget.timeoutMs);
     const text = redactRuntimeSecrets(result.stdout || "");
     const zeroConfidenceInfra = isZeroConfidenceWithoutCodeFindings(text);
     if (isSuccessfulCodexResponse(result, text)) return { raw: text, executionFailure: false };
 
     const failure = codexFailureText(result);
     const retryableFailure = zeroConfidenceInfra || isRetryableCodexFailure(result);
-    if (attempt < CODEX_RETRIES && retryableFailure) {
-      const waitMs = codexRetryDelayMs(result, attempt, CODEX_RETRY_MS);
-      if (reviewDeadlineMs - Date.now() > waitMs + 15_000) {
-        console.error(`  responses ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${CODEX_RETRIES}）: ${failure}`);
-        await delay(waitMs);
+    if (attempt < retries && retryableFailure) {
+      const waitMs = codexRetryDelayMs(result, attempt, retryMs);
+      const retryBudget = reviewerRetryBudget({
+        remainingMs: deadlineMs - now(),
+        queuedSlots,
+        retryDelayMs: waitMs,
+        floorMs,
+        cleanupReserveMs,
+      });
+      if (retryBudget.retryAllowed) {
+        console.error(`  responses ${label} 暂时失败，${waitMs}ms 后重试（${attempt + 1}/${retries}）: ${failure}`);
+        await wait(waitMs);
         continue;
       }
     }
@@ -1189,10 +1343,16 @@ function delay(ms) {
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
+  let active = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const idx = next++;
-      out[idx] = await fn(items[idx], idx);
+      active += 1;
+      try {
+        out[idx] = await fn(items[idx], idx, active - 1);
+      } finally {
+        active -= 1;
+      }
     }
   });
   await Promise.all(workers);

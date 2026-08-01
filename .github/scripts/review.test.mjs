@@ -28,7 +28,9 @@ import {
   findCircuitStateIssues,
   findPlanName,
   isCircuitBypassTrigger,
+  isCodexExecutionFailure,
   isRetryableCodexFailure,
+  isReviewerBudgetStarvation,
   isSuccessfulCodexResponse,
   isZeroConfidenceWithoutCodeFindings,
   mergeFindings,
@@ -42,7 +44,12 @@ import {
   redactRuntimeSecrets,
   readWorkspaceRegularFile,
   renderComment,
+  reviewerAttemptBudget,
+  reviewerRetryBudget,
+  reviewerSlotsForRound,
+  REVIEWER_BUDGET_STARVED,
   requestResponses,
+  runCodexResponses,
   runReviewPanel,
   renderCircuitSkipComment,
   renderHiddenMarker,
@@ -607,6 +614,299 @@ test("review 总预算: 单次 timeout 被剩余预算截断，并预留清理�
   assert.equal(boundedAttemptTimeout(900_000, 1_000_000), 820_000);
   assert.equal(boundedAttemptTimeout(900_000, 180_000), 0);
   assert.equal(boundedAttemptTimeout(900_000, 60_000, 15_000), 45_000);
+});
+
+test("reviewer budget floor: 精确保留未来槽位、清理时间与配置上限", () => {
+  const floorMs = 120_000;
+  const cleanupReserveMs = 180_000;
+  const exact = reviewerAttemptBudget({
+    configuredMs: 900_000,
+    remainingMs: cleanupReserveMs + 8 * floorMs,
+    queuedSlots: 8,
+    floorMs,
+    cleanupReserveMs,
+  });
+  assert.deepEqual(exact, {
+    timeoutMs: floorMs,
+    futureReserveMs: 7 * floorMs,
+    starvation: false,
+  });
+
+  const short = reviewerAttemptBudget({
+    configuredMs: 900_000,
+    remainingMs: cleanupReserveMs + 8 * floorMs - 1,
+    queuedSlots: 8,
+    floorMs,
+    cleanupReserveMs,
+  });
+  assert.equal(short.timeoutMs, floorMs - 1);
+  assert.equal(short.starvation, true, "少 1ms 时不得偷占未来 reviewer 的 floor");
+
+  const capped = reviewerAttemptBudget({
+    configuredMs: 300_000,
+    remainingMs: 2_000_000,
+    queuedSlots: 1,
+    floorMs,
+    cleanupReserveMs,
+  });
+  assert.equal(capped.timeoutMs, 300_000, "单次请求仍受配置 timeout 上限约束");
+  assert.equal(capped.futureReserveMs, 0);
+
+  const cleanupBoundary = reviewerAttemptBudget({
+    configuredMs: floorMs,
+    remainingMs: cleanupReserveMs + floorMs,
+    queuedSlots: 1,
+    floorMs,
+    cleanupReserveMs,
+  });
+  assert.equal(cleanupBoundary.timeoutMs, floorMs);
+  assert.equal(cleanupBoundary.starvation, false);
+});
+
+test("reviewer budget floor: 首轮预留复投，最终轮只预留剩余槽位", () => {
+  assert.equal(reviewerSlotsForRound("initial", 0), 8);
+  assert.equal(reviewerSlotsForRound("initial", 3), 5);
+  assert.equal(reviewerSlotsForRound("final", 0), 4);
+  assert.equal(reviewerSlotsForRound("final", 3), 1);
+  assert.equal(
+    reviewerSlotsForRound("initial", 1, 4, 1),
+    8,
+    "并发中的另一个首轮 reviewer 仍必须保留最低预算",
+  );
+  assert.equal(
+    reviewerSlotsForRound("final", 1, 4, 1),
+    4,
+    "并发中的另一个复投 reviewer 仍必须保留最低预算",
+  );
+  for (const args of [
+    ["initial", -1],
+    ["initial", 4],
+    ["other", 0],
+    ["final", 0, 4, -1],
+  ]) {
+    assert.throws(() => reviewerSlotsForRound(...args), /槽位参数非法|round 非法/);
+  }
+});
+
+test("reviewer budget floor: 串行面板让每个首轮和复投 reviewer 都得到 floor 请求", async () => {
+  const floorMs = 120_000;
+  const cleanupReserveMs = 180_000;
+  const deadlineMs = cleanupReserveMs + 8 * floorMs + 540_000;
+  const requests = [];
+  let nowMs = 0;
+  const approval = JSON.stringify({
+    vote: "APPROVE",
+    confidence: 95,
+    plan_intent: { status: "not_plan", reason: "", missing: [] },
+    summary: "通过",
+    findings: [],
+  });
+
+  const panel = await runReviewPanel(
+    reviewContext(),
+    async (prompt, label, scheduling) =>
+      runCodexResponses(prompt, label, {
+        ...scheduling,
+        now: () => nowMs,
+        deadlineMs,
+        configuredMs: 900_000,
+        floorMs,
+        cleanupReserveMs,
+        retries: 1,
+        request: async (_requestPrompt, timeoutMs) => {
+          requests.push({ label, timeoutMs, queuedSlots: scheduling.queuedSlots });
+          nowMs += timeoutMs;
+          return { code: 0, signal: null, stdout: approval, stderr: "" };
+        },
+      }),
+    { concurrency: 1 },
+  );
+
+  assert.equal(panel.outcome, "passed");
+  assert.deepEqual(
+    requests.map((request) => request.label),
+    ["initial-A", "initial-B", "initial-C", "initial-D", "final-A", "final-B", "final-C", "final-D"],
+  );
+  assert.deepEqual(requests.map((request) => request.queuedSlots), [8, 7, 6, 5, 4, 3, 2, 1]);
+  assert.ok(
+    requests.every((request) => request.timeoutMs >= floorMs && request.timeoutMs > 0),
+    "每个排队 reviewer 都必须实际获得至少一个正的 floor-respecting provider timeout",
+  );
+  assert.deepEqual(
+    requests.map((request) => request.timeoutMs),
+    [660_000, ...Array(7).fill(floorMs)],
+    "首个 reviewer 可使用额外 slack，但不得侵占其余七个 reviewer 的 floor",
+  );
+  assert.equal(nowMs, 660_000 + 7 * floorMs, "cleanup reserve 不得被 reviewer 请求吞占");
+});
+
+test("reviewer budget floor: 并发启动时也计入其他 active reviewer", async () => {
+  const calls = [];
+  const approval = JSON.stringify({
+    vote: "APPROVE",
+    confidence: 95,
+    plan_intent: { status: "not_plan", reason: "", missing: [] },
+    summary: "通过",
+    findings: [],
+  });
+
+  await runReviewPanel(
+    reviewContext(),
+    async (_prompt, label, scheduling) => {
+      calls.push({ label, queuedSlots: scheduling.queuedSlots });
+      return { raw: approval, executionFailure: false };
+    },
+    { concurrency: 2 },
+  );
+
+  assert.deepEqual(
+    calls.filter((call) => call.label.startsWith("initial-")).map((call) => call.queuedSlots),
+    [8, 8, 7, 6],
+    "首轮后启动的 reviewer 必须保留仍 active 的请求和潜在复投",
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.label.startsWith("final-")).map((call) => call.queuedSlots),
+    [4, 4, 3, 2],
+    "复投后启动的 reviewer 必须保留仍 active 的复投请求",
+  );
+});
+
+test("reviewer budget starvation: 未发 provider request 时单独标记并归类为 infra", async () => {
+  const floorMs = 100;
+  const cleanupReserveMs = 50;
+  let requests = 0;
+  const panel = await runReviewPanel(
+    reviewContext(),
+    async (prompt, label, scheduling) =>
+      runCodexResponses(prompt, label, {
+        ...scheduling,
+        now: () => 0,
+        deadlineMs: cleanupReserveMs + floorMs - 1,
+        configuredMs: 1_000,
+        floorMs,
+        cleanupReserveMs,
+        retries: 1,
+        request: async () => {
+          requests += 1;
+          return { code: 0, signal: null, stdout: "{}", stderr: "" };
+        },
+      }),
+    { concurrency: 1 },
+  );
+
+  const starved = panel.firstRound[0];
+  assert.equal(requests, 0, "预算不足时不得把未发生的 provider request 伪造成执行失败");
+  assert.equal(starved.reviewer_budget_starvation, true);
+  assert.equal(starved.execution_failure, false);
+  assert.equal(starved.findings.length, 0);
+  assert.equal(isReviewerBudgetStarvation(starved), true);
+  assert.equal(isCodexExecutionFailure(starved), false);
+  assert.match(starved.summary, new RegExp(REVIEWER_BUDGET_STARVED));
+  assert.doesNotMatch(starved.summary, /Codex reviewer .*执行失败/);
+  assert.equal(panel.outcome, "infra_failure");
+  assert.equal(
+    classifyReviewRun(panel.firstRound, [realRequestChanges, ...panel.finalRound.slice(1)]),
+    "gate_failure",
+    "真实代码 finding 必须优先于 starvation handoff",
+  );
+});
+
+test("reviewer budget retry: 延迟不得侵占未来 reviewer floor", async () => {
+  const floorMs = 100;
+  const cleanupReserveMs = 50;
+  const retryMs = 1_000;
+  const requestFailure = { code: 503, signal: null, stdout: "", stderr: "Service Unavailable" };
+
+  let nowMs = 0;
+  const delayed = [];
+  const successfulRequestTimeouts = [];
+  let attempts = 0;
+  const retried = await runCodexResponses("prompt", "initial-A", {
+    queuedSlots: 2,
+    now: () => nowMs,
+    deadlineMs: 1_350,
+    configuredMs: floorMs,
+    floorMs,
+    cleanupReserveMs,
+    retries: 2,
+    retryMs,
+    wait: async (ms) => {
+      delayed.push(ms);
+      nowMs += ms;
+    },
+    request: async (_prompt, timeoutMs) => {
+      successfulRequestTimeouts.push(timeoutMs);
+      nowMs += timeoutMs;
+      attempts += 1;
+      return attempts === 1
+        ? requestFailure
+        : { code: 0, signal: null, stdout: JSON.stringify({ vote: "APPROVE", findings: [] }), stderr: "" };
+    },
+  });
+  assert.equal(retried.executionFailure, false);
+  assert.deepEqual(delayed, [retryMs]);
+  assert.deepEqual(successfulRequestTimeouts, [floorMs, floorMs]);
+
+  nowMs = 0;
+  const blockedWaits = [];
+  const blockedRequestTimeouts = [];
+  const blocked = await runCodexResponses("prompt", "initial-A", {
+    queuedSlots: 2,
+    now: () => nowMs,
+    deadlineMs: 1_349,
+    configuredMs: floorMs,
+    floorMs,
+    cleanupReserveMs,
+    retries: 2,
+    retryMs,
+    wait: async (ms) => {
+      blockedWaits.push(ms);
+      nowMs += ms;
+    },
+    request: async (_prompt, timeoutMs) => {
+      blockedRequestTimeouts.push(timeoutMs);
+      nowMs += timeoutMs;
+      return requestFailure;
+    },
+  });
+  assert.equal(blocked.executionFailure, true);
+  assert.deepEqual(blockedWaits, [], "少 1ms 时不得等待后侵占后续 reviewer 的 floor");
+  assert.deepEqual(blockedRequestTimeouts, [floorMs]);
+
+  const exactRetry = reviewerRetryBudget({
+    remainingMs: 1_250,
+    queuedSlots: 2,
+    retryDelayMs: retryMs,
+    floorMs,
+    cleanupReserveMs,
+  });
+  assert.equal(exactRetry.retryAllowed, true);
+  assert.equal(exactRetry.timeoutMs, floorMs);
+});
+
+test("provider failures after a request remain Codex execution failures", async () => {
+  for (const code of [429, 503, 124]) {
+    let requests = 0;
+    const result = await runCodexResponses("prompt", `initial-${code}`, {
+      queuedSlots: 1,
+      now: () => 0,
+      deadlineMs: 1_000,
+      configuredMs: 500,
+      floorMs: 100,
+      cleanupReserveMs: 50,
+      retries: 1,
+      request: async () => {
+        requests += 1;
+        return { code, signal: code === 124 ? "SIGTERM" : null, stdout: "", stderr: `provider ${code}` };
+      },
+    });
+    const normalized = normalizeResult(result.raw, reviewer, { executionFailure: result.executionFailure });
+    assert.equal(requests, 1, `${code} 必须发生真实 provider request`);
+    assert.equal(result.executionFailure, true);
+    assert.equal(result.reviewerBudgetStarvation, undefined);
+    assert.equal(isCodexExecutionFailure(normalized), true);
+    assert.equal(classifyReviewRun(Array(4).fill(normalized), Array(4).fill(normalized)), "infra_failure");
+  }
 });
 
 test("Responses endpoint: 规范化 root/v1/responses 并拒绝凭据与非 HTTPS", () => {
@@ -1392,7 +1692,9 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   assert.match(review, /actions\/upload-artifact@v4/);
   assert.match(review, /review-run-outcome\.json/);
   assert.match(review, /review\.md/);
-  assert.match(review, /timeout-minutes: 40[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'35'/);
+  assert.match(review, /^    timeout-minutes: 110$/m);
+  assert.match(review, /REVIEW_REVIEWER_FLOOR_MS: \$\{\{ vars\.REVIEW_REVIEWER_FLOOR_MS \|\| '120000' \}\}/);
+  assert.match(review, /timeout-minutes: 70[^]*REVIEW_TOTAL_TIMEOUT_MINUTES:.*'60'/);
 
   assert.match(finalize, /pull-requests: write/);
   assert.match(finalize, /issues: write/);
@@ -1407,6 +1709,14 @@ test("workflow: 三 job 隔离写权限、可信脚本、PR head 与 deferred ar
   // (CodeRabbit 等在每个 PR 的评论都会唤醒本 workflow → preflight skip)
   assert.match(finalize, /always\(\) &&\s*needs\.preflight\.result != 'skipped' &&/);
   assert.doesNotMatch(finalize, /REVIEW_CODEX_API_KEY|gh pr checkout/);
+
+  const reviewJobTimeout = Number(review.match(/^    timeout-minutes: (\d+)$/m)?.[1]);
+  const reviewStepTimeouts = [...review.matchAll(/^        timeout-minutes: (\d+)$/gm)].map((match) => Number(match[1]));
+  assert.equal(reviewJobTimeout, 110);
+  assert.deepEqual(reviewStepTimeouts, [10, 3, 3, 3, 70, 3]);
+  assert.equal(reviewStepTimeouts.reduce((sum, value) => sum + value, 0), 92);
+  assert.equal(reviewJobTimeout - 15, 95);
+  assert.ok(92 <= 95, "review job 必须保留 15 分钟调度余量");
 
   for (const [name, block, reserve] of [
     ["preflight", preflight, 5],
