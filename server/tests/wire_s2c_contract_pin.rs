@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const VFX_EVENT_CHANNEL: &str = "bong:vfx_event";
+const VFX_EVENT_EMITTER: &str = "server/src/network/vfx_event_emit.rs";
+const VFX_EVENT_RECEIVER: &str = "client/src/main/java/com/bong/client/BongNetworkHandler.java";
+
 const EMIT_MANIFEST: &[(&str, &str, &str)] = &[
     (
         "server/src/identity/wanted_player_emit.rs",
@@ -1692,6 +1696,152 @@ fn emitter_manifest_pins_wire_transport_per_file_not_only_in_aggregate() {
         mismatch.is_err(),
         "a per-file transport swap must fail even when API shape and aggregate wire counts remain unchanged"
     );
+}
+
+#[test]
+fn vfx_event_dedicated_channel_matches_client_receiver() {
+    let root = repository_root();
+    let emitter = production_tokens_from_file(&root, VFX_EVENT_EMITTER);
+    let emitter_function = function_token_slice(&emitter, "emit_vfx_event_payloads")
+        .expect("VFX event emitter must remain present");
+    let receiver =
+        fs::read_to_string(root.join(VFX_EVENT_RECEIVER)).expect("read VFX event client receiver");
+    let receiver_tokens = java_tokens(&receiver);
+    let receiver_method = java_method_token_slice(&receiver_tokens, "registerVfxEventChannel")
+        .expect("VFX event client receiver must remain present");
+
+    assert!(
+        send_custom_payload_uses_channel(emitter_function, VFX_EVENT_CHANNEL),
+        "{VFX_EVENT_EMITTER}::emit_vfx_event_payloads must send VFX payloads on {VFX_EVENT_CHANNEL}"
+    );
+    assert!(
+        receiver_registers_channel(receiver_method, VFX_EVENT_CHANNEL),
+        "{VFX_EVENT_RECEIVER}::registerVfxEventChannel must receive {VFX_EVENT_CHANNEL}"
+    );
+}
+
+#[test]
+fn vfx_event_channel_contract_rejects_sender_and_receiver_typos() {
+    let sender_typo = rust_tokens(
+        r#"fn emit_vfx_event_payloads(client: &mut Client) {
+            client.send_custom_payload(ident!("bong:vfx_evnet"), bytes);
+        }"#,
+    );
+    let receiver_typo = java_tokens(
+        r#"private static void registerVfxEventChannel() {
+            ClientPlayNetworking.registerGlobalReceiver(
+                new Identifier("bong", "vfx_evnet"),
+                (client, handler, buf, responseSender) -> {}
+            );
+        }"#,
+    );
+    let receiver_method = java_method_token_slice(&receiver_typo, "registerVfxEventChannel")
+        .expect("synthetic VFX receiver must parse");
+
+    assert!(
+        !send_custom_payload_uses_channel(&sender_typo, VFX_EVENT_CHANNEL),
+        "a VFX sender channel typo must fail the exact channel contract"
+    );
+    assert!(
+        !receiver_registers_channel(receiver_method, VFX_EVENT_CHANNEL),
+        "a VFX receiver channel typo must fail the exact channel contract"
+    );
+}
+
+fn send_custom_payload_uses_channel(tokens: &[String], channel: &str) -> bool {
+    let expected_literal = format!("\"{channel}\"");
+    for index in 0..tokens.len() {
+        if tokens[index] != "send_custom_payload"
+            || index
+                .checked_sub(1)
+                .and_then(|previous| tokens.get(previous))
+                .is_none_or(|token| token != ".")
+            || tokens.get(index + 1).is_none_or(|token| token != "(")
+        {
+            continue;
+        }
+        let Some(argument) = first_call_argument(tokens, index + 1) else {
+            continue;
+        };
+        if argument.iter().any(|token| token == &expected_literal) {
+            return true;
+        }
+    }
+    false
+}
+
+fn receiver_registers_channel(tokens: &[String], channel: &str) -> bool {
+    let Some((namespace, path)) = channel.split_once(':') else {
+        return false;
+    };
+    let namespace = format!("\"{namespace}\"");
+    let path = format!("\"{path}\"");
+    tokens.windows(11).any(|window| {
+        window[0] == "ClientPlayNetworking"
+            && window[1] == "."
+            && window[2] == "registerGlobalReceiver"
+            && window[3] == "("
+            && window[4] == "new"
+            && window[5] == "Identifier"
+            && window[6] == "("
+            && window[7] == namespace
+            && window[8] == ","
+            && window[9] == path
+            && window[10] == ")"
+    })
+}
+
+fn java_method_token_slice<'a>(tokens: &'a [String], method: &str) -> Option<&'a [String]> {
+    for index in 0..tokens.len().saturating_sub(3) {
+        if tokens[index] != method || tokens.get(index + 1).is_none_or(|token| token != "(") {
+            continue;
+        }
+        let close = matching_delimiter(tokens, index + 1, "(", ")")?;
+        if tokens.get(close + 1).is_none_or(|token| token != "{") {
+            continue;
+        }
+        let body_end = matching_delimiter(tokens, close + 1, "{", "}")?;
+        return Some(&tokens[index..=body_end]);
+    }
+    None
+}
+
+fn java_tokens(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index].is_ascii_whitespace() {
+            index += 1;
+        } else if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+        } else if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index = skip_block_comment(bytes, index + 2);
+        } else if bytes[index] == b'"' {
+            let end = skip_quoted(bytes, index, b'"');
+            tokens.push(String::from_utf8_lossy(&bytes[index..end]).into_owned());
+            index = end;
+        } else if let Some(end) = char_literal_end(bytes, index) {
+            tokens.push(String::from_utf8_lossy(&bytes[index..end]).into_owned());
+            index = end;
+        } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
+            {
+                index += 1;
+            }
+            tokens.push(String::from_utf8_lossy(&bytes[start..index]).into_owned());
+        } else {
+            tokens.push(char::from(bytes[index]).to_string());
+            index += 1;
+        }
+    }
+    tokens
 }
 
 fn collect_emit_files(directory: &Path, root: &Path, output: &mut Vec<String>) {
