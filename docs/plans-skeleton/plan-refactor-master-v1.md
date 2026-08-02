@@ -100,6 +100,7 @@
 2. 三个 2 万行级 god file（inventory/mod.rs、client_request_handler.rs、persistence/mod.rs）不复存在，最大单文件 < 3000 行；
 3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；113 C2S 变体全部有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
 4. bot 场景数从 ~30 增至 ≥80，CI e2e 是唯一主门禁且无已知假绿。
+5. `flash-review` label 下 open issue 全部显式处置（fixed / dup / 验伪关闭 / 促升 skeleton，见 §10），无静默积压。
 
 ## 9. 开放问题（总纲级，pre-P0 收口）
 
@@ -107,3 +108,27 @@
 2. 调度会话由谁跑（用户手动 / 一个常驻 claude 会话）；波次放行的判定权归属。
 3. build token 的并发上限是否可按本机内存实测上调（默认 cargo≤2/gradle≤1）。
 4. #1289 e2e 红的根因（自称 agent npm 依赖问题）需在基线阶段查实。
+
+## 10. flash-review issue 消化流程（2026-08-02 增补，用户指示）
+
+背景：flash-review 只读扫描会话（独立 tmux，deepseek-v4-flash 全仓扫描）持续对本仓提 GitHub issue（label `flash-review`，标题带 [blocker]/[major]/[minor] 分级），2026-08-02 已 389 个 open 且持续增长。本节把 issue 消化正式纳入计划族闭环，防止重构收官后积压无人认领。
+
+### 10.1 在途 triage（重构进行期间，调度会话周期跑）
+
+1. **节奏**：每积累 ~100 个新 issue 或每轮 sweep 收口后跑一批；只做 issue 操作与源码只读核对，不改代码。
+2. **去重**：同根因多 issue 收敛为一个（保留证据最全者），其余以 `dup of #N` 评论关闭。
+3. **验真**：flash 模型误报率高——blocker/major 逐个对照源码验真；minor 按目录抽查。验伪的关闭并留结论证据。
+4. **归轨**：验真 issue 按 §4 所有权矩阵 / §6 覆盖矩阵打 label（`track:R1`…`track:R10` / `agent` / `worldgen` / `standalone`）；已被在飞或已合 PR 覆盖的评论关联后关闭。
+5. **升级出口**：blocker 验真即入调度队列单独修；major 聚类促升 skeleton（走 §7 机制）；minor 留 label 等批量窗口。
+
+### 10.2 轨道收尾挂钩
+
+各轨道最后一个 phase PR 合入、跑批量归档（§7）之前，必须过一遍本轨 label 下的 open issue：能顺带修的并入收尾 PR；修不了的显式评论移交去向。不查不得归档。
+
+### 10.3 完成清算（§8 第 5 条的执行细则）
+
+9 轨归档后 `flash-review` label 下仍 open 的 issue，终态只允许四种：fixed（关联 PR）/ dup / 验伪关闭（留结论）/ 促升 skeleton。若残量 >50，开专门收尾窗口（1-2 工人）批量消化，调度会话排期跟踪，直至清零。
+
+### 10.4 职责边界
+
+sweep（产 issue）= flash-review 独立会话；triage（分类/验真/关闭）= 调度会话；修复 = 工人正常 PR 流程。三者不互相越界；工人不得自行触发 review。
