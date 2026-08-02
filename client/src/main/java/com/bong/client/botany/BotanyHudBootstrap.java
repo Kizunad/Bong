@@ -38,19 +38,20 @@ public final class BotanyHudBootstrap {
     }
 
     private static void onStartClientTick(MinecraftClient client) {
+        if (client == null || client.player == null) {
+            return;
+        }
         HarvestSessionViewModel session = HarvestSessionStore.snapshot();
-        boolean accepted = client != null
-            && client.player != null
-            && session.interactive()
-            && client.currentScreen == null;
-        consumeAutoPresses(accepted, autoHarvestKey()::wasPressed,
-            () -> dispatchModeRequest(session, BotanyHarvestMode.AUTO));
-        if (!accepted) {
+        if (!session.interactive() || client.currentScreen != null) {
             return;
         }
 
         if (consumeManualPress(client)) {
             dispatchModeRequest(session, BotanyHarvestMode.MANUAL);
+        }
+
+        while (autoHarvestKey().wasPressed()) {
+            dispatchModeRequest(session, BotanyHarvestMode.AUTO);
         }
     }
 
@@ -82,21 +83,6 @@ public final class BotanyHudBootstrap {
         if (session.mode() == BotanyHarvestMode.MANUAL && isMoving(client)) {
             HarvestSessionStore.interruptLocally("移动打断", nowMillis);
         }
-    }
-
-    static int consumeAutoPresses(
-        boolean accepted,
-        java.util.function.BooleanSupplier wasPressed,
-        Runnable dispatch
-    ) {
-        int dispatched = 0;
-        while (wasPressed.getAsBoolean()) {
-            if (accepted) {
-                dispatch.run();
-                dispatched++;
-            }
-        }
-        return dispatched;
     }
 
     private static KeyBinding autoHarvestKey() {

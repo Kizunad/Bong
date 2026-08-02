@@ -3,15 +3,16 @@ package com.bong.client.insight;
 import com.bong.client.BongClient;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
-
-import java.util.Objects;
-import java.util.function.Consumer;
-import java.util.function.LongSupplier;
+import net.minecraft.sound.SoundCategory;
 
 /**
- * 监听 {@link InsightOfferStore}：新邀约到达时开屏，当前邀约结算时关闭该屏。
+ * 监听 {@link InsightOfferStore}：
+ * <ul>
+ *   <li>有新 offer 推入 → 自动打开 InsightOfferScreen。</li>
+ *   <li>offer 被清空 (玩家提交后 / 服务端撤回) → 关闭当前 screen。</li>
+ *   <li>断线 → 重置 store。</li>
+ * </ul>
  */
 public final class InsightOfferScreenBootstrap {
     private InsightOfferScreenBootstrap() {
@@ -19,6 +20,7 @@ public final class InsightOfferScreenBootstrap {
 
     public static void register() {
         InsightOfferStore.addListener(InsightOfferScreenBootstrap::onStoreChanged);
+
         BongClient.LOGGER.info("Registered insight offer screen bootstrap via store listener");
     }
 
@@ -31,76 +33,24 @@ public final class InsightOfferScreenBootstrap {
     }
 
     static void applyStoreChange(MinecraftClient client, InsightOfferViewModel offer) {
-        if (applyStoreChange(client.currentScreen, client::setScreen, offer, System::currentTimeMillis)) {
-            playOpenSound(client);
-        }
-    }
-
-    static boolean applyStoreChange(
-        Screen current,
-        Consumer<Screen> setScreen,
-        InsightOfferViewModel offer,
-        LongSupplier clock
-    ) {
-        Objects.requireNonNull(setScreen, "setScreen");
-        Objects.requireNonNull(clock, "clock");
-        if (offer != null && InsightOfferStore.snapshot() != offer) {
-            return false;
-        }
+        Screen current = client.currentScreen;
         if (offer == null) {
+            // store 被清空：若当前正显示 offer 屏，则关掉
             if (current instanceof InsightOfferScreen) {
-                setScreen.accept(null);
+                client.setScreen(null);
             }
-            return false;
+            return;
         }
-        if (offer.isExpired(clock.getAsLong())) {
-            InsightOfferStore.settle(
-                offer,
-                InsightOfferStore.TerminalCause.TIMEOUT,
-                InsightDecision.timedOut(offer.triggerId())
-            );
-            return false;
-        }
-        Throwable failure = null;
-        if (current instanceof InsightOfferScreen existing) {
-            if (existing.offer().triggerId().equals(offer.triggerId())) {
-                return false;
+        // 来了新邀约：打开屏幕 (即使当前已有别的屏，也覆盖之——顿悟是被动事件，应当抢焦点)
+        if (!(current instanceof InsightOfferScreen existing) || !existing.offer().triggerId().equals(offer.triggerId())) {
+            // plan §P2 视听规格：顿悟开屏音效（区分「喜」vs 心魔「危」）。
+            // block.beacon.activate pitch1.0/vol0.4 + entity.player.levelup pitch1.2/vol0.3
+            if (client.player != null) {
+                client.player.playSound(SoundEvents.BLOCK_BEACON_ACTIVATE, SoundCategory.PLAYERS, 0.4F, 1.0F);
+                client.player.playSound(SoundEvents.ENTITY_PLAYER_LEVELUP, SoundCategory.PLAYERS, 0.3F, 1.2F);
             }
-            try {
-                existing.settleForReplacement();
-            } catch (Throwable exception) {
-                failure = exception;
-            }
+            client.setScreen(new InsightOfferScreen(offer));
         }
-        try {
-            setScreen.accept(new InsightOfferScreen(offer));
-        } catch (Throwable exception) {
-            if (failure == null) {
-                failure = exception;
-            } else {
-                failure.addSuppressed(exception);
-            }
-        }
-        if (failure != null) {
-            rethrow(failure);
-        }
-        return true;
     }
 
-    private static void rethrow(Throwable failure) {
-        if (failure instanceof RuntimeException exception) {
-            throw exception;
-        }
-        if (failure instanceof Error error) {
-            throw error;
-        }
-        throw new AssertionError("insight replacement failed", failure);
-    }
-
-    static void playOpenSound(MinecraftClient client) {
-        if (client.player != null) {
-            client.player.playSound(SoundEvents.BLOCK_BEACON_ACTIVATE, SoundCategory.PLAYERS, 0.4F, 1.0F);
-            client.player.playSound(SoundEvents.ENTITY_PLAYER_LEVELUP, SoundCategory.PLAYERS, 0.3F, 1.2F);
-        }
-    }
 }

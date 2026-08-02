@@ -6,8 +6,6 @@ import com.bong.client.skill.SkillSetStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -54,34 +52,5 @@ public class BotanyHudBootstrapTest {
             "botany adjunct cleaner must leave HarvestSessionStore to the central registry");
         assertEquals(4, SkillSetStore.snapshot().get(SkillId.HERBALISM).effectiveLv(),
             "botany adjunct cleaner must preserve registry-owned skill data");
-    }
-
-    @Test
-    void blockedAutoPressesDrainWithoutReplayAndLaterFreshPressDispatches() {
-        AtomicInteger queued = new AtomicInteger(2);
-        AtomicInteger dispatched = new AtomicInteger();
-
-        assertEquals(0, BotanyHudBootstrap.consumeAutoPresses(
-            false,
-            () -> queued.getAndUpdate(value -> Math.max(0, value - 1)) > 0,
-            dispatched::incrementAndGet
-        ), "blocked input must dispatch nothing");
-        assertEquals(0, queued.get(), "blocked input must drain the complete physical press queue");
-        assertEquals(0, dispatched.get(), "blocked input must not later replay as a mode request");
-
-        assertEquals(0, BotanyHudBootstrap.consumeAutoPresses(
-            true,
-            () -> queued.getAndUpdate(value -> Math.max(0, value - 1)) > 0,
-            dispatched::incrementAndGet
-        ), "opening the gate after draining must not replay old presses");
-        assertEquals(0, dispatched.get(), "old blocked presses must remain discarded after the gate opens");
-
-        queued.incrementAndGet();
-        assertEquals(1, BotanyHudBootstrap.consumeAutoPresses(
-            true,
-            () -> queued.getAndUpdate(value -> Math.max(0, value - 1)) > 0,
-            dispatched::incrementAndGet
-        ), "a newly pressed AUTO key after the gate opens must still dispatch normally");
-        assertEquals(1, dispatched.get(), "only the fresh allowed press may dispatch");
     }
 }

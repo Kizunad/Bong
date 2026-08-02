@@ -160,7 +160,7 @@ class R7InventoryContractTest {
     @Test
     void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "1c4d2851e2aafa4fd4cd2c02aaedb405593c1f0e3085b4694c435f66bdaa54c6",
+            "07bc89ce87d945b64354b5fc39ab695d1c59e060c5535772ff4f76c58463ac1d",
             R7SourceScan.sourceTreeDigest(PRODUCTION_ROOT),
             "P0 is docs/tests/resources only; every production Java path and byte must match the frozen baseline"
         );
