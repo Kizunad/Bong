@@ -118,17 +118,27 @@
 1. **节奏**：每积累 ~100 个新 issue 或每轮 sweep 收口后跑一批；只做 issue 操作与源码只读核对，不改代码。
 2. **去重**：同根因多 issue 收敛为一个（保留证据最全者），其余以 `dup of #N` 评论关闭。
 3. **验真**：flash 模型误报率高——blocker/major 逐个对照源码验真；minor 按目录抽查。验伪的关闭并留结论证据。
-4. **归轨**：验真 issue 按 §4 所有权矩阵 / §6 覆盖矩阵打 label（`track:R1`…`track:R10` / `agent` / `worldgen` / `standalone`）；已被在飞或已合 PR 覆盖的评论关联后关闭。
-5. **升级出口**：blocker 验真即入调度队列单独修；major 聚类促升 skeleton（走 §7 机制）；minor 留 label 等批量窗口。
+4. **归轨**：每个验真 issue 必须恰有一个实现 owner label：`track:R1`、`track:R2`、`track:R3`、`track:R4`、`track:R5`、`track:R6`、`track:R7`、`track:R9`、`track:R10`、`track:V`、`track:registry-datafication`、`agent`、`worldgen` 或 `standalone`；`R8` 是编号空缺，绝不打 `track:R8`。已合入 `origin/main` 的 PR 经复核确实覆盖后才评论关联并以 fixed 关闭；仅在飞的 PR 只评论关联、保留 issue open，待其合入后复核再关闭，PR 撤回/未覆盖则回到本步骤重新归轨。
+5. **升级出口**：blocker 验真即入调度队列单独修；可由既有轨道吸收的 major 随该轨道收尾；需独立立项的 major 聚类走 §10.1.1；minor 留 label 等批量窗口。
+
+### 10.1.1 major 聚类促升 skeleton（独立出口）
+
+1. 调度会话先在 cluster intake 中列出 source issue、验真证据、唯一 owner label 和**明确的 implementation owner**（既有轨道，或命名的 standalone 工人）；未定 owner 的 source issue 保持 open，不得以“待建 skeleton”关闭。
+2. 需独立立项时，owner 在独立 docs PR 中按 `docs/CLAUDE.md` 创建或补充 `docs/plans-skeleton/plan-<name>-v1.md`，并在其 intake 写入 source issue 与 implementation owner；该 skeleton 按普通 plan 工作流进入调度/消费队列。此出口不走 §7，§7 只处理已被轨道吸收的 plan 归档。
+3. skeleton 合入 `origin/main` 且 implementation owner 已入队后，triage 才在每个 source issue 留下 skeleton 路径、commit/PR 与 owner 的关联证据，并以 `promoted to <skeleton>` 关闭；任何一步未完成都保留 source issue open。
 
 ### 10.2 轨道收尾挂钩
 
-各轨道最后一个 phase PR 合入、跑批量归档（§7）之前，必须过一遍本轨 label 下的 open issue：能顺带修的并入收尾 PR；修不了的显式评论移交去向。不查不得归档。
+每轨进入最后一个 implementation phase 前，必须扫描本轨 owner label 下的 open issue：能修的纳入该最后 phase PR，或另开一个 closeout implementation PR；两者都必须合入 `origin/main` 后，才可跑 §7 的 docs-only 批量归档。不能由本轨修的 issue 保持 open，并评论移交后改到其唯一接收 owner；不得用归档 PR 携带代码修复，也不得把“已关联在飞 PR”当作已结案。
+
+最后一个 implementation PR 合入后、§7 归档前再查一次本轨 owner label：发现仍需本轨代码的 issue 就新开 closeout implementation PR 并重复本段；发现可移交或促升的 issue 则按 §10.1/§10.1.1 完成其 open 状态迁移。仅当本轨没有 open 或待合入的 issue，才可提交 docs-only 归档 PR。
 
 ### 10.3 完成清算（§8 第 5 条的执行细则）
 
-9 轨归档后 `flash-review` label 下仍 open 的 issue，终态只允许四种：fixed（关联 PR）/ dup / 验伪关闭（留结论）/ 促升 skeleton。若残量 >50，开专门收尾窗口（1-2 工人）批量消化，调度会话排期跟踪，直至清零。
+九轨归档后，`flash-review` 生产者仍在运行时不得宣告计划族完成。调度会话必须先请求 producer 停产、等待正在执行的最后一轮 sweep 结束并确认其已写完全部 issue；记录 final-sweep watermark（sweep ID、扫描的 `origin/main` SHA、该轮产出的 issue ID 集合），且 producer 在下列清算与归档期间持续停止。
+
+以该 watermark 为边界，`flash-review` label 下每个仍 open 的 issue 只可完成为 fixed（关联已合入 PR）/ dup / 验伪关闭（留结论）/ 按 §10.1.1 促升 skeleton。若残量 >50，开专门收尾窗口（1-2 工人）批量消化，调度会话排期跟踪；在 producer 停止的前提下，复查 open issue 为零、无待合入关联 PR 后才归档计划族并在完成证据中写入 watermark 与最终查询结果。此后若要恢复 flash-review，必须先建立并指定一个 successor owner/plan 接管新 issue；不得在本计划族完成屏障内恢复 producer。
 
 ### 10.4 职责边界
 
-sweep（产 issue）= flash-review 独立会话；triage（分类/验真/关闭）= 调度会话；修复 = 工人正常 PR 流程。三者不互相越界；工人不得自行触发 review。
+sweep（产 issue 与停产确认）= flash-review 独立会话；triage（分类/验真/关闭、owner 指派、final-sweep 清算）= 调度会话；修复 = 工人正常 PR 流程。三者不互相越界；工人不得自行触发 review。
