@@ -55,7 +55,7 @@
 | 主动 `LowerShieldIntent` | 盾保留 | 全部终止 | 0 | 0 |
 | `StaminaState::Exhausted` | 盾保留 | 既有强制终止 | 0 | 既有恰 1 |
 
-- [ ] P0 contract 测试同时覆盖 exact break、未破盾、offhand missing、`StaminaState::{Idle, ShieldBlocking, Exhausted}`、重复 resolver intent 与 stop-animation 一次性语义；只断言外部可观察状态 / event / inventory，不锁 private helper 调用次数或具体重构形状。
+- [ ] P0 contract 测试同时覆盖 exact break、未破盾、offhand missing、**副手仍占用但已替换为非盾 / 不匹配实例**、`StaminaState::{Idle, ShieldBlocking, Exhausted}`、重复 resolver intent 与 stop-animation 一次性语义；对两类 stale-inventory fixture 均断言外部可观察状态 / event / inventory，不锁 private helper 调用次数或具体重构形状。
 
 ## P1 — resolver 同步终止与同 batch 回归
 
@@ -67,7 +67,7 @@
   3. 从两条对应 `CombatEvent` 断言第一条可为 `DefenseKind::ShieldBlock`，第二条**不是** `DefenseKind::ShieldBlock`，且第二条伤害 / 污染不获得木盾 fallback 削减。
   4. 本次 `app.update()` 完成后断言 `ShieldBlock`、`ShieldBlocking`、`ShieldDrainOverride` 均不存在，`StaminaState != ShieldBlocking`；后续 update / 再攻击仍无盾减伤、stamina 不再因盾 drain、不会由旧 state 进入 `Exhausted` 或 `ParryRecovery`。
 - [ ] 明确锁住 event 精度：同一已碎 instance 的后续 intent 不可再 emit `ShieldBroken`；外部测试直接注入重复 event 不属于本 finding 的全局去重协议。无需新增 dedupe resource、persistent receipt 或 network acknowledgement。
-- [ ] 覆盖边界：正面 FOV 未破盾保持现有减伤和持续 drain；背面 / 未格挡攻击不制造 shield terminal；主动放盾与 stamina exhaustion 保留现有各自语义；结算前移走副手盾只清 stale server state、无 `ShieldBroken`；durability update / inventory consume 失败不制造 false `ShieldBroken`、不吞 inventory、不得留下可触发 fallback 的 stale state。
+- [ ] 覆盖边界：正面 FOV 未破盾保持现有减伤和持续 drain；背面 / 未格挡攻击不制造 shield terminal；主动放盾与 stamina exhaustion 保留现有各自语义；结算前移走副手盾**或用非盾物品替换副手实例**时均只清 stale server state、无 `ShieldBroken`；后者必须断言攻击无 `DefenseKind::ShieldBlock`，伤害 / 污染不获得木盾 fallback 削减；durability update / inventory consume 失败不制造 false `ShieldBroken`、不吞 inventory、不得留下可触发 fallback 的 stale state。
 - [ ] 可核验 symbol：`terminate_shield_blocking_state`（名称可等义）、`shield_break_clears_authoritative_blocking_state`、`shield_break_second_intent_in_same_resolver_batch_is_not_blocked`、`missing_offhand_shield_clears_stale_blocking_state`、`shield_break_does_not_apply_exhaustion_parry_recovery`、`shield_break_emits_once_per_destroyed_instance`（名称可等义）。
 
 ## P2 — 既有 `ShieldBroken` feedback 不回归
