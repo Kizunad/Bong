@@ -131,7 +131,7 @@
 
 ### #2 只 deferred passive offer，不 replay physical hotkey
 
-**决议**：被 combat/屏幕挡住的 passive social offer 保留在既有 domain Store；bootstrap 按 identity 持有 `alreadyNotified`，首次阻塞 `DEFER_NOTIFY`，重复同 identity `DEFER_SILENT`，新 identity 恢复通知资格；空屏且未过 TTL 时打开。普通 hotkey 被任意 nonmatching screen 挡住即 drop。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；`InsightOfferScreen` + `CurrentScreenCancellationHandler` 以 trigger id 将所有 terminal path 收敛为 exactly-once settlement。
+**决议**：被 combat/屏幕挡住的 passive social offer 保留在既有 domain Store；bootstrap 按 identity 持有 `alreadyNotified`，首次阻塞 `DEFER_NOTIFY`，重复同 identity `DEFER_SILENT`，新 identity 恢复通知资格；空屏且未过 TTL 时打开。普通 hotkey 被任意 nonmatching screen 挡住即 drop。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；`InsightOfferScreen` + `CurrentScreenCancellationHandler` 以 `offer_id` 作为每个 offer instance 的唯一 settlement identity，`trigger_id` 仅作为可复用触发上下文，所有 terminal path 收敛为 exactly-once settlement。
 
 **落点**：`client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java:42-57`；`client/src/main/java/com/bong/client/insight/InsightOfferScreenBootstrap.java:35-53`；本 plan §ScreenOpenPolicy；`client/src/test/resources/bong/ui/r7-screen-open-policy.tsv`。
 
