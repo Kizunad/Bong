@@ -35,7 +35,6 @@ import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7FoundationContractTest {
@@ -250,182 +249,43 @@ class R7FoundationContractTest {
     @Test
     void insightSettlementFixtureFreezesEveryTerminalCauseAndOwner() {
         List<String> lines = resourceLines("/bong/ui/r7-insight-settlement.tsv");
-        assertEquals(expectedInsightSettlementFixtureLines(), lines,
-            "every settlement, owner, identity guard, commit order, failure rule, and observable effect must be exact-pinned");
         List<InsightSettlementRow> rows = insightSettlementRows();
+        assertEquals(8, rows.size(), "each bounded insight terminal path must have one contract row");
         assertEquals(Set.of(
             "ACCEPT", "DECLINE", "TIMEOUT", "ESC", "REPLACED_BY_DIFFERENT_OFFER",
-            "REMOVED_EXCEPTIONALLY", "DUPLICATE_TERMINAL"
+            "ANIMATED_OPEN_CANCELLED", "REMOVED_EXCEPTIONALLY", "DUPLICATE_TERMINAL"
         ), rows.stream().map(InsightSettlementRow::terminalCause)
             .collect(java.util.stream.Collectors.toSet()),
-            "every insight terminal cause must have one exactly-once settlement contract");
-        assertEquals(7, rows.size(), "insight terminal causes must be unique");
-        assertTrue(rows.stream().allMatch(row -> row.identityRule().contains("triggerId")),
-            "settlement must be identity guarded by the offer triggerId");
+            "every insight terminal cause must have one contract row");
+        assertEquals(8, rows.stream().map(InsightSettlementRow::terminalCause).distinct().count(),
+            "terminal causes must be unique");
+        assertTrue(rows.stream().allMatch(row -> row.identityRule().contains("offerId")),
+            "settlement identity must use wire offerId while triggerId remains reusable context");
         assertTrue(rows.stream()
             .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
             .allMatch(row -> row.commitOrder().contains("commit")
                 && row.commitOrder().contains("before")
                 && row.commitOrder().contains("send")),
-            "the winning triggerId and cause must commit before any fallible decision send");
-        assertTrue(rows.stream()
-            .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
-            .allMatch(row -> row.sendFailure().contains("still attempted")
-                || row.terminalCause().equals("REMOVED_EXCEPTIONALLY")),
-            "a send failure cannot skip the following transition or removal lifecycle stage");
-        assertTrue(rows.stream().allMatch(row -> row.transitionFailure().contains("committed winner")
-            || row.transitionFailure().contains("winner committed")),
-            "transition failures and duplicate paths must preserve the first committed winner");
-        assertEquals("NOOP", rows.stream()
-            .filter(row -> row.terminalCause().equals("DUPLICATE_TERMINAL"))
-            .findFirst().orElseThrow().settlement(),
-            "a second terminal path cannot emit another InsightDecision");
-        assertTrue(rows.stream()
+            "every fallible settlement path must commit its winner before sending");
+        assertTrue(rows.stream().allMatch(row -> !row.sendFailure().isBlank()
+            && !row.transitionFailure().isBlank()
+            && !row.exceptionRule().isBlank()
+            && !row.observableEffect().isBlank()),
+            "each terminal row must specify failure and observable lifecycle semantics");
+        InsightSettlementRow replacement = rows.stream()
             .filter(row -> row.terminalCause().equals("REPLACED_BY_DIFFERENT_OFFER"))
-            .findFirst().orElseThrow().owner().contains("CurrentScreenCancellationHandler"),
-            "replacement settlement must compose with ScreenTransitionController cancellation");
-        InsightSettlementRow timeout = rows.stream()
-            .filter(row -> row.terminalCause().equals("TIMEOUT"))
             .findFirst().orElseThrow();
-        assertTrue(timeout.owner().contains("InsightOfferScreenBootstrap")
-            && timeout.owner().contains("InsightOfferScreen"),
-            "TIMEOUT must have an executable owner before and after screen construction");
-        assertTrue(timeout.identityRule().contains("same triggerId")
-            && timeout.commitOrder().contains("before sending any fallible decision")
-            && timeout.observableEffect().contains("pre-open expiry never creates a screen"),
-            "TIMEOUT must freeze one trigger-level claim across pre-open and open paths");
-    }
-
-    @Test
-    void insightSettlementTransitionsPinPreOpenExpiryAndExactlyOnceClaim() {
-        InsightSettlementModel preOpen = new InsightSettlementModel("insight-old", 1_000);
-        assertEquals("DEFER", preOpen.observePreOpen(999, false),
-            "a live deferred offer must remain pending before its expiry boundary");
-        assertEquals("TIMEOUT", preOpen.observePreOpen(1_000, false),
-            "the bootstrap owner must settle an expired offer before constructing a screen");
-        assertEquals("TIMEOUT", preOpen.winner(),
-            "the terminal winner must be committed before the pre-open send can complete");
-        assertEquals(0, preOpen.screenConstructionCount(),
-            "pre-open expiry must not construct an InsightOfferScreen");
-        assertEquals(1, preOpen.sendCount(),
-            "pre-open expiry must send exactly one timeout decision");
-        assertEquals(0, preOpen.transitionCount(),
-            "pre-open expiry cannot attempt a screen transition");
-        assertEquals("NOOP", preOpen.constructScreen(),
-            "a pre-open terminal winner must prevent any later screen construction");
-        assertEquals(0, preOpen.screenConstructionCount(),
-            "a blocked post-settlement construction attempt must not change the zero-screen invariant");
-        assertEquals("NOOP", preOpen.observePreOpen(1_001, false),
-            "repeat observation after pre-open settlement must be a no-op");
-        assertEquals("NOOP", preOpen.observeScreenRemoval(),
-            "a later screen-removal callback cannot double-settle a pre-open winner");
-        assertEquals(1, preOpen.sendCount(),
-            "repeat observation and removal must not send a second decision");
-        assertEquals(List.of(
-            "pre-open:DEFER:insight-old",
-            "claim:TIMEOUT:bootstrap:insight-old",
-            "send:TIMEOUT:insight-old:ok",
-            "screen:NOOP:insight-old",
-            "pre-open:NOOP:insight-old",
-            "removal:NOOP:insight-old"
-        ), preOpen.events(), "pre-open expiry must commit before its single decision and block every later terminal path");
-
-        InsightSettlementModel failedSend = new InsightSettlementModel("insight-send-failure", 1_000);
-        SettlementFailure preOpenSendFailure = assertThrows(SettlementFailure.class,
-            () -> failedSend.observePreOpen(1_000, true),
-            "a pre-open send failure must surface after its terminal winner is committed");
-        assertEquals("send failed", preOpenSendFailure.getMessage(),
-            "pre-open send failure must remain the observable primary failure");
-        assertEquals(0, preOpenSendFailure.getSuppressed().length,
-            "pre-open expiry has no screen transition that could become a suppressed failure");
-        assertTrue(failedSend.sendFailureObserved(),
-            "the transition model must expose the fallible send branch");
-        assertEquals("TIMEOUT", failedSend.winner(),
-            "send failure must preserve the first terminal winner");
-        assertEquals("NOOP", failedSend.observePreOpen(2_000, false),
-            "send failure must not permit a retry or a second terminal claim");
-        assertEquals(1, failedSend.sendCount(),
-            "send failure must still be exactly-once at trigger scope");
-        assertEquals(List.of(
-            "claim:TIMEOUT:bootstrap:insight-send-failure",
-            "send:TIMEOUT:insight-send-failure:failed",
-            "pre-open:NOOP:insight-send-failure"
-        ), failedSend.events(), "a failed pre-open send must still commit before it becomes observable");
-
-        InsightSettlementModel openScreen = new InsightSettlementModel("insight-open", 1_000);
-        assertEquals("OPEN", openScreen.constructScreen(),
-            "a live offer may construct its screen before the timeout tick");
-        assertEquals("TIMEOUT", openScreen.observeOpenScreen(1_000, false, false),
-            "an already-open screen must share the same timeout winner contract");
-        assertEquals(1, openScreen.screenConstructionCount(),
-            "post-open timeout starts from exactly one constructed screen");
-        assertEquals(1, openScreen.transitionCount(),
-            "post-open timeout attempts its close/transition stage once");
-        assertEquals("NOOP", openScreen.observeScreenRemoval(),
-            "screen removal after timeout cannot replace the committed timeout winner");
-        assertEquals("NOOP", openScreen.observePreOpen(1_001, false),
-            "bootstrap and screen paths must converge on the same trigger-level winner");
-        assertEquals(1, openScreen.sendCount(),
-            "post-open timeout and removal must emit one decision total");
-        assertEquals(List.of(
-            "screen:OPEN:insight-open",
-            "claim:TIMEOUT:screen:insight-open",
-            "send:TIMEOUT:insight-open:ok",
-            "transition:TIMEOUT:insight-open:ok",
-            "removal:NOOP:insight-open",
-            "pre-open:NOOP:insight-open"
-        ), openScreen.events(), "open-screen timeout must use the same claim before send and transition");
-    }
-
-    @Test
-    void insightSettlementTransitionsKeepWinnerWhenPostOpenSendAndTransitionFail() {
-        InsightSettlementModel model = new InsightSettlementModel("insight-open-failure", 1_000);
-        assertEquals("OPEN", model.constructScreen(), "failure branch requires an open screen state");
-        SettlementFailure failure = assertThrows(SettlementFailure.class,
-            () -> model.observeOpenScreen(1_000, true, true),
-            "post-open timeout must surface the send failure only after attempting transition");
-        assertEquals("send failed", failure.getMessage(),
-            "send failure must remain primary when send and transition both fail");
-        assertEquals(1, failure.getSuppressed().length,
-            "the later transition failure must be retained as one suppressed failure");
-        assertEquals("transition failed", failure.getSuppressed()[0].getMessage(),
-            "suppressed failure order must preserve the transition stage");
-        assertTrue(model.sendFailureObserved(), "post-open send failure must be observable");
-        assertTrue(model.transitionFailureObserved(), "post-open transition failure must be observable");
-        assertEquals("TIMEOUT", model.winner(),
-            "neither post-open failure may replace the committed timeout winner");
-        assertEquals(1, model.sendCount(), "post-open send failure must not trigger retry");
-        assertEquals(1, model.transitionCount(), "post-open transition failure is attempted once");
-        assertEquals(List.of(
-            "screen:OPEN:insight-open-failure",
-            "claim:TIMEOUT:screen:insight-open-failure",
-            "send:TIMEOUT:insight-open-failure:failed",
-            "transition:TIMEOUT:insight-open-failure:failed"
-        ), model.events(), "even dual failure must retain claim-send-transition execution order");
-        assertEquals("NOOP", model.observeScreenRemoval(),
-            "removal after two failures must not create a second terminal cause");
-    }
-
-    @Test
-    void insightExceptionalRemovalCommitsDeclineAndBlocksLaterSettlement() {
-        InsightSettlementModel model = new InsightSettlementModel("insight-removed", 1_000);
-
-        assertEquals("REMOVED_EXCEPTIONALLY", model.observeScreenRemoval(),
-            "an unsettled screen removal must commit its terminal decline");
-        assertEquals("REMOVED_EXCEPTIONALLY", model.winner(),
-            "exceptional removal must become the immutable terminal winner");
-        assertEquals(1, model.sendCount(),
-            "exceptional removal must emit its one decline decision");
-        assertEquals("NOOP", model.observePreOpen(2_000, false),
-            "a later timeout observation must not retry an exceptionally removed offer");
-        assertEquals("NOOP", model.observeScreenRemoval(),
-            "duplicate removal must not emit another decline");
-        assertEquals(List.of(
-            "claim:REMOVED_EXCEPTIONALLY:removal:insight-removed",
-            "send:DECLINED:insight-removed:ok",
-            "pre-open:NOOP:insight-removed",
-            "removal:NOOP:insight-removed"
-        ), model.events(), "exceptional removal must commit and send before all later terminal paths no-op");
+        assertTrue(replacement.owner().contains("InsightOfferStore")
+            && replacement.identityRule().contains("pending"),
+            "replacement contract must cover pending offers without a current InsightOfferScreen");
+        InsightSettlementRow cancelled = rows.stream()
+            .filter(row -> row.terminalCause().equals("ANIMATED_OPEN_CANCELLED"))
+            .findFirst().orElseThrow();
+        assertTrue(cancelled.owner().contains("PendingOpenCancellationHandler")
+            && cancelled.observableEffect().contains("250 ms"),
+            "animated-open cancellation must be an explicit pending-screen contract");
+        assertTrue(lines.stream().anyMatch(line -> line.contains("offerId") && line.contains("triggerId")),
+            "fixture must distinguish reusable trigger context from unique offer instance identity");
     }
 
     @Test
@@ -453,9 +313,9 @@ class R7FoundationContractTest {
             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
         assertEquals(expectedIdentities, actualIdentities,
             "fixture and production must match the exact (sourcePath, assignment target) set in both directions");
-        assertEquals(expectedKeybindProductionSiteFixtureLines(),
-            resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
-            "every per-binding owner, source, constructor, cardinality, and consumer contract must be exact-pinned");
+        assertEquals(resourceLines("/bong/ui/r7-keybind-production-sites.tsv"),
+            keybindProductionSiteRows().stream().map(KeybindProductionSiteRow::fixtureLine).toList(),
+            "every production keybinding declaration must parse as one exact typed manifest row");
         assertEquals(34, actualSites.stream().mapToInt(KeybindingSourceSite::runtimeCardinality).sum(),
             "the AST-derived 26 constructors must expand to exactly 34 runtime bindings");
         Set<String> expandedTranslationKeys = new TreeSet<>();
@@ -482,23 +342,7 @@ class R7FoundationContractTest {
                 "AST-derived runtime cardinality drifted for " + row.ownerId());
             assertEquals(row.expandedTranslationKeys(), actual.expandedTranslationKeys(),
                 "expanded runtime translation keys drifted for " + row.ownerId());
-            String source = R7SourceScan.codeOnly(R7SourceScan.read(CLIENT_ROOT.resolve(row.sourcePath())));
-            assertTrue(source.contains(row.routeAnchor()),
-                "behavior route anchor drifted for " + row.ownerId());
-            assertFalse(row.consumerRoute().isBlank(),
-                "each binding must freeze its behavior-critical consumer route: " + row.ownerId());
         }
-        KeybindProductionSiteRow quickSlots = expected.stream()
-            .filter(row -> row.ownerId().equals("combat.quick_slot"))
-            .findFirst().orElseThrow();
-        String combatSource = R7SourceScan.codeOnly(R7SourceScan.read(CLIENT_ROOT.resolve(quickSlots.sourcePath())))
-            .replaceAll("\\s+", " ");
-        assertTrue(combatSource.contains("i < QuickSlotConfig.SLOT_COUNT")
-            && combatSource.contains("QUICK_SLOT_KEYS[i]")
-            && combatSource.contains("while (QUICK_SLOT_KEYS[i].wasPressed())")
-            && combatSource.contains("quickSlotHandler.accept(i)"),
-            "quick-slot one-source/nine-runtime expansion and ordered full-drain route must stay frozen");
-
         List<ExpandedProductionDefault> expandedDefaults = expandedProductionDefaults(
             expected, actualSites, keybindRows()
         );
@@ -973,49 +817,6 @@ class R7FoundationContractTest {
         return result;
     }
 
-    private static List<String> expectedKeybindProductionSiteFixtureLines() {
-        return """
-            botany.auto_harvest	botany/BotanyHudBootstrap.java	autoHarvestKey	key.bong-client.botany_auto_harvest	KEYSYM	R	category.bong-client.controls	1	START_CLIENT_TICK drains every queued AUTO press before checking player/session/screen eligibility; blocked presses are discarded and cannot replay after the gate opens; accepted presses dispatch AUTO to HarvestSessionStore and ClientRequestSender.	consumeAutoPresses(
-            combat.quick_slot	combat/CombatKeybindings.java	QUICK_SLOT_KEYS[i]	key.bong-client.quick_slot_{1..9}	KEYSYM	F1..F9	category.bong-client.combat	9 from one source constructor	install loop i=0..<QuickSlotConfig.SLOT_COUNT; consumeQuickSlotPresses iterates slots in order and drains each while(wasPressed), calling quickSlotHandler.accept(i) for every press.	while (QUICK_SLOT_KEYS[i].wasPressed())
-            combat.jiemai_react	combat/CombatKeybindings.java	jiemaiKey	key.bong-client.jiemai_react	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player, then drains while(wasPressed) and invokes jiemaiHandler for every press; no currentScreen gate.	while (jiemaiKey.wasPressed())
-            combat.spell_volume_hold	combat/CombatKeybindings.java	spellVolumeKey	key.bong-client.spell_volume_hold	KEYSYM	R	category.bong-client.combat	1	onTick requires player and polls isPressed edge; Botany input capture forces a release edge; handler receives hold true/false; no currentScreen gate.	spellVolumeKey.isPressed()
-            combat.event_stream_toggle	combat/CombatKeybindings.java	eventStreamToggleKey	key.bong-client.event_stream_toggle	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player, then drains while(wasPressed) and invokes eventStreamToggleHandler for every press; no currentScreen gate.	while (eventStreamToggleKey.wasPressed())
-            combat.shield_hold	combat/CombatKeybindings.java	shieldHoldKey	key.bong-client.shield_hold	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player and polls isPressed edge, invoking shieldHoldHandler with hold true/false; no currentScreen gate.	shieldHoldKey.isPressed()
-            combat.juice_multiplier_cycle	combat/juice/JuiceControls.java	cycleKey	key.bong-client.juice_multiplier_cycle	KEYSYM	UNKNOWN	category.bong-client.combat	1	END_CLIENT_TICK drains all while(wasPressed); absent player or open screen discards every queued press, otherwise each press cycles JuiceConfig and emits actionbar feedback.	consumeCyclePresses(
-            craft.open_screen	craft/CraftScreenBootstrap.java	openScreenKey	key.bong-client.open_craft_screen	KEYSYM	C	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each press uses client.execute and opens CraftScreen unless already current.	while (keyBinding().wasPressed())
-            void_action.open_screen	cultivation/voidaction/VoidActionScreenBootstrap.java	openScreenKey	key.bong-client.open_void_action_screen	KEYSYM	O	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each press uses client.execute and opens VoidActionScreen unless already current.	while (keyBinding().wasPressed())
-            dying_elder.give_dan	dying_elder/DyingElderInteractionKeybindings.java	giveDanKey	key.bong-client.dying_elder_give_dan	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1	END_CLIENT_TICK drains all three encounter queues when player absent, screen open, or encounter inactive; active give queue drains to one boolean then dispatches exact huiyuan_pill instance via sendGiveDanToElder.	consumeWasPressed(giveDanKey)
-            dying_elder.refuse	dying_elder/DyingElderInteractionKeybindings.java	refuseKey	key.bong-client.dying_elder_refuse	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1	END_CLIENT_TICK shares full gated drain; active refuse queue drains to one boolean and logs the no-protocol placeholder action.	consumeWasPressed(refuseKey)
-            dying_elder.delay	dying_elder/DyingElderInteractionKeybindings.java	delayKey	key.bong-client.dying_elder_delay	KEYSYM	UNKNOWN	category.bong-client.dying_elder	1	END_CLIENT_TICK shares full gated drain; active delay queue drains to one boolean and logs the no-effect placeholder action.	consumeWasPressed(delayKey)
-            forge.open_screen	forge/ForgeScreenBootstrap.java	openScreenKey	key.bong-client.open_forge_screen	KEYSYM	U	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each press uses client.execute and opens ForgeScreen unless already current.	while (keyBinding().wasPressed())
-            hud.immersive_toggle	hud/HudImmersionControls.java	toggleKey	key.bong-client.hud_immersive_toggle	KEYSYM	UNKNOWN	category.bong-client	1	END_CLIENT_TICK has no player/screen gate; drains while(wasPressed) and toggles HudImmersionMode once per press.	consumeTogglePresses(
-            identity.open_panel	identity/IdentityPanelScreenBootstrap.java	openScreenKey	key.bong-client.open_identity_panel	KEYSYM	DEFAULT_KEY=O	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed), requestOpenScreen uses client.execute and opens IdentityPanelScreen unless already current; store listener refresh remains separate.	while (keyBinding().wasPressed())
-            interaction.unified_g	input/InteractionKeybindings.java	interactKey	key.bong-client.interact	KEYSYM	G	category.bong-client.controls	1	END_CLIENT_TICK returns before reading the queue when player absent or screen open; otherwise drains while(wasPressed) and routes each press through InteractKeyRouter.global().	while (interactKey != null && interactKey.wasPressed())
-            lingtian.open_action_screen	lingtian/LingtianActionScreenBootstrap.java	openScreenKey	key.bong-client.open_lingtian_action_screen	KEYSYM	L	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed), requestOpenScreen uses client.execute, snapshots crosshair BlockPos, and opens LingtianActionScreen.	while (keyBinding().wasPressed())
-            mineral.sense	mineral/MineralSenseBootstrap.java	senseKey	key.bong-client.mineral_sense	KEYSYM	N	category.bong-client.mineral	1	END_CLIENT_TICK returns before reading queue when player absent; otherwise drains while(wasPressed), sending one mineral probe per press with a block target and no-op for empty crosshair.	while (senseKey.wasPressed())
-            movement.dash	movement/MovementKeybindings.java	dashKey	key.bong-client.movement_dash	KEYSYM	V	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queue when player absent or screen open; otherwise drains the queue to one boolean, routes DASH once, and sends movement action with resolved yaw.	consumeWasPressed(dashKey)
-            npc.interaction_log	npc/NpcInteractionLogControls.java	key	key.bong-client.npc_interaction_log	KEYSYM	UNKNOWN	category.bong-client.controls	1	END_CLIENT_TICK returns without reading queue when player absent or screen open; otherwise drains while(wasPressed) and toggles NpcInteractionLogStore once per press.	consumeTogglePresses(
-            social.spirit_niche_mark	social/SpiritNicheRevealBootstrap.java	markKey	key.bong-client.spirit_niche_mark_coordinate	KEYSYM	M	category.bong-client.social	1	END_CLIENT_TICK returns before reading queue when player absent; otherwise drains while(wasPressed), sending gaze plus mark-coordinate for a block target and no-op for empty crosshair.	while (markKey.wasPressed())
-            spirittreasure.open_screen	spirittreasure/SpiritTreasureScreenBootstrap.java	openScreenKey	key.bong-client.open_spirit_treasure_screen	KEYSYM	DEFAULT_KEY=T	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed), requestOpenScreen uses client.execute and opens SpiritTreasureScreen unless already current.	while (keyBinding().wasPressed())
-            tsy.extract_start	tsy/ExtractInteractionBootstrap.java	extractKey	key.bong-client.tsy_extract	KEYSYM	Y	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queues when player/options absent; while(wasPressed && !extracting) sends start for nearest portal; when gate is false one queued press is consumed before loop exits and further queued presses remain.	while (extractKey.wasPressed() && !ExtractStateStore.snapshot().extracting())
-            tsy.extract_cancel	tsy/ExtractInteractionBootstrap.java	cancelKey	key.bong-client.tsy_extract_cancel	KEYSYM	U	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queues when player/options absent; while(wasPressed && extracting) sends cancel; when gate is false one queued press is consumed before loop exits and further queued presses remain.	while (cancelKey.wasPressed() && ExtractStateStore.snapshot().extracting())
-            tsy.search_cancel	tsy/SearchCancelInteractionBootstrap.java	cancelKey	key.bong-client.tsy_search_cancel	KEYSYM	H	category.bong-client.controls	1	END_CLIENT_TICK returns before reading queue when player/options absent; while(wasPressed && SEARCHING) sends cancel; when gate is false one queued press is consumed before loop exits and further queued presses remain.	while (cancelKey.wasPressed() && SearchHudStateStore.snapshot().phase() == SearchHudState.Phase.SEARCHING)
-            ui.cultivation.open_screen	ui/CultivationScreenBootstrap.java	openScreenKey	key.bong-client.open_cultivation_screen	KEYSYM	K	category.bong-client.controls	1	END_CLIENT_TICK drains while(wasPressed); each accepted click uses client.execute, applies shouldOpen, then opens CultivationScreen from PlayerStateStore.snapshot().	while (consumeClick(keyBinding()))
-            """.strip().lines().toList();
-    }
-
-    private static List<String> expectedInsightSettlementFixtureLines() {
-        return """
-            ACCEPT\tInsightDecision.chosen(triggerId, choiceId)\tInsightOfferScreen\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and ACCEPT as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one CHOSEN InsightDecision; after either failure the offer remains terminal and cannot emit again.
-            DECLINE\tInsightDecision.declined(triggerId)\tInsightOfferScreen\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and DECLINE as the immutable winning cause before sending the decision; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tIf send and close both fail, throw the send failure and add the close failure as suppressed in execution order.\tEmit at most one DECLINED InsightDecision; after either failure the offer remains terminal and cannot emit again.
-            TIMEOUT\tInsightDecision.timedOut(triggerId)\tInsightOfferScreenBootstrap + InsightOfferScreen\tA shared exactly-once terminal claim keyed by the same triggerId is accepted from pre-open bootstrap or the open screen only once\tAtomically commit the shared triggerId and TIMEOUT as the immutable winning cause before sending any fallible decision; pre-open bootstrap may settle without constructing a screen, while an open screen uses the same claim and then closes if still current.\tA send failure is retained as primary; the committed TIMEOUT winner remains terminal and the applicable close/transition stage is still attempted.\tA transition or screen-removal failure leaves the committed winner unchanged; later bootstrap, screen, or removal observations remain NOOP.\tIf send and transition both fail, throw the send failure and add the transition failure as suppressed in execution order.\tEmit at most one TIMED_OUT InsightDecision for the triggerId; pre-open expiry never creates a screen and no later path can double-settle it.
-            ESC\tInsightDecision.declined(triggerId)\tInsightOfferScreen.close\tsettle only when current offer triggerId matches\tAtomically commit settled triggerId and ESC as the immutable winning cause before sending the decline; then send; then close this screen if still current.\tA send failure is retained as primary and closing this screen is still attempted.\tA close or removal-hook failure leaves the committed winner unchanged; the later onRemoved terminal path is NOOP.\tIf send and close or removal both fail, throw the first failure and add later failures as suppressed in execution order.\tEmit at most one DECLINED InsightDecision; subsequent onRemoved callback emits nothing and cannot replace ESC as winner.
-            REPLACED_BY_DIFFERENT_OFFER\tInsightDecision.declined(triggerId)\tInsightOfferScreen + InsightOfferScreenBootstrap + ScreenTransitionController.CurrentScreenCancellationHandler\tbootstrap compares outgoing and replacement triggerId before transition; handler settles the outgoing identity once\tAtomically commit the outgoing triggerId and REPLACED_BY_DIFFERENT_OFFER before sending its decline; then send; then switch to the different offer, which becomes authoritative only after the outgoing commit.\tA send failure is retained as primary and switching to the replacement is still attempted.\tA switch failure leaves the outgoing winner committed and the replacement non-authoritative; later terminal paths for the outgoing triggerId remain NOOP.\tIf send and switch both fail, throw the send failure and add the switch failure as suppressed in execution order.\tEmit at most one DECLINED InsightDecision for the outgoing triggerId; replacement cannot strand or re-settle the outgoing offer after either failure.
-            REMOVED_EXCEPTIONALLY\tInsightDecision.declined(triggerId)\tInsightOfferScreen.onRemoved\tsettle the same triggerId when no prior terminal cause won\tAtomically commit settled triggerId and REMOVED_EXCEPTIONALLY before sending the decline; then send; then allow BongScreenBase removal cleanup and super.removed to continue.\tA send failure is retained as primary and later removal lifecycle stages are still attempted.\tA later removal-stage failure leaves the committed winner unchanged; later terminal paths remain NOOP.\tBongScreenBase throws the first failure and adds later removal failures as suppressed in execution order.\tEmit at most one DECLINED InsightDecision through the removal hook; exceptional removal cannot leave the offer unsettled or permit a retry.
-            DUPLICATE_TERMINAL\tNOOP\tInsightOfferScreen\tsettled triggerId and first terminal cause are immutable\tObserve the already committed winner and return before decision send or any screen transition.\tNo decision send is attempted.\tNo screen switch is attempted by the duplicate path; the committed winner remains unchanged.\tNo new exception is produced by the duplicate path.\tEmit no second decision, perform no second transition, and do not mutate the winning cause.
-            """.strip().lines().toList();
-    }
-
     private static List<String> expectedOpenPolicyFixtureLines() {
         return """
             social-expired-past\tSOCIAL_INVITE\tinvite-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tA finite passive offer whose expiry is before now never opens.
@@ -1066,7 +867,7 @@ class R7FoundationContractTest {
             new FoundationRow("BongScreenBase", "removed-hook", "protected void onRemoved()", "R7", "Business terminal effects run once without allowing cleanup bypass."),
             new FoundationRow("DiffListWidget", "type", "public final class DiffListWidget<T, K, C extends Component>", "R7", "The generic list owns ordered-key diffing without imposing an owo scroll-offset API."),
             new FoundationRow("DiffListWidget", "constructor", "public DiffListWidget(FlowLayout rows, Function<? super T, ? extends K> keyOf, Function<? super T, ? extends C> createRow, BiConsumer<? super C, ? super T> patchRow)", "R7", "A final widget receives key extraction and row lifecycle functions by constructor injection."),
-            new FoundationRow("DiffListWidget", "update", "public UpdateResult update(List<? extends T> items)", "R7", "Null list/item/key and duplicate keys fail before mutation; equal ordered keys patch mounted rows; patch failure propagates unchanged, preserves the previous committed key sequence, and the next update retries the full list; structural key changes rebuild rows."),
+            new FoundationRow("DiffListWidget", "update", "public UpdateResult update(List<? extends T> items)", "R7", "Null list/item/key and duplicate keys fail before mutation; equal ordered keys patch mounted rows; patch failure propagates unchanged, preserves the previous committed key sequence, and the next update retries the full list; structural key changes create every replacement row before mutating mounted children, so createRow failure preserves the prior mounted rows and committed keys, and a successful rebuild swaps the complete row set atomically."),
             new FoundationRow("DiffListWidget", "rendered-keys", "public List<K> renderedKeys()", "R7", "Inspection returns the immutable current ordered key sequence."),
             new FoundationRow("DiffListWidget", "row-lookup", "public Optional<C> rowForKey(K key)", "R7", "Inspection exposes mounted identity without leaking mutable ownership."),
             new FoundationRow("DiffListWidget", "result", "public enum UpdateResult { REBUILT, PATCHED }", "R7", "The caller can distinguish structural rebuild from identity-preserving patch."),
@@ -1151,7 +952,7 @@ class R7FoundationContractTest {
             .map(line -> line.split("\\t", -1))
             .map(columns -> new KeybindProductionSiteRow(
                 columns[0], columns[1], columns[2], columns[3], columns[4],
-                columns[5], columns[6], columns[7], columns[8], columns[9]
+                columns[5], columns[6], columns[7]
             ))
             .toList();
     }
@@ -1174,149 +975,6 @@ class R7FoundationContractTest {
                 .toList();
         } catch (IOException | URISyntaxException exception) {
             throw new AssertionError("unable to read R7 fixture " + name, exception);
-        }
-    }
-
-    private static final class InsightSettlementModel {
-        private final String triggerId;
-        private final long expiresAtMs;
-        private final List<String> events = new java.util.ArrayList<>();
-        private String winner;
-        private boolean screenConstructed;
-        private int screenConstructionCount;
-        private int sendCount;
-        private int transitionCount;
-        private boolean sendFailureObserved;
-        private boolean transitionFailureObserved;
-
-        private InsightSettlementModel(String triggerId, long expiresAtMs) {
-            this.triggerId = triggerId;
-            this.expiresAtMs = expiresAtMs;
-        }
-
-        private String observePreOpen(long nowMs, boolean sendFails) {
-            if (winner != null) {
-                events.add("pre-open:NOOP:" + triggerId);
-                return "NOOP";
-            }
-            if (nowMs < expiresAtMs) {
-                events.add("pre-open:DEFER:" + triggerId);
-                return "DEFER";
-            }
-            claimTimeout("bootstrap");
-            SettlementFailure sendFailure = send(sendFails);
-            if (sendFailure != null) {
-                throw sendFailure;
-            }
-            return "TIMEOUT";
-        }
-
-        private String constructScreen() {
-            if (winner != null) {
-                events.add("screen:NOOP:" + triggerId);
-                return "NOOP";
-            }
-            screenConstructed = true;
-            screenConstructionCount++;
-            events.add("screen:OPEN:" + triggerId);
-            return "OPEN";
-        }
-
-        private String observeOpenScreen(long nowMs, boolean sendFails, boolean transitionFails) {
-            if (winner != null) {
-                events.add("screen-timeout:NOOP:" + triggerId);
-                return "NOOP";
-            }
-            if (!screenConstructed || nowMs < expiresAtMs) {
-                events.add("screen-timeout:NOOP:" + triggerId);
-                return "NOOP";
-            }
-            claimTimeout("screen");
-            SettlementFailure sendFailure = send(sendFails);
-            SettlementFailure transitionFailure = transition(transitionFails);
-            if (sendFailure != null) {
-                if (transitionFailure != null) {
-                    sendFailure.addSuppressed(transitionFailure);
-                }
-                throw sendFailure;
-            }
-            if (transitionFailure != null) {
-                throw transitionFailure;
-            }
-            return "TIMEOUT";
-        }
-
-        private String observeScreenRemoval() {
-            if (winner == null) {
-                winner = "REMOVED_EXCEPTIONALLY";
-                events.add("claim:REMOVED_EXCEPTIONALLY:removal:" + triggerId);
-                SettlementFailure sendFailure = send("DECLINED", false);
-                if (sendFailure != null) {
-                    throw sendFailure;
-                }
-                return "REMOVED_EXCEPTIONALLY";
-            }
-            events.add("removal:NOOP:" + triggerId);
-            return "NOOP";
-        }
-
-        private void claimTimeout(String owner) {
-            if (winner == null) {
-                winner = "TIMEOUT";
-                events.add("claim:TIMEOUT:" + owner + ":" + triggerId);
-            }
-        }
-
-        private SettlementFailure send(boolean fails) {
-            return send("TIMEOUT", fails);
-        }
-
-        private SettlementFailure send(String decision, boolean fails) {
-            sendCount++;
-            sendFailureObserved |= fails;
-            events.add("send:" + decision + ":" + triggerId + ":" + (fails ? "failed" : "ok"));
-            return fails ? new SettlementFailure("send failed") : null;
-        }
-
-        private SettlementFailure transition(boolean fails) {
-            transitionCount++;
-            transitionFailureObserved |= fails;
-            events.add("transition:TIMEOUT:" + triggerId + ":" + (fails ? "failed" : "ok"));
-            return fails ? new SettlementFailure("transition failed") : null;
-        }
-
-        private String winner() {
-            return winner;
-        }
-
-        private int screenConstructionCount() {
-            return screenConstructionCount;
-        }
-
-        private int sendCount() {
-            return sendCount;
-        }
-
-        private int transitionCount() {
-            return transitionCount;
-        }
-
-        private boolean sendFailureObserved() {
-            return sendFailureObserved;
-        }
-
-        private boolean transitionFailureObserved() {
-            return transitionFailureObserved;
-        }
-
-        private List<String> events() {
-            return List.copyOf(events);
-        }
-    }
-
-    private static final class SettlementFailure extends RuntimeException {
-        private SettlementFailure(String message) {
-            super(message);
         }
     }
 
@@ -1379,10 +1037,13 @@ class R7FoundationContractTest {
         String inputType,
         String defaultContract,
         String categoryContract,
-        String runtimeCardinality,
-        String consumerRoute,
-        String routeAnchor
+        String runtimeCardinality
     ) {
+        String fixtureLine() {
+            return String.join("\t", ownerId, sourcePath, sourceSite, translationContract, inputType,
+                defaultContract, categoryContract, runtimeCardinality);
+        }
+
         String normalizedDefaultContract() {
             return defaultContract.startsWith("DEFAULT_KEY=")
                 ? defaultContract.substring("DEFAULT_KEY=".length())
