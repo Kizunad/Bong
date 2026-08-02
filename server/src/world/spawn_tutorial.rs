@@ -225,7 +225,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_tutorial_state_to_joined_clients,
+            attach_tutorial_state_to_joined_clients
+                .after(crate::cultivation::attach_cultivation_to_joined_clients),
             send_tutorial_coffin_pos_on_join,
             grant_meridian_primer_on_join,
             handle_coffin_open_requests,
@@ -240,7 +241,7 @@ pub fn register(app: &mut App) {
     );
 }
 
-fn attach_tutorial_state_to_joined_clients(
+pub(crate) fn attach_tutorial_state_to_joined_clients(
     mut commands: Commands,
     clock: Option<Res<CombatClock>>,
     mut telemetry: ResMut<TutorialTelemetry>,

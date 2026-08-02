@@ -1151,6 +1151,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn typed_balance_transactions_reject_audit_only_reasons_atomically() {
         let audit_only_reasons = [
