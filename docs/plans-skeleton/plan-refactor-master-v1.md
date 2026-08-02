@@ -124,7 +124,7 @@
 ### 10.1.1 major 聚类促升 skeleton（独立出口）
 
 1. 调度会话先在 cluster intake 中列出 source issue、验真证据、唯一 owner label 和**明确的 implementation owner**（既有轨道，或命名的 standalone 工人）；未定 owner 的 source issue 保持 open，不得以“待建 skeleton”关闭。
-2. 需独立立项时，owner 在独立 docs PR 中按 `docs/CLAUDE.md` 创建或补充 `docs/plans-skeleton/plan-<name>-v1.md`，并在其 intake 写入 source issue 与 implementation owner；该 skeleton 按普通 plan 工作流进入调度/消费队列。此出口不走 §7，§7 只处理已被轨道吸收的 plan 归档。
+2. 需独立立项时，owner 必须在本仓库同一提交树内读取已存在的根 `CLAUDE.md`「Plan 工作流」和 `docs/CLAUDE.md` §§五-六（Plan 演进 / consume-plan），并在独立 docs PR 中创建或补充 `docs/plans-skeleton/plan-<name>-v1.md`；不得用外部或会话文档替代，任一路径缺失时不得创建 skeleton 或关闭 source issue，先转人工恢复仓库流程文档。该 skeleton 按普通 plan 工作流进入调度/消费队列。此出口不走 §7，§7 只处理已被轨道吸收的 plan 归档。
 3. skeleton 合入 `origin/main` 且 implementation owner 已入队后，triage 才在每个 source issue 留下 skeleton 路径、commit/PR 与 owner 的关联证据，并以 `promoted to <skeleton>` 关闭；任何一步未完成都保留 source issue open。
 
 ### 10.2 轨道收尾挂钩
