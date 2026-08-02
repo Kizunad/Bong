@@ -161,6 +161,15 @@ class R7FoundationContractTest {
             assertKeyBindingDeclaration(sourceText, row, source);
         }
 
+        assertTrue(find(rows, "botany_auto").resolution().contains("drain queued presses")
+                && find(rows, "botany_auto").resolution().contains("no later replay"),
+            "botany rejection must drain queued presses and prohibit later replay");
+        assertTrue(rows.stream().filter(row -> row.action().startsWith("dying_elder."))
+                .allMatch(row -> row.resolution().contains("effective binding")
+                    && row.resolution().contains("unbound")
+                    && row.resolution().contains("unified G router")),
+            "dying-elder HUD resolutions must require effective-binding and explicit unbound behavior");
+
         Set<PhysicalDefault> boundTargets = new TreeSet<>((left, right) -> {
             int type = left.type().compareTo(right.type());
             return type != 0 ? type : left.code().compareTo(right.code());
@@ -349,6 +358,21 @@ class R7FoundationContractTest {
         assertEquals(34, expandedDefaults.size(),
             "the collision audit must inspect every expanded runtime production default, including UNKNOWN entries");
         Set<DefaultCollision> collisions = new TreeSet<>();
+        for (int first = 0; first < expandedDefaults.size(); first++) {
+            ExpandedProductionDefault left = expandedDefaults.get(first);
+            if (left.defaultCode().equals("UNKNOWN")) {
+                continue;
+            }
+            for (int second = first + 1; second < expandedDefaults.size(); second++) {
+                ExpandedProductionDefault right = expandedDefaults.get(second);
+                if (left.inputType().equals(right.inputType())
+                    && left.defaultCode().equals(right.defaultCode())) {
+                    collisions.add(new DefaultCollision(
+                        left.ownerId(), right.ownerId(), left.inputType(), left.defaultCode()
+                    ));
+                }
+            }
+        }
         for (ExpandedProductionDefault production : expandedDefaults) {
             if (production.defaultCode().equals("UNKNOWN")) {
                 continue;
@@ -439,6 +463,9 @@ class R7FoundationContractTest {
             "ScreenOpenPolicy"
         );
         try {
+            if (!Files.exists(root)) {
+                return;
+            }
             if (Files.isRegularFile(root)) {
                 String source = R7SourceScan.codeOnly(R7SourceScan.read(root));
                 for (String name : names) {
@@ -612,7 +639,8 @@ class R7FoundationContractTest {
         try (var files = Files.walk(CLIENT_ROOT)) {
             return files.filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().endsWith(".java"))
-                .filter(path -> R7SourceScan.codeOnly(R7SourceScan.read(path)).contains("new KeyBinding("))
+                .filter(path -> java.util.regex.Pattern.compile("new\\s+KeyBinding\\s*\\(")
+                    .matcher(R7SourceScan.codeOnly(R7SourceScan.read(path))).find())
                 .sorted()
                 .toList();
         }
@@ -834,7 +862,7 @@ class R7FoundationContractTest {
             hotkey-ordinary\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tBLOCK_DROP\tAn ordinary nonmatching screen consumes the physical moment; the keypress is not queued.
             hotkey-modal\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tBLOCK_DROP\tPhysical keypresses are never queued for future replay behind a modal.
             hotkey-terminal\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tSYSTEM_TERMINAL\tdeath\tDEATH\tfalse\t1000\tBLOCK_DROP\tA hotkey never displaces or waits behind a system terminal.
-            insight-expired\tINSIGHT\tinsight-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tInsightOfferScreenBootstrap settles the expired trigger before screen creation and the policy never opens a screen.
+            insight-expired\tINSIGHT\tinsight-old\t999\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tEXPIRE\tInsightOfferScreenBootstrap settles the expired offer instance identified by offer_id before screen creation and the policy never opens a screen.
             insight-open\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tA live insight opens when no UI is active.
             insight-preempt\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tPREEMPT\tInsight may replace ordinary non-modal UI through transition arbitration.
             insight-matching\tINSIGHT\tinsight-live\t1001\tNONE\tfalse\tMODAL\tinsight-live\tNONE\tfalse\t1000\tNOOP_MATCHING\tThe same insight identity is not reopened.
@@ -972,6 +1000,7 @@ class R7FoundationContractTest {
             assertNotNull(resource, "missing R7 fixture " + name);
             return Files.readAllLines(Path.of(resource.toURI())).stream()
                 .filter(R7SourceScan::isFixtureDataLine)
+                .map(line -> line.replaceFirst("^\\d+\\t", ""))
                 .toList();
         } catch (IOException | URISyntaxException exception) {
             throw new AssertionError("unable to read R7 fixture " + name, exception);

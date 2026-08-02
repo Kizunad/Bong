@@ -14,7 +14,7 @@ hotkey-matching	HOTKEY	identity-screen	9223372036854775807	NONE	false	ORDINARY	i
 hotkey-ordinary	HOTKEY	identity-screen	9223372036854775807	NONE	false	ORDINARY	inventory	NONE	false	1000	BLOCK_DROP	An ordinary nonmatching screen consumes the physical moment; the keypress is not queued.
 hotkey-modal	HOTKEY	identity-screen	9223372036854775807	NONE	false	MODAL	trade-offer	NONE	false	1000	BLOCK_DROP	Physical keypresses are never queued for future replay behind a modal.
 hotkey-terminal	HOTKEY	identity-screen	9223372036854775807	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	BLOCK_DROP	A hotkey never displaces or waits behind a system terminal.
-insight-expired	INSIGHT	insight-old	999	NONE	false	NONE		NONE	false	1000	EXPIRE	InsightOfferScreenBootstrap settles the expired trigger before screen creation and the policy never opens a screen.
+insight-expired	INSIGHT	insight-old	999	NONE	false	NONE		NONE	false	1000	EXPIRE	InsightOfferScreenBootstrap settles the expired offer instance identified by offer_id before screen creation and the policy never opens a screen.
 insight-open	INSIGHT	insight-live	1001	NONE	false	NONE		NONE	false	1000	OPEN	A live insight opens when no UI is active.
 insight-preempt	INSIGHT	insight-live	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	PREEMPT	Insight may replace ordinary non-modal UI through transition arbitration.
 insight-matching	INSIGHT	insight-live	1001	NONE	false	MODAL	insight-live	NONE	false	1000	NOOP_MATCHING	The same insight identity is not reopened.
