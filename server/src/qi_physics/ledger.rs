@@ -438,6 +438,10 @@ pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 36] = [
     QiTransferReason::PseudoVeinSettle,
 ];
 
+/// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
+///
+/// 定义在 ledger.rs 内（与 `QiTransferReason` 同级），避免 attrition.rs ↔ ledger.rs 循环依赖。
+/// attrition.rs 反向 use 此 enum。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttritionOpKind {
     /// 从地面拾起物品（base rate × 1.0 = 0.03）

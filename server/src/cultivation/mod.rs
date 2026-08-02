@@ -1085,6 +1085,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // （recon 标定的最大孤岛：`IntrinsicRace` 定义了零处 insert）。
         let intrinsic_race = crate::body_plan::IntrinsicRace(cultivation.race.clone());
         let mut entity_commands = commands.entity(entity);
+        entity_commands.remove::<CultivationAttachPending>();
         entity_commands.insert(CultivationBundleTutorialHandoff {
             accepted_bundle: if reincarnation.is_some() {
                 None
@@ -3061,6 +3062,40 @@ mod tests {
         .expect("seeding cultivation qi snapshot should succeed");
     }
 
+    fn seed_cultivation_bundle_with_qi_life_record_and_tutorial(
+        settings: &PersistenceSettings,
+        username: &str,
+        qi_current: f64,
+        qi_max: f64,
+        life_record: &LifeRecord,
+        tutorial_state: &crate::world::spawn_tutorial::TutorialState,
+    ) {
+        crate::persistence::persist_player_cultivation_bundle(
+            settings,
+            username,
+            &Cultivation {
+                realm: Realm::Condense,
+                qi_current,
+                qi_max,
+                ..Default::default()
+            },
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            life_record,
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            Some(tutorial_state),
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("seeding cultivation and tutorial snapshots should succeed");
+    }
+
     fn seed_cultivation_bundle_with_qi(
         settings: &PersistenceSettings,
         username: &str,
@@ -3221,6 +3256,214 @@ mod tests {
                 .account(),
             crate::qi_physics::ledger::QiAccountId::player(canonical_id),
             "the live actor qi claim after missing-anchor rejection must remain canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_defer_when_active_character_lookup_fails_then_retry() {
+        let (settings, root) = temp_persistence_settings("defer-active-character-lookup");
+        let life_record = LifeRecord::new(canonical_player_id("DeferredIdentity"));
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "DeferredIdentity",
+            4.0,
+            12.0,
+            &life_record,
+        );
+        let failed_db_path = root.join("active-character-lookup-failure");
+        std::fs::create_dir_all(&failed_db_path)
+            .expect("fixture path must be a directory so SQLite opening it fails");
+        let failing_persistence = crate::player::state::PlayerStatePersistence::with_db_path(
+            root.join("players"),
+            &failed_db_path,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings.clone());
+        app.insert_resource(failing_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("DeferredIdentity");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        assert!(
+            app.world().get::<Cultivation>(entity).is_none(),
+            "a failed active-character lookup must defer rather than attach persisted qi under the account fallback identity"
+        );
+        assert!(
+            app.world()
+                .get::<CultivationAttachPending>(entity)
+                .is_some(),
+            "the failed lookup must leave a retry marker for a later tick"
+        );
+
+        app.world_mut()
+            .insert_resource(player_state_persistence_for(&settings, &root));
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("the retry must attach cultivation after active-character lookup succeeds");
+        assert_eq!(cultivation.qi_current, 4.0);
+        assert_eq!(cultivation.qi_max, 12.0);
+        assert!(
+            app.world()
+                .get::<CultivationAttachPending>(entity)
+                .is_none(),
+            "a successful retry must clear the pending marker"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn joined_clients_reject_malformed_persisted_life_record_before_live_qi_claim() {
+        let (settings, root) = temp_persistence_settings("reject-malformed-life-record");
+        let player_persistence = player_state_persistence_for(&settings, &root);
+        let raw_character_id = crate::player::state::rotate_current_character_id(
+            &player_persistence,
+            "MalformedAnchor",
+        )
+        .expect("seeding current character id should succeed");
+        let canonical_id =
+            crate::player::state::player_character_id("MalformedAnchor", &raw_character_id);
+        let life_record = LifeRecord::new(canonical_id.clone());
+        seed_cultivation_bundle_with_qi_and_life_record(
+            &settings,
+            "MalformedAnchor",
+            4.0,
+            12.0,
+            &life_record,
+        );
+
+        let connection = rusqlite::Connection::open(settings.db_path())
+            .expect("open sqlite connection to corrupt the identity anchor");
+        let cultivation_json: String = connection
+            .query_row(
+                "SELECT cultivation_json FROM player_cultivation WHERE username = ?1",
+                rusqlite::params!["MalformedAnchor"],
+                |row| row.get(0),
+            )
+            .expect("seeded bundle should exist before corrupting its identity anchor");
+        let mut bundle: serde_json::Value = serde_json::from_str(cultivation_json.as_str())
+            .expect("seeded cultivation bundle must be valid JSON before mutation");
+        bundle
+            .as_object_mut()
+            .expect("cultivation bundle must be a JSON object")
+            .insert(
+                "life_record".to_string(),
+                serde_json::json!("not-a-life-record"),
+            );
+        connection
+            .execute(
+                "UPDATE player_cultivation SET cultivation_json = ?1 WHERE username = ?2",
+                rusqlite::params![
+                    serde_json::to_string(&bundle)
+                        .expect("mutated cultivation bundle must remain serializable"),
+                    "MalformedAnchor"
+                ],
+            )
+            .expect("corrupting the identity anchor should update the persisted bundle");
+        drop(connection);
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(player_persistence);
+        app.add_systems(Update, attach_cultivation_to_joined_clients);
+
+        let (client_bundle, _helper) = create_mock_client("MalformedAnchor");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.update();
+
+        let world = app.world();
+        let live_life_record = world
+            .get::<LifeRecord>(entity)
+            .expect("malformed persisted identity must still produce a canonical live LifeRecord");
+        let death_registry = world
+            .get::<DeathRegistry>(entity)
+            .expect("malformed persisted identity must still produce a canonical DeathRegistry");
+        let cultivation = world
+            .get::<Cultivation>(entity)
+            .expect("malformed persisted identity must still attach a safe cultivation state");
+        assert_eq!(live_life_record.character_id, canonical_id);
+        assert_eq!(death_registry.char_id, canonical_id);
+        assert_eq!(
+            cultivation,
+            &Cultivation::default(),
+            "a malformed LifeRecord must reject the whole bundle, including persisted qi_current=4"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tutorial_restore_consumes_the_same_validated_cultivation_bundle_decision() {
+        let (settings, root) = temp_persistence_settings("tutorial-uses-validated-bundle");
+        let accepted_life_record = LifeRecord::new(canonical_player_id("AcceptedTutorial"));
+        let mut accepted_tutorial = crate::world::spawn_tutorial::TutorialState::new(17);
+        accepted_tutorial.trigger(crate::world::spawn_tutorial::TutorialHook::CoffinOpened);
+        seed_cultivation_bundle_with_qi_life_record_and_tutorial(
+            &settings,
+            "AcceptedTutorial",
+            4.0,
+            12.0,
+            &accepted_life_record,
+            &accepted_tutorial,
+        );
+
+        let rejected_life_record = LifeRecord::new(canonical_player_id("SomeoneElse"));
+        let mut rejected_tutorial = crate::world::spawn_tutorial::TutorialState::new(29);
+        rejected_tutorial.trigger(crate::world::spawn_tutorial::TutorialHook::CoffinOpened);
+        seed_cultivation_bundle_with_qi_life_record_and_tutorial(
+            &settings,
+            "RejectedTutorial",
+            4.0,
+            12.0,
+            &rejected_life_record,
+            &rejected_tutorial,
+        );
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(crate::world::spawn_tutorial::TutorialTelemetry::default());
+        app.add_systems(
+            Update,
+            attach_cultivation_to_joined_clients
+                .before(crate::world::spawn_tutorial::attach_tutorial_state_to_joined_clients),
+        );
+        app.add_systems(
+            Update,
+            crate::world::spawn_tutorial::attach_tutorial_state_to_joined_clients,
+        );
+
+        let (accepted_bundle, _accepted_helper) = create_mock_client("AcceptedTutorial");
+        let accepted_entity = app.world_mut().spawn(accepted_bundle).id();
+        let (rejected_bundle, _rejected_helper) = create_mock_client("RejectedTutorial");
+        let rejected_entity = app.world_mut().spawn(rejected_bundle).id();
+        app.update();
+        app.update();
+
+        let accepted_state = app
+            .world()
+            .get::<crate::world::spawn_tutorial::TutorialState>(accepted_entity)
+            .expect("accepted bundle must restore tutorial through the cultivation handoff");
+        assert_eq!(accepted_state, &accepted_tutorial);
+
+        let rejected_state = app
+            .world()
+            .get::<crate::world::spawn_tutorial::TutorialState>(rejected_entity)
+            .expect("rejected bundle must still attach a fresh tutorial state");
+        assert_eq!(
+            rejected_state.entered_at_tick, 0,
+            "rejected bundle must not restore persisted tutorial_state from a second SQLite read"
+        );
+        assert!(
+            !rejected_state.has(crate::world::spawn_tutorial::TutorialHook::CoffinOpened),
+            "rejected bundle must reject all sibling slices, including tutorial_state"
         );
 
         let _ = std::fs::remove_dir_all(root);
