@@ -81,6 +81,26 @@ pub use workbench::{
 
 use crate::cultivation::components::{ColorKind, Realm};
 
+type CodeOwnedRecipeRegistrar = fn(&mut CraftRegistry) -> Result<(), RegistryError>;
+
+const CODE_OWNED_RECIPE_REGISTRARS: &[(&str, CodeOwnedRecipeRegistrar)] = &[
+    ("anqi-v2", register_anqi_v2_recipes),
+    ("zhenfa-v2", register_zhenfa_v2_recipes),
+    ("zhenfa-content-v1", register_zhenfa_content_recipes),
+    ("tuike-v2", register_tuike_v2_recipes),
+    (
+        "poison-trait",
+        crate::cultivation::poison_trait::register_craft_recipes,
+    ),
+    (
+        "armor-visual-v1",
+        crate::armor::mundane::register_mundane_armor_recipes,
+    ),
+    ("gathering-ux-v1", register_gathering_tool_recipes),
+    ("basic-processing", register_basic_processing_recipes),
+    ("coffin-v1", crate::coffin::register_craft_recipes),
+];
+
 /// 注册 craft 子系统到主 App。
 ///
 ///   * 启动期加载 95 条 legacy/workbench 数据配方并校验全部物品引用
@@ -105,33 +125,11 @@ pub fn register(app: &mut App) {
     data::load_default_craft_recipes(&mut registry, item_registry).unwrap_or_else(|err| {
         panic!("[bong][craft] failed to load data-owned craft recipes: {err}");
     });
-    register_anqi_v2_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register anqi-v2 recipes: {err}");
-    });
-    register_zhenfa_v2_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register zhenfa-v2 recipes: {err}");
-    });
-    register_zhenfa_content_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register zhenfa-content-v1 recipes: {err}");
-    });
-    register_tuike_v2_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register tuike-v2 recipes: {err}");
-    });
-    crate::cultivation::poison_trait::register_craft_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register poison-trait recipes: {err}");
-    });
-    crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register armor-visual-v1 recipes: {err}");
-    });
-    register_gathering_tool_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register gathering-ux-v1 recipes: {err}");
-    });
-    register_basic_processing_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register basic-processing recipes: {err}");
-    });
-    crate::coffin::register_craft_recipes(&mut registry).unwrap_or_else(|err| {
-        panic!("[bong][craft] failed to register coffin-v1 recipes: {err}");
-    });
+    for &(name, registrar) in CODE_OWNED_RECIPE_REGISTRARS {
+        registrar(&mut registry).unwrap_or_else(|err| {
+            panic!("[bong][craft] failed to register code-owned `{name}` recipes: {err}");
+        });
+    }
     tracing::info!("[bong][craft] registered {} recipe(s)", registry.len());
 
     app.insert_resource(registry);
@@ -1379,19 +1377,50 @@ mod tests {
         assert_eq!(recipe.output, ("iron_ingot".into(), 1));
     }
 
+    /// 回归测试：生产注册表必须包含每个 code-owned registrar 产出的所有配方。
+    #[test]
+    fn register_includes_every_code_owned_recipe_from_each_registrar() {
+        let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry()
+                .expect("craft registration test requires ItemRegistry"),
+        );
+        register(&mut app);
+        let assembled = app.world().resource::<CraftRegistry>();
+
+        for &(registrar_name, registrar) in CODE_OWNED_RECIPE_REGISTRARS {
+            let mut expected = CraftRegistry::new();
+            registrar(&mut expected).unwrap_or_else(|error| {
+                panic!(
+                    "code-owned registrar `{registrar_name}` must register successfully: {error}"
+                );
+            });
+            assert!(
+                !expected.is_empty(),
+                "code-owned registrar `{registrar_name}` must contribute at least one recipe"
+            );
+
+            for recipe in expected.iter() {
+                assert!(
+                    assembled.get(&recipe.id).is_some(),
+                    "craft::register must retain `{}` from code-owned registrar `{registrar_name}`",
+                    recipe.id
+                );
+            }
+        }
+    }
+
     /// 回归测试：继续由 Rust registrar 持有的非 workbench 配方 station 必须为 None。
     #[test]
     fn code_owned_recipe_registrars_keep_station_none() {
         let mut registry = CraftRegistry::new();
-        register_anqi_v2_recipes(&mut registry).unwrap();
-        register_zhenfa_v2_recipes(&mut registry).unwrap();
-        register_zhenfa_content_recipes(&mut registry).unwrap();
-        register_tuike_v2_recipes(&mut registry).unwrap();
-        register_gathering_tool_recipes(&mut registry).unwrap();
-        register_basic_processing_recipes(&mut registry).unwrap();
-        crate::cultivation::poison_trait::register_craft_recipes(&mut registry).unwrap();
-        crate::armor::mundane::register_mundane_armor_recipes(&mut registry).unwrap();
-        crate::coffin::register_craft_recipes(&mut registry).unwrap();
+        for &(registrar_name, registrar) in CODE_OWNED_RECIPE_REGISTRARS {
+            registrar(&mut registry).unwrap_or_else(|error| {
+                panic!(
+                    "code-owned registrar `{registrar_name}` must register successfully: {error}"
+                );
+            });
+        }
 
         for recipe in registry.iter() {
             assert!(
