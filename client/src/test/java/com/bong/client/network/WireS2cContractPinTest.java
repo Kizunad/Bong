@@ -24,7 +24,10 @@ import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.NewArrayTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.ParenthesizedTree;
+import com.sun.source.tree.ReturnTree;
 import com.sun.source.tree.SwitchExpressionTree;
+import com.sun.source.tree.ThrowTree;
+
 import com.sun.source.tree.SwitchTree;
 import com.sun.source.tree.TryTree;
 import com.sun.source.tree.Tree;
@@ -91,6 +94,9 @@ final class WireS2cContractPinTest {
     private static final Map<NormalizationSite, Integer> BRIDGE_NORMALIZATIONS =
         bridgeNormalizations();
 
+    private static final Map<String, Set<NormalizationSite>> BRIDGE_DISPATCH_NORMALIZATIONS =
+        bridgeDispatchNormalizations();
+
     private enum MigrationDecision {
         MIGRATE,
         EXEMPT
@@ -98,6 +104,13 @@ final class WireS2cContractPinTest {
 
     private static final Map<String, MigrationDecision> SIDE_CHANNEL_DECISIONS =
         migrationDecisions();
+
+    private static final List<Set<String>> ATOMIC_MIGRATION_GROUPS = List.of(
+        Set.of("bong:audio/play", "bong:audio/stop"),
+        Set.of("bong:resonance_lock", "bong:resonance_lock_end"),
+        Set.of("bong:spider_disguise_enter", "bong:spider_ambush_trigger"),
+        Set.of("bong:daozhan_disguise_enter", "bong:daozhan_reveal")
+    );
 
     private static final Set<String> ENUM_PREFIXES = Set.of(
         "ALCHEMY_OUTCOME_BUCKET_",
@@ -152,7 +165,7 @@ final class WireS2cContractPinTest {
     @Test
     void everyClientS2cReceiverIsCountedAndEveryBypassHasAMigrationDecision() throws IOException {
         Path clientRoot = clientRoot();
-        JavaSourceModel sourceModel = JavaSourceModel.parse(clientRoot);
+        JavaSourceModel sourceModel = sourceModel();
         List<ReceiverSite> receiverSites = sourceModel.receiverSites();
 
         assertEquals(32, receiverSites.size(),
@@ -200,18 +213,33 @@ final class WireS2cContractPinTest {
             "豁免必须是实际旁路的精确子集，不能靠 31-3 的算术掩盖 stale exemption"
         );
 
+        for (Set<String> group : ATOMIC_MIGRATION_GROUPS) {
+            Set<MigrationDecision> decisions = group.stream()
+                .map(SIDE_CHANNEL_DECISIONS::get)
+                .collect(java.util.stream.Collectors.toSet());
+            assertTrue(!decisions.contains(null),
+                () -> "atomic migration group contains an unregistered channel: " + group);
+            assertEquals(1, decisions.size(),
+                () -> "atomic migration group must share one decision: " + group);
+        }
+
         sourceModel.assertReceiverBootstrapsAreReachable();
     }
 
     @Test
     void protoEnumPrefixInventoryAndNormalizationModesStayFrozen() throws IOException {
         Path clientRoot = clientRoot();
-        JavaSourceModel sourceModel = JavaSourceModel.parse(clientRoot);
+        JavaSourceModel sourceModel = sourceModel();
 
         assertEquals(
             BRIDGE_NORMALIZATIONS,
             sourceModel.bridgeNormalizations(),
             "ProtoServerDataBridge 的 prefix→field→mode 多重集漂移时必须更新 R6 normalization 账本"
+        );
+        assertEquals(
+            BRIDGE_DISPATCH_NORMALIZATIONS,
+            sourceModel.bridgeDispatchNormalizations(),
+            "每个 protobuf payload getter 必须绑定到自身 converter 的 field/prefix normalization，不得只靠全局 multiset"
         );
         int bridgeReferences = BRIDGE_NORMALIZATIONS.values().stream()
             .mapToInt(Integer::intValue)
@@ -247,6 +275,21 @@ final class WireS2cContractPinTest {
             "semantic normalization ledger includes reachable helper reuse, array-element normalization, and inventory exception");
     }
 
+    private static JavaSourceModel sourceModel() throws IOException {
+        return JavaSourceModelHolder.INSTANCE;
+    }
+
+    private static final class JavaSourceModelHolder {
+        private static final JavaSourceModel INSTANCE = parseModel();
+
+        private static JavaSourceModel parseModel() {
+            try {
+                return JavaSourceModel.parse(clientRoot());
+            } catch (IOException exception) {
+                throw new ExceptionInInitializerError(exception);
+            }
+        }
+    }
     private static Map<String, Integer> bridgePrefixLiteralCounts() {
         Map<String, Integer> counts = new HashMap<>();
         for (NormalizationSite site : BRIDGE_NORMALIZATIONS.keySet()) {
@@ -345,6 +388,55 @@ final class WireS2cContractPinTest {
         }
     }
 
+    private static Map<String, Set<NormalizationSite>> bridgeDispatchNormalizations() {
+        Map<String, Set<NormalizationSite>> normalizations = new LinkedHashMap<>();
+        normalizations.put("getSocialExposure", Set.of(site("kind", "EXPOSURE_KIND_")));
+        normalizations.put("getRiftPortalState", Set.of(
+            site("direction", "RIFT_PORTAL_DIRECTION_"),
+            site("kind", "RIFT_PORTAL_KIND_")
+        ));
+        normalizations.put("getSearchAborted", Set.of(site("reason", "SEARCH_ABORT_REASON_")));
+        normalizations.put("getYidaoHudState", Set.of(site("active_skill", "YIDAO_SKILL_ID_")));
+        normalizations.put("getSkillXpGain", Set.of(site("skill", "SKILL_ID_")));
+        normalizations.put("getSkillLvUp", Set.of(site("skill", "SKILL_ID_")));
+        normalizations.put("getSkillCapChanged", Set.of(site("skill", "SKILL_ID_")));
+        normalizations.put("getSkillScrollUsed", Set.of(site("skill", "SKILL_ID_")));
+        normalizations.put("getAlchemyOutcomeResolved", Set.of(site("bucket", "ALCHEMY_OUTCOME_BUCKET_")));
+        normalizations.put("getGatheringSession", Set.of(
+            site("target_type", "GATHERING_TARGET_TYPE_"),
+            site("quality_hint", "GATHERING_QUALITY_HINT_")
+        ));
+        normalizations.put("getLingtianSession", Set.of(site("kind", "LINGTIAN_SESSION_KIND_")));
+        normalizations.put("getCarrierState", Set.of(site("phase", "CARRIER_CHARGE_PHASE_")));
+        normalizations.put("getQiColorObserved", Set.of(
+            site("main", "COLOR_KIND_"),
+            site("secondary", "COLOR_KIND_")
+        ));
+        normalizations.put("getEventAlert", Set.of(site("event", "EVENT_KIND_")));
+        normalizations.put("getExtractStarted", Set.of(site("portal_kind", "RIFT_PORTAL_KIND_")));
+        normalizations.put("getExtractAborted", Set.of(site("reason", "EXTRACT_ABORTED_REASON_")));
+        normalizations.put("getExtractFailed", Set.of(site("reason", "EXTRACT_FAILED_REASON_")));
+        normalizations.put("getForgeOutcome", Set.of(
+            site("bucket", "FORGE_OUTCOME_BUCKET_"),
+            site("color", "COLOR_KIND_")
+        ));
+        normalizations.put("getRealmVisionParams", Set.of(site("fog_shape", "FOG_SHAPE_")));
+        normalizations.put("getNicheGuardianFatigue", Set.of(
+            site("guardian_kind", "GUARDIAN_KIND_", NormalizationMode.SNAKE_LOWER_OMIT_UNSPECIFIED)
+        ));
+        normalizations.put("getNicheGuardianBroken", Set.of(
+            site("guardian_kind", "GUARDIAN_KIND_", NormalizationMode.SNAKE_LOWER_OMIT_UNSPECIFIED)
+        ));
+        return Map.copyOf(normalizations);
+    }
+
+    private static NormalizationSite site(String field, String prefix) {
+        return site(field, prefix, NormalizationMode.SNAKE_LOWER);
+    }
+
+    private static NormalizationSite site(String field, String prefix, NormalizationMode mode) {
+        return new NormalizationSite(field, prefix, mode);
+    }
     private static Map<String, MigrationDecision> migrationDecisions() {
         Map<String, MigrationDecision> decisions = new LinkedHashMap<>();
         for (String channel : List.of(
@@ -419,6 +511,10 @@ final class WireS2cContractPinTest {
         private final Map<String, ExecutableElement> sourceMethods = new HashMap<>();
         private final Map<ExecutableElement, List<NormalizationSite>> bridgeNormalizationsByMethod =
             new HashMap<>();
+        private final Map<String, List<NormalizationSite>> bridgeNormalizationsByGetter =
+            new HashMap<>();
+        private final Map<String, List<ExecutableElement>> bridgeNormalizationOwnersByGetter =
+            new HashMap<>();
         private final Map<String, List<PrefixLiteralSite>> prefixLiteralsByValue = new HashMap<>();
         private final List<NormalizationSite> inventoryNormalizations = new ArrayList<>();
         private boolean inventoryStartsWithPrefix;
@@ -490,6 +586,19 @@ final class WireS2cContractPinTest {
 
         List<ReceiverSite> receiverSites() {
             return List.copyOf(receiverSites);
+        }
+
+        Map<String, Set<NormalizationSite>> bridgeDispatchNormalizations() {
+            Map<String, Set<NormalizationSite>> actual = new HashMap<>();
+            Set<ExecutableElement> reachable = reachableFrom(Set.of(bridgeMethod));
+            for (Map.Entry<String, List<ExecutableElement>> entry : bridgeNormalizationOwnersByGetter.entrySet()) {
+                if (entry.getValue().stream().noneMatch(reachable::contains)) {
+                    continue;
+                }
+                List<NormalizationSite> sites = bridgeNormalizationsByGetter.getOrDefault(entry.getKey(), List.of());
+                actual.put(entry.getKey(), Set.copyOf(sites));
+            }
+            return Map.copyOf(actual);
         }
 
         Map<NormalizationSite, Integer> bridgeNormalizations() {
@@ -690,6 +799,14 @@ final class WireS2cContractPinTest {
         }
 
 
+        private String getterName(ExpressionTree expression) {
+            if (expression instanceof MethodInvocationTree invocation
+                && invocation.getMethodSelect() instanceof MemberSelectTree select) {
+                return select.getIdentifier().toString();
+            }
+            return null;
+        }
+
         private void collectBridgeNormalization(
             CompilationUnitTree unit,
             MethodInvocationTree node,
@@ -719,14 +836,27 @@ final class WireS2cContractPinTest {
                 NormalizationMode mode = helper.equals("bridgeStripEnums")
                     ? NormalizationMode.SNAKE_LOWER
                     : NormalizationMode.SNAKE_LOWER_OMIT_UNSPECIFIED;
+                List<NormalizationSite> sites = new ArrayList<>();
                 for (int index = 2; index < node.getArguments().size(); index++) {
                     String[] pair = resolveStringPair(
                         new TreePath(invocationPath, node.getArguments().get(index))
                     );
                     assertTrue(pair != null,
                         () -> "enum field/prefix pair must be static at " + site(unit, node));
+                    NormalizationSite normalization = new NormalizationSite(pair[0], pair[1], mode);
+                    sites.add(normalization);
                     addBridgeNormalization(enclosingMethod, pair[0], pair[1], mode);
                 }
+                String getter = getterName(node.getArguments().get(0));
+                assertTrue(getter != null,
+                    () -> "generic bridge converter payload getter must be statically identified at "
+                        + site(unit, node));
+                bridgeNormalizationsByGetter
+                    .computeIfAbsent(getter, ignored -> new ArrayList<>())
+                    .addAll(sites);
+                bridgeNormalizationOwnersByGetter
+                    .computeIfAbsent(getter, ignored -> new ArrayList<>())
+                    .add(enclosingMethod);
                 return;
             }
             NormalizationMode mode = switch (helper) {
@@ -781,14 +911,18 @@ final class WireS2cContractPinTest {
         ) {
             String helper = called.getSimpleName().toString();
             if (!helper.equals("set") || node.getArguments().size() != 2
-                || !node.getArguments().get(0).toString().equals("0")) {
+                || !node.getArguments().get(0).toString().equals("0")
+                || !(node.getMethodSelect() instanceof MemberSelectTree select)
+                || !isQiColorMinArray(new TreePath(invocationPath, select.getExpression()))) {
                 return;
             }
             ExpressionTree value = node.getArguments().get(1);
-            String expression = value.toString();
-            assertTrue(expression.contains("substring(\"COLOR_KIND_\".length())"),
+            assertTrue(value instanceof NewClassTree
+                    || value.toString().contains("COLOR_KIND_"),
+                () -> "craft recipe qi_color_min[0] must normalize its assigned value at " + site(unit, node));
+            assertTrue(value.toString().contains("substring(\"COLOR_KIND_\".length())"),
                 () -> "craft recipe qi_color_min[0] must strip COLOR_KIND_ at " + site(unit, node));
-            assertTrue(expression.contains("toLowerCase(Locale.ROOT)"),
+            assertTrue(value.toString().contains("toLowerCase(Locale.ROOT)"),
                 () -> "craft recipe qi_color_min[0] must use ROOT lowercase at " + site(unit, node));
             addBridgeNormalization(
                 enclosingMethod,
@@ -796,6 +930,23 @@ final class WireS2cContractPinTest {
                 "COLOR_KIND_",
                 NormalizationMode.SNAKE_LOWER
             );
+        }
+
+        private boolean isQiColorMinArray(TreePath receiverPath) {
+            Element element = trees.getElement(receiverPath);
+            if (!(element instanceof VariableElement variable)
+                || !variable.getSimpleName().contentEquals("qcArr")) {
+                return false;
+            }
+            TreePath declarationPath = trees.getPath(variable);
+            if (declarationPath == null || !(declarationPath.getLeaf() instanceof VariableTree declaration)
+                || !(declaration.getInitializer() instanceof MethodInvocationTree initializer)
+                || initializer.getArguments().size() != 1) {
+                return false;
+            }
+            return "getAsJsonArray".contentEquals(initializer.getMethodSelect() instanceof MemberSelectTree select
+                    ? select.getIdentifier() : "")
+                && "\"qi_color_min\"".equals(initializer.getArguments().get(0).toString());
         }
 
         private void collectInventoryNormalization(
@@ -814,6 +965,9 @@ final class WireS2cContractPinTest {
                 ? called.getSimpleName().toString()
                 : "";
             TreePath invocationPath = getPath(unit, node);
+            if (!isSlotNameReceiver(invocationPath)) {
+                return;
+            }
             if (helper.equals("startsWith") && node.getArguments().size() == 1) {
                 String prefix = resolveString(
                     new TreePath(invocationPath, node.getArguments().get(0)),
@@ -833,7 +987,7 @@ final class WireS2cContractPinTest {
                         new TreePath(lengthPath, lengthSelect.getExpression()),
                         new HashSet<>()
                     );
-                    if ("EQUIP_SLOT_".equals(prefix)) {
+                    if ("EQUIP_SLOT_".equals(prefix) && isInsideEquipPrefixGuard(invocationPath)) {
                         inventoryNormalizations.add(new NormalizationSite(
                             "slot", prefix, NormalizationMode.SNAKE_LOWER
                         ));
@@ -841,10 +995,47 @@ final class WireS2cContractPinTest {
                 }
             }
             if (helper.equals("toLowerCase") && node.getArguments().size() == 1
-                && node.getArguments().get(0).toString().equals("java.util.Locale.ROOT")) {
+                && node.getArguments().get(0).toString().equals("java.util.Locale.ROOT")
+                && isInsideEquipPrefixGuard(invocationPath)) {
                 inventoryLowercasesSlot = true;
             }
         }
+
+        private boolean isSlotNameReceiver(TreePath invocationPath) {
+            Tree leaf = invocationPath.getLeaf();
+            if (!(leaf instanceof MethodInvocationTree invocation)
+                || !(invocation.getMethodSelect() instanceof MemberSelectTree select)) {
+                return false;
+            }
+            return isRootedInSlotName(new TreePath(invocationPath, select.getExpression()));
+        }
+
+        private boolean isRootedInSlotName(TreePath expressionPath) {
+            Element receiver = trees.getElement(expressionPath);
+            if (receiver instanceof VariableElement variable
+                && variable.getSimpleName().contentEquals("slotName")) {
+                return true;
+            }
+            if (expressionPath.getLeaf() instanceof MethodInvocationTree invocation
+                && invocation.getMethodSelect() instanceof MemberSelectTree select) {
+                return isRootedInSlotName(new TreePath(expressionPath, select.getExpression()));
+            }
+            return false;
+        }
+
+        private boolean isInsideEquipPrefixGuard(TreePath invocationPath) {
+            for (TreePath current = invocationPath.getParentPath(); current != null; current = current.getParentPath()) {
+                if (!(current.getLeaf() instanceof IfTree conditional)) {
+                    continue;
+                }
+                String condition = conditional.getCondition().toString();
+                if (condition.contains("slotName.startsWith") && condition.contains("EQUIP_SLOT_")) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
 
         private void addBridgeNormalization(
             ExecutableElement method,
@@ -897,8 +1088,17 @@ final class WireS2cContractPinTest {
                 return false;
             }
             TreePath statementParent = current.getParentPath();
-            if (statementParent == null || !(statementParent.getLeaf() instanceof BlockTree)) {
+            if (statementParent == null || !(statementParent.getLeaf() instanceof BlockTree block)) {
                 return false;
+            }
+            int statementIndex = block.getStatements().indexOf(current.getLeaf());
+            if (statementIndex < 0) {
+                return false;
+            }
+            for (Tree statement : block.getStatements().subList(0, statementIndex)) {
+                if (statement instanceof ReturnTree || statement instanceof ThrowTree) {
+                    return false;
+                }
             }
             for (TreePath ancestor = statementParent.getParentPath();
                  ancestor != null;

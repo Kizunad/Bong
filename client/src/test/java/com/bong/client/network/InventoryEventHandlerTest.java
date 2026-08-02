@@ -9,6 +9,9 @@ import com.bong.client.state.VisualEffectState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.charset.StandardCharsets;
 
@@ -579,11 +582,12 @@ public class InventoryEventHandlerTest {
                 "hotbar slot 0 应在 dropped 事件应用后清空");
     }
 
-    @Test
-    void movedToEquipThroughRealProtoWireStripsEquipSlotEnumPrefix() {
-        // 锁死 InventoryLocation.location 的 proto-native "equip" 形状 {"equip":{"slot":
-        // "EQUIP_SLOT_CHEST",...}}：proto 枚举打印全名前缀（EQUIP_SLOT_CHEST），而
-        // EQUIP_SLOT_BY_WIRE_NAME 只认小写 wire 名（"chest"），parseLocation 须归一化。
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("equipSlotVariants")
+    void movedToEveryEquipSlotThroughRealProtoWireStripsEquipSlotEnumPrefix(
+            Envelope.EquipSlot wireSlot,
+            com.bong.client.inventory.model.EquipSlotType expectedSlot
+    ) {
         InventoryModel baseline = InventoryModel.builder()
                 .containers(InventoryModel.DEFAULT_CONTAINERS)
                 .gridItem(
@@ -612,25 +616,43 @@ public class InventoryEventHandlerTest {
                                 .setCol(0)))
                 .setTo(Envelope.InventoryLocation.newBuilder()
                         .setEquip(Envelope.InventoryLocationEquip.newBuilder()
-                                .setSlot(Envelope.EquipSlot.EQUIP_SLOT_CHEST)
-                                .setState(Envelope.EquipState.EQUIP_STATE_WORN)))
+                                .setSlot(wireSlot)
+                                .setState(expectedSlot.isHand()
+                                        ? Envelope.EquipState.EQUIP_STATE_HELD
+                                        : Envelope.EquipState.EQUIP_STATE_WORN)))
                 .build();
 
         ServerDataDispatch dispatch = dispatchThroughRealProtoWire(
                 Envelope.InventoryEvent.newBuilder().setMoved(moved));
 
         assertTrue(dispatch.handled(),
-                "moved(to=equip) 应被接受，实际 log=" + dispatch.logMessage()
-                + "；若 noOp，需检查 to 的 proto-native {\"equip\":{\"slot\":\"EQUIP_SLOT_CHEST\",...}}"
-                + " 形状是否被 parseLocation 正确识别并剥离 EQUIP_SLOT_ 前缀。");
-
+                "moved(to=equip) 应被接受，wire slot=" + wireSlot + "，实际 log="
+                        + dispatch.logMessage());
         assertEquals(
                 "armor_bone_chestplate",
-                InventoryStateStore.snapshot()
-                        .equipped()
-                        .get(com.bong.client.inventory.model.EquipSlotType.CHEST)
-                        .itemId(),
-                "instance 1005 应落进 CHEST 装备槽（EquipSlot 全名前缀被正确剥离归一化）"
+                InventoryStateStore.snapshot().equipped().get(expectedSlot).itemId(),
+                "instance 1005 应落进 " + expectedSlot + " 装备槽（EquipSlot 全名前缀被正确剥离归一化）"
+        );
+    }
+
+    private static java.util.stream.Stream<Arguments> equipSlotVariants() {
+        return java.util.stream.Stream.of(
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_HEAD,
+                        com.bong.client.inventory.model.EquipSlotType.HEAD),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        com.bong.client.inventory.model.EquipSlotType.CHEST),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_LEGS,
+                        com.bong.client.inventory.model.EquipSlotType.LEGS),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_FEET,
+                        com.bong.client.inventory.model.EquipSlotType.FEET),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_MAIN_HAND,
+                        com.bong.client.inventory.model.EquipSlotType.MAIN_HAND),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_OFF_HAND,
+                        com.bong.client.inventory.model.EquipSlotType.OFF_HAND),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_EXTRA_HAND_0,
+                        com.bong.client.inventory.model.EquipSlotType.EXTRA_HAND_0),
+                Arguments.of(Envelope.EquipSlot.EQUIP_SLOT_EXTRA_HAND_1,
+                        com.bong.client.inventory.model.EquipSlotType.EXTRA_HAND_1)
         );
     }
 
