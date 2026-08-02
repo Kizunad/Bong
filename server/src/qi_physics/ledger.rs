@@ -343,10 +343,101 @@ pub enum QiTransferReason {
     PseudoVeinSettle,
 }
 
-/// plan-qi-handling-attrition-v1 P0 — 搬运磨损操作类型，对应不同基础磨损率。
-///
-/// 定义在 ledger.rs 内（与 `QiTransferReason` 同级），避免 attrition.rs ↔ ledger.rs 循环依赖。
-/// attrition.rs 反向 use 此 enum。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QiTransferDisposition {
+    AuditOnly,
+    BalanceMutating,
+}
+
+impl QiTransferReason {
+    pub(crate) const fn disposition(self) -> QiTransferDisposition {
+        match self {
+            Self::HalfStepBuff
+            | Self::DuguReturnToZone
+            | Self::DuguReverseVictimQi
+            | Self::NegPressureDrain => QiTransferDisposition::AuditOnly,
+            Self::CultivationRegen
+            | Self::Excretion
+            | Self::ReleaseToZone
+            | Self::Collision
+            | Self::Channeling
+            | Self::MeridianOpen
+            | Self::Breakthrough
+            | Self::MeridianForge
+            | Self::RiftCollapse
+            | Self::EraDecay
+            | Self::Crafting
+            | Self::VoidAction
+            | Self::Healing
+            | Self::BossDrain
+            | Self::SkullFiendDrain
+            | Self::FusionMerge
+            | Self::DaoZhangDrain
+            | Self::RatBiteDrain
+            | Self::TiandaoCondense
+            | Self::TradeDan
+            | Self::SoulSeize
+            | Self::TiandaoWatchDrain
+            | Self::EraShift
+            | Self::AttritionTax { .. }
+            | Self::ArtifactMaintenance
+            | Self::ArtifactEvolution
+            | Self::ZoneInflow
+            | Self::PseudoVeinSettle => QiTransferDisposition::BalanceMutating,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) const ALL_CONCRETE_QI_TRANSFER_REASONS: [QiTransferReason; 36] = [
+    QiTransferReason::CultivationRegen,
+    QiTransferReason::Excretion,
+    QiTransferReason::ReleaseToZone,
+    QiTransferReason::Collision,
+    QiTransferReason::Channeling,
+    QiTransferReason::MeridianOpen,
+    QiTransferReason::Breakthrough,
+    QiTransferReason::MeridianForge,
+    QiTransferReason::RiftCollapse,
+    QiTransferReason::NegPressureDrain,
+    QiTransferReason::EraDecay,
+    QiTransferReason::Crafting,
+    QiTransferReason::VoidAction,
+    QiTransferReason::Healing,
+    QiTransferReason::HalfStepBuff,
+    QiTransferReason::BossDrain,
+    QiTransferReason::SkullFiendDrain,
+    QiTransferReason::FusionMerge,
+    QiTransferReason::DaoZhangDrain,
+    QiTransferReason::RatBiteDrain,
+    QiTransferReason::TiandaoCondense,
+    QiTransferReason::TradeDan,
+    QiTransferReason::SoulSeize,
+    QiTransferReason::TiandaoWatchDrain,
+    QiTransferReason::EraShift,
+    QiTransferReason::AttritionTax {
+        op_kind: AttritionOpKind::Pickup,
+    },
+    QiTransferReason::AttritionTax {
+        op_kind: AttritionOpKind::SlotMove,
+    },
+    QiTransferReason::AttritionTax {
+        op_kind: AttritionOpKind::ContainerSearch,
+    },
+    QiTransferReason::AttritionTax {
+        op_kind: AttritionOpKind::ForgeLoad,
+    },
+    QiTransferReason::AttritionTax {
+        op_kind: AttritionOpKind::AlchemyLoad,
+    },
+    QiTransferReason::ArtifactMaintenance,
+    QiTransferReason::ArtifactEvolution,
+    QiTransferReason::DuguReturnToZone,
+    QiTransferReason::DuguReverseVictimQi,
+    QiTransferReason::ZoneInflow,
+    QiTransferReason::PseudoVeinSettle,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttritionOpKind {
     /// 从地面拾起物品（base rate × 1.0 = 0.03）
@@ -395,13 +486,16 @@ pub struct WorldQiAccount {
 impl Resource for WorldQiAccount {}
 
 fn audit_only_reason_label(reason: QiTransferReason) -> Option<&'static str> {
-    match reason {
-        QiTransferReason::HalfStepBuff => Some("HalfStepBuff"),
-        QiTransferReason::DuguReturnToZone => Some("DuguReturnToZone"),
-        QiTransferReason::DuguReverseVictimQi => Some("DuguReverseVictimQi"),
-        QiTransferReason::NegPressureDrain => Some("NegPressureDrain"),
-        _ => None,
+    if reason.disposition() != QiTransferDisposition::AuditOnly {
+        return None;
     }
+    Some(match reason {
+        QiTransferReason::HalfStepBuff => "HalfStepBuff",
+        QiTransferReason::DuguReturnToZone => "DuguReturnToZone",
+        QiTransferReason::DuguReverseVictimQi => "DuguReverseVictimQi",
+        QiTransferReason::NegPressureDrain => "NegPressureDrain",
+        _ => unreachable!("all audit-only QiTransferReason variants need a stable error label"),
+    })
 }
 
 pub fn reject_audit_only_qi_reason(reason: QiTransferReason) -> Result<(), QiPhysicsError> {

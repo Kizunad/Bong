@@ -12,7 +12,7 @@
 use valence::prelude::{
     bevy_ecs, BlockPos, BlockState, ChunkLayer, ChunkPos, Client, Commands, Component, Entity,
     Event, EventReader, EventWriter, Events, Or, Position, Query, RemovedComponents, Res, ResMut,
-    Resource, Username, With,
+    Resource, Username, With, Without,
 };
 
 use std::collections::{HashSet, VecDeque};
@@ -3737,7 +3737,7 @@ pub fn tribulation_intercept_death_system(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     item_registry: Res<ItemRegistry>,
-    mut q: Query<(&TribulationState, &Lifecycle)>,
+    mut q: Query<(&TribulationState, &Lifecycle), Without<crate::npc::spawn::NpcMarker>>,
     mut inventories: Query<&mut PlayerInventory>,
     mut life_records: Query<&mut LifeRecord>,
     mut settled: EventWriter<TribulationSettled>,
@@ -4167,6 +4167,12 @@ fn apply_tribulation_failure_penalty(
 mod tests {
     use super::*;
 
+    fn qi_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     use crate::combat::components::{CombatState, Lifecycle, LifecycleState, Stamina, Wounds};
     use crate::combat::events::{CombatEvent, DeathEvent, DeathInsightRequested};
     use crate::combat::lifecycle::death_arbiter_tick;
@@ -4349,7 +4355,7 @@ mod tests {
 
     #[test]
     fn omen_to_lock_emits_lock_event() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: DUXU_OMEN_TICKS,
         });
@@ -4399,7 +4405,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_dedupes_same_tick_internal_events() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-dedupe");
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(100.0));
@@ -4465,7 +4471,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_reserves_void_quota_fcfs_within_tick() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-quota-fcfs");
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(50.0));
@@ -4561,7 +4567,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_counts_in_flight_void_tribulations_across_ticks() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-quota-cross-tick");
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(50.0));
@@ -4646,7 +4652,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_fails_closed_when_quota_store_unreadable() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) =
             unbootstrapped_persistence_settings("start-tribulation-quota-read-failure");
         app.insert_resource(settings);
@@ -4709,7 +4715,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_aborts_when_active_row_persist_fails() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-active-row-persist-failure");
         {
             let connection =
@@ -4791,7 +4797,7 @@ mod tests {
 
     #[test]
     fn tribulation_wave_system_aborts_ascension_when_quota_write_fails() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) =
             unbootstrapped_persistence_settings("tribulation-ascension-quota-write-failure");
         app.insert_resource(settings);
@@ -4877,7 +4883,7 @@ mod tests {
 
     #[test]
     fn tribulation_announce_emits_boundary_vfx() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 0 });
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
@@ -5010,7 +5016,7 @@ mod tests {
 
     #[test]
     fn omen_midpoint_emits_soft_boundary_once() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: DUXU_OMEN_TICKS / 2,
         });
@@ -5049,7 +5055,7 @@ mod tests {
 
     #[test]
     fn lock_and_wave_events_emit_boundary_vfx() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
@@ -5097,7 +5103,7 @@ mod tests {
 
     #[test]
     fn long_full_progress_du_xu_request_adds_heart_demon_and_kaitian_waves() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5132,7 +5138,7 @@ mod tests {
 
     #[test]
     fn recent_full_progress_du_xu_request_keeps_default_three_waves() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5165,7 +5171,7 @@ mod tests {
 
     #[test]
     fn start_du_xu_request_rejects_non_spirit_or_incomplete_meridians() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5211,7 +5217,7 @@ mod tests {
 
     #[test]
     fn start_du_xu_request_rejects_already_active_tribulation() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5252,7 +5258,7 @@ mod tests {
 
     #[test]
     fn start_du_xu_request_dedupes_same_tick_duplicate_requests() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5286,7 +5292,7 @@ mod tests {
 
     #[test]
     fn fourth_wave_enters_heart_demon_without_aoe() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5356,7 +5362,7 @@ mod tests {
 
     #[test]
     fn pregen_offer_inserts_heart_demon_after_chain_lightning_without_consuming_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5419,7 +5425,7 @@ mod tests {
 
     #[test]
     fn heart_demon_still_falls_back_to_fourth_slot_when_pregen_is_absent() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5456,7 +5462,7 @@ mod tests {
 
     #[test]
     fn resolved_early_heart_demon_continues_next_combat_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1810 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5501,7 +5507,7 @@ mod tests {
 
     #[test]
     fn resolved_heart_demon_after_soul_devouring_skips_original_heart_demon_slot() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2110 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5546,7 +5552,7 @@ mod tests {
 
     #[test]
     fn unresolved_heart_demon_waits_without_advancing_to_kaitian_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2400 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5593,7 +5599,7 @@ mod tests {
     fn heart_demon_steadfast_choice_records_and_restores_qi() {
         // Pitfall (a): empty zone first so there is room for the full 20 qi grant without
         // hitting the zone capacity limit and splitting the debit.
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let mut zones = ZoneRegistry::fallback();
@@ -5697,7 +5703,7 @@ mod tests {
     fn heart_demon_steadfast_no_grant_without_zone() {
         // When the entity has no CurrentDimension the zone lookup fails and the grant is
         // suppressed to zero — no qi from thin air.
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let mut zones = ZoneRegistry::fallback();
@@ -5769,7 +5775,7 @@ mod tests {
         // Zone is near-depleted (spirit_qi = -0.9 → only 5 qi available above -1.0 floor).
         // Player wants 10% of 300 = 30 qi but zone can only provide 5.
         // actual_grant must equal the zone debit (no qi created from thin air).
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let mut zones = ZoneRegistry::fallback();
@@ -5857,7 +5863,7 @@ mod tests {
 
     #[test]
     fn heart_demon_obsession_timeout_penalizes_qi_and_boosts_kaitian_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: 2100 + DUXU_HEART_DEMON_TIMEOUT_TICKS,
         });
@@ -5915,7 +5921,7 @@ mod tests {
     /// Pitfall (c): credit = qi_before - qi_after (actual), not ratio × qi_current.
     #[test]
     fn heart_demon_obsession_timeout_credits_penalty_to_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: 2100 + DUXU_HEART_DEMON_TIMEOUT_TICKS,
         });
@@ -6007,7 +6013,7 @@ mod tests {
     /// Obsession via choice index (non-timeout path) also conserves qi to the zone.
     #[test]
     fn heart_demon_obsession_choice_credits_penalty_to_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_event::<QiTransfer>();
 
@@ -6093,7 +6099,7 @@ mod tests {
 
     #[test]
     fn heart_demon_no_solution_choice_records_without_penalty_or_boost() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let entity = app
@@ -6157,7 +6163,7 @@ mod tests {
 
     #[test]
     fn heart_demon_resolution_advances_to_kaitian_without_republishing_fourth_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2140 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -6202,7 +6208,7 @@ mod tests {
 
     #[test]
     fn obsession_resolution_increases_kaitian_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2400 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6268,7 +6274,7 @@ mod tests {
     #[test]
     fn publish_lock_event_to_tribulation_channel() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6314,7 +6320,7 @@ mod tests {
     #[test]
     fn publish_wave_event_keeps_tribulator_identity() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6377,7 +6383,7 @@ mod tests {
     #[test]
     fn publish_settle_event_uses_actor_name() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6440,7 +6446,7 @@ mod tests {
     #[test]
     fn publish_ascension_quota_open_event_to_tribulation_channel() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6486,7 +6492,7 @@ mod tests {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
         use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE;
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, _rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6613,7 +6619,7 @@ mod tests {
 
     #[test]
     fn lock_expiry_starts_first_wave_and_schedules_cooldown() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -6653,7 +6659,7 @@ mod tests {
 
     #[test]
     fn wave_cooldown_starts_next_wave_without_reusing_first_wave_phase() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -6692,7 +6698,7 @@ mod tests {
 
     #[test]
     fn aoe_uses_current_wave_strength_only_on_wave_start_tick() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6766,7 +6772,7 @@ mod tests {
 
     #[test]
     fn spectator_aoe_is_not_reduced_by_distance_within_danger_radius() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6828,7 +6834,7 @@ mod tests {
 
     #[test]
     fn tribulation_aoe_ignores_targets_in_other_dimension() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6889,7 +6895,7 @@ mod tests {
 
     #[test]
     fn third_wave_freezes_qi_max_as_soul_devouring_lightning() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6953,7 +6959,7 @@ mod tests {
 
     #[test]
     fn kaitian_lightning_fails_tribulator_without_full_health() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -7010,7 +7016,7 @@ mod tests {
 
     #[test]
     fn kaitian_lightning_fails_tribulator_without_full_available_qi() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -7067,7 +7073,7 @@ mod tests {
 
     #[test]
     fn kaitian_lightning_hits_normally_when_tribulator_has_full_resources() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -7126,7 +7132,7 @@ mod tests {
 
     #[test]
     fn void_quota_exceeded_start_marks_du_xu_for_juebi_instead_of_terminal_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("void-quota-exceeded-start");
         let char_id = "offline:Azure";
         let mut depleted_budget = WorldQiBudget::from_total(100.0);
@@ -7214,7 +7220,7 @@ mod tests {
 
     #[test]
     fn juebi_trigger_event_starts_juebi_state_after_delay() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-trigger-start");
         let char_id = "offline:Azure";
         app.insert_resource(settings.clone());
@@ -7276,7 +7282,7 @@ mod tests {
 
     #[test]
     fn juebi_pressure_collapse_drains_qi_and_marks_targets() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(JueBiNullFields::default());
         app.add_event::<DeathEvent>();
@@ -7324,7 +7330,7 @@ mod tests {
 
     #[test]
     fn juebi_phase_effect_clears_stale_phase_markers() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(JueBiNullFields::default());
         app.add_event::<DeathEvent>();
@@ -7372,7 +7378,7 @@ mod tests {
 
     #[test]
     fn juebi_settlement_treats_zero_health_as_killed_even_with_qi() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-zero-health-settle");
         let char_id = "offline:Azure";
         app.insert_resource(settings);
@@ -7443,7 +7449,7 @@ mod tests {
 
     #[test]
     fn juebi_settlement_clears_independent_active_row() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-settle-clears-active-row");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -7626,7 +7632,7 @@ mod tests {
 
     #[test]
     fn tribulation_failure_regresses_without_death_lifecycle_side_effects() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("failure-not-death");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -7810,7 +7816,7 @@ mod tests {
 
     #[test]
     fn intercepted_tribulation_transfers_all_inventory_to_killer() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("intercept-loot-transfer");
         app.insert_resource(settings.clone());
         app.insert_resource(ItemRegistry::default());
@@ -7906,8 +7912,98 @@ mod tests {
     }
 
     #[test]
+    fn npc_raw_death_does_not_settle_tribulation_before_terminal_commit() {
+        let mut app = qi_test_app();
+        let (settings, root) = persistence_settings("npc-intercept-waits-for-terminal-commit");
+        app.insert_resource(settings.clone());
+        app.insert_resource(ItemRegistry::default());
+        app.add_event::<DeathEvent>();
+        app.add_event::<TribulationSettled>();
+        app.add_systems(Update, tribulation_intercept_death_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                crate::npc::spawn::NpcMarker,
+                Lifecycle {
+                    character_id: "npc:tribulation-victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    participants: vec![
+                        "npc:tribulation-victim".to_string(),
+                        "offline:Killer".to_string(),
+                    ],
+                    failed: false,
+                },
+                test_inventory(vec![test_item(101)], 7),
+            ))
+            .id();
+        let killer = app
+            .world_mut()
+            .spawn((
+                test_inventory(vec![test_item(201)], 3),
+                LifeRecord::new("offline:Killer"),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "pvp:offline:Killer".to_string(),
+            attacker: Some(killer),
+            attacker_player_id: Some("offline:Killer".to_string()),
+            at_tick: 120,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(victim).is_some(),
+            "NPC raw lethal edge must retain tribulation state until terminal durability succeeds"
+        );
+        assert_eq!(
+            app.world()
+                .get::<PlayerInventory>(victim)
+                .expect("victim inventory should remain attached")
+                .bone_coins,
+            7,
+            "NPC raw lethal edge must not transfer victim inventory"
+        );
+        assert_eq!(
+            app.world()
+                .get::<PlayerInventory>(killer)
+                .expect("killer inventory should remain attached")
+                .bone_coins,
+            3,
+            "NPC raw lethal edge must not reward the killer"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(killer)
+                .expect("killer life record should remain attached")
+                .biography
+                .is_empty(),
+            "NPC raw lethal edge must not append interception biography"
+        );
+        assert_eq!(
+            app.world().resource::<Events<TribulationSettled>>().len(),
+            0,
+            "NPC raw lethal edge must not publish settlement before terminal commit"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn unregistered_player_kill_does_not_claim_interception_settlement() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("intercept-killer-must-be-participant");
         app.insert_resource(settings);
         app.insert_resource(ItemRegistry::default());
@@ -7970,7 +8066,7 @@ mod tests {
 
     #[test]
     fn attacking_locked_tribulator_records_interceptor_participant() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8040,7 +8136,7 @@ mod tests {
 
     #[test]
     fn attacking_during_heart_demon_records_interceptor_participant() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8108,7 +8204,7 @@ mod tests {
 
     #[test]
     fn attacking_tribulator_from_other_dimension_does_not_record_interceptor() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8175,7 +8271,7 @@ mod tests {
 
     #[test]
     fn attacking_restored_tribulator_preserves_primary_participant() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8232,7 +8328,7 @@ mod tests {
 
     #[test]
     fn registered_interceptor_dies_to_aoe_without_failing_tribulation() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -8303,7 +8399,7 @@ mod tests {
 
     #[test]
     fn spectator_death_by_tribulation_aoe_is_written_to_life_record() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("spectator-death-biography");
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 300 });
@@ -8403,7 +8499,7 @@ mod tests {
 
     #[test]
     fn disconnecting_during_tribulation_flees_and_regresses_without_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("disconnect-fled");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -8519,7 +8615,7 @@ mod tests {
     /// + TribulationSettled.kind == JueBi（不误报 DuXu）
     #[test]
     fn juebi_disconnect_is_settled_as_fled() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-disconnect-fled");
         let char_id = "offline:JueBiPlayer";
         persist_active_tribulation(
@@ -8674,7 +8770,7 @@ mod tests {
     /// 无 TribulationState 的普通玩家断线 → 不误结算（正常 despawn，无 Fled/Settled 事件）
     #[test]
     fn non_tribulation_disconnect_emits_no_fled_events() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("no-trib-disconnect");
         let char_id = "offline:NormalPlayer";
 
@@ -8737,7 +8833,7 @@ mod tests {
     /// —— 锁住 settle_fled_tribulation 使用 state.kind 而非硬编码 DuXu 的行为
     #[test]
     fn settle_fled_emits_correct_kind_for_juebi() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-settled-kind");
         let char_id = "offline:KindCheck";
         persist_active_tribulation(
@@ -8824,7 +8920,7 @@ mod tests {
     /// JueBi 劫刚开始（wave_current=0）断线 → 仍被结算为 fled（边界：劫刚触发）
     #[test]
     fn juebi_disconnect_at_wave_zero_is_fled() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-wave0-fled");
         let char_id = "offline:EarlyEscape";
         persist_active_tribulation(
@@ -8915,7 +9011,7 @@ mod tests {
     /// JueBi 接近完成（wave_current = waves_total - 1）断线 → 仍被结算为 fled（边界：接近通关）
     #[test]
     fn juebi_disconnect_near_completion_is_fled() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-near-complete-fled");
         let char_id = "offline:NearWinner";
         let waves_total = 5_u32;
@@ -9007,7 +9103,7 @@ mod tests {
 
     #[test]
     fn leaving_lock_radius_flees_and_regresses_without_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("boundary-fled");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -9107,7 +9203,7 @@ mod tests {
 
     #[test]
     fn changing_dimension_during_lock_flees_even_inside_radius() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("dimension-fled");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -9237,7 +9333,7 @@ mod tests {
     }
 
     fn p0_metrics_test_app() -> App {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock::default());
         app.init_resource::<TribulationMetrics>();
         app.init_resource::<QuotaFullTracker>();
@@ -10334,7 +10430,7 @@ mod tests {
     /// Pitfall (b): target carries CurrentDimension so find_zone resolves the zone.
     #[test]
     fn tribulation_aoe_wave_drain_credits_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -10435,7 +10531,7 @@ mod tests {
     /// drain from the wave; zone must not receive any credit and no transfer is emitted.
     #[test]
     fn tribulation_aoe_wave_drain_zero_qi_no_credit() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -10514,7 +10610,7 @@ mod tests {
     ///               = 100.0 × 0.02 × 1.0 × 1.0 = 2.0
     #[test]
     fn juebi_pressure_collapse_wave1_drain_credits_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         // tick != phase_started_tick so per-tick phase damage is not triggered
         app.insert_resource(CombatClock { tick: 101 });
         app.insert_resource(JueBiNullFields::default());
@@ -10610,7 +10706,7 @@ mod tests {
     /// actual_drain = 100.0 × 0.03 = 3.0
     #[test]
     fn juebi_null_field_wave3_drain_credits_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         // tick = phase_started_tick + 100 (elapsed=100 → null_radius = 50.0)
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(JueBiNullFields::default());
@@ -10703,7 +10799,7 @@ mod tests {
     /// current null radius is not drained and emits no QiTransfer.
     #[test]
     fn juebi_null_field_wave3_no_drain_outside_radius() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         // elapsed = 1 tick → null_radius = 150.0 × (1/300) ≈ 0.5 (essentially 0)
         app.insert_resource(CombatClock { tick: 1 });
         app.insert_resource(JueBiNullFields::default());

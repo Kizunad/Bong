@@ -2792,7 +2792,12 @@ mod tests {
         qi_ledger
             .set_balance(pending_inflow_account(), 100.0)
             .expect("pending pool fixture should accept a finite balance");
-        let total_before = qi_ledger.total();
+        let physical_total_before = qi_ledger.total()
+            + zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
         let omen = WorldEventOmen {
             kind: OmenKind::PseudoVeinForming,
             zone_name: "waste".to_string(),
@@ -2828,10 +2833,16 @@ mod tests {
             pseudo_zone.spirit_qi, 0.6,
             "expected dynamic zone field to reflect only the amount actually borrowed"
         );
+        let physical_total_after = qi_ledger.total()
+            + zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
         assert_eq!(
-            qi_ledger.total(),
-            total_before,
-            "expected pending-pool debit and dynamic-zone credit to preserve ledger total"
+            physical_total_after,
+            physical_total_before,
+            "expected pending-pool debit and external dynamic-zone credit to preserve the complete owner total"
         );
         assert_eq!(zones.find_zone_by_name("waste").unwrap().spirit_qi, 0.1);
     }

@@ -7,8 +7,8 @@ use valence::protocol::packets::play::DamageTiltS2c;
 use valence::protocol::VarInt;
 
 use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation};
-use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
+use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::rat_phase::MeditatingState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -76,17 +76,17 @@ pub fn apply_rat_bite_qi_drain(
             );
             continue;
         };
-        let source = match ActorQiIdentity::from_life_record(player_life_record, ActorQiKind::Player)
-        {
-            Ok(identity) => identity,
-            Err(error) => {
-                tracing::debug!(
-                    "[bong][combat] rat bite source identity invalid for {:?}: {error}",
-                    bite.target
-                );
-                continue;
-            }
-        };
+        let source =
+            match ActorQiIdentity::from_life_record(player_life_record, ActorQiKind::Player) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    tracing::debug!(
+                        "[bong][combat] rat bite source identity invalid for {:?}: {error}",
+                        bite.target
+                    );
+                    continue;
+                }
+            };
         let target = match ActorQiIdentity::from_life_record(rat_life_record, ActorQiKind::Npc) {
             Ok(identity) => identity,
             Err(error) => {
@@ -441,11 +441,7 @@ mod tests {
             .resource_mut::<WorldQiAccount>()
             .set_balance(rat_account.clone(), f64::MAX)
             .expect("finite destination setup should succeed");
-        let audit_before = app
-            .world()
-            .resource::<WorldQiAccount>()
-            .transfers()
-            .len();
+        let audit_before = app.world().resource::<WorldQiAccount>().transfers().len();
 
         app.world_mut().send_event(RatBiteEvent {
             rat,
@@ -467,10 +463,7 @@ mod tests {
             "failed destination credit must preserve its prior balance"
         );
         assert_eq!(
-            app.world()
-                .resource::<WorldQiAccount>()
-                .transfers()
-                .len(),
+            app.world().resource::<WorldQiAccount>().transfers().len(),
             audit_before,
             "failed destination credit must append no ledger audit"
         );

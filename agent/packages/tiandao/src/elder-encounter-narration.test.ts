@@ -21,7 +21,7 @@ import {
   renderDeathBroadcast,
 } from "./elder-encounter-narration.js";
 
-const { ELDER_ENCOUNTER, AGENT_NARRATE } = CHANNELS;
+const { ELDER_ENCOUNTER, ELDER_ENCOUNTER_DURABLE, AGENT_NARRATE } = CHANNELS;
 
 // ──── mock client ────────────────────────────────────────────────────────────
 
@@ -44,10 +44,65 @@ function makeMockClient() {
     unsubscribe: vi.fn(async () => {}),
     disconnect: vi.fn(() => {}),
     publish: vi.fn(async (_channel: string, _message: string) => 1),
+    eval: vi.fn(
+      async (
+        _script: string,
+        _numKeys: number,
+        _dedupeKey: string | number,
+        _channel: string | number,
+        _message: string | number,
+      ) => 1,
+    ),
 
     emit(channel: string, message: string) {
       (listeners.get("message") ?? []).forEach((l) => l(channel, message));
     },
+  };
+}
+
+function makeDurableQueueClient() {
+  const source: string[] = [];
+  const processing: string[] = [];
+
+  return {
+    source,
+    processing,
+    blmove: vi.fn(
+      async (
+        _source: string,
+        _destination: string,
+        sourceSide: "LEFT" | "RIGHT",
+        destinationSide: "LEFT" | "RIGHT",
+        _timeoutSeconds: number,
+      ) => {
+        const value = sourceSide === "LEFT" ? source.shift() : source.pop();
+        if (value === undefined) return null;
+        if (destinationSide === "LEFT") processing.unshift(value);
+        else processing.push(value);
+        return value;
+      },
+    ),
+    lrem: vi.fn(async (_key: string, _count: number, value: string) => {
+      const index = processing.indexOf(value);
+      if (index === -1) return 0;
+      processing.splice(index, 1);
+      return 1;
+    }),
+    lmove: vi.fn(
+      async (
+        _source: string,
+        _destination: string,
+        sourceSide: "LEFT" | "RIGHT",
+        destinationSide: "LEFT" | "RIGHT",
+      ) => {
+        const value = sourceSide === "LEFT" ? processing.shift() : processing.pop();
+        if (value === undefined) return null;
+        if (destinationSide === "LEFT") source.unshift(value);
+        else source.push(value);
+        return value;
+      },
+    ),
+    disconnect: vi.fn(() => {}),
   };
 }
 
@@ -238,6 +293,116 @@ describe("ElderEncounterNarrationRuntime", () => {
     sub.emit(ELDER_ENCOUNTER, makePayload("appeared"));
     await new Promise((r) => setTimeout(r, 0));
     expect(pub.publish, "ELDER_ENCOUNTER emit 应触发 publish").toHaveBeenCalledOnce();
+  });
+
+  // ── durable event_id 去重 ────────────────────────────────────────────────────
+
+  it("durable event_id 通过 Redis 原子 claim+publish，重复输入不再发布", async () => {
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:720000" });
+
+    await runtime.handlePayload(payload);
+    await runtime.handlePayload(payload);
+
+    expect(pub.publish, "durable payload 不得走非原子的普通 PUBLISH").not.toHaveBeenCalled();
+    expect(pub.eval, "首次 durable payload 应走 Redis 原子去重脚本").toHaveBeenCalledOnce();
+    const [, keyCount, dedupeKey, channel] = pub.eval.mock.calls[0] as [
+      string,
+      number,
+      string,
+      string,
+      string,
+    ];
+    expect(keyCount).toBe(1);
+    expect(dedupeKey).toBe("bong:dedupe:elder_encounter:terminal:npc:42:720000");
+    expect(channel).toBe(AGENT_NARRATE);
+    expect(runtime.stats.published).toBe(1);
+    expect(runtime.stats.ignored).toBe(1);
+  });
+
+  it("Redis 已持有 durable event_id 时计 ignored 且不重复发布", async () => {
+    pub.eval.mockResolvedValueOnce(0);
+
+    await runtime.handlePayload(
+      makePayload("betrayal", { event_id: "terminal:npc:42:duplicate" }),
+    );
+
+    expect(pub.eval).toHaveBeenCalledOnce();
+    expect(pub.publish).not.toHaveBeenCalled();
+    expect(runtime.stats.received).toBe(1);
+    expect(runtime.stats.published).toBe(0);
+    expect(runtime.stats.ignored).toBe(1);
+  });
+
+  it("durable 原子发布失败不在本地记 seen，同 ID 可重试", async () => {
+    pub.eval.mockRejectedValueOnce(new Error("redis unavailable")).mockResolvedValueOnce(1);
+    const payload = makePayload("dead_player_kill", {
+      event_id: "terminal:npc:42:retry",
+    });
+
+    await runtime.handlePayload(payload);
+    await runtime.handlePayload(payload);
+
+    expect(pub.eval, "失败后同一 durable ID 必须再次尝试 Redis 原子脚本").toHaveBeenCalledTimes(2);
+    expect(runtime.stats.received).toBe(2);
+    expect(runtime.stats.published).toBe(1);
+    expect(runtime.stats.ignored).toBe(0);
+  });
+
+  it("durable payload 缺少 EVAL 能力时 fail closed，不退化为普通 PUBLISH", async () => {
+    const pubWithoutEval = makeMockClient();
+    delete (pubWithoutEval as Partial<typeof pubWithoutEval>).eval;
+    const failClosedRuntime = new ElderEncounterNarrationRuntime({
+      sub,
+      pub: pubWithoutEval,
+    });
+
+    await failClosedRuntime.handlePayload(
+      makePayload("dead_natural", { event_id: "terminal:npc:42:no-eval" }),
+    );
+
+    expect(pubWithoutEval.publish).not.toHaveBeenCalled();
+    expect(failClosedRuntime.stats.received).toBe(1);
+    expect(failClosedRuntime.stats.published).toBe(0);
+  });
+
+  it("无 event_id 的非 durable 遭遇保持普通 PUBLISH 语义", async () => {
+    await runtime.handlePayload(makePayload("appeared"));
+
+    expect(pub.publish).toHaveBeenCalledOnce();
+    expect(pub.eval).not.toHaveBeenCalled();
+  });
+
+  it("durable queue 只在原子发布成功后返回可 ACK", async () => {
+    const payload = makePayload("dead_natural", {
+      event_id: "terminal:npc:42:queue-ack",
+    });
+    const durableRuntime = new ElderEncounterNarrationRuntime({ sub, pub });
+
+    expect(await durableRuntime.processDurablePayload(payload)).toBe(true);
+
+    expect(pub.eval).toHaveBeenCalledOnce();
+  });
+
+  it("durable queue 发布失败返回不可 ACK", async () => {
+    const payload = makePayload("betrayal", {
+      event_id: "terminal:npc:42:queue-retry",
+    });
+    pub.eval.mockRejectedValueOnce(new Error("redis unavailable"));
+    const durableRuntime = new ElderEncounterNarrationRuntime({ sub, pub });
+
+    expect(await durableRuntime.processDurablePayload(payload)).toBe(false);
+
+    expect(pub.eval).toHaveBeenCalledOnce();
+  });
+
+  it("durable queue 拒绝缺 event_id 的 payload，避免无去重 ACK", async () => {
+    const durableRuntime = new ElderEncounterNarrationRuntime({ sub, pub });
+
+    expect(await durableRuntime.processDurablePayload(makePayload("dead_natural"))).toBe(false);
+
+    expect(pub.publish).not.toHaveBeenCalled();
+    expect(pub.eval).not.toHaveBeenCalled();
+    expect(durableRuntime.stats.rejectedContract).toBe(1);
   });
 
   // ── disconnect ─────────────────────────────────────────────────────────────

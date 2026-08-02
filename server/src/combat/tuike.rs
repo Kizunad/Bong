@@ -799,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_false_skin_consumes_materials_and_qi() {
+    fn forge_false_skin_stages_inventory_without_direct_qi_mutation() {
         let mut inventory = inventory_with_materials();
         let registry = ItemRegistry::from_map(HashMap::from([
             (
@@ -833,7 +833,10 @@ mod tests {
         .expect("forge should succeed");
 
         assert_eq!(output, 100);
-        assert_eq!(cultivation.qi_current, 15.0);
+        assert_eq!(
+            cultivation.qi_current, 20.0,
+            "pure forge helper must only stage inventory; the ECS request handler owns the atomic qi settlement"
+        );
         assert_eq!(count_template(&inventory, SPIDER_SILK_MATERIAL_ID), 2);
         assert_eq!(
             count_template(&inventory, SPIDER_SILK_FALSE_SKIN_ITEM_ID),
