@@ -1,5 +1,3 @@
 # owner	input_type	code	reason
 vanilla.chat	KEYSYM	T	Minecraft chat default is reserved before Bong registrations.
 vanilla.advancements	KEYSYM	L	Minecraft advancements default is reserved before Bong registrations.
-vanilla.screenshot	KEYSYM	F2	Minecraft screenshot default is reserved before Bong registrations.
-vanilla.toggle_perspective	KEYSYM	F5	Minecraft perspective-toggle default is reserved before Bong registrations.

@@ -44,6 +44,13 @@ class R7FoundationContractTest {
     private static final Path PLAN = REPOSITORY_ROOT.resolve("docs/plan-refactor-client-ui-base-v1.md");
 
     @Test
+    void fixtureLoaderSkipsPlainAndOrdinalPrefixedHeaders() {
+        assertFalse(R7SourceScan.isFixtureDataLine("# owner\tinput_type"));
+        assertFalse(R7SourceScan.isFixtureDataLine("0\t# owner\tinput_type"));
+        assertTrue(R7SourceScan.isFixtureDataLine("owner\tKEYSYM\tT"));
+    }
+
+    @Test
     void foundationFixturePinsFiveNamedContractsAndOwnership() {
         List<FoundationRow> rows = foundationRows();
         Map<String, Long> components = histogram(rows.stream().map(FoundationRow::component).toList());
@@ -400,27 +407,36 @@ class R7FoundationContractTest {
     }
 
     @Test
+    void insightExceptionalRemovalCommitsDeclineAndBlocksLaterSettlement() {
+        InsightSettlementModel model = new InsightSettlementModel("insight-removed", 1_000);
+
+        assertEquals("REMOVED_EXCEPTIONALLY", model.observeScreenRemoval(),
+            "an unsettled screen removal must commit its terminal decline");
+        assertEquals("REMOVED_EXCEPTIONALLY", model.winner(),
+            "exceptional removal must become the immutable terminal winner");
+        assertEquals(1, model.sendCount(),
+            "exceptional removal must emit its one decline decision");
+        assertEquals("NOOP", model.observePreOpen(2_000, false),
+            "a later timeout observation must not retry an exceptionally removed offer");
+        assertEquals("NOOP", model.observeScreenRemoval(),
+            "duplicate removal must not emit another decline");
+        assertEquals(List.of(
+            "claim:REMOVED_EXCEPTIONALLY:removal:insight-removed",
+            "send:DECLINED:insight-removed:ok",
+            "pre-open:NOOP:insight-removed",
+            "removal:NOOP:insight-removed"
+        ), model.events(), "exceptional removal must commit and send before all later terminal paths no-op");
+    }
+
+    @Test
     void keybindManifestsPinReservedDefaultsExemptionsAndEveryProductionSite() throws IOException {
         assertEquals(List.of(
             new ReservedDefaultRow("vanilla.chat", "KEYSYM", "T",
                 "Minecraft chat default is reserved before Bong registrations."),
             new ReservedDefaultRow("vanilla.advancements", "KEYSYM", "L",
-                "Minecraft advancements default is reserved before Bong registrations."),
-            new ReservedDefaultRow("vanilla.screenshot", "KEYSYM", "F2",
-                "Minecraft screenshot default is reserved before Bong registrations."),
-            new ReservedDefaultRow("vanilla.toggle_perspective", "KEYSYM", "F5",
-                "Minecraft perspective-toggle default is reserved before Bong registrations.")
+                "Minecraft advancements default is reserved before Bong registrations.")
         ), reservedDefaultRows(), "vanilla reservation manifest drifted");
-        assertEquals(List.of(
-            new ConflictExemptionRow(
-                "combat.quick_slot_2", "vanilla.screenshot", "KEYSYM", "F2",
-                "Quick slot 2 intentionally retains the frozen F2 default while the vanilla screenshot reservation remains explicit; a future key migration must re-decide this exemption."
-            ),
-            new ConflictExemptionRow(
-                "combat.quick_slot_5", "vanilla.toggle_perspective", "KEYSYM", "F5",
-                "Quick slot 5 intentionally retains the frozen F5 default while the vanilla perspective reservation remains explicit; a future key migration must re-decide this exemption."
-            )
-        ), conflictExemptionRows(), "physical-default exemptions drifted");
+        assertEquals(List.of(), conflictExemptionRows(), "physical-default exemptions must remain empty");
 
         List<KeybindProductionSiteRow> expected = keybindProductionSiteRows();
         List<KeybindingSourceSite> actualSites = productionKeybindingSourceSites();
@@ -502,12 +518,9 @@ class R7FoundationContractTest {
                 }
             }
         }
-        Set<DefaultCollision> expectedCollisions = Set.of(
-            new DefaultCollision("combat.quick_slot_2", "vanilla.screenshot", "KEYSYM", "F2"),
-            new DefaultCollision("combat.quick_slot_5", "vanilla.toggle_perspective", "KEYSYM", "F5")
-        );
+        Set<DefaultCollision> expectedCollisions = Set.of();
         assertEquals(expectedCollisions, collisions,
-            "the 34 expanded target defaults must detect exactly the two explicitly exempted vanilla collisions");
+            "the 34 expanded target defaults must not collide with frozen vanilla reservations");
 
         Set<DefaultCollision> exemptions = conflictExemptionRows().stream()
             .map(row -> new DefaultCollision(row.firstOwnerId(), row.secondOwnerId(), row.inputType(), row.code()))
@@ -721,6 +734,7 @@ class R7FoundationContractTest {
                             if (tree.getIdentifier().toString().equals("KeyBinding")
                                 && tree.getArguments().size() == 4) {
                                 String sourceSite = enclosingAssignmentTarget(getCurrentPath());
+                                assertRegisteredKeyBinding(getCurrentPath(), path);
                                 assertNotNull(sourceSite,
                                     "every KeyBinding constructor needs a stable enclosing assignment target in " + path);
                                 List<String> translations = resolveTranslationKeys(tree.getArguments().get(0), constants);
@@ -903,6 +917,29 @@ class R7FoundationContractTest {
         return "key.bong-client.quick_slot_{1..9}";
     }
 
+    private static void assertRegisteredKeyBinding(TreePath path, Path sourcePath) {
+        TreePath parent = path.getParentPath();
+        assertTrue(parent != null && parent.getLeaf() instanceof MethodInvocationTree,
+            "every KeyBinding constructor must be passed directly to a registration call in " + sourcePath);
+        MethodInvocationTree invocation = (MethodInvocationTree) parent.getLeaf();
+        assertTrue(invocation.getArguments().contains(path.getLeaf()),
+            "every KeyBinding constructor must be a direct registration argument in " + sourcePath);
+        assertTrue(isRegistrationInvocation(invocation),
+            "unregistered KeyBinding constructor in " + sourcePath + ": " + invocation.getMethodSelect());
+    }
+
+    private static boolean isRegistrationInvocation(MethodInvocationTree invocation) {
+        if (!(invocation.getMethodSelect() instanceof MemberSelectTree select)) {
+            return false;
+        }
+        String method = select.getIdentifier().toString();
+        if (method.equals("apply")) {
+            return select.getExpression().toString().equals("registrar");
+        }
+        return method.equals("registerKeyBinding")
+            && select.getExpression().toString().endsWith("KeyBindingHelper");
+    }
+
     private static String enclosingAssignmentTarget(TreePath path) {
         for (TreePath cursor = path.getParentPath(); cursor != null; cursor = cursor.getParentPath()) {
             Tree leaf = cursor.getLeaf();
@@ -938,7 +975,7 @@ class R7FoundationContractTest {
 
     private static List<String> expectedKeybindProductionSiteFixtureLines() {
         return """
-            botany.auto_harvest	botany/BotanyHudBootstrap.java	autoHarvestKey	key.bong-client.botany_auto_harvest	KEYSYM	R	category.bong-client.controls	1	START_CLIENT_TICK gates on player+interactive+no screen before while(wasPressed); accepted presses dispatch AUTO to HarvestSessionStore and ClientRequestSender; rejected precondition returns retain queued presses.	while (autoHarvestKey().wasPressed())
+            botany.auto_harvest	botany/BotanyHudBootstrap.java	autoHarvestKey	key.bong-client.botany_auto_harvest	KEYSYM	R	category.bong-client.controls	1	START_CLIENT_TICK drains every queued AUTO press before checking player/session/screen eligibility; blocked presses are discarded and cannot replay after the gate opens; accepted presses dispatch AUTO to HarvestSessionStore and ClientRequestSender.	consumeAutoPresses(
             combat.quick_slot	combat/CombatKeybindings.java	QUICK_SLOT_KEYS[i]	key.bong-client.quick_slot_{1..9}	KEYSYM	F1..F9	category.bong-client.combat	9 from one source constructor	install loop i=0..<QuickSlotConfig.SLOT_COUNT; consumeQuickSlotPresses iterates slots in order and drains each while(wasPressed), calling quickSlotHandler.accept(i) for every press.	while (QUICK_SLOT_KEYS[i].wasPressed())
             combat.jiemai_react	combat/CombatKeybindings.java	jiemaiKey	key.bong-client.jiemai_react	KEYSYM	UNKNOWN	category.bong-client.combat	1	onTick requires player, then drains while(wasPressed) and invokes jiemaiHandler for every press; no currentScreen gate.	while (jiemaiKey.wasPressed())
             combat.spell_volume_hold	combat/CombatKeybindings.java	spellVolumeKey	key.bong-client.spell_volume_hold	KEYSYM	R	category.bong-client.combat	1	onTick requires player and polls isPressed edge; Botany input capture forces a release edge; handler receives hold true/false; no currentScreen gate.	spellVolumeKey.isPressed()
@@ -1133,7 +1170,7 @@ class R7FoundationContractTest {
             var resource = R7FoundationContractTest.class.getResource(name);
             assertNotNull(resource, "missing R7 fixture " + name);
             return Files.readAllLines(Path.of(resource.toURI())).stream()
-                .filter(line -> !line.isBlank() && !line.startsWith("#"))
+                .filter(R7SourceScan::isFixtureDataLine)
                 .toList();
         } catch (IOException | URISyntaxException exception) {
             throw new AssertionError("unable to read R7 fixture " + name, exception);
@@ -1211,7 +1248,12 @@ class R7FoundationContractTest {
 
         private String observeScreenRemoval() {
             if (winner == null) {
-                events.add("removal:REMOVED_EXCEPTIONALLY:" + triggerId);
+                winner = "REMOVED_EXCEPTIONALLY";
+                events.add("claim:REMOVED_EXCEPTIONALLY:removal:" + triggerId);
+                SettlementFailure sendFailure = send("DECLINED", false);
+                if (sendFailure != null) {
+                    throw sendFailure;
+                }
                 return "REMOVED_EXCEPTIONALLY";
             }
             events.add("removal:NOOP:" + triggerId);
@@ -1226,9 +1268,13 @@ class R7FoundationContractTest {
         }
 
         private SettlementFailure send(boolean fails) {
+            return send("TIMEOUT", fails);
+        }
+
+        private SettlementFailure send(String decision, boolean fails) {
             sendCount++;
             sendFailureObserved |= fails;
-            events.add("send:TIMEOUT:" + triggerId + ":" + (fails ? "failed" : "ok"));
+            events.add("send:" + decision + ":" + triggerId + ":" + (fails ? "failed" : "ok"));
             return fails ? new SettlementFailure("send failed") : null;
         }
 

@@ -55,6 +55,35 @@ final class R7SourceScan {
         }
     }
 
+    static boolean isFixtureDataLine(String line) {
+        return !line.isBlank()
+            && !line.stripLeading().startsWith("#")
+            && !line.matches("\\s*\\d+\\t\\s*#.*");
+    }
+
+    static String sourceTreeDigest(Path root) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new AssertionError("SHA-256 unavailable", exception);
+        }
+        try (var files = Files.walk(root)) {
+            for (Path path : files.filter(Files::isRegularFile)
+                .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
+                .sorted()
+                .toList()) {
+                digest.update(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+                digest.update(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
+                digest.update((byte) '\n');
+            }
+        } catch (NoSuchAlgorithmException exception) {
+            throw new AssertionError("SHA-256 unavailable", exception);
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
     static List<TokenOccurrence> tokenOccurrences(Path root, String token) throws IOException {
         List<TokenOccurrence> occurrences = new ArrayList<>();
         try (var files = Files.walk(root)) {
@@ -160,6 +189,7 @@ final class R7SourceScan {
                     root.relativize(path).toString().replace('\\', '/'),
                     ordinal,
                     line,
+                    index,
                     state == LexState.CODE,
                     lines[line - 1].strip()
                 ));
@@ -280,7 +310,7 @@ final class R7SourceScan {
                 if (!occurrence.code()) {
                     continue;
                 }
-                int offset = offsetAtLine(source, occurrence.line());
+                int offset = occurrence.offset();
                 EnclosingTree method = enclosingTrees.stream()
                     .filter(tree -> tree.identity().startsWith("METHOD:"))
                     .filter(tree -> tree.contains(offset))
@@ -313,19 +343,6 @@ final class R7SourceScan {
             .orElse("") + ")";
     }
 
-    private static int offsetAtLine(String source, int targetLine) {
-        int line = 1;
-        for (int index = 0; index < source.length(); index++) {
-            if (line == targetLine) {
-                return index;
-            }
-            if (source.charAt(index) == '\n') {
-                line++;
-            }
-        }
-        throw new AssertionError("source does not contain line " + targetLine);
-    }
-
     private static String digest(String value) {
         try {
             return HexFormat.of().formatHex(
@@ -342,7 +359,7 @@ final class R7SourceScan {
         }
     }
 
-    record TokenOccurrence(String path, int ordinal, int line, boolean code, String sourceLine) {
+    record TokenOccurrence(String path, int ordinal, int line, int offset, boolean code, String sourceLine) {
         String stableKey() {
             return path + "#" + ordinal;
         }
