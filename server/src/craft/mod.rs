@@ -1377,6 +1377,276 @@ mod tests {
         assert_eq!(recipe.output, ("iron_ingot".into(), 1));
     }
 
+    /// 回归测试：生产注册必须保留完整的 95 条 TOML data-owned 配方。
+    #[test]
+    fn register_includes_complete_data_owned_recipe_set() {
+        let item_registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let mut expected = CraftRegistry::new();
+        data::load_default_craft_recipes(&mut expected, &item_registry)
+            .expect("canonical data recipes must load");
+        let expected_ids = [
+            "coffin.bronze_coffin",
+            "coffin.jade_coffin",
+            "coffin.stone_coffin",
+            "craft.example.eclipse_needle.iron",
+            "craft.example.fake_skin.light",
+            "craft.example.herb_knife.iron",
+            "craft.example.poison_decoction.fan",
+            "craft.example.zhenfa_trap.iron",
+            "craft.tool.workbench",
+            "workbench.armor.armor_hide_boots",
+            "workbench.armor.armor_hide_helmet",
+            "workbench.armor.armor_straw_boots",
+            "workbench.armor.armor_straw_helmet",
+            "workbench.armor.hide_chest",
+            "workbench.armor.hide_legs",
+            "workbench.armor.straw_chest",
+            "workbench.armor.straw_legs",
+            "workbench.array.bait_stake",
+            "workbench.array.beast_trap",
+            "workbench.array.blank_paper",
+            "workbench.array.decoy_stake",
+            "workbench.array.eye_basic",
+            "workbench.array.flag_basic",
+            "workbench.array.gather_base",
+            "workbench.array.scatter_bead",
+            "workbench.array.trip_wire",
+            "workbench.container.dead_drop",
+            "workbench.container.herb_crate",
+            "workbench.container.herb_pouch",
+            "workbench.container.herb_vial",
+            "workbench.container.moisture_guard",
+            "workbench.container.ore_sack",
+            "workbench.container.projectile_bag",
+            "workbench.container.seal_box",
+            "workbench.container.sealed_envelope",
+            "workbench.container.sealed_vial",
+            "workbench.container.trade_crate",
+            "workbench.container.water_skin",
+            "workbench.cultivation.anti_gu",
+            "workbench.cultivation.bandage",
+            "workbench.cultivation.calming_tea",
+            "workbench.cultivation.huiyuan_soup",
+            "workbench.cultivation.meditation_mat",
+            "workbench.cultivation.meridian_rub",
+            "workbench.cultivation.meridian_salve",
+            "workbench.cultivation.ningmai_prep",
+            "workbench.cultivation.qi_talisman",
+            "workbench.cultivation.qingzhuo",
+            "workbench.cultivation.spirit_rack",
+            "workbench.economy.coin_box",
+            "workbench.economy.disguise_wrap",
+            "workbench.economy.niche_repair",
+            "workbench.medical.arm_splint",
+            "workbench.medical.leg_splint",
+            "workbench.prep.forge_station",
+            "workbench.prep.furnace_kit",
+            "workbench.process.bone_chip",
+            "workbench.process.bone_meal",
+            "workbench.process.clay_pot",
+            "workbench.process.dan_sha_powder",
+            "workbench.process.dried_grass",
+            "workbench.process.herb_bundle",
+            "workbench.process.iron_ingot",
+            "workbench.process.needle_batch",
+            "workbench.process.rat_tail_oil",
+            "workbench.process.rope",
+            "workbench.process.rough_cloth",
+            "workbench.process.salt_crystal",
+            "workbench.process.spider_cord",
+            "workbench.process.spirit_charcoal",
+            "workbench.process.tanned_hide",
+            "workbench.process.wood_handle",
+            "workbench.process.wood_plank",
+            "workbench.shelter.camo_net",
+            "workbench.shelter.door_bolt",
+            "workbench.shelter.lantern",
+            "workbench.shelter.moisture_base",
+            "workbench.shelter.niche_base",
+            "workbench.shelter.simple_bed",
+            "workbench.shelter.torch",
+            "workbench.shelter.window_grate",
+            "workbench.shield.bone_shield",
+            "workbench.shield.wooden_shield",
+            "workbench.tool.axe_iron",
+            "workbench.tool.hoe_iron",
+            "workbench.tool.ice_gauntlet",
+            "workbench.tool.pickaxe_iron",
+            "workbench.tool.scraper",
+            "workbench.tool.sickle",
+            "workbench.tool.stone_axe",
+            "workbench.tool.stone_pickaxe",
+            "workbench.weapon.bone_spike_crude",
+            "workbench.weapon.iron_dagger",
+            "workbench.weapon.stone_knife",
+            "workbench.weapon.wooden_club",
+        ];
+        assert_eq!(expected_ids.len(), 95);
+        assert_eq!(expected.len(), expected_ids.len());
+        for id in expected_ids {
+            assert!(
+                expected.get(&RecipeId::new(id)).is_some(),
+                "canonical data-owned recipe ID `{id}` must remain present"
+            );
+        }
+
+        let mut app = App::new();
+        app.insert_resource(item_registry);
+        register(&mut app);
+        let assembled = app.world().resource::<CraftRegistry>();
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|recipe| assembled.get(&recipe.id).is_some())
+                .count(),
+            expected.len(),
+            "craft::register must install every data-owned recipe"
+        );
+    }
+
+    #[test]
+    fn register_requires_item_registry_and_does_not_install_craft_registry() {
+        let mut app = App::new();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            register(&mut app);
+        }));
+        assert!(
+            result.is_err(),
+            "craft registration without ItemRegistry must fail fast"
+        );
+        assert!(app.world().get_resource::<CraftRegistry>().is_none());
+    }
+
+    #[test]
+    fn craft_scroll_templates_have_exact_registry_contract() {
+        let registry = crate::inventory::load_item_registry().expect("item registry loads");
+        let expected = [
+            (
+                "scroll_fake_skin_light",
+                crate::inventory::ItemRarity::Uncommon,
+                0.3,
+            ),
+            (
+                "scroll_herb_knife_iron",
+                crate::inventory::ItemRarity::Common,
+                0.2,
+            ),
+            (
+                "scroll_zhenfa_trap_iron",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_sealed_vial",
+                crate::inventory::ItemRarity::Common,
+                0.2,
+            ),
+            (
+                "scroll_workbench_seal_box",
+                crate::inventory::ItemRarity::Uncommon,
+                0.3,
+            ),
+            (
+                "scroll_workbench_dead_drop",
+                crate::inventory::ItemRarity::Uncommon,
+                0.3,
+            ),
+            (
+                "scroll_workbench_qi_talisman",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_meridian_rub",
+                crate::inventory::ItemRarity::Common,
+                0.25,
+            ),
+            (
+                "scroll_workbench_ningmai_prep",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_meridian_salve",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_anti_gu",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_qingzhuo",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_array_flag",
+                crate::inventory::ItemRarity::Common,
+                0.25,
+            ),
+            (
+                "scroll_workbench_array_eye",
+                crate::inventory::ItemRarity::Uncommon,
+                0.3,
+            ),
+            (
+                "scroll_workbench_decoy_stake",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_scatter_bead",
+                crate::inventory::ItemRarity::Uncommon,
+                0.35,
+            ),
+            (
+                "scroll_workbench_gather_base",
+                crate::inventory::ItemRarity::Rare,
+                0.45,
+            ),
+            (
+                "scroll_workbench_niche_repair",
+                crate::inventory::ItemRarity::Common,
+                0.2,
+            ),
+            (
+                "scroll_workbench_lantern",
+                crate::inventory::ItemRarity::Common,
+                0.2,
+            ),
+            (
+                "scroll_workbench_niche_base",
+                crate::inventory::ItemRarity::Uncommon,
+                0.3,
+            ),
+        ];
+        assert_eq!(expected.len(), 20);
+        let mut recipes = CraftRegistry::new();
+        data::load_default_craft_recipes(&mut recipes, &registry).expect("craft recipes load");
+        for (id, rarity, spirit_quality) in expected {
+            let item = registry
+                .get(id)
+                .unwrap_or_else(|| panic!("missing craft scroll `{id}`"));
+            assert_eq!(item.category, crate::inventory::ItemCategory::Scroll);
+            assert_eq!((item.grid_w, item.grid_h), (1, 2));
+            assert_eq!(item.max_stack_count, 1);
+            assert_eq!(item.base_weight, 0.05);
+            assert_eq!(item.rarity, rarity);
+            assert_eq!(item.spirit_quality_initial, spirit_quality);
+            assert_eq!(
+                recipes
+                    .iter()
+                    .flat_map(|recipe| recipe.unlock_sources.iter())
+                    .filter(|source| matches!(source, UnlockSource::Scroll { item_template } if item_template == id))
+                    .count(),
+                1,
+                "craft scroll `{id}` must unlock exactly one data-owned recipe"
+            );
+        }
+    }
+
     /// 回归测试：生产注册表必须包含每个 code-owned registrar 产出的所有配方。
     #[test]
     fn register_includes_every_code_owned_recipe_from_each_registrar() {

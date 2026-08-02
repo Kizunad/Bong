@@ -432,6 +432,8 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// （`learn_technique_if_allowed` 调用点判定本体经脉是否满足易形前置）与
     /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
     pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
+    pub craft_registry: Option<Res<'w, crate::craft::CraftRegistry>>,
+    pub craft_unlock_tx: Option<ResMut<'w, Events<crate::craft::CraftUnlockIntent>>>,
 }
 
 type NpcEngagementItem = (
@@ -1715,26 +1717,44 @@ pub fn handle_client_request_payloads(
                 });
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
-                handle_learn_skill_scroll(
+                if !handle_craft_recipe_scroll(
                     ev.client,
                     instance_id,
                     &mut inventories,
-                    &mut clients,
-                    &player_states,
-                    &mut skill_scroll_params,
-                    &mut combat_params.meridians,
-                );
+                    &skill_scroll_params.item_registry,
+                    skill_scroll_params.craft_registry.as_deref(),
+                    skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                ) {
+                    handle_learn_skill_scroll(
+                        ev.client,
+                        instance_id,
+                        &mut inventories,
+                        &mut clients,
+                        &player_states,
+                        &mut skill_scroll_params,
+                        &mut combat_params.meridians,
+                    );
+                }
             }
             ClientRequestV1::TechniqueScrollUse { instance_id, .. } => {
-                handle_learn_skill_scroll(
+                if !handle_craft_recipe_scroll(
                     ev.client,
                     instance_id,
                     &mut inventories,
-                    &mut clients,
-                    &player_states,
-                    &mut skill_scroll_params,
-                    &mut combat_params.meridians,
-                );
+                    &skill_scroll_params.item_registry,
+                    skill_scroll_params.craft_registry.as_deref(),
+                    skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                ) {
+                    handle_learn_skill_scroll(
+                        ev.client,
+                        instance_id,
+                        &mut inventories,
+                        &mut clients,
+                        &player_states,
+                        &mut skill_scroll_params,
+                        &mut combat_params.meridians,
+                    );
+                }
             }
             ClientRequestV1::AlchemyIgnite {
                 furnace_pos,
@@ -2956,6 +2976,57 @@ pub fn handle_client_request_payloads(
             }
         }
     }
+}
+
+fn handle_craft_recipe_scroll(
+    entity: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    item_registry: &ItemRegistry,
+    craft_registry: Option<&crate::craft::CraftRegistry>,
+    craft_unlock_tx: Option<&mut Events<crate::craft::CraftUnlockIntent>>,
+) -> bool {
+    let Some(craft_registry) = craft_registry else {
+        return false;
+    };
+    let Some(craft_unlock_tx) = craft_unlock_tx else {
+        return false;
+    };
+    let Some(template_id) = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id))
+        .map(|instance| instance.template_id.clone())
+    else {
+        return false;
+    };
+    let Some(template) = item_registry.get(&template_id) else {
+        return false;
+    };
+    if template.category != ItemCategory::Scroll {
+        return false;
+    }
+    let recipes =
+        crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id);
+    if recipes.is_empty() {
+        return false;
+    }
+    let Ok(mut inventory) = inventories.get_mut(entity) else {
+        return true;
+    };
+    if consume_item_instance_once(&mut inventory, instance_id).is_err() {
+        return true;
+    }
+    for recipe in recipes {
+        craft_unlock_tx.send(crate::craft::CraftUnlockIntent {
+            caster: entity,
+            recipe_id: recipe.id.clone(),
+            source: crate::craft::UnlockEventSource::Scroll {
+                item_template: template_id.clone(),
+            },
+        });
+    }
+    true
 }
 
 fn handle_learn_skill_scroll(

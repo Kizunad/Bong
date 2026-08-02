@@ -3,7 +3,7 @@
 //! P0 仅承载原 `register_examples` 五条与 `register_workbench_recipes` 全量配方。
 //! 流派/玩法各自 code-register 的配方仍由所属模块维护，绝不在这里隐式收编。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -386,13 +386,14 @@ fn commit_staged_recipes(
     let mut first_paths: HashMap<String, PathBuf> = HashMap::new();
     for located in &staged {
         let id = located.recipe.id.as_str().to_owned();
-        if let Some(first_path) = first_paths.insert(id.clone(), located.path.clone()) {
+        if let Some(first_path) = first_paths.get(&id) {
             return Err(CraftDataError::DuplicateId {
                 path: located.path.clone(),
                 recipe_id: id,
-                first_path: Some(first_path),
+                first_path: Some(first_path.clone()),
             });
         }
+        first_paths.insert(id.clone(), located.path.clone());
         if registry.get(&located.recipe.id).is_some() {
             return Err(CraftDataError::DuplicateId {
                 path: located.path.clone(),
@@ -617,15 +618,25 @@ fn convert_recipe(raw: CraftRecipeToml, path: &Path) -> Result<CraftRecipe, Craf
         .map(|(index, source)| convert_unlock_source(source, path, &recipe_id, index))
         .collect::<Result<Vec<_>, _>>()?;
 
+    let mut materials = Vec::with_capacity(raw.materials.len());
+    let mut material_ids = HashSet::new();
+    for (index, material) in raw.materials.into_iter().enumerate() {
+        if !material_ids.insert(material.template_id.clone()) {
+            return Err(conversion_error(
+                path,
+                &recipe_id,
+                &format!("materials[{index}].template_id"),
+                format!("duplicate material template `{}`", material.template_id),
+            ));
+        }
+        materials.push((material.template_id, material.count));
+    }
+
     let recipe = CraftRecipe {
         id: RecipeId::new(raw.id),
         category,
         display_name: raw.display_name,
-        materials: raw
-            .materials
-            .into_iter()
-            .map(|material| (material.template_id, material.count))
-            .collect(),
+        materials,
         qi_cost: raw.qi_cost,
         time_ticks,
         output: (raw.output.template_id, raw.output.count),
@@ -752,9 +763,7 @@ fn validation_field(error: &RecipeValidationError) -> String {
         RecipeValidationError::EmptyMaterialTemplate { .. } => {
             "materials[].template_id".to_string()
         }
-        RecipeValidationError::ZeroCount { template, .. } => {
-            format!("materials[{template}].count")
-        }
+        RecipeValidationError::ZeroCount { .. } => "materials[].count".to_string(),
         RecipeValidationError::EmptyOutputTemplate { .. } => "output.template_id".to_string(),
         RecipeValidationError::ZeroOutputCount { .. } => "output.count".to_string(),
         RecipeValidationError::InvalidQiCost { .. } => "qi_cost".to_string(),
@@ -1303,27 +1312,90 @@ station = "none"
     #[test]
     fn rejects_read_and_document_parse_failures_with_path_and_field() {
         let directory = temp_dir("read-parse");
-        let unreadable = write_toml(&directory, "invalid-utf8.toml", "");
+        let valid = write_toml(&directory, "a-valid.toml", &minimal_recipe());
+        let unreadable = write_toml(&directory, "z-invalid-utf8.toml", "");
         fs::write(&unreadable, [0xff_u8]).unwrap();
+        let mut registry = CraftRegistry::new();
         let error =
-            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
-                .unwrap_err();
+            load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap_err();
         assert!(matches!(error, CraftDataError::Read { .. }));
         assert!(error
             .to_string()
             .contains(&unreadable.display().to_string()));
+        assert!(
+            registry.is_empty(),
+            "read failure must not commit earlier valid files"
+        );
         fs::remove_file(&unreadable).unwrap();
 
-        let malformed = write_toml(&directory, "malformed.toml", "[[recipes]\nid = \"broken\"");
+        let malformed = write_toml(
+            &directory,
+            "z-malformed.toml",
+            "[[recipes]\nid = \"broken\"",
+        );
         let error =
-            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
-                .unwrap_err();
+            load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap_err();
         assert!(matches!(error, CraftDataError::Parse { .. }));
         assert!(error.to_string().contains(&malformed.display().to_string()));
         assert!(error.to_string().contains("document"));
+        assert!(
+            registry.is_empty(),
+            "parse failure must not commit earlier valid files"
+        );
+        assert!(valid.exists());
         clean(directory);
     }
 
+    #[test]
+    fn rejects_duplicate_material_rows_with_index_path() {
+        let directory = temp_dir("duplicate-material");
+        let content = replace_required_line(
+            minimal_recipe(),
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }, { template_id = \"iron_ingot\", count = 1 }]",
+        );
+        let path = write_toml(&directory, "duplicate.toml", &content);
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        assert_conversion_error_field(error, &path, "fixture.recipe", "materials[1].template_id");
+        clean(directory);
+    }
+
+    #[test]
+    fn duplicate_diagnostic_uses_lexical_first_declaration() {
+        let directory = temp_dir("duplicate-first-path");
+        let second = write_toml(&directory, "z.toml", &minimal_recipe());
+        let first = write_toml(&directory, "a.toml", &minimal_recipe());
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        let CraftDataError::DuplicateId {
+            path, first_path, ..
+        } = error
+        else {
+            panic!("duplicate recipe IDs must report DuplicateId");
+        };
+        assert_eq!(path, second);
+        assert_eq!(first_path, Some(first));
+        clean(directory);
+    }
+
+    #[test]
+    fn zero_material_count_reports_array_field() {
+        let directory = temp_dir("zero-material-count");
+        let content = replace_required_line(
+            minimal_recipe(),
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+            "materials = [{ template_id = \"iron_ingot\", count = 0 }]",
+        );
+        let path = write_toml(&directory, "zero.toml", &content);
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        assert_conversion_error_field(error, &path, "fixture.recipe", "materials[].count");
+        clean(directory);
+    }
     #[test]
     fn rejects_unknown_fields_at_document_recipe_and_nested_levels() {
         let directory = temp_dir("unknown-fields");

@@ -201,7 +201,7 @@ fn mentor(npc: &str) -> Vec<UnlockSource> {
 }
 
 /// 注册全部制作台配方 + 制作台自身手搓配方。
-/// plan-coffin-tiers-v1 P4 加入 3 档延寿棺、P2 经济僵尸清理后共 98 workbench/coffin + 1 self = 99 条。
+/// 数据资产共包含 90 条 workbench/coffin 配方和 1 条制作台自身配方。
 pub fn register_workbench_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     register_workbench_self_recipe(registry)?;
     register_survival_tools(registry)?; // #1-12

@@ -1,6 +1,5 @@
 # plan-registry-datafication-v1 P0 — 旧 craft registrar 引用的真实材料与产物。
 # 这些 ID 是 95 条 canonical 配方契约的一部分；启动期引用校验不得以近义 ID 或占位物绕过。
-# [BLOCKED: 需 /gen-image item 为本文件 5 个 ItemTemplate 生成正式 GUI icon；当前图像后端 502]
 
 [[item]]
 id = "rabbit_pelt"

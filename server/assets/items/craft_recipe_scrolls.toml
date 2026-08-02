@@ -1,6 +1,5 @@
 # plan-registry-datafication-v1 P0 — canonical craft 配方残卷模板。
 # `UnlockSource::Scroll` 以精确 template ID 关联配方，新增条目必须与配方资产逐一对拍。
-# [BLOCKED: 需 /gen-image item 为本文件 20 张残卷生成正式 GUI icon；当前图像后端 502]
 
 [[item]]
 id = "scroll_fake_skin_light"

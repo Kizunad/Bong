@@ -47,10 +47,9 @@ pub mod botany;
 pub mod cmd;
 pub mod coffin;
 pub mod combat;
-// craft：plan-craft-v1 P0+P1 通用手搓底盘。register() 注入 5 示例配方 + resources +
-// events；P2/P3（client UI + agent narration + 三渠道 hook）由 plan vN+1 接入。
-// 当前未在 Update systems 内消费 CraftStartedEvent / CraftCompletedEvent，
-// 等 P2/P3 接入前保留 #[allow(dead_code)]。
+// craft：plan-craft-v1 P0+P1 通用手搓底盘。register() 启动时加载全部 TOML 数据配方，
+// 再追加 code-owned 配方；调用前必须先注册 inventory::ItemRegistry。
+// P2/P3（client UI + agent narration + 三渠道 hook）由后续模块接入。
 #[allow(dead_code)]
 pub mod craft;
 #[allow(dead_code)]
