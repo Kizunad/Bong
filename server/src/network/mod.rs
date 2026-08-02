@@ -143,8 +143,8 @@ use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
-    EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup,
-    Update, Username, With,
+    EventWriter, Events, IntoSystemConfigs, Or, Position, PostUpdate, Query, Res, ResMut, Resource,
+    Startup, Update, Username, With,
 };
 
 use crate::combat::components::{Lifecycle, StatusEffects};
@@ -473,7 +473,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
-                .after(crate::combat::resolve::resolve_attack_intents),
+                .after(crate::combat::resolve::resolve_attack_intents)
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
             combat_bridge::publish_death_insight_requests
                 .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
@@ -497,10 +498,12 @@ pub(crate) fn register_app_wiring(app: &mut App) {
         anticheat_bridge::publish_anticheat_violation_events
             .after(crate::combat::anticheat::emit_anticheat_threshold_reports),
     );
+    // Spawn producers use deferred Commands in Update. Publish their stable LifeRecord identity
+    // only after those commands have been applied at the schedule boundary.
+    app.add_systems(PostUpdate, npc_event_bridge::publish_npc_spawn_events);
     app.add_systems(
         Update,
         (
-            npc_event_bridge::publish_npc_spawn_events,
             npc_event_bridge::publish_npc_death_events,
             // plan-offscreen-war-v1 P2：离屏战果 telemetry → bong:npc/combat。
             npc_event_bridge::publish_dormant_combat_events,
@@ -3849,6 +3852,7 @@ mod tests {
                 initial_qi: cultivation.qi_current,
                 qi_ledger_net: 0.0,
                 combat_dead_pending_release: false,
+                pending_combat_winner: None,
             }
         }
 

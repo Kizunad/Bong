@@ -12,6 +12,10 @@
     "server_tick"
   ],
   "properties": {
+    "event_id": {
+      "minLength": 1,
+      "type": "string"
+    },
     "zone_name": {
       "minLength": 1,
       "type": "string"

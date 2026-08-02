@@ -585,6 +585,7 @@ mod tests {
     use crate::combat::dugu_v2::events::DuguSkillId;
     use crate::combat::CombatClock;
     use crate::cultivation::components::{Cultivation, QiColor, Realm};
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
@@ -638,6 +639,7 @@ mod tests {
                 make_shroud(1000, maintain),
                 Position::new([0.0, 64.0, 0.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("shroud-zone")),
             ))
             .id();
 
@@ -808,6 +810,7 @@ mod tests {
                 make_shroud(1000, maintain),
                 Position::new([0.0, 64.0, 0.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("shroud-overflow")),
             ))
             .id();
 
@@ -840,6 +843,7 @@ mod tests {
                     ..Default::default()
                 },
                 make_shroud(1000, maintain),
+                LifeRecord::new(canonical_player_id("shroud-no-position")),
                 // No Position, no CurrentDimension
             ))
             .id();

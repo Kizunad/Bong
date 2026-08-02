@@ -328,9 +328,11 @@ pub fn register(app: &mut App) {
                 .after(resolve::resolve_attack_intents),
             lifecycle::death_arbiter_tick
                 .in_set(CombatSystemSet::Resolve)
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage)
                 .after(resolve::resolve_attack_intents),
             lifecycle::near_death_tick
                 .in_set(CombatSystemSet::Resolve)
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage)
                 .after(lifecycle::death_arbiter_tick)
                 .after(rat_bite::apply_rat_bite_qi_drain),
             lifecycle::handle_revival_action_intents

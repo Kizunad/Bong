@@ -387,6 +387,89 @@ pub fn death_arbiter_tick(
             continue;
         };
 
+        if npc_marker.is_some() {
+            let now_tick = event.at_tick.max(clock.tick);
+            let death_zone =
+                death_zone_from_context(event.cause.as_str(), position, zones.as_deref());
+            let Some(life_record) = life_record.as_deref() else {
+                tracing::warn!(
+                    target = ?event.target,
+                    "[bong][combat] retained NPC death because canonical LifeRecord is missing"
+                );
+                continue;
+            };
+            let (Some(death_registry), Some(lifespan)) =
+                (death_registry.as_deref(), lifespan.as_deref())
+            else {
+                tracing::warn!(
+                    target = ?event.target,
+                    "[bong][combat] retained NPC death because terminal owner components are missing"
+                );
+                continue;
+            };
+            let Ok(actor_qi_identity) =
+                ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+            else {
+                tracing::warn!(
+                    target = ?event.target,
+                    "[bong][combat] retained NPC death because terminal identity diverged"
+                );
+                continue;
+            };
+            if lifecycle.character_id != life_record.character_id
+                || death_registry.char_id != life_record.character_id
+            {
+                tracing::warn!(
+                    target = ?event.target,
+                    "[bong][combat] retained NPC death because terminal identity diverged"
+                );
+                continue;
+            }
+            let mut staged_registry = death_registry.clone();
+            staged_registry.record_death(now_tick, death_zone);
+            let insight_payload = build_death_insight_request(DeathInsightBuildInput {
+                lifecycle: &lifecycle,
+                life_record: Some(life_record),
+                cultivation,
+                death_registry: Some(&staged_registry),
+                lifespan: Some(lifespan),
+                position,
+                at_tick: now_tick,
+                cause: event.cause.as_str(),
+                category: DeathInsightCategoryV1::Combat,
+                zone_kind: death_zone,
+                rebirth_chance: None,
+                will_terminate: true,
+                known_spirit_eyes: known_spirit_eyes_for_death_insight(
+                    Some(life_record),
+                    &lifecycle,
+                    spirit_eyes.as_deref(),
+                ),
+            });
+            commands
+                .entity(event.target)
+                .insert(crate::npc::lifecycle::PendingNpcTermination {
+                    cause: event.cause.clone(),
+                    at_tick: now_tick,
+                    death_zone,
+                    lifespan_event: death_penalty_lifespan_event(
+                        cultivation,
+                        now_tick,
+                        event.cause.as_str(),
+                    ),
+                    death_insight: Some(insight_payload),
+                    reason: crate::npc::lifecycle::NpcDeathReason::Combat,
+                    attacker: event.attacker,
+                    attacker_player_id: event.attacker_player_id.clone(),
+                    authorize_loot: true,
+                    actor_qi_identity,
+                    reproduction: None,
+                    narration_outbox: None,
+                    loot_outbox: None,
+                });
+            continue;
+        }
+
         // plan-race-system-v1 P4（决议 §6）—— 死亡三条解除易形触发路径之一：死亡即刻
         // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
         // release_morph_state`）。本系统是 `Query` 而非原始 `World`，无法直接调用
@@ -560,6 +643,97 @@ pub fn death_arbiter_tick(
         else {
             continue;
         };
+
+        if npc_marker.is_some() {
+            let cause = format!("cultivation:{:?}", event.cause);
+            let death_zone = match event.cause {
+                CultivationDeathCause::NegativeZoneDrain => ZoneDeathKind::Negative,
+                CultivationDeathCause::SwarmQiDrain => ZoneDeathKind::Ordinary,
+                _ => death_zone_from_context(cause.as_str(), position, zones.as_deref()),
+            };
+            let Some(life_record) = life_record.as_deref() else {
+                tracing::warn!(
+                    target = ?event.entity,
+                    "[bong][combat] retained NPC cultivation death without canonical LifeRecord"
+                );
+                continue;
+            };
+            let Some(death_registry) = death_registry.as_deref() else {
+                tracing::warn!(
+                    target = ?event.entity,
+                    "[bong][combat] retained NPC cultivation death without DeathRegistry"
+                );
+                continue;
+            };
+            let Ok(actor_qi_identity) =
+                ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+            else {
+                tracing::warn!(
+                    target = ?event.entity,
+                    "[bong][combat] retained NPC cultivation death after identity mismatch"
+                );
+                continue;
+            };
+            if lifecycle.character_id != life_record.character_id
+                || death_registry.char_id != life_record.character_id
+            {
+                tracing::warn!(
+                    target = ?event.entity,
+                    "[bong][combat] retained NPC cultivation death after identity mismatch"
+                );
+                continue;
+            }
+            let mut staged_registry = death_registry.clone();
+            staged_registry.record_death(clock.tick, death_zone);
+            let insight_payload = build_death_insight_request(DeathInsightBuildInput {
+                lifecycle: &lifecycle,
+                life_record: Some(life_record),
+                cultivation,
+                death_registry: Some(&staged_registry),
+                lifespan: lifespan.as_deref(),
+                position,
+                at_tick: clock.tick,
+                cause: cause.as_str(),
+                category: death_insight_category_from_cultivation_cause(event.cause),
+                zone_kind: death_zone,
+                rebirth_chance: None,
+                will_terminate: true,
+                known_spirit_eyes: known_spirit_eyes_for_death_insight(
+                    Some(life_record),
+                    &lifecycle,
+                    spirit_eyes.as_deref(),
+                ),
+            });
+            commands
+                .entity(event.entity)
+                .insert(crate::npc::lifecycle::PendingNpcTermination {
+                    cause,
+                    at_tick: clock.tick,
+                    death_zone,
+                    lifespan_event: if event.cause == CultivationDeathCause::NaturalAging
+                        || event.cause == CultivationDeathCause::VoidQuotaExceeded
+                        || event.cause == CultivationDeathCause::VoidActionBacklash
+                    {
+                        None
+                    } else {
+                        death_penalty_lifespan_event(cultivation, clock.tick, "cultivation_death")
+                    },
+                    death_insight: Some(insight_payload),
+                    reason: if event.cause == CultivationDeathCause::NaturalAging {
+                        crate::npc::lifecycle::NpcDeathReason::NaturalAging
+                    } else {
+                        crate::npc::lifecycle::NpcDeathReason::Combat
+                    },
+                    attacker: None,
+                    attacker_player_id: None,
+                    authorize_loot: event.cause != CultivationDeathCause::NaturalAging,
+                    actor_qi_identity,
+                    reproduction: None,
+                    narration_outbox: None,
+                    loot_outbox: None,
+                });
+            continue;
+        }
 
         // Worldview §十二：死亡掉落应落在死亡点。
         if let Some(position) = position {
@@ -789,21 +963,59 @@ pub fn near_death_tick(
         }
 
         if npc_marker.is_some() {
-            if terminate_lifecycle(
-                entity,
-                &mut lifecycle,
-                life_record,
-                &persistence,
-                clock.tick,
-                &mut terminated,
-                position.as_deref(),
-                npc_marker.is_some(),
-                npc_visual_profile,
-                &mut vfx_events,
-                "npc_death",
-            ) {
-                hide_death_screen(&mut clients, entity);
+            let Some(life_record) = life_record.as_deref() else {
+                tracing::warn!(
+                    target = ?entity,
+                    "[bong][combat] retained near-death NPC without canonical LifeRecord"
+                );
+                continue;
+            };
+            let Some(death_registry) = death_registry.as_deref() else {
+                tracing::warn!(
+                    target = ?entity,
+                    "[bong][combat] retained near-death NPC without DeathRegistry"
+                );
+                continue;
+            };
+            let Ok(actor_qi_identity) =
+                ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+            else {
+                tracing::warn!(
+                    target = ?entity,
+                    "[bong][combat] retained near-death NPC after identity mismatch"
+                );
+                continue;
+            };
+            if lifecycle.character_id != life_record.character_id
+                || death_registry.char_id != life_record.character_id
+            {
+                tracing::warn!(
+                    target = ?entity,
+                    "[bong][combat] retained near-death NPC after identity mismatch"
+                );
+                continue;
             }
+            let cause = eventual_cause(Some(life_record));
+            let death_zone =
+                death_zone_from_context(cause.as_str(), position.as_deref(), zones.as_deref());
+            commands
+                .entity(entity)
+                .insert(crate::npc::lifecycle::PendingNpcTermination {
+                    cause,
+                    at_tick: clock.tick,
+                    death_zone,
+                    lifespan_event: None,
+                    death_insight: None,
+                    reason: crate::npc::lifecycle::NpcDeathReason::Combat,
+                    attacker: None,
+                    attacker_player_id: None,
+                    authorize_loot: true,
+                    actor_qi_identity,
+                    reproduction: None,
+                    narration_outbox: None,
+                    loot_outbox: None,
+                });
+            hide_death_screen(&mut clients, entity);
             continue;
         }
 
@@ -1803,6 +2015,38 @@ fn damaged_spawn_anchor_weakened_multiplier(lifecycle: &Lifecycle) -> u64 {
     }
 }
 
+pub(crate) fn emit_terminal_vfx(
+    position: Option<&Position>,
+    is_npc: bool,
+    npc_visual_profile: Option<&NpcVisualProfile>,
+    vfx_events: &mut EventWriter<VfxEventRequest>,
+) {
+    let Some(pos) = position else {
+        return;
+    };
+    let p = pos.get();
+    vfx_events.send(VfxEventRequest::new(
+        p,
+        VfxEventPayloadV1::SpawnParticle {
+            event_id: "bong:death_soul_dissipate".to_string(),
+            origin: [p.x, p.y, p.z],
+            direction: None,
+            color: Some("#CFEFFF".to_string()),
+            strength: Some(0.9),
+            count: Some(20),
+            duration_ticks: Some(40),
+        },
+    ));
+    if is_npc {
+        vfx_events.send(crate::skin::faction_tint::npc_death_smoke_request(p));
+        if let Some(request) =
+            crate::skin::faction_tint::npc_death_qi_burst_request(p, npc_visual_profile)
+        {
+            vfx_events.send(request);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn terminate_lifecycle(
     entity: Entity,
@@ -1902,29 +2146,7 @@ fn terminate_lifecycle_with_death_context(
     lifecycle.terminate(now_tick);
     terminated.send(PlayerTerminated { entity });
 
-    if let Some(pos) = position {
-        let p = pos.get();
-        vfx_events.send(VfxEventRequest::new(
-            p,
-            VfxEventPayloadV1::SpawnParticle {
-                event_id: "bong:death_soul_dissipate".to_string(),
-                origin: [p.x, p.y, p.z],
-                direction: None,
-                color: Some("#CFEFFF".to_string()),
-                strength: Some(0.9),
-                count: Some(20),
-                duration_ticks: Some(40),
-            },
-        ));
-        if is_npc {
-            vfx_events.send(crate::skin::faction_tint::npc_death_smoke_request(p));
-            if let Some(request) =
-                crate::skin::faction_tint::npc_death_qi_burst_request(p, npc_visual_profile)
-            {
-                vfx_events.send(request);
-            }
-        }
-    }
+    emit_terminal_vfx(position, is_npc, npc_visual_profile, vfx_events);
     true
 }
 

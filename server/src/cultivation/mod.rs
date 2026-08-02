@@ -96,7 +96,7 @@ pub mod void;
 
 use valence::prelude::{
     bevy_ecs, Added, App, Client, Commands, Component, Entity, EventReader, EventWriter,
-    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username, Without,
+    IntoSystemConfigs, Or, Position, Query, Res, ResMut, Update, Username, With, Without,
 };
 
 use self::breakthrough::{
@@ -551,7 +551,11 @@ pub fn register(app: &mut App) {
 pub struct CultivationBundleLoadFailed;
 
 type CultivationAttachFilter = (
-    Or<(Added<Client>, Added<CurrentDimension>)>,
+    Or<(
+        Added<Client>,
+        Added<CurrentDimension>,
+        With<CultivationAttachPending>,
+    )>,
     Without<Cultivation>,
 );
 type CultivationAttachQueryItem<'a> = (
@@ -559,7 +563,28 @@ type CultivationAttachQueryItem<'a> = (
     &'a Username,
     Option<&'a PlayerState>,
     Option<&'a LifespanComponent>,
+    Option<&'a CultivationAttachPending>,
 );
+
+#[derive(Debug, Clone, Copy, Component)]
+pub(crate) struct CultivationAttachPending {
+    pub(crate) next_retry_tick: u64,
+}
+
+#[derive(Debug, Clone, Component)]
+pub(crate) struct CultivationBundleTutorialHandoff {
+    pub(crate) accepted_bundle: Option<serde_json::Value>,
+}
+
+pub(crate) fn accepted_bundle_slice<T: serde::de::DeserializeOwned>(
+    accepted_bundle: &Option<serde_json::Value>,
+    key: &str,
+) -> Option<T> {
+    accepted_bundle
+        .as_ref()
+        .and_then(|bundle| bundle.get(key).cloned())
+        .and_then(|value| serde_json::from_value(value).ok())
+}
 
 fn parse_persisted_tribulation_dimension(value: &str) -> Option<DimensionKind> {
     match value {
@@ -574,6 +599,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
+    clock: Option<Res<CultivationClock>>,
     default_loadout: Option<Res<crate::inventory::DefaultLoadout>>,
     item_registry: Option<Res<crate::inventory::ItemRegistry>>,
     mut inventory_allocator: Option<ResMut<crate::inventory::InventoryInstanceIdAllocator>>,
@@ -584,16 +610,33 @@ pub(crate) fn attach_cultivation_to_joined_clients(
     race_registry: Option<Res<crate::body_plan::RaceRegistry>>,
     joined_clients: Query<CultivationAttachQueryItem<'_>, CultivationAttachFilter>,
 ) {
-    for (entity, username, player_state, restored_lifespan) in &joined_clients {
-        let mut canonical_id = player_persistence
+    let now_tick = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
+    for (entity, username, player_state, restored_lifespan, pending) in &joined_clients {
+        if let Some(pending) = pending {
+            if now_tick < pending.next_retry_tick {
+                continue;
+            }
+        }
+
+        let mut canonical_id = match player_persistence
             .as_deref()
-            .and_then(|persistence| {
-                load_current_character_id(persistence, username.0.as_str())
-                    .ok()
-                    .flatten()
-            })
-            .map(|current_char_id| player_character_id(username.0.as_str(), &current_char_id))
-            .unwrap_or_else(|| canonical_player_id(username.0.as_str()));
+            .map(|persistence| load_current_character_id(persistence, username.0.as_str()))
+        {
+            Some(Ok(Some(current_char_id))) => {
+                player_character_id(username.0.as_str(), &current_char_id)
+            }
+            Some(Ok(None)) | None => canonical_player_id(username.0.as_str()),
+            Some(Err(error)) => {
+                tracing::warn!(
+                    "[bong][cultivation] deferred cultivation restore for `{}`: failed to load active character id: {error}",
+                    username.0,
+                );
+                commands.entity(entity).insert(CultivationAttachPending {
+                    next_retry_tick: now_tick.saturating_add(20),
+                });
+                continue;
+            }
+        };
 
         let (persisted_bundle, mut cultivation_bundle_load_failed) =
             match load_player_cultivation_bundle(&settings, username.0.as_str()) {
@@ -1042,6 +1085,13 @@ pub(crate) fn attach_cultivation_to_joined_clients(
         // （recon 标定的最大孤岛：`IntrinsicRace` 定义了零处 insert）。
         let intrinsic_race = crate::body_plan::IntrinsicRace(cultivation.race.clone());
         let mut entity_commands = commands.entity(entity);
+        entity_commands.insert(CultivationBundleTutorialHandoff {
+            accepted_bundle: if reincarnation.is_some() {
+                None
+            } else {
+                persisted_bundle
+            },
+        });
         entity_commands.insert((
             cultivation,
             meridians,

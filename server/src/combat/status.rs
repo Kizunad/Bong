@@ -463,6 +463,8 @@ mod tests {
     };
     use crate::combat::events::{ApplyStatusEffectIntent, StatusEffectKind};
     use crate::combat::CombatClock;
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
@@ -1198,6 +1200,7 @@ mod tests {
                 },
                 Position::new([0.0, 64.0, 0.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("combat-pill-status")),
             ))
             .id();
 

@@ -238,6 +238,7 @@ mod tests {
             .spawn((
                 Position::new([10.0, 66.0, 10.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("inside")),
                 Cultivation {
                     qi_current: 10.0,
                     qi_max: 100.0,
@@ -411,6 +412,7 @@ mod tests {
         app.world_mut().spawn((
             Position::new([10.0, 66.0, 10.0]),
             CurrentDimension(DimensionKind::Overworld), // PITFALL (b): must include CurrentDimension
+            LifeRecord::new(canonical_player_id("zone-credit")),
             Cultivation {
                 qi_current: 10.0,
                 qi_max: 100.0,
