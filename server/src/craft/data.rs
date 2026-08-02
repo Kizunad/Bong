@@ -1053,6 +1053,36 @@ station = "none"
         );
     }
 
+    fn assert_conversion_error_field(
+        error: CraftDataError,
+        path: &Path,
+        recipe_id: &str,
+        field: &str,
+    ) {
+        match error {
+            CraftDataError::Conversion {
+                path: actual_path,
+                recipe_id: actual_recipe_id,
+                field: actual_field,
+                ..
+            } => {
+                assert_eq!(
+                    actual_path, path,
+                    "conversion error must retain its source file"
+                );
+                assert_eq!(
+                    actual_recipe_id, recipe_id,
+                    "conversion error must retain the parsed recipe id"
+                );
+                assert_eq!(
+                    actual_field, field,
+                    "conversion error must report the documented schema field path"
+                );
+            }
+            other => panic!("expected CraftDataError::Conversion for `{field}`, got {other:?}"),
+        }
+    }
+
     #[test]
     fn default_assets_match_pinned_legacy_registrars_field_for_field() {
         let mut legacy_registry = CraftRegistry::new();
@@ -1491,6 +1521,53 @@ skill_lv_min = 1
     }
 
     #[test]
+    fn validation_conversion_errors_report_exact_empty_value_field_paths() {
+        let cases = [
+            (
+                "id = \"fixture.recipe\"",
+                "id = \"\"",
+                "",
+                "id",
+            ),
+            (
+                "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+                "materials = [{ template_id = \"\", count = 1 }]",
+                "fixture.recipe",
+                "materials[].template_id",
+            ),
+            (
+                "output = { template_id = \"iron_ingot\", count = 1 }",
+                "output = { template_id = \"\", count = 1 }",
+                "fixture.recipe",
+                "output.template_id",
+            ),
+            (
+                "station = \"none\"",
+                "unlock_sources = [{ kind = \"scroll\", item_template = \"\" }]\nstation = \"none\"",
+                "fixture.recipe",
+                "unlock_sources[].item_template",
+            ),
+        ];
+
+        for (index, (original, replacement, recipe_id, field)) in cases.into_iter().enumerate() {
+            let directory = temp_dir("empty-validation-field");
+            let path = write_toml(
+                &directory,
+                &format!("case-{index}.toml"),
+                &replace_required_line(minimal_recipe(), original, replacement),
+            );
+            let error = load_craft_recipes_from_dir(
+                &directory,
+                &mut CraftRegistry::new(),
+                &item_registry(),
+            )
+            .unwrap_err();
+            assert_conversion_error_field(error, &path, recipe_id, field);
+            clean(directory);
+        }
+    }
+
+    #[test]
     fn rejects_checked_time_overflow_and_validation_boundaries() {
         let cases = [
             ("time_sec = 922337203685477581", "time_sec", "time_sec = 1"),
@@ -1665,7 +1742,7 @@ skill_lv_min = 1
         let error =
             load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap_err();
         assert!(matches!(
-            error,
+            &error,
             CraftDataError::DuplicateId {
                 first_path: None,
                 ..
