@@ -1,5 +1,6 @@
 package com.bong.client.insight;
 
+import com.bong.client.ui.ScreenTransitionController;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.container.Containers;
@@ -33,7 +34,8 @@ import java.util.function.LongSupplier;
  *   <li>ESC：和"心未契机"等价。</li>
  * </ul>
  */
-public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
+public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout>
+    implements ScreenTransitionController.CurrentScreenCancellationHandler {
     static final Text TITLE = Text.literal("◇ 心 有 所 感 ◇");
     static final String HEART_DEMON_TRIGGER_PREFIX = "heart_demon:";
 
@@ -57,22 +59,31 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     private final InsightOfferViewModel offer;
     private final Consumer<InsightDecision> onDecision;
     private final LongSupplier clock;
+    private final boolean usesStoreSettlement;
 
     private FlowLayout timerLabelHolder;
     private FlowLayout headerHolder;
     private boolean settled;
 
     public InsightOfferScreen(InsightOfferViewModel offer) {
-        this(offer, InsightOfferStore::submit, System::currentTimeMillis);
+        this(offer, InsightOfferStore::submit, System::currentTimeMillis, true);
     }
 
     InsightOfferScreen(InsightOfferViewModel offer,
                        Consumer<InsightDecision> onDecision,
                        LongSupplier clock) {
+        this(offer, onDecision, clock, false);
+    }
+
+    private InsightOfferScreen(InsightOfferViewModel offer,
+                               Consumer<InsightDecision> onDecision,
+                               LongSupplier clock,
+                               boolean usesStoreSettlement) {
         super(TITLE);
         this.offer = Objects.requireNonNull(offer, "offer");
         this.onDecision = Objects.requireNonNull(onDecision, "onDecision");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.usesStoreSettlement = usesStoreSettlement;
     }
 
     @Override
@@ -232,11 +243,39 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
     @Override
     public void close() {
         if (!settled) {
-            // 任何未结算的关闭都按 declined 处理 (e.g. ESC)
-            settle(InsightDecision.declined(offer.triggerId()));
+            settle(InsightOfferStore.TerminalCause.ESC, InsightDecision.declined(offer.triggerId()), true);
             return;
         }
         super.close();
+    }
+
+    @Override
+    public void removed() {
+        Throwable failure = null;
+        if (!settled) {
+            try {
+                settle(InsightOfferStore.TerminalCause.REMOVED_EXCEPTIONALLY, InsightDecision.declined(offer.triggerId()), false);
+            } catch (Throwable exception) {
+                failure = exception;
+            }
+        }
+        try {
+            super.removed();
+        } catch (Throwable exception) {
+            if (failure == null) {
+                failure = exception;
+            } else {
+                failure.addSuppressed(exception);
+            }
+        }
+        if (failure != null) {
+            rethrow(failure);
+        }
+    }
+
+    @Override
+    public void onCurrentScreenCancelled() {
+        settleForReplacement();
     }
 
     @Override
@@ -244,19 +283,72 @@ public final class InsightOfferScreen extends BaseOwoScreen<FlowLayout> {
         return false;
     }
 
+    void settleForReplacement() {
+        settle(
+            InsightOfferStore.TerminalCause.REPLACED_BY_DIFFERENT_OFFER,
+            InsightDecision.declined(offer.triggerId()),
+            false
+        );
+    }
+
     private void settle(InsightDecision decision) {
+        settle(terminalCause(decision), decision, true);
+    }
+
+    private void settle(InsightOfferStore.TerminalCause cause, InsightDecision decision, boolean closeAfterSettlement) {
         if (settled) {
             return;
         }
         settled = true;
+        Throwable failure = null;
         try {
-            onDecision.accept(decision);
-        } finally {
-            MinecraftClient mc = MinecraftClient.getInstance();
-            if (mc != null && mc.currentScreen == this) {
-                mc.setScreen(null);
+            if (usesStoreSettlement) {
+                InsightOfferStore.settle(offer, cause, decision);
+            } else {
+                onDecision.accept(decision);
+            }
+        } catch (Throwable exception) {
+            failure = exception;
+        }
+        if (closeAfterSettlement) {
+            try {
+                closeIfCurrent();
+            } catch (Throwable exception) {
+                if (failure == null) {
+                    failure = exception;
+                } else {
+                    failure.addSuppressed(exception);
+                }
             }
         }
+        if (failure != null) {
+            rethrow(failure);
+        }
+    }
+
+    private void closeIfCurrent() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc != null && mc.currentScreen == this) {
+            mc.setScreen(null);
+        }
+    }
+
+    private static void rethrow(Throwable failure) {
+        if (failure instanceof RuntimeException exception) {
+            throw exception;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        throw new AssertionError("insight settlement failed", failure);
+    }
+
+    private static InsightOfferStore.TerminalCause terminalCause(InsightDecision decision) {
+        return switch (decision.kind()) {
+            case CHOSEN -> InsightOfferStore.TerminalCause.ACCEPT;
+            case DECLINED -> InsightOfferStore.TerminalCause.DECLINE;
+            case TIMED_OUT -> InsightOfferStore.TerminalCause.TIMEOUT;
+        };
     }
 
     private long remainingSeconds() {

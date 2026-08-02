@@ -1,5 +1,8 @@
 package com.bong.client.insight;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -12,6 +15,7 @@ import java.util.function.Consumer;
 public final class InsightOfferStore {
     private static volatile InsightOfferViewModel snapshot = null;
     private static volatile InsightChoiceDispatcher dispatcher = InsightChoiceDispatcher.LOGGING;
+    private static final Map<String, TerminalCause> terminalCauses = new HashMap<>();
     private static final CopyOnWriteArrayList<Consumer<InsightOfferViewModel>> listeners = new CopyOnWriteArrayList<>();
 
     private InsightOfferStore() {
@@ -39,8 +43,56 @@ public final class InsightOfferStore {
 
     /** 玩家做出决定——回传服务端并清空当前 slot。 */
     public static void submit(InsightDecision decision) {
+        InsightOfferViewModel current = snapshot;
+        if (current != null && current.triggerId().equals(decision.triggerId())) {
+            settle(current, terminalCause(decision), decision);
+            return;
+        }
         dispatcher.dispatch(decision);
-        replace(null);
+    }
+
+    private static TerminalCause terminalCause(InsightDecision decision) {
+        return switch (decision.kind()) {
+            case CHOSEN -> TerminalCause.ACCEPT;
+            case DECLINED -> TerminalCause.DECLINE;
+            case TIMED_OUT -> TerminalCause.TIMEOUT;
+        };
+    }
+
+    public static synchronized boolean settle(
+        InsightOfferViewModel offer,
+        TerminalCause cause,
+        InsightDecision decision
+    ) {
+        Objects.requireNonNull(offer, "offer");
+        Objects.requireNonNull(cause, "cause");
+        Objects.requireNonNull(decision, "decision");
+        if (!offer.triggerId().equals(decision.triggerId()) || terminalCauses.containsKey(offer.triggerId())) {
+            return false;
+        }
+        terminalCauses.put(offer.triggerId(), cause);
+        try {
+            dispatcher.dispatch(decision);
+        } finally {
+            InsightOfferViewModel current = snapshot;
+            if (current != null && current.triggerId().equals(offer.triggerId())) {
+                replace(null);
+            }
+        }
+        return true;
+    }
+
+    static synchronized TerminalCause terminalCauseForTests(String triggerId) {
+        return terminalCauses.get(triggerId);
+    }
+
+    public enum TerminalCause {
+        ACCEPT,
+        DECLINE,
+        TIMEOUT,
+        ESC,
+        REPLACED_BY_DIFFERENT_OFFER,
+        REMOVED_EXCEPTIONALLY
     }
 
     public static void setDispatcher(InsightChoiceDispatcher next) {
@@ -64,6 +116,9 @@ public final class InsightOfferStore {
     public static void resetForTests() {
         snapshot = null;
         dispatcher = InsightChoiceDispatcher.LOGGING;
+        synchronized (InsightOfferStore.class) {
+            terminalCauses.clear();
+        }
         listeners.clear();
     }
 }
