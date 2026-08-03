@@ -323,6 +323,7 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
+            pending_combat_winner: None,
         }
     }
 
