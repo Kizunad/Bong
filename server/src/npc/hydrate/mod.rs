@@ -20,14 +20,12 @@ use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::tribulation::{
     du_xu_prereqs_met, HalfStepRechallengeTriggerEvent, InitiateXuhuaTribulation,
 };
-use crate::fauna::daozhan::{DaoZhangBehaviorBlackboard, DaoZhangState};
 use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
-    durable_npc_identity_error, dvec3_from_array, planar_distance, vec3_to_array,
-    DormantBehaviorIntent, DormantDaoxiangOriginSnapshot, DormantDaozhanSnapshot,
-    DormantFuyaAuraSnapshot, DormantGuardianRelicSnapshot, DormantPatrolSnapshot,
-    DormantTsyHostileSnapshot, DormantTsySentinelSnapshot, DormantZhinianPhase, NpcDormantSnapshot,
-    NpcDormantStore, NpcVirtualizationConfig,
+    dvec3_from_array, planar_distance, vec3_to_array, DormantBehaviorIntent,
+    DormantDaoxiangOriginSnapshot, DormantFuyaAuraSnapshot, DormantGuardianRelicSnapshot,
+    DormantPatrolSnapshot, DormantTsyHostileSnapshot, DormantTsySentinelSnapshot,
+    DormantZhinianPhase, NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig,
 };
 use crate::npc::faction::{FactionMembership, FactionRank};
 use crate::npc::interaction_memory::NpcMemoryComponent;
@@ -45,7 +43,6 @@ use crate::npc::spawn::{
     spawn_relic_guard_npc_at, spawn_rogue_npc_at, spawn_zombie_npc_at, NpcMarker,
     NpcSkinSpawnContext,
 };
-use crate::npc::spawn_rat::RatBlackboard;
 use crate::npc::territory::Territory;
 use crate::npc::trade::NpcPlayerReputation;
 use crate::npc::tsy_hostile::{
@@ -71,10 +68,6 @@ pub struct DormantExtraComponentQueries<'w, 's> {
     zhinian_minds: Query<'w, 's, Option<&'static ZhinianMind>, With<NpcMarker>>,
     fuya_auras: Query<'w, 's, Option<&'static FuyaAura>, With<NpcMarker>>,
     daoxiang_origins: Query<'w, 's, Option<&'static DaoxiangOrigin>, With<NpcMarker>>,
-    daozhan_states: Query<'w, 's, Option<&'static DaoZhangState>, With<NpcMarker>>,
-    daozhan_blackboards:
-        Query<'w, 's, Option<&'static DaoZhangBehaviorBlackboard>, With<NpcMarker>>,
-    rat_blackboards: Query<'w, 's, Option<&'static RatBlackboard>, With<NpcMarker>>,
     /// plan-tsy-sentinel-dormant-regression-v1 §P1：TSY 秘境守灵身份 marker（dehydrate 侧读取）。
     tsy_sentinel_markers: Query<'w, 's, Option<&'static TsySentinelMarker>, With<NpcMarker>>,
     /// dehydrate 侧 `guarding_container: Option<Entity>` 是精确已知的单个 `Entity`，
@@ -167,17 +160,6 @@ pub fn hydrate_dormant_near_players_system(
         if !force_tribulation && normal_slots == 0 {
             continue;
         }
-        if let Some(error) = store
-            .snapshots
-            .get(&char_id)
-            .and_then(NpcDormantSnapshot::durable_identity_error)
-        {
-            tracing::warn!(
-                character_id = %char_id,
-                "[bong][npc] refusing to hydrate dormant NPC with divergent durable identity: {error}"
-            );
-            continue;
-        }
 
         let Some(snapshot) = store.remove(&char_id) else {
             continue;
@@ -268,17 +250,6 @@ pub fn hydrate_dormant_on_rechallenge_trigger(
                 "[bong][npc] hydrate_dormant_on_rechallenge_trigger: char_id={} is combat_dead_pending_release, \
                  skipping hydrate — retry system will handle release and cleanup",
                 event.char_id
-            );
-            continue;
-        }
-        if let Some(error) = store
-            .snapshots
-            .get(&event.char_id)
-            .and_then(NpcDormantSnapshot::durable_identity_error)
-        {
-            tracing::warn!(
-                character_id = %event.char_id,
-                "[bong][npc] refusing rechallenge hydrate with divergent durable identity: {error}"
             );
             continue;
         }
@@ -404,88 +375,12 @@ pub fn dehydrate_far_npcs_system(
         if player_zones.contains(zone_name.as_str()) {
             continue;
         }
-        let Ok(Some(life_record)) = life_record.get(entity) else {
-            tracing::warn!(
-                entity = ?entity,
-                character_id = %lifecycle.character_id,
-                "[bong][npc] refusing to dehydrate NPC without canonical LifeRecord"
-            );
-            continue;
-        };
-        let Ok(Some(death_registry)) = death_registry.get(entity) else {
-            tracing::warn!(
-                entity = ?entity,
-                character_id = %lifecycle.character_id,
-                "[bong][npc] refusing to dehydrate NPC without canonical DeathRegistry"
-            );
-            continue;
-        };
-        if let Some(error) =
-            durable_npc_identity_error(&lifecycle.character_id, life_record, death_registry)
-        {
-            tracing::warn!(
-                entity = ?entity,
-                lifecycle_id = %lifecycle.character_id,
-                life_record_id = %life_record.character_id,
-                death_registry_id = %death_registry.char_id,
-                "[bong][npc] refusing to dehydrate NPC with invalid durable identity: {error}"
-            );
-            continue;
-        }
         let patrol_snapshot = patrol.map(|patrol| DormantPatrolSnapshot {
             home_zone: patrol.home_zone.clone(),
             anchor_index: patrol.anchor_index,
             current_target: crate::npc::dormant::vec3_to_array(patrol.current_target),
         });
         let intent = DormantBehaviorIntent::for_archetype(*archetype, patrol_snapshot.as_ref());
-        if extras.rat_blackboards.get(entity).ok().flatten().is_some() {
-            tracing::warn!(
-                entity = ?entity,
-                character_id = %lifecycle.character_id,
-                "[bong][npc] refusing to dehydrate rat without a rat-specific dormant snapshot"
-            );
-            continue;
-        }
-        let tsy_marker = extras.tsy_markers.get(entity).ok().flatten();
-        let daozhan = match extras.daozhan_blackboards.get(entity).ok().flatten() {
-            Some(blackboard)
-                if blackboard.daozhan_qi.is_finite() && blackboard.daozhan_qi >= 0.0 =>
-            {
-                Some(DormantDaozhanSnapshot {
-                    state: extras
-                        .daozhan_states
-                        .get(entity)
-                        .ok()
-                        .flatten()
-                        .copied()
-                        .unwrap_or_default(),
-                    home_zone: blackboard.home_zone.clone(),
-                    home_pos: vec3_to_array(blackboard.home_pos),
-                    daozhan_qi: blackboard.daozhan_qi,
-                    origin_realm: blackboard.origin_realm,
-                    behavior_queue: blackboard.behavior_queue.iter().copied().collect(),
-                    current_behavior_ticks: blackboard.current_behavior_ticks,
-                })
-            }
-            Some(blackboard) => {
-                tracing::warn!(
-                    entity = ?entity,
-                    character_id = %lifecycle.character_id,
-                    daozhan_qi = blackboard.daozhan_qi,
-                    "[bong][npc] refusing to dehydrate invalid Daozhan external qi owner"
-                );
-                continue;
-            }
-            None => None,
-        };
-        if daozhan.is_some() && tsy_marker.is_none() {
-            tracing::warn!(
-                entity = ?entity,
-                character_id = %lifecycle.character_id,
-                "[bong][npc] refusing to dehydrate Daozhan without stable TSY identity"
-            );
-            continue;
-        }
 
         candidates.push((
             entity,
@@ -521,8 +416,18 @@ pub fn dehydrate_far_npcs_system(
                     .flatten()
                     .cloned()
                     .unwrap_or_default(),
-                death_registry: death_registry.clone(),
-                life_record: life_record.clone(),
+                death_registry: death_registry
+                    .get(entity)
+                    .ok()
+                    .flatten()
+                    .cloned()
+                    .unwrap_or_else(|| DeathRegistry::new(lifecycle.character_id.clone())),
+                life_record: life_record
+                    .get(entity)
+                    .ok()
+                    .flatten()
+                    .cloned()
+                    .unwrap_or_else(|| LifeRecord::new(lifecycle.character_id.clone())),
                 memory: memories
                     .get(entity)
                     .ok()
@@ -552,11 +457,10 @@ pub fn dehydrate_far_npcs_system(
                     extras.trial_evals.get(entity).ok().flatten(),
                 ),
                 tsy_hostile: dormant_tsy_hostile_snapshot(
-                    tsy_marker,
+                    extras.tsy_markers.get(entity).ok().flatten(),
                     extras.zhinian_minds.get(entity).ok().flatten(),
                     extras.fuya_auras.get(entity).ok().flatten(),
                     extras.daoxiang_origins.get(entity).ok().flatten(),
-                    daozhan,
                 ),
                 tsy_sentinel: dormant_tsy_sentinel_snapshot(
                     extras.tsy_sentinel_markers.get(entity).ok().flatten(),
@@ -568,7 +472,6 @@ pub fn dehydrate_far_npcs_system(
                 initial_qi: cultivation.qi_current,
                 qi_ledger_net: 0.0,
                 combat_dead_pending_release: false,
-                pending_combat_winner: None,
             },
         ));
     }
@@ -622,7 +525,6 @@ fn dormant_tsy_hostile_snapshot(
     zhinian: Option<&ZhinianMind>,
     fuya: Option<&FuyaAura>,
     daoxiang_origin: Option<&DaoxiangOrigin>,
-    daozhan: Option<DormantDaozhanSnapshot>,
 ) -> Option<DormantTsyHostileSnapshot> {
     let marker = marker?;
     Some(DormantTsyHostileSnapshot {
@@ -639,7 +541,6 @@ fn dormant_tsy_hostile_snapshot(
             activated_at_tick: origin.activated_at_tick,
             inherited_drops: origin.inherited_drops.clone(),
         }),
-        daozhan,
     })
 }
 
@@ -1060,7 +961,6 @@ fn spawn_from_snapshot(
         });
     }
     if let Some(tsy) = snapshot.tsy_hostile {
-        let daozhan = tsy.daozhan;
         entity_commands.insert(TsyHostileMarker {
             family_id: tsy.family_id,
         });
@@ -1086,17 +986,6 @@ fn spawn_from_snapshot(
                 activated_at_tick: origin.activated_at_tick,
                 inherited_drops: origin.inherited_drops,
             });
-        }
-        if let Some(daozhan) = daozhan {
-            let mut blackboard = DaoZhangBehaviorBlackboard::new(
-                daozhan.home_zone.as_str(),
-                dvec3_from_array(daozhan.home_pos),
-                daozhan.origin_realm,
-            );
-            blackboard.daozhan_qi = daozhan.daozhan_qi;
-            blackboard.behavior_queue = daozhan.behavior_queue.into_iter().collect();
-            blackboard.current_behavior_ticks = daozhan.current_behavior_ticks;
-            entity_commands.insert((daozhan.state, blackboard));
         }
     }
     entity
@@ -1198,7 +1087,6 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
-            pending_combat_winner: None,
         }
     }
 
@@ -1306,149 +1194,6 @@ mod tests {
     }
 
     #[test]
-    fn dehydrate_refuses_rat_until_rat_specific_snapshot_exists() {
-        let mut app = App::new();
-        app.insert_resource(NpcDormantStore::default());
-        app.insert_resource(NpcVirtualizationConfig {
-            transition_interval_ticks: 1,
-            dehydrate_without_players: true,
-            ..Default::default()
-        });
-        app.add_systems(Update, dehydrate_far_npcs_system);
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position(DVec3::new(10.0, 64.0, 10.0)),
-                Lifecycle {
-                    character_id: "npc_rat_far".to_string(),
-                    ..Default::default()
-                },
-                LifeRecord::new("npc_rat_far"),
-                DeathRegistry::new("npc_rat_far"),
-                NpcArchetype::Beast,
-                NpcLifespan::new(0.0, 1_000.0),
-                Cultivation {
-                    realm: Realm::Awaken,
-                    qi_current: 10.0,
-                    qi_max: 100.0,
-                    ..Default::default()
-                },
-                MeridianSystem::default(),
-                Contamination::default(),
-                RatBlackboard::new("spawn", valence::prelude::ChunkPos::new(0, 0)),
-            ))
-            .id();
-
-        app.update();
-
-        assert!(
-            !app.world()
-                .resource::<NpcDormantStore>()
-                .contains("npc_rat_far"),
-            "rat without a lossless rat-specific dormant format must remain live"
-        );
-        assert!(
-            app.world().get::<RatBlackboard>(entity).is_some(),
-            "refused rat dehydration must retain the behavior and reserve mirror carrier"
-        );
-        assert!(
-            app.world().get::<Despawned>(entity).is_none(),
-            "refused rat dehydration must not mark the entity Despawned"
-        );
-    }
-
-    #[test]
-    fn dehydrate_requires_matching_canonical_durable_owner_components() {
-        for (case, lifecycle_id, life_record_id, death_registry_id) in [
-            ("missing_life_record", "npc_owner", None, Some("npc_owner")),
-            (
-                "missing_death_registry",
-                "npc_owner",
-                Some("npc_owner"),
-                None,
-            ),
-            (
-                "mismatched_life_record",
-                "npc_owner",
-                Some("npc_other"),
-                Some("npc_owner"),
-            ),
-            (
-                "mismatched_death_registry",
-                "npc_owner",
-                Some("npc_owner"),
-                Some("npc_other"),
-            ),
-            ("blank", "", Some(""), Some("")),
-            (
-                "unassigned",
-                "unassigned:life_record",
-                Some("unassigned:life_record"),
-                Some("unassigned:life_record"),
-            ),
-            (
-                "surrounding_whitespace",
-                " npc_owner ",
-                Some(" npc_owner "),
-                Some(" npc_owner "),
-            ),
-        ] {
-            let mut app = App::new();
-            app.insert_resource(NpcDormantStore::default());
-            app.insert_resource(NpcVirtualizationConfig {
-                transition_interval_ticks: 1,
-                dehydrate_without_players: true,
-                ..Default::default()
-            });
-            app.add_systems(Update, dehydrate_far_npcs_system);
-            let entity = app
-                .world_mut()
-                .spawn((
-                    NpcMarker,
-                    Position(DVec3::new(10.0, 64.0, 10.0)),
-                    Lifecycle {
-                        character_id: lifecycle_id.to_string(),
-                        ..Default::default()
-                    },
-                    NpcArchetype::Rogue,
-                    NpcLifespan::new(0.0, 1_000.0),
-                    Cultivation {
-                        realm: Realm::Awaken,
-                        qi_current: 10.0,
-                        qi_max: 100.0,
-                        ..Default::default()
-                    },
-                    MeridianSystem::default(),
-                    Contamination::default(),
-                ))
-                .id();
-            if let Some(character_id) = life_record_id {
-                app.world_mut()
-                    .entity_mut(entity)
-                    .insert(LifeRecord::new(character_id));
-            }
-            if let Some(character_id) = death_registry_id {
-                app.world_mut()
-                    .entity_mut(entity)
-                    .insert(DeathRegistry::new(character_id));
-            }
-
-            app.update();
-
-            assert!(
-                app.world().resource::<NpcDormantStore>().is_empty(),
-                "case={case}: invalid identity tuple must not enter durable dormant storage"
-            );
-            assert!(
-                app.world().get::<Despawned>(entity).is_none(),
-                "case={case}: failed identity preflight must leave the live NPC intact"
-            );
-        }
-    }
-
-    #[test]
     fn dehydrate_marks_live_npc_despawned_for_valence_layer_cleanup() {
         let mut app = App::new();
         app.insert_resource(NpcDormantStore::default());
@@ -1469,8 +1214,6 @@ mod tests {
                 NpcMarker,
                 Position(DVec3::new(10.0, 64.0, 10.0)),
                 lifecycle,
-                LifeRecord::new("npc_far"),
-                DeathRegistry::new("npc_far"),
                 NpcArchetype::Rogue,
                 NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 42),
                 NpcLifespan::new(0.0, 1_000.0),
@@ -1527,8 +1270,6 @@ mod tests {
                 character_id: "npc_memory_rep".to_string(),
                 ..Default::default()
             },
-            LifeRecord::new("npc_memory_rep"),
-            DeathRegistry::new("npc_memory_rep"),
             NpcArchetype::Rogue,
             NpcDailySchedule::for_archetype(NpcArchetype::Rogue, 42),
             NpcLifespan::new(0.0, 1_000.0),
@@ -1593,28 +1334,22 @@ mod tests {
         app.add_systems(Update, hydrate_dormant_near_players_system);
         app.update();
 
-        let (char_id, life_record_id, death_registry_id, remembers_attack) = {
+        let (char_id, remembers_attack) = {
             let world = app.world_mut();
-            let mut query = world.query_filtered::<
-                (&Lifecycle, &LifeRecord, &DeathRegistry, &NpcMemoryComponent),
-                With<NpcMarker>,
-            >();
+            let mut query =
+                world.query_filtered::<(&Lifecycle, &NpcMemoryComponent), With<NpcMarker>>();
             query
                 .iter(world)
-                .map(|(lifecycle, life_record, death_registry, memory)| {
+                .map(|(lifecycle, memory)| {
                     (
                         lifecycle.character_id.clone(),
-                        life_record.character_id.clone(),
-                        death_registry.char_id.clone(),
                         memory.has_been_attacked_by(PLAYER_ID),
                     )
                 })
                 .next()
-                .expect("hydrated NPC should carry identity and memory components")
+                .expect("hydrated NPC should carry memory component")
         };
         assert_eq!(char_id, "npc_remembers_attack");
-        assert_eq!(life_record_id, char_id);
-        assert_eq!(death_registry_id, char_id);
         assert!(
             remembers_attack,
             "hydrated NPC with the same char_id must still remember the attacker"
@@ -1715,9 +1450,8 @@ mod tests {
             drain_boost_multiplier: 2.0,
         };
 
-        let snapshot =
-            dormant_tsy_hostile_snapshot(Some(&marker), Some(&mind), Some(&aura), None, None)
-                .expect("TSY hostile metadata should snapshot");
+        let snapshot = dormant_tsy_hostile_snapshot(Some(&marker), Some(&mind), Some(&aura), None)
+            .expect("TSY hostile metadata should snapshot");
 
         assert_eq!(snapshot.family_id, "family-a");
         assert_eq!(
@@ -1780,7 +1514,6 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
-            pending_combat_winner: None,
         }
     }
 
@@ -2544,7 +2277,6 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
-            pending_combat_winner: None,
         };
         // Open all meridians so dormant_tribulation_ready passes
         for meridian in s.meridian_system.iter_mut() {
@@ -2597,42 +2329,6 @@ mod tests {
             "hydrated rechallenge NPC must use NPC_TRIBULATION_WAVES_DEFAULT; \
              expected {NPC_TRIBULATION_WAVES_DEFAULT}, got {}",
             all[0].waves_total
-        );
-    }
-
-    #[test]
-    fn rechallenge_trigger_rejects_divergent_durable_identity_without_removal() {
-        let mut store = NpcDormantStore::default();
-        let mut snapshot = dormant_halfstep_snapshot("npc_bad_rechallenge_identity");
-        snapshot.life_record = LifeRecord::new("npc_other_owner");
-        store.insert(snapshot);
-        let mut app = rechallenge_trigger_app(store);
-
-        send_rechallenge_event(&mut app, "npc_bad_rechallenge_identity", true);
-        app.update();
-
-        assert!(
-            app.world()
-                .resource::<NpcDormantStore>()
-                .contains("npc_bad_rechallenge_identity"),
-            "identity preflight failure must retain the dormant owner for repair"
-        );
-        assert!(
-            app.world()
-                .resource::<Events<InitiateXuhuaTribulation>>()
-                .iter_current_update_events()
-                .next()
-                .is_none(),
-            "rejected identity must not emit a tribulation for a fabricated live owner"
-        );
-        let npc_count = {
-            let world = app.world_mut();
-            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
-            query.iter(world).count()
-        };
-        assert_eq!(
-            npc_count, 0,
-            "rejected rechallenge identity must not spawn a live NPC"
         );
     }
 
@@ -2913,33 +2609,6 @@ mod tests {
         app
     }
 
-    #[test]
-    fn near_player_hydrate_rejects_divergent_durable_identity_without_removal() {
-        let mut store = NpcDormantStore::default();
-        let mut snapshot = snapshot("npc_bad_near_player_identity", DVec3::new(10.0, 64.0, 10.0));
-        snapshot.death_registry = DeathRegistry::new("npc_other_owner");
-        store.insert(snapshot);
-        let mut app = near_player_hydrate_app(store);
-
-        app.update();
-
-        assert!(
-            app.world()
-                .resource::<NpcDormantStore>()
-                .contains("npc_bad_near_player_identity"),
-            "identity preflight failure must retain the dormant owner for repair"
-        );
-        let npc_count = {
-            let world = app.world_mut();
-            let mut query = world.query_filtered::<Entity, With<NpcMarker>>();
-            query.iter(world).count()
-        };
-        assert_eq!(
-            npc_count, 0,
-            "rejected near-player identity must not spawn a live NPC"
-        );
-    }
-
     /// 守卫 P1：combat_dead_pending_release=true 的快照在玩家靠近时不被水化。
     /// 期望：store 保留该 snapshot；世界中无新 NpcMarker entity；qi 不双计。
     #[test]
@@ -3183,7 +2852,6 @@ mod tests {
             zhinian_phase_entered_at_tick: None,
             fuya_aura: None,
             daoxiang_origin: None,
-            daozhan: None,
         });
         snap.tsy_sentinel = Some(DormantTsySentinelSnapshot {
             guarding_container_pos,
@@ -3237,8 +2905,6 @@ mod tests {
                 NpcMarker,
                 Position(DVec3::new(12.0, 64.0, 12.0)),
                 lifecycle,
-                LifeRecord::new("npc_sentinel_far"),
-                DeathRegistry::new("npc_sentinel_far"),
                 NpcArchetype::GuardianRelic,
                 NpcDailySchedule::for_archetype(NpcArchetype::GuardianRelic, 7),
                 NpcLifespan::new(0.0, 1_000.0),
@@ -3595,8 +3261,6 @@ mod tests {
                 NpcMarker,
                 Position(DVec3::new(10.0, 64.0, 10.0)),
                 lifecycle,
-                LifeRecord::new("npc_sentinel_e2e"),
-                DeathRegistry::new("npc_sentinel_e2e"),
                 NpcArchetype::GuardianRelic,
                 NpcDailySchedule::for_archetype(NpcArchetype::GuardianRelic, 3),
                 NpcLifespan::new(0.0, 1_000.0),
