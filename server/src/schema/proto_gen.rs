@@ -11709,8 +11709,12 @@ mod tests {
         .expect("应能读取 .github/workflows/e2e.yml — CI 配置缺失");
 
         assert!(
-            e2e_yml.contains("buf breaking"),
-            "e2e.yml 应包含 'buf breaking' 步骤 — proto 兼容性 CI 保护缺失"
+            e2e_yml.contains("scripts/check-proto-breaking.sh"),
+            "e2e.yml 应调用 verified base-ref proto breaking gate"
+        );
+        assert!(
+            e2e_yml.contains("github.event.pull_request.base.ref"),
+            "e2e.yml 应将 PR base ref 传给 proto breaking gate"
         );
         assert!(
             e2e_yml.contains("Install buf") || e2e_yml.contains("bufbuild/buf-action"),

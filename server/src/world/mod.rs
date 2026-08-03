@@ -738,7 +738,7 @@ mod tests {
         block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
         select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
         AnvilBootstrapConfig, FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap,
-        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, GRASS_Y, FALLBACK_VIEW_DISTANCE_CHUNKS,
+        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, FALLBACK_VIEW_DISTANCE_CHUNKS, GRASS_Y,
         TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::{
@@ -1084,10 +1084,7 @@ mod tests {
             for seed in ["offline:Alice", "offline:Bob", "offline:Boundary-127"] {
                 let pos = crate::player::spawn_selector::fallback_spawn(seed, purpose);
                 let spawn_chunk = ChunkPos::from(DVec3::from(pos));
-                let view = ChunkView::new(
-                    spawn_chunk,
-                    FALLBACK_VIEW_DISTANCE_CHUNKS,
-                );
+                let view = ChunkView::new(spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
                 assert!(
                     view.iter().all(|chunk| chunks.contains(&chunk)),
                     "seed={seed} purpose={purpose:?} spawn={pos:?} 的最大境界完整视域必须在 fallback union 内"

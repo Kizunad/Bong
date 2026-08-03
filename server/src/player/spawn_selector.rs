@@ -277,7 +277,7 @@ fn emergency_spawn_distribution() -> Vec<SpawnDistributionAnchor> {
 }
 
 fn distribution_from_zone_patrol_anchors(registry: &ZoneRegistry) -> Vec<SpawnDistributionAnchor> {
-    let distribution = registry
+    let distribution: Vec<SpawnDistributionAnchor> = registry
         .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
         .map(|zone| {
             zone.patrol_anchors

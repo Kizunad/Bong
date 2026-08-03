@@ -4,8 +4,8 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{
-    App, Client, Commands, Component, Entity, EventReader, Position, Query, Res, Resource, Update,
-    With,
+    bevy_ecs, App, Client, Commands, Component, Entity, EventReader, Position, Query, Res,
+    Resource, Update, With,
 };
 
 use crate::botany::components::{Plant, PlantLifecycleClock};
