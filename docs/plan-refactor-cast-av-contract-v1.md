@@ -14,7 +14,7 @@
 
 ## 接入面
 
-- **进料**：`SkillRegistry`、`TECHNIQUE_DEFINITIONS`、server `Casting`；R5 P1 的 qi 访问器；R6 P2 的 S2C emit builder；R2 P1 的 client store 生命周期。
+- **进料**：`SkillRegistry`、`TECHNIQUE_DEFINITIONS`、server `Casting`；R5 P1 的 qi 访问器；R6 P1 的 S2C emit builder 与 R6 P2 的通用 router registration API；R2 P1 的 client store 生命周期。
 - **出料**：权威 `cast_sync` → client `CastStateStore`/HUD/FPV juice；`SkillAvBinding` → server AV emit 与 client `VfxBootstrap`/`BongAnimationRegistry`/audio recipe/SkillBar 图标。
 - **共享类型**：P3 production cutover 同 PR 引入并接通 `SkillRegistration { resolver, audience, cast_mode, definition, av }`，取代裸 `skill_id → SkillFn`；其中 `definition` 持有完整 `TechniqueDefinition` gameplay 元数据，`SkillAvBinding` 是五件套唯一注册入口，禁止提前建立 test-only 平行模型或让 resolver/event consumer 再维护第二份 ID 表。
 - **跨仓库契约**：server `CastSessionBegin` / `CastSyncV1` / protobuf `CastSync` / client `CastState` 同步增加会话与施法身份；`agent/packages/schema` 作为被动 wire schema source-of-truth 同步新增 `CastPlayAnim`/`CastStopAnim` TypeBox variant，并重建 schema dist/generated artifacts；client DTO、proto/JSON 样例、Rust roundtrip、Java handler/store 和 bot 深断言必须同 PR 对拍。天道 agent runtime/推演逻辑不参与。
@@ -167,7 +167,7 @@ CastTargetRef = oneof { entity_uuid: string, block: { dimension_id, x, y, z } }
 4. `skill_id` 对 SkillBar/DEDICATED 必填，QuickSlot 物品 cast 为 null；`target` 只在 server 已选定稳定目标时携带，无目标不是错误。
 5. `CastPhaseV1` 已存在，不增加重复 phase 字段。STOP 是同一 `CastIdentity` 的权威终态副作用：移动、污染、控制、用户取消、死亡、逃劫与换维度均在 owner 仍连接时发 `INTERRUPT + outcome`；断线在 server 内先结束 cast 并向旁观者广播 STOP，owner 侧由 R2 disconnect teardown 清 store（不伪称能给已断开的连接回包）。client 收到终态后停止 binding 的 looping start animation；VFX schema 新增施法专用 `CastPlayAnim { identity, target_player, anim_id, priority, fade_in_ticks }` / `CastStopAnim { identity, target_player, anim_id, fade_out_ticks }` 判别式，client `AnimationLayerManager` 的 cast ownership 记录 `(player_uuid, channel) → { anim_id, identity }`。`CastStopAnim` 只有复合 identity 与当前 owner 完全相等时才停层；旧 A 的延迟 STOP 遇到同招新 B 必须 no-op。既有通用 `PlayAnim`/`PlayAnimInline`/`StopAnim` 保持非 cast API，不与 cast ownership 互停。VFX cast STOP 仍只是终态派生的 transport 副作用，不能成为独立状态真相源。
 6. 前置拒绝仍用 `IDLE + Reject*`，但必须携新 identity/source/skill；新增 `RejectSkillConfigInvalid`，覆盖缺配置、缺字段与非法字段，不插入 `Casting`、不扣费、不写 cooldown。
-7. `target` 不承载 FPV 手臂姿态；R9 只迁移 `plan-fpv-cast-av-v1` 当前临时 `(slot, startedAtMs)` identity 到完整 `CastIdentity`，保留其 accepted-only juice 与 teardown 语义，FPV 动画资产仍归独立 plan。R9 冻结 `VfxEventRouter` 所需的 `CastPlayAnim`/`CastStopAnim` payload 与 `CastFovController.onAnimPlayed(identity, target_player, anim_id)` 接缝；由 R6 在其 router 区段完成 animation bridge 成功后的调用。controller 的 pending/anim token/terminal map 全部以复合 identity 为 key，`CastStopAnim`/终态消费同一 token。
+7. `target` 不承载 FPV 手臂姿态；R9 只迁移 `plan-fpv-cast-av-v1` 当前临时 `(slot, startedAtMs)` identity 到完整 `CastIdentity`，保留其 accepted-only juice 与 teardown 语义，FPV 动画资产仍归独立 plan。R9 冻结 `VfxEventRouter` 所需的 `CastPlayAnim`/`CastStopAnim` payload 与 `CastFovController.onAnimPlayed(identity, target_player, anim_id)` 接缝，并通过 R6 P2 的通用 registration API 完成 animation bridge 成功后的调用。controller 的 pending/anim token/terminal map 全部以复合 identity 为 key，`CastStopAnim`/终态消费同一 token。
 8. VFX cast identity 同步修改 Rust schema、`agent/packages/schema/src/vfx-event.ts` TypeBox source、schema dist/generated artifacts、protobuf bridge、Java DTO 与 roundtrip sample；`cast_stop_semantics` 必须覆盖“同玩家同 anim：A STOP 迟到、B 仍播放”和“重复 STOP 幂等”两条乱序回归。非 cast 驱动的通用动画继续使用既有 `PlayAnim`/`StopAnim` 与独立 ownership，不得伪造 cast identity 或进入 cast STOP 通道。
 
 ### P0.4 吸收清单第一性原理裁决
@@ -195,17 +195,17 @@ CastTargetRef = oneof { entity_uuid: string, block: { dimension_id, x, y, z } }
 ## P1 — cast wire/juice 生产闭环 ⬜
 
 - `CastSessionBegin`、`CastSyncV1`、protobuf `CastSync`、Rust convert/sample、Java `CastState`/handler/store 同步升级到完整 `CastIdentity`；`agent/packages/schema/src/vfx-event.ts`、dist/generated artifacts、Rust schema/protobuf payload 与 Java consumer DTO 同步落地 `CastPlayAnim`/`CastStopAnim`。R9 走 R6 已冻结的 builder/bridge API，不编辑 R6 独占 router 区段；删除 client source heuristic。
-- 生产 cast owner 从每连接 `CastSession { session_id, next_cast_instance_id }` 分配 identity；accepted/complete/interrupt/reject 主路径均真实 emit 并由 client store 消费。R9 在 P1 提供 `AnimationLayerManager`/`CastFovController` 的 identity-aware consumer API 与测试 fixture；R6 在其独占 router 区段接通 `VfxEventRouter → AnimationLayerManager + CastFovController`。两轨对应 P1 都合入后生产链才算可达：动画 bridge 成功后以同一 identity 武装 juice token，终态/STOP 以同一 identity 消费。
+- 生产 cast owner 从每连接 `CastSession { session_id, next_cast_instance_id }` 分配 identity；accepted/complete/interrupt/reject 主路径均真实 emit 并由 client store 消费。R6 P2 先冻结通用 router registration API；R9 在 P1 提供 `AnimationLayerManager`/`CastFovController` 的 identity-aware consumer API，并通过该扩展点注册 `CastPlayAnim` 分发，不编辑 R6 独占 router 区段。R6 P2 与 R9 P1 都合入后生产链才算可达：动画 bridge 成功后以同一 identity 武装 juice token，终态/STOP 以同一 identity 消费。
 - P1 同 PR 必过跨层契约测试，不推迟到 P4：
-  1. **wire shape matrix**：Rust/TypeBox/protobuf/Java 正反 roundtrip；`cast_instance_id` JSON 必须为 canonical decimal string，覆盖 `1`、`2^53-1`、`2^53`、`u64::MAX`、相邻大值去重，以及拒绝 number/0/负数/符号/前导零/overflow/非数字字符串。
+  1. **wire shape matrix**：Rust/TypeBox/protobuf/Java 正反 roundtrip；`CastSessionBegin.session_id`、`CastSessionBegin.target_player` 与 `CastIdentity.session_id` 各自在 schema、bridge、DTO、handler 边界覆盖合法 UUID roundtrip，并拒绝空值、非 UUID 与非字符串；`cast_instance_id` JSON 必须为 canonical decimal string，覆盖 `1`、`2^53-1`、`2^53`、`u64::MAX`、相邻大值去重，以及拒绝 number/0/负数/符号/前导零/overflow/非数字字符串。
   2. **session lifecycle matrix**：`CastSessionBegin` 必须先于同 session 的 owner/observer cast payload；未 BEGIN、旧 session、普通 payload 试图切换 session 均拒绝；远端 `PlayerEntity` unload 清除该 caster 全部 session/ownership/token/tombstone，10,000 个 UUID churn 后容量回基线，重进视野须新 BEGIN。
   3. **source/target matrix**：逐一 roundtrip/bridge/handler 断言 `QUICK_SLOT`、`SKILL_BAR`、`DEDICATED`；`target=None`、`entity_uuid`、`block { dimension_id, x, y, z }` 三种合法形状；拒绝 entity+block 同时出现、空 oneof wrapper、非法 UUID、空 dimension、坐标越界/类型错误。每个 source 同时 pin `skill_id` 必填/为空规则，禁止 enum fallback 或 unknown 映射。
-  4. **production consumer matrix**：R9 侧 server producer → wire DTO → client handler/store，以及 identity-aware `AnimationLayerManager` + `CastFovController` API 深断言；R6 侧独立 router contract test 断言 `CastPlayAnim` 分发到上述两个 consumer。R9 PR 不编辑 router，但必须提供 R6 可消费的 fixture/API pin；A/B supersession、断线 tombstone 后新 session 首次 cast 可正常武装。
+  4. **production consumer matrix**：R9 侧 server producer → wire DTO → client handler/store，以及经 R6 通用 registration API 注册的 `CastPlayAnim` → identity-aware `AnimationLayerManager` + `CastFovController` 分发链深断言；R6 P2 独立 contract test 只冻结通用 router registration API，R9 P1 提供 cast-specific registration fixture/API pin。R9 PR 不编辑 router；A/B supersession、断线 tombstone 后新 session 首次 cast 可正常武装。
   5. **config-reject conservation matrix**：缺整份配置、每个 mandatory 字段分别缺失、每类非法字段（非法 enum/id、越界数值、缺失资源）逐项触发 `RejectSkillConfigInvalid`；每一 case 对比 before/after 快照，断言 `Casting` 不存在、qi 与 qi ledger 均不变、stamina 不变、cooldown map/事件不变、inventory/target 状态不变、animation/VFX/audio/HUD 事件均为 0，只允许 allocator +1 与一个 reject sync。任何新 config validator 分支必须加入该矩阵。
   6. **allocator exhaustion matrix**：先发出 `u64::MAX`，再提交下一次请求；断言 checked overflow 进入 fail-closed admission，不发 0/回绕值/无 identity reject，不写 gameplay 或 AV 副作用，并要求新连接以新 `session_id` 从 1 恢复。
 - P1 同 PR 固定 allocator 生命周期：0 永不发出；每个 session 首次为 1；accepted 与**每一种 reject outcome/validator branch**混排时均恰递增一次且不复用；同一尝试的所有 phase/AV 共用 identity；新连接生成不同 `session_id` 且 counter 从 1 重启；旧 session tombstone 不得吞新 session 的 `(new_session, 1)`。
 - `SkillRegistration` / `SkillVisualBinding` 不在 P1 创建 test-only 平行模型；完整类型、validator、producer 与 consumer 一并留到 P3 production cutover。
-- 前置：R5 P1、R6 P2、R2 P1 已 merge；R6 P2 必须先冻结可扩展的 VFX channel/router registration API，R9 只通过该 API 注册 cast consumer，不修改 `VfxEventRouter` 独占文件或区段；若任一未满足，只更新本 plan 的依赖状态，不提前复制其职责。
+- 前置：R5 P1、R6 P2、R2 P1 已 merge；R6 P2 只需先冻结可扩展的 VFX channel/router registration API，不依赖 R9 cast payload 或 consumer 类型。随后 R9 P1 通过该 API 注册 cast consumer，不修改 `VfxEventRouter` 独占文件或区段；若任一前置未满足，只更新本 plan 的依赖状态，不提前复制其职责。
 
 ## P2 — 双源清除 + 全退出终态 ⬜
 
@@ -234,19 +234,19 @@ CastTargetRef = oneof { entity_uuid: string, block: { dimension_id, x, y, z } }
 4. `cast_wire_identity`：P1 的完整 wire/session/source-target/production-consumer/config-reject/allocator-exhaustion 六套矩阵在 P4 e2e 原样重跑，不得缩成代表性样例；protobuf 深断言 `CastSessionBegin` 独立 envelope arm、source/skill/target/复合 identity。覆盖 BEGIN 必须先于 owner/observer payload、未 BEGIN/旧 session/普通 payload 越权切 session 均拒绝、0 禁止、每 session 首值 1、accepted + 全 reject 混排逐次 +1、`u64::MAX` 后 fail-closed、新连接换 `session_id` 且 counter 重置、乱序终态、同槽连发、无目标、三 source、三 target 形状与 skill-config reject。
 5. `cast_av_phase_regression`：P2 的 `p2_av_single_owner`、`p2_terminal_state_matrix`、`p2_stop_reordering`、`p2_meditate_animation_pin`、`p2_av_phase_binding` 五套矩阵在 P4 原样重跑；每条退出路径、每个 Baomai/Tuike 受影响技能和每个 phase 均不得缩成代表样例。
 6. `cast_registration_projection`：P3 的 `p3_av_binding_projection` 与完整 registration validator/精确集合测试在 P4 重跑；逐条确认 P2 领域事件 phase → canonical `SkillAvPhaseBinding` 的 owner/cardinality 投影无漂移，68 resolver + 3 dedicated、definition、五件套和 icon placeholder 计数全部对拍。
-7. `cast_juice_identity_bridge`：R9 的 consumer API 与 R6 的 router 接线都合入后，在 P4 e2e 重跑完整生产链；真实 `CastPlayAnim` 经 R6 所有的 `VfxEventRouter` 成功播放后，把同一复合 identity 交给 R9 所有的 `CastFovController`，匹配 COMPLETE/INTERRUPT/STOP 消费；断线旧 tombstone 后重连首个 `(new_session, 1)` 必须正常武装，旧 session 迟到 PLAY/CASTING 必须 no-op。
+7. `cast_juice_identity_bridge`：R6 的通用 router registration API 与 R9 的 consumer API/cast-specific 注册都合入后，在 P4 e2e 重跑完整生产链；真实 `CastPlayAnim` 经 R6 所有的 `VfxEventRouter` 调用 R9 注册的分发并成功播放后，把同一复合 identity 交给 R9 所有的 `CastFovController`，匹配 COMPLETE/INTERRUPT/STOP 消费；断线旧 tombstone 后重连首个 `(new_session, 1)` 必须正常武装，旧 session 迟到 PLAY/CASTING 必须 no-op。
 8. runClient 人工验收远处读招、两层 hotbar 归属、HUD hint/icon 及循环动画停止；不能执行 UI 时如实标 blocker，不以单测替代。
 9. 逐份归档 P0.4 中 13 份被吸收 plan；已关闭/部分吸收项在 Finish Evidence 记录边界，不篡改历史结论。
 
 ## 文件所有权与边界
 
 - **R9 独占**：server cast/AV emit 点、skill registration、`network/cast_emit.rs`；client `CastSessionRegistry`（含 `ClientEntityEvents.ENTITY_UNLOAD` 远端 eviction）、combat cast store、CastFovController 的 identity/tombstone API 与 session cleanup 接线。R9 只定义并测试 router 所需的 `CastPlayAnim`/`CastStopAnim` identity payload/consumer 接口，不直接编辑 `VfxEventRouter`。
-- **R6 独占**：client channel registration、`VfxEventRouter`、bridge/router 分发区段；R6 在其 **P2** 接入 `CastPlayAnim` → `AnimationLayerManager` 与 `CastFovController.onAnimPlayed(identity, target_player, anim_id)`，并消费 R9 冻结的 identity API。R9 与 R6 merge 前必须互 fetch；同一文件不同区段仍以总纲矩阵为准。
+- **R6 独占**：client channel registration、`VfxEventRouter`、bridge/router 分发区段；R6 在其 **P2** 冻结不依赖 R9 类型的通用 router registration API。R9 P1 随后通过该扩展点注册 `CastPlayAnim` → `AnimationLayerManager` 与 `CastFovController.onAnimPlayed(identity, target_player, anim_id)`，不编辑 R6 独占区段。R9 与 R6 merge 前必须互 fetch；同一文件不同区段仍以总纲矩阵为准。
 - **R2 接缝**：`SessionScopedStoreRegistry`/`clearClientStateOnDisconnect` 的登记与通用 teardown 框架归 R2；R9 提供 `CastSessionRegistry.clearOnDisconnect`、`evict(player_uuid)` 和测试，R2 只负责把它登记进清理清单，不由 R9 改 R2 独占生命周期区段。
 - **被动 schema 更新**：允许且要求修改 `agent/packages/schema/src/vfx-event.ts` 及其 dist/generated artifacts；不得改天道 agent runtime、prompt、arbiter 或推演逻辑。
 - **只消费不改语义**：R5 qi 访问器、R6 emit builder 与 router 接缝 API、R2 store lifecycle 通用框架；R9 只实现自己的 cast/session 数据和 contract tests。
 - **不碰**：FPV 手臂动画与 signature 音频资产；combat hit-event 富化；天道 agent runtime；worldview。
-- **Wave 门**：P0 属 Wave 0；P1-P4 属 Wave 2，必须等待 R5/R6/R2 P1。
+- **Wave 门**：P0 属 Wave 0；P1-P4 属 Wave 2，必须等待 R5 P1、R6 P2、R2 P1；其中 R6 P2 只提供通用 registration API，R9 P1 随后完成 cast-specific 注册。
 
 ## §8 开放问题（历史，已收口）
 
@@ -265,6 +265,6 @@ CastTargetRef = oneof { entity_uuid: string, block: { dimension_id, x, y, z } }
 
 ### #2 FPV 对齐窗口
 
-**决议**：R9 不沿用 FPV 因旧 wire 缺字段而采用的 `(slot, startedAtMs)` 临时身份；P1 将其迁为 server `CastIdentity { session_id, cast_instance_id }`，并冻结 `CastFovController` 的 identity-aware consumer/tombstone/session gate API；R6 在其独占 `VfxEventRouter` 区段把 `CastPlayAnim` 接入该 API。两轨 P1 都合入后生产链闭环，但 R9 不编辑 router，也不接管 FPV 资产/播放实现，避免双 owner 和两个 identity 并存。
+**决议**：R9 不沿用 FPV 因旧 wire 缺字段而采用的 `(slot, startedAtMs)` 临时身份；R6 P2 先冻结不依赖 R9 类型的通用 router registration API，R9 P1 再将 cast identity 迁为 server `CastIdentity { session_id, cast_instance_id }`，冻结 `CastFovController` 的 identity-aware consumer/tombstone/session gate API，并通过该扩展点注册 `CastPlayAnim` 分发。R6 P2 与 R9 P1 都合入后生产链闭环；R9 不编辑 router，也不接管 FPV 资产/播放实现，避免双 owner 和两个 identity 并存。
 
-**落点**：`server/src/schema/combat_hud.rs:97-106`、`server/src/combat/components.rs:421-447`（R9：`CastSession` allocator + `CastSessionBegin` producer）；`agent/packages/schema/src/vfx-event.ts:67-128,183-189`（R9：cast AV TypeBox variants）；`client/src/main/java/com/bong/client/network/CastSyncHandler.java:19-51,97-103` 与 `client/src/main/java/com/bong/client/combat/juice/CastFovController.java:687-726`（R9：session gate/juice token/tombstone API）；`client/src/main/java/com/bong/client/network/VfxEventRouter.java:64-100`（R6 独占接线落点，R9 只提供 API pin）；`plan-fpv-cast-av-v1` P3 生命周期契约；总纲 §4 ownership matrix；本 plan §P0.3、§P1、§文件所有权与边界。
+**落点**：`server/src/schema/combat_hud.rs:97-106`、`server/src/combat/components.rs:421-447`（R9：`CastSession` allocator + `CastSessionBegin` producer）；`agent/packages/schema/src/vfx-event.ts:67-128,183-189`（R9：cast AV TypeBox variants）；`client/src/main/java/com/bong/client/network/CastSyncHandler.java:19-51,97-103` 与 `client/src/main/java/com/bong/client/combat/juice/CastFovController.java:687-726`（R9：session gate/juice token/tombstone API）；`client/src/main/java/com/bong/client/network/VfxEventRouter.java:64-100`（R6 独占 router 实现，R9 仅经通用 registration API 注入 cast-specific 分发）；`plan-fpv-cast-av-v1` P3 生命周期契约；总纲 §4 ownership matrix；本 plan §P0.3、§P1、§文件所有权与边界。
