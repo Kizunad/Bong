@@ -1057,9 +1057,9 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
     let mut checked_registration_roots = BTreeSet::new();
 
     for pin in REPLAY_PINS {
-        let source = source_cache.entry(pin.source).or_insert_with(|| {
-            production_tokens_from_file(&root, pin.source)
-        });
+        let source = source_cache
+            .entry(pin.source)
+            .or_insert_with(|| production_tokens_from_file(&root, pin.source));
         let function = function_token_slice(&source, pin.symbol).unwrap_or_else(|| {
             panic!(
                 "{:?} replay producer `{}` disappeared from {}; update the authoritative R6 replay contract",
@@ -1095,9 +1095,7 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
             pin.registration_function,
             pin.registered_callee
         );
-        if checked_registration_roots
-            .insert((pin.registration_source, pin.registration_function))
-        {
+        if checked_registration_roots.insert((pin.registration_source, pin.registration_function)) {
             assert_replay_registration_reachable(&root, pin);
         }
         *class_counts.entry(pin.class).or_insert(0usize) += 1;
@@ -1168,12 +1166,28 @@ fn server_data_helper_is_server_data(root: &Path) -> bool {
 fn assert_replay_registration_reachable(root: &Path, pin: &ReplayPin) {
     let edges: &[(&str, &str, &str)] = match pin.registration_source {
         "server/src/network/mod.rs" => &[
-            ("server/src/main.rs", "build_server_app", "network::register"),
-            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/main.rs",
+                "build_server_app",
+                "network::register",
+            ),
+            (
+                "server/src/network/mod.rs",
+                "register",
+                "register_app_wiring",
+            ),
         ],
         "server/src/network/daozhan_disguise_emit.rs" => &[
-            ("server/src/main.rs", "build_server_app", "network::register"),
-            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/main.rs",
+                "build_server_app",
+                "network::register",
+            ),
+            (
+                "server/src/network/mod.rs",
+                "register",
+                "register_app_wiring",
+            ),
             (
                 "server/src/network/mod.rs",
                 "register_app_wiring",
@@ -1181,8 +1195,16 @@ fn assert_replay_registration_reachable(root: &Path, pin: &ReplayPin) {
             ),
         ],
         "server/src/network/spider_disguise_emit.rs" => &[
-            ("server/src/main.rs", "build_server_app", "network::register"),
-            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/main.rs",
+                "build_server_app",
+                "network::register",
+            ),
+            (
+                "server/src/network/mod.rs",
+                "register",
+                "register_app_wiring",
+            ),
             (
                 "server/src/network/mod.rs",
                 "register_app_wiring",
@@ -1190,8 +1212,16 @@ fn assert_replay_registration_reachable(root: &Path, pin: &ReplayPin) {
             ),
         ],
         "server/src/network/rat_qi_tier_emit.rs" => &[
-            ("server/src/main.rs", "build_server_app", "network::register"),
-            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/main.rs",
+                "build_server_app",
+                "network::register",
+            ),
+            (
+                "server/src/network/mod.rs",
+                "register",
+                "register_app_wiring",
+            ),
             (
                 "server/src/network/mod.rs",
                 "register_app_wiring",
@@ -1261,27 +1291,23 @@ fn function_token_slice<'a>(tokens: &'a [String], symbol: &str) -> Option<&'a [S
 }
 
 fn add_systems_registers_callee(function: &[String], callee: &str) -> bool {
-    unconditional_add_systems_arguments(function).any(|arguments| {
-        registered_system_expression_contains(arguments, &path_tokens(callee))
-    })
+    unconditional_add_systems_arguments(function)
+        .any(|arguments| registered_system_expression_contains(arguments, &path_tokens(callee)))
 }
 
-fn add_systems_orders_callee_after(
-    function: &[String],
-    callee: &str,
-    dependency: &str,
-) -> bool {
+fn add_systems_orders_callee_after(function: &[String], callee: &str, dependency: &str) -> bool {
     let mut expected = path_tokens(callee);
     expected.extend([".".to_string(), "after".to_string(), "(".to_string()]);
     expected.extend(path_tokens(dependency));
     expected.push(")".to_string());
-    unconditional_add_systems_arguments(function)
-        .any(|arguments| arguments.windows(expected.len()).any(|window| window == expected))
+    unconditional_add_systems_arguments(function).any(|arguments| {
+        arguments
+            .windows(expected.len())
+            .any(|window| window == expected)
+    })
 }
 
-fn unconditional_add_systems_arguments(
-    function: &[String],
-) -> impl Iterator<Item = &[String]> {
+fn unconditional_add_systems_arguments(function: &[String]) -> impl Iterator<Item = &[String]> {
     let body_start = function.iter().position(|token| token == "{").unwrap_or(0);
     let depths = delimiter_depths(function, body_start);
     (body_start + 1..function.len()).filter_map(move |index| {
@@ -1315,8 +1341,8 @@ fn registered_system_expression_contains(arguments: &[String], expected: &[Strin
                     }
                     let preceded_by_delimiter =
                         offset == 0 || matches!(argument[offset - 1].as_str(), "(" | ",");
-                    let modifier_argument = offset > 1
-                        && matches!(argument[offset - 2].as_str(), "after" | "before");
+                    let modifier_argument =
+                        offset > 1 && matches!(argument[offset - 2].as_str(), "after" | "before");
                     preceded_by_delimiter && !modifier_argument
                 })
             {
@@ -1581,7 +1607,8 @@ fn channel_ident_bindings<'a>(
             continue;
         };
         let initializer = &tokens[equal + 1..statement_end];
-        let Some(source_constant) = channel_ident_initializer_constant(initializer, constants) else {
+        let Some(source_constant) = channel_ident_initializer_constant(initializer, constants)
+        else {
             continue;
         };
         bindings.insert(name, constants[source_constant]);
@@ -1631,9 +1658,7 @@ fn resolve_channel(
             .get(token)
             .or_else(|| bindings.get(token))
             .map(|value| (*value).to_string())
-            .or_else(|| {
-                (token == "SERVER_DATA_CHANNEL").then(|| "bong:server_data".to_string())
-            });
+            .or_else(|| (token == "SERVER_DATA_CHANNEL").then(|| "bong:server_data".to_string()));
     }
     if argument.len() == 5
         && argument[1] == "."
@@ -1641,7 +1666,9 @@ fn resolve_channel(
         && argument[3] == "("
         && argument[4] == ")"
     {
-        return bindings.get(argument[0].as_str()).map(|value| (*value).to_string());
+        return bindings
+            .get(argument[0].as_str())
+            .map(|value| (*value).to_string());
     }
     if argument.len() == 5
         && argument[0] == "ident"
@@ -1730,11 +1757,7 @@ fn is_test_cfg_attribute(bytes: &[u8], start: usize) -> bool {
         || normalized
             .strip_prefix("#[cfg(all(")
             .and_then(|value| value.strip_suffix("))]"))
-            .is_some_and(|predicates| {
-                predicates
-                    .split(',')
-                    .any(|predicate| predicate == "test")
-            })
+            .is_some_and(|predicates| predicates.split(',').any(|predicate| predicate == "test"))
 }
 
 fn rust_tokens(source: &str) -> Vec<String> {
@@ -2172,7 +2195,8 @@ fn registration_pin_rejects_conditional_and_early_exit_paths() {
         }"#,
     ] {
         let tokens = rust_tokens(source);
-        let function = function_token_slice(&tokens, "register").expect("synthetic register parses");
+        let function =
+            function_token_slice(&tokens, "register").expect("synthetic register parses");
         assert!(
             !contains_unconditional_call(function, "register_app_wiring"),
             "conditional or early-exit registration must fail production reachability"
@@ -2189,7 +2213,8 @@ fn registration_pin_rejects_conditional_add_systems() {
             }
         }"#,
     );
-    let function = function_token_slice(&registration, "register").expect("synthetic register parses");
+    let function =
+        function_token_slice(&registration, "register").expect("synthetic register parses");
     assert!(
         !add_systems_registers_callee(function, "expected_producer"),
         "add_systems inside a conditional block is not production-unconditional wiring"
