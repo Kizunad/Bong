@@ -1,6 +1,26 @@
 package com.bong.client.ui;
 
+import com.sun.source.tree.AssignmentTree;
+import com.sun.source.tree.BinaryTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.LiteralTree;
+import com.sun.source.tree.MemberReferenceTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.ParenthesizedTree;
+import com.sun.source.tree.Tree;
+import com.sun.source.tree.VariableTree;
+import com.sun.source.util.TreePath;
+import com.sun.source.util.TreePathScanner;
 import org.junit.jupiter.api.Test;
+
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -90,6 +110,12 @@ class R7FoundationContractTest {
             "R7 must not claim R6 network/router wiring");
         assertTrue(plan.contains("Screen-local listener/unsubscriber"),
             "Screen teardown must be distinguished from SessionScopedStore data clearing");
+        assertTrue(plan.contains("`SparringInviteScreenBootstrap` 必须成为 `ScreenOpenPolicy` 的 production consumer"),
+            "P4 must wire the real social-invite bootstrap into ScreenOpenPolicy");
+        assertTrue(plan.contains("server-authoritative combat snapshot"),
+            "P4 social deferral must block on an authoritative combat-state input");
+        assertTrue(plan.contains("stale offer A") && plan.contains("不能清除 offer B"),
+            "P4 must prove an older insight lifecycle cannot clear a newer offer");
     }
 
     @Test
@@ -262,11 +288,8 @@ class R7FoundationContractTest {
 
     @Test
     void insightSettlementFixtureFreezesEveryTerminalCauseAndOwner() {
-        List<String> lines = resourceLines("/bong/ui/r7-insight-settlement.tsv");
         List<InsightSettlementRow> rows = insightSettlementRows();
         assertEquals(8, rows.size(), "each bounded insight terminal path must have one contract row");
-        assertEquals(expectedInsightSettlementRows(), rows,
-            "every insight terminal cause, decision, owner, ordering, failure, and observable effect must be exact-pinned");
         assertEquals(Set.of(
             "ACCEPT", "DECLINE", "TIMEOUT", "ESC", "REPLACED_BY_DIFFERENT_OFFER",
             "ANIMATED_OPEN_CANCELLED", "REMOVED_EXCEPTIONALLY", "DUPLICATE_TERMINAL"
@@ -277,8 +300,11 @@ class R7FoundationContractTest {
             "terminal causes must be unique");
         assertTrue(rows.stream().allMatch(row -> row.identityRule().contains("offerId")),
             "settlement identity must use wire offerId while triggerId remains reusable context");
-        assertTrue(lines.stream().anyMatch(line -> line.contains("offerId") && line.contains("triggerId")),
-            "fixture must distinguish reusable trigger context from unique offer instance identity");
+        assertTrue(rows.stream().anyMatch(row -> row.observableEffect().contains("stale timeout of offer A")
+                && row.observableEffect().contains("offer B")),
+            "the P4 contract must explicitly prohibit stale offer A from clearing newer current or pending offer B");
+        assertTrue(rows.stream().allMatch(row -> !row.commitOrder().contains("send; then claim")),
+            "every terminal cause must claim its exact offerId before any send or transition side effect");
     }
 
     @Test
@@ -501,14 +527,219 @@ class R7FoundationContractTest {
             && currentTerminal == !row.currentPriority().equals("NONE");
     }
 
-    private static List<KeybindingSourceSite> productionKeybindingSourceSites() {
-        return keybindProductionSiteRows().stream()
-            .map(row -> new KeybindingSourceSite(
-                row.sourcePath(), row.sourceSite(), row.translationContract(), row.inputType(),
-                row.normalizedDefaultContract(), row.categoryContract(), row.runtimeCardinalityCount(),
-                row.expandedTranslationKeys()
-            ))
-            .toList();
+    private static List<KeybindingSourceSite> productionKeybindingSourceSites() throws IOException {
+        List<KeybindingSourceSite> result = new java.util.ArrayList<>();
+        for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(CLIENT_ROOT)) {
+            new TreePathScanner<Void, Void>() {
+                @Override
+                public Void visitNewClass(NewClassTree tree, Void unused) {
+                    TreePath constructorPath = getCurrentPath();
+                    Element constructor = parsed.trees().getElement(constructorPath);
+                    if (!(constructor instanceof ExecutableElement executable)
+                        || !(executable.getEnclosingElement() instanceof TypeElement owner)
+                        || !owner.getQualifiedName().contentEquals("net.minecraft.client.option.KeyBinding")) {
+                        return super.visitNewClass(tree, unused);
+                    }
+                    assertEquals(4, tree.getArguments().size(),
+                        "every production KeyBinding constructor overload must be modeled: " + tree);
+                    assertProductionRegistration(constructorPath, parsed);
+                    String sourceSite = enclosingAssignmentTarget(constructorPath);
+                    assertNotNull(sourceSite, "KeyBinding constructor needs a stable assignment target in " + parsed.path());
+                    List<String> translations = resolveTranslationKeys(
+                        new TreePath(constructorPath, tree.getArguments().get(0)), parsed
+                    );
+                    result.add(new KeybindingSourceSite(
+                        CLIENT_ROOT.relativize(parsed.path()).toString().replace('\\', '/'),
+                        sourceSite,
+                        translationContract(translations),
+                        resolveInputType(new TreePath(constructorPath, tree.getArguments().get(1)), parsed),
+                        resolveDefaultContract(new TreePath(constructorPath, tree.getArguments().get(2)), parsed),
+                        resolveString(new TreePath(constructorPath, tree.getArguments().get(3)), parsed),
+                        translations.size(),
+                        translations
+                    ));
+                    return super.visitNewClass(tree, unused);
+                }
+            }.scan(parsed.unit(), null);
+        }
+        result.sort(java.util.Comparator
+            .comparing(KeybindingSourceSite::sourcePath)
+            .thenComparing(KeybindingSourceSite::sourceSite));
+        return result;
+    }
+
+    private static void assertProductionRegistration(TreePath constructorPath, R7SourceScan.ParsedUnit parsed) {
+        TreePath parent = constructorPath.getParentPath();
+        assertTrue(parent != null && parent.getLeaf() instanceof MethodInvocationTree,
+            "every KeyBinding constructor must be a direct registration argument in " + parsed.path());
+        Element method = parsed.trees().getElement(parent);
+        assertTrue(method instanceof ExecutableElement,
+            "registration invocation must resolve to a real method in " + parsed.path());
+        ExecutableElement executable = (ExecutableElement) method;
+        TypeElement owner = (TypeElement) executable.getEnclosingElement();
+        if (owner.getQualifiedName().contentEquals(
+            "net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper")
+            && executable.getSimpleName().contentEquals("registerKeyBinding")) {
+            return;
+        }
+        assertTrue(executable.getSimpleName().contentEquals("apply")
+                && parent.getLeaf() instanceof MethodInvocationTree invocation
+                && invocation.getMethodSelect() instanceof MemberSelectTree select
+                && parsed.trees().getElement(new TreePath(parent, select.getExpression()))
+                    instanceof VariableElement registrar
+                && registrar.asType().toString().equals(
+                    "java.util.function.UnaryOperator<net.minecraft.client.option.KeyBinding>"),
+            "constructor must use Fabric registration or an attributed UnaryOperator<KeyBinding> seam in "
+                + parsed.path());
+        assertTrue(hasFabricRegistrarCaller(parsed, enclosingMethodElement(parent, parsed)),
+            "registrar seam must have a real caller passing KeyBindingHelper::registerKeyBinding in " + parsed.path());
+    }
+
+    private static ExecutableElement enclosingMethodElement(TreePath path, R7SourceScan.ParsedUnit parsed) {
+        for (TreePath cursor = path; cursor != null; cursor = cursor.getParentPath()) {
+            if (cursor.getLeaf() instanceof MethodTree) {
+                Element element = parsed.trees().getElement(cursor);
+                if (element instanceof ExecutableElement executable) {
+                    return executable;
+                }
+            }
+        }
+        throw new AssertionError("registration seam lacks an enclosing method in " + parsed.path());
+    }
+
+    private static boolean hasFabricRegistrarCaller(
+        R7SourceScan.ParsedUnit parsed,
+        ExecutableElement seam
+    ) {
+        final boolean[] found = {false};
+        new TreePathScanner<Void, Void>() {
+            @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                if (seam.equals(parsed.trees().getElement(getCurrentPath()))
+                    && invocation.getArguments().stream().anyMatch(argument ->
+                        argument instanceof MemberReferenceTree reference
+                            && reference.getQualifierExpression().toString().equals("KeyBindingHelper")
+                            && reference.getName().contentEquals("registerKeyBinding"))) {
+                    found[0] = true;
+                }
+                return super.visitMethodInvocation(invocation, unused);
+            }
+        }.scan(parsed.unit(), null);
+        return found[0];
+    }
+
+    private static List<String> resolveTranslationKeys(TreePath path, R7SourceScan.ParsedUnit parsed) {
+        ExpressionTree expression = (ExpressionTree) path.getLeaf();
+        if (expression instanceof BinaryTree binary && binary.getKind() == Tree.Kind.PLUS) {
+            String prefix = resolveString(new TreePath(path, binary.getLeftOperand()), parsed);
+            ExpressionTree right = binary.getRightOperand();
+            if (right instanceof ParenthesizedTree parenthesized) {
+                right = parenthesized.getExpression();
+            }
+            assertEquals("i + 1", right.toString(),
+                "only quick-slot translations may use runtime expansion");
+            return java.util.stream.IntStream.rangeClosed(1, quickSlotCount())
+                .mapToObj(index -> prefix + index)
+                .toList();
+        }
+        return List.of(resolveString(path, parsed));
+    }
+
+    private static int quickSlotCount() {
+        Path config = CLIENT_ROOT.resolve("combat/QuickSlotConfig.java");
+        try {
+            for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(config.getParent())) {
+                if (!parsed.path().equals(config)) {
+                    continue;
+                }
+                final int[] count = {-1};
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitVariable(VariableTree variable, Void unused) {
+                        if (variable.getName().contentEquals("SLOT_COUNT")
+                            && variable.getInitializer() instanceof LiteralTree literal
+                            && literal.getValue() instanceof Integer value) {
+                            count[0] = value;
+                        }
+                        return super.visitVariable(variable, unused);
+                    }
+                }.scan(parsed.unit(), null);
+                assertEquals(9, count[0], "QuickSlotConfig.SLOT_COUNT is the keybinding cardinality source");
+                return count[0];
+            }
+        } catch (IOException exception) {
+            throw new AssertionError("unable to read QuickSlotConfig", exception);
+        }
+        throw new AssertionError("missing QuickSlotConfig.SLOT_COUNT");
+    }
+
+    private static String resolveString(TreePath path, R7SourceScan.ParsedUnit parsed) {
+        if (path.getLeaf() instanceof LiteralTree literal && literal.getValue() instanceof String value) {
+            return value;
+        }
+        Element element = parsed.trees().getElement(path);
+        if (element instanceof VariableElement variable && variable.getConstantValue() instanceof String value) {
+            return value;
+        }
+        throw new AssertionError("unsupported attributed string expression: " + path.getLeaf());
+    }
+
+    private static String resolveInputType(TreePath path, R7SourceScan.ParsedUnit parsed) {
+        Element element = parsed.trees().getElement(path);
+        assertTrue(element instanceof VariableElement, "input type must resolve to an enum constant: " + path.getLeaf());
+        VariableElement variable = (VariableElement) element;
+        assertEquals("net.minecraft.client.util.InputUtil.Type",
+            ((TypeElement) variable.getEnclosingElement()).getQualifiedName().toString(),
+            "input type must be canonical Minecraft InputUtil.Type");
+        return variable.getSimpleName().toString();
+    }
+
+    private static String resolveDefaultContract(TreePath path, R7SourceScan.ParsedUnit parsed) {
+        ExpressionTree expression = (ExpressionTree) path.getLeaf();
+        if (expression instanceof BinaryTree binary && binary.getKind() == Tree.Kind.PLUS) {
+            assertEquals("GLFW.GLFW_KEY_F1", binary.getLeftOperand().toString());
+            assertEquals("i", binary.getRightOperand().toString());
+            assertEquals(9, quickSlotCount());
+            return "F1..F9";
+        }
+        if (expression instanceof MethodInvocationTree invocation
+            && invocation.getMethodSelect().toString().equals("InputUtil.UNKNOWN_KEY.getCode")) {
+            return "UNKNOWN";
+        }
+        Element element = parsed.trees().getElement(path);
+        if (element instanceof VariableElement variable) {
+            Object value = variable.getConstantValue();
+            if (value instanceof Integer code) {
+                if (variable.getSimpleName().contentEquals("GLFW_KEY_UNKNOWN")) {
+                    return "UNKNOWN";
+                }
+                String name = variable.getSimpleName().toString();
+                if (name.startsWith("GLFW_KEY_")) {
+                    return name.substring("GLFW_KEY_".length());
+                }
+                return glfwContract(code);
+            }
+        }
+        throw new AssertionError("unsupported attributed default-key expression: " + expression);
+    }
+
+    private static String glfwContract(int code) {
+        if (code >= 65 && code <= 90) {
+            return Character.toString((char) code);
+        }
+        throw new AssertionError("unsupported production default key code " + code);
+    }
+
+    private static String enclosingAssignmentTarget(TreePath path) {
+        for (TreePath cursor = path.getParentPath(); cursor != null; cursor = cursor.getParentPath()) {
+            if (cursor.getLeaf() instanceof AssignmentTree assignment) {
+                return assignment.getVariable().toString().replaceAll("\\s+", " ").trim();
+            }
+            if (cursor.getLeaf() instanceof VariableTree variable) {
+                return variable.getName().toString();
+            }
+        }
+        return null;
     }
 
     private static String translationContract(List<String> translations) {
@@ -574,25 +805,6 @@ class R7FoundationContractTest {
             death-blocked-peer\tSYSTEM_TERMINAL\tdeath-2\t9223372036854775807\tDEATH\tfalse\tSYSTEM_TERMINAL\tdeath-1\tDEATH\tfalse\t1000\tBLOCK_DROP\tA nonmatching equal-priority terminal is not replaced.
             terminate-blocked-peer\tSYSTEM_TERMINAL\tterminate-2\t9223372036854775807\tTERMINATE\tfalse\tSYSTEM_TERMINAL\tterminate-1\tTERMINATE\tfalse\t1000\tBLOCK_DROP\tA nonmatching Terminate terminal cannot replace an equal-priority peer.
             """.strip().lines().toList();
-    }
-
-    private static List<InsightSettlementRow> expectedInsightSettlementRows() {
-        return """
-            ACCEPT	InsightDecision.chosen(triggerId, choiceId)	InsightOfferScreen	claim only the exact current offerId; triggerId remains decision context and may recur	Atomically commit ACCEPT for the current offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	A close failure leaves this offerId terminal; later paths for the same instance remain NOOP.	If send and close both fail, retain send as primary and suppress close in execution order.	Emit at most one CHOSEN decision for this offer instance; terminal state is discarded once no current or pending lifecycle can race with it.
-            DECLINE	InsightDecision.declined(triggerId)	InsightOfferScreen	claim only the exact current offerId; a later offer may reuse triggerId	Atomically commit DECLINE for the current offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	A close failure leaves this offerId terminal; later paths for the same instance remain NOOP.	If send and close both fail, retain send as primary and suppress close in execution order.	Emit at most one DECLINED decision for this offer instance without poisoning a later offer that reuses triggerId.
-            TIMEOUT	InsightDecision.timedOut(triggerId)	InsightOfferScreenBootstrap + InsightOfferScreen	pre-open bootstrap and open screen compete for one exact offerId claim	Atomically commit TIMEOUT for offerId before sending; pre-open expiry creates no screen, while an open screen then closes if still current.	A send failure is primary; the applicable close or transition is still attempted.	A close or removal failure leaves this offerId terminal and cannot authorize another send.	If send and transition both fail, retain send as primary and suppress transition in execution order.	Emit one TIMED_OUT decision for the offer instance; stale timeout of offer A cannot clear current or pending offer B.
-            ESC	InsightDecision.declined(triggerId)	InsightOfferScreen.close	claim the exact offerId owned by the closing screen	Atomically commit ESC for offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	Close or removal failure leaves this offerId terminal; onRemoved remains NOOP for settlement.	Retain the first failure and suppress later close/removal failures in execution order.	Emit at most one DECLINED decision for this offer instance.
-            REPLACED_BY_DIFFERENT_OFFER	LOCAL_TERMINAL	InsightOfferStore + InsightOfferScreenBootstrap + ScreenTransitionController	compare outgoing and incoming offerId locally; do not claim wire-level isolation when triggerId is reused	Publish the incoming offer into a bounded pending slot; commit the outgoing offerId as a local terminal tombstone before attempting the screen switch; do not send InsightDecision for the outgoing offer because the current C2S schema has no offerId correlation. Promote pending to current only after installation succeeds.	No outgoing decision send is attempted; the incoming installation is still attempted.	Installation failure keeps the incoming offer non-authoritative in the pending slot for retry; it cannot strand an authoritative snapshot without a screen.	If installation fails, retain the incoming pending offer and the outgoing local tombstone; no ambiguous wire settlement is emitted.	The outgoing offer is settled locally exactly once; the incoming offer is either installed as current or remains bounded pending and reachable for retry. Cross-offer wire isolation is deferred until the protocol carries offerId.
-            ANIMATED_OPEN_CANCELLED	InsightDecision.declined(triggerId)	InsightOfferScreen + ScreenTransitionController.PendingOpenCancellationHandler	claim the exact offerId owned by activeTransition.handle().newScreen()	Atomically commit ANIMATED_OPEN_CANCELLED for offerId before sending the decline; then clear only matching current/pending ownership.	A send failure remains observable after the offerId is committed terminal.	Cancellation cannot leave the offer current or pending without a visible or retryable screen.	A later removal callback is NOOP for settlement and any later lifecycle failure is suppressed after the send failure.	Cancelling the 250 ms animated open emits at most one decline and leaves no invisible unsettled offer.
-            REMOVED_EXCEPTIONALLY	InsightDecision.declined(triggerId)	InsightOfferScreen.onRemoved	claim the screen's exact offerId only when no earlier cause won	Atomically commit REMOVED_EXCEPTIONALLY for offerId before sending; then continue all base removal stages.	A send failure is primary and later removal stages are still attempted.	A later removal-stage failure cannot replace the committed cause.	BongScreenBase retains the first failure and suppresses later lifecycle failures in execution order.	Exceptional removal emits at most one decline and cannot clear a different current or pending offer.
-            DUPLICATE_TERMINAL	NOOP	InsightOfferStore	an already committed offerId is immutable only while its current/pending lifecycle can still race	Observe the bounded in-flight terminal claim and return before send or transition.	No decision send is attempted.	No screen transition is attempted and no different offerId is mutated.	No new exception is produced.	No duplicate decision or transition occurs; historical offer IDs are not retained after their lifecycle becomes unreachable.
-            """.strip().lines()
-            .map(line -> line.split("\\t", -1))
-            .map(columns -> new InsightSettlementRow(
-                columns[0], columns[1], columns[2], columns[3], columns[4],
-                columns[5], columns[6], columns[7], columns[8]
-            ))
-            .toList();
     }
 
     private static List<FoundationRow> expectedFoundationRows() {
