@@ -18,7 +18,7 @@
 - **进料**：现有会话态 Store 的 listener/remove-listener API 与 snapshot；R2 只保证断线数据清理。`SessionScopedStore` 当前只有 `clearOnDisconnect()`，**不是订阅接口**，R7 基类不得持有或调用它。
 - **出料**：Screen/HUD 展示、用户输入到既有 C2S sender；本轨不改变 wire/schema/Redis key。
 - **共享类型**：冻结 `BongScreenBase<R extends ParentComponent>`、`DiffListWidget<T, K, C extends Component>`、`BongKeybindRegistry`、`ClientThreadMarshal`、`ScreenOpenPolicy` 五个 R7 类型；准确签名与 invariant 在 `r7-foundation-contract.tsv`。
-- **跨轨接缝**：R2 独占 Store disconnect lifecycle；R6 独占 channel 注册、`ProtoServerDataBridge`、`ServerDataRouter` 与网络 receive-boundary marshal。`ClientThreadMarshal` 只冻结纯 helper API，P0/P1 不把它接进 R6 文件；若后续发现非网络来源需要 helper，R7 仅在自有 Screen/HUD owner 内消费。
+- **跨轨接缝**：R2 独占 Store disconnect lifecycle；R6 独占 channel 注册、`ProtoServerDataBridge`、`ServerDataRouter` 与网络 receive-boundary marshal。`ClientThreadMarshal` 只冻结纯 helper API，P0/P1 不把它接进 R6 文件；若后续发现非网络来源需要 helper，R7 仅在自有 Screen/HUD owner 内消费。P4 的 insight instance identity 需要一次与 R6 协调的窄接缝：`network/InsightOfferHandler` 与 `network/HeartDemonOfferHandler` 保持现有 dispatch/线程 owner，只负责把 schema 已有的 `offer_id` 复制进 R7-owned `InsightOfferViewModel`；不得借此修改 channel/router/receive boundary。
 - **worldview / qi_physics**：纯 client 基础设施重构，不新增玩法、真元公式、境界、经济或世界观名词；零 qi ledger 变更。
 
 ## 阶段总览
@@ -27,7 +27,7 @@
 - ⬜ **P1 基础组件落地**：五个 R7 类型上线；全部 production keybind constructor sites 经 global registry；默认键、vanilla reservation、空 exemption manifest 收口；botany backlog 与 dying-elder effective-binding 显示按 fixture 验收。
 - ⬜ **P2 Screen 迁移批次 A**：炼丹/手搓/交易等迁基类；随迁修 fill 风险和 identity-sensitive clearChildren；outgoing trade 在 `TradeOfferIntentHandler`/`TradeOfferScreenBootstrap` 改为显式 picker。
 - ⬜ **P3 InspectScreen tab-first 拆解**：shell + tab panel + oversized section leaf，行为不变。
-- ⬜ **P4 Screen 迁移批次 B + R7-owned UI thread/open-policy 强制 + 删旧**：验真四个 `client.execute` consumer；Insight settlement 接 `ScreenTransitionController`；`BongHudOrchestrator` 恢复 qi radar main path。
+- ⬜ **P4 Screen 迁移批次 B + R7-owned UI thread/open-policy 强制 + 删旧**：验真四个 `client.execute` consumer；协调 `InsightOfferHandler`/`HeartDemonOfferHandler` → `InsightOfferViewModel.offerId` 接缝并把 Insight settlement 接 `ScreenTransitionController`；`BongHudOrchestrator` 恢复 qi radar main path。
 - ⬜ **P5 验收 + 被完整吸收 plan 批量归档**。
 
 ## P0 冻结契约
@@ -61,8 +61,8 @@
 - pure decision layer：输入 raw `Request(kind, identity, expiresAtMs, terminalPriority, alreadyNotified)`、raw `Current(kind, identity, terminalPriority, combatActive)` 与 `nowMs`，policy 自行按非空 identity 相等推导 matching、按 `nowMs >= expiresAtMs` 推导 finite expiry；输出 `OPEN | PREEMPT | NOOP_MATCHING | DEFER_NOTIFY | DEFER_SILENT | BLOCK_DROP | EXPIRE`。policy 不直接 `setScreen()`，不新建第二份 pending offer store；`alreadyNotified` 由现有 domain/bootstrap owner 按 identity 持有，并与 `ScreenTransitionController` 的 pending/current cancellation protocol 组合而非绕过。
 - passive social invite：domain Store 保持权威；战斗中或已有屏时，首次同 identity 阻塞 `DEFER_NOTIFY`，已经通知过则 `DEFER_SILENT`；新 identity 重新取得通知资格。战斗结束且 `currentScreen == null`、TTL 仍有效才 `OPEN`；先到 TTL 则 `EXPIRE`。
 - ordinary hotkey：无屏 `OPEN`、同屏 `NOOP_MATCHING`、任何 nonmatching ordinary/modal/system-terminal block 都 `BLOCK_DROP`；**物理按键永不排队重放**。
-- insight：可 `PREEMPT` 普通 non-modal UI；同 `offer_id` no-op，`trigger_id` 只作为可复用的触发上下文；在 equal/higher modal 或 death/terminate system terminal 后按 caller-owned 状态 `DEFER_NOTIFY/DEFER_SILENT`；过期 `EXPIRE`。wire 的 `offer_id` 必须贯通 client view-model、Store、Screen 与 decision settlement，作为每个 offer instance 的唯一身份。`r7-insight-settlement.tsv` 冻结 current/pending 两槽内的终态、send/transition 失败顺序、replacement 与 250ms pending-open cancellation；不得用 trigger_id 永久 map 代替实例状态，生命周期不可达后必须释放。P4 才在 `InsightOfferStore`/`InsightOfferScreenBootstrap`/`InsightOfferScreen` 的生产入口上写行为测试：旧 current 或 pending offer 必须先结算；新 offer 仅安装成功后成为 authoritative；安装失败保留 bounded pending 可重试；stale decision 不能清掉更新 offer。
-- system terminal：同 identity `NOOP_MATCHING`；`TerminateScreen > DeathScreen > ordinary/modal`，可抢占低优先 UI；非 matching equal-priority peer 与更高优先 terminal 都 `BLOCK_DROP`。finite expiry 先于 identity matching 判定（expiry 与 matching 同时为真仍 `EXPIRE`）；P0 raw decision vectors 在 `r7-screen-open-policy.tsv`，30 行全部字段逐行 exact pin。
+- insight：可 `PREEMPT` 普通 non-modal UI；同 `offer_id` no-op，`trigger_id` 只作为可复用的触发上下文；在 equal/higher modal 或 death/terminate system terminal 后按 caller-owned 状态 `DEFER_NOTIFY/DEFER_SILENT`；过期 `EXPIRE`。wire 的 `offer_id` 必须经 `network/InsightOfferHandler` 与 `network/HeartDemonOfferHandler` 贯通 `InsightOfferViewModel`、Store、Screen 与 decision settlement，作为每个 offer instance 的唯一身份；两条 handler 只做 schema→view-model 字段复制，不取得 R6 channel/router/线程边界所有权。`r7-insight-settlement.tsv` 冻结 current/pending 两槽内的终态、send/transition 失败顺序、replacement 与 250ms pending-open cancellation；不得用 trigger_id 永久 map 代替实例状态，生命周期不可达后必须释放。P4 才在这两条 converter、`InsightOfferViewModel`、`InsightOfferStore`/`InsightOfferScreenBootstrap`/`InsightOfferScreen` 的生产入口上写行为测试：两个不同 `offer_id` 即使复用同一 `trigger_id` 也必须保持独立实例；旧 current 或 pending offer 必须先结算；新 offer 仅安装成功后成为 authoritative；安装失败保留 bounded pending 可重试；stale decision 不能清掉更新 offer。
+- system terminal：同 identity `NOOP_MATCHING`；`TerminateScreen > DeathScreen > ordinary/modal`，可抢占低优先 UI；非 matching equal-priority peer 与更高优先 terminal 都 `BLOCK_DROP`。finite expiry 先于 identity matching 判定（expiry 与 matching 同时为真仍 `EXPIRE`）；P0 raw decision vectors 在 `r7-screen-open-policy.tsv`，32 行全部字段逐行 exact pin。
 
 ## InspectScreen P3 决议
 
@@ -101,7 +101,7 @@
 
 - **R7 独占**：client Screen/`ui/`/HUD 结构性改动、keybind 注册、`InspectScreen.java`；本 P0 实际只改本 plan、`client/src/test/java/com/bong/client/ui/R7*` 与 `client/src/test/resources/bong/ui/r7-*`。
 - **R2 独占且不碰**：`client/lifecycle/**`、Store clear/registry、`clearClientStateOnDisconnect` 区段及 R2 gate tests。R7 只消费各 Store 已有 listener/snapshot API。
-- **R6 独占且不碰**：`BongNetworkHandler` channel/receive dispatch、`network/` bridge/router/handler integration。R7 不因 helper freeze 取得接线权。
+- **R6 独占且窄接缝协调**：`BongNetworkHandler` channel/receive dispatch、`ServerDataRouter`、`ProtoServerDataBridge` 与线程边界仍由 R6 独占；P4 仅协调修改 `network/InsightOfferHandler`、`network/HeartDemonOfferHandler` 的 schema→`InsightOfferViewModel` 转换，使既有 `offer_id` 不再丢失，不取得其余 network wiring 所有权。
 - **server 全部不碰**；无 wire/schema/Redis 变更。
 
 ## 验收
@@ -109,7 +109,7 @@
 - P0 pin：`R7InventoryContractTest` 对拍 29 Screen、92 fill lexical inventory、owo inflate 语义和 production-zero-change；`R7FoundationContractTest` 对拍五类型签名、keybind target、ScreenOpenPolicy vectors、plan anchors、R2/R6 ownership。
 - P1 behavior gate：`BongKeybindRegistryTest` 覆盖 translation/physical duplicate、vanilla reservation、空/精确 exemption、UNKNOWN 非冲突与 registrations immutable/order；production-site source gate 确认 26 个 constructor sites 全部迁 global registry；`BotanyHudBootstrapTest` 覆盖 blocked/inactive drain 后不 replay；dying-elder HUD 测试覆盖 rebound key 与“未绑定”。
 - P2 trade gate：`TradeOfferIntentHandlerTest` + picker test 必须证明多 item 时只有 explicit selection 的 exact `instance_id` 被 dispatch；grid/hotbar/sort 不得替用户决定；无 selection 拒绝 dispatch 或打开 picker；P5 e2e 对拍 target 收到相同 instance/displayName。
-- P4 thread/open/HUD gate：四个命名 `client.execute` 来源逐个给出迁移或“不需要 helper”的证据；`InsightOfferScreenTest` 覆盖所有 `r7-insight-settlement.tsv` terminal causes；`BongHudOrchestratorTest` 必须证明凝脉及以上 main path 产出 `HudRenderLayer.QI_RADAR`、低境界隐藏，并经 main path 命中 negative-qi、TSY false-signal、nearby-cultivator markers。
+- P4 thread/open/HUD gate：四个命名 `client.execute` 来源逐个给出迁移或“不需要 helper”的证据；两个 insight handler 到 `InsightOfferViewModel` 的 converter 测试证明 `offer_id` 完整保留，且 distinct `offer_id` + reused `trigger_id` 不会合并实例；`InsightOfferScreenTest` 覆盖所有 `r7-insight-settlement.tsv` terminal causes；`BongHudOrchestratorTest` 必须证明凝脉及以上 main path 产出 `HudRenderLayer.QI_RADAR`、低境界隐藏，并经 main path 命中 negative-qi、TSY false-signal、nearby-cultivator markers。
 - P5 汇总 gate：上述 keybind/trade/insight/radar acceptance 全部在 Java 17 `test build` 与 UI C2S/e2e 可达证据中闭环后，才可归档对应 absorbed findings。
 - 完整 client gate：Java 17 下 `flock /tmp/bong-gradle.lock -c "cd client && ./gradlew test build"`；人工 `./gradlew runClient` 验五大屏留到实际生产迁移 PR。
 - bot 配合：`ui_c2s_smoke` 只证明各屏原 C2S 动作链路仍可达；bot 无法替代 client UI contract tests。
@@ -147,7 +147,7 @@
 2. **PR-2 / P1 foundations + keybind**：五类型；所有 production KeyBinding sites 迁 global registry；vanilla reserved/空 exemption、botany backlog、dying-elder effective binding 全部按 P1 gate 收口；不接 R6 network files。
 3. **PR-3 / P2 migration A**：alchemy/craft/trade 等，随迁 fill/list defects；outgoing trade 显式 picker 必须通过 exact instance-id gate。
 4. **PR-4 / P3 Inspect split**：tab-first shell/panels，行为不变。
-5. **PR-5 / P4 migration B + R7-owned enforcement**：只验真四个命名 UI `client.execute` 来源；Insight settlement 接 transition cancellation；qi radar 恢复 `BongHudOrchestrator` main path。
+5. **PR-5 / P4 migration B + R7-owned enforcement**：只验真四个命名 UI `client.execute` 来源；协调 `InsightOfferHandler`/`HeartDemonOfferHandler` 保留 `offer_id` 到 `InsightOfferViewModel`，再把 settlement 接 transition cancellation；qi radar 恢复 `BongHudOrchestrator` main path。
 6. **PR-6 / P5 acceptance + absorbed-plan archive**：keybind/trade/insight/radar 四组 acceptance 绿后才归档。
 
 前一 PR 的最终 HEAD 未通过 Java 17 gate、fresh-context SHA validator、`/review`、e2e 与 CodeRabbit 并 merge 前，不提前实施下一阶段。

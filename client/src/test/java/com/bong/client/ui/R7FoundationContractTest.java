@@ -20,6 +20,7 @@ import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
+import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import java.io.IOException;
@@ -32,9 +33,11 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7FoundationContractTest {
@@ -147,6 +150,22 @@ class R7FoundationContractTest {
             .filter(row -> !row.targetDefault().equals("UNKNOWN"))
             .map(KeybindRow::targetDefault)
             .collect(java.util.stream.Collectors.toSet()));
+        Map<String, String> expectedTargets = Map.ofEntries(
+            Map.entry("spirit_treasure_open", "UNKNOWN"),
+            Map.entry("lingtian_open", "UNKNOWN"),
+            Map.entry("identity_open", "O"),
+            Map.entry("void_action_open", "UNKNOWN"),
+            Map.entry("forge_open", "U"),
+            Map.entry("extract_cancel", "UNKNOWN"),
+            Map.entry("botany_auto", "UNKNOWN"),
+            Map.entry("spell_volume_hold", "R"),
+            Map.entry("dying_elder_give", "UNKNOWN"),
+            Map.entry("dying_elder_refuse", "UNKNOWN"),
+            Map.entry("dying_elder_delay", "UNKNOWN")
+        );
+        assertEquals(expectedTargets, rows.stream().collect(java.util.stream.Collectors.toMap(
+            KeybindRow::action, KeybindRow::targetDefault
+        )), "every migration action must retain its exact target default");
         assertEquals(expectedProductionKeySources().keySet(),
             rows.stream().map(KeybindRow::action).collect(java.util.stream.Collectors.toSet()),
             "every migration row must have one production declaration owner");
@@ -161,14 +180,22 @@ class R7FoundationContractTest {
             assertKeyBindingDeclaration(sourceText, row, source);
         }
 
-        assertTrue(find(rows, "botany_auto").resolution().contains("drain queued presses")
-                && find(rows, "botany_auto").resolution().contains("no later replay"),
+        assertEquals("Remove the passive automation default; drain queued presses while session/screen preconditions reject dispatch; prove no later replay.",
+            find(rows, "botany_auto").resolution(),
             "botany rejection must drain queued presses and prohibit later replay");
-        assertTrue(rows.stream().filter(row -> row.action().startsWith("dying_elder."))
-                .allMatch(row -> row.resolution().contains("effective binding")
-                    && row.resolution().contains("unbound")
-                    && row.resolution().contains("unified G router")),
-            "dying-elder HUD resolutions must require effective-binding and explicit unbound behavior");
+        Map<String, String> expectedDyingElderResolutions = Map.of(
+            "dying_elder_give",
+            "HUD must resolve the effective binding instead of promising G; show unbound explicitly; the unified G router remains unique.",
+            "dying_elder_refuse",
+            "HUD must resolve the effective binding instead of promising H; show unbound explicitly; the unified G router remains unique.",
+            "dying_elder_delay",
+            "HUD must resolve the effective binding instead of promising J; show unbound explicitly; the unified G router remains unique."
+        );
+        Map<String, String> actualDyingElderResolutions = rows.stream()
+            .filter(row -> row.action().startsWith("dying_elder_"))
+            .collect(java.util.stream.Collectors.toMap(KeybindRow::action, KeybindRow::resolution));
+        assertEquals(expectedDyingElderResolutions, actualDyingElderResolutions,
+            "all three dying-elder actions must use effective bindings, explicit unbound display, and one G router");
 
         Set<PhysicalDefault> boundTargets = new TreeSet<>((left, right) -> {
             int type = left.type().compareTo(right.type());
@@ -192,10 +219,10 @@ class R7FoundationContractTest {
     void screenOpenDecisionTableFreezesDeferredInvitesAndDroppedHotkeys() {
         List<String> fixtureLines = resourceLines("/bong/ui/r7-screen-open-policy.tsv");
         assertEquals(expectedOpenPolicyFixtureLines(), fixtureLines,
-            "all 30 raw policy vectors and every input/output field must be explicitly re-decided");
+            "all 32 raw policy vectors and every input/output field must be explicitly re-decided");
         List<OpenPolicyRow> rows = openPolicyRows();
-        assertEquals(30, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
-        assertEquals(30, rows.stream().map(OpenPolicyRow::scenario)
+        assertEquals(32, rows.size(), "ScreenOpenPolicy P0 decision vectors changed");
+        assertEquals(32, rows.stream().map(OpenPolicyRow::scenario)
             .collect(java.util.stream.Collectors.toSet()).size(),
             "each ScreenOpenPolicy scenario name must be unique");
         Set<String> requestKinds = Set.of("SOCIAL_INVITE", "HOTKEY", "INSIGHT", "SYSTEM_TERMINAL");
@@ -233,6 +260,8 @@ class R7FoundationContractTest {
         assertEquals("EXPIRE", findPolicy(rows, "social-expired-boundary").decision());
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-combat-first").decision());
         assertEquals("DEFER_SILENT", findPolicy(rows, "social-combat-repeat").decision());
+        assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-modal-first").decision());
+        assertEquals("DEFER_SILENT", findPolicy(rows, "social-modal-repeat").decision());
         assertEquals("DEFER_NOTIFY", findPolicy(rows, "social-new-identity").decision());
         assertEquals("BLOCK_DROP", findPolicy(rows, "hotkey-ordinary").decision());
         assertEquals("OPEN", findPolicy(rows, "insight-open").decision());
@@ -260,6 +289,8 @@ class R7FoundationContractTest {
         List<String> lines = resourceLines("/bong/ui/r7-insight-settlement.tsv");
         List<InsightSettlementRow> rows = insightSettlementRows();
         assertEquals(8, rows.size(), "each bounded insight terminal path must have one contract row");
+        assertEquals(expectedInsightSettlementRows(), rows,
+            "every insight terminal cause, decision, owner, ordering, failure, and observable effect must be exact-pinned");
         assertEquals(Set.of(
             "ACCEPT", "DECLINE", "TIMEOUT", "ESC", "REPLACED_BY_DIFFERENT_OFFER",
             "ANIMATED_OPEN_CANCELLED", "REMOVED_EXCEPTIONALLY", "DUPLICATE_TERMINAL"
@@ -270,29 +301,6 @@ class R7FoundationContractTest {
             "terminal causes must be unique");
         assertTrue(rows.stream().allMatch(row -> row.identityRule().contains("offerId")),
             "settlement identity must use wire offerId while triggerId remains reusable context");
-        assertTrue(rows.stream()
-            .filter(row -> !row.terminalCause().equals("DUPLICATE_TERMINAL"))
-            .allMatch(row -> row.commitOrder().contains("commit")
-                && row.commitOrder().contains("before")
-                && row.commitOrder().contains("send")),
-            "every fallible settlement path must commit its winner before sending");
-        assertTrue(rows.stream().allMatch(row -> !row.sendFailure().isBlank()
-            && !row.transitionFailure().isBlank()
-            && !row.exceptionRule().isBlank()
-            && !row.observableEffect().isBlank()),
-            "each terminal row must specify failure and observable lifecycle semantics");
-        InsightSettlementRow replacement = rows.stream()
-            .filter(row -> row.terminalCause().equals("REPLACED_BY_DIFFERENT_OFFER"))
-            .findFirst().orElseThrow();
-        assertTrue(replacement.owner().contains("InsightOfferStore")
-            && replacement.identityRule().contains("pending"),
-            "replacement contract must cover pending offers without a current InsightOfferScreen");
-        InsightSettlementRow cancelled = rows.stream()
-            .filter(row -> row.terminalCause().equals("ANIMATED_OPEN_CANCELLED"))
-            .findFirst().orElseThrow();
-        assertTrue(cancelled.owner().contains("PendingOpenCancellationHandler")
-            && cancelled.observableEffect().contains("250 ms"),
-            "animated-open cancellation must be an explicit pending-screen contract");
         assertTrue(lines.stream().anyMatch(line -> line.contains("offerId") && line.contains("triggerId")),
             "fixture must distinguish reusable trigger context from unique offer instance identity");
     }
@@ -586,48 +594,140 @@ class R7FoundationContractTest {
             && currentTerminal == !row.currentPriority().equals("NONE");
     }
 
+    @Test
+    void keybindingRegistrationAuditRejectsLookalikesQualifiedAndUnsupportedOverloads() {
+        assertDoesNotThrow(() -> auditKeyBindingSource("""
+            import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+            class Probe {
+                Object key = KeyBindingHelper.registerKeyBinding(new KeyBinding("key", type, code, "category"));
+            }
+            """));
+        assertDoesNotThrow(() -> auditKeyBindingSource("""
+            class Probe {
+                Object key = net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper.registerKeyBinding(
+                    new net.minecraft.client.option.KeyBinding("key", type, code, "category")
+                );
+            }
+            """));
+        assertDoesNotThrow(() -> auditKeyBindingSource("""
+            import java.util.function.UnaryOperator;
+            class Probe {
+                void install(UnaryOperator<KeyBinding> registrar) {
+                    registrar.apply(new KeyBinding("key", type, code, "category"));
+                }
+            }
+            """));
+        assertThrows(AssertionError.class, () -> auditKeyBindingSource("""
+            class Probe {
+                Object key = FakeKeyBindingHelper.registerKeyBinding(
+                    new KeyBinding("key", type, code, "category")
+                );
+            }
+            """));
+        assertThrows(AssertionError.class, () -> auditKeyBindingSource("""
+            import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+            class Probe {
+                Object KeyBindingHelper;
+                Object key = KeyBindingHelper.registerKeyBinding(
+                    new KeyBinding("key", type, code, "category")
+                );
+            }
+            """));
+        assertThrows(AssertionError.class, () -> auditKeyBindingSource("""
+            class Probe {
+                Object registrar;
+                void install() {
+                    registrar.apply(new KeyBinding("key", type, code, "category"));
+                }
+            }
+            """));
+        assertThrows(AssertionError.class, () -> auditKeyBindingSource("""
+            import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+            class Probe {
+                Object key = KeyBindingHelper.registerKeyBinding(new KeyBinding("key", code, "category"));
+            }
+            """));
+    }
+
+    private static void auditKeyBindingSource(String source) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 keybinding scanner test requires a full Java 17 JDK");
+        JavaFileObject sourceFile = new SimpleJavaFileObject(
+            java.net.URI.create("string:///Probe.java"),
+            JavaFileObject.Kind.SOURCE
+        ) {
+            @Override
+            public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+                return source;
+            }
+        };
+        JavacTask task = (JavacTask) compiler.getTask(
+            null, null, null, List.of("-proc:none"), null, List.of(sourceFile)
+        );
+        try {
+            for (CompilationUnitTree unit : task.parse()) {
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitNewClass(NewClassTree tree, Void unused) {
+                        if (isKeyBindingConstructor(tree)) {
+                            assertEquals(4, tree.getArguments().size(),
+                                "unsupported KeyBinding constructor overload: " + tree);
+                            assertRegisteredKeyBinding(getCurrentPath(), Path.of("Probe.java"), unit);
+                        }
+                        return super.visitNewClass(tree, unused);
+                    }
+                }.scan(unit, null);
+            }
+        } catch (IOException exception) {
+            throw new AssertionError("unable to parse keybinding scanner test source", exception);
+        }
+    }
+
     private static List<KeybindingSourceSite> productionKeybindingSourceSites() throws IOException {
         List<KeybindingSourceSite> result = new java.util.ArrayList<>();
-        for (Path path : productionKeybindingJavaFiles()) {
-            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-            assertNotNull(compiler, "R7 keybinding source scan requires a full Java 17 JDK");
-            DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-            try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
-                Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
-                JavacTask task = (JavacTask) compiler.getTask(
-                    null, fileManager, diagnostics, List.of("-proc:none"), null, sources
-                );
-                for (CompilationUnitTree unit : task.parse()) {
-                    Map<String, ExpressionTree> constants = collectSourceConstants(unit);
-                    new TreePathScanner<Void, Void>() {
-                        @Override
-                        public Void visitNewClass(NewClassTree tree, Void unused) {
-                            if (tree.getIdentifier().toString().equals("KeyBinding")
-                                && tree.getArguments().size() == 4) {
-                                String sourceSite = enclosingAssignmentTarget(getCurrentPath());
-                                assertRegisteredKeyBinding(getCurrentPath(), path);
-                                assertNotNull(sourceSite,
-                                    "every KeyBinding constructor needs a stable enclosing assignment target in " + path);
-                                List<String> translations = resolveTranslationKeys(tree.getArguments().get(0), constants);
-                                result.add(new KeybindingSourceSite(
-                                    CLIENT_ROOT.relativize(path).toString().replace('\\', '/'),
-                                    sourceSite,
-                                    translationContract(translations),
-                                    resolveInputType(tree.getArguments().get(1)),
-                                    resolveDefaultContract(tree.getArguments().get(2), constants),
-                                    resolveString(tree.getArguments().get(3), constants),
-                                    translations.size(),
-                                    translations
-                                ));
-                            }
-                            return super.visitNewClass(tree, unused);
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 keybinding source scan requires a full Java 17 JDK");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(
+                productionKeybindingJavaFiles()
+            );
+            JavacTask task = (JavacTask) compiler.getTask(
+                null, fileManager, diagnostics, List.of("-proc:none"), null, sources
+            );
+            for (CompilationUnitTree unit : task.parse()) {
+                Path path = Path.of(unit.getSourceFile().toUri());
+                Map<String, ExpressionTree> constants = collectSourceConstants(unit);
+                new TreePathScanner<Void, Void>() {
+                    @Override
+                    public Void visitNewClass(NewClassTree tree, Void unused) {
+                        if (isKeyBindingConstructor(tree)) {
+                            assertEquals(4, tree.getArguments().size(),
+                                "every production KeyBinding constructor overload must be explicitly modeled in "
+                                    + path + ": " + tree);
+                            String sourceSite = enclosingAssignmentTarget(getCurrentPath());
+                            assertRegisteredKeyBinding(getCurrentPath(), path, unit);
+                            assertNotNull(sourceSite,
+                                "every KeyBinding constructor needs a stable enclosing assignment target in " + path);
+                            List<String> translations = resolveTranslationKeys(tree.getArguments().get(0), constants);
+                            result.add(new KeybindingSourceSite(
+                                CLIENT_ROOT.relativize(path).toString().replace('\\', '/'),
+                                sourceSite,
+                                translationContract(translations),
+                                resolveInputType(tree.getArguments().get(1)),
+                                resolveDefaultContract(tree.getArguments().get(2), constants),
+                                resolveString(tree.getArguments().get(3), constants),
+                                translations.size(),
+                                translations
+                            ));
                         }
-                    }.scan(unit, null);
-                }
-                assertTrue(diagnostics.getDiagnostics().stream()
-                        .noneMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
-                    "unable to parse production keybinding source " + path + ": " + diagnostics.getDiagnostics());
+                        return super.visitNewClass(tree, unused);
+                    }
+                }.scan(unit, null);
             }
+            assertTrue(diagnostics.getDiagnostics().stream()
+                    .noneMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR),
+                "unable to parse production keybinding sources: " + diagnostics.getDiagnostics());
         }
         result.sort(java.util.Comparator
             .comparing(KeybindingSourceSite::sourcePath)
@@ -639,8 +739,6 @@ class R7FoundationContractTest {
         try (var files = Files.walk(CLIENT_ROOT)) {
             return files.filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().endsWith(".java"))
-                .filter(path -> java.util.regex.Pattern.compile("new\\s+KeyBinding\\s*\\(")
-                    .matcher(R7SourceScan.codeOnly(R7SourceScan.read(path))).find())
                 .sorted()
                 .toList();
         }
@@ -789,27 +887,74 @@ class R7FoundationContractTest {
         return "key.bong-client.quick_slot_{1..9}";
     }
 
-    private static void assertRegisteredKeyBinding(TreePath path, Path sourcePath) {
+    private static boolean isKeyBindingConstructor(NewClassTree tree) {
+        return Set.of("KeyBinding", "net.minecraft.client.option.KeyBinding")
+            .contains(tree.getIdentifier().toString());
+    }
+
+    private static void assertRegisteredKeyBinding(
+        TreePath path,
+        Path sourcePath,
+        CompilationUnitTree unit
+    ) {
         TreePath parent = path.getParentPath();
         assertTrue(parent != null && parent.getLeaf() instanceof MethodInvocationTree,
             "every KeyBinding constructor must be passed directly to a registration call in " + sourcePath);
         MethodInvocationTree invocation = (MethodInvocationTree) parent.getLeaf();
         assertTrue(invocation.getArguments().contains(path.getLeaf()),
             "every KeyBinding constructor must be a direct registration argument in " + sourcePath);
-        assertTrue(isRegistrationInvocation(invocation),
+        assertTrue(isRegistrationInvocation(invocation, parent, unit),
             "unregistered KeyBinding constructor in " + sourcePath + ": " + invocation.getMethodSelect());
     }
 
-    private static boolean isRegistrationInvocation(MethodInvocationTree invocation) {
+    private static boolean isRegistrationInvocation(
+        MethodInvocationTree invocation,
+        TreePath invocationPath,
+        CompilationUnitTree unit
+    ) {
         if (!(invocation.getMethodSelect() instanceof MemberSelectTree select)) {
             return false;
         }
         String method = select.getIdentifier().toString();
-        if (method.equals("apply")) {
-            return select.getExpression().toString().equals("registrar");
+        if (method.equals("apply") && select.getExpression().toString().equals("registrar")) {
+            return enclosingMethodHasRegistrarParameter(invocationPath);
         }
-        return method.equals("registerKeyBinding")
-            && select.getExpression().toString().endsWith("KeyBindingHelper");
+        if (!method.equals("registerKeyBinding")) {
+            return false;
+        }
+        String receiver = select.getExpression().toString();
+        return receiver.equals("net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper")
+            || (receiver.equals("KeyBindingHelper")
+                && !declaresIdentifier(unit, "KeyBindingHelper")
+                && unit.getImports().stream().anyMatch(importTree ->
+                !importTree.isStatic()
+                    && importTree.getQualifiedIdentifier().toString().equals(
+                        "net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper"
+                    )));
+    }
+
+    private static boolean declaresIdentifier(CompilationUnitTree unit, String name) {
+        boolean[] declared = {false};
+        new TreePathScanner<Void, Void>() {
+            @Override
+            public Void visitVariable(VariableTree variable, Void unused) {
+                declared[0] |= variable.getName().contentEquals(name);
+                return super.visitVariable(variable, unused);
+            }
+        }.scan(unit, null);
+        return declared[0];
+    }
+
+    private static boolean enclosingMethodHasRegistrarParameter(TreePath path) {
+        for (TreePath cursor = path; cursor != null; cursor = cursor.getParentPath()) {
+            if (cursor.getLeaf() instanceof com.sun.source.tree.MethodTree method) {
+                return method.getParameters().stream().anyMatch(parameter ->
+                    parameter.getName().contentEquals("registrar")
+                        && parameter.getType().toString().replaceAll("\\s+", "")
+                            .equals("UnaryOperator<KeyBinding>"));
+            }
+        }
+        return false;
     }
 
     private static String enclosingAssignmentTarget(TreePath path) {
@@ -855,6 +1000,8 @@ class R7FoundationContractTest {
             social-combat-repeat\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\ttrue\tNONE\t\tNONE\ttrue\t1000\tDEFER_SILENT\tThe same already-notified identity remains deferred without another notification.
             social-screen-first\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tDEFER_NOTIFY\tAnother screen defers the offer until currentScreen becomes null and notifies once.
             social-screen-repeat\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\ttrue\tORDINARY\tinventory\tNONE\tfalse\t1000\tDEFER_SILENT\tRepeated observation of the same blocked identity is silent.
+            social-modal-first\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tDEFER_NOTIFY\tA nonmatching modal defers the live social offer and notifies once.
+            social-modal-repeat\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\ttrue\tMODAL\ttrade-offer\tNONE\tfalse\t1000\tDEFER_SILENT\tRepeated observation behind the same nonmatching modal remains deferred without another notification.
             social-new-identity\tSOCIAL_INVITE\tinvite-new\t1001\tNONE\tfalse\tORDINARY\tinventory\tNONE\tfalse\t1000\tDEFER_NOTIFY\tA new caller-owned identity resets notification eligibility.
             social-terminal\tSOCIAL_INVITE\tinvite-live\t1001\tNONE\tfalse\tSYSTEM_TERMINAL\tdeath\tDEATH\tfalse\t1000\tDEFER_NOTIFY\tA passive social offer never displaces a system terminal.
             hotkey-open\tHOTKEY\tidentity-screen\t9223372036854775807\tNONE\tfalse\tNONE\t\tNONE\tfalse\t1000\tOPEN\tAn immediate user keypress may open when no screen blocks it.
@@ -878,6 +1025,25 @@ class R7FoundationContractTest {
             death-blocked-peer\tSYSTEM_TERMINAL\tdeath-2\t9223372036854775807\tDEATH\tfalse\tSYSTEM_TERMINAL\tdeath-1\tDEATH\tfalse\t1000\tBLOCK_DROP\tA nonmatching equal-priority terminal is not replaced.
             terminate-blocked-peer\tSYSTEM_TERMINAL\tterminate-2\t9223372036854775807\tTERMINATE\tfalse\tSYSTEM_TERMINAL\tterminate-1\tTERMINATE\tfalse\t1000\tBLOCK_DROP\tA nonmatching Terminate terminal cannot replace an equal-priority peer.
             """.strip().lines().toList();
+    }
+
+    private static List<InsightSettlementRow> expectedInsightSettlementRows() {
+        return """
+            ACCEPT	InsightDecision.chosen(triggerId, choiceId)	InsightOfferScreen	claim only the exact current offerId; triggerId remains decision context and may recur	Atomically commit ACCEPT for the current offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	A close failure leaves this offerId terminal; later paths for the same instance remain NOOP.	If send and close both fail, retain send as primary and suppress close in execution order.	Emit at most one CHOSEN decision for this offer instance; terminal state is discarded once no current or pending lifecycle can race with it.
+            DECLINE	InsightDecision.declined(triggerId)	InsightOfferScreen	claim only the exact current offerId; a later offer may reuse triggerId	Atomically commit DECLINE for the current offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	A close failure leaves this offerId terminal; later paths for the same instance remain NOOP.	If send and close both fail, retain send as primary and suppress close in execution order.	Emit at most one DECLINED decision for this offer instance without poisoning a later offer that reuses triggerId.
+            TIMEOUT	InsightDecision.timedOut(triggerId)	InsightOfferScreenBootstrap + InsightOfferScreen	pre-open bootstrap and open screen compete for one exact offerId claim	Atomically commit TIMEOUT for offerId before sending; pre-open expiry creates no screen, while an open screen then closes if still current.	A send failure is primary; the applicable close or transition is still attempted.	A close or removal failure leaves this offerId terminal and cannot authorize another send.	If send and transition both fail, retain send as primary and suppress transition in execution order.	Emit one TIMED_OUT decision for the offer instance; stale timeout of offer A cannot clear current or pending offer B.
+            ESC	InsightDecision.declined(triggerId)	InsightOfferScreen.close	claim the exact offerId owned by the closing screen	Atomically commit ESC for offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	Close or removal failure leaves this offerId terminal; onRemoved remains NOOP for settlement.	Retain the first failure and suppress later close/removal failures in execution order.	Emit at most one DECLINED decision for this offer instance.
+            REPLACED_BY_DIFFERENT_OFFER	InsightDecision.declined(triggerId)	InsightOfferStore + InsightOfferScreenBootstrap + ScreenTransitionController	compare outgoing and incoming offerId; settle an outgoing current or pending offer even when no InsightOfferScreen is current	Publish the incoming offer into a bounded pending slot; commit and send the outgoing offerId before attempting the screen switch; promote pending to current only after installation succeeds.	An outgoing send failure is primary and installation is still attempted; its offerId remains terminal.	Installation failure keeps the incoming offer non-authoritative in the pending slot for retry; it cannot strand an authoritative snapshot without a screen.	If send and installation both fail, retain send as primary and suppress installation in execution order.	Outgoing emits at most one DECLINED decision; incoming is either installed as current or remains bounded pending and reachable for retry.
+            ANIMATED_OPEN_CANCELLED	InsightDecision.declined(triggerId)	InsightOfferScreen + ScreenTransitionController.PendingOpenCancellationHandler	claim the exact offerId owned by activeTransition.handle().newScreen()	Atomically commit ANIMATED_OPEN_CANCELLED for offerId before sending the decline; then clear only matching current/pending ownership.	A send failure remains observable after the offerId is committed terminal.	Cancellation cannot leave the offer current or pending without a visible or retryable screen.	A later removal callback is NOOP for settlement and any later lifecycle failure is suppressed after the send failure.	Cancelling the 250 ms animated open emits at most one decline and leaves no invisible unsettled offer.
+            REMOVED_EXCEPTIONALLY	InsightDecision.declined(triggerId)	InsightOfferScreen.onRemoved	claim the screen's exact offerId only when no earlier cause won	Atomically commit REMOVED_EXCEPTIONALLY for offerId before sending; then continue all base removal stages.	A send failure is primary and later removal stages are still attempted.	A later removal-stage failure cannot replace the committed cause.	BongScreenBase retains the first failure and suppresses later lifecycle failures in execution order.	Exceptional removal emits at most one decline and cannot clear a different current or pending offer.
+            DUPLICATE_TERMINAL	NOOP	InsightOfferStore	an already committed offerId is immutable only while its current/pending lifecycle can still race	Observe the bounded in-flight terminal claim and return before send or transition.	No decision send is attempted.	No screen transition is attempted and no different offerId is mutated.	No new exception is produced.	No duplicate decision or transition occurs; historical offer IDs are not retained after their lifecycle becomes unreachable.
+            """.strip().lines()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new InsightSettlementRow(
+                columns[0], columns[1], columns[2], columns[3], columns[4],
+                columns[5], columns[6], columns[7], columns[8]
+            ))
+            .toList();
     }
 
     private static List<FoundationRow> expectedFoundationRows() {

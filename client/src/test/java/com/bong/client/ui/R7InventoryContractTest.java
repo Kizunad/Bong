@@ -34,10 +34,12 @@ import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7InventoryContractTest {
     private static final Path PRODUCTION_ROOT = R7SourceScan.productionRoot();
+    private static final Path PRODUCTION_INPUT_ROOT = R7SourceScan.productionInputRoot();
 
     @Test
     void screenInventoryPinsEveryDirectProductionScreenAndSuffixException() throws IOException {
@@ -158,11 +160,44 @@ class R7InventoryContractTest {
     }
 
     @Test
+    void tokenOccurrencesClassifiesStringCharacterAndEscapedLiteralStates(@TempDir Path directory)
+        throws IOException {
+        Path source = directory.resolve("Probe.java");
+        Files.writeString(source, """
+            class Probe {
+                void build() {
+                    use(Sizing.fill(100));
+                    String plain = "Sizing.fill(100)";
+                    String escaped = "\\\"Sizing.fill(100)";
+                    char quote = '\\''; // Sizing.fill(100)
+                    char marker = '§';
+                    char slash = '\\\\'; /* Sizing.fill(100) */
+                }
+            }
+            """);
+
+        List<R7SourceScan.TokenOccurrence> occurrences =
+            R7SourceScan.tokenOccurrences(directory, "Sizing.fill(100)");
+        assertEquals(5, occurrences.size(), "fixture must cover code, two strings, and two comments");
+        assertEquals(List.of(true, false, false, false, false),
+            occurrences.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
+            "literal and comment token occurrences must never be classified as executable code");
+        assertTrue(R7SourceScan.codeOnly(R7SourceScan.read(source)).contains("use(Sizing.fill(100))"),
+            "codeOnly must retain the executable occurrence");
+        assertEquals(1, java.util.regex.Pattern.compile("Sizing\\.fill\\(100\\)")
+            .matcher(R7SourceScan.codeOnly(R7SourceScan.read(source))).results().count(),
+            "codeOnly must erase string, character-adjacent, and comment occurrences including escapes");
+        assertEquals(List.of(false), R7SourceScan.tokenOccurrences(directory, "§").stream()
+            .map(R7SourceScan.TokenOccurrence::code)
+            .toList(), "a token inside a character literal must be classified as non-code");
+    }
+
+    @Test
     void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "07bc89ce87d945b64354b5fc39ab695d1c59e060c5535772ff4f76c58463ac1d",
-            R7SourceScan.sourceTreeDigest(PRODUCTION_ROOT),
-            "P0 is docs/tests/resources only; every production Java path and byte must match the frozen baseline"
+            "dbc8d6ad35718cd3d3819e92edc3c124883bcab3e6fe6cd160b112c78de736a4",
+            R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
+            "P0 is docs/tests/resources only; every shipped production path and byte must match the frozen baseline"
         );
     }
 
@@ -371,6 +406,34 @@ class R7InventoryContractTest {
             class Probe {
                 Object createAdapter() {
                     return OwoUIAdapter.create(this, Containers::verticalFlow);
+                }
+            }
+            """));
+        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return model.createAdapter(GridLayout.class, this);
+                }
+            }
+            """));
+        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return model.createAdapter(FlowLayout.class);
+                }
+            }
+            """));
+        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return OwoUIAdapter.create(this);
+                }
+            }
+            """));
+        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
+            class Probe {
+                Object createAdapter() {
+                    return OwoUIAdapter.create(this, Containers::verticalFlow, extra);
                 }
             }
             """));
