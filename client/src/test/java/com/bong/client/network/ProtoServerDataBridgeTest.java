@@ -2789,16 +2789,38 @@ class ProtoServerDataBridgeTest {
     }
 
     @Test
-    void bridgeAlchemyOutcomeResolvedStripsBucketEnumPrefix() {
+    void bridgeAlchemyOutcomeResolvedNormalizesBucketAndToxinColor() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
-                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT))
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT)
+                        .setToxinColor(Common.ColorKind.COLOR_KIND_TURBID))
                 .build();
 
         JsonObject json = bridgeAndParse(envelope);
         assertEquals("perfect", json.get("bucket").getAsString(),
                 "bucket 必须剥成 'perfect'（AlchemyProgressHudPlanner/AlchemyScreen switch），"
                 + "否则炼丹结果 HUD/试药史恒显示灰色默认'炼废'标签");
+        assertEquals("Turbid", json.get("toxin_color").getAsString(),
+                "toxin_color 必须符合 TypeBox ColorKind 的 PascalCase 字面量");
+    }
+
+    @Test
+    void bridgeAlchemyOutcomeResolvedOmitsAbsentOrUnspecifiedToxinColor() {
+        for (Envelope.AlchemyOutcomeResolved outcome : new Envelope.AlchemyOutcomeResolved[] {
+                Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_GOOD)
+                        .build(),
+                Envelope.AlchemyOutcomeResolved.newBuilder()
+                        .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_GOOD)
+                        .setToxinColor(Common.ColorKind.COLOR_KIND_UNSPECIFIED)
+                        .build()
+        }) {
+            JsonObject json = bridgeAndParse(Envelope.ServerDataEnvelope.newBuilder()
+                    .setAlchemyOutcomeResolved(outcome)
+                    .build());
+            assertFalse(json.has("toxin_color"),
+                    "absent/unspecified optional toxin_color 不得伪造成 TypeBox 非法值");
+        }
     }
 
     @Test

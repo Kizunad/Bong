@@ -4845,6 +4845,124 @@ mod tests {
     }
 
     #[test]
+    fn external_move_rejects_forged_player_source_container_and_coordinates_without_mutation() {
+        for (label, source_container_id, source_row, source_col) in [
+            ("container", "body_pocket", 0, 0),
+            ("row", "main_pack", 1, 0),
+            ("column", "main_pack", 0, 1),
+        ] {
+            let (app, player, coffin, payload_types) = run_player_to_external_move_case_with_source(
+                source_container_id,
+                source_row,
+                source_col,
+            );
+            let inventory = app
+                .world()
+                .get::<PlayerInventory>(player)
+                .expect("test player keeps inventory component");
+            assert_eq!(
+                inventory.revision,
+                InventoryRevision(0),
+                "forged player {label} source must not advance inventory revision"
+            );
+            assert!(
+                inventory.containers.iter().any(|container| {
+                    container.id == "main_pack"
+                        && container.items.iter().any(|item| {
+                            item.instance.instance_id == 7001 && item.row == 0 && item.col == 0
+                        })
+                }),
+                "forged player {label} source must keep instance 7001 at its authoritative slot"
+            );
+            let ext = app
+                .world()
+                .get::<crate::inventory::external_container::ExternalContainer>(coffin)
+                .expect("external container must remain attached after rejection");
+            assert!(
+                ext.container.items.is_empty(),
+                "forged player {label} source must not move instance 7001 into external storage"
+            );
+            assert!(payload_types.iter().any(|ty| ty == "loot_container_update"),
+                "forged player {label} source must resync external state; payloads={payload_types:?}");
+            assert!(
+                payload_types.iter().any(|ty| ty == "inventory_snapshot"),
+                "forged player {label} source must resync player state; payloads={payload_types:?}"
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_player_to_external_move_case_with_source(
+        source_container_id: &str,
+        source_row: u64,
+        source_col: u64,
+    ) -> (App, Entity, Entity, Vec<String>) {
+        use crate::inventory::external_container::{ExternalContainer, ExternalContainerRegistry};
+
+        const SESSION_ID: u64 = 77;
+        const INSTANCE_ID: u64 = 7001;
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let mut inventory = empty_inventory();
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 0,
+            instance: inventory_test_item(INSTANCE_ID, "spiritual_ore", 1),
+        });
+        let player = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory,
+                Cultivation::default(),
+                PlayerState::default(),
+            ))
+            .id();
+        let coffin = app
+            .world_mut()
+            .spawn(ExternalContainer {
+                session_id: SESSION_ID,
+                container: ContainerState {
+                    id: ExternalContainer::container_id(SESSION_ID),
+                    name: "external_test".to_string(),
+                    rows: 3,
+                    cols: 4,
+                    items: Vec::new(),
+                    owner_instance_id: None,
+                    quick_access: false,
+                },
+                opened_by: Some(player),
+                timeout_wall_secs: u64::MAX,
+                source_kind:
+                    crate::inventory::external_container::ExternalContainerKind::StorageCrate {
+                        is_herb: false,
+                    },
+            })
+            .id();
+        app.insert_resource(ExternalContainerRegistry {
+            next_session_id: SESSION_ID + 1,
+            sessions: [(SESSION_ID, coffin)].into_iter().collect(),
+        });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: player,
+                channel: ident!("bong:client_request").into(),
+                data: format!(
+                    r#"{{"type":"external_container_move","v":1,"session_id":{SESSION_ID},"instance_id":{INSTANCE_ID},"from":{{"kind":"container","container_id":"{source_container_id}","row":{source_row},"col":{source_col}}},"to":{{"kind":"container","container_id":"ext_{SESSION_ID}","row":0,"col":0}}}}"#
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+        let payload_types = collect_server_data_payload_types(&mut helper);
+        (app, player, coffin, payload_types)
+    }
+
+    #[test]
     fn non_supply_external_container_move_keeps_existing_contract_across_dimensions() {
         let (app, player, coffin, _payload_types) = run_external_container_move_case(
             Some(DimensionKind::Tsy),
