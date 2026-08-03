@@ -16,13 +16,13 @@
 - **进料**：R2 的 `SessionScopedStore`（Screen 订阅的一律是会话态 store）；`ServerDataRouter` handler（一律经 client-thread marshal 投递 UI）。
 - **出料**：Screen/HUD 展示；HUD 纪律沿用既有 memory 约束（未解锁隐藏不灰掉、沉浸式极简）。
 - **共享类型**：新 `BongScreenBase`（生命周期 + 订阅 + 关闭清理）、`DiffListWidget`（推广 craft 范本）、`BongKeybindRegistry`（注册时冲突检测 + 测试期断言）、`ClientThreadMarshal` helper、`ScreenOpenPolicy`（礼貌抢屏：战斗中/已有模态时排队）。
-- **跨仓库契约**：本轨不定义 wire；消费 R6 冻结的 `CraftOpen`/`CraftPause`/`CraftResume` 与 S2C session-state payload。Craft Screen 关闭只发送 `CraftPause`，显式取消按钮只发送 `CraftCancel`，重开后由 server state hydrate 决定是否发送 `CraftResume`。
+- **跨仓库契约**：本轨不定义 wire；消费 R6 冻结的 `CraftOpen`/`CraftPause`/`CraftResume` 与 S2C session-state payload。Craft Screen 首次进入/点击继续生产发送 `CraftOpen`，关闭只发送 `CraftPause`，显式取消按钮只发送 `CraftCancel`，重开后由 server state hydrate 决定是否发送 `CraftResume`。P2 client contract pin 覆盖四条 production intent：首次打开→`CraftOpen`、关闭→`CraftPause`、显式取消→`CraftCancel`、重开 hydrate→`CraftResume`。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：92 处 fill(100) 全量分类（根节点合法/子节点顶飞）；28 Screen 普查；冻结基类 API 与四个共享组件。
 - ⬜ P1 基础组件落地：BongScreenBase/DiffListWidget/KeybindRegistry/ClientThreadMarshal/ScreenOpenPolicy 上线；keybind 冲突全数改绑（T/L/O/U/G 簇）。
-- ⬜ P2 Screen 迁移批次 A：炼丹/锻造/手搓/交易屏迁基类，fill(100) 顶飞点与 clearChildren 回弹点随迁修复；Craft Screen 完成生产接线：close→`CraftPause`、独立取消按钮→`CraftCancel`、reopen hydrate→`CraftResume`，并以 client 单测锁住三条 intent 不互相替代。
+- ⬜ P2 Screen 迁移批次 A：炼丹/锻造/手搓/交易屏迁基类，fill(100) 顶飞点与 clearChildren 回弹点随迁修复；Craft Screen 完成生产接线：首次进入/点击继续→`CraftOpen`、close→`CraftPause`、独立取消按钮→`CraftCancel`、reopen hydrate→`CraftResume`，并以 client 单测锁住四条 intent 不互相替代。
 - ⬜ P3 InspectScreen 拆解：按 tab/section 拆组件文件（body/container/tooltip 已有雏形），行为不变。
 - ⬜ P4 Screen 迁移批次 B + 网络线程 marshal 强制（handler 层静态检查/测试）+ 删旧。
 - ⬜ P5 验收 + 吸收 plan 批量归档。
@@ -40,7 +40,7 @@ skeleton：alchemy-screen-fill100-eviction 与 alchemy-screen-fill-overflow（�
 
 ## 验收
 
-bot 测不到 client 渲染，本轨主验收 = client 单测（基类生命周期 pin、DiffListWidget 滚动保持、keybind 注册表无冲突断言、marshal 强制扫描）+ `./gradlew runClient` 人工过一遍五大屏。bot 配合：`ui_c2s_smoke`（各屏的 C2S 动作链路照常可达，防拆解断线）。
+bot 测不到 client 渲染，本轨主验收 = client 单测（基类生命周期 pin、DiffListWidget 滚动保持、keybind 注册表无冲突断言、marshal 强制扫描、CraftOpen/CraftPause/CraftCancel/CraftResume 四条 intent producer pin）+ `./gradlew runClient` 人工过一遍五大屏。bot 配合：`ui_c2s_smoke`（各屏的 C2S 动作链路照常可达，防拆解断线）。
 
 ## 开放问题（pre-P0 收口）
 

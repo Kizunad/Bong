@@ -98,7 +98,7 @@
 
 1. 9 条轨道全部归档（各自 bot 场景常绿 + 吸收 plan 全部归档/验伪结案）；
 2. 三个 2 万行级 god file（inventory/mod.rs、client_request_handler.rs、persistence/mod.rs）不复存在，最大单文件 < 3000 行；
-3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；113 C2S 变体全部有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
+3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；116 C2S 变体全部有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
 4. bot 场景数从 ~30 增至 ≥80，CI e2e 是唯一主门禁且无已知假绿。
 5. `flash-review` label 下 open issue 全部显式处置（fixed / dup / 验伪关闭 / 促升 skeleton，见 §10），无静默积压。
 
