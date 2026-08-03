@@ -32,7 +32,6 @@ source diff.
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -43,7 +42,6 @@ sys.path.insert(0, str(REPO_ROOT / "worldgen"))
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "nbt"))
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "nbt" / "decorations"))
 
-from gen_crystal import build_frost_cluster  # noqa: E402
 from nbt_builder import load_structure  # noqa: E402
 
 from scripts.terrain_gen.profiles import GLOBAL_DECORATION_PALETTE  # noqa: E402
@@ -244,10 +242,8 @@ class StructureSupportTests(unittest.TestCase):
             )
 
     def test_frost_cluster_diagonal_accents_face_up(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "frost_cluster_v3.nbt"
-            build_frost_cluster().save(str(path))
-            blocks = _block_positions(path)
+        path = DECORATIONS_ROOT / "crystal" / "frost_cluster_v3.nbt"
+        blocks = _block_positions(path)
         accents = [
             props for (x, _, z), (name, props) in blocks.items()
             if name == "amethyst_cluster" and abs(x - 2) == 1 and abs(z - 2) == 1

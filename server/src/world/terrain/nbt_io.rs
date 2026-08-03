@@ -228,6 +228,9 @@ impl StructureNbt {
 
 #[cfg(test)]
 thread_local! {
+    static OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK: std::cell::RefCell<
+        Option<Box<dyn FnOnce()>>,
+    > = std::cell::RefCell::new(None);
     static OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK: std::cell::RefCell<
         Option<Box<dyn FnOnce()>>,
     > = std::cell::RefCell::new(None);
@@ -282,6 +285,13 @@ pub(crate) fn open_regular_file_no_follow(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(test)]
+pub(crate) fn set_open_regular_file_before_open_test_hook(hook: impl FnOnce() + 'static) {
+    OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
 pub(crate) fn set_open_regular_file_after_open_test_hook(hook: impl FnOnce() + 'static) {
     OPEN_REGULAR_FILE_AFTER_OPEN_TEST_HOOK.with(|slot| {
         *slot.borrow_mut() = Some(Box::new(hook));
@@ -303,20 +313,38 @@ pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> 
 
     #[cfg(any(unix, windows))]
     let expected = std::fs::metadata(&canonical_path)?;
+    #[cfg(test)]
+    OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
     let file = open_regular_file_no_follow(path)?;
     #[cfg(target_os = "linux")]
     {
-        let actual = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-        if !actual.starts_with(trusted_root) {
-            return Err(io::Error::new(
-                ErrorKind::PermissionDenied,
-                format!(
-                    "{} resolves outside trusted root {}",
-                    path.display(),
-                    trusted_root.display()
-                ),
-            ));
+        if let Ok(actual) = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())) {
+            if !actual.starts_with(trusted_root) {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!(
+                        "{} resolves outside trusted root {}",
+                        path.display(),
+                        trusted_root.display()
+                    ),
+                ));
+            }
         }
+    }
+    let admitted_path = std::fs::canonicalize(path)?;
+    if !admitted_path.starts_with(trusted_root) {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{} resolves outside trusted root {}",
+                path.display(),
+                trusted_root.display()
+            ),
+        ));
     }
     #[cfg(unix)]
     {
@@ -711,6 +739,41 @@ mod tests {
             "ancestor escape diagnostic must identify the trust-boundary violation: {error}"
         );
 
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_under_root_rejects_target_swap_between_identity_capture_and_open() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_target_swap_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("template.nbt");
+        let replacement = root.join("replacement.nbt");
+        std::fs::write(&path, b"original").unwrap();
+        std::fs::write(&replacement, b"replacement").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+        let hook_path = path.clone();
+        let hook_replacement = replacement.clone();
+        set_open_regular_file_before_open_test_hook(move || {
+            std::fs::remove_file(&hook_path).unwrap();
+            std::fs::rename(&hook_replacement, &hook_path).unwrap();
+        });
+
+        let error = open_regular_file_under_root(&path, &trusted_root)
+            .expect_err("target identity swap during admission must fail closed");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(error
+            .to_string()
+            .contains("changed during trusted-root admission"));
         let _ = std::fs::remove_dir_all(base);
     }
 

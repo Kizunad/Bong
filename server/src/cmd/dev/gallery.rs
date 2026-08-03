@@ -928,8 +928,8 @@ mod tests {
         );
         assert_eq!(
             diagnostics.len(),
-            2,
-            "negative and upper-bound state references must both be reported: {diagnostics:?}"
+            1,
+            "invalid state references must use one bounded aggregate diagnostic: {diagnostics:?}"
         );
         assert!(
             diagnostics.iter().any(|diagnostic| {
