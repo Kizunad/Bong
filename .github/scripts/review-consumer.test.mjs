@@ -498,7 +498,7 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
   assert.deepEqual(Object.keys(value).sort(), [
     'minorFindingsRequestChanges', 'project', 'rules', 'version',
   ]);
-  assert.equal(value.version, 'project-review-policy.v2.1');
+  assert.equal(value.version, 'project-review-policy.v2');
   assert.equal(value.project, 'Kizunad/Bong');
   assert.equal(value.minorFindingsRequestChanges, false);
   assert.ok(value.rules.length >= 20 && value.rules.length <= 256);
