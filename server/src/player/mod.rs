@@ -26,7 +26,6 @@ use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::poison_trait::{DigestionLoad, PoisonToxicity};
 use crate::inventory::{attach_inventory_to_joined_clients, PlayerInventory};
 use crate::persistence::persist_player_cultivation_bundle;
-use crate::persistence::slice::ReconnectHandoffQueue;
 use crate::persistence::PersistenceSettings;
 use crate::skill::components::SkillSet;
 use crate::skill::config::{SkillConfigSchemas, SkillConfigStore};
@@ -359,7 +358,6 @@ pub(crate) fn despawn_disconnected_clients(
     // （见 player::state::save_player_lifecycle_slice）。缺省（未注册 CombatClock 的最小化
     // 测试 app）时按 0 处理。
     combat_clock: Option<Res<CombatClock>>,
-    mut reconnect_handoffs: Option<ResMut<ReconnectHandoffQueue>>,
     core_players: Query<(
         &Username,
         &PlayerState,
@@ -416,9 +414,6 @@ pub(crate) fn despawn_disconnected_clients(
             lifecycle,
         )) = core_players.get(entity)
         {
-            if let Some(queue) = reconnect_handoffs.as_deref_mut() {
-                queue.enqueue_subject(canonical_player_id(username.0.as_str()).as_str());
-            }
             let last_dimension = current_dimension
                 .map(|cd| cd.0)
                 .unwrap_or(DimensionKind::default());
