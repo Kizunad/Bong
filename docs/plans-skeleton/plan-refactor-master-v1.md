@@ -52,7 +52,7 @@
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
 - **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
-- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）。
+- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5 P1 + R6 P2 + R2 P1 后；R6 P2 先提供通用 router registration API）、R10（R3 P1 后）。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 
