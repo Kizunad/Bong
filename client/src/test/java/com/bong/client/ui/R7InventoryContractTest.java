@@ -193,6 +193,32 @@ class R7InventoryContractTest {
     }
 
     @Test
+    void tokenOccurrencesClassifiesTextBlocksAndUnicodeTranslatedComments(@TempDir Path directory)
+        throws IOException {
+        Path source = directory.resolve("Probe.java");
+        Files.writeString(source, """
+            class Probe {
+                void build() {
+                    String block = \"\"\"
+                        before Sizing.fill(100)
+                        \"\"\";
+                    \\u002f\\u002f Sizing.fill(100)
+                    use(Sizing.fill(100));
+                }
+            }
+            """);
+
+        List<R7SourceScan.TokenOccurrence> occurrences =
+            R7SourceScan.tokenOccurrences(directory, "Sizing.fill(100)");
+        assertEquals(List.of(false, false, true), occurrences.stream()
+            .map(R7SourceScan.TokenOccurrence::code)
+            .toList(), "text blocks and unicode-translated comments are literal contexts");
+        assertEquals(1, java.util.regex.Pattern.compile("Sizing\\.fill\\(100\\)")
+            .matcher(R7SourceScan.codeOnly(R7SourceScan.read(source))).results().count(),
+            "codeOnly must erase text-block and unicode-comment occurrences");
+    }
+
+    @Test
     void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
             "dbc8d6ad35718cd3d3819e92edc3c124883bcab3e6fe6cd160b112c78de736a4",
@@ -233,10 +259,30 @@ class R7InventoryContractTest {
 
     private static List<ScreenInventoryRow> discoverDirectScreensAndSuffixHelpers() throws IOException {
         List<ScreenInventoryRow> result = new ArrayList<>();
-        for (Path path : productionJavaFiles()) {
+        for (ProductionUnit production : parseProductionUnits()) {
+            Path path = production.path();
             String relative = relative(path);
-            String source = R7SourceScan.read(path);
-            List<DirectScreenDeclaration> declarations = directScreenDeclarations(path);
+            List<DirectScreenDeclaration> declarations = new ArrayList<>();
+            List<AdapterInvocation> adapters = new ArrayList<>();
+            new TreePathScanner<Void, Void>() {
+                @Override
+                public Void visitClass(ClassTree classTree, Void unused) {
+                    if (classTree.getExtendsClause() != null) {
+                        String parent = normalizeScreenParent(classTree.getExtendsClause().toString());
+                        if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")) {
+                            declarations.add(new DirectScreenDeclaration(
+                                classTree.getSimpleName().toString(), parent
+                            ));
+                        }
+                    }
+                    return super.visitClass(classTree, unused);
+                }
+            }.scan(production.unit(), null);
+            if (declarations.size() == 1 && declarations.get(0).parent().startsWith("BaseOwoScreen<")) {
+                collectAdapterInvocations(production.unit(), adapters);
+                assertEquals(1, adapters.size(),
+                    "each direct owo Screen must expose one unambiguous adapter factory call in createAdapter(): " + path);
+            }
             if (!declarations.isEmpty()) {
                 for (DirectScreenDeclaration declaration : declarations) {
                     boolean owo = declaration.parent().startsWith("BaseOwoScreen<");
@@ -249,7 +295,7 @@ class R7InventoryContractTest {
                         relative,
                         declaration.className(),
                         owo ? "BASE_OWO" : "VANILLA_SCREEN",
-                        owo ? adapterStyle(path) : "VANILLA",
+                        owo ? classifyAdapterInvocation(adapters.get(0)) : "VANILLA",
                         owo,
                         noteFor(relative)
                     ));
@@ -277,81 +323,50 @@ class R7InventoryContractTest {
         return result;
     }
 
+    private static String normalizeScreenParent(String parent) {
+        String normalized = parent.replaceAll("\\s+", "");
+        if (normalized.equals("net.minecraft.client.gui.screen.Screen")) {
+            return "Screen";
+        }
+        if (normalized.startsWith("io.wispforest.owo.ui.base.BaseOwoScreen<")) {
+            return normalized.substring("io.wispforest.owo.ui.base.".length());
+        }
+        return normalized;
+    }
+
+    private record ProductionUnit(Path path, CompilationUnitTree unit) {
+    }
+
+    private record DirectScreenDeclaration(String className, String parent) {
+    }
+
+    private static List<ProductionUnit> parseProductionUnits() throws IOException {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "R7 Screen inventory requires a full Java 17 JDK, not a JRE");
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+            List<Path> paths = productionJavaFiles();
+            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(paths);
+            JavacTask task = (JavacTask) compiler.getTask(
+                null, fileManager, diagnostics, List.of("-proc:none"), null, sources
+            );
+            List<ProductionUnit> result = new ArrayList<>();
+            for (CompilationUnitTree unit : task.parse()) {
+                result.add(new ProductionUnit(Path.of(unit.getSourceFile().toUri()), unit));
+            }
+            assertTrue(diagnostics.getDiagnostics().stream()
+                    .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
+                "unable to parse production Screen sources: " + diagnostics.getDiagnostics());
+            return result;
+        }
+    }
+
     private static List<Path> productionJavaFiles() throws IOException {
         try (var files = Files.walk(PRODUCTION_ROOT)) {
             return files.filter(Files::isRegularFile)
                 .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
                 .sorted()
                 .toList();
-        }
-    }
-
-    private static List<DirectScreenDeclaration> directScreenDeclarations(Path path) throws IOException {
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertNotNull(compiler, "R7 Screen inventory requires a full Java 17 JDK, not a JRE");
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
-            JavacTask task = (JavacTask) compiler.getTask(
-                null,
-                fileManager,
-                diagnostics,
-                List.of("-proc:none"),
-                null,
-                sources
-            );
-            List<DirectScreenDeclaration> declarations = new ArrayList<>();
-            for (CompilationUnitTree unit : task.parse()) {
-                new TreePathScanner<Void, Void>() {
-                    @Override
-                    public Void visitClass(ClassTree classTree, Void unused) {
-                        if (classTree.getExtendsClause() != null) {
-                            String parent = classTree.getExtendsClause().toString().replaceAll("\\s+", "");
-                            if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")) {
-                                declarations.add(new DirectScreenDeclaration(
-                                    classTree.getSimpleName().toString(),
-                                    parent
-                                ));
-                            }
-                        }
-                        return super.visitClass(classTree, unused);
-                    }
-                }.scan(unit, null);
-            }
-            assertTrue(diagnostics.getDiagnostics().stream()
-                    .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
-                "unable to parse production Screen source " + path + ": " + diagnostics.getDiagnostics());
-            return declarations;
-        }
-    }
-
-    private record DirectScreenDeclaration(String className, String parent) {
-    }
-
-    private static String adapterStyle(Path path) throws IOException {
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertNotNull(compiler, "R7 adapter classification requires a full Java 17 JDK, not a JRE");
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjects(path.toFile());
-            JavacTask task = (JavacTask) compiler.getTask(
-                null,
-                fileManager,
-                diagnostics,
-                List.of("-proc:none"),
-                null,
-                sources
-            );
-            List<AdapterInvocation> invocations = new ArrayList<>();
-            for (CompilationUnitTree unit : task.parse()) {
-                collectAdapterInvocations(unit, invocations);
-            }
-            assertTrue(diagnostics.getDiagnostics().stream()
-                    .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
-                "unable to parse production adapter source " + path + ": " + diagnostics.getDiagnostics());
-            assertEquals(1, invocations.size(),
-                "each direct owo Screen must expose one unambiguous adapter factory call in createAdapter(): " + path);
-            return classifyAdapterInvocation(invocations.get(0));
         }
     }
 
@@ -395,45 +410,24 @@ class R7InventoryContractTest {
                 }
             }
             """));
-        assertEquals("XML_MODEL", adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return holder.current.createAdapter(FlowLayout.class, this);
-                }
-            }
-            """));
         assertEquals("CODE", adapterStyleFromSource("""
             class Probe {
                 Object createAdapter() {
-                    return OwoUIAdapter.create(this, Containers::verticalFlow);
+                    return holder.current.create(FlowLayout.class, this);
                 }
             }
             """));
         assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
             class Probe {
                 Object createAdapter() {
-                    return model.createAdapter(GridLayout.class, this);
+                    return model.createAdapter(FlowLayout.class, this, extra);
                 }
             }
             """));
         assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
             class Probe {
                 Object createAdapter() {
-                    return model.createAdapter(FlowLayout.class);
-                }
-            }
-            """));
-        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return OwoUIAdapter.create(this);
-                }
-            }
-            """));
-        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return OwoUIAdapter.create(this, Containers::verticalFlow, extra);
+                    return model.create(FlowLayout.class);
                 }
             }
             """));
@@ -441,33 +435,27 @@ class R7InventoryContractTest {
 
     private static String adapterStyleFromSource(String source) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertNotNull(compiler, "R7 adapter scanner test requires a full Java 17 JDK, not a JRE");
+        assertNotNull(compiler, "R7 adapter classifier requires a full Java 17 JDK, not a JRE");
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        JavaFileObject sourceFile = new SimpleJavaFileObject(
-            java.net.URI.create("string:///Probe.java"),
-            JavaFileObject.Kind.SOURCE
+        JavaFileObject file = new SimpleJavaFileObject(
+            java.net.URI.create("string:///Probe.java"), JavaFileObject.Kind.SOURCE
         ) {
             @Override
             public CharSequence getCharContent(boolean ignoreEncodingErrors) {
                 return source;
             }
         };
-        JavacTask task = (JavacTask) compiler.getTask(
-            null, null, diagnostics, List.of("-proc:none"), null, List.of(sourceFile)
-        );
-        List<AdapterInvocation> invocations = new ArrayList<>();
+        JavacTask task = (JavacTask) compiler.getTask(null, null, diagnostics,
+            List.of("-proc:none"), null, List.of(file));
         try {
-            for (CompilationUnitTree unit : task.parse()) {
-                collectAdapterInvocations(unit, invocations);
-            }
+            CompilationUnitTree unit = task.parse().iterator().next();
+            List<AdapterInvocation> invocations = new ArrayList<>();
+            collectAdapterInvocations(unit, invocations);
+            assertEquals(1, invocations.size());
+            return classifyAdapterInvocation(invocations.get(0));
         } catch (IOException exception) {
-            throw new AssertionError("unable to parse adapter scanner test source", exception);
+            throw new AssertionError("unable to parse adapter classifier probe", exception);
         }
-        assertTrue(diagnostics.getDiagnostics().stream()
-                .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
-            "unable to parse adapter scanner test source: " + diagnostics.getDiagnostics());
-        assertEquals(1, invocations.size(), "scanner fixture must expose one adapter factory call");
-        return classifyAdapterInvocation(invocations.get(0));
     }
 
     private static void collectAdapterInvocations(

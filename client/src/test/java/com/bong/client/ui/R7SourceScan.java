@@ -122,11 +122,12 @@ final class R7SourceScan {
     }
 
     static String codeOnly(String source) {
-        StringBuilder result = new StringBuilder(source.length());
+        String translated = translateUnicodeEscapes(source);
+        StringBuilder result = new StringBuilder(translated.length());
         LexState state = LexState.CODE;
-        for (int index = 0; index < source.length(); index++) {
-            char current = source.charAt(index);
-            char next = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+        for (int index = 0; index < translated.length(); index++) {
+            char current = translated.charAt(index);
+            char next = index + 1 < translated.length() ? translated.charAt(index + 1) : '\0';
             switch (state) {
                 case CODE -> {
                     if (current == '/' && next == '/') {
@@ -137,6 +138,11 @@ final class R7SourceScan {
                         result.append("  ");
                         index++;
                         state = LexState.BLOCK_COMMENT;
+                    } else if (current == '"' && index + 2 < translated.length()
+                        && translated.startsWith("\"\"\"", index)) {
+                        result.append("   ");
+                        index += 2;
+                        state = LexState.TEXT_BLOCK;
                     } else if (current == '"') {
                         result.append(' ');
                         state = LexState.STRING;
@@ -172,36 +178,99 @@ final class R7SourceScan {
                         state = LexState.CODE;
                     }
                 }
+                case TEXT_BLOCK -> {
+                    if (current == '"' && index + 2 < translated.length()
+                        && translated.startsWith("\"\"\"", index)) {
+                        result.append("   ");
+                        index += 2;
+                        state = LexState.CODE;
+                    } else {
+                        result.append(current == '\n' ? '\n' : ' ');
+                    }
+                }
             }
         }
         return result.toString();
     }
 
+    private static String translateUnicodeEscapes(String source) {
+        StringBuilder translated = new StringBuilder(source.length());
+        for (int index = 0; index < source.length();) {
+            char current = source.charAt(index);
+            if (current == '\\' && index + 2 < source.length() && source.charAt(index + 1) == 'u') {
+                int cursor = index + 2;
+                while (cursor < source.length() && source.charAt(cursor) == 'u') {
+                    cursor++;
+                }
+                if (cursor + 4 <= source.length()) {
+                    String hex = source.substring(cursor, cursor + 4);
+                    try {
+                        translated.append((char) Integer.parseInt(hex, 16));
+                        index = cursor + 4;
+                        continue;
+                    } catch (NumberFormatException ignored) {
+                        // Not a unicode escape; keep the raw backslash.
+                    }
+                }
+            }
+            translated.append(current);
+            index++;
+        }
+        return translated.toString();
+    }
+
+    private static List<TokenChar> translatedCharacters(String source) {
+        List<TokenChar> characters = new ArrayList<>();
+        for (int index = 0; index < source.length();) {
+            char current = source.charAt(index);
+            if (current == '\\' && index + 2 < source.length() && source.charAt(index + 1) == 'u') {
+                int cursor = index + 2;
+                while (cursor < source.length() && source.charAt(cursor) == 'u') {
+                    cursor++;
+                }
+                if (cursor + 4 <= source.length()) {
+                    try {
+                        characters.add(new TokenChar((char) Integer.parseInt(source.substring(cursor, cursor + 4), 16), index));
+                        index = cursor + 4;
+                        continue;
+                    } catch (NumberFormatException ignored) {
+                        // Not a unicode escape; keep the raw backslash.
+                    }
+                }
+            }
+            characters.add(new TokenChar(current, index));
+            index++;
+        }
+        return characters;
+    }
+
     private static List<TokenOccurrence> tokenOccurrences(Path root, Path path, String token) {
         String source = read(path);
         String[] lines = source.split("\\R", -1);
+        List<TokenChar> characters = translatedCharacters(source);
         List<TokenOccurrence> occurrences = new ArrayList<>();
         LexState state = LexState.CODE;
         int line = 1;
         int ordinal = 0;
 
-        for (int index = 0; index < source.length();) {
-            if (source.startsWith(token, index)) {
+        for (int index = 0; index < characters.size();) {
+            if (startsWith(characters, index, token)) {
                 ordinal++;
+                int originalOffset = characters.get(index).originalOffset();
                 occurrences.add(new TokenOccurrence(
                     root.relativize(path).toString().replace('\\', '/'),
                     ordinal,
                     line,
-                    index,
+                    originalOffset,
                     state == LexState.CODE,
-                    lines[line - 1].strip()
+                    lines[Math.min(line - 1, lines.length - 1)].strip()
                 ));
                 index += token.length();
                 continue;
             }
 
-            char current = source.charAt(index);
-            char next = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+            char current = characters.get(index).value();
+            char next = index + 1 < characters.size() ? characters.get(index + 1).value() : '\0';
             switch (state) {
                 case CODE -> {
                     if (current == '/' && next == '/') {
@@ -212,6 +281,12 @@ final class R7SourceScan {
                     if (current == '/' && next == '*') {
                         state = LexState.BLOCK_COMMENT;
                         index += 2;
+                        continue;
+                    }
+                    if (current == '"' && index + 2 < characters.size()
+                        && startsWith(characters, index, "\"\"\"")) {
+                        state = LexState.TEXT_BLOCK;
+                        index += 3;
                         continue;
                     }
                     if (current == '"') {
@@ -245,6 +320,14 @@ final class R7SourceScan {
                         state = LexState.CODE;
                     }
                 }
+                case TEXT_BLOCK -> {
+                    if (current == '"' && index + 2 < characters.size()
+                        && startsWith(characters, index, "\"\"\"")) {
+                        state = LexState.CODE;
+                        index += 3;
+                        continue;
+                    }
+                }
             }
             if (current == '\n') {
                 line++;
@@ -252,6 +335,18 @@ final class R7SourceScan {
             index++;
         }
         return occurrences;
+    }
+
+    private static boolean startsWith(List<TokenChar> characters, int offset, String value) {
+        if (offset + value.length() > characters.size()) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            if (characters.get(offset + index).value() != value.charAt(index)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static List<StructuralTokenOccurrence> structuralTokenOccurrences(
@@ -356,6 +451,9 @@ final class R7SourceScan {
         }
     }
 
+    private record TokenChar(char value, int originalOffset) {
+    }
+
     private record EnclosingTree(long start, long end, String identity, String digest) {
         boolean contains(long offset) {
             return start <= offset && offset < end;
@@ -381,6 +479,7 @@ final class R7SourceScan {
         LINE_COMMENT,
         BLOCK_COMMENT,
         STRING,
-        CHARACTER
+        CHARACTER,
+        TEXT_BLOCK
     }
 }
