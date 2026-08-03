@@ -7,6 +7,8 @@ social-combat-first	SOCIAL_INVITE	invite-live	1001	NONE	false	NONE		NONE	true	10
 social-combat-repeat	SOCIAL_INVITE	invite-live	1001	NONE	true	NONE		NONE	true	1000	DEFER_SILENT	The same already-notified identity remains deferred without another notification.
 social-screen-first	SOCIAL_INVITE	invite-live	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	DEFER_NOTIFY	Another screen defers the offer until currentScreen becomes null and notifies once.
 social-screen-repeat	SOCIAL_INVITE	invite-live	1001	NONE	true	ORDINARY	inventory	NONE	false	1000	DEFER_SILENT	Repeated observation of the same blocked identity is silent.
+social-modal-first	SOCIAL_INVITE	invite-live	1001	NONE	false	MODAL	trade-offer	NONE	false	1000	DEFER_NOTIFY	A nonmatching modal defers the live social offer and notifies once.
+social-modal-repeat	SOCIAL_INVITE	invite-live	1001	NONE	true	MODAL	trade-offer	NONE	false	1000	DEFER_SILENT	Repeated observation behind the same nonmatching modal remains deferred without another notification.
 social-new-identity	SOCIAL_INVITE	invite-new	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	DEFER_NOTIFY	A new caller-owned identity resets notification eligibility.
 social-terminal	SOCIAL_INVITE	invite-live	1001	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	DEFER_NOTIFY	A passive social offer never displaces a system terminal.
 hotkey-open	HOTKEY	identity-screen	9223372036854775807	NONE	false	NONE		NONE	false	1000	OPEN	An immediate user keypress may open when no screen blocks it.

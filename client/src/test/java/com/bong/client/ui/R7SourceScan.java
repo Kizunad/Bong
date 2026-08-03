@@ -36,6 +36,10 @@ final class R7SourceScan {
         return clientRoot.resolve("src/main/java/com/bong/client");
     }
 
+    static Path productionInputRoot() {
+        return productionRoot().getParent().getParent().getParent().getParent();
+    }
+
     static Path repositoryRoot() {
         return productionRoot()
             .getParent()
@@ -70,7 +74,6 @@ final class R7SourceScan {
         }
         try (var files = Files.walk(root)) {
             for (Path path : files.filter(Files::isRegularFile)
-                .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
                 .sorted()
                 .toList()) {
                 digest.update(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
