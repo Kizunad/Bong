@@ -11,10 +11,9 @@ use std::time::Duration;
 use bong_server::{
     alchemy, audio, body_plan, botany, cmd, coffin, combat, craft, cultivation, dandao,
     death_lifecycle, economy, fauna, forge, gathering, identity, inventory, lingtian, mineral,
-<<<<<<< HEAD
-    movement, network, nourishment, npc, persistence, player, preview, qi_physics, server_readiness,
-    shader, shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin, sword_path, tools,
-    world, zhenfa,
+    movement, network, nourishment, npc, persistence, player, preview, qi_physics,
+    server_readiness, shader, shelflife, shutdown, skill, skin, social, spiritwood, supply_coffin,
+    sword_path, tools, world, zhenfa,
 };
 
 use crossbeam_channel::unbounded;
