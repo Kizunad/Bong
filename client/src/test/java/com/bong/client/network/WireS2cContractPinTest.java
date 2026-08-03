@@ -36,6 +36,7 @@ import com.sun.source.tree.WhileLoopTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
+import com.sun.source.util.TreeScanner;
 import com.sun.source.util.Trees;
 import org.junit.jupiter.api.Test;
 
@@ -48,9 +49,11 @@ import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
+import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -78,6 +81,27 @@ final class WireS2cContractPinTest {
     private static final Set<Path> SOURCE_ROOTS = Set.of(
         Path.of("src/main/java"),
         Path.of("build/generated/sources/bongBlocks/java")
+    );
+    private static final Set<Path> ATTRIBUTED_SOURCES = Set.of(
+        Path.of("src/main/java/com/bong/client/BongClient.java"),
+        Path.of("src/main/java/com/bong/client/BongNetworkHandler.java"),
+        Path.of("src/main/java/com/bong/client/daozhan/DaoZhanDisguiseHandler.java"),
+        Path.of("src/main/java/com/bong/client/dying_elder/DyingElderEncounterHandler.java"),
+        Path.of("src/main/java/com/bong/client/fauna/HallucinationLayerHandler.java"),
+        Path.of("src/main/java/com/bong/client/fauna/RatQiTierHandler.java"),
+        Path.of("src/main/java/com/bong/client/iris/IrisBootstrap.java"),
+        Path.of("src/main/java/com/bong/client/iris/ShaderStateHandler.java"),
+        Path.of("src/main/java/com/bong/client/network/AgentUiPayloadHandler.java"),
+        Path.of("src/main/java/com/bong/client/network/InventoryEventHandler.java"),
+        Path.of("src/main/java/com/bong/client/network/ProtoServerDataBridge.java"),
+        Path.of("src/main/java/com/bong/client/npc/NpcBubbleHandler.java"),
+        Path.of("src/main/java/com/bong/client/npc/NpcLodHandler.java"),
+        Path.of("src/main/java/com/bong/client/npc/NpcMetadataHandler.java"),
+        Path.of("src/main/java/com/bong/client/npc/NpcMoodHandler.java"),
+        Path.of("src/main/java/com/bong/client/spider/SpiderDisguiseHandler.java"),
+        Path.of("src/main/java/com/bong/client/tsy/TsyBossHealthHandler.java"),
+        Path.of("src/main/java/com/bong/client/tsy/TsyDeathVfxHandler.java"),
+        Path.of("src/main/java/com/bong/client/visual/particle/QiAttritionVfxPlayer.java")
     );
 
     private enum NormalizationMode {
@@ -131,6 +155,7 @@ final class WireS2cContractPinTest {
         "EVENT_KIND_",
         "EVENT_PRIORITY_",
         "EQUIP_SLOT_",
+        "EQUIP_STATE_",
         "EXPOSURE_KIND_",
         "EXTRACT_ABORTED_REASON_",
         "EXTRACT_FAILED_REASON_",
@@ -261,18 +286,55 @@ final class WireS2cContractPinTest {
         );
 
         assertEquals(
-            List.of(new NormalizationSite(
-                "slot", "EQUIP_SLOT_", NormalizationMode.SNAKE_LOWER
-            )),
+            List.of(
+                new NormalizationSite("slot", "EQUIP_SLOT_", NormalizationMode.SNAKE_LOWER),
+                new NormalizationSite("state", "EQUIP_STATE_", NormalizationMode.SNAKE_LOWER)
+            ),
             sourceModel.inventoryNormalizations(),
-            "P0 当前态只有 InventoryEventHandler.parseLocation 的嵌套 equip.slot 在 bridge 外剥前缀"
+            "P0 inventory equip location must normalize both slot and required state"
         );
 
         sourceModel.assertProductionPrefixLiteralInventory();
-        assertEquals(44, sourceModel.productionPrefixLiteralCount(),
-            "完整 production receive path 基线为 44 个 enum 前缀 literal");
-        assertEquals(59, bridgeReferences + sourceModel.inventoryNormalizations().size(),
-            "semantic normalization ledger includes reachable helper reuse, array-element normalization, and inventory exception");
+        assertEquals(45, sourceModel.productionPrefixLiteralCount(),
+            "完整 production receive path 基线为 45 个 enum 前缀 literal");
+        assertEquals(60, bridgeReferences + sourceModel.inventoryNormalizations().size(),
+            "semantic normalization ledger includes reachable helper reuse, array-element normalization, and inventory exceptions");
+    }
+
+    @Test
+    void directCallScannerRejectsConditionalEarlyExit() throws IOException {
+        assertEquals(
+            List.of("always", "nested"),
+            JavaSourceModel.directCallsInSyntheticSource("""
+                final class Wiring {
+                    static void early(boolean enabled) {
+                        if (!enabled) {
+                            return;
+                        }
+                        register();
+                    }
+
+                    static void thrown(boolean enabled) {
+                        if (!enabled) {
+                            throw new IllegalStateException();
+                        }
+                        register();
+                    }
+
+                    static void nested() {
+                        Runnable deferred = () -> { return; };
+                        register();
+                    }
+
+                    static void always() {
+                        register();
+                    }
+
+                    static void register() {}
+                }
+                """),
+            "conditional early return must make following wiring non-unconditional without treating lambda returns as method exits"
+        );
     }
 
     private static JavaSourceModel sourceModel() throws IOException {
@@ -509,6 +571,7 @@ final class WireS2cContractPinTest {
         private final Map<ExecutableElement, List<ExecutableElement>> calls = new HashMap<>();
         private final Map<ExecutableElement, List<ExecutableElement>> directCalls = new HashMap<>();
         private final Map<String, ExecutableElement> sourceMethods = new HashMap<>();
+        private final Set<ExecutableElement> sourceMethodElements = new HashSet<>();
         private final Map<ExecutableElement, List<NormalizationSite>> bridgeNormalizationsByMethod =
             new HashMap<>();
         private final Map<String, List<NormalizationSite>> bridgeNormalizationsByGetter =
@@ -519,6 +582,8 @@ final class WireS2cContractPinTest {
         private final List<NormalizationSite> inventoryNormalizations = new ArrayList<>();
         private boolean inventoryStartsWithPrefix;
         private boolean inventoryLowercasesSlot;
+        private boolean inventoryStateStartsWithPrefix;
+        private boolean inventoryLowercasesState;
         private ExecutableElement bridgeMethod;
         private ExecutableElement inventoryParseLocationMethod;
 
@@ -526,6 +591,49 @@ final class WireS2cContractPinTest {
             this.clientRoot = clientRoot;
             this.sourceRoots = sourceRoots;
             this.trees = trees;
+        }
+
+        static List<String> directCallsInSyntheticSource(String source) throws IOException {
+            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+            JavaFileObject sourceFile = new SimpleJavaFileObject(
+                URI.create("string:///Wiring.java"),
+                JavaFileObject.Kind.SOURCE
+            ) {
+                @Override
+                public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+                    return source;
+                }
+            };
+            JavacTask task = (JavacTask) compiler.getTask(
+                null,
+                null,
+                null,
+                List.of("-proc:none", "--release", "17"),
+                null,
+                List.of(sourceFile)
+            );
+            List<CompilationUnitTree> units = new ArrayList<>();
+            task.parse().forEach(units::add);
+            List<String> callers = new ArrayList<>();
+            for (CompilationUnitTree unit : units) {
+                new TreePathScanner<Void, String>() {
+                    @Override
+                    public Void visitMethod(MethodTree node, String ignored) {
+                        return super.visitMethod(node, node.getName().toString());
+                    }
+
+                    @Override
+                    public Void visitMethodInvocation(MethodInvocationTree node, String caller) {
+                        if (node.getMethodSelect().toString().equals("register")
+                            && isDirectExpressionStatement(getCurrentPath())) {
+                            callers.add(caller);
+                        }
+                        return super.visitMethodInvocation(node, caller);
+                    }
+                }.scan(unit, null);
+            }
+            callers.sort(String::compareTo);
+            return List.copyOf(callers);
         }
 
         static JavaSourceModel parse(Path clientRoot) throws IOException {
@@ -548,12 +656,18 @@ final class WireS2cContractPinTest {
             }
             sourceFiles.sort(Comparator.naturalOrder());
             assertGeneratedSourceContract(sourceRoots, sourceFiles);
+            List<Path> attributedSources = ATTRIBUTED_SOURCES.stream()
+                .map(clientRoot::resolve)
+                .sorted()
+                .toList();
+            assertTrue(attributedSources.stream().allMatch(Files::isRegularFile),
+                "R6 attributed ownership source set must remain present");
 
             DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
             try (StandardJavaFileManager fileManager =
                      compiler.getStandardFileManager(diagnostics, null, null)) {
                 Iterable<? extends JavaFileObject> javaFiles =
-                    fileManager.getJavaFileObjectsFromPaths(sourceFiles);
+                    fileManager.getJavaFileObjectsFromPaths(attributedSources);
                 List<String> options = List.of(
                     "-proc:none",
                     "--release", "17",
@@ -577,6 +691,10 @@ final class WireS2cContractPinTest {
                 JavaSourceModel model = new JavaSourceModel(clientRoot, sourceRoots, Trees.instance(task));
                 for (CompilationUnitTree unit : units) {
                     model.scan(unit);
+                }
+
+                for (Path sourceFile : sourceFiles) {
+                    model.scanPrefixLiterals(sourceFile);
                 }
                 assertEquals(List.of(), model.forbiddenReferences,
                     "registerGlobalReceiver method references are dynamic registration forms; R6 fails closed");
@@ -637,6 +755,7 @@ final class WireS2cContractPinTest {
                 .map(NormalizationSite::prefix)
                 .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
             expected.add("EQUIP_SLOT_");
+            expected.add("EQUIP_STATE_");
             assertEquals(expected, new TreeSet<>(prefixLiteralsByValue.keySet()),
                 "production enum-prefix literals must match the frozen R6 ledger");
 
@@ -654,12 +773,14 @@ final class WireS2cContractPinTest {
             assertEquals(List.of(), escaped,
                 "enum-prefix literals may only occur in ProtoServerDataBridge or the pinned inventory exception");
 
-            List<PrefixLiteralSite> inventorySites =
-                prefixLiteralsByValue.getOrDefault("EQUIP_SLOT_", List.of());
-            assertEquals(1, inventorySites.size(),
-                "InventoryEventHandler must retain exactly one EQUIP_SLOT_ literal declaration");
-            assertEquals(inventoryPath, inventorySites.get(0).relativePath(),
-                "EQUIP_SLOT_ may only occur in InventoryEventHandler");
+            for (String prefix : List.of("EQUIP_SLOT_", "EQUIP_STATE_")) {
+                List<PrefixLiteralSite> inventorySites =
+                    prefixLiteralsByValue.getOrDefault(prefix, List.of());
+                assertEquals(1, inventorySites.size(),
+                    "InventoryEventHandler must retain exactly one " + prefix + " literal declaration");
+                assertEquals(inventoryPath, inventorySites.get(0).relativePath(),
+                    prefix + " may only occur in InventoryEventHandler");
+            }
         }
 
         List<NormalizationSite> inventoryNormalizations() {
@@ -669,6 +790,10 @@ final class WireS2cContractPinTest {
                 "InventoryEventHandler.parseLocation 必须先以 EQUIP_SLOT_ 做 startsWith gate");
             assertTrue(inventoryLowercasesSlot,
                 "InventoryEventHandler.parseLocation 必须把 EQUIP_SLOT_* 后缀转为 ROOT lowercase");
+            assertTrue(inventoryStateStartsWithPrefix,
+                "InventoryEventHandler.parseLocation 必须先以 EQUIP_STATE_ 做 startsWith gate");
+            assertTrue(inventoryLowercasesState,
+                "InventoryEventHandler.parseLocation 必须把 EQUIP_STATE_* 后缀转为 ROOT lowercase");
             return List.copyOf(inventoryNormalizations);
         }
 
@@ -708,6 +833,7 @@ final class WireS2cContractPinTest {
                         ? executable : null;
                     if (method != null) {
                         sourceMethods.put(methodKey(method), method);
+                        sourceMethodElements.add(method);
                         String key = methodKey(method);
                         if (key.equals(
                             "com.bong.client.network.ProtoServerDataBridge#bridge/1"
@@ -769,19 +895,6 @@ final class WireS2cContractPinTest {
                 }
 
                 @Override
-                public Void visitLiteral(LiteralTree node, ExecutableElement enclosingMethod) {
-                    if (node.getValue() instanceof String value && ENUM_PREFIXES.contains(value)) {
-                        prefixLiteralsByValue
-                            .computeIfAbsent(value, ignored -> new ArrayList<>())
-                            .add(new PrefixLiteralSite(relativePath(unit), line(unit, node)));
-                    } else if (node.getValue() instanceof String value
-                        && value.matches("[A-Z][A-Z0-9_]*_")) {
-                        fail("unregistered enum-prefix literal at " + site(unit, node) + ": " + value);
-                    }
-                    return super.visitLiteral(node, enclosingMethod);
-                }
-
-                @Override
                 public Void visitMemberReference(
                     MemberReferenceTree node,
                     ExecutableElement enclosingMethod
@@ -796,6 +909,112 @@ final class WireS2cContractPinTest {
                     return super.visitMemberReference(node, enclosingMethod);
                 }
             }.scan(unit, null);
+        }
+
+        private void scanPrefixLiterals(Path sourceFile) throws IOException {
+            String source = Files.readString(sourceFile);
+            int index = 0;
+            long line = 1;
+            while (index < source.length()) {
+                char current = source.charAt(index);
+                if (current == '\n') {
+                    line++;
+                    index++;
+                    continue;
+                }
+                if (current == '/' && index + 1 < source.length()) {
+                    char next = source.charAt(index + 1);
+                    if (next == '/') {
+                        index += 2;
+                        while (index < source.length() && source.charAt(index) != '\n') {
+                            index++;
+                        }
+                        continue;
+                    }
+                    if (next == '*') {
+                        index += 2;
+                        while (index + 1 < source.length()
+                            && !(source.charAt(index) == '*' && source.charAt(index + 1) == '/')) {
+                            if (source.charAt(index) == '\n') {
+                                line++;
+                            }
+                            index++;
+                        }
+                        index = Math.min(source.length(), index + 2);
+                        continue;
+                    }
+                }
+                if (current == '\'') {
+                    index = skipJavaCharacterLiteral(source, index);
+                    continue;
+                }
+                if (current != '"') {
+                    index++;
+                    continue;
+                }
+                if (source.startsWith("\"\"\"", index)) {
+                    index += 3;
+                    while (index + 2 < source.length() && !source.startsWith("\"\"\"", index)) {
+                        if (source.charAt(index) == '\n') {
+                            line++;
+                        }
+                        index++;
+                    }
+                    index = Math.min(source.length(), index + 3);
+                    continue;
+                }
+
+                long literalLine = line;
+                StringBuilder value = new StringBuilder();
+                index++;
+                while (index < source.length()) {
+                    char character = source.charAt(index++);
+                    if (character == '"') {
+                        break;
+                    }
+                    if (character == '\\' && index < source.length()) {
+                        char escaped = source.charAt(index++);
+                        value.append(switch (escaped) {
+                            case 'b' -> '\b';
+                            case 't' -> '\t';
+                            case 'n' -> '\n';
+                            case 'f' -> '\f';
+                            case 'r' -> '\r';
+                            case '"' -> '"';
+                            case '\'' -> '\'';
+                            case '\\' -> '\\';
+                            default -> escaped;
+                        });
+                        continue;
+                    }
+                    if (character == '\n') {
+                        line++;
+                    }
+                    value.append(character);
+                }
+                String literal = value.toString();
+                PrefixLiteralSite site = new PrefixLiteralSite(relativePath(sourceFile), literalLine);
+                if (ENUM_PREFIXES.contains(literal)) {
+                    prefixLiteralsByValue
+                        .computeIfAbsent(literal, unused -> new ArrayList<>())
+                        .add(site);
+                } else if (literal.matches("[A-Z][A-Z0-9_]*_")) {
+                    fail("unregistered enum-prefix literal at " + site + ": " + literal);
+                }
+            }
+        }
+
+        private int skipJavaCharacterLiteral(String source, int index) {
+            index++;
+            while (index < source.length()) {
+                char character = source.charAt(index++);
+                if (character == '\\' && index < source.length()) {
+                    index++;
+                } else if (character == '\'') {
+                    break;
+                }
+            }
+            return index;
         }
 
 
@@ -965,7 +1184,16 @@ final class WireS2cContractPinTest {
                 ? called.getSimpleName().toString()
                 : "";
             TreePath invocationPath = getPath(unit, node);
-            if (!isSlotNameReceiver(invocationPath)) {
+            String variableName = receiverVariableName(invocationPath);
+            String field;
+            String expectedPrefix;
+            if ("slotName".equals(variableName)) {
+                field = "slot";
+                expectedPrefix = "EQUIP_SLOT_";
+            } else if ("stateName".equals(variableName)) {
+                field = "state";
+                expectedPrefix = "EQUIP_STATE_";
+            } else {
                 return;
             }
             if (helper.equals("startsWith") && node.getArguments().size() == 1) {
@@ -973,8 +1201,12 @@ final class WireS2cContractPinTest {
                     new TreePath(invocationPath, node.getArguments().get(0)),
                     new HashSet<>()
                 );
-                if ("EQUIP_SLOT_".equals(prefix)) {
-                    inventoryStartsWithPrefix = true;
+                if (expectedPrefix.equals(prefix)) {
+                    if (field.equals("slot")) {
+                        inventoryStartsWithPrefix = true;
+                    } else {
+                        inventoryStateStartsWithPrefix = true;
+                    }
                 }
             }
             if (helper.equals("substring") && node.getArguments().size() == 1) {
@@ -987,49 +1219,61 @@ final class WireS2cContractPinTest {
                         new TreePath(lengthPath, lengthSelect.getExpression()),
                         new HashSet<>()
                     );
-                    if ("EQUIP_SLOT_".equals(prefix) && isInsideEquipPrefixGuard(invocationPath)) {
+                    if (expectedPrefix.equals(prefix)
+                        && isInsideEquipPrefixGuard(invocationPath, variableName, expectedPrefix)) {
                         inventoryNormalizations.add(new NormalizationSite(
-                            "slot", prefix, NormalizationMode.SNAKE_LOWER
+                            field, prefix, NormalizationMode.SNAKE_LOWER
                         ));
                     }
                 }
             }
             if (helper.equals("toLowerCase") && node.getArguments().size() == 1
                 && node.getArguments().get(0).toString().equals("java.util.Locale.ROOT")
-                && isInsideEquipPrefixGuard(invocationPath)) {
-                inventoryLowercasesSlot = true;
+                && isInsideEquipPrefixGuard(invocationPath, variableName, expectedPrefix)) {
+                if (field.equals("slot")) {
+                    inventoryLowercasesSlot = true;
+                } else {
+                    inventoryLowercasesState = true;
+                }
             }
         }
 
-        private boolean isSlotNameReceiver(TreePath invocationPath) {
+        private String receiverVariableName(TreePath invocationPath) {
             Tree leaf = invocationPath.getLeaf();
             if (!(leaf instanceof MethodInvocationTree invocation)
                 || !(invocation.getMethodSelect() instanceof MemberSelectTree select)) {
-                return false;
+                return null;
             }
-            return isRootedInSlotName(new TreePath(invocationPath, select.getExpression()));
+            return rootedVariableName(new TreePath(invocationPath, select.getExpression()));
         }
 
-        private boolean isRootedInSlotName(TreePath expressionPath) {
+        private String rootedVariableName(TreePath expressionPath) {
             Element receiver = trees.getElement(expressionPath);
-            if (receiver instanceof VariableElement variable
-                && variable.getSimpleName().contentEquals("slotName")) {
-                return true;
+            if (receiver instanceof VariableElement variable) {
+                String name = variable.getSimpleName().toString();
+                if (name.equals("slotName") || name.equals("stateName")) {
+                    return name;
+                }
             }
             if (expressionPath.getLeaf() instanceof MethodInvocationTree invocation
                 && invocation.getMethodSelect() instanceof MemberSelectTree select) {
-                return isRootedInSlotName(new TreePath(expressionPath, select.getExpression()));
+                return rootedVariableName(new TreePath(expressionPath, select.getExpression()));
             }
-            return false;
+            return null;
         }
 
-        private boolean isInsideEquipPrefixGuard(TreePath invocationPath) {
+        private boolean isInsideEquipPrefixGuard(
+            TreePath invocationPath,
+            String variableName,
+            String expectedPrefix
+        ) {
             for (TreePath current = invocationPath.getParentPath(); current != null; current = current.getParentPath()) {
                 if (!(current.getLeaf() instanceof IfTree conditional)) {
                     continue;
                 }
                 String condition = conditional.getCondition().toString();
-                if (condition.contains("slotName.startsWith") && condition.contains("EQUIP_SLOT_")) {
+                if (condition.contains(variableName + ".startsWith")
+                    && condition.contains(expectedPrefix)) {
                     return true;
                 }
             }
@@ -1079,7 +1323,7 @@ final class WireS2cContractPinTest {
             return path;
         }
 
-        private boolean isDirectExpressionStatement(TreePath invocationPath) {
+        private static boolean isDirectExpressionStatement(TreePath invocationPath) {
             TreePath current = invocationPath.getParentPath();
             while (current != null && current.getLeaf() instanceof ParenthesizedTree) {
                 current = current.getParentPath();
@@ -1096,7 +1340,7 @@ final class WireS2cContractPinTest {
                 return false;
             }
             for (Tree statement : block.getStatements().subList(0, statementIndex)) {
-                if (statement instanceof ReturnTree || statement instanceof ThrowTree) {
+                if (mayCompleteAbruptly(statement)) {
                     return false;
                 }
             }
@@ -1122,6 +1366,35 @@ final class WireS2cContractPinTest {
                 }
             }
             return false;
+        }
+
+        private static boolean mayCompleteAbruptly(Tree statement) {
+            return Boolean.TRUE.equals(new TreeScanner<Boolean, Void>() {
+                @Override
+                public Boolean reduce(Boolean left, Boolean right) {
+                    return Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right);
+                }
+
+                @Override
+                public Boolean visitReturn(ReturnTree node, Void ignored) {
+                    return true;
+                }
+
+                @Override
+                public Boolean visitThrow(ThrowTree node, Void ignored) {
+                    return true;
+                }
+
+                @Override
+                public Boolean visitClass(ClassTree node, Void ignored) {
+                    return false;
+                }
+
+                @Override
+                public Boolean visitLambdaExpression(LambdaExpressionTree node, Void ignored) {
+                    return false;
+                }
+            }.scan(statement, null));
         }
 
         private String resolveIdentifier(TreePath path, Set<Element> resolving) {
@@ -1231,7 +1504,7 @@ final class WireS2cContractPinTest {
                     continue;
                 }
                 for (ExecutableElement called : graph.getOrDefault(method, List.of())) {
-                    if (sourceMethods.containsValue(called)) {
+                    if (sourceMethodElements.contains(called)) {
                         pending.addLast(called);
                     }
                 }
@@ -1291,6 +1564,16 @@ final class WireS2cContractPinTest {
                 "generated main Java root 只能包含冻结的 BongBlockIds；新增 production source 必须纳入 R6 审计");
         }
 
+        private Path relativePath(Path sourcePath) {
+            sourcePath = sourcePath.normalize();
+            for (Path sourceRoot : sourceRoots) {
+                if (sourcePath.startsWith(sourceRoot)) {
+                    return sourceRoot.relativize(sourcePath);
+                }
+            }
+            throw new AssertionError("source file escaped production roots: " + sourcePath);
+        }
+
         private Path relativePath(CompilationUnitTree unit) {
             Path sourcePath = Path.of(unit.getSourceFile().toUri()).normalize();
             for (Path sourceRoot : sourceRoots) {
@@ -1302,7 +1585,11 @@ final class WireS2cContractPinTest {
         }
 
         private long line(CompilationUnitTree unit, Tree tree) {
-            long position = trees.getSourcePositions().getStartPosition(unit, tree);
+            return line(trees, unit, tree);
+        }
+
+        private long line(Trees sourceTrees, CompilationUnitTree unit, Tree tree) {
+            long position = sourceTrees.getSourcePositions().getStartPosition(unit, tree);
             return unit.getLineMap().getLineNumber(position);
         }
 

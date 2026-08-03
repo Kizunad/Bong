@@ -249,7 +249,7 @@ public class InventoryEventHandlerTest {
         ServerDataDispatch dispatch = new InventoryEventHandler().handle(parseEnvelope("""
             {"v":1,"type":"inventory_event","kind":"moved","revision":6,"instance_id":1005,
              "from":{"kind":"container","container_id":"main_pack","row":0,"col":0},
-             "to":{"kind":"equip","slot":"chest"}}
+             "to":{"kind":"equip","slot":"chest","state":"worn"}}
             """));
 
         assertTrue(dispatch.handled(), dispatch.logMessage());
@@ -632,6 +632,74 @@ public class InventoryEventHandlerTest {
                 "armor_bone_chestplate",
                 InventoryStateStore.snapshot().equipped().get(expectedSlot).itemId(),
                 "instance 1005 应落进 " + expectedSlot + " 装备槽（EquipSlot 全名前缀被正确剥离归一化）"
+        );
+    }
+
+    @ParameterizedTest(name = "invalid equip state: {0}")
+    @MethodSource("invalidEquipStates")
+    void movedToEquipThroughRealProtoWireRejectsMissingOrMismatchedState(
+            String label,
+            Envelope.EquipSlot wireSlot,
+            Envelope.EquipState wireState,
+            boolean omitState
+    ) {
+        InventoryModel baseline = InventoryModel.builder()
+                .containers(InventoryModel.DEFAULT_CONTAINERS)
+                .gridItem(
+                        InventoryItem.createFull(
+                                1005L,
+                                "armor_bone_chestplate",
+                                "骨甲胸甲",
+                                1, 1, 1.4,
+                                "common",
+                                "fixture",
+                                1, 0.8, 1.0
+                        ),
+                        InventoryModel.PRIMARY_CONTAINER_ID,
+                        0, 0
+                )
+                .build();
+        InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
+
+        Envelope.InventoryLocationEquip.Builder equip = Envelope.InventoryLocationEquip.newBuilder()
+                .setSlot(wireSlot);
+        if (!omitState) {
+            equip.setState(wireState);
+        }
+        Envelope.InventoryEventMoved moved = Envelope.InventoryEventMoved.newBuilder()
+                .setRevision(6)
+                .setInstanceId(1005)
+                .setFrom(Envelope.InventoryLocation.newBuilder()
+                        .setContainer(Envelope.InventoryLocationContainer.newBuilder()
+                                .setContainerId("main_pack")
+                                .setRow(0)
+                                .setCol(0)))
+                .setTo(Envelope.InventoryLocation.newBuilder().setEquip(equip))
+                .build();
+
+        ServerDataDispatch dispatch = dispatchThroughRealProtoWire(
+                Envelope.InventoryEvent.newBuilder().setMoved(moved));
+
+        assertFalse(dispatch.handled(), label + " must be rejected at the wire boundary");
+        assertEquals(5L, InventoryStateStore.revision(),
+                label + " must not advance the authoritative revision");
+        assertEquals("armor_bone_chestplate",
+                InventoryStateStore.snapshot().gridItems().get(0).item().itemId(),
+                label + " must not remove the source item");
+        assertTrue(InventoryStateStore.snapshot().equipped().isEmpty(),
+                label + " must not mutate equipment slots");
+    }
+
+    private static java.util.stream.Stream<Arguments> invalidEquipStates() {
+        return java.util.stream.Stream.of(
+                Arguments.of("omitted/default state", Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        Envelope.EquipState.EQUIP_STATE_UNSPECIFIED, true),
+                Arguments.of("explicit unspecified state", Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        Envelope.EquipState.EQUIP_STATE_UNSPECIFIED, false),
+                Arguments.of("armor slot marked held", Envelope.EquipSlot.EQUIP_SLOT_CHEST,
+                        Envelope.EquipState.EQUIP_STATE_HELD, false),
+                Arguments.of("hand slot marked worn", Envelope.EquipSlot.EQUIP_SLOT_MAIN_HAND,
+                        Envelope.EquipState.EQUIP_STATE_WORN, false)
         );
     }
 

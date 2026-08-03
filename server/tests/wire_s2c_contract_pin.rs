@@ -1042,8 +1042,8 @@ fn production_registration_roots_stay_connected() {
     let register =
         function_token_slice(&network, "register").expect("network::register must remain present");
     assert!(
-        contains_token_path(register, "register_app_wiring"),
-        "network::register must call register_app_wiring"
+        contains_unconditional_call(register, "register_app_wiring"),
+        "network::register must unconditionally call register_app_wiring"
     );
 }
 
@@ -1052,8 +1052,14 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
     let root = repository_root();
     let mut class_counts = BTreeMap::new();
 
+    let mut source_cache: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut registration_cache: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut checked_registration_roots = BTreeSet::new();
+
     for pin in REPLAY_PINS {
-        let source = production_tokens_from_file(&root, pin.source);
+        let source = source_cache.entry(pin.source).or_insert_with(|| {
+            production_tokens_from_file(&root, pin.source)
+        });
         let function = function_token_slice(&source, pin.symbol).unwrap_or_else(|| {
             panic!(
                 "{:?} replay producer `{}` disappeared from {}; update the authoritative R6 replay contract",
@@ -1070,7 +1076,9 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
             );
         }
 
-        let registration = production_tokens_from_file(&root, pin.registration_source);
+        let registration = registration_cache
+            .entry(pin.registration_source)
+            .or_insert_with(|| production_tokens_from_file(&root, pin.registration_source));
         let registration_function =
             function_token_slice(&registration, pin.registration_function).unwrap_or_else(|| {
                 panic!(
@@ -1080,15 +1088,33 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
             });
         assert!(
             add_systems_registers_callee(registration_function, pin.registered_callee),
-            "{:?} replay producer `{}` is not a callee inside app.add_systems(...) in {}::{} (expected `{}`)",
+            "{:?} replay producer `{}` is not an unconditional callee inside app.add_systems(...) in {}::{} (expected `{}`)",
             pin.class,
             pin.symbol,
             pin.registration_source,
             pin.registration_function,
             pin.registered_callee
         );
+        if checked_registration_roots
+            .insert((pin.registration_source, pin.registration_function))
+        {
+            assert_replay_registration_reachable(&root, pin);
+        }
         *class_counts.entry(pin.class).or_insert(0usize) += 1;
     }
+
+    let zone_registration = registration_cache
+        .get("server/src/network/mod.rs")
+        .and_then(|tokens| function_token_slice(tokens, "register_app_wiring"))
+        .expect("network::register_app_wiring must remain present");
+    assert!(
+        add_systems_orders_callee_after(
+            zone_registration,
+            "zone_environment_bridge::zone_environment_broadcast_system",
+            "zone_environment_bridge::mark_zone_environment_dirty_for_new_clients",
+        ),
+        "zone environment broadcast must remain ordered after new-client dirty marking"
+    );
 
     assert_eq!(
         class_counts,
@@ -1139,6 +1165,83 @@ fn server_data_helper_is_server_data(root: &Path) -> bool {
     is_server_data_channel(argument, &constants, &bindings)
 }
 
+fn assert_replay_registration_reachable(root: &Path, pin: &ReplayPin) {
+    let edges: &[(&str, &str, &str)] = match pin.registration_source {
+        "server/src/network/mod.rs" => &[
+            ("server/src/main.rs", "build_server_app", "network::register"),
+            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+        ],
+        "server/src/network/daozhan_disguise_emit.rs" => &[
+            ("server/src/main.rs", "build_server_app", "network::register"),
+            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/network/mod.rs",
+                "register_app_wiring",
+                "daozhan_disguise_emit::register",
+            ),
+        ],
+        "server/src/network/spider_disguise_emit.rs" => &[
+            ("server/src/main.rs", "build_server_app", "network::register"),
+            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/network/mod.rs",
+                "register_app_wiring",
+                "spider_disguise_emit::register",
+            ),
+        ],
+        "server/src/network/rat_qi_tier_emit.rs" => &[
+            ("server/src/main.rs", "build_server_app", "network::register"),
+            ("server/src/network/mod.rs", "register", "register_app_wiring"),
+            (
+                "server/src/network/mod.rs",
+                "register_app_wiring",
+                "rat_qi_tier_emit::register",
+            ),
+        ],
+        "server/src/coffin/mod.rs" => {
+            &[("server/src/main.rs", "build_server_app", "coffin::register")]
+        }
+        "server/src/combat/mod.rs" => {
+            &[("server/src/main.rs", "build_server_app", "combat::register")]
+        }
+        "server/src/cultivation/mod.rs" => &[(
+            "server/src/main.rs",
+            "build_server_app",
+            "cultivation::register",
+        )],
+        "server/src/social/mod.rs" => {
+            &[("server/src/main.rs", "build_server_app", "social::register")]
+        }
+        "server/src/audio/ambient.rs" => &[
+            ("server/src/main.rs", "build_server_app", "audio::register"),
+            ("server/src/audio/mod.rs", "register", "ambient::register"),
+        ],
+        "server/src/world/spawn_tutorial.rs" => &[
+            ("server/src/main.rs", "build_server_app", "world::register"),
+            (
+                "server/src/world/mod.rs",
+                "register",
+                "spawn_tutorial::register",
+            ),
+        ],
+        source => panic!(
+            "replay registration root for {source}::{} is not classified",
+            pin.registration_function
+        ),
+    };
+
+    for (source, function_name, callee) in edges {
+        let tokens = production_tokens_from_file(root, source);
+        let function = function_token_slice(&tokens, function_name).unwrap_or_else(|| {
+            panic!("production registration function {source}::{function_name} disappeared")
+        });
+        assert!(
+            contains_unconditional_call(function, callee),
+            "production replay registration edge {source}::{function_name} -> {callee} must remain unconditional"
+        );
+    }
+}
+
 fn production_tokens_from_file(root: &Path, relative: &str) -> Vec<String> {
     let source = fs::read_to_string(root.join(relative))
         .unwrap_or_else(|error| panic!("read {relative}: {error}"));
@@ -1158,69 +1261,99 @@ fn function_token_slice<'a>(tokens: &'a [String], symbol: &str) -> Option<&'a [S
 }
 
 fn add_systems_registers_callee(function: &[String], callee: &str) -> bool {
-    let expected = path_tokens(callee);
-    let mut index = 0usize;
-    while index + 3 < function.len() {
-        if function[index] == "."
-            && function[index + 1] == "add_systems"
-            && function[index + 2] == "("
+    unconditional_add_systems_arguments(function).any(|arguments| {
+        registered_system_expression_contains(arguments, &path_tokens(callee))
+    })
+}
+
+fn add_systems_orders_callee_after(
+    function: &[String],
+    callee: &str,
+    dependency: &str,
+) -> bool {
+    let mut expected = path_tokens(callee);
+    expected.extend([".".to_string(), "after".to_string(), "(".to_string()]);
+    expected.extend(path_tokens(dependency));
+    expected.push(")".to_string());
+    unconditional_add_systems_arguments(function)
+        .any(|arguments| arguments.windows(expected.len()).any(|window| window == expected))
+}
+
+fn unconditional_add_systems_arguments(
+    function: &[String],
+) -> impl Iterator<Item = &[String]> {
+    let body_start = function.iter().position(|token| token == "{").unwrap_or(0);
+    let depths = delimiter_depths(function, body_start);
+    (body_start + 1..function.len()).filter_map(move |index| {
+        if function.get(index) != Some(&".".to_string())
+            || function.get(index + 1) != Some(&"add_systems".to_string())
+            || function.get(index + 2) != Some(&"(".to_string())
+            || depths.get(index).copied() != Some((0, 0, 0))
+            || prefix_may_exit(&function[body_start + 1..index])
         {
-            let Some(close) = matching_delimiter(function, index + 2, "(", ")") else {
-                return false;
-            };
-            let arguments = &function[index + 3..close];
-            let mut depth = 0usize;
-            let mut argument_start = 0usize;
-            for cursor in 0..=arguments.len() {
-                let at_boundary =
-                    cursor == arguments.len() || (depth == 0 && arguments[cursor] == ",");
-                if at_boundary {
-                    let argument = &arguments[argument_start..cursor];
-                    if argument
-                        .windows(expected.len())
-                        .enumerate()
-                        .any(|(offset, window)| {
-                            if window != expected {
-                                return false;
-                            }
-                            let preceded_by_delimiter =
-                                offset == 0 || matches!(argument[offset - 1].as_str(), "(" | ",");
-                            let modifier_argument = offset > 1
-                                && matches!(argument[offset - 2].as_str(), "after" | "before");
-                            preceded_by_delimiter && !modifier_argument
-                        })
-                    {
-                        return true;
-                    }
-                    argument_start = cursor + 1;
-                    continue;
-                }
-                match arguments[cursor].as_str() {
-                    "(" | "[" | "{" => depth += 1,
-                    ")" | "]" | "}" => depth = depth.saturating_sub(1),
-                    _ => {}
-                }
-            }
-            index = close;
+            return None;
         }
-        index += 1;
+        let close = matching_delimiter(function, index + 2, "(", ")")?;
+        Some(&function[index + 3..close])
+    })
+}
+
+fn registered_system_expression_contains(arguments: &[String], expected: &[String]) -> bool {
+    let mut depth = 0usize;
+    let mut argument_start = 0usize;
+    for cursor in 0..=arguments.len() {
+        let at_boundary = cursor == arguments.len()
+            || (depth == 0 && arguments.get(cursor).is_some_and(|token| token == ","));
+        if at_boundary {
+            let argument = &arguments[argument_start..cursor];
+            if argument
+                .windows(expected.len())
+                .enumerate()
+                .any(|(offset, window)| {
+                    if window != expected {
+                        return false;
+                    }
+                    let preceded_by_delimiter =
+                        offset == 0 || matches!(argument[offset - 1].as_str(), "(" | ",");
+                    let modifier_argument = offset > 1
+                        && matches!(argument[offset - 2].as_str(), "after" | "before");
+                    preceded_by_delimiter && !modifier_argument
+                })
+            {
+                return true;
+            }
+            argument_start = cursor + 1;
+            continue;
+        }
+        match arguments[cursor].as_str() {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
     }
     false
 }
 
 fn contains_unconditional_call(tokens: &[String], path: &str) -> bool {
     let expected = path_tokens(path);
-    for index in 0..tokens.len().saturating_sub(expected.len() + 2) {
+    let body_start = tokens.iter().position(|token| token == "{").unwrap_or(0);
+    let depths = delimiter_depths(tokens, body_start);
+    for index in body_start + 1..tokens.len().saturating_sub(expected.len()) {
         if tokens[index..].starts_with(&expected)
             && tokens.get(index + expected.len()) == Some(&"(".to_string())
+            && depths.get(index).copied() == Some((0, 0, 0))
         {
-            let mut statement_start = index;
-            while statement_start > 0 && tokens[statement_start - 1] != ";" {
-                statement_start -= 1;
-            }
+            let statement_start = (body_start + 1..index)
+                .rev()
+                .find(|cursor| {
+                    depths.get(*cursor).copied() == Some((0, 0, 0))
+                        && matches!(tokens[*cursor].as_str(), ";" | "}")
+                })
+                .map_or(body_start + 1, |cursor| cursor + 1);
             if !tokens[statement_start..index]
                 .iter()
                 .any(|token| matches!(token.as_str(), "if" | "else" | "match" | "let" | "="))
+                && !prefix_may_exit(&tokens[body_start + 1..statement_start])
             {
                 return true;
             }
@@ -1229,11 +1362,40 @@ fn contains_unconditional_call(tokens: &[String], path: &str) -> bool {
     false
 }
 
-fn contains_token_path(tokens: &[String], path: &str) -> bool {
-    let expected = path_tokens(path);
-    tokens
-        .windows(expected.len() + 1)
-        .any(|window| window[..expected.len()] == expected && window[expected.len()] == "(")
+fn delimiter_depths(tokens: &[String], body_start: usize) -> Vec<(usize, usize, usize)> {
+    let mut result = vec![(0, 0, 0); tokens.len()];
+    let (mut braces, mut parens, mut brackets) = (0usize, 0usize, 0usize);
+    for index in body_start + 1..tokens.len() {
+        result[index] = (braces, parens, brackets);
+        match tokens[index].as_str() {
+            "{" => braces += 1,
+            "}" => braces = braces.saturating_sub(1),
+            "(" => parens += 1,
+            ")" => parens = parens.saturating_sub(1),
+            "[" => brackets += 1,
+            "]" => brackets = brackets.saturating_sub(1),
+            _ => {}
+        }
+    }
+    result
+}
+
+fn prefix_may_exit(tokens: &[String]) -> bool {
+    let mut braces = 0usize;
+    let mut parens = 0usize;
+    for token in tokens {
+        match token.as_str() {
+            "{" => braces += 1,
+            "}" => braces = braces.saturating_sub(1),
+            "(" => parens += 1,
+            ")" => parens = parens.saturating_sub(1),
+            "return" | "break" | "continue" | "unreachable" | "todo" => return true,
+            "panic" if braces == 0 && parens == 0 => return true,
+            "?" if braces == 0 && parens == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn path_tokens(path: &str) -> Vec<String> {
@@ -1419,11 +1581,7 @@ fn channel_ident_bindings<'a>(
             continue;
         };
         let initializer = &tokens[equal + 1..statement_end];
-        let Some(source_constant) = initializer
-            .iter()
-            .map(String::as_str)
-            .find(|token| constants.contains_key(token))
-        else {
+        let Some(source_constant) = channel_ident_initializer_constant(initializer, constants) else {
             continue;
         };
         bindings.insert(name, constants[source_constant]);
@@ -1431,36 +1589,104 @@ fn channel_ident_bindings<'a>(
     bindings
 }
 
+fn channel_ident_initializer_constant<'a>(
+    initializer: &'a [String],
+    constants: &BTreeMap<&'a str, &'a str>,
+) -> Option<&'a str> {
+    if initializer.len() < 7
+        || initializer[0] != "Ident"
+        || initializer[1] != ":"
+        || initializer[2] != ":"
+        || initializer[3] != "new"
+        || initializer[4] != "("
+        || initializer[6] != ")"
+    {
+        return None;
+    }
+    let source_constant = initializer.get(5)?.as_str();
+    if !constants.contains_key(source_constant) {
+        return None;
+    }
+    let suffix = &initializer[7..];
+    let valid_suffix = suffix == [".", "unwrap", "(", ")"]
+        || suffix.len() == 5
+            && suffix[0] == "."
+            && suffix[1] == "expect"
+            && suffix[2] == "("
+            && suffix[3].starts_with('"')
+            && suffix[3].ends_with('"')
+            && suffix[4] == ")";
+    valid_suffix.then_some(source_constant)
+}
+
 fn resolve_channel(
     argument: &[String],
     constants: &BTreeMap<&str, &str>,
     bindings: &BTreeMap<&str, &str>,
 ) -> Option<String> {
-    if argument
-        .iter()
-        .any(|token| token == "if" || token == "else")
+    let argument = strip_balanced_parentheses(argument);
+    if argument.len() == 1 {
+        let token = argument[0].as_str();
+        return constants
+            .get(token)
+            .or_else(|| bindings.get(token))
+            .map(|value| (*value).to_string())
+            .or_else(|| {
+                (token == "SERVER_DATA_CHANNEL").then(|| "bong:server_data".to_string())
+            });
+    }
+    if argument.len() == 5
+        && argument[1] == "."
+        && argument[2] == "as_str_ident"
+        && argument[3] == "("
+        && argument[4] == ")"
     {
-        return None;
+        return bindings.get(argument[0].as_str()).map(|value| (*value).to_string());
     }
-    let mut values = BTreeSet::new();
-    for token in argument {
-        if let Some(value) = constants.get(token.as_str()) {
-            values.insert((*value).to_string());
-        }
-        if let Some(value) = bindings.get(token.as_str()) {
-            values.insert((*value).to_string());
-        }
-        if token.starts_with('"') && token.ends_with('"') {
-            let value = token.trim_matches('"');
-            if value.starts_with("bong:") {
-                values.insert(value.to_string());
-            }
-        }
+    if argument.len() == 5
+        && argument[0] == "ident"
+        && argument[1] == "!"
+        && argument[2] == "("
+        && argument[4] == ")"
+    {
+        return exact_channel_value(&argument[3], constants, bindings);
     }
-    if values.is_empty() && argument == ["SERVER_DATA_CHANNEL"] {
-        values.insert("bong:server_data".to_string());
+    if argument.len() == 8
+        && argument[0] == "valence"
+        && argument[1] == ":"
+        && argument[2] == ":"
+        && argument[3] == "ident"
+        && argument[4] == "!"
+        && argument[5] == "("
+        && argument[7] == ")"
+    {
+        return exact_channel_value(&argument[6], constants, bindings);
     }
-    (values.len() == 1).then(|| values.into_iter().next().expect("one resolved channel"))
+    None
+}
+
+fn strip_balanced_parentheses(mut tokens: &[String]) -> &[String] {
+    while tokens.first().is_some_and(|token| token == "(")
+        && matching_delimiter(tokens, 0, "(", ")") == Some(tokens.len() - 1)
+    {
+        tokens = &tokens[1..tokens.len() - 1];
+    }
+    tokens
+}
+
+fn exact_channel_value(
+    token: &str,
+    constants: &BTreeMap<&str, &str>,
+    bindings: &BTreeMap<&str, &str>,
+) -> Option<String> {
+    constants
+        .get(token)
+        .or_else(|| bindings.get(token))
+        .map(|value| (*value).to_string())
+        .or_else(|| {
+            let value = token.strip_prefix('"')?.strip_suffix('"')?;
+            value.starts_with("bong:").then(|| value.to_string())
+        })
 }
 
 fn is_server_data_channel(
@@ -1500,7 +1726,15 @@ fn is_test_cfg_attribute(bytes: &[u8], start: usize) -> bool {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    normalized.starts_with("#[cfg(") && normalized.contains("test")
+    normalized == "#[cfg(test)]"
+        || normalized
+            .strip_prefix("#[cfg(all(")
+            .and_then(|value| value.strip_suffix("))]"))
+            .is_some_and(|predicates| {
+                predicates
+                    .split(',')
+                    .any(|predicate| predicate == "test")
+            })
 }
 
 fn rust_tokens(source: &str) -> Vec<String> {
@@ -1924,14 +2158,141 @@ fn vfx_event_channel_contract_rejects_sender_and_receiver_typos() {
 }
 
 #[test]
+fn registration_pin_rejects_conditional_and_early_exit_paths() {
+    for source in [
+        r#"fn register(app: &mut App) {
+            if enabled { register_app_wiring(app); }
+        }"#,
+        r#"fn register(app: &mut App) {
+            if !enabled { return; }
+            register_app_wiring(app);
+        }"#,
+        r#"fn register(app: &mut App) {
+            match mode { Mode::Ready => register_app_wiring(app), _ => {} }
+        }"#,
+    ] {
+        let tokens = rust_tokens(source);
+        let function = function_token_slice(&tokens, "register").expect("synthetic register parses");
+        assert!(
+            !contains_unconditional_call(function, "register_app_wiring"),
+            "conditional or early-exit registration must fail production reachability"
+        );
+    }
+}
+
+#[test]
+fn registration_pin_rejects_conditional_add_systems() {
+    let registration = rust_tokens(
+        r#"fn register(app: &mut App) {
+            if enabled {
+                app.add_systems(Update, expected_producer);
+            }
+        }"#,
+    );
+    let function = function_token_slice(&registration, "register").expect("synthetic register parses");
+    assert!(
+        !add_systems_registers_callee(function, "expected_producer"),
+        "add_systems inside a conditional block is not production-unconditional wiring"
+    );
+}
+
+#[test]
+fn registration_pin_requires_zone_environment_ordering() {
+    let ordered = rust_tokens(
+        r#"fn register(app: &mut App) {
+            app.add_systems(Update, (
+                mark_zone_environment_dirty_for_new_clients,
+                zone_environment_broadcast_system
+                    .after(mark_zone_environment_dirty_for_new_clients),
+            ));
+        }"#,
+    );
+    let unordered = rust_tokens(
+        r#"fn register(app: &mut App) {
+            app.add_systems(Update, (
+                mark_zone_environment_dirty_for_new_clients,
+                zone_environment_broadcast_system,
+            ));
+        }"#,
+    );
+    let ordered = function_token_slice(&ordered, "register").expect("ordered fixture parses");
+    let unordered = function_token_slice(&unordered, "register").expect("unordered fixture parses");
+    assert!(add_systems_orders_callee_after(
+        ordered,
+        "zone_environment_broadcast_system",
+        "mark_zone_environment_dirty_for_new_clients",
+    ));
+    assert!(!add_systems_orders_callee_after(
+        unordered,
+        "zone_environment_broadcast_system",
+        "mark_zone_environment_dirty_for_new_clients",
+    ));
+}
+
+#[test]
+fn channel_pin_rejects_computed_aliases_and_match_expressions() {
+    let conditional_alias = scan_production_emit_source(
+        r#"
+        const EXPECTED: &str = "bong:vfx_event";
+        const WRONG: &str = "bong:vfx_evnet";
+        fn emit(client: &mut Client) {
+            let channel = if enabled {
+                Ident::new(EXPECTED).unwrap()
+            } else {
+                Ident::new(WRONG).unwrap()
+            };
+            client.send_custom_payload(channel.as_str_ident(), bytes);
+        }
+        "#,
+    );
+    assert_eq!(conditional_alias.unresolved_channel_calls, 1);
+    assert_eq!(conditional_alias.channels, BTreeSet::new());
+
+    let matched = scan_production_emit_source(
+        r#"fn emit(client: &mut Client) {
+            client.send_custom_payload(
+                match enabled {
+                    true => ident!("bong:vfx_event"),
+                    false => fallback_channel(),
+                },
+                bytes,
+            );
+        }"#,
+    );
+    assert_eq!(matched.unresolved_channel_calls, 1);
+    assert_eq!(matched.channels, BTreeSet::new());
+}
+
+#[test]
+fn emitter_scanner_keeps_cfg_not_test_production_items() {
+    let scan = scan_production_emit_source(
+        r#"
+        #[cfg(test)]
+        fn test_only(client: &mut Client) {
+            client.send_custom_payload(ident!("bong:test"), bytes);
+        }
+        #[cfg(not(test))]
+        fn production(client: &mut Client) {
+            client.send_custom_payload(ident!("bong:other"), bytes);
+        }
+        "#,
+    );
+    assert_eq!(scan.direct_calls, 1);
+    assert_eq!(scan.channels, BTreeSet::from(["bong:other".to_string()]));
+    assert_eq!(scan.unresolved_channel_calls, 0);
+}
+
+#[test]
 fn registration_pin_rejects_unrelated_after_modifier() {
     let registration = rust_tokens(
         r#"fn register_app_wiring(app: &mut App) {
             app.add_systems(Update, other_system.after(expected_producer));
         }"#,
     );
+    let function = function_token_slice(&registration, "register_app_wiring")
+        .expect("synthetic register_app_wiring parses");
     assert!(
-        !add_systems_registers_callee(&registration, "expected_producer"),
+        !add_systems_registers_callee(function, "expected_producer"),
         "a producer nested as an ordering dependency is not registered as the system"
     );
 }
@@ -1953,7 +2314,8 @@ fn channel_pin_rejects_conditional_transport_expression() {
 }
 
 fn send_custom_payload_uses_channel(tokens: &[String], channel: &str) -> bool {
-    let expected_literal = format!("\"{channel}\"");
+    let constants = channel_string_constants(tokens);
+    let bindings = channel_ident_bindings(tokens, &constants);
     for index in 0..tokens.len() {
         if tokens[index] != "send_custom_payload"
             || index
@@ -1967,13 +2329,7 @@ fn send_custom_payload_uses_channel(tokens: &[String], channel: &str) -> bool {
         let Some(argument) = first_call_argument(tokens, index + 1) else {
             continue;
         };
-        if argument
-            .iter()
-            .any(|token| token == "if" || token == "else")
-        {
-            continue;
-        }
-        if argument.iter().any(|token| token == &expected_literal) {
+        if resolve_channel(argument, &constants, &bindings).as_deref() == Some(channel) {
             return true;
         }
     }
