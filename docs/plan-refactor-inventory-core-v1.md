@@ -5,10 +5,10 @@
 ## 阶段
 
 - ✅ 2026-08-03 P0 完整契约面重写 + absorption audit
-- ⬜ P1：inventory 拆分 + txn/capacity 骨架
-- ⬜ P2：全部 production writer 迁移
-- ⬜ P3：纯 migration + R3 durable seam + R6 wire/client + R4 handler
-- ⬜ P4：R3 legacy consumer + bot/e2e + plan 收口
+- ⬜ P1：inventory 拆分 + txn/capacity 骨架（依赖 R3 P1 seam）
+- ⬜ P2：全部 production writer 迁移（依赖 R3 P2 atomic commit seam 已实现且 crash/retry pins 常绿）
+- ⬜ P3：pickup/merge txn + 纯 migration（依赖 R5 P3 attrition API、R6 P4 receipt API）
+- ⬜ P4：联合 bot/e2e + plan 收口（依赖 R4 handler 与 R3 P4 legacy consumer）
 
 实现属 Wave 2；跨轨工作须登记 owning plan。
 
@@ -83,15 +83,15 @@ R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不�
 
 ## 6. 所有权与顺序
 
-- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2 production writers 只有在 **R3 P3** durable spill/pickup recoverable-commit seam 已合入后才可迁移并宣称完成；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
-- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P3/P4 已冻结的接口。
+- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2 production writers 只有在 **R3 P2** 已实现 durable spill/pickup recoverable-commit seam 且 crash/retry pins 常绿后才可开始迁移；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
+- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P2/P4 已冻结并实现的接口。
 - **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
 - **R5**：incoming-only qi attrition/ledger；provider phase 为 R5 P3。
 - **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；receipt provider phase 为 R6 P4。
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：**R3 P1 → R10 P1 → R3 P3 → R10 P2 production writers → R5 P3 + R6 P4 → R4 handler/pickup consumer → R10 P3 migration/consumer → R3 P4 legacy consumer → e2e**。R10 P2 在 R3 P3 durable seam 未合入前只能保留 skeleton，R4 pickup consumer 在 R5 P3/R6 P4 provider 未合入前不得宣称完成；R10 不越权改 persistence、wire、handler 或 client。
+顺序：**R3 P1 → R10 P1 → R3 P2 atomic seam 实现 + crash/retry pins → R10 P2 production writers → R5 P3 + R6 P4 → R10 P3 pickup/merge txn + pure migration → R4 handler/pickup consumer → R3 P4 legacy consumer → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 未合入前不得开始 writer 迁移，R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
