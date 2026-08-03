@@ -1060,7 +1060,7 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
         let source = source_cache
             .entry(pin.source)
             .or_insert_with(|| production_tokens_from_file(&root, pin.source));
-        let function = function_token_slice(&source, pin.symbol).unwrap_or_else(|| {
+        let function = function_token_slice(source, pin.symbol).unwrap_or_else(|| {
             panic!(
                 "{:?} replay producer `{}` disappeared from {}; update the authoritative R6 replay contract",
                 pin.class, pin.symbol, pin.source
@@ -1080,7 +1080,7 @@ fn categorized_replay_producers_stay_registered_in_production_wiring() {
             .entry(pin.registration_source)
             .or_insert_with(|| production_tokens_from_file(&root, pin.registration_source));
         let registration_function =
-            function_token_slice(&registration, pin.registration_function).unwrap_or_else(|| {
+            function_token_slice(registration, pin.registration_function).unwrap_or_else(|| {
                 panic!(
                     "production registration function `{}` disappeared from {} for replay producer `{}`",
                     pin.registration_function, pin.registration_source, pin.symbol
