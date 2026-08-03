@@ -12,15 +12,15 @@
 ## 接入面
 
 - **进料**：R1 session 产物交付调用、R4 gate 通过后的物品类请求、掉落物系统、R3 的持久化 slice（inventories 表）。
-- **出料**：统一 `InventoryTxn` API：`deliver(items) -> Delivered | Spilled(fallback)`（满包溢出策略统一：脚下掉落/暂存箱，按 worldview 拍板）、`consume_checked`（先校验后扣）、`merge_stack`、占格变更事件（S2C 经 R6）。
+- **出料**：统一 `InventoryTxn` API：`deliver(delivery_id, items) -> Delivered | Spilled(fallback)`（满包溢出策略统一：脚下掉落/暂存箱，按 worldview 拍板）、`consume_checked`（先校验后扣）、`merge_stack`、占格变更事件（S2C 经 R6）。`delivery_id` 必须稳定跨重启；inventory mutation 或 durable spill、`DeliveryCommitReceipt` 与 outbox ack 在同一 SQLite transaction 提交，receipt 已存在时返回原结果且不重复 mutation。
 - **共享类型**：`ItemCategory` 合法集不动（无 Material，材料用 Misc——历史坑）；`owner_instance_id` 架构不动。
 - **worldview 锚点**：物品不凭空消失对齐末法稀缺经济（§十三物资锚点）；含真元物品的销毁/溢出走 R5 ledger。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：mod.rs 职责普查出拆分图（grid/txn/container/corpse/shelflife 接缝）；冻结 `InventoryTxn` API 与满包溢出策略；等 craft-refund P4、#1294 相关项定基线。
-- ⬜ P1 巨石拆分：按职责拆文件（行为不变，测试平移），`InventoryTxn` 骨架上线；先冻结并实现 R1 可直接消费的 `deliver(items) -> Delivered | Spilled(fallback)` 提交语义、幂等键和失败不提交契约，未达到该 gate 时 R1 只能落 registry/adapter 骨架，不能清 escrow/session。
-- ⬜ P2 交付路径统一：give/craft/alchemy/forge/loot 全部改走 `deliver`；先校验后扣全量化；满包场景全绿。R1 craft/alchemy/forge 的 `AwaitingDelivery → CommitTerminal` 生产路径只在本阶段对应调用点迁移后才算完成。
+- ⬜ P1 巨石拆分：按职责拆文件（行为不变，测试平移），`InventoryTxn` 骨架上线；冻结并实现 R1 可直接消费的 `deliver(delivery_id, items) -> Delivered | Spilled(fallback)`，其中 `delivery_id`/`DeliveryCommitReceipt` 必须 durable，receipt 与 inventory/spill mutation 同事务全成或全败，失败不提交。未达到该 gate 时 R1 只能落 registry/adapter 骨架，不能清 escrow/session。
+- ⬜ P2 交付路径统一：give/craft/alchemy/forge/loot 全部改走 `deliver`；先校验后扣全量化；满包场景全绿。R1 craft/alchemy/forge 的 `AwaitingDelivery → CommitTerminal` 生产路径只在本阶段对应调用点迁移后才算完成。消费 R3 `SessionDeliveryOutbox` 时自动重试按 `min(1_200 * 2^attempts, 72_000)` ticks，10 次或 7 天后转 durable `DeadLetter` 并停止自动重试；outbox handoff 后不持有 gameplay claim。授权 operator 可 inspect/retry/resolve，普通玩家不可调用，resolve 不得删除未交付 payload。
 - ⬜ P3 网格/堆叠一致性：拾取合并、占格同步、pack 回执、老存档布局迁移补课。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
 
@@ -33,14 +33,16 @@ skeleton：alchemy-takeback-full-inventory-loss（交付垫层部分；session t
 
 - 独占：`server/src/inventory/**`、各域交付调用点的替换行。
 - 不碰：`InspectScreen`（R7 域）；session 生命周期（R1）；掉落物拾取的 gate 校验（R4）。
-- 依赖：R3 P1（persistence 拆分先行，inventories 表接缝清晰）；与 R1 的交付接缝 API 由本轨定义、R1 消费。R1 可在本轨 P1 后编译 `deliver` delivery gate，但其 P1 craft 宿主与 P2 alchemy/forge 宿主均须等待本轨 P2 对应 production 调用点迁移后才可验收结案。Wave 2 开工，P0 普查可先行。
+- 依赖：R3 P1（persistence 拆分先行，inventories 表与 `SessionDeliveryOutbox` atomic handoff 接缝清晰）；与 R1 的交付接缝 API 由本轨定义、R1 消费。R1 可在本轨 P1 后编译 durable delivery gate，但其 P1 craft 宿主与 P2 alchemy/forge 宿主均须等待本轨 P2 对应 production 调用点迁移后才可验收结案。Wave 2 开工，P0 普查可先行。
 
 ## bot 验收场景
 
 1. `inv_full_delivery_matrix`：满包状态下 craft 完工/取丹/锻造出炉/给予→断言产物按统一溢出策略落地，总数不丢。
-2. `inv_stack_merge`：拾取同类掉落→断言合并入既有堆叠。
-3. `inv_footprint_sync`：旋转/移动占格物品→断言 client 快照占格一致（P6 protobuf 深断言）。
-4. `inv_give_visibility`：dev give 后立即快照→断言实例可见可拾取（修 bot 基建自身的假阳性）。
+2. `inv_delivery_crash_atomicity`：在 inventory/spill mutation、receipt commit、outbox ack 各边界强杀重启；相同 durable `delivery_id` 重放只返回原 receipt，物品或掉落实例总数始终恰为一次。
+3. `inv_delivery_dead_letter`：持续失败按指数退避且 cap 为 72,000 ticks，10 次或 7 天后停止自动扫描并进入 durable `DeadLetter`；普通玩家不能 inspect/retry/resolve，且整个失败周期不占 session facility claim。
+4. `inv_stack_merge`：拾取同类掉落→断言合并入既有堆叠。
+5. `inv_footprint_sync`：旋转/移动占格物品→断言 client 快照占格一致（P6 protobuf 深断言）。
+6. `inv_give_visibility`：dev give 后立即快照→断言实例可见可拾取（修 bot 基建自身的假阳性）。
 
 ## 开放问题（pre-P0 收口）
 
