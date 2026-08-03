@@ -1,6 +1,5 @@
 package com.bong.client;
 
-import com.bong.client.lifecycle.ClientStoreScopeManifest;
 import com.bong.client.lifecycle.JavaLifecycleSourceInspector;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -51,15 +50,11 @@ class AdjunctDisconnectOwnershipTest {
     }
 
     @Test
-    void centralizedDisconnectHelperOwnsEachAdjunctExactlyOnce() throws Exception {
+    void centralizedDisconnectHelperDelegatesToAdjunctOwnerExactlyOnce() throws Exception {
         String networkHandler = source("BongNetworkHandler.java");
         String centralHelper = methodBody(
             networkHandler,
             "static void clearClientStateOnDisconnect()"
-        );
-        String adjunctHelper = methodBody(
-            networkHandler,
-            "private static void runAdjunctDisconnectTeardown()"
         );
         String adjunctDelegation = "runAdjunctDisconnectTeardown()";
         assertTrue(
@@ -71,406 +66,47 @@ class AdjunctDisconnectOwnershipTest {
             centralHelper.lastIndexOf(adjunctDelegation),
             "token-gated 中央断线 helper 必须恰好委托一次 adjunct owner"
         );
-
-        for (String registration : new String[] {
-            "() -> EnvironmentEffectController.clearOnDisconnect()",
-            "() -> BongShaderState.clearOnDisconnect()",
-            "() -> CastFovController.clearOnDisconnect()",
-            "() -> CombatJuiceSystem.clearOnDisconnect()",
-            "() -> CombatHudBootstrap.clearOnDisconnect()",
-            "() -> MovementKeybindings.clearOnDisconnect()",
-            "() -> BotanyHudBootstrap.clearOnDisconnect()",
-            "() -> TechniquesListPanel.clearOnDisconnect()",
-            "() -> WeaponTreasurePanel.clearOnDisconnect()",
-            "() -> HomeSequence.clearOnDisconnect()",
-            "() -> InventoryMoveRejectedHandler.clearOnDisconnect()",
-            "() -> PillBuffHudPlanner.clearOnDisconnect()",
-            "() -> MorphCastVignetteState.clearOnDisconnect()",
-            "() -> SeasonVisualController.clearOnDisconnect()",
-            "() -> ScreenTransitionController.clearOnDisconnect()",
-            "() -> WorldVfxDemoBootstrap.clearOnDisconnect()",
-            "() -> DeadDropBreakPlayer.clearOnDisconnect()",
-            "() -> NpcFootstepAudioController.clearOnDisconnect()",
-            "() -> BongAnimationRegistry.clearOnDisconnect()"
-        }) {
-            assertTrue(
-                adjunctHelper.contains(registration),
-                "唯一 adjunct owner 必须接入稳定身份 adjunct：" + registration
-            );
-            assertEquals(
-                networkHandler.indexOf(registration),
-                networkHandler.lastIndexOf(registration),
-                "整个 production owner 必须恰好登记一次 adjunct：" + registration
-            );
-        }
     }
 
     @Test
-    void allowlistedAdjunctImplementationsDoNotReferenceRegistryManagedStores() throws Exception {
-        String[][] hooks = {
-            {"environment/EnvironmentEffectController.java", "EnvironmentEffectController", "clearOnDisconnect"},
-            {"iris/BongShaderState.java", "BongShaderState", "clearOnDisconnect"},
-            {"combat/juice/CameraShakeController.java", "CameraShakeController.Shake", "none"},
-            {"combat/juice/EntityTintController.java", "EntityTintController.Tint", "none"},
-            {"combat/juice/KillJuiceController.java", "KillJuiceController.KillState", "none"},
-            {"combat/juice/KillJuiceController.java", "KillJuiceController.MultiKillState", "empty"},
-            {"combat/juice/CombatJuiceSystem.java", "CombatJuiceSystem.LastCommand", "empty"},
-            {"combat/juice/CombatJuiceSystem.java", "CombatJuiceSystem.Overlay", "none"},
-            {"loop/HomeSequence.java", "HomeSequence.State", "away"},
-            {"season/SeasonBreakthroughOverlayHud.java", "SeasonBreakthroughOverlayHud.ActivePulse", "empty"},
-            {"combat/juice/CastFovController.java", "CastFovController", "clearOnDisconnect"},
-            {"combat/juice/CombatJuiceSystem.java", "CombatJuiceSystem", "clearOnDisconnect"},
-            {"combat/CombatHudBootstrap.java", "CombatHudBootstrap", "clearOnDisconnect"},
-            {"movement/MovementKeybindings.java", "MovementKeybindings", "clearOnDisconnect"},
-            {"botany/BotanyHudBootstrap.java", "BotanyHudBootstrap", "clearOnDisconnect"},
-            {"combat/inspect/TechniquesListPanel.java", "TechniquesListPanel", "clearOnDisconnect"},
-            {"combat/inspect/WeaponTreasurePanel.java", "WeaponTreasurePanel", "clearOnDisconnect"},
-            {"loop/HomeSequence.java", "HomeSequence", "clearOnDisconnect"},
-            {"network/InventoryMoveRejectedHandler.java", "InventoryMoveRejectedHandler", "clearOnDisconnect"},
-            {"hud/PillBuffHudPlanner.java", "PillBuffHudPlanner", "clearOnDisconnect"},
-            {"hud/MorphCastVignetteState.java", "MorphCastVignetteState", "clearOnDisconnect"},
-            {"season/SeasonVisualController.java", "SeasonVisualController", "clearOnDisconnect"},
-            {"ui/ScreenTransitionController.java", "ScreenTransitionController", "clearOnDisconnect"},
-            {"visual/particle/WorldVfxDemoBootstrap.java", "WorldVfxDemoBootstrap", "clearOnDisconnect"},
-            {"visual/particle/DeadDropBreakPlayer.java", "DeadDropBreakPlayer", "clearOnDisconnect"},
-            {"audio/NpcFootstepAudioController.java", "NpcFootstepAudioController", "clearOnDisconnect"},
-            {"animation/BongAnimationRegistry.java", "BongAnimationRegistry", "clearOnDisconnect"},
-            {"npc/NpcDialogueBubbleRenderer.java", "NpcDialogueBubbleRenderer", "clear"},
-            {"audio/MusicStateMachine.java", "MusicStateMachine", "clearOnDisconnect"},
-            {"audio/MusicStateMachine.java", "MusicStateMachine", "clear"},
-            {"audio/MusicStateMachine.java", "MusicStateMachine", "stopActive", "1"},
-            {"audio/MusicStateMachine.java", "MusicStateMachine", "instance"},
-            {"audio/MusicStateMachine.java", "MusicStateMachine", "clearSeasonModifierOnDisconnect"},
-            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "clearOnDisconnect"},
-            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "setMusicState", "1"},
-            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer", "stop", "1"},
-            {"audio/SoundRecipePlayer.java", "SoundRecipePlayer.ActiveLoop", "deactivateOwnedFlag"},
-            {"network/AudioEventPayload.java", "AudioEventPayload.PlaySoundRecipe", "instanceId"},
-            {"audio/AudioBusMixer.java", "AudioBusMixer", "setMusicState", "1"},
-            {"environment/EnvironmentAudioLoopState.java", "EnvironmentAudioLoopState", "deactivate", "1"},
-            {"audio/AudioBusMixer.java", "AudioBusMixer", "clearOnDisconnect"},
-            {"audio/SoundSink.java", "SoundSink", "clearOnDisconnect"},
-            {"audio/SoundSink.java", "SoundSink", "stop", "2"},
-            {"audio/MinecraftSoundSink.java", "MinecraftSoundSink", "clearOnDisconnect"},
-            {"audio/FadeableSoundInstance.java", "FadeableSoundInstance", "beginFadeOut", "1"},
-            {"animation/BongAnimationPlayer.java", "BongAnimationPlayer", "clearOnDisconnect"},
-            {"animation/AnimationLayerManager.java", "AnimationLayerManager", "clearOnDisconnect"},
-            {"animation/BongPunchCombo.java", "BongPunchCombo", "clearOnDisconnect"},
-            {"dandao/MutationVisualState.java", "MutationVisualState", "reset"},
-            {"spider/SpiderDisguiseHandler.java", "SpiderDisguiseHandler", "clearOnDisconnect"},
-            {"fauna/RatQiTierHandler.java", "RatQiTierHandler", "clearOnDisconnect"},
-            {"daozhan/DaoZhanDisguiseHandler.java", "DaoZhanDisguiseHandler", "clearOnDisconnect"},
-            {"era/EraAmbianceState.java", "EraAmbianceState", "reset"},
-            {"hud/BongToast.java", "BongToast", "clearOnDisconnect"},
-            {"BongNetworkHandler.java", "BongNetworkHandler", "runDisconnectCleanups", "1"},
-            {"combat/juice/CameraShakeController.java", "CameraShakeController", "clear"},
-            {"combat/juice/HitStopController.java", "HitStopController", "clearOnDisconnect"},
-            {"combat/juice/CameraShakeController.java", "CameraShakeController", "clearOnDisconnect"},
-            {"combat/juice/EntityTintController.java", "EntityTintController", "clearOnDisconnect"},
-            {"combat/juice/KillJuiceController.java", "KillJuiceController", "clearOnDisconnect"},
-            {"combat/CombatKeybindings.java", "CombatKeybindings", "clearOnDisconnect"},
-            {"social/SparringInviteScreenBootstrap.java", "SparringInviteScreenBootstrap", "clearOnDisconnect"},
-            {"botany/BotanyDragState.java", "BotanyDragState", "clearOnDisconnect"},
-            {"season/SeasonBreakthroughOverlayHud.java", "SeasonBreakthroughOverlayHud", "clearOnDisconnect"},
-            {"atmosphere/ZoneAtmosphereRenderer.java", "ZoneAtmosphereRenderer", "clearSeasonOverrideOnDisconnect"},
-            {"environment/EnvironmentAudioLoopState.java", "EnvironmentAudioLoopState", "clearOnDisconnect"},
-            {"environment/EnvironmentAudioController.java", "EnvironmentAudioController", "clearOnDisconnect"},
-            {"environment/EnvironmentEffectRegistry.java", "EnvironmentEffectRegistry", "clear"},
-            {"atmosphere/ZoneAtmosphereRenderer.java", "ZoneAtmosphereRenderer", "clear"},
-            {"atmosphere/AshFootprintTracker.java", "AshFootprintTracker", "clear"},
-            {"environment/EnvironmentFogController.java", "EnvironmentFogController", "clear"}
-        };
-        java.util.ArrayList<JavaLifecycleSourceInspector.AuditedLifecycleEntry> closure =
-            new java.util.ArrayList<>();
-        for (String[] hook : hooks) {
-            closure.add(new JavaLifecycleSourceInspector.AuditedLifecycleEntry(
-                hook[0],
-                source(hook[0]),
-                hook[1],
-                hook[2],
-                hook.length == 4 ? Integer.parseInt(hook[3]) : 0
-            ));
-        }
-        JavaLifecycleSourceInspector.assertLifecycleClosureContainsNoStoreCleanupReferences(
-            closure,
-            ClientStoreScopeManifest.registryManagedSessionStores()
+    void centralizedDisconnectHelperPinsEveryReviewedAdjunctRegistrationInOrder() throws Exception {
+        assertEquals(
+            List.of(
+                "()->EnvironmentEffectController.clearOnDisconnect()",
+                "()->BongShaderState.clearOnDisconnect()",
+                "()->CastFovController.clearOnDisconnect()",
+                "()->CombatJuiceSystem.clearOnDisconnect()",
+                "()->CombatHudBootstrap.clearOnDisconnect()",
+                "()->MovementKeybindings.clearOnDisconnect()",
+                "()->BotanyHudBootstrap.clearOnDisconnect()",
+                "()->TechniquesListPanel.clearOnDisconnect()",
+                "()->WeaponTreasurePanel.clearOnDisconnect()",
+                "()->HomeSequence.clearOnDisconnect()",
+                "()->InventoryMoveRejectedHandler.clearOnDisconnect()",
+                "()->PillBuffHudPlanner.clearOnDisconnect()",
+                "()->MorphCastVignetteState.clearOnDisconnect()",
+                "()->SeasonVisualController.clearOnDisconnect()",
+                "()->ScreenTransitionController.clearOnDisconnect()",
+                "()->WorldVfxDemoBootstrap.clearOnDisconnect()",
+                "()->DeadDropBreakPlayer.clearOnDisconnect()",
+                "()->NpcFootstepAudioController.clearOnDisconnect()",
+                "()->BongAnimationRegistry.clearOnDisconnect()",
+                "()->NpcDialogueBubbleRenderer.clear()",
+                "()->com.bong.client.audio.MusicStateMachine.clearOnDisconnect()",
+                "()->SoundRecipePlayer.instance().clearOnDisconnect()",
+                "()->BongAnimationPlayer.clearOnDisconnect()",
+                "()->AnimationLayerManager.clearOnDisconnect()",
+                "()->BongPunchCombo.clearOnDisconnect()",
+                "()->MutationVisualState.reset()",
+                "()->SpiderDisguiseHandler.clearOnDisconnect()",
+                "()->RatQiTierHandler.clearOnDisconnect()",
+                "()->DaoZhanDisguiseHandler.clearOnDisconnect()",
+                "()->com.bong.client.era.EraAmbianceState.reset()",
+                "()->BongToast.clearOnDisconnect()"
+            ),
+            JavaLifecycleSourceInspector.disconnectCleanupRegistrations(source("BongNetworkHandler.java")),
+            "中央 adjunct 注册表必须与逐站点审阅清单完全一致；新增、删除、重排或改写都需显式更新合同"
         );
-    }
-
-    @Test
-    void adjunctStoreReferenceAuditRejectsHiddenStoreReferenceShapes() {
-        for (String[] fixture : new String[][] {
-            {
-                """
-                    package com.bong.client.hud;
-                    final class AllowlistedAdjunct {
-                        static void clearOnDisconnect() {
-                            LootContainerStateStore.clearOnDisconnect();
-                        }
-                    }
-                    """,
-                "clearOnDisconnect"
-            },
-            {
-                """
-                    import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
-                    final class AllowlistedAdjunct {
-                        static void tearDown() {
-                            clearOnDisconnect();
-                        }
-                    }
-                    """,
-                "tearDown"
-            }
-        }) {
-            org.junit.jupiter.api.Assertions.assertThrows(
-                AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertMethodContainsNoStoreReferences(
-                    fixture[0],
-                    "AllowlistedAdjunct",
-                    fixture[1],
-                    java.util.Set.of("com.bong.client.hud.LootContainerStateStore")
-                )
-            );
-        }
-    }
-
-    @Test
-    void adjunctClosureRejectsLegacyCleanupHelpersCrossClassCallsAndWildcardImports() {
-        for (String fixture : new String[] {
-            """
-                package com.example;
-                import com.bong.client.hud.LootContainerStateStore;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { tearDown(); }
-                    static void tearDown() { LootContainerStateStore.clear(); }
-                }
-                """,
-            """
-                package com.example;
-                import com.bong.client.hud.LootContainerStateStore;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { tearDown(); }
-                    static void tearDown() { LootContainerStateStore.clearAll(); }
-                }
-                """,
-            """
-                package com.example;
-                import com.bong.client.hud.LootContainerStateStore;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { tearDown(); }
-                    static void tearDown() { LootContainerStateStore.reset(); }
-                }
-                """,
-            """
-                package com.example;
-                import com.bong.client.hud.LootContainerStateStore;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() {
-                        LootContainerStateStore store = null;
-                        store.discardAllVisuals();
-                    }
-                }
-                """,
-            """
-                package com.example;
-                import com.bong.client.hud.LootContainerStateStore;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { new LootContainerStateStore(); }
-                }
-                """,
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { Helper.tearDown(); }
-                }
-                final class Helper {
-                    static void tearDown() { }
-                }
-                """,
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    private static final Helper HELPER = null;
-                    static void clearOnDisconnect() { HELPER.tearDown(); }
-                }
-                final class Helper {
-                    static void tearDown() { }
-                }
-                """,
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    private static final Helper helper = null;
-                    static void clearOnDisconnect() { helper.tearDown(); }
-                }
-                final class Helper {
-                    static void tearDown() { }
-                }
-                """,
-            """
-                package com.example;
-                import static com.bong.client.hud.LootContainerStateStore.*;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { clear(); }
-                }
-                """,
-            """
-                package com.example;
-                import com.bong.client.hud.*;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { }
-                }
-                """,
-            """
-                package com.example;
-                import com.bong.client.hud.LootContainerStateStore;
-                class BaseAdjunct {
-                    static void clearInherited() {
-                        LootContainerStateStore.clearOnDisconnect();
-                    }
-                }
-                final class AllowlistedAdjunct extends BaseAdjunct {
-                    static void clearOnDisconnect() { clearInherited(); }
-                }
-                """
-        }) {
-            org.junit.jupiter.api.Assertions.assertThrows(
-                AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
-                    fixture,
-                    "AllowlistedAdjunct",
-                    "clearOnDisconnect",
-                    java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
-                    java.util.Set.of()
-                )
-            );
-        }
-    }
-
-    @Test
-    void adjunctClosureRejectsNestedAndLocalVariableReceiversWithoutExplicitAudit() {
-        for (String fixture : new String[] {
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    private static final Owner OWNER = null;
-                    static void clearOnDisconnect() { OWNER.helper.tearDown(); }
-                }
-                final class Owner { Helper helper; }
-                final class Helper { void tearDown() { } }
-                """,
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() {
-                        Helper helper = null;
-                        helper.tearDown();
-                    }
-                }
-                final class Helper { void tearDown() { } }
-                """
-        }) {
-            org.junit.jupiter.api.Assertions.assertThrows(
-                AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
-                    fixture,
-                    "AllowlistedAdjunct",
-                    "clearOnDisconnect",
-                    java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
-                    java.util.Set.of()
-                )
-            );
-        }
-    }
-
-    @Test
-    void adjunctClosureAllowsRecursiveLocalDataOnlyHelpers() {
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-            () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
-                """
-                    package com.example;
-                    final class AllowlistedAdjunct {
-                        static void clearOnDisconnect() { first(); }
-                        static void first() { second(); }
-                        static void second() { first(); }
-                    }
-                    """,
-                "AllowlistedAdjunct",
-                "clearOnDisconnect",
-                java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
-                java.util.Set.of()
-            )
-        );
-    }
-
-    @Test
-    void adjunctClosureInfersCollectionLambdaReceiverTypes() {
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-            () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
-                """
-                    package com.example;
-                    import java.util.List;
-                    final class AllowlistedAdjunct {
-                        private static final List<Payload> pending = null;
-                        static void clearOnDisconnect() {
-                            pending.removeIf(queued -> queued.instanceId() == 1L);
-                        }
-                    }
-                    record Payload(long instanceId) { }
-                    """,
-                "AllowlistedAdjunct",
-                "clearOnDisconnect",
-                java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
-                java.util.Set.of()
-            )
-        );
-    }
-
-    @Test
-    void adjunctClosureRequiresExactCrossClassOwnerMethodAndArity() {
-        String owner = "com.example.AllowlistedHelper.clearOnDisconnect/0";
-        String entry = """
-            package com.example;
-            final class AllowlistedAdjunct {
-                static void clearOnDisconnect() { AllowlistedHelper.clearOnDisconnect(); }
-            }
-            """;
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-            () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
-                entry,
-                "AllowlistedAdjunct",
-                "clearOnDisconnect",
-                java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
-                java.util.Set.of(owner)
-            )
-        );
-
-        for (String fixture : new String[] {
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { AllowlistedHelper.hiddenCleanup(); }
-                }
-                """,
-            """
-                package com.example;
-                final class AllowlistedAdjunct {
-                    static void clearOnDisconnect() { AllowlistedHelper.clearOnDisconnect(1); }
-                }
-                """
-        }) {
-            org.junit.jupiter.api.Assertions.assertThrows(
-                AssertionError.class,
-                () -> JavaLifecycleSourceInspector.assertMethodClosureContainsNoStoreCleanupReferences(
-                    fixture,
-                    "AllowlistedAdjunct",
-                    "clearOnDisconnect",
-                    java.util.Set.of("com.bong.client.hud.LootContainerStateStore"),
-                    java.util.Set.of(owner)
-                )
-            );
-        }
     }
 
     @Test

@@ -225,6 +225,10 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         weakened_until_tick: None,
         state: LifecycleState::AwaitingRevival,
     };
+    let before_save_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
 
@@ -259,13 +263,15 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     let revival_deadline = lifecycle
         .revival_decision_deadline_tick
         .expect("待决策状态必须保留 revival deadline");
+    let after_load_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
+    let max_elapsed_ticks = after_load_wall.saturating_sub(before_save_wall) * TICKS_PER_SECOND;
+    let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     assert!(
-        revival_deadline >= 9_999_u64.saturating_sub(TICKS_PER_SECOND),
-        "读档耗时最多允许一个墙钟 tick 的折算误差；实际 {revival_deadline}"
-    );
-    assert!(
-        revival_deadline <= 9_999,
-        "读档耗时跨过墙钟 tick 边界时，deadline 只能按已流逝时间提前，不能被重建到更晚；实际 {revival_deadline}"
+        (earliest_valid_deadline..=9_999).contains(&revival_deadline),
+        "deadline 应扣除测试期间真实流逝的墙钟时间；实际 {revival_deadline}，有效区间 {earliest_valid_deadline}..=9999"
     );
     assert_eq!(lifecycle.death_count, 2);
 
