@@ -20,7 +20,7 @@
 
 - ⬜ P0 设计收口 + 吸收清单验真：113 个变体普查（每个标注应有的门禁四元组现状）；冻结 `GateSpec` 与拒绝回执语义；等 #1287（冷却重构，同文件大改）merge 定基线。
 - ⬜ P1 门禁中间件落地：gate 层上线，先给"已知漏洞簇"的 ~20 个请求类型挂 spec（吸收清单全命中），旧内联校验保留并行断言一个版本期。
-- ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住；inventory pickup handler 必须从 ECS `CurrentDimension`、authoritative position/observation range 与 owner/private permission 构造 R10 `PickupAuthorization`，禁止仅凭 client XYZ/instance id 调用 txn，且把 R10 accepted/rejected outcome 交给 R6 emit API。
+- ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住；inventory pickup handler 必须从 ECS `CurrentDimension`、authoritative position/observation range 与 owner/private permission 构造 R10 `PickupAuthorization`，禁止仅凭 client XYZ/instance id 调用 txn，且把 R10 accepted/rejected outcome 交给 R6 emit API。**本批次的 inventory pickup consumer 仅在 R10 P3 pickup/merge txn、R5 P3 attrition API 与 R6 P4 receipt API 均已合入后实施；此前不得以 mock 或旧 R6 P1 schema 接线。**
 - ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：113 变体全部声明门禁（含显式 `no_gate` 声明，杜绝静默无门禁）；删除各域内联距离常量与重复维度判断。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
 

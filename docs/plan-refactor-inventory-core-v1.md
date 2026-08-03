@@ -5,10 +5,10 @@
 ## 阶段
 
 - ✅ 2026-08-03 P0 完整契约面重写 + absorption audit
-- ⬜ P1：inventory 拆分 + txn/capacity 骨架（依赖 R3 P1 seam）
-- ⬜ P2：全部 production writer 迁移（依赖 R3 P2 atomic commit seam 已实现且 crash/retry pins 常绿）
-- ⬜ P3：pickup/merge txn + inventory-layout/dropped-loot 纯 migration（依赖 R5 P3 attrition API、R6 P4 receipt API）
-- ⬜ P4：联合 bot/e2e + plan 收口（依赖 R4 handler 与 R3 P4 legacy consumer）
+- ⬜ P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers（依赖 R3 P1 seam）
+- ⬜ P2：全部 production writer 迁移（依赖 R3 P2 atomic commit seam 已实现、旧 dropped-loot 已可迁移且 crash/retry pins 常绿）
+- ⬜ P3：pickup/merge txn（依赖 R5 P3 attrition API、R6 P4 receipt API）
+- ⬜ P4：联合 bot/e2e + plan 收口（依赖 R4 handler 与 R3 P4 legacy inventory-layout consumer）
 
 实现属 Wave 2；跨轨工作须登记 owning plan。
 
@@ -83,15 +83,15 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 
 ## 6. 所有权与顺序
 
-- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2 production writers 只有在 **R3 P2** 已实现 durable spill/pickup recoverable-commit seam 且 crash/retry pins 常绿后才可开始迁移；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
+- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2 production writers 只有在 **R3 P2** 已实现 durable spill/pickup recoverable-commit seam、旧 dropped-loot migration compatibility 已就绪且 crash/retry pins 常绿后才可开始迁移；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
 - **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P2/P4 已冻结并实现的接口。
-- **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
+- **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R10 P3 pickup txn、R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
 - **R5**：incoming-only qi attrition/ledger；provider phase 为 R5 P3。
 - **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；receipt provider phase 为 R6 P4。
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：**R3 P1 → R10 P1 → R3 P2 atomic seam 实现 + crash/retry pins → R10 P2 production writers → R5 P3 + R6 P4 → R10 P3 pickup/merge txn + inventory-layout/dropped-loot pure migration → R4 handler/pickup consumer → R3 P4 legacy inventory-layout + dropped-loot hydration consumers → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 未合入前不得开始 writer 迁移，R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
+顺序：**R3 P1 → R10 P1（含纯 inventory-layout/dropped-loot migration helpers）→ R3 P2 atomic seam 实现 + legacy dropped-loot migration/hydration compatibility pins → R10 P2 production writers → R5 P3 + R6 P4 → R10 P3 pickup/merge txn → R4 handler/pickup consumer → R3 P4 legacy inventory-layout consumer → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 与旧 dropped-loot migration compatibility 未合入前不得开始 writer 迁移，R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
@@ -138,5 +138,12 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 ## 10. Deferred-to-implementation-wave
 
 P0 不决定 Rust lifetime、SQL/outbox 实现、锁粒度、distance/zone 数值、visibility-key 编码、client 重发、管理员运维或 UI；由 owning PR 设计并受上述 contract/pins 约束。P0 不迁移 writer、不删旧入口、不改 runtime。未跑真实 server→wire→client/bot 链前，不以 forge、snapshot 或文档声明归档 bug skeleton。
+
+本轮新增 deferred decisions（不扩 P0 实现范围）：
+
+1. **Pickup freshness / anti-replay**：`PickupAuthorization` 的 revision/anti-replay fact 如何生成、绑定和失效，留待 R10 P3 pickup txn 设计时决定；理由是必须与真实 durable transaction/idempotency 语义共同冻结，避免 P0 先拍一个不可验证的 token 形状；交叉引用 §6 顺序与总纲 §3 Wave 2。
+2. **Receipt correlation / C2S request ID**：accepted/rejected inventory receipt 的 request identity 是否新增到 `inventory_move_intent` 并贯通 Rust/proto/TypeBox/Java，留待 R6 P4 receipt wire/client 设计时决定；理由是响应相关性必须与双向 schema 变更和 breaking gate 一起落地；交叉引用 §6 R6 ownership 与 `docs/plans-skeleton/plan-refactor-wire-s2c-v1.md` P4。
+3. **Recipient-context revocation**：移动、换维度、管理员权限变化是否触发 dropped-loot projection 重发/撤销，留待 R6 P1/P2 projection/store 设计时决定；理由是这是 recipient lifecycle 与 client stale-snapshot 清理的联合契约，P0 不预先指定触发矩阵；交叉引用 §3 与 `docs/plans-skeleton/plan-refactor-wire-s2c-v1.md` P1-P2。
+4. **Snapshot multiplicativity bound**：recipient-specific full snapshot 的 coalescing、增量/空间索引或 aggregate rate bound，留待 R6 P1 emit builder 设计时决定；理由是分页和 key reuse 是否足以控制 aggregate cost 需要结合真实 recipient cardinality 与 wire budget 评估；交叉引用 §3 与 `docs/plans-skeleton/plan-refactor-wire-s2c-v1.md` P1。
 
 P0 完成只表示上述 surface、owner、失败边界、pins 与逐项 absorption audit 已冻结，不表示后续实现完成。
