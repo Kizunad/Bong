@@ -14,12 +14,12 @@
 - **进料**：`bong:client_request` 单通道（既有，C2S 本就单轨）、玩家实体（Position/CurrentDimension/状态组件）、R1 session 忙态、R10 inventory 事务。
 - **出料**：校验通过的请求进各域 handler；拒绝走统一 reject 回执（带原因码，client 侧 toast/HUD 可消费——对齐 unconsumed-event-feedback 的方向但只做 gate 拒绝部分）。
 - **共享类型**：新 `server/src/network/gate/`——`GateSpec { max_distance(度量统一), same_dimension, ownership, state_preconditions }` 按请求类型声明；维度感知 zone 查找 helper。
-- **跨仓库契约**：wire 形状不变（113 变体不动）；reject 回执若新增字段走 R6 的契约流程。
+- **跨仓库契约**：wire 形状通常不变（现行 enum 全量）；reject 回执若新增字段走 R6 的契约流程。R1 craft pause/resume 例外消费 R6 新增的 `CraftOpen`/`CraftPause`/`CraftResume`，本轨负责 production decode/dispatch，并以 owner、phase 与 busy `GateSpec` 拒绝伪造 resume/重复包。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：113 个变体普查（每个标注应有的门禁四元组现状）；冻结 `GateSpec` 与拒绝回执语义；等 #1287（冷却重构，同文件大改）merge 定基线。
-- ⬜ P1 门禁中间件落地：gate 层上线，先给"已知漏洞簇"的 ~20 个请求类型挂 spec（吸收清单全命中），旧内联校验保留并行断言一个版本期。
+- ⬜ P1 门禁中间件落地：gate 层上线，先给"已知漏洞簇"与 R1 craft `CraftOpen`/`CraftPause`/`CraftResume` 挂 spec；新增 intent 必须在同一提交进入 production decode/dispatch 和全量 gate matrix，旧内联校验保留并行断言一个版本期。
 - ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住。
 - ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：113 变体全部声明门禁（含显式 `no_gate` 声明，杜绝静默无门禁）；删除各域内联距离常量与重复维度判断。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
@@ -33,7 +33,7 @@ skeleton：alchemy-furnace-scope-gate、block-place-reach-gate、coffin-reclaim-
 
 - 独占：`network/client_request_handler.rs`（拆解）、新 `network/gate/`、各域内联距离/维度校验行的删除。
 - 不碰：`*_emit.rs` S2C 侧（R6）、session 内部（R1）、inventory 事务（R10）。
-- 依赖：基线等 #1287 merge；建议在 R6 的 emit 侧稳定后开 P2（同在 network/ 目录，文件不相交但相邻）；P0/P1 可先行。
+- 依赖：基线等 #1287 merge；R1 craft adapter 还要求 R6 先冻结 `CraftOpen`/`CraftPause`/`CraftResume`，本轨随后原子交付 production handler/gate；建议在 R6 emit 侧稳定后开 P2（同在 network/ 目录，文件不相交但相邻），其余 P0/P1 可先行。
 
 ## bot 验收场景
 

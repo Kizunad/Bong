@@ -24,7 +24,7 @@
   - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/{ClientStoreScopeManifest,SessionScopedStore,SessionStoreHandle,SessionScopedStoreRegistry}.java`；`SessionScopedStore.clearOnDisconnect()`；`SessionStoreHandle.forStore(...)`；`SessionScopedStoreRegistry.clearAllOnDisconnect()`。
   - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin 108 个 Store 的三分类、106 个 session Store、`ClientConnectionStatusStore` 外部 token 管理与 P0 空 registry；`SessionScopedStoreRegistryTest` pin 声明顺序、重复 FQCN fail-fast、Store / reporter 异常隔离和 `Error` 透传。
   - **跨仓库契约**：纯 client 生命周期基础设施；schema、Redis key、CustomPayload 均无新增或变更。
-- ⬜ **P1 在册 Store 平移**：把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。
+- ⬜ **P1 在册 Store 平移**：把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。R1 craft 接缝以本阶段已登记的 `CraftStore` 为唯一 client session-state owner；R7 P2 只消费该 Store 实现 close/pause/reopen/resume，不再建立第二份状态。
   - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/SessionScopedStoreRegistry.java` 的显式 `REGISTERED`；`client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `disconnectSession(...)` / `clearClientStateOnDisconnect()`。
   - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin P1 已迁移 FQCN 集；`BongNetworkHandlerTest` pin token invalidation 先于 registry、迟到旧 handler 不清新 session、非 Store hook 仍保留；每个 adapter 以目标 Store 的状态级行为测试证明 method reference 未错绑。
   - **跨仓库契约**：保持现有 wire、schema、Redis key 与 CustomPayload 不变。

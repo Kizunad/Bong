@@ -19,8 +19,8 @@
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：mod.rs 职责普查出拆分图（grid/txn/container/corpse/shelflife 接缝）；冻结 `InventoryTxn` API 与满包溢出策略；等 craft-refund P4、#1294 相关项定基线。
-- ⬜ P1 巨石拆分：按职责拆文件（行为不变，测试平移），`InventoryTxn` 骨架上线。
-- ⬜ P2 交付路径统一：give/craft/alchemy/forge/loot 全部改走 `deliver`；先校验后扣全量化；满包场景全绿。
+- ⬜ P1 巨石拆分：按职责拆文件（行为不变，测试平移），`InventoryTxn` 骨架上线；先冻结并实现 R1 可直接消费的 `deliver(items) -> Delivered | Spilled(fallback)` 提交语义、幂等键和失败不提交契约，未达到该 gate 时 R1 只能落 registry/adapter 骨架，不能清 escrow/session。
+- ⬜ P2 交付路径统一：give/craft/alchemy/forge/loot 全部改走 `deliver`；先校验后扣全量化；满包场景全绿。R1 craft/alchemy/forge 的 `AwaitingDelivery → CommitTerminal` 生产路径只在本阶段对应调用点迁移后才算完成。
 - ⬜ P3 网格/堆叠一致性：拾取合并、占格同步、pack 回执、老存档布局迁移补课。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
 
@@ -33,7 +33,7 @@ skeleton：alchemy-takeback-full-inventory-loss（交付垫层部分；session t
 
 - 独占：`server/src/inventory/**`、各域交付调用点的替换行。
 - 不碰：`InspectScreen`（R7 域）；session 生命周期（R1）；掉落物拾取的 gate 校验（R4）。
-- 依赖：R3 P1（persistence 拆分先行，inventories 表接缝清晰）；与 R1 的交付接缝 API 由本轨定义、R1 消费。Wave 2 开工，P0 普查可先行。
+- 依赖：R3 P1（persistence 拆分先行，inventories 表接缝清晰）；与 R1 的交付接缝 API 由本轨定义、R1 消费。R1 可在本轨 P1 后编译 `deliver` delivery gate，但其 P1 craft 宿主与 P2 alchemy/forge 宿主均须等待本轨 P2 对应 production 调用点迁移后才可验收结案。Wave 2 开工，P0 普查可先行。
 
 ## bot 验收场景
 

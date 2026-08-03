@@ -51,8 +51,8 @@
 ## 3. 波次与依赖
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
-- **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
-- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）。
+- **Wave 1**：R6（R2 合入后）、R7 基础设施（R2 合入后）、R1 framework-only（仅 `InteractionSession`/registry/lifecycle 骨架，R3 P1 合入后；不得宣称 craft pause/resume 或 delivery 生产闭环）。
+- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）；R1 宿主迁移按显式 gate 分批放行：craft 需 R3 P1 + R6 craft intents + R4 craft handler/gate + R7 P2 Craft Screen + R2 P1 已登记的 `CraftStore` + R10 P1 `deliver` contract + R10 P2 craft production delivery，alchemy/forge 同样需 R10 P2 对应生产调用点，`TsyPresence` 需 R3 P1 auxiliary Slice 与 R3 P4 restore parity。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 

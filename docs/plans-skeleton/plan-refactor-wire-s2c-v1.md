@@ -14,12 +14,12 @@
 - **进料**：各域游戏事件（emit 调用点）、`world` 维度/zone 信息（作用域过滤）。
 - **出料**：`bong:server_data` 单通道（目标态：28 旁路全部收编或显式豁免登记）；join/重连首包快照集契约（R2 清干净后靠它灌满）。
 - **共享类型**：新 server `network/emit/` builder（`scope: Global | Dimension | Zone | Player`）；client 桥接层唯一的枚举前缀剥离函数。
-- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。
+- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。R1 craft 例外要求显式冻结并一次性切换 `CraftOpen` / `CraftPause` / `CraftResume` C2S intent 与对应 S2C session-state payload；现有 `CraftCancel` 保留为唯一主动取消 intent，关屏不得复用它。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单。
-- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发。
+- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发；同时交付 R1 craft 所需 `CraftOpen`/`CraftPause`/`CraftResume` proto/schema/`proto_convert` 与 S2C session-state sample pins，生产 decoder/handler 由 R4 消费。
 - ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）。
 - ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
 - ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次。
@@ -35,7 +35,7 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 - 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：无硬前置；R2 先合（同文件低冲突区段）；R4 P2 建议在本轨 P1 后开。
+- 依赖：无硬前置；R2 先合（同文件低冲突区段）；R1 craft adapter 不得在本轨 P1 的 `CraftOpen`/`CraftPause`/`CraftResume` 契约 pins 合入前宣称 pause/resume 可达；R4 的 craft handler/gate 接缝在该契约合入后落地，R4 P2 其余拆分建议在本轨 P1 后开。
 
 ## bot 验收场景
 
