@@ -88,7 +88,7 @@ pub struct TechniqueDefinition {
     pub required_realm: String,
     pub required_meridians: Vec<TechniqueRequiredMeridian>,
     pub required_race: RaceGateOwned,
-    pub qi_cost: f32,
+    pub qi_cost: f64,
     pub stamina_cost: f32,
     pub cast_ticks: u32,
     pub cooldown_ticks: u32,
@@ -141,6 +141,20 @@ impl TechniqueRegistry {
             .get(id)
             .unwrap_or_else(|| panic!("test override references unknown technique {id:?}"));
         override_definition(&mut registry.definitions[index]);
+        registry
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_for_tests_with_definition(definition: TechniqueDefinition) -> Self {
+        let mut registry = Self::load_for_tests();
+        assert!(
+            !registry.id_to_index.contains_key(&definition.id),
+            "test extension duplicates technique {:?}",
+            definition.id
+        );
+        let index = registry.definitions.len();
+        registry.id_to_index.insert(definition.id.clone(), index);
+        registry.definitions.push(definition);
         registry
     }
 
@@ -304,7 +318,7 @@ struct TechniqueToml {
     required_realm: String,
     required_meridians: Vec<TechniqueRequiredMeridianToml>,
     required_race: RaceGateOwned,
-    qi_cost: f32,
+    qi_cost: f64,
     stamina_cost: f32,
     cast_ticks: u32,
     cooldown_ticks: u32,
@@ -344,6 +358,17 @@ fn validate_and_convert(
         }
     }
 
+    if !is_valid_icon_texture(&raw.icon_texture) {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "icon_texture must be a Minecraft GUI PNG identifier, got {:?}",
+                raw.icon_texture
+            ),
+        ));
+    }
+
     if parse_required_realm(&raw.required_realm).is_none() {
         return Err(TechniqueLoadError::invalid(
             path,
@@ -364,8 +389,8 @@ fn validate_and_convert(
 
     for (field, value) in [
         ("qi_cost", raw.qi_cost),
-        ("stamina_cost", raw.stamina_cost),
-        ("range", raw.range),
+        ("stamina_cost", f64::from(raw.stamina_cost)),
+        ("range", f64::from(raw.range)),
     ] {
         if !value.is_finite() || value < 0.0 {
             return Err(TechniqueLoadError::invalid(
@@ -374,6 +399,20 @@ fn validate_and_convert(
                 format!("{field} must be finite and non-negative, got {value}"),
             ));
         }
+    }
+    if raw.id == "body.guangbo_ticao" && raw.qi_cost <= 0.0 {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            "body.guangbo_ticao qi_cost must be strictly positive",
+        ));
+    }
+    if raw.id == "sword_path.heaven_gate" && raw.range > 100.0 {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            "sword_path.heaven_gate range must not exceed 100 blocks",
+        ));
     }
 
     let mut seen_meridians = HashSet::new();
@@ -440,6 +479,22 @@ fn validate_and_convert(
         category: raw.category,
         dispatch: raw.dispatch,
     })
+}
+
+fn is_valid_icon_texture(value: &str) -> bool {
+    let Some((namespace, path)) = value.split_once(':') else {
+        return false;
+    };
+    !namespace.is_empty()
+        && !path.is_empty()
+        && path.starts_with("textures/gui/")
+        && path.ends_with(".png")
+        && namespace
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.'))
+        && path.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '/' | '.')
+        })
 }
 
 fn validate_race_gate(
@@ -646,10 +701,13 @@ dispatch = "metadata_backed"
                 "race gate mismatch for {}",
                 legacy.id
             );
-            assert_eq!(
-                actual.qi_cost, legacy.qi_cost,
-                "qi_cost mismatch for {}",
-                legacy.id
+            assert!(
+                (actual.qi_cost - f64::from(legacy.qi_cost)).abs()
+                    <= f64::from(f32::EPSILON),
+                "qi_cost mismatch for {}: runtime={} legacy={}",
+                legacy.id,
+                actual.qi_cost,
+                legacy.qi_cost
             );
             assert_eq!(
                 actual.stamina_cost, legacy.stamina_cost,
@@ -869,6 +927,60 @@ dispatch = "metadata_backed"
                 "invalid species gate must reject: {text}"
             );
         }
+    }
+
+    #[test]
+    fn accepts_known_species_gate() {
+        let input = minimal_toml().replace(
+            "required_race = { kind = \"any\" }",
+            "required_race = { kind = \"species\", species = [\"whale\"] }",
+        );
+        let registry = load(&input).expect("known non-empty species gate must load");
+        let definition = registry.get("test.skill").unwrap();
+        assert!(definition
+            .required_race
+            .allows(&RaceId::new("whale"), false));
+        assert!(!definition
+            .required_race
+            .allows(&RaceId::new(crate::body_plan::HUMAN_RACE_ID), true));
+    }
+
+    #[test]
+    fn rejects_invalid_gui_icon_identifiers() {
+        for icon in [
+            "missing_namespace.png",
+            "Bong:textures/gui/skill.png",
+            "bong:textures/item/skill.png",
+            "bong:textures/gui/skill.jpg",
+            "bong:textures/gui/Skill.png",
+            "bong:textures/gui/skill icon.png",
+        ] {
+            let input = minimal_toml().replace(
+                "bong-client:textures/gui/items/skill_scroll_test_skill.png",
+                icon,
+            );
+            let error = load(&input).expect_err("invalid runtime icon must reject catalog");
+            assert!(
+                error.to_string().contains("icon_texture"),
+                "error must identify icon_texture, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_zero_cost_guangbo_and_oversized_heaven_gate() {
+        let zero_cost_guangbo =
+            minimal_toml().replace("id = \"test.skill\"", "id = \"body.guangbo_ticao\"");
+        let oversized_heaven_gate = minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"sword_path.heaven_gate\"")
+            .replace("range = 0.0", "range = 100.01");
+
+        let guangbo_error = load(&zero_cost_guangbo)
+            .expect_err("body.guangbo_ticao must not admit a free proficiency loop");
+        assert!(guangbo_error.to_string().contains("strictly positive"));
+        let heaven_gate_error =
+            load(&oversized_heaven_gate).expect_err("global entity fan-out range must be bounded");
+        assert!(heaven_gate_error.to_string().contains("100 blocks"));
     }
 
     fn noop_skill(

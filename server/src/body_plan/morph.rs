@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{bevy_ecs, Component, Entity, Events, Position};
 
+use crate::combat::components::Stamina;
 use crate::cultivation::components::{Cultivation, MeridianSystem};
 use crate::cultivation::known_techniques::TechniqueRegistry;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -162,7 +163,7 @@ fn cast_morph_yixing(
         };
     };
 
-    let (qi_cost, cooldown_ticks, anim_duration_ticks) = {
+    let (qi_cost, stamina_cost, cooldown_ticks, anim_duration_ticks) = {
         let techniques = world
             .get_resource::<TechniqueRegistry>()
             .expect("cultivation::register must insert TechniqueRegistry before skill resolution");
@@ -170,21 +171,33 @@ fn cast_morph_yixing(
             .get(YIXING_SKILL_ID)
             .expect("validated TechniqueRegistry must contain morph.yixing");
         (
-            f64::from(definition.qi_cost),
+            definition.qi_cost,
+            definition.stamina_cost,
             u64::from(definition.cooldown_ticks),
             definition.cast_ticks,
         )
     };
+    if let Some(stamina) = world.get::<Stamina>(caster) {
+        if stamina.current < stamina_cost || stamina.current <= 0.0 {
+            return CastResult::Rejected {
+                reason: CastRejectReason::InRecovery,
+            };
+        }
+    }
     if !drain_qi_to_zone(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
-
     let tick = world
         .get_resource::<CultivationClock>()
         .map(|clock| clock.tick)
         .unwrap_or(0);
+    if let Some(mut stamina) = world.get_mut::<Stamina>(caster) {
+        stamina.current = (stamina.current - stamina_cost).clamp(0.0, stamina.max);
+        stamina.last_drain_tick = Some(tick);
+    }
+
     world
         .entity_mut(caster)
         .insert(MorphState::new(target_race, 0, tick));
@@ -738,12 +751,10 @@ mod tests {
         }
 
         fn yixing_qi_cost() -> f64 {
-            f64::from(
-                TechniqueRegistry::load_for_tests()
-                    .get(YIXING_SKILL_ID)
-                    .expect("checked-in TechniqueRegistry must contain morph.yixing")
-                    .qi_cost,
-            )
+            TechniqueRegistry::load_for_tests()
+                .get(YIXING_SKILL_ID)
+                .expect("checked-in TechniqueRegistry must contain morph.yixing")
+                .qi_cost
         }
 
         #[test]
@@ -803,18 +814,25 @@ mod tests {
 
         #[test]
         fn cast_and_release_timing_consume_overridden_registry_metadata() {
-            let configured_cost = 2.5_f32;
+            let configured_cost = 2.5_f64;
+            let configured_stamina_cost = 7.5_f32;
             let configured_cooldown = 73;
             let configured_cast_ticks = 19;
             let techniques =
                 TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
                     definition.qi_cost = configured_cost;
+                    definition.stamina_cost = configured_stamina_cost;
                     definition.cooldown_ticks = configured_cooldown;
                     definition.cast_ticks = configured_cast_ticks;
                 });
             let races = human_to_whale_registry();
             let (mut world, caster) =
                 make_world_with_caster_and_zone_and_registry(10.0, 100.0, races, techniques);
+            world.entity_mut(caster).insert(Stamina {
+                current: 20.0,
+                max: 20.0,
+                ..Default::default()
+            });
 
             let morph = cast_morph_yixing(&mut world, caster, 0, None);
             assert_eq!(
@@ -826,12 +844,14 @@ mod tests {
                 "morph timing must come from the injected TechniqueRegistry"
             );
             assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current
-                    - (10.0 - f64::from(configured_cost)))
-                .abs()
+                (world.get::<Cultivation>(caster).unwrap().qi_current - (10.0 - configured_cost))
+                    .abs()
                     < 1e-9,
                 "morph charge must use overridden registry qi_cost"
             );
+            let stamina = world.get::<Stamina>(caster).unwrap();
+            assert_eq!(stamina.current, 20.0 - configured_stamina_cost);
+            assert_eq!(stamina.last_drain_tick, Some(1234));
 
             let release = cast_morph_yixing(&mut world, caster, 0, None);
             assert_eq!(
@@ -843,11 +863,59 @@ mod tests {
                 "release timing must use the same registry metadata rather than Rust constants"
             );
             assert!(
-                (world.get::<Cultivation>(caster).unwrap().qi_current
-                    - (10.0 - f64::from(configured_cost)))
-                .abs()
+                (world.get::<Cultivation>(caster).unwrap().qi_current - (10.0 - configured_cost))
+                    .abs()
                     < 1e-9,
                 "release branch remains free and must not charge metadata qi_cost twice"
+            );
+        }
+
+        #[test]
+        fn cast_rejects_overridden_stamina_cost_without_mutation() {
+            let techniques =
+                TechniqueRegistry::load_for_tests_with_override(YIXING_SKILL_ID, |definition| {
+                    definition.stamina_cost = 12.0
+                });
+            let races = human_to_whale_registry();
+            let (mut world, caster) = make_world_with_caster_and_zone_and_registry(
+                yixing_qi_cost() + 10.0,
+                100.0,
+                races,
+                techniques,
+            );
+            world.entity_mut(caster).insert(Stamina {
+                current: 11.9,
+                max: 20.0,
+                ..Default::default()
+            });
+            let qi_before = world.get::<Cultivation>(caster).unwrap().qi_current;
+            let zone_before = world
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name("spawn")
+                .unwrap()
+                .spirit_qi;
+
+            let result = cast_morph_yixing(&mut world, caster, 0, None);
+
+            assert_eq!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::InRecovery
+                }
+            );
+            assert!(world.get::<MorphState>(caster).is_none());
+            assert_eq!(
+                world.get::<Cultivation>(caster).unwrap().qi_current,
+                qi_before
+            );
+            assert_eq!(world.get::<Stamina>(caster).unwrap().current, 11.9);
+            assert_eq!(
+                world
+                    .resource::<ZoneRegistry>()
+                    .find_zone_by_name("spawn")
+                    .unwrap()
+                    .spirit_qi,
+                zone_before
             );
         }
 

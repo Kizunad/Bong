@@ -35,7 +35,7 @@ use crate::cultivation::known_techniques::{
     KnownTechniques, TechniqueDefinition, TechniqueRegistry,
 };
 use crate::cultivation::meridian::severed::{
-    check_meridian_dependencies, MeridianSeveredPermanent, SkillMeridianDependencies,
+    check_player_skill_meridian_gate, MeridianSeveredPermanent, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::technique_scroll::realm_rank;
@@ -113,7 +113,7 @@ fn cast_condense_edge(
 
     // 去掉"目标无效"门禁（Option B）：凝锋是近战剑势，准星没对准也照常挥出，
     // target 透传 Option —— 有目标命中、无目标 resolver 跳过即空挥（不命中、无误伤）。
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -163,7 +163,7 @@ fn cast_qi_slash(
 
     // 去掉"目标无效"门禁（Option B）：剑气斩是方向招，准星没对准也照常释放，target
     // 透传 Option —— 有目标命中、无目标 resolver 跳过即空斩；朝向无目标时落到玩家面朝向。
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -178,7 +178,7 @@ fn cast_qi_slash(
         target,
         issued_at_tick: ctx.now_tick,
         reach: AttackReach::new(ctx.definition.range, 0.0),
-        qi_invest: ctx.definition.qi_cost,
+        qi_invest: ctx.definition.qi_cost as f32,
         wound_kind: WoundKind::Cut,
         source: AttackSource::SwordPathQiSlash,
         debug_command: None,
@@ -242,7 +242,7 @@ fn cast_resonance(
         Err(reason) => return CastResult::Rejected { reason },
     };
 
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -307,7 +307,7 @@ fn cast_manifest(
     };
     // 去掉"目标无效"门禁（Option B）：化形是方向招，准星没对准也照常释放，target 透传
     // Option —— 有目标命中、无目标 resolver 跳过即空放（不命中、无误伤）。
-    let qi_cost = f64::from(ctx.definition.qi_cost);
+    let qi_cost = ctx.definition.qi_cost;
     if !drain_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
@@ -863,30 +863,21 @@ fn build_cast_context(
         return Err(CastRejectReason::RealmTooLow);
     }
 
-    // 经脉依赖（plan §P1.5）。SkillMeridianDependencies 是 Resource，缺则视为
-    // 不限制（与 sword_basics 现有行为一致）。
-    if let Some(deps_resource) = world.get_resource::<SkillMeridianDependencies>() {
-        let deps = deps_resource.lookup(skill_id).to_vec();
-        if !deps.is_empty() {
-            let severed = world.get::<MeridianSeveredPermanent>(caster);
-            if let Err(channel) = check_meridian_dependencies(&deps, severed) {
-                return Err(CastRejectReason::MeridianSevered(Some(channel)));
-            }
-            // 同时校验当前 integrity（worldview §四:286）：完全 SEVERED 已被
-            // check_meridian_dependencies 拦截；这里再防 integrity = 0 的临时损伤。
-            // 语义：剑道五招要求**所有**依赖经脉都通畅，任一断裂就拒绝（与 check_meridian
-            // _dependencies 的 ANY 拒绝语义对齐）。
-            if let Some(meridians) = world.get::<MeridianSystem>(caster) {
-                if let Some(broken) = deps
-                    .iter()
-                    .find(|m| meridians.get(**m).integrity <= f64::EPSILON)
-                {
-                    return Err(CastRejectReason::MeridianSevered(Some(*broken)));
-                }
-            }
+    // SkillMeridianDependencies 保留为 resolver-only 依赖；TechniqueDefinition 的
+    // required_meridians 是 metadata 真源，统一走同一套 opened/SEVERED/integrity 门控。
+    if let Some(meridians) = world.get::<MeridianSystem>(caster) {
+        let severed = world.get::<MeridianSeveredPermanent>(caster);
+        let deps = world.get_resource::<SkillMeridianDependencies>();
+        if let Err(blocked) = check_player_skill_meridian_gate(
+            skill_id,
+            &definition.required_meridians,
+            meridians,
+            severed,
+            deps,
+        ) {
+            return Err(CastRejectReason::MeridianSevered(Some(blocked)));
         }
     }
-
     Ok(CastContext {
         now_tick,
         definition,
@@ -1136,6 +1127,18 @@ mod tests {
         let mut deps = app.world_mut().resource_mut::<SkillMeridianDependencies>();
         declare_meridian_dependencies(&mut deps);
 
+        let mut meridians = MeridianSystem::default();
+        for definition in app.world().resource::<TechniqueRegistry>().iter() {
+            for required in &definition.required_meridians {
+                let id = crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
+                    .expect("checked-in sword technique meridian must parse");
+                let meridian = meridians.get_mut(id);
+                meridian.opened = true;
+                meridian.integrity = 1.0;
+                meridian.throughput_current = 1.0;
+            }
+        }
+
         let caster = app
             .world_mut()
             .spawn((
@@ -1163,7 +1166,7 @@ mod tests {
                     qi_max: 5000.0,
                     ..Cultivation::default()
                 },
-                MeridianSystem::default(),
+                meridians,
                 KnownTechniques {
                     entries: vec![
                         KnownTechnique {
@@ -1267,7 +1270,7 @@ mod tests {
     #[test]
     fn qi_slash_runtime_consumes_overridden_metadata_fields() {
         let (mut app, caster) = setup_app();
-        let configured_qi_cost = 7.25_f32;
+        let configured_qi_cost = 7.25_f64;
         let configured_stamina_cost = 4.5_f32;
         let configured_cast_ticks = 17;
         let configured_cooldown_ticks = 29;
@@ -1301,7 +1304,7 @@ mod tests {
         );
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - f64::from(configured_qi_cost)).abs() < 1e-6,
+            (qi_before - qi_after - configured_qi_cost).abs() < 1e-6,
             "qi charge must use overridden metadata: {qi_before} -> {qi_after}"
         );
         let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
@@ -1320,7 +1323,7 @@ mod tests {
             "attack reach must use overridden metadata range"
         );
         assert_eq!(
-            attack.qi_invest, configured_qi_cost,
+            attack.qi_invest, configured_qi_cost as f32,
             "attack qi investment must use the same overridden qi cost"
         );
         let casting = app
@@ -1370,6 +1373,38 @@ mod tests {
             app.world().get::<Cultivation>(caster).unwrap().qi_current,
             qi_before,
             "realm rejection must precede all costs"
+        );
+    }
+
+    #[test]
+    fn qi_slash_runtime_rejects_overridden_meridian_health_requirement() {
+        let (mut app, caster) = setup_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_QI_SLASH_ID,
+            |definition| {
+                definition.required_meridians[0].min_health = 0.9;
+            },
+        ));
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::LargeIntestine)
+            .integrity = 0.5;
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+
+        let result = cast_qi_slash(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Rejected {
+                reason: CastRejectReason::MeridianSevered(Some(MeridianId::LargeIntestine)),
+            },
+            "runtime must enforce the overridden metadata min_health instead of only the static dependency table"
+        );
+        assert_eq!(
+            app.world().get::<Cultivation>(caster).unwrap().qi_current,
+            qi_before,
+            "metadata meridian rejection must happen before qi drain"
         );
     }
 
@@ -1790,9 +1825,9 @@ mod tests {
 
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - f64::from(qi_slash.qi_cost)).abs() < 1e-6,
-            "qi_current 应扣 {} (f64::from(qi_slash.qi_cost))，实际差值 {}",
-            f64::from(qi_slash.qi_cost),
+            (qi_before - qi_after - qi_slash.qi_cost).abs() < 1e-6,
+            "qi_current 应扣 {} (qi_slash.qi_cost)，实际差值 {}",
+            qi_slash.qi_cost,
             qi_before - qi_after
         );
         let intent = app
@@ -2140,16 +2175,16 @@ mod tests {
         let result = cast_qi_slash(app.world_mut(), caster, 0, None);
         assert!(matches!(result, CastResult::Started { .. }));
 
-        // qi_current 应减少 f64::from(qi_slash.qi_cost)。
+        // qi_current 应减少 qi_slash.qi_cost。
         let qi_after = app.world().get::<Cultivation>(caster).unwrap().qi_current;
         assert!(
-            (qi_before - qi_after - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
-            "qi_current 应扣 {} (f64::from(qi_slash.qi_cost))，实际差 {}",
-            f64::from(qi_slash.qi_cost),
+            (qi_before - qi_after - qi_slash.qi_cost).abs() < 1e-9,
+            "qi_current 应扣 {} (qi_slash.qi_cost)，实际差 {}",
+            qi_slash.qi_cost,
             qi_before - qi_after,
         );
 
-        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = f64::from(qi_slash.qi_cost)。
+        // 无 bond → 全部 cost 归还 zone：ReleaseToZone event amount = qi_slash.qi_cost。
         let release: Vec<_> = app
             .world()
             .resource::<Events<QiTransfer>>()
@@ -2163,9 +2198,9 @@ mod tests {
             release.len()
         );
         assert!(
-            (release[0].amount - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
-            "ReleaseToZone.amount 应等于 f64::from(qi_slash.qi_cost)={:.1}（全额归 zone），实际 {}",
-            f64::from(qi_slash.qi_cost),
+            (release[0].amount - qi_slash.qi_cost).abs() < 1e-9,
+            "ReleaseToZone.amount 应等于 qi_slash.qi_cost={:.1}（全额归 zone），实际 {}",
+            qi_slash.qi_cost,
             release[0].amount,
         );
 
@@ -2227,7 +2262,7 @@ mod tests {
             "有 bond 时应有 1 笔 Channeling audit event，实际 {}",
             channeling.len()
         );
-        let expected_injected = f64::from(qi_slash.qi_cost) * super::super::bond::QI_INJECT_RATIO;
+        let expected_injected = qi_slash.qi_cost * super::super::bond::QI_INJECT_RATIO;
         assert!(
             (channeling[0].amount - expected_injected).abs() < 1e-9,
             "Channeling amount = cost × QI_INJECT_RATIO = {expected_injected:.2}，实际 {}",
@@ -2240,7 +2275,7 @@ mod tests {
             "有 bond 时仍应有 1 笔 ReleaseToZone，实际 {}",
             release.len()
         );
-        let expected_remainder = f64::from(qi_slash.qi_cost) - expected_injected;
+        let expected_remainder = qi_slash.qi_cost - expected_injected;
         assert!(
             (release[0].amount - expected_remainder).abs() < 1e-9,
             "ReleaseToZone amount = cost - injected = {expected_remainder:.2}，实际 {}",
@@ -2296,9 +2331,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "Mortal 灵剑全部 cost 归 zone");
         assert!(
-            (release[0].amount - f64::from(qi_slash.qi_cost)).abs() < 1e-9,
-            "全额归 zone = f64::from(qi_slash.qi_cost)={:.1}，实际 {}",
-            f64::from(qi_slash.qi_cost),
+            (release[0].amount - qi_slash.qi_cost).abs() < 1e-9,
+            "全额归 zone = qi_slash.qi_cost={:.1}，实际 {}",
+            qi_slash.qi_cost,
             release[0].amount,
         );
     }
@@ -2337,9 +2372,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "剑鸣无 bond 应有 1 笔 ReleaseToZone");
         assert!(
-            (release[0].amount - f64::from(resonance.qi_cost)).abs() < 1e-9,
-            "ReleaseToZone = f64::from(resonance.qi_cost)={:.1}，实际 {}",
-            f64::from(resonance.qi_cost),
+            (release[0].amount - resonance.qi_cost).abs() < 1e-9,
+            "ReleaseToZone = resonance.qi_cost={:.1}，实际 {}",
+            resonance.qi_cost,
             release[0].amount,
         );
     }
@@ -2364,9 +2399,9 @@ mod tests {
             .collect();
         assert_eq!(release.len(), 1, "化形无 bond 应有 1 笔 ReleaseToZone");
         assert!(
-            (release[0].amount - f64::from(manifest.qi_cost)).abs() < 1e-9,
-            "ReleaseToZone = f64::from(manifest.qi_cost)={:.1}，实际 {}",
-            f64::from(manifest.qi_cost),
+            (release[0].amount - manifest.qi_cost).abs() < 1e-9,
+            "ReleaseToZone = manifest.qi_cost={:.1}，实际 {}",
+            manifest.qi_cost,
             release[0].amount,
         );
     }

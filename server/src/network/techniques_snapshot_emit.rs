@@ -45,14 +45,11 @@ pub fn emit_join_techniques_snapshot_payloads(
     }
 }
 
-pub fn send_techniques_snapshot_to_client(
+fn build_techniques_snapshot(
     registry: &TechniqueRegistry,
-    entity: Entity,
-    client: &mut Client,
-    username: &str,
     known: &KnownTechniques,
-) {
-    let snapshot = TechniquesSnapshotV1 {
+) -> TechniquesSnapshotV1 {
+    TechniquesSnapshotV1 {
         entries: known
             .entries
             .iter()
@@ -75,7 +72,7 @@ pub fn send_techniques_snapshot_to_client(
                             min_health: required.min_health,
                         })
                         .collect(),
-                    qi_cost: definition.qi_cost,
+                    qi_cost: definition.qi_cost as f32,
                     stamina_cost: definition.stamina_cost,
                     cast_ticks: definition.cast_ticks,
                     cooldown_ticks: definition.cooldown_ticks,
@@ -83,7 +80,17 @@ pub fn send_techniques_snapshot_to_client(
                 })
             })
             .collect(),
-    };
+    }
+}
+
+pub fn send_techniques_snapshot_to_client(
+    registry: &TechniqueRegistry,
+    entity: Entity,
+    client: &mut Client,
+    username: &str,
+    known: &KnownTechniques,
+) {
+    let snapshot = build_techniques_snapshot(registry, known);
     let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot));
     let payload_type = payload_type_label(payload.payload_type());
     let payload_bytes = match serialize_server_data_payload(&payload) {
@@ -99,4 +106,44 @@ pub fn send_techniques_snapshot_to_client(
         SERVER_DATA_CHANNEL,
         payload_type
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+
+    #[test]
+    fn snapshot_uses_injected_registry_and_omits_unknown_known_ids() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.display_name = "运行时覆写劈".to_string();
+                definition.qi_cost = 7.25;
+                definition.range = 4.5;
+            });
+        let known = KnownTechniques {
+            entries: vec![
+                KnownTechnique {
+                    id: "unknown.removed".to_string(),
+                    proficiency: 0.4,
+                    active: true,
+                },
+                KnownTechnique {
+                    id: "sword.cleave".to_string(),
+                    proficiency: 1.5,
+                    active: true,
+                },
+            ],
+        };
+
+        let snapshot = build_techniques_snapshot(&registry, &known);
+
+        assert_eq!(snapshot.entries.len(), 1);
+        let entry = &snapshot.entries[0];
+        assert_eq!(entry.id, "sword.cleave");
+        assert_eq!(entry.display_name, "运行时覆写劈");
+        assert_eq!(entry.proficiency, 1.0);
+        assert_eq!(entry.qi_cost, 7.25);
+        assert_eq!(entry.range, 4.5);
+    }
 }
