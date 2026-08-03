@@ -90,7 +90,7 @@ pub fn is_damageable(entity: Entity, game_modes: &Query<&GameMode>) -> bool {
 type JoinedClientsWithoutCombatBundle<'a> = (valence::prelude::Entity, &'a Username);
 type JoinedClientsWithoutCombatBundleFilter = (Added<Client>, Without<Wounds>);
 
-fn attach_combat_bundle_to_joined_clients(
+pub(crate) fn attach_combat_bundle_to_joined_clients(
     mut commands: Commands,
     joined_clients: Query<
         JoinedClientsWithoutCombatBundle<'_>,

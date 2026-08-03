@@ -50,7 +50,7 @@ bug-hunt round1 confirmed（fix_pr 类，7 条）。可逐个直接修，但归�
 | P3 TSY collapse route 重复注册 | `client/src/main/java/com/bong/client/network/ServerDataRouter.java:193` 当前只注册一次 | `already-fixed/invalid`（already-fixed） | commit `4478c6ff5` / PR #576 | 仅归档 |
 | P4 quota release 并发丢更新 | `server/src/persistence/mod.rs:3338-3358` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10703-10782` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `230b9b784` / PR #590 | 仅归档 |
 | P5 ascension completion 并发丢更新 | `server/src/persistence/mod.rs:3158-3181` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10573-10664` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `1f5d30580` / PR #585 | 仅归档 |
-| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:4413-4449` 先写 bundle；`server/src/persistence/mod.rs:4429-4447` 的 DB-open 与 transaction-open 在补偿闭包外，早退仍绕过 `rollback_file` | `absorbed-by-track` | R3 `plan-refactor-persistence-slices-v1`（独占 `server/src/persistence/**`） | 已登记 R3 round-bundle 精确吸收，不另立 successor |
+| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:4413-4449` 先写 bundle；`server/src/persistence/mod.rs:4429-4447` 的 DB-open 与 transaction-open 在补偿闭包外，早退仍绕过 `rollback_file` | `absorbed-by-track` | R3 `docs/plan-refactor-persistence-slices-v1.md`（独占 `server/src/persistence/**`） | 已登记 R3 round-bundle 精确吸收，不另立 successor |
 
 ## Finish Evidence
 

@@ -658,6 +658,10 @@ pub enum SliceDispatchError {
         slice_id: SliceId,
         domain: WriteDomain,
     },
+    UnexpectedRebaseLease {
+        slice_id: SliceId,
+        domain: WriteDomain,
+    },
     DuplicateSubject {
         slice_id: SliceId,
         domain: WriteDomain,
@@ -686,6 +690,11 @@ impl fmt::Display for SliceDispatchError {
             Self::UnexpectedHydrateSubject { slice_id, domain } => write!(
                 formatter,
                 "slice `{slice_id}` activated an unexpected reconnect subject in domain `{}`",
+                domain.as_str()
+            ),
+            Self::UnexpectedRebaseLease { slice_id, domain } => write!(
+                formatter,
+                "slice `{slice_id}` changed reconnect leases during rebase in domain `{}`",
                 domain.as_str()
             ),
             Self::DuplicateSubject { slice_id, domain } => write!(
@@ -767,6 +776,35 @@ pub(in crate::persistence) struct ReconnectHandoffToken {
 }
 
 static NEXT_HANDOFF_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// Pending reconnect handoffs are produced by the player disconnect boundary and consumed
+/// once the matching replacement client is observed by the persistence dispatcher.
+#[derive(Debug, Default)]
+pub(crate) struct ReconnectHandoffQueue {
+    pending: HashMap<PersistenceSubjectKey, ReconnectHandoffToken>,
+}
+
+impl Resource for ReconnectHandoffQueue {}
+
+impl ReconnectHandoffQueue {
+    pub(crate) fn enqueue_subject(&mut self, subject_key: &str) {
+        let subject_key = PersistenceSubjectKey::new(subject_key.to_owned());
+        let token = reconnect_handoff_token(subject_key.0.clone());
+        self.pending.insert(subject_key, token);
+    }
+
+    pub(crate) fn take_subject(&mut self, subject_key: &str) -> Option<ReconnectHandoffToken> {
+        self.pending
+            .remove(&PersistenceSubjectKey::new(subject_key.to_owned()))
+    }
+
+    pub(crate) fn take(
+        &mut self,
+        subject_key: &PersistenceSubjectKey,
+    ) -> Option<ReconnectHandoffToken> {
+        self.pending.remove(subject_key)
+    }
+}
 
 #[allow(dead_code)]
 pub(in crate::persistence) fn reconnect_handoff_token(
@@ -1141,11 +1179,13 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         }
     }
 
+    let leases_before_rebase = reconnect_lease_snapshot(world)?;
     for descriptor in &descriptors {
         let Some(rebase) = descriptor.rebase else {
             continue;
         };
         report.rebases_attempted += 1;
+        let leases_before_call = reconnect_lease_snapshot(world)?;
         let context = SliceRunContext {
             reason: SliceRunReason::Rebase,
             runtime_tick,
@@ -1153,16 +1193,50 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             handoff_key: handoff_key.clone(),
             reconnect_activation: None,
         };
-        match rebase(world, &context) {
-            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
+        let outcome = rebase(world, &context);
+        let leases_after_call = reconnect_lease_snapshot(world)?;
+        let lease_error = (leases_after_call == leases_before_call)
+            .then_some(())
+            .is_none()
+            .then(|| {
+                let domain = leases_after_call
+                    .symmetric_difference(&leases_before_call)
+                    .next()
+                    .map_or(descriptor.write_binding.domain(), |lease| lease.0);
+                SliceDispatchError::UnexpectedRebaseLease {
+                    slice_id: descriptor.id,
+                    domain,
+                }
+            });
+        match outcome {
+            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) if lease_error.is_none() => {
                 report.rebases_completed += 1;
             }
+            Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {}
             Ok(SliceRunOutcome::SkippedBlocked) => report.blocked_rebases.push(descriptor.id),
             Err(error) => report.failures.push(ReconnectHandoffFailure {
                 slice_id: descriptor.id,
                 reason: SliceRunReason::Rebase,
                 error,
             }),
+        }
+        if let Some(error) = lease_error {
+            report.aborts_completed = cleanup_reconnect_activations(
+                world,
+                &hydrated_descriptors,
+                SliceRunReason::ReconnectAbort,
+                runtime_tick,
+                wall_unix_millis,
+                &handoff_key,
+            );
+            audit_aborted_hydrate_leases(
+                world,
+                &leases_before_hydrate,
+                &hydrated_descriptors,
+                &subject_key,
+                descriptor,
+            )?;
+            return Err(error);
         }
         if !report.blocked_rebases.is_empty() || !report.failures.is_empty() {
             report.aborts_completed = cleanup_reconnect_activations(
@@ -1182,6 +1256,18 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             )?;
             return Ok(report);
         }
+    }
+
+    let leases_after_rebase = reconnect_lease_snapshot(world)?;
+    if leases_after_rebase != leases_before_rebase {
+        let domain = leases_after_rebase
+            .symmetric_difference(&leases_before_rebase)
+            .next()
+            .map_or(WriteDomain::new("reconnect.rebase"), |lease| lease.0);
+        return Err(SliceDispatchError::UnexpectedRebaseLease {
+            slice_id: SliceId::new("reconnect.rebase.final-audit"),
+            domain,
+        });
     }
 
     Ok(report)
@@ -2420,6 +2506,13 @@ mod tests {
             ),
             ..basic_descriptor("player.invalid_domain", 55)
         }));
+        let invalid_authority = Box::leak(Box::new(SliceDescriptor {
+            write_binding: WriteBinding::new(
+                WriteDomain::new("player.core"),
+                WriteAuthority::new("Player Writer"),
+            ),
+            ..basic_descriptor("player.invalid_authority", 56)
+        }));
         let valid_rebase = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             hydrate: Some(noop_rebase),
@@ -2489,6 +2582,10 @@ mod tests {
         assert!(matches!(
             registry.register(invalid_domain),
             Err(SliceRegistryError::InvalidWriteDomain { .. })
+        ));
+        assert!(matches!(
+            registry.register(invalid_authority),
+            Err(SliceRegistryError::InvalidWriteAuthority { .. })
         ));
         assert!(matches!(
             registry.register(world_missing_hydrate),
@@ -3402,6 +3499,7 @@ mod tests {
         second_preflight: InjectedHookResult,
         second_hydrate: InjectedHookResult,
         preserve_new_first_on_abort: bool,
+        release_first_during_rebase: bool,
         hydrate_attempts: usize,
     }
 
@@ -3535,12 +3633,21 @@ mod tests {
         }
     }
 
+    fn atomic_rebase_first(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::Rebase);
+        let mut state = world.resource_mut::<AtomicReconnectState>();
+        if state.release_first_during_rebase {
+            state.new_first = None;
+        }
+        Ok(SliceRunOutcome::Clean)
+    }
+
     fn atomic_descriptors() -> (&'static SliceDescriptor, &'static SliceDescriptor) {
         let first = Box::leak(Box::new(SliceDescriptor {
             hydrate: Some(atomic_hydrate_first),
             reconnect_preflight: Some(atomic_preflight_first),
             reconnect_cleanup: Some(atomic_cleanup_first),
-            rebase: Some(rebase_partial_activation),
+            rebase: Some(atomic_rebase_first),
             disconnect_save: Some(handoff_save),
             ..basic_descriptor("player.atomic_first", 10)
         }));
@@ -3635,6 +3742,75 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reconnect_rebase_lease_mutation_fails_closed_and_aborts_hydrated_state() {
+        let (first, second) = atomic_descriptors();
+        let mut world = atomic_reconnect_world(
+            first,
+            second,
+            InjectedHookResult::Clean,
+            InjectedHookResult::Clean,
+        );
+        world
+            .resource_mut::<AtomicReconnectState>()
+            .release_first_during_rebase = true;
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let error = dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock)
+            .expect_err("rebase must not change the active reconnect lease set");
+        assert_eq!(
+            error,
+            SliceDispatchError::UnexpectedRebaseLease {
+                slice_id: first.id,
+                domain: first.write_binding.domain(),
+            }
+        );
+        let state = world.resource::<AtomicReconnectState>();
+        assert!(state.old_first.is_none() && state.old_second.is_none());
+        assert!(state.new_first.is_none() && state.new_second.is_none());
+        let subject = subject_key("player:atomic");
+        let registry = world.resource::<PersistenceSliceRegistry>();
+        assert!(!registry.active_subject_domain(&subject, first.write_binding.domain()));
+        assert!(!registry.active_subject_domain(&subject, second.write_binding.domain()));
+    }
+
+    #[test]
+    fn reconnect_save_failure_preserves_real_activation_leases() {
+        let (first, second) = atomic_descriptors();
+        let mut world = atomic_reconnect_world(
+            first,
+            second,
+            InjectedHookResult::Clean,
+            InjectedHookResult::Clean,
+        );
+        world.resource_mut::<HandoffTrace>().fail_save = true;
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        let report = dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock)
+            .expect("save failure should be reported without destructive cleanup");
+        assert_eq!(report.loads_attempted, 0);
+        assert_eq!(report.failures.len(), 2);
+        let state = world.resource::<AtomicReconnectState>();
+        assert!(state.old_first.is_some() && state.old_second.is_some());
+        assert!(activation_keeps_all_leases(
+            state.old_first.as_ref().unwrap()
+        ));
+        assert!(activation_keeps_all_leases(
+            state.old_second.as_ref().unwrap()
+        ));
+        assert!(world
+            .resource::<PersistenceSliceRegistry>()
+            .active_subject_domain(&subject_key("player:atomic"), first.write_binding.domain()));
+        assert!(world
+            .resource::<PersistenceSliceRegistry>()
+            .active_subject_domain(&subject_key("player:atomic"), second.write_binding.domain()));
+    }
     #[test]
     fn reconnect_hydrate_failure_after_real_activation_rolls_back_all_and_retries_cleanly() {
         let (first, second) = atomic_descriptors();
