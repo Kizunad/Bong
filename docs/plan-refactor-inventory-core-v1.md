@@ -21,7 +21,7 @@
 - `pickup_dropped_loot_instance`（`server/src/inventory/mod.rs:5337`）只找空 footprint，不尝试合并已有同身份堆叠，拾取合并缺口仍存在。
 - server 的 `apply_inventory_move`（`server/src/inventory/mod.rs:3828`）会正确交换旋转后的 `grid_w/grid_h`，但 `InventoryEventV1::Moved`（`server/src/schema/inventory.rs:294`）只带 from/to；client `InventoryEventHandler`（`:85`）复用旧 item view，因此 delta 路径会保留旧 footprint。
 - pack move 成功分支在 `handle_inventory_move`（`server/src/network/client_request_handler.rs:15310`）执行 `worn_pack_rebuild` snapshot 后提前返回；普通 `send_moved_event`（`:15590`）未覆盖该分支，稳定成功回执缺口仍存在。
-- `emit_changed_inventory_snapshots`（`server/src/network/inventory_snapshot_emit.rs:93`）会为 `Changed<PlayerInventory>` 自动推送权威快照；`production_forge_station_real_place.py:114-158` 已用 `/give` 后真实 `instance_id` 放砧并断言消耗快照，故“生产物品实例不可见”旧缺口已闭环，只需归档旧 skeleton。
+- `emit_changed_inventory_snapshots`（`server/src/network/inventory_snapshot_emit.rs:93`）会为 `Changed<PlayerInventory>` 自动推送权威快照；forge 路径已在 `production_forge_station_real_place.py:114-158` 从 `/give` 后快照取得真实 `instance_id` 并完成放砧/消耗断言，但该证据**不能代表所有生产系统已闭环**。`production_lingtian_gathering_intents.py:9-11,53-68` 仍明确使用 `hoe_instance_id: 0`，只等任意 server-data 回流；`hoe_iron` 的 producer→snapshot→equip/held→`lingtian_start_till` 深链仍未覆盖。
 - `load_player_inventory_from_sqlite`（`server/src/player/state.rs:1372`）已形成 schema-version 分流、纯内存迁移和 hydration 后校验接缝；pre-#249 布局迁移应在 R3 P1 抽出的接缝上调用 R10 的纯迁移函数，不应在 persistence 巨石中再造一套 inventory 规则。
 
 ## 接入面
@@ -94,17 +94,24 @@ impl InventoryTxn<'_> {
 3. 调用者没有真实 `SpillContext` 时 fail closed，返回 `CapacityExceeded`/`MissingSpillContext`；不得用虚构坐标，也不得清 session、扣材料或删除世界掉落。
 4. spill 必须携带原 `ItemInstance`；对 minted stack 可按合法最大堆叠拆分，对既有动态实例不得通过重新 mint 丢字段。
 5. 所有 attach 都必须先通过 `validate_attach_fits` 并由 `attach_at_location` 提交；删除 `force_attach_item_to_inventory` 的 `(0,0)` 强塞 fallback。全量转移放不下的剩余项进入显式 spill receipt，而不是重叠占格。
-6. rotate/move receipt 必须携带变更后的完整 item view 或等价 `grid_w/grid_h + rotated` 事实。R10 定义所需事实，R6 负责公共 S2C schema/emit 接缝，client 以权威新 footprint 替换旧 view。
+6. rotate/move receipt 必须携带变更后的完整 item view 或等价 `grid_w/grid_h + rotated` 事实。R10 的 inventory outcome 提供所需事实；R4 在其独占 handler 中把 outcome 交给 emit API；R6 扩展公共 S2C schema/emit 并让 client 以权威新 footprint 替换旧 view。三段任一未完成均不得判 P3/P4 完成。
 
 ### P0.4 文件所有权与跨轨边界
 
 - **R10 独占**：`server/src/inventory/**`；各产出域只改为调用冻结的 transaction API，不接管其 session/玩法状态机。
 - **R1**：拥有 session 生命周期。R10 返回 delivery 成败与 receipt；R1 只能在成功存入或成功 spill 后清 session，失败必须保留可重试状态。
 - **R3**：拥有 `server/src/persistence/**`、autosave 与 hydration 编排。R10 在 `inventory/migration.rs` 提供纯、幂等的旧布局转换/校验；R3 P1 的 slice loader 调用它。R10 不直接重构 persistence 巨石。
-- **R4**：拥有 C2S gate、距离/权限/状态校验；通过 gate 后才调用 R10 txn。R10 不重复做网络身份鉴权。
+- **R4**：拥有 C2S gate 与 `server/src/network/client_request_handler.rs`。通过 gate 后调用 R10 txn；对于 rotate/pack move，R4 还负责把 R10 outcome 的 request identity、revision 和新 item view 传给 R6 emit API，但不定义 wire schema。
 - **R5**：拥有 qi ledger、磨损/衰变物理；R10 只保留动态字段并调用其稳定接口。
-- **R6**：拥有公共 S2C emit/proto 接缝。rotate footprint、merge/spill/move receipt 的 wire 扩展必须消费 R6 冻结 API或交由 R6 落地，不在 R10 私造平行 payload。
+- **R6**：拥有公共 S2C schema/emit 与 client network consumer。R6 **P0 吸收登记**必须把 `rotate-footprint-sync`、`bot-inventory-pack-feedback` 的 wire 部分正式加入 `plan-refactor-wire-s2c-v1`；R6 **P4 inventory receipt contract 子批次**负责修改 `server/src/schema/inventory.rs` 及双端 samples/convert，使成功 `moved`（或等价 accepted receipt）携带请求可归因字段、结果 revision 和权威 item view，修改 inventory emit API 与 `client/.../InventoryEventHandler.java`，并补 server schema/emit、client handler、Python decoder contract tests。**在 R6 P0 登记与 P4 子批次 merge 前，R10 P3 不得标 ✅、P4 不得归档相关 skeleton；若 R6 尚未登记，R10 实施必须停在此门而不是用 snapshot 替代。**
 - **R7**：拥有 `InspectScreen`；R10 只提供权威 inventory model/receipt，不改 UI 导航架构。
+
+#### 跨轨执行顺序（P3 硬门）
+
+1. **R10 P3 inventory PR**：在 `server/src/inventory/**` 产出 rotate/pack move 的 typed outcome，含 `instance_id/from/to/revision/item_view`；不触碰 wire 文件。
+2. **R6 P0 + P4 wire PR**：P0 先更新 `plan-refactor-wire-s2c-v1` 的吸收清单/阶段；P4 的 inventory receipt contract 子批次再落地 schema → sample/convert → emit API → Fabric client consumer → 双端 contract tests，其 API 对 R4 可调用。
+3. **R4 P2 handler PR**：在按域拆分 inventory handler 时，把 R10 outcome 交给 R6 emit；成功与拒绝都必须逐请求发稳定机器回执，snapshot 仅作状态修正。若 R4 P2 尚未启动，需先开该阶段的最小 inventory-handler 接线 PR，不得由 R10/R6 越权改 `client_request_handler.rs`。
+4. 三个 PR 均 merge 后，R10 才运行 §P4 的跨层 bot gate，并以实际 server→wire→client/bot 链路作为吸收归档证据。
 
 ### P0.5 吸收清单验真
 
@@ -115,7 +122,7 @@ impl InventoryTxn<'_> {
 | `force-attach-grid-collision` | **吸收，仍真实** | `force_attach_item_to_inventory` 可直接压入 `(0,0)`，且全量转移可达。P3 删除强塞并用合法 attach/spill。 |
 | `rotate-footprint-sync` | **吸收，仍真实** | server 已旋转 footprint，`Moved` S2C 不带新 view，client 复用旧尺寸。P3 与 R6 接缝联动。 |
 | `bot-inventory-pack-feedback` | **吸收，仍真实** | pack rebuild 成功路径 snapshot 后提前返回，未发普通 moved receipt。P3 统一 receipt；P4 bot 断言。 |
-| `bot-production-inventory-instance-visibility` | **已闭环，只归档** | `Changed<PlayerInventory>` 自动 snapshot；现有 forge bot 已从 `/give` 快照取真实 instance id 放砧并验证消耗。不再新增实现。 |
+| `bot-production-inventory-instance-visibility` | **部分闭环，剩余契约吸收** | forge 已从 `/give` 快照取真实 anvil instance 并跑通放砧；灵田场景仍把 `hoe_instance_id` 写死为 `0`，未验证 `hoe_iron` 的 snapshot/equip/真实 till 链。P4 必须恢复该深断言后才能归档。 |
 | `forge-outcome-full-inventory-loss` | **吸收，仍真实** | #1294 已于 2026-07-27 merge，但只建立 bughunt skeleton，并非修复在飞。P2 forge outcome 改走统一 deliver/spill。 |
 
 **不吸收**：
@@ -178,7 +185,8 @@ impl InventoryTxn<'_> {
 ## P3 — 网格/堆叠一致性 + 迁移（⬜）
 
 - 删除 `force_attach_item_to_inventory` 强塞路径；全量转移、遗骸与套包重建统一合法 attach，overflow 返回显式 spill receipt。
-- 拾取合并、rotate footprint、pack move receipt 落地；公共 S2C 变更服从 R6 文件所有权。
+- R10 在 `server/src/inventory/**` 落地拾取合并及 rotate/pack typed outcome；不得把权威 snapshot 当作动作级 receipt。
+- **跨轨阻塞交付**：严格执行 §P0.4 的 R10 → R6 → R4 顺序。R6 PR 必须完成 schema/sample/convert/emit/client handler/contract tests，R4 PR 必须完成 handler 调用；两者未 merge 时，本阶段保持 ⬜，不得归档 `rotate-footprint-sync` 或 `bot-inventory-pack-feedback`。
 - 按 §P0.6 完成 pre-#249 幂等迁移并接入 R3 hydration seam。
 - 饱和测试覆盖每个 footprint 边界、碰撞/swap/rotate 状态、pack rebuild overflow、迁移正反/幂等/字段守恒。
 
@@ -186,7 +194,9 @@ impl InventoryTxn<'_> {
 
 1. `inv_full_delivery_matrix`：满包下 craft 完工、取丹、锻造出炉、give，断言 stored + spilled 总量不丢且失败不提前 teardown。
 2. `inv_stack_merge`：拾取同身份掉落，断言合并既有堆叠、revision 与 receipt；不同动态身份保持分栈。
-3. `inv_footprint_sync`：旋转/移动后断言 server snapshot、S2C event 与 client footprint 一致。
-4. `inv_pack_feedback`：pack stow/rebuild 成功和 overflow 均有稳定 typed receipt/权威 snapshot。
-5. `inv_give_visibility`：保留现有 production forge 真实 instance 可见性回归，不重复搭建平行场景。
-6. 按 §P0.5 逐项核验被吸收 skeleton 的代码、测试与证据，再依仓库三态规则分别收口；本 plan 未全部完成前不写 `Finish Evidence`、不归档。
+3. `inv_footprint_sync`：发送 `rotated=true` 的 2×1 move 后，必须收到**该请求之后**、匹配 `instance_id/from/to` 与结果 revision 的 accepted/moved receipt，且 receipt 中权威 item view 为 1×2；Fabric handler contract test 应把本地模型替换为 1×2。拒绝、1×1、非网格目标不得误改 footprint。全量 snapshot 不能替代此动作级断言。
+4. `inv_pack_feedback`：对 stow / 空 pack unequip / equip 三个成功请求，逐个等待发送时间锚之后、匹配 `instance_id/from/to` 的 accepted/moved receipt，并断言 receipt revision 与随后 snapshot 一致；对非法位置、非空 pack（若规则禁止）逐个断言 `inventory_move_rejected` 的 reason/instance/from/to，连接保持；预置同 instance 的旧 moved/rejected 事件，证明时间锚与结果 revision 不会误读 stale feedback。VFX 和 snapshot 只可附加验证，**不得作为唯一动作结果或 accepted/rejected 的替代**。
+5. `inv_give_visibility_forge`：保留 production forge 的 `/give fan_iron_anvil` → snapshot 真实 instance id → `forge_station_place` → 消耗快照深链回归。
+6. `inv_give_visibility_lingtian`：改造 `production_lingtian_gathering_intents.py`，禁止 `hoe_instance_id: 0` 和“任意 server-data 即成功”；`/give hoe_iron` 后必须在带时间锚的新 `inventory_snapshot` 找到 `hoe_iron` 及真实 instance/location，按生产规则把该实例移到 main-hand held（等待匹配请求的 accepted receipt 与权威 snapshot），再用同一非零 instance id 发 `lingtian_start_till`，断言真实 `lingtian_session`/明确业务拒绝回执且请求未因 instance mismatch 被拒。只有 producer→snapshot→equip→till 全链通过，才可归档 visibility skeleton。
+7. Python server-data decoder 对新增/扩展 inventory receipt 做正反样本测试；bot 场景的 request correlation 必须同时使用发送时间锚、instance id、from/to 和 revision，不得命中历史事件。
+8. 按 §P0.5 逐项核验被吸收 skeleton 的代码、跨轨 merge SHA、client/bot 测试与证据，再依仓库三态规则分别收口；本 plan 未全部完成前不写 `Finish Evidence`、不归档。
