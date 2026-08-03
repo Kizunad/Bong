@@ -49,10 +49,12 @@ InventoryTxn::pickup_and_merge(PickupRequest, PickupAuthorization, &mut DroppedL
 
 ```text
 MAX_DURABLE_DROPPED_LOOT_ENTRIES = 4096
+MAX_OWNER_ONLY_DISCARD_ENTRIES_PER_PLAYER = 256
+SYSTEM_RESERVED_DURABLE_DROPPED_LOOT_ENTRIES = 512
 try_insert / try_insert_batch
 ```
 
-所有 production writer 禁止直接 `entries.insert`，包括 give/craft/alchemy/forge/loot、player discard、container/pack overflow、death/revive、termination、morph release、`spawn_template_dropped_loot`、`tsy_loot_spawn::spawn_for_layer`、placeable-break 与 TSY layer/relic writers，以及实现波次枚举出的同类 producer。批量事务在 source mutation 前一次 reservation；超限返回 `{current, required, limit}`，所有状态与 DB 不变。pickup/授权 durable delete 才释放容量；不以 TTL/LRU/价值驱逐静默销毁。超限 hydration 由 R3 只读降级并告警，禁止截断或空表覆盖。
+所有 production writer 禁止直接 `entries.insert`，包括 give/craft/alchemy/forge/loot、player discard、container/pack overflow、death/revive、termination、morph release、`spawn_template_dropped_loot`、`tsy_loot_spawn::spawn_for_layer`、placeable-break 与 TSY layer/relic writers，以及实现波次枚举出的同类 producer。批量事务在 source mutation 前一次 reservation；超限返回 `{current, required, limit}`，所有状态与 DB 不变。`OwnerOnly` 的 player discard 同时受每个 `PlayerId` 的 `MAX_OWNER_ONLY_DISCARD_ENTRIES_PER_PLAYER` 配额和 `SYSTEM_RESERVED_DURABLE_DROPPED_LOOT_ENTRIES` 系统保留容量约束，不得消耗系统保留区；craft/alchemy/forge/loot/death/termination 等 production/system writer 才能预留保留区。单一 owner 因此不能填满全局 queue，其他玩家的 production spill 在 discard 洪峰下仍保有 bounded admission。pickup/授权 durable delete 才释放容量；不以 TTL/LRU/价值驱逐静默销毁。超限 hydration 由 R3 只读降级并告警，禁止截断或空表覆盖。
 
 内存 reservation 不等于 durability。R3 transaction/outbox 必须把 source inventory/session/material mutation、drop insert/delete、source revision、drop/transaction id 作为一个 recoverable commit。失败/崩溃/重启不得形成“只删 source”或“只写 drop”；按 `(transaction_id, source_revision, dropped_id)` 幂等重试，不丢不重。
 
@@ -81,15 +83,15 @@ R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不�
 
 ## 6. 所有权与顺序
 
-- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。
-- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer。
-- **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome。
-- **R5**：incoming-only qi attrition/ledger。
-- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync。
+- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2 production writers 只有在 **R3 P3** durable spill/pickup recoverable-commit seam 已合入后才可迁移并宣称完成；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
+- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P3/P4 已冻结的接口。
+- **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
+- **R5**：incoming-only qi attrition/ledger；provider phase 为 R5 P3。
+- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；receipt provider phase 为 R6 P4。
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：R3 P1 → R10 P1/P2 → R3 durable → R6 wire/client → R4 handler → R10 P3 pure migration → R3 legacy → e2e。R10 不越权改 persistence、wire、handler 或 client。
+顺序：**R3 P1 → R10 P1 → R3 P3 → R10 P2 production writers → R5 P3 + R6 P4 → R4 handler/pickup consumer → R10 P3 migration/consumer → R3 P4 legacy consumer → e2e**。R10 P2 在 R3 P3 durable seam 未合入前只能保留 skeleton，R4 pickup consumer 在 R5 P3/R6 P4 provider 未合入前不得宣称完成；R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
@@ -97,7 +99,7 @@ R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不�
 
 1. `consume_checked` 成功精确扣除；insufficient/unknown/zero 失败无 mutation/revision。
 2. `deliver` 对 same-template/different-identity、duplicate id、illegal footprint/placement、容量不足但缺 `SpillContext` 逐项 typed reject，且无 mutation/revision；existing instance placement/spill 逐字段保留，created 与 placed/spilled ids 分离。
-3. capacity 的 limit-1/limit/limit+1/batch；逐个生产 writer 证明走统一 gate，失败全状态不变。
+3. capacity 的 limit-1/limit/limit+1/batch；逐个生产 writer 证明走统一 gate，失败全状态不变；owner-only player discard 覆盖单 `PlayerId` 的 quota-1/quota/quota+1 与 system-reserved boundary，证明一个 owner 不能耗尽 global capacity，系统 writer 在 discard 洪峰下仍可 admission。
 4. spill durable write failure、commit interruption、restart/retry：无单边状态、无重复 drop。
 5. pickup 同维成功；跨维、超距/zone、owner/private 拒绝；merge、placement-only、failed attach/capacity/validation/persistence 后 entry 仍在；成功后才删。
 6. incoming-only attrition receipt + R5 ledger：旧 stack absolute qi 不变；注入 attrition 后、durable commit 中断与 restart/retry，断言 attrited item + zone/ledger + drop delete 原子且总量守恒。
