@@ -30,9 +30,18 @@ pub struct BlockCatalog {
 
 impl BlockCatalog {
     pub fn load(path: &Path) -> Result<Self, BlockCatalogError> {
-        let text = std::fs::read_to_string(path).map_err(|error| BlockCatalogError::Read {
-            path: path.to_path_buf(),
-            source: error.to_string(),
+        let mut file = super::nbt_io::open_regular_file_no_follow(path).map_err(|error| {
+            BlockCatalogError::Read {
+                path: path.to_path_buf(),
+                source: error.to_string(),
+            }
+        })?;
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut file, &mut text).map_err(|error| {
+            BlockCatalogError::Read {
+                path: path.to_path_buf(),
+                source: error.to_string(),
+            }
         })?;
         Self::from_toml(&text, path)
     }
@@ -717,6 +726,10 @@ name = "stone"
     #[test]
     fn strict_property_lowerer_rejects_every_invalid_input_class() {
         assert!(matches!(
+            block_state_with_properties("minecraft:", []),
+            Err(BlockStateResolveError::UnsupportedNamespace { .. })
+        ));
+        assert!(matches!(
             block_state_with_properties("mod:stone", []),
             Err(BlockStateResolveError::UnsupportedNamespace { .. })
         ));
@@ -797,6 +810,40 @@ name = "stone"
             write_and_load("entry_unknown", &entry_unknown),
             Err(BlockCatalogError::Parse { .. })
         ));
+    }
+
+    #[test]
+    fn catalog_validation_aggregates_and_sorts_simultaneous_errors() {
+        let diagnostics = validation_diagnostics(
+            write_and_load(
+                "aggregate",
+                r#"
+version = 2
+[[block]]
+name = "stone"
+[[block]]
+name = "stone"
+[[block]]
+name = "alias"
+alias_of = "missing"
+"#,
+            )
+            .expect_err("all catalog errors must be reported together"),
+        );
+        assert!(diagnostics.windows(2).all(|pair| pair[0] <= pair[1]));
+        for expected in [
+            "unsupported catalog version 2",
+            "duplicate logical block name 'stone'",
+            "alias 'alias' target 'missing' is not declared",
+            "only 1 of 2 unique catalog entries resolved",
+        ] {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(expected)),
+                "missing aggregate catalog diagnostic {expected:?}: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]

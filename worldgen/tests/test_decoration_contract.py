@@ -109,11 +109,12 @@ MANUAL_LARGE_DECORATION_ALLOWLIST = {
 
 
 def _resolved_block_names() -> set[str]:
-    import tomllib
-
-    with BLOCK_CATALOG_TOML.open("rb") as stream:
-        document = tomllib.load(stream)
-    return {str(entry["name"]) for entry in document["block"]}
+    names = set()
+    for line in BLOCK_CATALOG_TOML.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "name":
+            names.add(value.strip().strip('"'))
+    return names
 
 
 class DecorationContractTests(unittest.TestCase):

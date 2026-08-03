@@ -202,11 +202,14 @@ pub fn setup_world(
     mut dimensions: ResMut<DimensionTypeRegistry>,
     biomes: Res<BiomeRegistry>,
 ) {
-    let overworld = match select_world_bootstrap() {
+    let bootstrap = select_world_bootstrap();
+    if bootstrap_uses_default_decoration_registry(&bootstrap) {
+        commands.insert_resource(terrain::load_default_decoration_registry());
+    }
+    let overworld = match bootstrap {
         WorldBootstrap::FallbackFlat(fallback) => {
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
-            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_fallback_flat_world(&mut commands, &server, &dimensions, &biomes)
         }
         WorldBootstrap::TerrainRaster(config) => {
@@ -234,7 +237,6 @@ pub fn setup_world(
                 anvil.world_path.display(),
                 anvil.region_dir.display()
             );
-            commands.insert_resource(terrain::load_default_decoration_registry());
             spawn_anvil_world(&mut commands, &server, &dimensions, &biomes, anvil)
         }
     };
@@ -252,6 +254,10 @@ fn spawn_tsy_layer(
 ) -> Entity {
     let layer = LayerBundle::new(ident!("bong:tsy"), dimensions, biomes, server);
     commands.spawn((layer, TsyLayer)).id()
+}
+
+fn bootstrap_uses_default_decoration_registry(bootstrap: &WorldBootstrap) -> bool {
+    !matches!(bootstrap, WorldBootstrap::TerrainRaster(_))
 }
 
 fn select_world_bootstrap() -> WorldBootstrap {
@@ -862,6 +868,27 @@ mod tests {
             WorldBootstrap::FallbackFlat(FallbackFlatBootstrap {
                 reason: FallbackFlatReason::NoWorldBootstrapConfigured,
             })
+        );
+    }
+
+    #[test]
+    fn every_bootstrap_mode_has_one_decoration_registry_owner() {
+        let fallback = WorldBootstrap::FallbackFlat(FallbackFlatBootstrap {
+            reason: FallbackFlatReason::NoWorldBootstrapConfigured,
+        });
+        let anvil = WorldBootstrap::AnvilIfPresent(AnvilBootstrapConfig {
+            world_path: PathBuf::from("world"),
+            region_dir: PathBuf::from("world/region"),
+        });
+        let raster = WorldBootstrap::TerrainRaster(RasterBootstrapConfig {
+            manifest_path: PathBuf::from("raster/manifest.json"),
+            raster_dir: PathBuf::from("raster"),
+        });
+        assert!(super::bootstrap_uses_default_decoration_registry(&fallback));
+        assert!(super::bootstrap_uses_default_decoration_registry(&anvil));
+        assert!(
+            !super::bootstrap_uses_default_decoration_registry(&raster),
+            "raster bootstrap inserts its transactionally validated registry"
         );
     }
 
