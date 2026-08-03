@@ -44,7 +44,42 @@ pub mod wound;
 pub mod zone_qi;
 pub mod zones;
 
-use valence::prelude::App;
+use std::collections::HashSet;
+
+use valence::command::scopes::CommandScopes;
+use valence::command::{
+    CommandExecutionEvent, CommandRegistry, CommandScopeRegistry, CommandSystemSet,
+};
+use valence::message::SendMessage;
+use valence::prelude::{
+    bevy_ecs, Added, App, Client, EventLoopPreUpdate, EventLoopUpdate, EventReader,
+    IntoSystemConfigs, Local, Query, Res, ResMut, Resource, Username,
+};
+
+const DEV_COMMAND_SCOPE: &str = "bong.dev";
+const PUBLIC_COMMAND_ROOTS: &[&str] = &["bong", "faction", "ping"];
+
+#[derive(Default, Resource)]
+struct DevCommandRoots(HashSet<String>);
+
+#[derive(Resource)]
+pub struct DevCommandPermissions {
+    allowed_usernames: HashSet<String>,
+}
+
+impl Default for DevCommandPermissions {
+    fn default() -> Self {
+        Self {
+            allowed_usernames: HashSet::from(["Admin".to_string(), "admin".to_string()]),
+        }
+    }
+}
+
+impl DevCommandPermissions {
+    fn is_operator(&self, username: &str) -> bool {
+        self.allowed_usernames.contains(username)
+    }
+}
 
 pub fn dev_mode_enabled() -> bool {
     std::env::var("BONG_DEV_MODE").ok().is_some_and(|value| {
@@ -105,6 +140,86 @@ pub(crate) fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
     shader_push::register(app);
     tribulation_debug::register(app);
     tribulation_rechallenge::register(app);
+    register_operator_gate(app);
+}
+
+fn register_operator_gate(app: &mut App) {
+    app.init_resource::<DevCommandRoots>()
+        .init_resource::<DevCommandPermissions>()
+        .add_systems(
+            EventLoopPreUpdate,
+            (scope_dev_command_roots, sync_operator_scope)
+                .chain()
+                .before(CommandSystemSet),
+        )
+        .add_systems(EventLoopUpdate, gate_dev_commands);
+}
+
+fn scope_dev_command_roots(
+    mut command_registry: ResMut<CommandRegistry>,
+    mut scope_registry: ResMut<CommandScopeRegistry>,
+    mut dev_roots: ResMut<DevCommandRoots>,
+    mut initialized: Local<bool>,
+) {
+    if *initialized {
+        return;
+    }
+
+    let root = command_registry.graph.root;
+    let root_nodes = command_registry
+        .graph
+        .graph
+        .neighbors(root)
+        .collect::<Vec<_>>();
+    for node in root_nodes {
+        let valence::protocol::packets::play::command_tree_s2c::NodeData::Literal { name } =
+            &command_registry.graph.graph[node].data
+        else {
+            continue;
+        };
+        if PUBLIC_COMMAND_ROOTS.contains(&name.as_str()) {
+            continue;
+        }
+        dev_roots.0.insert(name.clone());
+        command_registry.graph.graph[node].scopes = vec![DEV_COMMAND_SCOPE.to_string()];
+    }
+    scope_registry.add_scope(DEV_COMMAND_SCOPE);
+    *initialized = true;
+}
+
+fn sync_operator_scope(
+    permissions: Res<DevCommandPermissions>,
+    mut clients: Query<(&Username, &mut CommandScopes), Added<CommandScopes>>,
+) {
+    for (username, mut scopes) in &mut clients {
+        if permissions.is_operator(username.0.as_str()) {
+            scopes.add(DEV_COMMAND_SCOPE);
+        } else {
+            scopes.remove(DEV_COMMAND_SCOPE);
+        }
+    }
+}
+
+fn gate_dev_commands(
+    mut events: EventReader<CommandExecutionEvent>,
+    dev_roots: Res<DevCommandRoots>,
+    permissions: Res<DevCommandPermissions>,
+    usernames: Query<&Username>,
+    mut clients: Query<&mut Client>,
+) {
+    for event in events.read() {
+        let command_root = event.command.split_whitespace().next().unwrap_or_default();
+        if !dev_roots.0.contains(command_root)
+            || usernames
+                .get(event.executor)
+                .is_ok_and(|username| permissions.is_operator(username.0.as_str()))
+        {
+            continue;
+        }
+        if let Ok(mut client) = clients.get_mut(event.executor) {
+            client.send_chat_message("[dev] Command requires operator permission.");
+        }
+    }
 }
 
 #[cfg(test)]
