@@ -777,35 +777,6 @@ pub(in crate::persistence) struct ReconnectHandoffToken {
 
 static NEXT_HANDOFF_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-/// Pending reconnect handoffs are produced by the player disconnect boundary and consumed
-/// once the matching replacement client is observed by the persistence dispatcher.
-#[derive(Debug, Default)]
-pub(crate) struct ReconnectHandoffQueue {
-    pending: HashMap<PersistenceSubjectKey, ReconnectHandoffToken>,
-}
-
-impl Resource for ReconnectHandoffQueue {}
-
-impl ReconnectHandoffQueue {
-    pub(crate) fn enqueue_subject(&mut self, subject_key: &str) {
-        let subject_key = PersistenceSubjectKey::new(subject_key.to_owned());
-        let token = reconnect_handoff_token(subject_key.0.clone());
-        self.pending.insert(subject_key, token);
-    }
-
-    pub(crate) fn take_subject(&mut self, subject_key: &str) -> Option<ReconnectHandoffToken> {
-        self.pending
-            .remove(&PersistenceSubjectKey::new(subject_key.to_owned()))
-    }
-
-    pub(crate) fn take(
-        &mut self,
-        subject_key: &PersistenceSubjectKey,
-    ) -> Option<ReconnectHandoffToken> {
-        self.pending.remove(subject_key)
-    }
-}
-
 #[allow(dead_code)]
 pub(in crate::persistence) fn reconnect_handoff_token(
     handoff_key: impl Into<String>,
@@ -2051,7 +2022,7 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
         &self,
         sql: &str,
         params: Q,
-    ) -> Result<usize, DurableWriteExecuteError> {
+    ) -> Result<(usize, u64), DurableWriteExecuteError> {
         self.requires_single_statement(sql)?;
         self.requires_canonical_database()?;
         let schema_version_before = self.schema_version()?;
@@ -2078,16 +2049,8 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
                 DurableWriteProofError::SchemaMutationDetected,
             ));
         }
-        // SAFETY: the fence owns this live connection for the read-only SQLite query.
-        let total_changes_after =
-            unsafe { ffi::sqlite3_total_changes64(self.transaction.handle()) as u64 };
-        if total_changes_after <= total_changes_before {
-            return Err(DurableWriteExecuteError::Proof(
-                DurableWriteProofError::MissingCurrentTransactionWrite,
-            ));
-        }
         self.requires_canonical_database()?;
-        Ok(affected_rows)
+        Ok((affected_rows, total_changes_before))
     }
 
     /// Executes a serialized durable statement through the fence-owned transaction.
@@ -2104,10 +2067,18 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
                 },
             ));
         }
-        let affected_rows = self.execute_durable(sql, params)?;
+        let (affected_rows, total_changes_before) = self.execute_durable(sql, params)?;
         if affected_rows == 0 {
             return Err(DurableWriteExecuteError::Proof(
                 DurableWriteProofError::SerializedWriteRejected,
+            ));
+        }
+        // SAFETY: the fence owns this live connection for the read-only SQLite query.
+        let total_changes_after =
+            unsafe { ffi::sqlite3_total_changes64(self.transaction.handle()) as u64 };
+        if total_changes_after <= total_changes_before {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::MissingCurrentTransactionWrite,
             ));
         }
         self.executed.set(true);
@@ -2128,10 +2099,18 @@ impl<P> DurableWriteRequest<'_, '_, '_, P> {
                 },
             ));
         }
-        let affected_rows = self.execute_durable(sql, params)?;
+        let (affected_rows, total_changes_before) = self.execute_durable(sql, params)?;
         if affected_rows != 1 {
             return Err(DurableWriteExecuteError::Proof(
                 DurableWriteProofError::CasRejected { affected_rows },
+            ));
+        }
+        // SAFETY: the fence owns this live connection for the read-only SQLite query.
+        let total_changes_after =
+            unsafe { ffi::sqlite3_total_changes64(self.transaction.handle()) as u64 };
+        if total_changes_after <= total_changes_before {
+            return Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::MissingCurrentTransactionWrite,
             ));
         }
         self.executed.set(true);
@@ -4558,6 +4537,64 @@ mod tests {
             )
             .unwrap();
         assert_eq!(*reactivated.value(), 12);
+    }
+
+    #[test]
+    fn durable_writer_rejects_cross_ordering_and_serialized_zero_row() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_ordering (subject TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+            )
+            .unwrap();
+        let transaction = connection.transaction().unwrap();
+        let payload = 10_u32;
+        let subject_key = subject_key("player:ordering");
+        let request = |ordering| DurableWriteRequest {
+            transaction: &transaction,
+            payload: &payload,
+            subject_key: &subject_key,
+            binding: TEST_BINDING,
+            expected_persisted_revision: DirtyRevision::default(),
+            write_revision: DirtyRevision::new(1),
+            outlet: WriteOutlet::Autosave,
+            ordering,
+            executed: Cell::new(false),
+        };
+
+        assert_eq!(
+            request(WriteOrdering::Serialized).execute_cas(
+                "INSERT INTO durable_ordering (subject, value) VALUES (?1, ?2)",
+                ("player:ordering", 10),
+            ),
+            Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::WrongOrdering {
+                    expected: WriteOrdering::PersistedRevisionCas,
+                    actual: WriteOrdering::Serialized,
+                }
+            ))
+        );
+        assert_eq!(
+            request(WriteOrdering::PersistedRevisionCas).execute_serialized(
+                "INSERT INTO durable_ordering (subject, value) VALUES (?1, ?2)",
+                ("player:ordering", 10),
+            ),
+            Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::WrongOrdering {
+                    expected: WriteOrdering::Serialized,
+                    actual: WriteOrdering::PersistedRevisionCas,
+                }
+            ))
+        );
+        assert_eq!(
+            request(WriteOrdering::Serialized).execute_serialized(
+                "UPDATE durable_ordering SET value = ?1 WHERE subject = ?2",
+                (10, "missing"),
+            ),
+            Err(DurableWriteExecuteError::Proof(
+                DurableWriteProofError::SerializedWriteRejected
+            ))
+        );
     }
 
     #[test]
