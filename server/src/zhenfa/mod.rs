@@ -131,6 +131,7 @@ pub enum ZhenfaDisarmMode {
 #[derive(Debug, Clone, Event)]
 pub struct ZhenfaPlaceRequest {
     pub player: Entity,
+    pub character_id: Option<String>,
     pub pos: [i32; 3],
     pub kind: ZhenfaKind,
     pub carrier: ZhenfaCarrierKind,
@@ -1615,6 +1616,15 @@ fn handle_zhenfa_place_requests(
             );
             continue;
         };
+        if let Some(captured_character_id) = req.character_id.as_deref() {
+            if lifecycle.character_id != captured_character_id {
+                tracing::warn!(
+                    "[bong][zhenfa] place rejected: stale character identity for player {:?}",
+                    req.player
+                );
+                continue;
+            }
+        }
         let ordinary_trap = trap_content::OrdinaryTrapKind::from_zhenfa_kind(req.kind);
         let network_item = match validate_network_array_place_item(
             req.kind,
@@ -3620,14 +3630,10 @@ fn shrine_ward_allows_target(
     relationships: Option<&Relationships>,
     renown: Option<&Renown>,
 ) -> bool {
-    if target == instance.owner {
-        return true;
-    }
-
     let Some(character_id) = lifecycle.map(|lifecycle| lifecycle.character_id.as_str()) else {
         return false;
     };
-    if character_id == instance.owner_player_id {
+    if character_id == instance.owner_character_id {
         return true;
     }
 
@@ -4734,6 +4740,7 @@ mod tests {
     fn send_lingju_place(app: &mut App, player: Entity, pos: [i32; 3], tick: u64) {
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player,
+            character_id: None,
             pos,
             kind: ZhenfaKind::Lingju,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -4743,6 +4750,37 @@ mod tests {
             target_face: None,
             requested_at_tick: tick,
         });
+    }
+
+    #[test]
+    fn queued_place_rejects_reincarnated_character_identity() {
+        let mut app = app_with_loaded_zhenfa();
+        let owner = spawn_player(&mut app, "Alice", [0.5, 64.0, 0.5]);
+        let qi_before = app.world().get::<Cultivation>(owner).unwrap().qi_current;
+        app.world_mut().send_event(ZhenfaPlaceRequest {
+            player: owner,
+            character_id: Some("character:previous-life".to_string()),
+            pos: [0, 64, 0],
+            kind: ZhenfaKind::Lingju,
+            carrier: ZhenfaCarrierKind::BeastCoreInlaid,
+            qi_invest_ratio: 0.30,
+            trigger: None,
+            item_instance_id: None,
+            target_face: None,
+            requested_at_tick: 1,
+        });
+
+        app.update();
+
+        assert!(app
+            .world()
+            .resource::<ZhenfaRegistry>()
+            .find_at([0, 64, 0])
+            .is_none());
+        assert_eq!(
+            app.world().get::<Cultivation>(owner).unwrap().qi_current,
+            qi_before
+        );
     }
 
     #[test]
@@ -5241,6 +5279,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Ward,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -5825,6 +5864,7 @@ mod tests {
     ) {
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player,
+            character_id: None,
             pos,
             kind: ZhenfaKind::NetworkArray,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -5985,6 +6025,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -6036,6 +6077,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -6079,6 +6121,7 @@ mod tests {
         for (tick, pos) in [(10_u64, [1, 64, 1]), (20, [3, 64, 3])] {
             app.world_mut().send_event(ZhenfaPlaceRequest {
                 player: owner,
+                character_id: None,
                 pos,
                 kind: ZhenfaKind::Trap,
                 carrier: ZhenfaCarrierKind::CommonStone,
@@ -6113,6 +6156,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -6144,6 +6188,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -6174,6 +6219,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -6201,6 +6247,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -6259,6 +6306,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -6331,6 +6379,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -6371,6 +6420,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -6403,6 +6453,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6446,6 +6497,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind: ZhenfaKind::ShrineWard,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6476,6 +6528,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6507,6 +6560,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6542,6 +6596,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6568,6 +6623,7 @@ mod tests {
         for tick in [1, 2] {
             app.world_mut().send_event(ZhenfaPlaceRequest {
                 player: owner,
+                character_id: None,
                 pos: [2, 64, 2],
                 kind: ZhenfaKind::Trap,
                 carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6595,6 +6651,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [2, 64, 2],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -6627,6 +6684,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::WarningTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -6701,6 +6759,7 @@ mod tests {
 
             app.world_mut().send_event(ZhenfaPlaceRequest {
                 player: owner,
+                character_id: None,
                 pos,
                 kind,
                 carrier: ZhenfaCarrierKind::CommonStone,
@@ -6868,6 +6927,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -6921,6 +6981,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::BeastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7010,6 +7071,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::BeastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7067,6 +7129,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::TripWire,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7166,6 +7229,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::TripWire,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7216,6 +7280,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DecoyStake,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7281,6 +7346,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::DecoyStake,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7452,6 +7518,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::BlastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7490,6 +7557,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::WarningTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7546,6 +7614,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [3, 64, 3],
             kind: ZhenfaKind::BlastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7581,6 +7650,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::WarningTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7621,6 +7691,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::WarningTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7667,6 +7738,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::BlastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7716,6 +7788,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::BlastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7759,6 +7832,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::BlastTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7806,6 +7880,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [2, 64, 2],
             kind: ZhenfaKind::SlowTrap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7852,6 +7927,7 @@ mod tests {
         let pos = [3, 64, 3];
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::CommonStone,
@@ -7908,6 +7984,7 @@ mod tests {
         let pos = [5, 64, 5];
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos,
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -7979,6 +8056,7 @@ mod tests {
         for (idx, pos) in [[5, 64, 5], [6, 64, 5], [7, 64, 5]].into_iter().enumerate() {
             app.world_mut().send_event(ZhenfaPlaceRequest {
                 player: owner,
+                character_id: None,
                 pos,
                 kind: ZhenfaKind::Trap,
                 carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8011,6 +8089,7 @@ mod tests {
         for (tick, pos) in [(1, [10, 64, 0]), (2, [3, 64, 0])] {
             app.world_mut().send_event(ZhenfaPlaceRequest {
                 player: owner,
+                character_id: None,
                 pos,
                 kind: ZhenfaKind::Trap,
                 carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8049,6 +8128,7 @@ mod tests {
         let intruder = app.world_mut().spawn(Position::new([4.5, 64.0, 0.5])).id();
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Ward,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8114,6 +8194,7 @@ mod tests {
         let breaker = spawn_player(&mut app, "Bob", [1.5, 64.0, 1.5]);
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8179,6 +8260,7 @@ mod tests {
         ));
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8245,6 +8327,7 @@ mod tests {
         let intruder = spawn_player(&mut app, "Bob", [4.5, 64.0, 0.5]);
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::ShrineWard,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8282,6 +8365,7 @@ mod tests {
             .health_current = 4.0;
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::ShrineWard,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8339,6 +8423,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::ShrineWard,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8366,6 +8451,7 @@ mod tests {
             .insert(deceive_heaven_material_inventory());
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -8407,6 +8493,7 @@ mod tests {
         app.world_mut().resource_mut::<ZhenfaRegistry>().next_id = exposed_id - 1;
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::DeceiveHeaven,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -8497,6 +8584,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Lingju,
             carrier: ZhenfaCarrierKind::BeastCoreInlaid,
@@ -8520,6 +8608,7 @@ mod tests {
             .insert(ArrayMastery::default());
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [1, 64, 1],
             kind: ZhenfaKind::Trap,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8744,6 +8833,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Ward,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8797,6 +8887,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Illusion,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8848,6 +8939,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Ward,
             carrier: ZhenfaCarrierKind::LingqiBlock,
@@ -8977,6 +9069,7 @@ mod tests {
 
         app.world_mut().send_event(ZhenfaPlaceRequest {
             player: owner,
+            character_id: None,
             pos: [0, 64, 0],
             kind: ZhenfaKind::Ward,
             carrier: ZhenfaCarrierKind::LingqiBlock,

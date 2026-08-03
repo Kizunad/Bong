@@ -962,7 +962,7 @@ mod tests {
     // ─── EpitaphGenerationSystem Bevy 集成测试 ──────────────────────────────
 
     #[test]
-    fn epitaph_generation_system_creates_entry_for_player_terminated() {
+    fn epitaph_generation_system_creates_entry_for_committed_player_termination() {
         let (settings, root) = temp_persistence("system-player");
         let mut app = App::new();
         app.insert_resource(settings.clone());
@@ -983,7 +983,7 @@ mod tests {
             .id();
         app.world_mut().send_event(PlayerTerminated {
             entity,
-            settlement_committed: false,
+            settlement_committed: true,
         });
         app.update();
 

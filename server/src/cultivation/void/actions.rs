@@ -750,6 +750,7 @@ mod tests {
             triggers[0].source,
             JueBiTriggerSource::VoidActionExplodeZone
         );
+        assert_eq!(triggers[0].character_id.as_deref(), Some("offline:Void"));
         assert_eq!(triggers[0].delay_ticks, JUEBI_VOID_ACTION_DELAY_TICKS);
         assert_eq!(triggers[0].triggered_at_tick, 42);
         assert_eq!(triggers[0].epicenter, Some([8.0, 66.0, 8.0]));

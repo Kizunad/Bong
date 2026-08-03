@@ -1781,6 +1781,7 @@ fn void_heart_tribulation_waits_for_runtime_active_duration() {
         .next()
         .expect("void heart should enqueue JueBi trigger");
     assert_eq!(juebi.source, JueBiTriggerSource::WoliuVortexHeart);
+    assert_eq!(juebi.character_id.as_deref(), Some("unbound:character"));
 }
 
 #[test]

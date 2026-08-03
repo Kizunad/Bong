@@ -1006,7 +1006,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             techniques_snapshot_emit::emit_techniques_snapshot_payloads,
             inventory_snapshot_emit::emit_changed_inventory_snapshots
                 .after(inventory_event_emit::emit_durability_changed_inventory_events)
-                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system)
+                .before(crate::inventory::apply_death_drop_on_revive),
             inventory_snapshot_emit::emit_revive_inventory_resyncs
                 .after(crate::combat::lifecycle::emit_player_revived_completions)
                 .after(crate::inventory::apply_death_drop_on_revive),

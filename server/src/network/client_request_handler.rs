@@ -228,6 +228,7 @@ pub struct CombatRequestParams<'w, 's> {
     pub skillbar_bindings_q: Query<'w, 's, &'static mut SkillBarBindings>,
     pub positions: Query<'w, 's, &'static valence::prelude::Position>,
     pub unique_ids: Query<'w, 's, &'static UniqueId>,
+    pub lifecycles: Query<'w, 's, &'static Lifecycle>,
     pub skill_registry: Option<Res<'w, SkillRegistry>>,
     pub skill_config_store: Option<ResMut<'w, SkillConfigStore>>,
     pub skill_config_schemas: Option<Res<'w, SkillConfigSchemas>>,
@@ -1645,8 +1646,15 @@ pub fn handle_client_request_payloads(
                     );
                     continue;
                 };
+                let Ok(lifecycle) = combat_params.lifecycles.get(ev.client) else {
+                    tracing::warn!(
+                        "[bong][network] dropped zhenfa_place because Lifecycle is missing"
+                    );
+                    continue;
+                };
                 place_tx.send(ZhenfaPlaceRequest {
                     player: ev.client,
+                    character_id: Some(lifecycle.character_id.clone()),
                     pos: [x, y, z],
                     kind,
                     carrier: carrier.unwrap_or_default(),

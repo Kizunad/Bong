@@ -481,7 +481,13 @@ fn three_void_disperses_emit_juebi_trigger() {
             .clear_all_cooldowns();
         cast_disperse(app.world_mut(), caster, 0, None);
     }
-    assert_eq!(app.world().resource::<Events<JueBiTriggerEvent>>().len(), 1);
+    let events = app.world().resource::<Events<JueBiTriggerEvent>>();
+    let triggers: Vec<_> = events.get_reader().read(events).collect();
+    assert_eq!(triggers.len(), 1);
+    assert_eq!(
+        triggers[0].character_id.as_deref(),
+        Some("unbound:character")
+    );
 }
 
 #[test]
