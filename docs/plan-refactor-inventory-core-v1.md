@@ -7,7 +7,7 @@
 - ✅ 2026-08-03 P0 完整契约面重写 + absorption audit
 - ⬜ P1：inventory 拆分 + txn/capacity 骨架（依赖 R3 P1 seam）
 - ⬜ P2：全部 production writer 迁移（依赖 R3 P2 atomic commit seam 已实现且 crash/retry pins 常绿）
-- ⬜ P3：pickup/merge txn + 纯 migration（依赖 R5 P3 attrition API、R6 P4 receipt API）
+- ⬜ P3：pickup/merge txn + inventory-layout/dropped-loot 纯 migration（依赖 R5 P3 attrition API、R6 P4 receipt API）
 - ⬜ P4：联合 bot/e2e + plan 收口（依赖 R4 handler 与 R3 P4 legacy consumer）
 
 实现属 Wave 2；跨轨工作须登记 owning plan。
@@ -79,7 +79,7 @@ migrate_legacy_inventory_layout(value, schema_version)
   -> MigrationOutcome { migrated_value, overflow: Vec<ItemInstance> }
 ```
 
-R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不猜 world context、不隐藏 overflow。R3 在临时副本上以真实 player/dimension/position 与 capacity/durable seam 消费；全成才写新行，失败保留旧行可重试且不重复 drop。
+R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保留所有实例/动态字段，不执行 SQL、不猜 world context、不隐藏 overflow；其中 dropped-loot 迁移把旧 `entry_json` 缺失的 `owner`/`visibility` 明确补为 `owner = None`、`visibility = Public`。R3 hydration consumer 必须先按 persisted schema version 解码/迁移旧 dropped-loot JSON，再构造 `DroppedLootEntry`；inventory-layout migration 则在临时副本上以真实 player/dimension/position 与 capacity/durable seam 消费。两类 migration 都须全成才写新行，失败保留旧行可重试且不重复 drop。
 
 ## 6. 所有权与顺序
 
@@ -91,7 +91,7 @@ R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不�
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：**R3 P1 → R10 P1 → R3 P2 atomic seam 实现 + crash/retry pins → R10 P2 production writers → R5 P3 + R6 P4 → R10 P3 pickup/merge txn + pure migration → R4 handler/pickup consumer → R3 P4 legacy consumer → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 未合入前不得开始 writer 迁移，R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
+顺序：**R3 P1 → R10 P1 → R3 P2 atomic seam 实现 + crash/retry pins → R10 P2 production writers → R5 P3 + R6 P4 → R10 P3 pickup/merge txn + inventory-layout/dropped-loot pure migration → R4 handler/pickup consumer → R3 P4 legacy inventory-layout + dropped-loot hydration consumers → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 未合入前不得开始 writer 迁移，R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
@@ -103,10 +103,10 @@ R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不�
 4. spill durable write failure、commit interruption、restart/retry：无单边状态、无重复 drop。
 5. pickup 同维成功；跨维、超距/zone、owner/private 拒绝；merge、placement-only、failed attach/capacity/validation/persistence 后 entry 仍在；成功后才删。
 6. incoming-only attrition receipt + R5 ledger：旧 stack absolute qi 不变；注入 attrition 后、durable commit 中断与 restart/retry，断言 attrited item + zone/ledger + drop delete 原子且总量守恒。
-7. 两 recipient 的 dimension/range/owner-private 正反 visibility；page/revision 按 projection；缺页/混 revision 不替换。
+7. visibility matrix：同维/范围内 `Public` 对非 owner 可见，`OwnerOnly` 对 owner 可见、对普通非 owner 不可见、对 server-authorized admin 可见；另测跨维/超距拒绝。page/revision 按每个 recipient projection；缺页/混 revision 不替换。
 8. accepted/rejected move correlation；pack stow/equip/unequip 与拒绝必须动作级 receipt，stale event 和 snapshot-only baseline 不通过。
 9. forge 深链保留；另锁 `/give hoe_iron → 新 snapshot → 真实非零 instance → held/equip → lingtian_start_till`，禁止 `instance_id=0` 或任意 server-data 冒充成功。
-10. migration pure happy/empty/full/dynamic/idempotent/invalid；R3 consumer 对真实 context 成功，缺 context/capacity/persistence failure 保留旧行可重试。
+10. inventory-layout migration pure happy/empty/full/dynamic/idempotent/invalid；dropped-loot migration 覆盖旧 `entry_json` 缺 owner/visibility → `None`/`Public`、已有字段原样保留、malformed/幂等；R3 consumer 对真实 context 成功，缺 context/capacity/persistence/migration failure 保留旧行可重试。
 
 ## 8. Named bot acceptance（P4）
 
