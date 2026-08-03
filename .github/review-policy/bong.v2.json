@@ -1,5 +1,5 @@
 {
-  "version": "project-review-policy.v2",
+  "version": "project-review-policy.v2.1",
   "project": "Kizunad/Bong",
   "rules": [
     {
@@ -126,6 +126,11 @@
       "id": "minimal-maintainable-change",
       "level": "major",
       "text": "Prefer the smallest complete and maintainable implementation. Compatibility layers without an explicit migration need, speculative abstractions without a present requirement, inconsistent duplicate sources of truth, and broad refactors unrelated to the requested outcome are major defects because they expand the supported surface and obscure the authoritative path even before a production failure is observed. Also treat demonstrated production failures, unreachable production wiring, non-atomic state, unbounded resource paths, and structures that materially prevent a required correct change as major defects."
+    },
+    {
+      "id": "p0-doc-scope",
+      "level": "major",
+      "text": "For pull requests whose changes are limited to docs/ plan documents (plan-* and plans-skeleton design-closure PRs), limit review scope to internal consistency, factual accuracy of code citations, alignment with plan-refactor-master-v1 scope and cross-track dependencies, and satisfaction of the acceptance criteria stated in the PR description or the document itself. Depth expansions beyond those criteria - new scenarios, extra edge-case enumerations, additional contract surfaces - are suggestions for the open-questions section, not major or blocker findings; an explicit open-questions entry with rationale is a valid resolution for a deferred design decision."
     },
     {
       "id": "quality-improvements",
