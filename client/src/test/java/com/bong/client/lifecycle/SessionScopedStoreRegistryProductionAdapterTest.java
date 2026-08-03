@@ -955,26 +955,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionSourcesContainNoTestResetCallSites() throws Exception {
-        Path sourceRoot = productionSourceRoot();
-        try (Stream<Path> paths = Files.walk(sourceRoot.resolve("com/bong/client"))) {
-            List<Path> sources = paths
-                .filter(Files::isRegularFile)
-                .filter(path -> path.getFileName().toString().endsWith(".java"))
-                .sorted()
-                .toList();
-            assertFalse(sources.isEmpty(), "production source guard 必须实际扫描 client Java source");
-            for (Path source : sources) {
-                JavaLifecycleSourceInspector.assertNoTestResetCalls(
-                    Files.readString(source),
-                    sourceRoot.relativize(source).toString()
-                );
-            }
-        }
-    }
-
-    @Test
-    void productionManagedStoreCleanerCallsHaveOneRegistryOwner() throws Exception {
+    void productionSourcesRespectLifecycleContracts() throws Exception {
         Path sourceRoot = productionSourceRoot();
         Set<String> managedStores = ClientStoreScopeManifest.registryManagedSessionStores();
         try (Stream<Path> paths = Files.walk(sourceRoot.resolve("com/bong/client"))) {
@@ -983,10 +964,10 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 .filter(path -> path.getFileName().toString().endsWith(".java"))
                 .sorted()
                 .toList();
-            assertFalse(sources.isEmpty(), "Store single-owner guard 必须实际扫描 client production source");
+            assertFalse(sources.isEmpty(), "production lifecycle guard 必须实际扫描 client Java source");
             for (Path source : sources) {
                 String identity = sourceRoot.relativize(source).toString().replace('\\', '/');
-                JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+                JavaLifecycleSourceInspector.assertProductionLifecycleContracts(
                     Files.readString(source),
                     identity,
                     managedStores,
@@ -1008,6 +989,28 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                         static void clearOnDisconnect() {
                             LootContainerStateStore.clearOnDisconnect();
                         }
+                    }
+                    """
+            },
+            {
+                "fixture/LocalAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() {
+                            LootContainerStateStore alias = null;
+                            alias.clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/FieldAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static final LootContainerStateStore STORE = null;
+                        static void tearDown() { STORE.clearOnDisconnect(); }
                     }
                     """
             },

@@ -321,6 +321,18 @@ class AdjunctDisconnectOwnershipTest {
                 final class AllowlistedAdjunct {
                     static void clearOnDisconnect() { }
                 }
+                """,
+            """
+                package com.example;
+                import com.bong.client.hud.LootContainerStateStore;
+                class BaseAdjunct {
+                    static void clearInherited() {
+                        LootContainerStateStore.clearOnDisconnect();
+                    }
+                }
+                final class AllowlistedAdjunct extends BaseAdjunct {
+                    static void clearOnDisconnect() { clearInherited(); }
+                }
                 """
         }) {
             org.junit.jupiter.api.Assertions.assertThrows(

@@ -123,7 +123,13 @@ public final class JavaLifecycleSourceInspector {
     }
 
     static void assertNoTestResetCalls(String source, String sourceIdentity) {
-        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        assertNoTestResetCalls(parse(simpleName(sourceIdentity), source), sourceIdentity);
+    }
+
+    private static void assertNoTestResetCalls(
+        CompilationUnitTree unit,
+        String sourceIdentity
+    ) {
         String sourceFqcn = sourceIdentity
             .replace('\\', '.')
             .replace('/', '.')
@@ -198,6 +204,22 @@ public final class JavaLifecycleSourceInspector {
                 return super.visitMemberReference(reference, unused);
             }
         }.scan(unit, null);
+    }
+
+    static void assertProductionLifecycleContracts(
+        String source,
+        String sourceIdentity,
+        Set<String> storeFqcns,
+        boolean registrySource
+    ) {
+        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        assertNoTestResetCalls(unit, sourceIdentity);
+        assertRegistryOwnsManagedStoreCleanerCalls(
+            unit,
+            sourceIdentity,
+            storeFqcns,
+            registrySource
+        );
     }
 
     public static void assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
@@ -782,39 +804,41 @@ public final class JavaLifecycleSourceInspector {
                 List<MethodTree> candidates = methodsByName.getOrDefault(name, List.of()).stream()
                     .filter(candidate -> candidate.getParameters().size() == parameterCount)
                     .toList();
+                if (candidates.isEmpty()) {
+                    violations.add("unresolved-local-or-inherited-helper:" + name + "/" + parameterCount);
+                    return;
+                }
                 if (candidates.size() > 1) {
                     violations.add("ambiguous-local-helper:" + name + "/" + parameterCount);
                     return;
                 }
-                if (candidates.size() == 1) {
-                    com.sun.source.util.TreePath candidatePath = com.sun.source.util.TreePath.getPath(
-                        methodPath.getCompilationUnit(),
-                        candidates.get(0)
-                    );
-                    if (candidatePath == null) {
-                        violations.add("unresolved-local-helper-path:" + name + "/" + parameterCount);
-                        return;
-                    }
-                    scanMethodClosure(
-                        candidates.get(0),
-                        candidatePath,
-                        className,
-                        methodsByName,
-                        visited,
-                        storeFqcns,
-                        visibleStoreTypeNames,
-                        currentClassFieldTypes,
-                        currentClassFieldElementTypes,
-                        localDataAccessors,
-                        visibleTypeFqcns,
-                        sourcePackage,
-                        staticallyImportedCleanupMethods,
-                        staticallyImportedMethods,
-                        hasWildcardStaticImport,
-                        allowedCrossClassCalls,
-                        violations
-                    );
+                com.sun.source.util.TreePath candidatePath = com.sun.source.util.TreePath.getPath(
+                    methodPath.getCompilationUnit(),
+                    candidates.get(0)
+                );
+                if (candidatePath == null) {
+                    violations.add("unresolved-local-helper-path:" + name + "/" + parameterCount);
+                    return;
                 }
+                scanMethodClosure(
+                    candidates.get(0),
+                    candidatePath,
+                    className,
+                    methodsByName,
+                    visited,
+                    storeFqcns,
+                    visibleStoreTypeNames,
+                    currentClassFieldTypes,
+                    currentClassFieldElementTypes,
+                    localDataAccessors,
+                    visibleTypeFqcns,
+                    sourcePackage,
+                    staticallyImportedCleanupMethods,
+                    staticallyImportedMethods,
+                    hasWildcardStaticImport,
+                    allowedCrossClassCalls,
+                    violations
+                );
             }
         }.scan(methodPath, null);
     }
@@ -1277,7 +1301,20 @@ public final class JavaLifecycleSourceInspector {
         Set<String> storeFqcns,
         boolean registrySource
     ) {
-        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        assertRegistryOwnsManagedStoreCleanerCalls(
+            parse(simpleName(sourceIdentity), source),
+            sourceIdentity,
+            storeFqcns,
+            registrySource
+        );
+    }
+
+    private static void assertRegistryOwnsManagedStoreCleanerCalls(
+        CompilationUnitTree unit,
+        String sourceIdentity,
+        Set<String> storeFqcns,
+        boolean registrySource
+    ) {
         String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
         String sourceFqcn = sourceIdentity
             .replace('\\', '.')
@@ -1316,16 +1353,69 @@ public final class JavaLifecycleSourceInspector {
         forbiddenWildcardImports.forEach(value -> violations.add("wildcard-import:" + value));
         new TreePathScanner<Void, Void>() {
             private String enclosingMethod;
+            private final java.util.ArrayDeque<Map<String, String>> variableTypeScopes =
+                new java.util.ArrayDeque<>();
+
+            @Override
+            public Void visitClass(ClassTree type, Void unused) {
+                Map<String, String> fieldTypes = new HashMap<>();
+                for (Tree member : type.getMembers()) {
+                    if (member instanceof VariableTree variable && variable.getType() != null) {
+                        fieldTypes.put(
+                            variable.getName().toString(),
+                            rawTypeName(variable.getType().toString())
+                        );
+                    }
+                }
+                variableTypeScopes.push(fieldTypes);
+                try {
+                    return super.visitClass(type, unused);
+                } finally {
+                    variableTypeScopes.pop();
+                }
+            }
 
             @Override
             public Void visitMethod(MethodTree method, Void unused) {
                 String previousMethod = enclosingMethod;
                 enclosingMethod = method.getName().toString();
+                Map<String, String> parameterTypes = new HashMap<>();
+                for (VariableTree parameter : method.getParameters()) {
+                    if (parameter.getType() != null) {
+                        parameterTypes.put(
+                            parameter.getName().toString(),
+                            rawTypeName(parameter.getType().toString())
+                        );
+                    }
+                }
+                variableTypeScopes.push(parameterTypes);
                 try {
                     return super.visitMethod(method, unused);
                 } finally {
+                    variableTypeScopes.pop();
                     enclosingMethod = previousMethod;
                 }
+            }
+
+            @Override
+            public Void visitBlock(com.sun.source.tree.BlockTree block, Void unused) {
+                variableTypeScopes.push(new HashMap<>());
+                try {
+                    return super.visitBlock(block, unused);
+                } finally {
+                    variableTypeScopes.pop();
+                }
+            }
+
+            @Override
+            public Void visitVariable(VariableTree variable, Void unused) {
+                if (variable.getType() != null && !variableTypeScopes.isEmpty()) {
+                    variableTypeScopes.peek().put(
+                        variable.getName().toString(),
+                        rawTypeName(variable.getType().toString())
+                    );
+                }
+                return super.visitVariable(variable, unused);
             }
 
             @Override
@@ -1336,8 +1426,9 @@ public final class JavaLifecycleSourceInspector {
                 }
                 if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
                     String owner = selection.getExpression().toString();
+                    String resolvedOwner = resolveScopedReceiverType(owner);
                     if (isForbiddenManagedStoreCall(
-                        owner,
+                        resolvedOwner,
                         storeFqcns,
                         visibleStoreTypeNames,
                         sourceIsManagedStore
@@ -1358,9 +1449,10 @@ public final class JavaLifecycleSourceInspector {
 
             @Override
             public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                String qualifier = reference.getQualifierExpression().toString();
                 if (!reference.getName().contentEquals(DISCONNECT_CLEANER_METHOD)
                     || !isManagedStoreOwner(
-                        reference.getQualifierExpression().toString(),
+                        resolveScopedReceiverType(qualifier),
                         storeFqcns,
                         visibleStoreTypeNames
                     )) {
@@ -1369,10 +1461,26 @@ public final class JavaLifecycleSourceInspector {
                 Tree parent = getCurrentPath().getParentPath().getLeaf();
                 if (!registrySource || !isSanctionedRegistryBinding(reference, parent)) {
                     violations.add(
-                        "reference:" + reference.getQualifierExpression() + "::" + reference.getName()
+                        "reference:" + qualifier + "::" + reference.getName()
                     );
                 }
                 return super.visitMemberReference(reference, unused);
+            }
+
+            private String resolveScopedReceiverType(String owner) {
+                String variableName = owner.startsWith("this.") || owner.startsWith("super.")
+                    ? owner.substring(owner.indexOf('.') + 1)
+                    : owner;
+                if (!variableName.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
+                    return owner;
+                }
+                for (Map<String, String> scope : variableTypeScopes) {
+                    String declaredType = scope.get(variableName);
+                    if (declaredType != null) {
+                        return declaredType;
+                    }
+                }
+                return owner;
             }
         }.scan(unit, null);
 
