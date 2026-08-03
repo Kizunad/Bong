@@ -9,11 +9,11 @@ const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.ym
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const canaryContractPath = '.github/workflows/provider-canary.yml';
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
-const centralSha = '57246b7aac64871c402a28eec212fc0af9a7f080';
+const centralSha = '2986b95388b3ac3f8bf28b8ebdd60a19d2e4364c';
 const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 // Hash of Kizunad/review/.github/workflows/review.yml; re-verify it on every pin bump.
 // It changes only when that workflow changes, which a central pin bump usually does not.
-const centralWorkflowSha256 = '4aa12ba70bf018ba1b71f94483aece8bdfe753f68b79fa6c2aba5004353e7386';
+const centralWorkflowSha256 = 'b07ba74a0eff87a520a5bd81da4cc7eb0ead97025680af5f5242db9c8e7153e8';
 
 const expectedCanaryInterface = `  workflow_call:
     inputs:
@@ -131,7 +131,7 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@57246b7aac64871c402a28eec212fc0af9a7f080
+    uses: Kizunad/review/.github/workflows/review.yml@2986b95388b3ac3f8bf28b8ebdd60a19d2e4364c
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
@@ -258,7 +258,7 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@57246b7aac64871c402a28eec212fc0af9a7f080/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@2986b95388b3ac3f8bf28b8ebdd60a19d2e4364c/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
