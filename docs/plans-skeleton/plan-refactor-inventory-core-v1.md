@@ -48,3 +48,4 @@ skeleton：alchemy-takeback-full-inventory-loss（交付垫层部分；session t
 
 1. 满包溢出策略正典拍板：脚下掉落（可被他人捡走，符合末法残酷）vs 个人暂存箱（体验友好）——需人工定。
 2. pre-#249 老存档迁移是否并入本轨 P3（倾向并入，一次清账）。
+3. `loot` production caller 的满包交付与 stable `delivery_id` crash/replay 专项覆盖本轮不扩展；延期到总纲 `plan-refactor-master-v1.md §3 Wave 2` 的 R10 production-delivery 验收窗口，理由是 API 级原子性测试不能证明该调用点已实际迁移。
