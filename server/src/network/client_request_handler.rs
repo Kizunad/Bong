@@ -1724,9 +1724,11 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &skill_scroll_params.item_registry,
-                    skill_scroll_params.craft_registry.as_deref(),
-                    skill_scroll_params.craft_unlock_state.as_deref_mut(),
-                    skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                    CraftRecipeScrollParams {
+                        registry: skill_scroll_params.craft_registry.as_deref(),
+                        unlock_state: skill_scroll_params.craft_unlock_state.as_deref_mut(),
+                        unlock_tx: skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                    },
                 ) {
                     handle_learn_skill_scroll(
                         ev.client,
@@ -1746,9 +1748,11 @@ pub fn handle_client_request_payloads(
                     &mut inventories,
                     &mut clients,
                     &skill_scroll_params.item_registry,
-                    skill_scroll_params.craft_registry.as_deref(),
-                    skill_scroll_params.craft_unlock_state.as_deref_mut(),
-                    skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                    CraftRecipeScrollParams {
+                        registry: skill_scroll_params.craft_registry.as_deref(),
+                        unlock_state: skill_scroll_params.craft_unlock_state.as_deref_mut(),
+                        unlock_tx: skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                    },
                 ) {
                     handle_learn_skill_scroll(
                         ev.client,
@@ -2983,18 +2987,22 @@ pub fn handle_client_request_payloads(
     }
 }
 
+struct CraftRecipeScrollParams<'a> {
+    registry: Option<&'a crate::craft::CraftRegistry>,
+    unlock_state: Option<&'a mut crate::craft::RecipeUnlockState>,
+    unlock_tx: Option<&'a mut Events<crate::craft::CraftUnlockIntent>>,
+}
+
 fn handle_craft_recipe_scroll(
     entity: Entity,
     instance_id: u64,
     inventories: &mut Query<&mut PlayerInventory>,
     clients: &mut Query<(&Username, &mut Client)>,
     item_registry: &ItemRegistry,
-    craft_registry: Option<&crate::craft::CraftRegistry>,
-    craft_unlock_state: Option<&mut crate::craft::RecipeUnlockState>,
-    craft_unlock_tx: Option<&mut Events<crate::craft::CraftUnlockIntent>>,
+    craft: CraftRecipeScrollParams<'_>,
 ) -> bool {
     let (Some(craft_registry), Some(craft_unlock_state), Some(craft_unlock_tx)) =
-        (craft_registry, craft_unlock_state, craft_unlock_tx)
+        (craft.registry, craft.unlock_state, craft.unlock_tx)
     else {
         return false;
     };
