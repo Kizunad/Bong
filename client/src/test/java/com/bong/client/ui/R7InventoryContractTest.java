@@ -1,5 +1,14 @@
 package com.bong.client.ui;
 
+import com.sun.source.tree.ClassTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.ParenthesizedTree;
+import com.sun.source.tree.ReturnTree;
+import com.sun.source.tree.TypeCastTree;
+import com.sun.source.util.TreePathScanner;
 import io.wispforest.owo.ui.core.Sizing;
 import org.junit.jupiter.api.Test;
 
@@ -44,10 +53,23 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void fill100InventoryPinsExactRegistrationSites() {
+    void fill100InventoryPinsExactRegistrationSites() throws IOException {
         List<FillInventoryRow> rows = readFillInventory();
+        List<R7SourceScan.TokenOccurrence> actual = R7SourceScan.tokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)");
         assertEquals(92, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
-        assertEquals(20, rows.stream().map(FillInventoryRow::path).distinct().count(),
+        assertEquals(rows.stream().map(FillInventoryRow::stableKey).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::stableKey).toList(),
+            "the fixture must enumerate every production fill token in path-local order");
+        assertEquals(rows.stream().map(FillInventoryRow::code).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
+            "executable fill calls must be distinguished from raw comment or literal occurrences by the Java AST");
+        assertEquals(rows.stream().map(FillInventoryRow::freezeLine).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::line).toList(),
+            "every frozen line must come from the production compilation unit line map");
+        assertEquals(rows.stream().map(FillInventoryRow::source).toList(),
+            actual.stream().map(R7SourceScan.TokenOccurrence::sourceLine).toList(),
+            "every frozen source line must match production bytes");
+        assertEquals(20, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
             "the frozen fill inventory file set changed");
         assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L),
             histogram(rows.stream().map(FillInventoryRow::verdict).toList()),
@@ -56,8 +78,14 @@ class R7InventoryContractTest {
                 .map(row -> row.stableKey() + "\t" + row.verdict() + "\t" + row.riskKind())
                 .toList(),
             "every exact fill registration site must be explicitly re-decided");
-        assertEquals(87, readFillStructuralContext().size(),
-            "all executable fill sites must carry a frozen structural context");
+
+        List<R7SourceScan.StructuralTokenOccurrence> structural = readFillStructuralContext();
+        assertEquals(structural, R7SourceScan.structuralTokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)"),
+            "every executable fill site must match its production enclosing class, method, and source hash");
+        assertEquals(87, structural.size(),
+            "all executable fill sites must carry one frozen structural context");
+        assertEquals(87, structural.stream().map(R7SourceScan.StructuralTokenOccurrence::stableKey).distinct().count(),
+            "structural-context stable keys must be unique");
     }
 
     @Test
@@ -109,12 +137,147 @@ class R7InventoryContractTest {
     }
 
     private static List<ScreenInventoryRow> discoverDirectScreensAndSuffixHelpers() throws IOException {
-        List<ScreenInventoryRow> rows = readScreenInventory();
-        for (ScreenInventoryRow row : rows) {
-            Path path = PRODUCTION_ROOT.resolve(row.path());
-            assertTrue(Files.isRegularFile(path), "screen inventory path is missing: " + row.path());
+        List<ScreenInventoryRow> result = new java.util.ArrayList<>();
+        for (R7SourceScan.ParsedUnit parsed : R7SourceScan.parseJava(PRODUCTION_ROOT)) {
+            String relative = PRODUCTION_ROOT.relativize(parsed.path()).toString().replace('\\', '/');
+            List<DirectScreenDeclaration> declarations = new java.util.ArrayList<>();
+            List<String> adapterStyles = new java.util.ArrayList<>();
+            new TreePathScanner<Void, Void>() {
+                private boolean inCreateAdapter;
+
+                @Override
+                public Void visitClass(ClassTree tree, Void unused) {
+                    if (tree.getExtendsClause() != null) {
+                        String parent = normalizeScreenParent(tree.getExtendsClause().toString());
+                        if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")) {
+                            declarations.add(new DirectScreenDeclaration(tree.getSimpleName().toString(), parent));
+                        }
+                    }
+                    return super.visitClass(tree, unused);
+                }
+
+                @Override
+                public Void visitMethod(MethodTree tree, Void unused) {
+                    boolean previous = inCreateAdapter;
+                    inCreateAdapter = tree.getName().contentEquals("createAdapter") && tree.getParameters().isEmpty();
+                    try {
+                        return super.visitMethod(tree, unused);
+                    } finally {
+                        inCreateAdapter = previous;
+                    }
+                }
+
+                @Override
+                public Void visitReturn(ReturnTree tree, Void unused) {
+                    if (inCreateAdapter) {
+                        adapterStyles.add(classifyReturnedAdapter(tree.getExpression()));
+                    }
+                    return super.visitReturn(tree, unused);
+                }
+            }.scan(parsed.unit(), null);
+            if (!declarations.isEmpty()) {
+                for (DirectScreenDeclaration declaration : declarations) {
+                    boolean owo = declaration.parent().startsWith("BaseOwoScreen<");
+                    if (owo) {
+                        assertEquals("BaseOwoScreen<FlowLayout>", declaration.parent(),
+                            "new direct owo roots require an explicit migration decision: " + relative);
+                        assertEquals(1, adapterStyles.size(),
+                            "each direct owo Screen needs one returned adapter factory: " + relative);
+                    }
+                    result.add(new ScreenInventoryRow(
+                        relative,
+                        declaration.className(),
+                        owo ? "BASE_OWO" : "VANILLA_SCREEN",
+                        owo ? adapterStyles.get(0) : "VANILLA",
+                        owo,
+                        noteFor(relative)
+                    ));
+                }
+            } else if (parsed.path().getFileName().toString().endsWith("Screen.java")) {
+                result.add(new ScreenInventoryRow(
+                    relative,
+                    parsed.path().getFileName().toString().replaceFirst("\\.java$", ""),
+                    "NON_SCREEN_HELPER",
+                    "NONE",
+                    false,
+                    noteFor(relative)
+                ));
+            }
         }
-        return rows;
+        result.sort((left, right) -> {
+            boolean leftLegacy = left.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
+            boolean rightLegacy = right.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
+            if (leftLegacy != rightLegacy) {
+                return leftLegacy ? 1 : -1;
+            }
+            return left.path().compareTo(right.path());
+        });
+        return result;
+    }
+
+    private static String normalizeScreenParent(String parent) {
+        String normalized = parent.replaceAll("\\s+", "");
+        if (normalized.equals("net.minecraft.client.gui.screen.Screen")) {
+            return "Screen";
+        }
+        if (normalized.startsWith("io.wispforest.owo.ui.base.BaseOwoScreen<")) {
+            return normalized.substring("io.wispforest.owo.ui.base.".length());
+        }
+        return normalized;
+    }
+
+    private static String classifyReturnedAdapter(ExpressionTree expression) {
+        ExpressionTree unwrapped = expression;
+        while (unwrapped instanceof ParenthesizedTree parenthesized
+            || unwrapped instanceof TypeCastTree) {
+            unwrapped = unwrapped instanceof ParenthesizedTree parenthesized
+                ? parenthesized.getExpression()
+                : ((TypeCastTree) unwrapped).getExpression();
+        }
+        if (!(unwrapped instanceof MethodInvocationTree invocation)
+            || !(invocation.getMethodSelect() instanceof MemberSelectTree select)) {
+            throw new AssertionError("createAdapter must return one direct factory invocation: " + expression);
+        }
+        List<String> arguments = invocation.getArguments().stream()
+            .map(argument -> argument.toString().replaceAll("\\s+", ""))
+            .toList();
+        if (select.getIdentifier().contentEquals("createAdapter")
+            && arguments.equals(List.of("FlowLayout.class", "this"))) {
+            return "XML_MODEL";
+        }
+        if (select.getIdentifier().contentEquals("create") && arguments.size() == 2) {
+            return "CODE";
+        }
+        throw new AssertionError("unclassified returned owo adapter factory: " + invocation);
+    }
+
+    private static String noteFor(String path) {
+        return switch (path) {
+            case "agentui/AgentUiScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
+            case "alchemy/AlchemyScreen.java" -> "Code-built FlowLayout";
+            case "coffin/CoffinMenuScreen.java" -> "Vanilla Screen, not a direct base migration";
+            case "combat/screen/DeathScreen.java", "combat/screen/TerminateScreen.java" -> "System-terminal screen";
+            case "combat/screen/ForgeCarrierScreen.java", "combat/screen/RepairScreen.java",
+                "combat/screen/ZhenfaLayoutScreen.java", "cultivation/voidaction/VoidActionScreen.java",
+                "forge/ForgeScreen.java", "identity/IdentityPanelScreen.java", "inspect/ItemInspectScreen.java",
+                "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
+            case "craft/CraftScreen.java", "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
+                "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
+                "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java",
+                "ui/CultivationScreen.java" -> "Code-built FlowLayout";
+            case "cultivation/TechniqueScrollReadScreen.java" ->
+                "Suffix matches Screen.java but class is a toast/text helper";
+            case "insight/InsightOfferScreen.java" -> "Code-built modal FlowLayout";
+            case "inventory/InspectScreen.java" -> "Code-built FlowLayout; P3 split target";
+            case "social/SparringInviteScreen.java", "social/TradeOfferScreen.java" -> "Vanilla modal screen";
+            case "ui/DynamicXmlScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
+            case "cultivation/voidaction/LegacyAssignPanel.java" ->
+                "Real Screen missed by the Screen.java suffix inventory";
+            default -> throw new AssertionError("fixture note mapping missing for " + path);
+        };
+    }
+
+    private record DirectScreenDeclaration(String className, String parent) {
     }
 
     @Test
@@ -134,17 +297,12 @@ class R7InventoryContractTest {
             "insight/InsightOfferScreen.java:227",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
-            "npc/NpcTradeScreen.java:163",
-            "scroll/ScrollReadScreen.java:38"
+            "npc/NpcTradeScreen.java:163"
         );
-        assertEquals(16, sites.size(), "the frozen clearChildren inventory changed");
-        for (String site : sites) {
-            int separator = site.lastIndexOf(':');
-            Path path = PRODUCTION_ROOT.resolve(site.substring(0, separator));
-            int line = Integer.parseInt(site.substring(separator + 1));
-            assertTrue(Files.readAllLines(path).get(line - 1).contains("clearChildren()"),
-                "clearChildren registration site drifted: " + site);
-        }
+        List<String> actual = R7SourceScan.zeroArgumentInvocationSites(PRODUCTION_ROOT, "clearChildren");
+        assertEquals(15, sites.size(), "the frozen executable clearChildren inventory changed");
+        assertEquals(sites.stream().sorted().toList(), actual,
+            "the inventory must match every executable zero-argument production clearChildren call");
     }
 
     private static List<ScreenInventoryRow> readScreenInventory() {
@@ -167,8 +325,13 @@ class R7InventoryContractTest {
             .toList();
     }
 
-    private static List<String> readFillStructuralContext() {
-        return resourceLines("/bong/ui/r7-fill100-structural-context.tsv");
+    private static List<R7SourceScan.StructuralTokenOccurrence> readFillStructuralContext() {
+        return resourceLines("/bong/ui/r7-fill100-structural-context.tsv").stream()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new R7SourceScan.StructuralTokenOccurrence(
+                columns[0], columns[1], columns[2], columns[3]
+            ))
+            .toList();
     }
 
     private static List<String> resourceLines(String name) {
