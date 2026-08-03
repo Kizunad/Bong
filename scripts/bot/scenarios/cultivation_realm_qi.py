@@ -39,8 +39,9 @@ def _chat_after(
 
 
 def _command_and_chat(bot, command: str, expected: str, *, exact: bool = False):
-    watermark = last_event_time(bot)
-    bot.cmd(command)
+    with bot._lock:
+        watermark = bot.events[-1].t if bot.events else 0.0
+        bot.cmd(command)
     return _chat_after(bot, watermark, expected, exact=exact)
 
 
@@ -72,6 +73,8 @@ def run(env) -> None:
             exact=True,
         )
 
+        _successful_command_and_chat(bot, "qi set 0", "[dev] qi set")
+        _successful_command_and_chat(bot, "qi max 10", "[dev] qi max")
         _successful_command_and_chat(
             bot,
             "qi max 12",

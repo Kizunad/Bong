@@ -17,7 +17,6 @@
 """
 
 import math
-import time
 
 from bot.scenarios._inventory_helpers import (
     find_item,
@@ -358,13 +357,19 @@ def run(env) -> None:
             )
             _assert_outcome(outcome.data["payload"])
 
-            # 给同 tick 的错误广播留出观察窗口；只检查 typed/deep-decoded 事件，
-            # unrelated heartbeat/raw payload 不能替代或污染这条隔离断言。
-            time.sleep(0.5)
+            barrier_anchor = last_event_time(bystander)
+            bystander.cmd("supply_coffin barrier")
+            barrier = bystander.wait_for(
+                lambda event: event.kind == "chat"
+                and event.t > barrier_anchor
+                and "[dev] supply_coffin barrier passed" in event.data["text"],
+                timeout=10.0,
+                description="结算后的 server-authoritative tick barrier",
+            )
             leaked = [
                 event
                 for event in bystander.events_of("server_data")
-                if event.t > bystander_anchor
+                if bystander_anchor < event.t <= barrier.t
                 and event.data["payload_type"] == "alchemy_outcome_resolved"
             ]
             assert leaked == [], (

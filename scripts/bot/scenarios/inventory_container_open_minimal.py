@@ -170,6 +170,48 @@ def run(env) -> None:
                 "v": 1,
                 "session_id": session_id,
                 "instance_id": fiber_instance_id,
+                "from": {
+                    **fiber_source,
+                    "row": int(fiber_source["row"]) + 1,
+                },
+                "to": container_location(ext_container_id, 1, 2),
+            }
+        )
+        forged_player_update = _server_data_after(
+            bot, "loot_container_update", into_ext_at
+        ).data["payload"]
+        if any(
+            placed["item"]["instance_id"] == fiber_instance_id
+            for placed in forged_player_update["placed_items"]
+        ):
+            raise BotAssertionError(
+                "伪造 player source 坐标必须拒绝，instance 不得进入外部货箱"
+            )
+        forged_player_snapshot = _inventory_after(
+            bot,
+            into_ext_at,
+            lambda candidate: _instance_at_container(
+                candidate,
+                fiber_instance_id,
+                fiber_source["container_id"],
+                int(fiber_source["row"]),
+                int(fiber_source["col"]),
+            ),
+            "伪造 player source 坐标拒绝后的背包同步",
+        )
+        if forged_player_snapshot["revision"] != player_snapshot["revision"]:
+            raise BotAssertionError(
+                "伪造 player source 坐标被拒时 revision 必须不变；"
+                f"before={player_snapshot['revision']} actual={forged_player_snapshot['revision']}"
+            )
+
+        into_ext_at = _event_watermark(bot)
+        bot.intent(
+            {
+                "type": "external_container_move",
+                "v": 1,
+                "session_id": session_id,
+                "instance_id": fiber_instance_id,
                 "from": fiber_source,
                 "to": container_location(ext_container_id, 1, 2),
             }

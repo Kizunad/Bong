@@ -251,6 +251,8 @@ class Bot:
             self._emit("player_list", {"actions": actions, "entries": entries})
         elif packet_id == mc.S2C_PLAYER_REMOVE:
             count = reader.varint()
+            if count < 0:
+                raise ValueError(f"negative player remove count {count}")
             removed = [reader.uuid() for _ in range(count)]
             for player_uuid in removed:
                 self.player_names.pop(player_uuid, None)
@@ -299,11 +301,17 @@ class Bot:
             dz = reader.i16() / 4096.0
             prev = self.entities.get(entity_id)
             if prev is not None:
-                self.entities[entity_id] = (prev[0] + dx, prev[1] + dy, prev[2] + dz)
+                current = (prev[0] + dx, prev[1] + dy, prev[2] + dz)
+                self.entities[entity_id] = current
+                self._emit(
+                    "entity_move",
+                    {"entity_id": entity_id, "x": current[0], "y": current[1], "z": current[2]},
+                )
         elif packet_id == mc.S2C_ENTITY_TELEPORT:
             entity_id = reader.varint()
             x, y, z = reader.f64(), reader.f64(), reader.f64()
             self.entities[entity_id] = (x, y, z)
+            self._emit("entity_move", {"entity_id": entity_id, "x": x, "y": y, "z": z})
         elif packet_id == mc.S2C_ENTITIES_DESTROY:
             count = reader.varint()
             ids = [reader.varint() for _ in range(count)]

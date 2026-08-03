@@ -18,7 +18,17 @@ MODULES = ["cultivation", "network"]
 
 BREAKTHROUGH_REQUEST = {"type": "breakthrough_request", "v": 1}
 PHASES = ("prelude", "charge", "catalyze", "apex", "aftermath")
-TERMINAL_TIMEOUT_SECONDS = 35.0
+MIN_GATE_TPS = 2.0
+PHASE_TIMEOUT_MARGIN_SECONDS = 15.0
+
+
+def _phase_timeout_seconds(payload: dict) -> float:
+    duration_ticks = payload.get("phase_duration_ticks")
+    if isinstance(duration_ticks, bool) or not isinstance(duration_ticks, int) or duration_ticks <= 0:
+        raise BotAssertionError(
+            f"breakthrough_cinematic.phase_duration_ticks 必须是正整数，实际 {duration_ticks!r}"
+        )
+    return duration_ticks / MIN_GATE_TPS + PHASE_TIMEOUT_MARGIN_SECONDS
 
 
 def _cinematic_after(event, sent_at: float) -> bool:
@@ -115,7 +125,7 @@ def _wait_cinematic_terminal(bot, initial_event):
             lambda observed, expected=phase, after=previous.t: _is_matching_phase(
                 observed, after, identity, expected
             ),
-            timeout=TERMINAL_TIMEOUT_SECONDS,
+            timeout=_phase_timeout_seconds(phases[-1]),
             description=(
                 "同一 breakthrough_cinematic 身份必须按序推进至 "
                 f"{phase}/phase_tick=0"

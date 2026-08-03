@@ -474,7 +474,10 @@ def _varint(fields: list[tuple[int, int, Any]], field: int, default: int = 0) ->
 
 
 def _optional_varint(fields: list[tuple[int, int, Any]], field: int) -> int | None:
-    return _varint(fields, field) if _has(fields, field) else None
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == WIRE_VARINT:
+            return int(value)
+    return None
 
 
 def _string(fields: list[tuple[int, int, Any]], field: int, default: str = "") -> str:

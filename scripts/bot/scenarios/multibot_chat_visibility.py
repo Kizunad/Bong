@@ -100,7 +100,14 @@ def run(env) -> None:
             alice.wait_for(
                 lambda event: event.t > alice_anchor and is_outgoing_positive_hit(event),
                 timeout=10.0,
-                description="Alice 对共享 NPC 的专属 outgoing=true positive hit",
+                description="Alice 的专属 outgoing=true positive hit",
+            )
+            alice.wait_for(
+                lambda event: event.kind == "entity_move"
+                and event.t > alice_anchor
+                and event.data.get("entity_id") == target_id,
+                timeout=10.0,
+                description=f"Alice 命中后精确共享 NPC entity_id={target_id} 产生 knockback",
             )
 
             # Bob 已通过同一 server 权威 rendezvous 与 Alice/目标共处；按 Bob 观察到的
@@ -111,7 +118,14 @@ def run(env) -> None:
             bob.wait_for(
                 lambda event: event.t > bob_anchor and is_outgoing_positive_hit(event),
                 timeout=10.0,
-                description="Bob 对同一共享 NPC 的专属 outgoing=true positive hit",
+                description="Bob 的专属 outgoing=true positive hit",
+            )
+            bob.wait_for(
+                lambda event: event.kind == "entity_move"
+                and event.t > bob_anchor
+                and event.data.get("entity_id") == target_id,
+                timeout=10.0,
+                description=f"Bob 命中后精确共享 NPC entity_id={target_id} 产生 knockback",
             )
 
             alice.assert_alive("互见身份并命中共享 NPC 后")

@@ -1,7 +1,7 @@
 """禁用的历史浅场景：占位 instance_id=0 不能证明炼丹炉或炼器砧生产链路。
 
 真实炼丹链路由 `production_alchemy_brew_pill` 覆盖；真实炼器链路由
-`production_forge_full_cycle` 覆盖。本文件仅保留旧请求形状供人工诊断，默认验收矩阵
+`production_forge_station_real_place` 覆盖。本文件仅保留旧请求形状供人工诊断，默认验收矩阵
 不得运行，防止 generic server_data / assert_alive 被误记为 P4 证据。
 """
 

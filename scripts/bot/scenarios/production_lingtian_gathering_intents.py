@@ -33,7 +33,12 @@ RUN_IN_ALL_WHEN_ENV = REQUIRED_ENV
 HOE_ID = "hoe_iron"
 HERB_ID = "spirit_grass"
 HARVEST_RADIUS_SQ = 6.0 * 6.0
-HARVEST_TERMINAL_TIMEOUT_SECONDS = 15.0
+HARVEST_TICKS = 40
+MIN_GATE_TPS = 2.0
+HARVEST_TIMEOUT_MARGIN_SECONDS = 10.0
+HARVEST_TERMINAL_TIMEOUT_SECONDS = (
+    HARVEST_TICKS / MIN_GATE_TPS + HARVEST_TIMEOUT_MARGIN_SECONDS
+)
 BOTANY_FIXTURE_PREFIX = (
     "[dev] botany_spawn accepted: plant_id="
 )
@@ -226,7 +231,7 @@ def _wait_gather_progress(
         )
         and observed.data["payload"].get("completed") is False
         and observed.data["payload"].get("interrupted") is False,
-        timeout=15.0,
+        timeout=HARVEST_TERMINAL_TIMEOUT_SECONDS,
         description=(
             "/bong gather 后真实 fixture Plant 的非空 session/target_id/有限 target_pos 进度"
         ),
