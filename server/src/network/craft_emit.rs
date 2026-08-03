@@ -937,6 +937,9 @@ pub fn apply_unlock_intents(
             Err(_) => format!("entity:{}", intent.caster.to_bits()),
         };
         let Some(recipe) = registry.get(&intent.recipe_id) else {
+            if let UnlockEventSource::Scroll { .. } = &intent.source {
+                unlock_state.release_scroll_unlock_reservation(&player_id, &intent.recipe_id);
+            }
             tracing::warn!(
                 "[bong][craft] unlock intent ignored: recipe `{}` not in registry",
                 intent.recipe_id
@@ -954,6 +957,9 @@ pub fn apply_unlock_intents(
                 unlock_via_insight(&mut unlock_state, &player_id, recipe, *trigger)
             }
         };
+        if let UnlockEventSource::Scroll { .. } = &intent.source {
+            unlock_state.release_scroll_unlock_reservation(&player_id, &intent.recipe_id);
+        }
         match outcome {
             UnlockOutcome::Newly { source } => {
                 tracing::info!(

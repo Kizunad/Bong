@@ -432,6 +432,9 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// （`learn_technique_if_allowed` 调用点判定本体经脉是否满足易形前置）与
     /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
     pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
+    pub craft_registry: Option<Res<'w, crate::craft::CraftRegistry>>,
+    pub craft_unlock_state: Option<ResMut<'w, crate::craft::RecipeUnlockState>>,
+    pub craft_unlock_tx: Option<ResMut<'w, Events<crate::craft::CraftUnlockIntent>>>,
 }
 
 type NpcEngagementItem = (
@@ -1715,26 +1718,48 @@ pub fn handle_client_request_payloads(
                 });
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
-                handle_learn_skill_scroll(
+                if !handle_craft_recipe_scroll(
                     ev.client,
                     instance_id,
                     &mut inventories,
                     &mut clients,
-                    &player_states,
-                    &mut skill_scroll_params,
-                    &mut combat_params.meridians,
-                );
+                    &skill_scroll_params.item_registry,
+                    skill_scroll_params.craft_registry.as_deref(),
+                    skill_scroll_params.craft_unlock_state.as_deref_mut(),
+                    skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                ) {
+                    handle_learn_skill_scroll(
+                        ev.client,
+                        instance_id,
+                        &mut inventories,
+                        &mut clients,
+                        &player_states,
+                        &mut skill_scroll_params,
+                        &mut combat_params.meridians,
+                    );
+                }
             }
             ClientRequestV1::TechniqueScrollUse { instance_id, .. } => {
-                handle_learn_skill_scroll(
+                if !handle_craft_recipe_scroll(
                     ev.client,
                     instance_id,
                     &mut inventories,
                     &mut clients,
-                    &player_states,
-                    &mut skill_scroll_params,
-                    &mut combat_params.meridians,
-                );
+                    &skill_scroll_params.item_registry,
+                    skill_scroll_params.craft_registry.as_deref(),
+                    skill_scroll_params.craft_unlock_state.as_deref_mut(),
+                    skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                ) {
+                    handle_learn_skill_scroll(
+                        ev.client,
+                        instance_id,
+                        &mut inventories,
+                        &mut clients,
+                        &player_states,
+                        &mut skill_scroll_params,
+                        &mut combat_params.meridians,
+                    );
+                }
             }
             ClientRequestV1::AlchemyIgnite {
                 furnace_pos,
@@ -2958,6 +2983,77 @@ pub fn handle_client_request_payloads(
     }
 }
 
+fn handle_craft_recipe_scroll(
+    entity: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    item_registry: &ItemRegistry,
+    craft_registry: Option<&crate::craft::CraftRegistry>,
+    craft_unlock_state: Option<&mut crate::craft::RecipeUnlockState>,
+    craft_unlock_tx: Option<&mut Events<crate::craft::CraftUnlockIntent>>,
+) -> bool {
+    let (Some(craft_registry), Some(craft_unlock_state), Some(craft_unlock_tx)) =
+        (craft_registry, craft_unlock_state, craft_unlock_tx)
+    else {
+        return false;
+    };
+    let Some(template_id) = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id))
+        .map(|instance| instance.template_id.clone())
+    else {
+        return false;
+    };
+    let Some(template) = item_registry.get(&template_id) else {
+        return false;
+    };
+    if template.category != ItemCategory::Scroll {
+        return false;
+    }
+    let Ok((username, _)) = clients.get_mut(entity) else {
+        return false;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let recipe_ids: Vec<_> =
+        crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id)
+            .into_iter()
+            .filter(|recipe| craft_unlock_state.reserve_scroll_unlock(&player_id, &recipe.id))
+            .map(|recipe| recipe.id.clone())
+            .collect();
+    if recipe_ids.is_empty() {
+        let is_craft_scroll =
+            crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id)
+                .into_iter()
+                .next()
+                .is_some();
+        return is_craft_scroll;
+    }
+    let Ok(mut inventory) = inventories.get_mut(entity) else {
+        for recipe_id in &recipe_ids {
+            craft_unlock_state.release_scroll_unlock_reservation(&player_id, recipe_id);
+        }
+        return true;
+    };
+    if consume_item_instance_once(&mut inventory, instance_id).is_err() {
+        for recipe_id in &recipe_ids {
+            craft_unlock_state.release_scroll_unlock_reservation(&player_id, recipe_id);
+        }
+        return true;
+    }
+    for recipe_id in recipe_ids {
+        craft_unlock_tx.send(crate::craft::CraftUnlockIntent {
+            caster: entity,
+            recipe_id,
+            source: crate::craft::UnlockEventSource::Scroll {
+                item_template: template_id.clone(),
+            },
+        });
+    }
+    true
+}
+
 fn handle_learn_skill_scroll(
     entity: Entity,
     instance_id: u64,
@@ -3821,7 +3917,8 @@ mod tests {
     use crate::botany::harvest::harvest_duration_ticks_for;
     use crate::botany::registry::BotanyPlantId;
     use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
-    use crate::cultivation::components::{MeridianSystem, Realm};
+    use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+    use crate::cultivation::known_techniques::KnownTechniques;
     use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
@@ -9774,6 +9871,215 @@ mod tests {
             DVec3::new(1.0, 0.0, 0.0),
             false,
         ));
+    }
+
+    fn production_scroll_request_app() -> App {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let item_registry = crate::inventory::load_item_registry()
+            .expect("production item registry must load for scroll routing tests");
+        let mut craft_registry = crate::craft::CraftRegistry::new();
+        crate::craft::load_default_craft_recipes(&mut craft_registry, &item_registry)
+            .expect("production craft registry must load for scroll routing tests");
+        app.insert_resource(item_registry);
+        app.insert_resource(craft_registry);
+        app.insert_resource(crate::craft::RecipeUnlockState::new());
+        app.add_event::<crate::craft::CraftUnlockIntent>();
+        app.add_event::<crate::craft::RecipeUnlockedEvent>();
+        app.add_systems(
+            Update,
+            crate::network::craft_emit::apply_unlock_intents.after(handle_client_request_payloads),
+        );
+        app
+    }
+
+    fn send_scroll_use(
+        app: &mut App,
+        entity: Entity,
+        instance_id: u64,
+        request: fn(u64) -> ClientRequestV1,
+    ) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&request(instance_id))
+                    .unwrap()
+                    .into_boxed_slice(),
+            });
+    }
+
+    fn send_technique_scroll_use(app: &mut App, entity: Entity, instance_id: u64) {
+        send_scroll_use(app, entity, instance_id, |instance_id| {
+            ClientRequestV1::TechniqueScrollUse { v: 1, instance_id }
+        });
+    }
+
+    fn send_skill_scroll_use(app: &mut App, entity: Entity, instance_id: u64) {
+        send_scroll_use(app, entity, instance_id, |instance_id| {
+            ClientRequestV1::LearnSkillScroll { v: 1, instance_id }
+        });
+    }
+
+    #[test]
+    fn production_technique_scroll_falls_through_craft_routing() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut meridians = MeridianSystem::default();
+        let lung = meridians.get_mut(MeridianId::Lung);
+        lung.opened = true;
+        lung.integrity = 1.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_woliu_vortex")),
+                KnownTechniques {
+                    entries: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                meridians,
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(entity).unwrap();
+        assert!(
+            known.entries.iter().any(|entry| entry.id == "woliu.vortex"),
+            "production technique scroll must reach the existing technique learner when no craft recipe names it"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(entity)
+                .unwrap()
+                .containers[0]
+                .items
+                .is_empty(),
+            "successful technique learning must consume exactly one production scroll"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "a technique-only scroll must not unlock a craft recipe"
+        );
+    }
+
+    #[test]
+    fn production_skill_scroll_falls_through_craft_routing() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(
+                    42,
+                    "skill_scroll_herbalism_baicao_can",
+                )),
+                SkillSet::default(),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_skill_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let skill_set = app.world().get::<SkillSet>(entity).unwrap();
+        assert!(
+            skill_set
+                .consumed_scrolls
+                .contains(&ScrollId::new("skill_scroll_herbalism_baicao_can")),
+            "production skill scroll must reach the existing skill learner when no craft recipe names it"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(entity)
+                .unwrap()
+                .containers[0]
+                .items
+                .is_empty(),
+            "successful skill learning must consume exactly one production scroll"
+        );
+    }
+
+    #[test]
+    fn queued_duplicate_craft_scroll_requests_consume_one_from_stack() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory =
+            inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern"));
+        inventory.containers[0].items[0].instance.stack_count = 2;
+        let entity = app.world_mut().spawn((client_bundle, inventory)).id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 1);
+        let player_id = canonical_player_id("Azure");
+        assert!(
+            app.world()
+                .resource::<crate::craft::RecipeUnlockState>()
+                .is_unlocked(
+                    &player_id,
+                    &crate::craft::RecipeId::new("workbench.shelter.lantern")
+                ),
+            "the single accepted intent must commit the recipe unlock"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .count(),
+            1,
+            "queued duplicates must produce one observable unlock"
+        );
+    }
+
+    #[test]
+    fn queued_duplicate_craft_scroll_instances_consume_only_first_copy() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory =
+            inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern"));
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 1,
+            instance: skill_scroll_item(43, "scroll_workbench_lantern"),
+        });
+        let entity = app.world_mut().spawn((client_bundle, inventory)).id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        send_technique_scroll_use(&mut app, entity, 43);
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.containers[0].items[0].instance.instance_id, 43);
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .count(),
+            1,
+            "two instance ids in one frame must commit one observable unlock"
+        );
     }
 
     #[test]

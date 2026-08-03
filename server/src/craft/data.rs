@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::cultivation::components::{ColorKind, Realm};
-use crate::inventory::ItemRegistry;
+use crate::inventory::{ItemCategory, ItemRegistry};
 
 use super::events::InsightTrigger;
 use super::recipe::{
@@ -73,6 +73,7 @@ pub struct MissingItemReference {
     pub recipe_id: String,
     pub field: String,
     pub template_id: String,
+    pub detail: String,
 }
 
 impl fmt::Display for CraftDataError {
@@ -130,17 +131,17 @@ impl fmt::Display for CraftDataError {
             Self::MissingItemReferences { references } => {
                 write!(
                     formatter,
-                    "craft recipe data contains {} missing ItemRegistry reference(s)",
+                    "craft recipe data contains {} invalid ItemRegistry reference(s)",
                     references.len()
                 )?;
                 for reference in references {
                     write!(
                         formatter,
-                        "\n- {} recipe `{}` field `{}`: ItemRegistry has no template `{}`",
+                        "\n- {} recipe `{}` field `{}`: {}",
                         reference.path.display(),
                         reference.recipe_id,
                         reference.field,
-                        reference.template_id
+                        reference.detail
                     )?;
                 }
                 Ok(())
@@ -710,13 +711,25 @@ fn collect_missing_item_references(
     }
     for (index, source) in recipe.unlock_sources.iter().enumerate() {
         if let UnlockSource::Scroll { item_template } = source {
-            if item_registry.get(item_template).is_none() {
-                missing.push(missing_item_reference(
+            match item_registry.get(item_template) {
+                None => missing.push(missing_item_reference(
                     path,
                     recipe,
                     format!("unlock_sources[{index}].item_template"),
                     item_template,
-                ));
+                )),
+                Some(template) if template.category != ItemCategory::Scroll => {
+                    missing.push(item_reference_error(
+                        path,
+                        recipe,
+                        format!("unlock_sources[{index}].item_template"),
+                        item_template,
+                        format!(
+                            "ItemRegistry template `{item_template}` must have category Scroll"
+                        ),
+                    ));
+                }
+                Some(_) => {}
             }
         }
     }
@@ -728,11 +741,28 @@ fn missing_item_reference(
     field: String,
     template_id: &str,
 ) -> MissingItemReference {
+    item_reference_error(
+        path,
+        recipe,
+        field,
+        template_id,
+        format!("ItemRegistry has no template `{template_id}`"),
+    )
+}
+
+fn item_reference_error(
+    path: &Path,
+    recipe: &CraftRecipe,
+    field: String,
+    template_id: &str,
+    detail: String,
+) -> MissingItemReference {
     MissingItemReference {
         path: path.to_path_buf(),
         recipe_id: recipe.id.as_str().to_owned(),
         field,
         template_id: template_id.to_owned(),
+        detail,
     }
 }
 
@@ -1432,6 +1462,46 @@ skill_lv_min = 1
         let mut registry = CraftRegistry::new();
         load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap();
         assert_eq!(registry.len(), entry_count);
+        for index in 0..entry_count {
+            let recipe = registry
+                .get(&RecipeId::new(format!("fixture.enum.{index}")))
+                .expect("every generated recipe must be present");
+            assert_eq!(
+                recipe.category,
+                parse_category(categories[index % categories.len()]).unwrap()
+            );
+            assert_eq!(
+                recipe.station,
+                parse_station(stations[index % stations.len()]).unwrap()
+            );
+            assert_eq!(
+                recipe.requirements.realm_min,
+                parse_realm(realms[index % realms.len()])
+            );
+            assert_eq!(
+                recipe.requirements.qi_color_min,
+                Some((parse_color(colors[index % colors.len()]).unwrap(), 0.5))
+            );
+            let expected_unlock = match index % unlocks.len() {
+                0 => UnlockSource::Mentor {
+                    npc_archetype: "fixture_mentor".to_string(),
+                },
+                1 => UnlockSource::Insight {
+                    trigger: InsightTrigger::Breakthrough,
+                },
+                2 => UnlockSource::Insight {
+                    trigger: InsightTrigger::NearDeath,
+                },
+                3 => UnlockSource::Insight {
+                    trigger: InsightTrigger::DefeatStronger,
+                },
+                4 => UnlockSource::Scroll {
+                    item_template: "scroll_bronze_coffin".to_string(),
+                },
+                _ => unreachable!(),
+            };
+            assert_eq!(recipe.unlock_sources, vec![expected_unlock]);
+        }
         for category in CraftCategory::ALL {
             assert!(
                 registry.by_category(category).next().is_some(),
@@ -1641,6 +1711,121 @@ skill_lv_min = 1
             baseline.recipes.len() + 1,
             "strict default load must atomically add every canonical recipe exactly once"
         );
+    }
+
+    #[test]
+    fn conversion_failure_does_not_commit_earlier_valid_files() {
+        let directory = temp_dir("conversion-atomicity");
+        let valid = write_toml(
+            &directory,
+            "a-valid.toml",
+            &minimal_recipe().replace("fixture.recipe", "fixture.valid"),
+        );
+        let invalid = write_toml(
+            &directory,
+            "b-invalid.toml",
+            &minimal_recipe()
+                .replace("fixture.recipe", "fixture.invalid")
+                .replace("category = \"misc\"", "category = \"unknown\""),
+        );
+        let existing = CraftRecipe {
+            id: RecipeId::new("existing"),
+            category: CraftCategory::Misc,
+            display_name: "Existing".to_string(),
+            materials: vec![("iron_ingot".to_string(), 1)],
+            qi_cost: 0.0,
+            time_ticks: 20,
+            output: ("iron_ingot".to_string(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
+            station: None,
+        };
+        let mut registry = CraftRegistry::new();
+        registry.register(existing.clone()).unwrap();
+
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("later conversion failure must abort the whole load");
+        assert_conversion_error_field(error, &invalid, "fixture.invalid", "category");
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(&RecipeId::new("existing")), Some(&existing));
+        assert!(registry.get(&RecipeId::new("fixture.valid")).is_none());
+        assert!(valid.exists());
+        clean(directory);
+    }
+
+    #[test]
+    fn aggregates_all_missing_references_before_mutating_registry() {
+        let directory = temp_dir("missing-reference-aggregate");
+        let content = minimal_recipe()
+            .replace(
+                "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+                "materials = [{ template_id = \"missing_material\", count = 1 }]",
+            )
+            .replace(
+                "output = { template_id = \"iron_ingot\", count = 1 }",
+                "output = { template_id = \"missing_output\", count = 1 }",
+            );
+        let content = format!(
+            "{content}unlock_sources = [{{ kind = \"scroll\", item_template = \"missing_scroll\" }}]\n"
+        );
+        let path = write_toml(&directory, "recipe.toml", &content);
+        let mut registry = CraftRegistry::new();
+        let existing = CraftRecipe {
+            id: RecipeId::new("existing"),
+            category: CraftCategory::Misc,
+            display_name: "Existing".to_string(),
+            materials: vec![("iron_ingot".to_string(), 1)],
+            qi_cost: 0.0,
+            time_ticks: 20,
+            output: ("iron_ingot".to_string(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
+            station: None,
+        };
+        registry.register(existing.clone()).unwrap();
+
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("all missing references must be reported together");
+        let CraftDataError::MissingItemReferences { references } = error else {
+            panic!("expected aggregate missing-reference error");
+        };
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].path, path);
+        assert_eq!(references[0].recipe_id, "fixture.recipe");
+        assert_eq!(references[0].field, "materials[0].template_id");
+        assert_eq!(references[0].template_id, "missing_material");
+        assert_eq!(references[1].field, "output.template_id");
+        assert_eq!(references[1].template_id, "missing_output");
+        assert_eq!(references[2].field, "unlock_sources[0].item_template");
+        assert_eq!(references[2].template_id, "missing_scroll");
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(&RecipeId::new("existing")), Some(&existing));
+        clean(directory);
+    }
+
+    #[test]
+    fn rejects_non_scroll_unlock_reference_even_when_item_exists() {
+        let directory = temp_dir("non-scroll-unlock-reference");
+        let content = format!(
+            "{}unlock_sources = [{{ kind = \"scroll\", item_template = \"iron_ingot\" }}]\n",
+            minimal_recipe()
+        );
+        let path = write_toml(&directory, "recipe.toml", &content);
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .expect_err("scroll unlock must reference a Scroll item");
+        let CraftDataError::MissingItemReferences { references } = error else {
+            panic!("expected semantic scroll-reference error");
+        };
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].path, path);
+        assert_eq!(references[0].field, "unlock_sources[0].item_template");
+        assert_eq!(references[0].template_id, "iron_ingot");
+        assert_eq!(
+            references[0].detail,
+            "ItemRegistry template `iron_ingot` must have category Scroll"
+        );
+        clean(directory);
     }
 
     #[test]
