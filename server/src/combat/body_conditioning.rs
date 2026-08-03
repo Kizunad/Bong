@@ -126,12 +126,10 @@ pub fn consume_guangbo_practice_events(
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    let qi_cost = f64::from(
-        technique_registry
-            .get(GUANGBO_TICAO_ID)
-            .expect("validated TechniqueRegistry must contain body.guangbo_ticao")
-            .qi_cost,
-    );
+    let qi_cost = technique_registry
+        .get(GUANGBO_TICAO_ID)
+        .expect("validated TechniqueRegistry must contain body.guangbo_ticao")
+        .qi_cost;
     for event in events.read() {
         let Ok((mut known, cultivation)) = q.get_mut(event.entity) else {
             continue;
@@ -483,7 +481,7 @@ mod tests {
             .get(GUANGBO_TICAO_ID)
             .expect("body.guangbo_ticao must exist in TechniqueRegistry");
         assert_eq!(
-            f64::from(def.qi_cost),
+            def.qi_cost,
             GUANGBO_TICAO_TEST_QI_COST,
             "GUANGBO_TICAO_TEST_QI_COST ({GUANGBO_TICAO_TEST_QI_COST}) must equal known_techniques \
              qi_cost ({}); 守恒：练习代价不得偏离技能定义",
@@ -850,7 +848,7 @@ mod tests {
 
         #[test]
         fn overridden_registry_cost_drives_charge_zone_credit_and_audit() {
-            let configured_cost = 2.75_f32;
+            let configured_cost = 2.75_f64;
             let mut app = App::new();
             app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
                 GUANGBO_TICAO_ID,
@@ -882,7 +880,7 @@ mod tests {
 
             let charged = 5.0 - app.world().get::<Cultivation>(entity).unwrap().qi_current;
             assert!(
-                (charged - f64::from(configured_cost)).abs() < 1e-6,
+                (charged - configured_cost).abs() < 1e-6,
                 "production system must charge the overridden TechniqueRegistry cost, got {charged}"
             );
             let zone_credit = app
@@ -893,7 +891,7 @@ mod tests {
                 .spirit_qi
                 * QI_ZONE_UNIT_CAPACITY;
             assert!(
-                (zone_credit - f64::from(configured_cost)).abs() < 1e-6,
+                (zone_credit - configured_cost).abs() < 1e-6,
                 "the exact overridden cost must be credited to the zone, got {zone_credit}"
             );
             let transfers: Vec<_> = app
@@ -907,7 +905,7 @@ mod tests {
                 "successful practice emits one audit transfer"
             );
             assert!(
-                (transfers[0].amount - f64::from(configured_cost)).abs() < 1e-6,
+                (transfers[0].amount - configured_cost).abs() < 1e-6,
                 "audit amount must equal the overridden registry cost"
             );
         }

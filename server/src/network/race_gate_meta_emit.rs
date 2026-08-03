@@ -156,6 +156,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn species_gated_technique_enters_table_with_precise_gate() {
+        let techniques =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.required_race = RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            });
+        let registry = ItemRegistry::from_map(std::collections::HashMap::new());
+
+        let meta = build_race_gate_meta(&registry, &techniques);
+        let entry = meta
+            .technique_required_race
+            .iter()
+            .find(|entry| entry.id == "sword.cleave")
+            .expect("species-gated runtime technique must enter wire table");
+
+        assert_eq!(entry.gate.kind, "species");
+        assert_eq!(entry.gate.species, vec!["whale".to_string()]);
+    }
+
     /// item 表当前为空（assets/items/*.toml 全部 wearer_race=Any）——P5 回填数据后
     /// 自动填充，无需再改 client / 本构建函数。
     #[test]

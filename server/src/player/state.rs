@@ -1934,7 +1934,23 @@ fn load_player_known_techniques_from_sqlite(
         .map_err(io::Error::other)?;
 
     let Some(known_techniques_json) = known_techniques_json else {
-        return Ok(KnownTechniques::default());
+        #[cfg(feature = "dev-techniques")]
+        {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH);
+            let registry = crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
+                path,
+                &crate::body_plan::RaceRegistry::default(),
+            )
+            .expect("dev-techniques catalog must load for fresh players");
+            return Ok(
+                crate::cultivation::known_techniques::KnownTechniques::dev_default(&registry),
+            );
+        }
+        #[cfg(not(feature = "dev-techniques"))]
+        {
+            return Ok(KnownTechniques::default());
+        }
     };
 
     serde_json::from_str::<KnownTechniques>(&known_techniques_json)
@@ -4951,11 +4967,16 @@ mod player_state_tests {
             .expect("baseline player state should persist");
 
         let loaded = load_player_slices(&persistence, "Azure");
+        #[cfg(feature = "dev-techniques")]
+        let expected = LoadedKnownTechniques::Loaded(KnownTechniques::dev_default(
+            &crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        ));
+        #[cfg(not(feature = "dev-techniques"))]
+        let expected = LoadedKnownTechniques::Loaded(KnownTechniques::default());
 
         assert_eq!(
-            loaded.known_techniques,
-            LoadedKnownTechniques::Loaded(KnownTechniques::default()),
-            "DB 无行 = 真新玩家，应返回 Loaded(default) 并允许后续正常落盘，\
+            loaded.known_techniques, expected,
+            "DB 无行 = 真新玩家，应返回当前构建模式的新玩家功法并允许后续正常落盘，\
              不得与「有行但读取失败」混为一谈"
         );
 

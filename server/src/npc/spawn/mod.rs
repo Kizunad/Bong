@@ -1121,6 +1121,44 @@ mod tests {
     }
 
     #[test]
+    fn spawned_relic_guard_loadout_uses_injected_registry() {
+        let registry =
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
+                "npc.heal_basic",
+                |definition| {
+                    definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                        species: vec![crate::body_plan::RaceId::new("whale")],
+                    };
+                },
+            );
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.add_systems(
+            valence::prelude::Startup,
+            (
+                setup_test_layer,
+                spawn_test_relic_guard.after(setup_test_layer),
+            ),
+        );
+        app.update();
+        app.update();
+
+        let guard = only_spawned_npc(&mut app);
+        let known = app
+            .world()
+            .get::<crate::cultivation::known_techniques::KnownTechniques>(guard)
+            .expect("spawned relic guard must carry a technique loadout");
+        assert!(
+            known
+                .entries
+                .iter()
+                .all(|entry| entry.id != "npc.heal_basic"),
+            "human relic guard must exclude runtime whale-only technique; loadout={:?}",
+            known.entries
+        );
+    }
+
+    #[test]
     fn spawn_relic_guard_npc_at_attaches_guardian_trial_state() {
         let mut app = App::new();
         app.insert_resource(

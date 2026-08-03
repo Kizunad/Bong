@@ -883,6 +883,41 @@ mod tests {
     }
 
     #[test]
+    fn npc_metadata_technique_name_uses_injected_registry() {
+        use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.display_name = "覆写劈击".to_string()
+            });
+        let techniques = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.75,
+                active: true,
+            }],
+        };
+        let payload = build_npc_metadata(NpcMetadataBuildInput {
+            technique_registry: &registry,
+            entity_id: 99,
+            archetype: NpcArchetype::Rogue,
+            cultivation: None,
+            membership: None,
+            lifespan: None,
+            player_cultivation: None,
+            player_identities: None,
+            wounds: None,
+            equipment: None,
+            techniques: Some(&techniques),
+            trade_inventory: None,
+            name_visible: None,
+            spider_disguise_state: None,
+        });
+
+        assert_eq!(payload.techniques[0].display_name, "覆写劈击");
+    }
+
+    #[test]
     fn npc_metadata_techniques_serializes() {
         use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
 

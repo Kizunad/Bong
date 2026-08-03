@@ -125,6 +125,50 @@ dispatch = "direct_generic"
 }
 
 #[test]
+fn full_app_startup_smoke_rejects_dangling_technique_scroll_reference() {
+    let assets_root = copied_assets_root("dangling-scroll");
+    let items_path = assets_root.join("assets/items/dangling_scroll_test.toml");
+    fs::write(
+        &items_path,
+        r#"
+[[item]]
+id = "test_dangling_scroll"
+name = "悬空残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 1
+base_weight = 0.1
+rarity = "common"
+spirit_quality_initial = 0.1
+description = "只用于启动引用完整性回归。"
+[item.technique_scroll]
+skill_id = "missing.runtime.technique"
+"#,
+    )
+    .expect("dangling scroll catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject a dangling technique-scroll reference; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique scroll references"),
+        "startup failure must identify the scroll-reference validator; output:\n{combined}"
+    );
+}
+
+#[test]
 fn production_readiness_is_published_by_poststartup() {
     let directory = unique_test_directory("readiness");
     fs::create_dir(&directory).expect("create readiness smoke directory");

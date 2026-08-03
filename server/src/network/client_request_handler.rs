@@ -12130,6 +12130,127 @@ mod tests {
         assert_eq!(casting.complete_cooldown_ticks, 60);
     }
 
+    #[test]
+    fn runtime_only_direct_generic_can_be_learned_bound_and_cast() {
+        const TECHNIQUE_ID: &str = "test.runtime_only_direct";
+        const SCROLL_TEMPLATE_ID: &str = "test_runtime_only_direct_scroll";
+        const SCROLL_INSTANCE_ID: u64 = 91_001;
+
+        let mut definition = TechniqueRegistry::load_for_tests()
+            .get("movement.dash")
+            .expect("direct-generic fixture must exist")
+            .clone();
+        definition.id = TECHNIQUE_ID.to_string();
+        definition.display_name = "运行时直施".to_string();
+        definition.cast_ticks = 17;
+        definition.cooldown_ticks = 83;
+        definition.required_meridians.clear();
+        let registry = TechniqueRegistry::load_for_tests_with_definition(definition);
+
+        let mut scroll_template = ItemTemplate::minimal_for_test(SCROLL_TEMPLATE_ID);
+        scroll_template.category = ItemCategory::Scroll;
+        scroll_template.technique_scroll_spec = Some(crate::inventory::TechniqueScrollSpec {
+            kind: "technique".to_string(),
+            skill_id: TECHNIQUE_ID.to_string(),
+        });
+        let item_registry = ItemRegistry::from_map(HashMap::from([(
+            SCROLL_TEMPLATE_ID.to_string(),
+            scroll_template,
+        )]));
+
+        let mut app = App::new();
+        register_request_app(&mut app);
+        app.insert_resource(registry);
+        app.insert_resource(item_registry);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                crate::cultivation::components::Cultivation::default(),
+                crate::cultivation::components::MeridianSystem::default(),
+                SkillBarBindings::default(),
+                QuickSlotBindings::default(),
+                inventory_with_skill_scroll(skill_scroll_item(
+                    SCROLL_INSTANCE_ID,
+                    SCROLL_TEMPLATE_ID,
+                )),
+                KnownTechniques::default(),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::TechniqueScrollUse {
+                    v: 1,
+                    instance_id: SCROLL_INSTANCE_ID,
+                })
+                .expect("technique-scroll request should serialize")
+                .into_boxed_slice(),
+            });
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(entity).unwrap();
+        assert!(
+            known
+                .entries
+                .iter()
+                .any(|entry| entry.id == TECHNIQUE_ID && entry.active),
+            "request-level scroll use must learn and activate a runtime-only technique"
+        );
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert!(
+            inventory_item_by_instance_borrow(inventory, SCROLL_INSTANCE_ID).is_none(),
+            "successful request-level learning must consume the exact scroll instance"
+        );
+
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"skill_bar_bind","v":1,"slot":0,"binding":{"kind":"skill","skill_id":"test.runtime_only_direct"}}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&ClientRequestV1::SkillBarCast {
+                    v: 1,
+                    slot: 0,
+                    target: None,
+                })
+                .unwrap()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert!(matches!(
+            app.world()
+                .get::<SkillBarBindings>(entity)
+                .unwrap()
+                .get(0),
+            Some(SkillSlot::Skill { skill_id }) if skill_id == "test.runtime_only_direct"
+        ));
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("runtime-only direct-generic cast must start");
+        assert_eq!(
+            casting.skill_id.as_deref(),
+            Some("test.runtime_only_direct")
+        );
+        assert_eq!(casting.duration_ticks, 17);
+        assert_eq!(casting.complete_cooldown_ticks, 83);
+    }
+
     /// 槽位 3 绑定崩拳——「主动切槽取消」用例里那条**通过全部门禁**的新 cast
     /// （空槽位/未学会都会在 cancel 判定之前早退，测不到取消路径）。
     fn slot3_bound_to_beng_quan() -> SkillBarBindings {

@@ -193,6 +193,46 @@ mod tests {
     }
 
     #[test]
+    fn mentor_uses_overridden_registry_grade_for_cost() {
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("woliu.burst", |definition| {
+                definition.grade = "profound".to_string()
+            });
+        let mut inventory = inventory(60);
+        let mut known = KnownTechniques::default();
+
+        let outcome = super::mentor_teaches_technique(
+            &registry,
+            &mut inventory,
+            &mut known,
+            &Cultivation {
+                realm: Realm::Awaken,
+                ..Default::default()
+            },
+            &opened_lung_heart(),
+            None,
+            MentorTeachContext {
+                player: Entity::from_raw(1),
+                npc_entity: Entity::from_raw(2),
+                archetype: NpcArchetype::Rogue,
+                tags: &tags(),
+                reputation_to_player: 60,
+                technique_id: "woliu.burst",
+            },
+            true,
+        );
+
+        assert!(matches!(
+            outcome,
+            MentorOutcome::Taught {
+                bone_coin_cost: 50,
+                ..
+            }
+        ));
+        assert_eq!(inventory.bone_coins, 10);
+    }
+
+    #[test]
     fn mentor_teaches_woliu_technique() {
         let player = Entity::from_raw(1);
         let npc = Entity::from_raw(2);
