@@ -45,7 +45,7 @@ use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation, 
 use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::mimic_spider::{transfer_spider_qi_to_zone, MimicSpiderBlackboard};
 use crate::fauna::mundane::{mundane_pool_fn, MundaneFaunaMarker};
-use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone;
+use crate::fauna::rat_phase::transfer_rat_drained_qi_to_zone_or_overflow;
 use crate::movement::{movement_zone_kind, MovementZoneKind};
 use crate::npc::dormant::{planar_distance, should_run_interval};
 use crate::npc::movement::GameTick;
@@ -1167,7 +1167,12 @@ pub fn ambient_scheduler_system<M: AmbientMarkerData>(
                         let zone = zone_name
                             .as_deref()
                             .and_then(|zone_name| registry.find_zone_mut(zone_name));
-                        match transfer_rat_drained_qi_to_zone(account, zone, &rat_identity) {
+                        let rat_account = rat_identity.account();
+                        match transfer_rat_drained_qi_to_zone_or_overflow(
+                            account,
+                            zone,
+                            &rat_account,
+                        ) {
                             Ok(_) => true,
                             Err(error) => {
                                 tracing::debug!(

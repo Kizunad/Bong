@@ -21,6 +21,7 @@ pub mod census;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use valence::prelude::{
     bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Startup, Update,
@@ -41,6 +42,7 @@ use crate::cultivation::lifespan::{
     DeathRegistry, LifespanCapTable, LifespanComponent, LifespanExtensionLedger,
 };
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
+use crate::fauna::daozhan::{DaoZhangState, FakeBehavior};
 use crate::npc::faction::{
     leader_realm_for, named_faction_id_for_legacy, EmergentGroupId, FactionId, FactionMembership,
     FactionRank, FactionStore, MissionQueue, Reputation, EMERGENT_GROUP_COUNT,
@@ -56,10 +58,9 @@ use crate::npc::spawn::{classify_zones_by_qi, initial_age_for_index};
 use crate::npc::trade::NpcPlayerReputation;
 use crate::player::gameplay::PendingGameplayNarrations;
 #[cfg(test)]
-use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
 use crate::qi_physics::{
-    constants::{QI_EPSILON, QI_NPC_ABSORB_FLOOR},
-    regen_from_zone, QiTransfer, QiTransferReason, WorldQiAccount,
+    constants::QI_NPC_ABSORB_FLOOR, regen_from_zone, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::schema::cultivation::realm_to_string;
 use crate::social::components::CharId;
@@ -236,6 +237,17 @@ pub struct DormantDaoxiangOriginSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantDaozhanSnapshot {
+    pub state: DaoZhangState,
+    pub home_zone: String,
+    pub home_pos: [f64; 3],
+    pub daozhan_qi: f64,
+    pub origin_realm: Option<Realm>,
+    pub behavior_queue: Vec<FakeBehavior>,
+    pub current_behavior_ticks: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DormantTsyHostileSnapshot {
     pub family_id: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -246,6 +258,8 @@ pub struct DormantTsyHostileSnapshot {
     pub fuya_aura: Option<DormantFuyaAuraSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub daoxiang_origin: Option<DormantDaoxiangOriginSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub daozhan: Option<DormantDaozhanSnapshot>,
 }
 
 /// plan-tsy-sentinel-dormant-regression-v1 §P1：TSY 秘境守灵（`TsySentinelMarker`）身份载荷。
@@ -376,19 +390,21 @@ pub struct NpcDormantSnapshot {
     pub qi_ledger_net: f64,
     /// plan-offscreen-war-v1 P3 review-fix：「已离屏战死、真元待释放」标记。
     ///
-    /// 当 [`run_dormant_combat_phase`] roll 出败者但 typed settlement 遇到非法 signed Zone、身份
-    /// 或稳定池 overflow 等硬事务失败时置 `true`，败者**仍留在 `store.snapshots`**（防吞真元红线：
-    /// 携带真元的快照绝不丢弃；随 Redis 持久化，server 重启不丢真元）。置 `true` 后：
-    /// - [`combat::collect_zone_combat_pairs`] 跳过该快照，**不再被选中参战**——故 death notice /
-    ///   `DormantCombatOutcome` 每个逻辑死亡只 emit 一次（初次 roll 时），不再重复污染 P4 派系
-    ///   死亡聚合（CodeRabbit Major：retained loser 重复 emit）。
-    /// - 每 tick 的 [`run_pending_combat_release_retry`] 重试 `release_dormant_qi_to_zone`，真元
-    ///   全释放（`<= QI_EPSILON`）后才 emit 遗物（若 `should_leave_relic`）+ 从 store 移除。
+    /// 所有 [`run_dormant_combat_phase`] roll 出的败者都会先置 `true` 并持久化胜者上下文，
+    /// 在 Redis HASH 成功确认前**仍留在 `store.snapshots` 且不碰真元**。这关闭了终局事件先于
+    /// 逻辑死亡落盘的重启窗口；随后的 typed settlement 若遇到非法 signed Zone、身份或稳定池
+    /// overflow 等硬事务失败，败者继续保留（防吞真元红线：携带真元的快照绝不丢弃）。置 `true` 后：
+    /// - [`combat::collect_zone_combat_pairs`] 跳过该快照，**不再被选中参战**。
+    /// - `pending_combat_winner` 持久化延迟发布所需的胜者身份；失败 tick 不发布 death/outcome。
+    /// - 每 tick 的 [`run_pending_combat_release_retry`] 重试 `release_dormant_qi_to_zone`，严格
+    ///   成功且 source 为零后才发布唯一 death/outcome，emit 遗物并从 store 移除。
     ///
     /// `#[serde(default)]` 向后兼容旧 Redis 快照（缺字段 → `false`）；`skip_serializing_if`
     /// 让绝大多数（未战死）快照不写这个字段，不算 §10.1 #2 所禁的快照膨胀。
     #[serde(default, skip_serializing_if = "is_false")]
     pub combat_dead_pending_release: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pending_combat_winner: Option<CharId>,
 }
 
 /// serde `skip_serializing_if` helper：`false`（默认值）时不序列化，避免快照膨胀。
@@ -414,6 +430,47 @@ impl NpcDormantSnapshot {
             .as_ref()
             .map(|membership| membership.faction_id)
     }
+
+    pub fn durable_identity_error(&self) -> Option<String> {
+        durable_npc_identity_error(&self.char_id, &self.life_record, &self.death_registry)
+    }
+}
+
+pub fn durable_npc_identity_error(
+    canonical_char_id: &str,
+    life_record: &LifeRecord,
+    death_registry: &DeathRegistry,
+) -> Option<String> {
+    if life_record.character_id == canonical_char_id && death_registry.char_id == canonical_char_id
+    {
+        return None;
+    }
+    Some(format!(
+        "durable identity tuple mismatch (canonical=`{canonical_char_id}`, life_record=`{}`, death_registry=`{}`)",
+        life_record.character_id, death_registry.char_id
+    ))
+}
+
+#[derive(Clone, Debug)]
+struct DormantPersistenceRuntime {
+    mutation_revision: u64,
+    persisted_revision: u64,
+    in_flight_revision: Option<u64>,
+    receipt_tx: Sender<crate::network::redis_bridge::RedisDeliveryReceipt>,
+    receipt_rx: Receiver<crate::network::redis_bridge::RedisDeliveryReceipt>,
+}
+
+impl Default for DormantPersistenceRuntime {
+    fn default() -> Self {
+        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+        Self {
+            mutation_revision: 0,
+            persisted_revision: 0,
+            in_flight_revision: None,
+            receipt_tx,
+            receipt_rx,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Resource, Serialize, Deserialize)]
@@ -433,6 +490,8 @@ pub struct NpcDormantStore {
     /// already persisted and must not trigger an immediate write-back.
     #[serde(skip, default)]
     dirty: bool,
+    #[serde(skip, default)]
+    persistence: DormantPersistenceRuntime,
 }
 
 impl NpcDormantStore {
@@ -457,6 +516,64 @@ impl NpcDormantStore {
     /// never silently drops a change.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+        self.persistence.mutation_revision = self.persistence.mutation_revision.saturating_add(1);
+    }
+
+    pub fn persistence_receipt_sender(
+        &self,
+    ) -> Sender<crate::network::redis_bridge::RedisDeliveryReceipt> {
+        self.persistence.receipt_tx.clone()
+    }
+
+    pub fn begin_persistence(&mut self) -> Option<u64> {
+        if !self.dirty || self.persistence.in_flight_revision.is_some() {
+            return None;
+        }
+        self.dirty = false;
+        let revision = self.persistence.mutation_revision;
+        self.persistence.in_flight_revision = Some(revision);
+        Some(revision)
+    }
+
+    pub fn requeue_persistence(&mut self, revision: u64) {
+        if self.persistence.in_flight_revision == Some(revision) {
+            self.persistence.in_flight_revision = None;
+        }
+        self.dirty = true;
+    }
+
+    pub fn apply_persistence_receipts(&mut self) {
+        while let Ok(receipt) = self.persistence.receipt_rx.try_recv() {
+            let Ok(revision) = receipt.delivery_id.parse::<u64>() else {
+                tracing::warn!(
+                    "[bong][npc] ignored dormant HASH receipt with invalid revision `{}`",
+                    receipt.delivery_id
+                );
+                continue;
+            };
+            if self.persistence.in_flight_revision != Some(revision) {
+                tracing::warn!(
+                    "[bong][npc] ignored dormant HASH receipt for non-current revision {revision}"
+                );
+                continue;
+            }
+            self.persistence.in_flight_revision = None;
+            match receipt.outcome {
+                Ok(()) => {
+                    self.persistence.persisted_revision = revision;
+                }
+                Err(error) => {
+                    self.dirty = true;
+                    tracing::warn!(
+                        "[bong][npc] dormant HASH revision {revision} failed and was re-queued: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn pending_combat_state_is_persisted(&self) -> bool {
+        self.persistence.persisted_revision >= self.persistence.mutation_revision
     }
 
     /// Read-only dirty accessor. The production publish path consumes the flag
@@ -480,7 +597,7 @@ impl NpcDormantStore {
     pub fn insert(&mut self, snapshot: NpcDormantSnapshot) -> Option<NpcDormantSnapshot> {
         let previous = self.snapshots.insert(snapshot.char_id.clone(), snapshot);
         self.rebuild_indexes();
-        self.dirty = true;
+        self.mark_dirty();
         previous
     }
 
@@ -488,7 +605,7 @@ impl NpcDormantStore {
         let removed = self.snapshots.remove(char_id);
         if removed.is_some() {
             self.rebuild_indexes();
-            self.dirty = true;
+            self.mark_dirty();
         }
         removed
     }
@@ -752,10 +869,15 @@ fn load_dormant_snapshots_from_hash_entries(
     let mut invalid = Vec::new();
     for (hash_char_id, payload) in entries {
         match serde_json::from_str::<NpcDormantSnapshot>(&payload) {
-            Ok(snapshot) if snapshot.char_id == hash_char_id => staged.push(snapshot),
+            Ok(snapshot)
+                if snapshot.char_id == hash_char_id
+                    && snapshot.life_record.character_id == snapshot.char_id
+                    && snapshot.death_registry.char_id == snapshot.char_id => staged.push(snapshot),
             Ok(snapshot) => invalid.push(format!(
-                "`{hash_char_id}`: payload character id `{}` does not match HASH field",
-                snapshot.char_id
+                "`{hash_char_id}`: durable identity tuple mismatch (outer=`{}`, life_record=`{}`, death_registry=`{}`)",
+                snapshot.char_id,
+                snapshot.life_record.character_id,
+                snapshot.death_registry.char_id
             )),
             Err(error) => invalid.push(format!("`{hash_char_id}`: {error}")),
         }
@@ -826,6 +948,7 @@ fn dormant_global_tick_system(
     races: Option<Res<RaceRegistry>>,
 ) {
     let tick = current_tick(game_tick.as_deref());
+    store.apply_persistence_receipts();
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
         return;
     }
@@ -897,12 +1020,17 @@ fn dormant_global_tick_system(
         }
 
         if snapshot.lifespan.is_expired() {
-            let mut settlement_committed = snapshot.cultivation.qi_current <= QI_EPSILON;
-            if let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) {
-                settlement_committed = snapshot.cultivation.qi_current <= QI_EPSILON
-                    || release_dormant_qi_to_zone(snapshot, zones, ledger).is_ok();
-            }
-            if !settlement_committed || snapshot.cultivation.qi_current > QI_EPSILON {
+            let settlement_committed = if snapshot.cultivation.qi_current == 0.0 {
+                true
+            } else if let (Some(zones), Some(ledger)) =
+                (zones.as_deref_mut(), ledger.as_deref_mut())
+            {
+                release_dormant_qi_to_zone(snapshot, zones, ledger).is_ok()
+                    && snapshot.cultivation.qi_current == 0.0
+            } else {
+                false
+            };
+            if !settlement_committed || snapshot.cultivation.qi_current != 0.0 {
                 tracing::warn!(
                     "[bong][npc] retained expired dormant NPC `{}` until {:.6} qi settles",
                     snapshot.char_id,
@@ -932,10 +1060,10 @@ fn dormant_global_tick_system(
     // （`collect_zone_combat_pairs` 先返回 owned `Vec<(CharId,CharId)>`，再逐 id 索引结算），
     // 规避 per-char_id 单可变借用与两两对战冲突。faction_store 是只读 `Res`。
     // Whether the combat phase changed persisted snapshot state without removing it —
-    // currently this means a hard settlement failure marked a loser
-    // `combat_dead_pending_release`. Such a tick must drive `mark_dirty` even when the
-    // aging pass touched nothing, otherwise a restart can reload the loser as alive and
-    // re-emit death/outcome telemetry. Successful retries remove the snapshot instead.
+    // every newly rolled combat death first records a durable pending marker and
+    // winner context. This must drive `mark_dirty` even when the aging pass touched
+    // nothing, otherwise a restart can reload the loser as alive. Confirmed pending
+    // rows settle and emit terminal events on a later phase.
     let mut combat_mutated = false;
     if let (Some(faction_store), Some(zones), Some(ledger)) = (
         faction_store.as_deref(),
@@ -962,8 +1090,8 @@ fn dormant_global_tick_system(
         }
     }
 
-    // Any advanced or removed snapshot — or a combat settlement failure that marked
-    // a pending retry — changed persisted state; schedule the Redis write.
+    // Any advanced, removed, or newly pending snapshot changed persisted state;
+    // schedule the next revision-aware Redis write.
     if mutated_any || removed_expired || combat_mutated {
         store.mark_dirty();
     }
@@ -976,10 +1104,10 @@ fn dormant_global_tick_system(
 /// - [`Self::removed`] — at least one snapshot left the store (combat death
 ///   fully released its qi, or a retry pass finalized one). Drives an index
 ///   rebuild (zone membership changed) **and** the dirty write.
-/// - [`Self::mutated`] — the phase marked a failed settlement
+/// - [`Self::mutated`] — the phase recorded a logical combat death as
 ///   `combat_dead_pending_release` without removing the snapshot. Drives only the dirty
-///   write; the physical owner and `qi_current` remain unchanged until a future retry
-///   commits atomically.
+///   write; the physical owner and `qi_current` remain unchanged until Redis confirms the
+///   marker and a future retry commits settlement.
 ///
 /// `removed` implies a mutation, but the two are tracked independently because
 /// only `removed` warrants an index rebuild.
@@ -996,14 +1124,15 @@ struct CombatPhaseOutcome {
 /// 走 `release_dormant_qi_to_zone` typed transaction，同步结算 actor、signed Zone、fixed overflow
 /// 与 audit（§10.1 #5 ②）。胜者真元不变（dormant 简化，未流动即未失衡，§10.1 #5 ③）。
 ///
-/// **防吞真元（transaction-failure retry）**：typed settlement 成功时，zone 不接收的余量
-/// 同步落入固定 `qi_flow_overflow`，败者 `qi_current` 必归零并可安全移除。只有非法 signed
-/// zone、身份或稳定池 overflow 等硬事务失败才保留败者，并标记 pending-release 供后续重试。
+/// **持久化先行**：本轮 roll 出败者后只记录 pending marker + winner context，不碰 qi owner，
+/// 也不发布终局事件。Redis HASH 成功回执确认该 revision 后，下一轮 retry 才执行 typed
+/// settlement；成功时 zone 不接收的余量同步落入固定 `qi_flow_overflow`，败者
+/// `qi_current` 必归零才可发 death/outcome 并移除。硬事务失败则保留 owner 继续重试。
 /// 同 zone 多败者按确定性顺序 settlement；物理 owner 总量保持不变。
 ///
 /// 返回 [`CombatPhaseOutcome`]：`removed`（有败者被移除 → rebuild 索引 + mark dirty）与
-/// `mutated`（事务失败后只翻 pending-release flag → 只 mark dirty，不 rebuild）。
-/// 失败原子性保证 actor/zone/ledger/audit 不变；持久化 flag 防止重启后重复 roll 败者和重发事件。
+/// `mutated`（新逻辑死亡写入 pending marker → 只 mark dirty，不 rebuild）。
+/// 失败原子性保证 actor/zone/ledger/audit 不变；持久化 flag 防止重启后重复 roll 败者。
 /// 借用安全：本函数独占 `&mut store` / `&mut ledger`；配对阶段只读并返回 owned id，
 /// 结算阶段再逐 id 获取单个 snapshot 的可变借用。
 #[allow(clippy::too_many_arguments)]
@@ -1018,12 +1147,19 @@ fn run_dormant_combat_phase(
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
 ) -> CombatPhaseOutcome {
-    // ⓪ 先重试上轮因硬事务失败而保留的战死者——它们已是「逻辑死亡」
-    // （死亡 notice / outcome 上轮已 emit 过一次），本轮**只**重试守恒 settlement，成功才造遗物
-    // + remove。优先于本轮新战斗结算，且绝不让它们再被 `collect_zone_combat_pairs`
-    // 选中重新 roll（plan-offscreen-war-v1 P3 review-fix / CodeRabbit Major）。
-    let mut outcome =
-        run_pending_combat_release_retry(store, config, tick, zones, ledger, pending_relics);
+    // ⓪ 先处理已持久化的逻辑战死者。首次终局 death/outcome 只会在 pending HASH
+    // 获得成功回执后发布；typed settlement 失败则保留 owner 和 marker 继续等待后续 retry。
+    // pending 快照始终被 `collect_zone_combat_pairs` 排除，不会重新 roll。
+    let mut outcome = run_pending_combat_release_retry(
+        store,
+        config,
+        tick,
+        zones,
+        ledger,
+        death_notices,
+        combat_outcomes,
+        pending_relics,
+    );
 
     // ① 配对：immutable 只读 → owned id 对（§10.1 #3 collect-then-index）。
     // `collect_zone_combat_pairs` 已跳过 `combat_dead_pending_release` 的快照，故 retry
@@ -1051,47 +1187,14 @@ fn run_dormant_combat_phase(
             a_id.clone()
         };
 
-        // ③ 败者守恒结算：唯一真元流动点。
+        // ③ 先持久化逻辑死亡与胜者上下文。本轮不碰任何 qi owner，也不发布终局事件；
+        // 只有 Redis HASH 成功确认这个 revision 后，retry 才执行 typed settlement、事件和移除。
         let Some(loser) = store.snapshots.get_mut(&loser_id) else {
             continue;
         };
-        // 战死方所在 zone（release 内部也会重定位，这里取 snapshot.zone_name 作 telemetry）。
-        let zone_name = loser.zone_name.clone();
-        // 胜者真元不变（dormant 简化，§10.1 #5 ③）——不读不写胜者，少一次 ledger 操作。
-        let released = release_dormant_qi_to_zone(loser, zones, ledger)
-            .map(|outcome| outcome.zone_accepted)
-            .unwrap_or(0.0);
-
-        // ④ 战死 death notice（reason=Combat + from_dormant_combat=true + pos）。
-        death_notices.send(dormant_combat_death_notice(loser));
-
-        // ⑤ 战果 telemetry（纯观测，不携带真元流动）。
-        combat_outcomes.send(DormantCombatOutcome {
-            winner: winner_id,
-            loser: loser_id.clone(),
-            zone: zone_name,
-            qi_released: released,
-        });
-
-        // ⑥ 人口回写 + fail-closed：typed settlement 把未被 zone 接收的余量同步落入固定
-        // qi_flow_overflow；成功后 snapshot current 必为零，失败则保留快照重试，绝不吞真元。
-        let residual = loser.cultivation.qi_current;
-        if residual > QI_EPSILON {
-            loser.combat_dead_pending_release = true;
-            outcome.mutated = true;
-            tracing::warn!(
-                "[bong][npc] retained combat-dead dormant NPC `{}` until {:.6} residual qi settles; marked pending-release, excluded from further combat",
-                loser_id,
-                residual
-            );
-        } else {
-            // 显式终结 `&mut loser` 借用后，走共享的「释放完成 → 造遗物 + remove」收尾
-            // （与 retry pass 同一入口，保证遗物只在真元释放完毕的此刻 emit 一次）。
-            let _ = loser;
-            finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
-            // 移除 → 索引变了 → 调用方据 `removed` rebuild；`removed` 自然蕴含 mutated。
-            outcome.removed = true;
-        }
+        loser.combat_dead_pending_release = true;
+        loser.pending_combat_winner = Some(winner_id);
+        outcome.mutated = true;
     }
 
     outcome
@@ -1099,11 +1202,9 @@ fn run_dormant_combat_phase(
 
 /// plan-offscreen-war-v1 P3 review-fix：重试上轮因守恒事务失败而保留的离屏战死者。
 ///
-/// 这些败者已被标记 `combat_dead_pending_release`（逻辑死亡，death notice / outcome 已 emit
-/// 过一次，**本函数绝不重发**），`collect_zone_combat_pairs` 已跳过它们不再参战。本函数每 tick
-/// 遍历所有被标记的快照，重试 `release_dormant_qi_to_zone`；真元全释放（`<= QI_EPSILON`）后才
-/// 走 `finalize_released_combat_death`（造遗物 + remove）。借用安全：先 collect owned id 列表，
-/// 再逐 id `get_mut` 结算（任一时刻只持一个 snapshot 可变借用），与配对结算同源。
+/// pending snapshot 已持久化 `pending_combat_winner`，因此本函数可以在 typed settlement
+/// 成功且 source 严格为零后发布唯一 death/outcome，再造遗物并移除 owner。缺 winner 的历史或
+/// 损坏快照保持 fail-closed，不猜测事件上下文。
 ///
 /// 返回 [`CombatPhaseOutcome`]：成功 retry 会 remove（`removed=true`）；失败 retry 不改任何
 /// owner，只保留既有 marker，因此不会制造虚假的 partial mutation。
@@ -1113,9 +1214,14 @@ fn run_pending_combat_release_retry(
     tick: u64,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
+    death_notices: &mut EventWriter<NpcDeathNotice>,
+    combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
 ) -> CombatPhaseOutcome {
     let mut outcome = CombatPhaseOutcome::default();
+    if !store.pending_combat_state_is_persisted() {
+        return outcome;
+    }
     // collect-then-index：先取出所有待释放败者的 owned id（升序，确定性），再逐个结算。
     let mut pending_ids: Vec<CharId> = store
         .snapshots
@@ -1132,18 +1238,30 @@ fn run_pending_combat_release_retry(
         let Some(loser) = store.snapshots.get_mut(&loser_id) else {
             continue;
         };
+        let Some(winner) = loser.pending_combat_winner.clone() else {
+            tracing::warn!(
+                "[bong][npc] retained combat-dead dormant NPC `{}` because its durable winner context is missing",
+                loser_id
+            );
+            continue;
+        };
         // 重试守恒 settlement。成功会全量清空 actor owner（zone 余量进入 fixed overflow）；
         // 失败则所有 owner 与 audit 原样不动，保留 flag 等下轮重试。
-        if release_dormant_qi_to_zone(loser, zones, ledger).is_ok() {
-            outcome.mutated = true;
-        }
-        let residual = loser.cultivation.qi_current;
-        let _ = loser;
-        if residual > QI_EPSILON {
-            // 守恒事务仍失败 → 继续保留，下轮再试（保持 flag=true，不重发 death 事件）。
+        let Ok(settlement) = release_dormant_qi_to_zone(loser, zones, ledger) else {
+            continue;
+        };
+        outcome.mutated = true;
+        if loser.cultivation.qi_current != 0.0 {
             continue;
         }
-        // 真元终于释放完 → 此刻才造遗物 + remove（与初次死亡路径同一收尾入口）。
+        death_notices.send(dormant_combat_death_notice(loser));
+        combat_outcomes.send(DormantCombatOutcome {
+            winner,
+            loser: loser_id.clone(),
+            zone: loser.zone_name.clone(),
+            qi_released: settlement.zone_accepted,
+        });
+        let _ = loser;
         finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
         outcome.removed = true;
     }
@@ -1154,7 +1272,7 @@ fn run_pending_combat_release_retry(
 /// （若 `should_leave_relic` 通过）+ 从 store 移除。
 ///
 /// **守恒时序红线**（§10.1 #5 ④ / docs/CLAUDE.md §四）：调用方必须保证已经 `release_dormant_qi_to_zone`
-/// 且 `qi_current <= QI_EPSILON`——「先把残余真元守恒还给 zone，再用快照创建零真元遗物，最后
+/// 且 `qi_current == 0.0`——「先把残余真元守恒还给 zone，再用快照创建零真元遗物，最后
 /// remove」，绝无吞真元窗口。遗物 event 在此 emit 一次（每个逻辑死亡至多一次：初次死亡释放完 or
 /// retry 释放完，二者互斥）。
 fn finalize_released_combat_death(
@@ -1627,6 +1745,7 @@ fn dormant_rogue_seed_snapshot(
         initial_qi: cultivation.qi_current,
         qi_ledger_net: 0.0,
         combat_dead_pending_release: false,
+        pending_combat_winner: None,
     }
 }
 
@@ -2210,6 +2329,7 @@ mod tests {
             initial_qi: 0.1,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
+            pending_combat_winner: None,
         }
     }
 
@@ -2456,6 +2576,54 @@ mod tests {
         assert!(
             !store.take_dirty(),
             "expected a second take_dirty with no intervening mutation to return false because the gate was already cleared; it returned true"
+        );
+    }
+
+    #[test]
+    fn dormant_persistence_receipts_are_revision_safe() {
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
+        let first_revision = store
+            .begin_persistence()
+            .expect("dirty store must start its first HASH write");
+        assert!(
+            store.begin_persistence().is_none(),
+            "an in-flight HASH write must block a second replacement"
+        );
+
+        store.mark_dirty();
+        store
+            .persistence_receipt_sender()
+            .send(crate::network::redis_bridge::RedisDeliveryReceipt {
+                delivery_id: first_revision.to_string(),
+                outcome: Ok(()),
+            })
+            .unwrap();
+        store.apply_persistence_receipts();
+        assert!(
+            !store.pending_combat_state_is_persisted(),
+            "an older success must not confirm a mutation made while it was in flight"
+        );
+
+        let second_revision = store
+            .begin_persistence()
+            .expect("the newer dirty revision must start after the first receipt");
+        store
+            .persistence_receipt_sender()
+            .send(crate::network::redis_bridge::RedisDeliveryReceipt {
+                delivery_id: second_revision.to_string(),
+                outcome: Err("redis unavailable".to_string()),
+            })
+            .unwrap();
+        store.apply_persistence_receipts();
+        assert!(
+            store.is_dirty(),
+            "a failed HASH receipt must re-arm persistence"
+        );
+        assert_eq!(
+            store.begin_persistence(),
+            Some(second_revision),
+            "retry must preserve the failed mutation revision"
         );
     }
 
@@ -2965,6 +3133,63 @@ mod tests {
     }
 
     #[test]
+    fn dormant_global_tick_retains_expired_snapshot_when_settlement_fails() {
+        let mut app = App::new();
+        app.add_event::<NpcDeathNotice>();
+        app.add_event::<DormantCombatOutcome>();
+        app.add_event::<PendingDormantRelicCreated>();
+        app.insert_resource(NpcVirtualizationConfig {
+            dormant_tick_interval_ticks: 1,
+            ..Default::default()
+        });
+        app.insert_resource(GameTick(1));
+        let mut invalid_zone = zone();
+        invalid_zone.spirit_qi = f64::NAN;
+        app.insert_resource(ZoneRegistry {
+            zones: vec![invalid_zone],
+        });
+        app.insert_resource(WorldQiAccount::default());
+        let mut expired = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        expired.cultivation.qi_current = 5e-7;
+        expired.cultivation.qi_max = 1.0;
+        expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
+        let mut store = NpcDormantStore::default();
+        store.insert(expired);
+        store.take_dirty();
+        app.insert_resource(store);
+        app.add_systems(Update, dormant_global_tick_system);
+
+        app.update();
+
+        let mut store = app
+            .world_mut()
+            .remove_resource::<NpcDormantStore>()
+            .expect("dormant store must survive a failed natural-death settlement");
+        let retained = store
+            .snapshots
+            .get("npc_a")
+            .expect("failed settlement must retain the positive sub-epsilon physical owner");
+        assert_eq!(retained.cultivation.qi_current(), 5e-7);
+        assert!(
+            store.take_dirty(),
+            "retained expiry state must be persisted"
+        );
+        let zones = app.world().resource::<ZoneRegistry>();
+        assert!(zones.zones[0].spirit_qi.is_nan());
+        let ledger = app.world().resource::<WorldQiAccount>();
+        assert_eq!(ledger.total(), 0.0);
+        assert!(ledger.transfers().is_empty());
+        assert_eq!(
+            app.world()
+                .resource::<Events<NpcDeathNotice>>()
+                .iter_current_update_events()
+                .count(),
+            0,
+            "natural death must not publish before typed settlement commits"
+        );
+    }
+
+    #[test]
     fn dormant_wander_uses_absolute_tick_salt() {
         let mut snapshot = snapshot("npc_a", DVec3::ZERO);
         snapshot.intent = DormantBehaviorIntent::Wander {
@@ -3271,10 +3496,22 @@ mod tests {
 
     #[test]
     fn redis_hash_restore_rejects_hash_field_identity_mismatch_atomically() {
+        let existing = snapshot("npc_existing", DVec3::new(1.0, 64.0, 1.0));
+        let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
         let incoming = snapshot("payload_owner", DVec3::new(10.0, 64.0, 10.0));
-        let payload = serde_json::to_string(&incoming).expect("serialize dormant snapshot");
-        let entries = HashMap::from([("different_hash_field".to_string(), payload)]);
+        let entries = HashMap::from([
+            (
+                valid.char_id.clone(),
+                serde_json::to_string(&valid).expect("serialize valid row"),
+            ),
+            (
+                "different_hash_field".to_string(),
+                serde_json::to_string(&incoming).expect("serialize mismatched row"),
+            ),
+        ]);
         let mut store = NpcDormantStore::default();
+        store.insert(existing);
+        store.take_dirty();
 
         let error = load_dormant_snapshots_from_hash_entries(&mut store, entries)
             .expect_err("HASH field and durable snapshot identity must agree");
@@ -3283,10 +3520,97 @@ mod tests {
             error.contains("does not match HASH field"),
             "identity mismatch should be explicit, got: {error}"
         );
+        assert_eq!(store.len(), 1);
+        assert!(store.contains("npc_existing"));
         assert!(
-            store.is_empty(),
-            "identity mismatch must not install the payload under a different owner id"
+            !store.contains("npc_valid") && !store.contains("payload_owner"),
+            "HASH/outer mismatch must reject valid staged rows without partially replacing the live store"
         );
+        assert!(!store.is_dirty());
+    }
+
+    #[test]
+    fn redis_hash_restore_rejects_every_nested_identity_mismatch_atomically() {
+        for (case, mutate) in [
+            ("life_record", |snapshot: &mut NpcDormantSnapshot| {
+                snapshot.life_record.character_id = "spoofed".to_string()
+            }),
+            ("death_registry", |snapshot: &mut NpcDormantSnapshot| {
+                snapshot.death_registry.char_id = "spoofed".to_string()
+            }),
+        ] {
+            let existing = snapshot("npc_existing", DVec3::new(1.0, 64.0, 1.0));
+            let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
+            let mut invalid = snapshot("npc_invalid", DVec3::new(3.0, 64.0, 3.0));
+            mutate(&mut invalid);
+            let entries = HashMap::from([
+                (
+                    valid.char_id.clone(),
+                    serde_json::to_string(&valid).expect("serialize valid row"),
+                ),
+                (
+                    invalid.char_id.clone(),
+                    serde_json::to_string(&invalid).expect("serialize invalid row"),
+                ),
+            ]);
+            let mut store = NpcDormantStore::default();
+            store.insert(existing);
+            store.take_dirty();
+
+            let error = load_dormant_snapshots_from_hash_entries(&mut store, entries)
+                .expect_err("nested identity spoofing must reject the complete restore");
+
+            assert!(
+                error.contains("durable identity tuple mismatch"),
+                "case={case}: {error}"
+            );
+            assert_eq!(store.len(), 1, "case={case}");
+            assert!(store.contains("npc_existing"), "case={case}");
+            assert!(!store.contains("npc_valid"), "case={case}");
+            assert!(!store.is_dirty(), "case={case}");
+        }
+    }
+
+    #[test]
+    fn redis_hash_restore_rejects_semantically_invalid_cultivation_atomically() {
+        for (case, qi_current) in [
+            ("negative", "-1.0"),
+            ("above_max", "101.0"),
+            ("non_finite", "1e400"),
+        ] {
+            let existing = snapshot("npc_existing", DVec3::new(1.0, 64.0, 1.0));
+            let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
+            let invalid = snapshot("npc_invalid", DVec3::new(3.0, 64.0, 3.0));
+            let template_json =
+                serde_json::to_string(&invalid).expect("serialize invalid row template");
+            let invalid_json = template_json.replacen(
+                "\"qi_current\":0.0",
+                &format!("\"qi_current\":{qi_current}"),
+                1,
+            );
+            assert_ne!(
+                invalid_json, template_json,
+                "case={case}: cultivation fixture replacement must target qi_current"
+            );
+            let entries = HashMap::from([
+                (
+                    valid.char_id.clone(),
+                    serde_json::to_string(&valid).expect("serialize valid row"),
+                ),
+                (invalid.char_id.clone(), invalid_json),
+            ]);
+            let mut store = NpcDormantStore::default();
+            store.insert(existing);
+            store.take_dirty();
+
+            load_dormant_snapshots_from_hash_entries(&mut store, entries)
+                .expect_err("invalid cultivation must reject the complete restore");
+
+            assert_eq!(store.len(), 1, "case={case}");
+            assert!(store.contains("npc_existing"), "case={case}");
+            assert!(!store.contains("npc_valid"), "case={case}");
+            assert!(!store.is_dirty(), "case={case}");
+        }
     }
 
     #[test]
@@ -3895,6 +4219,7 @@ mod tests {
             initial_qi: qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
+            pending_combat_winner: None,
         }
     }
 
@@ -3963,6 +4288,94 @@ mod tests {
         }
     }
 
+    fn acknowledge_dormant_persistence(store: &mut NpcDormantStore) {
+        let revision = store
+            .begin_persistence()
+            .expect("dirty dormant state must start one persistence revision");
+        store
+            .persistence_receipt_sender()
+            .send(crate::network::redis_bridge::RedisDeliveryReceipt {
+                delivery_id: revision.to_string(),
+                outcome: Ok(()),
+            })
+            .expect("dormant persistence receipt channel must remain connected");
+    }
+
+    fn run_combat_to_completion(
+        store: &mut NpcDormantStore,
+        zones: &mut ZoneRegistry,
+        ledger: &mut WorldQiAccount,
+        config: &NpcVirtualizationConfig,
+        tick: u64,
+    ) -> CombatTickEvents {
+        let pending = run_combat_tick(store, zones, ledger, config, tick);
+        if !pending.deaths.is_empty()
+            || !pending.outcomes.is_empty()
+            || !pending.relics.is_empty()
+            || !store
+                .snapshots
+                .values()
+                .any(|snapshot| snapshot.combat_dead_pending_release)
+        {
+            return pending;
+        }
+        acknowledge_dormant_persistence(store);
+        run_combat_tick(store, zones, ledger, config, tick)
+    }
+
+    #[test]
+    fn combat_terminal_events_wait_for_pending_hash_receipt() {
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let zone_before = zones.zones[0].spirit_qi;
+        let mut store = NpcDormantStore::default();
+        store.insert(combat_snapshot(
+            "atk",
+            FactionId::Attack,
+            5.0,
+            DVec3::new(10.0, 64.0, 10.0),
+        ));
+        store.insert(combat_snapshot(
+            "def",
+            FactionId::Defend,
+            5.0,
+            DVec3::new(11.0, 64.0, 11.0),
+        ));
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let first = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert!(first.deaths.is_empty() && first.outcomes.is_empty());
+        assert_eq!(store.len(), 2);
+        assert!(store
+            .snapshots
+            .values()
+            .any(|snapshot| snapshot.combat_dead_pending_release));
+        let owner_total_before_retry = physical_owner_total(&store, &zones, &ledger);
+
+        let unconfirmed = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
+        assert!(unconfirmed.deaths.is_empty() && unconfirmed.outcomes.is_empty());
+        assert_eq!(store.len(), 2);
+        assert_eq!(zones.zones[0].spirit_qi, zone_before);
+        assert!(ledger.transfers().is_empty());
+        assert_eq!(
+            physical_owner_total(&store, &zones, &ledger),
+            owner_total_before_retry
+        );
+
+        acknowledge_dormant_persistence(&mut store);
+        let confirmed = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 9);
+        assert_eq!(confirmed.deaths.len(), 1);
+        assert_eq!(confirmed.outcomes.len(), 1);
+        assert_eq!(store.len(), 1);
+        assert_eq!(
+            physical_owner_total(&store, &zones, &ledger),
+            owner_total_before_retry
+        );
+    }
+
     #[test]
     fn combat_death_releases_all_qi_to_zone() {
         // 一对敌对 dormant 在同 zone：战死一方的真元应**守恒回灌**给 zone（zone.spirit_qi 上升），
@@ -3990,7 +4403,7 @@ mod tests {
 
         let CombatTickEvents {
             deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        } = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             deaths.len(),
@@ -4044,7 +4457,7 @@ mod tests {
 
         let CombatTickEvents {
             deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        } = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         let notice = &deaths[0];
         assert_eq!(
@@ -4091,7 +4504,7 @@ mod tests {
         let config = NpcVirtualizationConfig::default();
 
         let CombatTickEvents { deaths, .. } =
-            run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+            run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             store.len(),
@@ -4135,7 +4548,7 @@ mod tests {
         let config = NpcVirtualizationConfig::default();
 
         let CombatTickEvents { deaths, .. } =
-            run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+            run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         let loser = &deaths[0].npc_id;
         let winner_id = if loser == "atk" { "def" } else { "atk" };
@@ -4172,7 +4585,7 @@ mod tests {
 
         let CombatTickEvents {
             deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        } = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(deaths.len(), 1);
         assert_eq!(outcomes.len(), 1);
@@ -4290,7 +4703,7 @@ mod tests {
 
         let CombatTickEvents {
             deaths, outcomes, ..
-        } = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        } = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             deaths.len(),
@@ -4347,7 +4760,7 @@ mod tests {
         let mut total_deaths = 0usize;
         for round in 0..10u64 {
             let CombatTickEvents { deaths, .. } =
-                run_combat_tick(&mut store, &mut zones, &mut ledger, &config, round + 1);
+                run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, round + 1);
             total_deaths += deaths.len();
             let mid = physical_owner_total(&store, &zones, &ledger);
             assert!(
@@ -4427,7 +4840,7 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let events = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert_eq!(
             events.deaths.len(),
@@ -4531,7 +4944,7 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let events = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        let events = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
 
         assert!(
             events.deaths.is_empty(),
@@ -4557,28 +4970,37 @@ mod tests {
             "fallen_disciple",
             NpcArchetype::Disciple,
             Some(FactionId::Attack),
-            5.0,
+            5e-7,
             DVec3::new(10.0, 64.0, 10.0),
         ));
         store.insert(combat_snapshot_named(
             "rival",
             NpcArchetype::Disciple,
             Some(FactionId::Defend),
-            5.0,
+            5e-7,
             DVec3::new(11.0, 64.0, 11.0),
         ));
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let tick_one = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        assert_eq!(tick_one.deaths.len(), 1);
+        let tick_one = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert!(
+            tick_one.deaths.is_empty() && tick_one.outcomes.is_empty(),
+            "failed settlement must persist pending state before publishing terminal events"
+        );
         assert!(tick_one.relics.is_empty());
-        let loser_id = tick_one.deaths[0].npc_id.clone();
-        let retained = store
+        let (loser_id, retained) = store
             .snapshots
-            .get(&loser_id)
+            .iter()
+            .find(|(_, snapshot)| snapshot.combat_dead_pending_release)
             .expect("failed settlement must retain the dormant physical owner");
-        assert!(retained.combat_dead_pending_release);
+        let loser_id = loser_id.clone();
+        assert!(retained.pending_combat_winner.is_some());
+        assert_eq!(
+            retained.cultivation.qi_current(),
+            5e-7,
+            "positive sub-epsilon qi must remain owned when combat settlement fails"
+        );
         let position = retained.position;
         let qi = retained.cultivation.qi_current();
         let realm = retained.cultivation.realm;
@@ -4622,14 +5044,21 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let tick_one = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        let loser_id = tick_one.deaths[0].npc_id.clone();
-        assert!(store.snapshots[&loser_id].combat_dead_pending_release);
+        let tick_one = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert!(tick_one.deaths.is_empty());
+        let loser_id = store
+            .snapshots
+            .iter()
+            .find(|(_, snapshot)| snapshot.combat_dead_pending_release)
+            .map(|(id, _)| id.clone())
+            .expect("failed settlement must retain one pending loser");
+        assert!(store.snapshots[&loser_id].pending_combat_winner.is_some());
         zones.zones[0].spirit_qi = 0.8;
 
         let tick_two = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
-        assert!(tick_two.deaths.is_empty());
-        assert!(tick_two.outcomes.is_empty());
+        assert_eq!(tick_two.deaths.len(), 1);
+        assert_eq!(tick_two.deaths[0].npc_id, loser_id);
+        assert_eq!(tick_two.outcomes.len(), 1);
         assert_eq!(tick_two.relics.len(), 1);
         assert_eq!(tick_two.relics[0].char_id, loser_id);
         assert!(!store.contains(&loser_id));
@@ -4655,6 +5084,7 @@ mod tests {
             DVec3::new(10.0, 64.0, 10.0),
         );
         pending.combat_dead_pending_release = true;
+        pending.pending_combat_winner = Some("rival".to_string());
         pending.intent = DormantBehaviorIntent::PatrolToward {
             target: vec3_to_array(DVec3::new(90.0, 64.0, 90.0)),
         };
@@ -4662,7 +5092,8 @@ mod tests {
         pending.lifespan.age_ticks = 10.0;
         let pending_id = pending.char_id.clone();
         store.insert(pending);
-        store.take_dirty();
+        acknowledge_dormant_persistence(&mut store);
+        store.apply_persistence_receipts();
         let baseline = store.snapshots[&pending_id].clone();
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
@@ -4754,11 +5185,16 @@ mod tests {
         let mut ledger = WorldQiAccount::default();
         let config = NpcVirtualizationConfig::default();
 
-        let initial = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
-        assert_eq!(initial.deaths.len(), 1);
-        assert_eq!(initial.outcomes.len(), 1);
+        let initial = run_combat_to_completion(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert!(initial.deaths.is_empty());
+        assert!(initial.outcomes.is_empty());
         assert!(initial.relics.is_empty());
-        let loser_id = initial.deaths[0].npc_id.clone();
+        let loser_id = store
+            .snapshots
+            .iter()
+            .find(|(_, snapshot)| snapshot.combat_dead_pending_release)
+            .map(|(id, _)| id.clone())
+            .expect("failed settlement must persist one pending loser");
         let retained_qi = store.snapshots[&loser_id].cultivation.qi_current();
         let payload = store
             .to_redis_hash_payloads()
@@ -4770,11 +5206,18 @@ mod tests {
         let restored_loser: NpcDormantSnapshot = serde_json::from_str(&payload)
             .expect("pending loser must survive Redis JSON roundtrip");
         assert!(restored_loser.combat_dead_pending_release);
+        assert!(
+            restored_loser.pending_combat_winner.is_some(),
+            "pending winner context must survive Redis before any terminal event is published"
+        );
         assert_eq!(restored_loser.cultivation.qi_current(), retained_qi);
 
         let mut restored_store = NpcDormantStore::default();
-        restored_store.insert(restored_loser);
-        restored_store.take_dirty();
+        load_dormant_snapshots_from_hash_entries(
+            &mut restored_store,
+            vec![(loser_id.clone(), payload)],
+        )
+        .expect("pending loser must restore through the production HASH boundary");
         for tick in [8, 9, 10] {
             let events =
                 run_combat_tick(&mut restored_store, &mut zones, &mut ledger, &config, tick);
@@ -4791,8 +5234,9 @@ mod tests {
 
         zones.zones[0].spirit_qi = 0.8;
         let recovered = run_combat_tick(&mut restored_store, &mut zones, &mut ledger, &config, 11);
-        assert!(recovered.deaths.is_empty());
-        assert!(recovered.outcomes.is_empty());
+        assert_eq!(recovered.deaths.len(), 1);
+        assert_eq!(recovered.deaths[0].npc_id, loser_id);
+        assert_eq!(recovered.outcomes.len(), 1);
         assert_eq!(recovered.relics.len(), 1);
         assert_eq!(recovered.relics[0].char_id, loser_id);
         assert!(!restored_store.contains(&loser_id));

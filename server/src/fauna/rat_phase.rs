@@ -448,6 +448,29 @@ pub fn transfer_rat_drained_qi_to_zone(
     Ok(amount)
 }
 
+pub fn transfer_rat_drained_qi_to_zone_or_overflow(
+    ledger: &mut WorldQiAccount,
+    zone: Option<&mut Zone>,
+    rat_account: &QiAccountId,
+) -> Result<f64, QiPhysicsError> {
+    match zone {
+        Some(zone) => transfer_rat_drained_qi_to_zone(ledger, zone, rat_account),
+        None => {
+            let amount = ledger.balance(rat_account);
+            if amount <= 0.0 {
+                return Ok(0.0);
+            }
+            ledger.transfer(QiTransfer::new(
+                rat_account.clone(),
+                qi_flow_overflow_account(),
+                amount,
+                QiTransferReason::ReleaseToZone,
+            )?)?;
+            Ok(amount)
+        }
+    }
+}
+
 pub fn collect_rat_density_heatmap<'a, I>(rats: I) -> RatDensityHeatmapV1
 where
     I: IntoIterator<Item = (&'a RatBlackboard, &'a RatPhase)>,

@@ -20,6 +20,8 @@ use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
 use crate::cultivation::tribulation::{
     du_xu_prereqs_met, HalfStepRechallengeTriggerEvent, InitiateXuhuaTribulation,
 };
+#[cfg(test)]
+use crate::fauna::daozhan::FakeBehavior;
 use crate::fauna::daozhan::{DaoZhangBehaviorBlackboard, DaoZhangState};
 use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
@@ -3684,5 +3686,115 @@ mod tests {
             "TSY 秘境守灵死亡掉落必须精确走 tsy_sentinel 分流键——身份没有在 dehydrate/hydrate \
              任何一步被洗平成普通 GuardianRelic 或其它 archetype 的掉落表"
         );
+    }
+
+    #[test]
+    fn daozhan_survives_full_dehydrate_hydrate_cycle() {
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(
+            Update,
+            (
+                hydrate_dormant_near_players_system,
+                dehydrate_far_npcs_system,
+            )
+                .chain(),
+        );
+
+        let home_pos = DVec3::new(30.0, 65.0, 31.0);
+        let mut blackboard =
+            DaoZhangBehaviorBlackboard::new("tsy_lingxu_01", home_pos, Some(Realm::Solidify));
+        blackboard.daozhan_qi = 17.25;
+        blackboard.behavior_queue = [FakeBehavior::Mine, FakeBehavior::Sneak]
+            .into_iter()
+            .collect();
+        blackboard.current_behavior_ticks = 37;
+        let expected_queue = blackboard.behavior_queue.clone();
+
+        let live_entity = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(10.0, 64.0, 10.0)),
+                Lifecycle {
+                    character_id: "npc_daozhan_e2e".to_string(),
+                    ..Default::default()
+                },
+                LifeRecord::new("npc_daozhan_e2e"),
+                DeathRegistry::new("npc_daozhan_e2e"),
+                NpcArchetype::GuardianRelic,
+                NpcDailySchedule::for_archetype(NpcArchetype::GuardianRelic, 3),
+                NpcLifespan::new(0.0, 1_000.0),
+                Cultivation {
+                    realm: Realm::Spirit,
+                    qi_current: 500.0,
+                    qi_max: 1000.0,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                Contamination::default(),
+                TsyHostileMarker {
+                    family_id: "tsy_lingxu_01".to_string(),
+                },
+                DaoZhangState::Ambush,
+                blackboard,
+            ))
+            .id();
+
+        app.update();
+        assert!(app.world().get::<Despawned>(live_entity).is_some());
+        let dormant = app
+            .world()
+            .resource::<NpcDormantStore>()
+            .snapshots
+            .get("npc_daozhan_e2e")
+            .and_then(|snapshot| snapshot.tsy_hostile.as_ref())
+            .and_then(|tsy| tsy.daozhan.as_ref())
+            .expect("dehydrate must persist every Daozhan field");
+        assert_eq!(dormant.state, DaoZhangState::Ambush);
+        assert_eq!(dormant.home_zone, "tsy_lingxu_01");
+        assert_eq!(dormant.home_pos, [30.0, 65.0, 31.0]);
+        assert_eq!(dormant.daozhan_qi, 17.25);
+        assert_eq!(dormant.origin_realm, Some(Realm::Solidify));
+        assert_eq!(
+            dormant.behavior_queue,
+            vec![FakeBehavior::Mine, FakeBehavior::Sneak]
+        );
+        assert_eq!(dormant.current_behavior_ticks, 37);
+
+        app.world_mut().spawn((
+            valence::client::ClientMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+        ));
+        app.update();
+
+        assert!(app.world().resource::<NpcDormantStore>().is_empty());
+        let restored = {
+            let world = app.world_mut();
+            let mut query = world
+                .query_filtered::<(&DaoZhangState, &DaoZhangBehaviorBlackboard), With<NpcMarker>>();
+            query
+                .iter(world)
+                .map(|(state, blackboard)| (*state, blackboard.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(restored.len(), 1);
+        let (state, blackboard) = &restored[0];
+        assert_eq!(*state, DaoZhangState::Ambush);
+        assert_eq!(blackboard.home_zone, "tsy_lingxu_01");
+        assert_eq!(blackboard.home_pos, home_pos);
+        assert_eq!(blackboard.daozhan_qi, 17.25);
+        assert_eq!(blackboard.origin_realm, Some(Realm::Solidify));
+        assert_eq!(blackboard.behavior_queue, expected_queue);
+        assert_eq!(blackboard.current_behavior_ticks, 37);
     }
 }

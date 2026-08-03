@@ -158,7 +158,11 @@ pub enum RedisInbound {
 #[derive(Debug, Clone)]
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
-    NpcDormantHash(Vec<(String, String)>),
+    NpcDormantHash {
+        entries: Vec<(String, String)>,
+        revision: u64,
+        receipt_tx: Sender<RedisDeliveryReceipt>,
+    },
     /// plan-offscreen-war-v1 P0：守恒 telemetry HASH（`bong:qi/ledger`）。
     QiLedgerHash(Vec<(String, String)>),
     SeasonChanged(SeasonChangedV1),
@@ -342,6 +346,12 @@ enum RedisIoCommand {
     ListPush {
         key: &'static str,
         payload: String,
+    },
+    HashReplaceWithReceipt {
+        key: &'static str,
+        entries: Vec<(String, String)>,
+        delivery_id: String,
+        receipt_tx: Sender<RedisDeliveryReceipt>,
     },
     HashReplace {
         key: &'static str,
@@ -577,9 +587,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
-        RedisOutbound::NpcDormantHash(entries) => Ok(RedisIoCommand::HashReplace {
+        RedisOutbound::NpcDormantHash {
+            entries,
+            revision,
+            receipt_tx,
+        } => Ok(RedisIoCommand::HashReplaceWithReceipt {
             key: NPC_DORMANT_REDIS_KEY,
             entries,
+            delivery_id: revision.to_string(),
+            receipt_tx,
         }),
         RedisOutbound::QiLedgerHash(entries) => Ok(RedisIoCommand::HashReplace {
             key: QI_LEDGER_REDIS_KEY,
@@ -1845,21 +1861,17 @@ async fn dispatch_outbound_command(
 }
 
 fn runs_on_background_redis_connection(command: &RedisIoCommand) -> bool {
-    // Both world_state Publish and dormant HashReplace must never block the
-    // primary outbound connection: a slow / timing-out dormant write previously
-    // pinned `pending_command` and starved every other channel (world_state,
-    // combat, chat). Routing them onto the cloned background connection makes
-    // them fire-and-forget — failures only `warn!` and never become a
-    // `pending_command`. `HashReplace` is exclusively produced by
-    // `RedisOutbound::NpcDormantHash` (see `prepare_outbound_command`), so the
-    // sole key it ever targets is `NPC_DORMANT_REDIS_KEY`; matching the variant
-    // is equivalent to "only dormant runs in the background".
+    // World-state publish and HASH replacements must never block the primary
+    // outbound connection. Dormant receipt-bearing HASH writes report their
+    // outcome back to `NpcDormantStore`; ordinary telemetry HASH failures only
+    // warn and never become a `pending_command`.
     matches!(
         command,
         RedisIoCommand::Publish {
             channel: CH_WORLD_STATE,
             ..
-        } | RedisIoCommand::HashReplace { .. }
+        } | RedisIoCommand::HashReplaceWithReceipt { .. }
+            | RedisIoCommand::HashReplace { .. }
     )
 }
 
@@ -1894,6 +1906,19 @@ async fn execute_outbound_command(
         }
         RedisIoCommand::ListPush { key, payload } => {
             execute_list_push(pub_conn, key, payload).await
+        }
+        RedisIoCommand::HashReplaceWithReceipt {
+            key,
+            entries,
+            delivery_id,
+            receipt_tx,
+        } => {
+            let outcome = execute_hash_replace(pub_conn, key, entries).await;
+            let _ = receipt_tx.send(RedisDeliveryReceipt {
+                delivery_id: delivery_id.clone(),
+                outcome: outcome.clone(),
+            });
+            outcome
         }
         RedisIoCommand::HashReplace { key, entries } => {
             execute_hash_replace(pub_conn, key, entries).await
@@ -2779,6 +2804,20 @@ fn expect_array_field<'a>(
 mod redis_bridge_tests {
     use super::*;
 
+    fn dormant_hash_outbound(
+        entries: Vec<(String, String)>,
+    ) -> (RedisOutbound, Receiver<RedisDeliveryReceipt>) {
+        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+        (
+            RedisOutbound::NpcDormantHash {
+                entries,
+                revision: 7,
+                receipt_tx,
+            },
+            receipt_rx,
+        )
+    }
+
     /// bug-hunt-1: war_outcome / dying_elder_* 是 agent 端生产 narration kind
     /// （war-outcome-narration.ts / elder-encounter-narration.ts）。此前 server 白名单
     /// 漏列导致 validate_narration_entry 拒收 → 整 batch 在 redis_bridge.rs:2224
@@ -3016,15 +3055,21 @@ mod redis_bridge_tests {
             "npc_a".to_string(),
             serde_json::json!({"char_id": "npc_a"}).to_string(),
         )];
-        let command = prepare_outbound_command(RedisOutbound::NpcDormantHash(entries.clone()))
+        let command = prepare_outbound_command(dormant_hash_outbound(entries.clone()).0)
             .expect("dormant hash payload should produce a hash replace command");
 
         match command {
-            RedisIoCommand::HashReplace { key, entries: got } => {
+            RedisIoCommand::HashReplaceWithReceipt {
+                key,
+                entries: got,
+                delivery_id,
+                ..
+            } => {
                 assert_eq!(key, NPC_DORMANT_REDIS_KEY);
                 assert_eq!(got, entries);
+                assert_eq!(delivery_id, "7");
             }
-            other => panic!("expected hash replace command, got {other:?}"),
+            other => panic!("expected hash replace command with receipt, got {other:?}"),
         }
     }
 
@@ -3171,10 +3216,13 @@ mod redis_bridge_tests {
     #[test]
     fn dormant_hash_replace_failure_does_not_starve_other_outbound() {
         // The would-be slow / failing dormant write.
-        let dormant = prepare_outbound_command(RedisOutbound::NpcDormantHash(vec![(
-            "npc_slow".to_string(),
-            serde_json::json!({"char_id": "npc_slow"}).to_string(),
-        )]))
+        let dormant = prepare_outbound_command(
+            dormant_hash_outbound(vec![(
+                "npc_slow".to_string(),
+                serde_json::json!({"char_id": "npc_slow"}).to_string(),
+            )])
+            .0,
+        )
         .expect("dormant payload should produce a HashReplace command");
         assert!(
             runs_on_background_redis_connection(&dormant),
@@ -5597,7 +5645,7 @@ mod redis_bridge_tests {
         // exact bug this plan fixes).
         assert!(
             runs_on_background_redis_connection(
-                &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
+                &prepare_outbound_command(dormant_hash_outbound(Vec::new()).0).unwrap()
             ),
             "expected dormant HashReplace to run on the background connection so it cannot starve other outbound IPC; got inline routing"
         );
