@@ -20,7 +20,7 @@
 
 - ⬜ P0 设计收口 + 吸收清单验真：mod.rs 职责普查出拆分图（grid/txn/container/corpse/shelflife 接缝）；冻结 `InventoryTxn` API 与满包溢出策略；等 craft-refund P4、#1294 相关项定基线。
 - ⬜ P1 巨石拆分：按职责拆文件（行为不变，测试平移），`InventoryTxn` 骨架上线；冻结并实现 R1 可直接消费的 `deliver(delivery_id, items) -> Delivered | Spilled(fallback)`，其中 `delivery_id`/`DeliveryCommitReceipt` 必须 durable，receipt 与 inventory/spill mutation 同事务全成或全败，失败不提交。未达到该 gate 时 R1 只能落 registry/adapter 骨架，不能清 escrow/session。
-- ⬜ P2 交付路径统一：give/craft/alchemy/forge/loot 全部改走 `deliver`；先校验后扣全量化；满包场景全绿。R1 craft/alchemy/forge 的 `AwaitingDelivery → CommitTerminal` 生产路径只在本阶段对应调用点迁移后才算完成。消费 R3 `SessionDeliveryOutbox` 时自动重试按 `min(1_200 * 2^attempts, 72_000)` ticks，10 次或 7 天后转 durable `DeadLetter` 并停止自动重试；outbox handoff 后不持有 gameplay claim。授权 operator 可 inspect/retry/resolve，普通玩家不可调用，resolve 不得删除未交付 payload。
+- ⬜ P2 交付路径统一：give/craft/alchemy/forge/loot 全部改走 `deliver`；先校验后扣全量化；满包场景全绿。R1 craft/alchemy/forge 的 `AwaitingDelivery → CommitTerminal` 生产路径只在本阶段对应调用点迁移后才算完成。消费 R3 `SessionDeliveryOutbox` 时自动重试按 `min(1_200 * 2^attempts, 72_000)` ticks，10 次或 7 天后转 durable `DeadLetter` 并停止自动重试；outbox 行以单调 `generation` + `Pending → InFlight(lease) → Committed/DeadLetter` 的 expected-state CAS 串行化，worker、scanner、operator retry/resolve 的冲突 loser 不得覆盖新状态或重复释放 quota。授权 operator 可 inspect/retry/resolve，普通玩家不可调用；resolve 只有在已有 receipt 或完整 payload 已原子转入另一 durable retained disposition 后才可释放原行/quota，禁止删除未交付 payload。
 - ⬜ P3 网格/堆叠一致性：拾取合并、占格同步、pack 回执、老存档布局迁移补课。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
 
@@ -39,7 +39,7 @@ skeleton：alchemy-takeback-full-inventory-loss（交付垫层部分；session t
 
 1. `inv_full_delivery_matrix`：满包状态下 craft 完工/取丹/锻造出炉/给予→断言产物按统一溢出策略落地，总数不丢。
 2. `inv_delivery_crash_atomicity`：在 inventory/spill mutation、receipt commit、outbox ack 各边界强杀重启；相同 durable `delivery_id` 重放只返回原 receipt，物品或掉落实例总数始终恰为一次。
-3. `inv_delivery_dead_letter`：持续失败按指数退避且 cap 为 72,000 ticks，10 次或 7 天后停止自动扫描并进入 durable `DeadLetter`；普通玩家不能 inspect/retry/resolve，且整个失败周期不占 session facility claim。
+3. `inv_delivery_dead_letter`：持续失败按指数退避且 cap 为 72,000 ticks，10 次或 7 天后停止自动扫描并进入 durable `DeadLetter`；worker claim、scanner dead-letter、operator retry/resolve 并发时按 expected `(state,generation)` CAS，过期 lease 可安全恢复，任何 loser 不覆盖状态、不重复交付、不释放 quota。普通玩家不能 inspect/retry/resolve；授权 resolve 在无 committed receipt 或 durable retained handoff 时必须拒绝，payload digest/body 保持可恢复、原行/quota 继续保留，只有 durable disposition 提交后才允许删除/释放。
 4. `inv_stack_merge`：拾取同类掉落→断言合并入既有堆叠。
 5. `inv_footprint_sync`：旋转/移动占格物品→断言 client 快照占格一致（P6 protobuf 深断言）。
 6. `inv_give_visibility`：dev give 后立即快照→断言实例可见可拾取（修 bot 基建自身的假阳性）。

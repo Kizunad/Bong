@@ -21,9 +21,9 @@
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：53 张表普查归域；冻结 Slice trait（载入守护语义：读失败 = 保留旧行 + 告警 + 只读降级，绝不写回空态；flush registry；tick rebase 协议）；等 #1288/#1289/#1261/#1259 merge 后定基线。
-- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；Slice 框架上线，KnownTechniques/Lifecycle（在飞 PR 的成果）平移为首批宿主；注册 R1 所需的 `TsyPresence` auxiliary Slice，字段固定为 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version，并接入 guarded load、autosave、`flush_on_shutdown`、`tick_rebase`；落 `SessionDeliveryOutbox` 表与 atomic handoff API，stable `delivery_id`、完整 payload、cause、attempts/next_retry/created_at/state 全部持久化。P1 acceptance 必须同时锁定 checkpoint terminalization/deletion 与 outbox insert 的同一 SQLite transaction 全成或全败，以及 outbox insert 前、terminalization 前、commit 后 ack 前的 crash-injection pins；P3 只做其余 flush registry/tick-rebase 批次，不得把该 atomic handoff 延后。
+- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；Slice 框架上线，KnownTechniques/Lifecycle（在飞 PR 的成果）平移为首批宿主；注册 R1 所需的 `TsyPresence` auxiliary Slice，字段固定为 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version，并接入 guarded load、autosave、`flush_on_shutdown`、`tick_rebase`；落 `SessionDeliveryOutbox` 表与 atomic handoff API，stable `delivery_id`、完整 payload、cause、attempts/next_retry/created_at/state、单调 generation 与 in-flight lease 全部持久化。P1 acceptance 必须同时锁定 checkpoint terminalization/deletion 与 outbox insert 的同一 SQLite transaction 全成或全败，以及 outbox insert 前、terminalization 前、commit 后 ack 前的 crash-injection pins；P3 只做其余 flush registry/tick-rebase 批次，不得把该 atomic handoff 延后。
 - ⬜ P2 载入守护推广：全部玩家 slice（SkillSet/Wounds/状态 buff/身份键……）收编，#1290 模式全量落地；身份主键统一（identity-persist-key-mismatch）。
-- ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部"节流落盘"域；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥（coffin-autosave-inflight-race 模式）；`TsyPresence` 的关服 flush 与 presence/position/dimension 同事务顺序固定。
+- ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部"节流落盘"域；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥（coffin-autosave-inflight-race 模式）；`TsyPresence` 的关服 flush 与 presence/position/dimension 必须在同一 SQLite transaction 内提交，crash injection 只能观察到三者全旧或全新。
 - ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、状态效果、化虚冷却、灵眼、地表遗缴、散灵珠、可放置实体、dormant 往返身份完整性（heiwushi）等——逐个按 Slice 框架补表。加入 `TsyPresence` guarded relog parity 契约测试和 TSY 维度重启 bot 场景，断言失败加载不 attach presence、成功恢复后才重新开放 TSY 请求。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
@@ -43,9 +43,9 @@ skeleton：coffin-autosave-inflight-race、identity-persist-key-mismatch、miner
 1. `restart_player_slices`：bot 建号→修炼/学功法/受伤→关服重启→重连→断言功法/伤势/濒死后果/buff 全部还原。
 2. `restart_world_runtime`：触发矿脉枯竭/配方解锁/zone influence→SIGTERM 关服→重启→断言无回滚无复活。
 3. `load_failure_guard`：注入一行损坏 slice 数据→启动→断言该玩家进入守护降级而非清零覆盖（配 dev 命令注入）。
-4. `tick_rebase`：带冷却/再生倒计时重启→断言倒计时按真实流逝折算（对齐 #1289 的 deadline 折算先例）。
+4. `tick_rebase`：带冷却/再生倒计时重启→断言倒计时按真实流逝折算（对齐 #1289 的 deadline 折算先例）；另持久化一半已消耗的 `SuspensionPolicy` lease，重启/rebase 只保留原剩余 TTL，连续重复重启不刷新 lease，并覆盖剩余时长前一 tick、精确边界、后一 tick。
 5. `tsy_presence_relog_parity`：进入 TSY→关服 flush→guarded load→只有 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version 校验通过才 attach `TsyPresence` 并开放 TSY 请求；损坏或缺失 Slice 保持未 attach 且拒绝请求；恢复后 death-drop 对原带物继续执行 50%/武器保护，对 TSY 所得执行既有 100% 规则。
-6. `tsy_presence_shutdown_order`：断言 session registry 静止后才 flush presence slice，且 position/dimension 与 presence 同一恢复事务对拍。
+6. `tsy_presence_shutdown_order`：断言 session registry 静止后才 flush presence slice；向 presence、position、dimension 三个逻辑写入之间注入 shutdown crash，重启后断言三者只能全部保留旧快照或全部提交新快照，不接受 clean restore 对拍掩盖分事务写入。
 7. `session_delivery_outbox_atomicity`：分别在 outbox insert 前、insert 后 checkpoint terminalize 前、事务 commit 后 ack 前强杀重启；另注入已 admission 但 payload 达到 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 的边界，断言超限在接受新 escrow/产物前 fail closed；正常路径断言 checkpoint/outbox 恰有一个权威 owner，完整 payload 不丢且 stable `delivery_id` 不变。
 
 ## 开放问题（pre-P0 收口）

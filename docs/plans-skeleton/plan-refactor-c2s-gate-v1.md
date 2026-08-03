@@ -1,6 +1,6 @@
 # plan-refactor-c2s-gate-v1 — C2S 请求统一门禁中间件 + client_request_handler 巨石拆分（重构轨 R4）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：给 116 种 C2S 请求建统一的声明式门禁层（距离/维度/所有权/状态前置），同时把 20082 行的 `client_request_handler.rs`（单函数 2438 行、17 个 SystemParam）拆成按域注册的 handler 模块——"只信裸坐标可跨维远程操作"这一整簇（20+ 份 plan）从此在架构上不可能。
+> 所属总纲：`plan-refactor-master-v1.md`。一句话：给当前 113 种 C2S 请求建统一的声明式门禁层（距离/维度/所有权/状态前置），并在 R6 的三个 craft lifecycle intent 落地后扩展到 116 种，同时把 20082 行的 `client_request_handler.rs`（单函数 2438 行、17 个 SystemParam）拆成按域注册的 handler 模块——"只信裸坐标可跨维远程操作"这一整簇（20+ 份 plan）从此在架构上不可能。
 
 ## 现状证据（2026-07-27 侦察）
 
@@ -18,10 +18,10 @@
 
 ## 阶段
 
-- ⬜ P0 设计收口 + 吸收清单验真：116 个变体普查（每个标注应有的门禁四元组现状）；冻结 `GateSpec` 与拒绝回执语义；等 #1287（冷却重构，同文件大改）merge 定基线。
-- ⬜ P1 门禁中间件落地：gate 层上线，先给"已知漏洞簇"与 R1 craft `CraftOpen`/`CraftPause`/`CraftResume` 挂 spec；新增 intent 必须在同一提交进入 production decode/dispatch 和全量 gate matrix，旧内联校验保留并行断言一个版本期。
+- ⬜ P0 设计收口 + 吸收清单验真：当前 113 个变体普查（每个标注应有的门禁四元组现状）；冻结 `GateSpec` 与拒绝回执语义；R6 P1 合入 `CraftOpen`/`CraftPause`/`CraftResume` 后，基线目标扩为 116；等 #1287（冷却重构，同文件大改）merge 定基线。
+- ⬜ P1 门禁中间件落地：gate 层上线，先给"已知漏洞簇"与 R1 craft `CraftOpen`/`CraftPause`/`CraftResume` 挂 spec；R6 落地三种 intent 后，同一提交进入 production decode/dispatch 和全量 gate matrix，旧内联校验保留并行断言一个版本期。
 - ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住。
-- ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：116 变体全部声明门禁（含显式 `no_gate` 声明，杜绝静默无门禁）；删除各域内联距离常量与重复维度判断。
+- ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：R6 craft intents 合入后 116 变体全部声明门禁（含显式 `no_gate` 声明，杜绝静默无门禁）；删除各域内联距离常量与重复维度判断。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
@@ -41,7 +41,7 @@ skeleton：alchemy-furnace-scope-gate、block-place-reach-gate、coffin-reclaim-
 2. `gate_reach`：超距放方块/开炉/采灵田→拒绝；贴脸→放行。
 3. `gate_ownership`：拆他人棺/取他人容器→拒绝。
 4. `gate_state_precondition`：给丹先校验后扣（满包/死亡目标不吞丹）；丹毒超阈值禁服。
-5. `gate_matrix_sweep`：对 116 变体做参数化扫描（合法/超距/跨维三档），断言与声明的 GateSpec 一致——这是本轨的主回归门。
+5. `gate_matrix_sweep`：当前 113 变体做参数化合法/超距/跨维扫描；R6 三个 craft intent 落地后追加 owner mismatch、wrong phase、conflicting busy claim、duplicate/replay、stale/mismatched session identity 负例，以及合法 owner + 正确 Running/Paused phase 正例，目标覆盖 116 变体并断言与声明的 `GateSpec` 一致——这是本轨的主回归门。
 
 ## 开放问题（pre-P0 收口）
 
