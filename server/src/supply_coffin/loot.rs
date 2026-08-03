@@ -61,6 +61,48 @@ const COMMON_LOOT: &[SupplyCoffinLootEntry] = &[
         max_count: 8,
         weight: 10,
     },
+    SupplyCoffinLootEntry {
+        template_id: "yu_yi_zhi",
+        min_count: 1,
+        max_count: 2,
+        weight: 4,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_herb_knife_iron",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_sealed_vial",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_meridian_rub",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_array_flag",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_niche_repair",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_lantern",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
 ];
 
 /// 漆棺（Rare）—— 中阶器修关键材料。
@@ -102,6 +144,84 @@ const RARE_LOOT: &[SupplyCoffinLootEntry] = &[
         min_count: 1,
         max_count: 1,
         weight: 7,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_fake_skin_light",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_zhenfa_trap_iron",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_seal_box",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_dead_drop",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_qi_talisman",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_ningmai_prep",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_meridian_salve",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_anti_gu",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_qingzhuo",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_array_eye",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_decoy_stake",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_scatter_bead",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_niche_base",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
     },
 ];
 
@@ -151,6 +271,12 @@ const PRECIOUS_LOOT: &[SupplyCoffinLootEntry] = &[
         min_count: 1,
         max_count: 1,
         weight: 6,
+    },
+    SupplyCoffinLootEntry {
+        template_id: "scroll_workbench_gather_base",
+        min_count: 1,
+        max_count: 1,
+        weight: 2,
     },
 ];
 

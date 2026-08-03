@@ -77,6 +77,7 @@ pub const SHENYUAN_ZHI_YAN: &str = "shenyuan_zhi_yan";
 pub const RAW_BEAST_MEAT: &str = "raw_beast_meat";
 pub const RAW_BEAST_HIDE: &str = "raw_beast_hide";
 pub const RAW_BEAST_BLOOD: &str = "raw_beast_blood";
+pub const RABBIT_PELT: &str = "rabbit_pelt";
 /// 凡骨——凡俗材料档，`bone_coin::bone_grade_for_template` 天然对未知 template_id 返回
 /// `None`（不加档），故凡骨永远无法喂进封灵骨币制作（§8.1 正典硬约束：骨币料仅限异变兽骨）。
 pub const FAN_GU: &str = "fan_gu";
@@ -320,9 +321,10 @@ const CHICKEN_DROPS: [DropEntry; 4] = [
     DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.10),
 ];
 
-const RABBIT_DROPS: [DropEntry; 4] = [
+const RABBIT_DROPS: [DropEntry; 5] = [
     DropEntry::guaranteed(RAW_BEAST_MEAT, QuantityRange::fixed(1)),
     DropEntry::rare(RAW_BEAST_HIDE, QuantityRange::fixed(1), 0.15),
+    DropEntry::guaranteed(RABBIT_PELT, QuantityRange::fixed(1)),
     DropEntry::rare(FAN_GU, QuantityRange::fixed(1), 0.08),
     DropEntry::rare(RAW_BEAST_BLOOD, QuantityRange::fixed(1), 0.08),
 ];
@@ -676,6 +678,7 @@ mod tests {
             RAW_BEAST_HIDE,
             RAW_BEAST_BLOOD,
             FAN_GU,
+            RABBIT_PELT,
         ];
         ItemRegistry::from_map(
             ids.into_iter()
@@ -751,6 +754,27 @@ mod tests {
                     "{kind:?} must always drop raw_beast_meat (guaranteed) for seed {seed}, got {drops:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn rabbit_always_produces_recipe_pelt() {
+        let table = drop_table_for_mundane(MundaneFaunaKind::Rabbit);
+        let pelt = table
+            .iter()
+            .find(|entry| entry.item_id == RABBIT_PELT)
+            .expect("rabbit production table must expose rabbit_pelt");
+        assert_eq!(pelt.probability, 1.0);
+        assert_eq!(pelt.quantity, QuantityRange::fixed(1));
+
+        for seed in [0, 1, 42, u64::MAX] {
+            let drops = roll_mundane_fauna_drops(MundaneFaunaKind::Rabbit, seed);
+            assert!(
+                drops
+                    .iter()
+                    .any(|drop| drop.item_id == RABBIT_PELT && drop.quantity == 1),
+                "rabbit_pelt must be obtainable from every rabbit death seed, got {drops:?}"
+            );
         }
     }
 

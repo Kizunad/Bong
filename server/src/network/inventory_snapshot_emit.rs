@@ -323,7 +323,17 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
             Some("forging".to_string()),
             Some(500),
         ),
-        id if id.starts_with("recipe_scroll_") => (Some("recipe_scroll".to_string()), None, None),
+        id if id.starts_with("recipe_scroll_")
+            || id.starts_with("scroll_workbench_")
+            || matches!(
+                id,
+                "scroll_fake_skin_light"
+                    | "scroll_herb_knife_iron"
+                    | "scroll_zhenfa_trap_iron"
+            ) =>
+        {
+            (Some("recipe_scroll".to_string()), None, None)
+        }
         id if id.starts_with("blueprint_scroll_") => {
             (Some("blueprint_scroll".to_string()), None, None)
         }

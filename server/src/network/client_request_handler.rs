@@ -433,6 +433,7 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
     pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
     pub craft_registry: Option<Res<'w, crate::craft::CraftRegistry>>,
+    pub craft_unlock_state: Option<Res<'w, crate::craft::RecipeUnlockState>>,
     pub craft_unlock_tx: Option<ResMut<'w, Events<crate::craft::CraftUnlockIntent>>>,
 }
 
@@ -1721,8 +1722,10 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     instance_id,
                     &mut inventories,
+                    &mut clients,
                     &skill_scroll_params.item_registry,
                     skill_scroll_params.craft_registry.as_deref(),
+                    skill_scroll_params.craft_unlock_state.as_deref(),
                     skill_scroll_params.craft_unlock_tx.as_deref_mut(),
                 ) {
                     handle_learn_skill_scroll(
@@ -1741,8 +1744,10 @@ pub fn handle_client_request_payloads(
                     ev.client,
                     instance_id,
                     &mut inventories,
+                    &mut clients,
                     &skill_scroll_params.item_registry,
                     skill_scroll_params.craft_registry.as_deref(),
+                    skill_scroll_params.craft_unlock_state.as_deref(),
                     skill_scroll_params.craft_unlock_tx.as_deref_mut(),
                 ) {
                     handle_learn_skill_scroll(
@@ -2982,11 +2987,16 @@ fn handle_craft_recipe_scroll(
     entity: Entity,
     instance_id: u64,
     inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
     item_registry: &ItemRegistry,
     craft_registry: Option<&crate::craft::CraftRegistry>,
+    craft_unlock_state: Option<&crate::craft::RecipeUnlockState>,
     craft_unlock_tx: Option<&mut Events<crate::craft::CraftUnlockIntent>>,
 ) -> bool {
     let Some(craft_registry) = craft_registry else {
+        return false;
+    };
+    let Some(craft_unlock_state) = craft_unlock_state else {
         return false;
     };
     let Some(craft_unlock_tx) = craft_unlock_tx else {
@@ -3006,10 +3016,17 @@ fn handle_craft_recipe_scroll(
     if template.category != ItemCategory::Scroll {
         return false;
     }
-    let recipes =
-        crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id);
+    let Ok((username, _)) = clients.get_mut(entity) else {
+        return true;
+    };
+    let player_id = format!("offline:{}", username.0);
+    let recipes: Vec<_> =
+        crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id)
+            .into_iter()
+            .filter(|recipe| !craft_unlock_state.is_unlocked(&player_id, &recipe.id))
+            .collect();
     if recipes.is_empty() {
-        return false;
+        return true;
     }
     let Ok(mut inventory) = inventories.get_mut(entity) else {
         return true;

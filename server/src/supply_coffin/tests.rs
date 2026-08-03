@@ -298,6 +298,45 @@ fn roll_loot_template_ids_belong_to_grade_table() {
 }
 
 #[test]
+fn craft_recipe_inputs_and_scrolls_have_supply_coffin_sources() {
+    let expected = [
+        ("yu_yi_zhi", SupplyCoffinGrade::Common),
+        ("scroll_herb_knife_iron", SupplyCoffinGrade::Common),
+        ("scroll_workbench_sealed_vial", SupplyCoffinGrade::Common),
+        ("scroll_workbench_meridian_rub", SupplyCoffinGrade::Common),
+        ("scroll_workbench_array_flag", SupplyCoffinGrade::Common),
+        ("scroll_workbench_niche_repair", SupplyCoffinGrade::Common),
+        ("scroll_workbench_lantern", SupplyCoffinGrade::Common),
+        ("scroll_fake_skin_light", SupplyCoffinGrade::Rare),
+        ("scroll_zhenfa_trap_iron", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_seal_box", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_dead_drop", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_qi_talisman", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_ningmai_prep", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_meridian_salve", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_anti_gu", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_qingzhuo", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_array_eye", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_decoy_stake", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_scatter_bead", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_niche_base", SupplyCoffinGrade::Rare),
+        ("scroll_workbench_gather_base", SupplyCoffinGrade::Precious),
+    ];
+
+    for (template_id, grade) in expected {
+        let entry = loot_table(grade)
+            .iter()
+            .find(|entry| entry.template_id == template_id)
+            .unwrap_or_else(|| panic!("{template_id} must have a production supply-coffin source"));
+        assert!(entry.weight > 0, "{template_id} source weight must be positive");
+        assert!(
+            entry.min_count >= 1 && entry.max_count >= entry.min_count,
+            "{template_id} source count range must be reachable"
+        );
+    }
+}
+
+#[test]
 fn roll_loot_no_duplicate_template_ids_within_single_roll() {
     // 同一次开箱不允许两个相同 template_id —— 严格 no-replacement
     for g in SupplyCoffinGrade::ALL {

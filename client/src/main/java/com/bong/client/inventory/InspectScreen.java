@@ -204,7 +204,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, READ_SCROLL }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, RECIPE_SCROLL_USE, READ_SCROLL }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -3158,6 +3158,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
             actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
         }
+        if (item.isRecipeScroll()) {
+            actions.add(new PillMenuAction("研读配方", ActionKind.RECIPE_SCROLL_USE));
+        }
         // plan-scroll-reading-v1 P0 — 可阅读残卷（如《经脉浅述·残卷》）右键菜单 [阅读]。
         // 与 TECHNIQUE_SCROLL_USE 互斥：readable_scroll_spec 挂载的物品不带 scrollKind，
         // 不会命中上面的 isTechniqueScroll() 分支，故不需要额外互斥判断。
@@ -3224,6 +3227,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case TECHNIQUE_SCROLL_USE -> {
                 pendingMeridianUse = null;
                 dispatchTechniqueScrollUse(item);
+            }
+            case RECIPE_SCROLL_USE -> {
+                pendingMeridianUse = null;
+                dispatchRecipeScrollUse(item);
             }
             case READ_SCROLL -> {
                 pendingMeridianUse = null;
@@ -3749,6 +3756,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (item.isTechniqueScroll()) {
             return tryReadTechniqueScroll(item);
         }
+        if (item.isRecipeScroll()) {
+            if (dispatchRecipeScrollUse(item)) {
+                skillScrollDropFeedback = "已送出配方研读请求";
+                return true;
+            }
+            skillScrollDropFeedback = "残卷无效";
+            return false;
+        }
         if (!item.isSkillScroll()) {
             skillScrollDropFeedback = "此物非 skill，不可入";
             return false;
@@ -3777,6 +3792,14 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         }
         skillScrollDropFeedback = "已送出研读请求";
         dispatchTechniqueScrollUse(item);
+        return true;
+    }
+
+    boolean dispatchRecipeScrollUse(InventoryItem item) {
+        if (item == null || item.instanceId() == 0L || !item.isRecipeScroll()) {
+            return false;
+        }
+        com.bong.client.network.ClientRequestSender.sendLearnSkillScroll(item.instanceId());
         return true;
     }
 
