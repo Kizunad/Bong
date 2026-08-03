@@ -20,8 +20,11 @@ use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
 use crate::combat::components::{Lifecycle, LifecycleState};
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
-use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::{
+    pending_inflow_account, qi_release_to_zone, transfer_external_qi_to_ledger, QiAccountId,
+    QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 use crate::world::dimension::CurrentDimension;
@@ -144,6 +147,7 @@ pub fn on_player_revived(
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut players: Query<(
         &mut Cultivation,
@@ -168,22 +172,35 @@ pub fn on_player_revived(
                 PlayerRevivePenalty::FormalPenaltyApplied { .. } => (0.0, None),
                 PlayerRevivePenalty::LegacyOrDevPending => {
                     let prior_realm = cultivation.realm;
+                    let amount = cultivation.qi_current.max(0.0);
+                    if !release_lifecycle_dust(
+                        ev.entity,
+                        amount,
+                        Some(&life),
+                        qi_account.as_deref_mut(),
+                        qi_transfers.as_deref_mut(),
+                        "revive_penalty",
+                    ) {
+                        continue;
+                    }
                     let released_qi =
                         apply_revive_penalty(&mut cultivation, &mut meridians, &mut contamination);
                     (released_qi, Some(prior_realm))
                 }
             };
 
-            release_qi_amount_to_zone(
-                ev.entity,
-                released_qi,
-                position,
-                current_dimension,
-                Some(&life),
-                zones.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
-                "revive_penalty",
-            );
+            if released_qi > QI_EPSILON {
+                release_qi_amount_to_zone(
+                    ev.entity,
+                    released_qi,
+                    position,
+                    current_dimension,
+                    Some(&life),
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                    "revive_penalty",
+                );
+            }
 
             if let Some(prior_realm) = legacy_prior_realm {
                 if prior_realm == Realm::Void && cultivation.realm != Realm::Void {
@@ -234,7 +251,10 @@ pub fn on_player_terminated(
     mut events: EventReader<PlayerTerminated>,
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_account: Option<ResMut<WorldQiAccount>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut coffin_registry: Option<ResMut<crate::coffin::CoffinRegistry>>,
+    mut coffin_state_events: Option<ResMut<Events<crate::coffin::CoffinStateChanged>>>,
     lifecycles: Query<&Lifecycle>,
     players: Query<TerminatedPlayerQueryItem<'_>>,
 ) {
@@ -264,15 +284,26 @@ pub fn on_player_terminated(
             players.get(ev.entity)
         {
             was_void = cultivation.realm == Realm::Void;
-            release_terminated_qi_to_zone(
+            if cultivation.qi_current > QI_EPSILON {
+                release_terminated_qi_to_zone(
+                    ev.entity,
+                    cultivation,
+                    position,
+                    current_dimension,
+                    life_record,
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                );
+            } else if !release_lifecycle_dust(
                 ev.entity,
-                cultivation,
-                position,
-                current_dimension,
+                cultivation.qi_current.max(0.0),
                 life_record,
-                zones.as_deref_mut(),
+                qi_account.as_deref_mut(),
                 qi_transfers.as_deref_mut(),
-            );
+                "terminated",
+            ) {
+                continue;
+            }
         } else {
             was_void = false;
         }
@@ -290,6 +321,18 @@ pub fn on_player_terminated(
                         ev.entity,
                     );
                 }
+            }
+        }
+        if crate::coffin::clear_player_coffin_runtime(
+            ev.entity,
+            &mut commands,
+            coffin_registry.as_deref_mut(),
+        ) {
+            if let Some(events) = coffin_state_events.as_deref_mut() {
+                events.send(crate::coffin::CoffinStateChanged {
+                    player: ev.entity,
+                    grade: None,
+                });
             }
         }
         if let Some(mut e) = commands.get_entity(ev.entity) {
@@ -482,6 +525,47 @@ fn release_qi_overflow_from(
     }
 }
 
+fn release_lifecycle_dust(
+    entity: Entity,
+    amount: f64,
+    life_record: Option<&LifeRecord>,
+    qi_account: Option<&mut WorldQiAccount>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    source: &'static str,
+) -> bool {
+    if amount == 0.0 || amount > QI_EPSILON {
+        return true;
+    }
+    let Some(qi_account) = qi_account else {
+        tracing::warn!(
+            "[bong][cultivation] refusing {source} dust release for {entity:?}: WorldQiAccount is missing"
+        );
+        return false;
+    };
+    let from = terminated_qi_account_id(entity, life_record);
+    let transfer = match transfer_external_qi_to_ledger(
+        qi_account,
+        from,
+        pending_inflow_account(),
+        amount,
+        QiTransferReason::ReleaseToZone,
+    ) {
+        Ok(Some(transfer)) => transfer,
+        Ok(None) => return true,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "[bong][cultivation] refusing {source} dust release for {entity:?}"
+            );
+            return false;
+        }
+    };
+    if let Some(qi_transfers) = qi_transfers {
+        qi_transfers.send(transfer);
+    }
+    true
+}
+
 fn terminated_qi_account_id(entity: Entity, life_record: Option<&LifeRecord>) -> QiAccountId {
     if let Some(life_record) = life_record {
         if !life_record.character_id.trim().is_empty() {
@@ -519,7 +603,6 @@ mod tests {
         ActiveTribulationRecord,
     };
     use crate::player::state::canonical_player_id;
-    use crate::qi_physics::constants::QI_EPSILON;
     use crate::qi_physics::{QiAccountId, QiTransferReason};
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
@@ -543,6 +626,43 @@ mod tests {
         crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("bootstrap should succeed");
         (settings, temp_root)
+    }
+
+    #[test]
+    fn lifecycle_dust_credits_authoritative_pending_inflow() {
+        let entity = Entity::from_raw(7);
+        let life = LifeRecord::new(canonical_player_id("Dust"));
+        let mut account = WorldQiAccount::default();
+        let mut events = Events::<QiTransfer>::default();
+        let amount = QI_EPSILON / 2.0;
+
+        assert!(release_lifecycle_dust(
+            entity,
+            amount,
+            Some(&life),
+            Some(&mut account),
+            Some(&mut events),
+            "test",
+        ));
+        assert_eq!(account.balance(&pending_inflow_account()), amount);
+        let transfer = events
+            .drain()
+            .next()
+            .expect("dust transfer must be emitted");
+        assert_eq!(transfer.amount, amount);
+        assert_eq!(transfer.to, pending_inflow_account());
+    }
+
+    #[test]
+    fn lifecycle_dust_fails_closed_without_authoritative_ledger() {
+        assert!(!release_lifecycle_dust(
+            Entity::from_raw(8),
+            QI_EPSILON / 2.0,
+            None,
+            None,
+            None,
+            "test",
+        ));
     }
 
     #[test]

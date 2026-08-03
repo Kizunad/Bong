@@ -513,38 +513,13 @@ pub fn death_arbiter_tick(
             continue;
         };
 
-        // plan-race-system-v1 P4（决议 §6）—— 死亡三条解除易形触发路径之一：死亡即刻
-        // 解除易形（移除 `MorphState` + 重扫装备门，见 `body_plan::morph::
-        // release_morph_state`）。本系统是 `Query` 而非原始 `World`，无法直接调用
-        // 需要 `&mut World` 的 `release_morph_state`，故走 `commands.add` 排入
-        // deferred command——**不是**立即生效，而是在本次 `Update` 调度末尾
-        // `apply_deferred` 时才真正执行；下游掉落/复活链路只要排在这次调度的
-        // command flush 之后（同一 tick 内），就能看到"已恢复本体"的状态。
-        {
-            let target = event.target;
-            commands.add(
-                move |world: &mut valence::prelude::bevy_ecs::world::World| {
-                    crate::body_plan::morph::release_morph_state(world, target);
-                },
-            );
-        }
-
-        // Worldview §十二：死亡掉落应落在死亡点。
-        if let Some(position) = position {
-            let p = position.get();
-            commands.entity(event.target).insert(DeathDropAnchor {
-                pos: [p.x, p.y, p.z],
-            });
-        }
+        // plan-race-system-v1 P4（决议 §6）——死亡成功提交后解除易形并重扫装备门。
+        // `release_morph_state` 需要 `&mut World`，因此通过 deferred command 执行。
+        // Worldview §十二：死亡掉落应落在首次成功提交的死亡点。
         // 已经在死亡屏（AwaitingRevival）等待玩家决策的实体不接受新死亡事件重入——
         // 否则濒死窗口每 tick 被新死亡事件拍回 NearDeath，AwaitingRevival 窗口实际只活 1 tick，
         // 玩家永远点不中重生按钮（bughunt 实证：污染溢出持续触发死亡导致死循环）。
-        if matches!(
-            lifecycle.state,
-            LifecycleState::NearDeath
-                | LifecycleState::AwaitingRevival
-                | LifecycleState::Terminated
-        ) {
+        if lifecycle_includes_current_death(&lifecycle) {
             continue;
         }
         let now_tick = event.at_tick.max(clock.tick);
@@ -631,8 +606,21 @@ pub fn death_arbiter_tick(
                 "natural_end",
                 Some(event.cause.as_str()),
                 lifespan_event.clone(),
+                staged_lifespan.as_ref(),
             );
             if terminated_now {
+                let target = event.target;
+                commands.add(
+                    move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                        crate::body_plan::morph::release_morph_state(world, target);
+                    },
+                );
+                if let Some(position) = position {
+                    let p = position.get();
+                    commands.entity(event.target).insert(DeathDropAnchor {
+                        pos: [p.x, p.y, p.z],
+                    });
+                }
                 if let (Some(mut death_registry), Some(staged_registry)) =
                     (death_registry, staged_death_registry)
                 {
@@ -682,6 +670,18 @@ pub fn death_arbiter_tick(
                 continue;
             }
         }
+        let target = event.target;
+        commands.add(
+            move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                crate::body_plan::morph::release_morph_state(world, target);
+            },
+        );
+        if let Some(position) = position {
+            let p = position.get();
+            commands.entity(event.target).insert(DeathDropAnchor {
+                pos: [p.x, p.y, p.z],
+            });
+        }
         if let (Some(mut death_registry), Some(staged_registry)) =
             (death_registry, staged_death_registry)
         {
@@ -723,20 +723,8 @@ pub fn death_arbiter_tick(
             continue;
         };
 
-        // Worldview §十二：死亡掉落应落在死亡点。
-        if let Some(position) = position {
-            let p = position.get();
-            commands.entity(event.entity).insert(DeathDropAnchor {
-                pos: [p.x, p.y, p.z],
-            });
-        }
         // 同上：AwaitingRevival 期间不接受新的 cultivation 死亡事件重入。
-        if matches!(
-            lifecycle.state,
-            LifecycleState::NearDeath
-                | LifecycleState::AwaitingRevival
-                | LifecycleState::Terminated
-        ) {
+        if lifecycle_includes_current_death(&lifecycle) {
             continue;
         }
         let cause = format!("cultivation:{:?}", event.cause);
@@ -849,8 +837,21 @@ pub fn death_arbiter_tick(
                 },
                 Some(cause.as_str()),
                 lifespan_event.clone(),
+                staged_lifespan.as_ref(),
             );
             if terminated_now {
+                let target = event.entity;
+                commands.add(
+                    move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                        crate::body_plan::morph::release_morph_state(world, target);
+                    },
+                );
+                if let Some(position) = position {
+                    let p = position.get();
+                    commands.entity(event.entity).insert(DeathDropAnchor {
+                        pos: [p.x, p.y, p.z],
+                    });
+                }
                 if let (Some(mut death_registry), Some(staged_registry)) =
                     (death_registry, staged_death_registry)
                 {
@@ -899,6 +900,18 @@ pub fn death_arbiter_tick(
                 let _ = life_record.biography.pop();
                 continue;
             }
+        }
+        let target = event.entity;
+        commands.add(
+            move |world: &mut valence::prelude::bevy_ecs::world::World| {
+                crate::body_plan::morph::release_morph_state(world, target);
+            },
+        );
+        if let Some(position) = position {
+            let p = position.get();
+            commands.entity(event.entity).insert(DeathDropAnchor {
+                pos: [p.x, p.y, p.z],
+            });
         }
         if let (Some(mut death_registry), Some(staged_registry)) =
             (death_registry, staged_death_registry)
@@ -1184,7 +1197,6 @@ pub fn reemit_death_screen_for_reconnected_awaiting_revival_clients(
     clock: Res<CombatClock>,
     zones: Option<Res<ZoneRegistry>>,
     mut commands: Commands,
-    mut death_cinematics: ResMut<Events<DeathCinematicPublished>>,
     mut reconnected: Query<
         ReconnectedAwaitingRevivalQueryItem<'_>,
         (
@@ -1222,9 +1234,6 @@ pub fn reemit_death_screen_for_reconnected_awaiting_revival_clients(
         );
         commands.entity(entity).insert(cinematic.clone());
         let cinematic_payload = cinematic.snapshot(clock.tick);
-        death_cinematics.send(DeathCinematicPublished {
-            payload: cinematic_payload.clone(),
-        });
 
         let payload = build_death_screen_payload(
             cause.as_str(),
@@ -1289,7 +1298,12 @@ pub fn handle_revival_action_intents(
     let mut executable = std::mem::take(&mut *deferred_creates);
     for intent in intents.read() {
         if intent.action == RevivalActionKind::CreateNewCharacter {
-            deferred_creates.push(intent.clone());
+            if !deferred_creates
+                .iter()
+                .any(|pending| pending.entity == intent.entity)
+            {
+                deferred_creates.push(intent.clone());
+            }
         } else {
             executable.push(intent.clone());
         }
@@ -1903,7 +1917,7 @@ pub(crate) fn stage_lifecycle_qi_release(
         .cloned()
         .ok_or_else(|| "ZoneRegistry resource is missing".to_string())?;
     let mut staged_qi_account = qi_account
-        .cloned()
+        .map(WorldQiAccount::clone_balances)
         .ok_or_else(|| "WorldQiAccount resource is missing".to_string())?;
     let from = if character_id.trim().is_empty() {
         QiAccountId::player(format!("entity:{entity:?}"))
@@ -1924,25 +1938,35 @@ pub(crate) fn stage_lifecycle_qi_release(
         let zone = staged_zones
             .find_zone_mut(zone_name.as_str())
             .ok_or_else(|| format!("revival zone `{zone_name}` disappeared while staging"))?;
+        let zone_before = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
         let outcome = qi_release_to_zone(
             amount,
             from.clone(),
             QiAccountId::zone(zone.name.clone()),
-            zone.spirit_qi * QI_ZONE_UNIT_CAPACITY,
+            zone_before,
             QI_ZONE_UNIT_CAPACITY,
         )
         .map_err(|error| format!("invalid revival qi release: {error}"))?;
         zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
+        let accepted =
+            (zone.spirit_qi * QI_ZONE_UNIT_CAPACITY - zone_before).clamp(0.0, outcome.accepted);
         zone_runtime = Some(ZoneRuntimeRecord {
             zone_id: zone.name.clone(),
             spirit_qi: zone.spirit_qi,
             danger_level: zone.danger_level,
         });
-        if let Some(transfer) = outcome.transfer {
+        if accepted > 0.0 {
+            let transfer = QiTransfer::new(
+                from.clone(),
+                QiAccountId::zone(zone.name.clone()),
+                accepted,
+                QiTransferReason::ReleaseToZone,
+            )
+            .map_err(|error| format!("invalid represented revival qi release: {error}"))?;
             staged_qi_account.push_transfer_audit(transfer.clone());
             transfers.push(transfer);
         }
-        overflow = outcome.overflow;
+        overflow = outcome.overflow + (outcome.accepted - accepted).max(0.0);
     } else {
         tracing::warn!(
             "[bong][combat] lifecycle qi release for {entity:?} has no matching zone; stage it in pending inflow"
@@ -2198,8 +2222,9 @@ fn revive_lifecycle(
     }
     if let Some(staged_release) = staged_qi_release {
         *zones.expect("staged revival qi release requires ZoneRegistry") = staged_release.zones;
-        *qi_account.expect("staged revival qi release requires WorldQiAccount") =
-            staged_release.qi_account;
+        qi_account
+            .expect("staged revival qi release requires WorldQiAccount")
+            .commit_staged(staged_release.qi_account);
         if let Some(qi_transfers) = qi_transfers {
             for transfer in staged_release.transfers {
                 qi_transfers.send(transfer);
@@ -2391,6 +2416,7 @@ fn terminate_lifecycle(
         cause,
         None,
         None,
+        None,
     )
 }
 
@@ -2411,6 +2437,7 @@ fn terminate_lifecycle_with_death_context(
     cause: &str,
     death_registry_cause: Option<&str>,
     lifespan_event: Option<LifespanEventRecord>,
+    staged_lifespan: Option<&LifespanComponent>,
 ) -> bool {
     let Some(mut life_record) = life_record else {
         if !is_npc || player_context.cultivation.is_some() {
@@ -2533,6 +2560,7 @@ fn terminate_lifecycle_with_death_context(
                 player_persistence,
                 username: username.0.as_str(),
                 combat_clock_tick: now_tick,
+                lifespan: staged_lifespan,
                 cultivation: PlayerCultivationBundle {
                     cultivation,
                     meridians,
@@ -2616,10 +2644,10 @@ fn terminate_lifecycle_with_death_context(
         *player_context
             .zones
             .expect("staged termination qi release requires ZoneRegistry") = staged_release.zones;
-        *player_context
+        player_context
             .qi_account
-            .expect("staged termination qi release requires WorldQiAccount") =
-            staged_release.qi_account;
+            .expect("staged termination qi release requires WorldQiAccount")
+            .commit_staged(staged_release.qi_account);
         if let Some(qi_transfers) = player_context.qi_transfers {
             for transfer in staged_release.transfers {
                 qi_transfers.send(transfer);
@@ -2884,8 +2912,9 @@ fn reset_for_new_character(
     if let Some(staged_release) = staged_old_qi_release {
         *zones.expect("staged new-character qi release requires ZoneRegistry") =
             staged_release.zones;
-        *qi_account.expect("staged new-character qi release requires WorldQiAccount") =
-            staged_release.qi_account;
+        qi_account
+            .expect("staged new-character qi release requires WorldQiAccount")
+            .commit_staged(staged_release.qi_account);
         if let Some(qi_transfers) = qi_transfers {
             for transfer in staged_release.transfers {
                 qi_transfers.send(transfer);
@@ -3045,6 +3074,7 @@ fn reset_for_new_character(
         .remove::<crate::cultivation::tribulation::PendingHeartDemonOffer>()
         .remove::<crate::cultivation::tribulation::HeartDemonResolution>()
         .remove::<crate::cultivation::tribulation::HalfStepState>()
+        .remove::<crate::body_plan::types::IntrinsicRace>()
         .remove::<crate::inventory::OverloadedMarker>();
 
     clear_coffin_runtime(entity, commands, coffin_registry, coffin_state_events);

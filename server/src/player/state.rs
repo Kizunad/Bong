@@ -801,9 +801,13 @@ pub(crate) fn upsert_new_character_player_slices_in_transaction(
     transaction
         .execute(
             "
-            INSERT OR IGNORE INTO player_ui_prefs (
+            INSERT INTO player_ui_prefs (
                 username, prefs_json, schema_version, last_updated_wall
             ) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(username) DO UPDATE SET
+                prefs_json = excluded.prefs_json,
+                schema_version = excluded.schema_version,
+                last_updated_wall = excluded.last_updated_wall
             ",
             params![
                 username,
@@ -852,6 +856,41 @@ pub(crate) fn upsert_new_character_player_slices_in_transaction(
         )
         .map_err(io::Error::other)?;
     persist_player_craft_session_in_transaction(transaction, username, None, last_updated_wall)?;
+    Ok(())
+}
+
+pub(crate) fn upsert_player_lifespan_slice_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    username: &str,
+    lifespan: &LifespanComponent,
+    last_updated_wall: i64,
+) -> io::Result<()> {
+    let updated = transaction
+        .execute(
+            "
+            UPDATE player_lifespan
+            SET years_lived = ?2,
+                cap_by_realm = ?3,
+                offline_pause_wall = ?4,
+                schema_version = ?5,
+                last_updated_wall = ?4
+            WHERE username = ?1
+            ",
+            params![
+                username,
+                lifespan.years_lived.min(lifespan.cap_by_realm as f64),
+                lifespan.cap_by_realm,
+                last_updated_wall,
+                PLAYER_ROW_SCHEMA_VERSION,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    if updated != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("player_lifespan row missing for `{username}`"),
+        ));
+    }
     Ok(())
 }
 

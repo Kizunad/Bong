@@ -458,6 +458,18 @@ impl WorldQiAccount {
         self.balances.values().sum()
     }
 
+    pub fn clone_balances(&self) -> Self {
+        Self {
+            balances: self.balances.clone(),
+            transfers: Vec::new(),
+        }
+    }
+
+    pub fn commit_staged(&mut self, staged: Self) {
+        self.balances = staged.balances;
+        self.transfers.extend(staged.transfers);
+    }
+
     pub fn transfers(&self) -> &[QiTransfer] {
         &self.transfers
     }

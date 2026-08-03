@@ -707,18 +707,11 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                             "[bong][cultivation] refusing cultivation hydration for `{}`: persisted life_record cannot be decoded: {error}; leaving the durable identity untouched",
                             username.0,
                         );
-                        commands.entity(entity).insert(CultivationAttachRetry);
+                        commands.entity(entity).remove::<CultivationAttachRetry>();
                         continue;
                     }
                 },
-                None => {
-                    tracing::warn!(
-                        "[bong][cultivation] refusing cultivation hydration for `{}`: persisted bundle is missing life_record; leaving the durable identity untouched",
-                        username.0,
-                    );
-                    commands.entity(entity).insert(CultivationAttachRetry);
-                    continue;
-                }
+                None => None,
             },
             None => None,
         };
@@ -731,7 +724,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 username.0,
                 expected_character_id,
             );
-            commands.entity(entity).insert(CultivationAttachRetry);
+            commands.entity(entity).remove::<CultivationAttachRetry>();
             continue;
         }
         let life_record_declares_terminated =
@@ -758,7 +751,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 "[bong][cultivation] refusing cultivation hydration for `{}`: life_record and durable lifecycle disagree about termination; leaving the old identity untouched",
                 username.0,
             );
-            commands.entity(entity).insert(CultivationAttachRetry);
+            commands.entity(entity).remove::<CultivationAttachRetry>();
             continue;
         }
         let persisted_terminated =
@@ -768,7 +761,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 "[bong][cultivation] refusing terminated-character reincarnation for `{}`: durable cultivation bundle is missing; leaving the old identity untouched",
                 username.0,
             );
-            commands.entity(entity).insert(CultivationAttachRetry);
+            commands.entity(entity).remove::<CultivationAttachRetry>();
             continue;
         }
 
@@ -802,7 +795,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                 "[bong][cultivation] refusing terminated-character reincarnation for `{}`: persisted race id is unknown; leaving the old identity untouched",
                 username.0,
             );
-            commands.entity(entity).insert(CultivationAttachRetry);
+            commands.entity(entity).remove::<CultivationAttachRetry>();
             continue;
         }
         let persisted_bundle = if unknown_persisted_race == Some(true) {
@@ -846,7 +839,7 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                         "[bong][cultivation] refusing terminated-character reincarnation for `{}`: persisted cultivation bundle is incomplete: {error}; leaving the old identity untouched",
                         username.0,
                     );
-                    commands.entity(entity).insert(CultivationAttachRetry);
+                    commands.entity(entity).remove::<CultivationAttachRetry>();
                     continue;
                 }
             }
@@ -1233,11 +1226,11 @@ pub(crate) fn attach_cultivation_to_joined_clients(
                     .as_deref_mut()
                     .expect("staged join reincarnation qi release requires ZoneRegistry") =
                     staged_release.zones;
-                *authorities
+                authorities
                     .qi_account
                     .as_deref_mut()
-                    .expect("staged join reincarnation qi release requires WorldQiAccount") =
-                    staged_release.qi_account;
+                    .expect("staged join reincarnation qi release requires WorldQiAccount")
+                    .commit_staged(staged_release.qi_account);
                 if let Some(events) = authorities.qi_transfers.as_deref_mut() {
                     for transfer in staged_release.transfers {
                         events.send(transfer);
