@@ -3379,9 +3379,7 @@ mod tests {
     use crate::schema::death_cinematic::{
         DeathCinematicRollV1, DeathCinematicZoneKindV1, DeathRollResultV1,
     };
-    use crate::schema::server_data::{
-        HeartDemonOfferV1, ServerDataPayloadV1, ServerDataV1,
-    };
+    use crate::schema::server_data::{HeartDemonOfferV1, ServerDataPayloadV1, ServerDataV1};
     use crate::world::dimension::{CurrentDimension, DimensionLayers};
     use rusqlite::{params, Connection};
     use std::fs;
