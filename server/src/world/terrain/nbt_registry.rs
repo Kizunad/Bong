@@ -263,6 +263,17 @@ impl DecorationNbtRegistry {
     }
 
     pub(crate) fn prepare(structures_dir: &Path) -> DecorationNbtPreflight {
+        let deco_dir = structures_dir.join(DECORATIONS_SUBDIR);
+        if std::fs::symlink_metadata(&deco_dir).is_err_and(|error| {
+            error.kind() == std::io::ErrorKind::NotFound
+                && std::fs::symlink_metadata(structures_dir)
+                    .is_err_and(|root_error| root_error.kind() == std::io::ErrorKind::NotFound)
+        }) {
+            return DecorationNbtPreflight {
+                candidate: Self::empty(),
+                diagnostics: Vec::new(),
+            };
+        }
         let trusted_root = match std::fs::canonicalize(structures_dir) {
             Ok(root) => root,
             Err(error) => {
@@ -275,11 +286,10 @@ impl DecorationNbtRegistry {
                 };
             }
         };
-        let deco_dir = structures_dir.join(DECORATIONS_SUBDIR);
         let NbtFileScan {
             mut paths,
             mut diagnostics,
-        } = collect_nbt_files(&deco_dir);
+        } = collect_nbt_files(&deco_dir, &trusted_root);
         // Deterministic load order so diagnostics and iteration are stable.
         paths.sort();
 
@@ -481,7 +491,16 @@ struct NbtFileScan {
 /// missing decorations root remains the backward-compatible empty registry;
 /// unreadable entries, symlinks, and non-regular `*.nbt` nodes fail closed while
 /// other valid files remain available to the startup candidate.
-fn collect_nbt_files(dir: &Path) -> NbtFileScan {
+const MAX_SCAN_ENTRIES: usize = 100_000;
+const MAX_SCAN_DIAGNOSTICS: usize = 256;
+
+fn push_scan_diagnostic(diagnostics: &mut Vec<String>, diagnostic: String) {
+    if diagnostics.len() < MAX_SCAN_DIAGNOSTICS {
+        diagnostics.push(diagnostic);
+    }
+}
+
+fn collect_nbt_files(dir: &Path, trusted_root: &Path) -> NbtFileScan {
     let metadata = match std::fs::symlink_metadata(dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -513,54 +532,205 @@ fn collect_nbt_files(dir: &Path) -> NbtFileScan {
     let mut pending = vec![dir.to_path_buf()];
     let mut paths = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut scanned_entries = 0usize;
     while let Some(current) = pending.pop() {
-        let read_dir = match std::fs::read_dir(&current) {
-            Ok(entries) => entries,
+        let canonical_current = match std::fs::canonicalize(&current) {
+            Ok(path) if path.starts_with(trusted_root) => path,
+            Ok(_) => {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "decoration directory {} escaped trusted root during traversal",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
             Err(error) => {
-                diagnostics.push(format!(
-                    "failed to read decoration directory {}: {error}",
-                    current.display()
-                ));
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "failed to anchor decoration directory {}: {error}",
+                        current.display()
+                    ),
+                );
                 continue;
             }
         };
-        let mut entries: Vec<std::fs::DirEntry> = Vec::new();
-        for entry_result in read_dir {
-            match entry_result {
-                Ok(entry) => entries.push(entry),
-                Err(error) => diagnostics.push(format!(
-                    "failed to enumerate decoration directory {}: {error}",
-                    current.display()
-                )),
+        let current_metadata = match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => metadata,
+            Ok(_) => {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "decoration directory {} changed during traversal",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
+            Err(error) => {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "failed to inspect decoration directory {}: {error}",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let canonical_metadata = match std::fs::metadata(&canonical_current) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    push_scan_diagnostic(
+                        &mut diagnostics,
+                        format!(
+                            "failed to inspect anchored decoration directory {}: {error}",
+                            current.display()
+                        ),
+                    );
+                    continue;
+                }
+            };
+            if (current_metadata.dev(), current_metadata.ino())
+                != (canonical_metadata.dev(), canonical_metadata.ino())
+            {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "decoration directory {} changed during traversal",
+                        current.display()
+                    ),
+                );
+                continue;
             }
         }
-        entries.sort_by_key(std::fs::DirEntry::file_name);
 
-        for entry in entries {
+        let read_dir = match std::fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(error) => {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "failed to read decoration directory {}: {error}",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
+        };
+        let post_open_path = match std::fs::canonicalize(&current) {
+            Ok(path) if path == canonical_current => path,
+            Ok(_) => {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "decoration directory {} changed while being opened",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
+            Err(error) => {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "failed to recheck decoration directory {}: {error}",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let post_open_metadata = match std::fs::metadata(&post_open_path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    push_scan_diagnostic(
+                        &mut diagnostics,
+                        format!(
+                            "failed to recheck anchored decoration directory {}: {error}",
+                            current.display()
+                        ),
+                    );
+                    continue;
+                }
+            };
+            if (current_metadata.dev(), current_metadata.ino())
+                != (post_open_metadata.dev(), post_open_metadata.ino())
+            {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "decoration directory {} changed while being opened",
+                        current.display()
+                    ),
+                );
+                continue;
+            }
+        }
+        for entry_result in read_dir {
+            scanned_entries += 1;
+            if scanned_entries > MAX_SCAN_ENTRIES {
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!(
+                        "decoration scan exceeded {MAX_SCAN_ENTRIES} filesystem entries under {}",
+                        dir.display()
+                    ),
+                );
+                pending.clear();
+                break;
+            }
+            let entry = match entry_result {
+                Ok(entry) => entry,
+                Err(error) => {
+                    push_scan_diagnostic(
+                        &mut diagnostics,
+                        format!(
+                            "failed to enumerate decoration directory {}: {error}",
+                            current.display()
+                        ),
+                    );
+                    continue;
+                }
+            };
             let path = entry.path();
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(error) => {
-                    diagnostics.push(format!(
-                        "failed to inspect decoration path {}: {error}",
-                        path.display()
-                    ));
+                    push_scan_diagnostic(
+                        &mut diagnostics,
+                        format!(
+                            "failed to inspect decoration path {}: {error}",
+                            path.display()
+                        ),
+                    );
                     continue;
                 }
             };
             if file_type.is_symlink() {
-                diagnostics.push(format!(
-                    "decoration path {} must not be a symlink",
-                    path.display()
-                ));
+                push_scan_diagnostic(
+                    &mut diagnostics,
+                    format!("decoration path {} must not be a symlink", path.display()),
+                );
             } else if path.extension().and_then(|extension| extension.to_str()) == Some("nbt") {
                 if file_type.is_file() {
                     paths.push(path);
                 } else {
-                    diagnostics.push(format!(
-                        "decoration template {} must be a regular file",
-                        path.display()
-                    ));
+                    push_scan_diagnostic(
+                        &mut diagnostics,
+                        format!(
+                            "decoration template {} must be a regular file",
+                            path.display()
+                        ),
+                    );
                 }
             } else if file_type.is_dir() {
                 pending.push(path);
@@ -811,6 +981,14 @@ mod tests {
         assert_eq!(reg.len(), 0);
         assert!(reg.get("decorations/anything.nbt").is_none());
         assert!(!reg.contains("decorations/anything.nbt"));
+    }
+
+    #[test]
+    fn load_missing_structures_root_yields_empty_registry() {
+        let dir = temp_structures_dir("missing_root");
+        fs::remove_dir_all(&dir).expect("remove structures fixture root");
+        let reg = DecorationNbtRegistry::load(&dir).expect("missing optional root must not error");
+        assert!(reg.is_empty());
     }
 
     #[test]

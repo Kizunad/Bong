@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -98,14 +99,23 @@ def _layer_file_name(layer_name: str) -> str:
     return f"{layer_name}.bin"
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    temp_path = path.with_name(f".{path.name}.tmp")
+    with temp_path.open("wb") as file:
+        file.write(data)
+        file.flush()
+        os.fsync(file.fileno())
+    temp_path.replace(path)
+
+
 def _write_float_layer(path: Path, values: np.ndarray) -> None:
     arr = np.ascontiguousarray(values, dtype=np.float32)
-    path.write_bytes(arr.tobytes())
+    _atomic_write_bytes(path, arr.tobytes())
 
 
 def _write_u8_layer(path: Path, values: np.ndarray) -> None:
     arr = np.ascontiguousarray(values, dtype=np.uint8)
-    path.write_bytes(arr.tobytes())
+    _atomic_write_bytes(path, arr.tobytes())
 
 
 # worldgen-v4 P3 §8.1 #1 — fixed world-level carve seed. The worldgen pipeline
@@ -258,8 +268,8 @@ def _write_spans(
     """
     columns = _carved_spans_for_tile(buffer, zone_chains or {})
     count_arr, spans_arr = encode_spans_arrays(columns)
-    (tile_dir / SPANS_COUNT_FILE).write_bytes(count_arr.tobytes())
-    (tile_dir / SPANS_FILE).write_bytes(spans_arr.tobytes())
+    _atomic_write_bytes(tile_dir / SPANS_COUNT_FILE, count_arr.tobytes())
+    _atomic_write_bytes(tile_dir / SPANS_FILE, spans_arr.tobytes())
 
 
 def export_rasters(

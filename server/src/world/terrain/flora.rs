@@ -1433,7 +1433,11 @@ mod nbt_stamp_tests {
             &DecorationNbtRegistry::empty(),
         )
         .expect("valid manifest decoration must lower");
-        let decoration = provider.decoration(1).expect("global id 1 must resolve");
+        let mut decoration = provider
+            .decoration(1)
+            .expect("global id 1 must resolve")
+            .clone();
+        decoration.resolved_blocks = vec![BlockState::GRASS];
         let mut chunk = make_chunk();
         place_decoration(
             &mut chunk,
@@ -1441,15 +1445,15 @@ mod nbt_stamp_tests {
             70,
             4,
             TEST_MIN_Y,
-            decoration,
+            &decoration,
             3,
             4,
             &DecorationNbtRegistry::empty(),
         );
         assert_eq!(
             block_at(&chunk, 3, 70, 4),
-            BlockState::POPPY,
-            "manifest-authored first block must reach flora placement unchanged"
+            BlockState::GRASS,
+            "placement must consume the pre-resolved state rather than re-resolving authored names"
         );
         let _ = fs::remove_dir_all(root);
     }

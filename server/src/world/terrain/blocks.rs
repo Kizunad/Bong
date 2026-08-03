@@ -781,9 +781,12 @@ name = "stone"
             .expect("a later valid startup admission must recover after a failed attempt");
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered.resolve("stone"), Some(BlockState::STONE));
-        assert!(CACHE.get().is_some());
+        fs::remove_file(&valid).expect("remove admitted catalog path");
+        let reused = load_catalog_once(&CACHE, &valid)
+            .expect("successful admission must be reused without reopening its path");
+        assert!(std::ptr::eq(recovered, reused));
+        assert_eq!(reused.resolve("stone"), Some(BlockState::STONE));
         let _ = fs::remove_file(invalid);
-        let _ = fs::remove_file(valid);
     }
 
     #[test]
