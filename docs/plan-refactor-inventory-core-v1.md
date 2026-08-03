@@ -4,11 +4,11 @@
 
 ## 阶段
 
-- ✅ 2026-08-03 P0 完整契约面重写
-- ⬜ A：inventory 拆分 + txn/capacity 骨架
-- ⬜ B：全部 production writer 迁移
-- ⬜ C：R3 durable seam + R6 wire/client + R4 handler
-- ⬜ D：legacy consumer + bot/e2e + plan 收口
+- ✅ 2026-08-03 P0 完整契约面重写 + absorption audit
+- ⬜ P1：inventory 拆分 + txn/capacity 骨架
+- ⬜ P2：全部 production writer 迁移
+- ⬜ P3：纯 migration + R3 durable seam + R6 wire/client + R4 handler
+- ⬜ P4：R3 legacy consumer + bot/e2e + plan 收口
 
 实现属 Wave 2；跨轨工作须登记 owning plan。
 
@@ -58,13 +58,15 @@ try_insert / try_insert_batch
 
 ## 3. Recipient-specific dropped sync
 
-R6 在编码前对每个 recipient 用 server authority 过滤：同 dimension、在授权 distance/zone observation 范围、owner/private 仅 owner 或授权管理员可见。排序、revision、page count 都针对过滤后的 projection；只有 visibility key 完全相同者可复用编码页，禁止一个 global snapshot 发给所有 client。
+`DroppedLootEntry` 必须持久化 `owner: Option<PlayerId>` 与 `visibility: Public | OwnerOnly`；producer 从机制权威 source 写入，普通 world loot 为 `Public`，私人 spill/drop 为 `OwnerOnly`。管理员授权来自 server permission，不写入 client payload；R3 migration/hydration 原样保留这些字段，缺失旧数据仅按明确 migration 规则补 `Public`，不得从请求猜 owner。
+
+R6 在编码前对每个 recipient 用 server authority 过滤：同 dimension、在授权 distance/zone observation 范围、`OwnerOnly` 仅 owner 或授权管理员可见。排序、revision、page count 都针对过滤后的 projection；只有 visibility key 完全相同者可复用编码页，禁止一个 global snapshot 发给所有 client。
 
 ## 4. Pickup transaction + authorization
 
 R4 从 ECS 构造不可由 client 覆盖的 `PickupAuthorization`：player UUID、`CurrentDimension`、authoritative position/observation range、owner/private permission、server-resolved entry、revision/anti-replay fact。txn 重新验证 entry/instance、同维、距离/zone、权限和 freshness；知道 dropped id、曾收到 sync 或跨维相同 XYZ 都不构成授权。
 
-顺序固定：authorize + validate merge/placement/capacity → staged inventory commit → durable inventory revision 与 dropped delete 同事务 → receipt/R5 attrition。attach/capacity/auth/persistence 任一失败时 drop 仍在且可重试；placement-only 与 merge 都必须覆盖，成功前不得删除 entry。
+顺序固定：authorize + validate merge/placement/capacity → staged attach/merge 与 incoming-only R5 attrition transfer（item qi → authoritative zone + ledger）→ 同一 durable transaction 原子提交 attrited item、inventory revision、zone balance/ledger 与 dropped delete → receipt。任一步失败或崩溃恢复都不得只应用其中一侧；drop 保留且可按 transaction id 重试。placement-only 与 merge 都必须覆盖。
 
 所有 attach 必须 `validate_attach_fits` 后 `attach_at_location`，删除 `(0,0)` 强塞。move/rotate/pack accepted outcome 含 request id、revision、instance/from/to、权威 item view；rejected outcome 含 reason/instance/from/to。snapshot 仅作状态修正，不是动作级反馈。
 
@@ -87,31 +89,52 @@ R10 函数纯且幂等，保留所有实例/动态字段，不执行 SQL、不�
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：R3 P1 → R10 A/B → R3 durable → R6 wire/client → R4 handler → R3 legacy → e2e。R10 不越权改 persistence、wire、handler 或 client。
+顺序：R3 P1 → R10 P1/P2 → R3 durable → R6 wire/client → R4 handler → R10 P3 pure migration → R3 legacy → e2e。R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
 仅保留下列 demanded pins；refactor 可删除 implementation-coupled 旧测试，不以数量为门：
 
 1. `consume_checked` 成功精确扣除；insufficient/unknown/zero 失败无 mutation/revision。
-2. existing instance placement/spill 逐字段保留，created 与 placed/spilled ids 分离。
+2. `deliver` 对 same-template/different-identity、duplicate id、illegal footprint/placement、容量不足但缺 `SpillContext` 逐项 typed reject，且无 mutation/revision；existing instance placement/spill 逐字段保留，created 与 placed/spilled ids 分离。
 3. capacity 的 limit-1/limit/limit+1/batch；逐个生产 writer 证明走统一 gate，失败全状态不变。
 4. spill durable write failure、commit interruption、restart/retry：无单边状态、无重复 drop。
 5. pickup 同维成功；跨维、超距/zone、owner/private 拒绝；merge、placement-only、failed attach/capacity/validation/persistence 后 entry 仍在；成功后才删。
-6. incoming-only attrition receipt + R5 ledger：旧 stack absolute qi 不变且总量守恒。
+6. incoming-only attrition receipt + R5 ledger：旧 stack absolute qi 不变；注入 attrition 后、durable commit 中断与 restart/retry，断言 attrited item + zone/ledger + drop delete 原子且总量守恒。
 7. 两 recipient 的 dimension/range/owner-private 正反 visibility；page/revision 按 projection；缺页/混 revision 不替换。
 8. accepted/rejected move correlation；pack stow/equip/unequip 与拒绝必须动作级 receipt，stale event 和 snapshot-only baseline 不通过。
 9. forge 深链保留；另锁 `/give hoe_iron → 新 snapshot → 真实非零 instance → held/equip → lingtian_start_till`，禁止 `instance_id=0` 或任意 server-data 冒充成功。
 10. migration pure happy/empty/full/dynamic/idempotent/invalid；R3 consumer 对真实 context 成功，缺 context/capacity/persistence failure 保留旧行可重试。
 
-## 8. Deferred-to-implementation-wave
+## 8. Named bot acceptance（P4）
+
+以下名称即 `scripts/bot/scenarios/<name>.py` 的稳定身份：
+
+1. `inv_full_delivery_matrix`：craft/alchemy/forge/give 满包时 `stored + spilled == requested`，失败不 teardown。
+2. `inv_stack_merge`：同 identity merge、异 identity 分栈；placement-only 与拒绝路径保留 drop；attrition durable 中断/restart 仍原子守恒。
+3. `inv_footprint_sync`：2×1 rotate 后以 request/instance/from/to/revision 锚定 1×2 authoritative receipt；snapshot 不代替回执。
+4. `inv_pack_feedback`：stow/equip/unequip 的 accepted/rejected 均按时间锚与 correlation 匹配，stale event 不通过。
+5. `inv_give_visibility_forge`：`/give fan_iron_anvil` → 新 snapshot 真实 id → `forge_station_place`。
+6. `inv_give_visibility_lingtian`：`/give hoe_iron` → 新 snapshot 非零 id → held/equip receipt → `lingtian_start_till`。
+7. `inv_dropped_loot_bound`：全 writer 容量拒绝、delete 后重试、超限 hydration guard、recipient 分页/可见性。
+
+## 9. 吸收边界与 P0 验真
+
+| plan | 2026-08-03 验真结论 | 证据/落点 |
+|---|---|---|
+| `alchemy-takeback-full-inventory-loss` | 部分吸收 | 满包 deliver/spill 后才由 R1 teardown。 |
+| `dropped-loot-pickup-stack-merge` | 仍真实，吸收 | 当前 pickup 只找空 footprint；落 `pickup_and_merge`。 |
+| `force-attach-grid-collision` | 仍真实，吸收 | `(0,0)` 强塞仍可达；改合法 attach/spill。 |
+| `rotate-footprint-sync` | 仍真实，吸收 | `Moved` 缺权威新 footprint；R6 receipt 补齐。 |
+| `bot-inventory-pack-feedback` | 仍真实，吸收 | pack 成功路径可只有 snapshot；动作级 receipt 补齐。 |
+| `bot-production-inventory-instance-visibility` | 部分闭环，吸收剩余 | forge 已用真实 id；lingtian 仍有 id=0 baseline，场景 6 锁定。 |
+| `forge-outcome-full-inventory-loss` | 仍真实，吸收 | #1294 只建立 skeleton；outcome 改走统一 deliver/spill。 |
+| `dropped-loot-cross-dimension-pickup` | 仍真实，吸收 | 当前 entry 有 dimension 但 pickup 未获 `CurrentDimension`；R4 authorization 补齐。 |
+
+不吸收：已闭环 `craft-refund-full-inventory-loss`；独立 feature `container-filter-and-completion`；已撤回 `nested-pack-base`。P0 仅在逐项复读代码/plan 并记录上述 live/fixed/invalid 结论后完成；P4 仍须按表逐项核验 merge SHA 与 bot/client 证据后才能归档。
+
+## 10. Deferred-to-implementation-wave
 
 P0 不决定 Rust lifetime、SQL/outbox 实现、锁粒度、distance/zone 数值、visibility-key 编码、client 重发、管理员运维或 UI；由 owning PR 设计并受上述 contract/pins 约束。P0 不迁移 writer、不删旧入口、不改 runtime。未跑真实 server→wire→client/bot 链前，不以 forge、snapshot 或文档声明归档 bug skeleton。
 
-## 9. 吸收边界
-
-吸收：`alchemy-takeback-full-inventory-loss`、`dropped-loot-pickup-stack-merge`、`force-attach-grid-collision`、`rotate-footprint-sync`、`bot-inventory-pack-feedback`、`bot-production-inventory-instance-visibility`、`forge-outcome-full-inventory-loss`、`dropped-loot-cross-dimension-pickup`。
-
-不吸收：已闭环 `craft-refund-full-inventory-loss`；独立 feature `container-filter-and-completion`；已撤回 `nested-pack-base`。
-
-P0 完成只表示上述完整 surface、owner、失败边界与 pins 已冻结，不表示后续实现完成。
+P0 完成只表示上述 surface、owner、失败边界、pins 与逐项 absorption audit 已冻结，不表示后续实现完成。
