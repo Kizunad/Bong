@@ -256,7 +256,13 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         Some(RevivalDecision::Tribulation { chance: 0.15 }),
         "待决策的渡劫结果必须原样恢复，永久终结风险不能被绕过"
     );
-    assert_eq!(lifecycle.revival_decision_deadline_tick, Some(9_999));
+    let restored_deadline = lifecycle
+        .revival_decision_deadline_tick
+        .expect("persisted revival decision deadline should be restored");
+    assert!(
+        (9_979..=9_999).contains(&restored_deadline),
+        "重连必须保留决策窗口；并行测试跨过 1 秒墙钟边界时只允许扣除对应 20 tick，实际 {restored_deadline}"
+    );
     assert_eq!(lifecycle.death_count, 2);
 
     let _ = std::fs::remove_dir_all(root);

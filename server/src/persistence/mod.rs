@@ -27,6 +27,9 @@ use crate::npc::brain::{canonical_npc_id, ChaseAction, DashAction, FleeAction, M
 use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode};
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
+use crate::persistence::slice::{
+    dispatch_reconnect_handoff, PersistenceSliceRegistry, ReconnectHandoffQueue, SliceClock,
+};
 use crate::player::state::canonical_player_id;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 #[cfg(test)]
@@ -47,6 +50,21 @@ use crate::world::heartbeat::{
     validate_persisted_pseudo_vein_record, WorldHeartbeat, EVENT_PSEUDO_VEIN,
     HEARTBEAT_EVAL_INTERVAL_TICKS,
 };
+
+struct PersistenceSliceClock {
+    runtime_tick: u64,
+    wall_unix_millis: u64,
+}
+
+impl SliceClock for PersistenceSliceClock {
+    fn runtime_tick(&self) -> u64 {
+        self.runtime_tick
+    }
+
+    fn wall_unix_millis(&self) -> u64 {
+        self.wall_unix_millis
+    }
+}
 
 #[allow(dead_code)]
 pub mod identity;
@@ -683,8 +701,42 @@ pub struct SocialPersistenceBundle {
     pub spirit_niches: Vec<SocialSpiritNicheRecord>,
 }
 
+fn process_reconnect_handoffs(world: &mut valence::prelude::World) {
+    let subjects: Vec<String> = world
+        .query_filtered::<&Username, valence::prelude::bevy_ecs::query::Added<Client>>()
+        .iter(world)
+        .map(|username| canonical_player_id(username.0.as_str()))
+        .collect();
+    let clock = PersistenceSliceClock {
+        runtime_tick: world
+            .get_resource::<CultivationClock>()
+            .map_or(0, |clock| clock.tick),
+        wall_unix_millis: current_unix_seconds().saturating_mul(1_000) as u64,
+    };
+    for subject in subjects {
+        let token = world
+            .resource_mut::<ReconnectHandoffQueue>()
+            .take_subject(subject.as_str());
+        if let Some(token) = token {
+            if let Err(error) = dispatch_reconnect_handoff(world, token, &clock) {
+                tracing::warn!(
+                    "[bong][persistence] reconnect handoff failed for `{subject}`: {error}"
+                );
+            }
+        }
+    }
+}
+
 pub fn register(app: &mut App) {
     app.init_resource::<PersistenceSettings>()
+        .insert_resource(PersistenceSliceRegistry::empty())
+        .init_resource::<ReconnectHandoffQueue>()
+        .add_systems(
+            Update,
+            process_reconnect_handoffs
+                .after(crate::player::despawn_disconnected_clients)
+                .before(crate::combat::attach_combat_bundle_to_joined_clients),
+        )
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DormantRelicSweepState>()
