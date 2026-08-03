@@ -18,17 +18,17 @@
 
 ## 阶段
 
-- ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单。
-- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发。
-- ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）。
+- ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单；正式登记 `rotate-footprint-sync`、`bot-inventory-pack-feedback` 的 inventory wire/feedback 工作，并冻结 `dropped_loot_sync` 分片 envelope（`snapshot_revision/page_index/page_count`、每页上限常量 `DROPPED_LOOT_SYNC_PAGE_SIZE = 256`）。
+- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发；dropped-loot 内容变化与 join sync 通过共享 builder 按固定页大小发送，同一 snapshot 只排序/编码一次后复用于目标 clients，禁止 per-client 重建无界全量 payload。
+- ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）；dropped-loot client store 仅在同 revision 全部分片收齐后原子替换，缺页/混 revision 保留旧视图并请求/等待重发。
 - ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
-- ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次。
+- ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次；完成 inventory receipt contract 子批次：`InventoryEventV1::Moved`（或等价 accepted receipt）必须携带 request identity、结果 revision、权威 item view，覆盖 schema/sample/convert/emit API、Fabric `InventoryEventHandler` 与 Python decoder，供 R4 handler 消费 R10 typed outcome。分片 dropped-loot 正反样本必须覆盖空/单页/恰好 256/257/末页缺失/混 revision。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
 active：server-data-s2c-schema-union-drift（TS union 补齐走 regenerate）、spirit-treasure-chat-key-conflict 除外（归 R7）。
-skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、forge-session-enum-unstripped（#1294 在飞）、client-request-schema-drift（C2S 契约 pin 部分）、cl-ningmai-meridian-target-drop（payload 字段丢失）、alchemy-recipe-fragment-handoff（id 前缀契约）、vfx-event-slash-contract（event_id 格式契约；agent 侧改动最小化）、npc-trade-bundle-count-bridge（展示/结算数量桥）、dropped-loot-g-pickup-range-desync（拾取范围下发对齐部分）、skillbar-cast-source-drift 与 skillconfig-castsync 除外（归 R9）。
+skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、forge-session-enum-unstripped（#1294 在飞）、client-request-schema-drift（C2S 契约 pin 部分）、cl-ningmai-meridian-target-drop（payload 字段丢失）、alchemy-recipe-fragment-handoff（id 前缀契约）、vfx-event-slash-contract（event_id 格式契约；agent 侧改动最小化）、npc-trade-bundle-count-bridge（展示/结算数量桥）、dropped-loot-g-pickup-range-desync（拾取范围下发对齐部分）、rotate-footprint-sync（R10 typed outcome → moved/accepted 权威 item view）、bot-inventory-pack-feedback（成功/拒绝动作级机器回执）、skillbar-cast-source-drift 与 skillconfig-castsync 除外（归 R9）。
 注：server↔agent 方向的桥（anticheat-tiandao-drop、niche-guardian-redis-dispatch、npc-combat-relic-schema-drift、pseudo-vein-agent-deadwire、war-participate-agent-command-drift、天道叙事簇 14 项）**不吸收**——agent 不在本次重构范围，独立保留（见总纲 §6 独立轨）。
 
 ## 文件所有权与边界
