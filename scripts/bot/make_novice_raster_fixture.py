@@ -111,6 +111,7 @@ def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int,
                 for value in anchor
             )
             or not all(math.isfinite(float(value)) for value in anchor)
+            or isinstance(radius, bool)
             or not isinstance(radius, (int, float))
             or not math.isfinite(float(radius))
             or radius < 0

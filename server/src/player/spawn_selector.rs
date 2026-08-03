@@ -266,8 +266,18 @@ fn load_spawn_distribution_from_path(
     Ok(distribution)
 }
 
+fn emergency_spawn_distribution() -> Vec<SpawnDistributionAnchor> {
+    let anchor = DVec3::from_array(EMERGENCY_SPAWN_POSITION);
+    vec![SpawnDistributionAnchor {
+        anchor,
+        radius: 0.0,
+        weight: 1,
+        safe_y: anchor.y,
+    }]
+}
+
 fn distribution_from_zone_patrol_anchors(registry: &ZoneRegistry) -> Vec<SpawnDistributionAnchor> {
-    registry
+    let distribution = registry
         .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
         .map(|zone| {
             zone.patrol_anchors
@@ -280,7 +290,12 @@ fn distribution_from_zone_patrol_anchors(registry: &ZoneRegistry) -> Vec<SpawnDi
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if distribution.is_empty() {
+        emergency_spawn_distribution()
+    } else {
+        distribution
+    }
 }
 
 #[cfg(test)]
@@ -372,5 +387,49 @@ mod tests {
         assert_eq!(distribution[0].radius, 64.0);
         assert_eq!(distribution[0].weight, 1);
         assert_eq!(distribution[0].safe_y, patrol_anchor.y + 2.0);
+    }
+
+    #[test]
+    fn effective_distribution_falls_back_to_patrol_anchors_for_valid_empty_file() {
+        let registry = ZoneRegistry::fallback();
+        let path = std::env::temp_dir().join(format!(
+            "bong-empty-spawn-distribution-{}-{}.json",
+            std::process::id(),
+            stable_hash("empty", SpawnPurpose::DevSpawnCommand),
+        ));
+        fs::write(
+            &path,
+            r#"{"zones":[{"name":"spawn","spawn_distribution":[]}]}"#,
+        )
+        .expect("empty spawn distribution fixture should be written");
+
+        let distribution = effective_spawn_distribution_from_path(&registry, &path);
+        fs::remove_file(path).expect("empty spawn distribution fixture should be removed");
+        let patrol_anchor = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .and_then(|zone| zone.patrol_anchors.first())
+            .expect("fallback spawn zone should declare a patrol anchor");
+
+        assert_eq!(distribution.len(), 1);
+        assert_eq!(distribution[0].anchor, *patrol_anchor);
+        assert_eq!(distribution[0].radius, 64.0);
+    }
+
+    #[test]
+    fn empty_patrol_anchors_produce_nonempty_emergency_distribution() {
+        let registry = ZoneRegistry::fallback();
+        let mut empty = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone should exist")
+            .clone();
+        empty.patrol_anchors.clear();
+        let registry = ZoneRegistry { zones: vec![empty] };
+
+        let distribution = distribution_from_zone_patrol_anchors(&registry);
+
+        assert_eq!(distribution.len(), 1);
+        assert_eq!(distribution[0].anchor.to_array(), EMERGENCY_SPAWN_POSITION);
+        assert_eq!(distribution[0].radius, 0.0);
+        assert_eq!(distribution[0].weight, 1);
     }
 }

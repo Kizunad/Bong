@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Bot e2e 编排：起 server（headless offline）→ 跑 scripts/bot/ 协议级黑盒场景 → 收尾。
 #
-# CI（.github/workflows/e2e.yml「Bot e2e stage」）在 release 二进制已构建、redis 已起的
-# job 里调用本脚本，cargo run --release 直接复用缓存。
+# CI 与本地都只在 build-token 内编译；随后复制本轮不可变 binary 到 evidence runtime，
+# 令牌释放后运行该副本，避免 runtime 长占全局构建槽或共享 target 被其他 worktree 覆盖。
 #
 # 本地用法：
 #   bash scripts/bot-e2e.sh                          # 自动起 server（release）
 #   BOT_E2E_PROFILE=debug bash scripts/bot-e2e.sh    # 用 debug 构建（快）
 #   BOT_E2E_REUSE=1 bash scripts/bot-e2e.sh          # 复用已在 25565 跑着的 server
 #
-# 注意：必须经 cargo run 从**当前 checkout** 构建运行，不要直接跑共享 target 里的旧
-# 二进制——CARGO_MANIFEST_DIR 是编译期烙死的，旧二进制可能指向已删 worktree 的资产路径
-# 启动即 panic（loot_pools.json not found 实证）。
+# 注意：必须从当前 checkout 经 build-token 构建，并复制本轮成功产物后运行，不要直接跑
+# 共享 target 里的旧二进制——CARGO_MANIFEST_DIR 是编译期烙死的，旧二进制可能指向已删
+# worktree 的资产路径，启动即 panic（loot_pools.json not found 实证）。
 
 set -euo pipefail
 
@@ -105,7 +105,7 @@ mkdir -p "$EVIDENCE_ROOT"
 EVIDENCE_DIR="$(mktemp -d "$EVIDENCE_ROOT/run.XXXXXXXXXX")"
 RUN_ID="${EVIDENCE_DIR##*.}"
 SERVER_LOG="$EVIDENCE_DIR/server.log"
-BOT_FALLBACK_READY_PAYLOAD="[bong][world] BOT_FALLBACK_FLAT_READY"
+BOT_FALLBACK_READY_PATTERN='^\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*$'
 if [ "$OWNED_WORLD_MODE" = "1" ]; then
   SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"
   mkdir -p "$SERVER_RUNTIME_DIR/server/data" "$SERVER_RUNTIME_DIR/library-web/public/deceased"
@@ -178,8 +178,8 @@ except OSError:
 EOF
 }
 
-# 端口可连还不够：cargo 编译窗口内可能有旧 server 抢先监听同一端口。只有 listener
-# PID 属于本次 `cargo run` 进程树，Bot 才能确信连到当前 checkout 的二进制。
+# Port reachability is insufficient: the immutable server may still be starting while an old server
+# listens on the same port. Only a listener in this launch's process tree is authoritative.
 pid_belongs_to_tree() {
   local candidate="$1"
   local root_pid="$2"
@@ -221,7 +221,7 @@ self_started_fixture_runtime_is_current() {
     && port_open "$HOST" "$PORT" \
     && port_owned_by_tree "$SERVER_PID" "$PORT" \
     && { [ "$AMBIENT_FIXTURE_MODE" != "1" ] || grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG"; } \
-    && { [ "$FALLBACK_MODE" != "1" ] || grep -Fq -- "$BOT_FALLBACK_READY_PAYLOAD" "$SERVER_LOG"; }
+    && { [ "$FALLBACK_MODE" != "1" ] || grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG"; }
 }
 
 # 递归杀整棵进程树（与 e2e-redis.sh 同模式）：先子孙后父防 reparent 孤儿，
@@ -273,13 +273,13 @@ trap cleanup EXIT
 python3 "$ROOT/scripts/bot/test_protocol.py"
 
 # ---- redis ----
-# Owned fixture evidence always receives an isolated Redis, even if CI/global environment exports
+# Owned fixture and fallback evidence always receive isolated Redis, even if a caller exports
 # REDIS_URL. Generic self-start preserves an explicit caller URL. With no explicit URL it first
 # adopts the historical caller Redis at 127.0.0.1:6379; only an absent default listener gets a
 # private Compose Redis owned and cleaned up by this run.
-if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then
+if [ "$REUSE" != "1" ] && [ "$OWNED_WORLD_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then
   echo "[bot-e2e] 沿用调用方默认 Redis 127.0.0.1:6379"
-elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then
+elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then
   REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"
   STARTED_REDIS=1
   echo "[bot-e2e] 启动本轮私有 Redis project: $REDIS_COMPOSE_PROJECT"
@@ -313,34 +313,42 @@ else
     echo "[bot-e2e] BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起" >&2
     exit 2
   fi
-  PROFILE_FLAG=""
+  PROFILE_FLAG=()
+  TARGET_PROFILE=debug
   if [ "$PROFILE" = "release" ]; then
-    PROFILE_FLAG="--release"
+    PROFILE_FLAG=(--release)
+    TARGET_PROFILE=release
   fi
-  echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，log: $SERVER_LOG）"
-  # Dedicated world modes move all relative persistent outputs into their evidence runtime.
-  # Generic mode retains the historical checkout/server CWD for callers that rely on that contract.
+  echo "[bot-e2e] 构建并启动本轮 immutable server（profile=$PROFILE，log: $SERVER_LOG）"
+  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+  CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT/server/target}"
+  if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+    CARGO_TARGET_ROOT="$ROOT/server/$CARGO_TARGET_ROOT"
+  fi
+  if ! (
+    cd "$ROOT/server"
+    "$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"
+  ) >>"$SERVER_LOG" 2>&1; then
+    echo "[bot-e2e] server build failed" >&2
+    tail -n 40 "$SERVER_LOG" >&2
+    exit 1
+  fi
+  SERVER_BINARY="$EVIDENCE_DIR/bong-server-$TARGET_PROFILE"
+  install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"
   (
     if [ "$OWNED_WORLD_MODE" = "1" ]; then
       cd "$SERVER_RUNTIME_DIR/server"
+      export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"
+      export BONG_ASSETS_DIR="$ROOT/server"
     else
       cd "$ROOT/server"
     fi
-    export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-    export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
-    if [ "$OWNED_WORLD_MODE" = "1" ]; then
-      export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"
-      export BONG_ASSETS_DIR="$ROOT/server"
-      # private cwd does not discover checkout/server/.cargo/config.toml automatically.
-      export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"
-    fi
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
-      # Ambient scenarios exercise dev-only setup commands. Fallback-flat evidence runs only its
-      # join/chunk scenario and therefore deliberately leaves dev commands disabled.
       export BONG_DEV_MODE=1
     fi
-    exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
-  ) >"$SERVER_LOG" 2>&1 &
+    exec "$SERVER_BINARY"
+  ) >>"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
 
   # Dedicated world modes need an exact startup marker. Generic mode keeps the prior common
@@ -362,7 +370,7 @@ else
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
       grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
     elif [ "$FALLBACK_MODE" = "1" ]; then
-      grep -Fq -- "$BOT_FALLBACK_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
+      grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG" && ready_marker_ok=1
     else
       grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && ready_marker_ok=1
     fi
@@ -382,7 +390,7 @@ else
   if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
     grep -Fq -- "$BOT_RASTER_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
   elif [ "$FALLBACK_MODE" = "1" ]; then
-    grep -Fq -- "$BOT_FALLBACK_READY_PAYLOAD" "$SERVER_LOG" && ready_marker_ok=1
+    grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG" && ready_marker_ok=1
   else
     grep -Fq "$BOOT_ANCHOR" "$SERVER_LOG" && ready_marker_ok=1
   fi
@@ -444,6 +452,10 @@ if [ "$FALLBACK_MODE" = "1" ]; then
   SCENARIO_ARGS=(--scenario terrain_join_chunk_delivery)
 elif [ -n "${BOT_E2E_SCENARIOS:-}" ]; then
   SCENARIO_ARGS=()
+  if [[ "$BOT_E2E_SCENARIOS" == ,* || "$BOT_E2E_SCENARIOS" == *, || "$BOT_E2E_SCENARIOS" == *,,* ]]; then
+    echo "[bot-e2e] BOT_E2E_SCENARIOS 含空场景名：$BOT_E2E_SCENARIOS" >&2
+    exit 2
+  fi
   IFS=',' read -r -a requested_scenarios <<<"$BOT_E2E_SCENARIOS"
   for scenario in "${requested_scenarios[@]}"; do
     trimmed_scenario="${scenario#"${scenario%%[![:space:]]*}"}"

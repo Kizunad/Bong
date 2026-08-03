@@ -3,6 +3,7 @@ use crate::schema::realm_vision::{FogShapeV1, RealmVisionParamsV1};
 
 pub const FLOOR_CLAMP_M: f64 = 15.0;
 pub const AWAKEN_VIEW_DISTANCE_CHUNKS: u8 = 4;
+pub const MAX_REALM_VIEW_DISTANCE_CHUNKS: u8 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RealmVisionStatusModifier {
@@ -205,7 +206,7 @@ fn base_spec(realm: Realm) -> RealmVisionBaseSpec {
         Realm::Void => RealmVisionBaseSpec {
             clear_m: 240.0,
             fog_end_m: 320.0,
-            view_distance_chunks: 20,
+            view_distance_chunks: MAX_REALM_VIEW_DISTANCE_CHUNKS,
             fog_shape: FogShapeV1::Sphere,
             fog_color_rgb: 0x7888A0,
             vignette_alpha: 0.0,

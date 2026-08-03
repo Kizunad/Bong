@@ -74,9 +74,9 @@ use crate::combat::CombatSystemSet;
 
 const TEST_AREA_CHUNKS: i32 = 16;
 const CHUNK_WIDTH: i32 = 16;
-const NEW_PLAYER_VIEW_DISTANCE_CHUNKS: u8 =
-    crate::cultivation::realm_vision::planner::AWAKEN_VIEW_DISTANCE_CHUNKS;
-const FALLBACK_FLAT_MAX_CHUNKS: usize = 4_096;
+const FALLBACK_VIEW_DISTANCE_CHUNKS: u8 =
+    crate::cultivation::realm_vision::planner::MAX_REALM_VIEW_DISTANCE_CHUNKS;
+const FALLBACK_FLAT_MAX_CHUNKS: usize = 8_192;
 const BEDROCK_Y: i32 = 64;
 const GRASS_Y: i32 = BEDROCK_Y + 1;
 pub(crate) const TEST_AREA_BLOCK_EXTENT: i32 = TEST_AREA_CHUNKS * CHUNK_WIDTH;
@@ -566,7 +566,7 @@ fn spawn_fallback_flat_world(
         "[bong][world] BOT_FALLBACK_FLAT_READY anchors={} chunks={} view_distance_chunks={}",
         anchors.len(),
         chunks.len(),
-        NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+        FALLBACK_VIEW_DISTANCE_CHUNKS,
     );
     layer_entity
 }
@@ -596,9 +596,9 @@ fn fallback_spawn_chunk_union(
             block_coord_to_chunk(max_spawn_z),
         );
         let min_view =
-            valence::prelude::ChunkView::new(min_spawn_chunk, NEW_PLAYER_VIEW_DISTANCE_CHUNKS);
+            valence::prelude::ChunkView::new(min_spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
         let max_view =
-            valence::prelude::ChunkView::new(max_spawn_chunk, NEW_PLAYER_VIEW_DISTANCE_CHUNKS);
+            valence::prelude::ChunkView::new(max_spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
         let (min_chunk, _) = min_view.bounding_box();
         let (_, max_chunk) = max_view.bounding_box();
 
@@ -738,7 +738,7 @@ mod tests {
         block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
         select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
         AnvilBootstrapConfig, FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap,
-        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, GRASS_Y, NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, GRASS_Y, FALLBACK_VIEW_DISTANCE_CHUNKS,
         TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::{
@@ -883,11 +883,11 @@ mod tests {
                 for spawn_chunk_x in spawn_min_x..=spawn_max_x {
                     let view = ChunkView::new(
                         ChunkPos::new(spawn_chunk_x, spawn_chunk_z),
-                        crate::cultivation::realm_vision::planner::AWAKEN_VIEW_DISTANCE_CHUNKS,
+                        FALLBACK_VIEW_DISTANCE_CHUNKS,
                     );
                     assert!(
                         view.iter().all(|chunk| chunks.contains(&chunk)),
-                        "出生簇 center=({},{}) radius={} 的候选 chunk=({},{}) 必须覆盖醒灵完整 Valence 视域",
+                        "出生簇 center=({},{}) radius={} 的候选 chunk=({},{}) 必须覆盖最大境界完整 Valence 视域",
                         center.x,
                         center.z,
                         radius,
@@ -907,14 +907,14 @@ mod tests {
                         block_coord_to_chunk(center.x - radius),
                         block_coord_to_chunk(center.z - radius),
                     ),
-                    crate::cultivation::realm_vision::planner::AWAKEN_VIEW_DISTANCE_CHUNKS,
+                    FALLBACK_VIEW_DISTANCE_CHUNKS,
                 );
                 let max_view = ChunkView::new(
                     ChunkPos::new(
                         block_coord_to_chunk(center.x + radius),
                         block_coord_to_chunk(center.z + radius),
                     ),
-                    crate::cultivation::realm_vision::planner::AWAKEN_VIEW_DISTANCE_CHUNKS,
+                    FALLBACK_VIEW_DISTANCE_CHUNKS,
                 );
                 let (min_chunk, _) = min_view.bounding_box();
                 let (_, max_chunk) = max_view.bounding_box();
@@ -993,14 +993,14 @@ mod tests {
                 block_coord_to_chunk(oversized_center.x - oversized_radius),
                 block_coord_to_chunk(oversized_center.z - oversized_radius),
             ),
-            NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+            FALLBACK_VIEW_DISTANCE_CHUNKS,
         );
         let oversized_max_view = ChunkView::new(
             ChunkPos::new(
                 block_coord_to_chunk(oversized_center.x + oversized_radius),
                 block_coord_to_chunk(oversized_center.z + oversized_radius),
             ),
-            NEW_PLAYER_VIEW_DISTANCE_CHUNKS,
+            FALLBACK_VIEW_DISTANCE_CHUNKS,
         );
         let (oversized_min_chunk, _) = oversized_min_view.bounding_box();
         let (_, oversized_max_chunk) = oversized_max_view.bounding_box();
@@ -1031,7 +1031,8 @@ mod tests {
         assert_eq!(
             fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
             Err(FALLBACK_FLAT_MAX_CHUNKS + 1),
-            "多个小矩形的 union 累积越界也必须在第 4097 个唯一 chunk 处 fail closed"
+            "多个小矩形的 union 累积越界也必须在第 {} 个唯一 chunk 处 fail closed",
+            FALLBACK_FLAT_MAX_CHUNKS + 1
         );
     }
 
@@ -1085,11 +1086,11 @@ mod tests {
                 let spawn_chunk = ChunkPos::from(DVec3::from(pos));
                 let view = ChunkView::new(
                     spawn_chunk,
-                    crate::cultivation::realm_vision::planner::AWAKEN_VIEW_DISTANCE_CHUNKS,
+                    FALLBACK_VIEW_DISTANCE_CHUNKS,
                 );
                 assert!(
                     view.iter().all(|chunk| chunks.contains(&chunk)),
-                    "seed={seed} purpose={purpose:?} spawn={pos:?} 的完整醒灵视域必须在 fallback union 内"
+                    "seed={seed} purpose={purpose:?} spawn={pos:?} 的最大境界完整视域必须在 fallback union 内"
                 );
             }
         }
@@ -1128,7 +1129,7 @@ mod tests {
             .expect("configured fallback union should fit");
 
         let (min, max) =
-            ChunkView::new(ChunkPos::new(-1, -1), NEW_PLAYER_VIEW_DISTANCE_CHUNKS).bounding_box();
+            ChunkView::new(ChunkPos::new(-1, -1), FALLBACK_VIEW_DISTANCE_CHUNKS).bounding_box();
         assert!(chunks.contains(&min));
         assert!(chunks.contains(&max));
         assert!(!chunks.contains(&ChunkPos::new(min.x - 1, min.z)));

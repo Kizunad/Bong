@@ -13,8 +13,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 READY_PREFIX = r"\[bong\]\[world\] BOT_FALLBACK_FLAT_READY"
 READY_PATTERN = re.compile(
-    rf"^{READY_PREFIX} anchors=[0-9]+ chunks=[0-9]+ "
-    r"view_distance_chunks=[0-9]+$"
+    rf"^{READY_PREFIX} anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
+    r"view_distance_chunks=[1-9][0-9]*$"
 )
 STALE_MARKER = "creating overworld test area"
 HARNESS_PATHS = (
@@ -28,12 +28,10 @@ HARNESS_PATHS = (
 class FallbackWorldReadinessContractTest(unittest.TestCase):
     def test_accepts_complete_numeric_marker(self) -> None:
         for line in (
-            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
-            "view_distance_chunks=4",
-            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=0 chunks=0 "
-            "view_distance_chunks=0",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 "
+            "view_distance_chunks=20",
             "[bong][world] BOT_FALLBACK_FLAT_READY anchors=4294967295 "
-            "chunks=4096 view_distance_chunks=18446744073709551615",
+            "chunks=8192 view_distance_chunks=18446744073709551615",
         ):
             with self.subTest(line=line):
                 self.assertRegex(line, READY_PATTERN)
@@ -41,6 +39,12 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
     def test_rejects_stale_incomplete_and_near_markers(self) -> None:
         for line in (
             "",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=0 chunks=0 "
+            "view_distance_chunks=0",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=0 "
+            "view_distance_chunks=20",
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 "
+            "view_distance_chunks=0",
             "[bong][world] creating overworld test area (16x16 chunks)",
             "[bong][world] BOT_FALLBACK_FLAT_READY",
             "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530",
@@ -60,8 +64,9 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
 
     def test_shell_ere_matches_the_same_contract(self) -> None:
         shell_pattern = (
-            r"\[bong\]\[world\] BOT_FALLBACK_FLAT_READY "
-            r"anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+"
+            r"^\[bong\]\[world\] BOT_FALLBACK_FLAT_READY "
+            r"anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
+            r"view_distance_chunks=[1-9][0-9]*$"
         )
         cases = (
             (
@@ -72,6 +77,16 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
             (
                 "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
                 "view_distance_chunks=four\n",
+                1,
+            ),
+            (
+                "[bong][world] BOT_FALLBACK_FLAT_READY anchors=0 chunks=0 "
+                "view_distance_chunks=0\n",
+                1,
+            ),
+            (
+                "prefix [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "view_distance_chunks=4\n",
                 1,
             ),
             ("[bong][world] creating overworld test area (16x16 chunks)\n", 1),
@@ -120,6 +135,39 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
                 'wait_for_pattern "$NORTH_RIFT_SERVER_LOG" '
                 '"$FALLBACK_WORLD_READY_PATTERN"'
             ),
+            1,
+        )
+    def test_bot_e2e_uses_structured_readiness_for_every_ownership_check(self) -> None:
+        source = (ROOT / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
+        assignment = (
+            "BOT_FALLBACK_READY_PATTERN='^\\[bong\\]\\[world\\] "
+            "BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
+            "view_distance_chunks=[1-9][0-9]*$'"
+        )
+        self.assertIn(assignment, source)
+        self.assertNotIn("BOT_FALLBACK_READY_PAYLOAD", source)
+        self.assertEqual(
+            source.count('grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG"'),
+            3,
+        )
+
+    def test_owned_fallback_uses_private_redis_predicate(self) -> None:
+        source = (ROOT / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            '[ "$REUSE" != "1" ] && [ "$OWNED_WORLD_MODE" != "1" ] '
+            '&& [ -z "${REDIS_URL:-}" ]',
+            source,
+        )
+        self.assertIn(
+            '[ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] '
+            '|| [ -z "${REDIS_URL:-}" ]; }',
+            source,
+        )
+
+    def test_ci_runs_this_contract_suite(self) -> None:
+        source = (ROOT / ".github/workflows/e2e.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            source.count("python3 scripts/tests/fallback_world_readiness_contract_test.py"),
             1,
         )
 
