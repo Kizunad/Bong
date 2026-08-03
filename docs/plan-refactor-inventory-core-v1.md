@@ -1,0 +1,192 @@
+# plan-refactor-inventory-core-v1 — Inventory 巨石拆分 + 网格/交付事务一致性（重构轨 R10）
+
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`。一句话：拆分 2 万行级 `server/src/inventory/mod.rs`，以统一 `InventoryTxn` 收口给予、交付、消费、拾取、堆叠与网格占格，使物品移动可原子验证、可观测且不静默丢失。
+
+## 阶段总览
+
+- ✅ 2026-08-03 P0 设计收口 + 吸收清单验真
+- ⬜ P1 巨石拆分（行为不变）+ `InventoryTxn` 骨架
+- ⬜ P2 交付/消费路径统一
+- ⬜ P3 网格/堆叠一致性 + 老存档布局迁移
+- ⬜ P4 bot 验收 + 被吸收 plan 收口
+
+> **实施门禁**：按 master §4/§5，R10 实现属于 Wave 2，必须等待 R3 P1 提供稳定 persistence inventory slice/hydration 接缝。当前仅 P0 完成；P1–P4 不得提前启动。2026-08-03 核验时 R3 仅有 P0 PR #1308 OPEN，R3 P1 尚未落地。
+
+## 现状证据（2026-08-03 复核）
+
+- `server/src/inventory/mod.rs` 当前 20479 行；原骨架记录的 20165 行已过时。该文件同时承载 domain model、registry/loadout、实例创建、交付/堆叠、网格移动、装备与套包、掉落拾取、遗骸转移、耐久/磨损接缝及大量内联测试。
+- `add_item_to_player_inventory_or_ground`（`server/src/inventory/mod.rs:1839`）只在真实容量不足时降级为地面掉落，其它结构错误原样返回；这是统一满包策略的现役生产先例。
+- `stack_identity_matches`（`server/src/inventory/mod.rs:2223`）与现有 staged grant 已具备“完整动态身份才合并、验证成功后再提交”的正确基线，R10 应抽取复用而非改弱为仅比较 `template_id`。
+- `force_attach_item_to_inventory`（`server/src/inventory/mod.rs:4733`）在无合法位置时直接把物品压入 `(0, 0)`；`transfer_all_inventory_contents`（`:4675`）会调用它，故占格重叠缺口仍可达。
+- `pickup_dropped_loot_instance`（`server/src/inventory/mod.rs:5337`）只找空 footprint，不尝试合并已有同身份堆叠，拾取合并缺口仍存在。
+- server 的 `apply_inventory_move`（`server/src/inventory/mod.rs:3828`）会正确交换旋转后的 `grid_w/grid_h`，但 `InventoryEventV1::Moved`（`server/src/schema/inventory.rs:294`）只带 from/to；client `InventoryEventHandler`（`:85`）复用旧 item view，因此 delta 路径会保留旧 footprint。
+- pack move 成功分支在 `handle_inventory_move`（`server/src/network/client_request_handler.rs:15310`）执行 `worn_pack_rebuild` snapshot 后提前返回；普通 `send_moved_event`（`:15590`）未覆盖该分支，稳定成功回执缺口仍存在。
+- `emit_changed_inventory_snapshots`（`server/src/network/inventory_snapshot_emit.rs:93`）会为 `Changed<PlayerInventory>` 自动推送权威快照；`production_forge_station_real_place.py:114-158` 已用 `/give` 后真实 `instance_id` 放砧并断言消耗快照，故“生产物品实例不可见”旧缺口已闭环，只需归档旧 skeleton。
+- `load_player_inventory_from_sqlite`（`server/src/player/state.rs:1372`）已形成 schema-version 分流、纯内存迁移和 hydration 后校验接缝；pre-#249 布局迁移应在 R3 P1 抽出的接缝上调用 R10 的纯迁移函数，不应在 persistence 巨石中再造一套 inventory 规则。
+
+## 接入面
+
+- **进料**：R1 session 产物交付、R4 gate 通过后的 inventory 请求、world dropped-loot registry、R3 persistence inventory slice/hydration、craft/alchemy/forge/botany 等产出域。
+- **出料**：`InventoryTxn` 的交付/消费/拾取 receipt、权威 `InventoryRevision`、世界掉落记录、网格变更事实；公共 S2C 经 R6 拥有的 emit/proto 接缝发送。
+- **共享类型**：保留 `PlayerInventory`、`ItemInstance`、`ContainerState`、`InventoryLocationV1`、`InventoryRevision`、`owner_instance_id` 和现有 `ItemCategory` 合法集；不建立兼容层或平行模型。
+- **跨仓库契约**：server 产出 `inventory_snapshot` / `inventory_event`；client 消费权威 footprint；bot 通过同一 wire payload 验证 instance、revision、move/merge/spill。R10 只冻结所需 payload 事实，R6 拥有公共 S2C schema/emit 接缝改动。
+- **worldview 锚点**：物品不凭空消失、满包产物落在争夺现场，对齐 `worldview.md` §十三末法物资稀缺与争夺语义；唯一真货币仍为骨币，R10 不改经济定义。
+- **qi_physics 锚点**：普通物品归属/位置变化不是新的真元流，R10 不新增真元常数或公式。含真元物品的磨损、销毁、衰变仍调用 R5/既有 ledger 语义；spill 与堆叠不得重置或吞掉动态真元字段。
+
+## P0 — 设计收口 + 吸收清单验真（✅ 2026-08-03）
+
+### P0.1 职责拆分图
+
+P1 按下表迁移 symbol；先做机械拆分和测试平移，不在同一提交中改行为。
+
+| 目标模块 | 独占职责 | 首批迁入 symbol / 数据 |
+|---|---|---|
+| `inventory/model.rs` | inventory 领域模型与 revision/receipt 基础类型 | `PlayerInventory`、`ItemInstance`、`ContainerState`、`PlacedItemState`、装备/位置/修订类型 |
+| `inventory/registry.rs` | template registry、TOML/loadout 解析、实例创建 | `ItemRegistry`、template lookup、instance allocator/construction |
+| `inventory/grid.rs` | footprint、碰撞、fit、attach/detach、move/swap/rotate | `find_free_slot`、`find_first_fit_container_location`、`validate_attach_fits`、`attach_at_location`、`apply_inventory_move` |
+| `inventory/txn.rs` | staged delivery/consume/pickup/merge 与统一 receipt | staged grant、`stack_identity_matches`、新增 `InventoryTxn` |
+| `inventory/container.rs` | 穿戴套包 owner、派生容器重建、容量/重量、overflow spill | worn-pack helpers、`rebuild_containers_from_equipment`、`rebuild_and_drop_overflow` |
+| `inventory/corpse.rs` | 死亡掉落、遗骸 inventory 与全量转移编排 | 保留现有 corpse 模块；将 `transfer_all_inventory_contents` 改为消费 txn/grid API，不再强塞 |
+| `inventory/freshness.rs` | 仅 freshness 数据与 inventory construction 接缝 | 保留现有模块；衰变公式继续由 shelflife/R5 单一实现，不复制到 txn |
+| `inventory/mod.rs` | 模块声明、稳定 re-export、Bevy plugin/system wiring | 不再承载具体算法或大块测试 |
+
+测试跟随所属模块迁移；跨模块契约测试放 `inventory/tests` 或现有集成测试文件，不把测试继续堆回 `mod.rs`。
+
+### P0.2 冻结 `InventoryTxn` 契约
+
+P1/P2 必须落地以下稳定语义；具体 Rust lifetime 可在实现时按借用检查器调整，但名称、输入事实、结果事实和错误边界不得漂移：
+
+```rust
+pub struct InventoryTxn<'a> { /* staged view over one PlayerInventory */ }
+
+impl InventoryTxn<'_> {
+    pub fn deliver(
+        &mut self,
+        request: DeliveryRequest,
+        spill: Option<&mut SpillContext<'_>>,
+    ) -> Result<InventoryDeliveryReceipt, InventoryTxnError>;
+
+    pub fn consume_checked(
+        &mut self,
+        request: ConsumeRequest,
+    ) -> Result<InventoryConsumeReceipt, InventoryTxnError>;
+
+    pub fn pickup_and_merge(
+        &mut self,
+        request: PickupRequest,
+        dropped: &mut DroppedLootRegistry,
+    ) -> Result<InventoryPickupReceipt, InventoryTxnError>;
+}
+```
+
+- `DeliveryRequest` 必须同时表达“按 template 创建”与“交付既有 `ItemInstance`”；后者保留 instance id、耐久、freshness、attributes/NBT 等动态身份，不允许重建成默认实例。
+- `InventoryDeliveryReceipt` 至少包含：最终 `revision`、`created_instance_ids`、直接放入的 instance ids、逐项 merge 的 source/target/count、逐项 spill 的 dropped id/instance id。允许“部分 merge + 剩余落地”，但总量必须守恒。
+- `InventoryConsumeReceipt` 至少包含最终 `revision` 与逐 instance 扣除量；所有 template、数量、身份和持有量前置条件须在 mutation 前完成验证，失败时 inventory/revision 不变。
+- `InventoryPickupReceipt` 至少包含最终 `revision`、被移除的 dropped id、merge/placement 明细；只有 inventory commit 成功后才能从 `DroppedLootRegistry` 删除世界掉落。
+- 堆叠资格统一复用完整 identity 规则；仅 `template_id` 相等不足以合并。freshness、耐久、attributes/NBT 或其它影响物品身份的字段不一致时必须分栈。
+- 所有成功 txn 至多 bump 一次 revision；结构拒绝与容量拒绝不得 bump。receipt 是调用域和 bot 的权威观察面，不再依赖错误字符串前缀或猜测 snapshot 差异。
+- `InventoryTxnError` 至少区分：unknown template、zero quantity、missing container/location、instance id conflict、identity mismatch、insufficient items、capacity exceeded、invalid grid placement、missing spill context。结构错误绝不伪装成 spill。
+
+### P0.3 冻结满包与网格策略
+
+1. **统一策略：机制结算点/玩家脚下地面掉落，不建个人暂存箱。** craft、alchemy、forge、give、loot 使用同一 delivery fallback；世界坐标和 dimension 由调用者提供。
+2. 只有经过完整验证后确认的容量不足可以 spill。unknown template、零数量、无容器、ID 冲突、非法 footprint 等必须返回结构错误并保持源状态不变。
+3. 调用者没有真实 `SpillContext` 时 fail closed，返回 `CapacityExceeded`/`MissingSpillContext`；不得用虚构坐标，也不得清 session、扣材料或删除世界掉落。
+4. spill 必须携带原 `ItemInstance`；对 minted stack 可按合法最大堆叠拆分，对既有动态实例不得通过重新 mint 丢字段。
+5. 所有 attach 都必须先通过 `validate_attach_fits` 并由 `attach_at_location` 提交；删除 `force_attach_item_to_inventory` 的 `(0,0)` 强塞 fallback。全量转移放不下的剩余项进入显式 spill receipt，而不是重叠占格。
+6. rotate/move receipt 必须携带变更后的完整 item view 或等价 `grid_w/grid_h + rotated` 事实。R10 定义所需事实，R6 负责公共 S2C schema/emit 接缝，client 以权威新 footprint 替换旧 view。
+
+### P0.4 文件所有权与跨轨边界
+
+- **R10 独占**：`server/src/inventory/**`；各产出域只改为调用冻结的 transaction API，不接管其 session/玩法状态机。
+- **R1**：拥有 session 生命周期。R10 返回 delivery 成败与 receipt；R1 只能在成功存入或成功 spill 后清 session，失败必须保留可重试状态。
+- **R3**：拥有 `server/src/persistence/**`、autosave 与 hydration 编排。R10 在 `inventory/migration.rs` 提供纯、幂等的旧布局转换/校验；R3 P1 的 slice loader 调用它。R10 不直接重构 persistence 巨石。
+- **R4**：拥有 C2S gate、距离/权限/状态校验；通过 gate 后才调用 R10 txn。R10 不重复做网络身份鉴权。
+- **R5**：拥有 qi ledger、磨损/衰变物理；R10 只保留动态字段并调用其稳定接口。
+- **R6**：拥有公共 S2C emit/proto 接缝。rotate footprint、merge/spill/move receipt 的 wire 扩展必须消费 R6 冻结 API或交由 R6 落地，不在 R10 私造平行 payload。
+- **R7**：拥有 `InspectScreen`；R10 只提供权威 inventory model/receipt，不改 UI 导航架构。
+
+### P0.5 吸收清单验真
+
+| plan（省略 `plan-bughunt-` / `-v1`） | 2026-08-03 裁决 | 第一性证据与 R10 落点 |
+|---|---|---|
+| `alchemy-takeback-full-inventory-loss` | **吸收交付部分** | 满包产物必须先 deliver/spill 成功再由 R1 清 session；session teardown 本身仍归 R1。P2 delivery matrix 锁定。 |
+| `dropped-loot-pickup-stack-merge` | **吸收，仍真实** | `pickup_dropped_loot_instance` 只找空 footprint，不 merge。P2 `pickup_and_merge` + incoming-only attrition receipt。 |
+| `force-attach-grid-collision` | **吸收，仍真实** | `force_attach_item_to_inventory` 可直接压入 `(0,0)`，且全量转移可达。P3 删除强塞并用合法 attach/spill。 |
+| `rotate-footprint-sync` | **吸收，仍真实** | server 已旋转 footprint，`Moved` S2C 不带新 view，client 复用旧尺寸。P3 与 R6 接缝联动。 |
+| `bot-inventory-pack-feedback` | **吸收，仍真实** | pack rebuild 成功路径 snapshot 后提前返回，未发普通 moved receipt。P3 统一 receipt；P4 bot 断言。 |
+| `bot-production-inventory-instance-visibility` | **已闭环，只归档** | `Changed<PlayerInventory>` 自动 snapshot；现有 forge bot 已从 `/give` 快照取真实 instance id 放砧并验证消耗。不再新增实现。 |
+| `forge-outcome-full-inventory-loss` | **吸收，仍真实** | #1294 已于 2026-07-27 merge，但只建立 bughunt skeleton，并非修复在飞。P2 forge outcome 改走统一 deliver/spill。 |
+
+**不吸收**：
+
+- `craft-refund-full-inventory-loss`：已在 `docs/finished_plans/` 独立闭环，不重复实现。
+- `container-filter-and-completion`：独立 feature plan，R10 只提供稳定 transaction/grid 底座。
+- `nested-pack-base`：已在 `docs/finished_plans/` 以 WITHDRAWN/独立结案，不复活旧范围。
+
+### P0.6 pre-#249 老布局迁移决议
+
+**决议**：并入 R10 P3，一次清账，但严格等待 R3 P1。
+
+1. R10 在 `server/src/inventory/migration.rs` 提供纯函数，例如 `migrate_legacy_inventory_layout(value, schema_version) -> MigrationOutcome`；输入/输出只涉及 inventory slice，不执行 SQL。
+2. 迁移挂到 R3 的 hydration seam：现有依据为 `server/src/player/state.rs:1372-1433` 的 schema-version 分流与反序列化路径；R3 P1 拆分后由稳定 loader 调用。
+3. 迁移幂等：新布局不变；旧 5×7/main-pack 形态转换为当前容器布局；所有 item instance 与动态字段保留；无法合法放入的物品走显式 migration spill/handoff，绝不静默截断。
+4. 迁移成功后由 R3 保存新 schema 形状；R10 不直接写 `inventories` 表、不修改 autosave 所有权。
+5. P3 测试至少覆盖：旧布局 happy path、空库存、边界填满、动态字段保留、重复迁移不变、非法/损坏 JSON 拒绝、overflow 明细守恒。
+
+**落点**：`server/src/player/state.rs:1372-1433`（当前依据）→ R3 P1 后的 inventory slice loader；本 plan §P3。
+
+### P0.7 开放问题决议（pre-P0 收口，2026-08-03）
+
+#### #1 满包溢出策略
+
+**决议**：选择玩家脚下/机制结算点地面掉落，拒绝个人暂存箱。
+
+- 复用现役 `add_item_to_player_inventory_or_ground` 与 `rebuild_and_drop_overflow` 语义，减少第二套持久化、权限、过期与 UI 生命周期。
+- 地面掉落保留末法争夺风险；通过 dropped id + instance id + world position/dimension receipt 保证可追踪。
+- 仅容量不足可降级，结构错误 fail closed；无真实世界上下文不得伪造 fallback。
+
+**落点**：`server/src/inventory/mod.rs:1839`、`:5016`（依据）；本 plan §P0.2、§P0.3、§P2。
+
+#### #2 pre-#249 老布局迁移是否并入
+
+**决议**：并入 P3，但在 R3 P1 后实施；R10 提供纯迁移，R3 负责 load/save 编排。
+
+**落点**：`server/src/player/state.rs:1372-1433`（依据）；本 plan §P0.6、§P3。
+
+原开放问题全部已在本节收口。原题保留如下以备追溯，**实施时以 §P0.7 决议为准**：
+
+1. 满包溢出策略：脚下掉落 vs 个人暂存箱。
+2. pre-#249 老存档迁移是否并入本轨 P3。
+
+## P1 — 巨石拆分 + `InventoryTxn` 骨架（⬜）
+
+> 前置：R3 P1 已 merge；仅机械拆分，不夹带 P2/P3 行为修复。
+
+- 按 §P0.1 建立 `model.rs`、`registry.rs`、`grid.rs`、`txn.rs`、`container.rs`、`migration.rs`，收薄 `mod.rs`；现有 public import 直接迁到新 canonical 路径并统一 re-export，不建立双实现兼容层。
+- 平移现有测试并保持行为等价；新增 module ownership pin，禁止 grid/txn 算法回流 `mod.rs`。
+- 落地 §P0.2 类型骨架、staged validation/commit 基础设施与 error/receipt pin tests；生产调用暂不全量切换。
+- 验收：server 完整门禁全绿；`mod.rs` 不再承担具体 inventory 算法；现有 inventory 测试数量不得减少。
+
+## P2 — 交付/消费路径统一（⬜）
+
+- give、craft、alchemy、forge、loot/pickup 全部改走 `InventoryTxn::deliver` / `consume_checked` / `pickup_and_merge`。
+- 删除按错误字符串前缀判断 public fallback 的调用契约，改用 typed error/disposition。
+- session 类调用严格执行“txn 成功（stored 或 spilled）后才 teardown”；失败不扣料、不删 session、不删 dropped entry。
+- 饱和测试覆盖：空包、恰好放满、少一格、同身份全 merge/部分 merge、不同动态身份拒绝 merge、无 spill context、每类结构错误、revision 单次 bump、总量守恒。
+
+## P3 — 网格/堆叠一致性 + 迁移（⬜）
+
+- 删除 `force_attach_item_to_inventory` 强塞路径；全量转移、遗骸与套包重建统一合法 attach，overflow 返回显式 spill receipt。
+- 拾取合并、rotate footprint、pack move receipt 落地；公共 S2C 变更服从 R6 文件所有权。
+- 按 §P0.6 完成 pre-#249 幂等迁移并接入 R3 hydration seam。
+- 饱和测试覆盖每个 footprint 边界、碰撞/swap/rotate 状态、pack rebuild overflow、迁移正反/幂等/字段守恒。
+
+## P4 — bot 验收 + 被吸收 plan 收口（⬜）
+
+1. `inv_full_delivery_matrix`：满包下 craft 完工、取丹、锻造出炉、give，断言 stored + spilled 总量不丢且失败不提前 teardown。
+2. `inv_stack_merge`：拾取同身份掉落，断言合并既有堆叠、revision 与 receipt；不同动态身份保持分栈。
+3. `inv_footprint_sync`：旋转/移动后断言 server snapshot、S2C event 与 client footprint 一致。
+4. `inv_pack_feedback`：pack stow/rebuild 成功和 overflow 均有稳定 typed receipt/权威 snapshot。
+5. `inv_give_visibility`：保留现有 production forge 真实 instance 可见性回归，不重复搭建平行场景。
+6. 按 §P0.5 逐项核验被吸收 skeleton 的代码、测试与证据，再依仓库三态规则分别收口；本 plan 未全部完成前不写 `Finish Evidence`、不归档。
