@@ -93,16 +93,18 @@ prepare_lock_file() {
     printf '[build-token] 槽位锁不是普通文件：%s\n' "$lock_file" >&2
     return 2
   fi
-  chmod 600 -- "$lock_file" || {
-    printf '[build-token] 无法将槽位锁权限收敛为 600：%s\n' "$lock_file" >&2
-    return 2
-  }
   local file_uid file_mode file_links
   read -r file_uid file_mode file_links < <(stat -Lc '%u %a %h' -- "$lock_file")
-  if [[ $file_uid != "$expected_uid" || $file_mode != 600 || $file_links != 1 ]]; then
-    printf '[build-token] 槽位锁必须是当前用户持有的 600 单链接普通文件，实际 uid=%s mode=%s links=%s：%s\n' \
+  if [[ $file_uid != "$expected_uid" || $file_links != 1 ]]; then
+    printf '[build-token] 槽位锁必须是当前用户持有的单链接普通文件，实际 uid=%s mode=%s links=%s：%s\n' \
       "$file_uid" "$file_mode" "$file_links" "$lock_file" >&2
     return 2
+  fi
+  if [[ $file_mode != 600 ]]; then
+    chmod 600 -- "$lock_file" || {
+      printf '[build-token] 无法将槽位锁权限收敛为 600：%s\n' "$lock_file" >&2
+      return 2
+    }
   fi
 }
 
@@ -112,47 +114,28 @@ done
 
 start_seconds=$SECONDS
 announced=0
-attempt=0
 while true; do
   for ((slot = 1; slot <= slots; slot++)); do
     lock_file="$lock_root/$kind-$slot.lock"
-    attempt=$((attempt + 1))
-    acquired_marker="$lock_root/.acquired-$kind-$$-$BASHPID-$attempt"
+    exec 9<>"$lock_file"
+    if flock --nonblock 9; then
+      printf '[build-token] %s 获得槽位 %s/%s（等待 %ss）：' \
+        "$kind" "$slot" "$slots" "$((SECONDS - start_seconds))" >&2
+      printf ' %q' "${command[@]}" >&2
+      printf '\n' >&2
 
-    # flock 自己打开并持有 path，--close 在 exec 构建命令前关闭该继承 FD；
-    # wrapper 父进程等待 command，cargo/Gradle daemon 与残留子孙不会继承锁。
-    set +e
-    flock --nonblock --close --conflict-exit-code 75 "$lock_file" \
-      bash -c '
-        set -euo pipefail
-        marker=$1
-        kind=$2
-        slot=$3
-        slots=$4
-        waited=$5
-        shift 5
-        : >"$marker"
-        printf "[build-token] %s 获得槽位 %s/%s（等待 %ss）：" \
-          "$kind" "$slot" "$slots" "$waited" >&2
-        printf " %q" "$@" >&2
-        printf "\n" >&2
-        exec "$@"
-      ' build-token-locked "$acquired_marker" "$kind" "$slot" "$slots" \
-      "$((SECONDS - start_seconds))" "${command[@]}"
-    status=$?
-    set -e
-
-    if [[ -e $acquired_marker ]]; then
-      rm -f -- "$acquired_marker"
+      set +e
+      "${command[@]}" 9>&-
+      status=$?
+      set -e
+      flock --unlock 9
+      exec 9>&-
       if ((status == 75)); then
         printf '[build-token] 构建命令返回 75\n' >&2
       fi
       exit "$status"
     fi
-    if ((status != 75)); then
-      printf '[build-token] flock 槽位 %d 失败，退出码 %d\n' "$slot" "$status" >&2
-      exit "$status"
-    fi
+    exec 9>&-
   done
 
   if ((announced == 0)); then

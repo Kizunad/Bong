@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 
 def ignore_signal(_signal_number: int, _frame: object) -> None:
@@ -116,6 +119,43 @@ def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
     return True
 
 
+def build_server_binary(server_directory: Path, build_token: Path) -> Path:
+    environment = os.environ.copy()
+    target_root = Path(
+        environment.get("CARGO_TARGET_DIR", str(server_directory / "target"))
+    )
+    if not target_root.is_absolute():
+        target_root = server_directory / target_root
+    subprocess.run(
+        [str(build_token), "cargo", "build", "--release"],
+        cwd=server_directory,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+        check=True,
+        close_fds=True,
+    )
+    built_binary = target_root / "release" / "bong-server"
+    if not built_binary.is_file():
+        raise RuntimeError(f"successful cargo build did not produce {built_binary}")
+    artifact_dir = Path(tempfile.mkdtemp(prefix="bong-e2e-server-"))
+    artifact = artifact_dir / "bong-server"
+    shutil.copy2(built_binary, artifact)
+    artifact.chmod(0o700)
+    return artifact
+
+
+def remove_artifact(artifact: Path | None) -> None:
+    if artifact is None:
+        return
+    try:
+        artifact.unlink(missing_ok=True)
+        artifact.parent.rmdir()
+    except OSError as error:
+        print(f"failed to remove immutable server artifact: {error}", file=sys.stderr)
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(
@@ -137,10 +177,14 @@ def main() -> int:
         signal.signal(signal_number, ignore_signal)
 
     server: subprocess.Popen[bytes] | None = None
+    artifact: Path | None = None
     try:
+        server_directory = Path(sys.argv[1]).resolve(strict=True)
+        build_token = Path(sys.argv[2]).resolve(strict=True)
+        artifact = build_server_binary(server_directory, build_token)
         server = subprocess.Popen(
-            [sys.argv[2], "cargo", "run", "--release"],
-            cwd=sys.argv[1],
+            [str(artifact)],
+            cwd=server_directory,
             close_fds=True,
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
@@ -148,9 +192,11 @@ def main() -> int:
         )
         sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
         sys.stdout.buffer.flush()
-    except (OSError, BrokenPipeError) as error:
-        print(f"failed to launch or publish release server readiness: {error}", file=sys.stderr)
-        return 2 if rollback_server(server) else 3
+    except (OSError, RuntimeError, subprocess.CalledProcessError, BrokenPipeError) as error:
+        print(f"failed to build, launch, or publish release server readiness: {error}", file=sys.stderr)
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     # Authority is not committed until the parent has pinned this PID, starttime,
     # executable identity, and PGID. EOF, read failure, or any byte other than C
@@ -159,9 +205,13 @@ def main() -> int:
         command = sys.stdin.buffer.read(1)
     except OSError as error:
         print(f"failed to read startup commit command: {error}", file=sys.stderr)
-        return 2 if rollback_server(server) else 3
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
     if command != b"C":
-        return 2 if rollback_server(server) else 3
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     # Publishing authority requires a second, post-consumption boundary: the
     # parent only trusts this exact flushed acknowledgement.
@@ -170,9 +220,12 @@ def main() -> int:
         sys.stdout.buffer.flush()
     except (OSError, BrokenPipeError) as error:
         print(f"failed to publish startup commit acknowledgement: {error}", file=sys.stderr)
-        return 2 if rollback_server(server) else 3
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     server.wait()
+    remove_artifact(artifact)
 
     # Do not relinquish the session/process-group identity when the direct child
     # exits. The E2E owner pins this PID/starttime/executable and removes us only

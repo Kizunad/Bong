@@ -23,8 +23,13 @@ if "$ROOT/scripts/build-token.sh" cargo test 2>&1 | tee /tmp/bong-test.log | tai
 
 echo ""
 echo "=== [3/4] Server smoke run (30s) ==="
-if "$ROOT/scripts/build-token.sh" cargo build 2>/dev/null; then pass "cargo build"; else fail "cargo build"; fi
-timeout 30s "$CARGO_TARGET_DIR/debug/bong-server" 2>&1 | tee /tmp/bong-smoke.log || true
+if "$ROOT/scripts/build-token.sh" cargo build 2>/dev/null; then
+    pass "cargo build"
+    timeout 30s "$CARGO_TARGET_DIR/debug/bong-server" 2>&1 | tee /tmp/bong-smoke.log || true
+else
+    fail "cargo build"
+    : >/tmp/bong-smoke.log
+fi
 grep -q "\[bong\]\[bridge\] tokio runtime started" /tmp/bong-smoke.log && pass "bridge startup" || fail "bridge startup"
 grep -Eq "$FALLBACK_WORLD_READY_PATTERN" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
 grep -q "\[bong\]\[player\] registering player init/cleanup systems" /tmp/bong-smoke.log && pass "player system" || fail "player system"

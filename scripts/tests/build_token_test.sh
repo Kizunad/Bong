@@ -177,13 +177,20 @@ start_cargo survivor
 if wait_file "$SANDBOX/crash_holder.started" && wait_file "$SANDBOX/survivor.started"; then
   start_cargo crash_waiter
   if not_started_briefly "$SANDBOX/crash_waiter.started"; then
-    kill -9 "${PIDS[0]}"
-    wait "${PIDS[0]}" 2>/dev/null || true
-    touch "$SANDBOX/crash_holder.release"
+    crash_holder_pid="${PIDS[0]}"
+    crash_child_pid="$(pgrep -P "$crash_holder_pid" | head -1)"
+    kill -9 "$crash_holder_pid"
+    wait "$crash_holder_pid" 2>/dev/null || true
     if wait_file "$SANDBOX/crash_waiter.started"; then
-      pass "持锁 wrapper 被 SIGKILL 后等待者获得槽位"
+      pass "持锁 wrapper 被 SIGKILL 后等待者获得槽位，无需释放 orphan command"
     else
       fail "SIGKILL 后槽位未自动释放"
+    fi
+    if [ -z "$crash_child_pid" ] || ! kill -0 "$crash_child_pid" 2>/dev/null; then
+      pass "wrapped command 不继承 token lock"
+    else
+      pass "orphan wrapped command 可存活但不再持有 token"
+      kill "$crash_child_pid" 2>/dev/null || true
     fi
   else
     fail "崩溃测试等待者未被双槽位阻塞"
@@ -194,6 +201,12 @@ fi
 for name in survivor crash_waiter; do touch "$SANDBOX/$name.release"; done
 for pid in "${PIDS[@]:1}"; do wait "$pid" 2>/dev/null || true; done
 PIDS=()
+
+if find "$SANDBOX/locks" -maxdepth 1 -name '.acquired-*' -print -quit | grep -q .; then
+  fail "wrapper 崩溃后不得留下 acquisition marker"
+else
+  pass "token acquisition 不依赖持久 marker 文件"
+fi
 
 start_cargo cwd_first
 start_cargo cwd_occupant
@@ -246,6 +259,23 @@ elif grep -q "不得是符号链接" "$SANDBOX/symlink.err"; then
   pass "锁目录 symlink fail closed"
 else
   fail "锁目录 symlink 拒绝缺少修复线索"
+fi
+
+hardlink_root="$SANDBOX/hardlink-locks"
+mkdir "$hardlink_root"
+chmod 700 "$hardlink_root"
+printf 'victim-content\n' >"$SANDBOX/hardlink-victim"
+chmod 640 "$SANDBOX/hardlink-victim"
+ln "$SANDBOX/hardlink-victim" "$hardlink_root/cargo-1.lock"
+if BONG_BUILD_TOKEN_DIR="$hardlink_root" "$TOKEN" cargo invalid >"$SANDBOX/hardlink.out" 2>"$SANDBOX/hardlink.err"; then
+  fail "hard-link slot lock 必须被拒绝"
+elif [ "$(stat -c %a "$SANDBOX/hardlink-victim")" != 640 ] \
+  || [ "$(cat "$SANDBOX/hardlink-victim")" != victim-content ]; then
+  fail "拒绝 hard-link lock 前不得修改 victim mode/content"
+elif grep -q "单链接普通文件" "$SANDBOX/hardlink.err"; then
+  pass "hard-link lock fail closed 且 victim 未被修改"
+else
+  fail "hard-link lock 拒绝缺少修复线索"
 fi
 
 printf '%s\n' '---'

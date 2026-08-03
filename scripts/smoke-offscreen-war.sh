@@ -23,7 +23,7 @@ ERROR_FILE="$EVIDENCE_DIR/${TASK_ID}-${SCRIPT_TAG}-error.log"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
-SERVER_BINARY="${CARGO_TARGET_DIR:-/tmp/bong-target}/release/bong-server"
+SERVER_BINARY="$RUN_DIR/bong-server"
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -171,6 +171,7 @@ if ! (
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo build --release
+  install -m 700 "${CARGO_TARGET_DIR:-/tmp/bong-target}/release/bong-server" "$SERVER_BINARY"
 ) >>"$SERVER_LOG" 2>&1; then
   finalize_failure "server" "server build failed; see $SERVER_LOG"
 fi

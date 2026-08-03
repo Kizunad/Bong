@@ -130,12 +130,19 @@ assert_dev_null_fd0() {
 fixture_dir="$TEST_ROOT/real-supervisor"
 fixture_bin="$fixture_dir/bin"
 fixture_server="$fixture_dir/server"
-cargo_pid_file="$fixture_dir/cargo.pid"
+fixture_target="$fixture_dir/target"
+cargo_pid_file="$fixture_dir/server.pid"
 descendant_pid_file="$fixture_dir/descendant.pid"
 build_token_args_file="$fixture_dir/build-token.args"
 build_token="$fixture_dir/build-token.sh"
-mkdir -p "$fixture_bin" "$fixture_server"
+mkdir -p "$fixture_bin" "$fixture_server" "$fixture_target"
 cat > "$fixture_bin/cargo" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 2 ] && [ "$1" = build ] && [ "$2" = --release ] || exit 43
+: "${CARGO_TARGET_DIR:?}"
+mkdir -p "$CARGO_TARGET_DIR/release"
+cat > "$CARGO_TARGET_DIR/release/bong-server" <<'SERVER'
 #!/usr/bin/env bash
 set -euo pipefail
 : "${SUPERVISOR_FIXTURE_CARGO_PID:?}"
@@ -149,6 +156,8 @@ printf '%s\n' "$BASHPID" > "$SUPERVISOR_FIXTURE_CARGO_PID"
 descendant=$!
 trap 'kill -KILL "$descendant" 2>/dev/null || true; wait "$descendant" 2>/dev/null || true; exit 0' TERM
 while :; do sleep 1; done
+SERVER
+chmod +x "$CARGO_TARGET_DIR/release/bong-server"
 FIXTURE
 chmod +x "$fixture_bin/cargo"
 cat > "$build_token" <<'FIXTURE'
@@ -167,6 +176,7 @@ start_direct_supervisor() {
     rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
     coproc DIRECT_SUPERVISOR {
         exec env \
+            CARGO_TARGET_DIR="$fixture_target" \
             PATH="$fixture_bin:$PATH" \
             SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
             SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
@@ -184,14 +194,14 @@ start_direct_supervisor() {
     DIRECT_OWNER_PID="${ready_line#READY pid=}"
     track_active_owner "$DIRECT_OWNER_PID"
     wait_for_file "$build_token_args_file" || fail "build-token fixture did not publish argv"
-    [ "$(tr '\n' ' ' < "$build_token_args_file")" = "cargo run --release " ] \
-        || fail "supervisor did not route exact cargo run --release argv through build-token"
-    wait_for_file "$cargo_pid_file" || fail "cargo fixture did not publish its PID"
-    wait_for_file "$descendant_pid_file" || fail "cargo descendant did not publish its PID"
+    [ "$(tr '\n' ' ' < "$build_token_args_file")" = "cargo build --release " ] \
+        || fail "supervisor did not route exact cargo build --release argv through build-token"
+    wait_for_file "$cargo_pid_file" || fail "server artifact did not publish its PID"
+    wait_for_file "$descendant_pid_file" || fail "server descendant did not publish its PID"
     DIRECT_CARGO_PID="$(<"$cargo_pid_file")"
     DIRECT_DESCENDANT_PID="$(<"$descendant_pid_file")"
-    assert_dev_null_fd0 "$DIRECT_CARGO_PID" "cargo child before commit"
-    assert_dev_null_fd0 "$DIRECT_DESCENDANT_PID" "cargo descendant before commit"
+    assert_dev_null_fd0 "$DIRECT_CARGO_PID" "server artifact before commit"
+    assert_dev_null_fd0 "$DIRECT_DESCENDANT_PID" "server descendant before commit"
 }
 
 assert_direct_rollback() {
@@ -228,8 +238,8 @@ IFS= read -r -t 5 -u "$DIRECT_READY_FD" acknowledgement \
     || fail "supervisor acknowledgement must be exact, got $acknowledgement"
 close_fd_if_open "$DIRECT_READY_FD" read
 DIRECT_READY_FD=""
-assert_dev_null_fd0 "$DIRECT_CARGO_PID" "cargo child after commit"
-assert_dev_null_fd0 "$DIRECT_DESCENDANT_PID" "cargo descendant after commit"
+assert_dev_null_fd0 "$DIRECT_CARGO_PID" "server artifact after commit"
+assert_dev_null_fd0 "$DIRECT_DESCENDANT_PID" "server descendant after commit"
 kill -0 "$DIRECT_OWNER_PID" 2>/dev/null \
     || fail "committed supervisor did not retain owner identity"
 bong_server_port_is_open() { return 1; }
@@ -275,6 +285,7 @@ assert_parent_unpublished() {
 
 # Happy path uses the production supervisor and publishes only after exact ACK.
 rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
+CARGO_TARGET_DIR="$fixture_target" \
 SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
 SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
 SUPERVISOR_FIXTURE_BUILD_TOKEN_ARGS="$build_token_args_file" \
@@ -295,8 +306,8 @@ start_server_process_group "$TEST_ROOT/parent-normal.log" 0 1 \
 track_active_owner "$SERVER_PID"
 wait_for_file "$cargo_pid_file" || fail "parent cargo fixture did not publish its PID"
 wait_for_file "$descendant_pid_file" || fail "parent cargo descendant did not publish its PID"
-assert_dev_null_fd0 "$(<"$cargo_pid_file")" "parent cargo child after commit"
-assert_dev_null_fd0 "$(<"$descendant_pid_file")" "parent cargo descendant after commit"
+assert_dev_null_fd0 "$(<"$cargo_pid_file")" "parent server artifact after commit"
+assert_dev_null_fd0 "$(<"$descendant_pid_file")" "parent server descendant after commit"
 bong_server_port_is_open() { return 1; }
 bong_server_stop_owned_process_group_and_release_port \
     "$SERVER_PID" "$SERVER_OWNER_STARTTIME" "$SERVER_OWNER_EXECUTABLE_IDENTITY" \

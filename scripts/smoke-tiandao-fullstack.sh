@@ -359,22 +359,24 @@ else
   fail "redis ping"
 fi
 
+FULLSTACK_SERVER_BINARY="$RUN_DIR/bong-server"
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo build
+  install -m 700 "$CARGO_TARGET_DIR/debug/bong-server" "$FULLSTACK_SERVER_BINARY"
 ) >>"$FULLSTACK_SERVER_LOG" 2>&1; then
   pass "server build"
+  (
+    cd "$ROOT/server"
+    exec "$FULLSTACK_SERVER_BINARY" >>"$FULLSTACK_SERVER_LOG" 2>&1
+  ) &
+  SERVER_PID="$!"
 else
   fail "server build"
+  SERVER_PID=""
 fi
-(
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  cd "$ROOT/server"
-  exec "$CARGO_TARGET_DIR/debug/bong-server" >>"$FULLSTACK_SERVER_LOG" 2>&1
-) &
-SERVER_PID="$!"
 
 if wait_for_pattern "$FULLSTACK_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 120; then
   pass "server world bootstrap"

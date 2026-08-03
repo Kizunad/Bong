@@ -129,15 +129,21 @@ run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agen
 
 stage "4/10" "Server entrypoint startup"
 run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
+server_target_root="${CARGO_TARGET_DIR:-$ROOT/server/target}"
+if [[ "$server_target_root" != /* ]]; then
+  server_target_root="$ROOT/server/$server_target_root"
+fi
+server_binary="$server_target_root/debug/bong-server"
+[[ -x "$server_binary" ]] || fail_stage "server-start" "successful cargo build did not produce $server_binary"
 server_start_exit=0
 echo "[run][server-start] timeout 20s built bong-server"
-timeout 20s bash -lc "cd '$ROOT/server' && exec ./target/debug/bong-server" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
+timeout 20s "$server_binary" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
 echo "[server-start] exit=${server_start_exit}, log=${SERVER_BOOT_LOG}"
 if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
   fail_stage "server-start" "built bong-server failed before startup anchors"
 fi
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[bridge\\] tokio runtime started" "bridge runtime started"
-require_anchor "server-start" "$SERVER_BOOT_LOG" "creating overworld" "world creation"
+require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[world\\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+" "fallback world readiness"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[player\\] registering player init/cleanup systems" "player systems registered"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[redis\\] connecting to" "redis bridge connection"
 

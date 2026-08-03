@@ -73,8 +73,12 @@ SPECS = {
         ],
     },
     "scripts/lib/bong-process-group-supervisor.py": {
-        "required": ['[sys.argv[2], "cargo", "run", "--release"]'],
-        "forbid": [r'subprocess\.Popen\(\s*\["cargo"'],
+        "required": [
+            '[str(build_token), "cargo", "build", "--release"]',
+            "shutil.copy2(built_binary, artifact)",
+            "[str(artifact)]",
+        ],
+        "forbid": [r'subprocess\.Popen\(\s*\["cargo"', r'cargo.*run'],
     },
     "scripts/start.sh": {
         "required": ['"$ROOT/scripts/build-token.sh" cargo build --release'],
@@ -83,9 +87,10 @@ SPECS = {
     "scripts/smoke-law-engine.sh": {
         "required": [
             "'$ROOT/scripts/build-token.sh' cargo build",
-            "exec ./target/debug/bong-server",
+            'server_target_root="${CARGO_TARGET_DIR:-$ROOT/server/target}"',
+            'timeout 20s "$server_binary"',
         ],
-        "forbid": [r"build-token\.sh' cargo run"],
+        "forbid": [r"build-token\.sh' cargo run", r'exec \./target/debug/bong-server'],
     },
     "scripts/dev-reload.sh": {
         "required": [
@@ -106,10 +111,11 @@ DIRECT_COMMAND_EXEMPTIONS = {
 }
 DIRECT_BUILD_PATTERNS = (
     re.compile(
-        r"(?:^|[;&|()]\s*|\bexec\s+|\bnohup\s+|\btimeout\s+\S+\s+)"
+        r"(?:^\s*|[;&|()]\s*|\bexec\s+|\bnohup\s+|\btimeout\s+\S+\s+)"
+        r"(?:[A-Za-z_][A-Za-z0-9_]*=(?:[^\s;|&]+|'[^']*'|\"[^\"]*\")\s+)*"
         r"cargo\s+(?:build|check|clippy|fmt|metadata|new|run|test)\b"
     ),
-    re.compile(r"\./gradlew\s+"),
+    re.compile(r"(?:^\s*|[;&|()]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*\./gradlew\s+"),
 )
 
 
@@ -149,6 +155,9 @@ def direct_build_failures(relative: str, text: str) -> list[str]:
 
 def test_direct_build_detection() -> None:
     cases = (
+        ("  cargo test", True),
+        ("  CARGO_BUILD_JOBS=1 cargo test", True),
+        ("  ./gradlew test", True),
         ("cargo test # build-token.sh", True),
         ("./gradlew test # build-token.sh", True),
         ('"$ROOT/scripts/build-token.sh" cargo test', False),
