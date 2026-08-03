@@ -14,12 +14,12 @@
 - **进料**：各域游戏事件（emit 调用点）、`world` 维度/zone 信息（作用域过滤）。
 - **出料**：`bong:server_data` 单通道（目标态：28 旁路全部收编或显式豁免登记）；join/重连首包快照集契约（R2 清干净后靠它灌满）。
 - **共享类型**：新 server `network/emit/` builder（`scope: Global | Dimension | Zone | Player`）；client 桥接层唯一的枚举前缀剥离函数。
-- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。R1 craft 例外要求显式冻结并一次性切换 `CraftOpen` / `CraftPause` / `CraftResume` C2S intent 与对应 S2C session-state payload；现有 `CraftCancel` 保留为唯一主动取消 intent，关屏不得复用它。R6 同时拥有 `agent/packages/schema/src/client-request.ts` TypeBox source、生成 JSON Schema 与提交的 `@bong/schema` dist、protobuf/Rust mirror/converter、samples，以及 client `ClientRequestProtocol.encodeCraftOpen/Pause/Resume` 与 `ClientRequestSender.sendCraftOpen/Pause/Resume` producer APIs；R7 只消费这些接口。
+- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。R1 craft 例外要求显式冻结并一次性切换 `CraftOpen` / `CraftPause` / `CraftResume` C2S intent，并用 `CraftSessionStateV2` 一次性替换既有 S2C `CraftSessionStateV1`：V2 除现有进度字段外，固定携带 `session_key`、单调 `generation`、`phase: Idle | Running | Paused | Suspended | AwaitingDelivery | DeliveryPending | Terminal`；`Idle` 明确无 session identity，其余 phase 必须携带 identity/version。现有 `CraftCancel` 保留为唯一主动取消 intent，关屏不得复用它。R6 同时拥有 C2S 的 `agent/packages/schema/src/client-request.ts` TypeBox source、生成 JSON Schema 与提交的 `@bong/schema` dist、protobuf/Rust mirror/converter、samples、client encode/send APIs；并拥有 S2C `CraftSessionStateV2` 在 `agent/packages/schema/src/craft.ts`→generated JSON Schema/dist→`proto/bong/envelope.proto`→Rust `server/src/schema/craft.rs`/`proto_convert.rs`→`network/craft_emit.rs` producer→`ProtoServerDataBridge`→`CraftSessionStateHandler`/`CraftStore` consumer 的一次性全链替换，同一提交删除 V1 schema/proto/bridge 分支。R7 只消费这些冻结接口。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单。
-- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发；同时交付 R1 craft 所需 `CraftOpen`/`CraftPause`/`CraftResume` TypeBox source→generated JSON Schema/dist→proto/Rust mirror/converter→samples 全链，以及 client `ClientRequestProtocol` encode / `ClientRequestSender` send APIs 与 producer contract tests，生产 decoder/handler 由 R4 消费。
+- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发；同时交付 R1 craft 所需 C2S `CraftOpen`/`CraftPause`/`CraftResume` TypeBox source→generated JSON Schema/dist→proto/Rust mirror/converter→正反 samples，以及 client `ClientRequestProtocol` encode / `ClientRequestSender` send APIs 与 producer contract tests，生产 decoder/handler 由 R4 消费；同阶段原子交付 S2C `CraftSessionStateV2` hydration 扩展的 TypeBox/schema/dist、proto/Rust mirror/converter、`craft_emit` phase/session_key/generation producer、bridge/router/handler/CraftStore consumer 与 samples。contract pins 必须证明：guarded restore 后首包按 server 权威 phase/identity/version hydrate；匹配 `Paused` 使 R7 恰发一次 Resume；Idle、Running、Suspended、DeliveryPending、Terminal、missing/stale/mismatched session key 或 generation 均不发 Resume；断线重连、乱序旧 generation 与同 key 新 generation 不得回退 store。
 - ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）。
 - ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
 - ⬜ P4 契约 pin 全量化：R6 P1 落地三种 craft intent 后，以 116 C2S + 144 S2C 每变体至少一条正反 sample 对拍（在此之前当前 C2S baseline 仍为 113；schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次。
@@ -41,8 +41,8 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 1. `wire_scope_dimension`：主世界 bot + TSY bot 双开，主世界触发 vfx/audio→断言 TSY bot 收不到（P6 protobuf 深断言配合）。
 2. `wire_dimension_transfer_resync`：bot 跨位面→断言 env/season/zone 大气全量重发。
-3. `wire_contract_sweep`：对 144 S2C 变体的 sample 对拍在 CI 常绿（配 proto-breaking 深检，联动 V 轨）。
-4. `wire_join_snapshot`：重连首包快照集完整（与 R2 的 `reconnect_state_freshness` 同场景）。
+3. `wire_contract_sweep`：对 144 S2C 变体的 sample 对拍在 CI 常绿（配 proto-breaking 深检，联动 V 轨）；`CraftSessionStateV2` 另有 phase 全变体、identity/generation required/forbidden 组合、stale generation 拒绝、proto→bridge→handler→CraftStore roundtrip pins。
+4. `wire_join_snapshot`：重连首包快照集完整（与 R2 的 `reconnect_state_freshness` 同场景）；checkpointed craft guarded restore 后必须包含单个权威 `CraftSessionStateV2` hydration，server `Paused`/identity/generation 与 client store 对拍，idle/terminal/delivery-pending 不得被伪装成可 Resume。
 
 ## 开放问题（pre-P0 收口）
 

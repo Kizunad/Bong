@@ -4,7 +4,7 @@
 
 ## 现状证据（2026-07-27 侦察）
 
-- `network/client_request_handler.rs:522` `handle_client_request_payloads` 单函数跨 522-2960 行，巨型 match 覆盖 `ClientRequestV1` 的 116 个变体；`CombatRequestParams` 一个 SystemParam 30 个字段。
+- `network/client_request_handler.rs:522` `handle_client_request_payloads` 单函数跨 522-2960 行，巨型 match 当前覆盖 `ClientRequestV1` 的 113 个生产变体；R6 P1 新增并接通 `CraftOpen`/`CraftPause`/`CraftResume` 后才扩为 116。`CombatRequestParams` 一个 SystemParam 30 个字段。
 - 门禁分散手写：8 个文件各自定义 `*_MAX_DISTANCE`/`*_RANGE_SQ`（`client_request_handler.rs:468-469`、`craft/workbench.rs:76` Chebyshev、`mineral/probe.rs`、`npc/relic.rs`、`supply_coffin/authority.rs`、`zhenfa/network_array.rs` 等），距离度量都不统一；`CurrentDimension` 在 handler 内被 13 处内联比对，无统一 helper。
 - 后果即 bughunt 大簇：跨维开工作台/布阵/夺舍/交易/拾取、无 reach 校验放方块、先扣物品后校验吞丹、无所有权校验拆棺。
 - `zone-lookup-overworld-hardcode`：zone 查找硬编码主世界，是维度感知缺失的底层同源。
