@@ -141,7 +141,7 @@ proto3 enum → legacy handler 字符串转换的目标态集中在 `ProtoServer
 3. `pascal_case`：剥前缀后多段 PascalCase（`ZHENFA_WARD_ALERT → ZhenfaWardAlert`）。
 4. `snake_lower_omit_unspecified`：与 1 相同，但 proto 默认 `*_UNSPECIFIED` 删除字段，让 legacy required-field gate fail closed。
 
-P0 bridge-local 盘点为 **43 个唯一前缀 / 57 处 lexical literal 引用**；语义 pin 另以 prefix→field→mode 多重集冻结，因 helper 复用和 craft `qi_color_min[0]` 手写分支，语义操作共 **58 处**。`InventoryEventHandler` 仍在嵌套 `inventory_event.from|to.equip.slot` 处理 `EQUIP_SLOT_`（1 个前缀 / 1 处 production lexical 引用），所以完整 production receive path 是 **44 个唯一前缀 / 58 处 lexical literal 引用**，语义 pin 共 **59 处**。`WireS2cContractPinTest` 同时锁定 lexical multiset、bridge-local semantic multiset 与 full-path 文件归属；P2 才把该 handler 逻辑迁回 bridge。
+P0 bridge-local 盘点为 **43 个唯一前缀 / 57 处 lexical literal 引用**；语义 pin 另以 prefix→field→mode 多重集冻结，因 helper 复用和 craft `qi_color_min[0]` 手写分支，语义操作共 **58 处**。`InventoryEventHandler` 仍在嵌套 `inventory_event.from|to.equip` 处理 `EQUIP_SLOT_` 与必填 `EQUIP_STATE_`（2 个前缀 / 2 处 production lexical 引用 / 2 处语义操作），所以完整 production receive path 是 **45 个唯一前缀 / 59 处 lexical literal 引用**，语义 pin 共 **60 处**。`WireS2cContractPinTest` 同时锁定 lexical multiset、bridge-local semantic multiset 与 full-path 文件归属；P2 才把该 handler 逻辑迁回 bridge。
 
 ## 5. join / reconnect replay 权威清单
 
@@ -180,7 +180,7 @@ P1 `JoinSnapshotKey` 只覆盖真正的 strict/join-derived/cache-driven 项；�
 
 ## 6. 所有权与 P0 不变量
 
-- R6 P0 只改本文与 pin tests；生产 `.rs` / `.java` 零修改。
+- R6 P0 的生产改动仅收紧既有 `InventoryEventHandler.parseLocation` 的 equip wire 边界：`state` 必填，手持槽只接受 `HELD`，穿戴槽只接受 `WORN`；其余 production `.rs` / `.java` 零修改。
 - R2 独占 `clearClientStateOnDisconnect`、Store lifecycle/gate；R6 的 receiver 扫描只读源码，不编辑这些区段。
 - R3 独占 `server/src/persistence/**` 与 autosave；join 清单只登记网络 producer，不改变 hydration。
 - R4 独占 `client_request_handler.rs`；`core_absorption_hallucination` 的 sender 等 R4 交付 API 后迁移。
@@ -188,6 +188,6 @@ P1 `JoinSnapshotKey` 只覆盖真正的 strict/join-derived/cache-driven 项；�
 ## 7. P0 本地验收边界
 
 - client：Java 17 下执行 `./gradlew test build -x runGametest --no-daemon`，完整 gate 通过。
-- server：`wire_s2c_contract_pin` standalone lexical tests 6/6 通过；最终仍须在共享 `/tmp/bong-cargo.lock` 下完成 Cargo target test 与 server 全门禁。
+- server：`wire_s2c_contract_pin` standalone lexical tests 18/18 通过；最终仍须在共享 `/tmp/bong-cargo.lock` 下完成 Cargo target test 与 server 全门禁。
 - 安全隔离：本地未运行 `scripts/test-tmux-shutdown-order.sh`、`scripts/test-server-lifecycle.sh`，也未运行会间接调用两者的 suite；该覆盖留给 GitHub e2e。
-- P0 不改 production `.rs` / `.java`，只改 contract 文档与 source/contract pin tests。
+- P0 除 `InventoryEventHandler.parseLocation` 的 equip state 边界外不改 production `.rs` / `.java`；其余改动仅涉及 contract 文档与 source/contract pin tests。

@@ -635,30 +635,39 @@ public class InventoryEventHandlerTest {
         );
     }
 
-    @ParameterizedTest(name = "invalid equip state: {0}")
-    @MethodSource("invalidEquipStates")
-    void movedToEquipThroughRealProtoWireRejectsMissingOrMismatchedState(
+    @ParameterizedTest(name = "invalid equip state on {0}: {1}")
+    @MethodSource("invalidEquipStateLocations")
+    void equipLocationsThroughRealProtoWireRejectMissingOrMismatchedState(
+            String location,
             String label,
             Envelope.EquipSlot wireSlot,
             Envelope.EquipState wireState,
             boolean omitState
     ) {
-        InventoryModel baseline = InventoryModel.builder()
-                .containers(InventoryModel.DEFAULT_CONTAINERS)
-                .gridItem(
-                        InventoryItem.createFull(
-                                1005L,
-                                "armor_bone_chestplate",
-                                "骨甲胸甲",
-                                1, 1, 1.4,
-                                "common",
-                                "fixture",
-                                1, 0.8, 1.0
-                        ),
-                        InventoryModel.PRIMARY_CONTAINER_ID,
-                        0, 0
-                )
-                .build();
+        InventoryItem equippedItem = InventoryItem.createFull(
+                1005L,
+                "armor_bone_chestplate",
+                "骨甲胸甲",
+                1, 1, 1.4,
+                "common",
+                "fixture",
+                1, 0.8, 1.0
+        );
+        InventoryModel.Builder baselineBuilder = InventoryModel.builder()
+                .containers(InventoryModel.DEFAULT_CONTAINERS);
+        if (location.equals("moved.to")) {
+            baselineBuilder.gridItem(
+                    equippedItem,
+                    InventoryModel.PRIMARY_CONTAINER_ID,
+                    0, 0
+            );
+        } else {
+            baselineBuilder.equip(
+                    com.bong.client.inventory.model.EquipSlotType.CHEST,
+                    equippedItem
+            );
+        }
+        InventoryModel baseline = baselineBuilder.build();
         InventoryStateStore.applyAuthoritativeSnapshot(baseline, 5L);
 
         Envelope.InventoryLocationEquip.Builder equip = Envelope.InventoryLocationEquip.newBuilder()
@@ -666,28 +675,58 @@ public class InventoryEventHandlerTest {
         if (!omitState) {
             equip.setState(wireState);
         }
-        Envelope.InventoryEventMoved moved = Envelope.InventoryEventMoved.newBuilder()
-                .setRevision(6)
-                .setInstanceId(1005)
-                .setFrom(Envelope.InventoryLocation.newBuilder()
-                        .setContainer(Envelope.InventoryLocationContainer.newBuilder()
-                                .setContainerId("main_pack")
-                                .setRow(0)
-                                .setCol(0)))
-                .setTo(Envelope.InventoryLocation.newBuilder().setEquip(equip))
+        Envelope.InventoryLocation equipLocation = Envelope.InventoryLocation.newBuilder()
+                .setEquip(equip)
                 .build();
+        Envelope.InventoryEvent.Builder event;
+        if (location.equals("dropped.from")) {
+            event = Envelope.InventoryEvent.newBuilder().setDropped(
+                    Envelope.InventoryEventDropped.newBuilder()
+                            .setRevision(6)
+                            .setInstanceId(1005)
+                            .setFrom(equipLocation)
+                            .setWorldPosX(8.5)
+                            .setWorldPosY(66.0)
+                            .setWorldPosZ(8.5)
+                            .setItem(baseItemView(1005, "armor_bone_chestplate", "骨甲胸甲"))
+            );
+        } else {
+            Envelope.InventoryLocation containerLocation = Envelope.InventoryLocation.newBuilder()
+                    .setContainer(Envelope.InventoryLocationContainer.newBuilder()
+                            .setContainerId("main_pack")
+                            .setRow(0)
+                            .setCol(0))
+                    .build();
+            event = Envelope.InventoryEvent.newBuilder().setMoved(
+                    Envelope.InventoryEventMoved.newBuilder()
+                            .setRevision(6)
+                            .setInstanceId(1005)
+                            .setFrom(location.equals("moved.from") ? equipLocation : containerLocation)
+                            .setTo(location.equals("moved.to") ? equipLocation : containerLocation)
+            );
+        }
 
-        ServerDataDispatch dispatch = dispatchThroughRealProtoWire(
-                Envelope.InventoryEvent.newBuilder().setMoved(moved));
+        ServerDataDispatch dispatch = dispatchThroughRealProtoWire(event);
 
-        assertFalse(dispatch.handled(), label + " must be rejected at the wire boundary");
+        String scenario = location + " / " + label;
+        assertFalse(dispatch.handled(), scenario + " must be rejected at the wire boundary");
         assertEquals(5L, InventoryStateStore.revision(),
-                label + " must not advance the authoritative revision");
-        assertEquals("armor_bone_chestplate",
-                InventoryStateStore.snapshot().gridItems().get(0).item().itemId(),
-                label + " must not remove the source item");
-        assertTrue(InventoryStateStore.snapshot().equipped().isEmpty(),
-                label + " must not mutate equipment slots");
+                scenario + " must not advance the authoritative revision");
+        assertEquals(baseline, InventoryStateStore.snapshot(),
+                scenario + " must not mutate any inventory location");
+        assertTrue(DroppedItemStore.snapshot().isEmpty(),
+                scenario + " must not create a dropped-store entry");
+    }
+
+    private static java.util.stream.Stream<Arguments> invalidEquipStateLocations() {
+        return java.util.stream.Stream.of("moved.from", "moved.to", "dropped.from")
+                .flatMap(location -> invalidEquipStates().map(arguments -> Arguments.of(
+                        location,
+                        arguments.get()[0],
+                        arguments.get()[1],
+                        arguments.get()[2],
+                        arguments.get()[3]
+                )));
     }
 
     private static java.util.stream.Stream<Arguments> invalidEquipStates() {

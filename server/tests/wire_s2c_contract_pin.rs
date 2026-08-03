@@ -1301,9 +1301,10 @@ fn add_systems_orders_callee_after(function: &[String], callee: &str, dependency
     expected.extend(path_tokens(dependency));
     expected.push(")".to_string());
     unconditional_add_systems_arguments(function).any(|arguments| {
-        arguments
-            .windows(expected.len())
-            .any(|window| window == expected)
+        registered_system_expression_contains(arguments, &path_tokens(callee))
+            && arguments
+                .windows(expected.len())
+                .any(|window| window == expected)
     })
 }
 
@@ -1339,11 +1340,20 @@ fn registered_system_expression_contains(arguments: &[String], expected: &[Strin
                     if window != expected {
                         return false;
                     }
-                    let preceded_by_delimiter =
+                    let at_expression_boundary =
                         offset == 0 || matches!(argument[offset - 1].as_str(), "(" | ",");
-                    let modifier_argument =
-                        offset > 1 && matches!(argument[offset - 2].as_str(), "after" | "before");
-                    preceded_by_delimiter && !modifier_argument
+                    let method_argument = offset >= 3
+                        && argument[offset - 3] == "."
+                        && argument[offset - 1] == "(";
+                    let expression_end = (offset + expected.len()..argument.len())
+                        .find(|cursor| argument[*cursor] == ",")
+                        .unwrap_or(argument.len());
+                    let runtime_gated = argument[offset + expected.len()..expression_end]
+                        .windows(2)
+                        .any(|window| {
+                            matches!(window, [dot, modifier] if dot == "." && matches!(modifier.as_str(), "run_if" | "distributive_run_if"))
+                        });
+                    at_expression_boundary && !method_argument && !runtime_gated
                 })
             {
                 return true;
@@ -1379,7 +1389,7 @@ fn contains_unconditional_call(tokens: &[String], path: &str) -> bool {
             if !tokens[statement_start..index]
                 .iter()
                 .any(|token| matches!(token.as_str(), "if" | "else" | "match" | "let" | "="))
-                && !prefix_may_exit(&tokens[body_start + 1..statement_start])
+                && !prefix_may_exit(&tokens[body_start + 1..index])
             {
                 return true;
             }
@@ -1407,18 +1417,66 @@ fn delimiter_depths(tokens: &[String], body_start: usize) -> Vec<(usize, usize, 
 }
 
 fn prefix_may_exit(tokens: &[String]) -> bool {
-    let mut braces = 0usize;
+    let mut braces = Vec::new();
     let mut parens = 0usize;
-    for token in tokens {
+    let mut brackets = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        let control_block = braces.iter().any(|control| *control);
+        if (braces.is_empty()
+            && parens == 0
+            && brackets == 0
+            && matches!(
+                token.as_str(),
+                "loop"
+                    | "while"
+                    | "for"
+                    | "return"
+                    | "break"
+                    | "continue"
+                    | "unreachable"
+                    | "todo"
+                    | "panic"
+                    | "?"
+            ))
+            || (control_block
+                && matches!(
+                    token.as_str(),
+                    "return" | "break" | "continue" | "unreachable" | "todo" | "panic" | "?"
+                ))
+        {
+            return true;
+        }
         match token.as_str() {
-            "{" => braces += 1,
-            "}" => braces = braces.saturating_sub(1),
+            "{" => braces.push(is_control_block(tokens, index)),
+            "}" => {
+                braces.pop();
+            }
             "(" => parens += 1,
             ")" => parens = parens.saturating_sub(1),
-            "return" | "break" | "continue" | "unreachable" | "todo" => return true,
-            "panic" if braces == 0 && parens == 0 => return true,
-            "?" if braces == 0 && parens == 0 => return true,
+            "[" => brackets += 1,
+            "]" => brackets = brackets.saturating_sub(1),
             _ => {}
+        }
+    }
+    false
+}
+
+fn is_control_block(tokens: &[String], open_index: usize) -> bool {
+    if open_index == 0 || tokens[open_index - 1] == "||" {
+        return false;
+    }
+    if tokens[open_index - 1] == "=>" {
+        return true;
+    }
+    for token in tokens[..open_index].iter().rev() {
+        if matches!(token.as_str(), ";" | "{" | "}") {
+            break;
+        }
+        if matches!(
+            token.as_str(),
+            "if" | "else" | "match" | "loop" | "while" | "for"
+        ) {
+            return true;
         }
     }
     false
@@ -2193,32 +2251,55 @@ fn registration_pin_rejects_conditional_and_early_exit_paths() {
         r#"fn register(app: &mut App) {
             match mode { Mode::Ready => register_app_wiring(app), _ => {} }
         }"#,
+        r#"fn register(app: &mut App) {
+            loop {}
+            register_app_wiring(app);
+        }"#,
+        r#"fn register(app: &mut App) {
+            if disabled { panic!("disabled"); }
+            register_app_wiring(app);
+        }"#,
+        r#"fn register(app: &mut App) -> Result<(), Error> {
+            if disabled { fail()?; }
+            register_app_wiring(app);
+            Ok(())
+        }"#,
     ] {
         let tokens = rust_tokens(source);
         let function =
             function_token_slice(&tokens, "register").expect("synthetic register parses");
         assert!(
             !contains_unconditional_call(function, "register_app_wiring"),
-            "conditional or early-exit registration must fail production reachability"
+            "conditional or early-exit registration must fail production reachability: {source}"
         );
     }
 }
 
 #[test]
 fn registration_pin_rejects_conditional_add_systems() {
-    let registration = rust_tokens(
+    for source in [
         r#"fn register(app: &mut App) {
             if enabled {
                 app.add_systems(Update, expected_producer);
             }
         }"#,
-    );
-    let function =
-        function_token_slice(&registration, "register").expect("synthetic register parses");
-    assert!(
-        !add_systems_registers_callee(function, "expected_producer"),
-        "add_systems inside a conditional block is not production-unconditional wiring"
-    );
+        r#"fn register(app: &mut App) {
+            loop {}
+            app.add_systems(Update, expected_producer);
+        }"#,
+        r#"fn register(app: &mut App) {
+            if disabled { panic!("disabled"); }
+            app.add_systems(Update, expected_producer);
+        }"#,
+    ] {
+        let registration = rust_tokens(source);
+        let function =
+            function_token_slice(&registration, "register").expect("synthetic register parses");
+        assert!(
+            !add_systems_registers_callee(function, "expected_producer"),
+            "conditional, unreachable, or early-exit add_systems wiring must fail closed"
+        );
+    }
 }
 
 #[test]
@@ -2308,18 +2389,29 @@ fn emitter_scanner_keeps_cfg_not_test_production_items() {
 }
 
 #[test]
-fn registration_pin_rejects_unrelated_after_modifier() {
-    let registration = rust_tokens(
+fn registration_pin_rejects_modifier_only_and_runtime_gated_mentions() {
+    for source in [
         r#"fn register_app_wiring(app: &mut App) {
             app.add_systems(Update, other_system.after(expected_producer));
         }"#,
-    );
-    let function = function_token_slice(&registration, "register_app_wiring")
-        .expect("synthetic register_app_wiring parses");
-    assert!(
-        !add_systems_registers_callee(function, "expected_producer"),
-        "a producer nested as an ordering dependency is not registered as the system"
-    );
+        r#"fn register_app_wiring(app: &mut App) {
+            app.add_systems(Update, other_system.ambiguous_with(expected_producer));
+        }"#,
+        r#"fn register_app_wiring(app: &mut App) {
+            app.add_systems(Update, expected_producer.run_if(|| false));
+        }"#,
+        r#"fn register_app_wiring(app: &mut App) {
+            app.add_systems(Update, expected_producer.distributive_run_if(resource_exists::<Gate>));
+        }"#,
+    ] {
+        let registration = rust_tokens(source);
+        let function = function_token_slice(&registration, "register_app_wiring")
+            .expect("synthetic register_app_wiring parses");
+        assert!(
+            !add_systems_registers_callee(function, "expected_producer"),
+            "modifier-only or runtime-gated mentions are not unconditional system registration"
+        );
+    }
 }
 
 #[test]
@@ -2439,8 +2531,17 @@ fn collect_emit_files(directory: &Path, root: &Path, output: &mut Vec<String>) {
     for entry in fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("read directory {}: {error}", directory.display()))
     {
-        let path = entry.expect("read directory entry").path();
-        if path.is_dir() {
+        let entry = entry.expect("read directory entry");
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .unwrap_or_else(|error| panic!("read file type {}: {error}", path.display()));
+        assert!(
+            !file_type.is_symlink(),
+            "emit inventory refuses symlinked production entries: {}",
+            path.display()
+        );
+        if file_type.is_dir() {
             collect_emit_files(&path, root, output);
         } else if path
             .file_name()
@@ -2455,6 +2556,26 @@ fn collect_emit_files(directory: &Path, root: &Path, output: &mut Vec<String>) {
             );
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn emit_file_inventory_rejects_symlinked_directories() {
+    let root = std::env::temp_dir().join(format!("bong-wire-s2c-symlink-{}", std::process::id()));
+    let source = root.join("server/src");
+    fs::create_dir_all(&source).expect("create synthetic emit source tree");
+    std::os::unix::fs::symlink(&source, source.join("loop"))
+        .expect("create synthetic directory symlink");
+
+    let result = std::panic::catch_unwind(|| {
+        collect_emit_files(&source, &root, &mut Vec::new());
+    });
+    fs::remove_dir_all(&root).expect("remove synthetic emit source tree");
+
+    assert!(
+        result.is_err(),
+        "emit inventory must reject directory symlinks instead of following them"
+    );
 }
 
 fn repository_root() -> PathBuf {

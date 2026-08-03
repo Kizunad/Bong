@@ -656,18 +656,25 @@ final class WireS2cContractPinTest {
             }
             sourceFiles.sort(Comparator.naturalOrder());
             assertGeneratedSourceContract(sourceRoots, sourceFiles);
-            List<Path> attributedSources = ATTRIBUTED_SOURCES.stream()
+            Set<Path> attributedSources = new HashSet<>(ATTRIBUTED_SOURCES.stream()
                 .map(clientRoot::resolve)
+                .toList());
+            for (Path sourceFile : sourceFiles) {
+                if (containsReceiverSyntax(sourceFile)) {
+                    attributedSources.add(sourceFile);
+                }
+            }
+            List<Path> sortedAttributedSources = attributedSources.stream()
                 .sorted()
                 .toList();
-            assertTrue(attributedSources.stream().allMatch(Files::isRegularFile),
-                "R6 attributed ownership source set must remain present");
+            assertTrue(sortedAttributedSources.stream().allMatch(Files::isRegularFile),
+                "R6 attributed ownership and discovered receiver sources must remain present");
 
             DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
             try (StandardJavaFileManager fileManager =
                      compiler.getStandardFileManager(diagnostics, null, null)) {
                 Iterable<? extends JavaFileObject> javaFiles =
-                    fileManager.getJavaFileObjectsFromPaths(attributedSources);
+                    fileManager.getJavaFileObjectsFromPaths(sortedAttributedSources);
                 List<String> options = List.of(
                     "-proc:none",
                     "--release", "17",
@@ -909,6 +916,73 @@ final class WireS2cContractPinTest {
                     return super.visitMemberReference(node, enclosingMethod);
                 }
             }.scan(unit, null);
+        }
+
+        private static boolean containsReceiverSyntax(Path sourceFile) throws IOException {
+            String source = Files.readString(sourceFile);
+            int index = 0;
+            while (index < source.length()) {
+                char current = source.charAt(index);
+                if (current == '/' && index + 1 < source.length()) {
+                    char next = source.charAt(index + 1);
+                    if (next == '/') {
+                        index += 2;
+                        while (index < source.length() && source.charAt(index) != '\n') {
+                            index++;
+                        }
+                        continue;
+                    }
+                    if (next == '*') {
+                        index += 2;
+                        while (index + 1 < source.length()
+                            && !(source.charAt(index) == '*' && source.charAt(index + 1) == '/')) {
+                            index++;
+                        }
+                        index = Math.min(source.length(), index + 2);
+                        continue;
+                    }
+                }
+                if (current == '"') {
+                    index = skipJavaQuotedLiteral(source, index, '"');
+                    continue;
+                }
+                if (current == '\'') {
+                    index = skipJavaQuotedLiteral(source, index, '\'');
+                    continue;
+                }
+                if (Character.isJavaIdentifierStart(current)) {
+                    int start = index++;
+                    while (index < source.length()
+                        && Character.isJavaIdentifierPart(source.charAt(index))) {
+                        index++;
+                    }
+                    if (source.regionMatches(start, "registerGlobalReceiver", 0,
+                        "registerGlobalReceiver".length())
+                        && index - start == "registerGlobalReceiver".length()) {
+                        return true;
+                    }
+                    continue;
+                }
+                index++;
+            }
+            return false;
+        }
+
+        private static int skipJavaQuotedLiteral(String source, int index, char quote) {
+            if (quote == '"' && source.startsWith("\"\"\"", index)) {
+                int end = source.indexOf("\"\"\"", index + 3);
+                return end < 0 ? source.length() : end + 3;
+            }
+            index++;
+            while (index < source.length()) {
+                char current = source.charAt(index++);
+                if (current == '\\' && index < source.length()) {
+                    index++;
+                } else if (current == quote) {
+                    break;
+                }
+            }
+            return index;
         }
 
         private void scanPrefixLiterals(Path sourceFile) throws IOException {
@@ -1271,9 +1345,32 @@ final class WireS2cContractPinTest {
                 if (!(current.getLeaf() instanceof IfTree conditional)) {
                     continue;
                 }
-                String condition = conditional.getCondition().toString();
-                if (condition.contains(variableName + ".startsWith")
-                    && condition.contains(expectedPrefix)) {
+                TreePath conditionPath = new TreePath(current, conditional.getCondition());
+                boolean matches = Boolean.TRUE.equals(new TreePathScanner<Boolean, Void>() {
+                    @Override
+                    public Boolean reduce(Boolean left, Boolean right) {
+                        return Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right);
+                    }
+
+                    @Override
+                    public Boolean visitMethodInvocation(MethodInvocationTree node, Void ignored) {
+                        TreePath path = getCurrentPath();
+                        if (node.getMethodSelect() instanceof MemberSelectTree select
+                            && select.getIdentifier().contentEquals("startsWith")
+                            && node.getArguments().size() == 1
+                            && variableName.equals(receiverVariableName(path))) {
+                            String prefix = resolveString(
+                                new TreePath(path, node.getArguments().get(0)),
+                                new HashSet<>()
+                            );
+                            if (expectedPrefix.equals(prefix)) {
+                                return true;
+                            }
+                        }
+                        return super.visitMethodInvocation(node, ignored);
+                    }
+                }.scan(conditionPath, null));
+                if (matches) {
                     return true;
                 }
             }
