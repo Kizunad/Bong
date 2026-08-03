@@ -25,6 +25,8 @@
 - ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次；完成 inventory receipt contract 子批次：`InventoryEventV1::Moved`（或等价 accepted receipt）必须携带 request identity、结果 revision、权威 item view，覆盖 schema/sample/convert/emit API、Fabric `InventoryEventHandler` 与 Python decoder，供 R4 handler 消费 R10 typed outcome。分片 dropped-loot 正反样本必须覆盖空/单页/恰好 256/257/末页缺失/混 revision。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
+R10 dropped-loot 契约优先：编码前按 recipient dimension/range/owner 投影，仅同 visibility key 复用；rejected receipt 含 reason/instance/from/to，并测两 recipient 正反可见性。
+
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
 active：server-data-s2c-schema-union-drift（TS union 补齐走 regenerate）、spirit-treasure-chat-key-conflict 除外（归 R7）。
