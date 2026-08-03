@@ -263,6 +263,18 @@ impl DecorationNbtRegistry {
     }
 
     pub(crate) fn prepare(structures_dir: &Path) -> DecorationNbtPreflight {
+        let trusted_root = match std::fs::canonicalize(structures_dir) {
+            Ok(root) => root,
+            Err(error) => {
+                return DecorationNbtPreflight {
+                    candidate: Self::empty(),
+                    diagnostics: vec![format!(
+                        "failed to anchor structures directory {}: {error}",
+                        structures_dir.display()
+                    )],
+                };
+            }
+        };
         let deco_dir = structures_dir.join(DECORATIONS_SUBDIR);
         let NbtFileScan {
             mut paths,
@@ -274,7 +286,10 @@ impl DecorationNbtRegistry {
         let mut templates = HashMap::with_capacity(paths.len());
         for path in paths {
             let id = relative_template_id(structures_dir, &path);
-            match nbt_io::read_structure_nbt(&path) {
+            match nbt_io::open_regular_file_under_root(&path, &trusted_root)
+                .map_err(nbt_io::NbtIoError::Io)
+                .and_then(nbt_io::read_structure_nbt_file)
+            {
                 Ok(structure) => {
                     let invalid_palette = structure.palette_diagnostics();
                     if invalid_palette.is_empty() {
@@ -374,7 +389,6 @@ impl DecorationNbtRegistry {
         // Rotated path: rotate each block's template-local offset about Y, then
         // place at base_origin. We rebuild placements directly (rather than via
         // structure_placements at one origin) because the rotation is per-block.
-        let unresolved = structure.palette_diagnostics();
         let mut placements = Vec::with_capacity(structure.blocks.len());
         for block in &structure.blocks {
             let Some(entry) = structure.palette.get(block.state as usize) else {
@@ -391,7 +405,7 @@ impl DecorationNbtRegistry {
             );
             placements.push((pos, state, block.block_nbt.clone()));
         }
-        Some((placements, unresolved))
+        Some((placements, Vec::new()))
     }
 
     /// The sorted list of resident template ids that live directly under

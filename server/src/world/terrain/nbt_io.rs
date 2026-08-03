@@ -34,8 +34,12 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use std::os::unix::fs::OpenOptionsExt;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 use flate2::read::GzDecoder;
@@ -176,16 +180,9 @@ pub struct StructureNbt {
     pub entities: Vec<Compound>,
 }
 
+const MAX_PALETTE_INDEX_EXAMPLES: usize = 8;
+
 impl StructureNbt {
-    /// Collect every bare palette block name (namespace stripped) that does NOT
-    /// resolve through `blocks::block_from_name`. An empty result means the
-    /// whole palette is renderable; a non-empty result lists the offending
-    /// names so callers can fail loudly instead of silently dropping blocks
-    /// during a stamp.
-    ///
-    /// This is the runtime mirror of the `AUTHORED_STRUCTURE_BLOCKS` dual-pin
-    /// test in `blocks.rs`: it enforces the same "every authored palette block
-    /// must be resolvable" contract on data actually loaded from disk.
     pub fn unresolved_palette_blocks(&self) -> Vec<String> {
         self.palette
             .iter()
@@ -198,31 +195,33 @@ impl StructureNbt {
             .collect()
     }
 
-    /// Validate every palette entry and every block-to-palette state index before
-    /// a structure is admitted or stamped. This prevents malformed authored NBT
-    /// from silently dropping blocks on either the startup registry path or the
-    /// direct dev-gallery path.
     pub fn palette_diagnostics(&self) -> Vec<String> {
         let mut diagnostics = self.unresolved_palette_blocks();
-        diagnostics.extend(
-            self.blocks
-                .iter()
-                .enumerate()
-                .filter_map(|(block_index, block)| {
-                    let state = usize::try_from(block.state).ok();
-                    if state.is_some_and(|state| state < self.palette.len()) {
-                        None
-                    } else {
-                        Some(format!(
-                            "block #{} at {:?} references invalid palette state {} (palette length {})",
-                            block_index + 1,
-                            block.pos,
-                            block.state,
-                            self.palette.len()
-                        ))
-                    }
-                }),
-        );
+        let mut invalid_count = 0usize;
+        let mut examples = Vec::new();
+        for (block_index, block) in self.blocks.iter().enumerate() {
+            let state = usize::try_from(block.state).ok();
+            if state.is_some_and(|state| state < self.palette.len()) {
+                continue;
+            }
+            invalid_count += 1;
+            if examples.len() < MAX_PALETTE_INDEX_EXAMPLES {
+                examples.push(format!(
+                    "block #{} at {:?} references palette state {}",
+                    block_index + 1,
+                    block.pos,
+                    block.state
+                ));
+            }
+        }
+        if invalid_count > 0 {
+            diagnostics.push(format!(
+                "{invalid_count} block(s) reference invalid palette states (palette length {}); first {}: {}",
+                self.palette.len(),
+                examples.len(),
+                examples.join(", ")
+            ));
+        }
         diagnostics
     }
 }
@@ -234,23 +233,22 @@ thread_local! {
     > = std::cell::RefCell::new(None);
 }
 
-/// Open an authored input without following a final-component symlink, then
-/// verify the opened descriptor itself is a regular file. Reading and type
-/// validation therefore operate on the same filesystem object even if another
-/// process replaces the path after discovery.
+/// Open an authored input without following its final path component and admit
+/// only a regular file. Directory-tree callers must additionally verify the
+/// opened object remains under their frozen trusted root.
 pub(crate) fn open_regular_file_no_follow(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    options.custom_flags(0o400_000 | 0o4_000); // Linux O_NOFOLLOW | O_NONBLOCK.
+    options.custom_flags(0o400_000 | 0o4_000); // O_NOFOLLOW | O_NONBLOCK.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    options.custom_flags(0x0000_0100 | 0x0000_0004); // O_NOFOLLOW | O_NONBLOCK.
+    #[cfg(windows)]
+    options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT.
 
     let file = match options.open(path) {
         Ok(file) => file,
         Err(open_error) => {
-            // Some special nodes (notably Unix sockets and FIFOs opened with
-            // O_NONBLOCK) fail before a descriptor exists. Inspecting the path
-            // here is diagnostic-only: it can never turn a failed open into an
-            // admitted file, but it preserves the actionable file-type contract.
             if std::fs::symlink_metadata(path).is_ok_and(|metadata| !metadata.file_type().is_file())
             {
                 return Err(io::Error::new(
@@ -290,14 +288,72 @@ pub(crate) fn set_open_regular_file_after_open_test_hook(hook: impl FnOnce() + '
     });
 }
 
+pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> io::Result<File> {
+    let canonical_path = std::fs::canonicalize(path)?;
+    if !canonical_path.starts_with(trusted_root) {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{} resolves outside trusted root {}",
+                path.display(),
+                trusted_root.display()
+            ),
+        ));
+    }
+
+    #[cfg(any(unix, windows))]
+    let expected = std::fs::metadata(&canonical_path)?;
+    let file = open_regular_file_no_follow(path)?;
+    #[cfg(target_os = "linux")]
+    {
+        let actual = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+        if !actual.starts_with(trusted_root) {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!(
+                    "{} resolves outside trusted root {}",
+                    path.display(),
+                    trusted_root.display()
+                ),
+            ));
+        }
+    }
+    #[cfg(unix)]
+    {
+        let actual = file.metadata()?;
+        if (expected.dev(), expected.ino()) != (actual.dev(), actual.ino()) {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("{} changed during trusted-root admission", path.display()),
+            ));
+        }
+    }
+    #[cfg(windows)]
+    {
+        let actual = file.metadata()?;
+        if (expected.volume_serial_number(), expected.file_index())
+            != (actual.volume_serial_number(), actual.file_index())
+        {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("{} changed during trusted-root admission", path.display()),
+            ));
+        }
+    }
+    Ok(file)
+}
+
+pub(crate) fn read_structure_nbt_file(mut file: File) -> Result<StructureNbt, NbtIoError> {
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
+    read_structure_nbt_bytes(&raw)
+}
+
 /// Read a gzip-compressed structure `.nbt` file from disk.
 ///
 /// Rejects bare (uncompressed) NBT with [`NbtIoError::NotGzip`].
 pub fn read_structure_nbt(path: &Path) -> Result<StructureNbt, NbtIoError> {
-    let mut file = open_regular_file_no_follow(path)?;
-    let mut raw = Vec::new();
-    file.read_to_end(&mut raw)?;
-    read_structure_nbt_bytes(&raw)
+    read_structure_nbt_file(open_regular_file_no_follow(path)?)
 }
 
 /// Read a structure from in-memory file bytes (the contents of a `.nbt` file,
@@ -621,6 +677,41 @@ mod tests {
             .parent()
             .expect("server dir has a parent")
             .to_path_buf()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_under_root_rejects_symlinked_ancestor_escape() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_ancestor_escape_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        let nested = root.join("decorations/tree");
+        let external = base.join("external");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(external.join("template.nbt"), b"outside").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        std::fs::remove_dir(&nested).unwrap();
+        symlink(&external, &nested).unwrap();
+        let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
+            .expect_err("an opened descriptor outside the frozen root must be rejected");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            error.to_string().contains("resolves outside trusted root"),
+            "ancestor escape diagnostic must identify the trust-boundary violation: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
     }
 
     // ── ① round-trip pin × 11: read → write → read structurally equal AND the
@@ -1111,23 +1202,44 @@ mod tests {
         let diagnostics = structure.palette_diagnostics();
         assert_eq!(
             diagnostics.len(),
-            2,
-            "valid state 0 must not be diagnosed while both invalid indices are retained: {diagnostics:?}"
+            1,
+            "invalid state indices must be summarized into one bounded diagnostic: {diagnostics:?}"
         );
+        let summary = &diagnostics[0];
         assert!(
-            diagnostics[0].contains("block #2")
-                && diagnostics[0].contains("[1, 0, 0]")
-                && diagnostics[0].contains("state -1")
-                && diagnostics[0].contains("palette length 1"),
-            "negative diagnostic must identify block, position, state, and palette length: {diagnostics:?}"
+            summary.contains("2 block(s)")
+                && summary.contains("block #2")
+                && summary.contains("[1, 0, 0]")
+                && summary.contains("state -1")
+                && summary.contains("block #3")
+                && summary.contains("[2, 0, 0]")
+                && summary.contains("state 1")
+                && summary.contains("palette length 1"),
+            "summary must retain count and bounded actionable examples: {diagnostics:?}"
         );
-        assert!(
-            diagnostics[1].contains("block #3")
-                && diagnostics[1].contains("[2, 0, 0]")
-                && diagnostics[1].contains("state 1")
-                && diagnostics[1].contains("palette length 1"),
-            "state == palette.len() must be rejected with actionable context: {diagnostics:?}"
-        );
+    }
+
+    #[test]
+    fn palette_diagnostics_bounds_examples_for_large_invalid_block_lists() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![],
+            blocks: (0..10_000)
+                .map(|index| StructureBlockEntry {
+                    pos: [index, 0, 0],
+                    state: -1,
+                    block_nbt: None,
+                })
+                .collect(),
+            entities: vec![],
+        };
+
+        let diagnostics = structure.palette_diagnostics();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("10000 block(s)"));
+        assert!(diagnostics[0].contains("first 8"));
+        assert!(!diagnostics[0].contains("block #9"));
     }
 
     #[test]

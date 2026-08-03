@@ -1,5 +1,4 @@
 use std::collections::{BTreeSet, HashMap};
-use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -1000,8 +999,11 @@ impl TerrainProvider {
                 None
             }
         };
-        let tile_area = match usize::try_from(manifest.tile_size) {
-            Ok(tile_size) if tile_size > 0 => match tile_size.checked_mul(tile_size) {
+        let tile_area = match manifest.tile_size {
+            tile_size if tile_size > 0 => match tile_size
+                .checked_mul(tile_size)
+                .and_then(|area| usize::try_from(area).ok())
+            {
                 Some(tile_area) => Some(tile_area),
                 None => {
                     diagnostics.push(
@@ -1075,13 +1077,44 @@ impl TerrainProvider {
                 let tile_dir = raster_dir.join(&tile.dir);
                 match TileFields::load(&tile_dir, &tile.layers, tile_area) {
                     Ok(tile_fields) => {
-                        if !manifest.surface_palette.is_empty() {
-                            collect_surface_palette_id_diagnostics(
-                                tile,
-                                &tile_fields,
-                                manifest.surface_palette.len(),
-                                &mut diagnostics,
-                            );
+                        collect_palette_id_diagnostics(
+                            tile,
+                            "surface_id",
+                            &tile_fields.surface_id,
+                            "surface palette",
+                            manifest.surface_palette.len(),
+                            &mut diagnostics,
+                        );
+                        collect_palette_id_diagnostics(
+                            tile,
+                            "subsurface_id",
+                            &tile_fields.subsurface_id,
+                            "surface palette",
+                            manifest.surface_palette.len(),
+                            &mut diagnostics,
+                        );
+                        collect_palette_id_diagnostics(
+                            tile,
+                            "biome_id",
+                            &tile_fields.biome_id,
+                            "biome palette",
+                            manifest.biome_palette.len(),
+                            &mut diagnostics,
+                        );
+                        for (layer_name, bytes) in [
+                            ("flora_variant_id", tile_fields.flora_variant_id.as_ref()),
+                            ("ground_cover_id", tile_fields.ground_cover_id.as_ref()),
+                        ] {
+                            if let Some(bytes) = bytes {
+                                collect_palette_id_diagnostics(
+                                    tile,
+                                    layer_name,
+                                    bytes,
+                                    "decoration palette",
+                                    decoration_palette.as_ref().map_or(0, Vec::len),
+                                    &mut diagnostics,
+                                );
+                            }
                         }
                         tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
                     }
@@ -1464,24 +1497,34 @@ fn read_tile_layer_u8(tile: &TileFields, index: usize, layer_name: &str, fallbac
     }
 }
 
-fn collect_surface_palette_id_diagnostics(
+fn collect_palette_id_diagnostics(
     tile: &ManifestTile,
-    fields: &TileFields,
+    layer_name: &str,
+    bytes: &Mmap,
+    palette_name: &str,
     palette_len: usize,
     diagnostics: &mut Vec<String>,
 ) {
-    for (layer_name, bytes) in [
-        ("surface_id", &fields.surface_id),
-        ("subsurface_id", &fields.subsurface_id),
-    ] {
-        for (index, value) in bytes.iter().copied().enumerate() {
-            if usize::from(value) >= palette_len {
-                diagnostics.push(format!(
-                    "raster: tile ({},{}) '{}' layer {layer_name} index {index} has palette id {value}, but surface palette length is {palette_len}",
-                    tile.tile_x, tile.tile_z, tile.dir
-                ));
+    const MAX_EXAMPLES: usize = 8;
+    let mut invalid_count = 0usize;
+    let mut examples = Vec::new();
+    for (index, value) in bytes.iter().copied().enumerate() {
+        if usize::from(value) >= palette_len {
+            invalid_count += 1;
+            if examples.len() < MAX_EXAMPLES {
+                examples.push(format!("index {index} has palette id {value}"));
             }
         }
+    }
+    if invalid_count > 0 {
+        diagnostics.push(format!(
+            "raster: tile ({},{}) '{}' layer {layer_name} has {invalid_count} ids outside {palette_name} length {palette_len}; first {}: {}",
+            tile.tile_x,
+            tile.tile_z,
+            tile.dir,
+            examples.len(),
+            examples.join(", ")
+        ));
     }
 }
 
@@ -1571,7 +1614,7 @@ fn map_optional_layer(
 }
 
 fn map_file(path: &Path, expected_len: usize) -> Result<Mmap, String> {
-    let file = File::open(path)
+    let mut file = super::nbt_io::open_regular_file_no_follow(path)
         .map_err(|error| format!("failed to open raster layer {}: {error}", path.display()))?;
     let metadata = file
         .metadata()
@@ -1584,18 +1627,34 @@ fn map_file(path: &Path, expected_len: usize) -> Result<Mmap, String> {
             expected_len
         ));
     }
+    let mut bytes = Vec::with_capacity(expected_len);
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read raster layer {}: {error}", path.display()))?;
+    if bytes.len() != expected_len {
+        return Err(format!(
+            "raster layer {} changed while being read: got {} bytes, expected {}",
+            path.display(),
+            bytes.len(),
+            expected_len
+        ));
+    }
+    read_only_mmap(&bytes).map_err(|error| {
+        format!(
+            "failed to allocate immutable raster snapshot {}: {error}",
+            path.display()
+        )
+    })
+}
 
-    unsafe { Mmap::map(&file) }
-        .map_err(|error| format!("failed to mmap raster layer {}: {error}", path.display()))
+fn read_only_mmap(bytes: &[u8]) -> Result<Mmap, std::io::Error> {
+    let mut mmap = memmap2::MmapMut::map_anon(bytes.len())?;
+    mmap.copy_from_slice(bytes);
+    mmap.make_read_only()
 }
 
 #[cfg(test)]
 fn anonymous_mmap_for_tests(bytes: &[u8]) -> Mmap {
-    let mut mmap = memmap2::MmapMut::map_anon(bytes.len())
-        .expect("anonymous test raster mmap should allocate");
-    mmap.copy_from_slice(bytes);
-    mmap.make_read_only()
-        .expect("anonymous test raster mmap should become read-only")
+    read_only_mmap(bytes).expect("anonymous test raster mmap should allocate")
 }
 
 fn read_u8(bytes: &Mmap, index: usize) -> u8 {
@@ -1714,6 +1773,14 @@ fn resolve_decoration_palette(
             diagnostics.push(format!(
                 "decoration '{}' (global_id {}) must declare at least one procedural block",
                 raw.name, raw.global_id
+            ));
+        }
+        if !raw.anchor.is_empty()
+            && !matches!(raw.anchor.as_str(), "ground" | "embedded" | "hanging")
+        {
+            diagnostics.push(format!(
+                "decoration '{}' (global_id {}) has invalid anchor '{}' (expected ground, embedded, or hanging)",
+                raw.name, raw.global_id, raw.anchor
             ));
         }
         if palette[id].is_some() {
@@ -2819,6 +2886,59 @@ mod tests {
     }
 
     #[test]
+    fn load_preflighted_rejects_empty_biome_palette_and_invalid_tile_sizes() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let manifest_path = root.join("manifest.json");
+        for (tile_size, expected) in [
+            ("0", "tile_size must be positive"),
+            ("-1", "tile_size must be positive"),
+            ("2147483647", "tile_size squared overflowed"),
+        ] {
+            fs::write(
+                &manifest_path,
+                format!(
+                    r#"{{
+                "version":2,"tile_size":{tile_size},
+                "world_bounds":{{"min_x":0,"max_x":0,"min_z":0,"max_z":0}},
+                "surface_palette":["stone"],"biome_palette":["plains"],"tiles":[]
+            }}"#
+                ),
+            )
+            .unwrap();
+            let error = TerrainProvider::load_preflighted(
+                &manifest_path,
+                &root,
+                &test_biomes(),
+                &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+            )
+            .expect_err("invalid tile_size must reject admission");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        fs::write(
+            &manifest_path,
+            r#"{
+            "version":2,"tile_size":1,
+            "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette":["stone"],"biome_palette":[],"tiles":[]
+        }"#,
+        )
+        .unwrap();
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("empty biome palette must reject admission");
+        assert!(
+            error.to_string().contains("biome palette cannot be empty"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn load_preflighted_rejects_empty_surface_palette() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("empty-palette fixture root should be creatable");
@@ -2865,25 +2985,80 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             palette_diagnostics.len(),
-            4,
-            "two bad surface ids and two bad subsurface ids must all survive aggregation: {error}"
+            2,
+            "surface and subsurface failures must each produce one bounded summary: {error}"
         );
         for expected in [
-            "surface_id index 1 has palette id 2",
-            "surface_id index 2 has palette id 3",
-            "subsurface_id index 0 has palette id 4",
-            "subsurface_id index 2 has palette id 5",
+            "surface_id has 2 ids outside surface palette length 2; first 2: index 1 has palette id 2, index 2 has palette id 3",
+            "subsurface_id has 2 ids outside surface palette length 2; first 2: index 0 has palette id 4, index 2 has palette id 5",
         ] {
             assert!(
                 palette_diagnostics
                     .iter()
                     .any(|diagnostic| diagnostic.contains(expected)
                         && diagnostic.contains("tile (0,0) 'tile_0_0'")),
-                "palette-id diagnostic must identify tile, layer, index, value, and palette length for {expected:?}: {error}"
+                "bounded palette diagnostic must identify layer, count, examples, and tile for {expected:?}: {error}"
             );
         }
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_preflighted_rejects_biome_flora_and_ground_cover_palette_overflow() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0, 0, 0, 0], &[0, 0, 0, 0]);
+        fs::write(tile_dir.join("biome_id.bin"), [0, 1, 0, 0]).unwrap();
+        fs::write(tile_dir.join("flora_variant_id.bin"), [0, 0, 2, 0]).unwrap();
+        fs::write(tile_dir.join("ground_cover_id.bin"), [0, 0, 0, 3]).unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+            "version":2,"tile_size":2,
+            "world_bounds":{"min_x":0,"max_x":1,"min_z":0,"max_z":1},
+            "surface_palette":["stone"],"biome_palette":["plains"],
+            "global_decoration_palette":[{
+                "global_id":1,"profile":"test","local_id":1,"name":"grass",
+                "kind":"flower","blocks":["grass"],"size_range":[1,1],
+                "rarity":1.0,"notes":"","nbt_templates":[],"anchor":"ground"
+            }],
+            "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0",
+                      "layers":["flora_variant_id","ground_cover_id"]}]
+        }"#,
+        )
+        .unwrap();
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("all palette-indexed raster layers must reject invalid foreign keys");
+        for expected in ["biome_id", "flora_variant_id", "ground_cover_id"] {
+            assert!(
+                error.to_string().contains(expected),
+                "missing {expected}: {error}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn raster_layer_is_an_immutable_startup_snapshot() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("layer.bin");
+        fs::write(&path, [1_u8, 2, 3, 4]).unwrap();
+        let snapshot = map_file(&path, 4).expect("valid layer must snapshot");
+        fs::write(&path, [9_u8, 9, 9, 9]).unwrap();
+        assert_eq!(
+            &snapshot[..],
+            &[1, 2, 3, 4],
+            "post-preflight disk mutation must not change admitted bytes"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -3079,10 +3254,39 @@ mod tests {
             "the public Decoration must carry the manifest's template path list"
         );
         assert_eq!(
+            deco.resolved_blocks,
+            vec![
+                BlockState::DIRT,
+                BlockState::MOSSY_COBBLESTONE,
+                BlockState::OAK_SIGN
+            ],
+            "manifest block ordering must lower unchanged into the procedural consumer palette"
+        );
+        assert_eq!(
             deco.anchor,
             DecorationAnchor::Embedded,
             "manifest anchor 'embedded' must lower to DecorationAnchor::Embedded on the public Decoration"
         );
+    }
+
+    #[test]
+    fn decoration_palette_rejects_explicit_invalid_anchor() {
+        let raw = ManifestDecoration {
+            global_id: 1,
+            profile: "test".into(),
+            local_id: 1,
+            name: "bad_anchor".into(),
+            kind: "crystal".into(),
+            blocks: vec!["stone".into()],
+            size_range: [1, 1],
+            rarity: 1.0,
+            notes: String::new(),
+            nbt_templates: Vec::new(),
+            anchor: "hangng".into(),
+        };
+        let error = resolve_decoration_palette(vec![raw], Path::new("manifest.json"))
+            .expect_err("explicit invalid anchors must not become ground placements");
+        assert!(error.contains("invalid anchor 'hangng'"), "{error}");
     }
 
     #[test]

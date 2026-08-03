@@ -22,14 +22,17 @@ shipped, so a regenerated asset that re-introduces them trips the suite:
     pops into a dropped item the instant the chunk loads. Pinned: every
     `facing=up` amethyst_cluster sits directly on a solid outcrop block.
 
-The tests load the SHIPPED `.nbt` assets under
-`server/structures/decorations/`, so they pin exactly what the Rust
-`DecorationNbtRegistry` stamps at runtime — not just the builder output.
+Most tests load the SHIPPED `.nbt` assets under
+`server/structures/decorations/`, so they pin what the Rust
+`DecorationNbtRegistry` stamps at runtime. Generator-only regressions build a
+temporary NBT and parse that output without requiring generated binaries in the
+source diff.
 """
 
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,7 +41,9 @@ DECORATIONS_ROOT = REPO_ROOT / "server" / "structures" / "decorations"
 
 sys.path.insert(0, str(REPO_ROOT / "worldgen"))
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "nbt"))
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "nbt" / "decorations"))
 
+from gen_crystal import build_frost_cluster  # noqa: E402
 from nbt_builder import load_structure  # noqa: E402
 
 from scripts.terrain_gen.profiles import GLOBAL_DECORATION_PALETTE  # noqa: E402
@@ -237,6 +242,25 @@ class StructureSupportTests(unittest.TestCase):
                 f"{floaters}. Urn posts must stand on the dais footprint, not the "
                 f"off-disc corners.",
             )
+
+    def test_frost_cluster_diagonal_accents_face_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "frost_cluster_v3.nbt"
+            build_frost_cluster().save(str(path))
+            blocks = _block_positions(path)
+        accents = [
+            props for (x, _, z), (name, props) in blocks.items()
+            if name == "amethyst_cluster" and abs(x - 2) == 1 and abs(z - 2) == 1
+        ]
+        self.assertEqual(
+            len(accents),
+            4,
+            "frost builder must create four diagonal accents",
+        )
+        self.assertTrue(
+            all(props.get("facing") == "up" for props in accents),
+            f"frost builder diagonal accents must face up: {accents}",
+        )
 
     def test_spirit_ore_vein_amethyst_clusters_are_supported(self) -> None:
         # Every upward amethyst cluster must sit on a solid outcrop block; a
