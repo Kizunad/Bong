@@ -1,6 +1,6 @@
 use crate::combat::{
     attach_combat_bundle_to_joined_clients,
-    components::{Lifecycle, LifecycleState, RevivalDecision},
+    components::{Lifecycle, LifecycleState, RevivalDecision, TICKS_PER_SECOND},
     is_damageable,
 };
 use crate::persistence::bootstrap_sqlite;
@@ -259,6 +259,10 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     let revival_deadline = lifecycle
         .revival_decision_deadline_tick
         .expect("待决策状态必须保留 revival deadline");
+    assert!(
+        revival_deadline >= 9_999_u64.saturating_sub(TICKS_PER_SECOND),
+        "读档耗时最多允许一个墙钟 tick 的折算误差；实际 {revival_deadline}"
+    );
     assert!(
         revival_deadline <= 9_999,
         "读档耗时跨过墙钟 tick 边界时，deadline 只能按已流逝时间提前，不能被重建到更晚；实际 {revival_deadline}"

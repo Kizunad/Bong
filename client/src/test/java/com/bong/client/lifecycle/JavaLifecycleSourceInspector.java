@@ -124,8 +124,38 @@ public final class JavaLifecycleSourceInspector {
 
     static void assertNoTestResetCalls(String source, String sourceIdentity) {
         CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
+        String sourceFqcn = sourceIdentity
+            .replace('\\', '.')
+            .replace('/', '.')
+            .replaceFirst("\\.java$", "");
+        Set<String> externalStaticResetMethods = new HashSet<>();
+        boolean wildcardStaticResetImport = false;
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            if (!importTree.isStatic()) {
+                continue;
+            }
+            if (imported.endsWith(".*")) {
+                wildcardStaticResetImport = true;
+            } else if (TEST_RESET_METHODS.contains(imported.substring(imported.lastIndexOf('.') + 1))) {
+                externalStaticResetMethods.add(imported.substring(imported.lastIndexOf('.') + 1));
+            }
+        }
+        final boolean hasWildcardStaticResetImport = wildcardStaticResetImport;
         new TreeScanner<Void, Void>() {
+            private String enclosingClass;
             private String enclosingMethod;
+
+            @Override
+            public Void visitClass(ClassTree type, Void unused) {
+                String previousClass = enclosingClass;
+                enclosingClass = type.getSimpleName().toString();
+                try {
+                    return super.visitClass(type, unused);
+                } finally {
+                    enclosingClass = previousClass;
+                }
+            }
 
             @Override
             public Void visitMethod(MethodTree method, Void unused) {
@@ -143,7 +173,12 @@ public final class JavaLifecycleSourceInspector {
                 rejectTestResetCall(
                     invokedMethodName(invocation.getMethodSelect()),
                     sourceIdentity,
-                    enclosingMethod
+                    enclosingClass,
+                    enclosingMethod,
+                    invocation.getMethodSelect().toString(),
+                    sourceFqcn,
+                    externalStaticResetMethods,
+                    hasWildcardStaticResetImport
                 );
                 return super.visitMethodInvocation(invocation, unused);
             }
@@ -153,7 +188,12 @@ public final class JavaLifecycleSourceInspector {
                 rejectTestResetCall(
                     reference.getName().toString(),
                     sourceIdentity,
-                    enclosingMethod
+                    enclosingClass,
+                    enclosingMethod,
+                    reference.getQualifierExpression().toString() + "::" + reference.getName(),
+                    sourceFqcn,
+                    externalStaticResetMethods,
+                    hasWildcardStaticResetImport
                 );
                 return super.visitMemberReference(reference, unused);
             }
@@ -467,6 +507,8 @@ public final class JavaLifecycleSourceInspector {
         }
         Set<String> visibleStoreTypeNames = new TreeSet<>();
         Set<String> staticallyImportedCleanupMethods = new TreeSet<>();
+        Set<String> staticallyImportedMethods = new TreeSet<>();
+        boolean hasWildcardStaticImport = false;
         Set<String> violations = new TreeSet<>();
         for (String fqcn : storeFqcns) {
             if (packageName(fqcn).equals(sourcePackage)) {
@@ -475,6 +517,12 @@ public final class JavaLifecycleSourceInspector {
         }
         for (ImportTree importTree : unit.getImports()) {
             String imported = importTree.getQualifiedIdentifier().toString();
+            if (importTree.isStatic() && imported.endsWith(".*")) {
+                hasWildcardStaticImport = true;
+            }
+            if (importTree.isStatic() && !imported.endsWith(".*")) {
+                staticallyImportedMethods.add(imported.substring(imported.lastIndexOf('.') + 1));
+            }
             if (!importTree.isStatic() && !imported.endsWith(".*")) {
                 visibleTypeFqcns.put(simpleName(imported), imported);
                 collectImportedDataAccessors(imported, localDataAccessors);
@@ -500,6 +548,7 @@ public final class JavaLifecycleSourceInspector {
         }
 
         Set<String> visited = new HashSet<>();
+        boolean wildcardStaticImport = hasWildcardStaticImport;
         com.sun.source.util.TreePath methodPath = com.sun.source.util.TreePath.getPath(unit, entries.get(0));
         if (methodPath == null) {
             throw new AssertionError("无法定位 production helper AST path：" + className + "." + methodName);
@@ -518,6 +567,8 @@ public final class JavaLifecycleSourceInspector {
             visibleTypeFqcns,
             sourcePackage,
             staticallyImportedCleanupMethods,
+            staticallyImportedMethods,
+            hasWildcardStaticImport,
             allowedCrossClassCalls,
             violations
         );
@@ -543,10 +594,12 @@ public final class JavaLifecycleSourceInspector {
         Map<String, String> visibleTypeFqcns,
         String sourcePackage,
         Set<String> staticallyImportedCleanupMethods,
+        Set<String> staticallyImportedMethods,
+        boolean hasWildcardStaticImport,
         Set<String> allowedCrossClassCalls,
         Set<String> violations
     ) {
-        String methodKey = method.getName() + "/" + method.getParameters().size();
+        String methodKey = className + "." + method.getName() + "/" + method.getParameters().size();
         if (!visited.add(methodKey) || method.getBody() == null) {
             return;
         }
@@ -608,7 +661,7 @@ public final class JavaLifecycleSourceInspector {
                     );
                     if (isManagedStoreOwner(resolvedOwner, storeFqcns, visibleStoreTypeNames)) {
                         violations.add("store-receiver:" + invocation.getMethodSelect());
-                    } else if (owner.equals("this") || owner.equals(className) || resolvedOwner.equals(className)) {
+                    } else if (owner.equals("this") || owner.equals("super") || owner.equals(className) || resolvedOwner.equals(className)) {
                         recurseLocal(invokedName, invocation.getArguments().size());
                     } else {
                         String crossClassCall = normalizeCrossClassCall(
@@ -627,7 +680,10 @@ public final class JavaLifecycleSourceInspector {
                         }
                     }
                 } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
-                    if (STORE_CLEANUP_METHODS.contains(invokedName)
+                    if (staticallyImportedMethods.contains(invokedName)
+                        || hasWildcardStaticImport) {
+                        violations.add("unresolved-static-import:" + invokedName);
+                    } else if (STORE_CLEANUP_METHODS.contains(invokedName)
                         && staticallyImportedCleanupMethods.contains(invokedName)) {
                         violations.add("static-import:" + invokedName);
                     } else {
@@ -683,6 +739,41 @@ public final class JavaLifecycleSourceInspector {
                 String constructorFqcn = visibleTypeFqcns.getOrDefault(identifier, identifier);
                 if (isManagedStoreOwner(constructorFqcn, storeFqcns, visibleStoreTypeNames)) {
                     violations.add("new-store:" + expression.getIdentifier());
+                } else {
+                    java.util.Optional<ClassTree> constructedType = findDeclaredType(
+                        methodPath.getCompilationUnit(),
+                        identifier
+                    );
+                    if (constructedType.isPresent()) {
+                        List<MethodTree> constructors = constructedType.orElseThrow().getMembers().stream()
+                            .filter(MethodTree.class::isInstance)
+                            .map(MethodTree.class::cast)
+                            .filter(constructor -> constructor.getName().contentEquals("<init>"))
+                            .filter(constructor -> constructor.getParameters().size()
+                                == expression.getArguments().size())
+                            .toList();
+                        if (constructors.size() > 1) {
+                            violations.add("ambiguous-constructor:" + identifier + "/"
+                                + expression.getArguments().size());
+                        } else if (constructors.size() == 1) {
+                            scanDeclaredMethodClosure(
+                                methodPath.getCompilationUnit(),
+                                constructedType.orElseThrow(),
+                                constructors.get(0),
+                                visited,
+                                storeFqcns,
+                                visibleStoreTypeNames,
+                                localDataAccessors,
+                                visibleTypeFqcns,
+                                sourcePackage,
+                                staticallyImportedCleanupMethods,
+                                staticallyImportedMethods,
+                                hasWildcardStaticImport,
+                                allowedCrossClassCalls,
+                                violations
+                            );
+                        }
+                    }
                 }
                 return super.visitNewClass(expression, unused);
             }
@@ -718,12 +809,75 @@ public final class JavaLifecycleSourceInspector {
                         visibleTypeFqcns,
                         sourcePackage,
                         staticallyImportedCleanupMethods,
+                        staticallyImportedMethods,
+                        hasWildcardStaticImport,
                         allowedCrossClassCalls,
                         violations
                     );
                 }
             }
         }.scan(methodPath, null);
+    }
+
+    private static void scanDeclaredMethodClosure(
+        CompilationUnitTree unit,
+        ClassTree owner,
+        MethodTree method,
+        Set<String> visited,
+        Set<String> storeFqcns,
+        Set<String> visibleStoreTypeNames,
+        Map<String, Map<String, String>> localDataAccessors,
+        Map<String, String> visibleTypeFqcns,
+        String sourcePackage,
+        Set<String> staticallyImportedCleanupMethods,
+        Set<String> staticallyImportedMethods,
+        boolean hasWildcardStaticImport,
+        Set<String> allowedCrossClassCalls,
+        Set<String> violations
+    ) {
+        com.sun.source.util.TreePath path = com.sun.source.util.TreePath.getPath(unit, method);
+        if (path == null) {
+            violations.add("unresolved-declared-helper-path:"
+                + owner.getSimpleName() + "." + method.getName());
+            return;
+        }
+        Map<String, List<MethodTree>> methodsByName = new HashMap<>();
+        Map<String, String> fieldTypes = new HashMap<>();
+        Map<String, String> fieldElementTypes = new HashMap<>();
+        for (Tree member : owner.getMembers()) {
+            if (member instanceof MethodTree declaredMethod) {
+                methodsByName.computeIfAbsent(
+                    declaredMethod.getName().toString(),
+                    ignored -> new ArrayList<>()
+                ).add(declaredMethod);
+            } else if (member instanceof VariableTree variable && variable.getType() != null) {
+                String declaredType = variable.getType().toString();
+                fieldTypes.put(variable.getName().toString(), rawTypeName(declaredType));
+                String elementType = singleGenericTypeArgument(declaredType);
+                if (elementType != null) {
+                    fieldElementTypes.put(variable.getName().toString(), elementType);
+                }
+            }
+        }
+        scanMethodClosure(
+            method,
+            path,
+            owner.getSimpleName().toString(),
+            methodsByName,
+            visited,
+            storeFqcns,
+            visibleStoreTypeNames,
+            fieldTypes,
+            fieldElementTypes,
+            localDataAccessors,
+            visibleTypeFqcns,
+            sourcePackage,
+            staticallyImportedCleanupMethods,
+            staticallyImportedMethods,
+            hasWildcardStaticImport,
+            allowedCrossClassCalls,
+            violations
+        );
     }
 
     private static int memberReferenceTargetArity(
@@ -775,9 +929,12 @@ public final class JavaLifecycleSourceInspector {
         Map<String, String> currentClassFieldTypes,
         Map<String, String> localDataVariables
     ) {
-        String ownerType = currentClassFieldTypes.get(owner);
+        String normalizedOwner = owner.startsWith("this.") || owner.startsWith("super.")
+            ? owner.substring(owner.indexOf('.') + 1)
+            : owner;
+        String ownerType = currentClassFieldTypes.get(normalizedOwner);
         if (ownerType == null) {
-            ownerType = localDataVariables.get(owner);
+            ownerType = localDataVariables.get(normalizedOwner);
         }
         return ownerType == null ? owner : ownerType;
     }
@@ -808,20 +965,25 @@ public final class JavaLifecycleSourceInspector {
         Map<String, String> visibleTypeFqcns,
         String sourcePackage
     ) {
-        String ownerType = currentClassFieldTypes.get(owner);
+        String normalizedOwner = owner.equals("this") || owner.equals("super")
+            ? owner
+            : owner.startsWith("this.") || owner.startsWith("super.")
+                ? owner.substring(owner.indexOf('.') + 1)
+                : owner;
+        String ownerType = currentClassFieldTypes.get(normalizedOwner);
         if (ownerType == null) {
-            ownerType = localDataVariables.get(owner);
+            ownerType = localDataVariables.get(normalizedOwner);
         }
         if (ownerType == null) {
-            String rootOwner = rootOwner(owner);
-            if (!rootOwner.equals(owner)) {
+            String rootOwner = rootOwner(normalizedOwner);
+            if (!rootOwner.equals(normalizedOwner)) {
                 String rootType = currentClassFieldTypes.get(rootOwner);
                 if (rootType == null) {
                     rootType = localDataVariables.get(rootOwner);
                 }
                 if (rootType != null) {
                     String resolvedChainType = resolveLocalDataChainType(
-                        owner,
+                        normalizedOwner,
                         currentClassFieldTypes,
                         localDataVariables,
                         localDataAccessors
@@ -840,7 +1002,7 @@ public final class JavaLifecycleSourceInspector {
                         : unresolvedCrossClassCall(owner, methodName, parameterCount);
                 }
                 String resolvedChainType = resolveLocalDataChainType(
-                    owner,
+                    normalizedOwner,
                     currentClassFieldTypes,
                     localDataVariables,
                     localDataAccessors
@@ -854,7 +1016,7 @@ public final class JavaLifecycleSourceInspector {
                         : unresolvedCrossClassCall(owner, methodName, parameterCount);
                 }
             }
-            ownerType = owner;
+            ownerType = normalizedOwner;
         }
         if (isLocalDataCall(ownerType, methodName, localDataAccessors)) {
             return null;
@@ -874,7 +1036,13 @@ public final class JavaLifecycleSourceInspector {
             return null;
         }
         if (isCrossClassStaticCallOwner(ownerType)) {
-            if (ownerFqcn.equals(ownerType) && !ownerType.contains(".")) {
+            if (ownerFqcn.equals(ownerType)
+                && !ownerType.contains(".")
+                && !ownerType.startsWith(sourcePackage + ".")) {
+                ownerFqcn = sourcePackage.isBlank() ? ownerType : sourcePackage + "." + ownerType;
+            } else if (ownerFqcn.equals(ownerType)
+                && ownerType.contains(".")
+                && Character.isUpperCase(ownerType.charAt(0))) {
                 ownerFqcn = sourcePackage.isBlank() ? ownerType : sourcePackage + "." + ownerType;
             }
             return ownerFqcn + "." + methodName + "/" + parameterCount;
@@ -890,8 +1058,11 @@ public final class JavaLifecycleSourceInspector {
         String methodName,
         Map<String, Map<String, String>> localDataAccessors
     ) {
+        String simpleOwnerType = ownerType.substring(ownerType.lastIndexOf('.') + 1);
         return localDataAccessors.getOrDefault(ownerType, Map.of()).containsKey(methodName)
-            || isStandardLibraryDataCall(ownerType, methodName);
+            || localDataAccessors.getOrDefault(simpleOwnerType, Map.of()).containsKey(methodName)
+            || isStandardLibraryDataCall(ownerType, methodName)
+            || isStandardLibraryDataCall(simpleOwnerType, methodName);
     }
 
     private static String resolveLocalDataChainType(
@@ -948,10 +1119,18 @@ public final class JavaLifecycleSourceInspector {
             || fqcn.startsWith("javax.")
             || Set.of(
                 "ArithmeticException",
+                "Boolean",
+                "Byte",
+                "Character",
+                "Double",
                 "Exception",
+                "Float",
                 "IllegalArgumentException",
                 "IllegalStateException",
+                "Integer",
+                "Long",
                 "RuntimeException",
+                "Short",
                 "String",
                 "Throwable"
             ).contains(fqcn)
@@ -1030,15 +1209,7 @@ public final class JavaLifecycleSourceInspector {
             : enclosingName + "." + type.getSimpleName();
         Map<String, String> accessors = new HashMap<>();
         for (Tree member : type.getMembers()) {
-            if (type.getKind() == Tree.Kind.RECORD
-                && member instanceof MethodTree method
-                && method.getParameters().isEmpty()
-                && method.getReturnType() != null) {
-                accessors.put(
-                    method.getName().toString(),
-                    rawTypeName(method.getReturnType().toString())
-                );
-            } else if (member instanceof VariableTree component
+            if (member instanceof VariableTree component
                 && component.getType() != null
                 && type.getKind() == Tree.Kind.RECORD) {
                 accessors.put(
@@ -1168,7 +1339,8 @@ public final class JavaLifecycleSourceInspector {
                     if (isForbiddenManagedStoreCall(
                         owner,
                         storeFqcns,
-                        visibleStoreTypeNames
+                        visibleStoreTypeNames,
+                        sourceIsManagedStore
                     )) {
                         violations.add("invoke:" + invocation.getMethodSelect());
                     }
@@ -1232,9 +1404,11 @@ public final class JavaLifecycleSourceInspector {
     private static boolean isForbiddenManagedStoreCall(
         String owner,
         Set<String> storeFqcns,
-        Set<String> visibleStoreTypeNames
+        Set<String> visibleStoreTypeNames,
+        boolean sourceIsManagedStore
     ) {
-        return isManagedStoreOwner(owner, storeFqcns, visibleStoreTypeNames);
+        return isManagedStoreOwner(owner, storeFqcns, visibleStoreTypeNames)
+            || (sourceIsManagedStore && (owner.equals("this") || owner.equals("super")));
     }
 
     private static boolean isManagedStoreOwner(
@@ -1258,10 +1432,28 @@ public final class JavaLifecycleSourceInspector {
     private static void rejectTestResetCall(
         String methodName,
         String sourceIdentity,
-        String enclosingMethod
+        String enclosingClass,
+        String enclosingMethod,
+        String expression,
+        String sourceFqcn,
+        Set<String> externalStaticResetMethods,
+        boolean wildcardStaticResetImport
     ) {
-        if (TEST_RESET_METHODS.contains(methodName)
-            && (enclosingMethod == null || !TEST_RESET_METHODS.contains(enclosingMethod))) {
+        if (!TEST_RESET_METHODS.contains(methodName)) {
+            return;
+        }
+        boolean sourceResetReference = expression.startsWith(enclosingClass + "::")
+            || expression.startsWith(enclosingClass + ".")
+            || expression.startsWith(sourceFqcn + "::")
+            || expression.startsWith(sourceFqcn + ".")
+            || (!expression.contains(".") && !expression.contains("::"));
+        boolean declarationContext = enclosingMethod != null
+            && TEST_RESET_METHODS.contains(enclosingMethod)
+            && sourceResetReference;
+        boolean forbidden = externalStaticResetMethods.contains(methodName)
+            || wildcardStaticResetImport
+            || !declarationContext;
+        if (forbidden) {
             throw new AssertionError(
                 sourceIdentity + " 的 production source 不得从 "
                     + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
