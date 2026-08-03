@@ -77,7 +77,11 @@ R4 从 ECS 构造不可由 client 覆盖的 `PickupAuthorization`：player UUID�
 ```text
 migrate_legacy_inventory_layout(value, schema_version)
   -> MigrationOutcome { migrated_value, overflow: Vec<ItemInstance> }
-```
+
+migrate_legacy_dropped_loot_entry(value, schema_version)
+  -> Result<serde_json::Value, DroppedLootMigrationError>
+  // owning phase: R10 P1 pure migration helper; consumed by R3 P4 hydration
+
 
 R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保留所有实例/动态字段，不执行 SQL、不猜 world context、不隐藏 overflow；其中 dropped-loot 迁移把旧 `entry_json` 缺失的 `owner`/`visibility` 明确补为 `owner = None`、`visibility = Public`。R3 hydration consumer 必须先按 persisted schema version 解码/迁移旧 dropped-loot JSON，再构造 `DroppedLootEntry`；inventory-layout migration 则在临时副本上以真实 player/dimension/position 与 capacity/durable seam 消费。两类 migration 都须全成才写新行，失败保留旧行可重试且不重复 drop。
 
@@ -87,11 +91,11 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 - **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P2/P4 已冻结并实现的接口。
 - **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R10 P3 pickup txn、R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
 - **R5**：incoming-only qi attrition/ledger；provider phase 为 R5 P3。
-- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；receipt provider phase 为 R6 P4。
+- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；dropped-loot projection/page consumer 为 R6 P1，必须在 R3 legacy dropped-loot migration/hydration consumer 完成后才可消费；receipt provider phase 为 R6 P4。
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：**R3 P1 → R10 P1（含纯 inventory-layout/dropped-loot migration helpers）→ R3 P2 atomic seam 实现 + legacy dropped-loot migration/hydration compatibility pins → R10 P2 production writers → R5 P3 + R6 P4 → R10 P3 pickup/merge txn → R4 handler/pickup consumer → R3 P4 legacy inventory-layout consumer → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 与旧 dropped-loot migration compatibility 未合入前不得开始 writer 迁移，R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
+顺序：**R3 P1 → R10 P1（含纯 inventory-layout/dropped-loot migration helpers）→ R3 P2 atomic seam 实现 + legacy dropped-loot migration/hydration compatibility pins → R10 P2 production writers → R3 P4 legacy dropped-loot migration/hydration consumer → R6 P1 dropped-loot projection/page consumer → R5 P3 + R6 P4 → R10 P3 pickup/merge txn → R4 handler/pickup consumer → R3 P4 legacy inventory-layout consumer → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 与旧 dropped-loot migration compatibility 未合入前不得开始 writer 迁移；R3 P4 legacy dropped-loot migration/hydration consumer 必须先于 R6 P1 dropped-loot projection/page consumer，确保旧 `entry_json` 已先升级为带 `owner`/`visibility` 的 canonical entry；R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
