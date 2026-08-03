@@ -252,6 +252,7 @@ pub struct TerminationPlayerPersistenceBundle<'a> {
     pub player_persistence: &'a crate::player::state::PlayerStatePersistence,
     pub username: &'a str,
     pub combat_clock_tick: u64,
+    pub lifespan: Option<&'a crate::cultivation::lifespan::LifespanComponent>,
     pub cultivation: PlayerCultivationBundle<'a>,
 }
 
@@ -4371,6 +4372,14 @@ fn persist_termination_transition_inner(
                     player.combat_clock_tick,
                     wall_clock,
                 )?;
+                if let Some(lifespan) = player.lifespan {
+                    crate::player::state::upsert_player_lifespan_slice_in_transaction(
+                        &transaction,
+                        player.username,
+                        lifespan,
+                        wall_clock,
+                    )?;
+                }
                 crate::player::state::clear_coffin_flag_in_transaction(
                     &transaction,
                     player.username,
@@ -8186,14 +8195,13 @@ pub fn reconcile_public_deceased_exports(settings: &PersistenceSettings) -> io::
         .map_err(io::Error::other)?;
 
     let mut entries = Vec::with_capacity(rows.len());
+    let mut snapshots = Vec::with_capacity(rows.len());
     for (char_id, snapshot_json, public_path, died_at_tick) in rows {
         let died_at_tick = sql_to_tick(died_at_tick)?;
         let snapshot: DeceasedSnapshot = serde_json::from_str(&snapshot_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let expected_path = format!(
-            "deceased/{}.json",
-            sanitize_deceased_snapshot_stem(char_id.as_str())
-        );
+        let stem = sanitize_deceased_snapshot_stem(char_id.as_str());
+        let expected_path = format!("deceased/{stem}.json");
         if public_path != expected_path {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -8202,16 +8210,7 @@ pub fn reconcile_public_deceased_exports(settings: &PersistenceSettings) -> io::
                 ),
             ));
         }
-        atomic_replace_file(
-            settings
-                .deceased_public_dir()
-                .join(format!(
-                    "{}.json",
-                    sanitize_deceased_snapshot_stem(char_id.as_str())
-                ))
-                .as_path(),
-            snapshot_json.as_bytes(),
-        )?;
+        snapshots.push((format!("{stem}.json"), snapshot_json));
         entries.push(DeceasedIndexEntry {
             char_id,
             died_at_tick,
@@ -8222,10 +8221,34 @@ pub fn reconcile_public_deceased_exports(settings: &PersistenceSettings) -> io::
 
     let index_json = serde_json::to_string_pretty(&entries)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    atomic_replace_file(
-        settings.deceased_public_dir().join("_index.json").as_path(),
-        index_json.as_bytes(),
-    )
+    let expected_files = snapshots
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<HashSet<_>>();
+    for entry in fs::read_dir(settings.deceased_public_dir())? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if entry.file_type()?.is_file()
+            && name.ends_with(".json")
+            && name != "_index.json"
+            && !expected_files.contains(name.as_ref())
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    for (name, snapshot_json) in snapshots {
+        let path = settings.deceased_public_dir().join(name);
+        if fs::read(&path).is_ok_and(|current| current == snapshot_json.as_bytes()) {
+            continue;
+        }
+        atomic_replace_file(path.as_path(), snapshot_json.as_bytes())?;
+    }
+    let index_path = settings.deceased_public_dir().join("_index.json");
+    if fs::read(&index_path).is_ok_and(|current| current == index_json.as_bytes()) {
+        return Ok(());
+    }
+    atomic_replace_file(index_path.as_path(), index_json.as_bytes())
 }
 
 fn atomic_replace_file(path: &Path, contents: &[u8]) -> io::Result<()> {
