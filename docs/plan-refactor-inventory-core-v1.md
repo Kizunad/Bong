@@ -95,7 +95,7 @@ impl InventoryTxn<'_> {
 3. 调用者没有真实 `SpillContext` 时 fail closed，返回 `CapacityExceeded`/`MissingSpillContext`；不得用虚构坐标，也不得清 session、扣材料或删除世界掉落。
 4. spill 必须携带原 `ItemInstance`；对 minted stack 可按合法最大堆叠拆分，对既有动态实例不得通过重新 mint 丢字段。
 5. 所有 attach 都必须先通过 `validate_attach_fits` 并由 `attach_at_location` 提交；删除 `force_attach_item_to_inventory` 的 `(0,0)` 强塞 fallback。全量转移放不下的剩余项进入显式 spill receipt，而不是重叠占格。
-6. dropped-loot registry 是有界 durable queue，不是无限容器：R10 定义 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 单一常量（初值 `4096`，测试只引用该常量），所有 delivery/discard/overflow 路径在 mutation 前按“本事务新增 dropped entry 数”原子预留容量。`len + required > MAX` 时返回 typed `DroppedLootCapacityExceeded { current, required, limit }`，inventory、revision、session、材料、世界掉落与 persistence 均保持不变；禁止逐项插入后才发现超限。启动 hydration 若数据库行数超过上限必须进入 R3 load-failure guard/只读降级并告警，不能截断、驱逐或覆盖旧行。
+6. dropped-loot registry 是有界 durable queue，不是无限容器：R10 P1 定义 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 单一常量（初值 `4096`，测试只引用该常量）以及 `DroppedLootRegistry::try_insert` / `try_insert_batch` 原子容量 API。任何生产写入都必须先通过该 API；单条写入在 mutation 前预留 1 槽，批量写入在首条 mutation 前一次性预留全部槽位，禁止调用方直接操作 `entries.insert`。生产 writer 的穷举清单是：`add_item_to_player_inventory_or_ground`、`rebuild_and_drop_overflow`、`enforce_intrinsic_gate_on_morph_release`、`apply_death_drop_on_revive` 的 TSY/主世界分支、`apply_termination_drop_on_terminate` 的 world-drop fallback 分支、`spawn_template_dropped_loot`、`discard_inventory_item_to_dropped_loot`、`tsy_loot_spawn::spawn_for_layer` 以及该文件内所有 placeable-break/TSY layer event writer；P2/P3 必须逐一迁移，测试 fixture 允许直接构造 registry 但不得代表生产接线。所有 delivery/discard/overflow/death/TSY/placeable-break 路径在 mutation 前按“本事务新增 dropped entry 数”原子预留容量。`len + required > MAX` 时返回 typed `DroppedLootCapacityExceeded { current, required, limit }`，inventory、revision、session、材料、世界掉落与 persistence 均保持不变；禁止逐项插入后才发现超限。启动 hydration 的行数检查由 R3 提供 guard 接缝、由 R10 P1 的常量/API 接入；在 R10 P1 合入前 R3 不得引用该 symbol。超限时必须进入 R3 load-failure guard/只读降级并告警，不能截断、驱逐或覆盖旧行。
 7. 正常回收只允许玩家 pickup 或后续显式管理员运维；本 plan 不以 TTL/LRU/按价值驱逐静默销毁稀缺物品。每次 pickup 与 durable delete 同事务释放槽位。R6 的 `dropped_loot_sync` 必须分页/分片，每 payload 至多 `256` entries，携带 `snapshot_revision/page_index/page_count`；client 收齐同 revision 全部分片后原子替换视图，内容变化时不再对每个 client 构建/排序一份无界全量 payload。
 8. rotate/move receipt 必须携带变更后的完整 item view 或等价 `grid_w/grid_h + rotated` 事实。R10 的 inventory outcome 提供所需事实；R4 在其独占 handler 中把 outcome 交给 emit API；R6 扩展公共 S2C schema/emit 并让 client 以权威新 footprint 替换旧 view。三段任一未完成均不得判 P3/P4 完成。
 
@@ -103,7 +103,7 @@ impl InventoryTxn<'_> {
 
 - **R10 独占**：`server/src/inventory/**`；各产出域只改为调用冻结的 transaction API，不接管其 session/玩法状态机。
 - **R1**：拥有 session 生命周期。R10 返回 delivery 成败与 receipt；R1 只能在成功存入或成功 spill 后清 session，失败必须保留可重试状态。
-- **R3**：拥有 `server/src/persistence/**`、autosave 与 hydration 编排。R3 P1 先冻结 inventory slice hydration seam；R10 P3 再在 `inventory/migration.rs` 提供纯、幂等的旧布局转换/校验；R3 P4 的 inventory migration consumer 子批次调用它、保存新 schema，并执行 dropped-loot 有界 hydration guard。三项工作均已登记进 R3 canonical plan；R10 不直接重构 persistence 巨石。
+- **R3**：拥有 `server/src/persistence/**`、autosave 与 hydration 编排。R3 P1 先冻结 inventory slice hydration seam；R10 P1 同时提供 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 与 `DroppedLootRegistry::{try_insert,try_insert_batch}` 这一容量契约，R3 P2/P4 只能在 R10 P1 merge 后接入并引用它；在此之前 R3 以未超限 guard seam 为占位，不得复制常量。R10 P3 再在 `inventory/migration.rs` 提供纯、幂等的旧布局转换/校验；R3 P4 的 inventory migration consumer 子批次调用它、保存新 schema，并为迁移 overflow 提供真实 `SpillContext`（player identity、mechanism/world position、dimension、durable registry 与 reservation）。R3 consumer 必须先在临时内存/副本上完成 migration，成功且所有 overflow 已通过容量预留并持久化后才提交新 schema；缺上下文、容量不足或持久化失败时保留旧行并返回 retryable load failure，不得伪造坐标、清空旧行或把 overflow 留在无主纯值中。R10 不直接重构 persistence 巨石。
 - **R4**：拥有 C2S gate 与 `server/src/network/client_request_handler.rs`。通过 gate 后调用 R10 txn；对于 rotate/pack move，R4 还负责把 R10 outcome 的 request identity、revision 和新 item view 传给 R6 emit API，但不定义 wire schema。
 - **R5**：拥有 qi ledger、磨损/衰变物理；R10 保留动态字段并产出 `PickupAttritionBasis`，R5 P3 已登记 incoming-only pickup attrition API 与守恒断言，R4 只传 receipt 不重算整栈真元。
 - **R6**：拥有公共 S2C schema/emit 与 client network consumer。R6 canonical plan 的 P0/吸收清单已登记 `rotate-footprint-sync`、`bot-inventory-pack-feedback`；R6 P1/P4 已登记 dropped-loot 分片快照与 inventory receipt contract 子批次，负责修改 `server/src/schema/inventory.rs` 及双端 samples/convert，使成功 `moved`（或等价 accepted receipt）携带请求可归因字段、结果 revision 和权威 item view，修改 inventory emit API 与 `client/.../InventoryEventHandler.java`，并补 server schema/emit、client handler、Python decoder contract tests。**在 R6 P4 子批次 merge 前，R10 P3 不得标 ✅、P4 不得归档相关 skeleton。**
@@ -138,11 +138,11 @@ impl InventoryTxn<'_> {
 
 **决议**：并入 R10 P3，一次清账，但严格等待 R3 P1。
 
-1. R10 在 `server/src/inventory/migration.rs` 提供纯函数，例如 `migrate_legacy_inventory_layout(value, schema_version) -> MigrationOutcome`；输入/输出只涉及 inventory slice，不执行 SQL。
-2. 迁移挂到 R3 冻结的 hydration seam：现有依据为 `server/src/player/state.rs:1372-1433` 的 schema-version 分流与反序列化路径；R3 P1 先冻结 loader seam，R10 P3 落纯迁移，R3 P4 inventory migration consumer 子批次再调用并保存。
-3. 迁移幂等：新布局不变；旧 5×7/main-pack 形态转换为当前容器布局；所有 item instance 与动态字段保留；无法合法放入的物品走显式 migration spill/handoff，绝不静默截断。
-4. 迁移成功后由 R3 保存新 schema 形状；R10 不直接写 `inventories` 表、不修改 autosave 所有权。
-5. P3 测试至少覆盖：旧布局 happy path、空库存、边界填满、动态字段保留、重复迁移不变、非法/损坏 JSON 拒绝、overflow 明细守恒。
+1. R10 在 `server/src/inventory/migration.rs` 提供纯函数，例如 `migrate_legacy_inventory_layout(value, schema_version) -> MigrationOutcome`；输入/输出只涉及 inventory slice，不执行 SQL。`MigrationOutcome` 必须显式携带 `overflow: Vec<ItemInstance>`，不得把无法安放的物品丢弃或藏在不可消费的字符串中。
+2. 迁移挂到 R3 冻结的 hydration seam：现有依据为 `server/src/player/state.rs:1372-1433` 的 schema-version 分流与反序列化路径；R3 P1 先冻结 loader seam，R10 P3 落纯迁移，R3 P4 inventory migration consumer 子批次再调用并保存。R3 consumer 负责把本次加载的玩家身份、真实机制结算点/世界坐标、dimension 与可写 `DroppedLootRegistry` 组装为真实 `SpillContext`，并负责持久化 overflow 与容量 reservation；R10 的纯函数不自行猜位置、不执行 SQL。
+3. 迁移幂等：新布局不变；旧 5×7/main-pack 形态转换为当前容器布局；所有 item instance 与动态字段保留；无法合法放入的物品必须进入 `MigrationOutcome::overflow`，由 R3 consumer 通过 `InventoryTxn::deliver`/显式 migration spill handoff 原子落入 durable registry。缺少真实上下文、容量不足或 overflow 持久化失败时，R3 必须保留旧数据库行并返回可重试的 load failure/只读降级；不得伪造坐标、先写新 schema 后再补 spill，或把 overflow 留在无主内存。
+4. 迁移成功后由 R3 保存新 schema 形状；只有“新 schema 与全部 overflow 均已持久化”才算成功。R10 不直接写 `inventories` 表、不修改 autosave 所有权。
+5. P3 测试至少覆盖：旧布局 happy path、空库存、边界填满、动态字段保留、重复迁移不变、非法/损坏 JSON 拒绝、overflow 明细守恒，以及 R3 consumer 在有真实 `SpillContext` 时成功提交、缺上下文/容量不足/持久化失败时保留旧行并可重试。
 
 **落点**：`server/src/player/state.rs:1372-1433`（当前依据）→ R3 P1 后的 inventory slice loader；本 plan §P3。
 
@@ -184,9 +184,9 @@ impl InventoryTxn<'_> {
 - give、craft、alchemy、forge、loot/pickup 全部改走 `InventoryTxn::deliver` / `consume_checked` / `pickup_and_merge`。
 - 删除按错误字符串前缀判断 public fallback 的调用契约，改用 typed error/disposition。
 - session 类调用严格执行“txn 成功（stored 或 spilled）后才 teardown”；失败不扣料、不删 session、不删 dropped entry。
-- 饱和测试覆盖：空包、恰好放满、少一格、同身份全 merge/部分 merge、不同动态身份拒绝 merge、无 spill context、每类结构错误、revision 单次 bump、总量守恒。
+- 饱和测试覆盖：空包、恰好放满、少一格、同身份全 merge/部分 merge、不同动态身份拒绝 merge、无 spill context、每类结构错误、revision 单次 bump、总量守恒；另设 `consume_checked` 专属 contract pin：成功消费逐 instance 扣除精确数量、receipt 逐项记录 source/count、revision 只 bump 一次；库存不足/未知 instance/zero quantity 任一失败时 inventory、revision、session 与材料均逐字节/逐字段保持不变，且不得出现部分扣除。
 - 既有实例 round-trip contract pin：构造非默认 `instance_id/durability/freshness/mineral_id/charges/forge_*/alchemy/lingering_owner_qi` 的 `ItemInstance`，分别验证直接 placement 与 spill 后所有字段逐项不变、receipt 将原 id 记入 placed/spilled 而非 created；merge 只允许完整 identity 相等且 receipt 保留 source/target/count。
-- dropped registry bound pin：`limit-1`、恰好 `limit`、`limit+1`/单事务多 spill 越界；越界时 inventory/revision/session/材料/registry/persistence 全不变，pickup 后容量可复用，超限 hydration 进入 guard 而不截断。
+- dropped registry bound pin：`limit-1`、恰好 `limit`、`limit+1`/单事务多 spill 越界；越界时 inventory/revision/session/材料/世界掉落与 persistence 全不变，pickup 后容量可复用，超限 hydration 进入 guard 而不截断。
 
 ## P3 — 网格/堆叠一致性 + 迁移（⬜）
 
@@ -205,5 +205,5 @@ impl InventoryTxn<'_> {
 5. `inv_give_visibility_forge`：保留 production forge 的 `/give fan_iron_anvil` → snapshot 真实 instance id → `forge_station_place` → 消耗快照深链回归。
 6. `inv_give_visibility_lingtian`：改造 `production_lingtian_gathering_intents.py`，禁止 `hoe_instance_id: 0` 和“任意 server-data 即成功”；`/give hoe_iron` 后必须在带时间锚的新 `inventory_snapshot` 找到 `hoe_iron` 及真实 instance/location，按生产规则把该实例移到 main-hand held（等待匹配请求的 accepted receipt 与权威 snapshot），再用同一非零 instance id 发 `lingtian_start_till`，断言真实 `lingtian_session`/明确业务拒绝回执且请求未因 instance mismatch 被拒。只有 producer→snapshot→equip→till 全链通过，才可归档 visibility skeleton。
 7. Python server-data decoder 对新增/扩展 inventory receipt 与 dropped-loot 分片快照做正反样本测试；bot 场景的 request correlation 必须同时使用发送时间锚、instance id、from/to 和 revision，不得命中历史事件。
-8. `inv_dropped_loot_bound`：预置到 `MAX_DURABLE_DROPPED_LOOT_ENTRIES`，再触发 craft/alchemy/forge/give/loot spill，逐域断言 typed capacity rejection、源状态/session/材料不变；pickup 一件后重试成功。重启超限数据库必须进入 guard 而非截断；分片 sync 每页 ≤ `DROPPED_LOOT_SYNC_PAGE_SIZE`，同 revision 缺页不得替换 client 视图。
+8. `inv_dropped_loot_bound`：预置到 `MAX_DURABLE_DROPPED_LOOT_ENTRIES`，再分别触发 craft/alchemy/forge/give/loot spill、player discard、death revive 的 TSY/主世界 drop、termination 的 world-drop fallback、TSY relic layer spawn、placeable-break template spawn、backpack unequip overflow、morph-release gate overflow；每个生产 writer 逐域断言通过 `try_insert/try_insert_batch` 获得 typed capacity rejection，源 inventory/revision/session/材料/世界掉落与 persistence 不变；pickup 或显式 durable delete 一件后重试成功。重启超限数据库必须进入 guard 而非截断；分片 sync 每页 ≤ `DROPPED_LOOT_SYNC_PAGE_SIZE`，同 revision 缺页不得替换 client 视图。
 9. 按 §P0.5 逐项核验被吸收 skeleton 的代码、跨轨 merge SHA、client/bot 测试与证据，再依仓库三态规则分别收口；本 plan 未全部完成前不写 `Finish Evidence`、不归档。
