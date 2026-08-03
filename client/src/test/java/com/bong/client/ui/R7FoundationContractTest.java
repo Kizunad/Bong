@@ -2,18 +2,21 @@ package com.bong.client.ui;
 
 import com.sun.source.tree.AssignmentTree;
 import com.sun.source.tree.BinaryTree;
+import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.LiteralTree;
 import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.NewClassTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.VariableTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
+import com.sun.source.util.TreeScanner;
 import org.junit.jupiter.api.Test;
 
 import javax.tools.Diagnostic;
@@ -625,6 +628,25 @@ class R7FoundationContractTest {
             }
             """));
         assertThrows(AssertionError.class, () -> auditKeyBindingSource("""
+            interface UnaryOperator<T> { T apply(T value); }
+            class Probe {
+                void install(UnaryOperator<KeyBinding> registrar) {
+                    registrar.apply(new KeyBinding("key", type, code, "category"));
+                }
+            }
+            """));
+        assertDoesNotThrow(() -> auditKeyBindingSource("""
+            import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+            class Probe {
+                void unrelated() {
+                    Object KeyBindingHelper = null;
+                }
+                Object key = KeyBindingHelper.registerKeyBinding(
+                    new KeyBinding("key", type, code, "category")
+                );
+            }
+            """));
+        assertThrows(AssertionError.class, () -> auditKeyBindingSource("""
             import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
             class Probe {
                 Object KeyBindingHelper;
@@ -917,7 +939,7 @@ class R7FoundationContractTest {
         }
         String method = select.getIdentifier().toString();
         if (method.equals("apply") && select.getExpression().toString().equals("registrar")) {
-            return enclosingMethodHasRegistrarParameter(invocationPath);
+            return enclosingMethodHasFabricRegistrarParameter(invocationPath, unit);
         }
         if (!method.equals("registerKeyBinding")) {
             return false;
@@ -925,7 +947,7 @@ class R7FoundationContractTest {
         String receiver = select.getExpression().toString();
         return receiver.equals("net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper")
             || (receiver.equals("KeyBindingHelper")
-                && !declaresIdentifier(unit, "KeyBindingHelper")
+                && !declaresIdentifierAtRegistrationSite(invocationPath, unit, "KeyBindingHelper")
                 && unit.getImports().stream().anyMatch(importTree ->
                 !importTree.isStatic()
                     && importTree.getQualifiedIdentifier().toString().equals(
@@ -933,28 +955,62 @@ class R7FoundationContractTest {
                     )));
     }
 
-    private static boolean declaresIdentifier(CompilationUnitTree unit, String name) {
-        boolean[] declared = {false};
-        new TreePathScanner<Void, Void>() {
+    private static boolean declaresIdentifierAtRegistrationSite(
+        TreePath registrationPath,
+        CompilationUnitTree unit,
+        String name
+    ) {
+        for (TreePath cursor = registrationPath; cursor != null; cursor = cursor.getParentPath()) {
+            Tree leaf = cursor.getLeaf();
+            if (leaf instanceof MethodTree method) {
+                if (method.getParameters().stream().anyMatch(parameter -> parameter.getName().contentEquals(name))) {
+                    return true;
+                }
+                return declaresVariableInMethod(method, name);
+            }
+            if (leaf instanceof ClassTree clazz
+                && clazz.getMembers().stream().anyMatch(member -> member instanceof VariableTree variable
+                    && variable.getName().contentEquals(name))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean declaresVariableInMethod(MethodTree method, String name) {
+        if (method.getBody() == null) {
+            return false;
+        }
+        final boolean[] declared = {false};
+        new TreeScanner<Void, Void>() {
             @Override
             public Void visitVariable(VariableTree variable, Void unused) {
                 declared[0] |= variable.getName().contentEquals(name);
                 return super.visitVariable(variable, unused);
             }
-        }.scan(unit, null);
+        }.scan(method.getBody(), null);
         return declared[0];
     }
 
-    private static boolean enclosingMethodHasRegistrarParameter(TreePath path) {
+    private static boolean enclosingMethodHasFabricRegistrarParameter(
+        TreePath path,
+        CompilationUnitTree unit
+    ) {
         for (TreePath cursor = path; cursor != null; cursor = cursor.getParentPath()) {
-            if (cursor.getLeaf() instanceof com.sun.source.tree.MethodTree method) {
+            if (cursor.getLeaf() instanceof MethodTree method) {
                 return method.getParameters().stream().anyMatch(parameter ->
                     parameter.getName().contentEquals("registrar")
                         && parameter.getType().toString().replaceAll("\\s+", "")
-                            .equals("UnaryOperator<KeyBinding>"));
+                            .equals("UnaryOperator<KeyBinding>")
+                        && isJavaUtilUnaryOperator(method, unit));
             }
         }
         return false;
+    }
+
+    private static boolean isJavaUtilUnaryOperator(MethodTree method, CompilationUnitTree unit) {
+        return unit.getImports().stream().anyMatch(importTree -> !importTree.isStatic()
+            && importTree.getQualifiedIdentifier().toString().equals("java.util.function.UnaryOperator"));
     }
 
     private static String enclosingAssignmentTarget(TreePath path) {
@@ -1033,7 +1089,7 @@ class R7FoundationContractTest {
             DECLINE	InsightDecision.declined(triggerId)	InsightOfferScreen	claim only the exact current offerId; a later offer may reuse triggerId	Atomically commit DECLINE for the current offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	A close failure leaves this offerId terminal; later paths for the same instance remain NOOP.	If send and close both fail, retain send as primary and suppress close in execution order.	Emit at most one DECLINED decision for this offer instance without poisoning a later offer that reuses triggerId.
             TIMEOUT	InsightDecision.timedOut(triggerId)	InsightOfferScreenBootstrap + InsightOfferScreen	pre-open bootstrap and open screen compete for one exact offerId claim	Atomically commit TIMEOUT for offerId before sending; pre-open expiry creates no screen, while an open screen then closes if still current.	A send failure is primary; the applicable close or transition is still attempted.	A close or removal failure leaves this offerId terminal and cannot authorize another send.	If send and transition both fail, retain send as primary and suppress transition in execution order.	Emit one TIMED_OUT decision for the offer instance; stale timeout of offer A cannot clear current or pending offer B.
             ESC	InsightDecision.declined(triggerId)	InsightOfferScreen.close	claim the exact offerId owned by the closing screen	Atomically commit ESC for offerId before sending; then send; then close this screen if still current.	A send failure is primary and closing this screen is still attempted.	Close or removal failure leaves this offerId terminal; onRemoved remains NOOP for settlement.	Retain the first failure and suppress later close/removal failures in execution order.	Emit at most one DECLINED decision for this offer instance.
-            REPLACED_BY_DIFFERENT_OFFER	InsightDecision.declined(triggerId)	InsightOfferStore + InsightOfferScreenBootstrap + ScreenTransitionController	compare outgoing and incoming offerId; settle an outgoing current or pending offer even when no InsightOfferScreen is current	Publish the incoming offer into a bounded pending slot; commit and send the outgoing offerId before attempting the screen switch; promote pending to current only after installation succeeds.	An outgoing send failure is primary and installation is still attempted; its offerId remains terminal.	Installation failure keeps the incoming offer non-authoritative in the pending slot for retry; it cannot strand an authoritative snapshot without a screen.	If send and installation both fail, retain send as primary and suppress installation in execution order.	Outgoing emits at most one DECLINED decision; incoming is either installed as current or remains bounded pending and reachable for retry.
+            REPLACED_BY_DIFFERENT_OFFER	LOCAL_TERMINAL	InsightOfferStore + InsightOfferScreenBootstrap + ScreenTransitionController	compare outgoing and incoming offerId locally; do not claim wire-level isolation when triggerId is reused	Publish the incoming offer into a bounded pending slot; commit the outgoing offerId as a local terminal tombstone before attempting the screen switch; do not send InsightDecision for the outgoing offer because the current C2S schema has no offerId correlation. Promote pending to current only after installation succeeds.	No outgoing decision send is attempted; the incoming installation is still attempted.	Installation failure keeps the incoming offer non-authoritative in the pending slot for retry; it cannot strand an authoritative snapshot without a screen.	If installation fails, retain the incoming pending offer and the outgoing local tombstone; no ambiguous wire settlement is emitted.	The outgoing offer is settled locally exactly once; the incoming offer is either installed as current or remains bounded pending and reachable for retry. Cross-offer wire isolation is deferred until the protocol carries offerId.
             ANIMATED_OPEN_CANCELLED	InsightDecision.declined(triggerId)	InsightOfferScreen + ScreenTransitionController.PendingOpenCancellationHandler	claim the exact offerId owned by activeTransition.handle().newScreen()	Atomically commit ANIMATED_OPEN_CANCELLED for offerId before sending the decline; then clear only matching current/pending ownership.	A send failure remains observable after the offerId is committed terminal.	Cancellation cannot leave the offer current or pending without a visible or retryable screen.	A later removal callback is NOOP for settlement and any later lifecycle failure is suppressed after the send failure.	Cancelling the 250 ms animated open emits at most one decline and leaves no invisible unsettled offer.
             REMOVED_EXCEPTIONALLY	InsightDecision.declined(triggerId)	InsightOfferScreen.onRemoved	claim the screen's exact offerId only when no earlier cause won	Atomically commit REMOVED_EXCEPTIONALLY for offerId before sending; then continue all base removal stages.	A send failure is primary and later removal stages are still attempted.	A later removal-stage failure cannot replace the committed cause.	BongScreenBase retains the first failure and suppresses later lifecycle failures in execution order.	Exceptional removal emits at most one decline and cannot clear a different current or pending offer.
             DUPLICATE_TERMINAL	NOOP	InsightOfferStore	an already committed offerId is immutable only while its current/pending lifecycle can still race	Observe the bounded in-flight terminal claim and return before send or transition.	No decision send is attempted.	No screen transition is attempted and no different offerId is mutated.	No new exception is produced.	No duplicate decision or transition occurs; historical offer IDs are not retained after their lifecycle becomes unreachable.
