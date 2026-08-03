@@ -94,13 +94,13 @@
 
 ## 问题记录（开发中实际踩到，后续阶段留意）
 
-1. **共享 target 的旧二进制不可直接跑**：`server/target/debug/bong-server` 是从已删 worktree（`.worktree/consume-tsy-search-cancel-v1`）编译的，`CARGO_MANIFEST_DIR` 编译期烙死 → 启动即 panic（loot_pools.json not found）。结论：bot-e2e.sh 必须 `cargo run` from 当前 checkout，禁止直接执行 target 里的二进制。
+1. **共享 target 的旧二进制不可直接跑**：`server/target/debug/bong-server` 可能来自其他或已删 worktree，`CARGO_MANIFEST_DIR` 编译期烙死后会指向错误资产路径。结论：bot-e2e.sh 必须从当前 checkout 经 build-token 完成 `cargo build`，在令牌保护的成功构建后复制本轮 immutable binary，再在令牌外运行该副本；禁止直接执行共享 target 里的旧二进制。
 2. **e2e-redis.sh 孤儿 server**：cleanup 只 `kill` 子 shell，bash 不向子进程转发 SIGTERM（已实验证实），`cargo run`/`bong-server` 变孤儿继续占 25565——本地跑完 smoke 会漏进程，CI 里会卡死后续要用该端口的 stage。P0 已修（`kill_tree` 递归杀树 + bot-e2e.sh `BOT_E2E_KILL_STALE` 兜底）。
 3. **763 命令包带签名字段**：`CommandExecution(0x04)` 尾部 timestamp/salt/签名数/message_count/20-bit BitSet 全零即可过 offline server，但字节布局错一位整包被丢（无反馈）。包 ID/布局唯一权威 = valence checkout `tools/packet_inspector/extracted/packets.json`，别信 wiki.vg 其他版本页。
 4. **短 timeout 轮询下的半帧撕裂**：reader 用 0.5s socket timeout 时，timeout 可能落在帧长度前缀读一半处；朴素"边读边消费"实现会把已读字节丢掉导致整条流错位。框架已用"缓冲区攒够完整帧才消费"规避（`_try_parse_frame`），后续写新协议工具照抄这个模式。
-5. **raster-less 世界盖不住 spawn 散布区（server 侧真缺口，建议后续修）**：`server/src/world/mod.rs` fallback 平台日志自称 "16x16 chunks centered on spawn"，实际 centered on **origin**；spawn 迁移（#808）+ zone "spawn" 散布后，玩家/bot 常出生在平台外纯虚空（实测三连 join：chunk(11,3) 34 chunk / chunk(-15,-15) 0 chunk ×2）。影响：CI e2e 与本地 raster-less dev server 的玩家出生即虚空 + 坠落回弹；`terrain_join_chunk_delivery` 场景的 chunk 投递 leg 只能自适应跳过（已显式打印）。修法候选：fallback 平台以真实 spawn 点为中心生成、或覆盖整个 spawn zone；修好后把场景下限收紧 ≥8。
+5. **raster-less fallback 世界覆盖已闭环**：`server/src/world/mod.rs` 从有效 spawn distribution（空配置则 patrol/emergency anchor）构造非空 chunk union，并按最高境界 20-chunk view distance 填平所有可出生视域；启动只在 `anchors/chunks/view_distance_chunks` 均为正整数时发布结构化 `BOT_FALLBACK_FLAT_READY`。`terrain_join_chunk_delivery` 在专用 fallback ownership 下要求三簇真实出生及至少八个 chunk，不再跳过 chunk-delivery leg。
 6. **Bot.wait_for 的 predicate 持锁回调死锁**：predicate 在事件锁内执行，回调 `events_of()` 等同样拿锁的方法时非重入锁直接死锁（连 SIGTERM 都收不干净）。已改 `RLock` 修复；写框架新等待原语时沿用。
-7. **并发 orchestrator 环境下"端口开 ≠ server 就绪"**：本机 `CARGO_TARGET_DIR` 全局指向共享 target，别的 agent 的 cargo 会占 build lock 把 `cargo run` 卡住；同时 25565 上可能出现别人集成测试的瞬时 listener（接受 TCP 几秒后断），单看端口会误判就绪、Bot 连上直接 `connection_lost`。`bot-e2e.sh` 已改为「本轮 log bootstrap 锚点 + listener 属于本轮进程树」双门，并对 build lock 卡死给出提示；CI 单租户无此问题，本地多 agent 并发时仍须 fail closed。
+7. **并发 orchestrator 环境下“端口开 ≠ server 就绪”**：本机共享 target 可能被别的 agent 构建；同时 25565 上可能出现其他集成测试的瞬时 listener。`bot-e2e.sh` 因此以“本轮 immutable binary 的结构化 bootstrap 锚点 + listener 属于本轮进程树”双门校验 ownership；专用 fallback/ambient 模式还使用本轮私有 Redis，拒绝共享状态假阳性。
 
 ## §9 开放问题（P5/P6 决策门）
 

@@ -85,29 +85,18 @@ jobs:
 
       - name: Proto breaking change check (buf)
         if: github.event_name == 'pull_request'
-        working-directory: proto
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags --depth=1 origin \
-            "$BASE_REF:refs/remotes/origin/$BASE_REF"
-          base_commit="$(git rev-parse --verify "refs/remotes/origin/$BASE_REF^{commit}")"
-          proto_type="$(git cat-file -t "$base_commit:proto" 2>/dev/null || true)"
-          if [ "$proto_type" = "tree" ]; then
-            buf breaking --against "../.git#branch=origin/$BASE_REF,subdir=proto"
-          elif [ -z "$proto_type" ]; then
-            echo "proto/ not found on verified base commit $base_commit — skipping breaking check (first PR)"
-          else
-            echo "verified base path proto has unexpected git object type: $proto_type" >&2
-            exit 1
-          fi
+        run: bash scripts/check-proto-breaking.sh
 
       - name: Build-token and signal-boundary contract tests
         run: |
           bash scripts/tests/build_token_test.sh
           python3 scripts/tests/ci_build_token_entrypoint_test.py
           python3 scripts/tests/signal_boundary_contract_test.py
+          python3 scripts/tests/fallback_world_readiness_contract_test.py
+          python3 scripts/tests/proto_breaking_base_ref_contract_test.py
+          bash scripts/tests/preview_lifecycle_contract_test.sh
 
       - name: Install agent workspace dependencies
         working-directory: agent
