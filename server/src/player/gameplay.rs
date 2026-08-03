@@ -982,6 +982,72 @@ mod tests {
     }
 
     #[test]
+    fn canonical_gather_without_session_store_is_fully_fail_closed() {
+        let mut app = setup_gather_action_test_app();
+        app.world_mut().remove_resource::<HarvestSessionStore>();
+        let initial_state = PlayerState {
+            karma: 0.11,
+            inventory_score: 0.22,
+        };
+        let initial_cultivation = Cultivation {
+            qi_current: 3.0,
+            qi_max: 10.0,
+            ..Cultivation::default()
+        };
+        let player = spawn_gather_action_test_player(
+            &mut app,
+            initial_state.clone(),
+            initial_cultivation.clone(),
+        );
+        let target = spawn_gather_action_test_plant(
+            &mut app,
+            crate::botany::registry::BotanyPlantId::SpiritGrass,
+            DEFAULT_SPAWN_ZONE_NAME,
+            [1.0, 66.0, 0.0],
+            false,
+            false,
+        );
+        let zone_qi_before = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .expect("fallback spawn zone exists")
+            .spirit_qi;
+        enqueue_spirit_grass_gather(&mut app, Some(target));
+
+        app.update();
+
+        let player_ref = app.world().entity(player);
+        assert_eq!(player_ref.get::<PlayerState>(), Some(&initial_state));
+        assert_eq!(player_ref.get::<Cultivation>(), Some(&initial_cultivation));
+        assert_eq!(
+            app.world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("fallback spawn zone exists")
+                .spirit_qi,
+            zone_qi_before
+        );
+        assert!(app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<ActiveEventsResource>()
+            .recent_events_snapshot()
+            .is_empty());
+        assert!(app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain()
+            .is_empty());
+        let plant = app.world().entity(target).get::<Plant>().unwrap();
+        assert!(!plant.harvested && !plant.trampled);
+    }
+
+    #[test]
     fn explicit_gather_target_rejects_every_non_harvestable_shape() {
         for (label, id, zone_name, position, harvested, trampled) in [
             (

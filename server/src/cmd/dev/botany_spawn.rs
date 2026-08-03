@@ -4,7 +4,8 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{
-    App, Client, Commands, EventReader, Position, Query, Res, Resource, Update, With,
+    App, Client, Commands, Component, Entity, EventReader, Position, Query, Res, Resource, Update,
+    With,
 };
 
 use crate::botany::components::{Plant, PlantLifecycleClock};
@@ -13,6 +14,9 @@ use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::ZoneRegistry;
 
 const FIXTURE_OFFSET_X: f64 = 1.0;
+
+#[derive(Debug, Clone, Component, PartialEq, Eq)]
+struct BotanySpawnFixtureOwner(Entity);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotanySpawnCmd {
@@ -54,6 +58,7 @@ fn handle_botany_spawn(
     mut commands: Commands,
     mut events: EventReader<CommandResultEvent<BotanySpawnCmd>>,
     mut players: PlayerQuery<'_, '_>,
+    fixtures: Query<(Entity, &BotanySpawnFixtureOwner), With<Plant>>,
     zones: Option<Res<ZoneRegistry>>,
     clock: Option<Res<PlantLifecycleClock>>,
     dev_access: Option<Res<BotanySpawnDevAccess>>,
@@ -115,20 +120,26 @@ fn handle_botany_spawn(
             continue;
         };
 
-        // Dev fixture only: create the real ECS Plant shape consumed by the production nearest-target
-        // resolver. This intentionally bypasses natural lifecycle density and qi accounting.
+        for (fixture, owner) in fixtures.iter() {
+            if owner.0 == event.executor {
+                commands.entity(fixture).despawn();
+            }
+        }
         let entity = commands
-            .spawn(Plant {
-                id: BotanyPlantId::SpiritGrass,
-                zone_name: target_zone.name.clone(),
-                position: target,
-                planted_at_tick: clock.tick,
-                wither_progress: 0,
-                source_point: None,
-                harvested: false,
-                trampled: false,
-                variant: PlantVariant::None,
-            })
+            .spawn((
+                Plant {
+                    id: BotanyPlantId::SpiritGrass,
+                    zone_name: target_zone.name.clone(),
+                    position: target,
+                    planted_at_tick: clock.tick,
+                    wither_progress: 0,
+                    source_point: None,
+                    harvested: false,
+                    trampled: false,
+                    variant: PlantVariant::None,
+                },
+                BotanySpawnFixtureOwner(event.executor),
+            ))
             .id();
         client.send_chat_message(format!(
             "[dev] botany_spawn accepted: plant_id=plant-{} kind=spirit_grass pos=[{:.17},{:.17},{:.17}] zone={}",
@@ -151,20 +162,32 @@ mod tests {
     use valence::protocol::packets::play::GameMessageS2c;
     use valence::testing::{create_mock_client, MockClientHelper};
 
-    fn setup_app(dev_access_enabled: bool, include_zones: bool, include_clock: bool) -> App {
+    fn setup_app_with_registry(
+        dev_access_enabled: bool,
+        zones: Option<ZoneRegistry>,
+        include_clock: bool,
+    ) -> App {
         let mut app = App::new();
         app.add_event::<CommandResultEvent<BotanySpawnCmd>>();
         if dev_access_enabled {
             app.insert_resource(BotanySpawnDevAccess);
         }
-        if include_zones {
-            app.insert_resource(ZoneRegistry::fallback());
+        if let Some(zones) = zones {
+            app.insert_resource(zones);
         }
         if include_clock {
             app.insert_resource(PlantLifecycleClock { tick: 73 });
         }
         app.add_systems(Update, handle_botany_spawn);
         app
+    }
+
+    fn setup_app(dev_access_enabled: bool, include_zones: bool, include_clock: bool) -> App {
+        setup_app_with_registry(
+            dev_access_enabled,
+            include_zones.then(ZoneRegistry::fallback),
+            include_clock,
+        )
     }
 
     fn spawn_client(
@@ -338,6 +361,128 @@ mod tests {
             );
             assert_eq!(collect_chat(&mut app, &mut helper), vec![expected]);
         }
+    }
+
+    #[test]
+    fn repeated_command_replaces_the_callers_fixture() {
+        let mut app = setup_app(true, true, true);
+        let (player, mut helper) =
+            spawn_client(&mut app, [10.0, 64.0, -4.0], Some(DimensionKind::Overworld));
+
+        send(&mut app, player);
+        app.update();
+        let first = app
+            .world_mut()
+            .query_filtered::<Entity, With<Plant>>()
+            .single(app.world());
+        send(&mut app, player);
+        app.update();
+
+        let world = app.world_mut();
+        let mut plants = world.query_filtered::<Entity, With<Plant>>();
+        let entities = plants.iter(world).collect::<Vec<_>>();
+        assert_eq!(
+            entities.len(),
+            1,
+            "one player may own at most one dev fixture"
+        );
+        assert_ne!(
+            entities[0], first,
+            "repeat invocation replaces the old fixture"
+        );
+        assert!(
+            world.get_entity(first).is_none(),
+            "old fixture must be despawned"
+        );
+        assert_eq!(collect_chat(&mut app, &mut helper).len(), 2);
+    }
+
+    #[test]
+    fn different_players_keep_one_fixture_each() {
+        let mut app = setup_app(true, true, true);
+        let (alice, _alice_helper) =
+            spawn_client(&mut app, [10.0, 64.0, -4.0], Some(DimensionKind::Overworld));
+        let (bob, _bob_helper) =
+            spawn_client(&mut app, [20.0, 64.0, -4.0], Some(DimensionKind::Overworld));
+        send(&mut app, alice);
+        send(&mut app, bob);
+
+        app.update();
+
+        assert_eq!(
+            app.world_mut().query::<&Plant>().iter(app.world()).count(),
+            2,
+            "the bound is per player, not global"
+        );
+    }
+
+    #[test]
+    fn player_without_zone_is_rejected() {
+        let mut app = setup_app(true, true, true);
+        let (player, mut helper) = spawn_client(
+            &mut app,
+            [100_000.0, 64.0, 0.0],
+            Some(DimensionKind::Overworld),
+        );
+        send(&mut app, player);
+
+        app.update();
+
+        assert_eq!(
+            app.world_mut().query::<&Plant>().iter(app.world()).count(),
+            0
+        );
+        assert_eq!(
+            collect_chat(&mut app, &mut helper),
+            vec!["[dev] botany_spawn rejected: no overworld zone at player"]
+        );
+    }
+
+    #[test]
+    fn target_without_zone_is_rejected() {
+        let mut registry = ZoneRegistry::fallback();
+        registry.zones[0].bounds.1.x = 0.5;
+        let mut app = setup_app_with_registry(true, Some(registry), true);
+        let (player, mut helper) =
+            spawn_client(&mut app, [0.0, 64.0, 0.0], Some(DimensionKind::Overworld));
+        send(&mut app, player);
+
+        app.update();
+
+        assert_eq!(
+            app.world_mut().query::<&Plant>().iter(app.world()).count(),
+            0
+        );
+        assert_eq!(
+            collect_chat(&mut app, &mut helper),
+            vec!["[dev] botany_spawn rejected: no overworld zone at target"]
+        );
+    }
+
+    #[test]
+    fn target_in_adjacent_zone_is_rejected() {
+        let mut registry = ZoneRegistry::fallback();
+        let mut adjacent = registry.zones[0].clone();
+        registry.zones[0].bounds.1.x = 0.5;
+        adjacent.name = "adjacent".to_string();
+        adjacent.bounds.0.x = 0.5;
+        adjacent.bounds.1.x = 2.0;
+        registry.zones.push(adjacent);
+        let mut app = setup_app_with_registry(true, Some(registry), true);
+        let (player, mut helper) =
+            spawn_client(&mut app, [0.0, 64.0, 0.0], Some(DimensionKind::Overworld));
+        send(&mut app, player);
+
+        app.update();
+
+        assert_eq!(
+            app.world_mut().query::<&Plant>().iter(app.world()).count(),
+            0
+        );
+        assert_eq!(
+            collect_chat(&mut app, &mut helper),
+            vec!["[dev] botany_spawn rejected: target crosses zone boundary"]
+        );
     }
 
     #[test]
