@@ -69,9 +69,17 @@ pub struct DevCommandPermissions {
 
 impl Default for DevCommandPermissions {
     fn default() -> Self {
-        Self {
-            allowed_usernames: HashSet::from(["Admin".to_string(), "admin".to_string()]),
-        }
+        let allowed_usernames = std::env::var("BONG_OPERATORS")
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|username| !username.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_else(|_| HashSet::from(["Admin".to_string(), "admin".to_string()]));
+        Self { allowed_usernames }
     }
 }
 
