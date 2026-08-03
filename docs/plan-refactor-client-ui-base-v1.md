@@ -11,7 +11,7 @@
 - `InspectScreen.java` 4647 行，是 client 最大 UI 聚合点；它同时持有 tab 组合、订阅 intake、drag/drop、context menu、tooltip、hotbar 和 overlay arbitration，拆分必须保留唯一 screen-level intake 与共享交互 owner。
 - 默认键冲突仍在：T/vanilla chat、L/vanilla advancements、O/O、U/U、R/R；垂死大能 G/H/J 的生产默认均为 UNKNOWN，但 HUD 文案硬承诺 `[G]/[H]/[J]`，属于 effective-binding 展示/路由不一致，而不是允许第二个默认 G。
 - 网络线程 premise 已变化：`BongNetworkHandler` 的 server-data bridge/router/handler/store/listener 整段已由 R6-owned `clientExecutor.accept(() -> processServerDataPayload(...))` 包住。`cast-sync-config-window-thread` 与 `mineral-probe-result-network-thread-ui` 的原始生产缺陷已由公共边界闭环；R7 不重复接线。
-- 抢屏 premise 也已变化：切磋邀请已采用“被别的屏挡住时 toast、保留 domain-store invite、空屏再开”的礼貌逻辑，`v-sparring-invite-screen-hijack` 是已完成 canonical plan 的重复项。顿悟屏仍可强制覆盖普通屏，且 replacement/removal 未汇聚到 exactly-once settlement，是 `ScreenOpenPolicy` 的有效输入。
+- 抢屏 premise 也已变化：切磋邀请已采用“被别的屏挡住时 toast、保留 domain-store invite、空屏再开”的礼貌逻辑，但 production bootstrap 尚无 combat 输入，因此 `v-sparring-invite-screen-hijack` 只完成屏幕占用 slice，combat deferral 仍由 P4 收口。顿悟屏仍可强制覆盖普通屏，且 replacement/removal 未汇聚到 exactly-once settlement，是 `ScreenOpenPolicy` 的有效输入。
 
 ## 接入面
 
@@ -64,7 +64,7 @@
 - passive social invite：domain Store 保持权威；战斗中或已有屏时，首次同 identity 阻塞 `DEFER_NOTIFY`，已经通知过则 `DEFER_SILENT`；新 identity 重新取得通知资格。战斗结束且 `currentScreen == null`、TTL 仍有效才 `OPEN`；先到 TTL 则 `EXPIRE`。
 - ordinary hotkey：无屏 `OPEN`、同屏 `NOOP_MATCHING`、任何 nonmatching ordinary/modal/system-terminal block 都 `BLOCK_DROP`；**物理按键永不排队重放**。
 - insight：可 `PREEMPT` 普通 non-modal UI；同 `offer_id` no-op，`trigger_id` 只作为可复用的触发上下文；在 equal/higher modal 或 death/terminate system terminal 后按 caller-owned 状态 `DEFER_NOTIFY/DEFER_SILENT`；过期 `EXPIRE`。wire 的 `offer_id` 必须经 `network/InsightOfferHandler` 与 `network/HeartDemonOfferHandler` 贯通 `InsightOfferViewModel`、Store、Screen；当前 C2S `InsightDecision` 只有 `trigger_id`/`choice_idx`，因此 replacement 只能以本地 offerId tombstone 结算，不能伪造 outgoing offerId 的 wire decline。`r7-insight-settlement.tsv` 冻结 current/pending 两槽内的终态、send/transition 失败顺序、replacement 与 250ms pending-open cancellation；不得用 trigger_id 永久 map 代替实例状态，生命周期不可达后必须释放。P4 才在两条 converter、`InsightOfferViewModel`、`InsightOfferStore`/`InsightOfferScreenBootstrap`/`InsightOfferScreen` 的生产入口上写行为测试：两个不同 `offer_id` 即使复用同一 `trigger_id` 也必须保持独立本地实例；旧 current 或 pending offer 必须先结算；新 offer 仅安装成功后成为 authoritative；安装失败保留 bounded pending 可重试；stale decision 不能清掉更新 offer。
-- system terminal：同 identity `NOOP_MATCHING`；`TerminateScreen > DeathScreen > ordinary/modal`，可抢占低优先 UI；非 matching equal-priority peer 与更高优先 terminal 都 `BLOCK_DROP`。finite expiry 先于 identity matching 判定（expiry 与 matching 同时为真仍 `EXPIRE`）；P0 raw decision vectors 在 `r7-screen-open-policy.tsv`，32 行全部字段逐行 exact pin。
+- system terminal：同 identity `NOOP_MATCHING`；`TerminateScreen > DeathScreen > ordinary/modal`，可抢占低优先 UI；非 matching equal-priority peer 与更高优先 terminal 都 `BLOCK_DROP`。finite expiry 先于 identity matching 判定（expiry 与 matching 同时为真仍 `EXPIRE`）；P0 raw decision vectors 在 `r7-screen-open-policy.tsv`，35 行全部字段逐行 exact pin。
 
 ## InspectScreen P3 决议
 
@@ -93,7 +93,7 @@
 | cast-sync-config-window-thread | already-fixed | R6 common receive boundary 已整体 client-thread marshal。 |
 | mineral-probe-result-network-thread-ui | already-fixed | 同一 R6 boundary 已覆盖；R7 不重复 handler 接线。 |
 | surface-stash-search-hud-label-gap | already-fixed | `TsyContainerView` 已有 `surface_stash -> 散修遗缴`。 |
-| v-sparring-invite-screen-hijack | duplicate/already-fixed | canonical 修复已用 deferred domain-store + one-shot toast；仅抽通用 policy。 |
+| v-sparring-invite-screen-hijack | still-valid (combat slice) | 现有 domain-store + one-shot toast 已解决屏幕占用，但 bootstrap 尚无 combat 输入；P4 接通用 policy 后补 combat deferral。 |
 | preview-config-dead-server | out-of-track | Gradle/preview harness tooling，不属 Screen UI-base。 |
 | weather-visual-overlay-collapse | out-of-track | environment/VFX emitter identity，不属 Screen UI-base。 |
 
@@ -108,7 +108,7 @@
 
 ## 验收
 
-- P0 pin：`R7InventoryContractTest` 对拍 29 Screen、92 fill lexical inventory、owo inflate 语义和 production-zero-change；`R7FoundationContractTest` 对拍五类型签名、keybind target、ScreenOpenPolicy vectors、plan anchors、R2/R6 ownership。
+- P0 pin：`R7InventoryContractTest` 对拍 29 Screen、92 fill 与 16 个 `clearChildren()` 精确站点 allowlist、owo inflate 语义和 production-zero-change；`R7FoundationContractTest` 对拍五类型签名、keybind target、ScreenOpenPolicy vectors、plan anchors、R2/R6 ownership。
 - P1 behavior gate：`BongKeybindRegistryTest` 覆盖 translation/physical duplicate、vanilla reservation、空/精确 exemption、UNKNOWN 非冲突与 registrations immutable/order；production-site source gate 确认 26 个 constructor sites 全部迁 global registry；`BotanyHudBootstrapTest` 覆盖 blocked/inactive drain 后不 replay；dying-elder HUD 测试覆盖 rebound key 与“未绑定”。
 - P2 trade gate：`TradeOfferIntentHandlerTest` + picker test 必须证明多 item 时只有 explicit selection 的 exact `instance_id` 被 dispatch；grid/hotbar/sort 不得替用户决定；无 selection 拒绝 dispatch 或打开 picker；P5 e2e 对拍 target 收到相同 instance/displayName。
 - P4 thread/open/HUD gate：四个命名 `client.execute` 来源逐个给出迁移或“不需要 helper”的证据；两个 insight handler 到 `InsightOfferViewModel` 的 converter 测试证明 `offer_id` 完整保留，且 distinct `offer_id` + reused `trigger_id` 不会合并实例；`InsightOfferScreenTest` 覆盖所有 `r7-insight-settlement.tsv` terminal causes；`BongHudOrchestratorTest` 必须证明凝脉及以上 main path 产出 `HudRenderLayer.QI_RADAR`、低境界隐藏，并经 main path 命中 negative-qi、TSY false-signal、nearby-cultivator markers。
@@ -133,7 +133,7 @@
 
 ### #2 只 deferred passive offer，不 replay physical hotkey
 
-**决议**：被 combat/屏幕挡住的 passive social offer 保留在既有 domain Store；bootstrap 按 identity 持有 `alreadyNotified`，首次阻塞 `DEFER_NOTIFY`，重复同 identity `DEFER_SILENT`，新 identity 恢复通知资格；空屏且未过 TTL 时打开。普通 hotkey 被任意 nonmatching screen 挡住即 drop。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；`InsightOfferScreen` + `CurrentScreenCancellationHandler` 以 `offer_id` 作为每个 offer instance 的唯一 settlement identity，`trigger_id` 仅作为可复用触发上下文，所有 terminal path 收敛为 exactly-once settlement。
+- **决议**：P4 将补齐 combat-aware passive social offer：被 combat/屏幕挡住的邀请保留在既有 domain Store；bootstrap 按 identity 持有 `alreadyNotified`，首次阻塞 `DEFER_NOTIFY`，重复同 identity `DEFER_SILENT`，新 identity 恢复通知资格；空屏且未过 TTL 时打开。现有 production bootstrap 仅实现屏幕占用 deferral，尚未读取 combat 状态，不能视为已完成。普通 hotkey 被任意 nonmatching screen 挡住即 drop；combat 本身不全局阻塞 HOTKEY、INSIGHT 或 SYSTEM_TERMINAL。Insight 可抢普通 UI，但在 equal/higher modal 与 system terminal 后 defer；`InsightOfferScreen` + `CurrentScreenCancellationHandler` 以 `offer_id` 作为每个 offer instance 的唯一 settlement identity，`trigger_id` 仅作为可复用触发上下文，所有 terminal path 收敛为 exactly-once settlement。
 
 **落点**：`client/src/main/java/com/bong/client/social/SparringInviteScreenBootstrap.java:42-57`；`client/src/main/java/com/bong/client/insight/InsightOfferScreenBootstrap.java:35-53`；本 plan §ScreenOpenPolicy；`client/src/test/resources/bong/ui/r7-screen-open-policy.tsv`。
 
@@ -146,7 +146,7 @@
 ### §10.2 多 PR 依赖顺序
 
 1. **PR-1 / P0 contract freeze**：docs + R7 tests/resources only，ZERO production behavior change。
-2. **PR-2 / P1 foundations + keybind**：五类型；所有 production KeyBinding sites 迁 global registry；vanilla reserved/空 exemption、botany backlog、dying-elder effective binding 全部按 P1 gate 收口；不接 R6 network files。
+2. **PR-2 / P1 foundations + keybind**：三类型；所有 production KeyBinding sites 迁 global registry；vanilla reserved/空 exemption、botany backlog、dying-elder effective binding 全部按 P1 gate 收口；不接 R6 network files。
 3. **PR-3 / P2 migration A**：alchemy/craft/trade 等，随迁 fill/list defects；outgoing trade 显式 picker 必须通过 exact instance-id gate。
 4. **PR-4 / P3 Inspect split**：tab-first shell/panels，行为不变。
 5. **PR-5 / P4 migration B + R7-owned enforcement**：只验真四个命名 UI `client.execute` 来源；协调 `InsightOfferHandler`/`HeartDemonOfferHandler` 保留 `offer_id` 到 `InsightOfferViewModel`，再把 settlement 接 transition cancellation；qi radar 恢复 `BongHudOrchestrator` main path。

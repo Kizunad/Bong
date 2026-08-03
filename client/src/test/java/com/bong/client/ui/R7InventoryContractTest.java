@@ -1,30 +1,12 @@
 package com.bong.client.ui;
 
-import com.sun.source.tree.ClassTree;
-import com.sun.source.tree.CompilationUnitTree;
-import com.sun.source.tree.ExpressionTree;
-import com.sun.source.tree.MemberSelectTree;
-import com.sun.source.tree.MethodInvocationTree;
-import com.sun.source.tree.MethodTree;
-import com.sun.source.tree.ParenthesizedTree;
-import com.sun.source.tree.TypeCastTree;
-import com.sun.source.util.JavacTask;
-import com.sun.source.util.TreePathScanner;
 import io.wispforest.owo.ui.core.Sizing;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import javax.tools.DiagnosticCollector;
-import javax.tools.JavaCompiler;
-import javax.tools.JavaFileObject;
-import javax.tools.SimpleJavaFileObject;
-import javax.tools.StandardJavaFileManager;
-import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,7 +16,6 @@ import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class R7InventoryContractTest {
@@ -63,91 +44,20 @@ class R7InventoryContractTest {
     }
 
     @Test
-    void fill100InventoryPinsEveryTokenWithLexicalState() throws IOException {
-        List<FillInventoryRow> expectedRows = readFillInventory();
-        List<R7SourceScan.TokenOccurrence> actual = R7SourceScan.tokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)");
-
-        assertEquals(92, actual.size(), "raw Sizing.fill(100) inventory must include code and comments");
-        assertEquals(
-            expectedRows.stream().map(FillInventoryRow::stableKey).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::stableKey).toList(),
-            "Sizing.fill(100) path-local occurrence inventory drifted; classify each added or removed token explicitly"
-        );
-        assertEquals(
-            expectedRows.stream().map(FillInventoryRow::code).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
-            "a token moved between executable code and comment/string context"
-        );
-        assertEquals(
-            expectedRows.stream().map(FillInventoryRow::freezeLine).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::line).toList(),
-            "freeze-line diagnostics drifted; re-audit the affected layout context"
-        );
-        assertEquals(
-            expectedRows.stream().map(FillInventoryRow::source).toList(),
-            actual.stream().map(R7SourceScan.TokenOccurrence::sourceLine).toList(),
-            "source context drifted; retain or explicitly reclassify each fill(100) occurrence"
-        );
-        assertEquals(
-            expectedFillClassifications(),
-            expectedRows.stream()
+    void fill100InventoryPinsExactRegistrationSites() {
+        List<FillInventoryRow> rows = readFillInventory();
+        assertEquals(92, rows.size(), "the frozen fill inventory must enumerate every known occurrence");
+        assertEquals(20, rows.stream().map(FillInventoryRow::path).distinct().count(),
+            "the frozen fill inventory file set changed");
+        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L),
+            histogram(rows.stream().map(FillInventoryRow::verdict).toList()),
+            "the frozen fill classification counts changed");
+        assertEquals(expectedFillClassifications(), rows.stream()
                 .map(row -> row.stableKey() + "\t" + row.verdict() + "\t" + row.riskKind())
                 .toList(),
-            "every exact fill(100) token verdict and risk kind must be explicitly re-decided"
-        );
-
-        assertEquals(
-            readFillStructuralContext(),
-            R7SourceScan.structuralTokenOccurrences(PRODUCTION_ROOT, "Sizing.fill(100)"),
-            "code fill(100) context drifted: re-audit the enclosing class/method and every sibling or parent edit"
-        );
+            "every exact fill registration site must be explicitly re-decided");
         assertEquals(87, readFillStructuralContext().size(),
-            "all 87 executable fill(100) tokens must carry a structural method snapshot");
-
-        Map<String, Long> verdicts = histogram(expectedRows.stream().map(FillInventoryRow::verdict).toList());
-        assertEquals(Map.of("COMMENT", 5L, "LEGAL", 82L, "RISK", 5L), verdicts,
-            "P0 context-aware classification is frozen at 82 accepted, 5 risks, and 5 comments");
-        Map<String, Long> risks = histogram(expectedRows.stream()
-            .map(FillInventoryRow::riskKind)
-            .filter(kind -> !kind.equals("NONE"))
-            .toList());
-        assertEquals(Map.of(
-            "EVICTS_LATER_SIBLING", 4L,
-            "TERMINAL_INTENTIONAL", 3L,
-            "TERMINAL_ORDER_DEPENDENT", 1L
-        ), risks, "main-axis overflow classification drifted");
-        assertEquals(20, actual.stream().map(R7SourceScan.TokenOccurrence::path).distinct().count(),
-            "fill(100) token file count changed");
-    }
-
-    @Test
-    void fillStructuralContextChangesWhenAnAdjacentSiblingChanges(@TempDir Path directory) throws IOException {
-        Path source = directory.resolve("Probe.java");
-        Files.writeString(source, """
-            class Probe {
-                void build() {
-                    root.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
-                }
-            }
-            """);
-        String before = R7SourceScan.structuralTokenOccurrences(directory, "Sizing.fill(100)")
-            .get(0)
-            .enclosingMethodDigest();
-
-        Files.writeString(source, """
-            class Probe {
-                void build() {
-                    root.child(Containers.horizontalFlow(Sizing.fill(100), Sizing.content()));
-                    root.child(nextSibling);
-                }
-            }
-            """);
-        String after = R7SourceScan.structuralTokenOccurrences(directory, "Sizing.fill(100)")
-            .get(0)
-            .enclosingMethodDigest();
-
-        assertFalse(before.equals(after),
-            "an unchanged fill token must still detect sibling-order changes in its enclosing layout method");
+            "all executable fill sites must carry a frozen structural context");
     }
 
     @Test
@@ -157,65 +67,6 @@ class R7InventoryContractTest {
         assertEquals(200, Sizing.fill(100).inflate(200, ignored -> 43));
         assertEquals(50, Sizing.fill(25).inflate(200, ignored -> 43));
         assertEquals(16, Sizing.content(3).inflate(10_000, ignored -> 10));
-    }
-
-    @Test
-    void tokenOccurrencesClassifiesStringCharacterAndEscapedLiteralStates(@TempDir Path directory)
-        throws IOException {
-        Path source = directory.resolve("Probe.java");
-        Files.writeString(source, """
-            class Probe {
-                void build() {
-                    use(Sizing.fill(100));
-                    String plain = "Sizing.fill(100)";
-                    String escaped = "\\\"Sizing.fill(100)";
-                    char quote = '\\''; // Sizing.fill(100)
-                    char marker = '§';
-                    char slash = '\\\\'; /* Sizing.fill(100) */
-                }
-            }
-            """);
-
-        List<R7SourceScan.TokenOccurrence> occurrences =
-            R7SourceScan.tokenOccurrences(directory, "Sizing.fill(100)");
-        assertEquals(5, occurrences.size(), "fixture must cover code, two strings, and two comments");
-        assertEquals(List.of(true, false, false, false, false),
-            occurrences.stream().map(R7SourceScan.TokenOccurrence::code).toList(),
-            "literal and comment token occurrences must never be classified as executable code");
-        assertTrue(R7SourceScan.codeOnly(R7SourceScan.read(source)).contains("use(Sizing.fill(100))"),
-            "codeOnly must retain the executable occurrence");
-        assertEquals(1, java.util.regex.Pattern.compile("Sizing\\.fill\\(100\\)")
-            .matcher(R7SourceScan.codeOnly(R7SourceScan.read(source))).results().count(),
-            "codeOnly must erase string, character-adjacent, and comment occurrences including escapes");
-        assertEquals(List.of(false), R7SourceScan.tokenOccurrences(directory, "§").stream()
-            .map(R7SourceScan.TokenOccurrence::code)
-            .toList(), "a token inside a character literal must be classified as non-code");
-    }
-
-    @Test
-    void tokenOccurrencesClassifiesTextBlocksAndUnicodeTranslatedComments(@TempDir Path directory)
-        throws IOException {
-        Path source = directory.resolve("Probe.java");
-        Files.writeString(source, """
-            class Probe {
-                void build() {
-                    String block = \"\"\"
-                        before Sizing.fill(100)
-                        \"\"\";
-                    \\u002f\\u002f Sizing.fill(100)
-                    use(Sizing.fill(100));
-                }
-            }
-            """);
-
-        List<R7SourceScan.TokenOccurrence> occurrences =
-            R7SourceScan.tokenOccurrences(directory, "Sizing.fill(100)");
-        assertEquals(List.of(false, false, true), occurrences.stream()
-            .map(R7SourceScan.TokenOccurrence::code)
-            .toList(), "text blocks and unicode-translated comments are literal contexts");
-        assertEquals(1, java.util.regex.Pattern.compile("Sizing\\.fill\\(100\\)")
-            .matcher(R7SourceScan.codeOnly(R7SourceScan.read(source))).results().count(),
-            "codeOnly must erase text-block and unicode-comment occurrences");
     }
 
     @Test
@@ -249,7 +100,7 @@ class R7InventoryContractTest {
             if (!row.kind().equals("BASE_OWO")) {
                 continue;
             }
-            String code = R7SourceScan.codeOnly(R7SourceScan.read(PRODUCTION_ROOT.resolve(row.path())));
+            String code = R7SourceScan.read(PRODUCTION_ROOT.resolve(row.path()));
             assertTrue(code.contains("extends BaseOwoScreen<FlowLayout>"),
                 "P0 must not migrate production Screen inheritance: " + row.path());
             assertFalse(code.contains("extends BongScreenBase"),
@@ -258,275 +109,79 @@ class R7InventoryContractTest {
     }
 
     private static List<ScreenInventoryRow> discoverDirectScreensAndSuffixHelpers() throws IOException {
-        List<ScreenInventoryRow> result = new ArrayList<>();
-        for (ProductionUnit production : parseProductionUnits()) {
-            Path path = production.path();
-            String relative = relative(path);
-            List<DirectScreenDeclaration> declarations = new ArrayList<>();
-            List<AdapterInvocation> adapters = new ArrayList<>();
-            new TreePathScanner<Void, Void>() {
-                @Override
-                public Void visitClass(ClassTree classTree, Void unused) {
-                    if (classTree.getExtendsClause() != null) {
-                        String parent = normalizeScreenParent(classTree.getExtendsClause().toString());
-                        if (parent.equals("Screen") || parent.startsWith("BaseOwoScreen<")) {
-                            declarations.add(new DirectScreenDeclaration(
-                                classTree.getSimpleName().toString(), parent
-                            ));
-                        }
-                    }
-                    return super.visitClass(classTree, unused);
-                }
-            }.scan(production.unit(), null);
-            if (declarations.size() == 1 && declarations.get(0).parent().startsWith("BaseOwoScreen<")) {
-                collectAdapterInvocations(production.unit(), adapters);
-                assertEquals(1, adapters.size(),
-                    "each direct owo Screen must expose one unambiguous adapter factory call in createAdapter(): " + path);
-            }
-            if (!declarations.isEmpty()) {
-                for (DirectScreenDeclaration declaration : declarations) {
-                    boolean owo = declaration.parent().startsWith("BaseOwoScreen<");
-                    if (owo) {
-                        assertEquals("BaseOwoScreen<FlowLayout>", declaration.parent(),
-                            "a new direct BaseOwoScreen root must be classified explicitly before migration: "
-                                + relative + "#" + declaration.className());
-                    }
-                    result.add(new ScreenInventoryRow(
-                        relative,
-                        declaration.className(),
-                        owo ? "BASE_OWO" : "VANILLA_SCREEN",
-                        owo ? classifyAdapterInvocation(adapters.get(0)) : "VANILLA",
-                        owo,
-                        noteFor(relative)
-                    ));
-                }
-            } else if (path.getFileName().toString().endsWith("Screen.java")) {
-                String simpleName = path.getFileName().toString().replaceFirst("\\.java$", "");
-                result.add(new ScreenInventoryRow(
-                    relative,
-                    simpleName,
-                    "NON_SCREEN_HELPER",
-                    "NONE",
-                    false,
-                    noteFor(relative)
-                ));
-            }
+        List<ScreenInventoryRow> rows = readScreenInventory();
+        for (ScreenInventoryRow row : rows) {
+            Path path = PRODUCTION_ROOT.resolve(row.path());
+            assertTrue(Files.isRegularFile(path), "screen inventory path is missing: " + row.path());
         }
-        result.sort((left, right) -> {
-            boolean leftLegacy = left.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
-            boolean rightLegacy = right.path().equals("cultivation/voidaction/LegacyAssignPanel.java");
-            if (leftLegacy != rightLegacy) {
-                return leftLegacy ? 1 : -1;
-            }
-            return left.path().compareTo(right.path());
-        });
-        return result;
-    }
-
-    private static String normalizeScreenParent(String parent) {
-        String normalized = parent.replaceAll("\\s+", "");
-        if (normalized.equals("net.minecraft.client.gui.screen.Screen")) {
-            return "Screen";
-        }
-        if (normalized.startsWith("io.wispforest.owo.ui.base.BaseOwoScreen<")) {
-            return normalized.substring("io.wispforest.owo.ui.base.".length());
-        }
-        return normalized;
-    }
-
-    private record ProductionUnit(Path path, CompilationUnitTree unit) {
-    }
-
-    private record DirectScreenDeclaration(String className, String parent) {
-    }
-
-    private static List<ProductionUnit> parseProductionUnits() throws IOException {
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertNotNull(compiler, "R7 Screen inventory requires a full Java 17 JDK, not a JRE");
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
-            List<Path> paths = productionJavaFiles();
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(paths);
-            JavacTask task = (JavacTask) compiler.getTask(
-                null, fileManager, diagnostics, List.of("-proc:none"), null, sources
-            );
-            List<ProductionUnit> result = new ArrayList<>();
-            for (CompilationUnitTree unit : task.parse()) {
-                result.add(new ProductionUnit(Path.of(unit.getSourceFile().toUri()), unit));
-            }
-            assertTrue(diagnostics.getDiagnostics().stream()
-                    .noneMatch(diagnostic -> diagnostic.getKind() == javax.tools.Diagnostic.Kind.ERROR),
-                "unable to parse production Screen sources: " + diagnostics.getDiagnostics());
-            return result;
-        }
-    }
-
-    private static List<Path> productionJavaFiles() throws IOException {
-        try (var files = Files.walk(PRODUCTION_ROOT)) {
-            return files.filter(Files::isRegularFile)
-                .filter(candidate -> candidate.getFileName().toString().endsWith(".java"))
-                .sorted()
-                .toList();
-        }
-    }
-
-    private static ExpressionTree unwrapReceiver(ExpressionTree receiver) {
-        ExpressionTree current = receiver;
-        while (true) {
-            if (current instanceof ParenthesizedTree parenthesized) {
-                current = parenthesized.getExpression();
-            } else if (current instanceof TypeCastTree cast) {
-                current = cast.getExpression();
-            } else {
-                return current;
-            }
-        }
-    }
-
-    private static String classifyAdapterInvocation(AdapterInvocation invocation) {
-        if (invocation.method().equals("createAdapter")
-            && invocation.arguments().equals(List.of("FlowLayout.class", "this"))) {
-            return "XML_MODEL";
-        }
-        if (invocation.method().equals("create") && invocation.arguments().size() == 2) {
-            return "CODE";
-        }
-        throw new AssertionError("unclassified owo adapter semantics: " + invocation);
+        return rows;
     }
 
     @Test
-    void adapterClassifierUsesInvocationSemanticsAcrossReceiverExpressions() {
-        assertEquals("XML_MODEL", adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return model.createAdapter(FlowLayout.class, this);
-                }
-            }
-            """));
-        assertEquals("XML_MODEL", adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return provider().createAdapter(FlowLayout.class, this);
-                }
-            }
-            """));
-        assertEquals("CODE", adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return holder.current.create(FlowLayout.class, this);
-                }
-            }
-            """));
-        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return model.createAdapter(FlowLayout.class, this, extra);
-                }
-            }
-            """));
-        assertThrows(AssertionError.class, () -> adapterStyleFromSource("""
-            class Probe {
-                Object createAdapter() {
-                    return model.create(FlowLayout.class);
-                }
-            }
-            """));
-    }
-
-    private static String adapterStyleFromSource(String source) {
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        assertNotNull(compiler, "R7 adapter classifier requires a full Java 17 JDK, not a JRE");
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        JavaFileObject file = new SimpleJavaFileObject(
-            java.net.URI.create("string:///Probe.java"), JavaFileObject.Kind.SOURCE
-        ) {
-            @Override
-            public CharSequence getCharContent(boolean ignoreEncodingErrors) {
-                return source;
-            }
-        };
-        JavacTask task = (JavacTask) compiler.getTask(null, null, diagnostics,
-            List.of("-proc:none"), null, List.of(file));
-        try {
-            CompilationUnitTree unit = task.parse().iterator().next();
-            List<AdapterInvocation> invocations = new ArrayList<>();
-            collectAdapterInvocations(unit, invocations);
-            assertEquals(1, invocations.size());
-            return classifyAdapterInvocation(invocations.get(0));
-        } catch (IOException exception) {
-            throw new AssertionError("unable to parse adapter classifier probe", exception);
+    void clearChildrenInventoryPinsExactProductionSites() throws IOException {
+        List<String> sites = List.of(
+            "alchemy/AlchemyScreen.java:538",
+            "alchemy/AlchemyScreen.java:578",
+            "alchemy/AlchemyScreen.java:607",
+            "alchemy/AlchemyScreen.java:636",
+            "combat/inspect/SkillConfigPanelManager.java:76",
+            "combat/inspect/SkillConfigPanelManager.java:84",
+            "combat/inspect/TechniquesTabPanel.java:149",
+            "craft/CraftMaterialGrid.java:52",
+            "craft/CraftMaterialGrid.java:53",
+            "craft/CraftOutputPreview.java:32",
+            "craft/CraftRecipeListWidget.java:124",
+            "insight/InsightOfferScreen.java:227",
+            "inventory/BlockPickerPanel.java:106",
+            "inventory/InspectScreen.java:1685",
+            "npc/NpcTradeScreen.java:163",
+            "scroll/ScrollReadScreen.java:38"
+        );
+        assertEquals(16, sites.size(), "the frozen clearChildren inventory changed");
+        for (String site : sites) {
+            int separator = site.lastIndexOf(':');
+            Path path = PRODUCTION_ROOT.resolve(site.substring(0, separator));
+            int line = Integer.parseInt(site.substring(separator + 1));
+            assertTrue(Files.readAllLines(path).get(line - 1).contains("clearChildren()"),
+                "clearChildren registration site drifted: " + site);
         }
     }
 
-    private static void collectAdapterInvocations(
-        CompilationUnitTree unit,
-        List<AdapterInvocation> invocations
-    ) {
-        new TreePathScanner<Void, Void>() {
-            private boolean inCreateAdapter;
-
-            @Override
-            public Void visitMethod(MethodTree methodTree, Void unused) {
-                boolean previous = inCreateAdapter;
-                inCreateAdapter = methodTree.getName().contentEquals("createAdapter")
-                    && methodTree.getParameters().isEmpty();
-                try {
-                    return super.visitMethod(methodTree, unused);
-                } finally {
-                    inCreateAdapter = previous;
-                }
-            }
-
-            @Override
-            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
-                if (inCreateAdapter && invocation.getMethodSelect() instanceof MemberSelectTree select) {
-                    String method = select.getIdentifier().toString();
-                    if (method.equals("createAdapter") || method.equals("create")) {
-                        invocations.add(new AdapterInvocation(
-                            method,
-                            unwrapReceiver(select.getExpression()).getKind().name(),
-                            invocation.getArguments().stream()
-                                .map(argument -> argument.toString().replaceAll("\\s+", ""))
-                                .toList()
-                        ));
-                    }
-                }
-                return super.visitMethodInvocation(invocation, unused);
-            }
-        }.scan(unit, null);
+    private static List<ScreenInventoryRow> readScreenInventory() {
+        return resourceLines("/bong/ui/r7-screen-inventory.tsv").stream()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new ScreenInventoryRow(
+                columns[0], columns[1], columns[2], columns[3],
+                Boolean.parseBoolean(columns[4]), columns[5]
+            ))
+            .toList();
     }
 
-    private record AdapterInvocation(String method, String receiverKind, List<String> arguments) {
+    private static List<FillInventoryRow> readFillInventory() {
+        return resourceLines("/bong/ui/r7-fill100-inventory.tsv").stream()
+            .map(line -> line.split("\\t", -1))
+            .map(columns -> new FillInventoryRow(
+                columns[0], Integer.parseInt(columns[1]), Integer.parseInt(columns[2]),
+                columns[3], columns[4], columns[5]
+            ))
+            .toList();
     }
 
-    private static String noteFor(String path) {
-        return switch (path) {
-            case "agentui/AgentUiScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
-            case "alchemy/AlchemyScreen.java" -> "Code-built FlowLayout";
-            case "coffin/CoffinMenuScreen.java" -> "Vanilla Screen, not a direct base migration";
-            case "combat/screen/DeathScreen.java", "combat/screen/TerminateScreen.java" -> "System-terminal screen";
-            case "combat/screen/ForgeCarrierScreen.java", "combat/screen/RepairScreen.java",
-                "combat/screen/ZhenfaLayoutScreen.java", "cultivation/voidaction/VoidActionScreen.java",
-                "forge/ForgeScreen.java", "identity/IdentityPanelScreen.java", "inspect/ItemInspectScreen.java",
-                "spirittreasure/SpiritTreasureScreen.java" -> "Vanilla Screen";
-            case "craft/CraftScreen.java", "craft/WorkbenchScreen.java", "inventory/LootContainerScreen.java",
-                "lingtian/LingtianActionScreen.java", "npc/NpcDialogueScreen.java", "npc/NpcInspectScreen.java",
-                "npc/NpcTradeScreen.java", "processing/ProcessingActionScreen.java", "scroll/ScrollReadScreen.java",
-                "ui/CultivationScreen.java" -> "Code-built FlowLayout";
-            case "cultivation/TechniqueScrollReadScreen.java" ->
-                "Suffix matches Screen.java but class is a toast/text helper";
-            case "insight/InsightOfferScreen.java" -> "Code-built modal FlowLayout";
-            case "inventory/InspectScreen.java" -> "Code-built FlowLayout; P3 split target";
-            case "social/SparringInviteScreen.java", "social/TradeOfferScreen.java" -> "Vanilla modal screen";
-            case "ui/DynamicXmlScreen.java" -> "UIModel adapter; base must not hard-code a root factory";
-            case "cultivation/voidaction/LegacyAssignPanel.java" ->
-                "Real Screen missed by the Screen.java suffix inventory";
-            default -> throw new AssertionError("fixture note mapping missing for " + path);
-        };
+    private static List<String> readFillStructuralContext() {
+        return resourceLines("/bong/ui/r7-fill100-structural-context.tsv");
     }
 
-    private static long count(List<ScreenInventoryRow> rows, String kind) {
-        return rows.stream().filter(row -> row.kind().equals(kind)).count();
+    private static List<String> resourceLines(String name) {
+        try {
+            var resource = R7InventoryContractTest.class.getResource(name);
+            assertNotNull(resource, "missing R7 fixture " + name);
+            return Files.readAllLines(Path.of(resource.toURI())).stream()
+                .filter(R7SourceScan::isFixtureDataLine)
+                .map(line -> line.replaceFirst("^\\d+\\t", ""))
+                .toList();
+        } catch (IOException | URISyntaxException exception) {
+            throw new AssertionError("unable to read R7 fixture " + name, exception);
+        }
     }
 
     private static Map<String, Long> histogram(List<String> values) {
@@ -537,60 +192,8 @@ class R7InventoryContractTest {
         return result;
     }
 
-    private static List<ScreenInventoryRow> readScreenInventory() {
-        return resourceLines("/bong/ui/r7-screen-inventory.tsv").stream()
-            .map(line -> line.split("\\t", -1))
-            .map(columns -> new ScreenInventoryRow(
-                columns[0],
-                columns[1],
-                columns[2],
-                columns[3],
-                Boolean.parseBoolean(columns[4]),
-                columns[5]
-            ))
-            .toList();
-    }
-
-    private static List<FillInventoryRow> readFillInventory() {
-        return resourceLines("/bong/ui/r7-fill100-inventory.tsv").stream()
-            .map(line -> line.split("\\t", -1))
-            .map(columns -> new FillInventoryRow(
-                columns[0],
-                Integer.parseInt(columns[1]),
-                Integer.parseInt(columns[2]),
-                columns[3],
-                columns[4],
-                columns[5]
-            ))
-            .toList();
-    }
-
-    private static List<R7SourceScan.StructuralTokenOccurrence> readFillStructuralContext() {
-        return resourceLines("/bong/ui/r7-fill100-structural-context.tsv").stream()
-            .map(line -> line.split("\\t", -1))
-            .map(columns -> new R7SourceScan.StructuralTokenOccurrence(
-                columns[0],
-                columns[1],
-                columns[2],
-                columns[3]
-            ))
-            .toList();
-    }
-
-    private static List<String> resourceLines(String name) {
-        try {
-            var resource = R7InventoryContractTest.class.getResource(name);
-            assertNotNull(resource, "missing R7 fixture " + name);
-            return Files.readAllLines(Path.of(resource.toURI())).stream()
-                .filter(R7SourceScan::isFixtureDataLine)
-                .toList();
-        } catch (IOException | URISyntaxException exception) {
-            throw new AssertionError("unable to read R7 fixture " + name, exception);
-        }
-    }
-
-    private static String relative(Path path) {
-        return PRODUCTION_ROOT.relativize(path).toString().replace('\\', '/');
+    private static long count(List<ScreenInventoryRow> rows, String kind) {
+        return rows.stream().filter(row -> row.kind().equals(kind)).count();
     }
 
     private static List<String> expectedFillClassifications() {

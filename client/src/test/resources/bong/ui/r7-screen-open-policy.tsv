@@ -12,18 +12,21 @@ social-modal-repeat	SOCIAL_INVITE	invite-live	1001	NONE	true	MODAL	trade-offer	N
 social-new-identity	SOCIAL_INVITE	invite-new	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	DEFER_NOTIFY	A new caller-owned identity resets notification eligibility.
 social-terminal	SOCIAL_INVITE	invite-live	1001	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	DEFER_NOTIFY	A passive social offer never displaces a system terminal.
 hotkey-open	HOTKEY	identity-screen	9223372036854775807	NONE	false	NONE		NONE	false	1000	OPEN	An immediate user keypress may open when no screen blocks it.
+hotkey-combat-open	HOTKEY	identity-screen	9223372036854775807	NONE	false	NONE		NONE	true	1000	OPEN	Combat does not globally block an ordinary hotkey when no screen is active.
 hotkey-matching	HOTKEY	identity-screen	9223372036854775807	NONE	false	ORDINARY	identity-screen	NONE	false	1000	NOOP_MATCHING	A matching screen is not recreated.
 hotkey-ordinary	HOTKEY	identity-screen	9223372036854775807	NONE	false	ORDINARY	inventory	NONE	false	1000	BLOCK_DROP	An ordinary nonmatching screen consumes the physical moment; the keypress is not queued.
 hotkey-modal	HOTKEY	identity-screen	9223372036854775807	NONE	false	MODAL	trade-offer	NONE	false	1000	BLOCK_DROP	Physical keypresses are never queued for future replay behind a modal.
 hotkey-terminal	HOTKEY	identity-screen	9223372036854775807	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	BLOCK_DROP	A hotkey never displaces or waits behind a system terminal.
 insight-expired	INSIGHT	insight-old	999	NONE	false	NONE		NONE	false	1000	EXPIRE	InsightOfferScreenBootstrap settles the expired offer instance identified by offer_id before screen creation and the policy never opens a screen.
 insight-open	INSIGHT	insight-live	1001	NONE	false	NONE		NONE	false	1000	OPEN	A live insight opens when no UI is active.
+insight-combat-open	INSIGHT	insight-live	1001	NONE	false	NONE		NONE	true	1000	OPEN	Combat does not globally block a live insight when no screen is active.
 insight-preempt	INSIGHT	insight-live	1001	NONE	false	ORDINARY	inventory	NONE	false	1000	PREEMPT	Insight may replace ordinary non-modal UI through transition arbitration.
 insight-matching	INSIGHT	insight-live	1001	NONE	false	MODAL	insight-live	NONE	false	1000	NOOP_MATCHING	The same insight identity is not reopened.
 insight-modal-first	INSIGHT	insight-live	1001	NONE	false	MODAL	trade-offer	NONE	false	1000	DEFER_NOTIFY	Insight waits behind an equal or higher modal and notifies once.
 insight-modal-repeat	INSIGHT	insight-live	1001	NONE	true	MODAL	trade-offer	NONE	false	1000	DEFER_SILENT	Repeated blocked insight observation is silent.
 insight-terminal	INSIGHT	insight-live	1001	NONE	false	SYSTEM_TERMINAL	death	DEATH	false	1000	DEFER_NOTIFY	Insight never displaces death or termination UI.
 death-open	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	NONE		NONE	false	1000	OPEN	A death terminal opens when no screen is active.
+death-combat-open	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	NONE		NONE	true	1000	OPEN	Combat does not globally block a system terminal when no screen is active.
 death-matching	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	SYSTEM_TERMINAL	death-1	DEATH	false	1000	NOOP_MATCHING	The same terminal identity is not recreated.
 death-preempt-ordinary	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	ORDINARY	inventory	NONE	false	1000	PREEMPT	Death may displace lower-priority ordinary UI.
 death-preempt-modal	SYSTEM_TERMINAL	death-1	9223372036854775807	DEATH	false	MODAL	trade-offer	NONE	false	1000	PREEMPT	Death may displace lower-priority modal UI.
