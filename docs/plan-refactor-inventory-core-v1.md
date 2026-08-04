@@ -52,6 +52,10 @@ SessionDeliveryWorker::commit_claimed(claimed, Option<&mut SpillContext>)
     -> Result<DeliveryCommitReceipt, DeliveryWorkerError>
 SessionDeliveryWorker::fail(claimed, reason, now)
     -> Result<DeliveryRetryState, DeliveryWorkerError>
+SessionDeliveryWorker::retry_dead_letter(request, principal, now)
+    -> Result<DeliveryRetryState, DeliveryWorkerError>
+SessionDeliveryWorker::resolve_dead_letter(request, principal, now)
+    -> Result<DispositionReceipt, DeliveryWorkerError>
 ```
 
 `commit_claimed` 必须先预留 bounded history capacity（不足走 O-26），再校验 digest 并从 `claimed.payload` decode/validate 唯一 `DeliveryRequest`；caller 无权另传 request。payload 大小、attempt/age 边界只消费 R1 `TerminalDeliveryPolicy`（1 MiB、8 attempts、24 小时），不得在 R10 另定阈值。O-16 transaction 对拍 canonical bytes/digest、semantic item set 与 inventory receipt，并原子提交 inventory/spill、receipt、obligation delete、quota `-Q`。已有 receipt 时返回既有结果，不再次 deliver 或释放 quota。malformed/digest mismatch 命中 O-14，禁止调用 `deliver`；`retry_dead_letter` 与 `resolve_dead_letter` 的 production dispatch path 是 `server/src/cmd/gameplay/session_delivery.rs::SessionDeliveryOperatorCmd`，由 `server/src/cmd/gameplay/mod.rs::register` 注册并由 `handle_session_delivery_operator` 调用；handler 将命令 executor 映射为当前 `MaintenancePrincipal`，再把 canonical delivery id/generation/disposition 交给 worker。它不是 dev-only 命令、维护脚本或测试 helper；无 principal、错误 executor scope、stale generation/lease/disposition replay 均在 worker CAS 前拒绝。retry/lease/dead-letter 只走 O-12/O-13/O-18，resolve 只走 O-19/O-20，绝不恢复 R1 session/claim。
