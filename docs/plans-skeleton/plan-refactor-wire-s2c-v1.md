@@ -14,7 +14,7 @@
 - **进料**：各域游戏事件（emit 调用点）、`world` 维度/zone 信息（作用域过滤）。
 - **出料**：`bong:server_data` 单通道（目标态：28 旁路全部收编或显式豁免登记）；join/重连首包快照集契约（R2 清干净后靠它灌满）。
 - **共享类型**：新 server `network/emit/` builder（`scope: Global | Dimension | Zone | Player`）；client 桥接层唯一的枚举前缀剥离函数。
-- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。Craft ownership 与 target 以总纲 §4 为准：Agent 轨拥有 TypeBox source/generated schema/`@bong/schema` dist；R6 只消费冻结版本并负责 proto/Rust/client wire plumbing。`CraftOpen.target` 为 required `Handcraft | Workbench { workbench_key }`；`workbench_key` 逻辑/Rust 为 `u64`、protobuf 为 `uint64`、JSON/TypeBox 为无符号十进制字符串，取自成功 S2C `WorkbenchOpen.entity_id` 并由 screen 原样回传，R4 解析后重验实体/维度/距离/facility。`CraftPause`/`CraftResume` 只携带 hydrated `session_key` + `generation`。R6 同时把冻结的 `CraftSessionStateV2` 一次性反映到 proto/Rust converter、`craft_emit`、bridge/router/handler/CraftStore，删除 V1 wire 分支；R7 只消费接口，不在 R6 提前实现 production Resume producer。
+- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。Craft ownership 与 target 以总纲 §4/§4.1 为准：Agent `A-CS` 批次拥有并先提交 TypeBox source/generated schema/`@bong/schema` dist；R6 只消费该批次记录 SHA 的冻结版本并负责 proto/Rust/client wire plumbing。`CraftOpen.target` 为 required `Handcraft | Workbench { workbench_key }`；`workbench_key` 逻辑/Rust 为 `u64`、protobuf 为 `uint64`、JSON/TypeBox 为无符号十进制字符串，取自成功 S2C `WorkbenchOpen.entity_id` 并由 screen 原样回传；它只在当前进程定位 runtime entity，R4 验证并解析到 R3 stable `placed_id` 后才交 R1 建持久 claim，wire/store/checkpoint 均不得把 `workbench_key` 当 durable identity。`CraftPause`/`CraftResume` 只携带 hydrated `session_key` + `generation`。R6 同时把冻结的 `CraftSessionStateV2` 一次性反映到 proto/Rust converter、`craft_emit`、bridge/router/handler/CraftStore，删除 V1 wire 分支；R7 只消费接口，不在 R6 提前实现 production Resume producer。
 
 ## 阶段
 
@@ -37,7 +37,7 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 - 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：Agent 轨独立 craft-schema 批次先合并并冻结 TypeBox source/schema/dist；R2 先合（同文件低冲突区段）。R1 craft adapter 不得在本轨 P1 的 craft 契约 pins 合入前宣称 pause/resume 可达；R4 handler/gate 随后落地。dropped-loot projection/page 子项另硬依赖 R10 P2a owner/visibility provider 与 R3 P4 migration/hydration consumer。
+- 依赖：Agent `A-CS`（`plan-agent-craft-schema-v1`）先合并并冻结 TypeBox source/schema/dist；R2 先合（同文件低冲突区段）。R1 craft adapter 不得在本轨 P1 的 craft 契约 pins 合入前宣称 pause/resume 可达；R4 handler/gate 随后落地。dropped-loot projection/page 子项另硬依赖 R10 P2a owner/visibility provider 与 R3 P4 migration/hydration consumer。
 
 ## bot 验收场景
 

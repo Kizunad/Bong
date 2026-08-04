@@ -14,7 +14,7 @@
 - **进料**：`bong:client_request` 单通道（既有，C2S 本就单轨）、玩家实体（Position/CurrentDimension/状态组件）、R1 session 忙态、R10 inventory 事务。
 - **出料**：校验通过的请求进各域 handler；拒绝走统一 reject 回执（带原因码，client 侧 toast/HUD 可消费——对齐 unconsumed-event-feedback 的方向但只做 gate 拒绝部分）。
 - **共享类型**：新 `server/src/network/gate/`——`GateSpec { max_distance(度量统一), same_dimension, ownership, state_preconditions }` 按请求类型声明；维度感知 zone 查找 helper。
-- **跨仓库契约**：wire 形状通常不变（现行 enum 全量）；reject 回执若新增字段走 R6 的契约流程。R1 craft pause/resume 例外消费 R6 新增的 `CraftOpen`/`CraftPause`/`CraftResume`，本轨负责 production decode/dispatch，并以 owner、phase 与 busy `GateSpec` 拒绝伪造 resume/重复包。
+- **跨仓库契约**：wire 形状通常不变（现行 enum 全量）；reject 回执若新增字段走 R6 的契约流程。R1 craft pause/resume 例外消费 R6 新增的 `CraftOpen`/`CraftPause`/`CraftResume`，本轨负责 production decode/dispatch，并以 owner、phase 与 busy `GateSpec` 拒绝伪造 resume/重复包。Workbench 初次 `CraftOpen` 的 `workbench_key` 只解析当前进程 runtime entity；R4 重验实体/维度/距离/facility 后还必须从 R3 P4 registry取得 stable `placed_id` 并把它交给 R1 建 claim，mapping 缺失/重复/未 hydrate 一律拒绝，禁止把 `Entity::to_bits()` 持久化。
 
 ## 阶段
 

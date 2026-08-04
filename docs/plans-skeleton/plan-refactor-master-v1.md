@@ -50,9 +50,9 @@
 
 ## 3. 波次与依赖
 
-- **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
-- **Wave 1**：R6（R2 合入后）、R7 基础设施（R2 合入后）、R1 framework-only（仅 `InteractionSession`/registry/lifecycle 骨架，R3 P1 合入后；不得宣称 craft pause/resume 或 delivery 生产闭环）。
-- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）；R1 宿主迁移按显式 gate 分批放行：craft 需 R3 P1 + R6 craft intents + R4 craft handler/gate + R7 P2 Craft Screen + R2 P1 已登记的 `CraftStore` + R10 P1 `deliver` contract + R10 P2 craft production delivery，alchemy/forge 同样需 R10 P2 对应生产调用点，`TsyPresence` 需 R3 P1 auxiliary Slice 与 R3 P4 restore parity。
+- **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。§6.11 登记的 Agent `A-CS`（`plan-agent-craft-schema-v1`）也在本波启动并独立提交，必须先于 R6 P1 合入。
+- **Wave 1**：R6（R2 + Agent `A-CS` 合入后）、R7 基础设施（R2 合入后）、R1 framework-only（仅 `InteractionSession`/registry/lifecycle 骨架，R3 P1 合入后；不得宣称 craft pause/resume 或 delivery 生产闭环）。
+- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）；R1 宿主迁移按显式 gate 分批放行：craft 需 Agent `A-CS` + R3 P1 reservation/outbox + R3 P4 placeable-entity stable `placed_id` 持久化/hydration/runtime 映射 + R6 craft intents + R4 craft handler/gate + R7 P2 Craft Screen + R2 P1 已登记的 `CraftStore` + R10 P1 `deliver`/receipt contract + R10 P2c production outbox worker，alchemy/forge 同样需 R3 P1 与 R10 P2c，`TsyPresence` 需 R3 P1 auxiliary Slice 与 R3 P4 restore parity。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 
@@ -61,8 +61,43 @@
 - `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
 - client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
 - `agent/packages/schema/src/**`、generated JSON Schema 与提交的 `@bong/schema` dist=§6.11 Agent 轨；craft schema prerequisite 的 production owner 是 Agent 轨的独立 craft-schema 交付批次，必须在 R6 P1 前提交并验收 TypeBox source、generated schema/dist 与变体计数。理由：TypeBox 是 agent-side source of truth，生成物必须与 source 同 owner 原子提交；让 R6 同时改 source 和 wire 会违反本总纲的 agent 排除边界并形成双 owner。R6 独占 proto/Rust mirror/converter、client wire encode/send 与 bridge/router plumbing，只消费该冻结版本并负责一次性 wire 反映。R6、R4、R7、R1 的 craft gate 均以本处 ownership 决议为准。
-- CraftOpen target bridge（跨轨 canonical contract）：`CraftOpen` 必须携带 required `target` 判别联合：`Handcraft` 或 `Workbench { workbench_key }`，不得省略。`workbench_key` 是现有成功 S2C `WorkbenchOpen.entity_id` 的 ECS `Entity::to_bits()` locator：逻辑/Rust 类型 `u64`、protobuf `uint64`、JSON/TypeBox 为无符号十进制字符串；它不是授权能力。普通手搓发送 `Handcraft`；`WorkbenchScreen` 必须从 response 保留该 key 并在初次 `CraftOpen` 原样回传。R4 将 key 解析为 entity 后重验实体存活且携带 `WorkbenchBlock`、玩家同维且在既有距离内，并执行 owner/busy/facility gate；R1 仅在校验通过后建立 facility claim。missing、malformed、stale、despawned、跨维或越距 key 均拒绝；R7 不得从 UI 猜测或改写 key。`CraftPause`/`CraftResume` 只携带 hydrated session identity/version，不重复 target。
+- CraftOpen target bridge（跨轨 canonical contract）：`CraftOpen` 必须携带 required `target` 判别联合：`Handcraft` 或 `Workbench { workbench_key }`，不得省略。`workbench_key` 是现有成功 S2C `WorkbenchOpen.entity_id` 的 ECS `Entity::to_bits()` locator：逻辑/Rust 类型 `u64`、protobuf `uint64`、JSON/TypeBox 为无符号十进制字符串；它只在当前进程的首次请求中定位 runtime entity，不是授权能力，也绝不写进 checkpoint。普通手搓发送 `Handcraft`；`WorkbenchScreen` 必须从 response 保留该 key 并在初次 `CraftOpen` 原样回传。R4 将 key 解析为 entity 后重验实体存活且携带 `WorkbenchBlock`、玩家同维且在既有距离内，并执行 owner/busy/facility gate，同时从 R3 P4 hydration registry 取得该 entity 对应的 stable `placed_id`；R1 仅在校验通过后以 `placed_id` 建立并持久化 facility claim。restore 时 R3/R1 用 stable `placed_id` 查询本次启动 hydrate 后的新 runtime entity，再重验 owner/维度/facility；missing/duplicate/unhydrated mapping 必须按 `InvalidRestore` fail closed。missing、malformed、stale、despawned、跨维或越距 `workbench_key` 均拒绝；R7 不得从 UI 猜测或改写 key。`CraftPause`/`CraftResume` 只携带 hydrated session identity/version，不重复 target。
 - 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
+
+### 4.1 跨轨 artifact producer/consumer 闭环表
+
+覆盖本计划族为 R1 链新增/改变的 artifact；sample、mock、类型引用或“后续接线”不算 consumer。新增 artifact 必须先增行。
+
+| Artifact | Producer | Production consumer | Gate / evidence |
+|---|---|---|---|
+| craft TypeBox source + generated schema + committed dist | Agent `A-CS` P1-P2 | R6 P1 mirror/generator；agent runtime | A-CS SHA；正反 sample、freshness、variant count |
+| craft proto/Rust mirror/converter/samples | R6 P1 | R4 P1 decode；R1 P1 emit | `A-CS`；buf/sample、116 C2S/144 S2C |
+| client craft API + bridge/router/handler | R6 P1 | R7 P2 producer；R2 P1 `CraftStore` | R2+A-CS；proto→store/client pins |
+| `CraftSessionStateV2` S2C | R6 P1 `craft_emit` 读 R1 | R2 store、R7 reopen | phase/identity/generation roundtrip |
+| request-local `workbench_key` | WorkbenchOpen response，R6 P1 固型 | R7 原样回传；R4 runtime lookup | u64 boundary、response→request 不变 |
+| stable `placed_id` + hydrate registry | R3 P4 | R4 runtime→stable claim；R1 restore rebind | placeable P0-P2；新 App hydrate/唯一 mapping |
+| validated craft admission | R4 P1 | R1 P1 `try_acquire` | R6+R3 P4；stale/跨维/越距/mapping 缺失拒绝 |
+| `InteractionSession`/phase/cause | R1 P1 | R1 P1-P3 adapters | R3 P1；状态/原因矩阵 |
+| `SessionKey`/`PlayerKey`/generation | R1 P1 | R3/R4/R6/R7/R10 | rebind、stale generation reject |
+| durability/transition | R1 P1 | 每个 domain adapter | checkpoint+P2c；显式 durability/六态 pins |
+| suspension policy/deadlines | R1 P1；R3 rebase | R1 scanner；R10 P2c scanner | TTL/retry/lease 连续重启不刷新 |
+| maintenance permissions | R1 P1 | admin terminate；P2c retry/resolve | authenticated allow；offline name/伪造 deny |
+| registry/`BusyClaim` | R1 P1 | R4 `GateSpec`；adapters | conflict matrix + race tests |
+| audit event | R1 contract；R3/R10 emit | audit sink | hashed principal；无 payload；transition 可追溯 |
+| insight deadline transition | R1 P1 | response gate/timeout scanner | deadline/race/lifecycle cleanup |
+| R7 Open/Pause/Cancel/Resume intents | R7 P2 | R6→R4→R1 | R2/R6/R4；四 intent 分离、resume once |
+| `CraftStore` lifecycle | R2 P1；R6 handler | R7 P2 | disconnect clear、stale reject |
+| checkpoint（escrow/`placed_id`/generation） | R1 payload；R3 P1 writer | R3 guarded restore→R1 | workbench 需 R3 P4；禁止 Entity |
+| reservation | R3 P1 new/reuse/cancel API | R1 admission/restore/handoff | R1 §2.2.2 全矩阵 |
+| quota | R3 P1 | R1 admission；R3/R10 release | counter=sum(obligations)、row/byte races |
+| outbox + `delivery_id` | R3 P1 terminal txn | R10 P2c worker | crash points、唯一 owner、完整 payload |
+| lease/retry/dead-letter CAS | R3 primitives；R10 P2c 驱动 | R10 worker/scanner/operator | rebase first；CAS races |
+| `InventoryTxn::deliver` | R10 P1 | R10 P2c | stored+spilled=requested、失败不变 |
+| `DeliveryCommitReceipt` | R10 P2c 原子 txn | R3 dedupe；R1 terminal confirm | replay 不重发/二次释放 |
+| `ResolvedDisposition` | R10 P2c/operator + R3 txn | R3 cleanup/audit；R1 confirm | 无 disposition 不释放；重放幂等 |
+| coupled TSY snapshot | R3 P1 | R1 P3 reconnect/gate | routine/disconnect/shutdown 全旧或全新 |
+
+闭环规则：任一端未合入，下游仅可提交接口/pins，不得启用 adapter。outbox consumer 固定 R10 P2c，stable workbench provider 固定 R3 P4；phase 删除/改名须同步本表与 wave gate。
 
 ## 5. 工作流（GPT tmux 多会话）
 
@@ -81,7 +116,7 @@
 
 - **6.1-6.9 已入轨**：见 R1-R10 各文件吸收清单（合计 ~130 份）。
 - **6.10 V 轨（bot 骨干 + 测试诚实性）**：bot-e2e-coverage（促升本体）、bot-combat-server-data-type-false-positive、bot-multibot-chat-visibility、bot-multibot-entity-spawn-visibility、e2e-command-anchor-rejected、task13-mutation-qi-zero-green、proto-breaking-check-shallow-skip（深检部分，与 R6 P4 联动）；已知 server 侧缺口「fallback 平台 centered on origin 非 spawn」一并修。
-- **6.11 Agent 轨（本次不重构，独立保留逐个消费）**：active——anticheat-tiandao-drop、niche-guardian-redis-dispatch、npc-combat-relic-schema-drift、pseudo-vein-agent-deadwire、war-participate-agent-command-drift、tiandao-schema-dist-start、server-data-s2c-schema-union-drift 的 TS 侧；skeleton——agent-ui-tiandao-revelation-vfx-flag-loss、alchemy-start-intervention-agent-drop、anqi-carrier-charged-agent-narration、arbiter-cjk-redaction-bypass、heart-demon-late-pregen-fallback、narration-target-prefix-routing、poi-novice-tiandao-narration-drain、technique-feedback-bridge、tiandao-agent-ui-click-context-loss、tsy-agent-ui-wrong-player-routing、tsy-enter-exit-agent-silent-drop、worldmodel-rollback-stub、rebirth-tiandao-bridge-gap、tsy-discovery-ui-target-fallback、player-chat-list-unbounded。
+- **6.11 Agent 轨（本次不重构，独立保留逐个消费）**：具名 production plan `A-CS — plan-agent-craft-schema-v1`（`docs/plans-skeleton/plan-agent-craft-schema-v1.md`，Wave 0 独立 Agent-track docs/implementation PR）唯一拥有并原子提交 `CraftOpen.target`、`CraftPause`、`CraftResume`、`CraftSessionStateV2` 的 TypeBox source、generated JSON Schema 与 committed `@bong/schema` dist；验收为 source→generated/dist freshness、全部 discriminated-union/phase 正反 samples 与 C2S 113→116 / craft S2C variant count，合入 SHA 记录为 R6 P1 输入。`A-CS` 不修改 proto/Rust/client，R6 不修改这些 Agent artifacts；若该 plan 未合入，R6/R4/R7/R1 craft gate 全部阻塞。其余独立项：active——anticheat-tiandao-drop、niche-guardian-redis-dispatch、npc-combat-relic-schema-drift、pseudo-vein-agent-deadwire、war-participate-agent-command-drift、tiandao-schema-dist-start、server-data-s2c-schema-union-drift 的 TS 侧；skeleton——agent-ui-tiandao-revelation-vfx-flag-loss、alchemy-start-intervention-agent-drop、anqi-carrier-charged-agent-narration、arbiter-cjk-redaction-bypass、heart-demon-late-pregen-fallback、narration-target-prefix-routing、poi-novice-tiandao-narration-drain、technique-feedback-bridge、tiandao-agent-ui-click-context-loss、tsy-agent-ui-wrong-player-routing、tsy-enter-exit-agent-silent-drop、worldmodel-rollback-stub、rebirth-tiandao-bridge-gap、tsy-discovery-ui-target-fallback、player-chat-list-unbounded。
 - **6.12 Worldgen 轨（独立保留）**：active——anomaly-raster-runtime-consumer、baolongwang-poi-consumer-gap、raster-check-required-layers、spirit-eye-raster-candidate-disconnect、structure-manifest-loot-consumer、tribulation-scorch-mineral-node-gap、worldgen-pipeline-root-cwd、worldgen-raster-check-cli-noop；skeleton——animal-air-spawn-gravity、spawn-safe-y-surface-drift、spawn-tutorial-poi-y-drift、sword-sea-zone-overlap、tsy-start-raster-env-gap、tsy-y-strata-overlay、worldgen-uint8-maximum-blend、zone-ecology-global-refuge、qi-density-same-source。
 - **6.13 接线拍板轨（module-wiring-gaps-v2 为决策菜单，人工拍板后逐个拆实施 plan；重构后接线成本大降）**：module-wiring-gaps-v2、forge-lingtian-processing-deadpath、poi-trespass-refusal-runtime-gap、silent-signal-runtime-bridge、social-runtime-bridge-gap、k2-identity-social-renown-bridge、war-emergent-group-reputation-gap、npc-combat-gear-v2、social-anonymity-live-refresh-gap、unconsumed-event-feedback、zhenfa-array-flag-e2e-wiring、woliu-dying-master-runtime-gap。
 - **6.14 Feature 轨（独立，注意 §5.6 冻结窗口）**：active——beast-horde、client-login-ux、container-filter-and-completion、gameplay-journey、gathering-tool-bind、halfstep-buff-calibration、iris-integration、nested-pack（已 WITHDRAWN）、social-v2、sou-da-che、satiety-hydration（在飞）、ci-redis-pull-resilience（#1291 返工中）；skeleton——ancient-relic-payoff、bonecoin-wallet-bridge、craft-chain-items、dandao-mutation-gameplay、dazuo、first-technique-grant、lootcrate、neardeath-ux、newbie-30min-hooks-audit、block-break-integration（#1253，基建 skeleton，建议 Wave 2 后评估与 R4 关系）。
