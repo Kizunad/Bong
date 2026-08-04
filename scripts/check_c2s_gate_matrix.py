@@ -10,10 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
 ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
-SERDE_ATTR_RE = re.compile(r"(?m)^[ \t]*#\[serde\(([^]]*)\)\][ \t]*$")
+ATTRIBUTE_LINE_RE = re.compile(r"(?m)^[ \t]*#\[[^\n]*\][ \t]*$")
 MATRIX_SECTION_RE = re.compile(r"^## P0 (\d+) 变体门禁矩阵\s*$")
-MATRIX_HEADER_RE = re.compile(r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|")
-MATRIX_RE = re.compile(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|")
+MATRIX_HEADER_RE = re.compile(
+    r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|(?:[^|\n]*\|){5}\s*$"
+)
+MATRIX_DIVIDER_RE = re.compile(r"^\|(?:\s*:?-+:?\s*\|){7}$")
+MATRIX_RE = re.compile(
+    r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|(?:[^|\n]*\|){5}\s*$"
+)
 VARIANT_DECL_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)\s*(.*)$", re.DOTALL)
 
 
@@ -173,11 +178,15 @@ def parse_enum_variants(source: str) -> list[str]:
     if not declaration:
         raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
     serde = None
-    for match in reversed(list(SERDE_ATTR_RE.finditer(masked, 0, declaration.start()))):
-        if masked[match.end() : declaration.start()].strip():
+    attribute_end = declaration.start()
+    for match in reversed(list(ATTRIBUTE_LINE_RE.finditer(masked, 0, declaration.start()))):
+        if masked[match.end() : attribute_end].strip():
             break
-        serde = source[match.start(1) : match.end(1)]
-        break
+        attribute = source[match.start() : match.end()].strip()
+        if attribute.startswith("#[serde(") and attribute.endswith(")]"):
+            serde = attribute[len("#[serde(") : -2]
+            break
+        attribute_end = match.start()
     if serde is None or not re.search(r'\btag\s*=\s*"type"', serde):
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
     if not re.search(r'\brename_all\s*=\s*"snake_case"', serde):
@@ -215,19 +224,35 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
     rows: list[tuple[int, str]] = []
     expected_count = None
     header_seen = False
-    for line in source.splitlines():
+    divider_seen = False
+    for line_number, line in enumerate(source.splitlines(), start=1):
         if expected_count is None:
-            if section := MATRIX_SECTION_RE.match(line):
+            if section := MATRIX_SECTION_RE.fullmatch(line):
                 expected_count = int(section.group(1))
             continue
         if line.startswith("## "):
             break
         if not header_seen:
-            if MATRIX_HEADER_RE.match(line):
+            if MATRIX_HEADER_RE.fullmatch(line):
                 header_seen = True
             continue
-        if match := MATRIX_RE.match(line):
-            rows.append((int(match.group(1)), match.group(2)))
+        if not divider_seen:
+            if MATRIX_DIVIDER_RE.fullmatch(line):
+                divider_seen = True
+                continue
+            if line.strip():
+                raise RuntimeError(f"malformed C2S matrix divider at line {line_number}: {line!r}")
+            continue
+        if not line.strip():
+            if rows:
+                break
+            continue
+        if not line.startswith("|"):
+            raise RuntimeError(f"unexpected C2S matrix content at line {line_number}: {line!r}")
+        match = MATRIX_RE.fullmatch(line)
+        if not match:
+            raise RuntimeError(f"malformed C2S matrix row at line {line_number}: {line!r}")
+        rows.append((int(match.group(1)), match.group(2)))
     if not rows:
         raise RuntimeError(f"cannot parse C2S matrix from {PLAN_PATH}")
     if expected_count != len(rows):

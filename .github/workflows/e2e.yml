@@ -10,7 +10,6 @@ on:
       - "server/**"
       - "proto/**"
       - "scripts/**"
-      - "docs/**"
       - "docker-compose.test.yml"
       - ".github/workflows/e2e.yml"
   pull_request:
@@ -20,7 +19,6 @@ on:
       - "server/**"
       - "proto/**"
       - "scripts/**"
-      - "docs/**"
       - "docker-compose.test.yml"
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
@@ -117,11 +115,6 @@ jobs:
 
       - name: Bring up Redis test service
         run: docker compose -f docker-compose.test.yml up -d redis --wait
-
-      - name: C2S gate matrix contract
-        run: |
-          python3 scripts/check_c2s_gate_matrix.py
-          python3 -m unittest scripts/tests/check_c2s_gate_matrix_test.py
 
       - name: Schema stage (build + check + test + generate)
         working-directory: agent/packages/schema

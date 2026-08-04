@@ -1,0 +1,33 @@
+name: C2S Gate Matrix Contract
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "server/src/schema/client_request.rs"
+      - "docs/plan-refactor-c2s-gate-v1.md"
+      - "scripts/check_c2s_gate_matrix.py"
+      - "scripts/tests/check_c2s_gate_matrix_test.py"
+      - ".github/workflows/c2s-gate-matrix.yml"
+  pull_request:
+    paths:
+      - "server/src/schema/client_request.rs"
+      - "docs/plan-refactor-c2s-gate-v1.md"
+      - "scripts/check_c2s_gate_matrix.py"
+      - "scripts/tests/check_c2s_gate_matrix_test.py"
+      - ".github/workflows/c2s-gate-matrix.yml"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check C2S gate matrix contract
+        run: |
+          python3 scripts/check_c2s_gate_matrix.py
+          python3 -m unittest scripts/tests/check_c2s_gate_matrix_test.py

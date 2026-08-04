@@ -108,7 +108,7 @@ P1 复用现有 `ServerDataPayloadV1::EventAlert { event: Generic, message: "目
 
 ### 5. 延寿棺 ownership 使用已认证持久化主体
 
-`CoffinBreak` 与 `CoffinMenuReclaim` 冻结为 **owner-only**；本 plan 不采用公共破坏策略。生产当前使用 `ConnectionMode::Offline`，握手 `Username` 可由客户端冒充，并用于恢复 `Lifecycle.character_id`；因此该字段只能标识持久角色记录，不能作为认证证明。R6 P4 必须先为这两类请求落客户端不可猜测的 opaque owner credential 字段，并落服务端私密单播 credential、客户端持久化 credential 的双端契约/sample；R4 P1 在放置棺时由服务端生成 credential、持久化其 hash，并只向当次 owner 连接单播原值，再原子完成 registry lifecycle 与 gate consumer：
+`CoffinBreak` 与 `CoffinMenuReclaim` 冻结为 **owner-only**；本 plan 不采用公共破坏策略。生产当前使用 `ConnectionMode::Offline`，握手 `Username` 可由客户端冒充，并用于恢复 `Lifecycle.character_id`；因此该字段只能标识持久角色记录，不能作为认证证明。按总纲 §3 Wave 表与 §4.1 第 3、5 条裁决，R6 可先落这两类请求及服务端私密单播/客户端持久化的 opaque owner credential contract-first stub（declared、unwired、test-only）；R4 P1 可同步声明 gate 与测试，但在 R6 generated wire/transport artifact 就绪前不得接 production。cutover 时 R4 由服务端生成 credential、持久化其 hash，并只向当次 owner 连接单播原值，再原子完成 registry lifecycle 与 gate consumer：
 
 - `CoffinEntity` 增加 `owner_credential_hash`，不得使用 ECS `Entity`、`Username` 或仅由 offline username 恢复的 `Lifecycle.character_id` 作为授权依据；
 - `CoffinRegistry::insert` 必须接收并存储 credential hash，`handle_coffin_place_requests` 缺安全随机源或无法单播 credential 时在消耗物品/写方块前 fail-closed；
@@ -117,7 +117,7 @@ P1 复用现有 `ServerDataPayloadV1::EventAlert { event: Generic, message: "目
 
 P1 测试必须覆盖 owner 放置后 break/reclaim、同 offline username 但无 credential 的重连仍拒绝、持有 credential 的 owner 重连后仍可操作、ECS entity 改变不影响 owner、缺 owner recovery fail-closed，以及拒绝时方块/registry/inventory 不变。
 
-**落点**：R6 P4 的 `CoffinBreak`/`CoffinMenuReclaim` opaque credential wire；`server/src/coffin/mod.rs::CoffinEntity`、`CoffinRegistry::{insert,reclaim_occupied}`、`handle_coffin_place_requests`；矩阵 #27/#28；plan P1。
+**落点**：R6-owned `CoffinBreak`/`CoffinMenuReclaim` opaque credential contract-first stub 与后续 production wire；`server/src/coffin/mod.rs::CoffinEntity`、`CoffinRegistry::{insert,reclaim_occupied}`、`handle_coffin_place_requests`；矩阵 #27/#28；plan P1。
 
 ### 6. handler 拆分不做动态注册
 
@@ -174,8 +174,8 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 24 | `BlockPickerGive` | — | — | self | dev/creative 权限、count 合法 | 显式 no spatial gate |
 | 25 | `CoffinEnter` | block / `NearbyInteract` | 主世界 | — | coffin exists、可进入 | 距离/维度已域内 |
 | 26 | `CoffinLeave` | — | — | occupant self | 当前卧棺 | 显式 no spatial gate |
-| 27 | `CoffinBreak` | block / `NearbyInteract` | 主世界 | unforgeable durable owner credential | coffin exists、无人受保护占用 | 距离/维度已有；R6 P4 补 credential wire，P1 补 producer/lifecycle/gate |
-| 28 | `CoffinMenuReclaim` | block / `NearbyInteract` | 主世界 | unforgeable durable owner credential | coffin exists、可回收 | 距离/维度已有；R6 P4 补 credential wire，P1 补 producer/lifecycle/gate |
+| 27 | `CoffinBreak` | block / `NearbyInteract` | 主世界 | unforgeable durable owner credential | coffin exists、无人受保护占用 | 距离/维度已有；R6-owned contract-first stub + 后续 wire，R4 补 producer/lifecycle/gate |
+| 28 | `CoffinMenuReclaim` | block / `NearbyInteract` | 主世界 | unforgeable durable owner credential | coffin exists、可回收 | 距离/维度已有；R6-owned contract-first stub + 后续 wire，R4 补 producer/lifecycle/gate |
 | 29 | `SpiritNichePlace` | block / `NearbyInteract` | 主世界 | item owner/self | 唯一锚点、位置合法 | 主世界/先验顺序需统一 |
 | 30 | `SpiritNicheRepair` | block / `NearbyInteract` | 主世界 | niche owner + item owner | niche damaged | 域内需登记 |
 | 31 | `SpiritNicheGaze` | block / `NearbyInteract` | 主世界 | — | niche exists、凝视达标 | 域内需登记 |
@@ -253,7 +253,7 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 103 | `ScrollReadClosed` | session / — | — | reader self | read session active；幂等关闭允许 | P2 接 R1 session |
 | 104 | `AgentUiResponse` | request / — | — | authenticated player / session request owner | request_id/action/button 未过期且获准 | 域内；AgentUiSessionStore 按 player entity 校验 request_id；显式 no spatial gate |
 
-P1 测试必须在实现阶段消费 R6 P4 已落地的 TypeBox `agent/packages/schema/src/client-request.ts::ClientRequestV1` IPC source of truth 导出/对拍，并同时校验 Rust serde mirror、Markdown matrix、生成的 `agent/packages/schema/generated/client-request-v1.json` 与未来 gate registry；不把当前变体数写成永恒常数。当前 TypeBox/generated mirror 只覆盖 Rust enum 的 **86/104** 个变体，以下 **18** 个 wire gap 由 **R6 P4** 补齐并作为 R4 P1 前置：`alchemy_learn_recipe_fragment`、`coffin_break`、`coffin_menu_reclaim`、`qi_scatter_bead_use`、`jiemai`、`supply_coffin_open`、`container_open`、`workbench_open`、`external_container_move`、`external_container_close`、`lingtian_start_till`、`lingtian_start_renew`、`lingtian_start_planting`、`lingtian_start_harvest`、`lingtian_start_drain_qi`、`craft_start`、`craft_cancel`、`give_dan_to_elder`。R4 不修改 R6 独占的 TypeBox/generated wire 文件；R6 P4 未完成时 R4 P1 不启动。每个 `NoGateReason` 仍须非空。P0 的仓内静态对拍由 CI 强制执行的 `python3 scripts/check_c2s_gate_matrix.py` 提供，比较 Rust `ClientRequestV1` 与 Markdown matrix 的动态 heading count、变体集合、顺序、重复项和连续编号；解析器遇到 unit/tuple/struct 以外的未知顶层 enum 语法必须 fail closed。
+P1 测试必须从 TypeBox `agent/packages/schema/src/client-request.ts::ClientRequestV1` IPC source of truth 导出/对拍，并同时校验 Rust serde mirror、Markdown matrix、生成的 `agent/packages/schema/generated/client-request-v1.json` 与未来 gate registry；不把当前变体数写成永恒常数。当前 TypeBox/generated mirror 只覆盖 Rust enum 的 **86/104** 个变体，以下 **18** 个 wire gap 由 R6 补齐：`alchemy_learn_recipe_fragment`、`coffin_break`、`coffin_menu_reclaim`、`qi_scatter_bead_use`、`jiemai`、`supply_coffin_open`、`container_open`、`workbench_open`、`external_container_move`、`external_container_close`、`lingtian_start_till`、`lingtian_start_renew`、`lingtian_start_planting`、`lingtian_start_harvest`、`lingtian_start_drain_qi`、`craft_start`、`craft_cancel`、`give_dan_to_elder`。按总纲 §3（Wave 表为 inter-track ordering/start/cutover 唯一 authority）与 §4.1 第 3、5 条，R4 不修改 R6 独占的 TypeBox/generated wire 文件；上游 artifact 尚未就绪时，R4 P1 只落对应 `GateSpec`/adapter contract-first stub（declared、unwired、test-only），不得接 production 或以临时 `NoGate` 宣称完成；真实 R6 artifact 是这些变体的 production cutover dependency，不是 R4 P1 start gate。每个 `NoGateReason` 仍须非空。P0 的仓内静态对拍由 CI 强制执行的 `python3 scripts/check_c2s_gate_matrix.py` 提供，比较 Rust `ClientRequestV1` 与 Markdown matrix 的动态 heading count、变体集合、顺序、重复项和连续编号；矩阵表内畸形/额外行以及 unit/tuple/struct 以外的未知顶层 enum 语法必须 fail closed。
 
 ## 吸收清单验真（2026-08-03）
 
@@ -269,7 +269,7 @@ P1 测试必须在实现阶段消费 R6 P4 已落地的 TypeBox `agent/packages/
 | `zhenfa-place-scope-gate` | active | REAL；裸坐标向主世界写阵，空间门缺。矩阵 #40。 |
 | `alchemy-furnace-scope-gate` | skeleton（真实文件无 `-v1`） | REAL；open/feed/take/ignite/intervention/place 六条统一收进 #11-15/#20。 |
 | `block-place-reach-gate` | skeleton | REAL；通用 `BlockPlace` 下游校验未包含 player reach。矩阵 #23。 |
-| `coffin-reclaim-owner-gate` | skeleton | REAL；现有 `CoffinEntity` 无 owner 数据；R6 P4 先落 opaque credential wire，R4 P1 生成 credential 并持久化 hash，原子迁移 `insert`/`reclaim_occupied`/重连恢复并对 break/reclaim 执行 owner-only；offline username 派生的 `Lifecycle.character_id` 不构成认证。矩阵 #27/#28。 |
+| `coffin-reclaim-owner-gate` | skeleton | REAL；现有 `CoffinEntity` 无 owner 数据；R6 先落 opaque credential contract-first stub，production wire 就绪时 R4 生成 credential 并持久化 hash，原子迁移 `insert`/`reclaim_occupied`/重连恢复并对 break/reclaim 执行 owner-only；offline username 派生的 `Lifecycle.character_id` 不构成认证。矩阵 #27/#28。 |
 | `combat-pill-toxin-gate` | skeleton | REAL；`AlchemyTakePill` 的毒性状态前置必须进入 mutation barrier。矩阵 #19。 |
 | `forge-station-place-gate` | skeleton | REAL；放砧缺距离/维度，矩阵 #96。 |
 | `lingtian-c2s-range-gate` | skeleton | REAL；六类 plot 请求缺空间门，矩阵 #83-#88。 |
@@ -307,11 +307,11 @@ P1 测试必须在实现阶段消费 R6 P4 已落地的 TypeBox `agent/packages/
 
 ## 阶段交付物
 
-- ✅ 2026-08-03 **P0 设计收口 + 吸收清单验真**：冻结穷尽 `RequestGate`、metric-aware 命名距离 profile、visibility-first fail-closed 顺序、authenticated durable coffin owner、内部 denial reason/安全外部折叠、每客户端 ingress/feedback/log 预算，以及 104 变体 Rust enum ↔ Markdown matrix 的 P0 inventory；逐项登记现行变体，完成 24 项吸收清单验真。P0 只新增 docs、吸收清单证据和 enum/matrix 静态检查器，不改运行时 gate、wire handler、TypeBox source 或 generated JSON Schema。TypeBox/generated 当前 86/104 的镜像覆盖及 18 个 gap 由 R6 P4 落地，作为 R4 P1 前置。
+- ✅ 2026-08-03 **P0 设计收口 + 吸收清单验真**：冻结穷尽 `RequestGate`、metric-aware 命名距离 profile、visibility-first fail-closed 顺序、authenticated durable coffin owner、内部 denial reason/安全外部折叠、每客户端 ingress/feedback/log 预算，以及 104 变体 Rust enum ↔ Markdown matrix 的 P0 inventory；逐项登记现行变体，完成 24 项吸收清单验真。P0 只新增 docs、吸收清单证据和 enum/matrix 静态检查器，不改运行时 gate、wire handler、TypeBox source 或 generated JSON Schema。TypeBox/generated 当前 86/104 的镜像覆盖及 18 个 gap 归 R6；R4 按 contract-first 裁决先落 declared/unwired/test-only gate stub，真实 wire 仅约束对应 production cutover。
   - **文件 / symbol 抓手**：`docs/plan-refactor-c2s-gate-v1.md`；`scripts/check_c2s_gate_matrix.py`；Rust mirror `server/src/schema/client_request.rs::ClientRequestV1`；Markdown 104-row matrix；未来 `network/gate::{GateSpec,RequestGate,GateDenialReason}`。TypeBox authority `agent/packages/schema/src/client-request.ts::ClientRequestV1` 与生成产物 `agent/packages/schema/generated/client-request-v1.json` 在 P0 仅作为 P1 gap inventory 的证据，不由本 PR 修改。
-  - **测试声明**：CI 的 `C2S gate matrix contract` step 强制运行 `python3 scripts/check_c2s_gate_matrix.py`；checker 解析 struct/unit/tuple Rust variants、拒绝未知顶层语法，并断言 Rust enum 与 Markdown matrix 的集合、顺序、重复项和连续编号；`scripts/tests/check_c2s_gate_matrix_test.py` 覆盖 parser 边界以及 enum/matrix 漂移、重复和编号测试。
-  - **依赖证据**：#1287 已 merge；R6 P4 未落地，implementation 保持 Wave 2 阻塞。
-- ⬜ **P1 全量门禁声明 + 中间件原子上线 + 已知漏洞簇首批接入**：仅在 #1287 与 **R6 P4 均已 merge** 后开始；在同一 PR 落 `server/src/network/gate/`、为届时全部 `ClientRequestV1` 变体穷尽声明 `Spec`/`NoGate(reason)`、补齐声明所需 authority/state adapter，并把 production mutation barrier 接到 decode/version 后。A 组 14 项及 B 组迁移样本在该全量 fail-closed 基础上完成根修复；禁止用临时 `NoGate` 绕过矩阵中要求门禁的变体，禁止在全量 registry 就绪前启用 dispatcher。
+  - **测试声明**：独立轻量 CI workflow `.github/workflows/c2s-gate-matrix.yml` 强制运行 `python3 scripts/check_c2s_gate_matrix.py` 与 checker 单测；checker 解析 struct/unit/tuple Rust variants、拒绝未知顶层语法及畸形矩阵行，并断言 Rust enum 与 Markdown matrix 的集合、顺序、重复项和连续编号；`scripts/tests/check_c2s_gate_matrix_test.py` 覆盖 parser 边界以及 enum/matrix 漂移、重复和编号测试。
+  - **依赖证据**：总纲 §3 Wave 表是唯一 ordering authority；#1287 已 merge，R4 implementation 仅等待 R6 P1，R6 后续 artifact 只约束对应 production cutover。
+- ⬜ **P1 全量门禁声明 + 中间件原子上线 + 已知漏洞簇首批接入**：按总纲 §3 Wave 2，仅在 #1287 与 **R6 P1 均已 merge** 后开始；在同一 PR 落 `server/src/network/gate/`、为届时全部 `ClientRequestV1` 变体穷尽声明 `Spec`/`NoGate(reason)`、补齐已具备 authority/state artifact 的 adapter，并把可安全启用部分的 production mutation barrier 接到 decode/version 后。尚缺 R6 wire artifact 的 18 个 gap 与 coffin credential 只落 declared/unwired/test-only contract-first stub，不接 production；artifact 就绪后在对应 cutover merge unit 启用。A 组 14 项及 B 组迁移样本在该全量 fail-closed 基础上完成根修复；禁止用临时 `NoGate` 绕过矩阵中要求门禁的变体，禁止让 stub 进入 dispatcher。
   - **测试抓手**：enum↔matrix↔registry 三方穷尽；每个 denial reason 正反/缺组件/fail-closed；每个 enum 变体专属 pin；所有 `NoGateReason` 非空；欧氏边界与 Workbench `Chebyshev3d` 对角 `[3,3,3]` 放行、任一轴 `3+ε` 拒绝；coffin credential owner/同名 offline 无 credential 拒绝/持 credential 重连/缺 owner；forge 同 update advance→hit 放行且 hit→advance 拒绝；拒绝前 inventory/qi/world/session 零 mutation；EventAlert 只单播请求者。
   - **资源与安全抓手**：单客户端 burst/flood 证明每 tick gate/handler 工作 ≤32、20 ticks 内 EventAlert ≤1、100 ticks 内同 key 日志 ≤1 且 suppressed count 汇总；断线清理 budget；对不存在/跨维/超距/他人目标的探测断言外部 packet、文案和时序不可区分。
 - ⬜ **P2 巨石拆分批次 A**：把 `client_request_handler.rs` 拆为 `combat/production/world/social/npc/inventory/session` 域模块，顶层保留 decode/version/budget/gate/dispatch；行为与 wire 不变。
@@ -325,8 +325,8 @@ P1 测试必须在实现阶段消费 R6 P4 已落地的 TypeBox `agent/packages/
 
 - **R4 独占**：`server/src/network/client_request_handler.rs` 的拆解、新 `server/src/network/gate/`、迁移后各域重复 reach/dimension/ownership 判定行。
 - **不碰**：R6 的 `network/*_emit.rs`、`schema/proto_convert.rs` 与 client channel/router；R1 session 内部；R10 inventory transaction；业务领域不属于 gate 的规则表。
-- **依赖门**：P0 无前置；P1-P4 均属 Wave 2，必须确认 #1287 + R6 P4 已 merge 后才开始。R6 若尚未提供结构化 reject，P1 使用 EventAlert 临时反馈，不阻塞内部 gate 落地，但不得宣称结构化 ack 已完成。
-- **跨轨接缝**：R1 暴露 session authority adapter；R10 暴露 inventory ownership/transaction preflight；R6 P4 拥有 18 个 C2S gap、coffin credential 双向 wire/sample 与结构化 reject wire；R9 拥有 skill cast target/cooldown contract。R4 只消费冻结 API。
+- **依赖门**：本节同步 PR #1902 `origin/docs/master-r9-r6-ownership-adjudication` 的 settled ruling：跨轨 start/order/cutover 以总纲 §3 Wave 表为唯一 authority；R4 P1-P4 属 Wave 2，按表只需 #1287 + R6 P1。R6 后续 wire/transport artifact 尚未就绪时，消费点只允许 contract-first stub（declared、unwired、test-only），真实 artifact 是对应 production cutover dependency，不得反写成 R4 start gate。R6 若尚未提供结构化 reject，已可启用的 P1 gate 使用 EventAlert 临时反馈，但不得宣称结构化 ack 已完成。
+- **跨轨接缝**：R1 暴露 session authority adapter；R10 暴露 inventory ownership/transaction preflight；R6 拥有 18 个 C2S gap、coffin credential 双向 wire/sample 与结构化 reject wire；R9 拥有 skill cast target/cooldown contract。R4 只消费冻结 API，并遵循总纲 §4.1 第 3、5 条 contract-first/production-cutover 裁决。
 
 ## bot 验收场景
 
@@ -347,7 +347,7 @@ P1 测试必须在实现阶段消费 R6 P4 已落地的 TypeBox `agent/packages/
 ### §10.2 PR 顺序
 
 1. **PR-1 / P0**：本次 docs + 静态 matrix checker 的设计收口与吸收验真。
-2. **PR-2 / P1**：依赖 #1287 + R6 P4，全量 spec/no_gate、所需 authority adapter、资源预算与 production gate 原子上线，同时修复已知漏洞簇。
+2. **PR-2 / P1**：按总纲 §3 Wave 2 依赖 #1287 + R6 P1，全量 spec/no_gate、已有 authority adapter、资源预算与可安全启用的 production gate 原子上线；缺 R6 artifact 的消费点只落 declared/unwired/test-only stub，待对应 cutover merge unit 启用。
 3. **PR-3 / P2**：拆 handler 批次 A，行为不变。
 4. **PR-4 / P3**：删重复门禁并收敛领域 adapter，不补枚举声明欠账。
 5. **PR-5 / P4**：bot/e2e 与符合条件的吸收项结案。

@@ -99,6 +99,10 @@ class ParserTests(unittest.TestCase):
 """
         self.assertEqual(checker.parse_enum_variants(inline_cfg), ["Variant"])
 
+    def test_accepts_valid_serde_contract_from_original_source(self) -> None:
+        source = ENUM_PREFIX + "#[derive(Debug)]\npub enum ClientRequestV1 { Variant, }"
+        self.assertEqual(checker.parse_enum_variants(source), ["Variant"])
+
     def test_serde_contract_uses_real_enum_not_decoy_text(self) -> None:
         source = """// #[serde(tag = \"type\", rename_all = \"snake_case\")] pub enum ClientRequestV1 { Decoy, }
 /* outer comment
@@ -139,10 +143,10 @@ pub enum ClientRequestV1 {
     def test_main_accepts_matching_enum_and_matrix(self) -> None:
         plan = """## P0 2 变体门禁矩阵
 
-| # | `ClientRequestV1` | 距离 | 维度 |
-|---:|---|---|---|
-| 1 | `Alpha` | — | — |
-| 2 | `Beta` | — | — |
+| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 |
+|---:|---|---|---|---|---|---|
+| 1 | `Alpha` | — | — | — | — | — |
+| 2 | `Beta` | — | — | — | — | — |
 
 ## 后续清单
 
@@ -154,6 +158,13 @@ pub enum ClientRequestV1 {
             checker.parse_matrix_variants(plan),
             ([1, 2], ["Alpha", "Beta"]),
         )
+        malformed = plan.replace(
+            "| 2 | `Beta` | — | — | — | — | — |",
+            "| x | `Gamma` | — | — | — | — | — |\n"
+            "| 2 | `Beta` | — | — | — | — | — |",
+        )
+        with self.assertRaisesRegex(RuntimeError, "malformed C2S matrix row"):
+            checker.parse_matrix_variants(malformed)
         with self.assertRaisesRegex(RuntimeError, "heading count 3 does not match 2 rows"):
             checker.parse_matrix_variants(plan.replace("P0 2", "P0 3"))
 
