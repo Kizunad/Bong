@@ -15,15 +15,14 @@
 - **出料**：`bong:server_data` 单通道（目标态：28 旁路全部收编或显式豁免登记）；join/重连首包快照集契约（R2 清干净后靠它灌满）。
 - **共享类型**：新 server `network/emit/` builder（`scope: Global | Dimension | Zone | Player`）；client 桥接层唯一的枚举前缀剥离函数。
 - **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步）；TypeBox canonical content 是 repo-wide schema source of truth，R6 负责据此运行 generation pipeline 并同步 protobuf/generated Rust、Rust conversion、Java bridge、router plumbing 与 dist/JSON Schema/samples，agent 侧只消费生成结果，不反向定义 schema，也不重构 agent 逻辑。每个 generated/constrained artifact 必须携可核验的 TypeBox source hash 或 version reference，CI 对当前 source 与 pin 的不一致 fail-closed。**不做双轨兼容层**——旁路收编是一次性切换。
-- **Tracked amendment obligation（owner: R6）**：本 plan 必须新增一个交付并验证 schema generation chain 的 phase；phase 的具体 artifact inventory、顺序与 acceptance evidence 由 R6 在该 amendment 中定义。在该 phase 已定义且完成前，任何依赖此 generation chain 的 track production cutover 均被阻塞。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单；正式登记 `rotate-footprint-sync`、`bot-inventory-pack-feedback` 的 inventory wire/feedback 工作，并冻结 `dropped_loot_sync` 分片 envelope（`snapshot_revision/page_index/page_count`、每页上限常量 `DROPPED_LOOT_SYNC_PAGE_SIZE = 256`）。
-- ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发；**仅在 R10 P2a 的 `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后**，dropped-loot 内容变化与 join sync 才通过共享 builder 按固定页大小发送，同一 visibility key 的 snapshot 只排序/编码一次后复用于目标 clients，禁止 per-client 重建无界全量 payload；在上述两个前置完成前不得启用该 private projection path。
-- ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）；dropped-loot client store 仅在同 revision 全部分片收齐后原子替换，缺页/混 revision 保留旧视图并请求/等待重发。
-- ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
-- ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次；完成 inventory receipt contract 子批次：`InventoryEventV1::Moved`（或等价 accepted receipt）必须携带 request identity、结果 revision、权威 item view，覆盖 schema/sample/convert/emit API、Fabric `InventoryEventHandler` 与 Python decoder，供 R4 handler 消费 R10 typed outcome。分片 dropped-loot 正反样本必须覆盖空/单页/恰好 256/257/末页缺失/混 revision。
+- ⬜ P1 schema generation chain contract + emit builder/scope：以 `agent/packages/schema/src/` 的分域 TypeBox declarations 与 `schema-registry.ts` 为 canonical source layout，交付 source→committed JSON Schema/dist→protobuf/generated Rust→Rust conversion→Java bridge/`ServerDataRouter` registration 的 generation manifest、单入口 tooling 与 artifact/source-pin inventory；CI 运行 freshness、missing/unexpected artifact、source hash/version pin 与 deterministic regeneration checks，任一 drift fail-closed。上述 generation artifacts 在本阶段必须 declared/unwired/test-only，不接 production traffic。同步上线与 schema chain 无关的共享 emit builder，并先让 vfx/audio/env 三类挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发。dropped-loot 只提交分页 envelope、producer/consumer API stub 和空/单页/恰好 256/257/末页缺失/混 revision 的正反 pin，不启用发送。
+- ⬜ P2 client bridge/consumer contract：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 分域注册接口整备；以 declared/unwired/test-only 形式交付 dropped-loot revision page assembler/store reducer，pin 同 revision 全部分片收齐后原子替换，以及缺页/混 revision 保留旧视图并请求/等待重发；旧 receiver 与旧 producer 原样保留。
+- ⬜ P3 schema mirrors + atomic production activation：运行 P1 generation chain 产出/刷新 protobuf/generated Rust、Rust conversion、Java bridge、dist/JSON Schema/samples，并接入 `ServerDataRouter`；28 channel 按 merge unit 逐批收编入 server_data envelope或登记豁免（资源包/握手类可豁免）。**dropped-loot 是一个不可拆 merge unit**：同一 merge unit 内同时启用共享 builder 的 paginated producer、generated mirror/conversion/router transport、P2 完整 revision page assembler 的 atomic store replace，并删除对应旧 producer/receiver；在总纲 §3 Wave 表放行前保持 P1/P2 artifacts unwired 且旧路径原样可用，禁止 P1 单独启用 producer、长期 dual emit 或 child-only 前置。
+- ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次；完成 inventory receipt contract 子批次：`InventoryEventV1::Moved`（或等价 accepted receipt）必须携带 request identity、结果 revision、权威 item view，覆盖 schema/sample/convert/emit API、Fabric `InventoryEventHandler` 与 Python decoder，供 R4 handler 消费 R10 typed outcome。P1/P2 contract-first artifacts 的 pin tests 不得延期至本阶段。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
 R10 dropped-loot 契约优先：编码前按 recipient dimension/range/owner 投影，仅同 visibility key 复用；rejected receipt 含 reason/instance/from/to，并测两 recipient 正反可见性。
@@ -36,9 +35,9 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 ## 文件所有权与边界
 
-- 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
+- 独占：`agent/packages/schema/src/{schema-registry,generated-artifacts,generate}.ts` generation machinery、`agent/packages/schema/generated/` 与 `proto/bong/` generated/constrained mirrors、`server/build.rs`/`server/src/schema/proto_gen.rs` generation 接缝、server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（generated ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。各 domain TypeBox declaration 内容仍归对应 domain owner，R6 只消费 canonical content。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：跨轨 start/order/cutover 以总纲 §3 Wave 表为唯一 authority；contract-first 工作可在 Wave 0 开始，涉及其他 track 所属 production 接缝时按总纲 Wave 放行，不构成整轨启动门。**P1 的 dropped-loot projection/page 是 scoped production cutover：须在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后才启用，未满足前仅冻结 contract/test-only stub，不阻塞其他 scope 子项。**
+- 依赖：跨轨 start/order/cutover 以总纲 §3 Wave 表为唯一 authority；contract-first 工作可在 Wave 0 开始，涉及其他 track 所属 production 接缝时只引用总纲 Wave 放行，不在本 plan 重述或新增前置。dropped-loot 在放行前仅保留 P1/P2 contract/test-only artifacts 与完整旧路径；放行后由 P3 单一 merge unit 原子切换，不阻塞其他 scope 子项。
 
 ## bot 验收场景
 

@@ -54,7 +54,7 @@
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工；R6 的 contract-first 工作与 R9 的 cast domain contract-first 工作均可在本波次按各自 plan 开工，不等待 production activation 条件。
 - **Wave 1**：R6、R7（R2 合入后）、R1（R3 P1 合入后）按各自 plan 推进；涉及 R2-owned production 接缝的工作须等待 R2 P1。
-- **Wave 2**：R4、R9 production activation（R5、R6、R2 的所属责任按各自 plan 就绪后，服从 §4.1 的 ownership 与 atomicity invariants）、R10（R3 P1 后）。本表只裁决跨轨顺序与 activation 边界；各轨具体 deliverable inventory、phase mapping 与验收证据由各自 plan 定义，不在总纲重述。
+- **Wave 2**：R4、R9 production activation（R5、R6、R2 的所属责任按各自 plan 就绪后，服从 §4.1 的 ownership 与 atomicity invariants）、R10（R3 P1 后）。**R6 dropped-loot production activation merge unit 仅在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后放行；此前只允许 declared/unwired/test-only 的 contract 与 pin artifacts。**本表只裁决跨轨顺序与 activation 边界；各轨具体 deliverable inventory、phase mapping 与验收证据由各自 plan 定义，不在总纲重述。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 
@@ -69,12 +69,13 @@
 本节是本计划族对 cast wire 的唯一上位裁决；R6/R9 子 plan 若冲突必须先同步到本节，禁止各自声明第二套 authority 或交付顺序。
 
 1. **Schema authority**：TypeBox source 是 repo-wide schema source of truth；它拥有 shape、discriminant 与 validation semantics。所有生成或受约束 mirror 均不得反向定义 TypeBox 为“被动镜像”。每个 generated/constrained artifact（含 protobuf/Rust conversion、Java bridge 与 samples）必须携可核验的 TypeBox source hash 或 version reference；CI 必须 fail-closed 检查该 pin 与当前 TypeBox source 一致，禁止 stale mirror 通过。
-2. **Domain content vs machinery**：R9 负责 author/review cast domain 的 TypeBox content、domain semantics/reducer 与 `SkillAvBinding`；R6 负责 repo-wide schema generation/transport machinery 及其生成或受约束 artifacts。R9 定义“cast 消息/状态是什么意思”，R6 定义“canonical schema 如何生成、转换和运输”；双方不得复制或重新拥有对方 artifact。具体 deliverable inventory、phase mapping 与 acceptance evidence 仅由 owner track plan 定义。R6 plan **必须**新增一个由 R6 owning、交付并验证 schema generation chain 的 phase；这是 tracked amendment obligation。在该 phase 已于 R6 plan 中定义且完成前，任何依赖该 generation chain 的 track production cutover 均不得排期。该 phase 的具体内容与验收由 R6 plan 自行定义。
+2. **Domain content vs machinery**：R9 负责 author/review cast domain 的 TypeBox content、domain semantics/reducer 与 `SkillAvBinding`；R6 负责 repo-wide schema generation/transport machinery 及其生成或受约束 artifacts。R9 定义“cast 消息/状态是什么意思”，R6 定义“canonical schema 如何生成、转换和运输”；双方不得复制或重新拥有对方 artifact。具体 deliverable inventory、phase mapping 与 acceptance evidence 仅由 owner track plan 定义。R6 plan 的 P1 必须交付 declared/unwired/test-only 的 schema generation chain contract 与 CI freshness/pin gate，P3 必须在单一 production activation merge unit 内生成 mirrors 并接入 transport/router；在 P1 contract 完成前，不得排期依赖该 generation chain 的 production cutover。
 3. **Contract-first 可早合**：R9 contract-first 工作不等待 R6 production machinery；R6 的 contract-first 工作也不因 production 接缝尚未完成而停止。contract-first artifacts 必须保持 declared/unwired/test-only，不得切换 production traffic 或宣称 live reachable。
-4. **Atomic production activation**：迁移某 channel 时，其 producer、transport plumbing、全部 consumers 与旧路径移除必须在**同一 merge unit**激活。若无法做到单一 merge unit，则旧 producer/receiver 必须原样保留，直到最终原子 activation；禁止 receiver-removed-before-consumer-installed，也禁止长期 dual emit。具体 sequencing 与 evidence 由相关 track plans 定义。
-5. **Generalized cross-track dependency rule**：
+4. **Atomic production activation**：迁移某 channel 时，其 producer、transport plumbing、全部 consumers 与旧路径移除必须在**同一 merge unit**激活。若无法做到单一 merge unit，则旧 producer/receiver 必须原样保留，直到最终原子 activation；禁止 receiver-removed-before-consumer-installed，也禁止长期 dual emit。R6 dropped-loot 必须把 paginated producer、generated mirror/conversion、`ServerDataRouter` transport registration、完整 revision page assembler 的 atomic store replace 与旧路径移除绑定为一个 P3 merge unit；该 merge unit 的跨轨放行只取 §3 Wave 表。
+5. **Contract pin-test invariant**：任何 contract-first schema 或 reducer/state-machine artifact 在首次提交时即必须携 pin tests；不得以后续 production/e2e 阶段补测。TypeBox pin 至少覆盖必填字段、每个 enum/discriminant 变体、invalid/unknown 变体与缺字段拒绝；reducer pin 至少覆盖每条合法转换、非法转换拒绝，以及 STOP/INTERRUPT 等终止路径。cast schema 与 cast reducer 是本不变量的强制命中项。
+6. **Generalized cross-track dependency rule**：
    - §3 Wave 表是 inter-track ordering claim 的**唯一权威**；track plan 不得引入本表没有的 start/order dependency。
-   - master 只裁决 owner、跨轨顺序与 invariants，不命名 owner plan 尚未定义的 phase、artifact、consumer 或验收步骤。
+   - master 只裁决 owner、跨轨顺序与 invariants；只有在 owner plan 已定义 phase/artifact/consumer 后才可引用其名称，不得替 owner plan 首次定义交付细节或验收步骤。
    - 若所需 upstream artifact 尚不存在，consumer track 只能先落 contract-first stub（declared、unwired、test-only，不接 production）；真实 artifact 的名称、phase 与验收由 owner track plan 定义，且 production dependency **不得反写成 start gate**。
    - 两份 track plan 出现 sequencing conflict 时，先 amendment §3 Wave 表并形成唯一裁决，再同步双方；禁止靠任一子 plan prose 抢占 authority。R9 contract-first start 以 Wave 0 为准，production activation 以 Wave 2 与本节 atomicity invariant 为准。
 
