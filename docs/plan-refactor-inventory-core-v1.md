@@ -4,13 +4,13 @@
 
 ## 阶段
 
-- ✅ 2026-08-03 P0 完整契约面重写 + absorption audit
-- ⬜ P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers（依赖 R3 P1 seam）
-- ⬜ P2：production writer 迁移分为 P2a metadata/provider + Public writer path、P2b OwnerOnly private-writer activation 与 P2c terminal-delivery worker；P2a 依赖 R3 P2 atomic commit seam 与旧 dropped-loot compatibility，P2b 必须等 R3 P4 dropped-loot migration/hydration、R6 P1 recipient projection/page、R5 P3 + R6 P4、R10 P3 pickup txn 及 R4 pickup consumer 全部完成后才可启用；P2c 依赖 R3 P1 outbox/reservation API 与 R10 P1 `deliver`/receipt contract，独立于 dropped-loot visibility 波次，且是 R1 任一 checkpointed 宿主迁移的硬前置。
-- ⬜ P3：pickup/merge txn（依赖 R5 P3 attrition API、R6 P4 receipt API）
-- ⬜ P4：联合 bot/e2e + plan 收口（依赖 R4 handler 与 R3 P4 legacy inventory-layout consumer）
+- ⏳ P0 完整契约面重写 + absorption audit
+- ⬜ P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers；对应 master M-06/M-13 的 transaction/provider surface，R3 seam 只按 M-04 提供。
+- ⬜ P2：production writer 迁移分为 metadata/provider、Public/OwnerOnly writer 与 terminal worker；terminal worker 对应 M-06/O-10..O-27，dropped-loot hydration/projection 与 pickup consumer 只按 master M-13/M-14/M-15 启用。
+- ⬜ P3：pickup/merge txn；R4/R5/R6 consumer 与 receipt/attrition 接缝只引用 master M-14/M-15。
+- ⬜ P4：联合 bot/e2e + plan 收口；完成 evidence 需覆盖对应 M-row 与 canonical O-row。
 
-实现属 Wave 2；跨轨工作须登记 owning plan。
+所有跨轨 start/order/cutover 只引用 `plan-refactor-master-v1.md §3/§4.1` 与 PR 1902；本阶段表不复制箭头。
 
 ## 1. 完整 contract surface
 
@@ -41,20 +41,22 @@ InventoryTxn::pickup_and_merge(PickupRequest, PickupAuthorization, &mut DroppedL
 
 ### 1.2 Terminal-delivery production consumer（P2c）
 
-R10 P2c 必须交付常驻 `SessionDeliveryWorker`，它是 R3 `SessionDeliveryOutbox` 的唯一生产 consumer，而不是测试 helper 或各域直接 `deliver` 调用。接口边界固定为：
+R10 P2c 交付常驻 `SessionDeliveryWorker`，作为 R3 outbox 的唯一 production consumer。它只实现 R1 canonical obligation reducer 的 O-10..O-21/O-26/O-27，不拥有 gameplay session 状态或 teardown：
 
 ```rust
 SessionDeliveryWorker::claim_next(now, worker_id)
-    -> Result<Option<ClaimedDelivery { delivery_id, lease_id, generation, payload }>, DeliveryWorkerError>
-SessionDeliveryWorker::commit(claimed, DeliveryRequest, Option<&mut SpillContext>)
+    -> Result<Option<ClaimedDelivery {
+        delivery_id, lease_id, generation, payload, payload_digest
+    }>, DeliveryWorkerError>
+SessionDeliveryWorker::commit_claimed(claimed, Option<&mut SpillContext>)
     -> Result<DeliveryCommitReceipt, DeliveryWorkerError>
 SessionDeliveryWorker::fail(claimed, reason, now)
     -> Result<DeliveryRetryState, DeliveryWorkerError>
 ```
 
-`claim_next` 以 R3 `(state,generation)` CAS 取得 `InFlight` lease；`commit` 用 stable `delivery_id` 调 `InventoryTxn::deliver`，并在 R3 同一 durable transaction 中提交 inventory/spill、receipt、`Committed`、obligation 删除与 quota `-Q`。receipt replay 不重复 deliver/release。`fail` 只推进 retry/backoff/`DeadLetter`，quota 为零变化。全部状态与 CAS 细节以 R1 §2.2.2 为唯一权威；P2c 还须接通 startup/shutdown worker/scanner/operator 与监控。
+`commit_claimed` 必须先预留 bounded history capacity（不足走 O-26），再校验 digest并从 `claimed.payload` decode/validate 唯一 `DeliveryRequest`；caller 无权另传 request。O-16 transaction 对拍 canonical bytes/digest、semantic item set 与 inventory receipt，并原子提交 inventory/spill、receipt、obligation delete、quota `-Q`。malformed/digest mismatch 命中 O-14，禁止调用 `deliver`；retry/lease/dead-letter 只走 O-12/O-13/O-18，绝不恢复 R1 session/claim。
 
-P2c contract pins：空队列、单条、并发 worker 唯一 claim、claim 后崩溃/lease expiry、deliver 前后崩溃、receipt 已存在重放、暂时失败退避、10 次/7 天 dead-letter、worker↔scanner/operator CAS loser、满包 spill、malformed payload fail closed，以及 `Pending/InFlight/DeadLetter` 始终占 quota、`Committed/ResolvedDisposition` 恰释放一次。R1 的 `session_delivery_crash_atomicity` 与 R3 的 `session_delivery_outbox_atomicity` 必须通过真实 P2c worker，不得直接调用 `InventoryTxn::deliver` 冒充 outbox consumer。
+P2c pins 直接执行 R1 O-10..O-21/O-26/O-27：并发唯一 claim、claim 后 crash/lease expiry、payload A/request B 拒绝、history quota fail-before-mutation、deliver 前后 crash、receipt replay、retry/dead-letter/operator CAS、满包 spill。R1 `session_delivery_crash_atomicity` 与 R3 `session_delivery_outbox_atomicity` 必须走真实 worker，不得由 domain 直接调用 `InventoryTxn::deliver` 冒充 consumer。
 
 `pickup` receipt 含 request id、revision、removed drop、merge/placement、`target_instance_id`、`incoming_instance_id/count/abs_qi_before`。placement 的 target 等于 incoming；merge 的 target 是提交后既有 stack。R5 只按 incoming absolute qi 做 attrition：`target_after = preexisting_abs_qi + incoming_after`，不得磨损旧数量或由合并后整栈反推。
 
@@ -104,15 +106,10 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 
 ## 6. 所有权与顺序
 
-- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration，以及 P2c `SessionDeliveryWorker` production consumer。P1 仅在 **R3 P1** 的 inventory/overflow 与 outbox transaction seam 冻结后实现 txn/capacity/receipt 骨架；P2c 在 P1 与 **R3 P1** reservation/outbox CAS API 合入后实现 claim/lease/decode/deliver/receipt/ack/dead-letter wiring，并先于任何 R1 checkpointed 宿主迁移。P2a 负责 metadata/provider 与 `Public` writer path，依赖 **R3 P2** durable spill/pickup recoverable-commit seam、旧 dropped-loot migration compatibility 与 crash/retry pins；P2b 才能启用 `OwnerOnly` private writers，且必须等 **R3 P4 dropped-loot migration/hydration、R6 P1 recipient projection/page、R5 P3 + R6 P4、R10 P3 pickup txn、R4 pickup consumer** 全部完成；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
-- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P2/P4 已冻结并实现的接口。P4 必须拆成 dropped-loot hydration 子批次与 inventory-layout overflow 子批次，前者不等待 R10 P3，后者才等待其实际 durable/capacity 前置。
-- **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R10 P3 pickup txn、R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
-- **R5**：incoming-only qi attrition/ledger；provider phase 为 R5 P3。
-- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；dropped-loot projection/page consumer 为 R6 P1，必须在 **R10 P2a owner/visibility metadata provider** 与 **R3 P4 dropped-loot migration/hydration consumer** 完成后才可消费；receipt provider phase 为 R6 P4。
-- **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
-- **R7**：UI 消费，不拥有事务。
-
-顺序分两条：**terminal delivery**：R3 P1 outbox/CAS → R10 P1 deliver/receipt → R10 P2c worker → R1 checkpointed hosts → R10 P4；**dropped-loot/pickup**：R3 P1 → R10 P1 migration helpers → R3 P2 seam/compatibility → R10 P2a Public provider/writers → R3 P4 hydration → R6 P1 projection/page → R5 P3 + R6 P4 → R10 P3 pickup → R4 consumer → R10 P2b OwnerOnly writers → R3 P4 layout overflow → R10 P4。P2c 独立于 pickup 链；各箭头未合入不得启用下游或用 mock 宣称完成。
+- **R10** 独占 `server/src/inventory/**`、纯 migration helpers 与 `SessionDeliveryWorker`；terminal worker 只投影 R1 O-10..O-21/O-26/O-27，inventory/spill transaction 不定义 session teardown。
+- **R3** 独占 SQL/outbox/CAS/reconciliation、hydration guard 与 migration consumer；R10 通过冻结接口 claim/commit/fail。
+- **R4/R5/R6/R7** 分别拥有 C2S authorization、qi attrition ledger、receipt/projection wire 与 UI consumer；R10 不修改其文件。
+- 所有跨轨 start/order/cutover 仅引用 master §3/§4.1 与 PR 1902，不在本 plan 复制箭头。接口可 contract-first 合入；真实 worker activation 必须等 master 列出的 R3 outbox 与 R10 transaction artifacts 存在，且不得用 mock 宣称 production closure。
 
 ## 7. 审核要求的 contract pins
 
@@ -125,7 +122,7 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 5. pickup 同维成功；跨维、超距/zone、owner/private 拒绝；merge、placement-only、failed attach/capacity/validation/persistence 后 entry 仍在；成功后才删。
 6. incoming-only attrition receipt + R5 ledger：旧 stack absolute qi 不变；注入 attrition 后、durable commit 中断与 restart/retry，断言 attrited item + zone/ledger + drop delete 原子且总量守恒。
 7. visibility matrix：同维/范围内 `Public` 对非 owner 可见，`OwnerOnly` 对 owner 可见、对普通非 owner 不可见、对 server-authorized admin 可见；另测跨维/超距拒绝。page/revision 按每个 recipient projection；缺页/混 revision 不替换。
-8. terminal-delivery worker：空队列、并发唯一 claim、lease expiry、commit 各 crash point、receipt 重放、retry/dead-letter/operator CAS；真实消费 R3 outbox，并对拍 R1 §2.2.2 全状态的 quota 增量。
+8. terminal-delivery worker：执行 R1 O-10..O-21/O-26/O-27，覆盖空队列、并发唯一 claim、lease expiry、payload/digest binding、history quota fail-before-mutation、commit crash、receipt replay、retry/dead-letter/operator CAS；quota effect 逐 row 对拍。
 9. accepted/rejected move correlation；pack stow/equip/unequip 与拒绝必须动作级 receipt，stale event 和 snapshot-only baseline 不通过。
 10. forge 深链保留；另锁 `/give hoe_iron → 新 snapshot → 真实非零 instance → held/equip → lingtian_start_till`，禁止 `instance_id=0` 或任意 server-data 冒充成功。
 11. inventory-layout migration pure happy/empty/full/dynamic/idempotent/invalid；dropped-loot migration 覆盖旧 `entry_json` 缺 owner/visibility → `None`/`Public`、已有字段原样保留、malformed/幂等；R3 consumer 对真实 context 成功，缺 context/capacity/persistence/migration failure 保留旧行可重试。
@@ -134,7 +131,7 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 
 以下名称即 `scripts/bot/scenarios/<name>.py` 的稳定身份：
 
-1. `inv_full_delivery_matrix`：craft/alchemy/forge/give 满包时 `stored + spilled == requested`，失败不 teardown；checkpointed 三域必须经真实 `SessionDeliveryOutbox`→P2c worker→receipt/ack 链，不得直接调用 `deliver` 绕过 worker。
+1. `inv_full_delivery_matrix`：craft/alchemy/forge/give 满包时 `stored + spilled == requested`；checkpointed 三域经真实 `SessionDeliveryOutbox`→P2c O-10..O-16→receipt 链。handoff 已在 R1 S-14 teardown，worker failure 只留 Pending/DeadLetter obligation，不恢复 session。
 2. `inv_stack_merge`：同 identity merge、异 identity 分栈；placement-only 与拒绝路径保留 drop；attrition durable 中断/restart 仍原子守恒。
 3. `inv_footprint_sync`：2×1 rotate 后以 request/instance/from/to/revision 锚定 1×2 authoritative receipt；snapshot 不代替回执。
 4. `inv_pack_feedback`：stow/equip/unequip 的 accepted/rejected 均按时间锚与 correlation 匹配，stale event 不通过。
@@ -146,7 +143,7 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 
 | plan | 2026-08-03 验真结论 | 证据/落点 |
 |---|---|---|
-| `alchemy-takeback-full-inventory-loss` | 部分吸收 | 满包 deliver/spill 后才由 R1 teardown。 |
+| `alchemy-takeback-full-inventory-loss` | 部分吸收 | terminal handoff 后由 obligation worker deliver/spill；失败走 O-13，不 reopen。 |
 | `dropped-loot-pickup-stack-merge` | 仍真实，吸收 | 当前 pickup 只找空 footprint；落 `pickup_and_merge`。 |
 | `force-attach-grid-collision` | 仍真实，吸收 | `(0,0)` 强塞仍可达；改合法 attach/spill。 |
 | `rotate-footprint-sync` | 仍真实，吸收 | `Moved` 缺权威新 footprint；R6 receipt 补齐。 |

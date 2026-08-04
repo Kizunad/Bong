@@ -48,57 +48,44 @@
 | V | `plan-bot-e2e-coverage-v1`（既有 skeleton 直接促升，不另立） | bot 场景 P1-P6 扩容 + CI 假绿修复 + build token 脚本 | `scripts/bot/**`、CI | ~9 |
 | 基建 | `plan-registry-datafication-v1`（既有 skeleton 直接促升） | 硬编码配方/功法/方块表迁数据 + fail-fast | 三张表 | 自身 |
 
-## 3. 波次与依赖
+## 3. 唯一跨轨波次与裁决
 
-- **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。§6.11 登记的 Agent `A-CS`（`plan-agent-craft-schema-v1`）也在本波启动并独立提交，必须先于 R6 P1 合入。
-- **Wave 1**：R6（R2 + Agent `A-CS` 合入后）、R7 基础设施（R2 合入后）、R1 framework-only（仅 `InteractionSession`/registry/lifecycle 骨架，R3 P1 合入后；不得宣称 craft pause/resume 或 delivery 生产闭环）。
-- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5/R6/R2 P1 后）、R10（R3 P1 后）；R1 宿主迁移按显式 gate 分批放行：craft 需 Agent `A-CS` + R3 P1 reservation/outbox + R3 P4 placeable-entity stable `placed_id` 持久化/hydration/runtime 映射 + R6 craft intents + R4 craft handler/gate + R7 P2 Craft Screen + R2 P1 已登记的 `CraftStore` + R10 P1 `deliver`/receipt contract + R10 P2c production outbox worker，alchemy/forge 同样需 R3 P1 与 R10 P2c，`TsyPresence` 需 R3 P1 auxiliary Slice 与 R3 P4 restore parity。
-- 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
-- R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
+本节与 §4.1 是计划族唯一 start/order/cutover authority。各 track plan 只能引用 row ID，不能复制或反写依赖图。PR 1902（`origin/docs/master-r9-r6-ownership-adjudication`）五项裁决作为 settled context：TypeBox source of truth、domain content/generation machinery 分权、contract-first 不等于 live、production activation 原子切换、master Wave 表唯一 authority。
 
-## 4. 文件所有权矩阵（防并行打架，冲突时以本表为准）
+- **Wave 0 — source/provider foundations**：V、R2、R3、R5、registry-datafication 与各轨 P0；Agent A-CS 执行 M-01。
+- **Wave 1 — contract-first infrastructure**：R6 M-02（A-CS 后）、R1 M-03 framework-only（R3 storage seam 后）、R7 UI 基础设施（R2 后）。这些 row 可交付 declarations/converters/reducers/tests/stubs，但不得宣称 craft live。
+- **Wave 2 — durable providers and atomic activation**：R3 M-04/M-05/M-12、R10 M-06/M-13/M-15、R4 M-07/M-15、R7 M-08、R1 M-09/M-10、R6 M-14/M-15。M-10 是唯一 craft production cutover：real state producer、wire emit/bridge、C2S gate/handler、client producer/store 与旧 receiver removal 必须在安全 merge unit 内一起启用；dropped-loot projection/pickup 则分别由 M-14/M-15 原子切换，禁止长期 dual emit 或以 fixture 冒充 live。
+- R1 其余 checkpointed adapters 在 M-04/M-06 后迁移；volatile adapters 仍须使用 canonical S/O traces。TSY attach 另等 R3 coupled snapshot guarded restore。
 
-- `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
-- client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
-- `agent/packages/schema/src/**`、generated JSON Schema 与提交的 `@bong/schema` dist=§6.11 Agent 轨；craft schema prerequisite 的 production owner 是 Agent 轨的独立 craft-schema 交付批次，必须在 R6 P1 前提交并验收 TypeBox source、generated schema/dist 与变体计数。理由：TypeBox 是 agent-side source of truth，生成物必须与 source 同 owner 原子提交；让 R6 同时改 source 和 wire 会违反本总纲的 agent 排除边界并形成双 owner。R6 独占 proto/Rust mirror/converter、client wire encode/send 与 bridge/router plumbing，只消费该冻结版本并负责一次性 wire 反映。R6、R4、R7、R1 的 craft gate 均以本处 ownership 决议为准。
-- CraftOpen target bridge（跨轨 canonical contract）：`CraftOpen` 必须携带 required `target` 判别联合：`Handcraft` 或 `Workbench { workbench_key }`，不得省略。`workbench_key` 是现有成功 S2C `WorkbenchOpen.entity_id` 的 ECS `Entity::to_bits()` locator：逻辑/Rust 类型 `u64`、protobuf `uint64`、JSON/TypeBox 为无符号十进制字符串；它只在当前进程的首次请求中定位 runtime entity，不是授权能力，也绝不写进 checkpoint。普通手搓发送 `Handcraft`；`WorkbenchScreen` 必须从 response 保留该 key 并在初次 `CraftOpen` 原样回传。R4 将 key 解析为 entity 后重验实体存活且携带 `WorkbenchBlock`、玩家同维且在既有距离内，并执行 owner/busy/facility gate。missing、malformed、stale、despawned、跨维或越距 key 均拒绝；R7 不得从 UI 猜测或改写 key。`CraftPause`/`CraftResume` 只携带 hydrated session identity/version，不重复 target。
-- **Stable workbench addendum**：R4 还须从 R3 P4 registry 把 runtime entity 映射为唯一 `placed_id` 后才交 R1 持久化 claim；restore 以 `placed_id` 绑定本次 hydrate 的新 Entity。missing/duplicate/unhydrated mapping 按 `InvalidRestore` fail closed。
-- 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
+## 4. 文件所有权矩阵
 
-### 4.1 跨轨 artifact producer/consumer 闭环表
+- `persistence/**`+autosave=R3；`session/`+七域 adapter=R1；`client_request_handler.rs`+`gate/`=R4；emit/converter/client network machinery=R6；`qi_physics/**`=R5；`inventory/**`=R10；cast domain=R9。
+- client Store lifecycle=R2；Screen/hud/keybind=R7；combat cast store=R9。
+- `agent/packages/schema/**` craft domain content/generated/dist=A-CS；R6 不修改 Agent artifacts，只消费冻结 SHA。
+- `workbench_key` 是 request-local runtime locator；R4 校验当前 Entity 后必须映射 R3 stable `placed_id`，R1 checkpoint 仅保存 `placed_id`。missing/duplicate/unhydrated mapping fail closed。
+- 任一轨碰他轨 artifact 只消费冻结 API；API owner、production consumer 和 cutover evidence 均以 §4.1 为准。
 
-覆盖本计划族为 R1 链新增/改变的 artifact；sample、mock、类型引用或“后续接线”不算 consumer。新增 artifact 必须先增行。
+### 4.1 Artifact / cutover ledger
 
-| Artifact | Producer | Production consumer | Gate / evidence |
+| Row ID | Artifact / cutover | Producer | Production consumer / completion evidence |
 |---|---|---|---|
-| craft TypeBox source + generated schema + committed dist | Agent `A-CS` P1-P2 | R6 P1 mirror/converter；agent runtime | A-CS SHA；正反 sample、freshness、variant count |
-| craft proto/Rust mirror/converter/samples | R6 P1 | R4 P1 decode；R1 P1 emit | `A-CS`；buf/sample、116 C2S/144 S2C |
-| client craft API + bridge/router/handler | R6 P1 | R7 P2 producer；R2 P1 `CraftStore` | R2+A-CS；proto→store/client pins |
-| `CraftSessionStateV2` S2C | R6 P1 `craft_emit` 读 R1 | R2 store、R7 reopen | phase/identity/generation roundtrip |
-| request-local `workbench_key` | WorkbenchOpen response，R6 P1 固型 | R7 原样回传；R4 runtime lookup | u64 boundary、response→request 不变 |
-| stable `placed_id` + hydrate registry | R3 P4 | R4 runtime→stable claim；R1 restore rebind | placeable P0-P2；新 App hydrate/唯一 mapping |
-| validated craft admission | R4 P1 | R1 P1 `try_acquire` | R6+R3 P4；stale/跨维/越距/mapping 缺失拒绝 |
-| `InteractionSession`/phase/cause | R1 P1 | R1 P1-P3 adapters | R3 P1；状态/原因矩阵 |
-| `SessionKey`/`PlayerKey`/generation | R1 P1 | R3/R4/R6/R7/R10 | rebind、stale generation reject |
-| durability/transition | R1 P1 | 每个 domain adapter | checkpoint+P2c；显式 durability/六态 pins |
-| suspension policy/deadlines | R1 P1；R3 rebase | R1 scanner；R10 P2c scanner | TTL/retry/lease 连续重启不刷新 |
-| maintenance permissions | R1 P1 | admin terminate；P2c retry/resolve | authenticated allow；offline name/伪造 deny |
-| registry/`BusyClaim` | R1 P1 | R4 `GateSpec`；adapters | conflict matrix + race tests |
-| audit event | R1 contract；R3/R10 emit | audit sink | hashed principal；无 payload；transition 可追溯 |
-| insight deadline transition | R1 P1 | response gate/timeout scanner | deadline/race/lifecycle cleanup |
-| R7 Open/Pause/Cancel/Resume intents | R7 P2 | R6→R4→R1 | R2/R6/R4；四 intent 分离、resume once |
-| `CraftStore` lifecycle | R2 P1；R6 handler | R7 P2 | disconnect clear、stale reject |
-| checkpoint（escrow/`placed_id`/generation） | R1 payload；R3 P1 writer | R3 guarded restore→R1 | workbench 需 R3 P4；禁止 Entity |
-| reservation | R3 P1 new/reuse/cancel API | R1 admission/restore/handoff | R1 §2.2.2 全矩阵 |
-| quota | R3 P1 | R1 admission；R3/R10 release | counter=sum(obligations)、row/byte races |
-| outbox + `delivery_id` | R3 P1 terminal txn | R10 P2c worker | crash points、唯一 owner、完整 payload |
-| lease/retry/dead-letter CAS | R3 primitives；R10 P2c 驱动 | R10 worker/scanner/operator | rebase first；CAS races |
-| `InventoryTxn::deliver` | R10 P1 | R10 P2c | stored+spilled=requested、失败不变 |
-| `DeliveryCommitReceipt` | R10 P2c 原子 txn | R3 dedupe；R1 terminal confirm | replay 不重发/二次释放 |
-| `ResolvedDisposition` | R10 P2c/operator + R3 txn | R3 cleanup/audit；R1 confirm | 无 disposition 不释放；重放幂等 |
-| coupled TSY snapshot | R3 P1 | R1 P3 reconnect/gate | routine/disconnect/shutdown 全旧或全新 |
+| M-01 | craft TypeBox A-01..A-06 source/generated/dist | A-CS P1-P3 | R6 M-02；registry-derived type sets、freshness、runtime import |
+| M-02 | craft proto/Rust/client wire machinery、emit API/stub | R6 P1 | M-10 activation；只验 converter/roundtrip，不要求 downstream live |
+| M-03 | `InteractionSession`、S reducer、registry/busy API | R1 P1 framework | R1 adapters；S-01..S-23 traces |
+| M-04 | reservation/quota/outbox/CAS/history storage | R3 P1 | R1 handoff + R10 worker；O-01..O-27 durable traces |
+| M-05 | stable `placed_id` hydrate registry | R3 P4 placeable batch | R4 runtime→stable lookup；R1 S-10 restore |
+| M-06 | `InventoryTxn::deliver` + `SessionDeliveryWorker` | R10 P1/P2c | O-10..O-21/O-26/O-27；payload digest binding、receipt atomicity |
+| M-07 | craft C2S production gate/handler | R4 P1 | R1 admission；malformed/stale/despawned/cross-dimension/out-of-range rejection |
+| M-08 | Craft Screen Open/Pause/Cancel/Resume producers | R7 P2 | R4 handler；intent separation、Resume once |
+| M-09 | `CraftStore` lifecycle + wire handler contract | R2 P1 + R6 M-02 | R7 P2；disconnect clear/stale generation reject |
+| M-10 | craft production atomic activation | R1/R4/R6/R7 integration owner | prerequisites M-01..M-09；real response→screen→request→session→emit/store trace；删除 V1/旧 receiver |
+| M-11 | checkpointed domain migration | R1 P1/P2 adapters | M-04 + M-06；S-07/S-14 与 O-08/O-16 crash trace |
+| M-12 | coupled TSY presence/position/dimension snapshot | R3 P1 | R1 P3 attach；routine/disconnect/shutdown 全旧或全新 |
+| M-13 | dropped-loot metadata、capacity 与纯 migration provider | R10 P1/P2 | R3 hydration；Public/OwnerOnly admission、spill/delete atomic seam |
+| M-14 | dropped-loot guarded hydration 与 recipient-specific projection/page | R3 P2 + R6 P1/P2 | 同 revision 分片替换、visibility/dimension/range/owner filter；超限 fail closed |
+| M-15 | pickup authorization、merge/placement、qi attrition 与 receipt atomic activation | R10 P3 + R5 ledger | R4 handler + R6 receipt；authorize→txn→attrition→drop delete 单事务 |
 
-闭环规则：任一端未合入，下游仅可提交接口/pins，不得启用 adapter。outbox consumer 固定 R10 P2c，stable workbench provider 固定 R3 P4；phase 删除/改名须同步本表与 wave gate。
+闭环规则：类型引用、mock、fixture 或单独 stub 不算 production consumer。上游 artifact 可 contract-first 合入；只有表中 consumer/cutover evidence 存在后才可宣称 live。任何新增跨轨 artifact 先登记本表；track plan 只引用 M-row 与 canonical S/O/A-row。
 
 ## 5. 工作流（GPT tmux 多会话）
 
@@ -137,7 +124,7 @@
 
 1. 9 条轨道全部归档（各自 bot 场景常绿 + 吸收 plan 全部归档/验伪结案）；
 2. 三个 2 万行级 god file（inventory/mod.rs、client_request_handler.rs、persistence/mod.rs）不复存在，最大单文件 < 3000 行；
-3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；116 C2S 变体全部有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
+3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；authoritative registry 派生的全部 C2S 变体均有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
 4. bot 场景数从 ~30 增至 ≥80，CI e2e 是唯一主门禁且无已知假绿。
 5. `flash-review` label 下 open issue 全部显式处置（fixed / dup / 验伪关闭 / 促升 skeleton，见 §10），无静默积压。
 

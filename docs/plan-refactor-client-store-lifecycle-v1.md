@@ -111,7 +111,7 @@ skeleton：niche-guardian-cross-session-leak。
 
 - 独占：全部 `*Store.java` 的生命周期接口与登记、`BongNetworkHandler.java` 的 `clearClientStateOnDisconnect` 区段。
 - 不碰：`BongNetworkHandler.register()` 的 channel 注册区（R6 域，同文件分区段协作，两轨 merge 前互相 fetch）；Screen 结构（R7 域）；store 的业务字段语义。
-- 依赖：无前置，Wave 0 即可动工。R7/R9 依赖本轨接口，先于它们合入。
+- 依赖：Wave/start/order/cutover 只引用 master §3/§4.1 与 PR 1902；R7/R9 只消费本轨冻结的 Store interface，不在 R2 复制跨轨箭头。
 
 ## bot 验收场景
 
