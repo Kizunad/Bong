@@ -23,13 +23,13 @@ class ParserTests(unittest.TestCase):
     StructVariant {
         value: u8,
     },
-    UnitVariant,
+    UnitVariant, SameLineVariant,
     TupleVariant(u8),
 }
 """
         self.assertEqual(
             checker.parse_enum_variants(source),
-            ["StructVariant", "UnitVariant", "TupleVariant"],
+            ["StructVariant", "UnitVariant", "SameLineVariant", "TupleVariant"],
         )
 
     def test_accepts_multiline_tuple_variant(self) -> None:
@@ -53,13 +53,16 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(checker.parse_enum_variants(source), ["TupleVariant"])
 
     def test_fails_closed_on_unknown_top_level_syntax(self) -> None:
-        source = ENUM_PREFIX + """pub enum ClientRequestV1 {
-    #[cfg(test)]
-    Unsupported = 1,
-}
-"""
-        with self.assertRaisesRegex(RuntimeError, "unsupported ClientRequestV1 variant syntax"):
-            checker.parse_enum_variants(source)
+        sources = [
+            ENUM_PREFIX + "pub enum ClientRequestV1 { #[cfg(test)] Unsupported = 1, }",
+            ENUM_PREFIX + "pub enum ClientRequestV1 { TupleVariant(u8) = 1, }",
+            ENUM_PREFIX + "pub enum ClientRequestV1 { StructVariant { value: u8 } = 1, }",
+        ]
+        for source in sources:
+            with self.subTest(source=source), self.assertRaisesRegex(
+                RuntimeError, "unsupported ClientRequestV1 variant syntax"
+            ):
+                checker.parse_enum_variants(source)
 
     def test_fails_closed_on_serde_wire_renames(self) -> None:
         camel = '#[serde(tag = "type", rename_all = "camelCase")]\npub enum ClientRequestV1 { Variant, }'
@@ -134,7 +137,7 @@ pub enum ClientRequestV1 {
                 self.assertEqual(checker.main(), 1)
 
     def test_main_accepts_matching_enum_and_matrix(self) -> None:
-        plan = """## P0 104 变体门禁矩阵
+        plan = """## P0 2 变体门禁矩阵
 
 | # | `ClientRequestV1` | 距离 | 维度 |
 |---:|---|---|---|
@@ -151,6 +154,8 @@ pub enum ClientRequestV1 {
             checker.parse_matrix_variants(plan),
             ([1, 2], ["Alpha", "Beta"]),
         )
+        with self.assertRaisesRegex(RuntimeError, "heading count 3 does not match 2 rows"):
+            checker.parse_matrix_variants(plan.replace("P0 2", "P0 3"))
 
         with patch.object(
             checker, "enum_variants", return_value=["Alpha", "Beta"]
