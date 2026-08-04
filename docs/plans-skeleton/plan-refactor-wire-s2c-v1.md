@@ -37,7 +37,7 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 - 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：跨轨 start/order/cutover 以总纲 §3 Wave 表为唯一 authority；R6 的 TypeBox-driven schema/generation 与 contract-first stub 可在 Wave 0 开始，R2 接缝只约束 production bridge/router 接线（Wave 1），不构成整轨启动门；R4 P2 的消费关系同样只按总纲放行。**P1 的 dropped-loot projection/page 是 scoped production cutover：须在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后才启用，未满足前仅冻结 contract/test-only stub，不阻塞其他 scope 子项。**
+- 依赖：跨轨 start/order/cutover 以总纲 §3 Wave 表为唯一 authority；contract-first 工作可在 Wave 0 开始，涉及其他 track 所属 production 接缝时按总纲 Wave 放行，不构成整轨启动门。**P1 的 dropped-loot projection/page 是 scoped production cutover：须在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后才启用，未满足前仅冻结 contract/test-only stub，不阻塞其他 scope 子项。**
 
 ## bot 验收场景
 

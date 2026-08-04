@@ -20,7 +20,7 @@
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：全部已注册招式普查（server 权威可达性 × client AV 五件套齐备度矩阵，#1249 已给出方法先例）；冻结 `SkillAvBinding` 与 cast_sync 契约增量。
-- ⬜ P1 契约落地：contract-first 先补 cast_sync 的 source/target/phase 字段与 STOP 权威事件、`SkillAvBinding` 注册表及 fail-fast 校验；仅在总纲 §3 的 R5/R6/R2 production cutover 条件满足后，才启用 live producer/receiver 与 concrete consumers，并按 §4.1 原子接通。
+- ⬜ P1 契约落地：contract-first 先补 cast_sync 的 source/target/phase 字段与 STOP 权威事件、`SkillAvBinding` 注册表及 fail-fast 校验；production activation 仅按总纲 §3/§4.1 的跨轨顺序、ownership 与 atomicity invariants 放行，具体接缝与验收由 owner track plans 定义。
 - ⬜ P2 修复批次 A：双源去重（baomai-v3/tuike-v2）、错接纠正（dugu penetrate）、停止语义接线（tribulation brace/打坐腿 pitch 红线修正）。
 - ⬜ P3 修复批次 B：skillbar 定义源统一（丹道三招接入）、HUD 提示/图标补齐（dugu-v2、zhenmai sever 标记语义修正）、缺失动画 JSON 补齐（woliu voidpath 五招，遵守 PlayerAnimator 四大坑）。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
@@ -35,7 +35,7 @@ skeleton：dandao-basic-skillbar-bridge、dugu-v2-hud-skill-hint、skillbar-cast
 
 - 独占：server `combat/` 的 cast/AV emit 点、`skill/` 注册表、`network/cast_emit.rs`；client `combat/` handler/store 的 cast 部分、`VfxBootstrap`/动画注册的绑定结构。
 - 不碰：qi 扣费语义（R5 访问器，本轨消费）；emit 传输层（R6 builder，本轨消费）；FPV 手臂动画（fpv-cast-av plan 域）。
-- **依赖**：#1287、#1249 是基线；P0 与 P1 的 canonical TypeBox content、reducer/state machine、tests、未启用 declarations 和 `SkillAvBinding` contract-first stub 可独立开工，不等待 R6/R5/R2 production artifacts。live producer/receiver、R6 transport machinery、R5 qi accessors 与 R2 cast-store 接线只按总纲 §3 Wave 2 和 §4.1 作为 production activation/cutover 条件，不得写成 contract start gate。P0 普查可先行。
+- **依赖**：#1287、#1249 是基线；P0 与 P1 contract-first 可独立开工，不等待其他 track 的 production artifacts。production activation/cutover 只按总纲 §3 Wave 与 §4.1 的 ownership/atomicity invariants 放行；具体接缝、artifact 和验收由各 owner track plan 定义。P0 普查可先行。
 
 ## bot 验收场景
 
