@@ -12,14 +12,14 @@
 ## 接入面
 
 - **进料**：`bong:client_request` 单通道（既有，C2S 本就单轨）、玩家实体（Position/CurrentDimension/状态组件）、R1 session 忙态、R10 inventory 事务。
-- **出料**：校验通过的请求进各域 handler；拒绝走统一 reject 回执（带原因码，client 侧 toast/HUD 可消费——对齐 unconsumed-event-feedback 的方向但只做 gate 拒绝部分）。
+- **出料**：校验通过的请求进各域 handler；拒绝走统一 typed reject 回执（带 request correlation/reason，client store/UI 必须消费——对齐 unconsumed-event-feedback 的方向但只做 gate 拒绝部分）。CraftOpen 的所有 S-01 admission rejection 必须产 A-08 `CraftOpenRejected { request_id, reason }`，不得静默 drop。
 - **共享类型**：新 `server/src/network/gate/`——`GateSpec { max_distance(度量统一), same_dimension, ownership, state_preconditions }` 按请求类型声明；维度感知 zone 查找 helper。
-- **跨仓库契约**：wire 形状通常不变（现行 enum 全量）；reject 回执若新增字段走 R6 的契约流程。R1 craft pause/resume 例外消费 R6 新增的 `CraftOpen`/`CraftPause`/`CraftResume`，本轨负责 production decode/dispatch，并以 owner、phase 与 busy `GateSpec` 拒绝伪造 resume/重复包。Workbench 初次 `CraftOpen` 的 `workbench_key` 只解析当前进程 runtime entity；R4 重验实体/维度/距离/facility 后还必须从 R3 P4 registry取得 stable `placed_id` 并把它交给 R1 建 claim，mapping 缺失/重复/未 hydrate 一律拒绝，禁止把 `Entity::to_bits()` 持久化。
+- **跨仓库契约**：wire 形状通常不变（现行 enum 全量）；reject 回执新增字段走 A-CS A-08 + R6 machinery，不由 R4 修改 Agent schema。R1 craft lifecycle 消费 R6 新增的 `CraftOpen`/`CraftStart`/`CraftPause`/`CraftResume`/generation-bound `CraftCancel`，本轨负责 production decode/dispatch，并在 reducer 前对所有 existing-session intent 按 `session_key/generation` 全比较：key/owner mismatch、generation `< current`、`> current`、wrong phase 均 typed reject且 no mutation，只有 `= current` 才进入相应 S-row；CraftStart 仅 matching Running 可进 S-26。Workbench 初次 `CraftOpen` 的 `workbench_key` 只解析当前进程 runtime entity；R4 重验实体/维度/距离/facility 后还必须从 R3 P4 registry取得 stable `placed_id` 并把它交给 R1 建 claim，mapping 缺失/重复/未 hydrate 一律 A-08 reject，禁止把 `Entity::to_bits()` 持久化。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：分别普查 production Rust match/decode 的全部可达 request variants 与 TypeBox authoritative registry，记录两集合及对称 drift；冻结 `GateSpec` 与拒绝回执。P3/P4 的 trust-boundary type set 是两集合的 reconciled union；任一 Rust-only live variant 必须先纳入 registry 或从 production decode 删除，不得因 registry 未登记而漏扫。每个 reconciled variant 标注门禁四元组。
-- ⬜ P1 门禁中间件落地：gate 层上线，先给已知漏洞簇挂 spec；craft production decode/dispatch 只在 master M-07/M-10 activation 时接入 A-CS A-01..A-04，runtime key negatives 属本阶段 owner evidence。contract-first handler declarations 可先合入，但不以未激活 stub 宣称 live。
+- ⬜ P1 门禁中间件落地：gate 层上线，先给已知漏洞簇挂 spec；craft production decode/dispatch 只在 master M-07/M-10 activation 时接入 A-CS A-01..A-04/A-07，A-08 rejection producer 同批 activation，runtime key/generation negatives 属本阶段 owner evidence。contract-first handler declarations 可先合入，但不以未激活 stub 宣称 live。
 - ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住；pickup handler 的 authorization/txn/receipt 接线只在 master M-14/M-15 与 R5 ledger artifact 可用后实施，不得以 mock 或旧 schema 接线。
 - ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：P0 reconciled union 中全部 production-decodable C2S variant 均声明 `GateSpec` 或显式 `no_gate`；TypeBox-only drift 必须有 production consumer/cutover evidence，Rust-only drift 必须先补 authoritative registry 或删除 decode。删除重复距离/维度判断。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
@@ -41,9 +41,9 @@ skeleton：alchemy-furnace-scope-gate、block-place-reach-gate、coffin-reclaim-
 2. `gate_reach`：超距放方块/开炉/采灵田→拒绝；贴脸→放行。
 3. `gate_ownership`：拆他人棺/取他人容器→拒绝。
 4. `gate_state_precondition`：给丹先校验后扣（满包/死亡目标不吞丹）；丹毒超阈值禁服。
-5. `gate_matrix_sweep`：从 P0 reconciled union 派生 type set，先断言无未处置 Rust-only/TypeBox-only drift，再对每个 production-decodable variant 执行声明的合法/超距/跨维/no_gate trace；craft 另覆盖 owner mismatch、wrong phase、conflicting busy claim、duplicate/replay、stale identity、runtime-key malformed/stale/despawned/cross-dimension/out-of-range 与合法 S-02 admission。
+5. `gate_matrix_sweep`：从 P0 reconciled union 派生 type set，先断言无未处置 Rust-only/TypeBox-only drift，再对每个 production-decodable variant 执行声明的合法/超距/跨维/no_gate trace；craft 另覆盖 owner/key mismatch、每 intent 的 generation `< /= /> current`、wrong phase、conflicting busy claim、duplicate/replay、runtime-key malformed/stale/despawned/cross-dimension/out-of-range、CraftStart quantity/recipe gate 与合法 S-02 admission。每个 CraftOpen reject 必须携原 request_id/A-08 reason，且 R1 session/claim/obligation 不变。
 
 ## 开放问题（pre-P0 收口）
 
 1. 距离度量统一用哪种（欧氏平方 vs Chebyshev）、按交互类别几档半径？需对照 worldview 交互设定拍板。
-2. 拒绝回执是复用既有 toast/error payload 还是新增统一 `request_rejected` 类型（涉及 R6 契约新增）？
+2. 通用拒绝复用统一 `request_rejected` envelope；CraftOpen 必须使用 A-08 `CraftOpenRejected` 以供 `OpenPending` matching clear。两者的 TypeBox owner/生成物分别引用对应 Agent artifact，R4 只生产 reason/correlation，R6 负责 wire machinery。

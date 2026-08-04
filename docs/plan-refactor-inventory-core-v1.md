@@ -81,7 +81,9 @@ try_insert / try_insert_batch
 
 `DroppedLootEntry` 必须持久化 `owner: Option<PlayerId>` 与 `visibility: Public | OwnerOnly`；producer 从机制权威 source 写入，普通 world loot 为 `Public`，私人 spill/drop 为 `OwnerOnly`。管理员授权来自 server permission，不写入 client payload；R3 migration/hydration 原样保留这些字段，缺失旧数据仅按明确 migration 规则补 `Public`，不得从请求猜 owner。
 
-R6 在编码前对每个 recipient 用 server authority 过滤：同 dimension、在授权 distance/zone observation 范围、`OwnerOnly` 仅 owner 或授权管理员可见。排序、revision、page count 都针对过滤后的 projection；只有 visibility key 完全相同者可复用编码页，禁止一个 global snapshot 发给所有 client。
+R6 在编码前对每个 recipient 用 server authority 过滤：同 dimension、在授权 distance/zone observation 范围、`OwnerOnly` 仅 owner 或授权管理员可见。排序、revision、page count 都针对过滤后的 projection；只有 visibility key + projection digest 完全相同者可复用编码页，禁止一个 global snapshot 发给所有 client。registry mutation、join，以及 recipient 的 dimension/range observation bucket/owner/admin permission key 变化都递增该 recipient projection revision；context key 变化即使 registry 未变也须先发 `DroppedLootProjectionReset`，使 client fail-closed 清旧视图，再按 R6 的 dirty-recipient queue 重建。empty projection 必须发单个 empty page，不能以零页或沉默表示。
+
+R6 projection 实现必须消费 master M-14 冻结的 aggregate bounds：每 tick 最多重建 64 个 recipient projection、最多发送 4 MiB dropped-loot sync bytes；以 dimension/range spatial index + dirty-recipient queue 避免 recipient×4096 全表扫描，超额保留最新 dirty revision并合并中间版本，reset/revocation 优先于新增可见页。R10 提供 metadata/capacity，不复制这些 wire 调度常量。
 
 ## 4. Pickup transaction + authorization
 
@@ -108,7 +110,7 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 
 - **R10** 独占 `server/src/inventory/**`、纯 migration helpers 与 `SessionDeliveryWorker`；terminal worker 只投影 R1 O-10..O-21/O-26/O-27，inventory/spill transaction 不定义 session teardown。
 - **R3** 独占 SQL/outbox/CAS/reconciliation、hydration guard 与 migration consumer；R10 通过冻结接口 claim/commit/fail。
-- **R4/R5/R6/R7** 分别拥有 C2S authorization、qi attrition ledger、receipt/projection wire 与 UI consumer；R10 不修改其文件。
+- **R4/R5/R6/R7** 分别拥有 C2S authorization、qi attrition ledger、receipt/projection wire 与 UI consumer；inventory accepted/rejected receipt 的 TypeBox/sample/generated/dist 由 master M-16 的 Agent owner 生产，R6 消费冻结 SHA 实现 proto/converter/client，R10 不修改其文件。
 - 所有跨轨 start/order/cutover 仅引用 master §3/§4.1 与 PR 1902，不在本 plan 复制箭头。接口可 contract-first 合入；真实 worker activation 必须等 master 列出的 R3 outbox 与 R10 transaction artifacts 存在，且不得用 mock 宣称 production closure。
 
 ## 7. 审核要求的 contract pins
@@ -122,7 +124,7 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 5. pickup 同维成功；跨维、超距/zone、owner/private 拒绝；merge、placement-only、failed attach/capacity/validation/persistence 后 entry 仍在；成功后才删。
 6. incoming-only attrition receipt + R5 ledger：旧 stack absolute qi 不变；注入 attrition 后、durable commit 中断与 restart/retry，断言 attrited item + zone/ledger + drop delete 原子且总量守恒。
 7. visibility matrix：同维/范围内 `Public` 对非 owner 可见，`OwnerOnly` 对 owner 可见、对普通非 owner 不可见、对 server-authorized admin 可见；另测跨维/超距拒绝。page/revision 按每个 recipient projection；缺页/混 revision 不替换。
-8. terminal-delivery worker：执行 R1 O-10..O-21/O-26/O-27，覆盖空队列、并发唯一 claim、lease expiry、payload/digest binding、history quota fail-before-mutation、commit crash、receipt replay、retry/dead-letter/operator CAS；quota effect 逐 row 对拍。
+8. terminal-delivery worker：执行 R1 O-10..O-21/O-26/O-27，覆盖空队列、并发唯一 claim、lease expiry、payload/digest binding、history quota fail-before-mutation、commit crash、receipt replay、retry/dead-letter/operator CAS；quota effect 逐 row 对拍。O-18 retry 与 O-19 discard/requeue 必须分别覆盖 authorized operator 成功、无 operator 身份、错误 role/scope、stale generation/lease/disposition replay 的拒绝矩阵；所有 unauthorized/replay 分支 obligation、quota、inventory、history 均不变。
 9. accepted/rejected move correlation；pack stow/equip/unequip 与拒绝必须动作级 receipt，stale event 和 snapshot-only baseline 不通过。
 10. forge 深链保留；另锁 `/give hoe_iron → 新 snapshot → 真实非零 instance → held/equip → lingtian_start_till`，禁止 `instance_id=0` 或任意 server-data 冒充成功。
 11. inventory-layout migration pure happy/empty/full/dynamic/idempotent/invalid；dropped-loot migration 覆盖旧 `entry_json` 缺 owner/visibility → `None`/`Public`、已有字段原样保留、malformed/幂等；R3 consumer 对真实 context 成功，缺 context/capacity/persistence/migration failure 保留旧行可重试。
@@ -162,7 +164,7 @@ P0 不决定 Rust lifetime、SQL/outbox 实现、锁粒度、distance/zone 数�
 
 1. **Pickup freshness / anti-replay**：`PickupAuthorization` 的 revision/anti-replay fact 如何生成、绑定和失效，留待 R10 P3 pickup txn 设计时决定；理由是必须与真实 durable transaction/idempotency 语义共同冻结，避免 P0 先拍一个不可验证的 token 形状；交叉引用 §6 顺序与总纲 §3 Wave 2。
 2. **Receipt correlation / C2S request ID**：accepted move/rotate/pack receipt 必须贯通稳定 `request_id`，并携 result revision、instance、from/to 与 post-operation authoritative item view；rejected receipt 保留同一 request correlation、reason、instance、from/to。若现行 `inventory_move_intent` 缺 request identity，R6 P4 必须连同 Rust/proto/TypeBox/Java breaking contract 一次补齐并执行其全链 acceptance；这不是可省略的 deferred shape decision。
-3. **Recipient-context revocation**：移动、换维度、管理员权限变化是否触发 dropped-loot projection 重发/撤销，留待 R6 P1/P2 projection/store 设计时决定；理由是这是 recipient lifecycle 与 client stale-snapshot 清理的联合契约，P0 不预先指定触发矩阵；交叉引用 §3 与 `docs/plans-skeleton/plan-refactor-wire-s2c-v1.md` P1-P2。
-4. **Snapshot multiplicativity bound**：recipient-specific full snapshot 的 coalescing、增量/空间索引或 aggregate rate bound，留待 R6 P1 emit builder 设计时决定；理由是分页和 key reuse 是否足以控制 aggregate cost 需要结合真实 recipient cardinality 与 wire budget 评估；交叉引用 §3 与 `docs/plans-skeleton/plan-refactor-wire-s2c-v1.md` P1。
+3. **Recipient-context revocation（已冻结）**：registry mutation、join、dimension/range observation bucket/owner/admin permission key 变化均递增 recipient projection revision；context 变化先发 reset 撤销旧视图，empty projection 仍发单 empty page。实现与 client monotonic assembly 只按 R6/M-14。
+4. **Snapshot multiplicativity bound（已冻结）**：R6/M-14 每 tick最多 64 次 recipient rebuild、4 MiB sync bytes；使用 spatial index + dirty queue，不允许 recipient×4096 全表扫描；预算耗尽保留最新 revision 并优先 reset。R10 只提供 registry/index 输入，不另设 wire 常量。
 
 P0 完成只表示上述 surface、owner、失败边界、pins 与逐项 absorption audit 已冻结，不表示后续实现完成。

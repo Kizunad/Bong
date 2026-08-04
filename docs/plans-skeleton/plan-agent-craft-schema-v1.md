@@ -13,32 +13,36 @@
 
 ## 1. P0 实际 inventory（禁止虚构 baseline）
 
-2026-08-04 对当前 source 的核对结果：`craft.ts` 有 standalone `CraftStartReqV1` 与 `CraftSessionStateV1`，但 `ClientRequestV1`、`ServerDataV1`、`SCHEMA_REGISTRY` 对 `craft_start`、`craft_cancel`、`workbench_open`、craft session state 均无 membership。Rust/proto 的生产变体数不是 TypeBox baseline，不能写成 `113→116`。
+2026-08-04 对当前 source 的核对结果：`craft.ts` 有 standalone `CraftStartReqV1` 与 `CraftSessionStateV1`，但 `ClientRequestV1`、`ServerDataV1`、`SCHEMA_REGISTRY` 对 `craft_start`、`craft_cancel`、`workbench_open`、craft session state 均无 membership。Rust/proto 的生产变体数不是 TypeBox baseline，不能写成 `113→116`。A-01 只接管 target admission，不删除 recipe execution；A-07 把既有 start command 升级为 session-identified command。
 
 | Row ID | production chain 所需 contract | 当前 TypeBox 状态 | A-CS 终态 |
 |---|---|---|---|
-| A-01 | `CraftOpen` | absent；取代 standalone/legacy `CraftStartReqV1` 的 lifecycle intent | required `target = Handcraft | Workbench { workbench_key }` |
+| A-01 | `CraftOpen` | absent；从 legacy `CraftStartReqV1` 拆出 target admission | required `request_id + target = Handcraft | Workbench { workbench_key }`；不含 recipe execution |
 | A-02 | `CraftPause` | absent | required `session_key + generation` |
 | A-03 | `CraftResume` | absent | required `session_key + generation` |
-| A-04 | `CraftCancel` | server/proto 已 live，TypeBox envelope absent | 纳入 authoritative C2S union；不由 Pause 替代 |
+| A-04 | `CraftCancel` | server/proto 已 live但 identity-free，TypeBox envelope absent | breaking replacement 为 required `session_key + generation`；不由 Pause 替代 |
 | A-05 | `WorkbenchOpen` | server/proto 已 live（`entity_id + x + y + z`），TypeBox S2C union absent | 纳入 authoritative S2C union；完整保留四字段并由 `entity_id` 产生 request-local `workbench_key` |
 | A-06 | `CraftSessionStateV2` | 只有 standalone V1，S2C union absent | V2 纳入 union；删除 V1 production export/membership |
+| A-07 | `CraftStart` | standalone `CraftStartReqV1` 有 `recipe_id/quantity`，live Rust/proto 已可达 | required `session_key + generation + recipe_id + quantity(1..64)`；仅 matching Running 按 S-26 执行，其他 phase 走 S-23 |
+| A-08 | `CraftOpenRejected` | absent | required `request_id + reason`；S-01/R4 admission reject producer，R2/R6 store 清理 matching OpenPending |
 
 P0 必须枚举每个 row 的 source→export→`ClientRequestV1`/`ServerDataV1`→`SCHEMA_REGISTRY`→generated→dist/runtime import 状态，并计算**当时真实** C2S/S2C type set。P1/P2 完成后的目标 count 是该集合实际去重后的派生值；主线 drift 先由其 owner 修复或显式登记，不把 Rust count 冒充 TypeBox count，也不为凑常量越界修无关 contract。
 
 ## 2. 冻结 shape
 
-- A-01 `CraftOpen.target` required：`Handcraft | Workbench { workbench_key }`。key 是 unsigned `u64` decimal string；缺失、负数、小数、科学计数法、空白、`>u64::MAX` 均拒绝；它不是 durable identity 或 capability。
+- A-01 `CraftOpen` required `request_id + target`：`Handcraft | Workbench { workbench_key }`。key 是 unsigned `u64` decimal string；缺失、负数、小数、科学计数法、空白、`>u64::MAX` 均拒绝；它不是 durable identity 或 capability。`request_id` 只关联 A-08，不成为 session identity。
 - A-02/A-03 只含 required `session_key + generation`，不得夹带 target 或替代 Cancel。
-- A-04 保留显式取消语义与既有 production discriminant；字段 inventory 必须与 proto/Rust live contract 对拍后冻结。
+- A-04 `CraftCancel` 保留显式取消 discriminant，但不保留 identity-free legacy shape：required `session_key + generation`。R1 对 `< current` stale reject、`= current` 按 S-05/S-24、`> current` future-invalid reject；key/owner mismatch reject，任何 reject 不得取消当前 session。
 - A-05 `WorkbenchOpen` 完整镜像 live proto：required `entity_id + x + y + z`；`entity_id` 是 A-01 `workbench_key` 的 producer，TypeBox/JSON 使用 unsigned `u64` decimal string，并锁 `0/1/u64::MAX`。`x/y/z` 是 required signed `sint32` integer，锁 `i32::MIN/0/i32::MAX`；坐标只供显示/上下文，不是 authorization，R4 仍须按 authoritative ECS 重验实体、维度、距离和 facility。
 - A-06 的五个 phase 都 required `session_key + generation`，且禁止 delivery obligation 字段。`Paused` 是唯一 Resume-eligible phase；`Running` 表示已活动且重复 Resume 不得重启；`Suspended` 必须等待 guarded restore 后由新 `Paused` projection 开放 Resume；`HandoffPreparing` 与 `Ended` 均 terminal/non-resumable。
+- A-07 `CraftStart` required `session_key + generation + recipe_id + quantity`；quantity 锁 `1/64` accept、`0/65` reject。它选择/启动 recipe，不创建新 session、不携 target；只有 matching Running 进入 R1 S-26，Paused/Suspended/HandoffPreparing/Ended 或 identity/recipe/quantity invalid 均走 S-23。
+- A-08 `CraftOpenRejected` required `request_id + reason`；reason 至少覆盖 malformed/stale/despawned/cross-dimension/out-of-range/busy/quota/persistence。它只终结 matching OpenPending，不创建 Idle gameplay phase。
 
 ## 3. 阶段交付物
 
 ### P1 — TypeBox domain content
 
-在 `agent/packages/schema/src/{craft.ts,client-request.ts,server-data.ts,schema-registry.ts,index.ts}` 落 A-01..A-06，注册/export 到相应 envelope 与 registry。正反样本覆盖 target/key、Pause/Resume identity、Cancel、WorkbenchOpen 四字段（坐标 min/zero/max、缺字段/错类型），并按下表逐行 pin StateV2：
+在 `agent/packages/schema/src/{craft.ts,client-request.ts,server-data.ts,schema-registry.ts,index.ts}` 落 A-01..A-08，注册/export 到相应 envelope 与 registry。正反样本覆盖 Open request correlation/target/key、Pause/Resume identity、Cancel/Start identity与 generation shape、Start recipe/quantity、OpenRejected reasons、WorkbenchOpen 四字段（坐标 min/zero/max、缺字段/错类型），并按下表逐行 pin StateV2：
 
 | phase | identity rule | client intent rule |
 |---|---|---|
@@ -52,7 +56,7 @@ P0 必须枚举每个 row 的 source→export→`ClientRequestV1`/`ServerDataV1`
 
 ### P2 — generated / dist
 
-更新 `GENERATED_SCHEMA_FILES`、六个单项 schema、envelope schemas 与 committed dist。source/registry/generated/dist 同一提交；删除或篡改任一层时 freshness test 失败，clean checkout 可 runtime import A-01..A-06。
+更新 `GENERATED_SCHEMA_FILES`、八个单项 schema、envelope schemas 与 committed dist。source/registry/generated/dist 同一提交；删除或篡改任一层时 freshness test 失败，clean checkout 可 runtime import A-01..A-08。
 
 ### P3 — R6 handoff
 
@@ -61,10 +65,10 @@ P0 必须枚举每个 row 的 source→export→`ClientRequestV1`/`ServerDataV1`
 ## 4. 验收与边界
 
 - 必跑 `cd agent/packages/schema && npm test` 与 `cd agent && npm run build -w @bong/schema`。
-- acceptance 逐 A-01..A-06 证明正反 sample、union membership、registry membership、freshness、generated/dist/runtime import；A-05 对拍 live `entity_id/x/y/z` 全字段，A-06 必须逐 `Running/Paused/Suspended/HandoffPreparing/Ended` 执行 §3 structural phase/identity presence 矩阵，不能用通用样本代替；stateful stale/mismatch/intent 规则必须引用 R1/R4/R7 runtime traces，不能伪称 TypeBox 可判断。count 断言从 registry 派生，不出现手写 113/116。
+- acceptance 逐 A-01..A-08 证明正反 sample、union membership、registry membership、freshness、generated/dist/runtime import；A-04/A-07 证明 identity/generation required 与 quantity boundary，A-05 对拍 live `entity_id/x/y/z` 全字段，A-06 必须逐 `Running/Paused/Suspended/HandoffPreparing/Ended` 执行 §3 structural phase/identity presence 矩阵，A-08 pin request correlation/reason；stateful generation comparison/intent 规则必须引用 R1/R4/R7 runtime traces，不能伪称 TypeBox 可判断。count 断言从 registry 派生，不出现手写 113/116。
 - 不改 proto、Rust、Java、gameplay handler/session；不吸收全量 schema drift plan。若无关 drift 阻断 envelope freshness，记录真实 owner/prerequisite，不擅自扩 scope。
 - 跨轨 owner/order/cutover 仅引用 master §3/§4.1 与 PR 1902，不在本 plan 复制依赖箭头。
 
 ## Finish Evidence
 
-> 迁入 `finished_plans/` 前填写 A-01..A-06 的落地路径、commit SHA/日期、测试结果、registry-derived counts/type sets、source/generated/dist/runtime-import 对拍及遗留 drift owner。
+> 迁入 `finished_plans/` 前填写 A-01..A-08 的落地路径、commit SHA/日期、测试结果、registry-derived counts/type sets、source/generated/dist/runtime-import 对拍及遗留 drift owner。

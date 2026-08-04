@@ -65,7 +65,7 @@ pub trait InteractionSession {
 - `TerminationCause::{Completed, VoluntaryCancel, Disconnect, DimensionChange, Shutdown, InvalidRestore, SuspensionExpired, AuthorizedAdministratorClosure}`。
 - `BusyClaim`：player-exclusive、target-exclusive、facility-exclusive 三类集中冲突矩阵。
 - `SuspensionPolicy`：`SESSION_SUSPENSION_TTL_TICKS = 1_728_000`、扫描 cadence `1_200` ticks；R3 tick rebase 只保留真实剩余 TTL，不刷新租约。
-- `TerminalDeliveryPolicy`：`SESSION_DELIVERY_MAX_PAYLOAD_BYTES = 1_048_576`（1 MiB）、`SESSION_DELIVERY_MAX_ATTEMPTS = 8`、`SESSION_DELIVERY_MAX_RETRY_AGE_TICKS = 1_728_000`（24 小时）；O-12/O-13 在 attempts 或 age 任一达到边界时进 `DeadLetter`，否则回 `Pending`，`created_at_tick`/attempts 在重启时不刷新。
+- `TerminalDeliveryPolicy`：`SESSION_DELIVERY_MAX_PAYLOAD_BYTES = 1_048_576`（1 MiB）、`MAX_ACTIVE_SESSION_DELIVERY_ROWS = 4_096`、`MAX_ACTIVE_SESSION_DELIVERY_BYTES = 4_294_967_296`（4 GiB）、`SESSION_DELIVERY_MAX_ATTEMPTS = 8`、`SESSION_DELIVERY_MAX_RETRY_AGE_TICKS = 1_728_000`（24 小时）；O-01 在同一事务内同时检查 row/byte aggregate limit，任一超界走 O-02；O-12/O-13 在 attempts 或 age 任一达到边界时进 `DeadLetter`，否则回 `Pending`，`created_at_tick`/attempts 在重启时不刷新。
 - `SessionMaintenancePermissions`：server console，或已认证且绑定当前 executor 的 principal/capability；Username、owner 字符串、offline player 和跨 executor capability 均无权。
 
 ## 3. Canonical session reducer（唯一 session 规范）
@@ -74,13 +74,13 @@ pub trait InteractionSession {
 
 | Row ID | 当前状态 + event | 结果 | claim/checkpoint/delivery effect |
 |---|---|---|---|
-| S-01 | Absent + admission validation fail | Absent | 无 runtime claim；不创建 obligation |
+| S-01 | Absent + admission validation fail | Absent | 无 runtime claim/obligation；返回与 `CraftOpen.request_id` 关联的 typed `CraftOpenRejected` |
 | S-02 | Absent + `reserve_new_terminal_obligation` 成功且 claim win | Running | obligation O-01→O-03，`+Q`；绑定 owner/target |
 | S-03 | Absent + reservation 成功但 busy race-loss | Absent | 执行 O-05→O-07/O-06；只有 O-06 commit 才 `-Q` |
 | S-04 | Running + valid pause/close | Paused | claim 保留；不退款、不创建 terminal obligation |
-| S-05 | Running + explicit `VoluntaryCancel` | HandoffPreparing | 按域 policy 生成 refund payload；进入 O-08 handoff |
+| S-05 | Running/Paused + matching `session_key/generation` explicit `VoluntaryCancel` | HandoffPreparing | 按域 policy 生成 refund payload；进入 O-08 handoff |
 | S-06 | Running + `Completed` | HandoffPreparing | 产物 payload；不 refund inputs；进入 O-08 |
-| S-07 | Running + `Disconnect`/`Shutdown` checkpointed | Suspended only after durable commit | checkpointed session 从 admission 起始终有 last committed recoverable checkpoint；本次 snapshot + state/generation 以单事务 commit 为线性化点，commit 前 quiesce/写入失败回滚并保持 Running/bound/可重试，commit 后 authoritative state 立即禁止 tick，再幂等解绑 runtime Entity并保留逻辑 facility claim；post-commit cleanup 由 reconciliation 重试，crash 只恢复旧 live checkpoint 或新 Suspended checkpoint |
+| S-07 | Running/Paused + `Disconnect`/`Shutdown` checkpointed | Suspended only after durable commit | checkpointed session 从 admission 起始终有 last committed recoverable checkpoint；本次 snapshot + state/generation 以单事务 commit 为线性化点，commit 前 quiesce/写入失败回到 exact prior state（Running 或 Paused）并保留本进程 binding/可重试，commit 后 authoritative state 立即禁止 tick，再幂等解绑 runtime Entity并保留逻辑 facility claim；post-commit cleanup 由 reconciliation 重试 |
 | S-08 | Running + `Disconnect`/`Shutdown` volatile | HandoffPreparing | 全退未消费 escrow；进入 O-08，不可离线推进 |
 | S-09 | Running + `DimensionChange` | HandoffPreparing | 停 intake；全退未消费 escrow；不得进入 Suspended |
 | S-10 | Suspended + reconnect and guarded restore pass | Paused | `reuse_terminal_obligation`（O-04，`ΔQ=0`）；stable `placed_id` rebind |
@@ -93,10 +93,13 @@ pub trait InteractionSession {
 | S-17 | any + maintenance authorization failure | same state | no mutation；audit reject reason，不产生 delivery |
 | S-18 | any + same-tick timeout/reconnect/admin CAS loser | winner state | loser 重读 generation；不二次 handoff、不重复释放 claim |
 | S-19 | Paused + resume with matching owner/generation | Running | claim 保留；继续原 checkpoint/escrow，不增 Q |
-| S-20 | Paused + disconnect/shutdown/dimension/complete/cancel | by S-05..S-09 | 与 Running 使用同一 cause policy；不得因 Paused 绕过 handoff |
+| S-20 | Paused + disconnect/shutdown/dimension/complete | by S-06..S-09 | 与 Running 使用同一 cause policy；S-07 失败必须回 Paused，不得激活为 Running |
 | S-21 | Suspended + duplicate disconnect/shutdown/pause | Suspended | 幂等 no-op；不刷新 TTL、不增 Q |
 | S-22 | HandoffPreparing + duplicate gameplay/terminal event | HandoffPreparing | 重试同一 generation/payload；禁止生成第二 delivery_id |
-| S-23 | nonterminal + event not admitted by state/cause matrix | same state | typed reject + audit；无 claim/checkpoint/quota effect |
+| S-23 | nonterminal + stale/invalid gameplay identity or event not admitted by state/cause matrix | same state | typed reject + audit；无 claim/checkpoint/quota effect；generation `< current` 为 stale、`> current` 为 future-invalid，key/owner mismatch 为 invalid |
+| S-24 | Suspended + matching `session_key/generation` explicit `VoluntaryCancel` | HandoffPreparing | 取消 retained logical claim；按 cancel policy 固定 payload 后进入 O-08，不先 rebind runtime Entity |
+| S-25 | persisted Running/Paused + startup detects new process epoch/no runtime binding | Suspended after durable fence | startup transaction 递增 generation/fence 并把 process-local live checkpoint normalize 为 Suspended；不得伪造旧 Entity 或直接恢复 tick，随后只允许 S-10/S-11 guarded restore |
+| S-26 | Running + matching `session_key/generation` valid `CraftStart { recipe_id, quantity }` | Running | 选择并启动 recipe execution；不创建新 session/Q、不改 target；Paused/Suspended/terminal 或 invalid recipe/quantity 走 S-23 |
 
 **唯一 teardown linearization point 是 S-14 的 durable handoff commit。** 从 S-14 起，worker 的 retry、lease expiry、malformed payload 或 inventory failure 只改变 obligation，不重新 attach gameplay session/claim。R1 不允许 direct terminal-delivery alternative；R10 的同步 `deliver` 只能是 obligation worker 内部的 transaction primitive。
 
@@ -125,7 +128,7 @@ pub trait InteractionSession {
 | O-08 | ReservedLive + terminal handoff transaction commit | Pending | `0`；reservation→outbox，不重复计量；payload bytes/digest 固定 |
 | O-09 | ReservedLive + handoff transaction failure before commit | ReservedLive | `0`；checkpoint/claim/reservation 可重试，不能部分删除 |
 | O-10 | Pending + worker claim CAS win | InFlight | `0`；写 lease/generation |
-| O-11 | Pending + duplicate claim/CAS loser | Pending | `0`；重读 authoritative row |
+| O-11 | Pending + duplicate claim/CAS loser | authoritative state | `0`；no-write，重读 winner row（通常 InFlight + winner lease），不得写回 Pending |
 | O-12 | InFlight + lease expiry | Pending 或 DeadLetter | `0`；O-10 已原子递增 attempts；attempts `< 8` 且 age `< 1_728_000` ticks 回 Pending，否则 DeadLetter；不 attach gameplay |
 | O-13 | InFlight + retryable inventory/spill failure | Pending 或 DeadLetter | `0`；沿用 O-12 attempts/age 边界，未达界时更新 backoff，达界即 DeadLetter |
 | O-14 | InFlight + malformed payload/digest mismatch | DeadLetter | `0`；fail closed、保留完整 payload、告警；禁止调用 deliver |
@@ -145,7 +148,7 @@ pub trait InteractionSession {
 
 ### 4.1 Obligation invariants
 
-1. 每个 `session_key` 恰有零或一个 durable obligation owner；`quota_used` 等于 `ReservedAwaitingClaim`、`ReservedLive`、`CancelPending`、`Pending`、`InFlight`、`DeadLetter` 的 Q 之和。每个 active Q 固定为 `(1 row, SESSION_DELIVERY_MAX_PAYLOAD_BYTES)`，不按当前 payload 小值预留；payload envelope 固定含 `payload_schema_version`、`delivery_id`、`session_key`、terminal `generation`、recipient `PlayerKey`、cause、item/refund entries；O-08 首次写入的 exact bytes 是唯一权威身份，后续不得重序列化替换。
+1. 每个 `session_key` 恰有零或一个 durable obligation owner；`quota_used` 等于 `ReservedAwaitingClaim`、`ReservedLive`、`CancelPending`、`Pending`、`InFlight`、`DeadLetter` 的 Q 之和，且始终满足 rows `<= 4_096`、bytes `<= 4_294_967_296`。每个 active Q 固定为 `(1 row, SESSION_DELIVERY_MAX_PAYLOAD_BYTES)`，不按当前 payload 小值预留；payload envelope 固定含 `payload_schema_version`、`delivery_id`、`session_key`、terminal `generation`、recipient `PlayerKey`、cause、item/refund entries；O-08 首次写入的 exact bytes 是唯一权威身份，后续不得重序列化替换。
 2. `reserve_new` 只产生 O-01 的 `+Q`，并固定预留完整 1 MiB；claim win O-03、matching restore/retry O-04、handoff O-08、retry/lease O-12/O-13、所有 CAS loser 均 `0`，因此 terminal payload 增长不需要未建模 resize。
 3. 只有 O-06 成功取消或 O-16/O-19 成功持久化终结结果才 `-Q`。取消标记或删除失败不能把 quota 留成无主 reservation：O-25 由原 reservation 继续担当 durable owner，O-07 由 `CancelPending` row 担当；scanner/retry 均不得凭 age 直接释放。
 4. `payload` 是 canonical serialized bytes；`payload_digest = SHA-256(payload)`。worker 的 `DeliveryRequest` 必须从 claimed payload decode，并在 O-16 transaction 中以 digest/semantic item set 对拍；不存在独立可替换的 caller payload。
@@ -159,34 +162,34 @@ pub trait InteractionSession {
 
 | Artifact / row | R1 提供或消费 | canonical evidence |
 |---|---|---|
-| `InteractionSession` / S-01..S-23 | R1 producer；domain adapters consumer | session reducer trace |
+| `InteractionSession` / S-01..S-26 | R1 producer；domain adapters consumer | session reducer trace |
 | `SessionKey`/`PlayerKey`/generation | R1 producer；R3/R4/R6/R7/R10 consumer | stale generation S-16/S-23 |
 | reservation/quota/outbox / O-01..O-27 | R3 durable producer；R1 semantic consumer；R10 worker consumer | quota invariant 1-3 |
 | payload/digest/receipt/retention | R3 storage + R10 transaction；R1 consumes result | O-14..O-27 |
 | stable `placed_id` | R3 P4 provider；R4 lookup；R1 checkpoint/restore consumer | S-10/S-11 |
-| craft wire/schema | A-CS/R6/R4/R7 按 master owner；R1 只消费 hydrated identity/phase | PR 1902 contract-first/activation rows |
+| craft intent/state wire | A-CS/R6/R4/R7 按 master owner；R1 消费 admitted Open/Start/Pause/Resume/Cancel，生产 authoritative `CraftSessionStateV2`，并把 S-01 correlated admission decision 交 R4 的 A-08 producer | M-10 real state/rejection producer→emit→store activation |
 | coupled `TsyPresence` snapshot | R3 provider；R1 reconnect/gate consumer | full-old/full-new snapshot trace |
 
 ## 6. Derived acceptance index
 
 验收只引用 row ID，不重新定义状态：
 
-1. `session_trace_matrix`：S-01..S-23 覆盖 admission、pause/resume、complete、cancel、disconnect、dimension、shutdown、restore、TTL、admin、duplicate、invalid、stale/CAS loser；每条 trace 逐步执行 `reduce_session`。S-07 另在 quiesce 后/commit 前、durable commit 后/runtime cleanup 前、cleanup 后注入 crash：恢复结果只能是旧 Running/bound checkpoint 或新 Suspended/unbound checkpoint，不得出现 Suspended 无 checkpoint、Running 已解绑或 lease 刷新。
+1. `session_trace_matrix`：S-01..S-26 覆盖 admission/rejection、matching Running recipe start、Paused/invalid recipe start reject、pause/resume、matching/stale/future Cancel、complete、disconnect、dimension、shutdown、restore、startup normalization、TTL、admin、duplicate、invalid、stale/CAS loser；每条 trace 逐步执行 `reduce_session`。S-07 另在 quiesce 后/commit 前、durable commit 后/runtime cleanup 前、cleanup 后注入 failure/crash：同进程 commit 前失败回 exact prior Running/Paused；进程 crash 后旧 process-local binding 一律经 S-25 normalize 为 Suspended，再走 S-10/S-11；commit 后只能恢复 Suspended，禁止出现 Paused→Running、伪造旧 Entity 或 lease 刷新。
 2. `obligation_trace_matrix`：O-01..O-27 覆盖 quota-full、claim win、busy loser、cancel-mark/delete persistence failure 与 live/restart retry、restore reuse、handoff crash、lease expiry、retry/dead-letter（attempts 7/8 与 age boundary-1/exact/after）、malformed/mismatched payload、history quota full、receipt replay、resolve fail-closed、retention/GC、invalid/stale event。
 3. `payload_identity`：claimed bytes、digest、derived request、inventory receipt 四者对拍；注入 payload A/request B 必须命中 O-14，不能调用 deliver 或 ack 任一 payload。
-4. `quota_conservation`：两个 SQLite connection 竞争最后 row/bytes；恰一个 O-01 成功并固定取得 `(1 row, 1_048_576 bytes)`，其余 O-02；race loser 的 cancel-mark 成功走 O-05→O-07/O-06，标记失败走 O-25 并由 live/startup reconciliation 收敛；terminal payload 从空增长到 exact-max 时不 resize，`1_048_577` 在接收新 escrow/output 前拒绝，任何路径都不泄漏或双扣 Q。
+4. `quota_conservation`：以 `MAX_ACTIVE_SESSION_DELIVERY_ROWS = 4_096` / `MAX_ACTIVE_SESSION_DELIVERY_BYTES = 4_294_967_296` 为 aggregate boundary，两个 SQLite connection 竞争第 4,096 个/4 GiB 最后 slot；恰一个 O-01 成功并固定取得 `(1 row, 1_048_576 bytes)`，其余 O-02；row/bytes limit-1/limit/limit+1 分别 pin，DeadLetter 继续计量。race loser 的 cancel-mark 成功走 O-05→O-07/O-06，标记失败走 O-25 并由 live/startup reconciliation 收敛；terminal payload 从空增长到 exact-max 时不 resize，`1_048_577` 在接收新 escrow/output 前拒绝，任何路径都不泄漏或双扣 Q。
 5. `handoff_crash_atomicity`：outbox insert 前、terminal checkpoint 前、commit 后 ack 前强杀；结果只能 O-09 可重试或 O-08/Pending 可重放，S-14 不 reopen。
 6. `delivery_history_bound`：receipt/disposition 在 horizon 前走 O-21 replay，stale worker 对已由 O-16 释放 Q 的 receipt 走 O-17 且不二次 `-Q`，达到 watermark 后为 O-22 tombstone，再由 O-24 GC；history quota 满命中 O-26，inventory 不 mutation，storage 不无限增长。
-7. `maintenance_auth`：console allow、current-executor capability allow、wrong-executor capability deny、offline/username/owner spoof deny。
+7. `maintenance_auth`：对 S-13、O-18 与 O-19 分别执行 console allow、current-executor capability allow、wrong-executor capability deny、offline/username/owner spoof deny、普通玩家 deny；拒绝时命中 S-17/O-27，DeadLetter payload/Q/state 不变。
 8. `workbench_restore`：`workbench_key` 0/1/u64::MAX 与 malformed/stale/despawned/cross-dimension/out-of-range；成功后只保存/恢复 `placed_id`，新 runtime Entity 可 rebind。
 9. `tsy_presence_snapshot`：routine autosave、disconnect、shutdown 每个写边界 crash 后 presence/position/dimension 只能全旧或全新。
-10. named bot scenarios：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_termination_cause_matrix`、`session_craft_pause_resume_wire`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 均只引用上述 row/trace ID。
+10. named bot scenarios：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_termination_cause_matrix`、`session_craft_pause_resume_wire`、`session_craft_generation_cancel`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 均只引用上述 row/trace ID。
 
 ## 7. 本轨实施阶段
 
 ### P1 — framework + craft adapter
 
-只落 `server/src/session/{mod.rs,registry.rs,lifecycle.rs}`、S reducer、registry/busy API 和 contract pins。framework 可在 master Wave 允许时先合入，但 craft production adapter 只有 master 的真实 artifact/cutover rows 全部满足后才启用；不以 mock、fixture 或未存在的 R6/R4/R7 consumer 宣称可达。
+只落 `server/src/session/{mod.rs,registry.rs,lifecycle.rs}`、S reducer、registry/busy API 和 contract pins。craft adapter 消费 A-01/A-07/A-02..A-04 intent，生产 A-06 authoritative state，并为 admitted Open 的 S-01 failure 返回 correlated rejection decision；R4 统一生产覆盖 decode/gate/admission fail 的 A-08。framework 可在 master Wave 允许时先合入，但 production adapter 只有 master 的真实 artifact/cutover rows 全部满足后才启用，不以 mock、fixture 或未存在的 R6/R4/R7 consumer 宣称可达。
 
 ### P2 — alchemy / forge / lingtian
 
