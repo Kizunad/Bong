@@ -1,45 +1,51 @@
-# plan-refactor-server-session-v1 — Server 交互 Session 统一生命周期框架（重构轨 R1）
+# plan-refactor-server-session-v1 — Server 交互 Session 生命周期与终态交付（重构轨 R1）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：把炼丹、手搓、锻造、采集、灵田、矿脉、灵木及相邻世界交互的 server session 收敛到统一生命周期框架，使断线、跨维、关服、重连、忙态与完成交付只保留一套权威语义。
+> 所属总纲：`plan-refactor-master-v1.md`。本轨唯一负责 gameplay session；终态交付的 durable 语义由本文件的 canonical contract 定义，R3/R10 只实现其存储与消费投影。跨轨排序引用总纲 §3 及 PR 1902 五项裁决，不在本文件另建依赖图。
 
 ## 阶段总览
 
 | 阶段 | 交付物 | 状态 |
 |---|---|---|
-| P0 | 设计收口、吸收清单验真、冻结 `InteractionSession` 合同 | ✅ 2026-08-03 |
-| P1 | `server/src/session/` 落地，craft 作为首个宿主 | ⬜ |
-| P2 | 迁移 alchemy、forge、lingtian | ⬜ |
-| P3 | 迁移 gathering、mineral、spiritwood 与世界交互锁 | ⬜ |
-| P4 | bot e2e、吸收项结案、归档 | ⬜ |
+| P0 | 现状/吸收验真；canonical session + obligation reducer；row-ID acceptance index | ⏳ |
+| P1 | `server/src/session/` 框架与 craft contract/adapter 接缝 | ⬜ |
+| P2 | alchemy、forge、lingtian adapter | ⬜ |
+| P3 | gathering、mineral、spiritwood、世界交互 adapter | ⬜ |
+| P4 | derived bot e2e、吸收结案、归档 | ⬜ |
 
-## 1. P0 第一性现状
+## 0. 外部决议与边界
 
-### 1.1 七域存储矩阵
+- 总纲 `plan-refactor-master-v1.md §3/§4` 是跨轨 start/order/cutover 的唯一 authority。本计划引用 master artifact/phase ID，不复制 A-CS→R6→R4→R7→R3→R10 的箭头。
+- PR 1902（`origin/docs/master-r9-r6-ownership-adjudication`，五项 settled rulings）作为外部已定上下文：TypeBox 是全仓 schema source of truth；domain content 与 generation machinery 分权；contract-first 可先合入但不可宣称 live；production activation 必须原子切换；track plan 不得创建第二套 sequencing authority。
+- R1 独占 gameplay session registry、session reducer 和七域 adapter；R3 独占 SQL/checkpoint/outbox storage；R10 独占 inventory/spill transaction 与 worker；R4/R6/R7/R2 各自拥有其 gate/wire/UI/store。任何轨只消费冻结 API，不复制另一轨的状态语义。
+- durable checkpoint 不以 Bevy `Entity` 为主键。`workbench_key` 是当前进程 `WorkbenchOpen.entity_id` 的 runtime locator；checkpoint 只保存 R3 P4 提供的 stable `placed_id`。
 
-| 域 | 当前权威状态 | P0 结论 |
+## 1. 现状与吸收边界
+
+### 1.1 七域现状
+
+| 域 | 当前权威状态 | R1 结论 |
 |---|---|---|
-| alchemy | `server/src/alchemy/session.rs:68` `AlchemySession`，挂在 furnace | 炉与 session 共同 checkpoint；不能只存玩家侧半张状态 |
-| craft | `server/src/craft/session.rs:40` ECS `CraftSession` | 作为 P1 首宿主；保留已落地的 DB/join hydration 行为 |
-| forge | `server/src/forge/session.rs:157` `ForgeSessions` Resource | station/session/已扣材料共同 checkpoint |
-| gathering | `server/src/gathering/session.rs:57` `GatheringSessionStore` | 短时易失；中断时确定性 teardown |
-| lingtian | `server/src/lingtian/systems.rs:196` `ActiveLingtianSessions` | 六类 actor session 统一按易失交互处理 |
-| mineral | `server/src/mineral/session.rs:16` `MiningSession` | 短时易失；解除矿点与工具 claim |
-| spiritwood | `server/src/spiritwood/session.rs:59` `WoodSessionStore` | 短时易失；`settling` 必须参与原子 teardown |
+| alchemy | `server/src/alchemy/session.rs:68` `AlchemySession`，挂在 furnace | P2 checkpointed adapter；炉与 session 同一 checkpoint |
+| craft | `server/src/craft/session.rs:40` ECS `CraftSession` | P1 首宿主；迁入 registry 后保留既有 hydration 语义 |
+| forge | `server/src/forge/session.rs:157` `ForgeSessions` Resource | P2 checkpointed adapter；station/material/session 同一快照 |
+| gathering | `server/src/gathering/session.rs:57` store | P3 volatile adapter；中断确定性 teardown |
+| lingtian | `server/src/lingtian/systems.rs:196` `ActiveLingtianSessions` | P2 volatile actor adapter；断线停止 tick |
+| mineral | `server/src/mineral/session.rs:16` `MiningSession` | P3 volatile adapter；释放矿点/工具 claim |
+| spiritwood | `server/src/spiritwood/session.rs:59` store | P3 volatile adapter；`settling` 与 teardown 同步 |
 
-当前不存在 `SessionManager`。七域分别以 Component、Resource、facility-owned state 保存；`server/src/network/craft_emit.rs:541` 只用 `With<Client>` 限制 craft tick，不表示 UI pause，也不能覆盖其他 store。
+已确认的接线缺口包括保存前未统一 teardown、跨维残留 owner、TSY Search/Extract 双向 busy 缺失、PendingInsightOffer 无 deadline，以及取回路径先 `end_session` 后 delivery 失败。吸收清单沿用本 PR 原 §4 的逐项验真；被 R2/R3/R4/R10 明确拥有的实现不在 R1 重复登记。
 
-### 1.2 生命周期缺口仍可达
+## 2. 术语与两个 ownership domain
 
-- 玩家保存与 despawn 从 `server/src/player/mod.rs:350` 开始；七域没有一个统一的、排在持久化前的 teardown/checkpoint 门。
-- 普通 external container 已有 `server/src/world/container_open.rs:184` 断线清锁，但跨维仍可保留 `opened_by`；局部补丁不能替代统一 hook。
-- TSY 搜刮入口 `server/src/world/tsy_container_search.rs:306` 与撤离入口 `server/src/world/extract_system.rs:182` 没有双向 busy 声明，搜刮锁也没有统一断线清理。
-- `server/src/cultivation/insight_flow.rs:229` 插入 `PendingInsightOffer`，选择、拒绝或校验失败会移除，但没有 deadline；同连接内 client 未展示/未回应时可长期悬挂。
-- 灵田 Resource 会对所有 entry 持续 `tick_all`（`server/src/lingtian/systems.rs:249`），没有 actor live-state gate。
-- 炼丹取回在 `server/src/network/client_request_handler.rs:16764-16766` 先 `end_session`，随后才从 `:16838` 尝试交付；交付失败时已经失去可重领状态。
+R1 不再用一组 `SessionPhase` 同时表示 gameplay 和 delivery。两者通过一次 handoff 连接：
 
-## 2. 冻结的 `InteractionSession` 合同
+- `GameplaySession`：`SessionKey`、`PlayerKey`、durability、runtime `Entity` binding、facility/target/busy claim、checkpoint/escrow 和 termination cause。
+- `TerminalObligation`：reservation、quota `Q`、canonical payload、payload digest、delivery lease/retry/dead-letter、receipt/disposition 和 retention metadata。
+- `Q = (1 row, reserved_bytes)`；`quota_used = sum(Q)` 对所有占用 obligation 成立。
+- `workbench_key` 只做当前进程 lookup，不是 authorization、durable identity 或 checkpoint 字段；`placed_id` 才是 restore/rebind identity。
+- `SessionKey`、terminal `generation`、`delivery_id` 和 canonical payload bytes 是 exactly-once 的不同概念：前者定位 session，generation 防旧写入，delivery id 防重复 handoff，payload digest 绑定交付内容。
 
-P1 必须在 `server/src/session/` 暴露以下可 grep 的合同 symbol；实现可以按 Rust 借用约束拆成 trait + adapter，但不得改变本节语义：
+### 2.1 R1 提供的 session 类型
 
 ```rust
 pub trait InteractionSession {
@@ -47,245 +53,158 @@ pub trait InteractionSession {
     fn owner_key(&self) -> &PlayerKey;
     fn durability(&self) -> SessionDurability;
     fn busy_claim(&self) -> BusyClaim;
-    fn on_disconnect(&mut self, ctx: &mut SessionLifecycleCtx) -> SessionTransition;
-    fn on_dimension_change(
-        &mut self,
-        from: DimensionKind,
-        to: DimensionKind,
-        ctx: &mut SessionLifecycleCtx,
-    ) -> SessionTransition;
-    fn on_shutdown(&mut self, ctx: &mut SessionLifecycleCtx) -> SessionTransition;
-    fn on_reconnect(
-        &mut self,
-        player: Entity,
-        ctx: &mut SessionLifecycleCtx,
-    ) -> SessionTransition;
+    fn reduce(&mut self, event: SessionEvent, ctx: &mut SessionLifecycleCtx)
+        -> SessionDecision;
 }
 ```
 
-配套冻结类型：
+固定类型：
 
-- `SessionRegistry`：唯一 server 权威 owner/busy/lifecycle registry。
-- `SessionKey { domain, id }`：稳定 session 身份；持久记录不得以 Bevy `Entity` 为主键。
-- `PlayerKey`：canonical player id；`Entity` 只作当前连接的 runtime binding。
-- `SessionDurability::{Checkpointed, Volatile}`：每个 adapter 注册时必须显式声明，不允许默认值。
-- `SessionPhase::{Running, Paused, Suspended, AwaitingDelivery, DeliveryPending, Terminal}`：同一 session 不允许同时处于多个 phase。`DeliveryPending` 表示 R3 已提交 durable outbox/checkpoint terminalization、但 R10 尚未提交 receipt；它不再是可恢复 gameplay session，不持有 runtime claim。
-- `TerminationCause::{Completed, VoluntaryCancel, Disconnect, DimensionChange, Shutdown, InvalidRestore, SuspensionExpired, AuthorizedAdministratorClosure}`；`Completed` 专用于正常完成后的 durable outbox handoff，不触发 refund。
-- `SuspensionPolicy`：声明 checkpointed session 的 `suspended_at_tick`、有限 `max_suspended_ticks`、过期扫描周期、管理员强制结案入口和 facility claim 回收动作；默认值冻结为 `SESSION_SUSPENSION_TTL_TICKS = 1_728_000`（20 TPS 下 24 小时）与 `SESSION_SUSPENSION_SCAN_INTERVAL_TICKS = 1_200`，不得配置为无限期保留。
-- `SessionTransition::{Keep, Pause, SuspendAndCheckpoint, Teardown, AwaitDelivery, DeliveryPending, CommitTerminal}`。
-- `SessionDeliveryOutbox { delivery_id, session_key, owner_key, payload_digest, payload, cause, state, generation, attempts, next_retry_tick, created_at_tick, tick_epoch }`：R3 持久化的 durable handoff；`delivery_id` 由 `SessionKey + terminal_generation` 稳定派生，禁止仅靠内存幂等键。`generation` 是每次状态 CAS 成功后递增的 durable token；`next_retry_tick`/`created_at_tick` 必须与 `tick_epoch`（持久化的 runtime tick、wall-clock capture 与 epoch id）一起经 R3 `tick_rebase` 转换，按重启时已过去的 wall-clock duration 计算新 epoch 下的剩余 retry/age，禁止跨重启直接比较旧 process-local tick。
-- `DeliveryOutboxState::{Pending, InFlight { lease_id, lease_until }, DeadLetter, Committed, ResolvedDisposition { delivery_id, operator_principal, reason, payload }}` 与 durable `DeliveryCommitReceipt`：R10 delivery 的跨重启 exactly-once 依据；worker、dead-letter scanner、operator retry/resolve 均以 outbox 行的 `(state,generation)` CAS 串行化；`ResolvedDisposition` 必须保留完整 payload，不能退化为 unit variant。
-- `SessionMaintenancePermissions`：只接受 server console origin，或 client 不可选择且已绑定当前 executor entity 的 authenticated principal/capability；`Username` 仅审计展示，绝不参与授权。offline mode 的 player executor 一律无 maintenance authority。
-- `BusyClaim`：声明 owner 与 world target 上占用的 busy classes；冲突矩阵集中注册。
+- `SessionDurability::{Checkpointed, Volatile}`；adapter 必须显式注册。
+- `SessionState::{Running, Paused, Suspended, HandoffPreparing, Ended}`。
+- `TerminationCause::{Completed, VoluntaryCancel, Disconnect, DimensionChange, Shutdown, InvalidRestore, SuspensionExpired, AuthorizedAdministratorClosure}`。
+- `BusyClaim`：player-exclusive、target-exclusive、facility-exclusive 三类集中冲突矩阵。
+- `SuspensionPolicy`：`SESSION_SUSPENSION_TTL_TICKS = 1_728_000`、扫描 cadence `1_200` ticks；R3 tick rebase 只保留真实剩余 TTL，不刷新租约。
+- `SessionMaintenancePermissions`：server console，或已认证且绑定当前 executor 的 principal/capability；Username、owner 字符串、offline player 和跨 executor capability 均无权。
 
-### 2.1 不变量
+## 3. Canonical session reducer（唯一 session 规范）
 
-1. `SessionRegistry` 中一个 `SessionKey` 只能有一个 owner；一个 runtime `Entity` 只能绑定同一 `PlayerKey` 的 session。
-2. `Checkpointed` session 断线/关服后进入受 `SuspensionPolicy` 限制的 `Suspended`，不离线推进；guarded restore 通过才以 `PlayerKey` 重绑新 `Entity`。TTL、管理员结案或恢复失败分别以对应 cause 按 §2.2.2 handoff，receipt 后才 `Terminal`。
-3. `Volatile` session 遇到断线、跨维或关服必须在同一生命周期门内 teardown；不得留下 owner、claim 或 `settling`。
-4. dimension-scoped session 在转移前终止；`TsyPresence` 仅由 R3 coupled snapshot checkpoint/restore。
-5. client screen/store 不授予权限；registry 裁决恶意包、重放和竞态。
-6. `Checkpointed` completion 经 `AwaitingDelivery` → R3 原子 reservation→outbox/`DeliveryPending` → R10 P2c 原子 deliver/receipt/ack/quota release；所有崩溃点按 §2.2.2 重放，禁止第二条 direct-delivery 协议。
-7. outbox commit 后幂等释放 gameplay claim 并移除 live session；delivery obligation 不可 reopen。
-8. qi refund/release 必须走 `qi_physics::ledger::QiTransfer`。
+`reduce_session(state, event) -> {next_state, handoff?, claim_effect, checkpoint_effect, audit_effect}` 是 gameplay 唯一规范。以下 row ID 同时是 acceptance index 的引用；任何 phase prose 必须展开为这些 trace，不得另写 transition。
 
-### 2.2 生命周期顺序
-
-**断线**：
-
-1. `SessionRegistry` 在 `despawn_disconnected_clients` 及 R3 player save 前接收 disconnect。
-2. `Checkpointed`：停止 tick → 写 checkpoint（包含 escrow，但不执行 refund）→ 解绑 runtime `Entity` → 保持 stable owner/设施 claim → `Suspended`。只有恢复窗口结束、管理员结案或恢复校验失败时，才按对应终止原因进入 delivery/refund 结算。
-3. `Volatile`：停止 tick → 按非自愿中断结算 escrow/refund → 释放 target/busy → `Terminal`。
-4. 完成上述变更后，R3 才保存 player slices，随后 Valence despawn。
-
-**跨维**：
-
-1. 在 `world/dimension_transfer` 写入新 layer/position 前停止接收该 owner 的 session 请求。
-2. 对 dimension-scoped session 执行非自愿 teardown 与返还；释放 busy/target。`Checkpointed` session 在跨维时不进入 `Suspended`，而是终止并全退未消费 escrow；`Disconnect`/`Shutdown` 的 checkpoint 保留语义不适用于跨维。
-3. teardown 成功后才应用维度转移。失败必须 fail closed，不能让旧维 session 跟随玩家进入新维度。
-
-**关服**：
-
-1. 关闭新 session intake；先结算 `AwaitingDelivery`。
-2. `Checkpointed` 调 `on_shutdown` 生成 R3 checkpoint；`Volatile` 在玩家与 inventory 仍可访问时 teardown。
-3. lifecycle registry 静止后才执行 R3 `flush_on_shutdown`。R3 在 `plan-refactor-persistence-slices-v1.md` 接入面冻结的 `load(guarded) / autosave / flush_on_shutdown / tick_rebase` 是唯一持久化出口。
-
-**重连**：
-
-1. R3 guarded load 先恢复 checkpoint，再由 registry 以 `PlayerKey` 绑定新 `Entity`。
-2. adapter 重验设施/target 存在、owner、维度和版本；通过后恢复为 `Paused` 或 `Running` 并 hydrate client。
-3. 恢复失败按 `InvalidRestore` 非自愿结案；有 escrow 时必须返还/交付。busy 冲突时保留 `Suspended` 并 fail closed，不得静默覆盖另一 session。
-
-### 2.2.1 Suspended retention and reclamation
-
-`Checkpointed → Suspended` 是为短期断线/重启恢复服务的有限窗口，不是永久租约。P1 必须冻结并实现：
-
-- 每个 checkpoint 写入 `suspended_at_tick`、`last_rebase_epoch`、owner `PlayerKey`、facility/target claim 和 escrow 摘要；不得只靠数据库行存在判断是否仍可恢复。
-- 每个宿主显式选择 `SuspensionPolicy.max_suspended_ticks`；P1 craft、P2 alchemy/forge 使用冻结默认值 `SESSION_SUSPENSION_TTL_TICKS = 1_728_000`，扫描 cadence 为 `SESSION_SUSPENSION_SCAN_INTERVAL_TICKS = 1_200`。R3 `tick_rebase` 保持剩余 TTL 的相对时长，关服时间不得让 lease 永久延长；P3 世界交互不得继承无限值。
-- registry 每 tick 或固定 cadence 扫描过期 session；只有 `SessionMaintenancePermissions::is_allowed(execution_origin, authenticated_principal, executor)` 才能用 `session-maintenance terminate <SessionKey>`。仅 server console origin 或 server 已认证且绑定 executor 的 principal/capability 可通过；offline-mode player `Username`、命令 payload 或 owner 字符串均不能产生授权。普通玩家、未知 executor、伪造 allow-listed username/owner 和跨 owner target 一律拒绝且不改变 session/outbox/claim。扫描、授权管理员结案、重连与关服 flush 竞争时以 `SessionKey` CAS/registry lock 保证一次结算。
-- 过期结案按 `TerminationCause::SuspensionExpired` 执行：停止 tick → 在 R3 checkpoint 事务中写入稳定 `delivery_id` 的 `SessionDeliveryOutbox` 并转为 `DeliveryPending` → 事务成功后幂等释放 facility/target/busy claim → 从 live registry 移除；R10 receipt 提交后再标记 `Terminal`。若进程在提交后、runtime claim 清理前退出，启动恢复必须依据已提交的 terminal/outbox 状态补做同一释放，不能重新 attach 或继续占用。R10 异步消费 outbox；不得以 delivery 临时失败为由继续占设施。
-- outbox 状态机、generation CAS、retry/dead-letter、tick rebase 与 quota release 唯一语义见 §2.2.2；R3 提供 durable primitive，R10 P2c 驱动 worker/scanner/operator。10 次或 7 天进入 `DeadLetter`；重启不得刷新 retry age 或 lease。
-- 首次 reservation、restore reuse、busy loser cancellation 与 terminal release 只按 §2.2.2；quota 满 fail closed，resolve 无完整 durable disposition 不释放。
-- `DeliveryPending` 只保留 obligation，不恢复 gameplay session/claim。
-- claim 回收与 outbox transition 记录不含 payload 的审计事件；handoff 后拒绝 reopen。
-
-- P1/P4 必测：abandoned/TTL/admin closure、授权拒绝与竞态、`Completed`、outbox crash/receipt replay、worker/scanner/operator CAS、lease/rebase、10 次/7 天 dead-letter、resolve fail-closed，以及 §2.2.2 的首次 `+Q`、取消/terminal `-Q`、其余零变化；并证明设施可由下一玩家取得。
-
-### 2.2.2 Delivery reservation lifecycle（唯一权威矩阵）
-
-R1/R3/R10 只实现本表，不另写释放条件。`Q=(1 row,reserved_bytes)`，`ΔQ` 是提交后的 quota 变化；所有 mutation 以 `session_key` + expected reservation/outbox `generation` CAS，loser 重读且 `ΔQ=0`。
-
-| 状态（durable owner / claim / quota） | claim | race-loss / admission failure | timeout | restore | retry / lease expiry | terminal |
-|---|---|---|---|---|---|---|
-| `Absent`（无 / 无 / 0） | `reserve_new_terminal_obligation` 原子 quota update+unique insert→`ReservedPendingClaim`，`+Q`；满则不变 | no-op | no-op | checkpoint 无 reservation：隔离并 fail closed，不补计量/attach | 非法 | 拒绝 |
-| `ReservedPendingClaim`（reservation / 无 / Q） | `try_acquire` 胜→`ClaimedLive`，0 | `cancel_unconsumed_reservation` 原子删 row/扣 counter→`Absent`，`-Q`；重复/CAS loser 0 | 同 race-loss | 启动见 reservation 但无 checkpoint/live claim：取消 `-Q`，不得当 restore | 同 restore | 未接 escrow/output，先取消，不 handoff |
-| `ClaimedLive`（reservation+session / 有 / Q） | 重复拒绝，0 | claim 后校验失败：释放 claim，再 CAS 取消 `-Q`；崩溃由“无 checkpoint 残留”补做 | 按域 pause/suspend/terminal；禁止只释放 quota | 重复 attach 拒绝 | gameplay retry 0 | `AwaitingDelivery`；R3 原子 reservation→outbox `Pending`，0；commit 后释放 claim |
-| `SuspendedReserved`（checkpoint+reservation / stable facility、无 Entity / Q） | 新 claim 拒绝 | 不适用 | TTL 赢 CAS 后按 terminal | `reuse_terminal_obligation` 仅在 session/owner/bytes/checkpoint generation 全匹配时复用，0；随后以 stable `placed_id` 重绑；missing/conflict fail closed，禁止 insert/+Q | 重复/并发 restore 同样复用，0 | 任一 terminal cause 原子 reservation→outbox，0；不得先删 checkpoint |
-| `OutboxPending`（`Pending` / 无 / Q） | 永久拒绝 | no-op | 到期可 claim，0 | 只 hydrate obligation | R10 CAS `Pending→InFlight`，0 | 重复 handoff 返回 stable `delivery_id` 既有 row，0 |
-| `OutboxInFlight`（lease / 无 / Q） | 拒绝 | no-op | lease expiry CAS 回 `Pending` 或达阈值→`DeadLetter`，0 | rebase lease，不 attach | 暂败写 attempts/backoff→`Pending`，0；CAS loser 0 | inventory/spill+receipt+`Committed`+删 obligation/扣 quota 同事务→`CommittedReleased`，`-Q`；已有 receipt 幂等完成，0 |
-| `DeadLetter`（outbox / 无 / Q） | 拒绝 | no-op | 停自动 retry，0 | 只 hydrate obligation | 授权 retry CAS→`Pending`，0 | 授权 resolve 原子持久化完整 `ResolvedDisposition`+删 obligation/扣 quota→`DispositionReleased`，`-Q`；无 disposition 不释放 |
-| `CommittedReleased`（receipt / 无 / 0） | 旧 generation 拒绝 | no-op | no-op | 只确认 terminal | receipt 重放，0 | no-op，禁止再扣 |
-| `DispositionReleased`（disposition / 无 / 0） | 旧 generation 拒绝 | no-op | no-op | 只确认 terminal | disposition 重放，0 | no-op，禁止再扣 |
-
-不变量：每个 `session_key` 恰有零或一个 durable owner；counter 等于六个占用态的 `Q` 之和。只有未接收 escrow/output 的 admission 取消，或 receipt/disposition 已持久化的终结事务可 `-Q`；reservation→outbox、restore/retry/timeout 与所有 CAS loser 均为 0。
-
-### 2.3 durability 决议矩阵
-
-| 状态族 | durability | 断线/关服 | 跨维 |
+| Row ID | 当前状态 + event | 结果 | claim/checkpoint/delivery effect |
 |---|---|---|---|
-| craft | `Checkpointed` | 保存进度、批次与 escrow；重连保持 paused，显式 reopen 后 resume；到 TTL 结算 `SuspensionExpired` | 非自愿 teardown，全退未消费 escrow |
-| alchemy furnace/session | `Checkpointed` | furnace + session 原子 checkpoint，不离线推进；到 TTL 结算并回收 facility claim | 非自愿 teardown；退款/产物先落交付事务 |
-| forge station/session | `Checkpointed` | station + session + 已扣材料原子 checkpoint；到 TTL 结算并回收 facility claim | 非自愿 teardown；不得遗留 `station.session` |
-| gathering | `Volatile` | teardown | teardown |
-| lingtian actor sessions | `Volatile` | teardown | teardown |
-| mineral | `Volatile` | teardown，解除 ore claim | teardown |
-| spiritwood | `Volatile` | teardown，清 session 与 `settling` | teardown |
-| external container / TSY search / extract | `Volatile` | 清 owner、进度与 target claim | teardown |
-| `PendingInsightOffer` | `Volatile` + deadline | disconnect/timeout 清除 | 清除 |
-| `TsyPresence` | R3 checkpointed auxiliary state | R3 Slice 保存 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to` 与版本；guarded restore 通过后才重新 attach component、开放 TSY 请求 | 由 transport 事务显式 enter/exit |
+| S-01 | Absent + admission validation fail | Absent | 无 runtime claim；不创建 obligation |
+| S-02 | Absent + `reserve_new_terminal_obligation` 成功且 claim win | Running | obligation O-01→O-03，`+Q`；绑定 owner/target |
+| S-03 | Absent + reservation 成功但 busy race-loss | Absent | 执行 O-05→O-07/O-06；只有 O-06 commit 才 `-Q` |
+| S-04 | Running + valid pause/close | Paused | claim 保留；不退款、不创建 terminal obligation |
+| S-05 | Running + explicit `VoluntaryCancel` | HandoffPreparing | 按域 policy 生成 refund payload；进入 O-08 handoff |
+| S-06 | Running + `Completed` | HandoffPreparing | 产物 payload；不 refund inputs；进入 O-08 |
+| S-07 | Running + `Disconnect`/`Shutdown` checkpointed | Suspended | 停 tick、写 checkpoint、解绑 runtime Entity；逻辑 facility claim 保留 |
+| S-08 | Running + `Disconnect`/`Shutdown` volatile | HandoffPreparing | 全退未消费 escrow；进入 O-08，不可离线推进 |
+| S-09 | Running + `DimensionChange` | HandoffPreparing | 停 intake；全退未消费 escrow；不得进入 Suspended |
+| S-10 | Suspended + reconnect and guarded restore pass | Paused | `reuse_terminal_obligation`（O-04，`ΔQ=0`）；stable `placed_id` rebind |
+| S-11 | Suspended + missing/conflicting checkpoint/owner/placed_id | HandoffPreparing | `InvalidRestore`；不得 attach 或覆盖另一 session；进入 O-08 |
+| S-12 | Suspended + TTL expiry | HandoffPreparing | `SuspensionExpired`；保留已完成产物交付，未消费 escrow 全退；进入 O-08 |
+| S-13 | Suspended + authorized admin closure | HandoffPreparing | `AuthorizedAdministratorClosure`；审计 principal/reason；进入 O-08 |
+| S-14 | HandoffPreparing + handoff transaction committed | Ended | 释放 runtime/facility/target claim；obligation 获得唯一 durable payload owner；不可 reopen |
+| S-15 | HandoffPreparing + transaction rollback before commit | prior live/checkpoint state | claim/session 保持可重试；不得删除 checkpoint 或扣 quota |
+| S-16 | Ended + late gameplay request/reconnect | Ended | stale generation reject；不 attach、不恢复 claim |
+| S-17 | any + maintenance authorization failure | same state | no mutation；audit reject reason，不产生 delivery |
+| S-18 | any + same-tick timeout/reconnect/admin CAS loser | winner state | loser 重读 generation；不二次 handoff、不重复释放 claim |
+| S-19 | Paused + resume with matching owner/generation | Running | claim 保留；继续原 checkpoint/escrow，不增 Q |
+| S-20 | Paused + disconnect/shutdown/dimension/complete/cancel | by S-05..S-09 | 与 Running 使用同一 cause policy；不得因 Paused 绕过 handoff |
+| S-21 | Suspended + duplicate disconnect/shutdown/pause | Suspended | 幂等 no-op；不刷新 TTL、不增 Q |
+| S-22 | HandoffPreparing + duplicate gameplay/terminal event | HandoffPreparing | 重试同一 generation/payload；禁止生成第二 delivery_id |
+| S-23 | nonterminal + event not admitted by state/cause matrix | same state | typed reject + audit；无 claim/checkpoint/quota effect |
 
-后续某个 volatile 域若改成“起 session 即预扣不可重建资源”，必须先把该域改为 `Checkpointed` 或证明 teardown 可无损返还；不得维持默认易失再补日志。
+**唯一 teardown linearization point 是 S-14 的 durable handoff commit。** 从 S-14 起，worker 的 retry、lease expiry、malformed payload 或 inventory failure 只改变 obligation，不重新 attach gameplay session/claim。R1 不允许 direct terminal-delivery alternative；R10 的同步 `deliver` 只能是 obligation worker 内部的 transaction primitive。
 
-### 2.4 busy 语义
+### 3.1 Domain policy projection
 
-- `SessionRegistry::try_acquire(BusyClaim)` 是唯一生产入口；各域私有 `has_session` 只能作为迁移期断言，P3 结束时删除。
-- busy 至少区分 player-exclusive、target-exclusive、facility-exclusive，并由集中 conflict matrix 判断；不能以“两个不同 Component 可以共存”代表允许并发。
-- TSY `Search` 与 `Extract` 必须双向冲突：搜刮中拒绝撤离，撤离中拒绝搜刮；取消/完成/断线/跨维均释放两侧 claim。
-- persistent session `Suspended` 时保留其逻辑 facility/escrow claim，避免其他玩家覆盖炉/站状态；runtime `Entity` binding 必须释放。
-- R4 的 `GateSpec` 消费 R1 busy 查询 API。距离、维度、所有权检查仍由 R4 实现，R1 不修改 `client_request_handler.rs`。
+- `Checkpointed` 的 `Disconnect`/`Shutdown` 是可恢复暂停，不退款；`DimensionChange`、`InvalidRestore`、`SuspensionExpired`、管理员结案才进入 terminal refund/delivery。
+- `Volatile` 遇 disconnect/dimension/shutdown 立即进入 terminal handoff；不留下 owner、claim 或 settling。
+- `Completed` 只交付完整产物，不退 inputs；`VoluntaryCancel` 才执行域既有规则（craft 未完成部分 70% 返还）。
+- 所有 refund/release 通过 canonical obligation payload 和 R10 worker；qi 变化仍必须走 `qi_physics::ledger::QiTransfer`。
+- maintenance allow 必须分别覆盖 console positive 与 bound capability positive；wrong executor、offline username、伪造 owner 和普通玩家均拒绝。
+- retention 常量固定：`SESSION_DELIVERY_RESULT_REPLAY_TTL_TICKS = 12_096_000`（7 日）、`SESSION_DELIVERY_TOMBSTONE_TTL_TICKS = 51_840_000`（30 日）、`MAX_SESSION_DELIVERY_HISTORY_ROWS = 65_536`、`MAX_SESSION_DELIVERY_HISTORY_BYTES = 134_217_728`。R3 tick rebase 保留真实 age，不刷新 horizon；达到 row 或 byte 上限时 O-26 fail-before-deliver。
 
-### 2.5 pause、cancel、refund 与 delivery
+## 4. Canonical terminal-obligation reducer（R1/R3/R10 共用）
 
-- screen close 是 `Pause`，不是 `VoluntaryCancel`。当前 wire 只有 `CraftCancel`（`proto/bong/envelope.proto:257,1309`），P1 必须与 R6/R4 协调显式 open/pause/resume intent；不能只删除 client cancel 后让 server 继续 tick。
-- `VoluntaryCancel` 保留域内已公开的经济规则，例如 craft 未完成部分返还 70%；UI 必须有明确取消动作，不能由 Esc、断线、跨维或关服冒充。
-- cause/refund matrix 固定如下，adapter 与 contract pin 必须逐项覆盖：
-  - `Completed`：正常完成后把完整产物交给 durable outbox，cause 固定为 `Completed`；不 refund inputs，不允许借用取消/断线原因。
-  - `VoluntaryCancel`：按域内公开规则结算；craft 未完成部分返还 70%。
-  - `Disconnect`：`Checkpointed` 进入 `Suspended`，不退款，checkpoint 保留未消费 escrow；`Volatile` 全退并终止。
-  - `DimensionChange`：dimension-scoped session 全退未消费 escrow，经 delivery 后终止，不进入 `Suspended`。
-  - `Shutdown`：`Checkpointed` 进入 `Suspended`，不退款，checkpoint 保留未消费 escrow；`Volatile` 在 inventory 可访问时全退并终止。
-  - `InvalidRestore`：全退未消费 escrow；已完成产物只走一次 delivery，不与 inputs 双发。
-  - `SuspensionExpired`：全退未消费 escrow/交付已完成产物；先提交 durable terminal/outbox state，再幂等释放 claim 并终止，delivery 失败不重新占用 claim。
-  - `AuthorizedAdministratorClosure`：授权管理员主动结案仍按 durable terminal/outbox handoff 结算；全退未消费 escrow/交付已完成产物，审计记录 operator principal 与 reason，不得伪装为 `InvalidRestore` 或 `SuspensionExpired`，delivery 失败不重新占用 claim。
-- `Disconnect`/`Shutdown` 的 checkpoint 保留与 terminal cause 的 refund 互斥；terminal delivery 使用 §2.1 的 crash-atomic transaction 或 durable outbox/receipt，不得保留既可恢复又待退款的 session，也不得在 receipt 未落盘时宣称交付完成。
-- refund 也走 R10 delivery 垫层；满包不得退化为日志告警。R10 冻结的 `deliver(delivery_id, items) -> Delivered | Spilled(fallback)` 与 durable `delivery_id`/receipt 见 `plan-refactor-inventory-core-v1.md` 接入面。
+`reduce_obligation(state, event) -> {next_state, quota_effect, worker_effect, retention_effect, audit_effect}` 是终态交付唯一规范。R3 提供 durable CAS/transaction；R10 提供唯一生产 worker；R1 只发出 handoff command 和消费结果。
 
-## 3.1 决议（原开放问题 §N.1）
+| Row ID | obligation state + event | next state | `ΔQ` / effect |
+|---|---|---|---|
+| O-01 | Absent + new admission reservation commit | ReservedAwaitingClaim | `+Q`；quota update + unique reservation 同事务 |
+| O-02 | Absent + quota full / unique conflict | Absent | `0`；fail closed |
+| O-03 | ReservedAwaitingClaim + runtime busy claim win | ReservedLive | `0`；绑定 live session/generation，不重复计量 |
+| O-04 | ReservedLive + matching suspended restore/retry | ReservedLive | `0`；复用 owner/bytes/generation，禁止 insert/+Q |
+| O-05 | ReservedAwaitingClaim + busy race-loss/validation failure | CancelPending | `0`；runtime claim先释放，但 durable cleanup owner仍存在 |
+| O-06 | CancelPending + cancel CAS commit | Absent | `-Q`；删除 reservation；重复/CAS loser `0` |
+| O-07 | CancelPending + persistence failure | CancelPending | `0`；写入/保留 `next_retry`, attempts, generation；live reconciliation 必须重试 |
+| O-08 | ReservedLive + terminal handoff transaction commit | Pending | `0`；reservation→outbox，不重复计量；payload bytes/digest 固定 |
+| O-09 | ReservedLive + handoff transaction failure before commit | ReservedLive | `0`；checkpoint/claim/reservation 可重试，不能部分删除 |
+| O-10 | Pending + worker claim CAS win | InFlight | `0`；写 lease/generation |
+| O-11 | Pending + duplicate claim/CAS loser | Pending | `0`；重读 authoritative row |
+| O-12 | InFlight + lease expiry | Pending 或 DeadLetter | `0`；按 retry budget/age 转换，不 attach gameplay |
+| O-13 | InFlight + retryable inventory/spill failure | Pending | `0`；backoff/attempts 更新 |
+| O-14 | InFlight + malformed payload/digest mismatch | DeadLetter | `0`；fail closed、保留完整 payload、告警；禁止调用 deliver |
+| O-15 | InFlight + claimed payload decode/validation success | InFlight | `0`；`DeliveryRequest` 只能由 canonical payload decode 派生 |
+| O-16 | InFlight + inventory/spill + receipt transaction commit | ReceiptRetained | `-Q`；inventory/spill、receipt、obligation delete、quota release 同事务 |
+| O-17 | InFlight + receipt already exists for same digest | ReceiptRetained | `0`；幂等 replay，不二次 deliver 或 release |
+| O-18 | DeadLetter + authorized operator retry | Pending | `0`；CAS loser 不改变 quota |
+| O-19 | DeadLetter + authorized resolve with complete disposition | DispositionRetained | `-Q`；完整 disposition、obligation delete、quota release 同事务 |
+| O-20 | DeadLetter + resolve missing payload/disposition | DeadLetter | `0`；fail closed，继续占 Q |
+| O-21 | Receipt/Disposition retained + replay before horizon | same | `0`；返回既有 receipt/disposition |
+| O-22 | Receipt/Disposition retained + compaction watermark reached | CompactedTombstone | `0`；保留 bounded digest/idempotency tombstone，不保留无限 payload |
+| O-23 | CompactedTombstone + old replay | CompactedTombstone | `0`；按 tombstone reject/ack，不重新交付 |
+| O-24 | CompactedTombstone + GC watermark/replay horizon confirmed | GarbageCollected | `0`；只允许在 producer/outbox watermark 证明旧 obligation 不可重现后删除 |
+| O-25 | ReservedAwaitingClaim + cancel-mark persistence failure | ReservedAwaitingClaim | `0`；reservation 本身仍是 durable cleanup owner；live retry + startup stale-reservation scanner，禁止超时即 `-Q` |
+| O-26 | InFlight + receipt/history quota unavailable before deliver | Pending 或 DeadLetter | `0`；在 inventory mutation 前 fail closed；保留 payload/Q 并 backoff/告警 |
+| O-27 | any nonterminal + stale generation/invalid event/CAS loser | authoritative state | `0`；typed reject/audit，重读 row；不得隐式 insert、release、deliver |
 
-### 决议 1：不是“全部持久化”或“复制 craft 表”二选一，而是显式 durability + R3 单一出口
+### 4.1 Obligation invariants
 
-- **明确结论**：需要重连/重启恢复的 session 全部注册为 R3 Slice/registry checkpoint；短时可无损结束的 session 显式标 `Volatile`。禁止为每个域复制 craft 私表 + join 自愈代码。
-- **实施方案**：craft 作为 P1 adapter，把现有表/hydration 行为收进 R3 暴露的 guarded load/flush API；P2 的 alchemy/forge 用同一 API；其余按 §2.3 teardown。join hydration 由 `on_reconnect` 统一触发。
-- **边界与拒绝理由**：全部 session 持久化会把 Entity/短时 target claim 写进 DB，扩大 stale restore 面；全部易失会丢已扣材料和长进度；复制 craft 表会继续制造七套 migration、flush 与 hydration。R1 不实现 `persistence/**`，只消费 R3 API。
-- **双锚点**：本 plan §2.2-§2.3；`plan-refactor-persistence-slices-v1.md` 接入面（`load(guarded) / autosave / flush_on_shutdown / tick_rebase`）；现有 join 基准 `server/src/network/craft_emit.rs:884`。
+1. 每个 `session_key` 恰有零或一个 durable obligation owner；`quota_used` 等于 `ReservedAwaitingClaim`、`ReservedLive`、`CancelPending`、`Pending`、`InFlight`、`DeadLetter` 的 Q 之和。payload envelope 固定含 `payload_schema_version`、`delivery_id`、`session_key`、terminal `generation`、recipient `PlayerKey`、cause、item/refund entries；O-08 首次写入的 exact bytes 是唯一权威身份，后续不得重序列化替换。
+2. `reserve_new` 只产生 O-01 的 `+Q`；claim win O-03、matching restore/retry O-04、handoff O-08、retry/lease O-12/O-13、所有 CAS loser 均 `0`。
+3. 只有 O-06 成功取消或 O-16/O-19 成功持久化终结结果才 `-Q`。取消标记或删除失败不能把 quota 留成无主 reservation：O-25 由原 reservation 继续担当 durable owner，O-07 由 `CancelPending` row 担当；scanner/retry 均不得凭 age 直接释放。
+4. `payload` 是 canonical serialized bytes；`payload_digest = SHA-256(payload)`。worker 的 `DeliveryRequest` 必须从 claimed payload decode，并在 O-16 transaction 中以 digest/semantic item set 对拍；不存在独立可替换的 caller payload。
+5. payload 序列化后恰为 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 可接受；`+1` 在新增 escrow/output 被接受前 fail closed。payload 一旦进入 O-08 不可增长。
+6. `ReceiptRetained`/`DispositionRetained` 不是无限历史：在 replay horizon 内保留完整结果；达到 producer/outbox GC watermark 后转 O-22 bounded tombstone，再满足 O-24 才 GC。具体 horizon、tombstone 上限和告警阈值由 R3 implementation P0 冻结，并受独立有界 storage quota 约束；O-26 要求在 deliver 前预留该容量。
+7. O-08 成功后 gameplay claim 已由 S-14 释放；O-12/O-13/O-14/O-18 不得恢复 session。DeadLetter 无 runtime claim 但继续占 Q。
 
-### 决议 2：Checkpointed 暂停保留 escrow；terminal 非自愿中断全退
+## 5. 接缝与 artifact ledger
 
-- **明确结论**：`Checkpointed` 的 `Disconnect`/`Shutdown` 是可恢复暂停，不退款，未消费 escrow 与 checkpoint 一起保留；`DimensionChange`、`InvalidRestore`、`SuspensionExpired` 等 terminal 非自愿原因才全退未消费 escrow。`Volatile` 遇到非自愿中断立即全退并终止。只有玩家明确触发 `VoluntaryCancel` 时，才执行域内既有损耗规则。
-- **实施方案**：所有 adapter 以 §2.5 的完整 `TerminationCause` matrix 分支；checkpoint 和 refund 在同一次 transition 中互斥；refund/output 经 R10 delivery，qi 经 ledger。craft 保留 70% 主动取消规则，但关屏只 pause。
-- **边界与拒绝理由**：若断线/关服同时 checkpoint escrow 与退款，会在恢复时双发；若一律把断线变 terminal，又会破坏短期恢复。terminal 非自愿原因统一全退，避免网络故障、跨维强制 teardown 或恢复失败施加进度折损；主动取消保留成本，避免套利。
-- **双锚点**：本 plan §2.1、§2.5；`plan-craft-close-pause-loss-v1.md` P0-P3；当前先 teardown 后 grant 反例 `server/src/network/client_request_handler.rs:16764-16861`；R10 `plan-refactor-inventory-core-v1.md` 接入面。
+下表只说明 R1 提供/消费的 artifact；跨轨 owner/order 引用 master §4.1 和 PR 1902，不在 R1 复制 sequencing：
 
-## 4. 吸收清单验真（2026-08-03）
-
-| plan 短名 | P0 裁决 | R1 处理 |
+| Artifact / row | R1 提供或消费 | canonical evidence |
 |---|---|---|
-| craft-close-pause-loss | **真缺陷**：client 关屏发 cancel，server 无 paused gate | P1 首宿主冻结 `Running/Paused` 与显式 cancel；跨端 intent 由 R6/R4 接缝 |
-| craft-session-reconnect-lock | **已闭环只归档**：CraftStore 已登记 disconnect clear；join 同发 idle/active session state | 不重复实现，以现有 hydration 作为 `on_reconnect` 基准 |
-| placed-container-session-lifecycle-gap | **部分闭环**：断线清锁已有测试；跨维 owner lock 仍缺 | P3 收编 lifecycle/lock teardown；请求距离门归 R4 |
-| tsy-container-disconnect-lock-leak | **真缺陷**：search progress/`searched_by` 无统一 disconnect cleanup | P3 收编 volatile target claim |
-| tsy-search-extract-concurrent-busy | **真缺陷**：search/extract 只查各自进度 | P3 以集中 conflict matrix 双向互斥 |
-| world-transport-tsy-relog-presence | **真缺陷**：位置/维度持久化而 `TsyPresence` 未同事务恢复 | R1 定 transport 生命周期，R3 保存 auxiliary state |
-| client-insight-offer-strand | **部分真实**：server pending 只有 chosen/reject 清理，无 deadline；client modal 属 R7 | R1 收编 server timeout/teardown；R7 处理展示 |
-| alchemy-furnace-persistence | **真缺陷**：furnace/session 仍为内存权威 | P2 adapter + R3 checkpoint |
-| alchemy-takeback-full-inventory-loss | **真缺陷**：先 `end_session` 后 grant | R1 改 teardown/commit 顺序；R10 提供 delivery |
-| forge-c2s-session-wiring | **已闭环只归档**：start session 与 blueprint page 已真实分发 | 不重复实现 |
-| bot-handcraft-craft-outcome-timeout | **旧证据不足，不形成 R1 owner**：报告来自脏 debug server；当前已有 `scripts/bot/scenarios/production_handcraft_stone_knife.py` | P4 仍跑 clean-main craft bot，失败再以新证据立 owner |
-| forge-outcome-full-inventory-loss | **真缺陷、R10 主责**：满包只有 `grant skipped` | R1 只提供 AwaitingDelivery→CommitTerminal 合同；R10 实现 fallback |
-| lingtian-session-disconnect-server | **真缺陷**：Resource 持续 tick，未按 actor 断线清理 | P2 迁移六类 actor session |
+| `InteractionSession` / S-01..S-23 | R1 producer；domain adapters consumer | session reducer trace |
+| `SessionKey`/`PlayerKey`/generation | R1 producer；R3/R4/R6/R7/R10 consumer | stale generation S-16/S-23 |
+| reservation/quota/outbox / O-01..O-27 | R3 durable producer；R1 semantic consumer；R10 worker consumer | quota invariant 1-3 |
+| payload/digest/receipt/retention | R3 storage + R10 transaction；R1 consumes result | O-14..O-27 |
+| stable `placed_id` | R3 P4 provider；R4 lookup；R1 checkpoint/restore consumer | S-10/S-11 |
+| craft wire/schema | A-CS/R6/R4/R7 按 master owner；R1 只消费 hydrated identity/phase | PR 1902 contract-first/activation rows |
+| coupled `TsyPresence` snapshot | R3 provider；R1 reconnect/gate consumer | full-old/full-new snapshot trace |
 
-### 4.1 覆盖审计差分
+## 6. Derived acceptance index
 
-按总纲 §6 要求枚举 active/skeleton 的 session、disconnect、busy、container、full-inventory 与 dimension-gate 候选后：
+验收只引用 row ID，不重新定义状态：
 
-- `forge-session-range-dimension-gate` 已由 `plan-refactor-c2s-gate-v1.md` 吸收清单明确登记为在飞项；实现落在 R4 的 `GateSpec`/`client_request_handler.rs`，不追加 R1 owner。R1 的 `on_dimension_change` 与 busy API 仅供 R4 查询。
-- `alchemy-furnace-scope-gate` 同样已由 R4 吸收；R1 负责炉 session 生命周期，不复制距离/维度 gate。
-- `forge-session-enum-unstripped` 是 R6/client bridge 契约修复，不是 server session 生命周期。
-- `tsy-extract-disconnect-stale`、`woliu-vortex-disconnect-residue`、`niche-guardian-cross-session-leak` 及其他 client `*Store` 残留归 R2/R7，不进入 R1 文件域。
-- 本轮未发现应新增到 R1 权威吸收清单、但尚无 owner 的 plan。
+1. `session_trace_matrix`：S-01..S-23 覆盖 admission、pause/resume、complete、cancel、disconnect、dimension、shutdown、restore、TTL、admin、duplicate、invalid、stale/CAS loser；每条 trace 逐步执行 `reduce_session`。
+2. `obligation_trace_matrix`：O-01..O-27 覆盖 quota-full、claim win、busy loser、cancel-mark/delete persistence failure 与 live/restart retry、restore reuse、handoff crash、lease expiry、retry/dead-letter、malformed/mismatched payload、history quota full、receipt replay、resolve fail-closed、retention/GC、invalid/stale event。
+3. `payload_identity`：claimed bytes、digest、derived request、inventory receipt 四者对拍；注入 payload A/request B 必须命中 O-14，不能调用 deliver 或 ack 任一 payload。
+4. `quota_conservation`：两个 SQLite connection 竞争最后 row/bytes；恰一个 O-01 成功，其余 O-02；race loser 的 cancel-mark 成功走 O-05→O-07/O-06，标记失败走 O-25 并由 live/startup reconciliation 收敛，不泄漏或双扣 Q。
+5. `handoff_crash_atomicity`：outbox insert 前、terminal checkpoint 前、commit 后 ack 前强杀；结果只能 O-09 可重试或 O-08/Pending 可重放，S-14 不 reopen。
+6. `delivery_history_bound`：receipt/disposition 在 horizon 前走 O-21 replay，达到 watermark 后为 O-22 tombstone，再由 O-24 GC；history quota 满命中 O-26，inventory 不 mutation，storage 不无限增长。
+7. `maintenance_auth`：console allow、current-executor capability allow、wrong-executor capability deny、offline/username/owner spoof deny。
+8. `workbench_restore`：`workbench_key` 0/1/u64::MAX 与 malformed/stale/despawned/cross-dimension/out-of-range；成功后只保存/恢复 `placed_id`，新 runtime Entity 可 rebind。
+9. `tsy_presence_snapshot`：routine autosave、disconnect、shutdown 每个写边界 crash 后 presence/position/dimension 只能全旧或全新。
+10. named bot scenarios：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_termination_cause_matrix`、`session_craft_pause_resume_wire`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 均只引用上述 row/trace ID。
 
-## 5. 文件所有权与接缝
+## 7. 本轨实施阶段
 
-- **R1 独占**：`server/src/session/`、七域 `session.rs`、`network/craft_emit.rs` 的 session tick 区，以及迁移时删除的域内私有生命周期代码。
-- **R3 独占**：`server/src/persistence/**`、player load/autosave/shutdown flush、`SessionDeliveryOutbox` 与 checkpoint terminalization transaction；R1 仅消费 checkpoint/restore/outbox hook。
-- **R4 独占**：`server/src/network/client_request_handler.rs` 与 `network/gate/`；R1 仅暴露 busy/session query。
-- **R6 独占**：proto/Rust mirror/converter、client wire encode/send、S2C bridge/router 与跨端 pause/resume 契约变更；R6 消费 Agent 轨冻结的 TypeBox/schema/dist，不修改 agent-side source-of-truth artifacts。
-- **R7/R2 独占**：client Screen/HUD 与 Store disconnect 清理；R7 的 Craft Screen 只消费 R6 wire 和总纲 §4 的 `CraftOpen.target`，Workbench screen 必须原样保留 server response 提供的 `workbench_key`。
-- **R10 独占**：`server/src/inventory/**`、`InventoryTxn::deliver`、inventory/spill mutation 与 `DeliveryCommitReceipt` 的原子提交；R1 只生成 stable `delivery_id` 并决定何时 terminalize/释放 claim。
-- **阶段放行矩阵**：
-  - framework-only：R3 P1 合入后可落 `InteractionSession`、registry、lifecycle 与不触达生产 wire/delivery 的 contract pins。
-  - craft producer path：Agent `A-CS` 先冻结 `CraftOpen.target`、`CraftPause`、`CraftResume`、`CraftSessionStateV2` TypeBox/schema/dist；随后 R6 P1 交付冻结契约的 proto/Rust mirror/bridge/client wire plumbing → R4 P1 交付 production decode/dispatch，并把当前进程 `workbench_key` 经 R3 P4 mapping 转成 stable `placed_id` 后执行 owner/phase/busy gate → R7 P2 交付 close/pause、显式 cancel、reopen/resume UI producer/consumer（R2 P1 `CraftStore` 提供 disconnect lifecycle）→ R3 P1 交付 §2.2.2 reservation/outbox/terminal checkpoint transaction，R3 P4 交付 placed workbench hydrate/rebind → R10 P1 冻结 `deliver`/receipt contract，R10 P2c 交付真实 outbox worker；全部合入后 R1 才能启用并验收 craft adapter。
-  - alchemy/forge：还须 R10 P2c worker 消费其 terminal outbox；否则只能停在 `AwaitingDelivery`。
-  - `TsyPresence`：R3 P1 注册 auxiliary Slice，且 R3 P4 restore parity 常绿后，R1 P3 才能 attach 新 runtime `Entity` 并开放 TSY 请求。
-- 禁止用 mock、registry 单测或临时持久层越过上述门宣称端到端完成；依赖未齐时 phase 保持未完成。
+### P1 — framework + craft adapter
 
-## 6. 后续阶段交付物
-
-### P1 — 框架 + craft 首宿主
-
-- 新增 `server/src/session/{mod.rs,registry.rs,lifecycle.rs}`，包含 §2 全部 symbol；framework-only 可在 R3 P1 后落地，但不启用生产 craft adapter。
-- Agent `A-CS`、R6 `CraftOpen`/`CraftPause`/`CraftResume`/StateV2 契约、R4 production handler/gate、R7 P2 Craft Screen producer/consumer（消费 R2 P1 `CraftStore`）、R3 P1 reservation/outbox、R3 P4 stable `placed_id` hydrate/rebind、R10 P1 `deliver`/receipt contract 与 R10 P2c production worker 全部合入后，craft 才迁移到 `SessionRegistry`：关闭 screen pause、显式 cancel、重开 resume；手搓不需要 placed mapping，Workbench checkpoint 必须存 `placed_id` 而非 `workbench_key`/Entity。
-- P1 contract pins 还必须逐行覆盖 §2.2.2：首次 reserve `+Q`、busy race/校验失败取消 `-Q`、重复取消/CAS loser 零变化、restore/retry matching reuse 零变化、missing/conflicting restore fail closed、handoff 零变化、Pending/InFlight/DeadLetter timeout/retry 零变化、receipt/disposition 恰一次 `-Q`；并在 Workbench 路径强杀重启后证明 checkpoint stable `placed_id` 能绑定 hydrate 后的新 Entity，旧 `workbench_key` 不能恢复。
-- contract pins：六态转换、stable owner 重绑、disconnect-before-save、dimension-before-transfer、busy 冲突、delivery commit gate，以及 §2.5 八个 `TerminationCause` 的逐变体正反测试；明确断言 `Completed` 只交付产物且不退款，`Disconnect`/`Shutdown` checkpoint 不退款，terminal refund 不保留可恢复 escrow。delivery pins 必须在 transaction 的“outbox 写入前/写入后 terminalize 前/receipt+inventory commit 后 ack 前”逐点模拟进程退出并重载，断言 payload 总数恰为一次；所有 checkpointed delivery 均经真实 R10 P2c worker。
-- `SuspensionPolicy` pins：TTL 前后、永不重连、授权管理员结案、offline client 伪造 allow-listed `Username` 仍拒绝、普通玩家/未知 executor/伪造 owner/跨 owner target 拒绝、过期/重连/关服竞态、重复扫描幂等、指数退避 cap、10 次/7 天 dead-letter、人工 retry/resolve 权限，以及 claim 回收后另一玩家可获取同一设施。另须持久化一半已消耗的 lease，重启后 rebasing 只保留原剩余 TTL；连续第二次/第三次重启不得刷新 `suspended_at_tick`，并覆盖 `remaining-1`、精确边界、`remaining+1`。
-- `PendingInsightOffer` pins：创建后正常选择/拒绝、deadline 前后与 off-by-one、同 tick response-versus-timeout 竞态、断线/跨维/关服清除，以及过期后不得再次接受选择。
+只落 `server/src/session/{mod.rs,registry.rs,lifecycle.rs}`、S reducer、registry/busy API 和 contract pins。framework 可在 master Wave 允许时先合入，但 craft production adapter 只有 master 的真实 artifact/cutover rows 全部满足后才启用；不以 mock、fixture 或未存在的 R6/R4/R7 consumer 宣称可达。
 
 ### P2 — alchemy / forge / lingtian
 
-- R3 checkpoint API 与 R10 P2c production outbox worker 都就绪后，alchemy furnace/session 与 forge station/session 才原子 checkpoint；终态 handoff 先写 durable outbox/terminal state，再在提交成功后幂等释放 runtime claim；delivery 失败不得重新 attach session 或 claim。
-- 灵田六类 `ActiveSession` 共用 volatile adapter；断线/跨维/关服不再 tick 或结算离线 actor。
-- qi refund/release 测试从 `SPIRIT_QI_TOTAL` 与 ledger 不变量取值，不写新物理常数。
+checkpointed furnace/station 使用 S-07/S-14 与 O-08/O-16；delivery failure 只推进 O-13，不重新 attach。lingtian 六类 actor 使用 volatile S-08；不在线 tick。
 
-### P3 — gathering / mineral / spiritwood / 世界交互
+### P3 — gathering / mineral / spiritwood / world interaction
 
-- 删除三域私有 store 生命周期分支，迁入 registry。
-- external container、TSY search/extract 使用 target claim；所有终态释放 busy。
-- R3 `TsyPresence` auxiliary Slice 的 guarded load/autosave/shutdown flush/tick-rebase 与 restore parity 常绿后，才把 presence 与 player position/dimension 对拍；新 `Entity` 只在身份/版本/维度校验通过后 attach，随后开放 TSY 请求，不再出现“人在 TSY、presence 不在”。
+volatile adapter 统一释放 target claim；TSY Search/Extract 双向 busy；TsyPresence 仅在 R3 coupled snapshot guarded restore 通过后 attach。
 
-### P4 — bot e2e + 归档
+### P4 — bot/e2e/归档
 
-加入并常绿：
+执行 §6 derived index，确认所有吸收项已有唯一 owner，再补 Finish Evidence；不修改其他轨文档的 authority 表述。
 
-1. `session_disconnect_cleanup`
-2. `session_dimension_transfer`
-3. `session_restart_recovery`
-4. `session_busy_mutex`
-5. `session_full_inventory_delivery`
-6. `session_suspension_reclamation`：永不重连、TTL 边界、授权管理员结案、普通玩家/未知 executor/伪造 owner/跨 owner target 拒绝、过期与重连竞态、重复扫描、claim 释放与 outbox handoff 均不泄漏或双发 claim/escrow。
-7. `session_delivery_crash_atomicity`：在 outbox/terminal checkpoint/receipt/inventory-or-spill/ack 各持久化边界强杀重启，断言 stable `delivery_id` 最终只交付一次；失败按指数退避，在 10 次或 7 天转 `DeadLetter`，且从 handoff 起不占设施 claim。
-8. `session_termination_cause_matrix`：逐项命中 `Completed`、`VoluntaryCancel`、`Disconnect`、`DimensionChange`、`Shutdown`、`InvalidRestore`、`SuspensionExpired`、`AuthorizedAdministratorClosure`，对拍 checkpoint/refund 互斥与 inputs/output 不双发，并断言管理员 principal/reason 被审计记录。
-9. `session_craft_pause_resume_wire`：真实 client producer → R6 proto/bridge → R4 production handler/gate → R1 registry → S2C hydrate → client reopen consumer 全链路。
-10. `session_tsy_presence_relog`：R3 guarded presence Slice 完整恢复 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version 并与 position/dimension 同事务对拍；分别注入 facility 不存在、owner 不匹配、dimension 不匹配、version 不匹配四类 guarded-load 拒绝，任何一类都不 attach、不开放 TSY 请求；恢复后 death-drop 仍正确区分原带物与 TSY 所得。
-11. `session_pending_insight_offer_deadline`：覆盖创建后选择/拒绝、deadline 前后与 off-by-one、同 tick response-versus-timeout 竞态、断线/跨维/关服清除，以及过期后不得再次接受选择。
+## 8. 开放问题
 
-另回归现有 `production_craft_disconnect_resume.py`、`production_craft_cancel_full_inventory_refund.py`、`production_handcraft_stone_knife.py`。对应 implementation PR 合入后，按总纲 §7 为吸收项补 Finish Evidence 并做每轨一次 docs-only 批量归档。
+1. retention 数值已由 §3.1 冻结；R3 P0 只需选择 table/index/compaction scheduling，不得扩大 horizon/上限或在重启时刷新 age。
+2. R3 需选择 `CancelPending` 独立表或 reservation row 内嵌 retry metadata；两者必须实现相同 O-07/O-25 语义。
+3. 具体 domain escrow/refund 数值沿用各域既有 plan；不得在本 canonical protocol 新增经济规则。
+
+## Finish Evidence
+
+> 迁入 `finished_plans/` 前填写各 S/O row 的实现路径、关键 commit、测试命令与数量、真实 producer→consumer→cutover evidence、receipt retention evidence，以及未完成的跨轨依赖。

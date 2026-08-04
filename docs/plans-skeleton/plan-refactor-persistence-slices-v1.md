@@ -13,7 +13,7 @@
 ## 接入面
 
 - **进料**：SQLite（bong.db，沿用）、`shutdown.rs`（#1261 之后的关服链路）、`CultivationClock`（相对 tick 基准）。
-- **出料**：统一 Slice API 供各域注册：`load(guarded) / autosave(cadence) / flush_on_shutdown / tick_rebase`；R1 的 session 持久化钩子、各域运行态表全部走它。`tick_rebase` 对 R1 suspension lease 保持相对剩余时长；R1 冻结默认 `SESSION_SUSPENSION_TTL_TICKS = 1_728_000` 与扫描 cadence `1_200` ticks，本轨不得把重启折算成无限续租。为 terminal delivery 提供 `SessionDeliveryOutbox`：事务内只提交 outbox 插入与 session checkpoint terminalization/删除，提交成功后 runtime gameplay claim 释放必须可依据 durable terminal/outbox 状态幂等重放；禁止仅持久化 session、把 delivery id 留在内存。每个 checkpointed session 的 admission/restore 先预留一行和固定 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 字节的 durable terminal-obligation capacity；payload 增长不得超过该上限，超限必须在接受新 escrow/产物前 fail closed。`SessionDeliveryOutbox` 仍设可观测 row/bytes quota；quota 满时不得新建/恢复会增加 retained obligation 的 checkpointed session。dead-letter 从自动扫描集合移除且不占 claim，quota 仅在 committed 或授权且不可丢 payload 的 audited resolve 后释放。`tick_rebase` 对 R1 suspension lease 保持相对剩余时长；R1 冻结默认 `SESSION_SUSPENSION_TTL_TICKS = 1_728_000` 与扫描 cadence `1_200` ticks，本轨不得把重启折算成无限续租。为 terminal delivery 提供 `SessionDeliveryOutbox`：事务内只提交 outbox 插入与 session checkpoint terminalization/删除，提交成功后 runtime gameplay claim 释放必须可依据 durable terminal/outbox 状态幂等重放；禁止仅持久化 session、把 delivery id 留在内存。每个 checkpointed session 的 admission/restore 先预留一行和固定 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 字节的 durable terminal-obligation capacity；payload 增长不得超过该上限，超限必须在接受新 escrow/产物前 fail closed。`SessionDeliveryOutbox` 仍设可观测 row/bytes quota；quota 满时不得新建/恢复会增加 retained obligation 的 checkpointed session。dead-letter 从自动扫描集合移除且不占 claim，quota 仅在 committed 或授权且不可丢 payload 的 audited resolve 后释放。
+- **出料**：统一 Slice API：`load(guarded) / autosave(cadence) / flush_on_shutdown / tick_rebase`。R1 session persistence 只消费该接口；tick rebase 保留 suspension/retry/lease 的真实剩余时长与已消耗 age，不刷新租约。R3 durable 实现严格投影 R1 O-01..O-27：`reserve_new_terminal_obligation`（O-01/O-02）、`reuse_terminal_obligation`（O-04）、durable `CancelPending` reconciliation（O-05..O-07）、reservation→outbox atomic handoff（O-08/O-09）、claim/retry/dead-letter CAS（O-10..O-20）、receipt/disposition retention、bounded tombstone 与 watermark GC（O-21..O-24）。`TsyPresence` 与 player position/dimension 仍为独立 coupled snapshot contract；routine autosave、disconnect、shutdown 必须共用 transaction/version，crash 后只能全旧或全新。
 - **共享类型**：新 `server/src/persistence/` 多文件模块（按域拆表定义 + 迁移链保持线性单入口）；`PlayerSliceRegistry`（对齐 #1290 skeleton 的方向，直接吸收它）。
 - **跨仓库契约**：零 wire 改动。
 - **qi_physics 锚点**：任何带 qi 的快照持久化/恢复不得造成账面变化；恢复失败的兜底路径必须走 `release_dormant_qi_to_zone` 而非丢弃（对齐守恒律红旗清单）。
@@ -21,13 +21,12 @@
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：53 张表普查归域；冻结 Slice trait（载入守护语义：读失败 = 保留旧行 + 告警 + 只读降级，绝不写回空态；flush registry；tick rebase 协议）；等 #1288/#1289/#1261/#1259 merge 后定基线。
-- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；Slice 框架上线，KnownTechniques/Lifecycle（在飞 PR 的成果）平移为首批宿主；冻结 inventory slice hydration seam 及 `MigrationOutcome` consumer 边界，R3 不复制 inventory 网格规则，待 R10 P1 提供纯幂等迁移函数后接入。R3 P1 只能冻结该 seam，不得引用尚未合入的 R10 常量或实现。注册 R1 所需的 `TsyPresence` auxiliary Slice，字段固定为 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version，并接入 guarded load、autosave、`flush_on_shutdown`、`tick_rebase`；落 `SessionDeliveryOutbox` 表与 atomic handoff API，stable `delivery_id`、完整 payload、cause、attempts/next_retry/created_at/state 全部持久化。
-- ⬜ P2 载入守护推广：全部玩家 slice（SkillSet/Wounds/状态 buff/身份键……）收编，#1290 模式全量落地；dropped-loot slice 的有界 hydration guard 依赖 R10 P1 已 merge 的容量契约：仅在该前置成立后引用 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 与 `DroppedLootRegistry::try_insert/try_insert_batch`；超限进入统一 load-failure guard/只读降级并告警，禁止 `take(limit)` 截断、驱逐旧条目或以空 registry 覆盖数据库。在 R10 P1 未 merge 时，R3 P2 不得编译或复制临时常量。同步冻结并实现 spill/pickup persistence transaction/outbox seam：source mutation、attrited item、zone balance/qi ledger、drop insert/delete 与幂等 transaction id 构成一个 recoverable commit，且 crash/retry pins 常绿后才允许 R10 P2a 迁移 Public writer path；R10 P2b OwnerOnly private writers 另受 R10 P3、R4、R6 与 R3 P4 consumer gates 约束。身份主键统一（identity-persist-key-mismatch）。
-- ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部"节流落盘"域；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥（coffin-autosave-inflight-race 模式）；`TsyPresence` 的关服 flush 与 presence/position/dimension 同事务顺序固定；outbox handoff 的 checkpoint 删除/terminalization 与 outbox insert 在同一 transaction 全成或全败，并以 crash injection pin 每个 commit boundary。
-- ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、状态效果、化虚冷却、灵眼、地表遗缴、散灵珠、可放置实体、dormant 往返身份完整性（heiwushi）等——逐个按 Slice 框架补表；P4 拆为两个独立 consumer 子批次：
-  - **dropped-loot hydration 子批次**：在 R10 P1 merge、R3 P2 persistence seam 与旧行 compatibility pins 就绪后，调用 `inventory::migration::migrate_legacy_dropped_loot_entry`，把旧 `dropped_loot.entry_json` 缺失字段补成 `owner = None`、`visibility = Public`，再反序列化为 `DroppedLootEntry`；此子批次先于 R6 P3 projection/page production activation，且不等待 R10 P3/R5/R6 P4/R4。
-  - **inventory-layout overflow 子批次**：仅在 R10 P3 merge 后，调用 `inventory::migration::migrate_legacy_inventory_layout`，用玩家 identity、真实机制结算点/世界 position、dimension 组装 `SpillContext`，把 `MigrationOutcome::overflow` 通过 R10 capacity API 持久化到 durable registry。
-  两类 consumer 仅在新 schema 与各自全部输出成功持久化后提交新行，缺上下文/容量/持久化或 JSON migration 失败则保留旧行并进入可重试 load guard；dropped-loot 子批次依赖 R10 P1，inventory-layout 子批次依赖 R10 P3，不得合并为一个跨越两者的门禁或另造容量常量。加入 `TsyPresence` guarded relog parity 契约测试和 TSY 维度重启 bot 场景，断言失败加载不 attach presence、成功恢复后才重新开放 TSY 请求。
+- ⬜ P1 框架落地 + 巨石拆分：保持 migration 单入口；上线 Slice guard/flush/rebase 与 inventory seam。实现 `SessionDeliveryQuota`、`SessionDeliveryReservation`、`SessionDeliveryOutbox`、receipt/disposition/history/tombstone storage 及 R1 O-01..O-27 所需 atomic CAS API。O-05 后 cancel-mark 写失败仍由原 reservation 作为 durable owner（O-25），写成功但后续取消失败则留下 `CancelPending` owner、retry metadata 与 live reconciliation scanner（O-07）；只有 O-06 可释放 Q。O-08 同事务固定 payload bytes/SHA-256 digest、terminalize checkpoint 并转 reservation 为 outbox；commit 后 R1 执行 S-14，ack 丢失可从 durable 状态重放。P1 acceptance 覆盖 O-row trace、最后 row/bytes 双连接竞争、exact-max accept/+1 reject、handoff crash points、cancel failure/restart retry、payload digest、receipt/disposition atomic release。另在同阶段交付 `TsyPresence`/position/dimension routine/disconnect/shutdown coupled-snapshot crash harness；P3 仅复用，不延期首次证据。
+- **P1 obligation storage projection**：API、状态、quota effect 与 acceptance 只引用 R1 O-01..O-27；R3 不另设 lifecycle table。实现可选择独立 `CancelPending` 表或 reservation row metadata，但必须保持 O-07 durable retry owner。
+- ⬜ P2 载入守护推广：全部玩家 slice（SkillSet/Wounds/状态 buff/身份键……）收编，#1290 模式全量落地；身份主键统一。dropped-loot hydration guard 使用 R10 M-06 提供的容量/迁移 contract 与 R3 M-04 durable seam；超限进入 load-failure guard/只读降级并告警，禁止截断、驱逐或空表覆盖。spill/pickup recoverable transaction 只在对应 master M-row provider/consumer 全部存在后接入。
+- ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部节流落盘域；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥。`TsyPresence` 三者原子 autosave/disconnect/shutdown 语义已在 P1 冻结，P3 仅补全 flush registry 接线与 crash 回归。
+- ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、状态效果、化虚冷却、灵眼、地表遗缴、散灵珠、可放置实体、dormant 往返身份完整性等按 Slice 框架补表。`TsyPresence` guarded relog parity 与 placed-id hydrate 分别引用 M-12/M-05；migration consumer 只按 master ledger 进入，不复制跨轨顺序。
+- **P4 placeable gate addendum**：可放置实体子批次须落实 `plan-bughunt-placeable-entity-restart-loss-v1` P0-P2：持久化 `placed_id`（非 Entity），world/layer ready 后 hydrate `WorkbenchBlock` 并建立唯一 `placed_id→runtime Entity` registry；missing/duplicate/unhydrated fail closed。它是 R4 runtime target→stable claim 与 R1 restore rebind 的 provider，常绿前不得迁移 checkpointed workbench craft。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
@@ -43,32 +42,27 @@ skeleton：coffin-autosave-inflight-race、identity-persist-key-mismatch、miner
 
 ## bot 验收场景
 
-1. `restart_player_slices`：bot 建号→修炼/学功法/受伤→关服重启→重连→断言功法/伤势/濒死后果/buff 全部还原；另以 pre-#249 inventory fixture 验证 R10 纯迁移保留全部 instance/dynamic fields、重复载入幂等并保存新 schema。
+1. `restart_player_slices`：bot 建号→修炼/学功法/受伤→关服重启→重连→断言功法/伤势/濒死后果/buff 全部还原。
 2. `restart_world_runtime`：触发矿脉枯竭/配方解锁/zone influence→SIGTERM 关服→重启→断言无回滚无复活。
-3. `load_failure_guard`：基础损坏 slice 仍断言守护降级而非清零覆盖；超过 R10 P1 提供的 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 的 dropped-loot rows 只有在 R10 P1 已 merge 后执行同一 guard，数据库行数与内容不得被截断/清空；R10 前置未满足时该断言保持待接线，不得引用不存在的 symbol。另覆盖旧 `entry_json` 无 owner/visibility → `owner = None` + `Public` 的 migration/hydration 正例，以及 malformed/migration failure 保留旧行可重试；再注入 spill durable write failure，以及 pickup attrition staged 后的 commit interruption/restart，断言 attrited item、zone/ledger 与 drop delete 无单边状态，按 transaction id 重试不重复应用。
-4. `tick_rebase`：带冷却/再生倒计时重启→断言倒计时按真实流逝折算（对齐 #1289 的 deadline 折算先例）。
+3. `load_failure_guard`：基础损坏 slice 断言守护降级而非清零覆盖；仅在 R10 P1 合入后，以超过 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 的 rows 断言数据库不得截断/清空。另覆盖旧 `entry_json` 缺 owner/visibility→`None`/`Public`、malformed/migration failure 保留旧行可重试，以及 spill durable write failure、pickup attrition staged 后 commit interruption/restart；attrited item、zone/ledger 与 drop delete 不得单边提交，按 transaction id 重试不得重复应用。
+4. `tick_rebase`：带冷却/再生倒计时重启→断言倒计时按真实流逝折算（对齐 #1289 的 deadline 折算先例）；另持久化一半已消耗的 `SuspensionPolicy` lease，重启/rebase 只保留原剩余 TTL，连续重复重启不刷新 lease，并覆盖剩余时长前一 tick、精确边界、后一 tick；outbox 同样覆盖 `next_retry_tick` 剩余退避、`created_at_tick` 已消耗 age、`lease_until` 剩余 lease 在单次/连续重启后的前一 tick、精确边界、后一 tick，断言不会把旧 process-local tick 直接带入新 epoch。
 5. `tsy_presence_relog_parity`：进入 TSY→关服 flush→guarded load→只有 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version 校验通过才 attach `TsyPresence` 并开放 TSY 请求；损坏或缺失 Slice 保持未 attach 且拒绝请求；恢复后 death-drop 对原带物继续执行 50%/武器保护，对 TSY 所得执行既有 100% 规则。
-6. `tsy_presence_shutdown_order`：断言 session registry 静止后才 flush presence slice，且 position/dimension 与 presence 同一恢复事务对拍。
-7. `session_delivery_outbox_atomicity`：分别在 outbox insert 前、insert 后 checkpoint terminalize 前、事务 commit 后 ack 前强杀重启；另注入已 admission 但 payload 达到 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 的边界，断言超限在接受新 escrow/产物前 fail closed；正常路径断言 checkpoint/outbox 恰有一个权威 owner，完整 payload 不丢且 stable `delivery_id` 不变。
+6. `tsy_presence_snapshot_atomicity`：分别在 routine autosave、disconnect save、shutdown flush 中，向 presence、position、dimension 三个逻辑写入之间注入 crash；重启后断言三者只能全部保留旧 snapshot/version 或全部提交新 snapshot/version，不接受各 Slice 独立提交后碰巧通过 clean restore 对拍。shutdown 路径另断言 session registry 静止后才 flush coupled snapshot。
+7. `session_delivery_outbox_atomicity`：执行 R1 O-01..O-27 的 durable traces；覆盖双 connection quota race、busy loser O-05→O-25 或 O-07/O-06、restore O-04、exact-max/+1、handoff crash、lease/dead-letter、payload digest mismatch、history quota O-26、O-16/O-19 atomic release，以及 O-21→O-24 bounded retention/GC。每步断言 `quota_used = sum(active Q)`。
 
 ## 开放问题（pre-P0 收口）
 
 1. 载入守护的玩家体验：只读降级 vs 拒绝进服 vs 回滚到上一备份？需人工拍板。
 2. 迁移链是否借机做一次 squash（v1-v39 合并基线）？风险与老存档兼容性需评估。
+3. receipt/disposition history 的 replay horizon、tombstone 上限、GC watermark 与 history quota 已由 R1 §3.1 冻结；R3 P0 只决定表结构、索引与 compaction 调度，必须执行 O-21..O-27，不能永久保留或在重启时刷新 age。
+4. TsyPresence 三者 coupled snapshot 的 routine autosave/disconnect/shutdown crash-injection harness 与跨连接屏障时序是 P1 acceptance 的组成部分：P1 必须在每个逻辑写边界注入 crash 并重启，证明结果只能全旧或全新；P3 只复用该 harness 做 flush-registry 长尾回归，不得延期首次原子性证据。
 
 ## § P0 决议锚点（待 R3 P0 开工时补齐）
 
-- `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 的引用门：R3 P2/P4 依赖 R10 P1 merge，R3 不复制常量或在此前编译引用。
-- dropped-loot hydration consumer：R3 P4 在 R10 P1 migration helper、R3 P2 persistence seam 与旧行 compatibility pins 就绪后执行，且必须先于 R6 P3 projection/page production activation；失败保留旧行并可重试。
-- inventory-layout migration consumer：R3 P4 的独立 overflow 子批次在 R10 P3 merge 后，使用真实 `SpillContext` 完成 overflow 持久化；失败保留旧行并可重试。
+- **R3 P2/P4** 在 master M-13/M-14 与 R10 migration/provider artifact 完成后接入 dropped-loot hydration；不复制 R10 常量，失败保留旧行可重试。
+- **R3 P1** 的 outbox/reservation 与 coupled snapshot 是 M-04/M-12 的 implementation surface；R1/R10 仅消费冻结接口。
 
-## 验收测试声明
+## 验收与实施边界
 
-- `cargo test --package bong-server persistence -- --nocapture`：Slice load guard、flush registry、tick rebase、migration consumer、dropped-loot hydration bound。
-- bot e2e：`restart_player_slices`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`。
-
-## 实施边界
-
-- R3 P1 只冻结接缝与框架，不提前实现 R10 inventory migration 或 dropped-loot capacity API。
-- R3 P2/P4 在依赖 merge 后才实现对应消费者；所有 migration overflow 必须有真实 spill context 和 durable sink。
-- 本 skeleton 不直接改 `server/src/inventory/**`；R10 拥有 inventory 生产 writer 与容量 API。
+- `cargo test --package bong-server persistence -- --nocapture` 覆盖 Slice guard、flush/tick rebase、migration consumer、dropped-loot bound 与 R1 O-01..O-27 durable traces；bot e2e 必须覆盖本 plan §bot 验收场景列出的全部七项：`restart_player_slices`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`、`tsy_presence_relog_parity`、`tsy_presence_snapshot_atomicity`、`session_delivery_outbox_atomicity`。任一场景未合入/未常绿，R3 P5 与下游 craft/TSY 放行均不得完成。
+- R3 P1 只冻结 inventory seam，不实现 R10 migration/capacity；P2/P4 等依赖合入后才实现 consumer，且不修改 `server/src/inventory/**`。

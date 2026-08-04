@@ -16,7 +16,7 @@
 - **进料**：R2 的 `SessionScopedStore`（Screen 订阅的一律是会话态 store）；`ServerDataRouter` handler（一律经 client-thread marshal 投递 UI）。
 - **出料**：Screen/HUD 展示；HUD 纪律沿用既有 memory 约束（未解锁隐藏不灰掉、沉浸式极简）。
 - **共享类型**：新 `BongScreenBase`（生命周期 + 订阅 + 关闭清理）、`DiffListWidget`（推广 craft 范本）、`BongKeybindRegistry`（注册时冲突检测 + 测试期断言）、`ClientThreadMarshal` helper、`ScreenOpenPolicy`（礼貌抢屏：战斗中/已有模态时排队）。
-- **跨仓库契约**：本轨不定义 wire，消费总纲 §4 与 R6 契约。Idle/no-session 初次 `CraftOpen` 必须带 target：手搓为 `Handcraft`；Workbench handler 从成功 S2C `WorkbenchOpen.entity_id` 读取 u64 decimal-string `workbench_key`，构造 screen 时注入并不可变保留，初次请求原样发送 `Workbench { workbench_key }`，不得猜测或改写。R4 校验后分配 session identity。已有 session close 只发 hydrated identity/version 的 `CraftPause`，显式取消只发 `CraftCancel`，仅匹配的 server-hydrated `Paused` session 发一次 `CraftResume`。P2 pins 覆盖两种 target、u64 key 边界、response→screen→request 不变、missing/malformed key 不开 Workbench screen，以及四条 intent 不互相替代；terminal/`AwaitingDelivery`/`DeliveryPending`/stale identity 不发 Resume。
+- **跨仓库契约**：本轨不定义 wire，只消费 A-CS A-row、master M-02/M-07/M-09/M-10 与 R1 S-row。Idle/no-session 初次 `CraftOpen` target 为 `Handcraft` 或 retained `Workbench { workbench_key }`；close 发 `CraftPause`，explicit cancel 发 `CraftCancel`，仅匹配 server-hydrated `Paused` session 发一次 `CraftResume`。R1 `HandoffPreparing`/`Ended` 或 stale identity 均不发 Resume；delivery Pending/InFlight/DeadLetter 是 obligation 状态，R7 不把它们存为 resumable gameplay phase。
 
 ## 阶段
 
@@ -36,7 +36,7 @@ skeleton：alchemy-screen-fill100-eviction 与 alchemy-screen-fill-overflow（�
 
 - 独占：client 全部 Screen/`ui/`/`hud/` 结构性改动、keybind 注册、`InspectScreen.java`。
 - 不碰：store 生命周期接口（R2 域，本轨消费）；`network/` 桥与 router（R6 域——marshal helper 由本轨提供、在 handler 注册处的接线与 R6 协调）；server 一切。
-- 依赖：R2 P1 先合（基类要绑 `SessionScopedStore`）；Craft Screen 接线还需 R6 `CraftOpen`/`CraftPause`/`CraftResume` 契约与 R4 production handler/gate 先就绪，R1 craft adapter 不得在本轨 P2 合入前宣称 close/pause/reopen/resume 端到端可达；与 R6 在其他 handler 投递点的接缝于 P4 前对齐。
+- 依赖：本轨只引用 master M-02/M-07/M-08/M-09/M-10；R2 Store、R6 machinery、R4 gate 与 R1 session 的 production 接缝在 master atomic activation row 完成前只能提交 contract pins，不宣称端到端可达。
 
 ## 验收
 
