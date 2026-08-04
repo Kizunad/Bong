@@ -23,7 +23,7 @@
 - ⬜ P0 设计收口 + 吸收清单验真：~200 个直写点全量普查分类（合法初始化/regen/衰减/战斗/UI 镜像）；冻结封装方案（`qi_current` 收私有 + 类型化访问器：`gain_from_zone` / `release_to_zone` / `transfer_to` / `set_for_init`，每个访问器内嵌 ledger 记账）；负灵域语义、qi_max 缩容语义写成决议。
 - ⬜ P1 类型封装落地：字段收私有，访问器上线；既有 ~130 处 QiTransfer 调用点平移；编译期扫清全部直写（编译器就是审计器）。
 - ⬜ P2 修复批次 A（cultivation + 消耗品 + lingtian）：regen/服丹/plot_qi/经脉淬炼影子账全部走访问器归账。
-- ⬜ P3 修复批次 B（combat 各流派 + fauna/npc/boss）：overflow/drain/打断退款/日程回气/暗器 imprint 回滚；离屏死亡走 `release_dormant_qi_to_zone`。
+- ⬜ P3 修复批次 B（combat 各流派 + fauna/npc/boss + inventory pickup）：overflow/drain/打断退款/日程回气/暗器 imprint 回滚；离屏死亡走 `release_dormant_qi_to_zone`；为 R10 `PickupAttritionBasis { target_instance_id, incoming_instance_id, incoming_stack_count, incoming_abs_qi_before }` 提供稳定 incoming-only pickup attrition API，只磨损 incoming 绝对真元并把损耗守恒归还 zone，merge 后不得重扣既有 stack 的绝对真元。
 - ⬜ P4 守恒审计常绿 + 归档：`assert_conservation` 进 bot e2e 每场景收尾断言；吸收 plan 批量归档。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
@@ -43,6 +43,7 @@ skeleton：attrition-overflow-ledger、bonecoin-qi-facevalue、carrier-resonance
 2. `qi_skill_roundtrip`：单招释放前后玩家+zone 总量不变。
 3. `qi_death_release`：击杀带真元的 NPC/离屏战死→断言 zone 收到等额释放。
 4. `qi_negative_zone`：负灵域内释放/吸收→断言赤字被记账不被 max(0) 抹平。
+5. `qi_pickup_merge_incoming_only`：已有 stack 与同 identity dropped item 合并，断言 attrition 只基于 receipt 的 `incoming_abs_qi_before`，既有 stack 原绝对真元不变、目标 stack + zone 总量守恒，且不依赖 consumed dropped instance id 在 inventory 中仍存在。
 
 ## 开放问题（pre-P0 收口）
 

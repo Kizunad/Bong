@@ -18,24 +18,26 @@
 
 ## 阶段
 
-- ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单。
-- ⬜ P1 emit builder + scope 落地：前置为 Agent 轨已按总纲 §4 提交 craft TypeBox source/generated schema/`@bong/schema` dist；R6 不修改这些 artifacts。builder 上线，vfx/audio/env 挂 scope；跨位面时 env/season 全量重发。把冻结 craft schema 一次性反映为 proto/Rust mirror/converter、samples、client encode/send API 与 producer pins：`CraftOpen.target` 正反 roundtrip `Handcraft` 和 `Workbench { workbench_key }`，覆盖 u64/decimal-string 边界及 response→screen→request key 不变；`CraftPause`/`CraftResume` roundtrip required `session_key` + `generation`。同阶段交付 `CraftSessionStateV2` proto/Rust converter、`craft_emit` producer、bridge/router/handler/CraftStore；R6 pins 覆盖 phase/identity、stale generation 与 malformed/out-of-u64 key，R4 pins 覆盖 stale/despawned/跨维/越距 key 拒绝。R7 的匹配 `Paused`→恰发一次 `CraftResume` 留在 R7 P2。
-- ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）。
+- ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单；登记 `rotate-footprint-sync`、`bot-inventory-pack-feedback`，并冻结 `dropped_loot_sync` 分片 envelope（`snapshot_revision/page_index/page_count`、`DROPPED_LOOT_SYNC_PAGE_SIZE = 256`）。
+- ⬜ P1 emit builder + scope 落地：前置为 Agent 轨已按总纲 §4 提交 craft TypeBox source/generated schema/`@bong/schema` dist；R6 不修改这些 artifacts。builder 上线，vfx/audio/env 挂 scope；跨位面时 env/season 全量重发。把冻结 craft schema 一次性反映为 proto/Rust mirror/converter、samples、client encode/send API 与 producer pins：`CraftOpen.target` 正反 roundtrip `Handcraft` 和 `Workbench { workbench_key }`，覆盖 u64/decimal-string 边界及 response→screen→request key 不变；`CraftPause`/`CraftResume` roundtrip required `session_key` + `generation`。同阶段交付 `CraftSessionStateV2` proto/Rust converter、`craft_emit` producer、bridge/router/handler/CraftStore；R6 pins 覆盖 phase/identity、stale generation 与 malformed/out-of-u64 key，R4 pins 覆盖 stale/despawned/跨维/越距 key 拒绝。R7 的匹配 `Paused`→恰发一次 `CraftResume` 留在 R7 P2。dropped-loot projection/page 子项仅在 R10 P2a owner/visibility metadata provider 与 R3 P4 migration/hydration consumer 均合入后启用：按固定页发送，同一 visibility key 只排序/编码一次，禁止 per-client 无界重建。
+- ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）；dropped-loot store 仅在同 revision 全部分片收齐后原子替换，缺页/混 revision 保留旧视图并等待重发。
 - ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
-- ⬜ P4 契约 pin 全量化：R6 P1 落地三种 craft intent 后，以 116 C2S + 144 S2C 每变体至少一条正反 sample 对拍（在此之前当前 C2S baseline 仍为 113；schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次。
+- ⬜ P4 契约 pin 全量化：R6 P1 落地三种 craft intent 后，以 116 C2S + 144 S2C 每变体至少一条正反 sample 对拍（此前 baseline 为 113；schema 改动连 sample 一起改）；emit 迁移长尾；inventory receipt 子批次要求 `InventoryEventV1::Moved`（或等价 accepted receipt）携带 request identity、revision、权威 item view，覆盖 schema/sample/convert/emit API、Fabric handler 与 Python decoder。dropped-loot 样本覆盖空/单页/恰 256/257/末页缺失/混 revision。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
+
+R10 dropped-loot 契约优先：编码前按 recipient dimension/range/owner 投影，仅同 visibility key 复用；rejected receipt 携带 reason/instance/from/to，并测两 recipient 正反可见性。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
 
 active：server-data-s2c-schema-union-drift（TS union 补齐走 regenerate）、spirit-treasure-chat-key-conflict 除外（归 R7）。
-skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、forge-session-enum-unstripped（#1294 在飞）、client-request-schema-drift（C2S 契约 pin 部分）、cl-ningmai-meridian-target-drop（payload 字段丢失）、alchemy-recipe-fragment-handoff（id 前缀契约）、vfx-event-slash-contract（event_id 格式契约；agent 侧改动最小化）、npc-trade-bundle-count-bridge（展示/结算数量桥）、dropped-loot-g-pickup-range-desync（拾取范围下发对齐部分）、skillbar-cast-source-drift 与 skillconfig-castsync 除外（归 R9）。
+skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、forge-session-enum-unstripped（#1294 在飞）、client-request-schema-drift（C2S 契约 pin 部分）、cl-ningmai-meridian-target-drop（payload 字段丢失）、alchemy-recipe-fragment-handoff（id 前缀契约）、vfx-event-slash-contract（event_id 格式契约；agent 侧改动最小化）、npc-trade-bundle-count-bridge（展示/结算数量桥）、dropped-loot-g-pickup-range-desync（拾取范围下发对齐部分）、rotate-footprint-sync（R10 typed outcome → 权威 item view）、bot-inventory-pack-feedback（动作级回执）、skillbar-cast-source-drift 与 skillconfig-castsync 除外（归 R9）。
 注：server↔agent 方向的桥（anticheat-tiandao-drop、niche-guardian-redis-dispatch、npc-combat-relic-schema-drift、pseudo-vein-agent-deadwire、war-participate-agent-command-drift、天道叙事簇 14 项）**不吸收**——agent 不在本次重构范围，独立保留（见总纲 §6 独立轨）。
 
 ## 文件所有权与边界
 
 - 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：Agent 轨独立 craft-schema 批次先合并并冻结 TypeBox source/schema/dist；R2 先合（同文件低冲突区段）。R1 craft adapter 不得在本轨 P1 的 `CraftOpen`/`CraftPause`/`CraftResume` 契约 pins 合入前宣称 pause/resume 可达；R4 的 craft handler/gate 接缝在该契约合入后落地，R4 P2 其余拆分建议在本轨 P1 后开。
+- 依赖：Agent 轨独立 craft-schema 批次先合并并冻结 TypeBox source/schema/dist；R2 先合（同文件低冲突区段）。R1 craft adapter 不得在本轨 P1 的 craft 契约 pins 合入前宣称 pause/resume 可达；R4 handler/gate 随后落地。dropped-loot projection/page 子项另硬依赖 R10 P2a owner/visibility provider 与 R3 P4 migration/hydration consumer。
 
 ## bot 验收场景
 
