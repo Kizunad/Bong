@@ -38,7 +38,7 @@
 
 ## 阶段
 
-- ✅ 2026-07-30 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、opaque load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→subject-bound capability hydrate→实际 lease 审计→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 token/foreign subject lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败 provenance 不可提取、写资格、重连顺序/阻断/旧 activation 原子保留/foreign-subject 拒绝/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界；未迁移生产 slice。
+- ✅ 2026-07-30 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、opaque load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→subject-bound capability hydrate→实际 lease 审计→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 token/foreign subject lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败 provenance 不可提取、写资格、重连顺序/阻断/旧 activation 原子保留/foreign-subject 拒绝/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界。2026-08-04 返工将现有 zone-runtime 关服写入迁为首个 production descriptor，安装唯一 canonical registry 与 `AppExit → Last` dispatcher；真实 player reconnect adapter 仍归 P3。
 - ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
 - ⬜ P3 真实 reconnect handoff + 关服 flush + tick rebase 批次：玩家 lifecycle 只从一次性 subject-bound capability 激活；shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
@@ -66,7 +66,7 @@
 | 13 | `mineral-exhausted-log-corrupt-revival` | 同 mineral JSON | 直写最终文件 | parse error 被当 empty log | startup hydrate 已接，损坏可令矿脉复活 | `server/src/mineral/persistence.rs:115-173,220-259`；`server/src/mineral/mod.rs:69-108` | P3 atomic/corrupt-safe persistence |
 | 14 | `spirit-eye-runtime-persistence` | —；`SpiritEyeRegistry` 仅 runtime | — | — | zones + `startup_salt()` 重建 | `server/src/world/spirit_eye.rs:40-69,109-145,232-268,350-363,592-606` | P4 world-runtime Slice |
 | 15 | `voidaction-cooldown-runtime-tick-restart` | SQLite `void_action_cooldowns` | 有 | 有 | startup hydrate 已接；`ready_at_tick` 是绝对 runtime tick | `server/src/persistence/mod.rs:723-775,1720-1729,2868-2957`；`server/src/cultivation/void/actions.rs:290-294` | P3 time rebase |
-| 16 | `r1-mechanical-fixes` P6 NPC deceased archive DB-open rollback | SQLite `npc_deceased_index` + zstd archive bundle | production `persist_npc_deceased_archive` 先写 bundle，再在 transaction 内 upsert index + 删除 hot rows；DB/transaction 失败回滚旧 bundle | `load_npc_deceased_archive` 可读 index + 解压/解码，但当前仅测试调用 | terminated NPC 由 periodic persistence system 归档；无 production archive rehydrate/restore consumer | `server/src/persistence/mod.rs:4415-4475,4635-4697` | P1 mechanical split 保持现有 rollback；NPC archive owner 决定 production restore 语义 |
+| 16 | `r1-mechanical-fixes` P6 NPC deceased archive DB-open rollback | SQLite `npc_deceased_index` + zstd archive bundle | production `persist_npc_deceased_archive` 先写 bundle，再在同一补偿边界内打开 DB/transaction、upsert index + 删除 hot rows；任一步失败均恢复旧 bundle | `load_npc_deceased_archive` 可读 index + 解压/解码，但当前仅测试调用 | terminated NPC 由 periodic persistence system 归档；无 production archive rehydrate/restore consumer | `server/src/persistence/mod.rs:4415-4452` | 2026-08-04 本轮已补 DB-open/transaction-open rollback；P1 mechanical split 保持该边界，NPC archive owner 决定 production restore 语义 |
 | 17 | `r10-findings` #1 mineral shutdown flush | 同 mineral JSON | Update interval 已有 | startup hydrate 已有 | register 无 `Last`/`AppExit` | `server/src/mineral/mod.rs:69-108`；`server/src/mineral/persistence.rs:177-218` | P3 shutdown registry/flush |
 | 18 | `wounds-relog-full-heal` | **无 Wounds durable schema** | **无** | **无** | join/rebirth 均 `Wounds::default()`，重连满血缺口仍在 | `server/src/combat/components.rs:73-102`；`server/src/combat/mod.rs:171-184,197-200`；`server/src/combat/lifecycle.rs:1803-1814,1916-1918` | P2 新建 player Slice/load guard；**不得与 Lifecycle 混记** |
 | 19 | `player-slice-load-failure-clears` | 既有 player SQLite tables | 有 | 部分：KnownTechniques 有 `Loaded/LoadFailed` marker，其余多处 fallback/default | failure 后仍可能默认值覆盖 durable row | `server/src/player/state.rs:158,434-573`；`server/src/player/mod.rs:228-236,269-278` | P2 load guard + aggregate `WriteSet` omit |
@@ -129,7 +129,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 ### #3 Shutdown registry：复用 `AppExit → Last`，失败隔离
 
 **决议**：
-1. 不重造 signal handler。唯一触发仍是 `shutdown.rs` 在 `PreUpdate` 发出的单次 `AppExit::Success`；统一 dispatcher 位于 `Last`。
+1. 不重造 signal handler。唯一触发仍是 `shutdown.rs` 在 `PreUpdate` 发出的单次 `AppExit::Success`；统一 dispatcher 位于 `Last`。2026-08-04 返工已将 zone-runtime 旧 `Last` hook 原位迁为首个 production descriptor，并安装 canonical registry + dispatcher；后续域继续逐个迁移。
 2. dispatcher 复制已排序 descriptor 列表后再逐个调用 hook，避免持有 registry 的 World borrow 时再次可变借用 World；返回汇总报告 `attempted/clean/flushed/blocked/failures`。
 3. 单个 hook 失败不得中断后续 slice；失败必须保留 dirty 和旧文件/旧行。P0 只冻结和测试 dispatcher，不注册生产 slice；P3 迁移时逐域“移除旧 hook → 注册 registry”，禁止双写。
 
@@ -157,7 +157,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 
 **决议**：
 1. 不重置 `PRAGMA user_version`，不删除 v1–v39 legacy upgrade path，不把行为迁移 squash 成一份 fresh schema。未来可额外生成新库 baseline，但旧库升级链、升级前备份和 fixture 必须长期保留。
-2. P0 只新增 `server/src/persistence/slice.rs` 与 contract-pin tests，并在 `persistence/mod.rs` 增加模块声明；不迁移生产 hook、不修改 schema、不拆巨石。#1289 已合入；#1259 的玩家/饱食度接线继续避让。
+2. P0 在 2026-08-04 返工前只新增 `server/src/persistence/slice.rs` 与 contract-pin tests，并在 `persistence/mod.rs` 增加模块声明；返工为关闭 production dead-wire，仅将既有 zone-runtime 关服 hook 原位迁为首个 production descriptor，并安装 canonical registry + `AppExit → Last` dispatcher，不修改 schema、不拆巨石、不提前接真实 player reconnect。#1289 已合入；#1259 的玩家/饱食度接线继续避让。
 3. P0 pins 覆盖：registry ID/authority/ordering 校验与稳定排序；无 shutdown 请求不调用；失败隔离；load 三态、`RefuseStartup` 与不可伪造 write permit；deadline 两种 offline policy 与边界；domain-bound dirty snapshot + durable receipt；同 tick save-before-load；注入时钟。
 
 **落点**：`server/src/persistence/mod.rs:57-62,1083-2386`；plan §P0 表域普查、§阶段 P0、§文件所有权与边界。
