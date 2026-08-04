@@ -225,6 +225,7 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
     expected_count = None
     header_seen = False
     divider_seen = False
+    table_ended = False
     for line_number, line in enumerate(source.splitlines(), start=1):
         if expected_count is None:
             if section := MATRIX_SECTION_RE.fullmatch(line):
@@ -244,11 +245,16 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
                 raise RuntimeError(f"malformed C2S matrix divider at line {line_number}: {line!r}")
             continue
         if not line.strip():
-            if rows:
-                break
+            continue
+        if table_ended:
+            if line.startswith("|"):
+                raise RuntimeError(
+                    f"unexpected C2S matrix content at line {line_number}: {line!r}"
+                )
             continue
         if not line.startswith("|"):
-            raise RuntimeError(f"unexpected C2S matrix content at line {line_number}: {line!r}")
+            table_ended = True
+            continue
         match = MATRIX_RE.fullmatch(line)
         if not match:
             raise RuntimeError(f"malformed C2S matrix row at line {line_number}: {line!r}")

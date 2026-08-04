@@ -165,6 +165,13 @@ pub enum ClientRequestV1 {
         )
         with self.assertRaisesRegex(RuntimeError, "malformed C2S matrix row"):
             checker.parse_matrix_variants(malformed)
+        with self.assertRaisesRegex(RuntimeError, "heading count 2 does not match 3 rows"):
+            checker.parse_matrix_variants(
+                plan.replace(
+                    "\n## 后续清单",
+                    "\n\n| 3 | `Gamma` | — | — | — | — | — |\n\n## 后续清单",
+                )
+            )
         with self.assertRaisesRegex(RuntimeError, "heading count 3 does not match 2 rows"):
             checker.parse_matrix_variants(plan.replace("P0 2", "P0 3"))
 
