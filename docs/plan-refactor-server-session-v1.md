@@ -149,7 +149,7 @@ pub trait InteractionSession {
 3. 只有 O-06 成功取消或 O-16/O-19 成功持久化终结结果才 `-Q`。取消标记或删除失败不能把 quota 留成无主 reservation：O-25 由原 reservation 继续担当 durable owner，O-07 由 `CancelPending` row 担当；scanner/retry 均不得凭 age 直接释放。
 4. `payload` 是 canonical serialized bytes；`payload_digest = SHA-256(payload)`。worker 的 `DeliveryRequest` 必须从 claimed payload decode，并在 O-16 transaction 中以 digest/semantic item set 对拍；不存在独立可替换的 caller payload。
 5. payload 序列化后恰为 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 可接受；`+1` 在新增 escrow/output 被接受前 fail closed。payload 一旦进入 O-08 不可增长。
-6. `ReceiptRetained`/`DispositionRetained` 不是无限历史：在 replay horizon 内保留完整结果；达到 producer/outbox GC watermark 后转 O-22 bounded tombstone，再满足 O-24 才 GC。具体 horizon、tombstone 上限和告警阈值由 R3 implementation P0 冻结，并受独立有界 storage quota 约束；O-26 要求在 deliver 前预留该容量。
+6. `ReceiptRetained`/`DispositionRetained` 不是无限历史：完整结果按 §3.1 的 replay TTL 保留，达到 producer/outbox GC watermark 后转 O-22 bounded tombstone，再按 §3.1 的 tombstone TTL 满足 O-24 才 GC。R1 是 retention 数值与边界的唯一 contract owner；R3 只实现 table/index/compaction scheduling 与 O-26 deliver 前容量预留，不得另定 horizon、row/byte limit 或重启时刷新 age。
 7. O-08 成功后 gameplay claim 已由 S-14 释放；O-12/O-13/O-14/O-18 不得恢复 session。DeadLetter 无 runtime claim 但继续占 Q。
 
 ## 5. 接缝与 artifact ledger
@@ -201,7 +201,7 @@ volatile adapter 统一释放 target claim；TSY Search/Extract 双向 busy；Ts
 
 ## 8. 开放问题
 
-1. retention 数值已由 §3.1 冻结；R3 P0 只需选择 table/index/compaction scheduling，不得扩大 horizon/上限或在重启时刷新 age。
+1. retention 数值与边界由本 canonical contract §3.1 唯一冻结；R3 P0 只选择 table/index/compaction scheduling 并实现这些常量，不得扩大 horizon/上限或在重启时刷新 age。
 2. R3 需选择 `CancelPending` 独立表或 reservation row 内嵌 retry metadata；两者必须实现相同 O-07/O-25 语义。
 3. 具体 domain escrow/refund 数值沿用各域既有 plan；不得在本 canonical protocol 新增经济规则。
 
