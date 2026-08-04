@@ -10,6 +10,7 @@ on:
       - "server/**"
       - "proto/**"
       - "scripts/**"
+      - "docs/**"
       - "docker-compose.test.yml"
       - ".github/workflows/e2e.yml"
   pull_request:
@@ -19,6 +20,7 @@ on:
       - "server/**"
       - "proto/**"
       - "scripts/**"
+      - "docs/**"
       - "docker-compose.test.yml"
       - ".github/workflows/e2e.yml"
   workflow_dispatch:

@@ -145,7 +145,7 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 8 | `ForgeRequest` | — | — | self | 经脉锻造前置 | 域内；非世界炼器站请求 |
 | 9 | `InsightDecision` | — | — | invite owner | trigger 未过期 | 域内 |
 | 10 | `BotanyHarvestRequest` | session / — | session authority | session owner | session active、mode 合法 | 已有 session owner；迁 R1 adapter |
-| 11 | `AlchemyOpenFurnace` | block / `NearbyInteract` | 同目标/主世界 | — | furnace exists | 距离/维度缺 |
+| 11 | `AlchemyOpenFurnace` | block / `NearbyInteract` | 同目标/主世界 | furnace owner (ownerless public) | furnace exists | 距离/维度缺 |
 | 12 | `AlchemyFeedSlot` | block / `NearbyInteract` | 同目标/主世界 | active operator | furnace/session active、slot/material 合法 | 距离/维度缺 |
 | 13 | `AlchemyTakeBack` | block / `NearbyInteract` | 同目标/主世界 | active operator | furnace active、slot 可取 | 距离/维度缺 |
 | 14 | `AlchemyIgnite` | block / `NearbyInteract` | 同目标/主世界 | active operator | recipe/material/qi 前置 | 距离/维度缺 |

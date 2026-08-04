@@ -9,11 +9,102 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
-ENUM_SERDE_RE = re.compile(
-    r'#\[serde\(([^]]*)\)\]\s*pub enum ClientRequestV1\s*\{', re.MULTILINE
+ENUM_DECL_RE = re.compile(
+    r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{"
 )
+ATTRIBUTE_LINE_RE = re.compile(r"(?m)^[ \t]*#\[[^\n]*\][ \t]*(?:\n|$)")
 MATRIX_RE = re.compile(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|")
 VARIANT_DECL_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)\s*(.*)$")
+
+
+def _mask_rust_comments_and_strings(source: str) -> str:
+    masked = list(source)
+    length = len(source)
+
+    def blank(start: int, end: int) -> None:
+        for index in range(start, end):
+            if source[index] != "\n":
+                masked[index] = " "
+
+    index = 0
+    while index < length:
+        if source.startswith("//", index):
+            end = source.find("\n", index)
+            end = length if end == -1 else end
+            blank(index, end)
+            index = end
+            continue
+        if source.startswith("/*", index):
+            end = index + 2
+            comment_depth = 1
+            while end < length and comment_depth:
+                if source.startswith("/*", end):
+                    comment_depth += 1
+                    end += 2
+                elif source.startswith("*/", end):
+                    comment_depth -= 1
+                    end += 2
+                else:
+                    end += 1
+            blank(index, end)
+            index = end
+            continue
+
+        raw = re.match(r"(?:b)?r(#+)\"", source[index:]) or re.match(
+            r"(?:b)?r\"", source[index:]
+        )
+        if raw:
+            hashes = raw.group(1) if raw.lastindex else ""
+            delimiter = '"' + hashes
+            content_start = index + raw.end()
+            closing = source.find(delimiter, content_start)
+            end = length if closing == -1 else closing + len(delimiter)
+            blank(index, end)
+            index = end
+            continue
+
+        if source[index] == "'" and not re.match(r"'(?:\\.|[^'\\\n])'", source[index:]):
+            index += 1
+            continue
+        if source[index] in {'"', "'"}:
+            quote = source[index]
+            end = index + 1
+            while end < length:
+                if source[end] == "\\":
+                    end += 2
+                elif source[end] == quote:
+                    end += 1
+                    break
+                else:
+                    end += 1
+            blank(index, end)
+            index = end
+            continue
+        index += 1
+
+    return "".join(masked)
+
+
+def _enum_declaration(source: str) -> tuple[str, re.Match[str]]:
+    masked = _mask_rust_comments_and_strings(source)
+    declaration = ENUM_DECL_RE.search(masked)
+    if not declaration:
+        raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
+    return masked, declaration
+
+
+def _enum_serde_body(source: str, masked: str, declaration: re.Match[str]) -> str:
+    attributes: list[str] = []
+    cursor = declaration.start()
+    for match in reversed(list(ATTRIBUTE_LINE_RE.finditer(masked, 0, cursor))):
+        if masked[match.end() : cursor].strip():
+            break
+        attributes.insert(0, source[match.start() : match.end()])
+        cursor = match.start()
+    for attribute in attributes:
+        if serde := re.search(r"#\[serde\(([^]]*)\)\]", attribute):
+            return serde.group(1)
+    raise RuntimeError("ClientRequestV1 must declare a serde attribute")
 
 
 def _without_line_comment(line: str) -> str:
@@ -55,36 +146,42 @@ def _leading_attributes(code: str) -> tuple[list[str], str]:
 
 
 def parse_enum_variants(source: str) -> list[str]:
-    serde = ENUM_SERDE_RE.search(source)
-    if not serde or not re.search(r'\btag\s*=\s*"type"', serde.group(1)):
+    masked, declaration = _enum_declaration(source)
+    serde = _enum_serde_body(source, masked, declaration)
+    if not re.search(r'\btag\s*=\s*"type"', serde):
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
-    if not re.search(r'\brename_all\s*=\s*"snake_case"', serde.group(1)):
+    if not re.search(r'\brename_all\s*=\s*"snake_case"', serde):
         raise RuntimeError("ClientRequestV1 must use serde rename_all = \"snake_case\"")
 
     lines = source.splitlines()
+    masked_lines = masked.splitlines()
+    declaration_line = masked[: declaration.start()].count("\n")
     variants: list[str] = []
     inside = False
     depth = 0
     tuple_depth = 0
     pending_attributes: list[str] = []
 
-    for line in lines:
+    for line_number, (line, masked_line) in enumerate(zip(lines, masked_lines)):
         if not inside:
-            if line == "pub enum ClientRequestV1 {":
+            if line_number == declaration_line:
                 inside = True
                 depth = 1
             continue
 
         code = _without_line_comment(line).strip()
+        structural_code = masked_line.strip()
         if depth == 1 and tuple_depth:
-            tuple_depth += code.count("(") - code.count(")")
+            tuple_depth += structural_code.count("(") - structural_code.count(")")
             if tuple_depth < 0:
                 raise RuntimeError(f"unbalanced tuple variant syntax: {line!r}")
             continue
-        if depth == 1 and code == "}":
+        if depth == 1 and structural_code == "}":
             depth = 0
             break
-        if depth == 1 and code:
+        if depth == 1 and structural_code:
+            if code == ",":
+                continue
             attributes, code = _leading_attributes(code)
             pending_attributes.extend(attributes)
             if not code:
@@ -104,7 +201,7 @@ def parse_enum_variants(source: str) -> list[str]:
                 if tuple_depth < 0:
                     raise RuntimeError(f"unbalanced tuple variant syntax: {line!r}")
 
-        depth += code.count("{") - code.count("}")
+        depth += structural_code.count("{") - structural_code.count("}")
         if depth == 0:
             break
 

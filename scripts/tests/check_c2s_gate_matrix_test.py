@@ -42,6 +42,16 @@ class ParserTests(unittest.TestCase):
 """
         self.assertEqual(checker.parse_enum_variants(source), ["TupleVariant"])
 
+    def test_accepts_multiline_tuple_variant_with_separate_trailing_comma(self) -> None:
+        source = ENUM_PREFIX + """pub enum ClientRequestV1 {
+    TupleVariant(
+        u8,
+    )
+    ,
+}
+"""
+        self.assertEqual(checker.parse_enum_variants(source), ["TupleVariant"])
+
     def test_fails_closed_on_unknown_top_level_syntax(self) -> None:
         source = ENUM_PREFIX + """pub enum ClientRequestV1 {
     #[cfg(test)]
@@ -85,6 +95,17 @@ class ParserTests(unittest.TestCase):
 }
 """
         self.assertEqual(checker.parse_enum_variants(inline_cfg), ["Variant"])
+
+    def test_serde_contract_uses_real_enum_not_decoy_text(self) -> None:
+        source = """// #[serde(tag = \"type\", rename_all = \"snake_case\")] pub enum ClientRequestV1 { Decoy, }
+const DECOY: &str = \"#[serde(tag = \\\"type\\\", rename_all = \\\"snake_case\\\")] pub enum ClientRequestV1 { Decoy, }\";
+#[serde(tag = \"kind\", rename_all = \"snake_case\")]
+pub enum ClientRequestV1 {
+    Variant,
+}
+"""
+        with self.assertRaisesRegex(RuntimeError, 'tag = "type"'):
+            checker.parse_enum_variants(source)
 
     def test_main_rejects_each_contract_drift(self) -> None:
         baseline = {
