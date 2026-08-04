@@ -12,7 +12,7 @@
 
 ## 接入面
 
-- **进料**：`SkillRegistry`/`SkillDef`（既有）、R5 后的 qi 访问器（施法扣费）、R6 emit builder（cast_sync 走它）、R2 的 store 生命周期（client cast 状态店）。
+- **进料**：`SkillRegistry`/`SkillDef`（既有）；R5 qi 访问器、R6 emit builder、R2 store 生命周期是 production activation 的接缝输入，不是 contract-first 的启动门。
 - **出料**：cast_sync/S2C AV 事件 → client `VfxBootstrap`/`BongAnimationRegistry`/audio recipe/HUD/SkillIcon 单点绑定。
 - **共享类型**：`SkillAvBinding { anim, vfx_event, audio_recipe, hud_hint, icon }` 每招一条，注册即校验（缺任何一项 = 启动 fail-fast，对齐「招式 A/V 差异化」红线）；cast 生命周期枚举补 STOP/INTERRUPT 权威事件。
 - **worldview/AV 锚点**：每招独立可辨五件套是 CLAUDE.md 红线；audio 沿用 Pattern A（cast_center 施法快照，不读实时 Position）。
@@ -20,7 +20,7 @@
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：全部已注册招式普查（server 权威可达性 × client AV 五件套齐备度矩阵，#1249 已给出方法先例）；冻结 `SkillAvBinding` 与 cast_sync 契约增量。
-- ⬜ P1 契约落地：cast_sync 补 source/target/phase 字段（走 R6 契约流程）+ STOP 权威事件；`SkillAvBinding` 注册表 + fail-fast 校验上线（死注册项即启动报错）。
+- ⬜ P1 契约落地：contract-first 先补 cast_sync 的 source/target/phase 字段与 STOP/INTERRUPT 权威事件、`SkillAvBinding` 注册表及 fail-fast 校验；**这些 artifacts 的首次提交必须同时携 pin suite**：TypeBox 正例覆盖每个 phase/discriminant，反例覆盖 source/target/phase 任一缺失与 invalid/unknown phase；client reducer/state-machine 覆盖每条合法转换、非法转换拒绝及 STOP/INTERRUPT 终止路径；registry 覆盖五件套齐备成功与任一缺项 fail-fast。不得把这些 pins 延后到 P4 bot/e2e。production activation 仅按总纲 §3/§4.1 的跨轨顺序、ownership 与 atomicity invariants 放行，具体接缝与验收由 owner track plans 定义。
 - ⬜ P2 修复批次 A：双源去重（baomai-v3/tuike-v2）、错接纠正（dugu penetrate）、停止语义接线（tribulation brace/打坐腿 pitch 红线修正）。
 - ⬜ P3 修复批次 B：skillbar 定义源统一（丹道三招接入）、HUD 提示/图标补齐（dugu-v2、zhenmai sever 标记语义修正）、缺失动画 JSON 补齐（woliu voidpath 五招，遵守 PlayerAnimator 四大坑）。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
@@ -35,7 +35,7 @@ skeleton：dandao-basic-skillbar-bridge、dugu-v2-hud-skill-hint、skillbar-cast
 
 - 独占：server `combat/` 的 cast/AV emit 点、`skill/` 注册表、`network/cast_emit.rs`；client `combat/` handler/store 的 cast 部分、`VfxBootstrap`/动画注册的绑定结构。
 - 不碰：qi 扣费语义（R5 访问器，本轨消费）；emit 传输层（R6 builder，本轨消费）；FPV 手臂动画（fpv-cast-av plan 域）。
-- 依赖：基线等 #1287、#1249 merge；R5 P1、R6 P1、R2 P1 之后开工（Wave 2）。P0 普查可先行。
+- **依赖**：#1287、#1249 是基线；P0 与 P1 contract-first 可独立开工，不等待其他 track 的 production artifacts。production activation/cutover 只按总纲 §3 Wave 与 §4.1 的 ownership/atomicity invariants 放行；具体接缝、artifact 和验收由各 owner track plan 定义。P0 普查可先行。
 
 ## bot 验收场景
 
