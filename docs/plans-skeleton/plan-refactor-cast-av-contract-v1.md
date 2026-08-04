@@ -20,7 +20,7 @@
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：全部已注册招式普查（server 权威可达性 × client AV 五件套齐备度矩阵，#1249 已给出方法先例）；冻结 `SkillAvBinding` 与 cast_sync 契约增量。
-- ⬜ P1 契约落地：contract-first 先补 cast_sync 的 source/target/phase 字段与 STOP 权威事件、`SkillAvBinding` 注册表及 fail-fast 校验；production activation 仅按总纲 §3/§4.1 的跨轨顺序、ownership 与 atomicity invariants 放行，具体接缝与验收由 owner track plans 定义。
+- ⬜ P1 契约落地：contract-first 先补 cast_sync 的 source/target/phase 字段与 STOP/INTERRUPT 权威事件、`SkillAvBinding` 注册表及 fail-fast 校验；**这些 artifacts 的首次提交必须同时携 pin suite**：TypeBox 正例覆盖每个 phase/discriminant，反例覆盖 source/target/phase 任一缺失与 invalid/unknown phase；client reducer/state-machine 覆盖每条合法转换、非法转换拒绝及 STOP/INTERRUPT 终止路径；registry 覆盖五件套齐备成功与任一缺项 fail-fast。不得把这些 pins 延后到 P4 bot/e2e。production activation 仅按总纲 §3/§4.1 的跨轨顺序、ownership 与 atomicity invariants 放行，具体接缝与验收由 owner track plans 定义。
 - ⬜ P2 修复批次 A：双源去重（baomai-v3/tuike-v2）、错接纠正（dugu penetrate）、停止语义接线（tribulation brace/打坐腿 pitch 红线修正）。
 - ⬜ P3 修复批次 B：skillbar 定义源统一（丹道三招接入）、HUD 提示/图标补齐（dugu-v2、zhenmai sever 标记语义修正）、缺失动画 JSON 补齐（woliu voidpath 五招，遵守 PlayerAnimator 四大坑）。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。

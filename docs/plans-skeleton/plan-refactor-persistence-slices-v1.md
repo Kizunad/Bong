@@ -25,7 +25,7 @@
 - ⬜ P2 载入守护推广：全部玩家 slice（SkillSet/Wounds/状态 buff/身份键……）收编，#1290 模式全量落地；dropped-loot slice 的有界 hydration guard 依赖 R10 P1 已 merge 的容量契约：仅在该前置成立后引用 `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 与 `DroppedLootRegistry::try_insert/try_insert_batch`；超限进入统一 load-failure guard/只读降级并告警，禁止 `take(limit)` 截断、驱逐旧条目或以空 registry 覆盖数据库。在 R10 P1 未 merge 时，R3 P2 不得编译或复制临时常量。同步冻结并实现 spill/pickup persistence transaction/outbox seam：source mutation、attrited item、zone balance/qi ledger、drop insert/delete 与幂等 transaction id 构成一个 recoverable commit，且 crash/retry pins 常绿后才允许 R10 P2a 迁移 Public writer path；R10 P2b OwnerOnly private writers 另受 R10 P3、R4、R6 与 R3 P4 consumer gates 约束。
 - ⬜ P3 关服 flush + tick rebase 批次：shutdown flush registry 收编全部"节流落盘"域；绝对 tick 全部改相对基准；autosave/事件写入竞态互斥（coffin-autosave-inflight-race 模式）。
 - ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、状态效果、化虚冷却、灵眼、地表遗缴、散灵珠、可放置实体、dormant 往返身份完整性（heiwushi）等——逐个按 Slice 框架补表；P4 拆为两个独立 consumer 子批次：
-  - **dropped-loot hydration 子批次**：在 R10 P1 merge、R3 P2 persistence seam 与旧行 compatibility pins 就绪后，调用 `inventory::migration::migrate_legacy_dropped_loot_entry`，把旧 `dropped_loot.entry_json` 缺失字段补成 `owner = None`、`visibility = Public`，再反序列化为 `DroppedLootEntry`；此子批次先于 R6 P1 projection/page，且不等待 R10 P3/R5/R6 P4/R4。
+  - **dropped-loot hydration 子批次**：在 R10 P1 merge、R3 P2 persistence seam 与旧行 compatibility pins 就绪后，调用 `inventory::migration::migrate_legacy_dropped_loot_entry`，把旧 `dropped_loot.entry_json` 缺失字段补成 `owner = None`、`visibility = Public`，再反序列化为 `DroppedLootEntry`；此子批次先于 R6 P3 projection/page production activation，且不等待 R10 P3/R5/R6 P4/R4。
   - **inventory-layout overflow 子批次**：仅在 R10 P3 merge 后，调用 `inventory::migration::migrate_legacy_inventory_layout`，用玩家 identity、真实机制结算点/世界 position、dimension 组装 `SpillContext`，把 `MigrationOutcome::overflow` 通过 R10 capacity API 持久化到 durable registry。
   两类 consumer 仅在新 schema 与各自全部输出成功持久化后提交新行，缺上下文/容量/持久化或 JSON migration 失败则保留旧行并进入可重试 load guard；dropped-loot 子批次依赖 R10 P1，inventory-layout 子批次依赖 R10 P3，不得合并为一个跨越两者的门禁或另造容量常量。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
@@ -56,7 +56,7 @@ skeleton：coffin-autosave-inflight-race、identity-persist-key-mismatch、miner
 ## § P0 决议锚点（待 R3 P0 开工时补齐）
 
 - `MAX_DURABLE_DROPPED_LOOT_ENTRIES` 的引用门：R3 P2/P4 依赖 R10 P1 merge，R3 不复制常量或在此前编译引用。
-- dropped-loot hydration consumer：R3 P4 在 R10 P1 migration helper、R3 P2 persistence seam 与旧行 compatibility pins 就绪后执行，且必须先于 R6 P1 projection/page；失败保留旧行并可重试。
+- dropped-loot hydration consumer：R3 P4 在 R10 P1 migration helper、R3 P2 persistence seam 与旧行 compatibility pins 就绪后执行，且必须先于 R6 P3 projection/page production activation；失败保留旧行并可重试。
 - inventory-layout migration consumer：R3 P4 的独立 overflow 子批次在 R10 P3 merge 后，使用真实 `SpillContext` 完成 overflow 持久化；失败保留旧行并可重试。
 
 ## 验收测试声明

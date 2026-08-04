@@ -54,7 +54,7 @@
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工；R6 的 contract-first 工作与 R9 的 cast domain contract-first 工作均可在本波次按各自 plan 开工，不等待 production activation 条件。
 - **Wave 1**：R6、R7（R2 合入后）、R1（R3 P1 合入后）按各自 plan 推进；涉及 R2-owned production 接缝的工作须等待 R2 P1。
-- **Wave 2**：R4、R9 production activation（R5、R6、R2 的所属责任按各自 plan 就绪后，服从 §4.1 的 ownership 与 atomicity invariants）、R10（R3 P1 后）。**R6 dropped-loot production activation merge unit 仅在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后放行；此前只允许 declared/unwired/test-only 的 contract 与 pin artifacts。**本表只裁决跨轨顺序与 activation 边界；各轨具体 deliverable inventory、phase mapping 与验收证据由各自 plan 定义，不在总纲重述。
+- **Wave 2**：R4、R9 production activation（R5、R6、R2 的所属责任按各自 plan 就绪后，服从 §4.1 的 ownership 与 atomicity invariants）、R10（R3 P1 后）。**R6 dropped-loot P3 production activation merge unit 仅在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后放行；此前只允许 declared/unwired/test-only 的 contract 与 pin artifacts。R10 P2b `OwnerOnly` private-writer activation 必须在该 R6 P3 merge unit 合入后放行，不得把 R6 P1/P2 的 unwired artifacts 当作 production consumer。**本表只裁决跨轨顺序与 activation 边界；各轨具体 deliverable inventory、phase mapping 与验收证据由各自 plan 定义，不在总纲重述。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 
