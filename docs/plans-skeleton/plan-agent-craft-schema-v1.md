@@ -32,13 +32,23 @@ P0 必须枚举每个 row 的 source→export→`ClientRequestV1`/`ServerDataV1`
 - A-02/A-03 只含 required `session_key + generation`，不得夹带 target 或替代 Cancel。
 - A-04 保留显式取消语义与既有 production discriminant；字段 inventory 必须与 proto/Rust live contract 对拍后冻结。
 - A-05 `WorkbenchOpen.entity_id` 是 A-01 `workbench_key` 的 producer；TypeBox/JSON 使用 decimal string，并锁 `0/1/u64::MAX`。
-- A-06 覆盖 R1 `Running | Paused | Suspended | HandoffPreparing | Ended` 的 client projection；delivery obligation 状态不伪装成 resumable gameplay phase。逐 phase 锁定 identity/generation required/forbidden 组合。
+- A-06 的五个 phase 都 required `session_key + generation`，且禁止 delivery obligation 字段。`Paused` 是唯一 Resume-eligible phase；`Running` 表示已活动且重复 Resume 不得重启；`Suspended` 必须等待 guarded restore 后由新 `Paused` projection 开放 Resume；`HandoffPreparing` 与 `Ended` 均 terminal/non-resumable。
 
 ## 3. 阶段交付物
 
 ### P1 — TypeBox domain content
 
-在 `agent/packages/schema/src/{craft.ts,client-request.ts,server-data.ts,schema-registry.ts,index.ts}` 落 A-01..A-06，注册/export 到相应 envelope 与 registry。正反样本覆盖 target/key、Pause/Resume identity、Cancel、WorkbenchOpen producer 和 StateV2 phase。P1 只可声明 contract-first，不宣称 producer→consumer production 可达。
+在 `agent/packages/schema/src/{craft.ts,client-request.ts,server-data.ts,schema-registry.ts,index.ts}` 落 A-01..A-06，注册/export 到相应 envelope 与 registry。正反样本覆盖 target/key、Pause/Resume identity、Cancel、WorkbenchOpen producer，并按下表逐行 pin StateV2：
+
+| phase | identity rule | client intent rule |
+|---|---|---|
+| `Running` | required matching `session_key + generation` | non-resumable；重复 Resume typed reject/no restart |
+| `Paused` | required matching `session_key + generation` | 唯一 Resume-eligible；只允许同 identity/generation 恰一次 Resume |
+| `Suspended` | required matching `session_key + generation` | non-resumable；等待 guarded restore 后新的 `Paused` projection |
+| `HandoffPreparing` | required matching `session_key + generation` | terminalizing；Resume/Pause/Cancel 均不得重新打开 session |
+| `Ended` | required matching `session_key + generation` | terminal；所有 gameplay intent stale reject |
+
+每个 phase 各有 valid sample，并分别覆盖缺 `session_key`、缺 `generation`、stale generation、mismatched identity；含 obligation phase/字段或未知 phase 必须拒绝。P1 只可声明 contract-first，不宣称 producer→consumer production 可达。
 
 ### P2 — generated / dist
 
@@ -51,7 +61,7 @@ P0 必须枚举每个 row 的 source→export→`ClientRequestV1`/`ServerDataV1`
 ## 4. 验收与边界
 
 - 必跑 `cd agent/packages/schema && npm test` 与 `cd agent && npm run build -w @bong/schema`。
-- acceptance 逐 A-01..A-06 证明正反 sample、union membership、registry membership、freshness、generated/dist/runtime import；count 断言从 registry 派生，不出现手写 113/116。
+- acceptance 逐 A-01..A-06 证明正反 sample、union membership、registry membership、freshness、generated/dist/runtime import；A-06 必须逐 `Running/Paused/Suspended/HandoffPreparing/Ended` 执行 §3 phase/identity/client-intent 矩阵的全部正反 case，不能用通用样本代替；count 断言从 registry 派生，不出现手写 113/116。
 - 不改 proto、Rust、Java、gameplay handler/session；不吸收全量 schema drift plan。若无关 drift 阻断 envelope freshness，记录真实 owner/prerequisite，不擅自扩 scope。
 - 跨轨 owner/order/cutover 仅引用 master §3/§4.1 与 PR 1902，不在本 plan 复制依赖箭头。
 

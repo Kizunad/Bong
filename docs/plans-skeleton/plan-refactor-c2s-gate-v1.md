@@ -20,7 +20,8 @@
 
 - ⬜ P0 设计收口 + 吸收清单验真：分别普查 production Rust match 与 TypeBox authoritative registry，记录 drift owner；每个 registry-derived C2S variant 标注门禁四元组，冻结 `GateSpec` 与拒绝回执。
 - ⬜ P1 门禁中间件落地：gate 层上线，先给已知漏洞簇挂 spec；craft production decode/dispatch 只在 master M-07/M-10 activation 时接入 A-CS A-01..A-04，runtime key negatives 属本阶段 owner evidence。contract-first handler declarations 可先合入，但不以未激活 stub 宣称 live。
-- ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住；pickup handler 的 authorization/txn/receipt 接线只在 master M-14/M-15 与 R5 ledger artifact 可用后实施，不得以 mock 或旧 schema 接线。- ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：authoritative registry-derived C2S type set 全部声明门禁（含显式 `no_gate`）；删除重复距离/维度判断。
+- ⬜ P2 巨石拆分批次 A：巨型 match 拆为按域 handler 注册表（combat/production/world/social/npc 五组），行为不变，bot 场景锁住；pickup handler 的 authorization/txn/receipt 接线只在 master M-14/M-15 与 R5 ledger artifact 可用后实施，不得以 mock 或旧 schema 接线。
+- ⬜ P3 巨石拆分批次 B + 全量挂 spec + 删旧：authoritative registry-derived C2S type set 全部声明门禁（含显式 `no_gate`）；删除重复距离/维度判断。
 - ⬜ P4 bot 验收 + 吸收 plan 批量归档。
 
 ## 吸收清单（短名省略 plan-bughunt- 前缀与 -v1 后缀）
