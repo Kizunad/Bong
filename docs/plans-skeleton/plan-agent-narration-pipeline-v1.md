@@ -1,6 +1,6 @@
 # plan-agent-narration-pipeline-v1（骨架）
 
-> **骨架（草案）**。一句话主题：把 Tiandao 的 narration 从“各 runtime 各自 drain、各自改状态、各自 Redis publish”收口为一条可去重、可校验、可路由、可记录 publisher-side resolve，且支持 pending store 写入后的内部恢复/重试的 agent 发布事务管道；处理 cluster 3 排除已 falsified #1551 后的 29 个 confirmed source，并把与 bounded concurrency 交付物同根的跨簇 #1702 纳入本 plan，共 30 个 confirmed source，其中 4 个是 #1470 的重复证据，另有 5 个跨簇 follow-up 不计入本 plan 账本。
+> **骨架（草案）**。一句话主题：把 Tiandao 的 narration 从“各 runtime 各自 drain、各自改状态、各自 Redis publish”收口为一条可去重、可校验、可路由、可记录 publisher-side resolve，且支持 pending store 写入后的内部恢复/重试的 agent 发布事务管道；处理 cluster 3 排除已 falsified #1551、并将 #1590 复核为 documented-compatible route 后的 28 个 confirmed source，并把与 bounded concurrency 交付物同根的跨簇 #1702 纳入本 plan，共 29 个 confirmed source，其中 4 个是 #1470 的重复证据，另有 5 个跨簇 follow-up 不计入本 plan 账本。
 
 ## 阶段总览
 
@@ -26,9 +26,10 @@
 
 ### 0.1 来源与实现 owner
 
-- **来源**：2026-08-03 flash-review cluster 3；合并汇总将其归类为“agent 发布/叙事管道”。triage 原始 source ledger 有 30 个 issue ID；其中 #1551 已由 shard-2 判定为 falsified，故其余 29 个为 cluster 3 confirmed source；这 29 个中 #1475/#1509/#1527/#1538 是 #1470 的重复证据，并非 4 个独立根因。跨簇 #1702 与本 plan 的 bounded concurrency 交付物完全重合，故一并纳入，共 30 个 confirmed source。其余 5 个真实但属于其他 cluster 的编号见 §4.4，不计入本 plan 账本。
+- **来源**：2026-08-03 flash-review cluster 3；合并汇总将其归类为“agent 发布/叙事管道”。triage 原始 source ledger 有 30 个 issue ID；其中 #1551 已由 shard-2 判定为 falsified，#1590 经本轮复核确认其 `offline:<name>` producer representation 与 server selector 的 documented normalization 相容，故当前 cluster 3 中保留 28 个 confirmed source；这 28 个中 #1475/#1509/#1527/#1538 是 #1470 的重复证据，并非 4 个独立根因。跨簇 #1702 与本 plan 的 bounded concurrency 交付物完全重合，故一并纳入，共 29 个 confirmed source。其余 5 个真实但属于其他 cluster 的编号见 §4.4，不计入本 plan 账本。
 - **唯一实现 owner**：`agent`（Tiandao runtime / schema / Redis IPC）；不归入 R1-R10 server/client 重构轨道。
-- **实现形态**：先作为共享 agent 基础设施 plan，再由各 feature narration runtime 逐个迁移；不是把 30 个 issue 分成 30 个互相复制的修复出口。
+- **Master matrix note**：master ownership-matrix registration remains pending the separate adjudication PR；本 plan 不修改该被 contended 的 master matrix 文件。
+- **实现形态**：先作为共享 agent 基础设施 plan，再由各 feature narration runtime 逐个迁移；不是把 29 个 issue 分成 29 个互相复制的修复出口。
 - **流程前置已核对（2026-08-04）**：本 skeleton 创建提交树内的根 `CLAUDE.md`「Plan 工作流」与 `docs/CLAUDE.md` §§五-六 均存在且已读取；头部接入面与本文 §10 按其强制结构补齐。
 
 ### 0.2 目标接入面
@@ -106,7 +107,7 @@
 | #1528 | `meridian-severed-narration.ts:79-81` 给 player target 加 `meridian_severed:` 前缀，非 server 认可的 player target。 | route 阶段必须规范化 target，禁止 renderer 自造 wire 格式。 |
 | #1532 | `zhenfa-v2-runtime.ts:41-46` event 没 zone 时默认 broadcast，包括隐藏 zhenfa deployment。 | 缺目标不能自动升级为 broadcast，必须 fail-closed 或显式 policy。 |
 | #1587 | `mutation-narration-runtime.ts:57-60` 对 player/zone 都使用 `mutation:<entity_id>`。 | scope 与 target 的格式需由集中 route policy 生成。 |
-| #1590 | `halfstep-rechallenge-narration.ts:167-169` 直接转发 raw `payload.char_id`，不是 normalized player target。 | player target 必须以 canonical identity/格式生成。 |
+| #1590 | `halfstep-rechallenge-narration.ts:167-169` forwards the documented `offline:<name>` player representation; `server/src/network/agent_bridge.rs:285-334` normalizes the alias and matches normalized usernames/char IDs. | This producer/consumer contract is already compatible; retain the documented representation and add a positive compatibility pin rather than rewriting it as a raw-ID bug. |
 | #1607 | `query-zone-history.ts:123-127` 将 bounded `localDelta` 与 full-history trend delta 并列展示。 | route/context 输入必须携带同一时间窗口语义，避免 narration 误读状态。 |
 | #1738 | `scattered-cultivator-narration.ts::renderNpcIntrusionNarration` 广播 SpiritNiche 坐标，违反 revealed/revealed_by 隐私。 | 当前输入与 selector 无法执行该策略；作为 §8.9 的 authorization producer/schema/enforcing-consumer contract gap 保持 open。 |
 
@@ -125,7 +126,7 @@
 | #1738 | narration recipient scope 泄露隐私。 | 当前幂等/route 无 authorization 输入或 enforcing consumer；不得在本 plan 内伪造 recipient key，等待 §8.9 完整契约。 |
 | #1746 | `world-model.ts::cloneZoneSnapshot` 丢失 context/persistence 使用的 `ZoneSnapshot.status`。 | snapshot clone 是 pipeline 输入的一部分，字段丢失必须在 ingress/context contract pin。 |
 
-> 注：#1616、#1619、#1738 等可同时落入多个调查分类；但 #1738 因缺 authorization 数据和 enforcing consumer，不进入本 plan P 阶段锁，只保留为 §8 contract gap。正式账本为 cluster 3 排除 falsified #1551 后的 29 个 confirmed source，加上由 bounded concurrency 交付物直接吸收的跨簇 #1702，共 30 个 confirmed source；其中 #1475/#1509/#1527/#1538 是 #1470 的重复证据。其余 5 个跨簇 follow-up 见 §4.4，不计入本 plan source ledger。
+> 注：#1616、#1619、#1738 等可同时落入多个调查分类；但 #1738 因缺 authorization 数据和 enforcing consumer，不进入本 plan P 阶段锁，只保留为 §8 contract gap。正式账本为 cluster 3 排除 falsified #1551 与 documented-compatible #1590 后的 28 个 confirmed source，加上由 bounded concurrency 交付物直接吸收的跨簇 #1702，共 29 个 confirmed source；其中 #1475/#1509/#1527/#1538 是 #1470 的重复证据。其余 5 个跨簇 follow-up 见 §4.4，不计入本 plan source ledger。
 
 ## 4. Source issue 清单与唯一聚类
 
@@ -133,21 +134,23 @@
 
 `#1470 #1475 #1509 #1527 #1538`
 
-### 4.2 narration-routing-and-delivery（15 个 confirmed source ID）
+### 4.2 narration-routing-and-delivery（14 个 confirmed source ID）
 
-`#1481 #1486 #1495 #1510 #1518 #1525 #1528 #1530 #1532 #1567 #1581 #1587 #1590 #1607 #1702`
+`#1481 #1486 #1495 #1510 #1518 #1525 #1528 #1530 #1532 #1567 #1581 #1587 #1607 #1702`
 
 `#1551` 不在此清单：shard-2 判定其为 falsified，仅保留在 §3.2 的 regression note。
+
+`#1590` 不在此清单：本轮复核确认其 `offline:<name>` producer representation 与 server selector 的 documented normalization 相容，保留为 compatibility pin，不进入 P4 raw-ID 修复范围。
 
 ### 4.3 agent-publish-idempotency（10 个 confirmed source ID）
 
 `#1616 #1619 #1654 #1659 #1673 #1674 #1675 #1679 #1738 #1746`
 
-**正式 source ledger 计数：cluster 3 有 30 个原始 issue ID，其中 #1551 已 falsified，余 29 个 confirmed source ID；另纳入与 bounded concurrency 交付物直接重合的跨簇 #1702，因此本 plan 共 30 个 confirmed source ID。30 个中 4 个是 #1470 的重复证据，26 个是非重复 confirmed source。** 不计入本 plan 的其余 5 个跨簇 follow-up 见 §4.4；不在 skeleton 阶段关闭或宣称任何 source 已修复。
+**正式 source ledger 计数：cluster 3 有 30 个原始 issue ID，其中 #1551 已 falsified、#1590 经复核为 documented-compatible，余 28 个 confirmed source ID；另纳入与 bounded concurrency 交付物直接重合的跨簇 #1702，因此本 plan 共 29 个 confirmed source ID。29 个中 4 个是 #1470 的重复证据，25 个是非重复 confirmed source。** 不计入本 plan 的其余 5 个跨簇 follow-up 见 §4.4；不在 skeleton 阶段关闭或宣称任何 source 已修复。
 
 ### 4.4 跨簇 follow-up（5 个；不属于本 plan source ledger，也不进入 P 阶段锁）
 
-以下编号在 shard-3 中是真实的 agent/narration 相关 finding，但不属于本次 plan 正式 source 清单。它们只作为后续 owner 的输入，不计入本 plan 的 30 个 confirmed source 或 acceptance 的“全部覆盖”统计：
+以下编号在 shard-3 中是真实的 agent/narration 相关 finding，但不属于本次 plan 正式 source 清单。它们只作为后续 owner 的输入，不计入本 plan 的 29 个 confirmed source 或 acceptance 的“全部覆盖”统计：
 
 | Issue | shard cluster | follow-up 边界 |
 |---:|---|---|
@@ -207,11 +210,11 @@
 
 1. route policy 根据已验证 payload 和当前 world state 生成现有 `NarrationV1` 可表达的 canonical `(scope, target)`；renderer 不得自行拼 wire target。
 2. 对 `player`、`zone`、`broadcast`、内部/system scope 建显式 allowed transition；缺 zone、无法解析 player 或隐藏事件不能自动升级为 broadcast。
-3. publish 前对拍现有 server selector：zone target 必须是可命中的真实 zone，player target 必须是 normalized identity。
+3. publish 前以现有 server selector 兼容矩阵对拍：必须有合法 `player`、`zone`、`broadcast` 三条正向集成案例；`player` 案例同时 pin documented `offline:<name>` producer representation 经 server normalization 后可命中 canonical identity。缺失或非法 target 的负向案例必须 fail-closed，不能隐式 broadcast。
 4. 匿名化先于 route，按最长/禁止集合确定性处理；context/window 字段保持同一时间范围和 tick epoch。
 5. 当前 `NarrationV1`/Rust mirror/server selector 均无 `dimension` 或 recipient authorization contract；P4 不声称 dimension gate，也不承接 SpiritNiche `revealed/revealed_by`。#1738 保留在 source ledger，但实现锁与关闭证据必须等待 §8 的 schema + producer authz data + enforcing consumer 决议。
 
-**本阶段锁定**：#1525、#1528、#1532、#1587、#1590、#1607。#1738 仅登记 contract gap，不进入 P 阶段锁。
+**本阶段锁定**：#1525、#1528、#1532、#1587、#1607；#1590 作为 documented `offline:<name>` → normalized player identity 的 compatibility pin 验证，不是 raw-ID 修复项。#1738 仅登记 contract gap，不进入 P 阶段锁。
 
 ### 5.6 Stage 5 — publish confirm（唯一出口、确认与取证）
 
@@ -234,7 +237,7 @@
 ### P0：收口契约与吸收边界
 
 - [ ] 复核本 skeleton 创建提交树内根 `CLAUDE.md`、`docs/CLAUDE.md` §§五-六 的读取证据，并确认 implementation owner 为 `agent`。
-- [ ] 建立 30 个 confirmed source issue 的唯一映射表，标明 shared infrastructure owner；其中 4 个是 #1470 的重复证据，#1702 由 bounded concurrency 交付物直接吸收；另将 §4.4 的 5 个跨簇 follow-up 单独登记为外部 owner，不纳入本 plan acceptance。
+- [ ] 建立 29 个 confirmed source issue 的唯一映射表，标明 shared infrastructure owner；其中 4 个是 #1470 的重复证据，#1702 由 bounded concurrency 交付物直接吸收，#1590 以 documented-compatible compatibility pin 记录；另将 §4.4 的 5 个跨簇 follow-up 单独登记为外部 owner，不纳入本 plan acceptance。
 - [ ] 盘点所有 Tiandao narration Redis channel、`RuntimeRedis` drain、直接 `publishNarrations` callsite、业务状态/cooldown/cursor 写点。
 - [ ] 定义 envelope、event_id、dedupe_key、ordering_key、tick_epoch、ack/state transition 及 pending/dead-letter 语义。
 - [ ] 定义现有 server selector 可接受的 canonical scope/target contract；dimension、SpiritNiche recipient authorization 和 consumed receipt 作为 §8 明示 contract gap，不进入当前 P 阶段实现锁。
@@ -243,7 +246,7 @@
 ### P1：有界 ingest 与 pending store
 
 - [ ] 统一 Redis ingress adapter，禁止 callback 内直接 drain+LLM+publish。
-- [ ] 为 chat/NPC/feature narration channel 接入 pending queue/store，支持 pending 写入后的内部重启恢复、失败 requeue 和 bounded backpressure；普通 Pub/Sub ingress 是 at-most-once，pre-ingest crash、subscriber delivery 和 publisher resolve 后的重放不在保证内。
+- [ ] pending store 使用持久、可跨进程恢复的实现，支持 pending 写入后的内部重启恢复、失败 requeue 和 bounded backpressure；普通 Pub/Sub ingress 是 at-most-once，pre-ingest crash、subscriber delivery 和 publisher resolve 后的重放不在保证内。
 - [ ] 为每个 channel/kind 注册 source、validator、ordering key、最大 payload/context 和失败策略。
 - [ ] 覆盖 #1510、#1518、#1673 的测试：处理失败不能使已摄入事件静默消失，单条 fallback 不影响同批其他事件。
 
@@ -263,10 +266,10 @@
 
 ### P4：canonical scope/target route
 
-- [ ] 统一生成 player/zone/broadcast target，删除 runtime 自拼 prefix/raw id 的路径。
+- [ ] 统一生成 player/zone/broadcast target，删除 runtime 自拼 prefix/raw id 的路径；保留 documented `offline:<name>` producer representation，并由 server selector 的 normalization 兼容消费。
 - [ ] route 前置 scope policy 与匿名化；缺 zone/target fail-closed。
-- [ ] 加现有 server selector compatibility tests，确保 zone 与 player-target narration 真能命中消费者。
-- [ ] 覆盖 #1525、#1528、#1532、#1587、#1590、#1607；#1738 等待 §8 authorization contract 决议，不得以本阶段完成为由关闭。
+- [ ] 加现有 server selector compatibility tests：至少一个 canonical player 正向案例、一个 canonical zone 正向案例、一个合法 broadcast 正向案例，以及 missing/invalid target fail-closed 负向案例；`offline:<name>` player 案例必须验证 normalization 后命中消费者。
+- [ ] 覆盖 #1525、#1528、#1532、#1587、#1607；#1590 仅作为 documented-compatible compatibility pin 验证，不作为 raw-ID 修复交付物；#1738 等待 §8 authorization contract 决议，不得以本阶段完成为由关闭。
 
 ### P5：publish confirm、迁移清理与集成验收
 
@@ -290,7 +293,7 @@
 
 - 每条 source payload 先通过对应 payload validator；renderer 构造的发布对象再通过 NarrationV1 validator。非法 style、超长文本、非法 nullable、未知 variant、无界上下文均在 publish 前被拒绝或转 bounded fallback。
 
-- `scope=zone` 的 target 必须是 server selector 可命中的 canonical zone；`scope=player` 必须是 normalized player identity；隐藏/无 target 事件不能隐式变成 broadcast。
+- `scope=zone` 的 target 必须是 server selector 可命中的 canonical zone；`scope=player` 必须是 normalized player identity，并以 documented `offline:<name>` producer representation 的正向兼容案例锁住 normalization；`scope=broadcast` 必须有合法 broadcast 正向集成案例；缺失或非法 target、隐藏事件不能隐式变成 broadcast。
 - 本 plan 只验收现有 `scope/target` route；当前 contract 无 dimension/recipient policy 字段，且无 SpiritNiche authorization data/enforcing consumer，因此不宣称 dimension gate 或 #1738 privacy closure。两项保持 §8 contract gap 与 open source issue。
 
 - agent producer/consumer schema 注册表与 server event producer 对拍通过；缺 validator、死 event name、Rust `Option`/JSON `null` 漂移在测试或启动关口暴露。
@@ -299,14 +302,16 @@
 
 - `cd agent/packages/tiandao && npm test` 通过，覆盖每个 pipeline state、错误分支、重试、重复、乱序、空队列、满队列、重启恢复和 route fail-closed。
 - `cd agent && npm run build` 通过；若 schema source 发生改动，先重建 `@bong/schema` dist，再验证 tiandao import。
-- Redis 集成测试至少覆盖：publish failure/retry、同 key pipeline dedupe、批量 malformed item isolation、tick epoch restart、canonical zone/player target、零 subscriber 的 resolve 语义、resolve 后 crash 的重复边界，以及 pending 写入后的内部重启恢复；测试明确不把 Pub/Sub pre-ingest replay、subscriber delivery ack、single visible side effect、dimension routing、SpiritNiche recipient authz 或 server consumed receipt 伪装成现有能力。
+- Redis 集成测试至少覆盖：publish failure/retry、同 key pipeline dedupe、批量 malformed item isolation、tick epoch restart、canonical zone/player target、合法 broadcast target、missing/invalid target fail-closed、`offline:<name>` player normalization、零 subscriber 的 resolve 语义、resolve 后 crash 的重复边界，以及 pending 写入后的内部重启恢复；测试明确不把 Pub/Sub pre-ingest replay、subscriber delivery ack、single visible side effect、dimension routing、SpiritNiche recipient authz 或 server consumed receipt 伪装成现有能力。
 - dead-letter boundedness 测试验证：malformed/publish-exhaustion/queue-overflow 终态不会超过配置的最大 item/byte 容量；TTL/retention 到期会清理或归档；容量已满时执行冻结的 overflow policy 并发出可查询 telemetry，不能静默无限增长。
 - 生产代码中不存在绕过集中 publisher 的 direct `publishNarrations` 或等价 Redis publish 调用；扫描结果与集中注册表一致。
-- 30 个 confirmed source issue 都有唯一映射：#1475/#1509/#1527/#1538 作为 #1470 的重复证据共享根因，#1702 由 bounded concurrency 交付物覆盖；可实现的 source 需有修复 commit/测试证据。#1738 因明确 contract gap 保持 open，不得以 plan 归档代替实现关闭。§4.4 的 5 个跨簇 follow-up 不计入本 plan acceptance，由各自 owner 提供独立证据。
+- 29 个 confirmed source issue 都有唯一映射：#1475/#1509/#1527/#1538 作为 #1470 的重复证据共享根因，#1702 由 bounded concurrency 交付物覆盖，#1590 以 documented-compatible `offline:<name>` normalization pin 记录；可实现的 source 需有修复 commit/测试证据。#1738 因明确 contract gap 保持 open，不得以 plan 归档代替实现关闭。§4.4 的 5 个跨簇 follow-up 不计入本 plan acceptance，由各自 owner 提供独立证据。
 
-## 8. Open questions（进入 P0 前必须收口）
+## 8. Open questions（P0 内收口；P0 退出前冻结依赖决策）
 
-1. **durable transport 选项**：本 plan 可用内存或持久 pending store，但只能恢复已写入 pending 的事件。普通 Redis Pub/Sub ingress 是 at-most-once；`PUBLISH` resolve 只表示 Redis client-side 调用完成，不能证明 subscriber delivery。若未来要求覆盖 pending 写入前的 crash、consumer ack 或 receiver-side replay，必须将对应 server producer 与 agent consumer 一并迁移到 Redis Streams/consumer group（或等价 durable claim/ack transport），并确定 retention、redelivery、claim timeout、consumer group 与清理责任；不能仅换 pending store 就宣称 pre-ingest replay 或 lossless delivery。
+本节不构成 P0 entry blocker。P0 可以在 owner、source ledger、现有 selector、envelope/state 边界和依赖盘点完成后进入；P0 的退出门才检查本节中标为 `DECISION-NEEDED`、且由 P0 负责冻结的 F06/F08/F09 及相关容量/生命周期参数。未在 P0 退出前收口的决定不得被 P1/P2/P4/P5 假设或消费；F05 仍保持 deferred/open，不能标记为已关闭。
+
+1. **durable transport 选项**：满足本 plan 的 pending/restart recovery contract 的 authoritative pending store 必须是持久、可跨进程恢复的实现；仅进程内 memory queue 不满足该合同。它只能恢复已成功写入 pending 的事件。普通 Redis Pub/Sub ingress 是 at-most-once；`PUBLISH` resolve 只表示 Redis client-side 调用完成，不能证明 subscriber delivery。若未来要求覆盖 pending 写入前的 crash、consumer ack 或 receiver-side replay，必须将对应 server producer 与 agent consumer 一并迁移到 Redis Streams/consumer group（或等价 durable claim/ack transport），并确定 retention、redelivery、claim timeout、consumer group 与清理责任；不能仅换 pending store 就宣称 pre-ingest replay 或 lossless delivery。
 2. **可选 consumed receipt 与可见副作用去重**：本 plan 以 publisher-side best-effort resolve 的 `published` 为 terminal in-scope state，不把它当作 server consumed、recipient selected 或 client displayed。若未来需要证明 server 已消费并保证同一事件只有一个可见 narration side effect，必须新增 correlated receipt wire contract（event/correlation id）、server receipt producer、receiver dedupe、agent receipt consumer、超时/重复语义及跨栈集成测试；在该完整生产链落地前，`consumed` 不得成为必选状态或 pending 删除前置。
 3. **dead-letter 生命周期与容量**：所有 publish exhaustion、malformed input 和 queue-overflow 进入 dead-letter 的路径必须共用一个有界策略。P0 必须冻结最大 item 数或字节数、单条记录最大 payload、retention/TTL、清理/归档 owner、容量达到上限时的 overflow policy（reject-and-metric、覆盖最旧记录或暂停新写入，三者择一并说明取舍）以及 `dead_letter_overflow`/eviction telemetry；达到上限后不得无限追加、静默丢弃或回到无界 pending。测试必须持续注入 terminal failure，证明 dead-letter 总量受上限约束、TTL 可清理/归档且 overflow 行为可观测。
 4. **命名与 owner**：统一 pipeline 应落在 `agent/packages/tiandao/src/` 哪个模块/类名；`RuntimeRedis` 现有 API 是适配层还是应被替换？需要避免新建第二套 runtime abstraction。
@@ -350,12 +355,12 @@
 
 ### 10.2 PR 序列（前一 PR merge 后才开下一 PR）
 
-1. **PR-1 / P0 契约盘点**：注册表、source ledger、envelope/state、现有 scope/target selector pin；冻结 F06/F08/F09。
-2. **PR-2 / P1 ingest**：统一 ingress 与 bounded pending store，只验收 pending 写入后的重启恢复，明确 Pub/Sub pre-ingest 不可恢复。
-3. **PR-3 / P2 dedupe/concurrency**：稳定 key、per-key ordering、全局 capacity/concurrency，覆盖 #1486/#1619/#1702。
-4. **PR-4 / P3 validate**：source payload validation → renderer → NarrationV1 output validation，补齐 validator registry。
-5. **PR-5 / P4 route**：只实现现有 scope/target canonical route 与匿名化；不伪造 dimension 或 SpiritNiche recipient contract。
-6. **PR-6 / P5 publish/migration**：publisher-side `published` state、retry/dead-letter/metrics、旧直发迁移与 agent/Redis 集成验收；不把 resolve 当作 subscriber ack 或 single visible side effect 证明；#1738 保持 open。
+1. **P0 / contract inventory**：owner、source ledger、envelope/state、现有 scope/target selector pin；P0 内收口 F06/F08/F09 及其他明确标为 P0-owned 的决定。P0 entry 不要求这些决定事先完成；P0 exit 必须完成并提供协议与测试矩阵，否则不得进入依赖阶段。
+2. **P1 / ingest**：统一 ingress 与 bounded persistent pending store，只验收 pending 写入后的重启恢复，明确 Pub/Sub pre-ingest 不可恢复。
+3. **P2 / dedupe/concurrency**：稳定 key、per-key ordering、全局 capacity/concurrency，覆盖 #1486/#1619/#1702。
+4. **P3 / validate**：source payload validation → renderer → NarrationV1 output validation，补齐 validator registry。
+5. **P4 / route**：只实现现有 scope/target canonical route 与匿名化；不伪造 dimension 或 SpiritNiche recipient contract。
+6. **P5 / publish/migration**：publisher-side `published` state、retry/dead-letter/metrics、旧直发迁移与 agent/Redis 集成验收；不把 resolve 当作 subscriber ack 或 single visible side effect 证明；#1738 保持 open。
 
 ### 10.3 每 PR 的验证与文档更新
 
