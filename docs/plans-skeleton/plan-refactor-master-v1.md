@@ -52,9 +52,9 @@
 
 **本节 Wave 表是全部轨道 inter-track ordering/start/cutover claims 的唯一权威（SOLE authority）**；各轨 plan 只能引用本节已有顺序，不得自行新增跨轨前置。需新增或改变顺序时先 amendment 本节，再同步子 plan。
 
-- **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
-- **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
-- **Wave 2**：R4（#1287 + R6 P1 后）、R9 contract-only（R5 P1 + R6 P2 + R2 P1 后；只可合入 cast TypeBox 内容、reducer/状态机与未启用声明，不宣称 live reachable）、R10（R3 P1 后）。R9 production cutover 另需 R6 generation/transport artifacts 就绪，并按 §4.1 与 R6 在同一 activation merge unit 接通；不得把“可开始 contract”误写成“可独立完成 live cutover”。
+- **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工；R6 的 schema canonical content 消费、generation pipeline 与 contract-first stub，以及 R9 的 canonical cast TypeBox 内容、reducer/状态机、tests 与未启用声明可在本波次合入，不等待 production artifacts。
+- **Wave 1**：R6 的 production bridge/router 接线（R2 P1 接缝就绪后）、R7（R2 合入后）、R1（R3 P1 合入后）。
+- **Wave 2**：R4（#1287 + R6 P1 后）、R9 production activation（R5 P1、R6 generation/transport artifacts 与 R2 P1 相关接缝就绪后，按 §4.1 与 R6 在同一 activation merge unit 接通）、R10（R3 P1 后）。R6 的 dropped-loot projection/page private path 是 scoped production cutover，须在 R10 P2a owner/visibility provider 与 R3 P4 dropped-loot hydration consumer 均合入后启用，不反向阻塞 R6 其他 contract/schema 工作；不得把“可开始 contract”误写成“可独立完成 live cutover”。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 
@@ -70,13 +70,13 @@
 
 1. **Schema authority**：TypeBox source 是 repo-wide schema source of truth；它拥有 shape、discriminant 与 validation semantics。protobuf、generated Rust/Java、Rust conversion、Java bridge、`ServerDataRouter` registration plumbing、dist/JSON Schema/samples 都是生成或受约束 mirror，不得反向定义 TypeBox 为“被动镜像”。
 2. **Domain content vs machinery**：R9 负责 author/review cast domain 的 TypeBox message content（BEGIN/CastSync/PLAY/STOP、identity/source/target/outcome）、reducer/state machine、concrete cast consumers 与 `SkillAvBinding`；R6 负责对**所有 wire domain（含 cast）**运行 generation pipeline，并拥有 generated mirrors、`proto_convert.rs`、`ProtoServerDataBridge`、`ServerDataRouter` 通用 registration plumbing 与 channel migration machinery。R9 定义“cast 消息/状态是什么意思”，R6 定义“canonical schema 如何生成、转换和运输”；双方不得复制对方 artifact。
-3. **Contract-only 可早合**：R9 在 Wave 2 contract gate 后可先合入 canonical TypeBox cast content、reducer/tests 与未启用 declarations；R6 可据此生成 mirrors/conversions/plumbing。该阶段不得删除旧 receiver、切 producer 或宣称 BEGIN/CastSync/PLAY/STOP live reachable。
+3. **Contract-first 可早合**：R9 contract-first 工作不等待 R6 production machinery；R9 可先合入 canonical TypeBox cast content、reducer/tests 与未启用 declarations，R6 随后据此生成 mirrors/conversions/plumbing。该阶段不得删除旧 receiver、切 producer 或宣称 BEGIN/CastSync/PLAY/STOP live reachable；R6 的 schema/generation 与 contract stub 也不因 R2 production 接线尚未完成而停止。
 4. **Atomic production activation**：旧 receiver removal、新 channel producer activation、R6 bridge/router plumbing、R9 四类 concrete consumers 必须在**同一 merge unit**落地并验证。若平台或跨轨 PR 无法做到单一 merge unit，则旧 producer/receiver 必须原样保留，直到新 consumers 已部署且 live-path 验证通过；随后才在最终 activation merge unit 切 producer并删除旧 receiver。禁止 receiver-removed-before-consumer-installed，也禁止长期 dual emit。
 5. **Generalized cross-track dependency rule**：
    - §3 Wave 表是 inter-track ordering claim 的**唯一权威**；track plan 不得引入本表没有的 start/order dependency。
    - track plan 只能依赖 dependency plan 中**真实存在且同名**的 phase/artifact；不得引用虚构、已改名或尚未定义的 phase。
    - 若所需 upstream artifact 尚不存在，consumer track 只能先落 contract-first stub（declared、unwired、test-only，不接 production）；真实 artifact 标为 §3 wave-gated production cutover dependency，**不得反写成 start gate**。
-   - 两份 track plan 出现 sequencing conflict 时，先 amendment §3 Wave 表并形成唯一裁决，再同步双方；禁止靠任一子 plan prose 抢占 authority。R9 的具体 start/completion 口径以 §3 Wave 2 与本节第 3-4 条为准。
+   - 两份 track plan 出现 sequencing conflict 时，先 amendment §3 Wave 表并形成唯一裁决，再同步双方；禁止靠任一子 plan prose 抢占 authority。R9 的 contract-first start 口径以 Wave 0 与本节第 3 条为准，production activation/completion 口径以 Wave 2 与本节第 4 条为准。
 
 ## 5. 工作流（GPT tmux 多会话）
 

@@ -14,7 +14,7 @@
 - **进料**：各域游戏事件（emit 调用点）、`world` 维度/zone 信息（作用域过滤）。
 - **出料**：`bong:server_data` 单通道（目标态：28 旁路全部收编或显式豁免登记）；join/重连首包快照集契约（R2 清干净后靠它灌满）。
 - **共享类型**：新 server `network/emit/` builder（`scope: Global | Dimension | Zone | Player`）；client 桥接层唯一的枚举前缀剥离函数。
-- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步；agent 侧 TS 只做被动 regenerate，不重构 agent 逻辑）。**不做双轨兼容层**——旁路收编是一次性切换。
+- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步）；TypeBox canonical content 是 repo-wide schema source of truth，R6 负责据此运行 generation pipeline 并同步 protobuf/generated Rust、Rust conversion、Java bridge、router plumbing 与 dist/JSON Schema/samples，agent 侧只消费生成结果，不反向定义 schema，也不重构 agent 逻辑。**不做双轨兼容层**——旁路收编是一次性切换。
 
 ## 阶段
 
@@ -37,7 +37,7 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 - 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段）。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：无通用硬前置；R2 先合（同文件低冲突区段）；R4 P2 建议在本轨 P1 后开。**P1 的 dropped-loot projection/page 子项例外：硬依赖 R10 P2a owner/visibility metadata provider 与 R3 P4 dropped-loot migration/hydration consumer，不能随其他 scope 子项提前实施。**
+- 依赖：跨轨 start/order/cutover 以总纲 §3 Wave 表为唯一 authority；R6 的 TypeBox-driven schema/generation 与 contract-first stub 可在 Wave 0 开始，R2 接缝只约束 production bridge/router 接线（Wave 1），不构成整轨启动门；R4 P2 的消费关系同样只按总纲放行。**P1 的 dropped-loot projection/page 是 scoped production cutover：须在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后才启用，未满足前仅冻结 contract/test-only stub，不阻塞其他 scope 子项。**
 
 ## bot 验收场景
 
