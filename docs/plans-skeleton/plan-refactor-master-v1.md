@@ -52,13 +52,13 @@
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工。
 - **Wave 1**：R6（R2 合入后）、R7（R2 合入后）、R1（R3 P1 合入后）。
-- **Wave 2**：R4（#1287 + R6 P1 后）、R9（R5 P1 + R6 P2 + R2 P1 后；R6 P2 先提供通用 router registration API）、R10（R3 P1 后）。
+- **Wave 2**：R4（#1287 + R6 P1 后）、R9（**release gate = R5 P1 + R6 P2 + R2 P1**；只放行 R9-owned domain contract，R6 P2 先提供通用 router registration API）、R10（R3 P1 后）。R9 P1 production cutover 另按 R9 §P0.3.2 的 P1-A→P1-B→P1-C：R6 P3 必须在 P1-B 完成 R9 §P0.3.3 所列 shared envelope/converter/bridge/channel artifacts，R9 才能执行 P1-C live registration/e2e 并宣称 P1 完成；**R6 P3 不是 Wave 2 release gate**。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
 - R5 P1（字段收私有的全仓编译大爆破）挑在飞 PR 队列清空的窗口单独合入。
 
 ## 4. 文件所有权矩阵（防并行打架，冲突时以本表为准）
 
-- `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
+- `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。R9 新增 artifact 的细粒度 ownership 以 R9 §P0.3.3 为权威：领域 message/reducer/consumer 归 R9，shared server-data envelope、`proto_convert.rs`、client bridge/router 与 channel migration 归 R6 P3。
 - client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
 - 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
 

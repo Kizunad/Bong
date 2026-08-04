@@ -21,7 +21,7 @@
 - ⬜ P0 设计收口 + 吸收清单验真：28 旁路逐个普查（收编 vs 豁免理由）；100 emit 文件的重复模式取样归纳 builder API；枚举前缀剥离点全量清点；冻结 scope 语义与 join 首包快照集清单。
 - ⬜ P1 emit builder + scope 落地：builder 上线，vfx/audio/env 三类先挂 scope（跨维 bleed 立灭）；跨位面切换时 env/season 全量重发。
 - ⬜ P2 client 桥接层收敛：枚举前缀剥离收敛到单点（含 forge-session 修复）；`ServerDataRouter` 注册表整备（分域注册文件，不再单个 1547 行 switch 追加）；落地不依赖领域 payload/consumer 类型的通用 router registration API，并以 contract test 固定注册、分发、重复 key 拒绝与 unknown key fail-closed，供 R9 等领域轨在其自有文件注册 consumer 而不编辑 R6 独占 router。
-- ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。
+- ⬜ P3 旁路归一批次：28 channel 逐批收编入 server_data envelope 或登记豁免（资源包/握手类可豁免）；删除散装 receiver。R9 cast 子批次在 R9 P1-A 冻结 domain wire 后，P3 **逐项拥有并交付**：`ServerDataEnvelope` 的 `CastSessionBegin`（含 generation/exhaustion/active/floor）新 arm、扩展 `CastSync` 与 `ServerDataEnvelope.vfx_event` integration；对应 Rust/Java protobuf generated bindings；`server/src/schema/proto_convert.rs` 对 BEGIN/扩展 CastSync/PLAY/STOP nested envelope 的 conversion；client `ProtoServerDataBridge` 对同四类 payload 的 DTO conversion；`ServerDataRouter` 的 `vfx_event.cast_play_anim`/`vfx_event.cast_stop_anim` nested dispatch；`bong:vfx_event`→`bong:server_data` 生产/channel registration migration；旧 cast receiver 删除；`agent/packages/schema/src/server-data.ts` 的 `ServerDataV1`/BEGIN/CastSync/envelope 被动 mirror，以及包含 R9 P1-A VFX source mirror 的 schema package-wide dist/JSON Schema/generated artifacts。每个 arm 必须有正反 conversion/dispatch/sample/buf pin，交付后由 R9 P1-C 注册领域 consumer 并跑 live e2e。
 - ⬜ P4 契约 pin 全量化：双向 sample 对拍测试补齐（113 C2S + 144 S2C 每变体至少一条正反 sample，schema 改动连 sample 一起改）；emit 迁移到 builder 的长尾批次。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
@@ -33,9 +33,9 @@ skeleton：vfx-audio-dimension-bleed、q-world-season-dimension-env-resync、for
 
 ## 文件所有权与边界
 
-- 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段），以及 P2 通用 router registration API 的实现与 contract tests。
+- 独占：server `network/*_emit.rs` 公共模式与新 `network/emit/`、`schema/proto_convert.rs`；client `network/`（ProtoServerDataBridge、ServerDataRouter、BongNetworkHandler 的 channel 注册区段），以及 P2 通用 router registration API 的实现与 contract tests。R9 cast 子批次的 R6 P3 artifacts/conversions 以 R9 §P0.3.3 为唯一明细；R6 消费 R9 P1-A 冻结 shape，不接管 R9 reducer/consumer 语义。
 - 不碰：`BongNetworkHandler.clearClientStateOnDisconnect` 区段（R2 域，同文件分区段，merge 前互相 fetch）；`client_request_handler.rs`（R4）；各 emit 的业务语义。
-- 依赖：无硬前置；R2 先合（同文件低冲突区段）；R4 P2 建议在本轨 P1 后开。
+- 依赖：R6 track 按总纲 Wave 1 在 R2 合入后放行；R4 P2 建议在本轨 P1 后开。R9 cast 子批次另有局部门：R6 P3 仅在 R9 P1-A 冻结 domain wire 后开始该子批次，完成后交付 R9 P1-C；不阻塞 R6 的其它 P3 side-channel 批次。
 
 ## bot 验收场景
 
