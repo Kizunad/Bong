@@ -336,4 +336,3 @@
 - **伪 exactly-once**：Redis publish resolve 不等同于 server 已展示；文档和指标必须区分 accepted、published、consumed/observed（若没有消费回执则明确缺口）。
 - **跨轨文件冲突**：本 plan 主体限定 agent；若要改 server selector、schema generated artifact 或 client handler，应先列接缝并拆独立 PR，不能在共享 pipeline PR 中顺手扩 scope。
 - **失败重试放大**：没有稳定 key 或退避上限时，publish failure 会制造重复 narration 和队列爆炸；P2/P5 必须先于大规模 runtime 迁移。
-
