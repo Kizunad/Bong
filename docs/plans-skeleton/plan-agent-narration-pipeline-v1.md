@@ -1,13 +1,13 @@
 # plan-agent-narration-pipeline-v1（骨架）
 
-> **骨架（草案）**。一句话主题：把 Tiandao 的 narration 从“各 runtime 各自 drain、各自改状态、各自 Redis publish”收口为一条可去重、可校验、可路由、可确认，且在写入 pending 后可重放的 agent 发布事务管道；处理 cluster 3 排除已 falsified #1551 后的 29 个 confirmed source，并把与 bounded concurrency 交付物同根的跨簇 #1702 纳入本 plan，共 30 个 confirmed source，其中 4 个是 #1470 的重复证据，另有 5 个跨簇 follow-up 不计入本 plan 账本。
+> **骨架（草案）**。一句话主题：把 Tiandao 的 narration 从“各 runtime 各自 drain、各自改状态、各自 Redis publish”收口为一条可去重、可校验、可路由、可记录 publisher-side resolve，且支持 pending store 写入后的内部恢复/重试的 agent 发布事务管道；处理 cluster 3 排除已 falsified #1551 后的 29 个 confirmed source，并把与 bounded concurrency 交付物同根的跨簇 #1702 纳入本 plan，共 30 个 confirmed source，其中 4 个是 #1470 的重复证据，另有 5 个跨簇 follow-up 不计入本 plan 账本。
 
 ## 阶段总览
 
 | 阶段 | 主题 | 路由 | 状态 |
 |---|---|---|---|
 | P0 | 事件信封、owner、source issue 吸收清单与迁移边界 | plan_skeleton | ⬜ |
-| P1 | ingest：bounded pending 摄入、写入后可重放 | fix_pr | ⬜ |
+| P1 | ingest：bounded pending 摄入、写入后的内部恢复 | fix_pr | ⬜ |
 | P2 | dedupe：稳定幂等键、顺序/并发控制、提交前不推进游标 | fix_pr | ⬜ |
 | P3 | validate：source payload → render → NarrationV1 output | fix_pr | ⬜ |
 | P4 | route：现有 scope/target 规范化与匿名化 | fix_pr | ⬜ |
@@ -43,18 +43,18 @@
 ## 1. Goals
 
 1. 让所有 narration 事件都经过统一的 `ingest → dedupe → validate → route → publish confirm` 管道，不再允许 runtime 直接 `publish` 绕过保护边界。
-2. 在 Redis publish 失败、LLM 解析失败、同 tick 重试和并发到达时，保证已写入 pending 的事件不会静默丢失、无限重复或乱序污染后续状态；普通 Redis Pub/Sub 在 pending 写入前崩溃不承诺恢复。
+2. 在 Redis publish 失败、LLM 解析失败、同 tick 重试和并发到达时，明确已写入 pending 的事件的恢复/重试边界，避免静默丢失、无界重试或乱序污染后续状态；普通 Redis Pub/Sub 的 ingress 是 at-most-once，pending 写入前崩溃以及 publisher resolve 后的 subscriber 投递均不在本 plan 的端到端保证内。
 3. 将现有 wire 可表达的 scope、target 和文本合约变成发布前可验证的边界；dimension 与 SpiritNiche recipient authorization 作为明确 contract gap 留待 §8 决策，不在本 plan P 阶段伪锁定。
-4. 把“状态已推进/冷却已记录/队列已删除”与“叙事已成功 publish”绑定；`published` 是本 plan 的 terminal success，未来若引入 server receipt 再扩展可选 `consumed`。
+4. 把“状态已推进/冷却已记录/队列已删除”与“publisher 已完成 best-effort resolve”绑定；其中队列删除只是本地 terminal bookkeeping，可能在零 subscriber 或 resolve 后 crash 场景下发生，因此不代表消息已送达或可见副作用只发生一次。未来若引入带 receipt/dedupe 的 server contract，再扩展可选 `consumed`。
 5. 为现有和未来 narration runtime 提供单一接入点，减少 feature plan 只写 renderer/模板却没有生产消费或回流确认的孤岛。
 
 ## 2. Non-goals
 
 - 不在本 plan 内补齐每一个 feature event 的业务 renderer、世界观文案或新的叙事内容；已有 `poi novice`、`anqi charged` 等 feature skeleton 仍由各自 owner 实现，只需迁移到共享管道。
 - 不修改 server gameplay、战斗、修炼、qi ledger、NPC 行为、worldgen 或 client HUD/VFX；它们只是 narration 的生产端或消费端，不是本 plan 的实现域。
-- 不追求跨 Redis/进程的数学意义“exactly once”幻觉；普通 Redis Pub/Sub 无 ack/replay，本 plan 只保证消息抵达 ingress 且 pending 写入成功后的 at-least-once 处理。若要覆盖写入前 crash，必须另行迁移到 Redis Streams/consumer group 等 durable transport，见 §8。
+- 不追求跨 Redis/进程的数学意义“exactly once”幻觉；普通 Redis Pub/Sub 没有 subscriber delivery ack、replay 或端到端 dedupe，本 plan 只把 ingress 视为 at-most-once，并对 pending store 已成功写入的事件提供内部恢复/重试语义。Redis `PUBLISH` resolve 只表示 Redis client-side 调用完成，不表示消费者收到；若要覆盖 pending 写入前 crash、消费者确认或单一可见副作用，必须另行迁移到 Redis Streams/consumer group 或等价 durable claim/ack transport，并补齐 wire-level correlation/receipt/dedupe contract，见 §8。
 - 不以兼容层长期保留旧的每 runtime 直发路径；迁移完成后旧出口应删除或在集中注册表中 fail-fast，而不是双发兜底。
-- 不把失败吞掉后仅写日志视为可靠性；日志、指标和 dead-letter/pending 语义必须能支持重放或人工处置。
+- 不把失败吞掉后仅写日志视为可靠性；日志、指标和 bounded dead-letter/pending 语义必须能支持有限重放、明确丢弃或人工处置。
 - 不将未经授权的 broadcast 作为“路由失败时的安全默认值”；隐藏/玩家/zone 事件必须 fail-closed。
 
 ## 3. Current-state findings
@@ -108,7 +108,7 @@
 | #1587 | `mutation-narration-runtime.ts:57-60` 对 player/zone 都使用 `mutation:<entity_id>`。 | scope 与 target 的格式需由集中 route policy 生成。 |
 | #1590 | `halfstep-rechallenge-narration.ts:167-169` 直接转发 raw `payload.char_id`，不是 normalized player target。 | player target 必须以 canonical identity/格式生成。 |
 | #1607 | `query-zone-history.ts:123-127` 将 bounded `localDelta` 与 full-history trend delta 并列展示。 | route/context 输入必须携带同一时间窗口语义，避免 narration 误读状态。 |
-| #1738 | `scattered-cultivator-narration.ts::renderNpcIntrusionNarration` 广播 SpiritNiche 坐标，违反 revealed/revealed_by 隐私。 | 当前输入与 selector 无法执行该策略；作为 §8.8 的 authorization producer/schema/enforcing-consumer contract gap 保持 open。 |
+| #1738 | `scattered-cultivator-narration.ts::renderNpcIntrusionNarration` 广播 SpiritNiche 坐标，违反 revealed/revealed_by 隐私。 | 当前输入与 selector 无法执行该策略；作为 §8.9 的 authorization producer/schema/enforcing-consumer contract gap 保持 open。 |
 
 ### 3.5 发布幂等、游标与重启（P2/P5）
 
@@ -122,7 +122,7 @@
 | #1674 | 无界 social relationships 结果。 | envelope/context 必须有大小上限。 |
 | #1675 | `runtime.ts` 只有 command 和 narration 都 publish 成功才推进 `lastProcessedStateCursor`。 | 需要定义每个 side effect 的 ack 关系，避免一项成功、一项失败时整批重复。 |
 | #1679 | publish 失败后以新 batch id 重发 command，cursor 不变。 | 重试必须复用 stable idempotency key，不得每次生成新 batch id。 |
-| #1738 | narration recipient scope 泄露隐私。 | 当前幂等/route 无 authorization 输入或 enforcing consumer；不得在本 plan 内伪造 recipient key，等待 §8.8 完整契约。 |
+| #1738 | narration recipient scope 泄露隐私。 | 当前幂等/route 无 authorization 输入或 enforcing consumer；不得在本 plan 内伪造 recipient key，等待 §8.9 完整契约。 |
 | #1746 | `world-model.ts::cloneZoneSnapshot` 丢失 context/persistence 使用的 `ZoneSnapshot.status`。 | snapshot clone 是 pipeline 输入的一部分，字段丢失必须在 ingress/context contract pin。 |
 
 > 注：#1616、#1619、#1738 等可同时落入多个调查分类；但 #1738 因缺 authorization 数据和 enforcing consumer，不进入本 plan P 阶段锁，只保留为 §8 contract gap。正式账本为 cluster 3 排除 falsified #1551 后的 29 个 confirmed source，加上由 bounded concurrency 交付物直接吸收的跨簇 #1702，共 30 个 confirmed source；其中 #1475/#1509/#1527/#1538 是 #1470 的重复证据。其余 5 个跨簇 follow-up 见 §4.4，不计入本 plan source ledger。
@@ -169,7 +169,7 @@
 - `source` / `kind` / `source_tick` / `tick_epoch`：用于 producer registry、重启后的时间域区分和取证。
 - `payload`：原始事件或 renderer 输入，进入 validate 前不可直接 publish。
 - `dedupe_key` / `ordering_key`：分别解决重复消费与同一实体/zone 的顺序，不混为一个字段。
-- `attempt` / `state`：`pending`、`validated`、`routed`、`published`、`rejected`、`dead_letter` 等本 plan 必选状态；`published` 是 terminal in-scope success。未来 server receipt contract 落地后才可增加可选 `consumed`。
+- `attempt` / `state`：`pending`、`validated`、`routed`、`published`、`rejected`、`dead_letter` 等本 plan 必选状态；`published` 是 publisher-side terminal in-scope state，不是 subscriber delivery 或 visible-side-effect confirmation。未来 server receipt contract 落地后才可增加可选 `consumed`。
 - `scope` / `target`：route 阶段按现有 `NarrationV1` 可表达字段生成的显式结果，缺少必要信息不得隐式 broadcast。`dimension` / `recipient_policy` 仅是未来 wire 扩展候选，不得写入当前 envelope-to-wire 锁。
 - `correlation_id`：关联同一输入事件的 command/narration side effects，重试复用。
 
@@ -179,13 +179,13 @@
 2. 普通 Redis Pub/Sub callback 没有 ack/replay：消息抵达进程后，adapter 尽快写入 bounded pending queue/store，再启动 renderer/LLM；只有 pending 写入成功后的事件才具备重启恢复。进程在 pending 写入前崩溃时事件可能丢失，这是当前 transport 的明确边界，不能宣称源端重投。
    **[DRAFT-DECISION F07]** pending 写入成功后以同一 `event_id` 恢复/去重；写入成功、worker 处理前或处理中崩溃均从 pending store 恢复。故障注入测试只锁定 post-ingest recovery；覆盖 pre-ingest crash 的强保证必须先迁移 producer+consumer 到 Redis Streams/consumer group 等 durable claim/ack transport，作为 §8 开放选项，不在本 plan P 阶段实现。
 3. 为每个 producer/channel 建显式注册表，记录 payload validator、source identity、ordering key、最大 payload/context 大小和失败策略。
-4. handler 异常、post-ingest 进程重启和消费者暂时不可用时，pending item 可重放；queue capacity、global concurrency、优先级、满队列 terminal policy 以及 transition telemetry schema 必须在 P0 按 §8.11 冻结，不能以无界 fallback 代替。
+4. handler 异常、post-ingest 进程重启和 worker 暂时不可用时，仍留在 pending store 的 item 可按同一 key 重试；这不等于 Redis Pub/Sub 的 subscriber delivery replay，也不保证 publisher resolve 后消费者一定收到。queue capacity、global concurrency、优先级、满队列 terminal policy 以及 transition telemetry schema 必须在 P0 按 §8.12 冻结，不能以无界 fallback 代替。
 
 **本阶段锁定**：#1510、#1518、#1673、#1746，并为 #1486/#1619 提供顺序入口。
 
 ### 5.3 Stage 2 — dedupe（去重、顺序与并发）
 
-1. 以稳定 `dedupe_key` 做 same-event retry claim；Redis publish 失败重试不得换新 batch/event id。
+1. 以稳定 `dedupe_key` 做 pipeline 内的 same-event retry claim；Redis publish 失败重试不得换新 batch/event id，但这不等于当前 Pub/Sub receiver 已实现可见副作用去重。
 2. 以 `ordering_key` 对同一 player/entity/zone 的事件串行化；不同 key 可 bounded 并发，设置全局并发上限和队列上限。
 3. 将 feature cooldown、`lastStatusByFaction`、`lastNarrationTickByKey` 等业务状态变成 confirm 后 commit 的 side effect；pipeline 在事件成功前不调用不可逆状态推进。
 4. 明确 stale event、重复 event、跨 restart tick epoch 的处理：可安全忽略的事件写入已处置原因，不可安全忽略的事件 requeue 或 dead-letter。
@@ -216,8 +216,8 @@
 ### 5.6 Stage 5 — publish confirm（唯一出口、确认与取证）
 
 1. 所有通过 route 的 narration 只能从集中 publisher 发往 `AGENT_NARRATE`；publisher 自己包住 Redis publish rejection、超时和 transport error。
-2. `published` 表示 Redis client resolve，是本 plan 的 terminal in-scope success；成功后提交 cooldown/cursor 等与“已发出”绑定的业务状态并删除 pending。不得声称 server 已选择 recipient 或客户端已展示。`consumed` 仅作为未来 server correlated receipt contract 落地后的可选状态，本 plan 不要求、也不等待不存在的 producer。
-3. publish 失败保留同一 `event_id`/`dedupe_key`/`correlation_id`，按退避和最大尝试次数重试；超过上限进入可观测 dead-letter，不伪造成功。测试覆盖 client resolve、publish rejection、超时和断线；不注入虚构的 server consumed receipt。
+2. `published` 表示 publisher/client 侧 Redis 调用 resolve，是本 plan 的 terminal in-scope state；它只表示 Redis 接受了该调用，不表示 subscriber 收到、server 已消费、recipient 已选择或客户端已展示。现有 Pub/Sub 返回的 subscriber count 不能作为 delivery receipt，零 subscriber 时 resolve 也不构成端到端成功。只有未来 correlated receipt + consumer dedupe contract 落地后，才可增加可选 `consumed`，本 plan 不要求、也不等待不存在的 producer。
+3. publish failure、连接断开或 resolve 后的 agent crash 可能分别造成 pending 保留、重复 publish 或 subscriber 未收到；因此本 plan 不声称 lossless delivery、at-least-once Pub/Sub 投递或 single visible side effect。失败/重启重试保留同一 `event_id`/`dedupe_key`/`correlation_id`，但当前 `NarrationV1`/server consumer 没有足够的 wire-level idempotency contract，重复可见副作用必须作为已知边界记录，而不是由本 plan 伪造消除。超过有限尝试次数进入 bounded dead-letter，不伪造成功；测试覆盖 client-side resolve、publish rejection、超时、断线、零 subscriber 和 resolve 后 crash，不注入虚构的 server consumed receipt。
 4. **[DECISION-NEEDED F06]** command+narration 的部分确认不能由单一 event-level ack 推断。P0 必须冻结四格状态矩阵：
    - command 成功 + narration 成功：两个 side effect 各自 terminal success，correlation cursor 是否前进必须由选定矩阵规定。
    - command 成功 + narration 失败：command 不应因 narration 重试而重复；narration 复用原 key 重试或 dead-letter。
@@ -238,12 +238,12 @@
 - [ ] 盘点所有 Tiandao narration Redis channel、`RuntimeRedis` drain、直接 `publishNarrations` callsite、业务状态/cooldown/cursor 写点。
 - [ ] 定义 envelope、event_id、dedupe_key、ordering_key、tick_epoch、ack/state transition 及 pending/dead-letter 语义。
 - [ ] 定义现有 server selector 可接受的 canonical scope/target contract；dimension、SpiritNiche recipient authorization 和 consumed receipt 作为 §8 明示 contract gap，不进入当前 P 阶段实现锁。
-- [ ] 收口 F06/F08/F09：每条 decision-needed 必须落为具体协议、选项和测试矩阵后才能进入 P1；F04/F05/F07 已由本次保守修订收口。
+- [ ] 收口 F06/F08/F09；F04/F07 按本次保守修订的现有 producer/consumer 与 post-ingest recovery 边界收口，F05 仍为 deferred/open gate：每条 decision-needed 必须落为具体协议、选项和测试矩阵后才能进入依赖它的后续阶段。不得把 §8.9 authorization data + enforcing consumer contract 尚未落地的隐私/fan-out 决策标为已收口。
 
-### P1：可靠 ingest 与 pending queue
+### P1：有界 ingest 与 pending store
 
 - [ ] 统一 Redis ingress adapter，禁止 callback 内直接 drain+LLM+publish。
-- [ ] 为 chat/NPC/feature narration channel 接入 pending queue/store，支持 pending 写入后的重启恢复、失败 requeue 和 bounded backpressure；普通 Pub/Sub 的 pre-ingest crash 不在保证内。
+- [ ] 为 chat/NPC/feature narration channel 接入 pending queue/store，支持 pending 写入后的内部重启恢复、失败 requeue 和 bounded backpressure；普通 Pub/Sub ingress 是 at-most-once，pre-ingest crash、subscriber delivery 和 publisher resolve 后的重放不在保证内。
 - [ ] 为每个 channel/kind 注册 source、validator、ordering key、最大 payload/context 和失败策略。
 - [ ] 覆盖 #1510、#1518、#1673 的测试：处理失败不能使已摄入事件静默消失，单条 fallback 不影响同批其他事件。
 
@@ -271,8 +271,8 @@
 ### P5：publish confirm、迁移清理与集成验收
 
 - [ ] 将所有 agent narration runtime 迁移到唯一 publisher；集中处理 rejection、timeout、retry、dead-letter 和 metrics。
-- [ ] 验证 `published` 终态：Redis client resolve 后才提交 cooldown/cursor 与删除 pending；publish 失败以相同 key 重放至成功且不重复 side effect。未来可选 `consumed` 不得成为当前状态提交前置。
-- [ ] 删除/禁用旧直发路径，添加生产代码扫描或注册表 pin 防回归。
+- [ ] 验证 publisher-side `published` 状态：只有 Redis client 调用 resolve 后才提交明确绑定为“publisher 已完成”的 cooldown/cursor；不得把该 resolve 当作 subscriber delivery ack、server consumed 或 single visible side effect 的证明。publish failure、断线、零 subscriber 和 resolve 后 crash 的有限重试/重复边界必须被记录；超过上限进入 bounded dead-letter。未来可选 `consumed` 不得成为当前状态提交前置。
+- [ ] 冻结 dead-letter 生命周期：设置最大 item 数或字节数、每条记录的 retention/TTL、清理或归档 owner、达到容量上限后的丢弃/覆盖/暂停策略，并为 overflow 记录 telemetry；不得让 malformed input、publish exhaustion 或 queue overflow 无限追加 terminal records。
 - [ ] 跑 agent 单测、构建、Redis integration/e2e，并用真实 server selector 验证现有 scope/target；dimension/SpiritNiche/consumed contract gap 不得伪造测试。其余 source issue 完成后才由 triage 关联/关闭，#1738 保持 open 直到后续 contract owner 落地。
 
 
@@ -281,8 +281,8 @@
 ### 7.1 功能与可靠性
 
 - 任意已注册 narration event 都能在 telemetry 中看到完整状态链：`ingest → dedupe → validate payload → render → validate NarrationV1 → route → published`（或明确的 rejected/dead-letter）；不存在只在单测可达、生产无 consumer 的路径。
-- Redis publish 被人为拒绝、超时或断线时：调用不会产生未处理 promise rejection；事件保持 pending/retry/dead-letter 之一；不会提前推进 cooldown、cursor、last status 或删除 pending。
-- 同一 `event_id` 在成功前重试多次只产生一个可见 narration side effect；retry 不生成新 batch id；成功后重复投递命中 dedupe 并有审计记录。
+- Redis publish 被人为拒绝、超时或断线时：调用不会产生未处理 promise rejection；事件保持 pending/retry/dead-letter 之一；不会提前推进 cooldown、cursor、last status 或删除 pending。这里的 resolve 只验证 publisher/client 侧调用完成，不验证 subscriber 收到或 server/client 可见。
+- 同一 `event_id` 在 pipeline 内重试时复用原 key、不得生成新 batch id，并对重复 claim 产生审计记录；不把当前 Redis Pub/Sub 或 `NarrationV1`/server consumer 解释为可证明的 exactly-once 或 single visible side effect。若 publisher 在 resolve 后、terminal 状态落盘前崩溃，恢复可能再次 publish；若 subscriber 未连接，resolve 也可能没有任何消费者收到。需要 single visible side effect 时，必须由未来的 correlated receipt + receiver dedupe contract 提供证据。
 - 同一 ordering key 的事件按输入顺序发布；不同 key 仍能在明确上限内并发；队列满和处理超时有可观察结果，不会无界增长。
 - 进程重启后，已写入 pending 且未到 terminal 的事件可恢复；普通 Pub/Sub 在 pending 写入前崩溃不承诺重投。server tick 重置不会错误抑制合法新事件，也不会让旧事件无限重放。
 
@@ -299,38 +299,46 @@
 
 - `cd agent/packages/tiandao && npm test` 通过，覆盖每个 pipeline state、错误分支、重试、重复、乱序、空队列、满队列、重启恢复和 route fail-closed。
 - `cd agent && npm run build` 通过；若 schema source 发生改动，先重建 `@bong/schema` dist，再验证 tiandao import。
-- Redis 集成测试至少覆盖：publish failure/retry、同 key dedupe、批量 malformed item isolation、tick epoch restart、canonical zone/player target，以及 pending 写入后的重启恢复；不把 Pub/Sub pre-ingest replay、dimension routing、SpiritNiche recipient authz 或 server consumed receipt 伪装成现有能力。
+- Redis 集成测试至少覆盖：publish failure/retry、同 key pipeline dedupe、批量 malformed item isolation、tick epoch restart、canonical zone/player target、零 subscriber 的 resolve 语义、resolve 后 crash 的重复边界，以及 pending 写入后的内部重启恢复；测试明确不把 Pub/Sub pre-ingest replay、subscriber delivery ack、single visible side effect、dimension routing、SpiritNiche recipient authz 或 server consumed receipt 伪装成现有能力。
+- dead-letter boundedness 测试验证：malformed/publish-exhaustion/queue-overflow 终态不会超过配置的最大 item/byte 容量；TTL/retention 到期会清理或归档；容量已满时执行冻结的 overflow policy 并发出可查询 telemetry，不能静默无限增长。
 - 生产代码中不存在绕过集中 publisher 的 direct `publishNarrations` 或等价 Redis publish 调用；扫描结果与集中注册表一致。
 - 30 个 confirmed source issue 都有唯一映射：#1475/#1509/#1527/#1538 作为 #1470 的重复证据共享根因，#1702 由 bounded concurrency 交付物覆盖；可实现的 source 需有修复 commit/测试证据。#1738 因明确 contract gap 保持 open，不得以 plan 归档代替实现关闭。§4.4 的 5 个跨簇 follow-up 不计入本 plan acceptance，由各自 owner 提供独立证据。
 
 ## 8. Open questions（进入 P0 前必须收口）
 
-1. **durable transport 选项**：本 plan 可用内存或持久 pending store，但只能恢复已写入 pending 的事件。若未来要求覆盖 Pub/Sub 消息抵达后、pending 写入前的 crash，必须将对应 server producer 与 agent consumer 一并迁移到 Redis Streams/consumer group（或等价 durable claim/ack transport），并确定 retention、redelivery、claim timeout、consumer group 与清理责任；不能仅换 pending store 就宣称 pre-ingest replay。
-2. **可选 consumed receipt**：本 plan 以 Redis client resolve 的 `published` 为 terminal success。若未来需要证明 server 已消费，必须新增 correlated receipt wire contract（event/correlation id）、server receipt producer、agent receipt consumer、超时/重复语义及跨栈集成测试；在该完整生产链落地前，`consumed` 不得成为必选状态或 pending 删除前置。
-3. **命名与 owner**：统一 pipeline 应落在 `agent/packages/tiandao/src/` 哪个模块/类名；`RuntimeRedis` 现有 API 是适配层还是应被替换？需要避免新建第二套 runtime abstraction。
-4. **幂等键来源**：哪些 server/agent event 已有稳定 event id；缺失者由哪个 producer 生成？`source_tick + entity` 在同 tick 多事件时如何避免碰撞；是否需要跨重启 `tick_epoch` 持久化。
-5. **顺序粒度**：默认按 player、entity、zone 还是 source channel 串行？同一事件同时产生 command 和 narration 时，二者的 ordering/ack 是否共用 key。
-6. **LLM failure 终态与责任边界 [DECISION-NEEDED F08]**：四类 failure 必须逐类选择责任主体和固定协议，不能共用模糊 fallback：
+1. **durable transport 选项**：本 plan 可用内存或持久 pending store，但只能恢复已写入 pending 的事件。普通 Redis Pub/Sub ingress 是 at-most-once；`PUBLISH` resolve 只表示 Redis client-side 调用完成，不能证明 subscriber delivery。若未来要求覆盖 pending 写入前的 crash、consumer ack 或 receiver-side replay，必须将对应 server producer 与 agent consumer 一并迁移到 Redis Streams/consumer group（或等价 durable claim/ack transport），并确定 retention、redelivery、claim timeout、consumer group 与清理责任；不能仅换 pending store 就宣称 pre-ingest replay 或 lossless delivery。
+2. **可选 consumed receipt 与可见副作用去重**：本 plan 以 publisher-side best-effort resolve 的 `published` 为 terminal in-scope state，不把它当作 server consumed、recipient selected 或 client displayed。若未来需要证明 server 已消费并保证同一事件只有一个可见 narration side effect，必须新增 correlated receipt wire contract（event/correlation id）、server receipt producer、receiver dedupe、agent receipt consumer、超时/重复语义及跨栈集成测试；在该完整生产链落地前，`consumed` 不得成为必选状态或 pending 删除前置。
+3. **dead-letter 生命周期与容量**：所有 publish exhaustion、malformed input 和 queue-overflow 进入 dead-letter 的路径必须共用一个有界策略。P0 必须冻结最大 item 数或字节数、单条记录最大 payload、retention/TTL、清理/归档 owner、容量达到上限时的 overflow policy（reject-and-metric、覆盖最旧记录或暂停新写入，三者择一并说明取舍）以及 `dead_letter_overflow`/eviction telemetry；达到上限后不得无限追加、静默丢弃或回到无界 pending。测试必须持续注入 terminal failure，证明 dead-letter 总量受上限约束、TTL 可清理/归档且 overflow 行为可观测。
+4. **命名与 owner**：统一 pipeline 应落在 `agent/packages/tiandao/src/` 哪个模块/类名；`RuntimeRedis` 现有 API 是适配层还是应被替换？需要避免新建第二套 runtime abstraction。
+5. **幂等键来源**：哪些 server/agent event 已有稳定 event id；缺失者由哪个 producer 生成？`source_tick + entity` 在同 tick 多事件时如何避免碰撞；是否需要跨重启 `tick_epoch` 持久化。
+6. **顺序粒度**：默认按 player、entity、zone 还是 source channel 串行？同一事件同时产生 command 和 narration 时，二者的 ordering/ack 是否共用 key。
+7. **LLM failure 终态与责任边界 [DECISION-NEEDED F08]**：四类 failure 必须逐类选择责任主体和固定协议，不能共用模糊 fallback：
    - timeout：选“有限重试后 bounded fallback 发布”或“有限重试后 rejected/dead-letter”；
    - transport rejection/disconnect：选“按相同 key 重试”或“达到上限后 dead-letter”，不得把 client resolve 当成功；
    - malformed JSON：选“validator 生成固定上限 unknown fallback”或“直接 rejected”；
    - schema-invalid response：选“逐项 fallback”或“逐项 rejected/dead-letter”。
    P0 必须为每类写明最大 retry、退避、fallback 最大长度/字段、最终 state 和 pending 是否保留，并用 fake LLM/断线集成测试锁定。
-7. **dimension-aware route contract gap**：当前 TypeBox `NarrationV1`、Rust mirror 与 server selector 均没有 dimension 字段。未来若启用必须同步扩展 schema source/generated artifacts、Rust mirror、agent producer 和 server enforcing selector，并加跨维负向测试；在此之前只按现有 scope/target 路由。
-8. **SpiritNiche authorization contract gap（#1738）**：当前 `NicheIntrusionEventV1`/`WorldStateV1` 不含 owner、revealed 或 authorized viewers，server selector 也不能消费 recipient policy。后续方案必须明确 authorization data source（server canonical niche owner + reveal registry）、把所需字段送入 agent 或由 server 自行判权，并指定 enforcing consumer（建议 server selector fail-closed）；producer、schema、consumer 与隐私 e2e 未一并落地前，#1738 保持 open 且不进入 P4 锁。
-9. **隐私与 fan-out [DEFERRED F05]**：只有 §8.8 的 authorization data + enforcing consumer contract 落地后，才能在 per-recipient durable 与 event-level atomic 中选择，并固定 recipient key、retry、dead-letter 和 pending 删除条件；本 plan 不预设不存在的 recipient policy。
-10. **command+narration partial confirm [DECISION-NEEDED F06]**：必须从“每个 side effect 独立 terminal、correlation cursor 仅在两者 terminal success 时前进”与“允许 partial terminal、cursor 拆成两个可查询子游标”中选择一个，固定四种成功/失败组合的 cursor、retry、dedupe、dead-letter 结果；不能以单一 event-level ack 掩盖部分确认。
-11. **backpressure 与优先级 [DECISION-NEEDED F09]**：现有证据不足以推出数值，不能伪造默认值。P0 必须从“固定 capacity + global concurrency + priority tiers + 满队列 reject/dead-letter”与“固定 capacity + 低优先级合并/淘汰但保留隐私/教学事件”中选择一套，冻结具体配置字段和值、优先级、terminal policy，以及 transition telemetry 的唯一 key、字段（event_id、state、reason、attempt、queue_depth、timestamp/tick_epoch、source/kind）和查询方式；验收断言深度不超过上限、满队列结果和指标值。
-12. **已有 feature skeleton 的迁移顺序**：`poi novice`、`anqi charged`、各类 narration target-prefix/runtime bridge skeleton 是否在 P1/P2 作为试点迁移，还是先完成共享管道后统一迁移；必须避免主循环与独立 runtime 双发。
-13. **跨簇 schema follow-up 的边界**：§4.4 的 #1728/#1734 不属于本 plan source ledger 或 P-phase lock；它们的 schema source/generated artifacts、owner 和 closure evidence 必须由对应 schema/registry follow-up 单独冻结。本 plan 只负责对未知/不兼容输入 fail-closed，不借此扩大实现范围。
-14. **source issue 关闭门**：只有共享管道完成后再逐项复验，还是允许某些同根因 issue 在 feature follow-up PR 中先关闭？需要统一 triage 证据格式，避免“关联 PR”被误写成“已修复”；#1738 必须等待 §8.8 的完整跨栈 contract 落地。
+8. **dimension-aware route contract gap**：当前 TypeBox `NarrationV1`、Rust mirror 与 server selector 均没有 dimension 字段。未来若启用必须同步扩展 schema source/generated artifacts、Rust mirror、agent producer 和 server enforcing selector，并加跨维负向测试；在此之前只按现有 scope/target 路由。
+9. **SpiritNiche authorization contract gap（#1738）**：当前 `NicheIntrusionEventV1`/`WorldStateV1` 不含 owner、revealed 或 authorized viewers，server selector 也不能消费 recipient policy。后续方案必须明确 authorization data source（server canonical niche owner + reveal registry）、把所需字段送入 agent 或由 server 自行判权，并指定 enforcing consumer（建议 server selector fail-closed）；producer、schema、consumer 与隐私 e2e 未一并落地前，#1738 保持 open 且不进入 P4 锁。
+10. **隐私与 fan-out [DEFERRED F05]**：F05 仍是未收口的 privacy/fan-out decision，不能在本 plan 的 P0 里标记为 closed，也不能让后续 P1/P4/P5 假设 recipient policy 已存在。只有 §8.9 的 authorization data + enforcing consumer contract 落地后，才能在 per-recipient durable 与 event-level atomic 中选择，并固定 recipient key、retry、dead-letter 和 pending 删除条件；在此前，本 plan 只允许现有 scope/target route，且不得以 mock authorization、测试专用 receipt 或未消费字段代替生产链。
+11. **command+narration partial confirm [DECISION-NEEDED F06]**：必须从“每个 side effect 独立 terminal、correlation cursor 仅在两者 terminal success 时前进”与“允许 partial terminal、cursor 拆成两个可查询子游标”中选择一个，固定四种成功/失败组合的 cursor、retry、dedupe、dead-letter 结果；不能以单一 event-level ack 掩盖部分确认。
+12. **backpressure 与优先级 [DECISION-NEEDED F09]**：现有证据不足以推出数值，不能伪造默认值。P0 必须从“固定 capacity + global concurrency + priority tiers + 满队列 reject/dead-letter”与“固定 capacity + 低优先级合并/淘汰但保留隐私/教学事件”中选择一套，冻结具体配置字段和值、优先级、terminal policy，以及 transition telemetry 的唯一 key、字段（event_id、state、reason、attempt、queue_depth、timestamp/tick_epoch、source/kind）和查询方式；同时必须落实下列 dead-letter policy row，且所有容量/TTL 字段在 P0 退出前必须为有限、已配置值，否则阻塞 P1/P5：
+
+   | terminal sink | size bound | retention / cleanup owner | overflow policy | required evidence |
+   |---|---|---|---|---|
+   | `dead_letter` | finite `max_items` + `max_bytes`；每条记录有 `max_payload_bytes` | finite `retention_ttl`；由 agent Tiandao pipeline cleanup/archive job 到期清理或归档 | conservative default：reject new terminal record + emit `dead_letter_overflow`，不重新塞回 pending；若 P0 选择覆盖/暂停，必须记录取舍并保持有界 | 持续注入 malformed、publish-exhaustion、queue-overflow，验证 item/byte/TTL 上限及 overflow telemetry |
+
+   验收同时断言 pending 与 dead-letter 均不超过各自上限，满队列和 dead-letter overflow 均产生可查询 telemetry。
+13. **已有 feature skeleton 的迁移顺序**：`poi novice`、`anqi charged`、各类 narration target-prefix/runtime bridge skeleton 是否在 P1/P2 作为试点迁移，还是先完成共享管道后统一迁移；必须避免主循环与独立 runtime 双发。
+14. **跨簇 schema follow-up 的边界**：§4.4 的 #1728/#1734 不属于本 plan source ledger 或 P-phase lock；它们的 schema source/generated artifacts、owner 和 closure evidence 必须由对应 schema/registry follow-up 单独冻结。本 plan 只负责对未知/不兼容输入 fail-closed，不借此扩大实现范围。
+15. **source issue 关闭门**：只有共享管道完成后再逐项复验，还是允许某些同根因 issue 在 feature follow-up PR 中先关闭？需要统一 triage 证据格式，避免“关联 PR”被误写成“已修复”；#1738 必须等待 §8.9 的完整跨栈 contract 落地。
 
 ## 9. 风险与迁移注意
 
 - **双发风险**：主循环 drain、独立 narration runtime、共享 pipeline 同时订阅会产生重复发布；迁移每个 channel 时必须有唯一 consumer claim 和重复 pin。
 - **批量启动刷屏**：ingest 恢复或 startup snapshot 可能一次性进入大量 POI/状态事件；优先级、合并和上限必须在 P2/P5 验收，不得用无限丢弃掩盖压力。
 - **语义误路由**：将缺失 zone 默认成 broadcast 会把隐藏事件扩大泄露；route policy 应 fail-closed，测试必须覆盖缺字段和未知 target。
-- **伪 exactly-once**：Redis publish resolve 只等于本 plan 的 `published` 终态，不等于 server 已选择 recipient 或客户端已展示；未来 `consumed` receipt 只有在 §8.2 的完整生产链落地后才可增加。
+- **伪 exactly-once**：Redis publish resolve 只等于本 plan 的 publisher-side `published` 状态，不等于 subscriber delivery、server 已选择 recipient 或客户端已展示；未来 `consumed` receipt 只有在 §8.2 的完整生产链落地后才可增加。若需要 single visible side effect，必须同时提供 receiver dedupe 与 correlated receipt，不能由当前 Pub/Sub client resolve 推导。
 - **跨轨文件冲突**：本 plan 主体限定 agent；dimension selector、SpiritNiche authz、server receipt、schema generated artifact 或 client handler 均是 §8 后续跨栈 contract，不在本 plan PR 中顺手扩 scope。
 - **失败重试放大**：没有稳定 key 或退避上限时，publish failure 会制造重复 narration 和队列爆炸；P2/P5 必须先于大规模 runtime 迁移。
 
@@ -347,7 +355,7 @@
 3. **PR-3 / P2 dedupe/concurrency**：稳定 key、per-key ordering、全局 capacity/concurrency，覆盖 #1486/#1619/#1702。
 4. **PR-4 / P3 validate**：source payload validation → renderer → NarrationV1 output validation，补齐 validator registry。
 5. **PR-5 / P4 route**：只实现现有 scope/target canonical route 与匿名化；不伪造 dimension 或 SpiritNiche recipient contract。
-6. **PR-6 / P5 publish/migration**：`published` terminal、retry/dead-letter/metrics、旧直发迁移与 agent/Redis 集成验收；#1738 保持 open。
+6. **PR-6 / P5 publish/migration**：publisher-side `published` state、retry/dead-letter/metrics、旧直发迁移与 agent/Redis 集成验收；不把 resolve 当作 subscriber ack 或 single visible side effect 证明；#1738 保持 open。
 
 ### 10.3 每 PR 的验证与文档更新
 
