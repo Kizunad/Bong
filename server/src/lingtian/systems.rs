@@ -17,9 +17,9 @@ use std::collections::{HashMap, HashSet};
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, Added, BlockState, ChunkLayer, Client, Commands, DVec3, DetectChanges, Entity,
-    EventReader, EventWriter, Events, ParamSet, Position, Query, Res, ResMut, Resource, Username,
-    With,
+    bevy_ecs, Added, BlockState, ChunkLayer, Client, Commands, DVec3, Despawned, DetectChanges,
+    Entity, EventReader, EventWriter, Events, ParamSet, Position, Query, Res, ResMut, Resource,
+    Username, With, Without,
 };
 
 use crate::alchemy::residue::{consume_one_residue, inventory_has_usable_residue};
@@ -165,7 +165,7 @@ pub struct CompletionActorQueries<'w, 's> {
     pub positions: Query<'w, 's, &'static Position>,
     pub dimensions: Query<'w, 's, &'static CurrentDimension>,
     pub clients: Query<'w, 's, (), With<Client>>,
-    pub npcs: Query<'w, 's, (), With<NpcMarker>>,
+    pub npcs: Query<'w, 's, (), (With<NpcMarker>, Without<Despawned>)>,
 }
 
 /// 灵田逻辑时间：冷却仍用 lingtian-tick，残料保鲜用真实 server tick。
@@ -986,8 +986,8 @@ pub struct PendingPlotZones {
     entities: HashSet<Entity>,
 }
 
-/// Resolve newly-added plots and retry only the unresolved entities when the
-/// zone registry becomes available or changes.
+/// Resolve newly-added plots once and retry unresolved plots only when the zone
+/// registry becomes available or changes.
 #[allow(clippy::type_complexity)]
 pub fn auto_set_plot_zone(
     mut plot_queries: ParamSet<(Query<Entity, Added<LingtianPlot>>, Query<&mut LingtianPlot>)>,
@@ -995,31 +995,35 @@ pub fn auto_set_plot_zone(
     mut pending: ResMut<PendingPlotZones>,
 ) {
     let new_entities: Vec<Entity> = plot_queries.p0().iter().collect();
-    pending.entities.extend(new_entities.iter().copied());
-
     let Some(zr) = zone_registry.as_deref() else {
+        pending.entities.extend(new_entities);
         return;
     };
-    if new_entities.is_empty() && !zone_registry.as_ref().is_some_and(|zr| zr.is_changed()) {
-        return;
-    }
+
+    let registry_changed = zone_registry.as_ref().is_some_and(|zr| zr.is_changed());
+    let candidates = if registry_changed {
+        pending.entities.extend(new_entities);
+        pending.entities.drain().collect::<Vec<_>>()
+    } else {
+        new_entities
+    };
 
     let mut plots = plot_queries.p1();
-    pending.entities.retain(|entity| {
-        let Ok(mut plot) = plots.get_mut(*entity) else {
-            return false;
+    for entity in candidates {
+        let Ok(mut plot) = plots.get_mut(entity) else {
+            continue;
         };
         if !plot.zone.is_empty() {
-            return false;
+            continue;
         }
         let pos = DVec3::new(plot.pos.x as f64, plot.pos.y as f64, plot.pos.z as f64);
         let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
         else {
-            return true;
+            pending.entities.insert(entity);
+            continue;
         };
         plot.zone = zone.name.clone();
-        false
-    });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1983,10 +1987,11 @@ mod tests {
                     handle_start_replenish,
                     handle_start_drain_qi,
                     tick_lingtian_sessions,
-                    apply_completed_sessions.after(DimensionTransferSet),
+                    apply_completed_sessions,
                     record_dye_contamination_warning_recent_events,
                 )
-                    .chain(),
+                    .chain()
+                    .after(DimensionTransferSet),
             );
         app
     }
@@ -2670,9 +2675,10 @@ mod tests {
                     handle_start_replenish,
                     handle_start_drain_qi,
                     tick_lingtian_sessions,
-                    apply_completed_sessions.after(DimensionTransferSet),
+                    apply_completed_sessions,
                 )
-                    .chain(),
+                    .chain()
+                    .after(DimensionTransferSet),
             );
         app
     }
@@ -2935,9 +2941,10 @@ mod tests {
                     handle_start_replenish,
                     handle_start_drain_qi,
                     tick_lingtian_sessions,
-                    apply_completed_sessions.after(DimensionTransferSet),
+                    apply_completed_sessions,
                 )
-                    .chain(),
+                    .chain()
+                    .after(DimensionTransferSet),
             );
         app
     }
@@ -3410,9 +3417,10 @@ mod tests {
                 (
                     handle_start_harvest,
                     tick_lingtian_sessions,
-                    apply_completed_sessions.after(DimensionTransferSet),
+                    apply_completed_sessions,
                 )
-                    .chain(),
+                    .chain()
+                    .after(DimensionTransferSet),
             );
 
         let pos = BlockPos::new(0, 64, 0);
@@ -5514,6 +5522,57 @@ mod tests {
     }
 
     #[test]
+    fn same_tick_dimension_transfer_precedes_start_validation() {
+        let mut app = build_app();
+        let overworld = app.world_mut().spawn(OverworldLayer).id();
+        let tsy = app.world_mut().spawn(TsyLayer).id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.add_event::<DimensionTransferRequest>();
+        app.add_systems(
+            Update,
+            apply_dimension_transfers.in_set(DimensionTransferSet),
+        );
+
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        let mut visible_layers = VisibleEntityLayers::default();
+        visible_layers.0.insert(tsy);
+        app.world_mut().entity_mut(player).insert((
+            CurrentDimension(DimensionKind::Tsy),
+            Position(DVec3::new(100.5, 80.5, 100.5)),
+            EntityLayerId(tsy),
+            VisibleChunkLayer(tsy),
+            visible_layers,
+        ));
+        app.world_mut().send_event(DimensionTransferRequest {
+            entity: player,
+            target: DimensionKind::Overworld,
+            target_pos: DVec3::new(0.5, 64.5, 0.5),
+        });
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CurrentDimension>(player),
+            Some(&CurrentDimension(DimensionKind::Overworld)),
+            "same-tick transfer must be applied before start authority is read"
+        );
+        assert_eq!(
+            app.world().resource::<ActiveLingtianSessions>().len(),
+            1,
+            "start validation must accept the post-transfer Overworld position"
+        );
+    }
+
+    #[test]
     fn same_tick_dimension_transfer_precedes_completion_revalidation() {
         let mut app = build_app();
         let overworld = app.world_mut().spawn(OverworldLayer).id();
@@ -5586,28 +5645,198 @@ mod tests {
         );
     }
 
-    #[test]
-    fn npc_finished_session_bypasses_player_c2s_gate() {
-        let mut app = build_app();
-        let pos = BlockPos::new(0, 64, 0);
-        let npc = app.world_mut().spawn(NpcMarker).id();
-        let mut session = DrainQiSession::new(pos);
-        for _ in 0..DRAIN_QI_TICKS {
+    fn finished_session(mut session: ActiveSession) -> ActiveSession {
+        while !session.is_finished() {
             session.tick();
         }
-        let mut plot = LingtianPlot::new(pos, None);
-        plot.plot_qi = 0.5;
-        let plot = app.world_mut().spawn(plot).id();
+        session
+    }
+
+    #[test]
+    fn npc_finished_sessions_settle_all_direct_farming_variants() {
+        let pos = BlockPos::new(0, 64, 0);
+
+        let mut till_app = build_app();
+        let till_npc = till_app.world_mut().spawn(NpcMarker).id();
+        till_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                till_npc,
+                finished_session(ActiveSession::Till(TillSession::new(
+                    pos,
+                    HoeKind::Iron,
+                    1,
+                    SessionMode::Manual,
+                    PlotEnvironment::base(),
+                ))),
+            );
+        till_app.update();
+        assert_eq!(
+            till_app
+                .world_mut()
+                .query::<&LingtianPlot>()
+                .iter(till_app.world())
+                .filter(|plot| plot.pos == pos)
+                .count(),
+            1,
+            "live NPC Till completion must create the plot"
+        );
+
+        let plant_id: PlantId = "ci_she_hao".into();
+        let mut planting_app = build_app();
+        let plant_registry = registry_with_three_test_plants();
+        planting_app.insert_resource(SeedRegistry::from_plant_registry(&plant_registry));
+        planting_app.insert_resource(plant_registry);
+        let planting_npc = planting_app.world_mut().spawn(NpcMarker).id();
+        let planting_plot = planting_app
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, None))
+            .id();
+        planting_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                planting_npc,
+                finished_session(ActiveSession::Planting(PlantingSession::new(
+                    pos,
+                    plant_id.clone(),
+                ))),
+            );
+        planting_app.update();
+        assert_eq!(
+            planting_app
+                .world()
+                .get::<LingtianPlot>(planting_plot)
+                .unwrap()
+                .crop
+                .as_ref()
+                .map(|crop| &crop.kind),
+            Some(&plant_id),
+            "live NPC Planting completion must populate the crop"
+        );
+
+        let mut harvest_app = build_app();
+        harvest_app.insert_resource(registry_with_three_test_plants());
+        harvest_app.insert_resource(registry_with_herb_and_seed_templates());
+        let harvest_npc = harvest_app.world_mut().spawn(NpcMarker).id();
+        let mut harvest_plot_value = LingtianPlot::new(pos, None);
+        let mut crop = CropInstance::new(plant_id.clone());
+        crop.growth = 1.0;
+        harvest_plot_value.crop = Some(crop);
+        let harvest_plot = harvest_app.world_mut().spawn(harvest_plot_value).id();
+        harvest_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                harvest_npc,
+                finished_session(ActiveSession::Harvest(HarvestSession::new(
+                    pos,
+                    plant_id.clone(),
+                    SessionMode::Auto,
+                ))),
+            );
+        harvest_app.update();
+        assert!(
+            harvest_app
+                .world()
+                .get::<LingtianPlot>(harvest_plot)
+                .unwrap()
+                .crop
+                .is_none(),
+            "live NPC Harvest completion must clear the ripe crop"
+        );
+
+        let mut replenish_app = build_app();
+        replenish_app
+            .world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 1.0);
+        let replenish_npc = replenish_app.world_mut().spawn(NpcMarker).id();
+        let replenish_plot = replenish_app
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, None))
+            .id();
+        replenish_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                replenish_npc,
+                finished_session(ActiveSession::Replenish(ReplenishSession::new(
+                    pos,
+                    ReplenishSource::Zone,
+                ))),
+            );
+        replenish_app.update();
+        assert_eq!(
+            replenish_app
+                .world()
+                .get::<LingtianPlot>(replenish_plot)
+                .unwrap()
+                .plot_qi,
+            ReplenishSource::Zone.plot_qi_amount(),
+            "live NPC Replenish completion must deposit plot qi"
+        );
+
+        let mut drain_app = build_app();
+        let drain_npc = drain_app.world_mut().spawn(NpcMarker).id();
+        let mut drain_plot_value = LingtianPlot::new(pos, None);
+        drain_plot_value.plot_qi = 0.5;
+        let drain_plot = drain_app.world_mut().spawn(drain_plot_value).id();
+        drain_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                drain_npc,
+                finished_session(ActiveSession::DrainQi(DrainQiSession::new(pos))),
+            );
+        drain_app.update();
+        assert_eq!(
+            drain_app
+                .world()
+                .get::<LingtianPlot>(drain_plot)
+                .unwrap()
+                .plot_qi,
+            0.0,
+            "live NPC DrainQi completion must drain plot qi"
+        );
+    }
+
+    #[test]
+    fn despawned_npc_finished_session_is_discarded() {
+        let mut app = build_app();
+        let pos = BlockPos::new(0, 64, 0);
+        let npc = app.world_mut().spawn((NpcMarker, Despawned)).id();
         app.world_mut()
             .resource_mut::<ActiveLingtianSessions>()
-            .try_insert(npc, ActiveSession::DrainQi(session));
+            .try_insert(
+                npc,
+                finished_session(ActiveSession::Till(TillSession::new(
+                    pos,
+                    HoeKind::Iron,
+                    1,
+                    SessionMode::Manual,
+                    PlotEnvironment::base(),
+                ))),
+            );
 
         app.update();
 
         assert_eq!(
-            app.world().get::<LingtianPlot>(plot).unwrap().plot_qi,
-            0.0,
-            "NpcMarker completion must keep its direct-session behavior without Client authority components"
+            app.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(app.world())
+                .count(),
+            0,
+            "Despawned NPC must not settle a finished farming session"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<TillCompleted>>()
+                .drain()
+                .count(),
+            0,
+            "Despawned NPC must not emit completion events"
         );
     }
     //
@@ -5674,6 +5903,88 @@ mod tests {
             plot.zone, "spawn_zone",
             "tick 2: registry present → zone must be back-filled (got {:?})",
             plot.zone
+        );
+    }
+
+    #[test]
+    fn auto_set_plot_zone_retries_when_existing_registry_changes() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry { zones: Vec::new() });
+        app.init_resource::<PendingPlotZones>();
+        app.add_systems(Update, auto_set_plot_zone);
+
+        let plot_entity = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None))
+            .id();
+        app.update();
+        assert!(
+            app.world()
+                .get::<LingtianPlot>(plot_entity)
+                .unwrap()
+                .zone
+                .is_empty(),
+            "empty existing registry must leave the plot pending"
+        );
+
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .zones
+            .push(zone_named(
+                "added_zone",
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(100.0, 100.0, 100.0),
+            ));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<LingtianPlot>(plot_entity).unwrap().zone,
+            "added_zone",
+            "in-place ZoneRegistry mutation must retry unresolved plots"
+        );
+    }
+
+    #[test]
+    fn auto_set_plot_zone_does_not_retry_history_for_each_new_plot() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone_named(
+                "registry_zone",
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(100.0, 100.0, 100.0),
+            )],
+        });
+        app.init_resource::<PendingPlotZones>();
+        app.add_systems(Update, auto_set_plot_zone);
+
+        let unresolved = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(500, 64, 500), None))
+            .id();
+        app.update();
+        app.world_mut()
+            .get_mut::<LingtianPlot>(unresolved)
+            .unwrap()
+            .pos = BlockPos::new(50, 64, 50);
+
+        let new_plot = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(60, 64, 60), None))
+            .id();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<LingtianPlot>(unresolved)
+                .unwrap()
+                .zone
+                .is_empty(),
+            "a new plot must not trigger a rescan of historical unresolved entries"
+        );
+        assert_eq!(
+            app.world().get::<LingtianPlot>(new_plot).unwrap().zone,
+            "registry_zone",
+            "the newly added plot must still resolve immediately"
         );
     }
 

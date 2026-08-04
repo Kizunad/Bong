@@ -180,9 +180,10 @@ pub fn register(app: &mut App) {
             systems::handle_start_replenish,
             systems::handle_start_drain_qi,
             systems::tick_lingtian_sessions,
-            systems::apply_completed_sessions.after(DimensionTransferSet),
+            systems::apply_completed_sessions,
         )
-            .chain(),
+            .chain()
+            .after(DimensionTransferSet),
     );
     app.add_systems(
         Update,
