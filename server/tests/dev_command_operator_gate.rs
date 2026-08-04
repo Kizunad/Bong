@@ -112,6 +112,29 @@ fn execute(app: &mut App, executor: Entity, command: &str) {
     app.world_mut().run_schedule(EventLoopUpdate);
 }
 
+fn qi_command_is_accepted(
+    connection_mode: ConnectionMode,
+    operators: Option<&str>,
+    allow_offline: Option<&str>,
+    username: &str,
+) -> bool {
+    let _env = ScopedEnvVars::set(&[
+        ("BONG_DEV_MODE", Some("1")),
+        ("BONG_OPERATORS", operators),
+        ("BONG_OPERATORS_ALLOW_OFFLINE", allow_offline),
+    ]);
+    let mut app = setup_app(connection_mode);
+    let (player, _helper) = spawn_client(&mut app, username);
+    execute(&mut app, player, "qi set 40");
+    !app.world()
+        .resource::<Events<CommandResultEvent<RepresentativeDevCommand>>>()
+        .is_empty()
+}
+
+fn operator_is_allowed(operators: Option<&str>, username: &str) -> bool {
+    qi_command_is_accepted(online_mode(), operators, None, username)
+}
+
 fn chat_messages(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
     let world = app.world_mut();
     let mut clients = world.query::<&mut Client>();
@@ -160,6 +183,110 @@ fn root_is_reachable(
                 required_scope,
             )
         })
+}
+
+#[test]
+fn operators_env_parsing_covers_defaults_empty_lists_and_identity_rules() {
+    assert!(
+        operator_is_allowed(None, "Admin"),
+        "absent BONG_OPERATORS must retain the Admin default"
+    );
+    assert!(
+        operator_is_allowed(None, "admin"),
+        "absent BONG_OPERATORS must retain the lowercase admin default"
+    );
+    assert!(
+        !operator_is_allowed(None, "Builder"),
+        "absent BONG_OPERATORS must not grant an unrelated username"
+    );
+    assert!(
+        !operator_is_allowed(Some(""), "Admin"),
+        "an explicitly empty BONG_OPERATORS must not fall back to Admin"
+    );
+    assert!(
+        !operator_is_allowed(Some("  , \t"), "Admin"),
+        "whitespace-only operator entries must be filtered without restoring defaults"
+    );
+    assert!(
+        operator_is_allowed(Some("Builder"), "Builder"),
+        "a single configured operator must be accepted"
+    );
+    assert!(
+        operator_is_allowed(Some("Builder, Another"), "Another"),
+        "every comma-separated operator must be accepted"
+    );
+    assert!(
+        operator_is_allowed(Some("  Builder  ,  Another  "), "Builder"),
+        "surrounding whitespace must be trimmed from the first operator"
+    );
+    assert!(
+        operator_is_allowed(Some("  Builder  ,  Another  "), "Another"),
+        "surrounding whitespace must be trimmed from later operators"
+    );
+    assert!(
+        operator_is_allowed(Some("Builder, Builder, Another"), "Builder"),
+        "duplicate operator entries must preserve the configured operator"
+    );
+    assert!(
+        operator_is_allowed(Some("Builder, Builder, Another"), "Another"),
+        "duplicate entries must not discard a distinct later operator"
+    );
+    assert!(
+        !operator_is_allowed(Some("Builder"), "builder"),
+        "operator matching must remain case-sensitive"
+    );
+}
+
+#[test]
+fn offline_opt_in_flag_controls_operator_authentication_for_online_and_offline_clients() {
+    assert!(
+        qi_command_is_accepted(online_mode(), Some("Builder"), None, "Builder"),
+        "online operators must be accepted when the offline opt-in is unset"
+    );
+    assert!(
+        qi_command_is_accepted(online_mode(), Some("Builder"), Some("false"), "Builder"),
+        "online operators must be accepted when the offline opt-in is false"
+    );
+    assert!(
+        !qi_command_is_accepted(ConnectionMode::Offline, Some("Builder"), None, "Builder"),
+        "offline usernames must be rejected when the offline opt-in is unset"
+    );
+    assert!(
+        !qi_command_is_accepted(
+            ConnectionMode::Offline,
+            Some("Builder"),
+            Some("false"),
+            "Builder"
+        ),
+        "offline usernames must be rejected for a false opt-in value"
+    );
+    assert!(
+        qi_command_is_accepted(
+            ConnectionMode::Offline,
+            Some("Builder"),
+            Some("1"),
+            "Builder"
+        ),
+        "offline usernames must be accepted for the explicit 1 opt-in"
+    );
+    assert!(
+        qi_command_is_accepted(
+            ConnectionMode::Offline,
+            Some("Builder"),
+            Some(" true "),
+            "Builder"
+        ),
+        "offline usernames must accept case-insensitive trimmed true"
+    );
+    assert!(
+        qi_command_is_accepted(
+            ConnectionMode::Offline,
+            Some("Builder"),
+            Some("YES"),
+            "Builder"
+        ),
+        "offline usernames must accept case-insensitive yes"
+    );
 }
 
 #[test]
