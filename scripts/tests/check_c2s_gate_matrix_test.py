@@ -98,6 +98,10 @@ class ParserTests(unittest.TestCase):
 
     def test_serde_contract_uses_real_enum_not_decoy_text(self) -> None:
         source = """// #[serde(tag = \"type\", rename_all = \"snake_case\")] pub enum ClientRequestV1 { Decoy, }
+/*
+#[serde(tag = \"type\", rename_all = \"snake_case\")]
+pub enum ClientRequestV1 { Decoy, }
+*/
 const DECOY: &str = \"#[serde(tag = \\\"type\\\", rename_all = \\\"snake_case\\\")] pub enum ClientRequestV1 { Decoy, }\";
 #[serde(tag = \"kind\", rename_all = \"snake_case\")]
 pub enum ClientRequestV1 {

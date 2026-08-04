@@ -9,102 +9,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
-ENUM_DECL_RE = re.compile(
-    r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{"
+ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
+SERDE_ATTR_RE = re.compile(r"(?m)^[ \t]*#\[serde\(([^]]*)\)\][ \t]*$")
+RUST_NON_CODE_RE = re.compile(
+    r'//[^\n]*|(?s:/\*.*?\*/)|(?:b)?r(?P<hashes>#+)"(?s:.*?)"(?P=hashes)|(?:b)?r"(?s:.*?)"|"(?:\\.|[^"\\])*"'
 )
-ATTRIBUTE_LINE_RE = re.compile(r"(?m)^[ \t]*#\[[^\n]*\][ \t]*(?:\n|$)")
 MATRIX_RE = re.compile(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|")
 VARIANT_DECL_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)\s*(.*)$")
 
 
-def _mask_rust_comments_and_strings(source: str) -> str:
-    masked = list(source)
-    length = len(source)
-
-    def blank(start: int, end: int) -> None:
-        for index in range(start, end):
-            if source[index] != "\n":
-                masked[index] = " "
-
-    index = 0
-    while index < length:
-        if source.startswith("//", index):
-            end = source.find("\n", index)
-            end = length if end == -1 else end
-            blank(index, end)
-            index = end
-            continue
-        if source.startswith("/*", index):
-            end = index + 2
-            comment_depth = 1
-            while end < length and comment_depth:
-                if source.startswith("/*", end):
-                    comment_depth += 1
-                    end += 2
-                elif source.startswith("*/", end):
-                    comment_depth -= 1
-                    end += 2
-                else:
-                    end += 1
-            blank(index, end)
-            index = end
-            continue
-
-        raw = re.match(r"(?:b)?r(#+)\"", source[index:]) or re.match(
-            r"(?:b)?r\"", source[index:]
-        )
-        if raw:
-            hashes = raw.group(1) if raw.lastindex else ""
-            delimiter = '"' + hashes
-            content_start = index + raw.end()
-            closing = source.find(delimiter, content_start)
-            end = length if closing == -1 else closing + len(delimiter)
-            blank(index, end)
-            index = end
-            continue
-
-        if source[index] == "'" and not re.match(r"'(?:\\.|[^'\\\n])'", source[index:]):
-            index += 1
-            continue
-        if source[index] in {'"', "'"}:
-            quote = source[index]
-            end = index + 1
-            while end < length:
-                if source[end] == "\\":
-                    end += 2
-                elif source[end] == quote:
-                    end += 1
-                    break
-                else:
-                    end += 1
-            blank(index, end)
-            index = end
-            continue
-        index += 1
-
-    return "".join(masked)
-
-
-def _enum_declaration(source: str) -> tuple[str, re.Match[str]]:
-    masked = _mask_rust_comments_and_strings(source)
-    declaration = ENUM_DECL_RE.search(masked)
-    if not declaration:
-        raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
-    return masked, declaration
-
-
-def _enum_serde_body(source: str, masked: str, declaration: re.Match[str]) -> str:
-    attributes: list[str] = []
-    cursor = declaration.start()
-    for match in reversed(list(ATTRIBUTE_LINE_RE.finditer(masked, 0, cursor))):
-        if masked[match.end() : cursor].strip():
-            break
-        attributes.insert(0, source[match.start() : match.end()])
-        cursor = match.start()
-    for attribute in attributes:
-        if serde := re.search(r"#\[serde\(([^]]*)\)\]", attribute):
-            return serde.group(1)
-    raise RuntimeError("ClientRequestV1 must declare a serde attribute")
+def _mask_rust_non_code(source: str) -> str:
+    return RUST_NON_CODE_RE.sub(
+        lambda match: "".join("\n" if char == "\n" else " " for char in match.group()),
+        source,
+    )
 
 
 def _without_line_comment(line: str) -> str:
@@ -146,25 +64,32 @@ def _leading_attributes(code: str) -> tuple[list[str], str]:
 
 
 def parse_enum_variants(source: str) -> list[str]:
-    masked, declaration = _enum_declaration(source)
-    serde = _enum_serde_body(source, masked, declaration)
-    if not re.search(r'\btag\s*=\s*"type"', serde):
+    masked = _mask_rust_non_code(source)
+    declaration = ENUM_DECL_RE.search(masked)
+    if not declaration:
+        raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
+    serde = None
+    for match in reversed(list(SERDE_ATTR_RE.finditer(source, 0, declaration.start()))):
+        if source[match.end() : declaration.start()].strip():
+            break
+        serde = match.group(1)
+        break
+    if serde is None or not re.search(r'\btag\s*=\s*"type"', serde):
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
     if not re.search(r'\brename_all\s*=\s*"snake_case"', serde):
         raise RuntimeError("ClientRequestV1 must use serde rename_all = \"snake_case\"")
 
     lines = source.splitlines()
     masked_lines = masked.splitlines()
-    declaration_line = masked[: declaration.start()].count("\n")
     variants: list[str] = []
     inside = False
     depth = 0
     tuple_depth = 0
     pending_attributes: list[str] = []
 
-    for line_number, (line, masked_line) in enumerate(zip(lines, masked_lines)):
+    for line, masked_line in zip(lines, masked_lines):
         if not inside:
-            if line_number == declaration_line:
+            if masked_line.strip() == "pub enum ClientRequestV1 {":
                 inside = True
                 depth = 1
             continue
