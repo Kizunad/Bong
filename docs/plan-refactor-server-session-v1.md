@@ -65,6 +65,7 @@ pub trait InteractionSession {
 - `TerminationCause::{Completed, VoluntaryCancel, Disconnect, DimensionChange, Shutdown, InvalidRestore, SuspensionExpired, AuthorizedAdministratorClosure}`。
 - `BusyClaim`：player-exclusive、target-exclusive、facility-exclusive 三类集中冲突矩阵。
 - `SuspensionPolicy`：`SESSION_SUSPENSION_TTL_TICKS = 1_728_000`、扫描 cadence `1_200` ticks；R3 tick rebase 只保留真实剩余 TTL，不刷新租约。
+- `TerminalDeliveryPolicy`：`SESSION_DELIVERY_MAX_PAYLOAD_BYTES = 1_048_576`（1 MiB）、`SESSION_DELIVERY_MAX_ATTEMPTS = 8`、`SESSION_DELIVERY_MAX_RETRY_AGE_TICKS = 1_728_000`（24 小时）；O-12/O-13 在 attempts 或 age 任一达到边界时进 `DeadLetter`，否则回 `Pending`，`created_at_tick`/attempts 在重启时不刷新。
 - `SessionMaintenancePermissions`：server console，或已认证且绑定当前 executor 的 principal/capability；Username、owner 字符串、offline player 和跨 executor capability 均无权。
 
 ## 3. Canonical session reducer（唯一 session 规范）
@@ -79,7 +80,7 @@ pub trait InteractionSession {
 | S-04 | Running + valid pause/close | Paused | claim 保留；不退款、不创建 terminal obligation |
 | S-05 | Running + explicit `VoluntaryCancel` | HandoffPreparing | 按域 policy 生成 refund payload；进入 O-08 handoff |
 | S-06 | Running + `Completed` | HandoffPreparing | 产物 payload；不 refund inputs；进入 O-08 |
-| S-07 | Running + `Disconnect`/`Shutdown` checkpointed | Suspended | 停 tick、写 checkpoint、解绑 runtime Entity；逻辑 facility claim 保留 |
+| S-07 | Running + `Disconnect`/`Shutdown` checkpointed | Suspended only after durable commit | checkpointed session 从 admission 起始终有 last committed recoverable checkpoint；本次 snapshot + state/generation 以单事务 commit 为线性化点，commit 前 quiesce/写入失败回滚并保持 Running/bound/可重试，commit 后 authoritative state 立即禁止 tick，再幂等解绑 runtime Entity并保留逻辑 facility claim；post-commit cleanup 由 reconciliation 重试，crash 只恢复旧 live checkpoint 或新 Suspended checkpoint |
 | S-08 | Running + `Disconnect`/`Shutdown` volatile | HandoffPreparing | 全退未消费 escrow；进入 O-08，不可离线推进 |
 | S-09 | Running + `DimensionChange` | HandoffPreparing | 停 intake；全退未消费 escrow；不得进入 Suspended |
 | S-10 | Suspended + reconnect and guarded restore pass | Paused | `reuse_terminal_obligation`（O-04，`ΔQ=0`）；stable `placed_id` rebind |
@@ -114,7 +115,7 @@ pub trait InteractionSession {
 
 | Row ID | obligation state + event | next state | `ΔQ` / effect |
 |---|---|---|---|
-| O-01 | Absent + new admission reservation commit | ReservedAwaitingClaim | `+Q`；quota update + unique reservation 同事务 |
+| O-01 | Absent + new admission reservation commit | ReservedAwaitingClaim | `+Q`；quota update + unique reservation 同事务；`reserved_bytes = SESSION_DELIVERY_MAX_PAYLOAD_BYTES`，按最坏 payload 固定预留 |
 | O-02 | Absent + quota full / unique conflict | Absent | `0`；fail closed |
 | O-03 | ReservedAwaitingClaim + runtime busy claim win | ReservedLive | `0`；绑定 live session/generation，不重复计量 |
 | O-04 | ReservedLive + matching suspended restore/retry | ReservedLive | `0`；复用 owner/bytes/generation，禁止 insert/+Q |
@@ -125,12 +126,12 @@ pub trait InteractionSession {
 | O-09 | ReservedLive + handoff transaction failure before commit | ReservedLive | `0`；checkpoint/claim/reservation 可重试，不能部分删除 |
 | O-10 | Pending + worker claim CAS win | InFlight | `0`；写 lease/generation |
 | O-11 | Pending + duplicate claim/CAS loser | Pending | `0`；重读 authoritative row |
-| O-12 | InFlight + lease expiry | Pending 或 DeadLetter | `0`；按 retry budget/age 转换，不 attach gameplay |
-| O-13 | InFlight + retryable inventory/spill failure | Pending | `0`；backoff/attempts 更新 |
+| O-12 | InFlight + lease expiry | Pending 或 DeadLetter | `0`；O-10 已原子递增 attempts；attempts `< 8` 且 age `< 1_728_000` ticks 回 Pending，否则 DeadLetter；不 attach gameplay |
+| O-13 | InFlight + retryable inventory/spill failure | Pending 或 DeadLetter | `0`；沿用 O-12 attempts/age 边界，未达界时更新 backoff，达界即 DeadLetter |
 | O-14 | InFlight + malformed payload/digest mismatch | DeadLetter | `0`；fail closed、保留完整 payload、告警；禁止调用 deliver |
 | O-15 | InFlight + claimed payload decode/validation success | InFlight | `0`；`DeliveryRequest` 只能由 canonical payload decode 派生 |
 | O-16 | InFlight + inventory/spill + receipt transaction commit | ReceiptRetained | `-Q`；inventory/spill、receipt、obligation delete、quota release 同事务 |
-| O-17 | InFlight + receipt already exists for same digest | ReceiptRetained | `0`；幂等 replay，不二次 deliver 或 release |
+| O-17 | ReceiptRetained + stale worker completion/claim for same digest | ReceiptRetained | `0`；authoritative receipt 证明 O-16 已原子 `-Q`；返回既有 receipt，不二次 deliver/release |
 | O-18 | DeadLetter + authorized operator retry | Pending | `0`；CAS loser 不改变 quota |
 | O-19 | DeadLetter + authorized resolve with complete disposition | DispositionRetained | `-Q`；完整 disposition、obligation delete、quota release 同事务 |
 | O-20 | DeadLetter + resolve missing payload/disposition | DeadLetter | `0`；fail closed，继续占 Q |
@@ -144,11 +145,11 @@ pub trait InteractionSession {
 
 ### 4.1 Obligation invariants
 
-1. 每个 `session_key` 恰有零或一个 durable obligation owner；`quota_used` 等于 `ReservedAwaitingClaim`、`ReservedLive`、`CancelPending`、`Pending`、`InFlight`、`DeadLetter` 的 Q 之和。payload envelope 固定含 `payload_schema_version`、`delivery_id`、`session_key`、terminal `generation`、recipient `PlayerKey`、cause、item/refund entries；O-08 首次写入的 exact bytes 是唯一权威身份，后续不得重序列化替换。
-2. `reserve_new` 只产生 O-01 的 `+Q`；claim win O-03、matching restore/retry O-04、handoff O-08、retry/lease O-12/O-13、所有 CAS loser 均 `0`。
+1. 每个 `session_key` 恰有零或一个 durable obligation owner；`quota_used` 等于 `ReservedAwaitingClaim`、`ReservedLive`、`CancelPending`、`Pending`、`InFlight`、`DeadLetter` 的 Q 之和。每个 active Q 固定为 `(1 row, SESSION_DELIVERY_MAX_PAYLOAD_BYTES)`，不按当前 payload 小值预留；payload envelope 固定含 `payload_schema_version`、`delivery_id`、`session_key`、terminal `generation`、recipient `PlayerKey`、cause、item/refund entries；O-08 首次写入的 exact bytes 是唯一权威身份，后续不得重序列化替换。
+2. `reserve_new` 只产生 O-01 的 `+Q`，并固定预留完整 1 MiB；claim win O-03、matching restore/retry O-04、handoff O-08、retry/lease O-12/O-13、所有 CAS loser 均 `0`，因此 terminal payload 增长不需要未建模 resize。
 3. 只有 O-06 成功取消或 O-16/O-19 成功持久化终结结果才 `-Q`。取消标记或删除失败不能把 quota 留成无主 reservation：O-25 由原 reservation 继续担当 durable owner，O-07 由 `CancelPending` row 担当；scanner/retry 均不得凭 age 直接释放。
 4. `payload` 是 canonical serialized bytes；`payload_digest = SHA-256(payload)`。worker 的 `DeliveryRequest` 必须从 claimed payload decode，并在 O-16 transaction 中以 digest/semantic item set 对拍；不存在独立可替换的 caller payload。
-5. payload 序列化后恰为 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES` 可接受；`+1` 在新增 escrow/output 被接受前 fail closed。payload 一旦进入 O-08 不可增长。
+5. payload 序列化后恰为 `SESSION_DELIVERY_MAX_PAYLOAD_BYTES = 1_048_576` 可接受；`1_048_577` 在新增 escrow/output 被接受前 fail closed。payload 一旦进入 O-08 不可增长。
 6. `ReceiptRetained`/`DispositionRetained` 不是无限历史：完整结果按 §3.1 的 replay TTL 保留，达到 producer/outbox GC watermark 后转 O-22 bounded tombstone，再按 §3.1 的 tombstone TTL 满足 O-24 才 GC。R1 是 retention 数值与边界的唯一 contract owner；R3 只实现 table/index/compaction scheduling 与 O-26 deliver 前容量预留，不得另定 horizon、row/byte limit 或重启时刷新 age。
 7. O-08 成功后 gameplay claim 已由 S-14 释放；O-12/O-13/O-14/O-18 不得恢复 session。DeadLetter 无 runtime claim 但继续占 Q。
 
@@ -170,12 +171,12 @@ pub trait InteractionSession {
 
 验收只引用 row ID，不重新定义状态：
 
-1. `session_trace_matrix`：S-01..S-23 覆盖 admission、pause/resume、complete、cancel、disconnect、dimension、shutdown、restore、TTL、admin、duplicate、invalid、stale/CAS loser；每条 trace 逐步执行 `reduce_session`。
-2. `obligation_trace_matrix`：O-01..O-27 覆盖 quota-full、claim win、busy loser、cancel-mark/delete persistence failure 与 live/restart retry、restore reuse、handoff crash、lease expiry、retry/dead-letter、malformed/mismatched payload、history quota full、receipt replay、resolve fail-closed、retention/GC、invalid/stale event。
+1. `session_trace_matrix`：S-01..S-23 覆盖 admission、pause/resume、complete、cancel、disconnect、dimension、shutdown、restore、TTL、admin、duplicate、invalid、stale/CAS loser；每条 trace 逐步执行 `reduce_session`。S-07 另在 quiesce 后/commit 前、durable commit 后/runtime cleanup 前、cleanup 后注入 crash：恢复结果只能是旧 Running/bound checkpoint 或新 Suspended/unbound checkpoint，不得出现 Suspended 无 checkpoint、Running 已解绑或 lease 刷新。
+2. `obligation_trace_matrix`：O-01..O-27 覆盖 quota-full、claim win、busy loser、cancel-mark/delete persistence failure 与 live/restart retry、restore reuse、handoff crash、lease expiry、retry/dead-letter（attempts 7/8 与 age boundary-1/exact/after）、malformed/mismatched payload、history quota full、receipt replay、resolve fail-closed、retention/GC、invalid/stale event。
 3. `payload_identity`：claimed bytes、digest、derived request、inventory receipt 四者对拍；注入 payload A/request B 必须命中 O-14，不能调用 deliver 或 ack 任一 payload。
-4. `quota_conservation`：两个 SQLite connection 竞争最后 row/bytes；恰一个 O-01 成功，其余 O-02；race loser 的 cancel-mark 成功走 O-05→O-07/O-06，标记失败走 O-25 并由 live/startup reconciliation 收敛，不泄漏或双扣 Q。
+4. `quota_conservation`：两个 SQLite connection 竞争最后 row/bytes；恰一个 O-01 成功并固定取得 `(1 row, 1_048_576 bytes)`，其余 O-02；race loser 的 cancel-mark 成功走 O-05→O-07/O-06，标记失败走 O-25 并由 live/startup reconciliation 收敛；terminal payload 从空增长到 exact-max 时不 resize，`1_048_577` 在接收新 escrow/output 前拒绝，任何路径都不泄漏或双扣 Q。
 5. `handoff_crash_atomicity`：outbox insert 前、terminal checkpoint 前、commit 后 ack 前强杀；结果只能 O-09 可重试或 O-08/Pending 可重放，S-14 不 reopen。
-6. `delivery_history_bound`：receipt/disposition 在 horizon 前走 O-21 replay，达到 watermark 后为 O-22 tombstone，再由 O-24 GC；history quota 满命中 O-26，inventory 不 mutation，storage 不无限增长。
+6. `delivery_history_bound`：receipt/disposition 在 horizon 前走 O-21 replay，stale worker 对已由 O-16 释放 Q 的 receipt 走 O-17 且不二次 `-Q`，达到 watermark 后为 O-22 tombstone，再由 O-24 GC；history quota 满命中 O-26，inventory 不 mutation，storage 不无限增长。
 7. `maintenance_auth`：console allow、current-executor capability allow、wrong-executor capability deny、offline/username/owner spoof deny。
 8. `workbench_restore`：`workbench_key` 0/1/u64::MAX 与 malformed/stale/despawned/cross-dimension/out-of-range；成功后只保存/恢复 `placed_id`，新 runtime Entity 可 rebind。
 9. `tsy_presence_snapshot`：routine autosave、disconnect、shutdown 每个写边界 crash 后 presence/position/dimension 只能全旧或全新。
