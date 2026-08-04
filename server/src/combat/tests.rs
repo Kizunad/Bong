@@ -225,8 +225,16 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         weakened_until_tick: None,
         state: LifecycleState::AwaitingRevival,
     };
+    let save_started_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
+    let save_finished_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
 
     let mut app = App::new();
     app.insert_resource(persistence);
@@ -234,7 +242,15 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
 
     let (client_bundle, _helper) = create_mock_client("Alice");
     let entity = app.world_mut().spawn(client_bundle).id();
+    let load_started_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
     app.update();
+    let load_finished_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
 
     let lifecycle = app
         .world()
@@ -259,9 +275,17 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     let restored_deadline = lifecycle
         .revival_decision_deadline_tick
         .expect("persisted revival decision deadline should be restored");
+    let earliest_elapsed_seconds = load_started_wall.saturating_sub(save_finished_wall);
+    let latest_elapsed_seconds = load_finished_wall.saturating_sub(save_started_wall);
+    let latest_deadline = 9_999_u64.saturating_sub(
+        earliest_elapsed_seconds.saturating_mul(crate::combat::components::TICKS_PER_SECOND),
+    );
+    let earliest_deadline = 9_999_u64.saturating_sub(
+        latest_elapsed_seconds.saturating_mul(crate::combat::components::TICKS_PER_SECOND),
+    );
     assert!(
-        (9_979..=9_999).contains(&restored_deadline),
-        "重连必须保留决策窗口；并行测试跨过 1 秒墙钟边界时只允许扣除对应 20 tick，实际 {restored_deadline}"
+        (earliest_deadline..=latest_deadline).contains(&restored_deadline),
+        "重连 deadline 必须按实际 save/load 墙钟边界折算；允许 {earliest_deadline}..={latest_deadline}，实际 {restored_deadline}"
     );
     assert_eq!(lifecycle.death_count, 2);
 

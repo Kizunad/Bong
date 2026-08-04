@@ -1,8 +1,8 @@
-//! Cross-domain persistence contracts.
+//! Cross-domain persistence contracts and canonical production registry support.
 //!
-//! P0 intentionally keeps this module free of production slice registrations. The
-//! descriptors and state machines below pin the invariants that later migrations
-//! must preserve without changing the existing SQLite ownership model.
+//! The framework owns descriptor validation and dispatch. Production domains migrate
+//! into the canonical registry one at a time so an old lifecycle hook and its slice
+//! adapter are never registered concurrently.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -5239,7 +5239,8 @@ mod tests {
         connection
             .execute_batch(
                 "CREATE TABLE durable_cas (subject TEXT PRIMARY KEY, revision INTEGER NOT NULL, value INTEGER NOT NULL);\
-                 INSERT INTO durable_cas (subject, revision, value) VALUES ('player:cas', 40, 9)",
+                 INSERT INTO durable_cas (subject, revision, value) VALUES ('player:cas', 40, 9);\
+                 INSERT INTO durable_cas (subject, revision, value) VALUES ('player:other', 40, 7)",
             )
             .unwrap();
 
@@ -5285,6 +5286,42 @@ mod tests {
                 [DirtyRevision::new(41).get() as i64],
             )
             .unwrap();
+
+        let multi_row_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
+        let multi_row_snapshot = tracker
+            .begin_snapshot(multi_row_permit, |value| *value)
+            .unwrap()
+            .unwrap();
+        let multi_row = fence.commit(&mut connection, multi_row_snapshot, |request| {
+            request
+                .execute_cas(
+                    "UPDATE durable_cas SET revision = ?1, value = ?2 WHERE revision >= ?3",
+                    (
+                        request.write_revision().get() as i64,
+                        *request.payload() as i64,
+                        DirtyRevision::new(40).get() as i64,
+                    ),
+                )
+                .map_err(|_| "cas matched multiple rows")
+        });
+        assert_eq!(
+            multi_row,
+            Err(DurableCommitError::WriteFailed("cas matched multiple rows"))
+        );
+        assert_eq!(fence.persisted_revision(), DirtyRevision::new(41));
+        assert!(tracker.is_dirty());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT revision, value FROM durable_cas WHERE subject = 'player:other'",
+                    [],
+                    |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u32>(1)?)),
+                )
+                .unwrap(),
+            (40, 7),
+            "a CAS predicate matching multiple rows must roll the whole transaction back"
+        );
+
         let accepted_permit = guarded.write_permit(WriteOutlet::Autosave).unwrap();
         let accepted_snapshot = tracker
             .begin_snapshot(accepted_permit, |value| *value)
@@ -5434,6 +5471,130 @@ mod tests {
         assert_eq!(
             tracker.acknowledge(receipt),
             DirtyAcknowledgement::Acknowledged
+        );
+    }
+
+    #[test]
+    fn stale_snapshot_and_receipt_ordering_matrix_preserves_newest_dirty_revision() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.stale_matrix", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:stale-matrix",
+            DirtyRevision::new(40),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE durable_stale_matrix (subject TEXT PRIMARY KEY, value INTEGER NOT NULL);\
+                 INSERT INTO durable_stale_matrix (subject, value) VALUES ('player:stale-matrix', 9)",
+            )
+            .unwrap();
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let equal_first = tracker
+            .begin_snapshot(
+                guarded.write_permit(WriteOutlet::Autosave).unwrap(),
+                |value| *value,
+            )
+            .unwrap()
+            .unwrap();
+        let equal_replay = tracker
+            .begin_snapshot(
+                guarded.write_permit(WriteOutlet::Autosave).unwrap(),
+                |value| *value,
+            )
+            .unwrap()
+            .unwrap();
+        let first_receipt = fence
+            .commit(&mut connection, equal_first, |request| {
+                request
+                    .execute_serialized(
+                        "UPDATE durable_stale_matrix SET value = ?1 WHERE subject = ?2",
+                        (*request.payload(), request.subject_key().0.as_str()),
+                    )
+                    .map_err(|_| "initial write failed")
+            })
+            .unwrap();
+        assert_eq!(
+            tracker.acknowledge(first_receipt),
+            DirtyAcknowledgement::Acknowledged
+        );
+        let mut equal_replay_writer_called = false;
+        assert_eq!(
+            fence.commit(&mut connection, equal_replay, |_request| {
+                equal_replay_writer_called = true;
+                Ok::<(), &str>(())
+            }),
+            Err(DurableCommitError::StaleRevision {
+                persisted: DirtyRevision::new(41),
+                attempted: DirtyRevision::new(41),
+            })
+        );
+        assert!(!equal_replay_writer_called);
+
+        guarded.mutate(&mut tracker, |value| *value = 11).unwrap();
+        let older_snapshot = tracker
+            .begin_snapshot(
+                guarded.write_permit(WriteOutlet::Autosave).unwrap(),
+                |value| *value,
+            )
+            .unwrap()
+            .unwrap();
+        guarded.mutate(&mut tracker, |value| *value = 12).unwrap();
+        let newer_snapshot = tracker
+            .begin_snapshot(
+                guarded.write_permit(WriteOutlet::Autosave).unwrap(),
+                |value| *value,
+            )
+            .unwrap()
+            .unwrap();
+        let newer_receipt = fence
+            .commit(&mut connection, newer_snapshot, |request| {
+                request
+                    .execute_serialized(
+                        "UPDATE durable_stale_matrix SET value = ?1 WHERE subject = ?2",
+                        (*request.payload(), request.subject_key().0.as_str()),
+                    )
+                    .map_err(|_| "newest write failed")
+            })
+            .unwrap();
+        let mut older_writer_called = false;
+        assert_eq!(
+            fence.commit(&mut connection, older_snapshot, |_request| {
+                older_writer_called = true;
+                Ok::<(), &str>(())
+            }),
+            Err(DurableCommitError::StaleRevision {
+                persisted: DirtyRevision::new(43),
+                attempted: DirtyRevision::new(42),
+            })
+        );
+        assert!(!older_writer_called);
+
+        guarded.mutate(&mut tracker, |value| *value = 13).unwrap();
+        assert_eq!(
+            tracker.acknowledge(newer_receipt),
+            DirtyAcknowledgement::Stale
+        );
+        assert!(tracker.is_dirty());
+        assert_eq!(tracker.current_revision(), DirtyRevision::new(44));
+        assert_eq!(fence.persisted_revision(), DirtyRevision::new(43));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT value FROM durable_stale_matrix WHERE subject = 'player:stale-matrix'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .unwrap(),
+            12
         );
     }
 

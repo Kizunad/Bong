@@ -10,11 +10,12 @@ use rusqlite::{params, types::Type, Connection, OptionalExtension, TransactionBe
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 use valence::prelude::bevy_ecs;
+use valence::prelude::bevy_ecs::event::{Events, ManualEventReader};
 use valence::prelude::bevy_ecs::schedule::SystemSet;
 use valence::prelude::{
     App, AppExit, Client, Commands, Component, DVec3, Entity, EntityKind, EventReader,
     IntoSystemConfigs, Last, Position, Query, Res, ResMut, Resource, Startup, Update, Username,
-    With,
+    With, World,
 };
 
 use crate::combat::components::{Lifecycle, LifecycleState};
@@ -52,6 +53,13 @@ use crate::world::heartbeat::{
 pub mod identity;
 #[allow(dead_code)]
 pub mod slice;
+
+use slice::{
+    AutosavePolicy, LoadFailurePolicy, PersistenceSlice, PersistenceSliceRegistry,
+    ShutdownFlushRequest, SliceClock, SliceDescriptor, SliceId, SliceRunContext, SliceRunError,
+    SliceRunOutcome, SliceRunResult, SliceScope, TimeBasis, WriteAuthority, WriteBinding,
+    WriteDomain, WriteOrdering,
+};
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
 pub const SQLITE_BUSY_TIMEOUT_MS: u64 = 15_000;
@@ -157,6 +165,55 @@ struct ZoneInfluenceSnapshotState {
 }
 
 impl Resource for ZoneInfluenceSnapshotState {}
+
+#[derive(Debug, Default)]
+struct PersistenceShutdownReader(ManualEventReader<AppExit>);
+
+impl Resource for PersistenceShutdownReader {}
+
+#[derive(Debug, Clone, Copy)]
+struct ProductionSliceClock {
+    runtime_tick: u64,
+    wall_unix_millis: u64,
+}
+
+impl SliceClock for ProductionSliceClock {
+    fn runtime_tick(&self) -> u64 {
+        self.runtime_tick
+    }
+
+    fn wall_unix_millis(&self) -> u64 {
+        self.wall_unix_millis
+    }
+}
+
+struct ZoneRuntimePersistenceSlice;
+
+impl PersistenceSlice for ZoneRuntimePersistenceSlice {
+    fn descriptor() -> &'static SliceDescriptor {
+        &ZONE_RUNTIME_SLICE_DESCRIPTOR
+    }
+}
+
+const ZONE_RUNTIME_SLICE_DESCRIPTOR: SliceDescriptor = SliceDescriptor {
+    id: SliceId::new("world.zone_runtime"),
+    scope: SliceScope::WorldResource,
+    order: 100,
+    load_failure: LoadFailurePolicy::RefuseStartup,
+    time_basis: TimeBasis::None,
+    write_binding: WriteBinding::new(
+        WriteDomain::new("world.zone_runtime"),
+        WriteAuthority::new("persistence.zone_runtime"),
+    ),
+    write_ordering: WriteOrdering::Serialized,
+    autosave: AutosavePolicy::Disabled,
+    hydrate: None,
+    reconnect_preflight: None,
+    reconnect_cleanup: None,
+    rebase: None,
+    disconnect_save: None,
+    shutdown_flush: Some(flush_zone_runtime_slice),
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
 pub(crate) struct PersistenceBootstrapSet;
@@ -684,7 +741,14 @@ pub struct SocialPersistenceBundle {
 }
 
 pub fn register(app: &mut App) {
-    app.init_resource::<PersistenceSettings>()
+    let mut slice_registry = PersistenceSliceRegistry::empty();
+    slice_registry
+        .register_slice::<ZoneRuntimePersistenceSlice>()
+        .expect("production persistence slice descriptors must be valid");
+
+    app.insert_resource(slice_registry)
+        .init_resource::<PersistenceShutdownReader>()
+        .init_resource::<PersistenceSettings>()
         .init_resource::<NpcSnapshotTracker>()
         .init_resource::<NpcDigestSweepState>()
         .init_resource::<DormantRelicSweepState>()
@@ -709,7 +773,7 @@ pub fn register(app: &mut App) {
                 persist_zone_influence_system,
             ),
         )
-        .add_systems(Last, persist_zone_runtime_on_shutdown_system);
+        .add_systems(Last, dispatch_persistence_shutdown_flushes);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -923,32 +987,74 @@ fn persist_zone_runtime_system(
     }
 }
 
-fn persist_zone_runtime_on_shutdown_system(
-    settings: Res<PersistenceSettings>,
-    mut app_exit: EventReader<AppExit>,
-    zones: Option<Res<crate::world::zone::ZoneRegistry>>,
-    heartbeat: Option<Res<WorldHeartbeat>>,
-    qi_ledger: Res<WorldQiAccount>,
-    clock: Res<CultivationClock>,
-) {
-    if app_exit.read().next().is_none() {
-        return;
+fn flush_zone_runtime_slice(world: &mut World, _context: &SliceRunContext) -> SliceRunResult {
+    if !world.contains_resource::<crate::world::zone::ZoneRegistry>() {
+        return Ok(SliceRunOutcome::Clean);
     }
-    let Some(zone_registry) = zones else {
-        return;
+    if !world.contains_resource::<PersistenceSettings>() {
+        return Err(SliceRunError::new("PersistenceSettings is unavailable"));
+    }
+    world.resource_scope(
+        |world, settings: valence::prelude::Mut<PersistenceSettings>| {
+            world.resource_scope(
+                |world, zones: valence::prelude::Mut<crate::world::zone::ZoneRegistry>| {
+                    let heartbeat = world.get_resource::<WorldHeartbeat>();
+                    let qi_ledger = world
+                        .get_resource::<WorldQiAccount>()
+                        .ok_or_else(|| SliceRunError::new("WorldQiAccount is unavailable"))?;
+                    let clock_tick = world
+                        .get_resource::<CultivationClock>()
+                        .ok_or_else(|| SliceRunError::new("CultivationClock is unavailable"))?
+                        .tick;
+
+                    persist_zone_runtime_snapshot_with_heartbeat_at_tick(
+                        &settings, &zones, heartbeat, qi_ledger, clock_tick,
+                    )
+                    .map(|_| SliceRunOutcome::Flushed)
+                    .map_err(|error| SliceRunError::new(error.to_string()))
+                },
+            )
+        },
+    )
+}
+
+fn dispatch_persistence_shutdown_flushes(world: &mut World) {
+    let requested = world.resource_scope(
+        |world, mut reader: valence::prelude::Mut<PersistenceShutdownReader>| {
+            world
+                .get_resource::<Events<AppExit>>()
+                .is_some_and(|events| reader.0.read(events).next().is_some())
+        },
+    );
+    let request = if requested {
+        ShutdownFlushRequest::Requested
+    } else {
+        ShutdownFlushRequest::NotRequested
+    };
+    let runtime_tick = world
+        .get_resource::<CultivationClock>()
+        .map_or(0, |clock| clock.tick);
+    let wall_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64);
+    let clock = ProductionSliceClock {
+        runtime_tick,
+        wall_unix_millis,
     };
 
-    if let Err(error) = persist_zone_runtime_snapshot_with_heartbeat_at_tick(
-        &settings,
-        &zone_registry,
-        heartbeat.as_deref(),
-        &qi_ledger,
-        clock.tick,
-    ) {
-        tracing::warn!(
-            "[bong][persistence] failed to flush zone runtime on shutdown at {}: {error}",
-            settings.db_path().display()
-        );
+    match slice::dispatch_shutdown_flushes(world, request, &clock) {
+        Ok(report) => {
+            for failure in report.failures {
+                tracing::warn!(
+                    "[bong][persistence] shutdown slice `{}` failed: {}",
+                    failure.slice_id,
+                    failure.error
+                );
+            }
+        }
+        Err(error) => {
+            tracing::error!("[bong][persistence] shutdown slice dispatch failed closed: {error}")
+        }
     }
 }
 
@@ -4428,9 +4534,9 @@ pub fn persist_npc_deceased_archive(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     write_zstd_bundle(&archive_path, &archive_json)?;
 
-    let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
     let persisted = (|| -> io::Result<()> {
+        let mut connection = open_persistence_connection(settings)?;
+        let transaction = connection.transaction().map_err(io::Error::other)?;
         upsert_npc_deceased_index(
             &transaction,
             &NpcDeceasedIndexRecord {
@@ -11801,6 +11907,59 @@ mod persistence_tests {
     }
 
     #[test]
+    fn production_registry_dispatches_zone_runtime_slice_on_app_exit() {
+        let (settings, root) = persistence_settings("production-zone-runtime-shutdown-slice");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let mut app = App::new();
+        app.add_event::<AppExit>();
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.insert_resource(settings.clone());
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        app.insert_resource(crate::world::zone::ZoneRegistry {
+            zones: vec![crate::world::zone::Zone {
+                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                dimension: crate::world::dimension::DimensionKind::Overworld,
+                bounds: crate::world::zone::default_spawn_bounds(),
+                spirit_qi: 0.37,
+                danger_level: 3,
+                active_events: Vec::new(),
+                patrol_anchors: Vec::new(),
+                blocked_tiles: Vec::new(),
+                qi_equilibrium: 0.0,
+                qi_inflow_per_min: 0.0,
+            }],
+        });
+        register(&mut app);
+        app.world_mut()
+            .resource_mut::<ZoneRuntimeSnapshotState>()
+            .last_snapshot_wall = current_unix_seconds();
+
+        app.world_mut().send_event(AppExit::Success);
+        app.update();
+
+        let records = load_zone_runtime_snapshot(&settings)
+            .expect("production shutdown dispatcher should persist zone runtime");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].zone_id, DEFAULT_SPAWN_ZONE_NAME);
+        assert_eq!(records[0].spirit_qi, 0.37);
+        assert_eq!(records[0].danger_level, 3);
+        assert_eq!(
+            app.world()
+                .resource::<PersistenceSliceRegistry>()
+                .descriptors()
+                .map(|descriptor| descriptor.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["world.zone_runtime"],
+            "production must install a real descriptor rather than an empty registry"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn persistence_can_write_deceased_snapshot_and_public_index() {
         let (settings, root) = persistence_settings("deceased-export");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -13864,6 +14023,53 @@ mod persistence_tests {
                 .expect("npc digest query should succeed")
                 .is_none(),
             "dead NPC should be removed from hot npc_digests table"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_db_open_failure_restores_previous_bundle() {
+        let (settings, root) = persistence_settings("npc-archive-db-open-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_db_open_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 700,
+            archived_at_wall: 1_704_067_250,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial npc archive should persist");
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("initial archive bundle should exist");
+
+        fs::remove_file(settings.db_path()).expect("fixture database should be removable");
+        fs::create_dir(settings.db_path())
+            .expect("database path should become an invalid directory");
+        archive.death_count = 2;
+        archive.died_at_tick = 701;
+        let error = persist_npc_deceased_archive(&settings, &archive)
+            .expect_err("database open failure must abort archive persistence");
+        assert!(
+            !error.to_string().is_empty(),
+            "database open failure should retain its diagnostic"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("previous archive should be restored"),
+            previous_bundle,
+            "DB-open failure after bundle replacement must restore the previous archive bytes"
         );
 
         let _ = fs::remove_dir_all(root);
