@@ -65,7 +65,6 @@ struct DevCommandRoots(HashSet<String>);
 #[derive(Resource)]
 pub struct DevCommandPermissions {
     allowed_usernames: HashSet<String>,
-    allow_all_usernames: bool,
     usernames_are_authenticated: bool,
 }
 
@@ -85,17 +84,18 @@ impl DevCommandPermissions {
                 "BONG_OPERATORS ignored in offline mode; set BONG_OPERATORS_ALLOW_OFFLINE=1 to explicitly trust client-provided usernames"
             );
         }
-        let (allowed_usernames, allow_all_usernames) = std::env::var("BONG_OPERATORS")
-            .map(|value| parse_operator_list(&value))
-            .unwrap_or_else(|_| {
-                (
-                    HashSet::from(["Admin".to_string(), "admin".to_string()]),
-                    false,
-                )
-            });
+        let allowed_usernames = std::env::var("BONG_OPERATORS")
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|username| !username.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_else(|_| HashSet::from(["Admin".to_string(), "admin".to_string()]));
         Self {
             allowed_usernames,
-            allow_all_usernames,
             usernames_are_authenticated,
         }
     }
@@ -104,57 +104,12 @@ impl DevCommandPermissions {
     pub fn allow_user(username: impl Into<String>) -> Self {
         Self {
             allowed_usernames: HashSet::from([username.into()]),
-            allow_all_usernames: false,
             usernames_are_authenticated: true,
         }
     }
 
     pub fn is_operator(&self, username: &str) -> bool {
-        self.usernames_are_authenticated
-            && (self.allow_all_usernames || self.allowed_usernames.contains(username))
-    }
-}
-
-fn parse_operator_list(value: &str) -> (HashSet<String>, bool) {
-    let mut allowed_usernames = HashSet::new();
-    let mut allow_all_usernames = false;
-    for username in value
-        .split(',')
-        .map(str::trim)
-        .filter(|username| !username.is_empty())
-    {
-        if username == "*" {
-            // Test-tooling escape hatch; production never sets BONG_OPERATORS=*.
-            allow_all_usernames = true;
-        } else {
-            allowed_usernames.insert(username.to_owned());
-        }
-    }
-    (allowed_usernames, allow_all_usernames)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{parse_operator_list, DevCommandPermissions};
-
-    #[test]
-    fn wildcard_operator_is_test_tooling_escape_hatch_with_offline_gate() {
-        let (allowed_usernames, allow_all_usernames) = parse_operator_list("*");
-        assert!(allowed_usernames.is_empty());
-        assert!(allow_all_usernames);
-
-        let authenticated = DevCommandPermissions {
-            allowed_usernames,
-            allow_all_usernames,
-            usernames_are_authenticated: true,
-        };
-        assert!(authenticated.is_operator("BciRGA"));
-
-        let unauthenticated = DevCommandPermissions {
-            usernames_are_authenticated: false,
-            ..authenticated
-        };
-        assert!(!unauthenticated.is_operator("BciRGA"));
+        self.usernames_are_authenticated && self.allowed_usernames.contains(username)
     }
 }
 
