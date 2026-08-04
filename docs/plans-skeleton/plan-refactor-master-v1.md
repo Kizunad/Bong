@@ -68,8 +68,8 @@
 
 本节是本计划族对 cast wire 的唯一上位裁决；R6/R9 子 plan 若冲突必须先同步到本节，禁止各自声明第二套 authority 或交付顺序。
 
-1. **Schema authority**：TypeBox source 是 repo-wide schema source of truth；它拥有 shape、discriminant 与 validation semantics。所有生成或受约束 mirror 均不得反向定义 TypeBox 为“被动镜像”。
-2. **Domain content vs machinery**：R9 负责 author/review cast domain 的 TypeBox content、domain semantics/reducer 与 `SkillAvBinding`；R6 负责 repo-wide schema generation/transport machinery 及其生成或受约束 artifacts。R9 定义“cast 消息/状态是什么意思”，R6 定义“canonical schema 如何生成、转换和运输”；双方不得复制或重新拥有对方 artifact。具体 deliverable inventory、phase mapping 与 acceptance evidence 仅由 owner track plan 定义。
+1. **Schema authority**：TypeBox source 是 repo-wide schema source of truth；它拥有 shape、discriminant 与 validation semantics。所有生成或受约束 mirror 均不得反向定义 TypeBox 为“被动镜像”。每个 generated/constrained artifact（含 protobuf/Rust conversion、Java bridge 与 samples）必须携可核验的 TypeBox source hash 或 version reference；CI 必须 fail-closed 检查该 pin 与当前 TypeBox source 一致，禁止 stale mirror 通过。
+2. **Domain content vs machinery**：R9 负责 author/review cast domain 的 TypeBox content、domain semantics/reducer 与 `SkillAvBinding`；R6 负责 repo-wide schema generation/transport machinery 及其生成或受约束 artifacts。R9 定义“cast 消息/状态是什么意思”，R6 定义“canonical schema 如何生成、转换和运输”；双方不得复制或重新拥有对方 artifact。具体 deliverable inventory、phase mapping 与 acceptance evidence 仅由 owner track plan 定义。R6 plan **必须**新增一个由 R6 owning、交付并验证 schema generation chain 的 phase；这是 tracked amendment obligation。在该 phase 已于 R6 plan 中定义且完成前，任何依赖该 generation chain 的 track production cutover 均不得排期。该 phase 的具体内容与验收由 R6 plan 自行定义。
 3. **Contract-first 可早合**：R9 contract-first 工作不等待 R6 production machinery；R6 的 contract-first 工作也不因 production 接缝尚未完成而停止。contract-first artifacts 必须保持 declared/unwired/test-only，不得切换 production traffic 或宣称 live reachable。
 4. **Atomic production activation**：迁移某 channel 时，其 producer、transport plumbing、全部 consumers 与旧路径移除必须在**同一 merge unit**激活。若无法做到单一 merge unit，则旧 producer/receiver 必须原样保留，直到最终原子 activation；禁止 receiver-removed-before-consumer-installed，也禁止长期 dual emit。具体 sequencing 与 evidence 由相关 track plans 定义。
 5. **Generalized cross-track dependency rule**：

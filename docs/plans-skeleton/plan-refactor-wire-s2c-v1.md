@@ -14,7 +14,8 @@
 - **进料**：各域游戏事件（emit 调用点）、`world` 维度/zone 信息（作用域过滤）。
 - **出料**：`bong:server_data` 单通道（目标态：28 旁路全部收编或显式豁免登记）；join/重连首包快照集契约（R2 清干净后靠它灌满）。
 - **共享类型**：新 server `network/emit/` builder（`scope: Global | Dimension | Zone | Player`）；client 桥接层唯一的枚举前缀剥离函数。
-- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步）；TypeBox canonical content 是 repo-wide schema source of truth，R6 负责据此运行 generation pipeline 并同步 protobuf/generated Rust、Rust conversion、Java bridge、router plumbing 与 dist/JSON Schema/samples，agent 侧只消费生成结果，不反向定义 schema，也不重构 agent 逻辑。**不做双轨兼容层**——旁路收编是一次性切换。
+- **跨仓库契约**：proto 形状原则上不动（收编旁路时如需并入 envelope 属破坏性变更，走 buf breaking + samples 同步）；TypeBox canonical content 是 repo-wide schema source of truth，R6 负责据此运行 generation pipeline 并同步 protobuf/generated Rust、Rust conversion、Java bridge、router plumbing 与 dist/JSON Schema/samples，agent 侧只消费生成结果，不反向定义 schema，也不重构 agent 逻辑。每个 generated/constrained artifact 必须携可核验的 TypeBox source hash 或 version reference，CI 对当前 source 与 pin 的不一致 fail-closed。**不做双轨兼容层**——旁路收编是一次性切换。
+- **Tracked amendment obligation（owner: R6）**：本 plan 必须新增一个交付并验证 schema generation chain 的 phase；phase 的具体 artifact inventory、顺序与 acceptance evidence 由 R6 在该 amendment 中定义。在该 phase 已定义且完成前，任何依赖此 generation chain 的 track production cutover 均被阻塞。
 
 ## 阶段
 
