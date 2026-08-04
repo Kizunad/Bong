@@ -2,6 +2,9 @@ use valence::prelude::{BlockPos, DVec3, Entity, Position, Query};
 
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
+#[cfg(test)]
+use std::sync::Mutex;
+
 /// Canonical maximum distance for player-to-lingtian interactions, before the
 /// block-center tolerance used by the interaction contract.
 pub const LINGTIAN_INTERACT_MAX_DISTANCE: f64 = 4.0;
@@ -14,6 +17,10 @@ pub enum LingtianInteractionDenial {
     WrongDimension,
     OutOfRange,
 }
+
+#[cfg(test)]
+static DENIAL_LOGS: Mutex<Vec<(Entity, BlockPos, LingtianInteractionDenial)>> =
+    Mutex::new(Vec::new());
 
 pub fn is_lingtian_position_in_scope(
     actor_position: DVec3,
@@ -63,6 +70,9 @@ pub fn log_lingtian_interaction_denial(
     target: BlockPos,
     reason: LingtianInteractionDenial,
 ) {
+    #[cfg(test)]
+    DENIAL_LOGS.lock().unwrap().push((actor, target, reason));
+
     match reason {
         LingtianInteractionDenial::MissingDimension => tracing::warn!(
             target: "bong::lingtian",
@@ -81,6 +91,18 @@ pub fn log_lingtian_interaction_denial(
             "interaction request rejected"
         ),
     }
+}
+
+#[cfg(test)]
+pub fn denial_was_logged(
+    actor: Entity,
+    target: BlockPos,
+    reason: LingtianInteractionDenial,
+) -> bool {
+    DENIAL_LOGS
+        .lock()
+        .unwrap()
+        .contains(&(actor, target, reason))
 }
 
 #[cfg(test)]
@@ -112,18 +134,18 @@ mod tests {
     }
 
     #[test]
-    fn canonical_distance_is_allowed() {
+    fn canonical_distance_plus_tolerance_is_allowed() {
         assert!(is_lingtian_position_in_scope(
-            DVec3::new(4.5, 64.5, 0.5),
+            DVec3::new(5.0, 64.5, 0.5),
             DimensionKind::Overworld,
             target(),
         ));
     }
 
     #[test]
-    fn distance_past_tolerance_is_denied() {
+    fn distance_just_past_tolerance_is_denied() {
         assert!(!is_lingtian_position_in_scope(
-            DVec3::new(5.501, 64.5, 0.5),
+            DVec3::new(5.000_001, 64.5, 0.5),
             DimensionKind::Overworld,
             target(),
         ));
@@ -183,7 +205,7 @@ mod tests {
         let actor = app
             .world_mut()
             .spawn((
-                Position(DVec3::new(4.5, 64.5, 0.5)),
+                Position(DVec3::new(5.0, 64.5, 0.5)),
                 CurrentDimension(DimensionKind::Overworld),
             ))
             .id();

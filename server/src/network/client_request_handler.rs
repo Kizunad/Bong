@@ -5860,8 +5860,8 @@ mod tests {
     #[test]
     fn lingtian_c2s_dispatch_applies_shared_position_and_dimension_gate_to_all_actions() {
         let target = BlockPos::new(0, 64, 0);
-        let near = DVec3::new(0.5, 64.5, 0.5);
-        let far = DVec3::new(20.5, 64.5, 0.5);
+        let boundary = DVec3::new(5.0, 64.5, 0.5);
+        let just_beyond = DVec3::new(5.000_001, 64.5, 0.5);
         let cases = [
             (
                 "till",
@@ -5910,17 +5910,21 @@ mod tests {
             assert_eq!(
                 run_lingtian_dispatch_case(
                     payload.clone(),
-                    Some(near),
+                    Some(boundary),
                     Some(DimensionKind::Overworld),
                 ),
                 vec![(kind, target)],
-                "near Overworld {kind} request must preserve its wire BlockPos and dispatch exactly once"
+                "boundary Overworld {kind} request must preserve its wire BlockPos and dispatch exactly once"
             );
             for (label, position, dimension) in [
-                ("out of range", Some(far), Some(DimensionKind::Overworld)),
-                ("wrong dimension", Some(near), Some(DimensionKind::Tsy)),
+                (
+                    "just beyond boundary",
+                    Some(just_beyond),
+                    Some(DimensionKind::Overworld),
+                ),
+                ("wrong dimension", Some(boundary), Some(DimensionKind::Tsy)),
                 ("missing position", None, Some(DimensionKind::Overworld)),
-                ("missing dimension", Some(near), None),
+                ("missing dimension", Some(boundary), None),
             ] {
                 assert!(
                     run_lingtian_dispatch_case(payload.clone(), position, dimension).is_empty(),
@@ -5935,7 +5939,7 @@ mod tests {
                     "type": "lingtian_start_replenish", "v": 1,
                     "x": 0, "y": 64, "z": 0, "source": "unknown_source"
                 }),
-                Some(near),
+                Some(boundary),
                 Some(DimensionKind::Overworld),
             )
             .is_empty(),

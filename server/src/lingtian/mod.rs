@@ -103,10 +103,12 @@ pub use terrain::{classify_for_till, TerrainKind, TillRejectReason};
 use valence::prelude::{App, IntoSystemConfigs, Update};
 
 use crate::botany::PlantKindRegistry;
+use crate::world::dimension_transfer::DimensionTransferSet;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][lingtian] registering lingtian subsystem (plan-lingtian-v1 P3)");
     app.insert_resource(ActiveLingtianSessions::new());
+    app.init_resource::<systems::PendingPlotZones>();
     app.insert_resource(LingtianTickAccumulator::new());
     let mut zone_qi = ZoneQiAccount::new();
     zone_qi.set(DEFAULT_ZONE, 5.0);
@@ -178,7 +180,7 @@ pub fn register(app: &mut App) {
             systems::handle_start_replenish,
             systems::handle_start_drain_qi,
             systems::tick_lingtian_sessions,
-            systems::apply_completed_sessions,
+            systems::apply_completed_sessions.after(DimensionTransferSet),
         )
             .chain(),
     );
