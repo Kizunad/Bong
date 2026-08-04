@@ -91,6 +91,7 @@ use crate::lingtian::events::{
     StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
     StartReplenishRequest, StartTillRequest,
 };
+use crate::lingtian::range_gate::{log_lingtian_interaction_denial, validate_lingtian_interaction};
 use crate::lingtian::session::{ReplenishSource, SessionMode};
 use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
 use crate::lingtian::PlotEnvironment;
@@ -290,6 +291,8 @@ pub struct LingtianRequestParams<'w, 's> {
     pub replenish_tx: EventWriter<'w, StartReplenishRequest>,
     pub drain_qi_tx: EventWriter<'w, StartDrainQiRequest>,
     pub layers: Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    pub positions: Query<'w, 's, &'static valence::prelude::Position>,
+    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
 }
 
 /// 合并 alchemy 相关 Resource/Query，避开 `handle_client_request_payloads`
@@ -2544,6 +2547,15 @@ pub fn handle_client_request_payloads(
                 ..
             } => {
                 let pos = valence::prelude::BlockPos::new(x, y, z);
+                if let Err(reason) = validate_lingtian_interaction(
+                    ev.client,
+                    pos,
+                    &lingtian_tx.positions,
+                    &lingtian_tx.dimensions,
+                ) {
+                    log_lingtian_interaction_denial("network", ev.client, pos, reason);
+                    continue;
+                }
                 // plan §1.2.2 — terrain / environment 由 server 从 chunk_layer 派生，
                 // 避免客户端伪造；session 再按 `TerrainKind::is_tillable` 决定放行。
                 let (terrain, environment) = match lingtian_tx.layers.get_single() {
@@ -2582,67 +2594,117 @@ pub fn handle_client_request_payloads(
                 hoe_instance_id,
                 ..
             } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                if let Err(reason) = validate_lingtian_interaction(
+                    ev.client,
+                    pos,
+                    &lingtian_tx.positions,
+                    &lingtian_tx.dimensions,
+                ) {
+                    log_lingtian_interaction_denial("network", ev.client, pos, reason);
+                    continue;
+                }
                 tracing::info!(
                     "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id}",
                     ev.client
                 );
                 lingtian_tx.renew_tx.send(StartRenewRequest {
                     player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    pos,
                     hoe_instance_id,
                 });
             }
             ClientRequestV1::LingtianStartPlanting {
                 x, y, z, plant_id, ..
             } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                if let Err(reason) = validate_lingtian_interaction(
+                    ev.client,
+                    pos,
+                    &lingtian_tx.positions,
+                    &lingtian_tx.dimensions,
+                ) {
+                    log_lingtian_interaction_denial("network", ev.client, pos, reason);
+                    continue;
+                }
                 tracing::info!(
                     "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id}",
                     ev.client
                 );
                 lingtian_tx.planting_tx.send(StartPlantingRequest {
                     player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    pos,
                     plant_id,
                 });
             }
             ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                if let Err(reason) = validate_lingtian_interaction(
+                    ev.client,
+                    pos,
+                    &lingtian_tx.positions,
+                    &lingtian_tx.dimensions,
+                ) {
+                    log_lingtian_interaction_denial("network", ev.client, pos, reason);
+                    continue;
+                }
                 tracing::info!(
                     "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode}",
                     ev.client
                 );
                 lingtian_tx.harvest_tx.send(StartHarvestRequest {
                     player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    pos,
                     mode: parse_session_mode(&mode),
                 });
             }
             ClientRequestV1::LingtianStartReplenish {
                 x, y, z, source, ..
             } => {
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source}",
-                    ev.client
-                );
                 let Some(parsed) = parse_replenish_source(&source) else {
                     tracing::warn!(
                         "[bong][network] lingtian_start_replenish ignored: unknown source `{source}`"
                     );
                     continue;
                 };
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                if let Err(reason) = validate_lingtian_interaction(
+                    ev.client,
+                    pos,
+                    &lingtian_tx.positions,
+                    &lingtian_tx.dimensions,
+                ) {
+                    log_lingtian_interaction_denial("network", ev.client, pos, reason);
+                    continue;
+                }
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source}",
+                    ev.client
+                );
                 lingtian_tx.replenish_tx.send(StartReplenishRequest {
                     player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    pos,
                     source: parsed,
                 });
             }
             ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
+                let pos = valence::prelude::BlockPos::new(x, y, z);
+                if let Err(reason) = validate_lingtian_interaction(
+                    ev.client,
+                    pos,
+                    &lingtian_tx.positions,
+                    &lingtian_tx.dimensions,
+                ) {
+                    log_lingtian_interaction_denial("network", ev.client, pos, reason);
+                    continue;
+                }
                 tracing::info!(
                     "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}]",
                     ev.client
                 );
                 lingtian_tx.drain_qi_tx.send(StartDrainQiRequest {
                     player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    pos,
                 });
             }
             ClientRequestV1::ForgeStationPlace {
@@ -3939,8 +4001,8 @@ mod tests {
     use crate::zhenfa::trap_content::TrapTargetFace;
     use valence::entity::{EntityId, EntityPlugin};
     use valence::prelude::{
-        ident, App, DVec3, EntityKind, EventReader, IntoSystemConfigs, OldPosition, Position,
-        ResMut, Update,
+        ident, App, BlockPos, DVec3, EntityKind, EventReader, IntoSystemConfigs, OldPosition,
+        Position, ResMut, Update,
     };
     use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -5721,6 +5783,164 @@ mod tests {
         };
         sessions.insert(session);
         app.insert_resource(sessions);
+    }
+
+    fn drain_lingtian_request_kinds(app: &mut App) -> Vec<(&'static str, BlockPos)> {
+        let world = app.world_mut();
+        let mut captured = Vec::new();
+        captured.extend(
+            world
+                .resource_mut::<Events<StartTillRequest>>()
+                .drain()
+                .map(|event| ("till", event.pos)),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartRenewRequest>>()
+                .drain()
+                .map(|event| ("renew", event.pos)),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartPlantingRequest>>()
+                .drain()
+                .map(|event| ("planting", event.pos)),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartHarvestRequest>>()
+                .drain()
+                .map(|event| ("harvest", event.pos)),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartReplenishRequest>>()
+                .drain()
+                .map(|event| ("replenish", event.pos)),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartDrainQiRequest>>()
+                .drain()
+                .map(|event| ("drain_qi", event.pos)),
+        );
+        captured
+    }
+
+    fn run_lingtian_dispatch_case(
+        payload: serde_json::Value,
+        position: Option<DVec3>,
+        dimension: Option<DimensionKind>,
+    ) -> Vec<(&'static str, BlockPos)> {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("LingtianDispatch");
+        let client = app.world_mut().spawn(client_bundle).id();
+        if let Some(position) = position {
+            app.world_mut()
+                .entity_mut(client)
+                .insert(Position::new(position));
+        }
+        if let Some(dimension) = dimension {
+            app.world_mut()
+                .entity_mut(client)
+                .insert(CurrentDimension(dimension));
+        }
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: payload.to_string().into_bytes().into_boxed_slice(),
+            });
+        app.update();
+        drain_lingtian_request_kinds(&mut app)
+    }
+
+    #[test]
+    fn lingtian_c2s_dispatch_applies_shared_position_and_dimension_gate_to_all_actions() {
+        let target = BlockPos::new(0, 64, 0);
+        let near = DVec3::new(0.5, 64.5, 0.5);
+        let far = DVec3::new(20.5, 64.5, 0.5);
+        let cases = [
+            (
+                "till",
+                serde_json::json!({
+                    "type": "lingtian_start_till", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "hoe_instance_id": 7, "mode": "manual"
+                }),
+            ),
+            (
+                "renew",
+                serde_json::json!({
+                    "type": "lingtian_start_renew", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "hoe_instance_id": 7
+                }),
+            ),
+            (
+                "planting",
+                serde_json::json!({
+                    "type": "lingtian_start_planting", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "plant_id": "ci_she_hao"
+                }),
+            ),
+            (
+                "harvest",
+                serde_json::json!({
+                    "type": "lingtian_start_harvest", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "mode": "manual"
+                }),
+            ),
+            (
+                "replenish",
+                serde_json::json!({
+                    "type": "lingtian_start_replenish", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "source": "bone_coin"
+                }),
+            ),
+            (
+                "drain_qi",
+                serde_json::json!({
+                    "type": "lingtian_start_drain_qi", "v": 1, "x": 0, "y": 64, "z": 0
+                }),
+            ),
+        ];
+
+        for (kind, payload) in cases {
+            assert_eq!(
+                run_lingtian_dispatch_case(
+                    payload.clone(),
+                    Some(near),
+                    Some(DimensionKind::Overworld),
+                ),
+                vec![(kind, target)],
+                "near Overworld {kind} request must preserve its wire BlockPos and dispatch exactly once"
+            );
+            for (label, position, dimension) in [
+                ("out of range", Some(far), Some(DimensionKind::Overworld)),
+                ("wrong dimension", Some(near), Some(DimensionKind::Tsy)),
+                ("missing position", None, Some(DimensionKind::Overworld)),
+                ("missing dimension", Some(near), None),
+            ] {
+                assert!(
+                    run_lingtian_dispatch_case(payload.clone(), position, dimension).is_empty(),
+                    "{label} {kind} request must be rejected before ECS dispatch"
+                );
+            }
+        }
+
+        assert!(
+            run_lingtian_dispatch_case(
+                serde_json::json!({
+                    "type": "lingtian_start_replenish", "v": 1,
+                    "x": 0, "y": 64, "z": 0, "source": "unknown_source"
+                }),
+                Some(near),
+                Some(DimensionKind::Overworld),
+            )
+            .is_empty(),
+            "unknown replenish source must preserve its existing parse rejection"
+        );
     }
 
     fn register_request_app(app: &mut App) {

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, BlockState, ChunkLayer, Client, Commands, DVec3, Entity, EventReader, EventWriter,
-    Events, Query, Res, ResMut, Resource, Username, With,
+    Events, Position, Query, Res, ResMut, Resource, Username, With,
 };
 
 use crate::alchemy::residue::{consume_one_residue, inventory_has_usable_residue};
@@ -59,6 +59,7 @@ use super::pressure::{
 use super::qi_account::{
     LingtianTickAccumulator, ZoneQiAccount, BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
 };
+use super::range_gate::{log_lingtian_interaction_denial, validate_lingtian_interaction};
 use super::seed::{seed_id_for, SeedRegistry};
 use super::session::{
     DrainQiSession, HarvestSession, PlantingSession, RenewSession, ReplenishSession,
@@ -66,6 +67,7 @@ use super::session::{
     REPLENISH_COOLDOWN_LINGTIAN_TICKS,
 };
 use super::terrain::classify_for_till;
+use crate::world::dimension::CurrentDimension;
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
@@ -123,6 +125,17 @@ impl ActiveSession {
             ActiveSession::DrainQi(s) => s.is_finished(),
         }
     }
+
+    fn position(&self) -> valence::prelude::BlockPos {
+        match self {
+            ActiveSession::Till(s) => s.pos,
+            ActiveSession::Renew(s) => s.pos,
+            ActiveSession::Planting(s) => s.pos,
+            ActiveSession::Harvest(s) => s.pos,
+            ActiveSession::Replenish(s) => s.pos,
+            ActiveSession::DrainQi(s) => s.pos,
+        }
+    }
 }
 
 /// 累计的 lingtian-tick（lingtian_growth_tick 触发时 ++）。用于补灵冷却比对。
@@ -145,6 +158,15 @@ pub struct CompletionEventWriters<'w> {
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
 }
 
+/// Actor components used to revalidate player sessions before completion.
+#[derive(SystemParam)]
+pub struct CompletionActorQueries<'w, 's> {
+    pub positions: Query<'w, 's, &'static Position>,
+    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
+    pub clients: Query<'w, 's, (), With<Client>>,
+    pub npcs: Query<'w, 's, (), With<NpcMarker>>,
+}
+
 /// 灵田逻辑时间：冷却仍用 lingtian-tick，残料保鲜用真实 server tick。
 #[derive(SystemParam)]
 pub struct LingtianTime<'w> {
@@ -160,6 +182,13 @@ impl LingtianTime<'_> {
     fn residue_tick(&self) -> u64 {
         residue_now_tick(self.combat_clock.as_deref(), &self.clock)
     }
+}
+
+/// Completion context shared by time-dependent settlement and actor revalidation.
+#[derive(SystemParam)]
+pub struct CompletionContext<'w, 's> {
+    pub time: LingtianTime<'w>,
+    pub actor_queries: CompletionActorQueries<'w, 's>,
 }
 
 /// xorshift64 — 确定性 RNG，用于种子掉落决策。测试可注入种子。
@@ -274,8 +303,16 @@ pub fn handle_start_till(
     mut events: EventReader<StartTillRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
 ) {
     for req in events.read() {
+        if let Err(reason) =
+            validate_lingtian_interaction(req.player, req.pos, &positions, &dimensions)
+        {
+            log_lingtian_interaction_denial("start", req.player, req.pos, reason);
+            continue;
+        }
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartTillRequest rejected: player={:?} already has active session",
@@ -324,8 +361,16 @@ pub fn handle_start_renew(
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
 ) {
     for req in events.read() {
+        if let Err(reason) =
+            validate_lingtian_interaction(req.player, req.pos, &positions, &dimensions)
+        {
+            log_lingtian_interaction_denial("start", req.player, req.pos, reason);
+            continue;
+        }
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartRenewRequest rejected: player={:?} already has active session",
@@ -372,8 +417,16 @@ pub fn handle_start_planting(
     seeds: Res<SeedRegistry>,
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
 ) {
     for req in events.read() {
+        if let Err(reason) =
+            validate_lingtian_interaction(req.player, req.pos, &positions, &dimensions)
+        {
+            log_lingtian_interaction_denial("start", req.player, req.pos, reason);
+            continue;
+        }
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartPlantingRequest rejected: player={:?} already has active session",
@@ -419,8 +472,16 @@ pub fn handle_start_drain_qi(
     mut events: EventReader<StartDrainQiRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     plots: Query<&LingtianPlot>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
 ) {
     for req in events.read() {
+        if let Err(reason) =
+            validate_lingtian_interaction(req.player, req.pos, &positions, &dimensions)
+        {
+            log_lingtian_interaction_denial("start", req.player, req.pos, reason);
+            continue;
+        }
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartDrainQiRequest rejected: player={:?} already has active session",
@@ -449,8 +510,16 @@ pub fn handle_start_harvest(
     plots: Query<&LingtianPlot>,
     cultivations: Query<&Cultivation>,
     skill_sets: Query<&SkillSet>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
 ) {
     for req in events.read() {
+        if let Err(reason) =
+            validate_lingtian_interaction(req.player, req.pos, &positions, &dimensions)
+        {
+            log_lingtian_interaction_denial("start", req.player, req.pos, reason);
+            continue;
+        }
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartHarvestRequest rejected: player={:?} already has active session",
@@ -497,6 +566,7 @@ pub fn handle_start_harvest(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_start_replenish(
     mut events: EventReader<StartReplenishRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
@@ -504,9 +574,17 @@ pub fn handle_start_replenish(
     inventories: Query<&PlayerInventory>,
     plots: Query<&LingtianPlot>,
     zone_qi: Res<ZoneQiAccount>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
 ) {
     let residue_tick = time.residue_tick();
     for req in events.read() {
+        if let Err(reason) =
+            validate_lingtian_interaction(req.player, req.pos, &positions, &dimensions)
+        {
+            log_lingtian_interaction_denial("start", req.player, req.pos, reason);
+            continue;
+        }
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartReplenishRequest rejected: player={:?} already has active session",
@@ -650,12 +728,31 @@ pub fn apply_completed_sessions(
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut harvest_rng: ResMut<LingtianHarvestRng>,
     mut zone_qi: ResMut<ZoneQiAccount>,
-    time: LingtianTime,
     mut writers: CompletionEventWriters,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
+    context: CompletionContext,
 ) {
     for (player, finished) in sessions.drain_finished() {
+        let target = finished.position();
+        if context.actor_queries.clients.get(player).is_ok() {
+            if let Err(reason) = validate_lingtian_interaction(
+                player,
+                target,
+                &context.actor_queries.positions,
+                &context.actor_queries.dimensions,
+            ) {
+                log_lingtian_interaction_denial("completion", player, target, reason);
+                continue;
+            }
+        } else if context.actor_queries.npcs.get(player).is_err() {
+            tracing::debug!(
+                "[bong][lingtian] completed session discarded for unknown actor={:?}",
+                player,
+            );
+            continue;
+        }
+
         match finished {
             ActiveSession::Till(s) => {
                 if let Ok(mut inv) = inventories.get_mut(player) {
@@ -753,7 +850,7 @@ pub fn apply_completed_sessions(
                     &item_registry,
                     &mut allocator,
                     &mut harvest_rng,
-                    time.lingtian_tick(),
+                    context.time.lingtian_tick(),
                     &mut writers.harvest,
                     &mut skill_xp_events,
                     s.mode,
@@ -766,7 +863,7 @@ pub fn apply_completed_sessions(
                 }
             }
             ActiveSession::Replenish(s) => {
-                let residue_tick = time.residue_tick();
+                let residue_tick = context.time.residue_tick();
                 let replenished = apply_replenish_completion(
                     player,
                     &s.pos,
@@ -774,7 +871,7 @@ pub fn apply_completed_sessions(
                     &mut inventories,
                     &mut plots,
                     &mut zone_qi,
-                    time.lingtian_tick(),
+                    context.time.lingtian_tick(),
                     residue_tick,
                     &mut harvest_rng,
                     &mut writers.replenish,
@@ -801,7 +898,7 @@ pub fn apply_completed_sessions(
                     &mut cultivations,
                     &mut life_records,
                     &mut zone_qi,
-                    time.lingtian_tick(),
+                    context.time.lingtian_tick(),
                     &mut writers.drain_qi,
                     &mut writers.qi_transfer,
                 );
@@ -1741,10 +1838,15 @@ mod tests {
     use valence::prelude::{App, BlockPos, DVec3, IntoSystemConfigs, Update};
 
     use super::super::events::{
-        RenewCompleted, StartRenewRequest, StartTillRequest, TillCompleted,
+        DrainQiCompleted, DyeContaminationWarning, HarvestCompleted, PlantingCompleted,
+        RenewCompleted, ReplenishCompleted, StartDrainQiRequest, StartHarvestRequest,
+        StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
+        TillCompleted,
     };
-    use super::super::hoe::HoeKind;
-    use super::super::session::{SessionMode, RENEW_TICKS, TILL_MANUAL_TICKS};
+    use super::super::session::{
+        DrainQiSession, ReplenishSource, SessionMode, DRAIN_QI_TICKS, HARVEST_MANUAL_TICKS,
+        PLANTING_TICKS, RENEW_TICKS, REPLENISH_COOLDOWN_LINGTIAN_TICKS, TILL_MANUAL_TICKS,
+    };
     use super::super::terrain::TerrainKind;
     use crate::skill::events::XpGainSource;
 
@@ -1788,6 +1890,37 @@ mod tests {
             bone_coins: 0,
             max_weight: 45.0,
         }
+    }
+
+    fn spawn_test_player<T: bevy_ecs::bundle::Bundle>(app: &mut App, components: T) -> Entity {
+        let (client_bundle, _helper) = valence::testing::create_mock_client("LingtianTest");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            components,
+            Position(DVec3::new(0.5, 64.5, 0.5)),
+            CurrentDimension(crate::world::dimension::DimensionKind::Overworld),
+        ));
+        player
+    }
+
+    fn set_test_player_position(app: &mut App, player: Entity, target: BlockPos) {
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position(DVec3::new(
+                f64::from(target.x) + 0.5,
+                f64::from(target.y) + 0.5,
+                f64::from(target.z) + 0.5,
+            )));
+    }
+
+    fn valid_test_player<T: bevy_ecs::bundle::Bundle>(
+        app: &mut App,
+        components: T,
+        target: BlockPos,
+    ) -> Entity {
+        let player = spawn_test_player(app, components);
+        set_test_player_position(app, player, target);
+        player
     }
 
     fn build_app() -> App {
@@ -1837,11 +1970,9 @@ mod tests {
     #[test]
     fn till_e2e_spawns_plot_and_decrements_durability() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
         let pos = BlockPos::new(10, 64, 10);
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
+        set_test_player_position(&mut app, player, pos);
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
@@ -1888,11 +2019,9 @@ mod tests {
     fn till_emits_vfx() {
         let mut app = build_app();
         app.add_event::<VfxEventRequest>();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
         let pos = BlockPos::new(10, 64, 10);
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
+        set_test_player_position(&mut app, player, pos);
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
@@ -1922,9 +2051,9 @@ mod tests {
     fn till_rejected_when_not_holding_hoe() {
         let mut app = build_app();
         // 玩家手里啥都没有
-        let player = app
-            .world_mut()
-            .spawn(PlayerInventory {
+        let player = spawn_test_player(
+            &mut app,
+            PlayerInventory {
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![],
@@ -1932,8 +2061,8 @@ mod tests {
                 hotbar: Default::default(),
                 bone_coins: 0,
                 max_weight: 45.0,
-            })
-            .id();
+            },
+        );
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -1949,10 +2078,7 @@ mod tests {
     #[test]
     fn till_rejected_on_blocked_terrain() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -2076,10 +2202,7 @@ mod tests {
     #[test]
     fn till_rejected_when_request_instance_id_mismatches_main_hand() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         // 主手 instance_id=1，但请求声 instance_id=2 → 应被拒
         app.world_mut().send_event(StartTillRequest {
             player,
@@ -2096,10 +2219,7 @@ mod tests {
     #[test]
     fn second_till_during_active_session_is_rejected() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -2130,11 +2250,12 @@ mod tests {
     #[test]
     fn renew_e2e_resets_barren_plot() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Xuantie, 1.0))
-            .id();
         let pos = BlockPos::new(5, 64, 5);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
+            pos,
+        );
         // 直接 spawn 一个贫瘠 plot
         let mut plot = LingtianPlot::new(pos, Some(player));
         plot.harvest_count = super::super::plot::N_RENEW;
@@ -2173,10 +2294,7 @@ mod tests {
     #[test]
     fn renew_rejected_when_plot_not_barren() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         let pos = BlockPos::new(0, 64, 0);
         // 新 plot，未贫瘠
         app.world_mut().spawn(LingtianPlot::new(pos, None));
@@ -2193,11 +2311,8 @@ mod tests {
     fn hoe_breaks_at_zero_durability() {
         let mut app = build_app();
         // Iron 锄剩 0.05 → 一次操作就归零（uses_max=20，cost=0.05）
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 0.05))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 0.05));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
@@ -2425,7 +2540,6 @@ mod tests {
     // ------------------------------------------------------------------------
 
     use crate::inventory::{ContainerState, PlacedItemState};
-    use crate::lingtian::session::PLANTING_TICKS;
 
     fn registry_with_three_test_plants() -> PlantKindRegistry {
         let mut r = PlantKindRegistry::new();
@@ -2542,11 +2656,12 @@ mod tests {
     #[test]
     fn planting_e2e_spawns_crop_and_consumes_seed() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         // 已开垦的空 plot
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         app.world_mut().send_event(StartPlantingRequest {
@@ -2579,11 +2694,12 @@ mod tests {
     #[test]
     fn planting_consumes_last_seed_then_removes_stack() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ning_mai_cao_seed", 1))
-            .id();
         let pos = BlockPos::new(1, 64, 1);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ning_mai_cao_seed", 1),
+            pos,
+        );
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         app.world_mut().send_event(StartPlantingRequest {
             player,
@@ -2600,11 +2716,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_no_seed_in_inventory() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 1))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 1),
+            pos,
+        );
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         // 请求种 ling_mu_miao（没种子）
         app.world_mut().send_event(StartPlantingRequest {
@@ -2619,11 +2736,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_plot_already_has_crop() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         let mut plot = LingtianPlot::new(pos, Some(player));
         plot.crop = Some(CropInstance::new("ning_mai_cao".into()));
         app.world_mut().spawn(plot);
@@ -2639,11 +2757,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_plot_barren() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         let mut plot = LingtianPlot::new(pos, Some(player));
         plot.harvest_count = crate::lingtian::plot::N_RENEW; // 贫瘠
         app.world_mut().spawn(plot);
@@ -2659,11 +2778,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_plant_id_unknown_to_seed_registry() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         // shi_mai_gen 非 cultivable，SeedRegistry 不应有它
         app.world_mut().send_event(StartPlantingRequest {
@@ -2680,7 +2800,6 @@ mod tests {
     // ------------------------------------------------------------------------
 
     use crate::inventory::{ItemCategory, ItemEffect};
-    use crate::lingtian::session::HARVEST_MANUAL_TICKS;
 
     fn herb_template(id: &str, display: &str) -> ItemTemplate {
         ItemTemplate {
@@ -2858,8 +2977,8 @@ mod tests {
     #[test]
     fn harvest_e2e_drops_plant_and_clears_plot() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(2, 64, 2);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -2914,8 +3033,8 @@ mod tests {
         );
 
         let mut app = build_harvest_app_with_item_registry(item_registry);
-        let player = app.world_mut().spawn(inventory).id();
         let pos = BlockPos::new(4, 64, 4);
+        let player = valid_test_player(&mut app, inventory, pos);
         let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -2954,8 +3073,8 @@ mod tests {
     #[test]
     fn harvest_rejected_when_crop_not_ripe() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let mut p = LingtianPlot::new(pos, None);
         let mut crop = CropInstance::new("ci_she_hao".into());
         crop.growth = 0.5;
@@ -2973,8 +3092,8 @@ mod tests {
     #[test]
     fn harvest_rejected_when_no_crop() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         app.world_mut().spawn(LingtianPlot::new(pos, None));
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3005,12 +3124,12 @@ mod tests {
     #[test]
     fn harvest_auto_rejected_when_herbalism_below_unlock_level() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         // auto_unlock_level 默认 3；lv=2 明确不足。
         app.world_mut()
             .entity_mut(player)
             .insert(skill_set_with_herbalism_lv(2));
-        let pos = BlockPos::new(0, 64, 0);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3030,8 +3149,8 @@ mod tests {
     fn harvest_auto_rejected_when_herbalism_missing_entirely() {
         // 完全没有 SkillSet/Cultivation 组件 —— 等价 herbalism lv=0，同样必须被拒。
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3049,12 +3168,12 @@ mod tests {
     #[test]
     fn harvest_auto_allowed_when_herbalism_meets_unlock_level() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         // 刚好等于 auto_unlock_level=3 —— 边界值必须放行（>= 不是 >）。
         app.world_mut()
             .entity_mut(player)
             .insert(skill_set_with_herbalism_lv(3));
-        let pos = BlockPos::new(0, 64, 0);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3072,11 +3191,11 @@ mod tests {
     #[test]
     fn harvest_auto_allowed_when_herbalism_well_above_unlock_level() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         app.world_mut()
             .entity_mut(player)
             .insert(skill_set_with_herbalism_lv(10));
-        let pos = BlockPos::new(0, 64, 0);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3095,8 +3214,8 @@ mod tests {
     fn harvest_manual_mode_is_unaffected_by_herbalism_level() {
         // Manual 模式完全不该受门禁影响，即使玩家一点采集技艺都没有。
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3114,8 +3233,8 @@ mod tests {
     #[test]
     fn five_harvests_make_plot_barren() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(3, 64, 3);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         // 收 N_RENEW 次：每次都重新种熟（手动设 growth=1）
         let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         for i in 0..crate::lingtian::plot::N_RENEW {
@@ -3173,8 +3292,8 @@ mod tests {
                     lingering_owner_qi: None,
                 },
             });
-        let player = app.world_mut().spawn(inv).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, inv, pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3199,8 +3318,8 @@ mod tests {
     #[test]
     fn harvest_completion_emits_herbalism_skill_xp() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3272,8 +3391,8 @@ mod tests {
                     .chain(),
             );
 
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3366,8 +3485,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set(DEFAULT_ZONE, 5.0);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3393,8 +3512,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set("blood_valley", 5.0);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(8, 64, 8);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_empty_plot_in_zone(&mut app, pos, "blood_valley");
 
         app.world_mut().send_event(StartReplenishRequest {
@@ -3430,8 +3549,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set(DEFAULT_ZONE, 0.79);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3456,8 +3575,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set(DEFAULT_ZONE, 0.8);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3483,11 +3602,8 @@ mod tests {
     #[test]
     fn replenish_bone_coin_consumes_one_coin_and_adds_0_8() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_bone_coins(3))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_bone_coins(3), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3506,11 +3622,12 @@ mod tests {
     #[test]
     fn replenish_beast_core_overflows_to_zone_when_full() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_misc_stack("mutant_beast_core", 1))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_misc_stack("mutant_beast_core", 1),
+            pos,
+        );
         let plot = spawn_empty_plot(&mut app, pos);
         // plot_qi 已经在 0.5/1.0 → 注 2.0 → +0.5 满，溢出 1.5 回 zone
         app.world_mut()
@@ -3547,11 +3664,12 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set("north_wastes", 1.0);
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_misc_stack("mutant_beast_core", 1))
-            .id();
         let pos = BlockPos::new(9, 64, 9);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_misc_stack("mutant_beast_core", 1),
+            pos,
+        );
         let plot = spawn_empty_plot_in_zone(&mut app, pos, "north_wastes");
         app.world_mut()
             .get_mut::<LingtianPlot>(plot)
@@ -3583,11 +3701,12 @@ mod tests {
     #[test]
     fn replenish_ling_shui_consumes_one_bottle() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_misc_stack("ling_shui", 2))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_misc_stack("ling_shui", 2),
+            pos,
+        );
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3614,11 +3733,8 @@ mod tests {
             let mut app = build_app();
             app.world_mut()
                 .insert_resource(LingtianHarvestRng::new(343));
-            let player = app
-                .world_mut()
-                .spawn(make_inventory_with_residue(kind, 0, 1))
-                .id();
             let pos = BlockPos::new(0, 64, 0);
+            let player = valid_test_player(&mut app, make_inventory_with_residue(kind, 0, 1), pos);
             let plot = spawn_empty_plot(&mut app, pos);
             app.world_mut().send_event(StartReplenishRequest {
                 player,
@@ -3651,14 +3767,15 @@ mod tests {
         app.world_mut().insert_resource(LingtianHarvestRng::new(2));
         app.world_mut().resource_mut::<CombatClock>().tick = 987;
         let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
-        let player = app
-            .world_mut()
-            .spawn((
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            (
                 Username("Azure".to_string()),
                 make_inventory_with_residue(kind, 0, 1),
-            ))
-            .id();
-        let pos = BlockPos::new(0, 64, 0);
+            ),
+            pos,
+        );
         let plot = spawn_empty_plot_in_zone(&mut app, pos, "lingquan_marsh");
         app.world_mut()
             .get_mut::<LingtianPlot>(plot)
@@ -3701,13 +3818,10 @@ mod tests {
     fn replenish_rejects_expired_residue() {
         let mut app = build_app();
         let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_residue(kind, 10, 1))
-            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_residue(kind, 10, 1), pos);
         app.world_mut().resource_mut::<CombatClock>().tick =
             10 + crate::alchemy::residue::PILL_RESIDUE_TTL_TICKS;
-        let pos = BlockPos::new(0, 64, 0);
         spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3735,8 +3849,8 @@ mod tests {
     fn replenish_rejected_when_no_material() {
         let mut app = build_app();
         // bone_coins=0，请求 BoneCoin → 拒
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3750,11 +3864,8 @@ mod tests {
     #[test]
     fn replenish_rejected_when_in_cooldown() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_bone_coins(2))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_bone_coins(2), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         // 模拟"刚补过" — last_replenish_at 设到当前 clock
         app.world_mut()
@@ -3780,11 +3891,8 @@ mod tests {
     #[test]
     fn replenish_allowed_after_cooldown_expires() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_bone_coins(2))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_bone_coins(2), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut()
             .resource_mut::<LingtianClock>()
@@ -3814,10 +3922,7 @@ mod tests {
     #[test]
     fn till_with_combined_environment_yields_cap_2_8() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -3853,10 +3958,7 @@ mod tests {
         // plan-lingtian-weather-v1 §2 — `PlotEnvironment::base()` 默认 Summer
         // (-0.2 modifier)，所以裸开垦的 plot_qi_cap = 1.0 - 0.2 = 0.8。
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -3885,10 +3987,7 @@ mod tests {
     fn till_xizhuan_environment_keeps_cap_at_1_0() {
         // 汐转期 modifier=0，plot_qi_cap 锁回 plan-lingtian-v1 的 1.0 基线。
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -4343,10 +4442,10 @@ mod tests {
     }
 
     /// build_harvest_app 已有；本 helper 在它基础上同时挂 LifeRecord 给 owner / operator
-    fn spawn_player_with_lifelog(app: &mut App, character_id: &str) -> Entity {
+    fn spawn_player_with_lifelog(app: &mut App, character_id: &str, target: BlockPos) -> Entity {
         let inv = empty_inventory_8x8();
         let lr = LifeRecord::new(character_id);
-        app.world_mut().spawn((inv, lr)).id()
+        valid_test_player(app, (inv, lr), target)
     }
 
     fn spawn_owned_ripe_plot(
@@ -4365,8 +4464,8 @@ mod tests {
     #[test]
     fn self_harvest_records_no_steal_entries() {
         let mut app = build_harvest_app();
-        let player = spawn_player_with_lifelog(&mut app, "alice");
         let pos = BlockPos::new(0, 64, 0);
+        let player = spawn_player_with_lifelog(&mut app, "alice", pos);
         spawn_owned_ripe_plot(&mut app, "ci_she_hao", pos, Some(player));
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -4390,9 +4489,9 @@ mod tests {
     #[test]
     fn stolen_harvest_records_both_sides() {
         let mut app = build_harvest_app();
-        let owner = spawn_player_with_lifelog(&mut app, "alice");
-        let thief = spawn_player_with_lifelog(&mut app, "bob");
         let pos = BlockPos::new(3, 64, 7);
+        let owner = spawn_player_with_lifelog(&mut app, "alice", pos);
+        let thief = spawn_player_with_lifelog(&mut app, "bob", pos);
         spawn_owned_ripe_plot(&mut app, "ning_mai_cao", pos, Some(owner));
         app.world_mut().send_event(StartHarvestRequest {
             player: thief,
@@ -4441,11 +4540,12 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         };
-        let thief = app
-            .world_mut()
-            .spawn((empty_inventory_8x8(), LifeRecord::new("bob"), thief_cult))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let thief = valid_test_player(
+            &mut app,
+            (empty_inventory_8x8(), LifeRecord::new("bob"), thief_cult),
+            pos,
+        );
         let mut p = LingtianPlot::new(pos, Some(owner));
         p.plot_qi = 0.5;
         let plot = app.world_mut().spawn(p).id();
@@ -4517,9 +4617,10 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set("north_wastes", 3.0);
-        let thief = app
-            .world_mut()
-            .spawn((
+        let pos = BlockPos::new(4, 64, 4);
+        let thief = valid_test_player(
+            &mut app,
+            (
                 empty_inventory_8x8(),
                 LifeRecord::new("bob"),
                 Cultivation {
@@ -4527,9 +4628,9 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
-            ))
-            .id();
-        let pos = BlockPos::new(4, 64, 4);
+            ),
+            pos,
+        );
         let mut plot = LingtianPlot::new(pos, None).with_zone("north_wastes");
         plot.plot_qi = 0.5;
         app.world_mut().spawn(plot);
@@ -4581,10 +4682,11 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         };
-        let player = app
-            .world_mut()
-            .spawn((empty_inventory_8x8(), LifeRecord::new("p"), cult))
-            .id();
+        let player = valid_test_player(
+            &mut app,
+            (empty_inventory_8x8(), LifeRecord::new("p"), cult),
+            pos,
+        );
         app.world_mut()
             .send_event(StartDrainQiRequest { player, pos });
         for _ in 0..DRAIN_QI_TICKS {
@@ -4629,17 +4731,18 @@ mod tests {
         let mut plot = LingtianPlot::new(pos, None);
         plot.plot_qi = 0.5;
         app.world_mut().spawn(plot);
-        let player = app
-            .world_mut()
-            .spawn((
+        let player = valid_test_player(
+            &mut app,
+            (
                 empty_inventory_8x8(),
                 Cultivation {
                     qi_current: 0.0,
                     qi_max: 100.0,
                     ..Default::default()
                 },
-            ))
-            .id();
+            ),
+            pos,
+        );
 
         app.world_mut()
             .send_event(StartDrainQiRequest { player, pos });
@@ -4670,11 +4773,9 @@ mod tests {
     #[test]
     fn drain_qi_rejected_on_empty_plot() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn((empty_inventory_8x8(), LifeRecord::new("p")))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player =
+            valid_test_player(&mut app, (empty_inventory_8x8(), LifeRecord::new("p")), pos);
         let mut p = LingtianPlot::new(pos, None);
         p.plot_qi = 0.0;
         app.world_mut().spawn(p);
@@ -4687,8 +4788,8 @@ mod tests {
     #[test]
     fn ownerless_harvest_records_neither_side() {
         let mut app = build_harvest_app();
-        let player = spawn_player_with_lifelog(&mut app, "wanderer");
         let pos = BlockPos::new(0, 64, 0);
+        let player = spawn_player_with_lifelog(&mut app, "wanderer", pos);
         spawn_owned_ripe_plot(&mut app, "ci_she_hao", pos, None); // 无主田
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -4708,7 +4809,652 @@ mod tests {
         );
     }
 
-    // -- M1: auto_set_plot_zone retries when ZoneRegistry arrives late ------
+    fn send_test_start_request(app: &mut App, action: &str, player: Entity, pos: BlockPos) {
+        match action {
+            "till" => {
+                app.world_mut().send_event(StartTillRequest {
+                    player,
+                    pos,
+                    hoe_instance_id: 1,
+                    mode: SessionMode::Manual,
+                    terrain: TerrainKind::Grass,
+                    environment: PlotEnvironment::base(),
+                });
+            }
+            "renew" => {
+                app.world_mut().send_event(StartRenewRequest {
+                    player,
+                    pos,
+                    hoe_instance_id: 1,
+                });
+            }
+            "planting" => {
+                app.world_mut().send_event(StartPlantingRequest {
+                    player,
+                    pos,
+                    plant_id: "ci_she_hao".into(),
+                });
+            }
+            "harvest" => {
+                app.world_mut().send_event(StartHarvestRequest {
+                    player,
+                    pos,
+                    mode: SessionMode::Manual,
+                });
+            }
+            "replenish" => {
+                app.world_mut().send_event(StartReplenishRequest {
+                    player,
+                    pos,
+                    source: ReplenishSource::BoneCoin,
+                });
+            }
+            "drain_qi" => {
+                app.world_mut()
+                    .send_event(StartDrainQiRequest { player, pos });
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn every_start_handler_fails_closed_for_wrong_or_missing_authority_components() {
+        let pos = BlockPos::new(0, 64, 0);
+        for action in [
+            "till",
+            "renew",
+            "planting",
+            "harvest",
+            "replenish",
+            "drain_qi",
+        ] {
+            for denial in ["wrong_dimension", "missing_position", "missing_dimension"] {
+                let mut app = build_planting_app();
+                let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
+                match denial {
+                    "wrong_dimension" => {
+                        app.world_mut().entity_mut(player).insert(CurrentDimension(
+                            crate::world::dimension::DimensionKind::Tsy,
+                        ));
+                    }
+                    "missing_position" => {
+                        app.world_mut().entity_mut(player).remove::<Position>();
+                    }
+                    "missing_dimension" => {
+                        app.world_mut()
+                            .entity_mut(player)
+                            .remove::<CurrentDimension>();
+                    }
+                    _ => unreachable!(),
+                }
+                send_test_start_request(&mut app, action, player, pos);
+                app.update();
+                assert!(
+                    app.world().resource::<ActiveLingtianSessions>().is_empty(),
+                    "{action} must fail closed for {denial} before evaluating action prerequisites"
+                );
+            }
+        }
+    }
+
+    fn move_test_player_out_of_range(app: &mut App, player: Entity, target: BlockPos) {
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position(DVec3::new(
+                f64::from(target.x) + 20.5,
+                f64::from(target.y) + 0.5,
+                f64::from(target.z) + 0.5,
+            )));
+    }
+
+    fn run_until_session_finishes(app: &mut App, ticks: u32) {
+        for _ in 0..ticks {
+            app.update();
+        }
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "finished session must leave the active-session table even when completion is denied"
+        );
+    }
+
+    #[test]
+    fn all_start_handlers_reject_out_of_range_without_mutating_targets_or_inventory() {
+        let far = Position(DVec3::new(20.5, 64.5, 0.5));
+        let overworld = CurrentDimension(crate::world::dimension::DimensionKind::Overworld);
+
+        let mut till = build_app();
+        let till_player = spawn_test_player(&mut till, make_inventory_with_hoe(HoeKind::Iron, 1.0));
+        till.world_mut().entity_mut(till_player).insert(far);
+        till.world_mut().send_event(StartTillRequest {
+            player: till_player,
+            pos: BlockPos::new(0, 64, 0),
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+        till.update();
+        assert!(till.world().resource::<ActiveLingtianSessions>().is_empty());
+        assert_eq!(
+            till.world()
+                .get::<PlayerInventory>(till_player)
+                .unwrap()
+                .equipped[MAIN_HAND_SLOT]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            1.0,
+            "remote till must not wear the hoe"
+        );
+        assert_eq!(
+            till.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(till.world())
+                .count(),
+            0,
+            "remote till must not create a plot"
+        );
+
+        let mut renew = build_app();
+        let renew_pos = BlockPos::new(0, 64, 0);
+        let renew_player = valid_test_player(
+            &mut renew,
+            make_inventory_with_hoe(HoeKind::Iron, 1.0),
+            renew_pos,
+        );
+        renew.world_mut().entity_mut(renew_player).insert(far);
+        let mut barren = LingtianPlot::new(renew_pos, Some(renew_player));
+        barren.harvest_count = crate::lingtian::plot::N_RENEW;
+        let renew_plot = renew.world_mut().spawn(barren).id();
+        renew.world_mut().send_event(StartRenewRequest {
+            player: renew_player,
+            pos: renew_pos,
+            hoe_instance_id: 1,
+        });
+        renew.update();
+        assert!(renew
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert!(renew
+            .world()
+            .get::<LingtianPlot>(renew_plot)
+            .unwrap()
+            .is_barren());
+
+        let mut planting = build_planting_app();
+        let planting_pos = BlockPos::new(0, 64, 0);
+        let planting_player = valid_test_player(
+            &mut planting,
+            make_inventory_with_seed("ci_she_hao_seed", 2),
+            planting_pos,
+        );
+        planting.world_mut().entity_mut(planting_player).insert(far);
+        let planting_plot = planting
+            .world_mut()
+            .spawn(LingtianPlot::new(planting_pos, Some(planting_player)))
+            .id();
+        planting.world_mut().send_event(StartPlantingRequest {
+            player: planting_player,
+            pos: planting_pos,
+            plant_id: "ci_she_hao".into(),
+        });
+        planting.update();
+        assert!(planting
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert!(planting
+            .world()
+            .get::<LingtianPlot>(planting_plot)
+            .unwrap()
+            .crop
+            .is_none());
+        assert_eq!(
+            planting
+                .world()
+                .get::<PlayerInventory>(planting_player)
+                .unwrap()
+                .containers[0]
+                .items[0]
+                .instance
+                .stack_count,
+            2,
+            "remote planting must not consume seed"
+        );
+
+        let mut harvest = build_harvest_app();
+        let harvest_pos = BlockPos::new(0, 64, 0);
+        let harvest_player = valid_test_player(&mut harvest, empty_inventory_8x8(), harvest_pos);
+        harvest.world_mut().entity_mut(harvest_player).insert(far);
+        let harvest_plot = spawn_ripe_plot(&mut harvest, "ci_she_hao", harvest_pos);
+        harvest.world_mut().send_event(StartHarvestRequest {
+            player: harvest_player,
+            pos: harvest_pos,
+            mode: SessionMode::Manual,
+        });
+        harvest.update();
+        assert!(harvest
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert!(harvest
+            .world()
+            .get::<LingtianPlot>(harvest_plot)
+            .unwrap()
+            .crop
+            .as_ref()
+            .is_some_and(|crop| crop.is_ripe()));
+
+        let mut replenish = build_app();
+        let replenish_pos = BlockPos::new(0, 64, 0);
+        let mut replenish_inventory = empty_inventory_8x8();
+        replenish_inventory.bone_coins = 2;
+        let replenish_player =
+            valid_test_player(&mut replenish, replenish_inventory, replenish_pos);
+        replenish
+            .world_mut()
+            .entity_mut(replenish_player)
+            .insert(far);
+        let replenish_plot = replenish
+            .world_mut()
+            .spawn(LingtianPlot::new(replenish_pos, Some(replenish_player)))
+            .id();
+        replenish.world_mut().send_event(StartReplenishRequest {
+            player: replenish_player,
+            pos: replenish_pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        replenish.update();
+        assert!(replenish
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert_eq!(
+            replenish
+                .world()
+                .get::<PlayerInventory>(replenish_player)
+                .unwrap()
+                .bone_coins,
+            2,
+            "remote replenish must not consume material"
+        );
+        assert_eq!(
+            replenish
+                .world()
+                .get::<LingtianPlot>(replenish_plot)
+                .unwrap()
+                .plot_qi,
+            0.0
+        );
+
+        let mut drain = build_app();
+        let drain_pos = BlockPos::new(0, 64, 0);
+        let drain_player = valid_test_player(
+            &mut drain,
+            (
+                empty_inventory_8x8(),
+                Cultivation::default(),
+                LifeRecord::new("remote"),
+            ),
+            drain_pos,
+        );
+        drain.world_mut().entity_mut(drain_player).insert(far);
+        drain.world_mut().entity_mut(drain_player).insert(overworld);
+        let mut qi_plot = LingtianPlot::new(drain_pos, None);
+        qi_plot.plot_qi = 0.5;
+        let drain_plot = drain.world_mut().spawn(qi_plot).id();
+        drain.world_mut().send_event(StartDrainQiRequest {
+            player: drain_player,
+            pos: drain_pos,
+        });
+        drain.update();
+        assert!(drain
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert_eq!(
+            drain
+                .world()
+                .get::<LingtianPlot>(drain_plot)
+                .unwrap()
+                .plot_qi,
+            0.5
+        );
+        assert_eq!(
+            drain
+                .world()
+                .get::<Cultivation>(drain_player)
+                .unwrap()
+                .qi_current,
+            0.0
+        );
+    }
+
+    #[test]
+    fn all_player_completion_paths_revalidate_range_before_side_effects() {
+        let pos = BlockPos::new(0, 64, 0);
+
+        let mut till = build_app();
+        let till_player =
+            valid_test_player(&mut till, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        till.world_mut().send_event(StartTillRequest {
+            player: till_player,
+            pos,
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+        till.update();
+        move_test_player_out_of_range(&mut till, till_player, pos);
+        run_until_session_finishes(&mut till, TILL_MANUAL_TICKS - 1);
+        assert_eq!(
+            till.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(till.world())
+                .count(),
+            0
+        );
+        assert_eq!(
+            till.world()
+                .get::<PlayerInventory>(till_player)
+                .unwrap()
+                .equipped[MAIN_HAND_SLOT]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            1.0
+        );
+        assert_eq!(
+            till.world_mut()
+                .resource_mut::<Events<TillCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut renew = build_app();
+        let renew_player =
+            valid_test_player(&mut renew, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        let mut barren = LingtianPlot::new(pos, Some(renew_player));
+        barren.harvest_count = crate::lingtian::plot::N_RENEW;
+        let renew_plot = renew.world_mut().spawn(barren).id();
+        renew.world_mut().send_event(StartRenewRequest {
+            player: renew_player,
+            pos,
+            hoe_instance_id: 1,
+        });
+        renew.update();
+        move_test_player_out_of_range(&mut renew, renew_player, pos);
+        run_until_session_finishes(&mut renew, RENEW_TICKS - 1);
+        assert!(renew
+            .world()
+            .get::<LingtianPlot>(renew_plot)
+            .unwrap()
+            .is_barren());
+        assert_eq!(
+            renew
+                .world_mut()
+                .resource_mut::<Events<RenewCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut planting = build_planting_app();
+        let planting_player = valid_test_player(
+            &mut planting,
+            make_inventory_with_seed("ci_she_hao_seed", 2),
+            pos,
+        );
+        let planting_plot = planting
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, Some(planting_player)))
+            .id();
+        planting.world_mut().send_event(StartPlantingRequest {
+            player: planting_player,
+            pos,
+            plant_id: "ci_she_hao".into(),
+        });
+        planting.update();
+        move_test_player_out_of_range(&mut planting, planting_player, pos);
+        run_until_session_finishes(&mut planting, PLANTING_TICKS - 1);
+        assert!(planting
+            .world()
+            .get::<LingtianPlot>(planting_plot)
+            .unwrap()
+            .crop
+            .is_none());
+        assert_eq!(
+            planting
+                .world()
+                .get::<PlayerInventory>(planting_player)
+                .unwrap()
+                .containers[0]
+                .items[0]
+                .instance
+                .stack_count,
+            2
+        );
+        assert_eq!(
+            planting
+                .world_mut()
+                .resource_mut::<Events<PlantingCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut harvest = build_harvest_app();
+        let harvest_player = valid_test_player(&mut harvest, empty_inventory_8x8(), pos);
+        let harvest_plot = spawn_ripe_plot(&mut harvest, "ci_she_hao", pos);
+        harvest.world_mut().send_event(StartHarvestRequest {
+            player: harvest_player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        harvest.update();
+        move_test_player_out_of_range(&mut harvest, harvest_player, pos);
+        run_until_session_finishes(&mut harvest, HARVEST_MANUAL_TICKS - 1);
+        let plot = harvest.world().get::<LingtianPlot>(harvest_plot).unwrap();
+        assert!(plot.crop.as_ref().is_some_and(|crop| crop.is_ripe()));
+        assert_eq!(plot.harvest_count, 0);
+        assert_eq!(
+            count_in_main_pack(
+                harvest
+                    .world()
+                    .get::<PlayerInventory>(harvest_player)
+                    .unwrap(),
+                "ci_she_hao"
+            ),
+            0
+        );
+        assert_eq!(
+            harvest
+                .world_mut()
+                .resource_mut::<Events<HarvestCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut replenish = build_app();
+        let mut inventory = empty_inventory_8x8();
+        inventory.bone_coins = 2;
+        let replenish_player = valid_test_player(&mut replenish, inventory, pos);
+        let replenish_plot = replenish
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, Some(replenish_player)))
+            .id();
+        replenish.world_mut().send_event(StartReplenishRequest {
+            player: replenish_player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        replenish.update();
+        move_test_player_out_of_range(&mut replenish, replenish_player, pos);
+        run_until_session_finishes(
+            &mut replenish,
+            ReplenishSource::BoneCoin.duration_ticks() - 1,
+        );
+        assert_eq!(
+            replenish
+                .world()
+                .get::<PlayerInventory>(replenish_player)
+                .unwrap()
+                .bone_coins,
+            2
+        );
+        assert_eq!(
+            replenish
+                .world()
+                .get::<LingtianPlot>(replenish_plot)
+                .unwrap()
+                .plot_qi,
+            0.0
+        );
+        assert_eq!(
+            replenish
+                .world_mut()
+                .resource_mut::<Events<ReplenishCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut drain = build_app();
+        let drain_player = valid_test_player(
+            &mut drain,
+            (
+                empty_inventory_8x8(),
+                Cultivation::default(),
+                LifeRecord::new("completion"),
+            ),
+            pos,
+        );
+        let mut qi_plot = LingtianPlot::new(pos, None);
+        qi_plot.plot_qi = 0.5;
+        let drain_plot = drain.world_mut().spawn(qi_plot).id();
+        drain.world_mut().send_event(StartDrainQiRequest {
+            player: drain_player,
+            pos,
+        });
+        drain.update();
+        move_test_player_out_of_range(&mut drain, drain_player, pos);
+        run_until_session_finishes(&mut drain, DRAIN_QI_TICKS - 1);
+        assert_eq!(
+            drain
+                .world()
+                .get::<LingtianPlot>(drain_plot)
+                .unwrap()
+                .plot_qi,
+            0.5
+        );
+        assert_eq!(
+            drain
+                .world()
+                .get::<Cultivation>(drain_player)
+                .unwrap()
+                .qi_current,
+            0.0
+        );
+        assert_eq!(
+            drain
+                .world_mut()
+                .resource_mut::<Events<QiTransfer>>()
+                .drain()
+                .count(),
+            0
+        );
+        assert_eq!(
+            drain
+                .world_mut()
+                .resource_mut::<Events<DrainQiCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn completion_gate_rejects_wrong_or_missing_player_authority_components() {
+        let pos = BlockPos::new(0, 64, 0);
+        for denial in ["wrong_dimension", "missing_position", "missing_dimension"] {
+            let mut app = build_app();
+            let player =
+                valid_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+            app.world_mut().send_event(StartTillRequest {
+                player,
+                pos,
+                hoe_instance_id: 1,
+                mode: SessionMode::Manual,
+                terrain: TerrainKind::Grass,
+                environment: PlotEnvironment::base(),
+            });
+            app.update();
+            match denial {
+                "wrong_dimension" => {
+                    app.world_mut().entity_mut(player).insert(CurrentDimension(
+                        crate::world::dimension::DimensionKind::Tsy,
+                    ));
+                }
+                "missing_position" => {
+                    app.world_mut().entity_mut(player).remove::<Position>();
+                }
+                "missing_dimension" => {
+                    app.world_mut()
+                        .entity_mut(player)
+                        .remove::<CurrentDimension>();
+                }
+                _ => unreachable!(),
+            }
+            run_until_session_finishes(&mut app, TILL_MANUAL_TICKS - 1);
+            assert_eq!(
+                app.world_mut()
+                    .query::<&LingtianPlot>()
+                    .iter(app.world())
+                    .count(),
+                0,
+                "{denial} must reject before till creates a plot"
+            );
+            assert_eq!(
+                app.world_mut()
+                    .resource_mut::<Events<TillCompleted>>()
+                    .drain()
+                    .count(),
+                0,
+                "{denial} must not emit TillCompleted"
+            );
+        }
+    }
+
+    #[test]
+    fn npc_finished_session_bypasses_player_c2s_gate() {
+        let mut app = build_app();
+        let pos = BlockPos::new(0, 64, 0);
+        let npc = app.world_mut().spawn(NpcMarker).id();
+        let mut session = DrainQiSession::new(pos);
+        for _ in 0..DRAIN_QI_TICKS {
+            session.tick();
+        }
+        let mut plot = LingtianPlot::new(pos, None);
+        plot.plot_qi = 0.5;
+        let plot = app.world_mut().spawn(plot).id();
+        app.world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(npc, ActiveSession::DrainQi(session));
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<LingtianPlot>(plot).unwrap().plot_qi,
+            0.0,
+            "NpcMarker completion must keep its direct-session behavior without Client authority components"
+        );
+    }
     //
     // Regression: the previous implementation used `Added<LingtianPlot>` and
     // returned early when ZoneRegistry was missing. If a plot spawned on a

@@ -30,6 +30,7 @@ pub mod plot;
 pub mod pressure;
 pub mod processing;
 pub mod qi_account;
+pub mod range_gate;
 pub mod seed;
 pub mod session;
 pub mod systems;
