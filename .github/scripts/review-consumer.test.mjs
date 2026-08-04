@@ -116,6 +116,7 @@ const expectedPolicyLevels = Object.freeze({
   'saturated-tests': 'major',
   'test-failure-honesty': 'major',
   'minimal-maintainable-change': 'major',
+  'p0-doc-scope': 'major',
   'quality-improvements': 'suggestion',
 });
 
@@ -578,6 +579,11 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
       `minimal-maintainable-change must preserve ${requiredRisk}`,
     );
   }
+  assert.equal(byId['p0-doc-scope'].level, 'major');
+  assert.equal(
+    byId['p0-doc-scope'].text,
+    "For pull requests whose changes are limited to docs/ plan documents (plan-* and plans-skeleton design-closure PRs), limit review scope to internal consistency, factual accuracy of code citations, alignment with plan-refactor-master-v1 scope and cross-track dependencies, and satisfaction of the acceptance criteria stated in the PR description or the document itself. Depth expansions beyond those criteria - new scenarios, extra edge-case enumerations, additional contract surfaces - are suggestions for the open-questions section, not major or blocker findings; an explicit open-questions entry with rationale is a valid resolution for a deferred design decision.",
+  );
   assert.equal(byId['quality-improvements'].level, 'suggestion');
   assert.match(
     byId['quality-improvements'].text,
