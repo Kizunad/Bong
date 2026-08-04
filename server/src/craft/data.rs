@@ -785,6 +785,9 @@ fn validation_field(error: &RecipeValidationError) -> String {
         RecipeValidationError::ZeroCount { template, .. } => {
             format!("materials[{template}].count")
         }
+        RecipeValidationError::DuplicateMaterialTemplate { template, .. } => {
+            format!("materials[].template_id ({template})")
+        }
         RecipeValidationError::EmptyOutputTemplate { .. } => "output.template_id".to_string(),
         RecipeValidationError::ZeroOutputCount { .. } => "output.count".to_string(),
         RecipeValidationError::InvalidQiCost { .. } => "qi_cost".to_string(),
@@ -860,10 +863,6 @@ fn parse_insight_trigger(raw: &str) -> Option<InsightTrigger> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-#[path = "fixtures/legacy_p0_registrar.rs"]
-mod legacy_p0_registrar;
 
 #[cfg(test)]
 mod tests {
@@ -1114,13 +1113,9 @@ station = "none"
     }
 
     #[test]
-    fn default_assets_match_pinned_legacy_registrars_field_for_field() {
-        let mut legacy_registry = CraftRegistry::new();
-        super::legacy_p0_registrar::register_examples(&mut legacy_registry)
-            .expect("pinned legacy example registrar must stay executable");
-        super::legacy_p0_registrar::register_workbench_recipes(&mut legacy_registry)
-            .expect("pinned legacy workbench registrar must stay executable");
-        let mut expected: Vec<_> = legacy_registry.iter().map(canonical).collect();
+    fn default_assets_match_committed_pre_migration_fixture_field_for_field() {
+        let baseline = fixture();
+        let mut expected = baseline.recipes;
         expected.sort_by(|left, right| left.id.cmp(&right.id));
 
         let mut registry = CraftRegistry::new();
@@ -1131,29 +1126,7 @@ station = "none"
 
         assert_eq!(
             actual, expected,
-            "P0 TOML loader output must equal the pinned pre-migration Rust registrars field-for-field"
-        );
-        assert_eq!(
-            registry.len(),
-            legacy_registry.len(),
-            "recipe count must derive from the pinned pre-migration registrars"
-        );
-    }
-
-    #[test]
-    fn checked_in_p0_baseline_was_generated_from_pinned_legacy_registrars() {
-        let baseline = fixture();
-        let mut legacy_registry = CraftRegistry::new();
-        super::legacy_p0_registrar::register_examples(&mut legacy_registry)
-            .expect("pinned legacy example registrar must stay executable");
-        super::legacy_p0_registrar::register_workbench_recipes(&mut legacy_registry)
-            .expect("pinned legacy workbench registrar must stay executable");
-        let mut generated: Vec<_> = legacy_registry.iter().map(canonical).collect();
-        generated.sort_by(|left, right| left.id.cmp(&right.id));
-
-        assert_eq!(
-            baseline.recipes, generated,
-            "checked-in P0 fixture must remain a one-way canonical dump of commit 6a6a262c's Rust registrars"
+            "P0 TOML loader output must equal the committed pre-migration fixture field-for-field"
         );
     }
 
@@ -1328,6 +1301,27 @@ station = "none"
             "a named-pipe *.toml entry must fail before any blocking read or registry commit"
         );
         clean(fifo_directory);
+    }
+
+    #[test]
+    fn rejects_duplicate_material_rows_before_registry_commit() {
+        let directory = temp_dir("duplicate-materials");
+        let duplicate = replace_required_line(
+            minimal_recipe(),
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }, { template_id = \"iron_ingot\", count = 1 }]",
+        );
+        let path = write_toml(&directory, "duplicate.toml", &duplicate);
+        let mut registry = CraftRegistry::new();
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("duplicate material rows must be rejected during startup validation");
+        assert!(error.to_string().contains(&path.display().to_string()));
+        assert!(error.to_string().contains("duplicate material template"));
+        assert!(
+            registry.is_empty(),
+            "invalid duplicate-material recipe must not partially commit"
+        );
+        clean(directory);
     }
 
     #[test]

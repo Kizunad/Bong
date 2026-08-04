@@ -40,6 +40,7 @@
 - 新 loader `craft/data.rs`：`load_craft_recipes_from_dir` 启动扫盘 → 逐条 `registry.register()`。`deny_unknown_fields`；materials/output 引用的 item id 必须在 `ItemRegistry`（启动校验 fail fast）；重复 id 拒载（复用 `RegistryError::DuplicateId`）。
 - 迁移范围：`register_workbench_recipes` 全部十组 + `register_workbench_self_recipe` + `HANDCRAFT_STONE_TOOLS` station 覆写语义（`:21`，TOML 里直接写 `station = "none"`）+ `craft/mod.rs` `register_examples` 5 条。**流派 plan 在自己 P0 内 code-register 的招式配方不迁**（§8 #2）。
 - **对拍回归门（本 plan 核心测试策略）**：迁移 commit 前先落一个 test fixture——基线取 **P0 实施起点的实际 Rust 表**（脚本化 dump 当刻 register 结果；90 + 5 仅为 2026-07-18 参考值，防同批 plan-craft-chain-items-v1 先行加配方后字面数失效，一切数量断言取快照长度不写字面数）；迁移后断言 TOML 加载结果与快照**逐条相等** + 数量 pin 承接既有 `register_workbench_recipes_succeeds` / `workbench_recipe_count_by_group` 两 pin（随基线同步刷新），并顺带修正 `:78` 过期头注。既有 session / unlock / reclaim / UI 分组测试全绿不动（尤其 `session.rs:1744` 手搓无台可做 pin）。
+- **残卷获取链 gap（PR-A 明确不扩大范围）**：本 P0 只迁移配方与 `ItemRegistry` 残卷模板，不新增 loot/NPC/任务 producer，也不改 client UI/wire 请求生产；`UnlockSource::Scroll` 配方在对应玩法 plan 接通生产获取与客户端使用入口前保持可注册但不可由普通玩家取得。该缺口必须在后续 acquisition/UI plan 关闭，不得用 dev `/give` 视为生产路径。
 - 饱和测试：坏 TOML 拒载（未知字段 / 重复 id / 引用不存在 item / 负数 qi / 零产出 / malformed TOML）+ 加载边界（空目录 / 目录不存在 / 文件扫描顺序无关性）——这些直接决定启动期是否**静默得到空 registry**，必须 fail fast 不许空转；失败断言必须携带文件路径 + recipe id，对拍失败必须同时输出期望值与实际值；`CraftCategory` / `UnlockSource` / `CraftStationKind` 每 serde 变体正反 sample pin。
 
 ## P1 功法元数据数据化 ⬜

@@ -21,6 +21,8 @@ use crate::qi_physics::ledger::{
     pending_inflow_account, transfer_external_qi_to_ledger, QiAccountId, QiTransferReason,
     WorldQiAccount,
 };
+use crate::skill::components::SkillSet;
+use crate::skill::curve::effective_lv;
 
 use super::events::{CraftCompletedEvent, CraftFailedEvent, CraftFailureReason, CraftStartedEvent};
 use super::recipe::{CraftRecipe, RecipeId};
@@ -75,6 +77,8 @@ pub enum StartCraftError {
         required: ColorKind,
         current: ColorKind,
     },
+    /// 技能等级不足。
+    SkillTooLow { required: u8, current: u8 },
     /// ledger 内部错误（transfer 失败等）
     LedgerError(String),
     /// 批量数量必须 >= 1。
@@ -230,6 +234,8 @@ pub struct StartCraftDeps<'a> {
     pub qi_color: &'a QiColor,
     pub ledger: &'a mut WorldQiAccount,
     pub existing_session: Option<&'a CraftSession>,
+    /// 玩家技能状态；缺失时所有技能等级按 0 处理。
+    pub skill_set: Option<&'a SkillSet>,
     /// plan-workbench-recipes-v1 §P2.4：玩家 3 格内是否有制作台。
     /// `true` = 有（或不需要），`false` = 没有。
     /// 对 station=None 的配方此字段被忽略。
@@ -288,6 +294,25 @@ pub fn start_craft(
     // station=None → 手搓，不受制作台距离限制。
     if recipe.station.is_some() && !deps.has_nearby_workbench {
         return Err(StartCraftError::StationOutOfRange);
+    }
+
+    if let Some(min) = recipe.requirements.skill_lv_min {
+        let current = deps
+            .skill_set
+            .and_then(|set| set.skills.values().map(|entry| entry.lv).max())
+            .map(|real_lv| {
+                effective_lv(
+                    real_lv,
+                    crate::cultivation::breakthrough::skill_cap_for_realm(deps.cultivation.realm),
+                )
+            })
+            .unwrap_or(0);
+        if current < min {
+            return Err(StartCraftError::SkillTooLow {
+                required: min,
+                current,
+            });
+        }
     }
 
     if let Some(min) = recipe.requirements.realm_min {
@@ -556,6 +581,7 @@ mod tests {
         cultivation: &'a mut Cultivation,
         color: &'a QiColor,
         ledger: &'a mut WorldQiAccount,
+        skill_set: Option<&'a SkillSet>,
     ) -> StartCraftDeps<'a> {
         StartCraftDeps {
             registry,
@@ -565,6 +591,7 @@ mod tests {
             qi_color: color,
             ledger,
             existing_session: None,
+            skill_set,
             has_nearby_workbench: true, // 默认近处有制作台（手搓配方不需要）
         }
     }
@@ -693,7 +720,15 @@ mod tests {
                 current_tick: 1000,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
 
@@ -735,7 +770,15 @@ mod tests {
                 current_tick: 1000,
                 quantity: 3,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
 
@@ -760,7 +803,15 @@ mod tests {
                 current_tick: 1000,
                 quantity: MAX_CRAFT_QUANTITY + 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
 
@@ -787,7 +838,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(matches!(err, StartCraftError::UnknownRecipe(_)));
@@ -806,7 +865,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(matches!(err, StartCraftError::NotUnlocked(_)));
@@ -830,8 +897,15 @@ mod tests {
         let color = QiColor::default();
         let mut ledger = WorldQiAccount::default();
 
-        let mut deps =
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
+        let mut deps = ok_deps_for_player(
+            &registry,
+            &unlock,
+            &mut inv,
+            &mut cult,
+            &color,
+            &mut ledger,
+            None,
+        );
         // 制作台自身是手搓配方（station: None），附近没有制作台也必须能做 ——
         // 否则"造第一张制作台"死锁。
         deps.has_nearby_workbench = false;
@@ -886,7 +960,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(
@@ -910,8 +992,15 @@ mod tests {
             quantity_total: 1,
             completed_count: 0,
         };
-        let mut deps =
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger);
+        let mut deps = ok_deps_for_player(
+            &registry,
+            &unlock,
+            &mut inv,
+            &mut cult,
+            &color,
+            &mut ledger,
+            None,
+        );
         deps.existing_session = Some(&existing);
         let err = start_craft(
             StartCraftRequest {
@@ -939,7 +1028,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         match err {
@@ -978,7 +1075,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1019,7 +1124,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1058,7 +1171,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1094,7 +1215,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
         assert_eq!(result.session.qi_paid, 0.0);
@@ -1361,7 +1490,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
 
@@ -1418,7 +1555,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
         assert_eq!(success.session.qi_paid, 5.0);
@@ -1444,7 +1589,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
 
@@ -1487,7 +1640,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
 
@@ -1521,7 +1682,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .expect("生产态没有 player ledger 镜像时也必须能制作");
         assert_eq!(
@@ -1552,7 +1721,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap();
 
@@ -1604,7 +1781,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .unwrap_err();
         assert!(matches!(err, StartCraftError::LedgerError(_)));
@@ -1653,7 +1838,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         )
         .expect_err("empty-source recipe must be locked until material-discovery unlock");
         assert!(
@@ -1693,7 +1886,15 @@ mod tests {
                 current_tick: 0,
                 quantity: 1,
             },
-            ok_deps_for_player(&registry, &unlock, &mut inv, &mut cult, &color, &mut ledger),
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inv,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None,
+            ),
         );
         assert!(result.is_ok(), "材料发现解锁后空源配方应可造: {result:?}");
     }
@@ -1736,12 +1937,107 @@ mod tests {
                 qi_color: &color,
                 ledger: &mut ledger,
                 existing_session: None,
+                skill_set: None,
                 has_nearby_workbench: false, // 附近没有制作台
             },
         );
         assert!(
             result.is_ok(),
             "handcraft recipe (station: None) must succeed even without nearby workbench: {result:?}"
+        );
+    }
+
+    #[test]
+    fn start_craft_rejects_skill_level_below_loaded_requirement_without_side_effects() {
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        let mut recipe = simple_recipe("skill_gate");
+        recipe.requirements.skill_lv_min = Some(2);
+        registry.register(recipe).unwrap();
+        unlock.unlock("offline:Alice", RecipeId::new("skill_gate"));
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let before_inventory = count_template_in_inventory(&inventory, "herb_a");
+        let mut skills = SkillSet::default();
+        skills.skills.insert(
+            crate::skill::components::SkillId::Herbalism,
+            crate::skill::components::SkillEntry {
+                lv: 1,
+                ..Default::default()
+            },
+        );
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                Some(&skills),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            StartCraftError::SkillTooLow {
+                required: 2,
+                current: 1
+            }
+        );
+        assert_eq!(
+            count_template_in_inventory(&inventory, "herb_a"),
+            before_inventory,
+            "skill rejection must not consume materials"
+        );
+        assert_eq!(
+            cult.qi_current, 50.0,
+            "skill rejection must not transfer qi"
+        );
+    }
+
+    #[test]
+    fn start_craft_accepts_loaded_skill_requirement_at_boundary() {
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        let mut recipe = simple_recipe("skill_gate_boundary");
+        recipe.requirements.skill_lv_min = Some(2);
+        registry.register(recipe).unwrap();
+        unlock.unlock("offline:Alice", RecipeId::new("skill_gate_boundary"));
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut skills = SkillSet::default();
+        skills.skills.insert(
+            crate::skill::components::SkillId::Herbalism,
+            crate::skill::components::SkillEntry {
+                lv: 2,
+                ..Default::default()
+            },
+        );
+        let result = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate_boundary"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                Some(&skills),
+            ),
+        );
+        assert!(
+            result.is_ok(),
+            "skill level exactly at requirement must permit craft: {result:?}"
         );
     }
 
@@ -1781,6 +2077,7 @@ mod tests {
                 qi_color: &color,
                 ledger: &mut ledger,
                 existing_session: None,
+                skill_set: None,
                 has_nearby_workbench: false, // 附近没有制作台
             },
         )
@@ -1835,6 +2132,7 @@ mod tests {
                 qi_color: &color,
                 ledger: &mut ledger,
                 existing_session: None,
+                skill_set: None,
                 has_nearby_workbench: true, // 附近有制作台
             },
         );

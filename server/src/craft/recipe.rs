@@ -141,7 +141,7 @@ pub struct CraftRequirements {
     /// 当前用 main color 命中即视为满足（secondary 不参与）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qi_color_min: Option<(ColorKind, f32)>,
-    /// 流派技能等级下限（含）。后续 plan-skill-v2 接入后由 SkillSet::lv 校验。
+    /// 玩家任一已习得流派技能的有效等级下限（含）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_lv_min: Option<u8>,
 }
@@ -204,7 +204,14 @@ impl CraftRecipe {
                 id: self.id.clone(),
             });
         }
+        let mut material_templates = std::collections::HashSet::new();
         for (template, count) in &self.materials {
+            if !material_templates.insert(template) {
+                return Err(RecipeValidationError::DuplicateMaterialTemplate {
+                    id: self.id.clone(),
+                    template: template.clone(),
+                });
+            }
             if template.is_empty() {
                 return Err(RecipeValidationError::EmptyMaterialTemplate {
                     id: self.id.clone(),
@@ -285,6 +292,10 @@ pub enum RecipeValidationError {
         id: RecipeId,
         template: String,
     },
+    DuplicateMaterialTemplate {
+        id: RecipeId,
+        template: String,
+    },
     EmptyOutputTemplate {
         id: RecipeId,
     },
@@ -327,6 +338,10 @@ impl std::fmt::Display for RecipeValidationError {
             Self::ZeroCount { id, template } => {
                 write!(f, "recipe `{id}` material `{template}` count is 0")
             }
+            Self::DuplicateMaterialTemplate { id, template } => write!(
+                f,
+                "recipe `{id}` declares duplicate material template `{template}`"
+            ),
             Self::EmptyOutputTemplate { id } => {
                 write!(f, "recipe `{id}` output template_id is empty")
             }
@@ -460,6 +475,17 @@ mod tests {
         assert!(matches!(
             r.validate(),
             Err(RecipeValidationError::ZeroCount { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_material_template() {
+        let mut r = ok_recipe();
+        r.materials = vec![("herb_a".into(), 1), ("herb_a".into(), 2)];
+        assert!(matches!(
+            r.validate(),
+            Err(RecipeValidationError::DuplicateMaterialTemplate { ref template, .. })
+                if template == "herb_a"
         ));
     }
 

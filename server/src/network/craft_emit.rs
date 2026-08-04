@@ -62,9 +62,18 @@ use crate::schema::craft::{
     CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1, UnlockEventSourceV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::skill::components::SkillSet;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const DEFAULT_REFUND_GROUND_POS: [f64; 3] = [0.0, 64.0, 0.0];
+
+type CraftStarterQuery<'a> = (
+    &'a mut PlayerInventory,
+    &'a mut Cultivation,
+    &'a QiColor,
+    Option<&'a SkillSet>,
+    Option<&'a CraftSession>,
+);
 
 /// 每隔 N tick 对在线 session 推一次进度（20 tick = 1 秒）。
 const SESSION_STATE_PUSH_INTERVAL_TICKS: u64 = 20;
@@ -245,12 +254,7 @@ pub fn apply_craft_start_intents(
     names: Query<&Username>,
     player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     workbenches: Query<&Position, With<WorkbenchBlock>>,
-    mut casters: Query<(
-        &mut PlayerInventory,
-        &mut Cultivation,
-        &QiColor,
-        Option<&CraftSession>,
-    )>,
+    mut casters: Query<CraftStarterQuery<'_>>,
 ) {
     // ── start ───────────────────────────────────────────────
     let mut processed_start_casters = HashSet::new();
@@ -262,7 +266,7 @@ pub fn apply_craft_start_intents(
             );
             continue;
         }
-        let Ok((mut inventory, mut cultivation, qi_color, existing)) =
+        let Ok((mut inventory, mut cultivation, qi_color, skill_set, existing)) =
             casters.get_mut(intent.caster)
         else {
             tracing::warn!(
@@ -309,6 +313,7 @@ pub fn apply_craft_start_intents(
             qi_color,
             ledger: &mut staged_ledger,
             existing_session: existing,
+            skill_set,
             has_nearby_workbench,
         };
 

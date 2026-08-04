@@ -860,7 +860,7 @@ mod tests {
         );
     }
 
-    fn p0_legacy_baseline_count() -> usize {
+    fn p0_legacy_baseline_ids() -> std::collections::HashSet<String> {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "fixtures/registry_datafication_p0_baseline.json"
         ))
@@ -869,20 +869,47 @@ mod tests {
             .as_array()
             .expect("P0 baseline fixture must contain a recipes array")
             .iter()
-            .filter(|recipe| {
+            .map(|recipe| {
                 recipe["id"]
                     .as_str()
                     .expect("baseline recipe id must be a string")
-                    .starts_with("craft.example.")
+                    .to_string()
             })
-            .count()
+            .collect()
+    }
+
+    #[test]
+    fn production_register_includes_complete_data_owned_recipe_set() {
+        let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry()
+                .expect("craft registration test requires ItemRegistry"),
+        );
+        register(&mut app);
+        let assembled = app.world().resource::<CraftRegistry>();
+        let expected = p0_legacy_baseline_ids();
+        let actual: std::collections::HashSet<String> = assembled
+            .iter()
+            .filter(|recipe| expected.contains(recipe.id.as_str()))
+            .map(|recipe| recipe.id.as_str().to_string())
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "production craft::register must retain every migrated TOML recipe"
+        );
     }
 
     #[test]
     fn register_examples_succeeds() {
         let mut registry = CraftRegistry::new();
         register_examples(&mut registry).unwrap();
-        assert_eq!(registry.len(), p0_legacy_baseline_count());
+        assert_eq!(
+            registry.len(),
+            p0_legacy_baseline_ids()
+                .iter()
+                .filter(|id| id.starts_with("craft.example."))
+                .count()
+        );
     }
 
     #[test]
