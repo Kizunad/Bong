@@ -6,7 +6,7 @@
 
 - ✅ 2026-08-03 P0 完整契约面重写 + absorption audit
 - ⬜ P1：inventory 拆分 + txn/capacity 骨架 + inventory-layout/dropped-loot 纯 migration helpers（依赖 R3 P1 seam）
-- ⬜ P2：全部 production writer 迁移（依赖 R3 P2 atomic commit seam 已实现、旧 dropped-loot 已可迁移且 crash/retry pins 常绿）
+- ⬜ P2：production writer 迁移分为 P2a metadata/provider + Public writer path 与 P2b OwnerOnly private-writer activation；P2a 依赖 R3 P2 atomic commit seam 与旧 dropped-loot compatibility，P2b 必须等 R3 P4 dropped-loot migration/hydration、R6 P1 recipient projection/page、R5 P3 + R6 P4、R10 P3 pickup txn 及 R4 pickup consumer 全部完成后才可启用。
 - ⬜ P3：pickup/merge txn（依赖 R5 P3 attrition API、R6 P4 receipt API）
 - ⬜ P4：联合 bot/e2e + plan 收口（依赖 R4 handler 与 R3 P4 legacy inventory-layout consumer）
 
@@ -81,21 +81,21 @@ migrate_legacy_inventory_layout(value, schema_version)
 migrate_legacy_dropped_loot_entry(value, schema_version)
   -> Result<serde_json::Value, DroppedLootMigrationError>
   // owning phase: R10 P1 pure migration helper; consumed by R3 P4 hydration
-
+```
 
 R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保留所有实例/动态字段，不执行 SQL、不猜 world context、不隐藏 overflow；其中 dropped-loot 迁移把旧 `entry_json` 缺失的 `owner`/`visibility` 明确补为 `owner = None`、`visibility = Public`。R3 hydration consumer 必须先按 persisted schema version 解码/迁移旧 dropped-loot JSON，再构造 `DroppedLootEntry`；inventory-layout migration 则在临时副本上以真实 player/dimension/position 与 capacity/durable seam 消费。两类 migration 都须全成才写新行，失败保留旧行可重试且不重复 drop。
 
 ## 6. 所有权与顺序
 
-- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2 production writers 只有在 **R3 P2** 已实现 durable spill/pickup recoverable-commit seam、旧 dropped-loot migration compatibility 已就绪且 crash/retry pins 常绿后才可开始迁移；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
-- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P2/P4 已冻结并实现的接口。
+- **R10**：`server/src/inventory/**` model/grid/txn/capacity、writer enumeration、typed outcome、纯 migration。P1 仅在 **R3 P1** 的 inventory/overflow seam 冻结后实现 txn/capacity 骨架；P2a 负责 metadata/provider 与 `Public` writer path，依赖 **R3 P2** durable spill/pickup recoverable-commit seam、旧 dropped-loot migration compatibility 与 crash/retry pins；P2b 才能启用 `OwnerOnly` private writers，且必须等 **R3 P4 dropped-loot migration/hydration、R6 P1 recipient projection/page、R5 P3 + R6 P4、R10 P3 pickup txn、R4 pickup consumer** 全部完成；P3 pickup/attrition consumer 只有在 **R5 P3** incoming-only attrition/ledger API 与 **R6 P4** receipt wire/client API 已合入后才可接通。
+- **R3**：SQL/outbox、spill/pickup recoverable commit、hydration guard、migration consumer；R10 只消费 R3 P1/P2/P4 已冻结并实现的接口。P4 必须拆成 dropped-loot hydration 子批次与 inventory-layout overflow 子批次，前者不等待 R10 P3，后者才等待其实际 durable/capacity 前置。
 - **R4**：C2S gate/handler、authoritative pickup context、调用 R10 并转交 R6 outcome；R4 handler/consumer phase 必须等待 **R10 P3 pickup txn、R6 P4** receipt API 与 **R5 P3** attrition API，不得以 R10 mock 或仅 R6 P1 schema 代替。
 - **R5**：incoming-only qi attrition/ledger；provider phase 为 R5 P3。
-- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；dropped-loot projection/page consumer 为 R6 P1，必须在 R3 legacy dropped-loot migration/hydration consumer 完成后才可消费；receipt provider phase 为 R6 P4。
+- **R6**：receipt wire/client、recipient projection/page、decoder；canonical plan 登记 rotate、pack feedback、dropped sync；dropped-loot projection/page consumer 为 R6 P1，必须在 **R10 P2a owner/visibility metadata provider** 与 **R3 P4 dropped-loot migration/hydration consumer** 完成后才可消费；receipt provider phase 为 R6 P4。
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序：**R3 P1 → R10 P1（含纯 inventory-layout/dropped-loot migration helpers）→ R3 P2 atomic seam 实现 + legacy dropped-loot migration/hydration compatibility pins → R10 P2 production writers → R3 P4 legacy dropped-loot migration/hydration consumer → R6 P1 dropped-loot projection/page consumer → R5 P3 + R6 P4 → R10 P3 pickup/merge txn → R4 handler/pickup consumer → R3 P4 legacy inventory-layout consumer → R10 P4 联合 e2e**。R10 P2 在 R3 P2 atomic seam 与旧 dropped-loot migration compatibility 未合入前不得开始 writer 迁移；R3 P4 legacy dropped-loot migration/hydration consumer 必须先于 R6 P1 dropped-loot projection/page consumer，确保旧 `entry_json` 已先升级为带 `owner`/`visibility` 的 canonical entry；R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer，R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
+顺序：**R3 P1 → R10 P1（含纯 inventory-layout/dropped-loot migration helpers）→ R3 P2 atomic seam 实现 + legacy dropped-loot migration/hydration compatibility pins → R10 P2a metadata/provider + Public writer path → R3 P4 dropped-loot migration/hydration consumer → R6 P1 dropped-loot projection/page consumer → R5 P3 + R6 P4 → R10 P3 pickup/merge txn → R4 handler/pickup consumer → R10 P2b OwnerOnly private-writer activation → R3 P4 inventory-layout overflow consumer → R10 P4 联合 e2e**。R10 P2a 在 R3 P2 atomic seam 与旧 dropped-loot migration compatibility 未合入前不得开始；R3 P4 dropped-loot migration/hydration consumer 必须先于 R6 P1 dropped-loot projection/page consumer，确保旧 `entry_json` 已先升级为带 `owner`/`visibility` 的 canonical entry；R10 P2b 只有在 R3 P4 dropped-loot hydration、R6 P1 projection/page、R5 P3 + R6 P4、R10 P3 pickup txn 与 R4 pickup consumer 全部完成后才可启用，避免 OwnerOnly writer 在授权消费链闭合前广播或转移私有掉落；R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer；R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
 
 ## 7. 审核要求的 contract pins
 
