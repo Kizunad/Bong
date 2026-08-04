@@ -220,12 +220,12 @@ pub trait InteractionSession {
 - **R1 独占**：`server/src/session/`、七域 `session.rs`、`network/craft_emit.rs` 的 session tick 区，以及迁移时删除的域内私有生命周期代码。
 - **R3 独占**：`server/src/persistence/**`、player load/autosave/shutdown flush、`SessionDeliveryOutbox` 与 checkpoint terminalization transaction；R1 仅消费 checkpoint/restore/outbox hook。
 - **R4 独占**：`server/src/network/client_request_handler.rs` 与 `network/gate/`；R1 仅暴露 busy/session query。
-- **R6 独占**：proto/S2C bridge 与跨端 pause/resume 契约变更。
-- **R7/R2 独占**：client Screen/HUD 与 Store disconnect 清理。
+- **R6 独占**：proto/Rust mirror/converter、client wire encode/send、S2C bridge/router 与跨端 pause/resume 契约变更；R6 消费 Agent 轨冻结的 TypeBox/schema/dist，不修改 agent-side source-of-truth artifacts。
+- **R7/R2 独占**：client Screen/HUD 与 Store disconnect 清理；R7 的 Craft Screen 只消费 R6 wire 和总纲 §4 的 `CraftOpen.target`，Workbench screen 必须原样保留 server response 提供的 `workbench_key`。
 - **R10 独占**：`server/src/inventory/**`、`InventoryTxn::deliver`、inventory/spill mutation 与 `DeliveryCommitReceipt` 的原子提交；R1 只生成 stable `delivery_id` 并决定何时 terminalize/释放 claim。
 - **阶段放行矩阵**：
   - framework-only：R3 P1 合入后可落 `InteractionSession`、registry、lifecycle 与不触达生产 wire/delivery 的 contract pins。
-  - craft producer path：R6 P1 交付 `CraftOpen`/`CraftPause`/`CraftResume` proto/schema/bridge → R4 P1 交付 production decode/dispatch 与 owner/phase/busy gate → R7 P2 交付 close/pause、显式 cancel、reopen/resume UI producer/consumer（R2 P1 已登记的 `CraftStore` 继续提供 disconnect lifecycle）→ R3 P1 交付 durable `SessionDeliveryOutbox`/terminal checkpoint transaction → R10 P1 冻结 `deliver`、stable `delivery_id` 与 durable receipt contract，且 R10 P2 把 craft production 调用点迁入 exactly-once transaction；全部合入后 R1 才能启用并验收 craft adapter。
+  - craft producer path：Agent 轨先冻结 `CraftOpen.target`、`CraftPause`、`CraftResume` TypeBox/schema/dist；随后 R6 P1 交付这些冻结契约的 proto/Rust mirror/bridge/client wire plumbing 与 `CraftSessionStateV2` → R4 P1 交付 production decode/dispatch 与 owner/phase/busy gate → R7 P2 交付 close/pause、显式 cancel、reopen/resume UI producer/consumer（R2 P1 已登记的 `CraftStore` 继续提供 disconnect lifecycle）→ R3 P1 交付 durable `SessionDeliveryOutbox`/terminal checkpoint transaction → R10 P1 冻结 `deliver`、stable `delivery_id` 与 durable receipt contract，且 R10 P2 把 craft production 调用点迁入 exactly-once transaction；全部合入后 R1 才能启用并验收 craft adapter。
   - alchemy/forge：还须 R10 P2 将两域 production delivery 调用点迁入 `InventoryTxn::deliver`，否则只能停在 `AwaitingDelivery`。
   - `TsyPresence`：R3 P1 注册 auxiliary Slice，且 R3 P4 restore parity 常绿后，R1 P3 才能 attach 新 runtime `Entity` 并开放 TSY 请求。
 - 禁止用 mock、registry 单测或临时持久层越过上述门宣称端到端完成；依赖未齐时 phase 保持未完成。
