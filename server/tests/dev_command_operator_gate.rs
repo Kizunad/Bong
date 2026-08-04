@@ -115,6 +115,29 @@ fn operator_is_allowed(operators: Option<&str>, username: &str) -> bool {
     qi_command_is_accepted(online_mode(), operators, None, username)
 }
 
+fn qi_command_is_accepted(
+    connection_mode: ConnectionMode,
+    operators: Option<&str>,
+    allow_offline: Option<&str>,
+    username: &str,
+) -> bool {
+    let _env = ScopedEnvVars::set(&[
+        ("BONG_DEV_MODE", Some("1")),
+        ("BONG_OPERATORS", operators),
+        ("BONG_OPERATORS_ALLOW_OFFLINE", allow_offline),
+    ]);
+    let mut app = setup_app(connection_mode);
+    let (player, _helper) = spawn_client(&mut app, username);
+    execute(&mut app, player, "qi set 40");
+    !app.world()
+        .resource::<Events<CommandResultEvent<RepresentativeDevCommand>>>()
+        .is_empty()
+}
+
+fn operator_is_allowed(operators: Option<&str>, username: &str) -> bool {
+    qi_command_is_accepted(online_mode(), operators, None, username)
+}
+
 fn chat_messages(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
     let world = app.world_mut();
     let mut clients = world.query::<&mut Client>();
