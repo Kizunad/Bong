@@ -6,7 +6,7 @@
 
 ## 0. 范围与铁律
 
-- **只重构 `server/` + `client/`**。`agent/`、`worldgen/`、`library-web/` 不动，相关 plan 独立保留（§6.11-6.12）。
+- **重构实施只改 `server/` + `client/`**。`agent/`、`worldgen/`、`library-web/` 不由 R1-R10 修改，相关 plan 独立保留（§6.11-6.12）；R 轨需要 agent-side schema 变更时，必须由 §6.11 Agent 轨作为独立 production owner 先交付，R 轨只消费其冻结产物。
 - 对外契约（Redis IPC、proto schema）原则上不动形状；确需变更走 buf breaking + samples 同步，agent 侧只做被动 regenerate。**不写兼容层**——切换一次到位，删旧路径。
 - 真元守恒律、worldview 正典、招式 A/V 差异化红线全部继续生效。
 - **测试方针（用户 2026-07-27 指示，仅限重构轨道，覆盖根 CLAUDE.md「饱和化测试」节）**：
@@ -60,6 +60,8 @@
 
 - `persistence/**`+autosave=R3；`session/`+7 域 session.rs=R1；`client_request_handler.rs`+`gate/`=R4；`*_emit.rs` 公共层+`proto_convert.rs`=R6；`qi_physics/**`+qi 字段直写行=R5；`inventory/**`=R10；cast/AV emit+skill 注册=R9。
 - client：Store 生命周期+`clearClientStateOnDisconnect` 区段=R2；channel 注册区段+桥+router=R6（与 R2 同文件不同区段，merge 前互 fetch）；Screen/hud/keybind/InspectScreen=R7；combat cast store=R9。
+- `agent/packages/schema/src/**`、generated JSON Schema 与提交的 `@bong/schema` dist=§6.11 Agent 轨；craft schema prerequisite 的 production owner 是 Agent 轨的独立 craft-schema 交付批次，必须在 R6 P1 前提交并验收 TypeBox source、generated schema/dist 与变体计数。理由：TypeBox 是 agent-side source of truth，生成物必须与 source 同 owner 原子提交；让 R6 同时改 source 和 wire 会违反本总纲的 agent 排除边界并形成双 owner。R6 独占 proto/Rust mirror/converter、client wire encode/send 与 bridge/router plumbing，只消费该冻结版本并负责一次性 wire 反映。R6、R4、R7、R1 的 craft gate 均以本处 ownership 决议为准。
+- CraftOpen target bridge（跨轨 canonical contract）：`CraftOpen` 必须携带 required `target` 判别联合：`Handcraft` 或 `Workbench { workbench_key }`，不得省略。`workbench_key` 是现有成功 S2C `WorkbenchOpen.entity_id` 的 ECS `Entity::to_bits()` locator：逻辑/Rust 类型 `u64`、protobuf `uint64`、JSON/TypeBox 为无符号十进制字符串；它不是授权能力。普通手搓发送 `Handcraft`；`WorkbenchScreen` 必须从 response 保留该 key 并在初次 `CraftOpen` 原样回传。R4 将 key 解析为 entity 后重验实体存活且携带 `WorkbenchBlock`、玩家同维且在既有距离内，并执行 owner/busy/facility gate；R1 仅在校验通过后建立 facility claim。missing、malformed、stale、despawned、跨维或越距 key 均拒绝；R7 不得从 UI 猜测或改写 key。`CraftPause`/`CraftResume` 只携带 hydrated session identity/version，不重复 target。
 - 任何轨道碰他轨文件：只允许"消费对方冻结后的 API"，不允许改对方独占文件；接缝 API 归被依赖方定义。
 
 ## 5. 工作流（GPT tmux 多会话）
