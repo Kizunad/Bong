@@ -70,7 +70,7 @@ pub trait InteractionSession {
 - `PlayerKey`：canonical player id；`Entity` 只作当前连接的 runtime binding。
 - `SessionDurability::{Checkpointed, Volatile}`：每个 adapter 注册时必须显式声明，不允许默认值。
 - `SessionPhase::{Running, Paused, Suspended, AwaitingDelivery, DeliveryPending, Terminal}`：同一 session 不允许同时处于多个 phase。`DeliveryPending` 表示 R3 已提交 durable outbox/checkpoint terminalization、但 R10 尚未提交 receipt；它不再是可恢复 gameplay session，不持有 runtime claim。
-- `TerminationCause::{Completed, VoluntaryCancel, Disconnect, DimensionChange, Shutdown, InvalidRestore, SuspensionExpired}`；`Completed` 专用于正常完成后的 durable outbox handoff，不触发 refund。
+- `TerminationCause::{Completed, VoluntaryCancel, Disconnect, DimensionChange, Shutdown, InvalidRestore, SuspensionExpired, AuthorizedAdministratorClosure}`；`Completed` 专用于正常完成后的 durable outbox handoff，不触发 refund。
 - `SuspensionPolicy`：声明 checkpointed session 的 `suspended_at_tick`、有限 `max_suspended_ticks`、过期扫描周期、管理员强制结案入口和 facility claim 回收动作；默认值冻结为 `SESSION_SUSPENSION_TTL_TICKS = 1_728_000`（20 TPS 下 24 小时）与 `SESSION_SUSPENSION_SCAN_INTERVAL_TICKS = 1_200`，不得配置为无限期保留。
 - `SessionTransition::{Keep, Pause, SuspendAndCheckpoint, Teardown, AwaitDelivery, DeliveryPending, CommitTerminal}`。
 - `SessionDeliveryOutbox { delivery_id, session_key, owner_key, payload_digest, payload, cause, state, generation, attempts, next_retry_tick, created_at_tick, tick_epoch }`：R3 持久化的 durable handoff；`delivery_id` 由 `SessionKey + terminal_generation` 稳定派生，禁止仅靠内存幂等键。`generation` 是每次状态 CAS 成功后递增的 durable token；`next_retry_tick`/`created_at_tick` 必须与 `tick_epoch`（持久化的 runtime tick、wall-clock capture 与 epoch id）一起经 R3 `tick_rebase` 转换，按重启时已过去的 wall-clock duration 计算新 epoch 下的剩余 retry/age，禁止跨重启直接比较旧 process-local tick。
@@ -81,7 +81,7 @@ pub trait InteractionSession {
 ### 2.1 不变量
 
 1. `SessionRegistry` 中一个 `SessionKey` 只能有一个 owner；一个 runtime `Entity` 只能绑定同一 `PlayerKey` 的 session。
-2. `Checkpointed` session 断线/关服后进入 `Suspended`，不得离线推进；必须记录 `suspended_at_tick` 并受 `SuspensionPolicy.max_suspended_ticks` 约束。重连通过 R3 guarded restore 后才重新绑定 `Entity`；超过 TTL 或管理员结案时转入 `InvalidRestore`/`SuspensionExpired` 结算，先把完整 delivery obligation 写入 durable terminal/outbox state 并转为 `DeliveryPending`，再幂等释放 facility/target claim；R10 receipt 提交后才进入 `Terminal`。过期扫描和管理员入口必须幂等，且不会等待 owner 重连。
+2. `Checkpointed` session 断线/关服后进入 `Suspended`，不得离线推进；必须记录 `suspended_at_tick` 并受 `SuspensionPolicy.max_suspended_ticks` 约束。重连通过 R3 guarded restore 后才重新绑定 `Entity`；超过 TTL 时转入 `SuspensionExpired`，管理员结案时转入 `AuthorizedAdministratorClosure`，恢复校验失败时转入 `InvalidRestore`，分别按对应终止原因结算，先把完整 delivery obligation 写入 durable terminal/outbox state 并转为 `DeliveryPending`，再幂等释放 facility/target claim；R10 receipt 提交后才进入 `Terminal`。过期扫描和管理员入口必须幂等，且不会等待 owner 重连。
 3. `Volatile` session 遇到断线、跨维或关服必须在同一生命周期门内 teardown；不得留下 owner entity、设施锁、target claim 或 `settling` 标记。
 4. 所有 dimension-scoped session 在维度切换前终止。`TsyPresence` 是 transport 辅助状态，单独 checkpoint/restore，不得用“保留旧交互 session”修复 presence 撕裂。
 5. client 的 screen/store 只能改善 UX，不能授予 session 或 busy 权限；恶意包、重复包和同 tick 竞态最终都由 registry 拒绝。
@@ -167,6 +167,7 @@ pub trait InteractionSession {
   - `Shutdown`：`Checkpointed` 进入 `Suspended`，不退款，checkpoint 保留未消费 escrow；`Volatile` 在 inventory 可访问时全退并终止。
   - `InvalidRestore`：全退未消费 escrow；已完成产物只走一次 delivery，不与 inputs 双发。
   - `SuspensionExpired`：全退未消费 escrow/交付已完成产物；先提交 durable terminal/outbox state，再幂等释放 claim 并终止，delivery 失败不重新占用 claim。
+  - `AuthorizedAdministratorClosure`：授权管理员主动结案仍按 durable terminal/outbox handoff 结算；全退未消费 escrow/交付已完成产物，审计记录 operator principal 与 reason，不得伪装为 `InvalidRestore` 或 `SuspensionExpired`，delivery 失败不重新占用 claim。
 - `Disconnect`/`Shutdown` 的 checkpoint 保留与 terminal cause 的 refund 互斥；terminal delivery 使用 §2.1 的 crash-atomic transaction 或 durable outbox/receipt，不得保留既可恢复又待退款的 session，也不得在 receipt 未落盘时宣称交付完成。
 - refund 也走 R10 delivery 垫层；满包不得退化为日志告警。R10 冻结的 `deliver(delivery_id, items) -> Delivered | Spilled(fallback)` 与 durable `delivery_id`/receipt 见 `plan-refactor-inventory-core-v1.md` 接入面。
 
@@ -235,7 +236,7 @@ pub trait InteractionSession {
 
 - 新增 `server/src/session/{mod.rs,registry.rs,lifecycle.rs}`，包含 §2 全部 symbol；framework-only 可在 R3 P1 后落地，但不启用生产 craft adapter。
 - R6 `CraftOpen`/`CraftPause`/`CraftResume` 契约、R4 production handler/gate、R7 P2 Craft Screen producer/consumer（消费 R2 P1 已登记的 `CraftStore`）、R10 P1 `deliver` contract 与 R10 P2 craft production delivery 全部合入后，craft 才迁移到 `SessionRegistry`：关闭 screen pause、显式 cancel、重开 resume，现有 recipe/session join hydration 行为不变。
-- contract pins：六态转换、stable owner 重绑、disconnect-before-save、dimension-before-transfer、busy 冲突、delivery commit gate，以及 §2.5 七个 `TerminationCause` 的逐变体正反测试；明确断言 `Completed` 只交付产物且不退款，`Disconnect`/`Shutdown` checkpoint 不退款，terminal refund 不保留可恢复 escrow。delivery pins 必须在 transaction 的“outbox 写入前/写入后 terminalize 前/receipt+inventory commit 后 ack 前”逐点模拟进程退出并重载，断言 payload 总数恰为一次；SQLite 同库路径另断言 inventory/spill、receipt、checkpoint 删除在单事务全成或全败。
+- contract pins：六态转换、stable owner 重绑、disconnect-before-save、dimension-before-transfer、busy 冲突、delivery commit gate，以及 §2.5 八个 `TerminationCause` 的逐变体正反测试；明确断言 `Completed` 只交付产物且不退款，`Disconnect`/`Shutdown` checkpoint 不退款，terminal refund 不保留可恢复 escrow。delivery pins 必须在 transaction 的“outbox 写入前/写入后 terminalize 前/receipt+inventory commit 后 ack 前”逐点模拟进程退出并重载，断言 payload 总数恰为一次；SQLite 同库路径另断言 inventory/spill、receipt、checkpoint 删除在单事务全成或全败。
 - `SuspensionPolicy` pins：TTL 前后、永不重连、授权管理员结案、offline client 伪造 allow-listed `Username` 仍拒绝、普通玩家/未知 executor/伪造 owner/跨 owner target 拒绝、过期/重连/关服竞态、重复扫描幂等、指数退避 cap、10 次/7 天 dead-letter、人工 retry/resolve 权限，以及 claim 回收后另一玩家可获取同一设施。另须持久化一半已消耗的 lease，重启后 rebasing 只保留原剩余 TTL；连续第二次/第三次重启不得刷新 `suspended_at_tick`，并覆盖 `remaining-1`、精确边界、`remaining+1`。
 - `PendingInsightOffer` pins：创建后正常选择/拒绝、deadline 前后与 off-by-one、同 tick response-versus-timeout 竞态、断线/跨维/关服清除，以及过期后不得再次接受选择。
 
@@ -262,7 +263,7 @@ pub trait InteractionSession {
 5. `session_full_inventory_delivery`
 6. `session_suspension_reclamation`：永不重连、TTL 边界、授权管理员结案、普通玩家/未知 executor/伪造 owner/跨 owner target 拒绝、过期与重连竞态、重复扫描、claim 释放与 outbox handoff 均不泄漏或双发 claim/escrow。
 7. `session_delivery_crash_atomicity`：在 outbox/terminal checkpoint/receipt/inventory-or-spill/ack 各持久化边界强杀重启，断言 stable `delivery_id` 最终只交付一次；失败按指数退避，在 10 次或 7 天转 `DeadLetter`，且从 handoff 起不占设施 claim。
-8. `session_termination_cause_matrix`：逐项命中 `VoluntaryCancel`、`Disconnect`、`DimensionChange`、`Shutdown`、`InvalidRestore`、`SuspensionExpired`，对拍 checkpoint/refund 互斥与 inputs/output 不双发。
+8. `session_termination_cause_matrix`：逐项命中 `Completed`、`VoluntaryCancel`、`Disconnect`、`DimensionChange`、`Shutdown`、`InvalidRestore`、`SuspensionExpired`、`AuthorizedAdministratorClosure`，对拍 checkpoint/refund 互斥与 inputs/output 不双发，并断言管理员 principal/reason 被审计记录。
 9. `session_craft_pause_resume_wire`：真实 client producer → R6 proto/bridge → R4 production handler/gate → R1 registry → S2C hydrate → client reopen consumer 全链路。
 10. `session_tsy_presence_relog`：R3 guarded presence Slice 完整恢复 `family_id`、`entered_at_tick`、`entry_inventory_snapshot`、`return_to`、schema/version 并与 position/dimension 同事务对拍；分别注入 facility 不存在、owner 不匹配、dimension 不匹配、version 不匹配四类 guarded-load 拒绝，任何一类都不 attach、不开放 TSY 请求；恢复后 death-drop 仍正确区分原带物与 TSY 所得。
 11. `session_pending_insight_offer_deadline`：覆盖创建后选择/拒绝、deadline 前后与 off-by-one、同 tick response-versus-timeout 竞态、断线/跨维/关服清除，以及过期后不得再次接受选择。
