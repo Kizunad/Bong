@@ -52,7 +52,7 @@ SessionDeliveryWorker::fail(claimed, reason, now)
     -> Result<DeliveryRetryState, DeliveryWorkerError>
 ```
 
-`claim_next` 通过 R3 expected `(Pending, generation)` CAS 写 `InFlight { lease_id, lease_until }`；`commit` 解码并逐字段校验完整 payload，以 stable `delivery_id` 调 `InventoryTxn::deliver`，并在 R3 提供的同一 durable transaction 中原子提交 inventory/spill mutation、`DeliveryCommitReceipt`、`InFlight→Committed`、obligation 删除与 quota `-Q`。已有 receipt 时返回既有结果，不再次 deliver 或释放 quota。`fail` 只更新 attempts/backoff 或在阈值后 CAS 到 `DeadLetter`，quota 增量为零；lease expiry scanner、operator retry/resolve 与 worker 共用 R1 §2.2.2 generation-CAS 规则。R10 P2c 同时提供启动 worker/scanner、shutdown drain/lease handoff 与监控告警的 production wiring；R3 只持有 SQL/CAS primitive，不运行 inventory consumer。
+`claim_next` 以 R3 `(state,generation)` CAS 取得 `InFlight` lease；`commit` 用 stable `delivery_id` 调 `InventoryTxn::deliver`，并在 R3 同一 durable transaction 中提交 inventory/spill、receipt、`Committed`、obligation 删除与 quota `-Q`。receipt replay 不重复 deliver/release。`fail` 只推进 retry/backoff/`DeadLetter`，quota 为零变化。全部状态与 CAS 细节以 R1 §2.2.2 为唯一权威；P2c 还须接通 startup/shutdown worker/scanner/operator 与监控。
 
 P2c contract pins：空队列、单条、并发 worker 唯一 claim、claim 后崩溃/lease expiry、deliver 前后崩溃、receipt 已存在重放、暂时失败退避、10 次/7 天 dead-letter、worker↔scanner/operator CAS loser、满包 spill、malformed payload fail closed，以及 `Pending/InFlight/DeadLetter` 始终占 quota、`Committed/ResolvedDisposition` 恰释放一次。R1 的 `session_delivery_crash_atomicity` 与 R3 的 `session_delivery_outbox_atomicity` 必须通过真实 P2c worker，不得直接调用 `InventoryTxn::deliver` 冒充 outbox consumer。
 
@@ -112,7 +112,7 @@ R10 的 inventory-layout 与 dropped-loot migration 函数均纯且幂等，保�
 - **R1**：txn stored/spilled 成功后才 teardown，失败保留 session。
 - **R7**：UI 消费，不拥有事务。
 
-顺序分两条无伪依赖的链：**terminal delivery：R3 P1 reservation/outbox/CAS API → R10 P1 `deliver`/receipt contract → R10 P2c production worker → R1 checkpointed craft/alchemy/forge migration → R10 P4 联合 e2e**；**dropped-loot/pickup：R3 P1 → R10 P1（含纯 inventory-layout/dropped-loot migration helpers）→ R3 P2 atomic seam 实现 + legacy dropped-loot migration/hydration compatibility pins → R10 P2a metadata/provider + Public writer path → R3 P4 dropped-loot migration/hydration consumer → R6 P1 dropped-loot projection/page consumer → R5 P3 + R6 P4 → R10 P3 pickup/merge txn → R4 handler/pickup consumer → R10 P2b OwnerOnly private-writer activation → R3 P4 inventory-layout overflow consumer → R10 P4 联合 e2e**。P2c 不等待 R10 P2a/P2b 或 pickup 链，但必须消费真实 R3 outbox 且通过 crash/retry pins；R10 P2a 在 R3 P2 atomic seam 与旧 dropped-loot migration compatibility 未合入前不得开始；R3 P4 dropped-loot migration/hydration consumer 必须先于 R6 P1 dropped-loot projection/page consumer，确保旧 `entry_json` 已先升级为带 `owner`/`visibility` 的 canonical entry；R10 P2b 只有在 R3 P4 dropped-loot hydration、R6 P1 projection/page、R5 P3 + R6 P4、R10 P3 pickup txn 与 R4 pickup consumer 全部完成后才可启用，避免 OwnerOnly writer 在授权消费链闭合前广播或转移私有掉落；R10 P3 在 R5 P3/R6 P4 provider 未合入前不得开始 pickup consumer；R4/R3 的外轨交付物只作 R10 P4 验收前置、不计入 R10 自身 phase；R10 不越权改 persistence、wire、handler 或 client。
+顺序分两条：**terminal delivery**：R3 P1 outbox/CAS → R10 P1 deliver/receipt → R10 P2c worker → R1 checkpointed hosts → R10 P4；**dropped-loot/pickup**：R3 P1 → R10 P1 migration helpers → R3 P2 seam/compatibility → R10 P2a Public provider/writers → R3 P4 hydration → R6 P1 projection/page → R5 P3 + R6 P4 → R10 P3 pickup → R4 consumer → R10 P2b OwnerOnly writers → R3 P4 layout overflow → R10 P4。P2c 独立于 pickup 链；各箭头未合入不得启用下游或用 mock 宣称完成。
 
 ## 7. 审核要求的 contract pins
 

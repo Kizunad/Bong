@@ -81,13 +81,13 @@ pub trait InteractionSession {
 ### 2.1 不变量
 
 1. `SessionRegistry` 中一个 `SessionKey` 只能有一个 owner；一个 runtime `Entity` 只能绑定同一 `PlayerKey` 的 session。
-2. `Checkpointed` session 断线/关服后进入 `Suspended`，不得离线推进；必须记录 `suspended_at_tick` 并受 `SuspensionPolicy.max_suspended_ticks` 约束。重连通过 R3 guarded restore 后才重新绑定 `Entity`；超过 TTL 时转入 `SuspensionExpired`，管理员结案时转入 `AuthorizedAdministratorClosure`，恢复校验失败时转入 `InvalidRestore`，分别按对应终止原因结算，先把完整 delivery obligation 写入 durable terminal/outbox state 并转为 `DeliveryPending`，再幂等释放 facility/target claim；R10 receipt 提交后才进入 `Terminal`。过期扫描和管理员入口必须幂等，且不会等待 owner 重连。
-3. `Volatile` session 遇到断线、跨维或关服必须在同一生命周期门内 teardown；不得留下 owner entity、设施锁、target claim 或 `settling` 标记。
-4. 所有 dimension-scoped session 在维度切换前终止。`TsyPresence` 是 transport 辅助状态，单独 checkpoint/restore，不得用“保留旧交互 session”修复 presence 撕裂。
-5. client 的 screen/store 只能改善 UX，不能授予 session 或 busy 权限；恶意包、重复包和同 tick 竞态最终都由 registry 拒绝。
-6. session 完成后先进入 `AwaitingDelivery`。所有 `Checkpointed` terminal obligation 一律按 §2.2.2 走 R3 outbox，不因 inventory 与 checkpoint 恰在同一 SQLite 文件就建立第二条 direct-delivery 协议：R3 在一个 checkpoint transaction 中把 reservation 转成完整 `SessionDeliveryOutbox` 并把 session 转入 durable `DeliveryPending`；R10 P2c 只按稳定 `delivery_id` 消费 outbox，在同一 durable transaction 提交 inventory mutation、durable spill、`DeliveryCommitReceipt`、outbox ack/obligation 删除与 quota 释放。任一步失败则该事务的各侧都不发布；重启见 receipt 即跳过重复 delivery并完成幂等 terminal confirmation。进程在 outbox insert、terminalization、worker claim、inventory/spill、receipt 或 ack 任一边界退出都不得丢失或双发。
-7. `AwaitingDelivery` 不得无限保留 facility/target claim。转入 durable outbox 时，事务内只提交权威的 terminal/outbox 状态；事务成功后释放 runtime gameplay claim 并从 live registry 移除，释放动作必须可由已提交的 terminal/outbox 状态幂等重放。outbox 仅保留 owner delivery obligation，不允许 owner 重新恢复已 terminalize 的 session。
-8. 涉及真元的 refund/release 必须通过 `qi_physics::ledger::QiTransfer`；session adapter 不得裸写 `qi_current` 或 zone qi。
+2. `Checkpointed` session 断线/关服后进入受 `SuspensionPolicy` 限制的 `Suspended`，不离线推进；guarded restore 通过才以 `PlayerKey` 重绑新 `Entity`。TTL、管理员结案或恢复失败分别以对应 cause 按 §2.2.2 handoff，receipt 后才 `Terminal`。
+3. `Volatile` session 遇到断线、跨维或关服必须在同一生命周期门内 teardown；不得留下 owner、claim 或 `settling`。
+4. dimension-scoped session 在转移前终止；`TsyPresence` 仅由 R3 coupled snapshot checkpoint/restore。
+5. client screen/store 不授予权限；registry 裁决恶意包、重放和竞态。
+6. `Checkpointed` completion 经 `AwaitingDelivery` → R3 原子 reservation→outbox/`DeliveryPending` → R10 P2c 原子 deliver/receipt/ack/quota release；所有崩溃点按 §2.2.2 重放，禁止第二条 direct-delivery 协议。
+7. outbox commit 后幂等释放 gameplay claim 并移除 live session；delivery obligation 不可 reopen。
+8. qi refund/release 必须走 `qi_physics::ledger::QiTransfer`。
 
 ### 2.2 生命周期顺序
 
@@ -124,12 +124,12 @@ pub trait InteractionSession {
 - 每个宿主显式选择 `SuspensionPolicy.max_suspended_ticks`；P1 craft、P2 alchemy/forge 使用冻结默认值 `SESSION_SUSPENSION_TTL_TICKS = 1_728_000`，扫描 cadence 为 `SESSION_SUSPENSION_SCAN_INTERVAL_TICKS = 1_200`。R3 `tick_rebase` 保持剩余 TTL 的相对时长，关服时间不得让 lease 永久延长；P3 世界交互不得继承无限值。
 - registry 每 tick 或固定 cadence 扫描过期 session；只有 `SessionMaintenancePermissions::is_allowed(execution_origin, authenticated_principal, executor)` 才能用 `session-maintenance terminate <SessionKey>`。仅 server console origin 或 server 已认证且绑定 executor 的 principal/capability 可通过；offline-mode player `Username`、命令 payload 或 owner 字符串均不能产生授权。普通玩家、未知 executor、伪造 allow-listed username/owner 和跨 owner target 一律拒绝且不改变 session/outbox/claim。扫描、授权管理员结案、重连与关服 flush 竞争时以 `SessionKey` CAS/registry lock 保证一次结算。
 - 过期结案按 `TerminationCause::SuspensionExpired` 执行：停止 tick → 在 R3 checkpoint 事务中写入稳定 `delivery_id` 的 `SessionDeliveryOutbox` 并转为 `DeliveryPending` → 事务成功后幂等释放 facility/target/busy claim → 从 live registry 移除；R10 receipt 提交后再标记 `Terminal`。若进程在提交后、runtime claim 清理前退出，启动恢复必须依据已提交的 terminal/outbox 状态补做同一释放，不能重新 attach 或继续占用。R10 异步消费 outbox；不得以 delivery 临时失败为由继续占设施。
-- outbox 每行携带单调 `generation`，状态为 `Pending | InFlight { lease_id, lease_until } | DeadLetter | Committed | ResolvedDisposition { delivery_id, operator_principal, reason, payload }`。自动 worker 仅以 expected `(state,generation)` CAS claim `Pending→InFlight`；delivery receipt + inventory/spill + `InFlight→Committed` 同事务提交。dead-letter scanner 仅 CAS 非活跃/已过期 lease，operator retry/resolve 也必须 CAS 当前 generation；CAS loser 重读，不得覆盖 worker/scanner/operator 的并发结果或重复释放 quota。重试冻结为指数退避 `min(1_200 * 2^attempts, 72_000)` ticks；10 次或 7 天后转 `DeadLetter` 并停止自动扫描。`next_retry_tick`、`created_at_tick`、`lease_until` 与 `tick_epoch` 一并持久化；启动 guarded load 必须在 worker/scanner 运行前用 R3 `tick_rebase` 原子换算到当前 epoch，保持 retry 剩余时长与已消耗 age，连续重启不得刷新退避、7 天 age 或 lease。
-- R3 `SessionDeliveryOutbox` 是失败交付的唯一 retained obligation。每个 `Checkpointed` session 按 §2.2.2 的唯一协议在首次 admission 时、取得 gameplay claim 前预留 durable terminal-obligation capacity；restore 只能复用并校验已有 reservation，绝不再次计量。terminal handoff 与 checkpoint 行同事务转移 reservation。`Pending`/`InFlight`/`DeadLetter` 不重建 session 或 claim；quota 满时 fail closed，禁止删除/覆盖 payload。`resolve` 必须在同一事务把完整 payload 移入持久 `ResolvedDisposition { delivery_id, operator_principal, reason, payload }`（或已提交 receipt），审计成功后才删除 dead-letter row/释放 quota；禁止无 disposition 删除未交付 payload。
-- `DeliveryPending` 已提交 durable handoff 但未 receipt；R10 delivery 失败或进入 `DeadLetter` 时仍保持该 phase 的 durable obligation，绝不回退为 `AwaitingDelivery` 或重新占用 claim。
-- claim 回收与 outbox 状态变化必须有审计事件（session key、owner key hash、operator identity hash/`system`、cause、released claims、delivery id/result/attempt），不记录原 payload；恢复窗口内仍允许 owner 正常 reopen，写入 outbox 后 reopen 明确拒绝。
+- outbox 状态机、generation CAS、retry/dead-letter、tick rebase 与 quota release 唯一语义见 §2.2.2；R3 提供 durable primitive，R10 P2c 驱动 worker/scanner/operator。10 次或 7 天进入 `DeadLetter`；重启不得刷新 retry age 或 lease。
+- 首次 reservation、restore reuse、busy loser cancellation 与 terminal release 只按 §2.2.2；quota 满 fail closed，resolve 无完整 durable disposition 不释放。
+- `DeliveryPending` 只保留 obligation，不恢复 gameplay session/claim。
+- claim 回收与 outbox transition 记录不含 payload 的审计事件；handoff 后拒绝 reopen。
 
-- P1/P4 必须覆盖：永不重连的 abandoned session 最终释放设施、TTL 边界前后、授权管理员结案、offline client 伪造 allow-listed `Username` 仍拒绝、普通玩家/未知 executor/伪造 owner/跨 owner target 拒绝、过期与重连竞态、重复扫描幂等、正常 `Completed` handoff 不退款且 cause 可 roundtrip、outbox 事务 crash points、receipt 重放去重、worker↔scanner 与 worker↔operator retry/resolve generation-CAS 竞态、过期 lease 恢复、退避边界、10 次/7 天 dead-letter、重启前后 retry/age/lease deadline rebase（含连续重启不刷新）、授权 resolve 无 receipt/durable disposition 时 payload 与 quota 保留、quota 满时首次 admission fail-closed、两个首次 admission 并发竞争最后一行或最后一份 bytes 时仅一个成功、busy-claim race loser/后续校验失败取消临时 reservation 且 quota 恰减一次、restore/retry 复用同一 reservation 且 quota 增量为零、冲突 reservation fail-closed、quota 释放后的重新 admission，以及回收后另一玩家可获得同一 furnace/station claim。
+- P1/P4 必测：abandoned/TTL/admin closure、授权拒绝与竞态、`Completed`、outbox crash/receipt replay、worker/scanner/operator CAS、lease/rebase、10 次/7 天 dead-letter、resolve fail-closed，以及 §2.2.2 的首次 `+Q`、取消/terminal `-Q`、其余零变化；并证明设施可由下一玩家取得。
 
 ### 2.2.2 Delivery reservation lifecycle（唯一权威矩阵）
 
