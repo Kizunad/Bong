@@ -11,18 +11,70 @@ ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
 ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
 SERDE_ATTR_RE = re.compile(r"(?m)^[ \t]*#\[serde\(([^]]*)\)\][ \t]*$")
-RUST_NON_CODE_RE = re.compile(
-    r'//[^\n]*|(?s:/\*.*?\*/)|(?:b)?r(?P<hashes>#+)"(?s:.*?)"(?P=hashes)|(?:b)?r"(?s:.*?)"|"(?:\\.|[^"\\])*"'
-)
+MATRIX_SECTION_RE = re.compile(r"^## P0 104 变体门禁矩阵\s*$")
+MATRIX_HEADER_RE = re.compile(r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|")
 MATRIX_RE = re.compile(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|")
 VARIANT_DECL_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)\s*(.*)$")
 
 
+def _blank_non_newlines(masked: list[str], start: int, end: int) -> None:
+    for index in range(start, end):
+        if masked[index] != "\n":
+            masked[index] = " "
+
+
 def _mask_rust_non_code(source: str) -> str:
-    return RUST_NON_CODE_RE.sub(
-        lambda match: "".join("\n" if char == "\n" else " " for char in match.group()),
-        source,
-    )
+    masked = list(source)
+    index = 0
+    while index < len(source):
+        if source.startswith("//", index):
+            end = source.find("\n", index)
+            end = len(source) if end == -1 else end
+            _blank_non_newlines(masked, index, end)
+            index = end
+            continue
+        if source.startswith("/*", index):
+            start = index
+            depth = 1
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            _blank_non_newlines(masked, start, index)
+            continue
+        raw_prefix = 2 if source.startswith("br", index) else 1 if source.startswith("r", index) else 0
+        if raw_prefix:
+            quote_index = index + raw_prefix
+            while quote_index < len(source) and source[quote_index] == "#":
+                quote_index += 1
+            if quote_index < len(source) and source[quote_index] == '"':
+                delimiter = '"' + source[index + raw_prefix : quote_index]
+                end = source.find(delimiter, quote_index + 1)
+                end = len(source) if end == -1 else end + len(delimiter)
+                _blank_non_newlines(masked, index, end)
+                index = end
+                continue
+        if source[index] == '"':
+            end = index + 1
+            while end < len(source):
+                if source[end] == "\\":
+                    end += 2
+                elif source[end] == '"':
+                    end += 1
+                    break
+                else:
+                    end += 1
+            _blank_non_newlines(masked, index, end)
+            index = end
+            continue
+        index += 1
+    return "".join(masked)
 
 
 def _without_line_comment(line: str) -> str:
@@ -69,10 +121,10 @@ def parse_enum_variants(source: str) -> list[str]:
     if not declaration:
         raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
     serde = None
-    for match in reversed(list(SERDE_ATTR_RE.finditer(source, 0, declaration.start()))):
-        if source[match.end() : declaration.start()].strip():
+    for match in reversed(list(SERDE_ATTR_RE.finditer(masked, 0, declaration.start()))):
+        if masked[match.end() : declaration.start()].strip():
             break
-        serde = match.group(1)
+        serde = source[match.start(1) : match.end(1)]
         break
     if serde is None or not re.search(r'\btag\s*=\s*"type"', serde):
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
@@ -139,14 +191,30 @@ def enum_variants() -> list[str]:
     return parse_enum_variants(ENUM_PATH.read_text(encoding="utf-8"))
 
 
-def matrix_variants() -> tuple[list[int], list[str]]:
+def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
     rows: list[tuple[int, str]] = []
-    for line in PLAN_PATH.read_text(encoding="utf-8").splitlines():
+    in_matrix = False
+    header_seen = False
+    for line in source.splitlines():
+        if not in_matrix:
+            if MATRIX_SECTION_RE.match(line):
+                in_matrix = True
+            continue
+        if line.startswith("## "):
+            break
+        if not header_seen:
+            if MATRIX_HEADER_RE.match(line):
+                header_seen = True
+            continue
         if match := MATRIX_RE.match(line):
             rows.append((int(match.group(1)), match.group(2)))
     if not rows:
         raise RuntimeError(f"cannot parse C2S matrix from {PLAN_PATH}")
     return [number for number, _ in rows], [variant for _, variant in rows]
+
+
+def matrix_variants() -> tuple[list[int], list[str]]:
+    return parse_matrix_variants(PLAN_PATH.read_text(encoding="utf-8"))
 
 
 def duplicates(values: list[str]) -> list[str]:

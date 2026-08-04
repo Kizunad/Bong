@@ -131,7 +131,17 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 
 ## P0 104 变体门禁矩阵
 
-记法：距离列为目标 + profile；维度 `同目标` 表示请求者与目标权威维度相同，`主世界` 表示请求者必须是 Overworld，`—` 表示无空间维度门；所有权/状态是 **P3 终态要求**。现状列的“域内”表示已有下游校验但尚未统一，“缺”表示本轮验真的真实缺口，“显式 no_gate”仍必须写理由。
+记法：距离列为目标 + profile；维度列只描述请求者与空间目标的实际维度关系，`同目标` 表示请求者与目标权威维度相同，`主世界` 表示请求者必须是 Overworld，`—` 表示无空间维度门；session / request 的 authenticated authority 不填入维度列，统一见下方 **Authority contract field**；所有权/状态是 **P3 终态要求**。现状列的“域内”表示已有下游校验但尚未统一，“缺”表示本轮验真的真实缺口，“显式 no_gate”仍必须写理由。
+
+**Authority contract field**：矩阵的所有权 / participant 细化为独立的权威关系；`authenticated player` 表示由当前连接的玩家实体解析请求者，`session owner` 表示由 R1 session adapter 按 authenticated player 绑定并校验 session/request ID，`participant snapshot` 表示由 invite/offer 的服务端参与者快照校验。该字段不描述空间维度：`AgentUiResponse` 必须使用 `authenticated player → AgentUiSessionStore → request_id` 关系校验，不能写成 request dimension 或 request target。
+
+| authority contract | 适用变体 |
+|---|---|
+| `authenticated player → session owner` | `BotanyHarvestRequest`, `CancelExtractRequest`, `CancelSearch`, `ExternalContainerMove`, `ExternalContainerClose`, `CraftCancel`, `ScrollReadClosed` |
+| `participant snapshot` | `SparringInviteResponse` |
+| `authenticated player → AgentUiSessionStore → request_id` | `AgentUiResponse` |
+
+所有上述变体的维度单元格均为 `—`；`ExternalContainerMove` 的 `ExternalSession` 仅保留为距离 profile，不是维度名称。所有权 / participant 列仍保留每行的领域对象语义，以上字段为其可核验的 authority source。
 
 | # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |
 |---:|---|---|---|---|---|---|
@@ -144,7 +154,7 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 7 | `HeartDemonDecision` | — | — | challenge participant | 事件未过期、choice 合法 | 域内 |
 | 8 | `ForgeRequest` | — | — | self | 经脉锻造前置 | 域内；非世界炼器站请求 |
 | 9 | `InsightDecision` | — | — | invite owner | trigger 未过期 | 域内 |
-| 10 | `BotanyHarvestRequest` | session / — | session authority | session owner | session active、mode 合法 | 已有 session owner；迁 R1 adapter |
+| 10 | `BotanyHarvestRequest` | session / — | — | session owner | session active、mode 合法 | 已有 session owner；迁 R1 adapter |
 | 11 | `AlchemyOpenFurnace` | block / `NearbyInteract` | 同目标/主世界 | furnace owner (ownerless public) | furnace exists | 距离/维度缺 |
 | 12 | `AlchemyFeedSlot` | block / `NearbyInteract` | 同目标/主世界 | active operator | furnace/session active、slot/material 合法 | 距离/维度缺 |
 | 13 | `AlchemyTakeBack` | block / `NearbyInteract` | 同目标/主世界 | active operator | furnace active、slot 可取 | 距离/维度缺 |
@@ -168,7 +178,7 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 31 | `SpiritNicheGaze` | block / `NearbyInteract` | 主世界 | — | niche exists、凝视达标 | 域内需登记 |
 | 32 | `SpiritNicheMarkCoordinate` | block / `NearbyInteract` | 主世界 | — | niche exists、mark 能力 | 域内需登记 |
 | 33 | `SpiritNicheActivateGuardian` | block / `NearbyInteract` | 主世界 | niche owner | guardian/material 前置 | 域内需登记 |
-| 34 | `SparringInviteResponse` | invite / — | participant snapshot | invite target | invite active、未过期 | participant/state 域内 |
+| 34 | `SparringInviteResponse` | invite / — | — | invite target | invite active、未过期 | participant/state 域内 |
 | 35 | `TradeOfferRequest` | player / `NearbyInteract` | 同目标 | initiator owns offered item | 双方存活、目标可交易 | 同维缺；NPC reputation 误门另结案 |
 | 36 | `TradeOfferResponse` | offer / `NearbyInteract` | 同 participant | offer target + 双方 item owner | offer active、未过期、双方存活 | 同维缺；接受时需复验 |
 | 37 | `NpcInspectRequest` | entity / `NearbyInteract` | 同目标 | — | NPC 可交互 | 已有同维/距离 helper |
@@ -209,14 +219,14 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 72 | `CombatTerminate` | — | — | self | death state 可终结 | 显式 no spatial gate |
 | 73 | `CombatCreateNewCharacter` | — | — | self | terminated/new-character transition | 显式 no spatial gate |
 | 74 | `StartExtractRequest` | portal entity / profile-preserved | 同目标 | — | portal active、玩家可撤离、非忙态 | 域内需登记 |
-| 75 | `CancelExtractRequest` | session / — | session authority | session owner | extract active | R1 session gate |
+| 75 | `CancelExtractRequest` | session / — | — | session owner | extract active | R1 session gate |
 | 76 | `StartSearch` | container entity / profile-preserved | 同目标 | loot authority | container searchable、非忙态 | 域内需登记 |
-| 77 | `CancelSearch` | session / — | session authority | session owner | search active | R1 session gate |
+| 77 | `CancelSearch` | session / — | — | session owner | search active | R1 session gate |
 | 78 | `SupplyCoffinOpen` | entity / `SupplyCoffinOpen` | 同目标 | — | coffin active/unopened | 已有 authority helper |
 | 79 | `ContainerOpen` | entity / profile-preserved | 同目标 | access authority | container active | 域内需登记 |
 | 80 | `WorkbenchOpen` | entity / `Workbench` | 同目标 | — | workbench active | 距离已有；同维缺 |
-| 81 | `ExternalContainerMove` | session / `ExternalSession` | session dimension | session owner | revision/source/destination 合法 | 已有 session authority；迁 R1/R10 adapter |
-| 82 | `ExternalContainerClose` | session / — | session authority | session owner | session active | 已有 owner；迁 R1 adapter |
+| 81 | `ExternalContainerMove` | session / `ExternalSession` | — | session owner | revision/source/destination 合法 | 已有 session authority；迁 R1/R10 adapter |
+| 82 | `ExternalContainerClose` | session / — | — | session owner | session active | 已有 owner；迁 R1 adapter |
 | 83 | `LingtianStartTill` | block / `NearbyInteract` | 同目标 | hoe owner | terrain/mode/非忙态 | 距离/维度缺 |
 | 84 | `LingtianStartRenew` | block / `NearbyInteract` | 同目标 | hoe owner | plot 可翻新 | 距离/维度缺 |
 | 85 | `LingtianStartPlanting` | block / `NearbyInteract` | 同目标 | seed owner | plot/plant/非忙态 | 距离/维度缺 |
@@ -232,13 +242,13 @@ P2/P3 使用编译期分域函数与穷尽 match，不采用 `HashMap<String, dy
 | 95 | `ForgeLearnBlueprint` | inventory / — | — | scroll/material owner | blueprint/unlock 合法 | 域内；R10 transaction |
 | 96 | `ForgeStationPlace` | block / `NearbyInteract` | 主世界/同目标 | item owner | tier/位置可放置 | 距离/维度缺 |
 | 97 | `CraftStart` | recipe station / recipe profile | station 存在时同目标 | material owner | unlock/material/qi/非忙态 | station 规则域内；接 R1/R10 |
-| 98 | `CraftCancel` | session / — | session authority | session owner | craft active | R1 session gate |
+| 98 | `CraftCancel` | session / — | — | session owner | craft active | R1 session gate |
 | 99 | `GiveDanToElder` | entity / `NearbyInteract` | 同目标 | pill owner | DyingElder + Plea/Recovering、存活 | 目标/状态/距离/维度须在扣丹前 |
 | 100 | `RaiseShield` | equipped / — | — | shield owner | 存活、off-hand shield、非冲突态 | 域内 |
 | 101 | `LowerShield` | — | — | self | blocking active；幂等退出允许 | 域内 |
 | 102 | `ScrollReadRequest` | inventory / — | — | item owner | readable spec、非冲突态 | owner/spec 域内 |
-| 103 | `ScrollReadClosed` | session / — | session authority | reader self | read session active；幂等关闭允许 | P2 接 R1 session |
-| 104 | `AgentUiResponse` | request / — | request owner | request target | request_id/action/button 未过期且获准 | 域内；显式 no spatial gate |
+| 103 | `ScrollReadClosed` | session / — | — | reader self | read session active；幂等关闭允许 | P2 接 R1 session |
+| 104 | `AgentUiResponse` | request / — | — | authenticated player / session request owner | request_id/action/button 未过期且获准 | 域内；AgentUiSessionStore 按 player entity 校验 request_id；显式 no spatial gate |
 
 P1 测试必须在实现阶段从 TypeBox `agent/packages/schema/src/client-request.ts::ClientRequestV1` 这一 IPC source of truth 导出/对拍，并同时校验 Rust serde mirror、Markdown matrix、生成的 `agent/packages/schema/generated/client-request-v1.json` 与未来 gate registry；不把数字 104 写成永恒常数。当前 TypeBox/generated mirror 只覆盖 Rust enum 的 **86/104** 个变体，以下 **18** 个 wire gap 明确登记为 P1 阻塞项：`alchemy_learn_recipe_fragment`、`coffin_break`、`coffin_menu_reclaim`、`qi_scatter_bead_use`、`jiemai`、`supply_coffin_open`、`container_open`、`workbench_open`、`external_container_move`、`external_container_close`、`lingtian_start_till`、`lingtian_start_renew`、`lingtian_start_planting`、`lingtian_start_harvest`、`lingtian_start_drain_qi`、`craft_start`、`craft_cancel`、`give_dan_to_elder`。P0 不修改或要求这些运行时 mirror 对齐。每个 `NoGateReason` 仍须非空。P0 的仓内静态对拍由 CI 强制执行的 `python3 scripts/check_c2s_gate_matrix.py` 提供，仅比较 Rust `ClientRequestV1` 与 Markdown matrix 的变体集合、顺序、重复项和连续编号；解析器遇到 unit/tuple/struct 以外的未知顶层 enum 语法必须 fail closed。
 

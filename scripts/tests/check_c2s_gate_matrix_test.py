@@ -98,7 +98,8 @@ class ParserTests(unittest.TestCase):
 
     def test_serde_contract_uses_real_enum_not_decoy_text(self) -> None:
         source = """// #[serde(tag = \"type\", rename_all = \"snake_case\")] pub enum ClientRequestV1 { Decoy, }
-/*
+/* outer comment
+/* inner comment */
 #[serde(tag = \"type\", rename_all = \"snake_case\")]
 pub enum ClientRequestV1 { Decoy, }
 */
@@ -133,6 +134,24 @@ pub enum ClientRequestV1 {
                 self.assertEqual(checker.main(), 1)
 
     def test_main_accepts_matching_enum_and_matrix(self) -> None:
+        plan = """## P0 104 变体门禁矩阵
+
+| # | `ClientRequestV1` | 距离 | 维度 |
+|---:|---|---|---|
+| 1 | `Alpha` | — | — |
+| 2 | `Beta` | — | — |
+
+## 后续清单
+
+| # | `ClientRequestV1` |
+|---:|---|
+| 99 | `Decoy` |
+"""
+        self.assertEqual(
+            checker.parse_matrix_variants(plan),
+            ([1, 2], ["Alpha", "Beta"]),
+        )
+
         with patch.object(
             checker, "enum_variants", return_value=["Alpha", "Beta"]
         ), patch.object(
