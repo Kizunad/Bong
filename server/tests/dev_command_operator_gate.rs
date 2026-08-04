@@ -440,6 +440,50 @@ fn every_dev_root_blocks_non_operators_and_allows_operators() {
 }
 
 #[test]
+fn every_dev_root_enforces_event_time_operator_authorization() {
+    let _env = ScopedEnvVars::set(&[
+        ("BONG_DEV_MODE", Some("1")),
+        ("BONG_OPERATORS", Some("Builder")),
+        ("BONG_OPERATORS_ALLOW_OFFLINE", None),
+    ]);
+    let mut app = setup_app(online_mode());
+    let (player, mut player_helper) = spawn_client(&mut app, "Alice");
+    let (operator, mut operator_helper) = spawn_client(&mut app, "Builder");
+    app.world_mut().run_schedule(EventLoopPreUpdate);
+
+    let dev_roots = root_scopes(&app)
+        .into_iter()
+        .filter(|(root, required_scopes)| {
+            !dev::PUBLIC_COMMAND_ROOTS.contains(&root.as_str())
+                && required_scopes == &[DEV_COMMAND_SCOPE.to_string()]
+        })
+        .map(|(root, _)| root)
+        .collect::<Vec<_>>();
+    assert!(
+        !dev_roots.is_empty(),
+        "the gate test must discover registered dev roots"
+    );
+
+    for root in dev_roots {
+        execute(&mut app, player, &root);
+        assert!(
+            chat_messages(&mut app, &mut player_helper)
+                .iter()
+                .any(|message| message.contains("Command requires operator permission")),
+            "non-operator execution of /{root} must receive the operator rejection"
+        );
+
+        execute(&mut app, operator, &root);
+        assert!(
+            !chat_messages(&mut app, &mut operator_helper)
+                .iter()
+                .any(|message| message.contains("Command requires operator permission")),
+            "operator execution of /{root} must not receive the operator rejection"
+        );
+    }
+}
+
+#[test]
 fn configured_operator_can_use_season_through_shared_permission_source() {
     let _env = ScopedEnvVars::set(&[
         ("BONG_DEV_MODE", Some("1")),

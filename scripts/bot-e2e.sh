@@ -32,8 +32,16 @@ for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
   [ -z "$BOT_E2E_OPERATORS" ] || BOT_E2E_OPERATORS+=,
   BOT_E2E_OPERATORS+="B${BOT_E2E_RUN_TAG}${bot_tag}"
 done
-# These tags mirror every env.new_bot() identity used by the default --all scenarios.
-# The server receives only this finite roster; wildcard authorization is intentionally unsupported.
+# Reuse is safe only when the caller proves that the running offline server has this exact
+# run-tag roster and the explicit username-trust opt-in. Otherwise force the fresh-launch path.
+if [ "$REUSE" = "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && {
+  [ "${BONG_OPERATORS:-}" != "$BOT_E2E_OPERATORS" ] ||
+  [ "${BONG_OPERATORS_ALLOW_OFFLINE:-}" != "1" ]
+}; then
+  echo "[bot-e2e] existing server operator roster does not match this run; disabling BOT_E2E_REUSE=1" >&2
+  REUSE=0
+fi
+
 # Ambient fixture ownership has three intentionally closed values: unset/default, generic 0,
 # and strict owned-fixture 1. Reject typos before creating files or starting tools.
 case "$AMBIENT_FIXTURE_MODE" in
