@@ -38,10 +38,10 @@
 
 ## 阶段
 
-- ✅ 2026-07-30 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、opaque load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→subject-bound capability hydrate→实际 lease 审计→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 token/foreign subject lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败 provenance 不可提取、写资格、重连顺序/阻断/旧 activation 原子保留/foreign-subject 拒绝/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界。2026-08-04 返工将现有 zone-runtime 关服写入迁为首个 production descriptor，安装唯一 canonical registry 与 `AppExit → Last` dispatcher；真实 player reconnect adapter 仍归 P3。
-- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变）；等 #1259 合入后，将 KnownTechniques/Lifecycle 平移为首批宿主。
+- ✅ 2026-07-30 P0 设计收口 + contract pins：完成 51 表归域与吸收清单验真；`server/src/persistence/slice.rs` 已冻结 descriptor-based Slice contract、opaque load guard、shutdown registry、同 tick save→全量只读 preflight→无 blocked/error 返回通道的 cleanup→lease check→subject-bound capability hydrate→实际 lease 审计→rebase（hydrate/rebase fail-fast，后序失败则对所有已尝试 descriptor 逆序 cleanup 并复核 token/foreign subject lease）、注入时钟、tick rebase、稳定主体独占 activation 与 payload-bound dirty receipt；contract-pin tests 覆盖 registry 缺失 fail-closed、注册冲突、失败 provenance 不可提取、写资格、重连顺序/阻断/旧 activation 原子保留/foreign-subject 拒绝/部分 hydrate 回滚与干净重试、dirty revision/CAS 与 deadline 边界。2026-08-04 返工安装唯一 canonical registry 与 `AppExit → Last` dispatcher，将 zone-runtime 关服写入迁为首个 production descriptor，并以 KnownTechniques 接通首个真实 player reconnect/load guard/dirty snapshot/durable fence adapter；P3 负责向其余玩家与世界域推广，不重复安装这些 P0 接入点。
+- ⬜ P1 框架落地 + 巨石拆分：`persistence/` 按域拆文件（迁移链不变、行为不变），机械保留 P0 已安装的 canonical registry、zone-runtime 与 KnownTechniques production wiring；等 #1259 合入后，将 Lifecycle 等其余首批宿主平移入对应域文件。
 - ⬜ P2 载入守护推广：全部玩家 slice（core/position/inventory/SkillSet/Wounds/长期 buff/身份键等）收编；聚合 writer 按 `WriteSet` omit 被阻断 slice。
-- ⬜ P3 真实 reconnect handoff + 关服 flush + tick rebase 批次：玩家 lifecycle 只从一次性 subject-bound capability 激活；shutdown registry 逐域替换旧 `Last` hook；绝对 deadline 改相对基准；autosave/事件写入按 write authority + revision/CAS 串行化。
+- ⬜ P3 reconnect/关服 flush/tick rebase 推广批次：以 P0 的 KnownTechniques production adapter 为基线，将一次性 subject-bound handoff、shutdown descriptor、相对 deadline 与 write authority + revision/CAS 串行化逐域推广；每迁一域先移除其旧 hook，禁止双写。
 - ⬜ P4 遗漏运行态补持久化批次：ActiveEvents、TiandaoAttention、长期 consumable/buff、realm taint、season override、supply cooldown、灵眼等逐个补 Slice；业务生命周期修复留在各自领域。
 - ⬜ P5 bot 验收 + 吸收 plan 批量归档。
 
@@ -86,7 +86,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 ## 文件所有权与边界
 
 - 独占：`server/src/persistence/**`、`player/state.rs` + `player/mod.rs` 的 autosave/载入区段、各域持久化接线点。
-- P0 冻结区：#1289 已合入；#1259 合入前继续避让 `server/src/persistence/mod.rs`、`server/src/player/state.rs`、`server/src/player/mod.rs`、`server/src/combat/lifecycle.rs` 的生产主体。P0 对 `persistence/mod.rs` 仍只允许增加模块声明。
+- P0 返工边界：#1289 已合入；为关闭 production dead-wire，已授权修改 `server/src/persistence/mod.rs`、`server/src/player/state.rs` 与 `server/src/player/mod.rs` 的 KnownTechniques 精确接入区段，交付 canonical registry、zone-runtime shutdown descriptor 与首个 player production adapter；P1 机械拆分必须原样保留这些接入点。
 - 不碰：session 业务逻辑（R1 经钩子接入）、qi 语义（R5）、`client_request_handler.rs`（R4）。已有 craft/inventory/cultivation/ledger/dropped-loot 跨表 transaction 不得拆成多连接写入。
 - 不引入：全局 `rusqlite::Connection` Resource、`Mutex<Connection>`、异步全局 writer、所有时间统一 wall-clock、或新旧 shutdown hook 双注册。
 
@@ -131,7 +131,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 **决议**：
 1. 不重造 signal handler。唯一触发仍是 `shutdown.rs` 在 `PreUpdate` 发出的单次 `AppExit::Success`；统一 dispatcher 位于 `Last`。2026-08-04 返工已将 zone-runtime 旧 `Last` hook 原位迁为首个 production descriptor，并安装 canonical registry + dispatcher；后续域继续逐个迁移。
 2. dispatcher 复制已排序 descriptor 列表后再逐个调用 hook，避免持有 registry 的 World borrow 时再次可变借用 World；返回汇总报告 `attempted/clean/flushed/blocked/failures`。
-3. 单个 hook 失败不得中断后续 slice；失败必须保留 dirty 和旧文件/旧行。P0 只冻结和测试 dispatcher，不注册生产 slice；P3 迁移时逐域“移除旧 hook → 注册 registry”，禁止双写。
+3. 单个 hook 失败不得中断后续 slice；失败必须保留 dirty 和旧文件/旧行。P0 已注册 zone-runtime 与 KnownTechniques 两个 production descriptor，并移除其对应旧写入接线；P3 只对其余域逐个执行“移除旧 hook → 注册 registry”，禁止重复注册或双写。
 
 **落点**：`server/src/shutdown.rs:43-74,247-375`；`server/src/craft/unlock.rs:282-301,1209-1337`；`server/src/persistence/mod.rs:921-977`；plan §阶段 P3、§bot 验收场景 #3。
 
@@ -157,7 +157,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 
 **决议**：
 1. 不重置 `PRAGMA user_version`，不删除 v1–v39 legacy upgrade path，不把行为迁移 squash 成一份 fresh schema。未来可额外生成新库 baseline，但旧库升级链、升级前备份和 fixture 必须长期保留。
-2. P0 在 2026-08-04 返工前只新增 `server/src/persistence/slice.rs` 与 contract-pin tests，并在 `persistence/mod.rs` 增加模块声明；返工为关闭 production dead-wire，仅将既有 zone-runtime 关服 hook 原位迁为首个 production descriptor，并安装 canonical registry + `AppExit → Last` dispatcher，不修改 schema、不拆巨石、不提前接真实 player reconnect。#1289 已合入；#1259 的玩家/饱食度接线继续避让。
+2. P0 在 2026-08-04 返工前只新增 `server/src/persistence/slice.rs` 与 contract-pin tests，并在 `persistence/mod.rs` 增加模块声明；返工为关闭 production dead-wire，安装唯一 canonical registry 与 `AppExit → Last` dispatcher，将既有 zone-runtime 关服 hook 原位迁为首个 world production descriptor，并以 KnownTechniques 接通首个真实 player reconnect/load guard/dirty snapshot/durable fence adapter；不修改 schema、不拆巨石。#1289 已合入；#1259 的玩家/饱食度其余接线继续避让。
 3. P0 pins 覆盖：registry ID/authority/ordering 校验与稳定排序；无 shutdown 请求不调用；失败隔离；load 三态、`RefuseStartup` 与不可伪造 write permit；deadline 两种 offline policy 与边界；domain-bound dirty snapshot + durable receipt；同 tick save-before-load；注入时钟。
 
 **落点**：`server/src/persistence/mod.rs:57-62,1083-2386`；plan §P0 表域普查、§阶段 P0、§文件所有权与边界。
@@ -167,7 +167,7 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 **决议**：
 1. 同一持久化主体在同一 schedule tick 内出现 disconnect 与 reconnect 时，必须同步完成旧实体的 disconnect save，成功后才允许新实体 hydrate；保存失败则跳过载入并保留失败，禁止从旧 durable row 重建后继续运行。
 2. P0 以 `dispatch_reconnect_handoff` 冻结该次序：registry 内同一玩家主体的所有 `SliceDescriptor::disconnect_save` 先按稳定顺序串行完成；只有全部返回 `Clean | Flushed` 后，才对所有参与玩家重连的 descriptor 执行**只读** `reconnect_preflight`。任一 preflight blocked/failed 时，旧 activation/lease 全部原样保留且零 hydrate；全量 preflight 成功后才用独立、无 blocked/error 返回通道的 `reconnect_cleanup` 提交删除旧 activation（panic 视为 adapter 契约违规并 fail-fast）。所有 hydrate 成功后才按同一时钟快照运行 rebase。入口消费 persistence-private 的一次性 `ReconnectHandoffToken`，同一 generation 不可重复执行；hydrate/rebase fail-fast，失败或 blocked 时对所有已尝试 hydrate descriptor（包括 hook 激活后才返回失败者）以 `ReconnectAbort` 逆序调用同一 cleanup，随后复核所有 subject/domain lease 均已释放；残留以 `DuplicateSubject` fail-closed，干净时才允许同一稳定主体重试。
-3. P2 只把玩家 Slice adapter 改成消费 hook 生命周期内借用、不可克隆的 subject-bound activation capability；P3 才把真实 player lifecycle 接到一次性 handoff dispatcher，并按稳定 reconnect event ID 去重，使同一上游事件只 mint/dispatch 一次。两阶段都不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设；一次性 generation 只约束已经 mint 的 token。
+3. P0 已以 KnownTechniques 把真实 player lifecycle 接到一次性 handoff dispatcher；P2/P3 只按各自阶段向其余玩家 Slice 推广 subject-bound activation、稳定 reconnect event ID 去重与 write authority。推广不得依赖 Bevy 系统注册先后、deferred commands 或“通常下一 tick 才重连”的时间假设；一次性 generation 只约束已经 mint 的 token。
 4. 所有该主体/domain 的 disconnect save 成功后、任何 hydrate 前，adapter 必须把“能否同步释放旧 activation”的可失败检查放进只读签名 `reconnect_preflight: fn(&World, ...)`；registry 校验所有参与玩家 reconnect 的 descriptor 必须同时提供 preflight 与无 blocked/error 返回通道的 `reconnect_cleanup`。只有全量 preflight 成功后 dispatcher 才统一 cleanup；cleanup 必须同步释放对应 state、可幂等处理 `ReconnectCleanup`（旧 activation 提交）与 `ReconnectAbort`（本轮新 activation 回滚），panic 视为 adapter 契约违规。cleanup/abort 返回后若仍残留 lease，以 `DuplicateSubject` fail-closed，禁止框架强制 revoke 后并存双 writer。
 
 **落点**：`server/src/persistence/slice.rs` 的 `SliceRunReason::{DisconnectSave,ReconnectPreflight,ReconnectCleanup,ReconnectLoad,ReconnectAbort}`、`ReconnectActivationCapability`、`SlicePreflightHook`、`SliceDescriptor::{disconnect_save,reconnect_preflight,reconnect_cleanup}`、`dispatch_reconnect_handoff` 与真实 activation contract pins；plan §阶段 P0/P2/P3、§bot 验收场景 #2。
@@ -184,9 +184,9 @@ Lifecycle 是 #1289 已落地的独立生产 Slice 基线：SQLite `player_lifec
 
 本 plan 继续按依赖顺序序列化 P1–P5；每个阶段独立 PR，前一阶段合入 `origin/main` 且门禁全绿后才进入下一阶段，不拆成新的 persistence 总体 plan。
 
-1. **PR-P1 框架落地 + 机械拆分**：前置为 #1259 合入并解除 `persistence/mod.rs`、`player/state.rs`、`player/mod.rs`、`combat/lifecycle.rs` 避让。只机械移动迁移/查询代码并安装唯一 canonical `PersistenceSliceRegistry`，迁移链、transaction、错误行为和连接 ownership 不变。
-2. **PR-P2 玩家 load guard 推广**：依赖 P1；按价值域逐批接 KnownTechniques、Lifecycle、Wounds、core/position/inventory/cultivation/craft 等真实 adapter，所有连接/SQL/解码失败保留 `Failed` provenance，聚合 transaction 按 `WriteSet` omit 被阻断 slice。
-3. **PR-P3 shutdown/reconnect/time/write authority**：依赖 P2；逐域执行“移除旧 hook → 注册 registry”，接入 `AppExit → Last`、一次性 reconnect handoff、deadline rebase、payload-bound snapshot 和 serialized/CAS writer，禁止新旧 hook 双注册。
+1. **PR-P1 框架落地 + 机械拆分**：前置为 #1259 合入并解除 `persistence/mod.rs`、`player/state.rs`、`player/mod.rs`、`combat/lifecycle.rs` 避让。只机械移动迁移/查询代码并保留 P0 已安装的唯一 canonical `PersistenceSliceRegistry`、zone-runtime 与 KnownTechniques production wiring，迁移链、transaction、错误行为和连接 ownership 不变。
+2. **PR-P2 玩家 load guard 推广**：依赖 P1；以 P0 的 KnownTechniques adapter 为范式，按价值域逐批接 Lifecycle、Wounds、core/position/inventory/cultivation/craft 等其余真实 adapter，所有连接/SQL/解码失败保留 `Failed` provenance，聚合 transaction 按 `WriteSet` omit 被阻断 slice。
+3. **PR-P3 shutdown/reconnect/time/write authority 推广**：依赖 P2；对 P0 尚未迁移的域逐个执行“移除旧 hook → 注册 registry”，推广 `AppExit → Last`、一次性 reconnect handoff、deadline rebase、payload-bound snapshot 和 serialized/CAS writer，禁止重复安装 registry、重复注册 P0 descriptor 或新旧 hook 双写。
 4. **PR-P4 遗漏运行态持久化**：依赖 P3；补 ActiveEvents、TiandaoAttention、长期 consumable/buff、realm taint、season override、supply cooldown、灵眼等真实 Slice；实体重建、所有权与守恒仍归领域 owner。
 5. **PR-P5 restart Bot 验收 + 吸收归档**：依赖 P4；跑 `restart_player_slices`、`same_tick_reconnect_handoff`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`、`restart_qi_conservation`，核验 27 项吸收清单后补 `## Finish Evidence` 并归档到 `docs/finished_plans/`。
 

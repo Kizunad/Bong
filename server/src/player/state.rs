@@ -34,7 +34,7 @@ pub const DEFAULT_PLAYER_DATA_DIR: &str = "data/players";
 // plan-layered-equip-v1 P0.6（决议 #4）— inventory schema 内容版本。
 // v1 = equipped 每槽单件 ItemInstance；v2 = SlotContents{worn:Vec, held:Option}。
 // PLAYER_ROW_SCHEMA_VERSION bump 到 2：load 时 schema_version < 2 触发 migrate_equipped_v1_to_v2。
-const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
+pub(crate) const PLAYER_ROW_SCHEMA_VERSION: i32 = 2;
 const INVENTORY_SCHEMA_VERSION: i32 = 2;
 const DEFAULT_INVENTORY_JSON: &str = "null";
 const MIN_SAFE_PLAYER_Y: f64 = crate::world::terrain::MIN_Y as f64;
@@ -170,12 +170,13 @@ pub struct LoadedPlayerSlices {
     pub(crate) ui_prefs: PlayerUiPrefs,
 }
 
-/// 功法加载结果。`LoadFailed` 表示持久化状态无法可靠读取：行存在但读取/解析失败
+/// 功法聚合加载结果。`LoadFailed` 表示持久化状态无法可靠读取：行存在但读取/解析失败
 /// （JSON 损坏、SELECT 报错），或连接都打不开导致**行状态完全不可知**——两种情况都
 /// 绝不允许用 `KnownTechniques::default()` 覆盖写回（会把玩家全部功法+熟练度
-/// 永久清零）；消费侧必须挂 `KnownTechniquesLoadFailed` 写保护标记跳过所有落盘路径。
-/// 唯一能确认「无数据」的是连接成功且查到无行（真新玩家），归入 `Loaded(default)`，
-/// 可正常写回。
+/// 永久清零）。production join 由 canonical persistence adapter 保留 failed provenance、挂
+/// `KnownTechniquesLoadFailed` 并统一阻断 Changed/disconnect/shutdown 写出口；仍消费本聚合
+/// API 的调用方也必须保留同一写保护语义。唯一能确认「无数据」的是连接成功且查到无行
+/// （真新玩家），归入 `Loaded(default)`，可正常写回。
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadedKnownTechniques {
     Loaded(KnownTechniques),
@@ -435,6 +436,21 @@ pub fn load_player_slices(
     persistence: &PlayerStatePersistence,
     username: &str,
 ) -> LoadedPlayerSlices {
+    load_player_slices_inner(persistence, username, true)
+}
+
+pub(crate) fn load_player_slices_for_canonical_techniques(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> LoadedPlayerSlices {
+    load_player_slices_inner(persistence, username, false)
+}
+
+fn load_player_slices_inner(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+    load_known_techniques: bool,
+) -> LoadedPlayerSlices {
     let state = load_player_state(persistence, username);
     let connection = match open_player_connection(persistence) {
         Ok(connection) => connection,
@@ -535,16 +551,22 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
-    let known_techniques = match load_player_known_techniques_from_sqlite(&connection, username) {
-        Ok(known_techniques) => LoadedKnownTechniques::Loaded(known_techniques),
-        Err(error) => {
-            tracing::error!(
-                "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; blocking known techniques persistence for this session to protect the stored row",
-                username,
-                persistence.db_path().display()
-            );
-            LoadedKnownTechniques::LoadFailed
+    let known_techniques = if load_known_techniques {
+        match load_player_known_techniques_from_sqlite(&connection, username) {
+            Ok(known_techniques) => {
+                LoadedKnownTechniques::Loaded(known_techniques.unwrap_or_default())
+            }
+            Err(error) => {
+                tracing::error!(
+                    "[bong][player] failed to load persisted known techniques for `{}` from sqlite {}: {error}; blocking known techniques persistence for this session to protect the stored row",
+                    username,
+                    persistence.db_path().display()
+                );
+                LoadedKnownTechniques::LoadFailed
+            }
         }
+    } else {
+        LoadedKnownTechniques::Loaded(KnownTechniques::default())
     };
     let ui_prefs = match load_player_ui_prefs_from_sqlite(&connection, username) {
         Ok(ui_prefs) => ui_prefs,
@@ -1203,7 +1225,9 @@ pub fn import_player_bundle(
     transaction.commit().map_err(io::Error::other)
 }
 
-fn open_player_connection(persistence: &PlayerStatePersistence) -> io::Result<Connection> {
+pub(crate) fn open_player_connection(
+    persistence: &PlayerStatePersistence,
+) -> io::Result<Connection> {
     if let Some(parent) = persistence.db_path().parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1916,10 +1940,18 @@ fn load_player_skill_set_from_sqlite(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+pub(crate) fn load_player_known_techniques_slice(
+    persistence: &PlayerStatePersistence,
+    username: &str,
+) -> io::Result<Option<KnownTechniques>> {
+    let connection = open_player_connection(persistence)?;
+    load_player_known_techniques_from_sqlite(&connection, username)
+}
+
 fn load_player_known_techniques_from_sqlite(
     connection: &Connection,
     username: &str,
-) -> io::Result<KnownTechniques> {
+) -> io::Result<Option<KnownTechniques>> {
     let known_techniques_json: Option<String> = connection
         .query_row(
             "
@@ -1934,10 +1966,11 @@ fn load_player_known_techniques_from_sqlite(
         .map_err(io::Error::other)?;
 
     let Some(known_techniques_json) = known_techniques_json else {
-        return Ok(KnownTechniques::default());
+        return Ok(None);
     };
 
     serde_json::from_str::<KnownTechniques>(&known_techniques_json)
+        .map(Some)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 

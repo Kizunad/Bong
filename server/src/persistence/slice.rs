@@ -1380,6 +1380,10 @@ impl PersistenceSubjectKey {
     pub(in crate::persistence) fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
+
+    pub(in crate::persistence) fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Opaque identity shared only by state derived from one active durable subject.
@@ -1665,6 +1669,10 @@ impl<P> DirtySnapshot<P> {
 
     pub fn payload(&self) -> &P {
         &self.payload
+    }
+
+    pub(in crate::persistence) fn subject_key(&self) -> &PersistenceSubjectKey {
+        &self.subject_key
     }
 }
 
@@ -3037,10 +3045,20 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_dispatch_skips_non_participating_player_descriptors() {
+    fn reconnect_dispatch_skips_non_participating_and_world_scoped_descriptors() {
         let non_participant = Box::leak(Box::new(SliceDescriptor {
             shutdown_flush: Some(clean_hook),
             ..basic_descriptor("player.shutdown_only", 5)
+        }));
+        let world_scoped = Box::leak(Box::new(SliceDescriptor {
+            scope: SliceScope::WorldResource,
+            hydrate: Some(handoff_load_participant),
+            reconnect_preflight: Some(noop_preflight),
+            reconnect_cleanup: Some(handoff_cleanup_participant),
+            rebase: Some(handoff_rebase),
+            disconnect_save: Some(handoff_save),
+            write_binding: EXTRA_TEST_BINDING,
+            ..basic_descriptor("world.reconnect_shaped", 7)
         }));
         let participant = Box::leak(Box::new(SliceDescriptor {
             hydrate: Some(handoff_load_participant),
@@ -3051,6 +3069,7 @@ mod tests {
         }));
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(non_participant).unwrap();
+        registry.register(world_scoped).unwrap();
         registry.register(participant).unwrap();
         let mut world = World::new();
         world.insert_resource(registry);
@@ -3475,8 +3494,10 @@ mod tests {
         old_second: Option<RealReconnectActivation>,
         new_first: Option<RealReconnectActivation>,
         new_second: Option<RealReconnectActivation>,
+        second_save: InjectedHookResult,
         second_preflight: InjectedHookResult,
         second_hydrate: InjectedHookResult,
+        second_rebase: InjectedHookResult,
         preserve_new_first_on_abort: bool,
         release_first_during_rebase: bool,
         hydrate_attempts: usize,
@@ -3543,6 +3564,20 @@ mod tests {
                 .guarded
                 .subject
                 .is_same(&activation.fence.subject)
+    }
+
+    fn atomic_save_first(_world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::DisconnectSave);
+        Ok(SliceRunOutcome::Flushed)
+    }
+
+    fn atomic_save_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::DisconnectSave);
+        match world.resource::<AtomicReconnectState>().second_save {
+            InjectedHookResult::Clean => Ok(SliceRunOutcome::Flushed),
+            InjectedHookResult::Blocked => Ok(SliceRunOutcome::SkippedBlocked),
+            InjectedHookResult::Error => Err(SliceRunError::new("second save failed")),
+        }
     }
 
     fn atomic_preflight_first(_world: &World, context: &SliceRunContext) -> SliceRunResult {
@@ -3621,32 +3656,43 @@ mod tests {
         Ok(SliceRunOutcome::Clean)
     }
 
+    fn atomic_rebase_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
+        assert_eq!(context.reason, SliceRunReason::Rebase);
+        match world.resource::<AtomicReconnectState>().second_rebase {
+            InjectedHookResult::Clean => Ok(SliceRunOutcome::Clean),
+            InjectedHookResult::Blocked => Ok(SliceRunOutcome::SkippedBlocked),
+            InjectedHookResult::Error => Err(SliceRunError::new("second rebase failed")),
+        }
+    }
+
     fn atomic_descriptors() -> (&'static SliceDescriptor, &'static SliceDescriptor) {
         let first = Box::leak(Box::new(SliceDescriptor {
             hydrate: Some(atomic_hydrate_first),
             reconnect_preflight: Some(atomic_preflight_first),
             reconnect_cleanup: Some(atomic_cleanup_first),
             rebase: Some(atomic_rebase_first),
-            disconnect_save: Some(handoff_save),
+            disconnect_save: Some(atomic_save_first),
             ..basic_descriptor("player.atomic_first", 10)
         }));
         let second = Box::leak(Box::new(SliceDescriptor {
             hydrate: Some(atomic_hydrate_second),
             reconnect_preflight: Some(atomic_preflight_second),
             reconnect_cleanup: Some(atomic_cleanup_second),
-            rebase: Some(rebase_partial_activation),
-            disconnect_save: Some(handoff_save),
+            rebase: Some(atomic_rebase_second),
+            disconnect_save: Some(atomic_save_second),
             write_binding: SECOND_TEST_BINDING,
             ..basic_descriptor("player.atomic_second", 20)
         }));
         (first, second)
     }
 
-    fn atomic_reconnect_world(
+    fn atomic_reconnect_world_with_failures(
         first: &'static SliceDescriptor,
         second: &'static SliceDescriptor,
+        second_save: InjectedHookResult,
         second_preflight: InjectedHookResult,
         second_hydrate: InjectedHookResult,
+        second_rebase: InjectedHookResult,
     ) -> World {
         let mut registry = PersistenceSliceRegistry::empty();
         registry.register(first).unwrap();
@@ -3659,11 +3705,29 @@ mod tests {
         world.insert_resource(AtomicReconnectState {
             old_first: Some(old_first),
             old_second: Some(old_second),
+            second_save,
             second_preflight,
             second_hydrate,
+            second_rebase,
             ..AtomicReconnectState::default()
         });
         world
+    }
+
+    fn atomic_reconnect_world(
+        first: &'static SliceDescriptor,
+        second: &'static SliceDescriptor,
+        second_preflight: InjectedHookResult,
+        second_hydrate: InjectedHookResult,
+    ) -> World {
+        atomic_reconnect_world_with_failures(
+            first,
+            second,
+            InjectedHookResult::Clean,
+            second_preflight,
+            second_hydrate,
+            InjectedHookResult::Clean,
+        )
     }
 
     #[test]
@@ -3759,13 +3823,14 @@ mod tests {
     #[test]
     fn reconnect_save_failure_preserves_real_activation_leases() {
         let (first, second) = atomic_descriptors();
-        let mut world = atomic_reconnect_world(
+        let mut world = atomic_reconnect_world_with_failures(
             first,
             second,
+            InjectedHookResult::Error,
+            InjectedHookResult::Clean,
             InjectedHookResult::Clean,
             InjectedHookResult::Clean,
         );
-        world.resource_mut::<HandoffTrace>().fail_save = true;
         let clock = FixedClock {
             runtime_tick: 400,
             wall_unix_millis: 49_999,
@@ -3773,8 +3838,10 @@ mod tests {
 
         let report = dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock)
             .expect("save failure should be reported without destructive cleanup");
+        assert_eq!(report.saves_attempted, 2);
+        assert_eq!(report.saves_completed, 1);
         assert_eq!(report.loads_attempted, 0);
-        assert_eq!(report.failures.len(), 2);
+        assert_eq!(report.failures.len(), 1);
         let state = world.resource::<AtomicReconnectState>();
         assert!(state.old_first.is_some() && state.old_second.is_some());
         assert!(activation_keeps_all_leases(
@@ -3790,6 +3857,65 @@ mod tests {
             .resource::<PersistenceSliceRegistry>()
             .active_subject_domain(&subject_key("player:atomic"), second.write_binding.domain()));
     }
+    #[test]
+    fn later_save_failure_or_block_preserves_all_old_activations() {
+        let (first, second) = atomic_descriptors();
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        for injected in [InjectedHookResult::Blocked, InjectedHookResult::Error] {
+            let mut world = atomic_reconnect_world_with_failures(
+                first,
+                second,
+                injected,
+                InjectedHookResult::Clean,
+                InjectedHookResult::Clean,
+                InjectedHookResult::Clean,
+            );
+            let report =
+                dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+
+            assert_eq!(report.saves_attempted, 2, "{injected:?}");
+            assert_eq!(report.saves_completed, 1, "{injected:?}");
+            assert_eq!(report.cleanups_completed, 0, "{injected:?}");
+            assert_eq!(report.loads_attempted, 0, "{injected:?}");
+            let state = world.resource::<AtomicReconnectState>();
+            assert!(state.old_first.is_some() && state.old_second.is_some());
+            assert!(state.new_first.is_none() && state.new_second.is_none());
+        }
+    }
+
+    #[test]
+    fn later_rebase_failure_or_block_aborts_all_hydrated_activations() {
+        let (first, second) = atomic_descriptors();
+        let clock = FixedClock {
+            runtime_tick: 400,
+            wall_unix_millis: 49_999,
+        };
+
+        for injected in [InjectedHookResult::Blocked, InjectedHookResult::Error] {
+            let mut world = atomic_reconnect_world_with_failures(
+                first,
+                second,
+                InjectedHookResult::Clean,
+                InjectedHookResult::Clean,
+                InjectedHookResult::Clean,
+                injected,
+            );
+            let report =
+                dispatch_reconnect_handoff(&mut world, token("player:atomic"), &clock).unwrap();
+
+            assert_eq!(report.rebases_attempted, 2, "{injected:?}");
+            assert_eq!(report.rebases_completed, 1, "{injected:?}");
+            assert_eq!(report.aborts_completed, 2, "{injected:?}");
+            let state = world.resource::<AtomicReconnectState>();
+            assert!(state.old_first.is_none() && state.old_second.is_none());
+            assert!(state.new_first.is_none() && state.new_second.is_none());
+        }
+    }
+
     #[test]
     fn reconnect_hydrate_failure_after_real_activation_rolls_back_all_and_retries_cleanly() {
         let (first, second) = atomic_descriptors();
@@ -4342,6 +4468,55 @@ mod tests {
         assert_eq!(report.loads_completed, 2);
         assert_eq!(report.rebases_completed, 2);
         assert!(report.failures.is_empty());
+    }
+
+    #[test]
+    fn slice_load_status_predicates_cover_every_state() {
+        let cases = [
+            (
+                SliceLoad::<u32, &str>::missing(),
+                SliceLoadStatus::Missing,
+                (true, false, false),
+            ),
+            (
+                SliceLoad::<u32, &str>::loaded(17),
+                SliceLoadStatus::Loaded,
+                (false, true, false),
+            ),
+            (
+                SliceLoad::<u32, &str>::failed("secret failure"),
+                SliceLoadStatus::Failed,
+                (false, false, true),
+            ),
+        ];
+
+        for (load, status, predicates) in cases {
+            assert_eq!(load.status(), status);
+            assert_eq!(
+                (load.is_missing(), load.is_loaded(), load.is_failed()),
+                predicates,
+                "each SliceLoad state must report one and only one matching predicate"
+            );
+        }
+    }
+
+    #[test]
+    fn slice_load_debug_reports_status_without_payloads() {
+        let missing = format!("{:?}", SliceLoad::<String, String>::missing());
+        let loaded = format!(
+            "{:?}",
+            SliceLoad::<String, String>::loaded("private player payload".to_string())
+        );
+        let failed = format!(
+            "{:?}",
+            SliceLoad::<String, String>::failed("database credential leaked".to_string())
+        );
+
+        assert!(missing.contains("status: Missing"));
+        assert!(loaded.contains("status: Loaded"));
+        assert!(failed.contains("status: Failed"));
+        assert!(!loaded.contains("private player payload"));
+        assert!(!failed.contains("database credential leaked"));
     }
 
     #[test]
