@@ -2,13 +2,13 @@
 
 > 计划名：`plan-bughunt-worldgen-integrity-determinism-v1`
 >
-> 状态：`docs/plans-skeleton/` 骨架，当前提交树可核验根 `CLAUDE.md`、`docs/CLAUDE.md` 和 master §6.12 的 Worldgen owner row；本文只声明已登记为 skeleton，不追溯声称创建时已完成 master §10.1.1 的历史前置核验。尚未进入 active plan，不参与 `/consume-plan`。下一生命周期转换只能是 skeleton → active；转 active 前仍须按 `docs/CLAUDE.md` §五将开放问题收口为 `§N.1 决议`，并在 active promotion 中重新记录当前 `file:line` 证据。
+> 状态：`docs/plans-skeleton/` 骨架；本文只声明已登记为 skeleton，不追溯声称创建时已完成既有 promotion gate 的历史前置核验。尚未进入 active plan，不参与 `/consume-plan`。下一生命周期转换只能是 skeleton → active；转 active 前须将开放问题收口为 `§N.1 决议`，并重新核对 promotion gate 所需的仓库流程文件证据；证据不可读时保持 `BLOCKED`。
 >
-> Registry note：本文件进入仓库 registry 的事实是 `docs/plans-skeleton/` 路径与 master §6.12 ownership row；master §10.1.1 的创建前 gate 不在本文件中伪造为已完成证据。后续 skeleton → active promotion 必须由 owner 在同一提交树内复核根 `CLAUDE.md`「Plan 工作流」和 `docs/CLAUDE.md` §§五-六，并按该规则记录可核验结论。
+> Registry note：本文件进入仓库 registry 的事实是 `docs/plans-skeleton/` 路径与 master §6.12 ownership row；既有 promotion gate 的创建前核验不在本文件中伪造为已完成证据。后续 skeleton → active promotion 必须重新核对当时提交树中实际存在且可读取的仓库流程文件；若所需文件缺失或证据不可读，promotion 保持 `BLOCKED`，不得以本段或外部/会话文档替代。
 >
 > 范围：worldgen 产物从 blueprint/profile、布局与结构导出，到 raster/manifest、预览与 server runtime consumer 的完整性、确定性和边界合同。
 >
-> 明确不拥有：`#1623`、`#1627`、`#1853`。这三个 issue 的唯一既有 owner 是已归档的 `plan-terrain-tribulation-scorch-v1`（`docs/finished_plans/plan-terrain-wiring-v1.md` 的断链 #11 A 归属记录与其 Finish Evidence）；本文只保留 cross-reference 和跨计划集成验收边界，不重新分配 ownership。
+> 明确不拥有：`#1623`、`#1627`、`#1853`。这三个未解决的 structure-manifest runtime wiring issue 由仍在进行的 `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md` 作为当前 implementation owner；该计划的证据记录 worldgen 顶层 `corpse_mounds` / `ascension_pits` 字段被 Rust `RasterManifest` 丢弃，本文只保留 cross-reference 和跨计划集成验收边界，不宣称其已归档或已完成。
 
 
 ## 阶段总览
@@ -80,7 +80,7 @@
 
 ### 既有计划边界与非重复约束
 
-- `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md`：记录 `corpse_mounds` / `ascension_pits` 的现存运行时断链，但不改变 header 的既有 owner 声明。本计划只验证必要的跨计划产物接缝，不修改其 owned issue。
+- `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md`：当前 implementation owner，负责 `corpse_mounds` / `ascension_pits` 两个 worldgen 顶层字段被 Rust `RasterManifest` 丢弃的 runtime wiring gap；本计划只验证必要的跨计划产物接缝，不修改其 owned issue。
 - `docs/plan-bughunt-anomaly-raster-runtime-consumer-v1.md`：可能承接 `#1656` 的 anomaly threshold runtime validation 子项；是否转移必须经开放问题决议。
 - `docs/plan-bughunt-raster-check-required-layers-v1.md`：可能承接 `#1653/#1705` 中属于统一 required-layer shape contract 的部分；本计划保留 profile/layout/semantic 其余边界，不能重复定义 checker。
 - `docs/plan-bughunt-worldgen-raster-check-cli-noop-v1.md`：拥有 raster checker CLI 可执行性/no-op 入口问题；本计划可以调用其 checker，但不重修 CLI main 或退出码合同。
@@ -238,14 +238,14 @@
 
 **Umbrella-owned issue：** 无新增 owned issue。
 
-**Cross-reference only：** `#1623 #1627 #1853`；其 owner 仅以上方 header 的既有归属声明为准，本节不重新分配 ownership。
+**Cross-reference only：** `#1623 #1627 #1853`；当前 implementation owner 仍是上述 active structure-manifest plan，本节不重新分配 ownership，也不将其未完成的 runtime wiring 写成已归档完成。
 
 **目标：** 在不重新夺取三个 structure-manifest issue ownership 的前提下，验证 P0-P3 的 worldgen 产物与 structure manifest/loot consumer 计划能够组成一致的 exporter → manifest → server consumer 全链路。
 
 **覆盖边界：**
 
 - 本计划不修改、重述或“关闭”`#1623/#1627/#1853` 的根因。
-- structure-manifest 相关文档记录 `corpse_mounds` 缺失 loot 引用、`ascension_pits` 错误 manifest kind，以及 Python 导出但 Rust `RasterManifest`/consumer 不接入的问题；本计划不据此改变 header 已声明的 excluded issue owner。
+- structure-manifest 计划记录的是 `corpse_mounds` / `ascension_pits` 两个 worldgen 顶层字段由 Rust `RasterManifest` 丢弃、因而尚未进入 runtime/loot consumer；本计划不据此改变 header 已声明的 active owner，也不把该 gap 写成已修复的 loot reference 或 manifest kind 错误。
 - 本计划只负责在已有/完成后的 structure-manifest 接口上做 cross-plan regression：worldgen 输出的 profile/layout/regen/preview 改动不能破坏 manifest generation、坐标、generation id 或 server loader 的既有合同。
 **可核验交付物：**
 
@@ -258,7 +258,7 @@
 **Acceptance criteria：**
 
 - `#1623/#1627/#1853` 在本计划的 issue ledger 中标记为 `cross-reference only`，不得出现在 umbrella-owned 修复清单或独立实现 commit 的 scope 中。
-- 以真实导出物验证：manifest 字段名称、kind/type、结构坐标、generation/version 和 server serde decode 一致；缺失字段/错误 kind/未知字段的错误路径可定位。
+- 以真实导出物验证：`corpse_mounds` / `ascension_pits` 字段名称、结构坐标、generation/version 和 server serde decode 一致；字段缺失、serde 丢弃或未知字段的错误路径可定位。
 - structure-manifest plan 完成后，运行跨计划 integration test；若其仍未完成，验收结果为明确 `BLOCKED`，并列出依赖的具体 symbol/fixture。
 - P4 不修改 `docs/finished_plans/`，也不把新问题回写到已归档 plan；新增发现走对应 active/skeleton owner。
 
@@ -326,15 +326,15 @@ P0-P3 当前预期是 worldgen/server 逻辑；需确认 console/regen/preview �
 
 需把 pipeline cwd、CLI no-op、required layers、qidensity、anomaly runtime、structure manifest、finished snapshot 与本 umbrella 的每个 issue/phase 做一对一映射，确认不存在重复修复、遗漏或“只引用但无人拥有”的孤岛。
 
-## Skeleton → Active promotion gate（master §10.1.1）
+## Skeleton → Active promotion gate
 
 本文件已经是 master §6.12 登记的 Worldgen skeleton，不再经过 draft → skeleton 转换。后续 promotion 只能将其从 `docs/plans-skeleton/` 移到 `docs/plan-*.md`；在此之前：
 
-1. 按 `docs/CLAUDE.md` 顺序复核 worldview、finished plans、active plans、skeleton/reminder 的接入面，并保留本仓库同一提交树内根 `CLAUDE.md`「Plan 工作流」和 `docs/CLAUDE.md` §§五-六的读取证据。
+1. 重新核对当前提交树实际存在且可读取的仓库流程文件，并保留对应读取证据；若 promotion 所需文件缺失或不可读，promotion 保持 `BLOCKED`，不得以外部或会话文档替代。
 2. 为 §1–§15 开放问题补齐只读调查、`§N.1 决议` 和 `file:line + plan section` 双锚点；#1766 先完成 compositor 全宽修复，再以像素回归锁定该修复，不重新打开 geometry redesign。
 3. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
-4. 确认 `#1623/#1627/#1853` 仍按 header 的既有 owner 声明处理，并仅在 P4 做 cross-reference。
-5. active promotion 时更新阶段状态表和 current `file:line` 锚点；`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。promotion 前本 skeleton 不由 `/consume-plan` 消费，source issue 也不得仅凭 skeleton 登记就宣称已修复。
+4. 确认 `#1623/#1627/#1853` 仍由 active structure-manifest plan 负责，本文仅在 P4 做 cross-reference；该 runtime wiring 未完成前必须记录 `BLOCKED`。
+5. active promotion 时更新阶段状态表和当前 `file:line` 锚点；`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。promotion 前本 skeleton 不由 `/consume-plan` 消费，source issue 也不得仅凭 skeleton 登记就宣称已修复。
 
 ## §10 实施工作流
 
