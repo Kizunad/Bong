@@ -44,11 +44,11 @@
 
 本 plan 的 agent 发布验收会调用 `scripts/bot-e2e.sh`；bot harness 的身份与复用门禁属于验收前置，不得让 stale offline server 或未授权 bot 伪造 narration 结果。
 
-- **生成身份**：有效的 `BOT_E2E_RUN_TAG` 必须在生成用户名和 `BONG_OPERATORS` 之前校验，只允许 Minecraft username-safe 的字母、数字和下划线；对每个实际场景 tag 都必须满足 `len("B${BOT_E2E_RUN_TAG}${tag}") <= 16`。空值沿用脚本默认值，逗号、空白、控制字符、超长结果和其他非法字符必须在创建 roster、fixture 或 server 之前 fail-fast。
+- **生成身份**：有效的 `BOT_E2E_RUN_TAG` 必须在生成用户名和 `BONG_OPERATORS` 之前校验，只允许 Minecraft username-safe 的字母、数字和下划线；对每个实际场景 tag 都必须满足 `len("B${BOT_E2E_RUN_TAG}${tag}") <= 16`。空值沿用脚本默认值，逗号、空白、控制字符、超长结果和其他非法字符必须在创建 roster、fixture 或 server 之前 fail-fast。实现顺序是：确定默认值后立即执行字符/长度 guard，再执行 `export`、场景 tag 遍历和 `BONG_OPERATORS` 拼接；guard 失败不得创建 roster、fixture、server 或其运行目录。
 - **完整 tag 来源**：roster 不得手工遗漏场景身份；P0 必须从当前 `scripts/bot/scenarios/**/*.py` 的 `env.new_bot(...)` 调用和动态 tag（包括 `terrain_join_chunk_delivery.py` 的 `J1`）建立可审计清单。当前清单为 `RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop NRift J1 Poi`。其中 command-using 场景至少包括 `RGA/RGB` 的 realm gate、`Clr`、`Fog`、`Give`、`RespawnSfx`、`Cast`、`SwordAV`、`Sword`、`Break`、`Pill`、`Cult`、`Box`、`Herbal`、`Eqp`、`ScDim`、`CE1/CE2`、`Brew`、`ProdAF`、`Refund`、`Resume`、`Forge`、`Craft`、`ProdLG`、`WoodDrop`、`NRift` 和 `Poi`；`Sword` 与 `NRift` 不得只因存在 `SwordAV` 或其他同前缀 tag 而被省略。
 - **fresh launch contract**：自起 server 必须把同一份完整生成 roster 导出为 `BONG_OPERATORS`，并导出 `BONG_OPERATORS_ALLOW_OFFLINE=1`；scenario runner 生成的每个用户名必须能在该 roster 中找到对应条目。
 - **reuse contract**：`BOT_E2E_REUSE=1` 不是“自动复用上一轮脚本自启动 server”的承诺。调用者必须显式提供与运行中 server 完全相同的有效 `BOT_E2E_RUN_TAG`、完整 `BONG_OPERATORS` 和 `BONG_OPERATORS_ALLOW_OFFLINE=1`；默认按新 shell PID 生成的 tag 不得被文案描述为可复用上一轮 server。
-- **harness regression matrix**：必须有 harness-level（非仅 server parser）测试，使用隔离的 fake environment 验证：① exact generated roster + offline opt-in 保持 `REUSE=1` 且不走 fresh launch；② roster 少一项、多一项或顺序/内容不完全相等时强制 `REUSE=0`；③ `BONG_OPERATORS_ALLOW_OFFLINE` 缺失或不等于 `1` 时强制 `REUSE=0`；④ fresh launch 收到 exact generated roster 与 offline opt-in，而不是沿用 caller 的 stale 值；⑤ invalid `BOT_E2E_RUN_TAG` 在 roster/fixture/server 创建前被拒绝。测试必须断言复用决策和 fresh-launch environment，不能只测试 server 端 operator parsing。
+- **harness regression matrix**：必须有 harness-level（非仅 server parser）测试，使用隔离的 fake environment 验证：① exact generated roster + offline opt-in 保持 `REUSE=1` 且不走 fresh launch；② roster 少一项、多一项或顺序/内容不完全相等时强制 `REUSE=0`；③ `BONG_OPERATORS_ALLOW_OFFLINE` 缺失或不等于 `1` 时强制 `REUSE=0`；④ fresh launch 收到 exact generated roster 与 offline opt-in，而不是沿用 caller 的 stale 值；⑤ invalid `BOT_E2E_RUN_TAG` 在 roster/fixture/server 创建前被拒绝。测试必须断言复用决策和 fresh-launch environment，不能只测试 server 端 operator parsing。server dev-command gate 的契约测试还必须从注册表发现完整 public-root 集合，并把每个 public root 的 command event 送过 event-time authorization gate：非 operator 不得收到 operator rejection，operator 也不得收到该 rejection；对每个被拒绝的 dev root，必须额外断言没有 `CommandResultEvent`、状态 mutation 或 handler side effect，不能以 rejection chat 作为 command cancellation 的替代证明。
 
 ## 1. Goals
 
@@ -188,7 +188,7 @@
 
 1. 所有 Redis channel 进入统一 ingress adapter；adapter 只做 channel/kind 识别、最小反序列化和 envelope 建立，不在 callback 内直接调用 LLM 或 publish。
 2. 普通 Redis Pub/Sub callback 没有 ack/replay：消息抵达进程后，adapter 尽快写入 bounded pending queue/store，再启动 renderer/LLM；只有 pending 写入成功后的事件才具备重启恢复。进程在 pending 写入前崩溃时事件可能丢失，这是当前 transport 的明确边界，不能宣称源端重投。
-   **[DRAFT-DECISION F07]** pending 写入成功后以同一 `event_id` 恢复/去重；写入成功、worker 处理前或处理中崩溃均从 pending store 恢复。故障注入测试只锁定 post-ingest recovery；覆盖 pre-ingest crash 的强保证必须先迁移 producer+consumer 到 Redis Streams/consumer group 等 durable claim/ack transport，作为 §8 开放选项，不在本 plan P 阶段实现。
+   **[DECISION F07 — P0-owned]** pending 写入成功后以同一 `event_id` 恢复/去重；写入成功、worker 处理前或处理中崩溃均从 pending store 恢复。故障注入测试只锁定 post-ingest recovery；覆盖 pre-ingest crash 的强保证必须先迁移 producer+consumer 到 Redis Streams/consumer group 等 durable claim/ack transport，作为 §8 开放选项，不在本 plan P 阶段实现。P0 必须冻结该 post-ingest-only 边界、pending store 的恢复入口、同一 `event_id`/attempt 的重试语义和“不得宣称 pre-ingest replay”的验收矩阵；P1 才能消费这份已冻结契约。
 3. 为每个 producer/channel 建显式注册表，记录 payload validator、source identity、ordering key、最大 payload/context 大小和失败策略。
 4. handler 异常、post-ingest 进程重启和 worker 暂时不可用时，仍留在 pending store 的 item 可按同一 key 重试；这不等于 Redis Pub/Sub 的 subscriber delivery replay，也不保证 publisher resolve 后消费者一定收到。queue capacity、global concurrency、优先级、满队列 terminal policy 以及 transition telemetry schema 必须在 P0 按 §8.12 冻结，不能以无界 fallback 代替。
 
@@ -249,7 +249,7 @@
 - [ ] 盘点所有 Tiandao narration Redis channel、`RuntimeRedis` drain、直接 `publishNarrations` callsite、业务状态/cooldown/cursor 写点。
 - [ ] 定义 envelope、event_id、dedupe_key、ordering_key、tick_epoch、ack/state transition 及 pending/dead-letter 语义。
 - [ ] 定义现有 server selector 可接受的 canonical scope/target contract；dimension、SpiritNiche recipient authorization 和 consumed receipt 作为 §8 明示 contract gap，不进入当前 P 阶段实现锁。
-- [ ] 收口 F06/F08/F09；F04/F07 按本次保守修订的现有 producer/consumer 与 post-ingest recovery 边界收口，F05 仍为 deferred/open gate：每条 decision-needed 必须落为具体协议、选项和测试矩阵后才能进入依赖它的后续阶段。不得把 §8.9 authorization data + enforcing consumer contract 尚未落地的隐私/fan-out 决策标为已收口。
+- [ ] 收口 F06/F08/F09；F07 作为 **P0-owned** 的 post-ingest recovery contract 冻结：明确 pending 写入成功后的恢复入口、同一 `event_id`/attempt 的重试与去重、故障注入矩阵，以及 pre-ingest crash 不在保证内且必须由未来 durable transport 承接。F05 仍为 deferred/open gate：每条 decision-needed 必须落为具体协议、选项和测试矩阵后才能进入依赖它的后续阶段。不得把 §8.9 authorization data + enforcing consumer contract 尚未落地的隐私/fan-out 决策标为已收口。
 
 ### P1：有界 ingest 与 pending store
 
@@ -318,7 +318,7 @@
 
 ## 8. Open questions（P0 内收口；P0 退出前冻结依赖决策）
 
-本节不构成 P0 entry blocker。P0 可以在 owner、source ledger、现有 selector、envelope/state 边界和依赖盘点完成后进入；P0 的退出门才检查本节中标为 `DECISION-NEEDED`、且由 P0 负责冻结的 F06/F08/F09 及相关容量/生命周期参数。未在 P0 退出前收口的决定不得被 P1/P2/P4/P5 假设或消费；F05 仍保持 deferred/open，不能标记为已关闭。
+本节不构成 P0 entry blocker。P0 可以在 owner、source ledger、现有 selector、envelope/state 边界和依赖盘点完成后进入；P0 的退出门才检查本节中标为 `DECISION-NEEDED`、且由 P0 负责冻结的 F06/F07/F08/F09 及相关容量/生命周期参数。未在 P0 退出前收口的决定不得被 P1/P2/P4/P5 假设或消费；F05 仍保持 deferred/open，不能标记为已关闭。
 
 1. **durable transport 选项**：满足本 plan 的 pending/restart recovery contract 的 authoritative pending store 必须是持久、可跨进程恢复的实现；仅进程内 memory queue 不满足该合同。它只能恢复已成功写入 pending 的事件。普通 Redis Pub/Sub ingress 是 at-most-once；`PUBLISH` resolve 只表示 Redis client-side 调用完成，不能证明 subscriber delivery。若未来要求覆盖 pending 写入前的 crash、consumer ack 或 receiver-side replay，必须将对应 server producer 与 agent consumer 一并迁移到 Redis Streams/consumer group（或等价 durable claim/ack transport），并确定 retention、redelivery、claim timeout、consumer group 与清理责任；不能仅换 pending store 就宣称 pre-ingest replay 或 lossless delivery。
 2. **可选 consumed receipt 与可见副作用去重**：本 plan 的 terminal in-scope state 是业务状态提交成功后的 `published`，不是 Redis resolve 瞬间的 `publish_pending_commit`，也不把它当作 server consumed、recipient selected 或 client displayed。若未来需要证明 server 已消费并保证同一事件只有一个可见 narration side effect，必须新增 correlated receipt wire contract（event/correlation id）、server receipt producer、receiver dedupe、agent receipt consumer、超时/重复语义及跨栈集成测试；在该完整生产链落地前，`consumed` 不得成为必选状态或 pending 删除前置。
@@ -364,7 +364,7 @@
 
 ### 10.2 PR 序列（前一 PR merge 后才开下一 PR）
 
-1. **P0 / contract inventory**：owner、source ledger、envelope/state、现有 scope/target selector pin；P0 内收口 F06/F08/F09 及其他明确标为 P0-owned 的决定。P0 entry 不要求这些决定事先完成；P0 exit 必须完成并提供协议与测试矩阵，否则不得进入依赖阶段。
+1. **P0 / contract inventory**：owner、source ledger、envelope/state、现有 scope/target selector pin；P0 内收口 F06/F07/F08/F09 及其他明确标为 P0-owned 的决定。P0 entry 不要求这些决定事先完成；P0 exit 必须完成并提供协议与测试矩阵，否则不得进入依赖阶段。
 2. **P1 / ingest**：统一 ingress 与 bounded persistent pending store，只验收 pending 写入后的重启恢复，明确 Pub/Sub pre-ingest 不可恢复。
 3. **P2 / dedupe/concurrency**：稳定 key、per-key ordering、全局 capacity/concurrency，覆盖 #1486/#1619/#1702。
 4. **P3 / validate**：source payload validation → renderer → NarrationV1 output validation，补齐 validator registry。
