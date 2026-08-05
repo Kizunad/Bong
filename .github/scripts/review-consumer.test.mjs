@@ -9,7 +9,7 @@ const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.ym
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const canaryContractPath = '.github/workflows/provider-canary.yml';
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
-const centralSha = '2986b95388b3ac3f8bf28b8ebdd60a19d2e4364c';
+const centralSha = '58af0669396ca942128c756ae392934caecd5760';
 const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 // Hash of Kizunad/review/.github/workflows/review.yml; re-verify it on every pin bump.
 // It changes only when that workflow changes, which a central pin bump usually does not.
@@ -132,7 +132,7 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@2986b95388b3ac3f8bf28b8ebdd60a19d2e4364c
+    uses: Kizunad/review/.github/workflows/review.yml@58af0669396ca942128c756ae392934caecd5760
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
@@ -259,7 +259,7 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@2986b95388b3ac3f8bf28b8ebdd60a19d2e4364c/,
+    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@58af0669396ca942128c756ae392934caecd5760/,
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
@@ -582,7 +582,7 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
   assert.equal(byId['p0-doc-scope'].level, 'major');
   assert.equal(
     byId['p0-doc-scope'].text,
-    "For pull requests whose changes are limited to docs/ plan documents (plan-* and plans-skeleton design-closure PRs), limit review scope to internal consistency, factual accuracy of code citations, alignment with plan-refactor-master-v1 scope and cross-track dependencies, and satisfaction of the acceptance criteria stated in the PR description or the document itself. Depth expansions beyond those criteria - new scenarios, extra edge-case enumerations, additional contract surfaces - are suggestions for the open-questions section, not major or blocker findings; an explicit open-questions entry with rationale is a valid resolution for a deferred design decision.",
+    "For pull requests whose changes are limited to docs/ plan documents (plan-* and plans-skeleton design-closure PRs), limit review scope to internal consistency, factual accuracy of code citations, alignment with plan-refactor-master-v1 scope and adjudications, cross-track dependencies, and satisfaction of the acceptance criteria stated in the PR description or the document itself. Findings addressed in a prior review round of the same branch, regardless of the pull-request number carrying that branch, must not be re-raised as major findings unless a later change newly contradicts or invalidates the resolution. Completeness expansions beyond the plan's stated acceptance criteria and evidence base - including demands for new scenarios, additional test rows, extra edge-case enumerations, protocol corners, or contract surfaces - are suggestions for the open-questions section, not major or blocker findings; an explicit open-questions entry with rationale is a valid resolution for a deferred design decision. Major findings in this scope are reserved for internal contradictions, conflicts with plan-refactor-master-v1 or binding adjudications, and specifications that a competent implementer could not execute as written.",
   );
   assert.equal(byId['quality-improvements'].level, 'suggestion');
   assert.match(
