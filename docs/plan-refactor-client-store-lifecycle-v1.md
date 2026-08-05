@@ -15,7 +15,7 @@
 - **进料**：`ClientPlayConnectionEvents.DISCONNECT`（既有唯一权威入口）、`ClientConnectionStatusStore` 会话状态机。
 - **出料**：所有 HUD planner / Screen / tooltip 读到的 store 快照保证是本会话的。
 - **共享类型**：新 `SessionScopedStore` 接口（单一 `clearOnDisconnect()` 生产语义）+ 显式静态 adapter registry / FQCN manifest；Store 继续保留既有静态业务 API，registry 不依赖构造器实例化、运行时反射或注解扫描。
-- **跨仓库契约**：通常零 wire 改动；craft 例外消费 master M-09 的 A-06/A-08 handler contract。`CraftStore` 持有当前 accepted `session_key`、该 identity 的 highest generation、当前 `open_request_id` 与 matching `OpenPending`；只接受同 session_key 的同/较新 generation 或明确开始的新 authoritative identity，较旧 generation 与同 generation identity conflict no-op。仅同 request_id 的 A-08 清 pending 并记录 reason，stale/mismatched rejection no-op，disconnect 原子清空全部 craft state。loop 音效清理对齐 `feedback_audio_loop_lifecycle`（硬停连延迟层一起哑）。
+- **跨仓库契约**：通常零 wire 改动；craft 例外消费 master M-09 的 A-06/A-08 handler contract。`CraftStore` 持有当前 accepted `session_key`、该 identity 的 highest generation/`phase_revision`、当前 `open_request_id` 与 matching `OpenPending`；A-06 accepted hydration 必须回显该 `open_request_id`，并携带 `session_transition=Initial | Rollover { previous_session_key }`。仅 `Initial` 作用于无 session 的 Idle/OpenPending；只有 previous key 等于当前 key 的 `Rollover` 才授权新 `session_key` 替换旧 identity。只接受同 session_key 的较新 generation，或携带合法 rollover 的新 authoritative identity；较旧 generation、未授权 key 变化、同 generation 且 `phase_revision <= current` 的 snapshot 均 no-op。equal-generation 只有严格更高 `phase_revision` 才能更新 phase，禁止 Running 覆盖已接受的 Paused。仅同 request_id 的 A-08 清 pending 并记录 reason，stale/mismatched rejection/hydration no-op，disconnect 原子清空全部 craft state。loop 音效清理对齐 `feedback_audio_loop_lifecycle`（硬停连延迟层一起哑）。
 - **worldview 锚点**：`docs/worldview.md §一 L17-L26` 的“匮乏、信息差、搜打撤”要求跨会话观察必须可信；Store 生命周期属于 client 基础设施，不新增玩法、境界、经济或真元物理规则。
 
 ## 阶段

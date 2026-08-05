@@ -167,7 +167,7 @@ pub trait InteractionSession {
 | reservation/quota/outbox / O-01..O-27 | R3 durable producer；R1 semantic consumer；R10 worker consumer | quota invariant 1-3 |
 | payload/digest/receipt/retention | R3 storage + R10 transaction；R1 consumes result | O-14..O-27 |
 | stable `placed_id` | R3 P4 provider；R4 lookup；R1 checkpoint/restore consumer | S-10/S-11 |
-| craft intent/state wire | A-CS/R6/R4/R7 按 master owner；R1 消费 admitted Open/Start/Pause/Resume/Cancel，生产 authoritative `CraftSessionStateV2`，并把 S-01 correlated admission decision 交 R4 的 A-08 producer | M-10 real state/rejection producer→emit→store activation |
+| craft intent/state wire | A-CS/R6/R4/R7 按 master owner；R1 消费 admitted Open/Start/Pause/Resume/Cancel，生产 authoritative `CraftSessionStateV2`（含 `open_request_id`、`session_transition`、`phase_revision`）；每次同 identity 的 phase projection 递增 `phase_revision`，rollover 使用 `session_transition=Rollover { previous_session_key }`，并把 S-01 correlated admission decision 交 R4 的 A-08 producer | M-10 real state/rejection producer→emit→store activation |
 | coupled `TsyPresence` snapshot | R3 provider；R1 reconnect/gate consumer | full-old/full-new snapshot trace |
 
 ## 6. Derived acceptance index
@@ -183,7 +183,7 @@ pub trait InteractionSession {
 7. `maintenance_auth`：对 S-13、O-18 与 O-19 分别执行 console allow、current-executor capability allow、wrong-executor capability deny、offline/username/owner spoof deny、普通玩家 deny；拒绝时命中 S-17/O-27，DeadLetter payload/Q/state 不变。
 8. `workbench_restore`：`workbench_key` 0/1/u64::MAX 与 malformed/stale/despawned/cross-dimension/out-of-range；成功后只保存/恢复 `placed_id`，新 runtime Entity 可 rebind。
 9. `tsy_presence_snapshot`：routine autosave、disconnect、shutdown 每个写边界 crash 后 presence/position/dimension 只能全旧或全新。
-10. named bot scenarios：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_termination_cause_matrix`、`session_craft_pause_resume_wire`、`session_craft_generation_cancel`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 均只引用上述 row/trace ID。
+10. named bot scenarios（按总纲 `plan-refactor-master-v1.md §0` 的每轨 3-8 场景上限固定为以下八项）：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_craft_pause_resume_wire` 均只引用上述 row/trace ID。`session_craft_generation_cancel`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 属跨轨/共享证据，不计入 R1 的 bot 场景交付数。
 
 ## 7. 本轨实施阶段
 

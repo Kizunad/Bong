@@ -22,7 +22,7 @@
 | A-03 | `CraftResume` | absent | required `session_key + generation` |
 | A-04 | `CraftCancel` | server/proto 已 live但 identity-free，TypeBox envelope absent | breaking replacement 为 required `session_key + generation`；不由 Pause 替代 |
 | A-05 | `WorkbenchOpen` | server/proto 已 live（`entity_id + x + y + z`），TypeBox S2C union absent | 纳入 authoritative S2C union；完整保留四字段并由 `entity_id` 产生 request-local `workbench_key` |
-| A-06 | `CraftSessionStateV2` | 只有 standalone V1，S2C union absent | V2 纳入 union；删除 V1 production export/membership |
+| A-06 | `CraftSessionStateV2` | 只有 standalone V1，S2C union absent | V2 纳入 union；删除 V1 production export/membership；accepted hydration required `open_request_id + session_key + generation + phase_revision + session_transition + phase` |
 | A-07 | `CraftStart` | standalone `CraftStartReqV1` 有 `recipe_id/quantity`，live Rust/proto 已可达 | required `session_key + generation + recipe_id + quantity(1..64)`；仅 matching Running 按 S-26 执行，其他 phase 走 S-23 |
 | A-08 | `CraftOpenRejected` | absent | required `request_id + reason`；S-01/R4 admission reject producer，R2/R6 store 清理 matching OpenPending |
 
@@ -34,7 +34,7 @@ P0 必须枚举每个 row 的 source→export→`ClientRequestV1`/`ServerDataV1`
 - A-02/A-03 只含 required `session_key + generation`，不得夹带 target 或替代 Cancel。
 - A-04 `CraftCancel` 保留显式取消 discriminant，但不保留 identity-free legacy shape：required `session_key + generation`。R1 对 `< current` stale reject、`= current` 按 S-05/S-24、`> current` future-invalid reject；key/owner mismatch reject，任何 reject 不得取消当前 session。
 - A-05 `WorkbenchOpen` 完整镜像 live proto：required `entity_id + x + y + z`；`entity_id` 是 A-01 `workbench_key` 的 producer，TypeBox/JSON 使用 unsigned `u64` decimal string，并锁 `0/1/u64::MAX`。`x/y/z` 是 required signed `sint32` integer，锁 `i32::MIN/0/i32::MAX`；坐标只供显示/上下文，不是 authorization，R4 仍须按 authoritative ECS 重验实体、维度、距离和 facility。
-- A-06 的五个 phase 都 required `session_key + generation`，且禁止 delivery obligation 字段。`Paused` 是唯一 Resume-eligible phase；`Running` 表示已活动且重复 Resume 不得重启；`Suspended` 必须等待 guarded restore 后由新 `Paused` projection 开放 Resume；`HandoffPreparing` 与 `Ended` 均 terminal/non-resumable。
+- A-06 的五个 phase 都 required `open_request_id + session_key + generation + phase_revision + session_transition + phase`；`open_request_id` 必须回显当前成功 admission 的 A-01 request，供 CraftStore 只接受当前 `OpenPending` 的 hydration。`session_transition` 必须显式为 `Initial | Rollover { previous_session_key }`；只有 `Rollover` 才授权替换已接受 identity，且 previous key 必须等于 client 当前 key。`phase_revision` 是同一 session identity 内单调递增的权威状态序号；CraftStore 对 equal-generation snapshot 仅接受严格更高 revision，低于或等于当前 revision 的 duplicate/replay no-op，禁止 phase 回退。delivery obligation 字段仍禁止进入 A-06。`Paused` 是唯一 Resume-eligible phase；`Running` 表示已活动且重复 Resume 不得重启；`Suspended` 必须等待 guarded restore 后由新 `Paused` projection 开放 Resume；`HandoffPreparing` 与 `Ended` 均 terminal/non-resumable。
 - A-07 `CraftStart` required `session_key + generation + recipe_id + quantity`；quantity 锁 `1/64` accept、`0/65` reject。它选择/启动 recipe，不创建新 session、不携 target；只有 matching Running 进入 R1 S-26，Paused/Suspended/HandoffPreparing/Ended 或 identity/recipe/quantity invalid 均走 S-23。
 - A-08 `CraftOpenRejected` required `request_id + reason`；reason 至少覆盖 malformed/stale/despawned/cross-dimension/out-of-range/busy/quota/persistence。它只终结 matching OpenPending，不创建 Idle gameplay phase。
 
