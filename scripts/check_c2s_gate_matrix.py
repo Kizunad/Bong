@@ -85,12 +85,14 @@ def _mask_rust_non_code(source: str, *, mask_strings: bool = True) -> str:
 
 def _leading_attributes(code: str) -> tuple[list[str], str]:
     attributes: list[str] = []
-    while code.startswith("#["):
+    while match := re.match(r"^#\s*\[", code):
+        bracket_start = match.end() - 1
         bracket_depth = 0
         in_string = False
         escaped = False
         end = None
-        for index, char in enumerate(code):
+        for index in range(bracket_start, len(code)):
+            char = code[index]
             if in_string:
                 if escaped:
                     escaped = False
@@ -119,7 +121,7 @@ def _leading_attributes(code: str) -> tuple[list[str], str]:
 
 def _enum_attributes(masked: str, source: str, declaration_start: int) -> list[str]:
     attributes: list[tuple[int, int, str]] = []
-    for match in re.finditer(r"(?m)^[ \t]*#\[", masked[:declaration_start]):
+    for match in re.finditer(r"#\s*\[", masked[:declaration_start]):
         depth = 0
         end = None
         for index in range(match.start(), declaration_start):
@@ -164,6 +166,28 @@ def _serde_options(serde: str) -> list[str]:
             start = index + 1
     options.append(serde[start:].strip())
     return [option for option in options if option]
+
+
+def _serde_attribute_body(attribute: str) -> str | None:
+    attribute = attribute.strip()
+    match = re.match(r"^#\s*\[\s*serde\b", attribute)
+    if not match:
+        return None
+    opening = attribute.find("(", match.end())
+    closing_bracket = attribute.rfind("]")
+    if opening == -1 or closing_bracket <= opening:
+        raise RuntimeError("unsupported ClientRequestV1 serde attribute syntax")
+    if attribute[match.end() : opening].strip():
+        raise RuntimeError("unsupported ClientRequestV1 serde attribute syntax")
+    suffix = attribute[opening + 1 : closing_bracket].rstrip()
+    if not suffix.endswith(")") or attribute[closing_bracket + 1 :].strip():
+        raise RuntimeError("unsupported ClientRequestV1 serde attribute syntax")
+    return suffix[:-1]
+
+
+def _normalize_serde_option(option: str) -> str:
+    option = re.sub(r"\s+", " ", option.strip())
+    return re.sub(r"\s*=\s*", " = ", option)
 
 
 def _wrapped_suffix(suffix: str, opening: str, closing: str) -> bool:
@@ -227,23 +251,33 @@ def parse_enum_variants(source: str) -> list[str]:
     declaration = ENUM_DECL_RE.search(masked)
     if not declaration:
         raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
-    serde = None
-    for attribute in _enum_attributes(masked, source, declaration.start()):
-        if attribute.startswith("#[serde(") and attribute.endswith(")]"):
-            serde = _mask_rust_non_code(attribute, mask_strings=False)[len("#[serde(") : -2]
-            break
-    allowed_options = {'tag = "type"', 'rename_all = "snake_case"', 'deny_unknown_fields'}
-    options = _serde_options(serde or "")
-    options = [option for option in options if option]
-    if any(option not in allowed_options for option in options):
+    enum_attributes = _enum_attributes(masked, source, declaration.start())
+    serde_options: list[str] = []
+    for attribute in enum_attributes:
+        body = _serde_attribute_body(attribute)
+        if body is None:
+            continue
+        masked_body = _mask_rust_non_code(body, mask_strings=False)
+        serde_options.extend(
+            _normalize_serde_option(option)
+            for option in _serde_options(masked_body)
+            if option
+        )
+
+    allowed_options = {
+        'tag = "type"',
+        'rename_all = "snake_case"',
+        "deny_unknown_fields",
+    }
+    if any(option not in allowed_options for option in serde_options):
         raise RuntimeError("ClientRequestV1 has unsupported serde wire option")
-    if options.count("deny_unknown_fields") != 1:
+    if serde_options.count("deny_unknown_fields") != 1:
         raise RuntimeError('ClientRequestV1 must use serde deny_unknown_fields')
-    tag_options = re.findall(r'\btag\s*=\s*"([^"]*)"', serde or "")
-    rename_options = re.findall(r'\brename_all\s*=\s*"([^"]*)"', serde or "")
-    if len(tag_options) != 1 or tag_options[0] != "type":
+    tag_options = [option for option in serde_options if option.startswith("tag = ")]
+    rename_options = [option for option in serde_options if option.startswith("rename_all = ")]
+    if tag_options != ['tag = "type"']:
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
-    if len(rename_options) != 1 or rename_options[0] != "snake_case":
+    if rename_options != ['rename_all = "snake_case"']:
         raise RuntimeError("ClientRequestV1 must use serde rename_all = \"snake_case\"")
 
     body_start, body_end = _enum_body(masked, declaration.end())
@@ -253,9 +287,24 @@ def parse_enum_variants(source: str) -> list[str]:
         if not code:
             continue
         attributes, code = _leading_attributes(code)
-        serde_attributes = [attribute for attribute in attributes if attribute.startswith("#[serde(")]
+        serde_attributes = [
+            attribute
+            for attribute in attributes
+            if _serde_attribute_body(attribute) is not None
+        ]
         if serde_attributes:
-            if any("rename" in attribute for attribute in serde_attributes):
+            if any(
+                any(
+                    _normalize_serde_option(option).startswith("rename")
+                    for option in _serde_options(
+                        _mask_rust_non_code(
+                            _serde_attribute_body(attribute) or "",
+                            mask_strings=False,
+                        )
+                    )
+                )
+                for attribute in serde_attributes
+            ):
                 raise RuntimeError("ClientRequestV1 variant-level serde rename is unsupported")
             raise RuntimeError("ClientRequestV1 variant-level serde wire attribute is unsupported")
         match = VARIANT_DECL_RE.fullmatch(code)
@@ -283,6 +332,23 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
     header_seen = False
     divider_seen = False
     table_ended = False
+
+    # The C2S gate matrix is a singular contract: exactly one `## P0 N
+    # 变体门禁矩阵` section may exist in the plan. A second authoritative-
+    # looking matrix (stale, reordered, or with extra variants) must fail
+    # closed instead of being silently ignored after the first section.
+    matrix_sections = [
+        line
+        for line in source.splitlines()
+        if MATRIX_SECTION_RE.fullmatch(line)
+    ]
+    if len(matrix_sections) > 1:
+        raise RuntimeError(
+            "C2S plan contains duplicate P0 matrix sections: "
+            f"{len(matrix_sections)} headings ({matrix_sections[0]!r}, "
+            f"{matrix_sections[1]!r}, ...)"
+        )
+
     for line_number, line in enumerate(source.splitlines(), start=1):
         if expected_count is None:
             if section := MATRIX_SECTION_RE.fullmatch(line):

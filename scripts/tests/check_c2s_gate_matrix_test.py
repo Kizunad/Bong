@@ -112,7 +112,7 @@ class ParserTests(unittest.TestCase):
                 checker.parse_enum_variants(source)
 
     def test_rejects_serde_wire_variant_attributes(self) -> None:
-        for attribute in ("skip", "skip_deserializing", "skip_serializing", "rename = \"other\""):
+        for attribute in ("skip", "skip_deserializing", "skip_serializing", 'rename = "other"'):
             source = ENUM_PREFIX + f"pub enum ClientRequestV1 {{ #[serde({attribute})] Variant, }}"
             with self.subTest(attribute=attribute), self.assertRaisesRegex(
                 RuntimeError, "variant-level serde"
@@ -141,12 +141,57 @@ pub enum ClientRequestV1 { Variant, }
             ):
                 checker.parse_enum_variants(source)
 
+    def test_rejects_multiple_enum_level_serde_attributes(self) -> None:
+        sources = [
+            """#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+#[serde(content = "payload")]
+pub enum ClientRequestV1 { Variant, }
+""",
+            """#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
+pub enum ClientRequestV1 { Variant, }
+""",
+        ]
+        for source in sources:
+            with self.subTest(source=source), self.assertRaisesRegex(
+                RuntimeError, "unsupported serde wire option|rename_all"
+            ):
+                checker.parse_enum_variants(source)
+
+    def test_accepts_whitespace_tolerant_enum_serde_attributes(self) -> None:
+        for attribute in (
+            '#[ serde(deny_unknown_fields, tag = "type", rename_all = "snake_case") ]',
+            '#[serde (deny_unknown_fields, tag = "type", rename_all = "snake_case")]',
+            '#[ serde ( deny_unknown_fields, tag = "type", rename_all = "snake_case" ) ]',
+        ):
+            with self.subTest(attribute=attribute):
+                self.assertEqual(
+                    checker.parse_enum_variants(
+                        f'{attribute}\npub enum ClientRequestV1 {{ Variant, }}'
+                    ),
+                    ["Variant"],
+                )
+
+    def test_rejects_whitespace_tolerant_variant_serde_attributes(self) -> None:
+        for attribute in (
+            '#[ serde(rename = "other") ]',
+            "#[serde (skip)]",
+        ):
+            source = (
+                '#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]\n'
+                f'pub enum ClientRequestV1 {{ {attribute} Variant, }}'
+            )
+            with self.subTest(attribute=attribute), self.assertRaisesRegex(
+                RuntimeError, "variant-level serde"
+            ):
+                checker.parse_enum_variants(source)
+
     def test_requires_deny_unknown_fields_on_enum_contract(self) -> None:
         missing = '#[serde(tag = "type", rename_all = "snake_case")]\npub enum ClientRequestV1 { Variant, }'
         duplicate = '#[serde(deny_unknown_fields, deny_unknown_fields, tag = "type", rename_all = "snake_case")]\npub enum ClientRequestV1 { Variant, }'
         for source in (missing, duplicate):
             with self.subTest(source=source), self.assertRaisesRegex(
-                RuntimeError, 'deny_unknown_fields'
+                RuntimeError, "deny_unknown_fields"
             ):
                 checker.parse_enum_variants(source)
 
@@ -271,6 +316,28 @@ pub enum ClientRequestV1 {
             checker, "matrix_variants", return_value=([1, 2], ["Alpha", "Beta"])
         ):
             self.assertEqual(checker.main(), 0)
+
+    def test_rejects_duplicate_p0_matrix_sections(self) -> None:
+        plan = """## P0 2 变体门禁矩阵
+
+| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |
+|---:|---|---|---|---|---|---|
+| 1 | `Alpha` | — | — | — | — | — |
+| 2 | `Beta` | — | — | — | — | — |
+
+## 后续清单
+
+stale notes
+
+## P0 2 变体门禁矩阵
+
+| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |
+|---:|---|---|---|---|---|---|
+| 1 | `Beta` | — | — | — | — | — |
+| 2 | `Alpha` | — | — | — | — | — |
+"""
+        with self.assertRaisesRegex(RuntimeError, "duplicate P0 matrix sections"):
+            checker.parse_matrix_variants(plan)
 
 
 if __name__ == "__main__":
