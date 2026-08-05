@@ -12,7 +12,7 @@
 ## 接入面
 
 - **进料**：`bong:client_request` 单通道（既有，C2S 本就单轨）、玩家实体（Position/CurrentDimension/状态组件）、R1 session 忙态、R10 inventory 事务。
-- **出料**：校验通过的请求进各域 handler；拒绝走统一 typed reject 回执（带 request correlation/reason，client store/UI 必须消费——对齐 unconsumed-event-feedback 的方向但只做 gate 拒绝部分）。CraftOpen 的所有 S-01 admission rejection 必须产 A-08 `CraftOpenRejected { request_id, reason }`，不得静默 drop。
+- **出料**：校验通过的请求进各域 handler；拒绝走统一 typed reject 回执（带 request correlation/reason，client store/UI 必须消费——对齐 unconsumed-event-feedback 的方向但只做 gate 拒绝部分）。CraftOpen 中已经解析出合法 `request_id` 的 malformed/业务 admission rejection 必须产 A-08 `CraftOpenRejected { request_id, reason }`，不得静默 drop；envelope decode failure 或缺失/非法 `request_id` 属于不可关联 parse rejection，只记录边界拒绝/metric，不伪造 A-08，且不得改变 session/claim/obligation。
 - **共享类型**：新 `server/src/network/gate/`——`GateSpec { max_distance(度量统一), same_dimension, ownership, state_preconditions }` 按请求类型声明；维度感知 zone 查找 helper。
 - **跨仓库契约**：wire 形状通常不变（现行 enum 全量）；reject 回执新增字段走 A-CS A-08 + R6 machinery，不由 R4 修改 Agent schema。R1 craft lifecycle 消费 R6 新增的 `CraftOpen`/`CraftStart`/`CraftPause`/`CraftResume`/generation-bound `CraftCancel`，本轨负责 production decode/dispatch，并在 reducer 前对所有 existing-session intent 按 `session_key/generation` 全比较：key/owner mismatch、generation `< current`、`> current`、wrong phase 均 typed reject且 no mutation，只有 `= current` 才进入相应 S-row；CraftStart 仅 matching Running 可进 S-26。Workbench 初次 `CraftOpen` 的 `workbench_key` 只解析当前进程 runtime entity；R4 重验实体/维度/距离/facility 后还必须从 R3 P4 registry取得 stable `placed_id` 并把它交给 R1 建 claim，mapping 缺失/重复/未 hydrate 一律 A-08 reject，禁止把 `Entity::to_bits()` 持久化。
 
@@ -41,7 +41,7 @@ skeleton：alchemy-furnace-scope-gate、block-place-reach-gate、coffin-reclaim-
 2. `gate_reach`：超距放方块/开炉/采灵田→拒绝；贴脸→放行。
 3. `gate_ownership`：拆他人棺/取他人容器→拒绝。
 4. `gate_state_precondition`：给丹先校验后扣（满包/死亡目标不吞丹）；丹毒超阈值禁服。
-5. `gate_matrix_sweep`：从 P0 reconciled union 派生 type set，先断言无未处置 Rust-only/TypeBox-only drift，再对每个 production-decodable variant 执行声明的合法/超距/跨维/no_gate trace；craft 另覆盖 owner/key mismatch、每 intent 的 generation `< /= /> current`、wrong phase、conflicting busy claim、duplicate/replay、runtime-key malformed/stale/despawned/cross-dimension/out-of-range、CraftStart quantity/recipe gate 与合法 S-02 admission。每个 CraftOpen reject 必须携原 request_id/A-08 reason，且 R1 session/claim/obligation 不变。
+5. `gate_matrix_sweep`：从 P0 reconciled union 派生 type set，先断言无未处置 Rust-only/TypeBox-only drift，再对每个 production-decodable variant 执行声明的合法/超距/跨维/no_gate trace；craft 另覆盖 owner/key mismatch、每 intent 的 generation `< /= /> current`、wrong phase、conflicting busy claim、duplicate/replay、runtime-key malformed/stale/despawned/cross-dimension/out-of-range、CraftStart quantity/recipe gate 与合法 S-02 admission。已解析且含合法 `request_id` 的 CraftOpen rejection 必须携 A-08 reason 且 R1 session/claim/obligation 不变；缺失/非法 request_id 或 envelope decode failure 只命中不可关联 parse rejection，禁止伪造 A-08。
 
 ## 开放问题（pre-P0 收口）
 
