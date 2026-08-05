@@ -99,6 +99,36 @@ class ParserTests(unittest.TestCase):
 """
         self.assertEqual(checker.parse_enum_variants(inline_cfg), ["Variant"])
 
+    def test_rejects_commented_serde_contract_options(self) -> None:
+        sources = [
+            '#[serde(tag = "kind", rename_all = "camelCase", /* tag = "type", rename_all = "snake_case" */)]\npub enum ClientRequestV1 { Variant, }',
+            '#[serde(tag = "type", /* rename_all = "snake_case" */ rename_all = "camelCase")]\npub enum ClientRequestV1 { Variant, }',
+        ]
+        for source in sources:
+            with self.subTest(source=source), self.assertRaisesRegex(
+                RuntimeError, 'tag = "type"|rename_all = "snake_case"'
+            ):
+                checker.parse_enum_variants(source)
+
+    def test_rejects_serde_wire_variant_attributes(self) -> None:
+        for attribute in ("skip", "skip_deserializing", "skip_serializing", "rename = \"other\""):
+            source = ENUM_PREFIX + f"pub enum ClientRequestV1 {{ #[serde({attribute})] Variant, }}"
+            with self.subTest(attribute=attribute), self.assertRaisesRegex(
+                RuntimeError, "variant-level serde"
+            ):
+                checker.parse_enum_variants(source)
+
+        for options in (
+            'untagged, tag = "type", rename_all = "snake_case"',
+            'tag = "type", tag = "kind", rename_all = "snake_case"',
+            'tag = "type", rename_all = "snake_case", rename_all = "camelCase"',
+        ):
+            source = f"#[serde({options})]\npub enum ClientRequestV1 {{ Variant, }}"
+            with self.subTest(options=options), self.assertRaisesRegex(
+                RuntimeError, "ClientRequestV1"
+            ):
+                checker.parse_enum_variants(source)
+
     def test_accepts_valid_serde_contract_from_original_source(self) -> None:
         source = ENUM_PREFIX + "#[derive(Debug)]\npub enum ClientRequestV1 { Variant, }"
         self.assertEqual(checker.parse_enum_variants(source), ["Variant"])

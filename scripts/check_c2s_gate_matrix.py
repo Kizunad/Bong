@@ -28,7 +28,7 @@ def _blank_non_newlines(masked: list[str], start: int, end: int) -> None:
             masked[index] = " "
 
 
-def _mask_rust_non_code(source: str) -> str:
+def _mask_rust_non_code(source: str, *, mask_strings: bool = True) -> str:
     masked = list(source)
     index = 0
     while index < len(source):
@@ -62,7 +62,8 @@ def _mask_rust_non_code(source: str) -> str:
                 delimiter = '"' + source[index + raw_prefix : quote_index]
                 end = source.find(delimiter, quote_index + 1)
                 end = len(source) if end == -1 else end + len(delimiter)
-                _blank_non_newlines(masked, index, end)
+                if mask_strings:
+                    _blank_non_newlines(masked, index, end)
                 index = end
                 continue
         if source[index] == '"':
@@ -75,7 +76,8 @@ def _mask_rust_non_code(source: str) -> str:
                     break
                 else:
                     end += 1
-            _blank_non_newlines(masked, index, end)
+            if mask_strings:
+                _blank_non_newlines(masked, index, end)
             index = end
             continue
         index += 1
@@ -184,13 +186,17 @@ def parse_enum_variants(source: str) -> list[str]:
             break
         attribute = source[match.start() : match.end()].strip()
         if attribute.startswith("#[serde(") and attribute.endswith(")]"):
-            serde = attribute[len("#[serde(") : -2]
+            serde = _mask_rust_non_code(attribute, mask_strings=False)[len("#[serde(") : -2]
             break
         attribute_end = match.start()
-    if serde is None or not re.search(r'\btag\s*=\s*"type"', serde):
+    tag_options = re.findall(r'\btag\s*=\s*"([^"]*)"', serde or "")
+    rename_options = re.findall(r'\brename_all\s*=\s*"([^"]*)"', serde or "")
+    if len(tag_options) != 1 or tag_options[0] != "type":
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
-    if not re.search(r'\brename_all\s*=\s*"snake_case"', serde):
+    if len(rename_options) != 1 or rename_options[0] != "snake_case":
         raise RuntimeError("ClientRequestV1 must use serde rename_all = \"snake_case\"")
+    if re.search(r"\buntagged\b", serde or ""):
+        raise RuntimeError("ClientRequestV1 serde untagged representation is unsupported")
 
     body_start, body_end = _enum_body(masked, declaration.end())
     variants: list[str] = []
@@ -199,8 +205,11 @@ def parse_enum_variants(source: str) -> list[str]:
         if not code:
             continue
         attributes, code = _leading_attributes(code)
-        if any("serde" in attribute and "rename" in attribute for attribute in attributes):
-            raise RuntimeError("ClientRequestV1 variant-level serde rename is unsupported")
+        serde_attributes = [attribute for attribute in attributes if attribute.startswith("#[serde(")]
+        if serde_attributes:
+            if any("rename" in attribute for attribute in serde_attributes):
+                raise RuntimeError("ClientRequestV1 variant-level serde rename is unsupported")
+            raise RuntimeError("ClientRequestV1 variant-level serde wire attribute is unsupported")
         match = VARIANT_DECL_RE.fullmatch(code)
         if not match:
             raise RuntimeError(f"unsupported ClientRequestV1 syntax: {code!r}")
