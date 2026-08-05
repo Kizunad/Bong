@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event, EventReader,
-    EventWriter, IntoSystemConfigs, Local, Position, Query, Res, ResMut, Resource, Update,
-    Username, With, Without,
+    bevy_ecs, Added, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event,
+    EventReader, EventWriter, IntoSystemConfigs, Local, Position, Query, Res, ResMut, Resource,
+    Update, Username, With, Without,
 };
 
 use crate::alchemy::learned::LearnedRecipes;
@@ -20,7 +20,6 @@ use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::{BreakthroughOutcome, BreakthroughSuccess};
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
-use crate::cultivation::CultivationBundleTutorialHandoff;
 use crate::forge::learned::LearnedBlueprints;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
@@ -34,6 +33,7 @@ use crate::npc::spawn::{
     snap_spawn_y_to_surface, spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext,
 };
 use crate::npc::spawn_rat::spawn_rat_npc_at;
+use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -194,12 +194,8 @@ pub struct TutorialTelemetry {
     pub completed_within_30min: u64,
 }
 
-type JoinedTutorialClientQueryItem<'a> = (Entity, &'a CultivationBundleTutorialHandoff);
-type JoinedTutorialClientFilter = (
-    With<Client>,
-    With<CultivationBundleTutorialHandoff>,
-    Without<TutorialState>,
-);
+type JoinedTutorialClientQueryItem<'a> = (Entity, &'a Username);
+type JoinedTutorialClientFilter = (Added<Client>, Without<TutorialState>);
 /// F9 跨层修复 — 还没收到 `tutorial_coffin_pos` 广播的 client entity。
 type UnsentTutorialCoffinPosQueryItem<'a> = (Entity, &'a mut Client);
 type UnsentTutorialCoffinPosFilter = (With<Client>, Without<TutorialCoffinPosSent>);
@@ -225,8 +221,7 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_tutorial_state_to_joined_clients
-                .after(crate::cultivation::attach_cultivation_to_joined_clients),
+            attach_tutorial_state_to_joined_clients,
             send_tutorial_coffin_pos_on_join,
             grant_meridian_primer_on_join,
             handle_coffin_open_requests,
@@ -241,23 +236,22 @@ pub fn register(app: &mut App) {
     );
 }
 
-pub(crate) fn attach_tutorial_state_to_joined_clients(
+fn attach_tutorial_state_to_joined_clients(
     mut commands: Commands,
+    settings: Res<PersistenceSettings>,
     clock: Option<Res<CombatClock>>,
     mut telemetry: ResMut<TutorialTelemetry>,
     joined: Query<JoinedTutorialClientQueryItem<'_>, JoinedTutorialClientFilter>,
 ) {
     let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
-    for (entity, handoff) in &joined {
-        let restored = crate::cultivation::accepted_bundle_slice::<TutorialState>(
-            &handoff.accepted_bundle,
-            "tutorial_state",
-        );
+    for (entity, username) in &joined {
+        let restored = load_player_cultivation_bundle(&settings, username.0.as_str())
+            .ok()
+            .flatten()
+            .and_then(|bundle| bundle.get("tutorial_state").cloned())
+            .and_then(|value| serde_json::from_value::<TutorialState>(value).ok());
         let state = tutorial_state_for_join(restored, now, &mut telemetry);
-        commands
-            .entity(entity)
-            .insert(state)
-            .remove::<CultivationBundleTutorialHandoff>();
+        commands.entity(entity).insert(state);
     }
 }
 

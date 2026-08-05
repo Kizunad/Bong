@@ -3,7 +3,7 @@
 use valence::prelude::{bevy_ecs, Entity, Events, Position, Query, ResMut, Resource, Without};
 
 use crate::npc::spawn::NpcMarker;
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::QiTransfer;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::zone::{Zone, ZoneRegistry};
 
@@ -54,7 +54,6 @@ pub fn apply_dead_zone_drain(cultivation: &mut Cultivation, handler: DeadZoneTic
 #[allow(clippy::type_complexity)]
 pub fn dead_zone_silent_qi_loss_tick(
     handler: Option<ResMut<DeadZoneTickHandler>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut players: Query<
@@ -72,6 +71,12 @@ pub fn dead_zone_silent_qi_loss_tick(
     if handler.qi_drain_per_tick() <= 0.0 {
         return;
     }
+    // 不在缺 QiTransfer 事件资源时扣真元（CodeRabbit #699）：扣减必须连带 release 的审计轨迹，
+    // 缺资源时无法 emit → 直接跳过本 tick 抽取（生产环境该资源恒在，仅防御性早退）。
+    if qi_transfers.is_none() {
+        return;
+    }
+
     // Collect entities in dead zones first (immutable borrow), then apply drain.
     let mut to_drain: Vec<(Entity, f64)> = Vec::new();
     {
@@ -100,23 +105,19 @@ pub fn dead_zone_silent_qi_loss_tick(
         else {
             continue;
         };
-        let outcome = release_qi_amount_to_zone(
-            &mut cultivation,
-            drain,
+        // Deduct from player qi first, then credit the zone for ledger balance.
+        let actual_drain = drain.min(cultivation.qi_current.max(0.0));
+        cultivation.qi_current = (cultivation.qi_current - actual_drain).max(0.0);
+        release_qi_amount_to_zone(
+            entity,
+            actual_drain,
             Some(position),
             current_dim,
             life_record,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             "dead_zone_drain",
         );
-        if let Err(error) = outcome {
-            tracing::warn!(
-                ?error,
-                "[bong][cultivation] dead-zone qi release failed closed"
-            );
-        }
     }
 }
 
@@ -230,7 +231,6 @@ mod tests {
             zones: vec![dead_zone("ash"), normal_zone("normal")],
         });
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, dead_zone_silent_qi_loss_tick);
 
         let inside = app
@@ -238,7 +238,6 @@ mod tests {
             .spawn((
                 Position::new([10.0, 66.0, 10.0]),
                 CurrentDimension(DimensionKind::Overworld),
-                LifeRecord::new(canonical_player_id("inside")),
                 Cultivation {
                     qi_current: 10.0,
                     qi_max: 100.0,
@@ -291,7 +290,6 @@ mod tests {
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, dead_zone_silent_qi_loss_tick);
 
         let player = app
@@ -357,7 +355,6 @@ mod tests {
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, dead_zone_silent_qi_loss_tick);
 
         let player = app
@@ -406,13 +403,11 @@ mod tests {
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, dead_zone_silent_qi_loss_tick);
 
         app.world_mut().spawn((
             Position::new([10.0, 66.0, 10.0]),
             CurrentDimension(DimensionKind::Overworld), // PITFALL (b): must include CurrentDimension
-            LifeRecord::new(canonical_player_id("zone-credit")),
             Cultivation {
                 qi_current: 10.0,
                 qi_max: 100.0,
@@ -449,7 +444,6 @@ mod tests {
         app.insert_resource(DeadZoneTickHandler::default());
         // No ZoneRegistry inserted
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, dead_zone_silent_qi_loss_tick);
 
         let player = app
@@ -486,7 +480,6 @@ mod tests {
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, dead_zone_silent_qi_loss_tick);
 
         let player = app

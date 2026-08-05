@@ -16,7 +16,7 @@ use crate::inventory::{
     add_item_to_player_inventory, consume_item_instance_once, InventoryInstanceIdAllocator,
     ItemRegistry, PlayerInventory, EQUIP_SLOT_CHEST,
 };
-use crate::qi_physics::{QiTransfer, StyleDefense, WorldQiAccount};
+use crate::qi_physics::{QiTransfer, StyleDefense};
 use crate::schema::tuike::{FalseSkinKindV1, FalseSkinStateV1, ShedEventV1};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
@@ -319,7 +319,7 @@ pub fn recipe_for_kind(kind: FalseSkinKind) -> &'static FalseSkinRecipe {
 
 pub fn forge_false_skin(
     recipe: &FalseSkinRecipe,
-    cultivation: &Cultivation,
+    cultivation: &mut Cultivation,
     inventory: &mut PlayerInventory,
     registry: &ItemRegistry,
     allocator: Option<&mut InventoryInstanceIdAllocator>,
@@ -358,6 +358,8 @@ pub fn forge_false_skin(
 
     *inventory = staged_inventory;
     *allocator = staged_allocator;
+    cultivation.qi_current =
+        (cultivation.qi_current - recipe.kind.qi_cost()).clamp(0.0, cultivation.qi_max);
 
     Ok(receipt.instance_id)
 }
@@ -441,7 +443,6 @@ pub fn handle_false_skin_forge_requests(
     registry: Res<ItemRegistry>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for request in requests.read() {
@@ -460,45 +461,29 @@ pub fn handle_false_skin_forge_requests(
             continue;
         };
 
-        let mut staged_inventory = inventory.clone();
-        let mut staged_allocator = allocator.as_deref().cloned();
         let qi_cost = request.kind.qi_cost();
         let result = forge_false_skin(
             recipe_for_kind(request.kind),
-            &cultivation,
-            &mut staged_inventory,
+            &mut cultivation,
+            &mut inventory,
             &registry,
-            staged_allocator.as_mut(),
+            allocator.as_deref_mut(),
         );
         match result {
             Ok(instance_id) => {
                 let location = locations.get(request.crafter).ok();
                 let (position, current_dimension, life_record) =
                     location.unwrap_or((None, None, None));
-                let release = release_qi_amount_to_zone(
-                    &mut cultivation,
+                release_qi_amount_to_zone(
+                    request.crafter,
                     qi_cost,
                     position,
                     current_dimension,
                     life_record,
                     zones.as_deref_mut(),
-                    &mut ledger,
                     qi_transfers.as_deref_mut(),
                     "tuike_false_skin_forge",
                 );
-                if let Err(error) = release {
-                    tracing::warn!(
-                        ?error,
-                        "[bong][tuike] false skin forge qi release failed closed"
-                    );
-                    continue;
-                }
-                *inventory = staged_inventory;
-                if let (Some(allocator), Some(staged_allocator)) =
-                    (allocator.as_deref_mut(), staged_allocator)
-                {
-                    *allocator = staged_allocator;
-                }
                 tracing::info!(
                     "[bong][tuike] forged {:?} for {:?} as item instance {}",
                     request.kind,
@@ -799,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_false_skin_stages_inventory_without_direct_qi_mutation() {
+    fn forge_false_skin_consumes_materials_and_qi() {
         let mut inventory = inventory_with_materials();
         let registry = ItemRegistry::from_map(HashMap::from([
             (
@@ -815,7 +800,7 @@ mod tests {
                 template(SPIDER_SILK_FALSE_SKIN_ITEM_ID),
             ),
         ]));
-        let cultivation = Cultivation {
+        let mut cultivation = Cultivation {
             realm: Realm::Induce,
             qi_current: 20.0,
             qi_max: 20.0,
@@ -825,7 +810,7 @@ mod tests {
 
         let output = forge_false_skin(
             recipe_for_kind(FalseSkinKind::SpiderSilk),
-            &cultivation,
+            &mut cultivation,
             &mut inventory,
             &registry,
             Some(&mut allocator),
@@ -833,10 +818,7 @@ mod tests {
         .expect("forge should succeed");
 
         assert_eq!(output, 100);
-        assert_eq!(
-            cultivation.qi_current, 20.0,
-            "pure forge helper must only stage inventory; the ECS request handler owns the atomic qi settlement"
-        );
+        assert_eq!(cultivation.qi_current, 15.0);
         assert_eq!(count_template(&inventory, SPIDER_SILK_MATERIAL_ID), 2);
         assert_eq!(
             count_template(&inventory, SPIDER_SILK_FALSE_SKIN_ITEM_ID),
@@ -876,7 +858,7 @@ mod tests {
                 template(SPIDER_SILK_FALSE_SKIN_ITEM_ID),
             ),
         ]));
-        let cultivation = Cultivation {
+        let mut cultivation = Cultivation {
             realm: Realm::Induce,
             qi_current: 20.0,
             qi_max: 20.0,
@@ -886,7 +868,7 @@ mod tests {
 
         let error = forge_false_skin(
             recipe_for_kind(FalseSkinKind::SpiderSilk),
-            &cultivation,
+            &mut cultivation,
             &mut inventory,
             &registry,
             Some(&mut allocator),
@@ -932,7 +914,7 @@ mod tests {
                 template(SPIDER_SILK_FALSE_SKIN_ITEM_ID),
             ),
         ]));
-        let cultivation = Cultivation {
+        let mut cultivation = Cultivation {
             realm: Realm::Induce,
             qi_current: 20.0,
             qi_max: 20.0,
@@ -941,7 +923,7 @@ mod tests {
 
         let error = forge_false_skin(
             recipe_for_kind(FalseSkinKind::SpiderSilk),
-            &cultivation,
+            &mut cultivation,
             &mut inventory,
             &registry,
             None,
@@ -973,7 +955,7 @@ mod tests {
                 template_with_size(SPIDER_SILK_FALSE_SKIN_ITEM_ID, 2, 2),
             ),
         ]));
-        let cultivation = Cultivation {
+        let mut cultivation = Cultivation {
             realm: Realm::Induce,
             qi_current: 20.0,
             qi_max: 20.0,
@@ -983,7 +965,7 @@ mod tests {
 
         let error = forge_false_skin(
             recipe_for_kind(FalseSkinKind::SpiderSilk),
-            &cultivation,
+            &mut cultivation,
             &mut inventory,
             &registry,
             Some(&mut allocator),

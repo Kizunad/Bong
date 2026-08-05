@@ -81,8 +81,6 @@ pub fn register(app: &mut App) {
     app.add_event::<HarvestTerminalEvent>();
     app.add_event::<BotanySkillChangedEvent>();
     app.add_event::<BotanyAttractsMobsEvent>();
-    // botany 早于 npc::register 装载；先创建 commit capability 队列，后续重复 add_event 幂等。
-    app.add_event::<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>();
 
     app.add_systems(Startup, validate_botany_inventory_primitives_on_startup);
 
@@ -90,8 +88,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             initialize_static_points_from_zones,
-            spawn_event_triggered_plants_on_death
-                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+            spawn_event_triggered_plants_on_death,
             detect_non_session_trample,
             run_botany_lifecycle_tick,
             tick_harvest_hazards,

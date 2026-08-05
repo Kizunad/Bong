@@ -1,8 +1,7 @@
-use valence::prelude::{EventReader, EventWriter, Query, Res, ResMut};
+use valence::prelude::{EventReader, EventWriter, Res, ResMut};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
-use crate::cultivation::life_record::LifeRecord;
 use crate::npc::dormant::census::{assign_status, compute_faction_census, LastFactionCensus};
 use crate::npc::dormant::{
     effective_group, DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated,
@@ -26,22 +25,14 @@ const NPC_EVENT_VERSION: u8 = 1;
 pub fn publish_npc_spawn_events(
     redis: Res<RedisBridgeResource>,
     game_tick: Option<Res<GameTick>>,
-    life_records: Query<&LifeRecord>,
     mut events: EventReader<NpcSpawnNotice>,
 ) {
     let at_tick = current_game_tick(game_tick.as_deref());
     for ev in events.read() {
-        let Ok(life_record) = life_records.get(ev.entity) else {
-            tracing::warn!(
-                target = ?ev.entity,
-                "[bong][npc_event_bridge] dropped NpcSpawned without canonical LifeRecord"
-            );
-            continue;
-        };
         let wire = NpcSpawnedV1 {
             v: NPC_EVENT_VERSION,
             kind: "npc_spawned".to_string(),
-            npc_id: life_record.character_id.clone(),
+            npc_id: ev.npc_id.clone(),
             archetype: ev.archetype.as_str().to_string(),
             source: ev.source.as_str().to_string(),
             zone: ev.home_zone.clone(),
@@ -448,7 +439,6 @@ fn current_game_tick(game_tick: Option<&GameTick>) -> u64 {
 mod tests {
     use super::*;
     use crate::cultivation::components::{Cultivation, Realm};
-    use crate::cultivation::life_record::LifeRecord;
     use crate::network::redis_bridge::RedisOutbound;
     use crate::npc::dormant::{DormantBehaviorIntent, NpcDormantSnapshot};
     use crate::npc::faction::{
@@ -457,24 +447,7 @@ mod tests {
     };
     use crate::npc::lifecycle::{NpcArchetype, NpcDeathReason};
     use crossbeam_channel::{unbounded, Receiver};
-    use valence::prelude::{App, Commands, DVec3, EventWriter, PostUpdate, Update};
-
-    fn emit_spawn_notice_with_deferred_life_record(
-        mut commands: Commands,
-        mut notices: EventWriter<NpcSpawnNotice>,
-    ) {
-        let entity = commands
-            .spawn(LifeRecord::new("npc:stable:deferred-spawn"))
-            .id();
-        notices.send(NpcSpawnNotice {
-            entity,
-            archetype: NpcArchetype::Rogue,
-            source: crate::npc::lifecycle::NpcSpawnSource::AgentCommand,
-            home_zone: "green_cloud_peak".to_string(),
-            position: DVec3::new(1.0, 64.0, 2.0),
-            initial_age_ticks: 0.0,
-        });
-    }
+    use valence::prelude::{App, DVec3, Update};
 
     fn setup_app() -> (App, Receiver<RedisOutbound>) {
         let mut app = App::new();
@@ -521,13 +494,9 @@ mod tests {
         app.add_event::<NpcDeathNotice>();
         app.insert_resource(GameTick(654));
         app.add_systems(Update, (publish_npc_spawn_events, publish_npc_death_events));
-        let spawned_npc = app
-            .world_mut()
-            .spawn(LifeRecord::new("npc:stable:spawn-1"))
-            .id();
 
         app.world_mut().send_event(NpcSpawnNotice {
-            entity: spawned_npc,
+            npc_id: "npc_1v1".to_string(),
             archetype: NpcArchetype::Rogue,
             source: crate::npc::lifecycle::NpcSpawnSource::AgentCommand,
             home_zone: "green_cloud_peak".to_string(),
@@ -553,56 +522,12 @@ mod tests {
         ];
         assert!(outbounds.iter().any(|outbound| matches!(
             outbound,
-            RedisOutbound::NpcSpawned(payload)
-                if payload.at_tick == 654 && payload.npc_id == "npc:stable:spawn-1"
+            RedisOutbound::NpcSpawned(payload) if payload.at_tick == 654
         )));
         assert!(outbounds.iter().any(|outbound| matches!(
             outbound,
             RedisOutbound::NpcDeath(payload) if payload.at_tick == 654
         )));
-    }
-
-    #[test]
-    fn post_update_spawn_publisher_observes_deferred_life_record() {
-        let (mut app, rx) = setup_app();
-        app.add_event::<NpcSpawnNotice>();
-        app.insert_resource(GameTick(655));
-        app.add_systems(Update, emit_spawn_notice_with_deferred_life_record);
-        app.add_systems(PostUpdate, publish_npc_spawn_events);
-
-        app.update();
-
-        let outbound = rx
-            .try_recv()
-            .expect("PostUpdate publisher must observe the deferred LifeRecord");
-        let RedisOutbound::NpcSpawned(payload) = outbound else {
-            panic!("expected NpcSpawned outbound");
-        };
-        assert_eq!(payload.npc_id, "npc:stable:deferred-spawn");
-        assert_eq!(payload.at_tick, 655);
-    }
-
-    #[test]
-    fn spawn_publisher_drops_notice_without_canonical_life_record() {
-        let (mut app, rx) = setup_app();
-        app.add_event::<NpcSpawnNotice>();
-        app.add_systems(Update, publish_npc_spawn_events);
-        let unowned_entity = app.world_mut().spawn_empty().id();
-        app.world_mut().send_event(NpcSpawnNotice {
-            entity: unowned_entity,
-            archetype: NpcArchetype::Rogue,
-            source: crate::npc::lifecycle::NpcSpawnSource::AgentCommand,
-            home_zone: "green_cloud_peak".to_string(),
-            position: DVec3::ZERO,
-            initial_age_ticks: 0.0,
-        });
-
-        app.update();
-
-        assert!(
-            rx.try_recv().is_err(),
-            "spawn telemetry must fail closed instead of inventing an Entity-derived owner id"
-        );
     }
 
     #[test]
@@ -759,7 +684,6 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
-            pending_combat_winner: None,
         }
     }
 

@@ -57,7 +57,7 @@ use crate::schema::channels::{
     CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
     CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT,
     CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED, ELDER_ENCOUNTER_DURABLE_REDIS_KEY, QI_LEDGER_REDIS_KEY,
+    CH_ZONG_CORE_ACTIVATED, QI_LEDGER_REDIS_KEY,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -135,12 +135,6 @@ const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RedisDeliveryReceipt {
-    pub delivery_id: String,
-    pub outcome: Result<(), String>,
-}
 
 #[derive(Debug, Clone)]
 pub enum RedisInbound {
@@ -302,12 +296,6 @@ pub enum RedisOutbound {
     BaomaiV4ResonanceLockEnd(BaomaiV4ResonanceLockEndV1),
     /// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进叙事事件（bong:void_erosion_event）。
     VoidErosionEvent(VoidErosionEventV1),
-    /// Durable terminal narration source entry. RPUSH is acknowledged only after Redis stores it.
-    ElderEncounterTerminal {
-        delivery_id: String,
-        event: ElderEncounterEventV1,
-        receipt_tx: Sender<RedisDeliveryReceipt>,
-    },
     /// plan-dying-elder-v1 P3 — 垂死大能遭遇事件（bong:elder_encounter）。
     ElderEncounterEvent(ElderEncounterEventV1),
     /// plan-territory-v1 P3 — 领地霸主变动叙事请求（bong:territory_narration_request）。
@@ -323,14 +311,8 @@ pub enum RedisOutbound {
     ),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum RedisIoCommand {
-    ListPushWithReceipt {
-        key: &'static str,
-        payload: String,
-        delivery_id: String,
-        receipt_tx: Sender<RedisDeliveryReceipt>,
-    },
     Publish {
         channel: &'static str,
         payload: String,
@@ -1702,23 +1684,6 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
-        RedisOutbound::ElderEncounterTerminal {
-            delivery_id,
-            event,
-            receipt_tx,
-        } => {
-            let payload = serde_json::to_string(&event).map_err(|error| {
-                ValidationError::new(format!(
-                    "failed to serialize durable ElderEncounterEventV1: {error}"
-                ))
-            })?;
-            Ok(RedisIoCommand::ListPushWithReceipt {
-                key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
-                payload,
-                delivery_id,
-                receipt_tx,
-            })
-        }
         RedisOutbound::ElderEncounterEvent(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
@@ -1868,21 +1833,6 @@ async fn execute_outbound_command(
     command: &RedisIoCommand,
 ) -> Result<(), String> {
     match command {
-        RedisIoCommand::ListPushWithReceipt {
-            key,
-            payload,
-            delivery_id,
-            receipt_tx,
-        } => {
-            let outcome = execute_list_push(pub_conn, key, payload).await;
-            if outcome.is_ok() {
-                let _ = receipt_tx.send(RedisDeliveryReceipt {
-                    delivery_id: delivery_id.clone(),
-                    outcome: Ok(()),
-                });
-            }
-            outcome
-        }
         RedisIoCommand::Publish { channel, payload } => {
             execute_publish(pub_conn, channel, payload).await
         }
@@ -1893,37 +1843,31 @@ async fn execute_outbound_command(
             Ok(())
         }
         RedisIoCommand::ListPush { key, payload } => {
-            execute_list_push(pub_conn, key, payload).await
+            match tokio::time::timeout(
+                REDIS_IO_TIMEOUT,
+                redis::cmd("RPUSH")
+                    .arg(key)
+                    .arg(payload)
+                    .query_async::<i64>(pub_conn),
+            )
+            .await
+            {
+                Ok(Ok(list_len)) => {
+                    tracing::debug!(
+                        "[bong][redis] pushed payload onto {key}; list length {list_len}"
+                    );
+                    Ok(())
+                }
+                Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
+                Err(_) => Err(format!(
+                    "timed out RPUSH {key} after {:?}",
+                    REDIS_IO_TIMEOUT
+                )),
+            }
         }
         RedisIoCommand::HashReplace { key, entries } => {
             execute_hash_replace(pub_conn, key, entries).await
         }
-    }
-}
-
-async fn execute_list_push(
-    pub_conn: &mut redis::aio::MultiplexedConnection,
-    key: &'static str,
-    payload: &str,
-) -> Result<(), String> {
-    match tokio::time::timeout(
-        REDIS_IO_TIMEOUT,
-        redis::cmd("RPUSH")
-            .arg(key)
-            .arg(payload)
-            .query_async::<i64>(pub_conn),
-    )
-    .await
-    {
-        Ok(Ok(list_len)) => {
-            tracing::debug!("[bong][redis] pushed payload onto {key}; list length {list_len}");
-            Ok(())
-        }
-        Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
-        Err(_) => Err(format!(
-            "timed out RPUSH {key} after {:?}",
-            REDIS_IO_TIMEOUT
-        )),
     }
 }
 
@@ -2859,69 +2803,6 @@ mod redis_bridge_tests {
         .expect("chat-message sample should deserialize")
     }
 
-    fn sample_durable_elder_event(event_id: &str) -> ElderEncounterEventV1 {
-        ElderEncounterEventV1 {
-            event_id: Some(event_id.to_string()),
-            zone_name: "tsy_deep".to_string(),
-            elder_entity_id: 42,
-            event_kind: crate::schema::elder_encounter::ElderEncounterEventKindV1::DeadNatural,
-            betray_probability: 0.0,
-            dan_count: 0,
-            offered_skill_id: String::new(),
-            qi_fraction: 0.0,
-            server_tick: 91,
-        }
-    }
-
-    #[test]
-    fn durable_elder_terminal_encodes_correlated_inline_list_push() {
-        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
-        let event_id = "terminal:npc:42:91";
-        let command = prepare_outbound_command(RedisOutbound::ElderEncounterTerminal {
-            delivery_id: event_id.to_string(),
-            event: sample_durable_elder_event(event_id),
-            receipt_tx,
-        })
-        .expect("durable terminal event should encode");
-
-        assert!(
-            !runs_on_background_redis_connection(&command),
-            "durable terminal publish must stay inline so reconnect retains it as pending_command"
-        );
-        match command {
-            RedisIoCommand::ListPushWithReceipt {
-                key,
-                payload,
-                delivery_id,
-                receipt_tx: encoded_tx,
-            } => {
-                assert_eq!(key, ELDER_ENCOUNTER_DURABLE_REDIS_KEY);
-                assert_eq!(delivery_id, event_id);
-                let decoded: ElderEncounterEventV1 =
-                    serde_json::from_str(&payload).expect("durable payload should be valid JSON");
-                assert_eq!(decoded, sample_durable_elder_event(event_id));
-                assert!(
-                    receipt_rx.try_recv().is_err(),
-                    "encoding must not forge delivery receipt"
-                );
-                encoded_tx
-                    .send(RedisDeliveryReceipt {
-                        delivery_id,
-                        outcome: Ok(()),
-                    })
-                    .expect("encoded receipt channel should remain correlated");
-                assert_eq!(
-                    receipt_rx.recv().expect("receipt should arrive"),
-                    RedisDeliveryReceipt {
-                        delivery_id: event_id.to_string(),
-                        outcome: Ok(()),
-                    }
-                );
-            }
-            other => panic!("expected ListPushWithReceipt, got {other:?}"),
-        }
-    }
-
     #[test]
     fn publishes_world_state() {
         let command = prepare_outbound_command(RedisOutbound::WorldState(sample_world_state()))
@@ -3223,18 +3104,6 @@ mod redis_bridge_tests {
                 payload: "{}".to_string(),
             }),
             "expected non-world_state Publish to stay inline; only world_state is large enough to warrant the background connection"
-        );
-        // Correlated durable ListPushWithReceipt -> inline. It must be eligible for
-        // pending_command retry and may emit a receipt only after Redis stores the list entry.
-        let (receipt_tx, _receipt_rx) = crossbeam_channel::unbounded();
-        assert!(
-            !runs_on_background_redis_connection(&RedisIoCommand::ListPushWithReceipt {
-                key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
-                payload: "{}".to_string(),
-                delivery_id: "terminal:npc:42:91".to_string(),
-                receipt_tx,
-            }),
-            "expected durable terminal list push to stay inline so failures retain the exact command for reconnect retry"
         );
         // ListPush (e.g. player_chat) -> inline.
         assert!(

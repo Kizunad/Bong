@@ -93,6 +93,7 @@ use valence::prelude::{
     Query, Res, ResMut, Resource, Update, With,
 };
 
+use crate::combat::events::DeathEvent;
 use crate::cultivation::tribulation::InitiateXuhuaTribulation;
 use crate::npc::lod::NpcLodTier;
 use crate::npc::movement::GameTick;
@@ -450,9 +451,10 @@ pub fn register(app: &mut App) {
     // tests that only register brain but not cultivation.
     app.add_event::<InitiateXuhuaTribulation>();
     app.add_event::<crate::combat::events::DefenseIntent>();
-    // Terminal settlement capability is defensively registered for isolated brain tests; the
-    // lifecycle module owns the production event and Bevy keeps one shared queue.
-    app.add_event::<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>();
+    // plan-mundane-fauna-v1 P2 — `mundane_predator_kill_hunger_reward_system` 监听
+    // `DeathEvent`；防御性注册（可能已由 combat 模块全局注册，Bevy 允许重复调用，
+    // 同本文件其它 add_event 先例），确保仅注册 brain 模块的隔离测试不会 panic。
+    app.add_event::<DeathEvent>();
     app.insert_resource(NpcBehaviorConfig::default())
         .insert_resource(NpcCooldownMap::default())
         .add_plugins(BigBrainPlugin::new(PreUpdate))
@@ -545,13 +547,9 @@ pub fn register(app: &mut App) {
             emit_retire_request_on_pending_added
                 .before(crate::npc::lifecycle::process_npc_retire_requests),
         )
-        // plan-mundane-fauna-v1 P2 — 捕食闭环：durable NPC terminal commit 后才回补狼/狐 Hunger，
-        // raw lethal edge 不提前发放 gameplay 收益。
-        .add_systems(
-            Update,
-            mundane_predator_kill_hunger_reward_system
-                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
-        );
+        // plan-mundane-fauna-v1 P2 — 捕食闭环：猎杀成功回补狼/狐 Hunger（监听
+        // `DeathEvent`，唯一权威死亡信号，不与超距回收等非战斗消失混淆）。
+        .add_systems(Update, mundane_predator_kill_hunger_reward_system);
 }
 
 // ---------------------------------------------------------------------------
@@ -916,8 +914,6 @@ mod tests {
         };
 
         let mut app = App::new();
-        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
-        app.add_event::<crate::qi_physics::QiTransfer>();
         app.insert_resource(AscensionQuotaStore::default());
         // plan-zone-qi-economy-v1 P0 §8.1 决议 #2：满预算 → quota_limit=2 只在预算取
         // DEFAULT_SPIRIT_QI_TOTAL 本身时成立（DEFAULT_VOID_QUOTA_K 等比例缩放）；

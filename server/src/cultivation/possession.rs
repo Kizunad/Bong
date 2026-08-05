@@ -20,7 +20,7 @@ use crate::npc::spawn::NpcMarker;
 use crate::player::state::{
     position_array_from_dvec3, save_player_slow_slice, PlayerState, PlayerStatePersistence,
 };
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::QiTransfer;
 use crate::schema::death_lifecycle::DuoSheEventV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers};
 use crate::world::zone::ZoneRegistry;
@@ -140,7 +140,6 @@ pub fn process_duo_she_requests(
     )>,
     mut commands: valence::prelude::Commands,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for request in requests.read() {
@@ -192,54 +191,26 @@ pub fn process_duo_she_requests(
             );
             let host_prev_age = host_lifespan.years_lived;
 
-            let new_qi_max = (host_cultivation.qi_max * DUO_SHE_QI_MAX_FACTOR).max(1.0);
-            let zone = match (
-                host_position.as_deref(),
-                host_current_dimension.as_deref(),
-                zones.as_deref_mut(),
-            ) {
-                (Some(position), Some(dimension), Some(zones)) => {
-                    let zone_name = zones
-                        .find_zone(dimension.0, position.0)
-                        .map(|zone| zone.name.clone());
-                    zone_name.and_then(|zone_name| zones.find_zone_mut(zone_name.as_str()))
-                }
-                _ => None,
-            };
-            let actor = host_life_record.as_deref().and_then(|record| {
-                crate::cultivation::components::ActorQiIdentity::from_life_record(
-                    record,
-                    crate::cultivation::components::ActorQiKind::Player,
-                )
-                .ok()
-            });
-            let resize = actor.as_ref().map_or(
-                Err(crate::cultivation::components::QiFlowError::InvalidActorIdentity),
-                |actor| {
-                    host_cultivation.resize_qi_max_and_release_excess(
-                        zone,
-                        &mut ledger,
-                        actor,
-                        new_qi_max,
-                        crate::qi_physics::QiTransferReason::ReleaseToZone,
-                    )
-                },
-            );
-            let resize = match resize {
-                Ok(resize) => resize,
-                Err(error) => {
-                    tracing::warn!(?error, "[bong][duo_she] qi resize failed closed");
-                    continue;
-                }
-            };
-            if let Some(release) = resize.release {
-                if let Some(qi_transfers) = qi_transfers.as_deref_mut() {
-                    for transfer in release.transfers {
-                        qi_transfers.send(transfer);
-                    }
-                }
-            }
             host_lifespan.years_lived = target_age.min(host_lifespan.cap_by_realm as f64);
+            let new_qi_max = (host_cultivation.qi_max * DUO_SHE_QI_MAX_FACTOR).max(1.0);
+            let excess = (host_cultivation.qi_current - new_qi_max).max(0.0);
+            host_cultivation.qi_max = new_qi_max;
+            host_cultivation.qi_current = host_cultivation.qi_current.min(new_qi_max);
+            // Qi conservation: the clipped excess must be returned to the zone rather than
+            // vanishing from the ledger. Pattern mirrors revive_penalty and other qi-reducing
+            // mechanics (ghost, hazard, dugu, skull_fiend, botany).
+            if excess > f64::EPSILON {
+                crate::cultivation::death_hooks::release_qi_amount_to_zone(
+                    request.host,
+                    excess,
+                    host_position.as_deref(),
+                    host_current_dimension.as_deref(),
+                    host_life_record.as_deref(),
+                    zones.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                    "duo_she_qi_max_clip",
+                );
+            }
             if let Some(mut host_karma) = host_karma {
                 host_karma.weight += DUO_SHE_KARMA_DELTA;
             }

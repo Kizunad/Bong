@@ -43,9 +43,6 @@ pub fn register(app: &mut App) {
     app.insert_resource(migration::ZoneGraph::default());
     app.insert_resource(ghost::GhostZoneRegistry::default());
     app.add_event::<rat_phase::RatPhaseChangeEvent>();
-    // Fauna 的 commit 后 VFX/audio/drop consumers 早于 npc::register 装载；事件资源需先存在，
-    // `npc::lifecycle::register` 后续重复 add_event 仅保留同一队列。
-    app.add_event::<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>();
     app.add_systems(
         valence::prelude::Update,
         (
@@ -56,17 +53,15 @@ pub fn register(app: &mut App) {
             rat_phase::apply_rat_phase_visual_system
                 .after(rat_phase::apply_rat_phase_change_system)
                 .after(rat_phase::advance_transitioning_phase_system),
+            rat_phase::release_drained_qi_on_death_system.before(drop::fauna_drop_system),
             experience::emit_fauna_spawn_vfx_system,
             experience::emit_fauna_spawn_ambient_audio_system,
             experience::emit_fauna_attack_audio_system,
-            experience::emit_fauna_death_vfx_audio_system
-                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
-            // `NpcTerminalSettlementSucceeded` 同一 reader batch 内只提供 commit 后授权；掉落系统
-            // 自身以 `FaunaDropIssued` 保证幂等，无需再绑定 raw death 顺序。
-            drop::fauna_drop_system.in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+            experience::emit_fauna_death_vfx_audio_system.before(drop::fauna_drop_system),
             experience::emit_rat_bite_audio_system,
             butcher::handle_butcher_requests,
             bone_coin::handle_bone_coin_craft_requests,
+            drop::fauna_drop_system,
         ),
     );
     app.add_systems(
@@ -106,7 +101,7 @@ pub fn register(app: &mut App) {
             ghost_narration::moss_drain_narration_system,
         ),
     );
-    // plan-fauna-mimic-spider-v1 P0：拟态灰烬蛛状态机 + Disguised qi 吸收（死亡归还统一走 NPC terminal transaction）
+    // plan-fauna-mimic-spider-v1 P0：拟态灰烬蛛状态机 + Disguised qi 吸收 + 死亡归还
     mimic_spider::register(app);
     // plan-daozhan-v1 P1：Mimicry big-brain Scorer/Action 注册
     daozhan::register_p1(app);

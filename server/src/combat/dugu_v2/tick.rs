@@ -98,7 +98,6 @@ pub fn shroud_maintain_tick(
         Option<&LifeRecord>,
     )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (entity, mut cultivation, shroud, position, current_dimension, life_record) in &mut actors {
@@ -111,23 +110,17 @@ pub fn shroud_maintain_tick(
             continue;
         }
         let drained = shroud.maintain_qi_per_tick;
-        let outcome = release_qi_amount_to_zone(
-            &mut cultivation,
+        cultivation.qi_current = (cultivation.qi_current - drained).clamp(0.0, cultivation.qi_max);
+        release_qi_amount_to_zone(
+            entity,
             drained,
             position,
             current_dimension,
             life_record,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             "dugu_v2:shroud_maintain",
         );
-        if let Err(error) = outcome {
-            tracing::warn!(
-                ?error,
-                "[bong][combat] shroud maintenance qi release failed closed"
-            );
-        }
     }
 }
 
@@ -585,7 +578,6 @@ mod tests {
     use crate::combat::dugu_v2::events::DuguSkillId;
     use crate::combat::CombatClock;
     use crate::cultivation::components::{Cultivation, QiColor, Realm};
-    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
@@ -614,7 +606,6 @@ mod tests {
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .unwrap()
             .spirit_qi = 0.0;
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, shroud_maintain_tick);
         app
     }
@@ -639,7 +630,6 @@ mod tests {
                 make_shroud(1000, maintain),
                 Position::new([0.0, 64.0, 0.0]),
                 CurrentDimension(DimensionKind::Overworld),
-                LifeRecord::new(canonical_player_id("shroud-zone")),
             ))
             .id();
 
@@ -793,7 +783,6 @@ mod tests {
         app.insert_resource(CombatClock { tick: 1 });
         // Intentionally do NOT insert ZoneRegistry
         app.add_event::<QiTransfer>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, shroud_maintain_tick);
 
         let maintain = 0.5 / TICKS_PER_SECOND as f64;
@@ -810,7 +799,6 @@ mod tests {
                 make_shroud(1000, maintain),
                 Position::new([0.0, 64.0, 0.0]),
                 CurrentDimension(DimensionKind::Overworld),
-                LifeRecord::new(canonical_player_id("shroud-overflow")),
             ))
             .id();
 
@@ -843,7 +831,6 @@ mod tests {
                     ..Default::default()
                 },
                 make_shroud(1000, maintain),
-                LifeRecord::new(canonical_player_id("shroud-no-position")),
                 // No Position, no CurrentDimension
             ))
             .id();

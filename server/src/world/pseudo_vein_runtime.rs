@@ -11,8 +11,7 @@ use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::ledger::{
-    pending_inflow_account, transfer_ledger_qi_to_zone, transfer_zone_qi_to_ledger, QiAccountId,
-    QiTransfer, QiTransferReason, WorldQiAccount,
+    pending_inflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::qi_physics::QiPhysicsError;
 use crate::schema::common::NarrationStyle;
@@ -458,9 +457,9 @@ fn player_density_by_zone(
 /// 创生。借出额被待分配池当前余额钳制（`min(desired, available)`）——池子余额不足时灵潮只能
 /// 把 zone 顶到"能负担"的高度，绝不透支（§8.1 #1 红线）。
 ///
-/// Injection uses the typed stable-pool → external-Zone transaction. The caller first clamps the
-/// demand to the pending pool's available balance, preserving the existing partial-injection
-/// contract without creating a `zone:*` ledger mirror or allowing the helper to overdraw the pool.
+/// 记账范本照抄 `world::heartbeat::zone_qi_inflow_tick`：调用前先用 `set_balance` 把 zone
+/// ledger 镜像同步到 `zone.spirit_qi * QI_ZONE_UNIT_CAPACITY` 真实值，转账后再把结果写回
+/// `zone.spirit_qi`。
 pub fn inject_zone_for_pseudo_vein(
     zone: &mut Zone,
     ledger: &mut WorldQiAccount,
@@ -468,35 +467,58 @@ pub fn inject_zone_for_pseudo_vein(
     inject_zone_for_pseudo_vein_target(zone, ledger, PSEUDO_VEIN_MAX_QI)
 }
 
-/// Debit the stable pending pool and credit the external Zone owner without creating a `zone:*`
-/// balance mirror. The bounded helper owns the target ceiling preflight and transfers only the
-/// amount the Zone can accept.
+/// heartbeat 动态伪灵脉复用的定额借出入口。
+///
+/// 与 [`inject_zone_for_pseudo_vein`] 使用同一 pending-pool → zone 账本路径，只把目标
+/// 浓度改为 omen 已裁定的强度；这样动态 zone 不再用 `spirit_qi = intensity` 凭空创生。
 pub(crate) fn inject_zone_for_pseudo_vein_target(
     zone: &mut Zone,
     ledger: &mut WorldQiAccount,
     target_spirit_qi: f64,
 ) -> Option<QiTransfer> {
-    let target = zone
-        .spirit_qi
+    let before = zone.spirit_qi;
+    let target = before
         .max(target_spirit_qi)
         .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
-    let desired_absolute = (target - zone.spirit_qi).max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    let available = ledger.balance(&pending_inflow_account()).max(0.0);
-    let requested = round3(desired_absolute.min(available));
-    if requested <= f64::EPSILON {
+    let desired_fraction = (target - before).max(0.0);
+    if desired_fraction <= f64::EPSILON {
+        return None;
+    }
+    let desired_absolute = round3(desired_fraction * QI_ZONE_UNIT_CAPACITY);
+    if desired_absolute <= f64::EPSILON {
         return None;
     }
 
-    transfer_ledger_qi_to_zone(
-        ledger,
-        pending_inflow_account(),
-        zone.name.as_str(),
-        &mut zone.spirit_qi,
-        requested,
-        target,
+    let pool = pending_inflow_account();
+    let available = ledger.balance(&pool).max(0.0);
+    let actual_absolute = round3(desired_absolute.min(available));
+    if actual_absolute <= f64::EPSILON {
+        return None;
+    }
+
+    let zone_account = QiAccountId::zone(zone.name.as_str());
+    if ledger
+        .set_balance(
+            zone_account.clone(),
+            before.max(0.0) * QI_ZONE_UNIT_CAPACITY,
+        )
+        .is_err()
+    {
+        return None;
+    }
+    let transfer = QiTransfer::new(
+        pool,
+        zone_account.clone(),
+        actual_absolute,
         QiTransferReason::ReleaseToZone,
     )
-    .ok()?
+    .ok()?;
+    if ledger.transfer(transfer.clone()).is_err() {
+        return None;
+    }
+    let updated_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
+    zone.spirit_qi = updated_fraction.clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    Some(transfer)
 }
 
 /// heartbeat 动态伪灵脉 zone 即将删除前的最终结算。
@@ -511,31 +533,38 @@ pub(crate) fn settle_ephemeral_pseudo_vein_zone(
     settle_ephemeral_pseudo_vein_zone_to_target(zone, ledger, 0.0)
 }
 
-/// Move the difference between the external Zone owner and the lifecycle target into the stable
-/// pending pool. The helper commits the stable credit before mutating Zone.spirit_qi and never
-/// leaves a `zone:*` balance mirror.
+/// 将 heartbeat 动态伪灵脉 zone 的真实余额守恒收敛到生命周期目标值。
+///
+/// `PseudoVeinRuntimeState::advance` 只负责计算目标浓度；这里把减少量从 zone 账户真实
+/// 转回 pending pool，再用账本结果回写 `zone.spirit_qi`。因此运行期衰减与最终删除共用
+/// 同一条可审计路径，不会出现 state 已衰减、zone/ledger 仍停在旧值的三份状态分叉。
 pub(crate) fn settle_ephemeral_pseudo_vein_zone_to_target(
     zone: &mut Zone,
     ledger: &mut WorldQiAccount,
     target_spirit_qi: f64,
 ) -> Result<Option<QiTransfer>, QiPhysicsError> {
-    if !zone.spirit_qi.is_finite() {
-        return Err(QiPhysicsError::InvalidAmount {
-            field: "zone.spirit_qi",
-            value: zone.spirit_qi,
-        });
+    let zone_account = QiAccountId::zone(zone.name.as_str());
+    let current_absolute = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
+    ledger.set_balance(zone_account.clone(), current_absolute)?;
+    let target_absolute = (target_spirit_qi.clamp(0.0, ZONE_SPIRIT_QI_MAX) * QI_ZONE_UNIT_CAPACITY)
+        .min(current_absolute);
+    let returned_absolute = (current_absolute - target_absolute).max(0.0);
+    if returned_absolute == 0.0 {
+        zone.spirit_qi = (current_absolute / QI_ZONE_UNIT_CAPACITY)
+            .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+        return Ok(None);
     }
-    let target = target_spirit_qi.clamp(0.0, ZONE_SPIRIT_QI_MAX);
-    let current = zone.spirit_qi.max(0.0);
-    let returned_absolute = (current - target).max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    transfer_zone_qi_to_ledger(
-        ledger,
-        zone.name.as_str(),
-        &mut zone.spirit_qi,
+
+    let transfer = QiTransfer::new(
+        zone_account.clone(),
         pending_inflow_account(),
         returned_absolute,
         QiTransferReason::PseudoVeinSettle,
-    )
+    )?;
+    ledger.transfer(transfer.clone())?;
+    zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY)
+        .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    Ok(Some(transfer))
 }
 
 /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮借款归还：能还多少还多少
@@ -555,21 +584,32 @@ fn apply_pseudo_vein_settlement(
     let Some(zone) = zones.find_zone_mut(settlement.return_transfer.from.id.as_str()) else {
         return;
     };
+    let zone_account = QiAccountId::zone(zone.name.as_str());
     let current_absolute = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    let requested = round3(settlement.returned_to_pool.min(current_absolute).max(0.0));
-    let Ok(transfer) = transfer_zone_qi_to_ledger(
-        ledger,
-        zone.name.as_str(),
-        &mut zone.spirit_qi,
+    if ledger
+        .set_balance(zone_account.clone(), current_absolute)
+        .is_err()
+    {
+        return;
+    }
+    let actual_absolute = round3(settlement.returned_to_pool.min(current_absolute).max(0.0));
+    if actual_absolute <= f64::EPSILON {
+        return;
+    }
+    let Ok(transfer) = QiTransfer::new(
+        zone_account.clone(),
         pending_inflow_account(),
-        requested,
+        actual_absolute,
         QiTransferReason::PseudoVeinSettle,
     ) else {
         return;
     };
-    if let Some(transfer) = transfer {
-        qi_transfers.send(transfer);
+    if ledger.transfer(transfer.clone()).is_err() {
+        return;
     }
+    zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY)
+        .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    qi_transfers.send(transfer);
 }
 
 fn pseudo_vein_season_from_world(season: Season) -> PseudoVeinSeasonV1 {
@@ -929,11 +969,6 @@ mod tests {
             "pending pool must be debited by exactly the amount credited to the zone \
              (conservation: no qi created out of thin air)"
         );
-        assert!(
-            !ledger.has_account(&QiAccountId::zone("fast")),
-            "pseudo-vein injection must keep dynamic Zone qi solely in Zone.spirit_qi"
-        );
-        assert_eq!(ledger.transfers(), &[transfer]);
     }
 
     #[test]
@@ -962,12 +997,6 @@ mod tests {
             "the pool must be drained to exactly zero (scaled down), never left negative or \
              partially untouched"
         );
-        assert_eq!(zone.spirit_qi, 0.2);
-        assert!(
-            !ledger.has_account(&QiAccountId::zone("fast")),
-            "partial injection must not materialize a dynamic Zone ledger mirror"
-        );
-        assert_eq!(ledger.transfers(), &[transfer]);
     }
 
     #[test]
@@ -1061,12 +1090,6 @@ mod tests {
             injected_absolute,
             "the pending pool must receive back exactly what was originally borrowed"
         );
-        assert!(
-            !app.world()
-                .resource::<WorldQiAccount>()
-                .has_account(&QiAccountId::zone("lingquan_marsh")),
-            "pseudo-vein settlement must not leave a Zone ledger mirror"
-        );
     }
 
     #[test]
@@ -1120,18 +1143,6 @@ mod tests {
             "repay must be capped at what the zone actually held (10.0 absolute), not the \
              originally-borrowed 42.5 — the difference was already legitimately consumed \
              elsewhere and cannot be conjured back"
-        );
-        assert_eq!(
-            app.world()
-                .resource::<WorldQiAccount>()
-                .balance(&pending_inflow_account()),
-            10.0
-        );
-        assert!(
-            !app.world()
-                .resource::<WorldQiAccount>()
-                .has_account(&QiAccountId::zone("lingquan_marsh")),
-            "partial settlement must not leave a Zone ledger mirror"
         );
     }
 

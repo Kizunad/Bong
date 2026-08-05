@@ -25,7 +25,7 @@ use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::spawn::common::NpcMarker;
 use crate::qi_physics::constants::{GHOST_CONTACT_FACTOR, QI_EPSILON};
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::ledger::QiTransfer;
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -218,7 +218,6 @@ pub fn ghost_drift_system(zones: Option<Res<ZoneRegistry>>, mut ghosts: Query<&m
 #[allow(clippy::type_complexity)]
 pub fn ghost_contact_system(
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
     ghosts: Query<&GhostEntity>,
     mut players: Query<
@@ -316,24 +315,19 @@ pub fn ghost_contact_system(
             });
             continue;
         }
-        let outcome = release_qi_amount_to_zone(
-            &mut cultivation,
+        cultivation.qi_current = (cultivation.qi_current - actual_pulse).max(0.0);
+
+        // 守恒：overflow-safe 路由，emit QiTransfer 留痕（溢出量进专用 overflow 账户，不销毁）
+        release_qi_amount_to_zone(
+            entity,
             actual_pulse,
             Some(pos),
             current_dim,
             life_record,
             zones.as_deref_mut(),
-            &mut ledger,
             qi_transfer_events.as_deref_mut(),
             "ghost_contact",
         );
-        if let Err(error) = outcome {
-            tracing::warn!(
-                ?error,
-                "[bong][fauna] ghost contact qi release failed closed"
-            );
-            continue;
-        }
 
         // 更新 cooldown（insert 或 update）
         commands.entity(entity).insert(GhostContactCooldown {
@@ -531,7 +525,6 @@ mod tests {
     fn ghost_contact_system_emits_qi_transfer_on_contact() {
         // 玩家在负灵域 + 诡影在接触半径内 → emit QiTransfer{reason: GhostContact}
         let mut app = make_app_with_neg_zone(-0.5);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, ghost_contact_system);
 
         // 手动 spawn 一个诡影在玩家附近
@@ -590,7 +583,6 @@ mod tests {
     fn ghost_contact_system_respects_shared_cooldown() {
         // 同一 tick 内，cooldown 已设置时第二次接触不应再 emit
         let mut app = make_app_with_neg_zone(-0.5);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, ghost_contact_system);
 
         // 两个诡影都在接触半径内
@@ -637,7 +629,6 @@ mod tests {
     fn ghost_contact_system_no_effect_in_positive_zone() {
         // 正灵域（spirit_qi=0.5）不触发诡影接触效果
         let mut app = make_app_with_neg_zone(0.5);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, ghost_contact_system);
 
         app.world_mut().spawn(GhostEntity {
@@ -709,7 +700,6 @@ mod tests {
     fn ghost_contact_system_skips_entity_without_current_dimension() {
         // 无 CurrentDimension 的玩家不应触发接触（无法确认所在 zone）
         let mut app = make_app_with_neg_zone(-0.5);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, ghost_contact_system);
 
         app.world_mut().spawn(GhostEntity {
@@ -842,7 +832,6 @@ mod tests {
         use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         let initial_spirit_qi = -0.5_f64; // 负灵域
         let mut app = make_app_with_neg_zone(initial_spirit_qi);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, ghost_contact_system);
 
         // Spawn 诡影在玩家附近（距离 0.1 格 < GHOST_SIPHON_RADIUS=2.0）
@@ -919,7 +908,6 @@ mod tests {
         use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         let initial_spirit_qi = -0.5_f64;
         let mut app = make_app_with_neg_zone(initial_spirit_qi);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, ghost_contact_system);
 
         app.world_mut().spawn(GhostEntity {

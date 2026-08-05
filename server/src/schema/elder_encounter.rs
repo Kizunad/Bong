@@ -46,9 +46,6 @@ pub enum ElderEncounterEventKindV1 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ElderEncounterEventV1 {
-    /// Stable delivery identity for durable terminal events. Non-terminal telemetry may omit it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_id: Option<String>,
     /// 大能所在 TSY zone 名称（对应 ZoneRegistry zone.name）。
     pub zone_name: String,
     /// 大能 MC protocol entity_id（i32，Valence EntityId::get()，从 1 起分配；
@@ -143,7 +140,6 @@ mod elder_encounter_schema_tests {
     fn event_v1_appeared_serde_roundtrip() {
         // 期望：appeared 事件（含 betray_probability + qi_fraction）完整往返
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 42,
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -165,7 +161,6 @@ mod elder_encounter_schema_tests {
     fn event_v1_dan_received_serde_roundtrip() {
         // 期望：dan_received 事件（dan_count=3）往返（qi_fraction 反映恢复进度）
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_shallow".to_string(),
             elder_entity_id: 99,
             event_kind: ElderEncounterEventKindV1::DanReceived,
@@ -184,7 +179,6 @@ mod elder_encounter_schema_tests {
     fn event_v1_betrayal_serde_roundtrip() {
         // 期望：betrayal 事件往返（betray_probability=0.0，offered_skill_id 可为空，qi_fraction=0.0）
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 7,
             event_kind: ElderEncounterEventKindV1::Betrayal,
@@ -203,7 +197,6 @@ mod elder_encounter_schema_tests {
     fn event_v1_dead_natural_serde_roundtrip() {
         // 期望：dead_natural 事件往返（qi_fraction=0.0 死亡后真元耗尽）
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_abyss".to_string(),
             elder_entity_id: 11,
             event_kind: ElderEncounterEventKindV1::DeadNatural,
@@ -222,7 +215,6 @@ mod elder_encounter_schema_tests {
     fn event_v1_dead_player_kill_serde_roundtrip() {
         // 期望：dead_player_kill 事件往返（qi_fraction=0.0 被击杀后无真元）
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 3,
             event_kind: ElderEncounterEventKindV1::DeadPlayerKill,
@@ -263,7 +255,6 @@ mod elder_encounter_schema_tests {
         // 期望：betray_probability 合法范围 [0.0, 1.0]，序列化不截断
         for prob in [0.0_f64, 0.3, 0.65, 0.95, 1.0] {
             let ev = ElderEncounterEventV1 {
-                event_id: None,
                 zone_name: "tsy".to_string(),
                 elder_entity_id: 1,
                 event_kind: ElderEncounterEventKindV1::Appeared,
@@ -288,7 +279,6 @@ mod elder_encounter_schema_tests {
         // 期望：elder_entity_id=1 是最小合法 MC protocol entity_id（Valence 从 1 开始分配，跳过 0）。
         // elder_entity_id=0 是 sentinel（未分配/无大能），client 以 <= 0 判断无效。
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 1,
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -310,7 +300,6 @@ mod elder_encounter_schema_tests {
     fn event_v1_entity_id_large_protocol_id_roundtrip() {
         // 期望：较大的 MC protocol entity_id（i32 正数范围）往返无截断
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_abyss".to_string(),
             elder_entity_id: 65535,
             event_kind: ElderEncounterEventKindV1::DanReceived,
@@ -333,7 +322,6 @@ mod elder_encounter_schema_tests {
         // 期望：elder_entity_id=0 在 schema 层可序列化往返（runtime guard 在 client/server 逻辑层，非 serde 层）。
         // 0 = sentinel"无大能/未分配"；Valence EntityManager 从 1 起分配，不会下发此值。
         let ev = ElderEncounterEventV1 {
-            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 0,
             event_kind: ElderEncounterEventKindV1::Appeared,
