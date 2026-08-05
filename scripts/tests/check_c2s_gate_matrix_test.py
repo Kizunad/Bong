@@ -310,12 +310,45 @@ pub enum ClientRequestV1 {
         with self.assertRaisesRegex(RuntimeError, "heading count 3 does not match 2 rows"):
             checker.parse_matrix_variants(plan.replace("P0 2", "P0 3"))
 
+        with self.assertRaisesRegex(RuntimeError, "unexpected C2S matrix table content before header"):
+            checker.parse_matrix_variants(
+                plan.replace(
+                    "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+                    "| 999 | `StaleVariant` | — | — | — | — | — |\n"
+                    "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+                )
+            )
+
         with patch.object(
             checker, "enum_variants", return_value=["Alpha", "Beta"]
         ), patch.object(
             checker, "matrix_variants", return_value=([1, 2], ["Alpha", "Beta"])
+        ), patch.object(
+            checker, "generated_schema_variants", return_value=["alpha", "beta"]
+        ), patch.object(
+            checker, "KNOWN_TYPEBOX_GAPS", frozenset()
         ):
             self.assertEqual(checker.main(), 0)
+
+    def test_typebox_contract_rejects_unexpected_schema_drift(self) -> None:
+        enum = ["Alpha", "Beta"]
+        matrix = ["Alpha", "Beta"]
+        with patch.object(checker, "KNOWN_TYPEBOX_GAPS", frozenset()):
+            self.assertEqual(
+                checker.typebox_contract_errors(enum, matrix, ["alpha", "beta"]),
+                [],
+            )
+            self.assertEqual(
+                checker.typebox_contract_errors(enum, matrix, ["alpha"]),
+                ["Rust variants missing from TypeBox schema outside documented gaps: ['beta']"],
+            )
+            self.assertEqual(
+                checker.typebox_contract_errors(enum, matrix, ["alpha", "beta", "gamma"]),
+                [
+                    "TypeBox schema variants absent from Rust enum: ['gamma']",
+                    "TypeBox schema variants absent from Markdown matrix: ['gamma']",
+                ],
+            )
 
     def test_rejects_duplicate_p0_matrix_sections(self) -> None:
         plan = """## P0 2 变体门禁矩阵

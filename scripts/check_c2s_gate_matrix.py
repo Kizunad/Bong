@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import re
 import sys
 from collections import Counter
@@ -9,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
+GENERATED_SCHEMA_PATH = ROOT / "agent/packages/schema/generated/client-request-v1.json"
 ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
 MATRIX_SECTION_RE = re.compile(r"^## P0 (\d+) 变体门禁矩阵\s*$")
 MATRIX_HEADER_RE = re.compile(
@@ -19,6 +21,28 @@ MATRIX_RE = re.compile(
     r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|(?:[^|\n]*\|){5}\s*$"
 )
 VARIANT_DECL_RE = re.compile(r"^([A-Z][A-Za-z0-9_]*)\s*(.*)$", re.DOTALL)
+KNOWN_TYPEBOX_GAPS = frozenset(
+    {
+        "alchemy_learn_recipe_fragment",
+        "coffin_break",
+        "coffin_menu_reclaim",
+        "qi_scatter_bead_use",
+        "jiemai",
+        "supply_coffin_open",
+        "container_open",
+        "workbench_open",
+        "external_container_move",
+        "external_container_close",
+        "lingtian_start_till",
+        "lingtian_start_renew",
+        "lingtian_start_planting",
+        "lingtian_start_harvest",
+        "lingtian_start_drain_qi",
+        "craft_start",
+        "craft_cancel",
+        "give_dan_to_elder",
+    }
+)
 
 
 def _blank_non_newlines(masked: list[str], start: int, end: int) -> None:
@@ -359,8 +383,14 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
         if not header_seen:
             if MATRIX_HEADER_RE.fullmatch(line):
                 header_seen = True
-            elif line.startswith("|") and "ClientRequestV1" in line:
-                raise RuntimeError(f"malformed C2S matrix header at line {line_number}: {line!r}")
+            elif line.strip() and line.lstrip().startswith("|"):
+                if "ClientRequestV1" in line:
+                    raise RuntimeError(
+                        f"malformed C2S matrix header at line {line_number}: {line!r}"
+                    )
+                raise RuntimeError(
+                    f"unexpected C2S matrix table content before header at line {line_number}: {line!r}"
+                )
             continue
         if not divider_seen:
             if MATRIX_DIVIDER_RE.fullmatch(line):
@@ -397,6 +427,65 @@ def matrix_variants() -> tuple[list[int], list[str]]:
     return parse_matrix_variants(PLAN_PATH.read_text(encoding="utf-8"))
 
 
+def rust_variant_to_wire(name: str) -> str:
+    name = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", name)
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
+    return name.lower()
+
+
+def generated_schema_variants() -> list[str]:
+    try:
+        document = json.loads(GENERATED_SCHEMA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot parse generated ClientRequestV1 schema: {error}") from error
+
+    members = document.get("anyOf") if isinstance(document, dict) else None
+    if not isinstance(members, list) or not members:
+        raise RuntimeError("generated ClientRequestV1 schema must contain a non-empty anyOf list")
+
+    variants: list[str] = []
+    for index, member in enumerate(members, start=1):
+        try:
+            variant = member["properties"]["type"]["const"]
+        except (KeyError, TypeError):
+            raise RuntimeError(
+                f"generated ClientRequestV1 schema member {index} lacks a type const"
+            ) from None
+        if not isinstance(variant, str) or not variant:
+            raise RuntimeError(
+                f"generated ClientRequestV1 schema member {index} has an invalid type const"
+            )
+        variants.append(variant)
+    return variants
+
+
+def typebox_contract_errors(enum: list[str], matrix: list[str], schema: list[str]) -> list[str]:
+    rust_wire = [rust_variant_to_wire(variant) for variant in enum]
+    matrix_wire = [rust_variant_to_wire(variant) for variant in matrix]
+    rust_set = set(rust_wire)
+    matrix_set = set(matrix_wire)
+    schema_set = set(schema)
+    errors: list[str] = []
+
+    unknown_gaps = sorted(KNOWN_TYPEBOX_GAPS - rust_set)
+    if unknown_gaps:
+        errors.append(f"TypeBox gap baseline names are not Rust variants: {unknown_gaps}")
+    if duplicates(schema):
+        errors.append(f"duplicate TypeBox schema variants: {duplicates(schema)}")
+
+    extra_schema = sorted(schema_set - rust_set)
+    if extra_schema:
+        errors.append(f"TypeBox schema variants absent from Rust enum: {extra_schema}")
+    extra_matrix = sorted(schema_set - matrix_set)
+    if extra_matrix:
+        errors.append(f"TypeBox schema variants absent from Markdown matrix: {extra_matrix}")
+
+    undocumented_missing = sorted((rust_set - schema_set) - KNOWN_TYPEBOX_GAPS)
+    if undocumented_missing:
+        errors.append(f"Rust variants missing from TypeBox schema outside documented gaps: {undocumented_missing}")
+    return errors
+
+
 def duplicates(values: list[str]) -> list[str]:
     return sorted(value for value, count in Counter(values).items() if count > 1)
 
@@ -415,6 +504,7 @@ def main() -> int:
     try:
         enum = enum_variants()
         numbers, matrix = matrix_variants()
+        schema = generated_schema_variants()
     except RuntimeError as error:
         print(f"C2S gate matrix check failed:\n- {error}", file=sys.stderr)
         return 1
@@ -436,6 +526,8 @@ def main() -> int:
         errors.append(f"extra matrix variants: {matrix_enum_extra}")
     if set(matrix) != set(enum):
         errors.append("matrix and Rust enum variant sets differ")
+
+    errors.extend(typebox_contract_errors(enum, matrix, schema))
 
     mismatch = first_order_mismatch(enum, matrix)
     if mismatch:

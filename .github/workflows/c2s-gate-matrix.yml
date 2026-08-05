@@ -34,6 +34,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+
+      - name: Install schema dependencies
+        working-directory: agent
+        run: npm ci
+
+      - name: Validate TypeBox source and generated schema
+        working-directory: agent/packages/schema
+        run: npm run check
+
       - name: Check C2S gate matrix contract
         run: |
           python3 scripts/check_c2s_gate_matrix.py
