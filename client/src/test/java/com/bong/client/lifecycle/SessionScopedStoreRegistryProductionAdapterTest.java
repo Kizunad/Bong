@@ -561,7 +561,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 () -> IdentityPanelState.empty().equals(IdentityPanelStateStore.snapshot())),
             adapter(65, InsightOfferStore.class,
                 () -> InsightOfferStore.replace(new InsightOfferViewModel(
-                    "old", "old", "old", 0.5d, 1, 1, 2_000L,
+                    "offer:old", "old", "old", "old", 0.5d, 1, 1, 2_000L,
                     List.of(new InsightChoice("old", InsightCategory.QI, "old", "old", "old", "")))),
                 () -> InsightOfferStore.snapshot() == null),
             adapter(66, BodyPlanLayoutStore.class,
@@ -877,7 +877,7 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         SkillBarStore.addListener(ignored -> skillBarNotifications.incrementAndGet());
         var eventStream = UnifiedEventStore.stream();
         InsightOfferViewModel oldOffer = new InsightOfferViewModel(
-            "old", "old", "old", 0.5d, 1, 1, 2_000L,
+            "offer:old", "old", "old", "old", 0.5d, 1, 1, 2_000L,
             List.of(new InsightChoice("old", InsightCategory.QI, "old", "old", "old", ""))
         );
         InsightOfferStore.replace(oldOffer);
@@ -907,11 +907,11 @@ class SessionScopedStoreRegistryProductionAdapterTest {
         assertEquals(2, skillBarNotifications.get(), "skill-bar listener 必须收到旧态与断线空态");
 
         InsightOfferViewModel freshOffer = new InsightOfferViewModel(
-            "fresh", "fresh", "fresh", 0.5d, 1, 1, 3_000L,
+            "offer:fresh", "fresh", "fresh", "fresh", 0.5d, 1, 1, 3_000L,
             List.of(new InsightChoice("fresh", InsightCategory.QI, "fresh", "fresh", "fresh", ""))
         );
         InsightOfferStore.replace(freshOffer);
-        InsightOfferStore.submit(InsightDecision.chosen("fresh", "fresh"));
+        InsightOfferStore.submit(InsightDecision.chosen("fresh", "fresh"), "offer:fresh");
         SkillBarStore.updateSlot(1, SkillBarEntry.item("fresh", "fresh", 0, 0, ""));
         eventStream.publish(
             UnifiedEvent.Channel.WORLD,
