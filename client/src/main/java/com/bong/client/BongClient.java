@@ -89,6 +89,8 @@ public class BongClient implements ClientModInitializer {
         NpcInteractionLogControls.register();
         HudImmersionControls.register();
         MovementKeybindings.register();
+        com.bong.client.animation.LowerBodyGaitController.register();
+        com.bong.client.animation.UpperBodyViewPitchLayer.register();
         DyingElderInteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
         CultivationScreenBootstrap.register();
