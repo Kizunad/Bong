@@ -232,11 +232,13 @@ def parse_enum_variants(source: str) -> list[str]:
         if attribute.startswith("#[serde(") and attribute.endswith(")]"):
             serde = _mask_rust_non_code(attribute, mask_strings=False)[len("#[serde(") : -2]
             break
-    allowed_options = {"deny_unknown_fields", 'tag = "type"', 'rename_all = "snake_case"'}
+    allowed_options = {'tag = "type"', 'rename_all = "snake_case"', 'deny_unknown_fields'}
     options = _serde_options(serde or "")
     options = [option for option in options if option]
     if any(option not in allowed_options for option in options):
         raise RuntimeError("ClientRequestV1 has unsupported serde wire option")
+    if options.count("deny_unknown_fields") != 1:
+        raise RuntimeError('ClientRequestV1 must use serde deny_unknown_fields')
     tag_options = re.findall(r'\btag\s*=\s*"([^"]*)"', serde or "")
     rename_options = re.findall(r'\brename_all\s*=\s*"([^"]*)"', serde or "")
     if len(tag_options) != 1 or tag_options[0] != "type":

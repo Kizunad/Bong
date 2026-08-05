@@ -141,6 +141,15 @@ pub enum ClientRequestV1 { Variant, }
             ):
                 checker.parse_enum_variants(source)
 
+    def test_requires_deny_unknown_fields_on_enum_contract(self) -> None:
+        missing = '#[serde(tag = "type", rename_all = "snake_case")]\npub enum ClientRequestV1 { Variant, }'
+        duplicate = '#[serde(deny_unknown_fields, deny_unknown_fields, tag = "type", rename_all = "snake_case")]\npub enum ClientRequestV1 { Variant, }'
+        for source in (missing, duplicate):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                RuntimeError, 'deny_unknown_fields'
+            ):
+                checker.parse_enum_variants(source)
+
     def test_accepts_valid_serde_contract_from_original_source(self) -> None:
         source = ENUM_PREFIX + "#[derive(Debug)]\npub enum ClientRequestV1 { Variant, }"
         self.assertEqual(checker.parse_enum_variants(source), ["Variant"])
