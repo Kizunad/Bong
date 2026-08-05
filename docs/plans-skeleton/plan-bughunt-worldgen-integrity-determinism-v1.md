@@ -2,9 +2,9 @@
 
 > 计划名：`plan-bughunt-worldgen-integrity-determinism-v1`
 >
-> 状态：`docs/plans-skeleton/` 候选骨架，尚未满足仓库要求的 plan workflow contract，因此未注册到 master ownership matrix，不参与 `/consume-plan`，生命周期保持 `BLOCKED`。只有在所需 workflow contract 已存在且可读取、并完成注册核验后，才能进入 skeleton → active；转 active 前须将开放问题收口为 `§N.1 决议`，并重新核对 promotion gate 证据。
+> 状态：`docs/plans-skeleton/` 骨架；创建门已满足：同一提交树中的根 `CLAUDE.md` 与 `docs/CLAUDE.md` 均存在且可读取，且创建前已按 `docs/CLAUDE.md` §§五-六完成核验。本文已登记到 master §6.12 ownership matrix，尚未进入 active plan，不参与 `/consume-plan`；下一生命周期转换只能是 skeleton → active，转 active 前须将开放问题收口为 `§N.1 决议`，并重新核对 promotion gate 证据。
 >
-> Registry note：本文件目前只是待注册候选；由于所需 plan workflow contract 尚未作为可读取仓库证据满足，master §6.12 不包含本文件，任何 source issue/implementation owner/active promotion 都保持 `BLOCKED`。恢复 contract 后，必须先完成独立 skeleton 的注册核验，再按 promotion gate 进入 active；不得以本段或外部/会话文档替代。
+> Registry note：本文件仅在上述 plan workflow contract 创建门满足后写入 canonical skeleton path；master §6.12 记录其 ownership。若任一流程文件缺失或不可读，必须先恢复并核验流程文件，禁止创建本 skeleton，不能把缺失前置条件延期为 registration 或 promotion gate。
 > 范围：worldgen 产物从 blueprint/profile、布局与结构导出，到 raster/manifest、预览与 server runtime consumer 的完整性、确定性和边界合同。
 >
 > 明确不拥有：`#1623`、`#1627`、`#1853`。这三个未解决的 structure-manifest runtime wiring issue 由仍在进行的 `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md` 作为当前 implementation owner；该计划的证据记录 worldgen 顶层 `corpse_mounds` / `ascension_pits` 字段被 Rust `RasterManifest` 丢弃，本文只保留 cross-reference 和跨计划集成验收边界，不宣称其已归档或已完成。
@@ -160,7 +160,7 @@
 
 **Acceptance criteria：**
 
-- `#1610`：同一个输入 seed/variant 集合不会在未声明配置变化时固定偏向单一 flora variant；测试覆盖候选为空、单候选、多候选和重复生成。
+- `#1610`：selection contract 必须固定一个 canonical fixture（按 canonical ID 排序的候选 variant IDs、fixture profile/name/version）、一组明确枚举的多 seed 输入，以及逐项 `seed → expected variant ID` selection table/oracle；交付物必须记录候选集、seed 集、期望映射和选择算法版本，而不是只记录“应分布均匀”。同一 fixture/seed 在独立进程与不同 `PYTHONHASHSEED` 下必须得到完全相同的映射，候选为空时 fail-closed、单候选时只能选该候选、多候选时必须按 oracle 命中至少两个 variant，重复生成不得改变映射。回归测试必须显式以“始终返回排序后第一个候选”的 selector 运行并失败，不能只用单次 determinism 或 repeated-generation 通过来替代 selection contract。
 - `#1793/#1795`：在两个独立 Python 进程、不同 `PYTHONHASHSEED` 下，对相同 canonical inputs 生成相同 seed、结构坐标和 manifest；输入名称/版本变化按决议的 contract 产生可解释变化。
 - `#1684`：四个旋转方向和非方形 footprint 至少各有一条坐标对拍；结构 orientation 与 layout orientation 不发生 90/180 度错位。
 - `#1798`：结构 dump 中所有写入坐标均落在声明 bounds；负坐标、边界坐标和越界坐标各有测试。
@@ -325,25 +325,35 @@ P0-P3 当前预期是 worldgen/server 逻辑；需确认 console/regen/preview �
 
 需把 pipeline cwd、CLI no-op、required layers、qidensity、anomaly runtime、structure manifest、finished snapshot 与本 umbrella 的每个 issue/phase 做一对一映射，确认不存在重复修复、遗漏或“只引用但无人拥有”的孤岛。
 
+## §10.1 决议（pre-P0 收口，2026-08-05）
+
+### #1796 biome boundary classification semantics
+
+**决议**：
+1. canonical classification unit 固定为每个 biome sample column，不采用 chunk center、chunk-wide majority 或 coverage 汇总。现有 Rust consumer 在 `server/src/world/terrain/biome.rs:22-36` 对 chunk 的 4×4 biome cells 按其实际 world `(x,z)` sample 坐标逐列调用 `TerrainProvider::sample(...).biome`；`ColumnSample` 的 `biome_id`/`biome` 是该列的分类结果（`server/src/world/terrain/raster.rs:214-224`），本计划以此作为 Python oracle 与 Rust consumer 的共同语义。
+2. P2 实施固定同一坐标原点、4×4 sample 网格和边界规则；Python fixture 为每个 sample column 写出 expected `biome_id`，覆盖 chunk 四边界、四角、跨 biome 边界和内部一致区域，再与 Rust `ColumnSample`/`fill_chunk_biomes` 逐列对拍。现有 sword-sea override 保持其显式逐 sample 特例，不扩展为新的 majority/coverage 规则。
+3. boundary fixture 必须让旧的 center-only 实现至少漏掉一个边界列并失败；fixture、raster 导出、server parse 和 chunk biome 写入必须使用同一坐标/endianness contract。该决议只收口 `#1796` 的分类单位与对拍边界，不改变 `#1614` 的 POI fallback height ownership。
+
+**落点**：`server/src/world/terrain/biome.rs:22-36`、`server/src/world/terrain/raster.rs:214-224` / 本计划「P2：Terrain/POI boundary 与 Rust consumer 对齐」及其 `#1796` acceptance criteria。
+
 ## Skeleton → Active promotion gate
 
-本文件目前不在 master §6.12 ownership matrix 中，且不执行 draft → skeleton → active 的后续生命周期转换；只有在所需 plan workflow contract 恢复并完成独立 skeleton 注册后，才可按 promotion gate 进入 active。在此之前：
+本文件已满足创建门并登记在 master §6.12 ownership matrix 中，当前仍是 skeleton，不参与 `/consume-plan`；skeleton → active 只能在下列门禁全部满足后进行：
 
-1. 保持当前候选为 `BLOCKED`；不得由本文件创建 source issue/implementation owner，也不得由 `/consume-plan` 消费。
-2. 注册恢复后，重新核对当时提交树实际存在且可读取的仓库流程文件，并保留对应读取证据；若 promotion 所需文件缺失或不可读，继续保持 `BLOCKED`，不得以外部或会话文档替代。
-3. 为 §1–§15 开放问题补齐只读调查、`§N.1 决议` 和 `file:line + plan section` 双锚点；这些是注册后的 promotion criteria，不是 P3 implementation deliverables。
-4. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
-5. 注册后的 active promotion 只核验上述生命周期/决策/owner 门禁；`#1766` 全宽修复与像素回归仍属于 active P3/PR-4，不能作为 skeleton → active 的前置条件。`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。
+1. 创建前已核验同一提交树中的根 `CLAUDE.md` 与 `docs/CLAUDE.md` 存在且可读取；后续若任一流程文件缺失或不可读，必须先恢复并重新核验，不得以外部或会话文档替代。
+2. 为 §1–§15 开放问题补齐只读调查、对应 `§N.1 决议` 和 `file:line + plan section` 双锚点；其中 §10 的决议必须独占 `§10.1`，不得与实施工作流子标题重名。
+3. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
+4. active promotion 只核验上述生命周期、决策、owner 和 contract evidence；`#1766` 全宽修复与像素回归仍属于 active P3/PR-4，不能作为 skeleton → active 的前置条件。`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。
 
 ## §10 实施工作流
 
-本计划 scope 覆盖 P0–P4，按单计划多 PR 串行消费；前一 PR 合入并完成验收后，才进入下一 PR。候选未注册且处于 `BLOCKED` 时不执行以下实施步骤，亦不以本节替代 `docs/CLAUDE.md` §五的 `§N.1 决议` 门。
+本计划 scope 覆盖 P0–P4，按单计划多 PR 串行消费；前一 PR 合入并完成验收后，才进入下一 PR。skeleton 在完成上方 promotion gate 前不执行以下实施步骤，亦不以本节替代 `docs/CLAUDE.md` §五的 `§N.1 决议` 门。
 
-### §10.1 资产与布局变更的三轮打磨
+### 资产与布局变更的三轮打磨
 
 P1 涉及 NBT、layout、placement 或复杂预览资产时，必须按 Round 1 first cut、Round 2 结构 dump/渲染/ASCII 自评、Round 3 终轮一致性复核执行；对应提交按 `(round 1/3)`、`(round 2/3)`、`(round 3/3)` 标记，终轮提交附 `<PROMISE>`，并覆盖 seed、bounds、orientation、anchor 和 footprint 证据。纯校验逻辑不适用该资产打磨门。
 
-### §10.2 PR 序列与职责边界
+### PR 序列与职责边界
 
 1. **PR-1（P0）**：profile/default、layer shape、depth-tier unknown 输入和 island mask 的 canonical validation 与 pin/integration fixture。
 2. **PR-2（P1）**：deterministic seed、layout rotation、bounds/orientation/anchor 及结构验证器。
@@ -353,14 +363,14 @@ P1 涉及 NBT、layout、placement 或复杂预览资产时，必须按 Round 1 
 
 每个 PR 只修改本阶段实际 owner 的代码、测试和本 active plan；不得修改 `docs/worldview.md`、`docs/finished_plans/` 或 excluded issue 的 owner plan。
 
-### §10.3 独立实施与审查闭环
+### 独立实施与审查闭环
 
 每个 PR 由独立实施 agent 按本节、对应阶段交付物和测试合同执行，完成后由无上下文只读 validator 对待审 HEAD 做第一性核验；validator 必须回报 HEAD 对拍和 PASS/FAIL。FAIL 时针对新 HEAD 返工并重新验证；任何合并主线造成 HEAD 变化也必须重新验证。实施、validator 和 review 结果不得以孤立 Python 单测替代真实 exporter/manifest/server consumer 链路。
 
-### §10.4 本地门禁、主线同步与 review 等待
+### 本地门禁、主线同步与 review 等待
 
 按受影响栈执行对应完整门禁；worldgen/server 跨栈变更同时跑两端门禁。推送前紧邻执行 `git fetch origin && git merge origin/main`，若 merge 带入受影响变更则重跑门禁和 validator。开 PR 后使用仓库规定的独立 review 入口和 CodeRabbit 检查；检查 pending 时按 `docs/CLAUDE.md` §六的 `ScheduleWakeup` 等待协议，不以本地自判替代复审。
 
-### §10.5 单次 consume-plan 收口
+### 单次 consume-plan 收口
 
 用户提交 `/consume-plan` 后，消费流程按 PR-1→PR-5 串行推进：每个 PR 完成实现、validator、栈门禁、主线同步、review 收敛和合入后再开下一 PR；全部 P 阶段完成后更新状态、补 `## Finish Evidence`，最后将 active plan 迁入 `docs/finished_plans/`。任一 excluded plan 或上游合同未完成时保留可核验 `BLOCKED` 证据，不得把未实施 issue 宣称为完成。
