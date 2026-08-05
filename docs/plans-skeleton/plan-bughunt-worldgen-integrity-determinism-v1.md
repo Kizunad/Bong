@@ -2,13 +2,14 @@
 
 > 计划名：`plan-bughunt-worldgen-integrity-determinism-v1`
 >
-> 状态：`docs/plans-skeleton/` 骨架，已按 master §10.1.1 完成 skeleton 注册门核验，尚未进入 active plan，不参与 `/consume-plan`。下一生命周期转换只能是 skeleton → active；转 active 前仍须按 `docs/CLAUDE.md` §五将开放问题收口为 `§N.1 决议`，并在 active promotion 中复核 current `file:line`。
+> 状态：`docs/plans-skeleton/` 骨架，当前提交树可核验根 `CLAUDE.md`、`docs/CLAUDE.md` 和 master §6.12 的 Worldgen owner row；本文只声明已登记为 skeleton，不追溯声称创建时已完成 master §10.1.1 的历史前置核验。尚未进入 active plan，不参与 `/consume-plan`。下一生命周期转换只能是 skeleton → active；转 active 前仍须按 `docs/CLAUDE.md` §五将开放问题收口为 `§N.1 决议`，并在 active promotion 中重新记录当前 `file:line` 证据。
 >
-> Promotion gate：本文件已作为 `docs/plans-skeleton/` 中的正式 skeleton 纳入 master §6.12 Worldgen ownership matrix；§1–§15 的只读调查、`§N.1 决议`、`file:line + plan section` 双锚点和 implementation owner `worldgen` 是后续 skeleton → active promotion 的门禁，不是本 skeleton 进入仓库 registry 或 P0 立项的前置条件。
+> Registry note：本文件进入仓库 registry 的事实是 `docs/plans-skeleton/` 路径与 master §6.12 ownership row；master §10.1.1 的创建前 gate 不在本文件中伪造为已完成证据。后续 skeleton → active promotion 必须由 owner 在同一提交树内复核根 `CLAUDE.md`「Plan 工作流」和 `docs/CLAUDE.md` §§五-六，并按该规则记录可核验结论。
 >
 > 范围：worldgen 产物从 blueprint/profile、布局与结构导出，到 raster/manifest、预览与 server runtime consumer 的完整性、确定性和边界合同。
 >
-> 明确不拥有：`#1623`、`#1627`、`#1853`。这三个 issue 交由 `plan-bughunt-structure-manifest-loot-consumer-v1` 吸收；本文只保留 cross-reference 和跨计划集成验收边界。
+> 明确不拥有：`#1623`、`#1627`、`#1853`。这三个 issue 的唯一既有 owner 是已归档的 `plan-terrain-tribulation-scorch-v1`（`docs/finished_plans/plan-terrain-wiring-v1.md` 的断链 #11 A 归属记录与其 Finish Evidence）；本文只保留 cross-reference 和跨计划集成验收边界，不重新分配 ownership。
+
 
 ## 阶段总览
 
@@ -17,7 +18,7 @@
 | P0 | profile/default、layer shape、mask/threshold validation | #1576 #1653 #1656 #1705 #1884 | ⬜ |
 | P1 | deterministic seed、layout rotation、结构 bounds/orientation/anchor | #1610 #1684 #1793 #1795 #1798 #1799 #1848 | ⬜ |
 | P2 | terrain/POI boundary 与 Rust consumer 对齐 | #1614 #1796 | ⬜ |
-| P3 | regen atomicity/reentrancy、console marker refresh、preview compositor 回归 | #1751 #1753；#1766 已修复，仅保留回归核验 | ⬜ |
+| P3 | regen atomicity/reentrancy、console marker refresh、preview compositor 全宽修复与回归 | #1751 #1753 #1766 | ⬜ |
 | P4 | 集成回归与结构 manifest 跨计划接缝 | umbrella-owned issue：无；cross-reference：#1623 #1627 #1853 | ⬜ |
 
 阶段日期在立项并完成对应验收后填写，格式为 `✅ YYYY-MM-DD`；当前骨架不预填完成日期。
@@ -41,7 +42,7 @@
 - 具有明确 bounds、rotation、orientation、anchor、footprint 语义的结构/布局 manifest 或导出物。
 - 对 terrain surface、POI 高程和 biome boundary 做出可核验空间分类的 raster/runtime 结果。
 - 原子、可重入且 generation-consistent 的 regen 输出；console marker 与实际产物同步。
-- preview compositor 的完整目标宽度回归产物；已修复的 half-width 路径不得复发，且不凭 #1766 重新定义未经证实的跨 cell ownership/clipping 合同。
+- preview compositor 的全宽输出与回归产物；P3 必须修复 `raster_surface` 的目标画布宽度，再锁定该修复及边界行为，且不凭 #1766 重新定义未经证实的跨 cell ownership/clipping 合同。
 - server runtime consumer 对 manifest/raster 字段的显式兼容性测试和回归证据。
 
 ### 共享类型 / 事件（Shared types / events）
@@ -79,7 +80,7 @@
 
 ### 既有计划边界与非重复约束
 
-- `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md`：拥有 `#1623/#1627/#1853` 的 structure manifest/loot consumer 修复；本计划只验证必要的跨计划产物接缝，不修改其 owned issue。
+- `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md`：记录 `corpse_mounds` / `ascension_pits` 的现存运行时断链，但不改变 header 的既有 owner 声明。本计划只验证必要的跨计划产物接缝，不修改其 owned issue。
 - `docs/plan-bughunt-anomaly-raster-runtime-consumer-v1.md`：可能承接 `#1656` 的 anomaly threshold runtime validation 子项；是否转移必须经开放问题决议。
 - `docs/plan-bughunt-raster-check-required-layers-v1.md`：可能承接 `#1653/#1705` 中属于统一 required-layer shape contract 的部分；本计划保留 profile/layout/semantic 其余边界，不能重复定义 checker。
 - `docs/plan-bughunt-worldgen-raster-check-cli-noop-v1.md`：拥有 raster checker CLI 可执行性/no-op 入口问题；本计划可以调用其 checker，但不重修 CLI main 或退出码合同。
@@ -199,17 +200,17 @@
 - 至少一条真实 worldgen raster → Rust `ColumnSample`/biome/POI consumer 集成测试证明 wire/endianness/坐标原点和分类一致。
 - P2 不新增 client/agent runtime 依赖；若消费结果需要 S2C，仅复用已存在 payload contract 并先记录决议。
 
-## P3：Regen atomicity/reentrancy、console marker refresh、preview compositor 回归
+## P3：Regen atomicity/reentrancy、console marker refresh、preview compositor 全宽修复与回归
 
-**Issue：** `#1751 #1753`；`#1766` 的历史 compositor half-width bug 已由当前主线修复，仅保留回归核验。
+**Issue：** `#1751 #1753 #1766`。
 
-**目标：** 让 worldgen regen 在并发/重复触发时保持 generation 一致和产物原子可见，console marker 与实际新产物同步，并以当前已修复 compositor 的完整目标宽度输出作为 preview grid 回归基线。
+**目标：** 让 worldgen regen 在并发/重复触发时保持 generation 一致和产物原子可见，console marker 与实际新产物同步；同时修复 preview compositor 将 `raster_surface` 以单个 `CELL_W` 宽度贴入双宽画布的 half-width 缺陷，并以修复后的完整目标宽度锁定 preview grid 回归基线。
 
 **覆盖边界：**
 
 - `#1751` console regen 后必须刷新 POI markers，而不是保留旧 marker 状态。
 - `#1753` regen reentrancy 和 manifest 非原子更新必须有明确事务边界。
-- `#1766` 的历史 preview half-width compositor bug 已由 `scripts/preview/compose_grid.py` 当前主线修复；P3 不再把它诊断为新的跨 cell geometry ownership/clipping 缺陷，只保留 compositor width 与 preview grid 边界的回归 pin，防止该已修复行为复发。
+- `#1766`：修复 `scripts/preview/compose_grid.py` 将 `raster_surface` 以 `CELL_W` 左半宽贴入 `CELL_W * 2` 画布的缺陷，使其先按完整目标画布宽度生成，再以像素断言锁定全宽输出；同时覆盖单 cell、跨 cell、cell-edge 和负/正方向 fixture，防止修复回退；不把该修复扩写成新的跨 cell ownership/clipping 实现。
 
 **涉及模块 / 路径：**
 
@@ -223,13 +224,13 @@
 1. regen 的并发、重复触发、失败中止和成功发布状态有明确 state/generation contract。
 2. manifest、raster、POI markers 和 preview 引用同一成功 generation；半写产物不会被 consumer 看到。
 3. console regen 成功后旧 marker 被替换/失效，新 marker 与新产物一致。
-4. preview compositor 使用与最终画布一致的输出宽度；对已修复的 half-width failure 及仍需核验的 cell-edge/边界输入保留明确回归断言，不重新引入未经证实的 split/clipping/ownership 实现合同。
+4. preview compositor 先将 `raster_surface` 缩放到最终画布的完整 `CELL_W * 2` 宽度，再以像素断言锁定全宽输出；对 half-width failure 及 cell-edge/边界输入保留明确回归断言，不引入未经证实的 split/clipping/ownership 实现合同。
 
 **Acceptance criteria：**
 
 - `#1753`：两个并发 regen、同一 regen 重入、生成中途失败、manifest 写入失败和重复提交均有测试；只允许一个完整 generation 对外可见，失败不会把 manifest 指向半成品。
 - `#1751`：regen 前后 POI marker 快照对拍，旧 marker 不残留，新 marker 坐标/代数与新 manifest 一致；刷新失败必须 fail-closed 而非静默成功。
-- `#1766` 回归 pin：以当前 `scripts/preview/compose_grid.py` 的 compositor 输出为基线，验证 `raster_surface` 使用完整目标画布宽度而非固定 `CELL_W` 左半宽；同时覆盖单 cell、跨 cell、cell-edge 和负/正方向 fixture，防止已修复 half-width bug 复发；不把该回归 pin 扩写成新的跨 cell ownership/clipping 实现。
+- `#1766` 回归与修复 pin：先修复 `scripts/preview/compose_grid.py`，使 `raster_surface` 按完整 `CELL_W * 2` 目标宽度缩放后再贴入 row 2；随后用像素 fixture 验证左右两半均来自源图而非初始化背景，并覆盖单 cell、跨 cell、cell-edge 和负/正方向输入。该 pin 只锁定实际全宽修复，不扩写新的跨 cell ownership/clipping 实现。
 - P3 的实际 console/regen 入口必须跑一次真实 end-to-end 产物链；不能只调用孤立 writer。
 - 如果 P3 发现 Redis、server、agent 或 client 参与，新增 wire contract 必须先完成开放问题决议和 schema/sample/consumer 对拍；否则以 worldgen-only 验收收口。
 
@@ -237,19 +238,18 @@
 
 **Umbrella-owned issue：** 无新增 owned issue。
 
-**Cross-reference only：** `#1623 #1627 #1853`，由 `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md` 拥有。
+**Cross-reference only：** `#1623 #1627 #1853`；其 owner 仅以上方 header 的既有归属声明为准，本节不重新分配 ownership。
 
 **目标：** 在不重新夺取三个 structure-manifest issue ownership 的前提下，验证 P0-P3 的 worldgen 产物与 structure manifest/loot consumer 计划能够组成一致的 exporter → manifest → server consumer 全链路。
 
 **覆盖边界：**
 
 - 本计划不修改、重述或“关闭”`#1623/#1627/#1853` 的根因。
-- structure-manifest 计划负责 `corpse_mounds` 缺失 loot 引用、`ascension_pits` 错误 manifest kind，以及 Python 导出但 Rust `RasterManifest`/consumer 不接入的问题。
+- structure-manifest 相关文档记录 `corpse_mounds` 缺失 loot 引用、`ascension_pits` 错误 manifest kind，以及 Python 导出但 Rust `RasterManifest`/consumer 不接入的问题；本计划不据此改变 header 已声明的 excluded issue owner。
 - 本计划只负责在已有/完成后的 structure-manifest 接口上做 cross-plan regression：worldgen 输出的 profile/layout/regen/preview 改动不能破坏 manifest generation、坐标、generation id 或 server loader 的既有合同。
-
 **可核验交付物：**
 
-1. 一份 ownership matrix 明确三个 excluded issue 的 owner、输入、输出、依赖和验收入口。
+1. 一份 cross-plan boundary matrix 记录三个 excluded issue 的既有接口输入、输出、依赖和验收入口；不在此处重列或分配 ownership。
 2. 一条真实 integration fixture 从 worldgen profile/layout/export 进入 structure manifest，再进入 server loader/loot consumer；测试只在两个计划都具备接口后启用。
 3. cross-plan contract 对 `RasterManifest`、structure/placement metadata、POI/marker generation 和坐标系做字段级对拍。
 4. P0-P3 的 regression suite 能在 structure-manifest plan 变更后重新运行，且不通过复制一份 schema/loader 来掩盖漂移。
@@ -310,9 +310,9 @@ fallback height 的优先级是 terrain surface sample、profile safe-y、zone/P
 
 原子发布应采用临时目录 + rename、锁、generation id、写入 journal，还是已有 pipeline/console transaction？必须定义并发请求、失败恢复、旧 generation 保留和 marker refresh 的顺序，且不引入与已有 server/worldgen event 平行的生命周期。
 
-### §12 `#1766` preview compositor 回归边界
+### §12 `#1766` preview compositor 修复与回归边界
 
-`#1766` 的 half-width 根因是 compositor 将 `raster_surface` 保持为单个 `CELL_W` 后贴入双宽画布；该路径在当前主线已修复。本 plan 只需锁定完整目标画布宽度的像素回归与 cell-edge fixture，不再选择 split geometry、per-cell clipping 或 owner-cell 等新合同；若未来出现独立的跨 cell geometry 缺陷，必须以新证据另行立项。
+`#1766` 的已核实根因是 compositor 将 `raster_surface` 保持为单个 `CELL_W` 后贴入双宽画布，导致 row 2 右半边保持背景色。P3 必须先在 `scripts/preview/compose_grid.py` 将该源图缩放到完整 `CELL_W * 2` 目标宽度，再锁定左右两半像素均来自源图的回归；单 cell、跨 cell、cell-edge 和负/正方向只作为输入 fixture，不引入 split geometry、per-cell clipping 或 owner-cell 等新合同。若未来出现独立的跨 cell geometry 缺陷，必须以新证据另行立项。
 
 ### §13 P4 与 excluded issue 的 cross-plan 验收边界
 
@@ -331,9 +331,9 @@ P0-P3 当前预期是 worldgen/server 逻辑；需确认 console/regen/preview �
 本文件已经是 master §6.12 登记的 Worldgen skeleton，不再经过 draft → skeleton 转换。后续 promotion 只能将其从 `docs/plans-skeleton/` 移到 `docs/plan-*.md`；在此之前：
 
 1. 按 `docs/CLAUDE.md` 顺序复核 worldview、finished plans、active plans、skeleton/reminder 的接入面，并保留本仓库同一提交树内根 `CLAUDE.md`「Plan 工作流」和 `docs/CLAUDE.md` §§五-六的读取证据。
-2. 为 §1–§15 开放问题补齐只读调查、`§N.1 决议` 和 `file:line + plan section` 双锚点；已修复的 #1766 只形成 compositor 回归 pin，不重新打开 geometry redesign。
+2. 为 §1–§15 开放问题补齐只读调查、`§N.1 决议` 和 `file:line + plan section` 双锚点；#1766 先完成 compositor 全宽修复，再以像素回归锁定该修复，不重新打开 geometry redesign。
 3. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
-4. 确认 `#1623/#1627/#1853` 仍由 `plan-bughunt-structure-manifest-loot-consumer-v1` 拥有，并仅在 P4 做 cross-reference。
+4. 确认 `#1623/#1627/#1853` 仍按 header 的既有 owner 声明处理，并仅在 P4 做 cross-reference。
 5. active promotion 时更新阶段状态表和 current `file:line` 锚点；`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。promotion 前本 skeleton 不由 `/consume-plan` 消费，source issue 也不得仅凭 skeleton 登记就宣称已修复。
 
 ## §10 实施工作流
@@ -349,7 +349,7 @@ P1 涉及 NBT、layout、placement 或复杂预览资产时，必须按 Round 1 
 1. **PR-1（P0）**：profile/default、layer shape、depth-tier unknown 输入和 island mask 的 canonical validation 与 pin/integration fixture。
 2. **PR-2（P1）**：deterministic seed、layout rotation、bounds/orientation/anchor 及结构验证器。
 3. **PR-3（P2）**：terrain/POI boundary、biome classification 与 Python exporter → Rust consumer 对拍。
-4. **PR-4（P3）**：regen generation/原子发布、marker refresh、preview compositor width 回归 pin。
+4. **PR-4（P3）**：regen generation/原子发布、marker refresh、preview compositor 全宽修复与回归 pin。
 5. **PR-5（P4）**：与 structure-manifest plan 的真实跨计划 integration fixture；依赖未完成时只提交明确 `BLOCKED` 证据。
 
 每个 PR 只修改本阶段实际 owner 的代码、测试和本 active plan；不得修改 `docs/worldview.md`、`docs/finished_plans/` 或 excluded issue 的 owner plan。
