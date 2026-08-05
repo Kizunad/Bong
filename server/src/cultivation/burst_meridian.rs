@@ -5,7 +5,9 @@ use valence::prelude::{
 };
 
 use crate::body_plan::intrinsic_is_humanoid_from_world;
-use crate::combat::components::{CastSource, Casting, SkillBarBindings, WoundKind};
+use crate::combat::components::{
+    CastSource, Casting, SkillBarBindings, Stamina, StaminaState, WoundKind,
+};
 use crate::combat::events::{
     ApplyStatusEffectIntent, AttackIntent, AttackReach, AttackSource, StatusEffectKind,
 };
@@ -14,6 +16,8 @@ use crate::cultivation::color::{record_style_practice, PracticeLog};
 use crate::cultivation::components::{
     ColorKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
 };
+#[cfg(test)]
+use crate::cultivation::known_techniques::TechniqueRequiredMeridian;
 use crate::cultivation::known_techniques::{TechniqueDefinition, TechniqueRegistry};
 use crate::cultivation::meridian::severed::{
     check_meridian_runtime_integrity, check_player_skill_meridian_gate, MeridianSeveredPermanent,
@@ -56,7 +60,6 @@ pub const TIE_SHAN_KAO_EVENT_SKILL: &str = "tie_shan_kao";
 pub const TIE_SHAN_KAO_OVERLOAD_RATIO: f64 = 1.6;
 /// 撕裂躯干经脉（Stomach）后的 integrity 残留比例 —— 比崩拳略缓（短爆而非零距灌入）。
 pub const TIE_SHAN_KAO_INTEGRITY_MULTIPLIER: f64 = 0.8;
-const TIE_SHAN_KAO_MERIDIANS: [MeridianId; 1] = [MeridianId::Stomach];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属靠身撞击动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，肩胯靠撞与出拳姿态语义完全不同）。
 const TIE_SHAN_KAO_ANIM_ID: &str = "bong:tie_shan_kao";
@@ -72,7 +75,6 @@ pub const XUE_BENG_BU_EVENT_SKILL: &str = "xue_beng_bu";
 /// 撕裂腿经（GallBladder）后的 integrity 残留比例。
 pub const XUE_BENG_BU_INTEGRITY_MULTIPLIER: f64 = 0.75;
 /// 突进距离（格），与 known_techniques.xue_beng_bu.range 对齐。
-const XUE_BENG_BU_MERIDIANS: [MeridianId; 1] = [MeridianId::Gallbladder];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属步法突进动画（借用解除：原借崩拳出拳
 /// `bong:beng_quan`，位移招播出拳属姿态语义错位）。
 const XUE_BENG_BU_ANIM_ID: &str = "bong:xue_beng_bu";
@@ -90,7 +92,6 @@ pub const NI_MAI_HU_TI_INTEGRITY_MULTIPLIER: f64 = 0.7;
 pub const NI_MAI_HU_TI_DAMAGE_REDUCTION: f32 = 0.35;
 /// 护体持续时间（tick）—— 与 known_techniques 的 cooldown 120 形成短窗高冷却节奏。
 pub const NI_MAI_HU_TI_BUFF_DURATION_TICKS: u64 = 60;
-const NI_MAI_HU_TI_MERIDIANS: [MeridianId; 1] = [MeridianId::Pericardium];
 /// plan-skill-anim-fidelity-v1 P3 —— 专属护体结印动画（缺失补齐：原 `anim_id: None`
 /// 完全不发 PlayAnim，护体招只有粒子+嗡音、玩家无姿态反馈）。
 const NI_MAI_HU_TI_ANIM_ID: &str = "bong:ni_mai_hu_ti";
@@ -196,13 +197,35 @@ pub fn register_skills(registry: &mut SkillRegistry) {
     registry.register(NI_MAI_HU_TI_SKILL_ID, resolve_ni_mai_hu_ti);
 }
 
+/// 从权威 `TechniqueRegistry`（单一真源）派生经脉依赖声明（M38）。
+///
+/// 各招的 `required_meridians` 在 TOML 定义（loader 已验证 channel 可被
+/// `parse_meridian_id` 解析、min_health ∈ (0,1]），此处逐条声明，消除「TOML 改了
+/// 经脉而声明表仍锁旧常量」的双源发散。channel 解析失败（理论不可达：loader 已
+/// 保证可解析）时静默跳过——声明表只防启动期重复声明，运行时门禁由 resolver 自身
+/// 从 `definition.required_meridians` 读取（`npc/technique.rs` 同理）。
 pub fn declare_meridian_dependencies(
     dependencies: &mut crate::cultivation::meridian::severed::SkillMeridianDependencies,
+    techniques: &TechniqueRegistry,
 ) {
-    dependencies.declare(BENG_QUAN_SKILL_ID, RIGHT_ARM_MERIDIANS.to_vec());
-    dependencies.declare(TIE_SHAN_KAO_SKILL_ID, TIE_SHAN_KAO_MERIDIANS.to_vec());
-    dependencies.declare(XUE_BENG_BU_SKILL_ID, XUE_BENG_BU_MERIDIANS.to_vec());
-    dependencies.declare(NI_MAI_HU_TI_SKILL_ID, NI_MAI_HU_TI_MERIDIANS.to_vec());
+    for skill_id in [
+        BENG_QUAN_SKILL_ID,
+        TIE_SHAN_KAO_SKILL_ID,
+        XUE_BENG_BU_SKILL_ID,
+        NI_MAI_HU_TI_SKILL_ID,
+    ] {
+        let meridian_ids: Vec<MeridianId> = techniques
+            .get(skill_id)
+            .map(|definition| {
+                definition
+                    .required_meridians
+                    .iter()
+                    .filter_map(|required| parse_meridian_id(&required.channel))
+                    .collect()
+            })
+            .unwrap_or_default();
+        dependencies.declare(skill_id, meridian_ids);
+    }
 }
 
 /// 从 known_techniques 读招式的 flat qi_cost（单一真值源，严禁在本文件硬编码重复）。
@@ -285,6 +308,10 @@ pub fn resolve_beng_quan(
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
     if let Err(reason) = check_beng_quan_meridian_gate(world, caster, &definition) {
         return rejected(reason);
     }
@@ -312,6 +339,7 @@ pub fn resolve_beng_quan(
     });
 
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     if let Some(mut meridians) = world.get_mut::<MeridianSystem>(caster) {
         for required in &definition.required_meridians {
             let Some(id) = parse_meridian_id(&required.channel) else {
@@ -450,6 +478,10 @@ pub fn resolve_tie_shan_kao(
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
     let Some(primary_meridian) = definition
         .required_meridians
         .first()
@@ -476,8 +508,9 @@ pub fn resolve_tie_shan_kao(
         TIE_SHAN_KAO_SKILL_ID,
     );
 
-    // ── 守恒：扣 flat qi + 撕裂躯干经脉（系列代价）───────────────────────────────
+    // ── 守恒：扣 flat qi + 体力 + 撕裂躯干经脉（系列代价）────────────────────────
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     tear_meridian(
         world,
         caster,
@@ -578,6 +611,10 @@ pub fn resolve_xue_beng_bu(
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
     let Some(primary_meridian) = definition
         .required_meridians
         .first()
@@ -604,8 +641,9 @@ pub fn resolve_xue_beng_bu(
         XUE_BENG_BU_SKILL_ID,
     );
 
-    // ── 守恒：扣 flat qi + 撕裂腿经（系列代价）+ 服务器权威位移 ──────────────────
+    // ── 守恒：扣 flat qi + 体力 + 撕裂腿经（系列代价）+ 服务器权威位移 ────────────
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     tear_meridian(
         world,
         caster,
@@ -691,6 +729,10 @@ pub fn resolve_ni_mai_hu_ti(
     if let Some(reason) = check_qi_gate(world, caster, cost) {
         return rejected(reason);
     }
+    // M31：体力门。零成本放行（M33），Exhausted / 不足拒绝。
+    if let Some(reason) = check_stamina_gate(world, caster, definition.stamina_cost) {
+        return rejected(reason);
+    }
     let Some(primary_meridian) = definition
         .required_meridians
         .first()
@@ -717,8 +759,9 @@ pub fn resolve_ni_mai_hu_ti(
         NI_MAI_HU_TI_SKILL_ID,
     );
 
-    // ── 守恒：扣 flat qi + 逆转真元撕本脉（系列代价）+ 短时减伤 buff ──────────────
+    // ── 守恒：扣 flat qi + 体力 + 逆转真元撕本脉（系列代价）+ 短时减伤 buff ────────
     spend_qi(world, caster, cost);
+    apply_stamina_cost(world, caster, definition.stamina_cost, now_tick);
     tear_meridian(
         world,
         caster,
@@ -832,6 +875,48 @@ fn check_qi_gate(
         return Some(CastRejectReason::QiInsufficient);
     }
     None
+}
+
+/// 体力门（M31）：Exhausted / current ≤ 0 / current < stamina_cost 均拒绝。
+/// 零成本（`stamina_cost <= 0`）直接放行——与 qi gate 的零成本语义对称（M33：
+/// valid zero-cost metadata 不能被当作 insufficient）。
+/// 不在此处扣减（扣减由 `apply_stamina_cost` 在所有门通过后执行）。
+fn check_stamina_gate(
+    world: &bevy_ecs::world::World,
+    caster: Entity,
+    stamina_cost: f32,
+) -> Option<CastRejectReason> {
+    if stamina_cost <= 0.0 {
+        return None;
+    }
+    let Some(stamina) = world.get::<Stamina>(caster) else {
+        // 无 Stamina 组件 = 无体力系统实体（如纯测试 spawn），不拦。
+        return None;
+    };
+    if stamina.state == StaminaState::Exhausted
+        || stamina.current <= 0.0
+        || stamina.current < stamina_cost
+    {
+        return Some(CastRejectReason::InRecovery);
+    }
+    None
+}
+
+/// 扣除体力（M31）：与 `morph.yixing` 同一模式——clamp 到 [0, max] 并打
+/// `last_drain_tick` 时间戳。仅在所有门通过后调用。
+fn apply_stamina_cost(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    stamina_cost: f32,
+    now_tick: u64,
+) {
+    if stamina_cost <= 0.0 {
+        return;
+    }
+    if let Some(mut stamina) = world.get_mut::<Stamina>(caster) {
+        stamina.current = (stamina.current - stamina_cost).clamp(0.0, stamina.max);
+        stamina.last_drain_tick = Some(now_tick);
+    }
 }
 
 fn check_beng_quan_meridian_gate(
@@ -2050,9 +2135,17 @@ mod tests {
                 definition.range = 7.5;
                 definition.cast_ticks = 11;
                 definition.cooldown_ticks = 89;
+                definition.stamina_cost = 3.0;
             },
         ));
         let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 20.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: None,
+            state: StaminaState::Idle,
+        });
 
         let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
 
@@ -2064,8 +2157,88 @@ mod tests {
             }
         );
         assert!((qi(&app, caster) - 93.75).abs() < 1e-9);
+        // M31：stamina_cost=3.0 已扣除（20 → 17），并打了 last_drain_tick。
+        let stamina = app
+            .world()
+            .get::<crate::combat::components::Stamina>(caster)
+            .unwrap();
+        assert_eq!(stamina.current, 17.0, "M31: 必须扣 definition.stamina_cost");
+        assert_eq!(stamina.last_drain_tick, Some(10), "M31: 必须打 drain tick");
         let position = app.world().get::<Position>(caster).unwrap().get();
         assert!((position.z - 7.5).abs() < 1e-9 && position.x.abs() < 1e-9);
+    }
+
+    #[test]
+    fn xue_beng_bu_rejects_when_stamina_insufficient_without_displacement() {
+        // M31 负向：stamina_cost 高于当前体力 → 拒绝且零副作用（不位移/不扣 qi/不撕裂）。
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.stamina_cost = 3.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 2.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: None,
+            state: StaminaState::Idle,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(result, rejected(CastRejectReason::InRecovery));
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        let position = app.world().get::<Position>(caster).unwrap().get();
+        assert_eq!(position, DVec3::ZERO, "no displacement on rejection");
+        let stamina = app.world().get::<Stamina>(caster).unwrap();
+        assert_eq!(
+            stamina.current, 2.0,
+            "stamina must be untouched on rejection"
+        );
+    }
+
+    #[test]
+    fn xue_beng_bu_zero_stamina_cost_casts_even_when_exhausted() {
+        // M33：valid zero-cost metadata（stamina_cost = 0.0）不能被体力 gate 当
+        // insufficient 拒绝——Exhausted 状态下零成本招仍可施放。与 qi gate 的
+        // 零成本语义（`cost <= EPSILON` 放行）对称。
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.stamina_cost = 0.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        // Exhausted + 0 体力——若 stamina gate 错误拦零成本，这里会 InRecovery。
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 0.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: Some(5),
+            state: StaminaState::Exhausted,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 50,
+                anim_duration_ticks: 6,
+            },
+            "M33: zero-cost stamina must not block casting"
+        );
+        assert!((qi(&app, caster) - 93.75).abs() < 1e-9);
     }
 
     #[test]
@@ -2477,15 +2650,43 @@ mod tests {
         assert!(registry.lookup(NI_MAI_HU_TI_SKILL_ID).is_some());
 
         let mut deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
-        declare_meridian_dependencies(&mut deps);
-        assert_eq!(deps.lookup(TIE_SHAN_KAO_SKILL_ID), &[MeridianId::Stomach]);
+        let techniques = TechniqueRegistry::load_for_tests();
+        declare_meridian_dependencies(&mut deps, &techniques);
+        // M38：声明必须派生自权威 registry（TOML required_meridians），
+        // 而非本文件锁死的旧常量（双源发散）。
+        assert_eq!(
+            deps.lookup(TIE_SHAN_KAO_SKILL_ID),
+            &[MeridianId::Stomach],
+            "tie_shan_kao 声明须来自 registry required_meridians"
+        );
         assert_eq!(
             deps.lookup(XUE_BENG_BU_SKILL_ID),
-            &[MeridianId::Gallbladder]
+            &[MeridianId::Gallbladder],
+            "xue_beng_bu 声明须来自 registry required_meridians"
         );
         assert_eq!(
             deps.lookup(NI_MAI_HU_TI_SKILL_ID),
-            &[MeridianId::Pericardium]
+            &[MeridianId::Pericardium],
+            "ni_mai_hu_ti 声明须来自 registry required_meridians"
+        );
+    }
+
+    #[test]
+    fn declare_meridian_dependencies_follows_registry_override() {
+        // M38 双源发散回归锁：TOML 改经脉后声明表必须跟随，不能锁旧常量。
+        let techniques =
+            TechniqueRegistry::load_for_tests_with_override(TIE_SHAN_KAO_SKILL_ID, |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Liver".to_string(),
+                    min_health: 0.3,
+                }];
+            });
+        let mut deps = crate::cultivation::meridian::severed::SkillMeridianDependencies::default();
+        declare_meridian_dependencies(&mut deps, &techniques);
+        assert_eq!(
+            deps.lookup(TIE_SHAN_KAO_SKILL_ID),
+            &[MeridianId::Liver],
+            "声明必须跟随 registry 覆盖后的 required_meridians"
         );
     }
 

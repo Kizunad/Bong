@@ -1048,7 +1048,12 @@ fn inject_bond_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: f
 }
 
 /// 将剑道招式消耗中未注入灵剑的余量（`cost - injected`）归还给 caster 所在 zone，
-/// 并发 `QiTransfer(player → zone, remainder)` 守恒审计事件。
+/// 并发守恒审计事件。
+///
+/// M23 blocker：zone 容量受 `QI_ZONE_UNIT_CAPACITY` 约束，满时不能把超出部分静默
+/// clamp 掉却仍 emit 全额 audit（玩家已扣、zone 未收 → 真元蒸发）。结算统一走
+/// `qi_release_to_zone`（accept 入 zone / overflow 路由 Overflow 账户），保证
+/// 玩家扣减总有目的账户承接。
 ///
 /// - 若 ZoneRegistry 不存在（测试 / 早期启动期）则静默 skip。
 /// - 若 remainder ≤ ε 则无需操作。
@@ -1059,7 +1064,7 @@ fn credit_skill_qi_to_zone(
     injected: f64,
 ) {
     let remainder = qi_cost - injected;
-    if remainder <= f64::EPSILON {
+    if remainder <= crate::qi_physics::constants::QI_EPSILON {
         return;
     }
     let pos = world
@@ -1076,21 +1081,56 @@ fn credit_skill_qi_to_zone(
             .map(|z| z.name.clone())
             .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
     };
+    let zone_current = world
+        .get_resource::<crate::world::zone::ZoneRegistry>()
+        .and_then(|registry| registry.find_zone_by_name(&zone_name))
+        .map(|zone| zone.spirit_qi * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
+        .unwrap_or(0.0);
+    let from = QiAccountId::player(format!("entity:{caster:?}"));
+    let to = QiAccountId::zone(zone_name.clone());
+    let outcome = match crate::qi_physics::release::qi_release_to_zone(
+        remainder,
+        from.clone(),
+        to,
+        zone_current,
+        crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "[bong][sword_path] invalid skill qi release for {:?}; dropped",
+                caster,
+            );
+            return;
+        }
+    };
     if let Some(mut registry) = world.get_resource_mut::<crate::world::zone::ZoneRegistry>() {
         if let Some(zone) = registry.find_zone_mut(&zone_name) {
-            zone.spirit_qi = (zone.spirit_qi
-                + remainder / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-                .clamp(-1.0, 1.0);
+            zone.spirit_qi =
+                outcome.zone_after / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         }
     }
-    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
-        if let Ok(transfer) = QiTransfer::new(
-            QiAccountId::player(format!("entity:{caster:?}")),
-            QiAccountId::zone(zone_name),
-            remainder,
-            QiTransferReason::ReleaseToZone,
-        ) {
+    if let Some(transfer) = outcome.transfer {
+        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
             events.send(transfer);
+        }
+    }
+    if outcome.overflow > crate::qi_physics::constants::QI_EPSILON {
+        tracing::warn!(
+            "[bong][sword_path] skill qi release for {:?} overflowed zone cap by {}; routing to overflow",
+            caster,
+            outcome.overflow,
+        );
+        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+            if let Ok(transfer) = QiTransfer::new(
+                from,
+                QiAccountId::overflow(format!("sword_path:{caster:?}")),
+                outcome.overflow,
+                QiTransferReason::ReleaseToZone,
+            ) {
+                events.send(transfer);
+            }
         }
     }
 }
@@ -1376,6 +1416,46 @@ mod tests {
         );
     }
 
+    /// M13：Condense Edge resolver 必须消费 definition 的每个实际字段——cost、cast/cooldown
+    /// timing、range、race、realm、meridians，而不只是 realm。override 全部字段后断言
+    /// 扣费、AV 参数与结果一致。
+    #[test]
+    fn condense_edge_runtime_consumes_overridden_cost_timing_and_range() {
+        let (mut app, caster) = setup_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_CONDENSE_EDGE_ID,
+            |definition| {
+                definition.qi_cost = 12.5;
+                definition.stamina_cost = 3.0;
+                definition.cast_ticks = 7;
+                definition.cooldown_ticks = 11;
+                definition.range = 2.5;
+            },
+        ));
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+
+        let result = cast_condense_edge(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 11,
+                anim_duration_ticks: 7,
+            },
+            "overridden cast/cooldown must drive the CastResult payload"
+        );
+        let charged = qi_before - app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (charged - 12.5).abs() < 1e-6,
+            "condense edge must drain the overridden qi_cost, got {charged}"
+        );
+        let avs = drain_av(&app);
+        assert!(
+            avs.contains(&SwordPathSkillId::CondenseEdge),
+            "overridden metadata cast must still emit the CondenseEdge AV event"
+        );
+    }
+
     #[test]
     fn qi_slash_runtime_rejects_overridden_meridian_health_requirement() {
         let (mut app, caster) = setup_app();
@@ -1580,6 +1660,98 @@ mod tests {
         let target = app.world_mut().spawn(Position::default()).id();
         let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
         assert!(matches!(result, CastResult::Started { .. }));
+        assert_eq!(drain_av(&app), vec![SwordPathSkillId::Manifest]);
+    }
+
+    /// M13：Resonance 此前完全没有 override 驱动测试。override cost/timing/range 后
+    /// 断言扣费、CastResult 与 AoE 半径（范围内目标命中/范围外目标不受影响）都来自
+    /// injected definition。
+    #[test]
+    fn resonance_runtime_consumes_overridden_cost_timing_and_range() {
+        let (mut app, caster) = setup_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_RESONANCE_ID,
+            |definition| {
+                definition.qi_cost = 9.0;
+                definition.cast_ticks = 4;
+                definition.cooldown_ticks = 13;
+                definition.range = 2.0;
+            },
+        ));
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        // caster 在原点；范围内放一个 StatusEffects 实体（命中），范围外放一个（不命中）。
+        let in_range = app
+            .world_mut()
+            .spawn((Position::new([1.0, 0.0, 0.0]), StatusEffects::default()))
+            .id();
+        let out_range = app
+            .world_mut()
+            .spawn((Position::new([3.0, 0.0, 0.0]), StatusEffects::default()))
+            .id();
+
+        let result = cast_resonance(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 13,
+                anim_duration_ticks: 4,
+            },
+            "overridden cast/cooldown must drive the CastResult payload"
+        );
+        let charged = qi_before - app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (charged - 9.0).abs() < 1e-6,
+            "resonance must drain the overridden qi_cost, got {charged}"
+        );
+        let intents: Vec<_> = app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .iter_current_update_events()
+            .cloned()
+            .collect();
+        assert!(
+            intents.iter().any(|i| i.target == in_range),
+            "entity within overridden range must be slowed, intents={intents:?}"
+        );
+        assert!(
+            !intents.iter().any(|i| i.target == out_range),
+            "entity outside overridden range must NOT be slowed, intents={intents:?}"
+        );
+    }
+
+    /// M13：Manifest 也没有 override 驱动测试。override cost/timing/cooldown 后断言
+    /// 扣费与 CastResult 都来自 injected definition。
+    #[test]
+    fn manifest_runtime_consumes_overridden_cost_timing_and_cooldown() {
+        let (mut app, caster) = setup_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_MANIFEST_ID,
+            |definition| {
+                definition.qi_cost = 15.0;
+                definition.stamina_cost = 2.0;
+                definition.cast_ticks = 6;
+                definition.cooldown_ticks = 17;
+            },
+        ));
+        let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let target = app.world_mut().spawn(Position::default()).id();
+
+        let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 17,
+                anim_duration_ticks: 6,
+            },
+            "overridden cast/cooldown must drive the CastResult payload"
+        );
+        let charged = qi_before - app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        assert!(
+            (charged - 15.0).abs() < 1e-6,
+            "manifest must drain the overridden qi_cost, got {charged}"
+        );
         assert_eq!(drain_av(&app), vec![SwordPathSkillId::Manifest]);
     }
 

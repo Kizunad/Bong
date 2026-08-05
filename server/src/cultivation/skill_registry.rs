@@ -116,7 +116,13 @@ impl SkillRegistry {
 
 /// 构造生产运行时完整的经脉依赖声明表。显式空声明与未声明必须保持可区分；任意重复
 /// 声明会由 [`SkillMeridianDependencies::declare`] 在启动期直接拒绝。
-pub fn init_meridian_dependencies() -> SkillMeridianDependencies {
+///
+/// `techniques` 供 M38 修复使用：`burst_meridian::declare_meridian_dependencies` 从
+/// **权威 `TechniqueRegistry`**（单一真源）读取各招 `required_meridians` 生成声明，
+/// 消除「TOML 改了经脉而声明表仍锁旧常量」的双源发散。
+pub fn init_meridian_dependencies(
+    techniques: &crate::cultivation::known_techniques::TechniqueRegistry,
+) -> SkillMeridianDependencies {
     let mut deps = SkillMeridianDependencies::default();
     crate::combat::zhenmai_v2::declare_meridian_dependencies(&mut deps);
     crate::combat::anqi_v2::declare_meridian_dependencies(&mut deps);
@@ -128,7 +134,7 @@ pub fn init_meridian_dependencies() -> SkillMeridianDependencies {
     crate::movement::dash_proficiency::declare_dash_meridian_dependencies(&mut deps);
     crate::npc::npc_skill::declare_npc_skill_meridian_deps(&mut deps);
     crate::combat::woliu::declare_meridian_dependencies(&mut deps);
-    crate::cultivation::burst_meridian::declare_meridian_dependencies(&mut deps);
+    crate::cultivation::burst_meridian::declare_meridian_dependencies(&mut deps, techniques);
     crate::combat::yidao::declare_meridian_dependencies(&mut deps);
     crate::dandao::declare_meridian_dependencies(&mut deps);
     crate::cultivation::dugu::declare_meridian_dependencies(&mut deps);
@@ -253,7 +259,14 @@ mod tests {
 
     /// 构造与生产路径完全一致的 SkillMeridianDependencies（不走 Bevy App）。
     fn build_production_deps() -> SkillMeridianDependencies {
-        init_meridian_dependencies()
+        init_meridian_dependencies(
+            &crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH),
+                &crate::body_plan::RaceRegistry::default(),
+            )
+            .expect("checked-in technique catalog must load"),
+        )
     }
 
     /// 審計不変量（宣言完整性）：SkillRegistry に登録された招式のうち

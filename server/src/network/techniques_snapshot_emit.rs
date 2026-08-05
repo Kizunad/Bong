@@ -146,4 +146,140 @@ mod tests {
         assert_eq!(entry.qi_cost, 7.25);
         assert_eq!(entry.range, 4.5);
     }
+
+    #[test]
+    fn snapshot_qi_cost_above_f32_range_is_rejected_at_loader_and_not_emitted() {
+        // M14：qi_cost 的 wire 契约是 f32——loader 必须拒绝超过 f32::MAX 的值，
+        // 否则 snapshot 的 `as f32` 会把 1e40 窄化成 +inf 推给 client。先证明
+        // 1e40 在 loader 里被拒（边界测试），再证明 snapshot 对合法最大值以内的
+        // 值不溢出。
+        let error = TechniqueRegistry::load_from_contents_for_tests(
+            r#"
+[[techniques]]
+id = "sword.cleave"
+display_name = "劈"
+grade = "common"
+description = "基础劈砍"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "humanoid" }
+qi_cost = 1e40
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#,
+        )
+        .expect_err("qi_cost above f32::MAX must be rejected by the loader (M14)");
+        assert!(
+            format!("{error}").contains("f32"),
+            "rejection message should name the f32 wire boundary, got {error}"
+        );
+
+        // 合法最大值以内（f32::MAX 同量级但可表示）的值 snapshot 不产生 infinity。
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.qi_cost = f64::from(f32::MAX);
+            });
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let snapshot = build_techniques_snapshot(&registry, &known);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert!(
+            snapshot.entries[0].qi_cost.is_finite(),
+            "f32::MAX 可表示值 snapshot 必须有限，实际 {}",
+            snapshot.entries[0].qi_cost
+        );
+        assert_eq!(snapshot.entries[0].qi_cost, f32::MAX);
+    }
+
+    #[test]
+    fn snapshot_qi_cost_16777217_precision_boundary_rounds_but_stays_finite() {
+        // M32：f32 精度边界——16777217 不能被 f32 精确表示（变 16777216）。
+        // loader 接受该值（≤ f32::MAX 且有限），snapshot 必须保持有限（不能
+        // infinity），客户端显示与服务器扣费的小幅精度差是可接受的 wire 契约
+        // 行为，但不能是非有限值。
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.qi_cost = 16_777_217.0;
+            });
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let snapshot = build_techniques_snapshot(&registry, &known);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert!(
+            snapshot.entries[0].qi_cost.is_finite(),
+            "16777217 窄化后必须有限（M32）"
+        );
+        assert_eq!(
+            snapshot.entries[0].qi_cost, 16_777_216.0_f32,
+            "f32 无法表示 16777217，应精确落在 16777216（M32 精度边界）"
+        );
+    }
+
+    #[test]
+    fn aggregate_snapshot_bound_accepts_checked_in_catalog() {
+        // M18：catalog 被接受 ⇒ 学会全部条目的玩家必能收到完整快照。checked-in catalog
+        // 49 条、最长 description 41 字节，最坏聚合大小必须显著低于 32 KiB wire 上限。
+        let registry = TechniqueRegistry::load_for_tests();
+        let aggregate = registry.aggregate_snapshot_size();
+        assert!(
+            aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
+            "checked-in catalog worst-case snapshot ~{aggregate} bytes must fit MAX_PAYLOAD_BYTES = {}",
+            crate::schema::common::MAX_PAYLOAD_BYTES
+        );
+        // 保守估计的实际余量：即使再翻 10 倍也仍在限制内（与 loader 的
+        // MAX_CATALOG_ENTRIES = 512 相对照，填满 512 条就应突破）。
+        let extrapolated = aggregate * 10;
+        assert!(
+            extrapolated > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "10x catalog scale should exceed the wire limit (aggregate={aggregate}, extrapolated={extrapolated})"
+        );
+    }
+
+    #[test]
+    fn oversize_description_is_rejected_at_loader_not_dropped_at_send() {
+        // M18 负向用例：超长 description 必须在 loader 拒绝（单条 1024 字节上限，
+        // checked-in 最长 41 字节），不能等发送端 `PayloadBuildError::Oversize`
+        // 整包丢弃让快照消失。
+        let too_long = "刀".repeat(2_000);
+        let error = TechniqueRegistry::load_from_contents_for_tests(&format!(
+            r#"
+[[techniques]]
+id = "sword.cleave"
+display_name = "劈"
+grade = "common"
+description = "{too_long}"
+required_realm = "Awaken"
+required_meridians = []
+required_race = {{ kind = "humanoid" }}
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#
+        ))
+        .expect_err("2000-byte description must be rejected by the loader (M18)");
+        assert!(
+            format!("{error}").contains("description"),
+            "rejection message should name the description field, got {error}"
+        );
+    }
 }
