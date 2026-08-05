@@ -313,6 +313,18 @@ pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> 
 
     #[cfg(any(unix, windows))]
     let expected = std::fs::metadata(&canonical_path)?;
+    // Capture the containing directory identity before open. On platforms
+    // without `/proc/self/fd`, this is the only check that can prove the
+    // *opened* object still lives under the trusted root after an ancestor swap:
+    // the final identity comparison proves the same object was opened, but a
+    // file moved outside the root keeps its identity, so the containing
+    // directory's identity must also survive admission.
+    #[cfg(any(unix, windows))]
+    let expected_parent = std::fs::metadata(
+        canonical_path
+            .parent()
+            .expect("canonical asset path must have a parent directory"),
+    )?;
     #[cfg(test)]
     OPEN_REGULAR_FILE_BEFORE_OPEN_TEST_HOOK.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
@@ -345,6 +357,39 @@ pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> 
                 trusted_root.display()
             ),
         ));
+    }
+    // Non-Linux descriptor-location revalidation: the identity comparison below
+    // proves the original object was opened, but not that an ancestor still
+    // places it beneath the trusted root. Compare the containing directory
+    // captured before open with the directory the *original path* now resolves
+    // through. A final component may legitimately be replaced after open (the
+    // admitted bytes are read from the opened descriptor, never re-opened by
+    // path), but an ancestor swap leaves a recreated or symlinked directory
+    // behind and is rejected here. (Linux `/proc/self/fd` covers the same
+    // contract by re-reading the descriptor's own resolved location.)
+    #[cfg(any(unix, windows))]
+    {
+        let admitted_parent = std::fs::metadata(
+            path.parent()
+                .expect("asset path must have a parent directory"),
+        )?;
+        #[cfg(unix)]
+        let matches = (expected_parent.dev(), expected_parent.ino())
+            == (admitted_parent.dev(), admitted_parent.ino());
+        #[cfg(windows)]
+        let matches = (
+            expected_parent.volume_serial_number(),
+            expected_parent.file_index(),
+        ) == (
+            admitted_parent.volume_serial_number(),
+            admitted_parent.file_index(),
+        );
+        if !matches {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("{} changed during trusted-root admission", path.display()),
+            ));
+        }
     }
     #[cfg(unix)]
     {
@@ -774,6 +819,71 @@ mod tests {
         assert!(error
             .to_string()
             .contains("changed during trusted-root admission"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// The double-swap escape: the target is *moved* (same inode) outside the root
+    /// and the ancestor swapped to a symlink pointing at it, then the ancestor is
+    /// swapped *back* before the post-open re-canonicalize. Every path-based
+    /// containment re-check and even the pre-open identity capture then see a
+    /// consistent in-range picture; only comparing the opened descriptor's own
+    /// identity against the re-canonicalized path (Linux `/proc/self/fd`, or the
+    /// non-Linux fd↔path identity branch) rejects the admission.
+    #[cfg(unix)]
+    #[test]
+    fn open_under_root_rejects_ancestor_swap_restored_before_recheck() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_double_swap_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        let nested = root.join("decorations/tree");
+        let external = base.join("external");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(nested.join("template.nbt"), b"original").unwrap();
+        std::fs::write(external.join("template.nbt"), b"outside").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        // before open: move the original (same inode) out and point the ancestor at it.
+        let moved = base.join("moved");
+        std::fs::create_dir_all(&moved).unwrap();
+        let hook_nested = nested.clone();
+        let hook_moved = moved.clone();
+        set_open_regular_file_before_open_test_hook(move || {
+            std::fs::rename(
+                hook_nested.join("template.nbt"),
+                hook_moved.join("template.nbt"),
+            )
+            .unwrap();
+            std::fs::remove_dir(&hook_nested).unwrap();
+            symlink(&hook_moved, &hook_nested).unwrap();
+        });
+        // after open: restore the ancestor with a *different* inode under the same path.
+        let hook_restored = nested.clone();
+        set_open_regular_file_after_open_test_hook(move || {
+            std::fs::remove_file(&hook_restored).unwrap(); // removes the symlink itself
+            std::fs::create_dir_all(&hook_restored).unwrap();
+            std::fs::write(hook_restored.join("template.nbt"), b"restored").unwrap();
+        });
+
+        let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
+            .expect_err("an opened descriptor relocated outside the root must be rejected");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        let message = error.to_string();
+        assert!(
+            message.contains("resolves outside trusted root")
+                || message.contains("changed during trusted-root admission"),
+            "descriptor-location violation must be diagnosed, got: {message}"
+        );
+
         let _ = std::fs::remove_dir_all(base);
     }
 
