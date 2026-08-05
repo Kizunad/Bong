@@ -15,7 +15,19 @@
 - **进料**：`ClientPlayConnectionEvents.DISCONNECT`（既有唯一权威入口）、`ClientConnectionStatusStore` 会话状态机。
 - **出料**：所有 HUD planner / Screen / tooltip 读到的 store 快照保证是本会话的。
 - **共享类型**：新 `SessionScopedStore` 接口（单一 `clearOnDisconnect()` 生产语义）+ 显式静态 adapter registry / FQCN manifest；Store 继续保留既有静态业务 API，registry 不依赖构造器实例化、运行时反射或注解扫描。
-- **跨仓库契约**：零 wire 改动；loop 音效清理对齐 `feedback_audio_loop_lifecycle`（硬停连延迟层一起哑）。
+- **跨仓库契约**：通常零 wire 改动；craft 例外消费 master M-09 的 A-06/A-08 handler contract。`CraftStore` 持有当前 accepted `session_key`、该 identity 的 highest generation/`phase_revision`、当前 `open_request_id` 与 matching `OpenPending`；普通 A-06 accepted hydration 必须回显该 `open_request_id`，并携带 `session_transition=Initial | Rollover { previous_session_key }`。断线后的 S-10 guarded restore 不依赖已清除的 request/latch：server 是 reconnect guard 的唯一 producer。S-07 durable checkpoint 成功时，R1 生成一次性 `ReconnectGuard { owner_key, session_key, generation, phase_revision, restore_token }`，R3 将它与 Suspended checkpoint 同事务持久化；新连接时 R3 先加载该 guard，R1/R6 按同一有序 server-data stream 先发送独立 `CraftRestoreGuard { owner_key, session_key, generation, phase_revision, restore_token }` control frame，再发送独立 A-06 `Restore { restore_token }` variant 的 Paused projection。client bridge 只把独立 frame 交给 `CraftStore.armReconnectGuard(...)`，不生成 token；CraftStore 只在当前连接已 arm 的 guard、owner、session identity、generation 与 `phase_revision` 全部对拍时接受 Restore，成功后立即消费该 guard。R1 S-10 同时校验并消费 server-side guard；Restore 不依赖已清除的 `open_request_id`/`OpenPending`，旧 guard 不能跨连接或重放。仅 `Initial` 作用于无 session 的 Idle/OpenPending；只有 previous key 等于当前 key 的 `Rollover` 才授权新 `session_key` 替换旧 identity。
+
+  CraftStore 的 authoritative phase acceptance 明确按下表执行；所有同 identity/generation 的更新都要求 `phase_revision > current_phase_revision`，较低或相等 revision 一律 no-op，不能用 phase 名称判断新旧：
+
+  | 当前 accepted phase | 更高 revision 的 incoming phase | 结果 |
+  |---|---|---|
+  | `Running` | `Running` / `Paused` / `HandoffPreparing` / `Ended` | 接受；`Paused` 是权威 pause，后续更高 revision 的 `Running` 仍可按 S-19 接受 |
+  | `Paused` | `Paused` / `Running` / `HandoffPreparing` / `Ended` | 接受；`Running` 是 matching Resume 后的合法单调 successor，不得被旧的“Paused 禁止被 Running 覆盖”规则拦截 |
+  | `HandoffPreparing` | `HandoffPreparing` / `Ended` | 接受终态推进；`Running`/`Paused`/`Suspended` no-op |
+  | `Ended` | `Ended` | 仅接受更高 revision 的终态重放；其他 phase no-op |
+  | disconnect 后 `Empty` + armed guard | 仅 `Restore { restore_token }` + `Paused` 且 token/binding/revision 与 guard 完全匹配 | 接受为本连接首个 craft projection；`Initial`/`Rollover`/普通 phase no-op，不发送普通 Pause、不重开第二个 Screen |
+
+  对 `Suspended` 只走上行 server-side S-10 与下发的 guarded `Restore`; client 不把未经 guard 的 `Suspended` 或 `Running` 当作 reconnect hydration。较旧 generation、未授权 key 变化、同 generation 且 `phase_revision <= current` 的 snapshot 均 no-op。仅同 request_id 的 A-08 清 pending 并记录 reason；不可关联 parse rejection 不触碰 pending，stale/mismatched rejection/hydration no-op；disconnect 原子清空全部 craft state 与旧 reconnect guard。loop 音效清理对齐 `feedback_audio_loop_lifecycle`（硬停连延迟层一起哑）。
 - **worldview 锚点**：`docs/worldview.md §一 L17-L26` 的“匮乏、信息差、搜打撤”要求跨会话观察必须可信；Store 生命周期属于 client 基础设施，不新增玩法、境界、经济或真元物理规则。
 
 ## 阶段
@@ -24,10 +36,12 @@
   - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/{ClientStoreScopeManifest,SessionScopedStore,SessionStoreHandle,SessionScopedStoreRegistry}.java`；`SessionScopedStore.clearOnDisconnect()`；`SessionStoreHandle.forStore(...)`；`SessionScopedStoreRegistry.clearAllOnDisconnect()`。
   - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin 108 个 Store 的三分类、106 个 session Store、`ClientConnectionStatusStore` 外部 token 管理与 P0 空 registry；`SessionScopedStoreRegistryTest` pin 声明顺序、重复 FQCN fail-fast、Store / reporter 异常隔离和 `Error` 透传。
   - **跨仓库契约**：纯 client 生命周期基础设施；schema、Redis key、CustomPayload 均无新增或变更。
-- ⬜ **P1 在册 Store 平移**：把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。
+- ⬜ **P1 在册 Store 平移**：把当前 `clearClientStateOnDisconnect()` 中已存在的 Store 清理逐项迁入 registry；断线 helper 改为调用 registry 一次。非 Store 的 renderer / handler / ambience 等生命周期 hook 继续由 helper 显式拥有，P1 不借重构删除它们。R1 craft 接缝以本阶段已登记的 `CraftStore` 为唯一 client session-state owner：M-09 handler 维护 highest accepted generation/current open request，matching A-08 清 `OpenPending` 并允许重试，duplicate/stale/mismatched state/rejection no-op，disconnect 清 request/session/latch 与已 arm 的 reconnect guard；R6/M-09 的 server bridge 在 Restore 前先消费独立 `CraftRestoreGuard` control frame，调用 `CraftStore.armReconnectGuard(...)`，不得由 client store 生成或猜测 token；R7 P2 只消费该 Store 实现 open/start/close/pause/cancel/resume，不再建立第二份状态。
+  - **CraftStore state acceptance pin**：同 `session_key + generation` 只接受 `phase_revision > current_phase_revision`；`Running→Paused`、`Paused→Running`（S-19 Resume）、`Paused→HandoffPreparing`、`HandoffPreparing→Ended` 均可按更高 revision 接受，Running/Paused 不因 phase 名称互相覆盖而被拒绝；低/等 revision、旧 generation、未授权 key 变化均 no-op。`Empty + armed guard` 只接受 token/binding/revision 全匹配的 `Restore { phase=Paused }`，成功后消费 guard；`Initial`/`Rollover` 不得绕过断线后的 guard，`Running`/`Ended`/`HandoffPreparing` Restore 均 no-op。
+
   - **模块 / symbol**：`client/src/main/java/com/bong/client/lifecycle/SessionScopedStoreRegistry.java` 的显式 `REGISTERED`；`client/src/main/java/com/bong/client/BongNetworkHandler.java` 的 `disconnectSession(...)` / `clearClientStateOnDisconnect()`。
-  - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin P1 已迁移 FQCN 集；`BongNetworkHandlerTest` pin token invalidation 先于 registry、迟到旧 handler 不清新 session、非 Store hook 仍保留；每个 adapter 以目标 Store 的状态级行为测试证明 method reference 未错绑。
-  - **跨仓库契约**：保持现有 wire、schema、Redis key 与 CustomPayload 不变。
+  - **测试抓手**：`ClientStoreScopeManifestTest` 精确 pin P1 已迁移 FQCN 集；`BongNetworkHandlerTest` pin token invalidation 先于 registry、迟到旧 handler 不清新 session、非 Store hook 仍保留；每个 adapter 以目标 Store 的状态级行为测试证明 method reference 未错绑。CraftStore 另锁 `OpaqueId` 的空串/空白/Unicode/超长与 `U64DecimalString` 的负数/小数/科学计数法/前导零/overflow 反例，以及 generation 0/1/max 单调、同 generation identity mismatch、matching A-08 clear/retry、stale/mismatched A-08 no-op、disconnect 后迟到 state/rejection 不复活旧 pending；正向 rollover 另以 authoritative `session_key=K2` 替换既有 `K1`，断言新 identity 被接受、generation floor 从 K2 的起点重建，旧 K1 state/rejection 不再写回；S-10 restore 另覆盖 disconnect 清除 `OpenPending` 后仅凭 matching `restore_token` + reconnect guard + owner/session identity/generation + strictly higher `phase_revision` 接受 server-authoritative `Paused`，missing/wrong/stale token、owner/key/generation/revision mismatch、Running/Ended/HandoffPreparing projection 均 no-op，且不得发送普通 Pause 或重开第二个 Screen。
+  - **跨仓库契约**：非 craft Store 保持现有 wire、schema、Redis key 与 CustomPayload 不变；CraftStore 只消费 M-09 已冻结的 A-06/A-08 router 输出，不修改 schema/converter。
 - ⬜ **P2 裸奔状态收编**：按 P0 manifest 显式接入 Freshness、`combat/store/`、炼丹 / 锻造 / 灵田 / 灵宝 / TSY / 医道等会话态 Store、玩家动画层缓存，并为灵田等循环音效提供“活动实例 + 延迟层 + 派生 flag”同边界硬停。
   - **模块 / symbol**：各目标 `*Store.clearOnDisconnect()`；`processing/state/FreshnessStore.java`；`combat/store/*.java`；`animation/BongAnimationPlayer.java`；generic audio / animation adjunct lifecycle handle（不得计入 108 Store manifest）。
   - **测试抓手**：逐 Store pin data-only production clear 不删除 listener / dispatcher / built-in registry / test seam；动画 pin 旧 layer 不跨重连；循环音频 pin active instance、pending layer 与派生 flag 同时归零；`ClientStoreScopeManifestTest` 精确 pin P2 累积登记集。
@@ -110,8 +124,8 @@ skeleton：niche-guardian-cross-session-leak。
 ## 文件所有权与边界
 
 - 独占：全部 `*Store.java` 的生命周期接口与登记、`BongNetworkHandler.java` 的 `clearClientStateOnDisconnect` 区段。
-- 不碰：`BongNetworkHandler.register()` 的 channel 注册区（R6 域，同文件分区段协作，两轨 merge 前互相 fetch）；Screen 结构（R7 域）；store 的业务字段语义。
-- 依赖：无前置，Wave 0 即可动工。R7/R9 依赖本轨接口，先于它们合入。
+- 不碰：`BongNetworkHandler.register()` 的 channel 注册区（R6 域，同文件分区段协作，两轨 merge 前互相 fetch）；Screen 结构（R7 域）；除 master M-09 明确登记的 `CraftStore` freshness/request/latch 外的 store 业务字段语义。
+- 依赖：Wave/start/order/cutover 只引用 master §3/§4.1 与 PR 1902；R7/R9 只消费本轨冻结的 Store interface，不在 R2 复制跨轨箭头。
 
 ## bot 验收场景
 
