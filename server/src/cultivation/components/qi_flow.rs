@@ -76,8 +76,11 @@ impl ActorQiIdentity {
         life_record: &LifeRecord,
         kind: ActorQiKind,
     ) -> Result<Self, QiFlowError> {
-        let character_id = life_record.character_id.trim();
-        if character_id.is_empty() || character_id == "unassigned:life_record" {
+        let character_id = life_record.character_id.as_str();
+        if character_id.is_empty()
+            || character_id.trim() != character_id
+            || character_id == "unassigned:life_record"
+        {
             return Err(QiFlowError::InvalidActorIdentity);
         }
         let account = match kind {
@@ -94,8 +97,11 @@ impl ActorQiIdentity {
     pub(crate) fn from_canonical_npc_id(
         canonical_id: impl AsRef<str>,
     ) -> Result<Self, QiFlowError> {
-        let canonical_id = canonical_id.as_ref().trim();
-        if canonical_id.is_empty() {
+        let canonical_id = canonical_id.as_ref();
+        if canonical_id.is_empty()
+            || canonical_id.trim() != canonical_id
+            || canonical_id == "unassigned:life_record"
+        {
             return Err(QiFlowError::InvalidActorIdentity);
         }
         Ok(Self {
@@ -528,11 +534,6 @@ impl Cultivation {
     }
 }
 
-/// 把 live actor 的 `Cultivation` 真元结算进外部 canonical owner 的物理保留字段
-/// （例如道伥 blackboard 的 `daozhan_qi`）。
-///
-/// source 字段与 target 物理字段共用活体事务的同一失败原子性边界：任一步失败即整体
-/// 保持原样，不产生部分写入；审计轨迹与守恒断言与 `transfer_to_external_actor` 同一族。
 pub(crate) fn transfer_cultivation_to_external_owner(
     source: &mut Cultivation,
     target_current: &mut f64,
@@ -803,6 +804,7 @@ fn reject_same_account(transfer: &QiTransfer) -> Result<(), QiFlowError> {
 mod tests {
     use super::*;
     use crate::cultivation::components::Realm;
+    use crate::qi_physics::ledger::{QiTransferDisposition, ALL_CONCRETE_QI_TRANSFER_REASONS};
     use crate::world::dimension::DimensionKind;
     use valence::prelude::DVec3;
 
@@ -1111,6 +1113,109 @@ mod tests {
     }
 
     #[test]
+    fn typed_balance_transactions_enforce_every_qi_transfer_reason_disposition() {
+        for reason in ALL_CONCRETE_QI_TRANSFER_REASONS {
+            let is_audit_only = reason.disposition() == QiTransferDisposition::AuditOnly;
+
+            let mut gain_actor = cultivation(5.0, 10.0);
+            let mut gain_zone = zone("gain", 0.5);
+            let mut gain_ledger = WorldQiAccount::default();
+            let gain_result = gain_actor.gain_from_zone(
+                &mut gain_zone,
+                &mut gain_ledger,
+                &ActorQiIdentity::for_test(QiAccountId::player("gain")),
+                1.0,
+                reason,
+            );
+            assert_reason_result(gain_result, is_audit_only, "gain_from_zone", reason);
+            if is_audit_only {
+                assert_eq!(gain_actor.qi_current(), 5.0);
+                assert_eq!(gain_zone.spirit_qi, 0.5);
+                assert!(gain_ledger.transfers().is_empty());
+            }
+
+            let mut release_actor = cultivation(5.0, 10.0);
+            let mut release_zone = zone("release", 0.5);
+            let mut release_ledger = WorldQiAccount::default();
+            let release_result = release_actor.release_to_zone(
+                Some(&mut release_zone),
+                &mut release_ledger,
+                &ActorQiIdentity::for_test(QiAccountId::player("release")),
+                1.0,
+                reason,
+            );
+            assert_reason_result(release_result, is_audit_only, "release_to_zone", reason);
+            if is_audit_only {
+                assert_eq!(release_actor.qi_current(), 5.0);
+                assert_eq!(release_zone.spirit_qi, 0.5);
+                assert!(release_ledger.transfers().is_empty());
+            }
+
+            let mut transfer_actor = cultivation(5.0, 10.0);
+            let mut transfer_ledger = WorldQiAccount::default();
+            let transfer_result = transfer_actor.transfer_to(
+                PersistentQiSink::QiFlowOverflow,
+                &mut transfer_ledger,
+                &ActorQiIdentity::for_test(QiAccountId::player("transfer")),
+                1.0,
+                reason,
+            );
+            assert_reason_result(transfer_result, is_audit_only, "transfer_to", reason);
+            if is_audit_only {
+                assert_eq!(transfer_actor.qi_current(), 5.0);
+                assert!(transfer_ledger.transfers().is_empty());
+            }
+
+            let mut resize_actor = cultivation(5.0, 10.0);
+            let mut resize_zone = zone("resize", 0.5);
+            let mut resize_ledger = WorldQiAccount::default();
+            let resize_result = resize_actor.resize_qi_max_and_release_excess(
+                Some(&mut resize_zone),
+                &mut resize_ledger,
+                &ActorQiIdentity::for_test(QiAccountId::player("resize")),
+                4.0,
+                reason,
+            );
+            assert_reason_result(
+                resize_result,
+                is_audit_only,
+                "resize_qi_max_and_release_excess",
+                reason,
+            );
+            if is_audit_only {
+                assert_eq!(
+                    resize_actor.qi_snapshot(),
+                    cultivation(5.0, 10.0).qi_snapshot()
+                );
+                assert_eq!(resize_zone.spirit_qi, 0.5);
+                assert!(resize_ledger.transfers().is_empty());
+            }
+        }
+    }
+
+    fn assert_reason_result<T>(
+        result: Result<T, QiFlowError>,
+        is_audit_only: bool,
+        transaction: &str,
+        reason: QiTransferReason,
+    ) {
+        if is_audit_only {
+            assert!(
+                matches!(
+                    result,
+                    Err(QiFlowError::Physics(QiPhysicsError::AuditOnlyReason { .. }))
+                ),
+                "{transaction} must reject audit-only reason {reason:?}"
+            );
+        } else {
+            assert!(
+                result.is_ok(),
+                "{transaction} must accept balance-mutating reason {reason:?}"
+            );
+        }
+    }
+
+    #[test]
     fn typed_balance_transactions_reject_audit_only_reasons_atomically() {
         let audit_only_reasons = [
             QiTransferReason::HalfStepBuff,
@@ -1187,6 +1292,73 @@ mod tests {
             assert_eq!(ledger.total(), 0.0);
             assert!(ledger.transfers().is_empty());
         }
+    }
+
+    #[test]
+    fn balance_mutating_zero_work_is_a_noop_and_resize_to_zero_releases_all_qi() {
+        let actor_id = ActorQiIdentity::for_test(QiAccountId::player("zero"));
+        let mut actor = cultivation(5.0, 10.0);
+        let mut zone = zone("zero", 0.5);
+        let mut ledger = WorldQiAccount::default();
+        let before = actor.qi_snapshot();
+
+        let gain = actor
+            .gain_from_zone(
+                &mut zone,
+                &mut ledger,
+                &actor_id,
+                0.0,
+                QiTransferReason::Crafting,
+            )
+            .expect("zero balance-mutating gain must be a successful no-op");
+        assert_eq!(gain, QiFlowOutcome::noop(0.0));
+        assert_eq!(actor.qi_snapshot(), before);
+        assert_eq!(zone.spirit_qi, 0.5);
+        assert!(ledger.transfers().is_empty());
+
+        let release = actor
+            .release_to_zone(
+                Some(&mut zone),
+                &mut ledger,
+                &actor_id,
+                0.0,
+                QiTransferReason::ReleaseToZone,
+            )
+            .expect("zero balance-mutating release must be a successful no-op");
+        assert_eq!(release, QiFlowOutcome::noop(0.0));
+        assert_eq!(actor.qi_snapshot(), before);
+        assert_eq!(zone.spirit_qi, 0.5);
+        assert!(ledger.transfers().is_empty());
+
+        let transfer = actor
+            .transfer_to(
+                PersistentQiSink::QiFlowOverflow,
+                &mut ledger,
+                &actor_id,
+                0.0,
+                QiTransferReason::Healing,
+            )
+            .expect("zero balance-mutating transfer must be a successful no-op");
+        assert_eq!(transfer, QiFlowOutcome::noop(0.0));
+        assert_eq!(actor.qi_snapshot(), before);
+        assert!(ledger.transfers().is_empty());
+
+        let resize = actor
+            .resize_qi_max_and_release_excess(
+                None,
+                &mut ledger,
+                &actor_id,
+                0.0,
+                QiTransferReason::ReleaseToZone,
+            )
+            .expect("resize-to-zero must release the current qi atomically");
+        assert_eq!(resize.old_max, 10.0);
+        assert_eq!(resize.new_max, 0.0);
+        assert_eq!(resize.excess, 5.0);
+        assert_eq!(actor.qi_current(), 0.0);
+        assert_eq!(actor.qi_max(), 0.0);
+        assert_eq!(ledger.balance(&qi_flow_overflow_account()), 5.0);
+        assert_eq!(ledger.transfers().len(), 1);
     }
 
     #[test]
@@ -1365,13 +1537,21 @@ mod tests {
     }
 
     #[test]
-    fn canonical_npc_identity_constructor_fixes_kind_and_rejects_blank_id() {
+    fn canonical_npc_identity_constructor_fixes_kind_and_rejects_noncanonical_id() {
         let npc = ActorQiIdentity::from_canonical_npc_id("daozhan:7v2").unwrap();
         assert_eq!(npc.account, QiAccountId::npc("daozhan:7v2"));
-        assert!(matches!(
-            ActorQiIdentity::from_canonical_npc_id("   "),
-            Err(QiFlowError::InvalidActorIdentity)
-        ));
+        for invalid in [
+            "",
+            "   ",
+            "unassigned:life_record",
+            " daozhan:7v2",
+            "daozhan:7v2 ",
+        ] {
+            assert!(matches!(
+                ActorQiIdentity::from_canonical_npc_id(invalid),
+                Err(QiFlowError::InvalidActorIdentity)
+            ));
+        }
     }
 
     #[test]

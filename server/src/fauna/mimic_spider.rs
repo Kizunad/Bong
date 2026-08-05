@@ -5,8 +5,8 @@
 //!   - SpiderDisguiseState enum（三态）
 //!   - MimicSpiderBlackboard component（含 drained_qi 字段）
 //!   - 感知 / 几何阈值常数（留本模块，qi_physics 速率常数归 constants.rs）
-//!   - Disguised 期 qi 吸收系统（走 qi_physics::regen_from_zone + QiTransfer，守恒）
-//!   - 死亡 qi 归还系统（mirror fauna/rat_phase.rs release_drained_qi_on_death_system）
+//!   - Disguised 期 qi 吸收系统（走 `Cultivation::gain_from_zone`，守恒）
+//!   - 死亡 qi 归还系统（走 canonical `LifeRecord` + `Cultivation::release_to_zone`）
 //!
 //! P3 实装：
 //!   - `SpiderTrapPotential` component（陷阱归属 + 放置时间戳）
@@ -18,18 +18,23 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Component, DVec3, Entity, Event, EventReader, IntoSystemConfigs, Position, Query,
-    Res, ResMut, With,
+    bevy_ecs, Component, DVec3, Despawned, Entity, Event, IntoSystemConfigs, Position, Query, Res,
+    ResMut, With, Without,
 };
 
+#[cfg(test)]
 use crate::combat::events::DeathEvent;
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, QiFlowError};
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::tick::CultivationClock;
 use crate::npc::spawn::NpcMarker;
-use crate::qi_physics::constants::{QI_ZONE_UNIT_CAPACITY, SPIDER_DISGUISE_REGEN_RATE};
+use crate::qi_physics::constants::SPIDER_DISGUISE_REGEN_RATE;
 use crate::qi_physics::excretion::regen_from_zone;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::ledger::{QiTransferReason, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::{Zone, ZoneRegistry};
+#[cfg(test)]
+use valence::prelude::EventReader;
 
 // ── 几何 / 感知阈值常数（归本模块；qi 速率常数归 qi_physics::constants）────────────
 
@@ -42,10 +47,6 @@ pub const SPIDER_SENSE_RADIUS: f64 = 8.0;
 
 /// 撤退判定半径（方块数）：退出此距离视为完成撤退。
 pub const SPIDER_RETREAT_RADIUS: f64 = 32.0;
-
-// pub(crate)：ambient 调度核超距回收路径（§ambient-threat-v1 Verify blocker②）需要与
-// `spider_release_qi_on_death_system` 共用同一条归还系数，跨模块测试才能精确对拍。
-pub(crate) const SPIDER_DRAINED_QI_DEATH_RETURN_RATIO: f64 = 0.01;
 
 // ── P3 陷阱常数 ───────────────────────────────────────────────────────────────
 
@@ -76,7 +77,7 @@ pub enum SpiderDisguiseState {
 
 /// 拟态灰烬蛛个体 blackboard。
 ///
-/// - `drained_qi`：Disguised 期累计从 zone 吸走的真元量，死亡时归还（等比衰减）。
+/// - `drained_qi`：Disguised 期累计吸收量的 UI/AI telemetry；物理余额唯一 owner 是 `Cultivation`。
 /// - `home_zone`：孵化区域名称，用于 zone 查找。
 /// - `home_pos`：出生位置，Retreat 阶段的方向参考。
 /// - `trapped_by`：P3 陷阱归属（None = 野生）。
@@ -162,23 +163,21 @@ use valence::prelude::Commands;
 /// P0 Disguised 期 qi 吸收系统。
 ///
 /// 每 tick 以 `SPIDER_DISGUISE_REGEN_RATE` 从所在 zone spirit_qi 吸收真元：
-///   - 调用 `regen_from_zone(zone_qi, rate=1.0, integrity=1.0, room)`
-///   - 走 `WorldQiAccount::transfer` 保证双账户守恒
-///   - 无 Cultivation component（蛛不修炼），用 `blackboard.drained_qi` 记账
-///
-/// # 守恒约束
-/// zone.spirit_qi 减少量 == blackboard.drained_qi 累计增量（除精度误差）。
+///   - `regen_from_zone` 只计算请求量；
+///   - `Cultivation::gain_from_zone` 原子提交 signed zone debit、actor credit 与 audit；
+///   - `blackboard.drained_qi` 只累计成功吸收量，供视觉/AI 读取，不参与物理结算。
 type SpiderAbsorbQuery<'w, 's> = Query<
     'w,
     's,
     (
-        Entity,
         &'static Position,
         Option<&'static CurrentDimension>,
         &'static SpiderDisguiseState,
         &'static mut MimicSpiderBlackboard,
+        &'static LifeRecord,
+        &'static mut crate::cultivation::components::Cultivation,
     ),
-    With<NpcMarker>,
+    (With<NpcMarker>, Without<Despawned>),
 >;
 
 pub fn spider_disguised_qi_absorb_system(
@@ -190,7 +189,7 @@ pub fn spider_disguised_qi_absorb_system(
         return;
     };
 
-    for (entity, pos, dim, state, mut blackboard) in &mut spiders {
+    for (pos, dim, state, mut blackboard, life_record, mut cultivation) in &mut spiders {
         // 只在 Disguised 状态吸收
         if *state != SpiderDisguiseState::Disguised {
             continue;
@@ -207,111 +206,91 @@ pub fn spider_disguised_qi_absorb_system(
             continue;
         };
 
-        // 负灵域 spirit_qi <= 0 时不吸收
-        if zone.spirit_qi <= 0.0 {
+        let Ok(identity) = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc) else {
             continue;
-        }
-
-        // qi 上限：蛛吸收额度上限 = BeastKind::Spider 的 qi_max（25.0 × 0.1 = 2.5）
-        // 这里用 qi_max 类比：drained_qi 无上限（会随死亡衰减回区域），room = 饱和上限
-        let qi_spider_cap = crate::fauna::components::BeastKind::Spider.health_max() as f64;
-        let room = (qi_spider_cap - blackboard.drained_qi).max(0.0);
-        if room <= 0.0 {
-            continue;
-        }
-
-        // regen_from_zone(zone_qi, rate, integrity, room) 返回 (gain, drain)
-        // rate 参数用 SPIDER_DISGUISE_REGEN_RATE（已乘入 QI_CULTIVATION_REGEN_RATE 基底）
-        let (gain, drain) = regen_from_zone(
+        };
+        let (requested, _) = regen_from_zone(
             zone.spirit_qi,
             SPIDER_DISGUISE_REGEN_RATE,
-            1.0, // 蛛无经脉，integrity=1.0 全效
-            room,
+            1.0,
+            cultivation.qi_snapshot().room,
         );
-
-        if gain <= 0.0 || drain <= 0.0 {
+        if requested <= 0.0 {
             continue;
         }
-
-        // 走 ledger 双账户守恒
-        let zone_account = QiAccountId::zone(zone.name.clone());
-        let spider_account = QiAccountId::npc(format!("mimic_spider:{}", entity.index()));
-
-        // set_balance 对齐账户
-        if ledger
-            .set_balance(
-                zone_account.clone(),
-                zone.spirit_qi.max(0.0) * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
-            )
-            .is_err()
-        {
-            continue;
-        }
-        if ledger
-            .set_balance(spider_account.clone(), blackboard.drained_qi.max(0.0))
-            .is_err()
-        {
-            continue;
-        }
-
-        let Ok(transfer) = QiTransfer::new(
-            zone_account,
-            spider_account.clone(),
-            gain,
+        let before = cultivation.qi_current();
+        let Ok(outcome) = cultivation.gain_from_zone(
+            zone,
+            ledger,
+            &identity,
+            requested,
             QiTransferReason::CultivationRegen,
         ) else {
             continue;
         };
-
-        if ledger.transfer(transfer).is_ok() {
-            blackboard.drained_qi = ledger.balance(&spider_account);
-            zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
+        if outcome.target_credited > 0.0 {
+            blackboard.drained_qi += cultivation.qi_current() - before;
         }
     }
 }
 
-/// 死亡时将 drained_qi 的 1% 归还给所在 zone（与 rat_phase 等比策略一致）。
-///
-/// 蛛死亡时散逸：真元随蛛尸分解慢慢回归环境，而非全量即时释放（防止刷怪刷灵气）。
+/// 将拟态蛛从环境吸收、仍由其 `Cultivation` 持有的真元作为唯一物理 owner
+/// 释放到当前 zone；`MimicSpiderBlackboard.drained_qi` 只保留累计吸收的 UI/AI
+/// telemetry，不能作为第二份余额参与结算。
+pub(crate) fn transfer_spider_qi_to_zone(
+    cultivation: &mut crate::cultivation::components::Cultivation,
+    zone: Option<&mut Zone>,
+    ledger: &mut WorldQiAccount,
+    life_record: &LifeRecord,
+) -> Result<(), QiFlowError> {
+    let identity = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)?;
+    let amount = cultivation.qi_current();
+    cultivation.release_to_zone(
+        zone,
+        ledger,
+        &identity,
+        amount,
+        QiTransferReason::ReleaseToZone,
+    )?;
+    Ok(())
+}
+
+/// 旧 raw `DeathEvent` hook 保留给定向测试；生产 NPC 终结统一由
+/// `npc::lifecycle::settle_pending_npc_termination` 在持久化 commit 边界内结算。
+#[cfg(test)]
 pub fn spider_release_qi_on_death_system(
     mut deaths: EventReader<DeathEvent>,
-    spiders: Query<(&Position, Option<&CurrentDimension>, &MimicSpiderBlackboard), With<NpcMarker>>,
+    mut spiders: Query<
+        (
+            &Position,
+            Option<&CurrentDimension>,
+            &LifeRecord,
+            &mut crate::cultivation::components::Cultivation,
+        ),
+        With<NpcMarker>,
+    >,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: Option<ResMut<WorldQiAccount>>,
 ) {
-    let Some(zones) = zones.as_deref_mut() else {
-        for _ in deaths.read() {}
+    let (Some(zones), Some(ledger)) = (zones.as_deref_mut(), ledger.as_deref_mut()) else {
         return;
     };
-
     for death in deaths.read() {
-        let Ok((position, dimension, blackboard)) = spiders.get(death.target) else {
+        let Ok((position, dimension, life_record, mut cultivation)) = spiders.get_mut(death.target)
+        else {
             continue;
         };
-        if blackboard.drained_qi <= 0.0 {
-            continue;
-        }
         let dim = dimension
             .map(|d| d.0)
             .unwrap_or(crate::world::dimension::DimensionKind::Overworld);
-        let Some(zone_name) = zones.find_zone(dim, position.get()).map(|z| z.name.clone()) else {
-            continue;
-        };
-        if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            return_spider_drained_qi_to_zone(zone, blackboard.drained_qi);
-        }
+        let zone_name = zones
+            .find_zone(dim, position.get())
+            .map(|zone| zone.name.clone());
+        let zone = zone_name
+            .as_deref()
+            .and_then(|zone_name| zones.find_zone_mut(zone_name));
+        let _ = transfer_spider_qi_to_zone(&mut cultivation, zone, ledger, life_record);
     }
-}
-
-/// 归还 `drained_qi` 给 zone 的守恒计算——从 [`spider_release_qi_on_death_system`] 抽出
-/// 独立函数，供 ambient 调度核的超距回收路径共用（§ambient-threat-v1 Verify blocker②
-/// 收口：回收前必须先走这条既有"死亡归还"路径，残余 qi 才不会在软删除
-/// `insert(Despawned)` 时蒸发）。`drained_qi <= 0.0` 时无操作。
-pub fn return_spider_drained_qi_to_zone(zone: &mut Zone, drained_qi: f64) {
-    if drained_qi <= 0.0 {
-        return;
-    }
-    let returned_qi = drained_qi * SPIDER_DRAINED_QI_DEATH_RETURN_RATIO;
-    zone.spirit_qi = (zone.spirit_qi + returned_qi / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
 }
 
 /// P0 内部：判断某位置玩家真元是否超过感知阈值（用于 P1 SpiderAmbushScorer）。
@@ -346,8 +325,9 @@ pub fn register(app: &mut valence::prelude::App) {
     app.add_systems(
         valence::prelude::Update,
         (
-            spider_disguised_qi_absorb_system,
-            spider_release_qi_on_death_system.before(crate::fauna::drop::fauna_drop_system),
+            spider_disguised_qi_absorb_system.in_set(
+                crate::npc::spawn::ambient_scheduler::AmbientTerminalSystemSet::PostRecycle,
+            ),
             spider_trap_timeout_system,
         ),
     );
@@ -365,6 +345,23 @@ mod tests {
 
     fn make_blackboard(zone: &str, pos: DVec3) -> MimicSpiderBlackboard {
         MimicSpiderBlackboard::new(zone, pos)
+    }
+
+    fn spawn_spider_owner(app: &mut App, pos: DVec3, state: SpiderDisguiseState) -> Entity {
+        let entity = app.world_mut().spawn_empty().id();
+        let bundle = crate::npc::lifecycle::npc_runtime_bundle(
+            entity,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            crate::cultivation::components::Realm::Awaken,
+        );
+        app.world_mut().entity_mut(entity).insert((
+            NpcMarker,
+            Position::new([pos.x, pos.y, pos.z]),
+            state,
+            make_blackboard("spawn", pos),
+            bundle,
+        ));
+        entity
     }
 
     /// 构建带 spawn zone 的 ZoneRegistry，用指定 spirit_qi 覆盖默认值。
@@ -539,15 +536,7 @@ mod tests {
 
         // spawn zone bounds: min=[-128,64,-128], 位置 [0,64,0] 在其内
         let pos = DVec3::new(0.0, 64.0, 0.0);
-        let spider = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                SpiderDisguiseState::Disguised,
-                make_blackboard("spawn", pos),
-            ))
-            .id();
+        let spider = spawn_spider_owner(&mut app, pos, SpiderDisguiseState::Disguised);
 
         app.update();
 
@@ -560,6 +549,15 @@ mod tests {
             "Disguised 蛛一 tick 后 drained_qi 应 > 0，实际 {}（说明 qi 吸收系统未执行）",
             blackboard.drained_qi
         );
+        let cultivation = app
+            .world()
+            .get::<crate::cultivation::components::Cultivation>(spider)
+            .unwrap();
+        assert_eq!(
+            cultivation.qi_current(),
+            blackboard.drained_qi,
+            "Cultivation 必须是拟态蛛唯一物理 owner，blackboard 只镜像累计吸收量"
+        );
     }
 
     #[test]
@@ -571,15 +569,7 @@ mod tests {
         app.add_systems(Update, spider_disguised_qi_absorb_system);
 
         let pos = DVec3::new(0.0, 64.0, 0.0);
-        let spider = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                SpiderDisguiseState::Ambush, // 暴起中，不吸收
-                make_blackboard("spawn", pos),
-            ))
-            .id();
+        let spider = spawn_spider_owner(&mut app, pos, SpiderDisguiseState::Ambush);
 
         app.update();
 
@@ -599,15 +589,7 @@ mod tests {
         app.add_systems(Update, spider_disguised_qi_absorb_system);
 
         let pos = DVec3::new(0.0, 64.0, 0.0);
-        let spider = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                SpiderDisguiseState::Retreat,
-                make_blackboard("spawn", pos),
-            ))
-            .id();
+        let spider = spawn_spider_owner(&mut app, pos, SpiderDisguiseState::Retreat);
 
         app.update();
 
@@ -628,15 +610,7 @@ mod tests {
         app.add_systems(Update, spider_disguised_qi_absorb_system);
 
         let pos = DVec3::new(0.0, 64.0, 0.0);
-        let spider = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                SpiderDisguiseState::Disguised,
-                make_blackboard("spawn", pos),
-            ))
-            .id();
+        let spider = spawn_spider_owner(&mut app, pos, SpiderDisguiseState::Disguised);
 
         app.update();
 
@@ -648,8 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn spider_death_releases_qi_to_zone() {
-        // 有 drained_qi 的蛛死亡后 zone spirit_qi 应有小幅回升
+    fn spider_death_releases_full_cultivation_qi_to_zone() {
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.insert_resource(WorldQiAccount::default());
@@ -659,18 +632,20 @@ mod tests {
         app.add_systems(Update, spider_release_qi_on_death_system);
 
         let pos = DVec3::new(0.0, 64.0, 0.0);
-        let mut blackboard = make_blackboard("spawn", pos);
-        blackboard.drained_qi = 100.0; // 已累计吸收 100 真元
-
-        let spider = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                SpiderDisguiseState::Disguised,
-                blackboard,
-            ))
-            .id();
+        let spider = spawn_spider_owner(&mut app, pos, SpiderDisguiseState::Disguised);
+        app.world_mut()
+            .get_mut::<crate::cultivation::components::Cultivation>(spider)
+            .unwrap()
+            .set_for_init(crate::cultivation::components::CultivationQiInit {
+                current: 4.0,
+                max: 10.0,
+                frozen: None,
+            })
+            .unwrap();
+        app.world_mut()
+            .get_mut::<MimicSpiderBlackboard>(spider)
+            .unwrap()
+            .drained_qi = 4.0;
 
         app.world_mut().send_event(DeathEvent {
             target: spider,
@@ -687,23 +662,18 @@ mod tests {
             .find_zone_by_name("spawn")
             .expect("spawn zone must still exist")
             .spirit_qi;
-        assert!(
-            new_spirit_qi > initial_spirit_qi,
-            "蛛死亡后 zone spirit_qi 应回升（期望 > {initial_spirit_qi}，实际 {new_spirit_qi}）"
-        );
-        // drained_qi 是绝对真元，zone.spirit_qi 是归一化浓度。
-        let expected = (initial_spirit_qi
-            + (100.0 * SPIDER_DRAINED_QI_DEATH_RETURN_RATIO) / QI_ZONE_UNIT_CAPACITY)
-            .clamp(-1.0, 1.0);
-        assert!(
-            (new_spirit_qi - expected).abs() < 1e-9,
-            "死亡归还应 = drained_qi × ratio / QI_ZONE_UNIT_CAPACITY clamp(-1,1)，期望 {expected}，实际 {new_spirit_qi}"
+        assert_eq!(new_spirit_qi, initial_spirit_qi + 0.04);
+        assert_eq!(
+            app.world()
+                .get::<crate::cultivation::components::Cultivation>(spider)
+                .unwrap()
+                .qi_current(),
+            0.0
         );
     }
 
     #[test]
-    fn spider_death_with_zero_drained_qi_no_zone_change() {
-        // drained_qi=0 时死亡不影响 zone（避免零值写入影响守恒审计）
+    fn spider_death_with_zero_qi_no_zone_change() {
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.insert_resource(WorldQiAccount::default());
@@ -713,15 +683,7 @@ mod tests {
         app.add_systems(Update, spider_release_qi_on_death_system);
 
         let pos = DVec3::new(0.0, 64.0, 0.0);
-        let spider = app
-            .world_mut()
-            .spawn((
-                NpcMarker,
-                Position::new([pos.x, pos.y, pos.z]),
-                SpiderDisguiseState::Disguised,
-                make_blackboard("spawn", pos), // drained_qi == 0
-            ))
-            .id();
+        let spider = spawn_spider_owner(&mut app, pos, SpiderDisguiseState::Disguised);
 
         app.world_mut().send_event(DeathEvent {
             target: spider,
@@ -740,7 +702,7 @@ mod tests {
             .spirit_qi;
         assert_eq!(
             new_spirit_qi, initial_spirit_qi,
-            "drained_qi=0 的蛛死亡不应改变 zone spirit_qi"
+            "qi_current=0 的蛛死亡不应改变 zone spirit_qi"
         );
     }
 

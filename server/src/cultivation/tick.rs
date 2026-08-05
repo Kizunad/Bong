@@ -22,8 +22,7 @@ use crate::fauna::mundane::MundaneFaunaSpecies;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
-    constants::QI_NPC_ABSORB_FLOOR, regen_from_zone, QiAccountId, QiTransfer, QiTransferReason,
-    WorldQiAccount,
+    constants::QI_NPC_ABSORB_FLOOR, regen_from_zone, QiAccountId, QiTransferReason, WorldQiAccount,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::events::EVENT_REALM_COLLAPSE;
@@ -32,7 +31,9 @@ use crate::world::zone::ZoneRegistry;
 use super::color::{
     CultivationSessionPracticeEvent, CULTIVATION_SESSION_PRACTICE_TICKS_PER_MINUTE,
 };
-use super::components::{ColorKind, Cultivation, MeridianSystem, QiColor, Realm};
+use super::components::{
+    ActorQiIdentity, ActorQiKind, ColorKind, Cultivation, MeridianSystem, QiColor, Realm,
+};
 use super::life_record::LifeRecord;
 use super::lifespan::LifespanComponent;
 use super::tribulation::JueBiAftershockDebuff;
@@ -256,7 +257,7 @@ pub fn qi_regen_and_zone_drain_tick(
         } else {
             zone.spirit_qi
         };
-        let (gain, drain) = compute_regen(
+        let (gain, _drain) = compute_regen(
             npc_absorbable_zone_qi,
             rate * wind_candle_multiplier
                 * humility_multiplier
@@ -280,19 +281,30 @@ pub fn qi_regen_and_zone_drain_tick(
         let Some(qi_ledger) = qi_ledger.as_deref_mut() else {
             continue;
         };
-        let to_account = cultivation_regen_account_id(entity, life_record, npc_marker.is_some());
-        let Ok(transfer) = QiTransfer::new(
-            QiAccountId::zone(zone.name.clone()),
-            to_account,
+        let Some(life_record) = life_record else {
+            continue;
+        };
+        let actor_kind = if npc_marker.is_some() {
+            ActorQiKind::Npc
+        } else {
+            ActorQiKind::Player
+        };
+        let Ok(actor) = ActorQiIdentity::from_life_record(life_record, actor_kind) else {
+            continue;
+        };
+        let Ok(outcome) = cultivation.gain_from_zone(
+            zone,
+            qi_ledger,
+            &actor,
             gain,
             QiTransferReason::CultivationRegen,
         ) else {
             continue;
         };
-        qi_ledger.push_transfer_audit(transfer);
-
-        cultivation.qi_current += gain;
-        zone.spirit_qi = (zone.spirit_qi - drain).max(0.0);
+        let actual_gain = outcome.target_credited;
+        if actual_gain <= 0.0 {
+            continue;
+        }
         if clock.tick.is_multiple_of(40) {
             if let Some(events) = vfx_events.as_deref_mut() {
                 let origin = pos.get() + valence::prelude::DVec3::new(0.0, 0.9, 0.0);

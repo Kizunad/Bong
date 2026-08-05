@@ -5,13 +5,18 @@ use valence::prelude::{
 };
 
 use crate::combat::events::{
-    ApplyStatusEffectIntent, DeathEvent, StatusEffectKind, HALLUCINATION_DURATION_TICKS,
+    ApplyStatusEffectIntent, StatusEffectKind, HALLUCINATION_DURATION_TICKS,
 };
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind};
+use crate::cultivation::life_record::LifeRecord;
 use crate::inventory::{
     DroppedLootEntry, DroppedLootRegistry, InventoryInstanceIdAllocator, ItemInstance, ItemRegistry,
 };
-use crate::npc::lifecycle::NpcArchetype;
+use crate::npc::lifecycle::{NpcArchetype, NpcTerminalSettlementSucceeded};
 use crate::npc::spawn::NpcMarker;
+use crate::npc::spawn_rat::RatBlackboard;
+use crate::qi_physics::constants::QI_EPSILON;
+use crate::qi_physics::WorldQiAccount;
 use crate::shelflife::{DecayProfileRegistry, Freshness};
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
@@ -30,6 +35,8 @@ type FaunaDropNpcQuery<'w, 's> = Query<
         &'static Position,
         Option<&'static CurrentDimension>,
         Option<&'static FaunaDropIssued>,
+        Option<&'static RatBlackboard>,
+        Option<&'static LifeRecord>,
     ),
     With<NpcMarker>,
 >;
@@ -383,12 +390,13 @@ pub fn roll_mundane_fauna_drops(kind: MundaneFaunaKind, seed: u64) -> Vec<Rolled
 #[allow(clippy::too_many_arguments)]
 pub fn fauna_drop_system(
     mut commands: Commands,
-    mut deaths: EventReader<DeathEvent>,
+    mut deaths: EventReader<NpcTerminalSettlementSucceeded>,
     npcs: FaunaDropNpcQuery<'_, '_>,
     item_registry: Option<Res<ItemRegistry>>,
     decay_profiles: Option<Res<DecayProfileRegistry>>,
     mut allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut loot_registry: Option<ResMut<DroppedLootRegistry>>,
+    qi_ledger: Option<Res<WorldQiAccount>>,
     mut status_effects: EventWriter<ApplyStatusEffectIntent>,
 ) {
     let (Some(item_registry), Some(allocator), Some(loot_registry)) = (
@@ -401,13 +409,43 @@ pub fn fauna_drop_system(
     let decay_profiles = decay_profiles.as_deref();
 
     for event in deaths.read() {
-        let Ok((tag, archetype, species, pos, dimension, issued)) = npcs.get(event.target) else {
+        if !event.authorize_loot {
+            continue;
+        }
+        let Ok((tag, archetype, species, pos, dimension, issued, rat_blackboard, life_record)) =
+            npcs.get(event.entity)
+        else {
             continue;
         };
+        if rat_blackboard.is_some() {
+            let (Some(ledger), Some(life_record)) = (qi_ledger.as_deref(), life_record) else {
+                tracing::warn!(
+                    target = ?event.entity,
+                    "[bong][fauna] withheld rat drops without qi ledger or canonical identity"
+                );
+                continue;
+            };
+            let Ok(identity) = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+            else {
+                tracing::warn!(
+                    target = ?event.entity,
+                    "[bong][fauna] withheld rat drops with invalid canonical qi identity"
+                );
+                continue;
+            };
+            if ledger.balance(&identity.account()) > QI_EPSILON {
+                tracing::warn!(
+                    target = ?event.entity,
+                    balance = ledger.balance(&identity.account()),
+                    "[bong][fauna] withheld rat drops until terminal qi settlement"
+                );
+                continue;
+            }
+        }
         if issued.is_some() {
             continue;
         }
-        let seed = fauna_drop_seed(event.target, event.at_tick);
+        let seed = fauna_drop_seed(event.entity, event.at_tick);
         // plan-mundane-fauna-v1 P1：凡兽（挂 MundaneFaunaSpecies）走独立掉落表，不复用
         // BeastKind 键；否则回退到既有妖兽 FaunaTag / legacy archetype 分支。
         let (drops, source_tag) = if let Some(species) = species {
@@ -471,7 +509,7 @@ pub fn fauna_drop_system(
         }
 
         commands
-            .entity(event.target)
+            .entity(event.entity)
             .insert((FaunaDropIssued, Despawned));
     }
 }
@@ -589,7 +627,13 @@ mod tests {
         dropped_loot_snapshot, pickup_dropped_loot_instance, ContainerState, InventoryRevision,
         ItemCategory, ItemRarity, ItemTemplate, PlayerInventory, MAIN_PACK_CONTAINER_ID,
     };
+    use crate::npc::lifecycle::NpcDeathReason;
     use crate::npc::spawn::NpcMarker;
+
+    fn terminal_test_identity(label: &str) -> ActorQiIdentity {
+        ActorQiIdentity::from_life_record(&LifeRecord::new(label), ActorQiKind::Npc)
+            .expect("terminal event fixture must use canonical NPC identity")
+    }
 
     fn template(id: &str) -> ItemTemplate {
         ItemTemplate {
@@ -889,7 +933,7 @@ mod tests {
     #[test]
     fn death_event_for_mundane_species_drops_from_mundane_table_with_mundane_source_tag() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(fauna_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
@@ -905,11 +949,14 @@ mod tests {
                 Position::new([3.0, 64.0, 4.0]),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: cow,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: cow,
             cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
             attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: terminal_test_identity("npc:fauna-drop-test"),
             at_tick: 200,
         });
 
@@ -940,7 +987,7 @@ mod tests {
         // 回归防护：MundaneFaunaSpecies 分支必须优先于 tag/archetype fallback 判定，
         // 否则若凡兽实体意外挂了 NpcArchetype::Beast 会被吞进老鼠表（悖离契约）。
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(fauna_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
@@ -957,11 +1004,14 @@ mod tests {
                 Position::new([0.0, 64.0, 0.0]),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: chicken,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: chicken,
             cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
             attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: terminal_test_identity("npc:fauna-drop-test"),
             at_tick: 5,
         });
 
@@ -1191,7 +1241,7 @@ mod tests {
     #[test]
     fn death_event_creates_dropped_loot_and_marks_target_despawned() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(fauna_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
@@ -1207,11 +1257,14 @@ mod tests {
                 Position::new([1.0, 64.0, 2.0]),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: beast,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: beast,
             cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
             attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: terminal_test_identity("npc:fauna-drop-test"),
             at_tick: 55,
         });
 
@@ -1238,7 +1291,7 @@ mod tests {
     #[test]
     fn rat_kill_to_g_pickup_round_trip_creates_inventory_shu_gu() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(fauna_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
@@ -1254,11 +1307,14 @@ mod tests {
                 Position::new([0.0, 64.0, 0.0]),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: rat,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: rat,
             cause: "player_kill".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
-            attacker_player_id: Some("offline:test-player".to_string()),
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: terminal_test_identity("npc:fauna-drop-test"),
             at_tick: 55,
         });
 
@@ -1306,7 +1362,7 @@ mod tests {
     #[test]
     fn untagged_legacy_beast_falls_back_to_rat_table() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(fauna_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
@@ -1322,11 +1378,14 @@ mod tests {
                 Position::new([1.0, 64.0, 2.0]),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: beast,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: beast,
             cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: None,
             attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: terminal_test_identity("npc:fauna-drop-test"),
             at_tick: 55,
         });
 
@@ -1356,7 +1415,7 @@ mod tests {
     #[test]
     fn core_drop_applies_hallucination_to_attacker() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.insert_resource(fauna_registry());
         app.insert_resource(crate::shelflife::build_default_registry());
@@ -1373,11 +1432,14 @@ mod tests {
                 Position::new([0.0, 64.0, 0.0]),
             ))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: beast,
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: beast,
             cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
             attacker: Some(attacker),
             attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: terminal_test_identity("npc:fauna-drop-test"),
             at_tick: 159,
         });
 

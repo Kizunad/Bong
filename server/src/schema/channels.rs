@@ -180,6 +180,8 @@ pub const CH_TUIKE_ASH_DECAY: &str = "bong:tuike_v2/ash_decay";
 // event_kind: "appeared" | "dan_received" | "betrayal" | "dead_natural" | "dead_player_kill"。
 // agent 订阅后 LLM 生成 zone perception / death broadcast 两类 narration（各 2 条文案）。
 pub const CH_ELDER_ENCOUNTER: &str = "bong:elder_encounter";
+/// Durable source queue consumed by Tiandao before publishing narration.
+pub const ELDER_ENCOUNTER_DURABLE_REDIS_KEY: &str = "bong:elder_encounter:durable";
 pub const CH_YIDAO_EVENT: &str = "bong:yidao/event";
 
 // 伪灵脉（plan-terrain-pseudo-vein-v1 §6.1）

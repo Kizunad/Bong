@@ -6,12 +6,12 @@
 
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, Entity, EntityLayerId, EventReader, Position,
-    Query, Update, With, Without,
+    bevy_ecs, App, Client, Commands, Component, Entity, EntityLayerId, EventReader,
+    IntoSystemConfigs, Position, Query, Update, With, Without,
 };
 
-use crate::combat::events::DeathEvent;
 use crate::fauna::components::{BeastKind, FaunaTag};
+use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
 
 /// 玩家听到鲸鸣 / 看到鲸殒落的最大距离。鲸体型大、飘高，200 块半径合理。
 const NARRATION_HEARING_RADIUS_BLOCKS: f64 = 200.0;
@@ -37,7 +37,11 @@ pub struct WhaleSpawnNarrationPending;
 pub fn register(app: &mut App) {
     app.add_systems(
         Update,
-        (whale_spawn_narration_system, whale_death_narration_system),
+        (
+            whale_spawn_narration_system,
+            whale_death_narration_system
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+        ),
     );
 }
 
@@ -74,14 +78,17 @@ pub fn whale_spawn_narration_system(
     }
 }
 
-/// DeathEvent → 若死的是 FaunaTag::Whale → 同 layer 附近玩家广播 death 叙事。
+/// Terminal commit → 若终结的是 FaunaTag::Whale → 同 layer 附近玩家广播 death 叙事。
 pub fn whale_death_narration_system(
-    mut deaths: EventReader<DeathEvent>,
+    mut deaths: EventReader<NpcTerminalSettlementSucceeded>,
     whales: Query<(&FaunaTag, &Position, &EntityLayerId)>,
     mut clients: Query<(&Position, &EntityLayerId, &mut Client)>,
 ) {
     for event in deaths.read() {
-        let Ok((tag, whale_pos, whale_layer)) = whales.get(event.target) else {
+        if !event.authorize_loot {
+            continue;
+        }
+        let Ok((tag, whale_pos, whale_layer)) = whales.get(event.entity) else {
             continue;
         };
         if tag.beast_kind != BeastKind::Whale {
