@@ -22,6 +22,10 @@ class UpperBodyViewPitchLayerTest {
         return l;
     }
 
+    private static UpperBodyViewPitchLayer suppressedLayer(double pitchDeg, boolean armed) {
+        return new UpperBodyViewPitchLayer(() -> pitchDeg, () -> armed, () -> true);
+    }
+
     @Test
     void casualBandIsSmallerThanArmedBand() {
         assertEquals(
@@ -126,7 +130,18 @@ class UpperBodyViewPitchLayerTest {
     }
 
     @Test
-    void layerPriorityStaysBetweenLowerAndUpperChannels() {
+    void suppressedJianTakeoverPassesExistingTorsoBendThroughImmediately() {
+        UpperBodyViewPitchLayer l = suppressedLayer(90.0, true);
+        Vec3f in = new Vec3f(0.5f, 0.25f, 0.0f);
+        l.tick();
+        assertEquals(0.0f, l.targetDeg(), 1e-6f,
+            "Jian 招式活跃时视角目标必须归零，避免继续驱动躯干");
+        assertSame(in, l.get3DTransform("torso", TransformType.BEND, 1.0f, in),
+            "Jian 招式活跃时必须直接透传已有 bend，不能与视角层叠加");
+    }
+
+    @Test
+    void prioritySitsBetweenLowerBodyAndUpperBodyChannels() {
         assertTrue(
             UpperBodyViewPitchLayer.PRIORITY > AnimationLayerManager.Channel.LOWER_BODY.priority(),
             "视角跟随必须高于下半身步态，否则步态层会把 torso 压回去"

@@ -120,7 +120,7 @@ def group(name, origin, rotation, children, color=0):
 
 
 def build(pose_key: str):
-    src = json.loads(SRC_JIAN.read_text())
+    src = H.load_model_document(SRC_JIAN)
     jian_tex = Image.open(io.BytesIO(base64.b64decode(
         src["textures"][0]["source"].split(",", 1)[1]))).convert("RGBA")
 
@@ -264,20 +264,18 @@ def main():
     ap.add_argument("--size", type=int, default=420)
     args = ap.parse_args()
 
-    if not SRC_JIAN.exists():
-        raise SystemExit(f"缺 {SRC_JIAN.relative_to(REPO)}，先跑 gen_bamboo_jian.py --single")
-
     out_bb = Path(args.out) if args.out else OUT_BB
     if out_bb.exists() and not args.force:
         # Blockbench 存盘会升到 fmt 5.0 并把 group 属性搬进顶层 groups——这是手改过的信号
         prev = json.loads(out_bb.read_text())
         if "groups" in prev or prev.get("meta", {}).get("format_version") != "4.10":
             raise SystemExit(
-                f"{out_bb.relative_to(REPO)} 像是 Blockbench 手改过的（fmt "
+                f"{_rel(out_bb)} 像是 Blockbench 手改过的（fmt "
                 f"{prev.get('meta', {}).get('format_version')}），拒绝覆盖。\n"
                 f"  想留手改 → 加 --out 另存；确定要覆盖 → 加 --force")
 
     model, label = build(args.pose)
+    out_bb.parent.mkdir(parents=True, exist_ok=True)
     out_bb.write_text(json.dumps(model, ensure_ascii=False, indent=1))
     n_player = len(H.PLAYER_CUBES)
     print(f"JianPlayer（姿态：{label}）:")

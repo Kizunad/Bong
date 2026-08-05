@@ -37,6 +37,18 @@ REPO = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = REPO / "local_models" / "BambooJianSingle.bbmodel"
 OUT = REPO / "scripts" / "models" / "render_jian_in_hand.png"
 
+
+def load_model_document(path: Path | None = None) -> dict:
+    target = DEFAULT_MODEL if path is None else Path(path)
+    if target.is_file():
+        return json.loads(target.read_text())
+    if target.resolve() == DEFAULT_MODEL.resolve():
+        from gen_bamboo_jian import build_bbmodel
+
+        model, _cubes, _texture = build_bbmodel(pair=False)
+        return model
+    raise FileNotFoundError(target)
+
 CJK_FONTS = [  # PIL 默认字体没有 CJK 字形，标签会全变方块
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
@@ -204,7 +216,7 @@ def player_tris(pose=None):
 
 def weapon_tris(path: Path):
     """读 bbmodel → 三角形（已应用 element 自身 rotation），UV 落到图集下半。"""
-    d = json.loads(Path(path).read_text())
+    d = load_model_document(path)
     src = d["textures"][0]["source"].split(",", 1)[1]
     tex = Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA")
     tris = []
@@ -272,6 +284,8 @@ def main():
                     help="逗号分隔的武器缩放档，多档时出垂持对比图（例 1.0,0.85,0.7）")
     args = ap.parse_args()
     scales = [float(v) for v in args.scales.split(",") if v.strip()]
+    if not scales:
+        ap.error("--scales 至少需要一个非空缩放值")
 
     w_tris, w_tex = weapon_tris(Path(args.model))
     tex_arr = build_atlas(w_tex)

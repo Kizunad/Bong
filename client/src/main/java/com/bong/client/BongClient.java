@@ -12,7 +12,9 @@ import com.bong.client.block.BongBlocks;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
+import com.bong.client.combat.juice.CastFovController;
 import com.bong.client.combat.juice.CombatJuiceSystem;
+import com.bong.client.combat.juice.JuiceControls;
 import com.bong.client.cultivation.BreakthroughBillboardWorldRenderer;
 import com.bong.client.dandao.BaolongwangRenderBootstrap;
 import com.bong.client.debug.BongAnimCommand;
@@ -127,6 +129,8 @@ public class BongClient implements ClientModInitializer {
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
         CombatJuiceSystem.bootstrap();
+        CastFovController.bootstrap();
+        JuiceControls.register();
         BotanyPlantRenderBootstrap.register();
         BotanyHudBootstrap.register();
         WhaleRenderBootstrap.register();

@@ -158,7 +158,7 @@ def part_point(name, axes, local):
 def jian_tris(pose: dict, v_off: int):
     """把单锏挂到双手：手心随手臂 pose 走，锏沿小臂朝向（bend 之后的方向）。"""
     import json as _json
-    src = _json.loads(H.DEFAULT_MODEL.read_text())
+    src = H.load_model_document()
     base = []
     for e in src["elements"]:
         frm, to = np.array(e["from"], float), np.array(e["to"], float)
@@ -220,7 +220,7 @@ def skin_atlas(with_jian: bool = False) -> np.ndarray:
     atlas.paste(H.make_skin(), (0, 0))
     if with_jian:
         import base64 as _b64, io as _io, json as _json
-        src = _json.loads(H.DEFAULT_MODEL.read_text())
+        src = H.load_model_document()
         tex = Image.open(_io.BytesIO(_b64.b64decode(
             src["textures"][0]["source"].split(",", 1)[1]))).convert("RGBA")
         atlas.paste(tex.resize((H.SKIN, H.SKIN), Image.NEAREST), (0, H.WEAPON_V_OFF))

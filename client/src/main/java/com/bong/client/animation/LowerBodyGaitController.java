@@ -2,12 +2,15 @@ package com.bong.client.animation;
 
 import com.bong.client.movement.MovementState;
 import com.bong.client.movement.MovementStateStore;
+import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
+
+import java.util.UUID;
 
 /**
  * 下半身步态驱动：每 client tick 选档，把对应动画挂到 {@link AnimationLayerManager.Channel#LOWER_BODY}。
@@ -23,6 +26,8 @@ import net.minecraft.util.math.Vec3d;
 public final class LowerBodyGaitController {
     /** dash 是一次性动画，播完自己结束；期间不因档位重算而被打断。 */
     private static GaitSelector.Gait activeGait = GaitSelector.Gait.NONE;
+    private static UUID activePlayerId;
+    private static AnimationStack activeStack;
 
     private LowerBodyGaitController() {
     }
@@ -57,33 +62,51 @@ public final class LowerBodyGaitController {
     }
 
     static void apply(AbstractClientPlayerEntity player, GaitSelector.Gait next) {
-        if (next == activeGait) {
+        if (player == null || next == null) {
+            return;
+        }
+        AnimationStack stack = PlayerAnimationAccess.getPlayerAnimLayer(player);
+        UUID playerId = player.getUuid();
+        boolean sameOwner = activePlayerId != null
+            && activePlayerId.equals(playerId)
+            && activeStack == stack;
+        if (sameOwner && next == activeGait) {
             return;
         }
         Identifier animId = next.animId();
         if (animId == null) {
             AnimationLayerManager.stopOnStack(
-                PlayerAnimationAccess.getPlayerAnimLayer(player),
-                player.getUuid(),
+                stack,
+                playerId,
                 AnimationLayerManager.Channel.LOWER_BODY,
                 BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS
             );
             activeGait = next;
+            activePlayerId = playerId;
+            activeStack = stack;
             return;
         }
         boolean played = AnimationLayerManager.playOnStack(
-            PlayerAnimationAccess.getPlayerAnimLayer(player),
-            player.getUuid(),
+            stack,
+            playerId,
             AnimationLayerManager.Channel.LOWER_BODY,
             animId
         );
         if (played) {
             activeGait = next;
+            activePlayerId = playerId;
+            activeStack = stack;
         }
     }
 
-    static void resetForTests() {
+    public static void clearOnDisconnect() {
         activeGait = GaitSelector.Gait.NONE;
+        activePlayerId = null;
+        activeStack = null;
+    }
+
+    static void resetForTests() {
+        clearOnDisconnect();
     }
 
     static GaitSelector.Gait activeGaitForTests() {

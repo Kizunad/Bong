@@ -1,6 +1,7 @@
 package com.bong.client.animation;
 
 import dev.kosmx.playerAnim.api.TransformType;
+import dev.kosmx.playerAnim.api.layered.AnimationStack;
 import dev.kosmx.playerAnim.api.layered.IAnimation;
 import dev.kosmx.playerAnim.minecraftApi.PlayerAnimationAccess;
 import dev.kosmx.playerAnim.core.util.Vec3f;
@@ -48,35 +49,48 @@ public final class UpperBodyViewPitchLayer implements IAnimation {
     /** 视角 pitch 来源（度）。抽成注入点：单测直接喂角度，不必起 MC 运行时。 */
     private final DoubleSupplier viewPitchDeg;
     private final BooleanSupplier armed;
+    private final BooleanSupplier suppressed;
 
     private float previousDeg;
     private float currentDeg;
 
     public UpperBodyViewPitchLayer(DoubleSupplier viewPitchDeg, BooleanSupplier armed) {
+        this(viewPitchDeg, armed, () -> false);
+    }
+
+    UpperBodyViewPitchLayer(
+        DoubleSupplier viewPitchDeg,
+        BooleanSupplier armed,
+        BooleanSupplier suppressed
+    ) {
         this.viewPitchDeg = viewPitchDeg == null ? () -> 0.0 : viewPitchDeg;
         this.armed = armed == null ? () -> false : armed;
+        this.suppressed = suppressed == null ? () -> false : suppressed;
     }
 
-    /** 生产构造：跟随该玩家的视角。 */
-    public static UpperBodyViewPitchLayer forPlayer(AbstractClientPlayerEntity player, BooleanSupplier armed) {
-        return new UpperBodyViewPitchLayer(player == null ? null : player::getPitch, armed);
-    }
-
-    /**
-     * 每玩家挂一层。PlayerAnimator 在玩家实体初始化时触发该事件，layer 随玩家生命周期存在；
-     * {@link #tick()} 由 {@code AnimationStack.tick()} 驱动，不需要自己注册 tick 回调。
-     *
-     * <p>持械判定：主手非空即算持械（双锏/剑等）。真正的"Bong 武器"判定等武器注册表统一
-     * 出口后再收窄，此处先用可注入的谓词占位，不把耦合写死。
-     */
-    public static void register() {
-        PlayerAnimationAccess.REGISTER_ANIMATION_EVENT.register((player, stack) ->
-            stack.addAnimLayer(PRIORITY, forPlayer(player, () -> !player.getMainHandStack().isEmpty()))
+    /** 每玩家挂一层；Jian 上半身招式期间由招式独占 torso bend。 */
+    private static UpperBodyViewPitchLayer forPlayer(
+        AbstractClientPlayerEntity player,
+        AnimationStack stack
+    ) {
+        return new UpperBodyViewPitchLayer(
+            player == null ? null : player::getPitch,
+            () -> player != null && !player.getMainHandStack().isEmpty(),
+            () -> player != null && AnimationLayerManager.isJianAnimationActive(player.getUuid(), stack)
         );
     }
 
-    /** 目标折弯角（度）：视角 pitch 归一化到 [-1,1] 后乘当前档位上限。 */
+    /** 注册生产视角层。 */
+    public static void register() {
+        PlayerAnimationAccess.REGISTER_ANIMATION_EVENT.register((player, stack) ->
+            stack.addAnimLayer(PRIORITY, forPlayer(player, stack))
+        );
+    }
+
     float targetDeg() {
+        if (suppressed.getAsBoolean()) {
+            return 0.0f;
+        }
         float normalized = MathHelper.clamp((float) viewPitchDeg.getAsDouble() / 90.0f, -1.0f, 1.0f);
         return normalized * (armed.getAsBoolean() ? ARMED_MAX_DEG : CASUAL_MAX_DEG);
     }
@@ -112,11 +126,13 @@ public final class UpperBodyViewPitchLayer implements IAnimation {
         if (type != TransformType.BEND || !"torso".equals(modelName)) {
             return value0;
         }
+        if (suppressed.getAsBoolean()) {
+            return value0;
+        }
         float bend = bendRadians(tickDelta);
         if (Math.abs(bend) < 1.0e-4f) {
-            return value0;   // 没有可见折弯就完全透传，不抢 bendAxis
+            return value0;
         }
-        // BEND 的 Vec3f 语义 = (bendAxis, bendValue, 0)，与 KeyframeAnimationPlayer 一致
         float axis = Math.abs(value0.getY()) > 1.0e-4f ? value0.getX() : BEND_AXIS_RAD;
         return new Vec3f(axis, value0.getY() + bend, 0.0f);
     }

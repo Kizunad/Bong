@@ -182,7 +182,7 @@ def group(name, origin, children, rotation=(0.0, 0.0, 0.0), color=0):
 
 def build_geometry():
     """返回 (elements, outliner, group_uuid_by_name, atlas)。"""
-    src = json.loads(SRC_JIAN.read_text())
+    src = H.load_model_document(SRC_JIAN)
     jian_tex = Image.open(io.BytesIO(base64.b64decode(
         src["textures"][0]["source"].split(",", 1)[1]))).convert("RGBA")
     atlas = Image.new("RGBA", (H.ATLAS, H.ATLAS), (0, 0, 0, 0))
