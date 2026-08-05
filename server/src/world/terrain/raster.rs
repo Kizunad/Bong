@@ -1808,6 +1808,22 @@ fn map_file(path: &Path, expected_len: usize) -> Result<Mmap, String> {
     map_open_file(path, file, expected_len)
 }
 
+#[cfg(test)]
+type AfterMmapHook = Box<dyn FnOnce(&std::fs::File)>;
+
+#[cfg(test)]
+thread_local! {
+    static MAP_OPEN_FILE_AFTER_MMAP_TEST_HOOK: std::cell::RefCell<Option<AfterMmapHook>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn set_map_open_file_after_mmap_test_hook(hook: impl FnOnce(&std::fs::File) + 'static) {
+    MAP_OPEN_FILE_AFTER_MMAP_TEST_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
 fn map_open_file(path: &Path, file: File, expected_len: usize) -> Result<Mmap, String> {
     let metadata_before = file
         .metadata()
@@ -1828,6 +1844,12 @@ fn map_open_file(path: &Path, file: File, expected_len: usize) -> Result<Mmap, S
     })?;
     let mmap = unsafe { memmap2::MmapOptions::new().len(expected_len).map(&file) }
         .map_err(|error| format!("failed to mmap raster layer {}: {error}", path.display()))?;
+    #[cfg(test)]
+    MAP_OPEN_FILE_AFTER_MMAP_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(&file);
+        }
+    });
     let metadata_after = file
         .metadata()
         .map_err(|error| format!("failed to restat raster layer {}: {error}", path.display()))?;
@@ -3318,6 +3340,44 @@ mod tests {
             &snapshot[..],
             &[1, 2, 3, 4],
             "post-preflight disk mutation must not change admitted bytes"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn raster_layer_rejects_short_file_at_preflight() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("layer.bin");
+        fs::write(&path, [1_u8, 2, 3]).unwrap();
+        let error =
+            map_file(&path, 4).expect_err("short raster layer must be rejected at preflight");
+        assert!(
+            error.contains("has 3 bytes, expected 4"),
+            "expected length-mismatch diagnostic, got: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn raster_layer_rejects_file_mutated_while_being_mapped() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("layer.bin");
+        fs::write(&path, [1_u8, 2, 3, 4]).unwrap();
+        let hook_path = path.clone();
+        set_map_open_file_after_mmap_test_hook(move |_file| {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut writer =
+                std::io::BufWriter::new(OpenOptions::new().write(true).open(&hook_path).unwrap());
+            writer.write_all(&[5_u8, 6, 7, 8, 9, 10, 11, 12]).unwrap();
+            writer.flush().unwrap();
+        });
+        let error = map_file(&path, 4).expect_err("in-place mutation during map must be rejected");
+        assert!(
+            error.contains("changed while being mapped"),
+            "expected stability diagnostic, got: {error}"
         );
         let _ = fs::remove_dir_all(root);
     }
