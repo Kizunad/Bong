@@ -10,7 +10,7 @@
 - server `Casting` 已保存 `source` 与 `skill_id`，但 `CastSyncV1` 只发 `phase/slot/duration_ms/started_at_ms/outcome`；client `CastSyncHandler.sourceFor()` 因此只能从当前快照猜来源并默认 `QUICK_SLOT`（`server/src/combat/components.rs:421-447`；`server/src/schema/combat_hud.rs:97-106`；`client/src/main/java/com/bong/client/network/CastSyncHandler.java:19-51,97-103`）。
 - `CastPhaseV1` 已有 `Idle/Casting/Complete/Interrupt`，所以本轨不重复“新增 phase 字段”；真正缺的是稳定 cast 身份、权威来源/技能/目标与所有退出路径的一致终态。循环动画停止仍由 `cast_emit.rs` 的 skill-id 特判表分散维护，而非注册契约。
 - AV 元数据已有 `DuguSkillVisual`、`TuikeSkillVisual`、`WoliuSkillVisual`、`YidaoSkillSpec` 等局部结构，字段与消费路径各异；Baomai/Tuike 仍可同时走 resolver 直发与事件 consumer，证明局部映射不能充当全局唯一真相源。
-- #1287 的总纲 §1 基线门已由 `origin/main` commit `9931a3a1fdd5b4d6b38f4da2fce43f400e26bf0d`（PR #1287）满足；这只关闭该历史等待项。R9/R6 的跨轨 schema ownership、contract-first start 与 production activation 服从总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §3/§4.1 及其 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：Wave 0 可先落 R9 canonical cast content/reducer/tests 与 R6 generation contract，Wave 1/2 才放行对应 production bridge、transport 与 atomic activation。`dugu.penetrate` 当前也已改为 `visual_for(DuguSkillId::Penetrate)` 驱动 runtime animation/audio（`server/src/combat/dugu_v2/skills.rs:392-416`），旧错接结论已经关闭。
+- #1287 的总纲 §1 基线门已由 `origin/main` commit `9931a3a1fdd5b4d6b38f4da2fce43f400e26bf0d`（PR #1287）满足；这只关闭该历史等待项。R9/R6 的跨轨 schema ownership、contract-first start 与 production activation 服从总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §3/§4.1 及其 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：Wave 0 可先落 R9 canonical cast content/reducer/tests 与 R6 generation contract，Wave 2 才放行对应 production bridge、transport 与 atomic activation。`dugu.penetrate` 当前也已改为 `visual_for(DuguSkillId::Penetrate)` 驱动 runtime animation/audio（`server/src/combat/dugu_v2/skills.rs:392-416`），旧错接结论已经关闭。
 
 ---
 
@@ -26,16 +26,16 @@
 | `I-04` | authoritative gameplay event | `CastSync(CASTING/COMPLETE/INTERRUPT)`；只有它能建立或终结 authoritative active cast。 |
 | `I-05` | attempt feedback | `CastSync(IDLE + Reject* 或 MERIDIAN_GATED)`；只描述某次 attempt 被拒，不能冒充 active cast 终态。 |
 | `I-06` | advisory AV event | `CastPlayAnim` / `CastStopAnim`；只操作同 identity 的 AV ownership，不决定 gameplay 生命周期。 |
-| `I-07` | session gate | client 对 caster 保存的 generation、session、floor、exhaustion 与 advertised active 边界。 |
+| `I-07` | session gate | client 对 caster（player 或 NPC）保存的 `(caster,session_id,generation)`、floor、exhaustion 与 advertised active 边界。 |
 | `I-08` | `AH` / `TH` | attempt high-water / authoritative terminal high-water；`TH` 只能由 COMPLETE/INTERRUPT 推进。 |
-| `I-09` | gameplay tombstone | authoritative terminal identity 的有界记录；只由 COMPLETE/INTERRUPT 写入。 |
-| `I-10` | AV owner / AV tombstone | 当前动画 token 的 identity，以及阻止迟到 PLAY 复活的独立有界标记；pre-admission STOP marker 属于 attempt 分区，只绑定尚未进入 CASTING 的 reserved identity，matching CASTING 消费后不得再影响该 identity 的 PLAY；`av_supersession_floor` 只记录当前 authoritative active identity 已被 STOP/terminal/supersession 拒绝的 identity，不得复用 `TH` 或 gameplay tombstone。 |
+| `I-09` | terminal record | authoritative terminal identity 与 outcome 的有界成对记录；只由 COMPLETE/INTERRUPT 写入，单个 record 同时保存 replay 判定所需的 identity/outcome。 |
+| `I-10` | AV owner / AV tombstone | 当前动画 token 的 identity，以及阻止迟到 PLAY 复活的独立有界标记；pre-admission STOP marker 属于 attempt 分区，只绑定尚未进入 CASTING 的 reserved identity，matching CASTING 消费后不得再影响该 identity 的 PLAY；`av_supersession_floor` 只记录当前 authoritative active identity 已被 STOP/terminal/supersession 拒绝的 identity，不得复用 `TH` 或 terminal record。 |
 | `I-11` | player authorization | 玩家 `KnownTechniques` 中 learned 且 active；与某 ID 存在于 global registration 是两件事。 |
 | `I-12` | pipeline boundary | real producer → transport → bridge → router → reducer → AV owner → shipped asset pack。fixture 直调任何中段都不等于生产可达。 |
 
 ### 1.2 不可变式
 
-- `INV-01`：**STOP 永远不拥有 terminal state。** STOP 不得推进 `TH`、不得写 gameplay tombstone、不得写/消费 `CastOutcomeV1`、不得清 authoritative active/reserved；通常只可停止同 identity 的 AV owner 并写 AV tombstone；若 identity 是尚未进入 CASTING 的 pending reserved attempt，则只能写 attempt-scoped `pending_pre_admission_stop` marker，不能改 AV tombstone/floor。
+- `INV-01`：**STOP 永远不拥有 terminal state。** STOP 不得推进 `TH`、不得写 terminal record、不得写/消费 `CastOutcomeV1`、不得清 authoritative active/reserved；通常只可停止同 identity 的 AV owner 并写 AV tombstone；若 identity 是尚未进入 CASTING 的 pending reserved attempt，则只能写 attempt-scoped `pending_pre_admission_stop` marker，不能改 AV tombstone/floor。
 - `INV-02`：只有 `CastSync(COMPLETE|INTERRUPT)` 能终结 authoritative cast；STOP 先到也不能让后续 terminal 变成被吞掉的幂等空操作。pre-admission STOP 只能标记同 identity 的 pending reserved attempt；matching CASTING 原子消费该 marker，后续合法 PLAY 不得被它抑制。
 - `INV-03`：attempt feedback、authoritative state、AV ownership 三个分区独立；B reject 不清 active A。若产品语义要求取消 A，producer 必须先为 A 发 matching INTERRUPT（及 advisory STOP），再发 B reject。
 - `INV-04`：所有 lifecycle、ordering、terminal、floor 与 exhaustion 场景必须逐步表示为 §3 的 `reduce(state, message)` trace；场景不得覆盖 reducer 行。
@@ -74,22 +74,22 @@ protobuf field number 与 oneof number 仍须显式稳定 pin，但不能改变 
 | `P-01` | R9 authors/reviews the cast domain meaning in the canonical TypeBox content (BEGIN/CastSync/identity/source/target/outcome/PLAY/STOP); the repo-wide TypeBox source remains the schema authority. R6 owns the generation pipeline and all generated/constrained mirrors, including package dist, JSON Schema, proto/Rust/Java artifacts and samples; R9 must not duplicate or re-own those artifacts. |
 | `P-02` | `CanonicalUint64String` 是 `1..=u64::MAX` 的无符号十进制字符串；拒绝 JSON number、0、符号、空串、前导零、非数字和 overflow。Rust/protobuf 内部为 `u64/uint64`，TypeBox/JSON/Java bridge 保留 canonical string 或无损无符号解析。 |
 | `P-03` | `CastIdentity { session_id: UUID, session_generation: CanonicalUint64String, cast_instance_id: CanonicalUint64String }`；三个字段 required、拒绝 unknown field；所有非-BEGIN payload 必须携带并按完整三元组匹配。 |
-| `P-04` | `CastSessionBegin { target_player: UUID, target_entity_id: int32, session_id: UUID, session_generation: CanonicalUint64String, allocator_exhausted: boolean, active_cast_instance_id?: CanonicalUint64String, minimum_cast_instance_id?: CanonicalUint64String }`。 |
+| `P-04` | `CastSessionBegin { caster: CastCasterRef, target_entity_id: int32, session_id: UUID, session_generation: CanonicalUint64String, allocator_exhausted: boolean, active_cast_instance_id?: CanonicalUint64String, minimum_cast_instance_id?: CanonicalUint64String }`；`CastCasterRef = player { player_uuid: UUID } | npc { npc_uuid: UUID }`，只允许一个 arm。`target_entity_id` 是该 caster 在 recipient 当前 tracking epoch 的 protocol entity ID；player 与 NPC 共用同一 BEGIN/session gate，禁止用 player-only sentinel 表示 NPC。 |
 | `P-05` | BEGIN 合法形状恰为四种：open/no-active=`false,None,Some(next)`；open/active=`false,Some(a),Some(a)`；exhausted/no-active=`true,None,None`；exhausted/active=`true,Some(a),Some(a)`。active/floor 必须非零且相等。 |
-| `P-06` | `CastSourceV1 = QUICK_SLOT | SKILL_BAR | DEDICATED`。`CastSync` 另带 required `npc: boolean` source discriminator：QUICK_SLOT/SKILL_BAR 必须 `npc=false`；player dedicated 为 `DEDICATED,npc=false`；NPC resolver 为 `DEDICATED,npc=true`，且只能配 `audience=Npc|Both`。QuickSlot item cast 的 `skill_id=null`；SkillBar/Dedicated 的 `skill_id` required non-empty。unknown source 或非法 source/npc 组合 fail-closed，无 fallback。 |
+| `P-06` | `CastSourceV1 = QUICK_SLOT | SKILL_BAR | DEDICATED`。`CastSync` 另带 required `npc: boolean` source discriminator 与 required `av_binding_key`：QUICK_SLOT/SKILL_BAR 必须 `npc=false`；player dedicated 为 `DEDICATED,npc=false`；NPC resolver 为 `DEDICATED,npc=true`，且只能配 `audience=Npc|Both`。QUICK_SLOT 的 `skill_id=null`，但必须携 canonical item-template/cast-variant `av_binding_key`；SKILL_BAR/player DEDICATED/NPC DEDICATED 的 `skill_id` required non-empty，`av_binding_key` 必须等于其 registration 声明的 key。unknown source 或非法 source/npc/binding 组合 fail-closed，无 fallback。 |
 | `P-07` | `CastTargetRef = entity { entity_uuid: UUID } | block { dimension_id: non-empty string, x:i32, y:i32, z:i32 }`；target 整体 optional；空 wrapper、双 arm、unknown arm、非法坐标类型拒绝。 |
-| `P-08` | `CastSync { identity, source, npc, skill_id, target?, phase, slot, duration_ms, started_at_ms, outcome }`；`identity/source/npc/phase/slot/duration_ms/started_at_ms/outcome` required，`skill_id` 按 source 规则必填或为 null。`phase = IDLE | CASTING | COMPLETE | INTERRUPT`；phase/outcome 合法组合由本行固定：IDLE 只配 `Reject*` 或 `MERIDIAN_GATED`（后者是 meridian-gated pre-cast rejection 的唯一保真表示），CASTING 只配 NONE，COMPLETE 只配 COMPLETED，INTERRUPT 只配 interrupt outcome。 |
+| `P-08` | `CastSync { identity, source, npc, skill_id, av_binding_key, target?, phase, slot, duration_ms, started_at_ms, outcome }`；`identity/source/npc/av_binding_key/phase/slot/duration_ms/started_at_ms/outcome` required，`skill_id` 按 source 规则必填或为 null。`slot` 是 source-discriminated required union：`quick_slot { index: 0..=8 }` 仅 QUICK_SLOT 合法；`non_slot { kind: SKILL_BAR | DEDICATED }` 仅对应 source 合法，NPC DEDICATED 使用 `non_slot{kind=DEDICATED}`，不得伪造 F1-F9 或发送 client 丢弃的 sentinel。`phase = IDLE | CASTING | COMPLETE | INTERRUPT`；phase/outcome 合法组合由本行固定：IDLE 只配 `Reject*` 或 `MERIDIAN_GATED`（后者是 meridian-gated pre-cast rejection 的唯一保真表示），CASTING 只配 NONE，COMPLETE 只配 COMPLETED，INTERRUPT 只配 interrupt outcome。 |
 | `P-09` | `CastOutcomeV1` 完整集合固定为 `NONE, COMPLETED, INTERRUPT_MOVEMENT, INTERRUPT_CONTAM, INTERRUPT_CONTROL, USER_CANCEL, DEATH, MERIDIAN_GATED, REJECT_QI_INSUFFICIENT, REJECT_ON_COOLDOWN, REJECT_INVALID_TARGET, REJECT_IN_RECOVERY, REJECT_REALM_TOO_LOW, REJECT_NO_WEAPON, REJECT_TECHNIQUE_INACTIVE, REJECT_RACE_MISMATCH, REJECT_SKILL_CONFIG_INVALID`。`MERIDIAN_GATED` 只允许与 `IDLE` 配对，语义等同 pre-cast rejection 但保留既有 reason；每个 variant 在 TypeBox/proto/Rust/Java 各恰有一个同义映射；unknown value fail-closed。 |
 | `P-10` | `CastPlayAnim { identity, animation_id }` 与 `CastStopAnim { identity, animation_id }` 都 required 完整 identity；非 cast 通用动画不得伪造 identity 进入此通道。 |
 | `P-11` | `ServerDataV1` 有独立 `cast_session_begin`、`cast_sync`、`vfx_event.cast_play_anim`、`vfx_event.cast_stop_anim` arms；四者统一走 `bong:server_data`。 |
-| `P-12` | `target_entity_id` 是 recipient 当前 tracking epoch 的 Minecraft protocol entity ID，不是 ECS Entity bits；client 仅在它当前解析到 `target_player` 时安装 BEGIN。 |
+| `P-12` | `target_entity_id` 是 caster 在 recipient 当前 tracking epoch 的 Minecraft protocol entity ID，不是 ECS Entity bits；client 仅在该 ID 当前解析到 BEGIN 的 `caster`（player 或 NPC）时安装 session。connection/tracking entry 与 observer re-entry 都必须重发该 caster 的权威 BEGIN；其后 CastSync/PLAY/STOP 只接受同一 `(caster,session_id,session_generation)` gate。 |
 | `P-13` | generation 进程级单调非零；同 session 重发复用。connection 内 identity 从 1 单调分配；发出 `u64::MAX` 后 exhausted，后续 admission 无 identity、gameplay、AV 或 reject 副作用。 |
-| `P-14` | server 必须先向 recipient 发合法 BEGIN，才可发送同 session 的其余 cast payload。observer 重进 tracking 时 BEGIN 携权威 floor/active/exhaustion 快照。 |
+| `P-14` | server 必须在 caster connection/tracking epoch entry 向每个 recipient 发合法 BEGIN，才可发送该 caster session 的其余 cast payload；observer 重进 tracking 时重新发送同一 caster 的权威 floor/active/exhaustion 快照。player 与 NPC caster 均走此 BEGIN → CastSync → PLAY/STOP → reducer/AV consumer 链，fixture 注入 BEGIN 不能代替真实 entry producer。 |
 | `P-15` | unknown arm、unknown field、malformed UUID、非法 canonical uint64、非法 phase/outcome/source/target 组合均 fail-closed，且不得 coerce。 |
 
 ### 2.3 必交 wire samples
 
-每个 `P-02..P-11` 都有正、反 sample；`P-09` 的 17 个 outcome 逐 variant 正向 roundtrip，并逐 variant 以 unknown/错拼/错 phase 负向 pin。数值边界至少含 `1`、`2^53-1`、`2^53`、`u64::MAX` 和相邻大值不折叠。BEGIN 四形状各一份正 sample，所有非法组合各一份负 sample。除此之外，P1 schema pin 必须为每个 required field 建立独立 missing-field negative sample：只从一个 otherwise-valid payload 删除被测字段，其余字段和枚举组合保持合法，必须 fail-closed；不得用一个 generic malformed sample 代替字段矩阵。字段矩阵至少逐项覆盖 `CastIdentity.session_id`、`session_generation`、`cast_instance_id`；`CastSessionBegin.target_player`、`target_entity_id`、`session_id`、`session_generation`、`allocator_exhausted`，以及 active/floor 形状下的 `active_cast_instance_id`、`minimum_cast_instance_id`；`CastTargetRef` 的 entity `entity_uuid` 与 block `dimension_id`、`x`、`y`、`z`；`CastSync.identity`、`source`、`npc`、`phase`、`slot`、`duration_ms`、`started_at_ms`、`outcome`；按 source 规则 required 的 `skill_id`；以及 `CastPlayAnim`/`CastStopAnim` 的 `identity`、`animation_id`。每个 `P-11` arm 还要对其嵌套 payload 的 required fields 各有删除样本；`QUICK_SLOT` 的 `skill_id=null` 是独立合法 pin，不能被缺失字段样本混淆。该矩阵属于 `D-01` 的 P1 必交验收，不是可选 completeness suggestion。执行 schema build 后再运行 package tests，禁止只改 source 不重建 dist。
+每个 `P-02..P-11` 都有正、反 sample；`P-09` 的 17 个 outcome 逐 variant 正向 roundtrip，并逐 variant 以 unknown/错拼/错 phase 负向 pin。数值边界至少含 `1`、`2^53-1`、`2^53`、`u64::MAX` 和相邻大值不折叠。BEGIN 四形状各一份正 sample，所有非法组合各一份负 sample。`CastCasterRef` 的 player/NPC 两个 arm 各有正 sample，并分别覆盖错误 arm、空 wrapper、双 arm 与 unknown arm。除此之外，P1 schema pin 必须为每个 required field 建立独立 missing-field negative sample：只从一个 otherwise-valid payload 删除被测字段，其余字段和枚举组合保持合法，必须 fail-closed；不得用一个 generic malformed sample 代替字段矩阵。字段矩阵至少逐项覆盖 `CastIdentity.session_id`、`session_generation`、`cast_instance_id`；`CastSessionBegin.caster`、其 player `player_uuid`/NPC `npc_uuid`、`target_entity_id`、`session_id`、`session_generation`、`allocator_exhausted`，以及 active/floor 形状下的 `active_cast_instance_id`、`minimum_cast_instance_id`；`CastTargetRef` 的 entity `entity_uuid` 与 block `dimension_id`、`x`、`y`、`z`；`CastSync.identity`、`source`、`npc`、`av_binding_key`、`phase`、`slot`、`duration_ms`、`started_at_ms`、`outcome`；按 source 规则 required 的 `skill_id`；以及 `CastPlayAnim`/`CastStopAnim` 的 `identity`、`animation_id`。每个 `P-11` arm 还要对其嵌套 payload 的 required fields 各有删除样本；`QUICK_SLOT` 的 `skill_id=null` 与 `quick_slot.index=0/8` 是独立合法 pin，不能被缺失字段样本混淆。该矩阵属于 `D-01` 的 P1 必交验收，不是可选 completeness suggestion。执行 schema build 后再运行 package tests，禁止只改 source 不重建 dist。
 
 ---
 
@@ -108,11 +108,11 @@ reduce(state, message) -> { next_state, disposition, side_effects }
 ```text
 gate      = { session_id, generation, floor?, exhausted, reserved_active? }
 attempt   = { AH, latest_disposition?, reject_feedback?, pending_identity?: identity, pending_pre_admission_stop?: identity }
-gameplay  = { active_identity?, TH, terminal_tombstones[<=256], outcome_by_tombstone }
+gameplay  = { active_identity?, TH, terminal_records[<=256] }
 av         = { owner?: (identity, animation_id, token), av_tombstones[<=256], av_supersession_floor?: identity }
 ```
 
-七态只是上述字段的派生视图，不是第二状态机：`U` 无 gate；`O` open/no active；`R` open/reserved；`A` open/active；`X` exhausted/no active；`XR` exhausted/reserved；`XA` exhausted/active。`pending_identity` 表示已由 BEGIN 保留但尚未收到 CASTING 的 identity；`pending_pre_admission_stop` 最多一个，且只能与相同 identity 的 `pending_identity`/`reserved_active` 共存。进入 `A/X/XA` 后不得保留该 marker；matching CASTING 必须消费它而不生成 AV tombstone 或 floor。`disposition = ACC | ACC_IDEM | IGN | SUP`。`IGN` 必须让四分区 byte-for-byte 不变。
+七态只是上述字段的派生视图，不是第二状态机：`U` 无 gate；`O` open/no active；`R` open/reserved；`A` open/active；`X` exhausted/no active；`XR` exhausted/reserved；`XA` exhausted/active。`terminal_records` 每项同时保存唯一 `identity` 与其 `outcome`；它是 gameplay terminal tombstone 与 outcome 的唯一有界历史，容量维护必须原子移除整项，`TH/AH` 不因驱逐降低。`pending_identity` 表示已由 BEGIN 保留但尚未收到 CASTING 的 identity；`pending_pre_admission_stop` 最多一个，且只能与相同 identity 的 `pending_identity`/`reserved_active` 共存。进入 `A/X/XA` 后不得保留该 marker；matching CASTING 必须消费它而不生成 AV tombstone 或 floor。`disposition = ACC | ACC_IDEM | IGN | SUP`。`IGN` 必须让四分区 byte-for-byte 不变。
 
 ### 3.2 规范 transition rows
 
@@ -125,17 +125,17 @@ av         = { owner?: (identity, animation_id, token), av_tombstones[<=256], av
 | `R-03` | 旧 generation、等 generation 不同 session、BEGIN 非法/回退 | `IGN`。 |
 | `R-04` | 新 Reject attempt，`n>AH` 且未 terminal | `ACC`；`AH=n`、latest=`REJECTED`、替换 feedback。保留不相同的 reserved/active/AV owner；`n=max` 只令 gate exhausted，不终结其它 identity。 |
 | `R-05` | 同 identity、同 outcome 的 Reject replay | `ACC_IDEM`；不重复 HUD。其它 `n<=AH` reject 为 `R-14`。 |
-| `R-06` | CASTING 命中 reserved，或 `n>AH/TH` 的新 accepted attempt | `ACC/SUP`；matching `pending_identity/reserved_active` 的 CASTING 先消费并清除同 identity 的 `pending_pre_admission_stop`，该 marker 不得转成 AV tombstone/floor，因而后续合法 PLAY 仍可走 `R-10`。若存在较旧 authoritative active，先在同一 reducer transition 中为旧 identity 产生权威 `INTERRUPT(INTERRUPT_CONTROL)`，推进 `TH`、写旧 identity gameplay tombstone/outcome、清旧 active/reserved，并发送 matching advisory STOP、写旧 identity 的 AV tombstone/floor；随后清较旧 feedback，清 `pending_identity`，置 `AH=n/latest=CASTING`，建立新 active 并清除仅属于旧 identity 的 floor。旧 identity 的 terminal side effects 与新 identity admission 必须原子完成，不能只写 AV tombstone。 |
+| `R-06` | CASTING 命中 reserved，或 `n>AH/TH` 的新 accepted attempt | `ACC/SUP`；matching `pending_identity/reserved_active` 的 CASTING 先消费并清除同 identity 的 `pending_pre_admission_stop`，该 marker 不得转成 AV tombstone/floor，因而后续合法 PLAY 仍可走 `R-10`。若存在较旧 authoritative active，先在同一 reducer transition 中为旧 identity 产生权威 `INTERRUPT(INTERRUPT_CONTROL)`，推进 `TH`、写旧 identity terminal record、清旧 active/reserved，并发送 matching advisory STOP、写旧 identity 的 AV tombstone/floor；随后清较旧 feedback，清 `pending_identity`，置 `AH=n/latest=CASTING`，建立新 active 并清除仅属于旧 identity 的 floor。旧 identity 的 terminal side effects 与新 identity admission 必须原子完成，不能只写 AV tombstone。 |
 | `R-07` | CASTING 命中同 active 且 latest=`CASTING` | `ACC_IDEM`；不得重复 gameplay/AV。rejected/terminal identity 的 CASTING 为 `R-14`。 |
-| `R-08` | COMPLETE/INTERRUPT；若 identity 已有 gameplay tombstone 则走 `R-09`；若 identity 是当前 active/reserved，则即使 `n<=TH` 也必须先完成该 active 的 authoritative terminal；若 identity 不同于当前 active 且 `n>active_instance_id`，执行 supersession cascade；仅在上述两者都不成立且 identity 未在 tombstone 中但 `n<=TH`（说明该 terminal tombstone 已被 `R-16` 驱逐）时，才 `ACC_IDEM`；否则 identity 未 terminal、未以同 identity reject 且通过 gate | 新 terminal 才 `ACC`。普通 terminal 写 identity 的 gameplay tombstone/outcome、`TH=max(TH,n)`、latest 在 `n>=AH` 时置 `TERMINAL`，清 matching reserved/active/pending identity 与 matching pending marker；若它是当前 active/reserved，则停 matching AV owner并写该 identity 的 AV tombstone/floor。supersession cascade 必须在同一 reducer transition 中先为旧 active `a` 写权威 `INTERRUPT(INTERRUPT_CONTROL)`、推进 `TH`、写 `a` 的 gameplay tombstone/outcome、清旧 active/reserved、停旧 AV owner并写其 AV tombstone/floor，再接受 `n` 的 terminal并清除仅属于 `a` 的 floor；两组 terminal side effects 原子完成，最终不得留下旧 active。迟到旧 terminal 不得改写较新 attempt feedback/disposition；被驱逐 terminal 的 replay 只能幂等 no-op，绝不能重新执行 outcome/HUD/release/complete/interrupt。 |
-| `R-09` | COMPLETE/INTERRUPT 命中 gameplay tombstone | `ACC_IDEM`；不重复 outcome/HUD/release/complete/interrupt/token。冲突 outcome fail-closed 为 `R-14`。 |
-| `R-10` | PLAY 命中 active identity、无 gameplay tombstone、无 AV tombstone，且 identity 严格高于 `av_supersession_floor`（若存在） | 首次 `ACC` 并武装 owner/token；完全相同 replay 为 `ACC_IDEM`。PLAY 不建立 active，不推进 AH/TH。低于或等于 AV floor 的迟到 PLAY 为 `R-14`，即使对应 AV tombstone 已被驱逐也不得复活。 |
-| `R-11` | STOP 命中当前 AV owner identity | `ACC`；只停 token、清 owner、写 AV tombstone，并令 `av_supersession_floor=max(floor,identity)`；**gameplay、attempt、TH、gameplay tombstone、outcome 全不变。** |
+| `R-08` | COMPLETE/INTERRUPT；若 identity 已有 terminal record 则走 `R-09`；若 identity 是当前 active/reserved，则即使 `n<=TH` 也必须先完成该 active 的 authoritative terminal；若 identity 不同于当前 active 且 `n>active_instance_id`，执行 supersession cascade；仅在上述两者都不成立且 identity 未在 terminal records 中但 `n<=TH`（说明该 terminal record 已被 `R-16` 驱逐）时，才 `ACC_IDEM`；否则 identity 未 terminal、未以同 identity reject 且通过 gate | 新 terminal 才 `ACC`。普通 terminal 写 identity+outcome 的 terminal record、`TH=max(TH,n)`，并同步 `AH=max(AH,n)`；若 `n` 不低于 terminal 前的 `AH`，latest 置 `TERMINAL`，从而 delayed reject 不得覆盖该 feedback；清 matching reserved/active/pending identity 与 matching pending marker；若它是当前 active/reserved，则停 matching AV owner并写该 identity 的 AV tombstone/floor。supersession cascade 必须在同一 reducer transition 中先为旧 active `a` 写权威 `INTERRUPT(INTERRUPT_CONTROL)`、推进 `TH` 与 `AH`、写 `a` 的 terminal record、清旧 active/reserved、停旧 AV owner并写其 AV tombstone/floor，再接受 `n` 的 terminal、写其 terminal record 并同步推进 `AH/TH`，最后清除仅属于 `a` 的 floor；两组 terminal side effects 原子完成，最终不得留下旧 active。迟到旧 terminal 不得改写较新 attempt feedback/disposition；被驱逐 terminal record 的 replay 只能幂等 no-op，绝不能重新执行 outcome/HUD/release/complete/interrupt。 |
+| `R-09` | COMPLETE/INTERRUPT 命中 terminal record | `ACC_IDEM`；同 identity、同 outcome 不重复 outcome/HUD/release/complete/interrupt/token；冲突 outcome fail-closed 为 `R-14`。被 `R-16` 驱逐的 record 不在本行命中，由 `R-08` 依据 `TH` 处理为无副作用幂等 replay。 |
+| `R-10` | PLAY 命中 active identity、无 terminal record、无 AV tombstone，且 identity 严格高于 `av_supersession_floor`（若存在） | 首次 `ACC` 并武装 owner/token；完全相同 replay 为 `ACC_IDEM`。PLAY 不建立 active，不推进 AH/TH。低于或等于 AV floor 的迟到 PLAY 为 `R-14`，即使对应 AV tombstone 已被驱逐也不得复活。 |
+| `R-11` | STOP 命中当前 AV owner identity | `ACC`；只停 token、清 owner、写 AV tombstone，并令 `av_supersession_floor=max(floor,identity)`；**gameplay、attempt、TH、terminal record、outcome 全不变。** |
 | `R-12` | STOP 通过 gate但非 owner，且 identity 尚无 AV tombstone | matching `pending_identity == reserved_active == identity` 且尚未收到 CASTING 时，`ACC`；只写 attempt-scoped `pending_pre_admission_stop=identity`，重复 marker 为 `ACC_IDEM`，不写 AV tombstone/floor、不推进 `AH/TH`，也不清 authoritative active/reserved；后续 matching `R-06` CASTING 必须消费 marker，合法 PLAY 仍走 `R-10`。其它 identity 才按普通非 owner STOP `ACC`；只写 AV tombstone；仅当 STOP identity 等于当前 authoritative active identity 时，才令 `av_supersession_floor=identity`，否则不改变当前 active 的 floor。这样无关 identity 的 bounded tombstone churn 不会阻止当前 active 的 PLAY；terminal-before-PLAY/STOP-before-terminal 的迟到 PLAY 仍由 matching tombstone 或 floor 拒绝。不得分类 attempt，后续 `R-08` 仍须完整生效。 |
 | `R-13` | STOP 命中 AV tombstone | `ACC_IDEM`；四分区除既有 AV tombstone外不变。 |
 | `R-14` | unknown/malformed/session mismatch/below floor/forbidden combination/stale message | `IGN`。 |
 | `R-15` | tracking unload / disconnect lifecycle input | caster eviction 原子清四分区；这是 lifecycle teardown，不是 cast terminal，不生成 outcome。 |
-| `R-16` | 容量维护 | gameplay tombstone 与 AV tombstone 各自最多 256；驱逐 gameplay tombstone 不得降低 `TH/AH`，并且 `R-08` 以 `n<=TH` 将任何已驱逐 terminal replay 分类为 `ACC_IDEM` no-op；驱逐 AV tombstone 时只移除 tombstone entry，**不得移除或降低 `av_supersession_floor`**，`R-10` 仍因 floor gate 拒绝对应迟到 PLAY。floor 仅在 matching active 的 terminal、控制 supersession 或 BEGIN generation replacement 的原子 transition 中写入/清除，不能由容量维护驱逐。 |
+| `R-16` | 容量维护 | terminal records 与 AV tombstones 各自最多 256；驱逐 terminal record 必须把 identity 与 outcome 原子整项删除，不得降低 `TH/AH`，并且 `R-08` 以 `n<=TH` 将任何已驱逐 terminal replay 分类为 `ACC_IDEM` no-op；驱逐 AV tombstone 时只移除 tombstone entry，**不得移除或降低 `av_supersession_floor`**，`R-10` 仍因 floor gate 拒绝对应迟到 PLAY。floor 仅在 matching active 的 terminal、控制 supersession 或 BEGIN generation replacement 的原子 transition 中写入/清除，不能由容量维护驱逐。 |
 
 ### 3.3 规范 traces（所有场景只能写成这些 row 的组合）
 
@@ -148,13 +148,13 @@ T-02  A(active=7) --REJECT(8)[R-04]--> A(active=7,feedback=8)
       --COMPLETE(7)[R-08]--> O(feedback=8)
 
 T-03  A(active=8,owner=8) --STOP(8)[R-11]--> A(active=8,av_tombstone=8)
-      --INTERRUPT(8)[R-08]--> O(outcome written)
+      --INTERRUPT(8)[R-08]--> O(terminal record written)
 
-T-04  A(active=8) --INTERRUPT(8)[R-08]--> O(tombstones=8)
+T-04  A(active=8) --INTERRUPT(8)[R-08]--> O(terminal_records=8)
       --PLAY(8)[R-14]--> O
 
 T-05  O --STOP(8)[R-12]--> O(av_tombstone=8)
-      --COMPLETE(8)[R-08]--> O(gameplay tombstone+outcome=8)
+      --COMPLETE(8)[R-08]--> O(terminal_record={8:outcome}, AV tombstone=8)
 
 T-06  cast 7 terminal[R-08] --UNLOAD[R-15]--> U
       --BEGIN(S,g,floor=8)[R-01]--> O --PLAY(8)[R-14]--> O
@@ -165,14 +165,14 @@ T-07  A(active=A) --REJECT(max=B)[R-04]--> XA(active=A,feedback=B)
 
 T-08  X --STOP(max)[R-12]--> X(av_tombstone=max)
       --INTERRUPT(max)[R-14]--> X(av_tombstone=max)
-      the exhaustion-causing reject already owns identity max; the late terminal is rejected and creates no gameplay tombstone/outcome.
+      the exhaustion-causing reject already owns identity max; the late terminal is rejected and creates no terminal record.
 
 T-09  A(active=7,owner=7,AH=7,TH=0) --CASTING(8)[R-06]-->
-      A(active=8,AH=8,TH=7,gameplay_tombstone=7,av_tombstone=7)
+      A(active=8,AH=8,TH=7,terminal_record=7,av_tombstone=7)
       side_effects = INTERRUPT_CONTROL(7) + matching STOP(7); identity 7 is terminal before 8 becomes active
 
-T-10  A(active=8) --COMPLETE(8)[R-08]--> O(TH=8,gameplay_tombstone=8,outcome=COMPLETED)
-      --EVICT gameplay_tombstone(8)[R-16]--> O(TH=8,no tombstone 8)
+T-10  A(active=8) --COMPLETE(8)[R-08]--> O(TH=8,terminal_record=8:COMPLETED)
+      --EVICT terminal_record(8)[R-16]--> O(TH=8,no terminal record 8)
       --COMPLETE(8)[R-08]--> O(ACC_IDEM,no side effects)
 
 T-11  BEGIN(S,generation=1,active=8)[R-01] --COMPLETE(S,generation=1,8)[R-08]--> O
@@ -182,15 +182,15 @@ T-11  BEGIN(S,generation=1,active=8)[R-01] --COMPLETE(S,generation=1,8)[R-08]-->
       old-generation terminal cannot match the generation-2 reserved identity despite reusing session and instance IDs.
 
 T-12  A(active=1,owner=1) --STOP(1)[R-11]--> A(active=1,av_tombstone=1,av_floor=1)
-      --STOP(2..257)[R-12]--> A(active=1,av_tombstones=2..257,av_floor=1)
-      --EVICT av_tombstone(1)[R-16]--> A(active=1,no av_tombstone=1,av_floor=1)
+      --STOP(2..256)[R-12]--> A(active=1,av_tombstones=1..256,av_floor=1)
+      --STOP(257)[R-12/R-16]--> A(active=1,av_tombstones=2..257,av_floor=1)
       --PLAY(1)[R-14]--> A(active=1,no owner)
-      evicting the tombstone cannot resurrect the delayed PLAY, while unrelated STOP churn cannot raise the active-1 floor.
+      `R-12` 写入第 257 个 AV tombstone 时由同一 transition 调用 `R-16` 驱逐最旧 entry；没有第二个显式 eviction edge，floor 仍保护 delayed PLAY。
 
-T-13  A(active=7) --COMPLETE(8)[R-08]-->
-      O(TH=8,gameplay_tombstones=7,8,outcomes=INTERRUPT_CONTROL/COMPLETED,no active)
+T-13  A(active=7,AH=7) --COMPLETE(8)[R-08]--> O(TH=8,AH=8,terminal_records={7:INTERRUPT_CONTROL,8:COMPLETED},no active)
       side_effects = INTERRUPT_CONTROL(7) + matching STOP(7) + COMPLETED(8);
-      the newer instant terminal atomically supersedes and closes older active 7.
+      --REJECT(8)[R-14]--> O(feedback unchanged)
+      the newer instant terminal atomically supersedes and closes older active 7; AH=8 makes the delayed reject stale instead of fresh feedback.
 
 T-14  U --BEGIN(S,generation=1,active=9)[R-01]-->
       R(reserved=9,pending_identity=9)
@@ -239,16 +239,18 @@ T-14  U --BEGIN(S,generation=1,active=9)[R-01]-->
 
 | ID | real entry | authorization gate | source / skill_id | required emissions | live evidence |
 |---|---|---|---|---|---|
-| `A-01` | `handle_use_quick_slot` / `UseQuickSlotRequestV1` | slot、inventory instance、item cast/target rule；不查 global skill membership 冒充 item ownership | `QUICK_SLOT / null` | accepted CASTING 或瞬发 COMPLETE；所有结束带同 identity terminal；binding 声明的 AV | request-handler e2e + bot official entry |
+| `A-01` | `handle_use_quick_slot` / `UseQuickSlotRequestV1` | slot、inventory instance、item cast/target rule；不查 global skill membership 冒充 item ownership | `QUICK_SLOT / null / canonical av_binding_key(item_template_id, cast_variant)` | accepted CASTING 或瞬发 COMPLETE；所有结束带同 identity terminal；binding key 声明的 AV | request-handler e2e + bot official entry |
 | `A-02` | `handle_skill_bar_bind` / `SkillBarBindRequestV1` | global registration 存在 **且** 玩家 `KnownTechniques` learned+active | 不发 cast；绑定项保存 canonical skill ID | unauthorized bind 拒绝且不污染 binding | empty/missing/inactive/active `KnownTechniques` live request |
-| `A-03` | `handle_skill_bar_cast` / `SkillBarCastRequestV1` | 当前槽绑定、global registration、玩家 learned+active、race/meridian/config/target/cooldown/qi gates | `SKILL_BAR / required` | 每次进入 admission 先分 identity；accepted/terminal 或 `IDLE+Reject*` / `IDLE+MERIDIAN_GATED`；AV 仅 accepted | bind→cast 正负 e2e，禁止 pure helper 替代 |
-| `A-04` | registration 指定的 official dedicated handler | unique handler ownership；玩家入口仍查 learned+active 与适用 gates | `DEDICATED / required` | 与 `A-03` 同身份/终态契约；不得旁路 reducer | `movement.dash`、`shield_block`、`body.guangbo_ticao` 各 official handler e2e |
-| `A-05` | NPC resolver | global registration、NPC AI 自有 gate；不得伪造玩家 KnownTechniques | `DEDICATED,npc=true,skill_id required`；只能配 `audience=Npc|Both`，不得进入玩家 skillbar | authoritative lifecycle；只消费 Npc/Both visual | NPC resolver integration |
-| `A-06` | pre-cast reject producer | 对 mandatory config 缺失/非法逐字段 fail-closed | 保持请求真实 source/skill_id | 只发 `IDLE+Reject*` 或 `IDLE+MERIDIAN_GATED`；不得扣 qi/stamina、写 cooldown/inventory/target、发任何 AV/STOP | active 与 idle 两前态全矩阵 |
+| `A-03` | `handle_skill_bar_cast` / `SkillBarCastRequestV1` | 当前槽绑定、global registration、玩家 learned+active、race/meridian/config/target/cooldown/qi gates | `SKILL_BAR / required / registration av_binding_key` | 每次进入 admission 先分 identity；accepted/terminal 或 `IDLE+Reject*` / `IDLE+MERIDIAN_GATED`；AV 仅 accepted | bind→cast 正负 e2e，禁止 pure helper 替代 |
+| `A-04` | registration 指定的 official dedicated handler | unique handler ownership；玩家入口仍查 learned+active 与适用 gates | `DEDICATED,npc=false / required / registration av_binding_key / non_slot{kind=DEDICATED}` | 与 `A-03` 同身份/终态契约；不得旁路 reducer | `movement.dash`、`shield_block`、`body.guangbo_ticao` 各 official handler e2e |
+| `A-05` | NPC resolver；NPC spawn/tracking-epoch entry 与 observer re-entry producer 先为每个 recipient 发该 NPC 的 authoritative BEGIN，再发 lifecycle | global registration、NPC AI 自有 gate；不得伪造玩家 KnownTechniques；BEGIN/后续 payload 共用 caster=npc ref 与 session generation | `DEDICATED,npc=true / skill_id required / registration av_binding_key / non_slot{kind=DEDICATED}`；只能配 `audience=Npc|Both`，不得进入玩家 skillbar | authoritative CASTING/terminal lifecycle；只消费 Npc/Both visual；BEGIN、CastSync、PLAY/STOP 均走同一 reducer/AV chain | NPC resolver integration + real tracking entry/re-entry e2e |
+| `A-06` | pre-cast reject producer | 对 mandatory config 缺失/非法逐字段 fail-closed | 保持请求真实 source/skill_id/av_binding_key | 只发 `IDLE+Reject*` 或 `IDLE+MERIDIAN_GATED`；不得扣 qi/stamina、写 cooldown/inventory/target、发任何 AV/STOP | active 与 idle 两前态全矩阵 |
 
 `A-02/A-03/A-04` 强制区分 registration membership 与 player authorization。active A 时 attempt B reject 只按 `R-04` 更新 B feedback，A 的 gameplay/AV/token 与后续 `R-08` 能力保持；任何“reject 顺手 reset cast”的实现不合格。
 
 ### 4.3 `SkillAvBinding` 冻结
+
+`SkillAvBinding` 由 registration key 索引；QUICK_SLOT 的 `av_binding_key` 是 `(item_template_id, cast_variant)` 的 canonical 字符串，SKILL_BAR/DEDICATED 使用 `skill_id` 对应 registration 的同一 key，NPC DEDICATED 使用相同 registration key 但选择 `SkillVisualBinding::Npc`/`Both` 的 NPC arm。任何 producer 或 consumer 都不得从 `skill_id=null` 猜测 binding，也不得另建 item→skill 隐式表。
 
 P3 production cutover 的数据形状冻结为：
 
@@ -256,7 +258,7 @@ P3 production cutover 的数据形状冻结为：
 enum SkillCastMode { Resolver, Dedicated { handler: DedicatedHandlerId } }
 struct SkillRegistration {
     resolver: Option<SkillFn>, audience: SkillAudience, cast_mode: SkillCastMode,
-    definition: TechniqueDefinition, av: SkillVisualBinding,
+    definition: TechniqueDefinition, av_binding_key: &'static str, av: SkillVisualBinding,
 }
 enum SkillVisualBinding {
     Player(SkillAvBinding), Npc(NpcVisualBinding),
@@ -279,24 +281,24 @@ enum SkillIconBinding {
 
 `TechniqueDefinition` 的 required fields 固定为 `id/display_name/grade/description/required_realm/required_meridians/required_race/qi_cost/stamina_cost/cast_ticks/cooldown_ticks/range/category`。
 
-`SkillRegistration.definition` 是所有 gameplay/技能栏元数据的唯一 owner；现有 `TechniqueDefinition.icon_texture` 删除，图标只来自 `av.icon`。`TECHNIQUE_DEFINITIONS`、`TECHNIQUE_IDS` 和 skillbar snapshot 均由 registration 投影生成，不再保留手写 canonical 数组。`cast_mode=Dedicated` 使用 `resolver=None`，但仍须携完整 definition、官方 handler 标识与玩家 AV binding。`SkillAvBinding.vfx/audio/hud` 的每个 phase 槽位明确声明该效果是否在 `start`、权威 `release`、`complete` 或 `interrupt` 发射；空槽表示该阶段不适用，消费者只读 binding，不得在 resolver、router 或 skill-id 特判表里补阶段语义。`release` 与 `complete` 仅 COMPLETE 可消费，`interrupt` 仅 INTERRUPT 可消费；任何 INTERRUPT 必须跳过 release/complete。
+`SkillRegistration.definition` 是所有 gameplay/技能栏元数据的唯一 owner；现有 `TechniqueDefinition.icon_texture` 删除，图标只来自 `av.icon`。`TECHNIQUE_DEFINITIONS`、`TECHNIQUE_IDS` 和 skillbar snapshot 均由 registration 投影生成，不再保留手写 canonical 数组。`cast_mode=Dedicated` 使用 `resolver=None`，但仍须携完整 definition、官方 handler 标识、`av_binding_key` 与玩家 AV binding。`SkillAvBinding.vfx/audio/hud` 的每个 phase 槽位明确声明该效果是否在 `start`、权威 `release`、`complete` 或 `interrupt` 发射；空槽表示该阶段不适用，消费者只读 binding，不得在 resolver、router 或 skill-id 特判表里补阶段语义。`release` 与 `complete` 仅 COMPLETE 可消费，`interrupt` 仅 INTERRUPT 可消费；任何 INTERRUPT 必须跳过 release/complete。
 
 约束：
 
 1. `SkillRegistry::register` 改收完整 `SkillRegistration`；同一 `skill_id` 或同一 cast 的多个 emit owner 均启动 fail-fast。不同玩家技能不得复用任一完整 AV 通道：任意两个不同的 Player/Both 技能，其 animation、VFX、SFX、HUD feedback、icon 五个绑定值必须逐字段全部不同；单个底层素材只有在不落入玩家技能绑定通道时才可复用（否则无法辨招）。resolver 只发送“技能已接受/命中/结算”领域事件，不得直发绑定中的 animation/VFX/audio，唯一 AV consumer 按 registration 发射；每个 `SkillAvPhaseBinding` 槽位只能由该唯一 consumer 按其声明 phase 发射。
-2. `definition.id` 必须等于 registration key；resolver 模式要求 `resolver=Some`，Dedicated 模式要求 `resolver=None` 且恰有一个经启动审计确认的官方 handler。所有 definition 字段均来自 registration；旧 `TECHNIQUE_DEFINITIONS`/`TECHNIQUE_IDS` 只允许成为派生只读视图，不得再手写条目。
+2. `definition.id == key` 且 `av_binding_key` 在 registration lookup 中唯一；Resolver 有 resolver；Dedicated 无 resolver且恰有一个 official handler；definition/skillbar 只读投影。
 3. 玩家受众 (`audience=Player|Both`) 五字段全部必填并验证真实 client 资源/recipe/handler；纯 NPC 受众显式免除 HUD/icon，animation 不适用时也必须用明确 `NpcVisual` 类型，禁止空串冒充。
 4. 占位只允许 `SkillIconBinding::ExplicitPlaceholder`，且必须携 `[BLOCKED: 需 /gen-image ...]` blocker、引用真实占位资产并出现在启动汇总；animation/VFX/audio/HUD 不允许 placeholder 或静默 fallback。P3 归零所有 placeholder 后才可完成。
 5. 多阶段招式用 `start + optional release + looping`；施法专用 `CastPlayAnim` 与 `CastStopAnim` 都携完整 `CastIdentity`，STOP 只可停止客户端记录为同一 identity 的 `start` 循环层，release 只在权威完成时播。禁止另建 `looping_cast_anim_id(skill_id)` 特判表。
-6. icon 单一真相源迁入 registration 后，由它派生 technique/skillbar/client icon snapshot；不得继续维护同一 skill 的第二份路径字面量。
+6. icon 与 quick-slot item binding 单一真相源迁入 registration lookup 后，由它派生 technique/skillbar/client icon snapshot；不得继续维护同一 skill/item cast 的第二份路径字面量。`av_binding_key` 必须随 CastSync 穿过 producer、bridge、router、reducer 与唯一 AV consumer，consumer 不得重新推导。
 
 | ID | registration invariant |
 |---|---|
-| `A-07` | `definition.id == key`；Resolver 有 resolver；Dedicated 无 resolver且恰有一个 official handler；definition/skillbar 只读投影。 |
+| `A-07` | `definition.id == key`；`av_binding_key` 在 registration lookup 中唯一；Resolver 有 resolver；Dedicated 无 resolver且恰有一个 official handler；definition/skillbar 只读投影。 |
 | `A-08` | Player/Both 五件套真实存在且逐通道可辨；Npc 用显式类型表达 HUD/icon/player animation 不适用。 |
 | `A-09` | phase slot 是唯一 emit 声明；COMPLETE 消费 release/complete，INTERRUPT 只消费 interrupt。 |
 | `A-10` | 仅 icon 允许显式 blocker placeholder，P3 完成前归零；其它四件套不允许 placeholder。 |
-| `A-11` | 每个 `(CastIdentity,av_kind,phase)` 恰有一个 registration consumer owner。 |
+| `A-11` | 每个 `(CastIdentity,av_binding_key,av_kind,phase)` 恰有一个 registration consumer owner。 |
 | `A-12` | looping owner identity-aware；STOP/terminal 只走 `R-08/R-11..R-13`，无 skill-id stop 特判表。 |
 | `A-13` | VFX 表示必须携 capability tier；Iris 是 client 可选能力，server 不假设渲染能力。 |
 
@@ -315,15 +317,15 @@ enum SkillIconBinding {
 | `C-01` | Canonical TypeBox cast domain content：BEGIN/CastSync/identity/source/target/outcome/PLAY/STOP semantics | R9 domain owner；schema authority and cross-track boundary按总纲 §4.1/PR #1902 adjudication | P1 contract-first | `P-01..P-15` domain rows + source-level semantic tests |
 | `C-02` | R6 generation pipeline output for cast：schema dist、JSON Schema、registry/generated samples 与 constrained mirrors | R6 shared-wire owner | generation contract / cutover unit | package build/test；generated diff and sample pins |
 | `C-03` | protobuf declarations/field numbers/oneofs + generated Rust/Java | R6 shared-wire owner | generation contract / cutover unit | buf breaking + generated pin |
-| `C-04` | Rust domain DTO、session/attempt allocator、real producers | R9 | P1 contract-first | `A-01..A-06` producer tests |
+| `C-04` | Rust domain DTO、session/attempt allocator、connection/tracking-epoch BEGIN producer 与 real producers | R9 | P1 contract-first + Wave 2 activation | `A-01..A-06` producer tests；真实 connection entry、caster tracking entry、observer re-entry 都必须发 player/NPC authoritative BEGIN，fixture 注入不能替代 |
 | `C-05` | `ServerDataEnvelope` arms 与 `proto_convert.rs` | R6 shared-wire owner | cutover unit | four-arm conversion roundtrip |
 | `C-06` | `ProtoServerDataBridge` conversions/normalization | R6 shared-wire owner | cutover unit | proto→Java boundary/unknown tests |
 | `C-07` | `ServerDataRouter` keys：`cast_session_begin`、`cast_sync`、`vfx_event.cast_play_anim`、`vfx_event.cast_stop_anim` | R6 shared router owner | cutover unit | four-key registration/dispatch/duplicate/unknown tests |
-| `C-08` | concrete BEGIN + CastSync consumer → `CastSessionRegistry.reduce` | R9 | cutover unit | real router dispatch to `R-01..R-09/R-14` |
+| `C-08` | concrete BEGIN + CastSync consumer → `CastSessionRegistry.reduce` | R9 | cutover unit | real router dispatch to `R-01..R-09/R-14`，含 player/NPC tracking-entry BEGIN snapshot 与后续 CastSync |
 | `C-09` | concrete PLAY + STOP consumer → `AnimationLayerManager` / `CastFovController` | R9 | cutover unit | real router dispatch to `R-10..R-14` |
 | `C-10` | `bong:vfx_event` cast producer/receiver removal；all cast emit 改 `bong:server_data` | R6 channel machinery + R9 consumer activation in the same unit | cutover unit | old receiver zero-hit + new live path |
-| `C-11` | `CastSessionRegistry`、lifecycle adapter、FPV identity/token | R9（消费 R2 P1 lifecycle API） | cutover unit | `R-15/R-16` churn + juice identity |
-| `C-12` | Baomai/Tuike single owner、全退出 producer、`meditate_sit.json` pose oracle：torso.pitch=0；head.pitch≈+0.2094395rad；both leg.pitch∈[-0.698132,0]rad；opposite leg yaw≈±0.436332rad；leg bend≈1.570796rad；each used loop axis repeats at endTick | R9 | P2 | `A-09/A-11/A-12` pins |
+| `C-11` | `CastSessionRegistry`、lifecycle adapter、FPV identity/token、movement/contamination/control/user-cancel/Fled/death/disconnect/dimension-change terminal producer adapters | R9（消费 R2 P1 lifecycle API） | cutover unit | `R-15/R-16` churn + juice identity + every required terminal producer reaches authoritative `R-08/R-11..R-15` on the live path |
+| `C-12` | Baomai/Tuike single owner 与 `meditate_sit.json` pose oracle：torso.pitch=0；head.pitch≈+0.2094395rad；both leg.pitch∈[-0.698132,0]rad；opposite leg yaw≈±0.436332rad；leg bend≈1.570796rad；each used loop axis repeats at endTick；对 Wave 2 已启用的 terminal producers 做 P2 强制回归 | R9 | P2 | `A-09/A-11/A-12` pins + `D-21` live stop semantics regression；本阶段不得首次接入 terminal producer |
 | `C-13` | `SkillRegistration`、68 resolver + 3 dedicated、definitions/AV bindings/assets | R9 | P3 | `A-02..A-13` projection/real-entry tests |
 | `C-14` | `client/resourcepack/manifest.json`、built zip SHA-1/size、`server/src/network/resourcepack.rs::DEFAULT_RESOURCE_PACK_MANIFEST` | R9 asset PR | P3 same delivery | build-resourcepack + committed SHA-1/size exact match |
 | `C-15` | contract/live/bot/release evidence 与 absorbed-plan archive | R9 | P4 | §6 derived index 全绿 |
@@ -338,7 +340,7 @@ WAVE-0 CONTRACT-FIRST:
        │
        └── R6 consumes the frozen domain content for C-02/C-03 generation contract
 
-WAVE-1/2 PRODUCTION:
+WAVE-2 PRODUCTION:
   R5 P1 + R6 generation/transport artifacts + R2 P1 seam
        │
        └── ATOMIC-ACTIVATION = C-05+C-06+C-07+C-08+C-09+C-10+C-11
@@ -346,12 +348,12 @@ WAVE-1/2 PRODUCTION:
                                └── P2 C-12 -> P3 C-13+C-14 -> P4 C-15
 ```
 
-`WAVE-0 CONTRACT-FIRST` is the only start condition for semantic contract work. The production dependency list and activation unit are the Wave 1/2 cutover conditions from the master plan and PR #1902 adjudication; they are not R9 contract start gates.
+`WAVE-0 CONTRACT-FIRST` is the only start condition for semantic contract work. The production dependency list and activation unit are the Wave 2 cutover conditions from the master plan and PR #1902 adjudication; they are not R9 contract start gates.
 
 | ID | merge invariant |
 |---|---|
 | `C-INV-01` | contract phase只增加 declarations、generated mirrors、reducer/producer tests；未激活的 arms 不得宣称 production reachable。 |
-| `C-INV-02` | production cutover 默认是同一 merge unit：新 channel producer、四 key router、BEGIN/CastSync/PLAY/STOP concrete consumers、bridge/conversion、旧 cast receiver removal 同时生效。 |
+| `C-INV-02` | production cutover 默认是同一 merge unit：新 channel producer、四 key router、BEGIN/CastSync/PLAY/STOP concrete consumers、bridge/conversion、旧 cast receiver removal，以及 movement/contamination/control/user-cancel/Fled/death/disconnect/dimension-change terminal producers 同时生效。 |
 | `C-INV-03` | 若跨 track 必须拆 PR，只允许先合入 inert declarations/conversions/registrations；旧 receiver 与旧 producer保持完整。最终 activation PR 必须同一 merge unit切 producer、启用四 consumers并删除旧 receiver。 |
 | `C-INV-04` | **禁止 receiver-removed-before-consumer-installed window**；也禁止 producer 双投旧/新 channel造成 AV 双发。每个可合入中间态必须是“完整旧路径”或“完整新路径”，不能是半条路径。 |
 | `C-INV-05` | “可开始”只由 WAVE-0 CONTRACT-FIRST 决定；“可宣称生产可达”必须 ATOMIC-ACTIVATION 和 live evidence 全绿。R6 generation/transport artifacts 与 R2 seam 属 production reachability gate，不是 R9 contract start gate。 |
@@ -371,7 +373,7 @@ WAVE-1/2 PRODUCTION:
 | `D-02` | `cast_outcome_all_variants`（含 `IDLE+MERIDIAN_GATED` 合法配对） | `P-08,P-09,P-15,C-01..C-03` |
 | `D-03` | `cast_reducer_all_rows_all_states` | `I-04..I-10,INV-01..INV-04,R-01..R-16` |
 | `D-04` | `cast_trace_static_consistency` | `INV-04,R-01..R-16,T-01..T-14` |
-| `D-05` | `cast_session_lifecycle_churn` | `P-04,P-05,P-12..P-14,R-01..R-03,R-15,R-16,C-11` |
+| `D-05` | `cast_session_lifecycle_churn`（含 connection/tracking entry 与 observer re-entry 的 player/NPC BEGIN replay） | `P-04,P-05,P-12..P-14,R-01..R-03,R-15,R-16,C-04,C-08,C-11` |
 | `D-06` | `cast_real_producer_mapping`（含 `IDLE+MERIDIAN_GATED` mapping） | `P-06..P-10,A-01,A-03..A-06,C-04` |
 | `D-07` | `cast_known_techniques_bind_cast` | `I-11,A-02..A-04,A-07,C-13` |
 | `D-08` | `cast_active_preservation_on_reject` | `INV-03,R-04,R-05,R-08,A-06` |
@@ -411,13 +413,13 @@ WAVE-1/2 PRODUCTION:
 ### P1 — cast contract + 原子 production cutover ⬜
 
 1. **P1 contract-first**：完成 `C-01`、`C-04`、`D-01..D-06,D-08..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。七个 `scripts/bot/scenarios/` 文件/anchor 与本阶段 contract/reducer work 同步首次提交，引用冻结的 `D-*` 但保持 inert，不宣称 production reachable。R6 据冻结的 domain content 生成 `C-02/C-03` mirrors；本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。`D-07` 依赖 P3 的 `C-13` registration artifact，留在 P3 gate。
-2. **P1 atomic activation**：在总纲 §3 Wave 1/2 与 PR #1902 adjudication 的 production conditions 满足后，与 R6 组成同一 `ATOMIC-ACTIVATION` merge unit，完成 `C-02/C-03/C-05..C-11` 的 live handoff；`cast_wire_identity` 与 `cast_juice_identity_bridge` 两个 scenario 随真实 transport/bridge/consumer 接线同步启用，四 arms 必须同一安全 merge unit 可达，通过 `D-10,D-11,D-23,D-26`。若不能同一 merge unit，旧 producer/receiver 原样保留。
+2. **P1 atomic activation**：仅在总纲 §3 的 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam 与 PR #1902 adjudication production conditions 全部满足后，与 R6 组成同一 `ATOMIC-ACTIVATION` merge unit，完成 `C-02/C-03/C-05..C-11` 的 live handoff；transport/bridge/router/四 arms consumer 与 movement、contamination、control、user-cancel、Fled、death、disconnect、dimension-change terminal producers 必须同时生效。`cast_wire_identity` 与 `cast_juice_identity_bridge` 随真实 transport/bridge/consumer 接线启用，通过 `D-10,D-11,D-23,D-26`；旧 producer/receiver 在同一 unit 完成切换前原样保留。
 3. 删除 `CastSyncHandler.sourceFor()` 与旧 cast `bong:vfx_event` receiver 只能作为上述 atomic activation 的同一交付物；不得保留 dual-form compatibility，也不得先删 receiver 再安装 consumers。
 
 ### P2 — 双源清除 + 全退出终态 ⬜
 
-- 完成 `C-12`：Baomai/Tuike 余下双源归一；移动、污染、控制、用户取消、Fled、死亡、断线、换维度 producer 对齐 `R-08/R-11..R-15`。`cast_stop_semantics`、`cast_av_phase_regression` 两个 bot scenario 在本阶段随真实 single-owner/terminal producer 接线并验收。
-- 完成 `D-12..D-16,D-24`；`dugu.penetrate` 只保留现状防回归 pin。
+- 完成 `C-12`：Baomai/Tuike 余下双源归一；对 Wave 2 atomic activation 已接入的移动、污染、控制、用户取消、Fled、死亡、断线、换维度 producer 做 `R-08/R-11..R-15` 强制回归，不在 P2 首次接线。`cast_stop_semantics`、`cast_av_phase_regression` 两个 bot scenario 在本阶段以真实 single-owner/terminal producer live path 验收。
+- 完成 `D-12..D-16,D-21,D-24`；`D-21` 是 P2 completion gate，必须覆盖 movement/contamination/control/user-cancel/Fled/death/disconnect/dimension-change 的真实 stop semantics；`dugu.penetrate` 只保留现状防回归 pin。
 - 视觉资产 `meditate_sit.json` 按三轮打磨，Round 3 commit 带 `<PROMISE>`。
 
 ### P3 — 定义/资产补齐 + registration 原子迁移 ⬜
@@ -445,7 +447,7 @@ WAVE-1/2 PRODUCTION:
 | `woliu-voidpath-missing-animations` | **仍成立且范围扩大**：五招 animation 缺失，同时 registry-only | P3 补定义与五件套 |
 | `dandao-basic-skillbar-bridge` | **仍成立**：三 resolver registry-only；只有局部粒子素材 | P3 完整接入 |
 | `dugu-v2-hud-skill-hint` | **仍成立**：局部 `hud_hint` 未进入 skillbar/runtime HUD 契约 | P3 由 binding 下发/渲染 |
-| `skillbar-cast-source-drift` | **仍成立**：wire 无 source，client `sourceFor()` 猜测 | P1 权威 source + identity |
+| `skillbar-cast-source-drift` | **仍成立**：wire 无 source，client `sourceFor()` 猜测 | P1 权威 source + identity + binding key |
 | `skillconfig-castsync` | **仍成立**：配置 fail-close 分支无纠正回执 | P1 新 reject outcome |
 | `zhenmai-sever-marker-hud` | **仍成立**：client 固定显示“断链增幅”，无 amplification 语义分支 | P3 修 payload/HUD |
 | `baomai-v3-av-double-source` | **仍成立**：resolver 直发与 `BaomaiSkillEvent` consumers 并存 | P2 唯一 consumer |
@@ -474,12 +476,12 @@ WAVE-1/2 PRODUCTION:
 ### 9.1 PR 顺序与文件纪律
 
 1. PR-1 contract-first：R9 交付 `C-01,C-04` + `D-01..D-06,D-08..D-09`，只落 canonical domain content、reducer/producer tests 与未启用声明；R6 可据冻结 content 生成 `C-02,C-03` inert mirrors，但双方均不得宣称 production reachable。`D-07` 随 P3 `C-13` registration migration 交付。
-2. PR-2 atomic activation：仅在总纲 §3 Wave 1/2 production conditions 满足后，由 R6/R9 在同一 `ATOMIC-ACTIVATION` merge unit 交付 `C-02,C-03,C-05..C-11` + `D-10,D-11,D-23,D-26`；新 producer、bridge/router、四 concrete consumers 与旧 receiver removal 同时生效。若平台无法形成同一 merge unit，本步骤不得切 producer或删除 receiver，完整旧路径继续保留。
-3. PR-3 P2 single-owner/terminal/meditation：`C-12` + `D-12..D-16,D-24`。
+2. PR-2 atomic activation：仅在总纲 §3 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam 与 PR #1902 production conditions 满足后，由 R6/R9 在同一 `ATOMIC-ACTIVATION` merge unit 交付 `C-02,C-03,C-05..C-11` + `D-10,D-11,D-23,D-26`；新 producer、bridge/router、四 concrete consumers、全部 required terminal/lifecycle producers 与旧 receiver removal 同时生效。若平台无法形成同一 merge unit，本步骤不得切 producer或删除 receiver，完整旧路径继续保留。
+3. PR-3 P2 single-owner/terminal/meditation：`C-12` + `D-12..D-16,D-21,D-24`；`D-21` 是该 PR 的 mandatory live stop gate，不得推迟到 P4。
 4. PR-4 P3 registration/assets/release：`C-13,C-14` + `D-07,D-17..D-20,D-22,D-25`。
 5. PR-5 P4 full evidence/archive：`C-15` + `D-01..D-27`。
 
-本顺序显式执行总纲 `plan-refactor-master-v1.md` §3/§4.1 与 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：contract-first 可在 Wave 0 合入，production activation 必须按 Wave 1/2 原子切换。前一 PR merge 后才开始后一 PR；每次 fetch 最新 `origin/main` 后验证 DAG gate。跨 owner 文件只能按 §5 owner/handoff 修改，不得复制 converter、bridge、router 或 consumer 绕门。任何 visual asset PR 执行 3 轮打磨与 `<PROMISE>`；资源包同步是同 PR 交付物。
+本顺序显式执行总纲 `plan-refactor-master-v1.md` §3/§4.1 与 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：contract-first 可在 Wave 0 合入，R9 production activation 必须在 **Wave 2** 按上述依赖原子切换。前一 PR merge 后才开始后一 PR；每次 fetch 最新 `origin/main` 后验证 DAG gate。跨 owner 文件只能按 §5 owner/handoff 修改，不得复制 converter、bridge、router 或 consumer 绕门。任何 visual asset PR 执行 3 轮打磨与 `<PROMISE>`；资源包同步是同 PR 交付物。
 
 ### 9.2 必跑 gate
 
@@ -506,7 +508,7 @@ WAVE-1/2 PRODUCTION:
 本次 rewrite 的首轮正式 review 必须同时满足：
 
 1. **major findings 少于 9 条**；
-2. **本次文档 diff byte count 不得大于提交时记录的 rewrite diff byte count，且最终文档小于 66KB**。
+2. **rewrite delta 不得超过 immutable baseline，且最终文档小于 66KB**：baseline 固定为 rewrite commit `df11b2168b140bd22fc26ec354f2cccf038a2ff6` 相对 parent `aa2c8a48363cba8186cb7cb983aa7b1e13ab8081` 的单文件 `docs/plan-refactor-cast-av-contract-v1.md` patch；可复现命令为 `git diff --no-ext-diff --binary df11b2168^ df11b2168 -- docs/plan-refactor-cast-av-contract-v1.md | wc -c`，固定结果 **92186 bytes**。验收时以 `git diff --no-ext-diff --binary df11b2168 HEAD -- docs/plan-refactor-cast-av-contract-v1.md | wc -c <= 92186` 对拍，不得使用未定义的 submission-time 外部值。
 
 任一失败即视为新架构未证明收敛：回滚本 rewrite commit，恢复诊断前版本，不进入 finding-by-finding 增补。禁止通过降级 finding 严重性、删除规范 evidence 或把内容移到未受审文件规避本条。
 
