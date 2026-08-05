@@ -12,7 +12,7 @@ PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
 ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
 MATRIX_SECTION_RE = re.compile(r"^## P0 (\d+) 变体门禁矩阵\s*$")
 MATRIX_HEADER_RE = re.compile(
-    r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|(?:[^|\n]*\|){5}\s*$"
+    r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|\s*距离\s*\|\s*维度\s*\|\s*所有权 / participant\s*\|\s*状态前置\s*\|\s*P0 现状结论\s*\|\s*$"
 )
 MATRIX_DIVIDER_RE = re.compile(r"^\|(?:\s*:?-+:?\s*\|){7}$")
 MATRIX_RE = re.compile(
@@ -144,6 +144,28 @@ def _enum_attributes(masked: str, source: str, declaration_start: int) -> list[s
     return list(reversed(selected))
 
 
+def _serde_options(serde: str) -> list[str]:
+    options: list[str] = []
+    start = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(serde):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == ",":
+            options.append(serde[start:index].strip())
+            start = index + 1
+    options.append(serde[start:].strip())
+    return [option for option in options if option]
+
+
 def _wrapped_suffix(suffix: str, opening: str, closing: str) -> bool:
     if not suffix.startswith(opening):
         return False
@@ -207,17 +229,20 @@ def parse_enum_variants(source: str) -> list[str]:
         raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
     serde = None
     for attribute in _enum_attributes(masked, source, declaration.start()):
-        if attribute.startswith("#[serde(") and attribute.endswith(")]" ):
+        if attribute.startswith("#[serde(") and attribute.endswith(")]"):
             serde = _mask_rust_non_code(attribute, mask_strings=False)[len("#[serde(") : -2]
             break
+    allowed_options = {"deny_unknown_fields", 'tag = "type"', 'rename_all = "snake_case"'}
+    options = _serde_options(serde or "")
+    options = [option for option in options if option]
+    if any(option not in allowed_options for option in options):
+        raise RuntimeError("ClientRequestV1 has unsupported serde wire option")
     tag_options = re.findall(r'\btag\s*=\s*"([^"]*)"', serde or "")
     rename_options = re.findall(r'\brename_all\s*=\s*"([^"]*)"', serde or "")
     if len(tag_options) != 1 or tag_options[0] != "type":
         raise RuntimeError("ClientRequestV1 must use serde tag = \"type\"")
     if len(rename_options) != 1 or rename_options[0] != "snake_case":
         raise RuntimeError("ClientRequestV1 must use serde rename_all = \"snake_case\"")
-    if re.search(r"\buntagged\b", serde or ""):
-        raise RuntimeError("ClientRequestV1 serde untagged representation is unsupported")
 
     body_start, body_end = _enum_body(masked, declaration.end())
     variants: list[str] = []

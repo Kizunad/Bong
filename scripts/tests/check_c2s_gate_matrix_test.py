@@ -13,7 +13,6 @@ spec = importlib.util.spec_from_file_location("check_c2s_gate_matrix", CHECKER)
 assert spec and spec.loader
 checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
-
 ENUM_PREFIX = '#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]\n'
 
 
@@ -66,7 +65,9 @@ class ParserTests(unittest.TestCase):
 
     def test_fails_closed_on_serde_wire_renames(self) -> None:
         camel = '#[serde(tag = "type", rename_all = "camelCase")]\npub enum ClientRequestV1 { Variant, }'
-        with self.assertRaisesRegex(RuntimeError, 'rename_all = "snake_case"'):
+        with self.assertRaisesRegex(
+            RuntimeError, 'unsupported serde wire option|rename_all = "snake_case"'
+        ):
             checker.parse_enum_variants(camel)
 
         renamed = ENUM_PREFIX + """pub enum ClientRequestV1 {
@@ -106,7 +107,7 @@ class ParserTests(unittest.TestCase):
         ]
         for source in sources:
             with self.subTest(source=source), self.assertRaisesRegex(
-                RuntimeError, 'tag = "type"|rename_all = "snake_case"'
+                RuntimeError, "unsupported serde wire option|must use"
             ):
                 checker.parse_enum_variants(source)
 
@@ -115,17 +116,6 @@ class ParserTests(unittest.TestCase):
             source = ENUM_PREFIX + f"pub enum ClientRequestV1 {{ #[serde({attribute})] Variant, }}"
             with self.subTest(attribute=attribute), self.assertRaisesRegex(
                 RuntimeError, "variant-level serde"
-            ):
-                checker.parse_enum_variants(source)
-
-        for options in (
-            'untagged, tag = "type", rename_all = "snake_case"',
-            'tag = "type", tag = "kind", rename_all = "snake_case"',
-            'tag = "type", rename_all = "snake_case", rename_all = "camelCase"',
-        ):
-            source = f"#[serde({options})]\npub enum ClientRequestV1 {{ Variant, }}"
-            with self.subTest(options=options), self.assertRaisesRegex(
-                RuntimeError, "ClientRequestV1"
             ):
                 checker.parse_enum_variants(source)
 
@@ -138,6 +128,18 @@ class ParserTests(unittest.TestCase):
 pub enum ClientRequestV1 { Variant, }
 """
         self.assertEqual(checker.parse_enum_variants(source), ["Variant"])
+
+    def test_rejects_enum_level_serde_wire_options(self) -> None:
+        for options in (
+            'tag = "type", content = "payload", rename_all = "snake_case"',
+            'tag = "type", rename_all = "snake_case", rename = "other"',
+            'untagged, tag = "type", rename_all = "snake_case"',
+        ):
+            source = f"#[serde({options})]\npub enum ClientRequestV1 {{ Variant, }}"
+            with self.subTest(options=options), self.assertRaisesRegex(
+                RuntimeError, "unsupported serde wire option|must use"
+            ):
+                checker.parse_enum_variants(source)
 
     def test_accepts_valid_serde_contract_from_original_source(self) -> None:
         source = ENUM_PREFIX + "#[derive(Debug)]\npub enum ClientRequestV1 { Variant, }"
@@ -156,7 +158,9 @@ pub enum ClientRequestV1 {
     Variant,
 }
 """
-        with self.assertRaisesRegex(RuntimeError, 'tag = "type"'):
+        with self.assertRaisesRegex(
+            RuntimeError, 'unsupported serde wire option|tag = "type"'
+        ):
             checker.parse_enum_variants(source)
 
     def test_main_rejects_each_contract_drift(self) -> None:
@@ -183,7 +187,7 @@ pub enum ClientRequestV1 {
     def test_main_accepts_matching_enum_and_matrix(self) -> None:
         plan = """## P0 2 变体门禁矩阵
 
-| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 |
+| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |
 |---:|---|---|---|---|---|---|
 | 1 | `Alpha` | — | — | — | — | — |
 | 2 | `Beta` | — | — | — | — | — |
@@ -205,6 +209,7 @@ pub enum ClientRequestV1 {
         )
         with self.assertRaisesRegex(RuntimeError, "malformed C2S matrix row"):
             checker.parse_matrix_variants(malformed)
+
         malformed_columns = {
             "too few row columns": plan.replace(
                 "| 2 | `Beta` | — | — | — | — | — |",
@@ -215,12 +220,12 @@ pub enum ClientRequestV1 {
                 "| 2 | `Beta` | — | — | — | — | — | extra |",
             ),
             "too few header columns": plan.replace(
-                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 |",
-                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 |",
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 |",
             ),
             "too many header columns": plan.replace(
-                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 |",
-                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 | extra |",
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 | extra |",
             ),
         }
         for label, malformed_source in malformed_columns.items():
@@ -228,6 +233,18 @@ pub enum ClientRequestV1 {
                 RuntimeError, r"malformed C2S matrix (header|row) at line \d+"
             ):
                 checker.parse_matrix_variants(malformed_source)
+
+        for header in (
+            "| # | `ClientRequestV1` | 错误 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+            "| # | `ClientRequestV1` | 维度 | 距离 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+        ):
+            with self.subTest(header=header), self.assertRaisesRegex(
+                RuntimeError, r"malformed C2S matrix header at line \d+"
+            ):
+                checker.parse_matrix_variants(plan.replace(
+                    "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |",
+                    header,
+                ))
 
         with self.assertRaisesRegex(RuntimeError, "heading count 2 does not match 3 rows"):
             checker.parse_matrix_variants(
