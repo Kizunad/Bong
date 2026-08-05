@@ -13,7 +13,7 @@ use crate::coffin::CoffinGrade;
 use crate::combat::components::{QuickSlotBindings, SkillBarBindings, SkillSlot};
 use crate::craft::CraftSession;
 use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{KnownTechniques, TechniqueRegistry};
 use crate::cultivation::lifespan::{
     lifespan_delta_years_for_real_seconds, LifespanComponent, LIFESPAN_OFFLINE_MULTIPLIER,
 };
@@ -434,6 +434,7 @@ pub fn load_player_state(persistence: &PlayerStatePersistence, username: &str) -
 pub fn load_player_slices(
     persistence: &PlayerStatePersistence,
     username: &str,
+    techniques: Option<&TechniqueRegistry>,
 ) -> LoadedPlayerSlices {
     let state = load_player_state(persistence, username);
     let connection = match open_player_connection(persistence) {
@@ -535,7 +536,11 @@ pub fn load_player_slices(
             SkillSet::default()
         }
     };
-    let known_techniques = match load_player_known_techniques_from_sqlite(&connection, username) {
+    let known_techniques = match load_player_known_techniques_from_sqlite(
+        &connection,
+        username,
+        techniques,
+    ) {
         Ok(known_techniques) => LoadedKnownTechniques::Loaded(known_techniques),
         Err(error) => {
             tracing::error!(
@@ -988,7 +993,7 @@ pub fn export_player_bundle(
     persistence: &PlayerStatePersistence,
     username: &str,
 ) -> io::Result<PlayerExportBundle> {
-    let loaded = load_player_slices(persistence, username);
+    let loaded = load_player_slices(persistence, username, None);
     let LoadedKnownTechniques::Loaded(known_techniques) = loaded.known_techniques else {
         return Err(io::Error::other(format!(
             "known techniques for `{username}` could not be reliably loaded; refusing to export a default table in its place"
@@ -1919,6 +1924,9 @@ fn load_player_skill_set_from_sqlite(
 fn load_player_known_techniques_from_sqlite(
     connection: &Connection,
     username: &str,
+    #[cfg_attr(not(feature = "dev-techniques"), allow(unused_variables))] techniques: Option<
+        &TechniqueRegistry,
+    >,
 ) -> io::Result<KnownTechniques> {
     let known_techniques_json: Option<String> = connection
         .query_row(
@@ -1936,7 +1944,15 @@ fn load_player_known_techniques_from_sqlite(
     let Some(known_techniques_json) = known_techniques_json else {
         #[cfg(feature = "dev-techniques")]
         {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            if let Some(registry) = techniques {
+                // M21/m01 修复：fresh-player dev 授予必须来自启动期已加载的权威
+                // `TechniqueRegistry`（与 `cultivation::register` 同一份，含部署期
+                // `BONG_ASSETS_DIR` 覆盖），而不是在 update thread 按
+                // `CARGO_MANIFEST_DIR` 独立重读——否则部署资产树的额外功法
+                // 会从新玩家授予中消失、且每次新玩家加入都重复 parse catalog。
+                return Ok(KnownTechniques::dev_default(registry));
+            }
+            let path = crate::body_plan::resolve_assets_root()
                 .join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH);
             let registry = crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
                 path,
@@ -3847,7 +3863,7 @@ mod player_state_tests {
         )
         .expect("inventory + craft session should persist in one transaction");
 
-        let reloaded = load_player_slices(&persistence, "Azure");
+        let reloaded = load_player_slices(&persistence, "Azure", None);
         assert_eq!(
             reloaded.inventory.as_ref().map(|value| value.revision),
             Some(inventory.revision),
@@ -3868,7 +3884,7 @@ mod player_state_tests {
             None,
         )
         .expect("terminal inventory + session delete should commit atomically");
-        let cleared = load_player_slices(&persistence, "Azure");
+        let cleared = load_player_slices(&persistence, "Azure", None);
         assert_eq!(
             cleared.inventory.as_ref().map(|value| value.revision),
             Some(InventoryRevision(42)),
@@ -3953,7 +3969,7 @@ mod player_state_tests {
             "failure should retain the injected repair hint, actual={error}"
         );
 
-        let reloaded = load_player_slices(&persistence, "Azure");
+        let reloaded = load_player_slices(&persistence, "Azure", None);
         assert_eq!(
             reloaded.inventory.as_ref().map(|value| value.revision),
             Some(InventoryRevision(41)),
@@ -4049,7 +4065,7 @@ mod player_state_tests {
             "a committed pickup must not resurrect its durable ground row"
         );
         assert_eq!(
-            load_player_slices(&persistence, "Azure")
+            load_player_slices(&persistence, "Azure", None)
                 .inventory
                 .map(|value| value.revision),
             Some(InventoryRevision(42)),
@@ -4122,7 +4138,7 @@ mod player_state_tests {
             "pickup-checkpoint-zone-rollback",
         );
         assert_eq!(
-            load_player_slices(&persistence, "Azure")
+            load_player_slices(&persistence, "Azure", None)
                 .inventory
                 .map(|value| value.revision),
             Some(InventoryRevision(41)),
@@ -4159,7 +4175,7 @@ mod player_state_tests {
         )
         .expect("saving invalid slow slice should succeed");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
 
         assert_eq!(
             loaded.position,
@@ -4183,7 +4199,7 @@ mod player_state_tests {
         )
         .expect("saving too-high slow slice should succeed");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
 
         assert_eq!(
             loaded.position,
@@ -4307,7 +4323,7 @@ mod player_state_tests {
         )
         .expect("lifespan slice should persist with player slices");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
         let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
         let offline_pause_wall: i64 = connection
@@ -4343,7 +4359,7 @@ mod player_state_tests {
         save_player_known_techniques_slice(&persistence, "Azure", &known_techniques)
             .expect("known techniques slice should persist");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
         let known_techniques_json: String = connection
             .query_row(
@@ -4884,7 +4900,7 @@ mod player_state_tests {
         seed_dash_known_techniques_row(&persistence);
         corrupt_known_techniques_row(&persistence);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
 
         assert_eq!(
             loaded.known_techniques,
@@ -4919,7 +4935,7 @@ mod player_state_tests {
             .execute_batch("DROP TABLE player_known_techniques;")
             .expect("dropping table should succeed");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
 
         assert_eq!(
             loaded.known_techniques,
@@ -4948,7 +4964,7 @@ mod player_state_tests {
         fs::create_dir_all(&dir_as_db).expect("creating directory placeholder should succeed");
         let persistence = PlayerStatePersistence::with_db_path(&data_dir, &dir_as_db);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
 
         assert_eq!(
             loaded.known_techniques,
@@ -4966,7 +4982,7 @@ mod player_state_tests {
         save_player_state(&persistence, "Azure", &PlayerState::default())
             .expect("baseline player state should persist");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         #[cfg(feature = "dev-techniques")]
         let expected = LoadedKnownTechniques::Loaded(KnownTechniques::dev_default(
             &crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
@@ -4983,13 +4999,51 @@ mod player_state_tests {
         let _ = fs::remove_dir_all(&data_dir);
     }
 
+    /// M05：fresh-player dev 授予必须来自注入的权威 registry（部署资产根），而不是
+    /// 独立重读 CARGO_MANIFEST_DIR。注入一个含 runtime-only 条目的 registry，断言
+    /// fresh-player 的 KnownTechniques 包含该 runtime-only id。
+    #[test]
+    fn known_techniques_load_defaults_use_injected_registry_not_compile_time_catalog() {
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-injected-registry");
+        save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+
+        let mut registry =
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
+                "movement.dash",
+                |definition| definition.display_name = "部署资产树覆写".to_string(),
+            );
+        let _ = &mut registry;
+        let loaded = load_player_slices(&persistence, "Azure", Some(&registry));
+        #[cfg(feature = "dev-techniques")]
+        {
+            let LoadedKnownTechniques::Loaded(known) = loaded.known_techniques else {
+                panic!("fresh player with injected registry must load dev grants");
+            };
+            assert!(
+                known.entries.iter().any(|e| e.id == "movement.dash"),
+                "fresh-player grants must include entries from the injected registry"
+            );
+        }
+        #[cfg(not(feature = "dev-techniques"))]
+        {
+            // 非 dev-techniques 构建：fresh-player 无行 → 空 KnownTechniques。
+            assert_eq!(
+                loaded.known_techniques,
+                LoadedKnownTechniques::Loaded(KnownTechniques::default())
+            );
+        }
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
     #[test]
     fn known_techniques_load_recovers_after_corrupt_row_is_repaired() {
         let (persistence, data_dir) = sqlite_persistence("known-techniques-repair-recovery");
         let original = seed_dash_known_techniques_row(&persistence);
         corrupt_known_techniques_row(&persistence);
         assert_eq!(
-            load_player_slices(&persistence, "Azure").known_techniques,
+            load_player_slices(&persistence, "Azure", None).known_techniques,
             LoadedKnownTechniques::LoadFailed,
             "前置条件：损坏行应先观察到 LoadFailed"
         );
@@ -5000,7 +5054,7 @@ mod player_state_tests {
             .expect("repairing the row via the legit save path should succeed");
 
         assert_eq!(
-            load_player_slices(&persistence, "Azure").known_techniques,
+            load_player_slices(&persistence, "Azure", None).known_techniques,
             LoadedKnownTechniques::Loaded(original),
             "行修复后重新加载应回到 Loaded(原数据)——失败状态只属于单次会话，不粘滞"
         );
@@ -5060,7 +5114,7 @@ mod player_state_tests {
             )
             .expect("lifespan fixture should insert");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(
@@ -5108,7 +5162,7 @@ mod player_state_tests {
             )
             .expect("lifespan fixture should insert");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(loaded.in_coffin);
@@ -5191,7 +5245,7 @@ mod player_state_tests {
             )
             .expect("legacy zero-pause lifespan fixture should insert");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert_eq!(loaded_lifespan.years_lived, 12.0);
@@ -5206,7 +5260,7 @@ mod player_state_tests {
 
         persist_player_with_inventory(&persistence, "Azure", &inventory);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_inventory = loaded.inventory.expect("inventory should reload");
         let main_hand_slot = loaded_inventory
             .equipped
@@ -5244,7 +5298,7 @@ mod player_state_tests {
 
         persist_player_with_inventory(&persistence, "Azure", &inventory);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_inventory = loaded.inventory.expect("inventory should reload");
         let packed_sword = only_container_item(&loaded_inventory);
         let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
@@ -5281,7 +5335,7 @@ mod player_state_tests {
         save_player_inventory_slice(&persistence, "Azure", Some(&inventory))
             .expect("changed inventory slice should persist");
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_inventory = loaded.inventory.expect("inventory should reload");
         let broken_sword = only_container_item(&loaded_inventory);
         let snapshot = persisted_inventory_snapshot(&persistence, "Azure");
@@ -5418,7 +5472,7 @@ mod player_state_tests {
         persist_player_with_inventory(&persistence, "PackReload", &inventory);
 
         // 重载。
-        let loaded = load_player_slices(&persistence, "PackReload");
+        let loaded = load_player_slices(&persistence, "PackReload", None);
         let loaded_inventory = loaded.inventory.expect("inventory should reload");
 
         // pack_8801 容器仍存在，dust(8802) 仍在其中（位置守恒 row=1,col=2）。
@@ -5588,7 +5642,7 @@ mod player_state_tests {
 
         // 核心断言③：落盘 + 重载，受害者 inventory 必须能拿回（不得被 loader 丢弃回落默认 loadout）。
         persist_player_with_inventory(&persistence, "TribulationVictim", &victim);
-        let loaded = load_player_slices(&persistence, "TribulationVictim");
+        let loaded = load_player_slices(&persistence, "TribulationVictim", None);
         assert!(
             loaded.inventory.is_some(),
             "受害者被截劫夺包后重登，inventory 不应被 loader 判为污染档丢弃回落默认 loadout"
@@ -6487,7 +6541,7 @@ mod player_state_tests {
         .expect("jade lifespan fixture should insert");
         drop(conn);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(loaded.in_coffin, "should be in_coffin");
@@ -6540,7 +6594,7 @@ mod player_state_tests {
         .expect("stone lifespan fixture should insert");
         drop(conn);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(loaded.in_coffin, "should be in_coffin");
@@ -6593,7 +6647,7 @@ mod player_state_tests {
         .expect("bronze lifespan fixture should insert");
         drop(conn);
 
-        let loaded = load_player_slices(&persistence, "Azure");
+        let loaded = load_player_slices(&persistence, "Azure", None);
         let loaded_lifespan = loaded.lifespan.expect("lifespan should reload");
 
         assert!(loaded.in_coffin, "should be in_coffin");

@@ -2,7 +2,7 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Update};
+use valence::prelude::{App, Client, Commands, EventReader, IntoSystemConfigs, Query, Res, Update};
 
 use crate::combat::anticheat::AntiCheatCounter;
 use crate::combat::body_mass::{BodyMass, Stance};
@@ -25,7 +25,9 @@ use crate::cultivation::full_power_strike::{ChargingState, FullPowerChargeRateOv
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
 use crate::cultivation::insight_flow::PendingInsightOffer;
-use crate::cultivation::known_techniques::KnownTechniques;
+use crate::cultivation::known_techniques::{
+    KnownTechniques, TechniqueRegistry as DevTechniqueRegistry,
+};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::{DeathRegistry, LifespanComponent, LifespanExtensionLedger};
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -247,6 +249,7 @@ type ProgressionResetItem<'a> = (
 fn reset_progression_state(
     mut events: EventReader<CommandResultEvent<ResetCmd>>,
     mut players: Query<ProgressionResetItem<'_>>,
+    technique_registry: Option<Res<DevTechniqueRegistry>>,
 ) {
     for event in events.read() {
         let Ok((
@@ -286,12 +289,28 @@ fn reset_progression_state(
             *dugu = DuguPractice::default();
         }
         if let Some(mut techniques) = techniques {
-            *techniques = KnownTechniques::default();
+            *techniques = dev_reset_known_techniques(technique_registry.as_deref());
         }
         if let Some(mut skill_set) = skill_set {
             *skill_set = SkillSet::default();
         }
     }
+}
+
+/// M36 修复：`/reset` 的功法重置与 fresh-player join 同源——dev-techniques 构建下
+/// 授予**当前权威 registry** 的全量（而非 derive 的无条件空表），否则 dev 玩家
+/// `/reset` 后功法全清、与加入时的授予行为自相矛盾；非 dev 构建保持空表。
+fn dev_reset_known_techniques(
+    #[cfg_attr(not(feature = "dev-techniques"), allow(unused_variables))]
+    technique_registry: Option<&DevTechniqueRegistry>,
+) -> KnownTechniques {
+    #[cfg(feature = "dev-techniques")]
+    {
+        if let Some(registry) = technique_registry {
+            return KnownTechniques::dev_default(registry);
+        }
+    }
+    KnownTechniques::default()
 }
 
 type InventoryResetItem<'a> = (

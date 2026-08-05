@@ -371,6 +371,7 @@ mod tests {
     use super::*;
     use crate::cmd::dev::meridian::parse_meridian_id;
     use crate::cmd::dev::realm::parse_realm;
+    use crate::cultivation::known_techniques::TechniqueDefinition;
     use std::collections::HashSet;
 
     // ── parse_completion_query：路由 / 词位 / 偏移 ────────────────────
@@ -609,6 +610,39 @@ mod tests {
             out.iter().all(|c| c.tooltip.is_some()),
             "功法候选应带 display_name tooltip"
         );
+    }
+
+    #[test]
+    fn technique_source_consumes_runtime_only_definition() {
+        // M07：completion 必须消费注入的 runtime registry——runtime-only 招式只存在
+        // 于注入实例，若 completion 改读默认/静态 catalog 它会从 `/technique`
+        // 建议里消失并撞红。
+        let items = ItemRegistry::from_map(Default::default());
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "runtime.only".to_string(),
+            display_name: "运行时专属".to_string(),
+            grade: "common".to_string(),
+            description: "只存在于注入 registry 的 runtime-only 招式（M07 契约）。".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 1.0,
+            stamina_cost: 1.0,
+            cast_ticks: 10,
+            cooldown_ticks: 20,
+            range: 3.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                .to_string(),
+            category: crate::cultivation::known_techniques::SkillCategory::Attack,
+            dispatch: crate::cultivation::known_techniques::TechniqueDispatch::DirectGeneric,
+        });
+        let out = candidates_for(CompletionSource::Techniques, &items, &registry, None);
+        let runtime = out
+            .iter()
+            .find(|c| c.value == "runtime.only")
+            .unwrap_or_else(|| panic!("candidates 必须包含注入 registry 的 runtime-only 招式"));
+        assert_eq!(runtime.tooltip.as_deref(), Some("运行时专属"));
+        assert_eq!(out.len(), registry.len());
     }
 
     #[test]

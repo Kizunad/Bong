@@ -3209,4 +3209,141 @@ mod tests {
             "removing unknown entity should not affect existing entries"
         );
     }
+
+    // ─── M33：heal scorer system 必须消费注入 registry 的 override 值 ───────────
+    //
+    // 若 npc_heal_scorer_system 改读默认/静态 catalog 的 qi_cost，override 后
+    // heal 成本高于 NPC 当前 qi 时 scorer 会错误 emit 0.9（低血量 NPC 选不可负担
+    // 的 heal action）。直接调 select_technique 无法探测——scorer 自带 registry
+    // 查找/category/cooldown/meridian/affordability 过滤，这里用完整 bevy system
+    // 跑一遍证明生产路径消费注入 registry。
+
+    #[test]
+    fn heal_scorer_system_follows_injected_registry_affordability() {
+        use big_brain::prelude::{Actor, Score};
+        use valence::prelude::{App, Update};
+
+        // checked-in npc.heal_basic 是 Awaken/Heal/低 qi_cost；override 成 500 qi_cost，
+        // 任何 NPC（这里 100 qi）都负担不起 → scorer 必须给 0.0。
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "npc.heal_basic",
+            |definition| {
+                definition.qi_cost = 500.0;
+            },
+        ));
+        app.insert_resource(NpcCooldownMap::default());
+        app.insert_resource(SkillMeridianDependencies::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
+        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
+        app.insert_resource(crate::npc::lod::NpcLodTick(0));
+        app.add_systems(Update, npc_heal_scorer_system);
+
+        // NPC：低血量（health 10/100）且知道 npc.heal_basic——若 scorer 读默认
+        // catalog（成本低）就会给 0.9。
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcBlackboard::default(),
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "npc.heal_basic".to_string(),
+                        proficiency: 1.0,
+                        active: true,
+                    }],
+                },
+                crate::combat::components::Wounds {
+                    entries: Vec::new(),
+                    health_current: 10.0,
+                    health_max: 100.0,
+                },
+                crate::npc::spawn::NpcMarker,
+                crate::npc::lod::NpcLodTier::Near,
+            ))
+            .id();
+
+        // big-brain scorer entity：挂 NpcHealScorer + Actor(npc) + Score。
+        let scorer_entity = app
+            .world_mut()
+            .spawn((NpcHealScorer, Actor(npc), Score::default()))
+            .id();
+        let _ = scorer_entity;
+
+        app.update();
+
+        let score = app
+            .world()
+            .get::<Score>(scorer_entity)
+            .map(|score| score.get())
+            .unwrap();
+        assert_eq!(
+            score, 0.0,
+            "scorer must see the injected 500 qi_cost and reject the unaffordable heal (M33)"
+        );
+
+        // 对照组：override 成低成本（1.0）→ 低血量 NPC 必须得到 0.9，证明
+        // scorer 正向跟随注入 registry 而非恒 0。
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "npc.heal_basic",
+            |definition| {
+                definition.qi_cost = 1.0;
+            },
+        ));
+        app.insert_resource(NpcCooldownMap::default());
+        app.insert_resource(SkillMeridianDependencies::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
+        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
+        app.insert_resource(crate::npc::lod::NpcLodTick(0));
+        app.add_systems(Update, npc_heal_scorer_system);
+
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcBlackboard::default(),
+                Cultivation {
+                    realm: Realm::Condense,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "npc.heal_basic".to_string(),
+                        proficiency: 1.0,
+                        active: true,
+                    }],
+                },
+                crate::combat::components::Wounds {
+                    entries: Vec::new(),
+                    health_current: 10.0,
+                    health_max: 100.0,
+                },
+                crate::npc::spawn::NpcMarker,
+                crate::npc::lod::NpcLodTier::Near,
+            ))
+            .id();
+        let scorer_entity = app
+            .world_mut()
+            .spawn((NpcHealScorer, Actor(npc), Score::default()))
+            .id();
+
+        app.update();
+
+        let score = app
+            .world()
+            .get::<Score>(scorer_entity)
+            .map(|score| score.get())
+            .unwrap();
+        assert_eq!(
+            score, 0.9,
+            "scorer must admit an affordable heal when override lowers cost (M33)"
+        );
+    }
 }

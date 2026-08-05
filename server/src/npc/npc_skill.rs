@@ -59,6 +59,13 @@ pub const BUFF_DEFENSE_MAGNITUDE: f32 = 0.2;
 pub const BUFF_DURATION_TICKS: u64 = 200;
 pub const BUFF_COOLDOWN_TICKS: u64 = 400;
 
+/// M08：resolver 从权威 registry 读 qi_cost/cooldown 用的 skill id（与
+/// `register_npc_skills` 的注册 id 一一对应；测试断言仍可用 HEAL_* 常量作
+/// checked-in 期望值，运行时成本以 registry 为准）。
+pub const NPC_HEAL_SKILL_ID: &str = "npc.heal_basic";
+pub const NPC_BUFF_SPEED_SKILL_ID: &str = "npc.buff_speed";
+pub const NPC_BUFF_DEFENSE_SKILL_ID: &str = "npc.buff_defense";
+
 fn npc_qi_account(caster: Entity) -> QiAccountId {
     QiAccountId::npc(format!("npc_{}v{}", caster.index(), caster.generation()))
 }
@@ -322,7 +329,21 @@ fn npc_heal_basic(
         }
     };
 
-    if cultivation.qi_current < HEAL_QI_COST {
+    // M08：resolver 必须消费权威 registry 的 qi_cost/cooldown——selector 已经按
+    // registry 成本选择（npc/technique.rs），executor 若继续用硬编码常量就会
+    // 出现「selector 认为可负担 → resolver 拒绝」或双重扣费的分裂契约。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_HEAL_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
@@ -332,10 +353,10 @@ fn npc_heal_basic(
     let heal_grades = (heal_amount / 0.25).round().clamp(0.0, f64::from(u8::MAX)) as u8;
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - HEAL_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, HEAL_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     if let Some(mut wounds) = world.get_mut::<Wounds>(caster) {
         crate::alchemy::pill::apply_wound_heal(&mut wounds, None, heal_grades);
@@ -350,7 +371,7 @@ fn npc_heal_basic(
     );
 
     CastResult::Started {
-        cooldown_ticks: HEAL_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks).max(1),
         anim_duration_ticks: 20,
     }
 }
@@ -370,17 +391,29 @@ fn npc_buff_speed(
         }
     };
 
-    if cultivation.qi_current < BUFF_SPEED_QI_COST {
+    // M08：同 npc_heal_basic——executor 必须与 selector 共用同一 registry 成本。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_BUFF_SPEED_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - BUFF_SPEED_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, BUFF_SPEED_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -406,7 +439,7 @@ fn npc_buff_speed(
     );
 
     CastResult::Started {
-        cooldown_ticks: BUFF_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks).max(1),
         anim_duration_ticks: 10,
     }
 }
@@ -426,17 +459,29 @@ fn npc_buff_defense(
         }
     };
 
-    if cultivation.qi_current < BUFF_DEFENSE_QI_COST {
+    // M08：同 npc_heal_basic——executor 必须与 selector 共用同一 registry 成本。
+    let Some(definition) = world
+        .get_resource::<crate::cultivation::known_techniques::TechniqueRegistry>()
+        .and_then(|techniques| techniques.get(NPC_BUFF_DEFENSE_SKILL_ID))
+        .cloned()
+    else {
+        return CastResult::Rejected {
+            reason: CastRejectReason::QiInsufficient,
+        };
+    };
+    let cost = definition.qi_cost;
+
+    if cultivation.qi_current + f64::EPSILON < cost {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
 
     if let Some(mut cult) = world.get_mut::<Cultivation>(caster) {
-        cult.qi_current = (cult.qi_current - BUFF_DEFENSE_QI_COST).max(0.0);
+        cult.qi_current = (cult.qi_current - cost).max(0.0);
     }
 
-    release_npc_qi_to_zone(world, caster, BUFF_DEFENSE_QI_COST);
+    release_npc_qi_to_zone(world, caster, cost);
 
     let clock = world
         .get_resource::<crate::cultivation::tick::CultivationClock>()
@@ -462,7 +507,7 @@ fn npc_buff_defense(
     );
 
     CastResult::Started {
-        cooldown_ticks: BUFF_COOLDOWN_TICKS,
+        cooldown_ticks: u64::from(definition.cooldown_ticks).max(1),
         anim_duration_ticks: 10,
     }
 }
@@ -483,6 +528,10 @@ mod tests {
         world.insert_resource(Events::<QiTransfer>::default());
         world.insert_resource(Events::<VfxEventRequest>::default());
         world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+        // M08：resolver 从注入 registry 读成本——测试必须安装与生产一致的 registry。
+        world.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         world
     }
 

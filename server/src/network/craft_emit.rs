@@ -2284,7 +2284,7 @@ mod tests {
             1,
             "persistence rejection should produce one client-visible failure"
         );
-        let reloaded = load_player_slices(&persistence, "Azure");
+        let reloaded = load_player_slices(&persistence, "Azure", None);
         assert!(reloaded.inventory.is_none());
         assert!(reloaded.craft_session.is_none());
         std::fs::remove_dir_all(data_dir).ok();

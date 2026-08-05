@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, bevy_ecs::system::SystemParam, Added, Client, Commands, Entity, EventReader,
     EventWriter, Events, GameMode, Position, Query, Res, ResMut, Username, Without,
@@ -1229,13 +1230,28 @@ pub struct RevivalEventWriters<'w> {
     coffin_state_events: EventWriter<'w, crate::coffin::CoffinStateChanged>,
 }
 
+/// 复活/新建角色的只读 registry 桶。M36：合并两个 `Option<Res<...>>` 为单一
+/// SystemParam，避免顶层参数撞 Bevy 0.14 的 16 元上限（与 `resolve.rs` 的
+/// `CombatResolveEventWriters` 同一模式）。
+#[derive(SystemParam)]
+pub struct RevivalRegistries<'w, 's> {
+    item_registry: Option<Res<'w, crate::inventory::ItemRegistry>>,
+    technique_registry: Option<Res<'w, crate::cultivation::known_techniques::TechniqueRegistry>>,
+    _marker: std::marker::PhantomData<&'s ()>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_revival_action_intents(
     clock: Res<CombatClock>,
     persistence: Res<PersistenceSettings>,
     player_persistence: Option<Res<PlayerStatePersistence>>,
     default_loadout: Option<Res<DefaultLoadout>>,
-    item_registry: Option<Res<crate::inventory::ItemRegistry>>,
+    // M36：`item_registry` 与 `technique_registry` 合并进同一个 bucket 结构（单一
+    // SystemParam），保持系统函数在 Bevy 0.14 的 16 元 SystemParam 上限内（实测第 17
+    // 个参数直接编译失败，见 `resolve_attack_intents` 的同一注释）。`TechniqueRegistry`
+    // 供 `CreateNewCharacter` 分支的 `reset_for_new_character` 使用——新角色功法授予
+    // 与 `/reset`、fresh-player join 同源（`fresh_player_known_techniques`）。
+    registries: RevivalRegistries<'_, '_>,
     mut inventory_allocator: Option<ResMut<InventoryInstanceIdAllocator>>,
     mut intents: EventReader<RevivalActionIntent>,
     mut qi: RevivalQiResources,
@@ -1246,6 +1262,8 @@ pub fn handle_revival_action_intents(
     // P0 fix: coffin 清除参数（复活/新建时彻底清除 coffin 状态）
     mut coffin_registry: Option<ResMut<crate::coffin::CoffinRegistry>>,
 ) {
+    let item_registry = registries.item_registry.as_deref();
+    let technique_registry = registries.technique_registry.as_deref();
     for intent in intents.read() {
         let Ok((
             (entity, mut lifecycle, wounds, stamina, combat_state),
@@ -1426,7 +1444,8 @@ pub fn handle_revival_action_intents(
                     skill_set,
                     player_persistence.as_deref(),
                     default_loadout.as_deref(),
-                    item_registry.as_deref(),
+                    item_registry,
+                    technique_registry,
                     inventory_allocator.as_deref_mut(),
                     coffin_registry.as_deref_mut(),
                     &mut events.coffin_state_events,
@@ -2158,6 +2177,23 @@ fn terminate_lifecycle_with_death_context(
     true
 }
 
+/// 新角色/重置的功法初始集。M36 修复：dev-techniques feature 下必须授予
+/// **当前权威 registry** 的全量（与 fresh-player join 路径的 `dev_default` 同源，
+/// 而不是 derive 出来的无条件空表）——否则创建新角色 / `/reset` 会把 dev 玩家
+/// 已授予的全部功法清空，与加入时的授予行为自相矛盾。非 dev 构建保持空表。
+fn fresh_player_known_techniques(
+    #[cfg_attr(not(feature = "dev-techniques"), allow(unused_variables))]
+    technique_registry: Option<&crate::cultivation::known_techniques::TechniqueRegistry>,
+) -> KnownTechniques {
+    #[cfg(feature = "dev-techniques")]
+    {
+        if let Some(registry) = technique_registry {
+            return KnownTechniques::dev_default(registry);
+        }
+    }
+    KnownTechniques::default()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn reset_for_new_character(
     entity: Entity,
@@ -2178,6 +2214,7 @@ fn reset_for_new_character(
     player_persistence: Option<&PlayerStatePersistence>,
     default_loadout: Option<&DefaultLoadout>,
     item_registry: Option<&crate::inventory::ItemRegistry>,
+    technique_registry: Option<&crate::cultivation::known_techniques::TechniqueRegistry>,
     inventory_allocator: Option<&mut InventoryInstanceIdAllocator>,
     // P0 fix: coffin 清除参数（新建角色不应继承死亡前的棺状态）
     coffin_registry: Option<&mut crate::coffin::CoffinRegistry>,
@@ -2308,7 +2345,7 @@ fn reset_for_new_character(
     entity_commands.insert((
         SkillBarBindings::default(),
         UnlockedStyles::default(),
-        KnownTechniques::default(),
+        fresh_player_known_techniques(technique_registry),
         learned_recipes,
     ));
     commands
@@ -5663,6 +5700,7 @@ mod tests {
         let persisted = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
+            None,
         );
         assert_eq!(persisted.state, PlayerState::default());
         assert_eq!(persisted.position, expected_spawn);
@@ -7225,6 +7263,7 @@ mod tests {
         let before = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
+            None,
         );
         assert!(
             before.in_coffin,
@@ -7290,6 +7329,7 @@ mod tests {
         let after = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
+            None,
         );
         assert!(
             !after.in_coffin,
@@ -7350,6 +7390,7 @@ mod tests {
         let before = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
+            None,
         );
         assert!(
             before.in_coffin,
@@ -7413,6 +7454,7 @@ mod tests {
         let after = crate::player::state::load_player_slices(
             &PlayerStatePersistence::with_db_path(&data_dir, settings.db_path()),
             username.0.as_str(),
+            None,
         );
         assert!(
             !after.in_coffin,

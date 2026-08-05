@@ -910,6 +910,110 @@ mod tests {
             );
         }
 
+        /// 真元恰好等于 configured cost（exact affordability 边界）——charge 与 zone credit
+        /// 必须同时使用同一个 configured cost，扣后玩家真元归零且 zone 收到全额。
+        #[test]
+        fn exact_affordability_at_overridden_cost_charges_fully_and_credits_zone() {
+            let configured_cost = 2.75_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(configured_cost),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let qi_after = app.world().get::<Cultivation>(entity).unwrap().qi_current;
+            assert!(
+                (qi_after - 0.0).abs() < 1e-12,
+                "exact-affordability practice must drain the player to exactly zero, got {qi_after}"
+            );
+            let zone_credit = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                * QI_ZONE_UNIT_CAPACITY;
+            assert!(
+                (zone_credit - configured_cost).abs() < 1e-6,
+                "the full configured cost must be credited to the zone, got {zone_credit}"
+            );
+        }
+
+        /// configured cost 大于旧常量（1.0）但低于玩家余额——入账必须是 configured cost，
+        /// 而不是把 affordability 门留在旧常量上（split cost 回归）。
+        #[test]
+        fn overridden_cost_above_legacy_constant_below_balance_charges_full_cost() {
+            let configured_cost = 1.5_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(2.0),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let charged = 2.0 - app.world().get::<Cultivation>(entity).unwrap().qi_current;
+            assert!(
+                (charged - configured_cost).abs() < 1e-6,
+                "player must be charged the configured cost (not legacy 1.0), got {charged}"
+            );
+            let zone_credit = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .spirit_qi
+                * QI_ZONE_UNIT_CAPACITY;
+            assert!(
+                (zone_credit - configured_cost).abs() < 1e-6,
+                "zone must receive the configured cost (not legacy 1.0), got {zone_credit}"
+            );
+        }
+
         /// 真元不足时练习被拒——zone 不应得到任何 credit，QiTransfer 不应被 emit。
         #[test]
         fn insufficient_qi_no_zone_credit() {

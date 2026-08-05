@@ -317,4 +317,41 @@ mod tests {
             "narration style should be Perception"
         );
     }
+
+    #[test]
+    fn first_hit_honors_overridden_realm_requirement() {
+        // M27：first-hit 学习必须消费注入 registry 的 movement.dash 定义——override
+        // 把 required_realm 提到 Void 后，Induce 玩家被击中不得学会 dash；若系统改读
+        // 默认/静态 catalog（Awaken），就会错误放行并撞红。
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<TechniqueLearnedEvent>();
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "movement.dash",
+            |definition| {
+                definition.required_realm = "Void".to_string();
+            },
+        ));
+        app.add_systems(Update, first_hit_dash_insight);
+
+        let attacker = app.world_mut().spawn_empty().id();
+        let player = spawn_player(&mut app, KnownTechniques::default());
+
+        app.world_mut().send_event(combat_event(attacker, player));
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(player).unwrap();
+        assert!(
+            !known.entries.iter().any(|e| e.id == "movement.dash"),
+            "realm-ineligible player must not learn dash from override registry (M27)"
+        );
+        let events = app.world().resource::<Events<TechniqueLearnedEvent>>();
+        assert_eq!(
+            events.len(),
+            0,
+            "no TechniqueLearnedEvent when registry override blocks learning"
+        );
+    }
 }

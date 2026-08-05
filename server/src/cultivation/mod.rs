@@ -236,7 +236,7 @@ pub fn register(app: &mut App) {
             },
         );
         let skills = skill_registry::init_registry();
-        let dependencies = skill_registry::init_meridian_dependencies();
+        let dependencies = skill_registry::init_meridian_dependencies(&techniques);
         known_techniques::validate_startup_wiring(&techniques, &skills, &dependencies)
             .unwrap_or_else(|error| {
                 panic!("[bong][cultivation] startup rejected technique wiring: {error}")

@@ -19,7 +19,9 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{Contamination, Cultivation, Karma, MeridianSystem, QiColor};
 use crate::cultivation::insight::InsightQuota;
 use crate::cultivation::insight_apply::{InsightModifiers, UnlockedPerceptions};
-use crate::cultivation::known_techniques::{KnownTechniques, KnownTechniquesLoadFailed};
+use crate::cultivation::known_techniques::{
+    KnownTechniques, KnownTechniquesLoadFailed, TechniqueRegistry,
+};
 use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::lifespan::LifespanComponent;
 use crate::cultivation::meridian::severed::MeridianSeveredPermanent;
@@ -207,6 +209,8 @@ fn init_clients(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy 系统参数（8 个）都是独立 resource/query；与
+                                     // spiritwood/mod.rs、npc/spawn/common.rs 同一模式，拆桶反而不如直列清晰。
 pub(crate) fn attach_player_state_to_joined_clients(
     mut commands: Commands,
     persistence: Res<PlayerStatePersistence>,
@@ -214,6 +218,7 @@ pub(crate) fn attach_player_state_to_joined_clients(
     dimension_layers: Option<Res<DimensionLayers>>,
     mut skill_config_store: Option<ResMut<SkillConfigStore>>,
     skill_config_schemas: Option<Res<SkillConfigSchemas>>,
+    technique_registry: Option<Res<TechniqueRegistry>>,
     mut joined_clients: Query<
         JoinedClientsWithoutStateQueryItem<'_>,
         JoinedClientsWithoutStateQueryFilter,
@@ -229,7 +234,13 @@ pub(crate) fn attach_player_state_to_joined_clients(
         flags,
     ) in &mut joined_clients
     {
-        let persisted = load_player_slices(&persistence, username.0.as_str());
+        let persisted = load_player_slices(
+            &persistence,
+            username.0.as_str(),
+            // M21/m01：fresh-player dev 授予使用启动期已加载的权威 registry（部署资产根），
+            // 不按 CARGO_MANIFEST_DIR 独立重读。
+            technique_registry.as_deref(),
+        );
         let restored_inventory = persisted.inventory.is_some();
         let restored_lifespan = persisted.lifespan.is_some();
         let restored_skill = !persisted.skill_set.skills.is_empty()

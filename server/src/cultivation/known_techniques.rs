@@ -158,6 +158,17 @@ impl TechniqueRegistry {
         registry
     }
 
+    /// 从任意 TOML 文本构造 registry（仅测试用），让其他模块的测试能直接 pin loader
+    /// 的拒绝边界（如 M14 的 f32 wire 上限）。
+    #[cfg(test)]
+    pub(crate) fn load_from_contents_for_tests(text: &str) -> Result<Self, TechniqueLoadError> {
+        Self::from_toml_contents(
+            Path::new("test-techniques.toml"),
+            text,
+            &RaceRegistry::default(),
+        )
+    }
+
     pub fn get(&self, id: &str) -> Option<&TechniqueDefinition> {
         self.id_to_index
             .get(id)
@@ -178,6 +189,44 @@ impl TechniqueRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.definitions.is_empty()
+    }
+
+    /// 最坏情况下（玩家学会全部 catalog 条目）techniques_snapshot 聚合 payload 的保守
+    /// 字节上界。每条目按 JSON 转义最坏情况（每个字节都可能转义为 `\u00XX` → 6×）与
+    /// 结构开销估算，再与 wire 上限 `MAX_PAYLOAD_BYTES` 比对——编码检查在发送端是
+    /// 逐玩家逐 tick 执行的，启动期先做一次聚合门禁（`validate_startup_wiring`），
+    /// 保证"catalog 被接受 ⇒ 任何全量快照都能完整送达"。
+    ///
+    /// 基底只取固定信封开销（实测 `{"v":1,"type":"techniques_snapshot",...}` 约 54
+    /// 字节），不能按 `MAX_PAYLOAD_BYTES` 比例预留——否则小 catalog 会被错误拒绝
+    /// （例如 20 条 × ~500B 条目 + 16 KiB 基底 > 32 KiB，真实 payload 却只有 5 KiB）。
+    ///
+    /// 编码器（`serialize_server_data_payload` → serde_json）对 CJK 写原生 UTF-8（1×）、
+    /// 对控制字符写 `\u00XX`（6×）——3× 是对混合文本的保守上界。wire 条目
+    /// `TechniqueEntryV1`（schema/combat_hud.rs）不携带 `icon_texture`，故不计入。
+    pub fn aggregate_snapshot_size(&self) -> usize {
+        const ENVELOPE_OVERHEAD: usize = 1024;
+        const PER_ENTRY_OVERHEAD: usize = 192;
+        let mut total = ENVELOPE_OVERHEAD; // 信封 / 类型 / 元数据开销余量
+        for definition in &self.definitions {
+            // 3 倍 UTF-8 字节数 ≈ JSON 转义最坏情况上界；字符串字段 = id + display_name
+            // + grade + description + required_realm + proficiency_label（`sword_proficiency_label`
+            // 最长为五段 label 之一，~16B）。min_health 等数值字段走 serde 数字序列化，
+            // 开销已含在 PER_ENTRY_OVERHEAD。
+            let text_bytes = definition.id.len()
+                + definition.display_name.len()
+                + definition.grade.len()
+                + definition.description.len()
+                + definition.required_realm.len()
+                + 16; // proficiency_label 保守余量
+            let meridian_bytes: usize = definition
+                .required_meridians
+                .iter()
+                .map(|m| m.channel.len() * 3 + 16)
+                .sum();
+            total += 3 * text_bytes + meridian_bytes + PER_ENTRY_OVERHEAD;
+        }
+        total
     }
 
     /// 读取并验证任意 techniques TOML。读取、反序列化、跨表验证完成前不会构造任何可见
@@ -216,6 +265,20 @@ impl TechniqueRegistry {
                 path,
                 None,
                 "techniques must not be empty",
+            ));
+        }
+        // M18：catalog 总量同样受 `MAX_PAYLOAD_BYTES` 聚合边界约束。checked-in catalog
+        // 是 49 条，512 条是约 10 倍余量——单条小成本 × 数千条也能撑爆 32 KiB 聚合
+        // payload，因此先卡总量再在启动期量一次真实编码大小。
+        const MAX_CATALOG_ENTRIES: usize = 512;
+        if parsed.techniques.len() > MAX_CATALOG_ENTRIES {
+            return Err(TechniqueLoadError::invalid(
+                path,
+                None,
+                format!(
+                    "techniques catalog must not exceed {MAX_CATALOG_ENTRIES} entries, got {}",
+                    parsed.techniques.len()
+                ),
             ));
         }
 
@@ -357,6 +420,57 @@ fn validate_and_convert(
             ));
         }
     }
+    // M18：description 会原样进 techniques_snapshot 的聚合 payload（上限
+    // `MAX_PAYLOAD_BYTES = 32_768`）。单个字段不设上限时，一条超长 description 就能让
+    // 已接受的 catalog 在发送端被 `PayloadBuildError::Oversize` 整包丢弃。这里按
+    // UTF-8 字节数封顶（checked-in catalog 实测最长 41 字节，1024 留 25 倍余量）；
+    // 截断语义违背"发送什么就是什么"的契约，因此拒绝而不是静默截断。catalog
+    // 总数（`definitions` 声明上限）与聚合编码大小由启动期 `aggregate_snapshot_size`
+    // 一并门禁。
+    const MAX_DESCRIPTION_BYTES: usize = 1024;
+    if raw.description.len() > MAX_DESCRIPTION_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "description must not exceed {MAX_DESCRIPTION_BYTES} bytes (UTF-8), got {}",
+                raw.description.len()
+            ),
+        ));
+    }
+    const MAX_DISPLAY_NAME_BYTES: usize = 256;
+    if raw.display_name.len() > MAX_DISPLAY_NAME_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "display_name must not exceed {MAX_DISPLAY_NAME_BYTES} bytes (UTF-8), got {}",
+                raw.display_name.len()
+            ),
+        ));
+    }
+    const MAX_ID_BYTES: usize = 128;
+    if raw.id.len() > MAX_ID_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "id must not exceed {MAX_ID_BYTES} bytes (UTF-8), got {}",
+                raw.id.len()
+            ),
+        ));
+    }
+    const MAX_ICON_TEXTURE_BYTES: usize = 512;
+    if raw.icon_texture.len() > MAX_ICON_TEXTURE_BYTES {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "icon_texture must not exceed {MAX_ICON_TEXTURE_BYTES} bytes (UTF-8), got {}",
+                raw.icon_texture.len()
+            ),
+        ));
+    }
 
     if !is_valid_icon_texture(&raw.icon_texture) {
         return Err(TechniqueLoadError::invalid(
@@ -400,6 +514,20 @@ fn validate_and_convert(
             ));
         }
     }
+    // M14：qi_cost 的 wire 契约是 f32（TechniqueEntryV1.qi_cost），snapshot 用 `as f32`
+    // 窄化。若 loader 放行超过 f32::MAX 的值，1e40 这类输入会被窄化成 +inf 推给 client。
+    // 这里必须在 loader 侧拒绝（错误消息点名 f32 边界），与 f32 精度边界 M32 配套。
+    if raw.qi_cost > f64::from(f32::MAX) {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "qi_cost exceeds the f32 wire contract (f32::MAX = {}), got {}",
+                f32::MAX,
+                raw.qi_cost
+            ),
+        ));
+    }
     if raw.id == "body.guangbo_ticao" && raw.qi_cost <= 0.0 {
         return Err(TechniqueLoadError::invalid(
             path,
@@ -407,11 +535,37 @@ fn validate_and_convert(
             "body.guangbo_ticao qi_cost must be strictly positive",
         ));
     }
+    // qi ledger quantum 边界：`release_qi_amount_to_zone` 对 `amount <= QI_EPSILON` 直接
+    // 返回（不落 zone/overflow、不发 QiTransfer）。若接受 `0 < qi_cost <= QI_EPSILON`，
+    // 消费方会先扣玩家真元再以同一金额回灌——release helper 提前返回造成单边扣减、
+    // 真元永久销毁（M01 blocker）。因此任何非零 qi_cost 必须大于 ledger quantum；
+    // `body.guangbo_ticao` 上方的 `<= 0.0` 特判保持零成本专属拒绝语义。
+    if raw.qi_cost > 0.0 && raw.qi_cost <= crate::qi_physics::constants::QI_EPSILON {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            format!(
+                "qi_cost must be zero or exceed the qi ledger quantum ({}), got {}",
+                crate::qi_physics::constants::QI_EPSILON,
+                raw.qi_cost
+            ),
+        ));
+    }
     if raw.id == "sword_path.heaven_gate" && raw.range > 100.0 {
         return Err(TechniqueLoadError::invalid(
             path,
             Some(technique_id.clone()),
             "sword_path.heaven_gate range must not exceed 100 blocks",
+        ));
+    }
+    // M30：`sword_path.resonance` 是全世界 entity fan-out（扫 Position+StatusEffects），
+    // 无界 range 会让一次 cast 入队 O(world entities) 事件。给该招式加 operational
+    // 上限（checked-in 6 格远低于 30 上限），与 heaven_gate 的 100 上限同一类防护。
+    if raw.id == "sword_path.resonance" && raw.range > 30.0 {
+        return Err(TechniqueLoadError::invalid(
+            path,
+            Some(technique_id.clone()),
+            "sword_path.resonance range must not exceed 30 blocks (entity fan-out bound)",
         ));
     }
 
@@ -569,6 +723,17 @@ pub fn validate_startup_wiring(
     skills: &SkillRegistry,
     dependencies: &SkillMeridianDependencies,
 ) -> Result<(), TechniqueWiringError> {
+    // M18：catalog 被接受 ⇒ 学会全部条目的玩家必能收到完整快照。编码检查（发送端
+    // `PayloadBuildError::Oversize`）是逐玩家逐 tick 的，启动期必须先行量一次最坏
+    // 聚合大小，否则超限 catalog 会让快照在发送端被整包丢弃。
+    let aggregate = techniques.aggregate_snapshot_size();
+    if aggregate > crate::schema::common::MAX_PAYLOAD_BYTES {
+        return Err(TechniqueWiringError(format!(
+            "techniques catalog worst-case snapshot is ~{aggregate} bytes, exceeding MAX_PAYLOAD_BYTES = {}; \
+             reduce catalog size or per-entry text before startup",
+            crate::schema::common::MAX_PAYLOAD_BYTES
+        )));
+    }
     for definition in techniques.iter() {
         match definition.dispatch {
             TechniqueDispatch::MetadataBacked => {
@@ -702,8 +867,7 @@ dispatch = "metadata_backed"
                 legacy.id
             );
             assert!(
-                (actual.qi_cost - f64::from(legacy.qi_cost)).abs()
-                    <= f64::from(f32::EPSILON),
+                (actual.qi_cost - f64::from(legacy.qi_cost)).abs() <= f64::from(f32::EPSILON),
                 "qi_cost mismatch for {}: runtime={} legacy={}",
                 legacy.id,
                 actual.qi_cost,
@@ -794,6 +958,48 @@ dispatch = "metadata_backed"
             .entries
             .iter()
             .all(|entry| { entry.active && (entry.proficiency - 0.5).abs() <= f32::EPSILON }));
+        // M10：序列化必须钉住完整 persistence shape（含 `active` key）——若把 active
+        // 序列化成别的名字或省略，旧存档 JSON 就无法按既有契约加载，这里直接撞红。
+        let json = serde_json::to_string(&known).expect("KnownTechniques must serialize");
+        let first_entry_id = known
+            .entries
+            .first()
+            .expect("dev_default grants the full catalog")
+            .id
+            .as_str();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("serialized JSON must parse");
+        let entries = parsed
+            .get("entries")
+            .expect("persistence shape must keep top-level `entries` key");
+        assert_eq!(
+            entries
+                .get(0)
+                .and_then(|entry| entry.get("id"))
+                .and_then(serde_json::Value::as_str),
+            Some(first_entry_id),
+            "persisted entries[0].id must match the registry-first technique"
+        );
+        assert_eq!(
+            entries
+                .get(0)
+                .and_then(|entry| entry.get("active"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true),
+            "persistence shape must keep per-entry `active` key (M10)"
+        );
+        assert!(
+            entries
+                .get(0)
+                .and_then(|entry| entry.get("proficiency"))
+                .and_then(serde_json::Value::as_f64)
+                .is_some(),
+            "persistence shape must keep per-entry `proficiency` key"
+        );
+        // 反序列化 round-trip：序列化产物必须能被既有存档加载路径读回。
+        let round_trip: KnownTechniques =
+            serde_json::from_str(&json).expect("serialized shape must round-trip");
+        assert_eq!(round_trip, known);
     }
 
     #[test]
@@ -873,6 +1079,58 @@ dispatch = "metadata_backed"
     }
 
     #[test]
+    fn rejects_blank_required_text_fields_per_field() {
+        let blank_id = minimal_toml().replace("id = \"test.skill\"", "id = \"\"");
+        let whitespace_id = minimal_toml().replace("id = \"test.skill\"", "id = \"  \"");
+        let blank_display_name =
+            minimal_toml().replace("display_name = \"测试\"", "display_name = \"\"");
+        let whitespace_display_name =
+            minimal_toml().replace("display_name = \"测试\"", "display_name = \" \t \"");
+        let blank_description =
+            minimal_toml().replace("description = \"测试功法\"", "description = \"\"");
+        for text in [
+            blank_id,
+            whitespace_id,
+            blank_display_name,
+            whitespace_display_name,
+            blank_description,
+        ] {
+            assert!(
+                load(&text).is_err(),
+                "blank or whitespace-only required text field must reject: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_each_numeric_field_invalid_value_class_independently() {
+        let negative_qi = minimal_toml().replace("qi_cost = 0.0", "qi_cost = -0.1");
+        let nonfinite_qi = minimal_toml().replace("qi_cost = 0.0", "qi_cost = inf");
+        let negative_stamina = minimal_toml().replace("stamina_cost = 0.0", "stamina_cost = -0.1");
+        let nonfinite_stamina = minimal_toml().replace("stamina_cost = 0.0", "stamina_cost = nan");
+        let negative_range = minimal_toml().replace("range = 0.0", "range = -1.0");
+        let nonfinite_range = minimal_toml().replace("range = 0.0", "range = inf");
+        let nonfinite_health = minimal_toml().replace(
+            "required_meridians = []",
+            "required_meridians = [{ channel = \"Lung\", min_health = nan }]",
+        );
+        for text in [
+            negative_qi,
+            nonfinite_qi,
+            negative_stamina,
+            nonfinite_stamina,
+            negative_range,
+            nonfinite_range,
+            nonfinite_health,
+        ] {
+            assert!(
+                load(&text).is_err(),
+                "invalid numeric value class must reject independently: {text}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_invalid_numbers_and_bad_meridian_references() {
         let negative_cost = minimal_toml().replace("qi_cost = 0.0", "qi_cost = -0.1");
         let nan_range = minimal_toml().replace("range = 0.0", "range = nan");
@@ -931,18 +1189,41 @@ dispatch = "metadata_backed"
 
     #[test]
     fn accepts_known_species_gate() {
+        // `RaceRegistry::default()` 是空注册表——物种门对未知 race 必须拒绝，
+        // 而"已知"需要真实注册表。这里构造带 human race 的注册表证明非空物种门
+        // 能被接受（区别于 `rejects_species_gates_that_are_empty_duplicate_or_unknown`）。
         let input = minimal_toml().replace(
             "required_race = { kind = \"any\" }",
-            "required_race = { kind = \"species\", species = [\"whale\"] }",
+            "required_race = { kind = \"species\", species = [\"human\"] }",
         );
-        let registry = load(&input).expect("known non-empty species gate must load");
+        let body_plans = crate::body_plan::BodyPlanRegistry::from_plans(vec![
+            (*crate::body_plan::humanoid_plan_static()).clone(),
+        ])
+        .expect("humanoid plan must validate");
+        let races = crate::body_plan::RaceRegistry::from_parts_for_test(
+            vec![crate::body_plan::race_registry::RaceEntry {
+                id: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                display_name: "人族".to_string(),
+                body_plan_id: crate::body_plan::BodyPlanId::new("humanoid"),
+                beast_kinds: vec![],
+            }],
+            vec![],
+            &body_plans,
+        )
+        .expect("human-only test registry must validate");
+        let registry = TechniqueRegistry::from_toml_contents(
+            Path::new("test-techniques.toml"),
+            &input,
+            &races,
+        )
+        .expect("known non-empty species gate must load");
         let definition = registry.get("test.skill").unwrap();
         assert!(definition
             .required_race
-            .allows(&RaceId::new("whale"), false));
+            .allows(&RaceId::new("human"), false));
         assert!(!definition
             .required_race
-            .allows(&RaceId::new(crate::body_plan::HUMAN_RACE_ID), true));
+            .allows(&RaceId::new("whale"), false));
     }
 
     #[test]
@@ -968,6 +1249,39 @@ dispatch = "metadata_backed"
     }
 
     #[test]
+    fn rejects_sub_epsilon_qi_costs_but_accepts_zero_and_above_epsilon() {
+        // M01 blocker 边界：`release_qi_amount_to_zone` 对 `amount <= QI_EPSILON` 直接
+        // 返回，接受 `0 < qi_cost <= QI_EPSILON` 会造成扣玩家却不落目的账户的单边销毁。
+        // 因此非零 qi_cost 必须大于 ledger quantum。
+        let sub_epsilon = minimal_toml().replace("qi_cost = 0.0", "qi_cost = 0.0000005");
+        let exactly_epsilon = minimal_toml().replace(
+            "qi_cost = 0.0",
+            &format!("qi_cost = {}", crate::qi_physics::constants::QI_EPSILON),
+        );
+        for text in [sub_epsilon, exactly_epsilon] {
+            assert!(
+                load(&text).is_err(),
+                "non-zero qi_cost at or below the ledger quantum must reject: {text}"
+            );
+        }
+
+        // 零成本仍合法（免费招，由各消费方决定 zero-cost 语义）；刚好超过 epsilon 合法。
+        let zero_cost = load(&minimal_toml()).expect("zero qi_cost remains a valid catalog value");
+        assert_eq!(zero_cost.get("test.skill").unwrap().qi_cost, 0.0);
+        let above_epsilon = minimal_toml().replace(
+            "qi_cost = 0.0",
+            &format!(
+                "qi_cost = {}",
+                crate::qi_physics::constants::QI_EPSILON * 2.0
+            ),
+        );
+        assert!(
+            load(&above_epsilon).is_ok(),
+            "qi_cost strictly above the ledger quantum must load"
+        );
+    }
+
+    #[test]
     fn rejects_zero_cost_guangbo_and_oversized_heaven_gate() {
         let zero_cost_guangbo =
             minimal_toml().replace("id = \"test.skill\"", "id = \"body.guangbo_ticao\"");
@@ -981,6 +1295,28 @@ dispatch = "metadata_backed"
         let heaven_gate_error =
             load(&oversized_heaven_gate).expect_err("global entity fan-out range must be bounded");
         assert!(heaven_gate_error.to_string().contains("100 blocks"));
+    }
+
+    #[test]
+    fn rejects_oversized_resonance_fan_out_range() {
+        // M30：resonance 是世界级 entity fan-out，range 必须有 operational 上限。
+        let oversized = minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"sword_path.resonance\"")
+            .replace("range = 0.0", "range = 30.01");
+        let error = load(&oversized)
+            .expect_err("sword_path.resonance range must be bounded to prevent world fan-out");
+        assert!(error.to_string().contains("30 blocks"));
+
+        // 恰好 30 与 6（checked-in 值）仍合法。
+        for valid in ["30.0", "6.0"] {
+            let input = minimal_toml()
+                .replace("id = \"test.skill\"", "id = \"sword_path.resonance\"")
+                .replace("range = 0.0", &format!("range = {valid}"));
+            assert!(
+                load(&input).is_ok(),
+                "resonance range {valid} must remain valid"
+            );
+        }
     }
 
     fn noop_skill(
@@ -1072,7 +1408,8 @@ dispatch = "metadata_backed"
     fn checked_in_production_wiring_satisfies_dynamic_relationships() {
         let techniques = production_registry();
         let skills = crate::cultivation::skill_registry::init_registry();
-        let dependencies = crate::cultivation::skill_registry::init_meridian_dependencies();
+        let dependencies =
+            crate::cultivation::skill_registry::init_meridian_dependencies(&techniques);
 
         validate_startup_wiring(&techniques, &skills, &dependencies)
             .expect("checked-in metadata, resolvers, and dependencies must satisfy startup wiring");
@@ -1090,6 +1427,66 @@ dispatch = "metadata_backed"
                 .unwrap()
                 .cooldown_ticks,
             u32::MAX
+        );
+    }
+
+    #[test]
+    fn oversize_aggregate_snapshot_is_rejected_at_startup_wiring() {
+        // M18：catalog 聚合快照超过 `MAX_PAYLOAD_BYTES`（32 KiB）时必须启动期拒绝，
+        // 而不是等发送端 `PayloadBuildError::Oversize` 整包丢弃。单条 1024 字节上限
+        // 与 512 条总量上限都放行时，聚合大小门禁是最后一道防线——这里用 400 条
+        // description 都顶到 900 字节（仍低于 1024 单条上限）来压过 32 KiB 上限：
+        // 400 × (3×900 + 192) ≈ 1.1 MB ≫ 32 KiB。
+        let mut catalog = String::new();
+        for index in 0..400 {
+            catalog.push_str(&format!(
+                r#"
+[[techniques]]
+id = "bulk.{index}"
+display_name = "批量功法"
+grade = "common"
+description = "{}"
+required_realm = "Awaken"
+required_meridians = []
+required_race = {{ kind = "any" }}
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "direct_generic"
+"#,
+                "刀".repeat(300)
+            ));
+        }
+        let registry = load(&catalog).expect("bulk catalog within per-entry limits must load");
+        assert!(
+            registry.aggregate_snapshot_size() > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "400×1000-byte descriptions must exceed the 32 KiB wire limit (aggregate = {})",
+            registry.aggregate_snapshot_size()
+        );
+        let error = validate_startup_wiring(
+            &registry,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("oversize aggregate snapshot must fail startup wiring");
+        assert!(
+            error.to_string().contains("MAX_PAYLOAD_BYTES"),
+            "wiring rejection should name the payload limit, got {error}"
+        );
+    }
+
+    #[test]
+    fn checked_in_catalog_aggregate_snapshot_fits_wire_limit() {
+        let techniques = production_registry();
+        let aggregate = techniques.aggregate_snapshot_size();
+        assert!(
+            aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
+            "checked-in catalog worst-case snapshot ~{aggregate} bytes must fit {}",
+            crate::schema::common::MAX_PAYLOAD_BYTES
         );
     }
 }

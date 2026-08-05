@@ -1632,7 +1632,7 @@ fn inject_vanilla_block_templates(
 }
 
 pub fn load_item_registry() -> Result<ItemRegistry, String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_ITEMS_DIR);
+    let path = crate::body_plan::resolve_assets_root().join(DEFAULT_ITEMS_DIR);
     load_item_registry_from_dir(path)
 }
 
@@ -1725,7 +1725,7 @@ fn collect_item_toml_paths(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), St
 }
 
 pub fn load_default_loadout(registry: &ItemRegistry) -> Result<LoadoutSpec, String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_LOADOUT_PATH);
+    let path = crate::body_plan::resolve_assets_root().join(DEFAULT_LOADOUT_PATH);
     load_default_loadout_from_path(path, registry)
 }
 

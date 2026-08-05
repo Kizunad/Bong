@@ -169,6 +169,168 @@ skill_id = "missing.runtime.technique"
 }
 
 #[test]
+fn full_app_startup_smoke_rejects_metadata_backed_without_resolver() {
+    let assets_root = copied_assets_root("wiring-missing-resolver");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    techniques.push_str(
+        r#"
+
+[[techniques]]
+id = "test.wiring_no_resolver_smoke"
+display_name = "断链探针"
+grade = "common"
+description = "metadata_backed 但无 SkillRegistry resolver，必须被启动期 wiring 门拒绝。"
+required_realm = "Awaken"
+required_meridians = []
+required_race = { kind = "any" }
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 0
+cooldown_ticks = 0
+range = 0.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
+category = "attack"
+dispatch = "metadata_backed"
+"#,
+    );
+    fs::write(&techniques_path, techniques).expect("extended technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject metadata_backed without resolver; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique wiring"),
+        "startup failure must identify the wiring validator; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_metadata_backed_without_dependency_declaration() {
+    // 「有 resolver、无依赖」负例在 full-app 层不可构造：生产 `init_registry` 的所有
+    // resolver id 都在 `init_meridian_dependencies` 有声明（checked-in wiring 测试锁住），
+    // 而 full-app 无法注入新 resolver。该分支的拒绝语义已由单元测试
+    // `startup_wiring_rejects_each_metadata_relationship_violation_with_the_id` 锁定。
+    //
+    // 这里改用「缺 resolver 但依赖声明存在」的变体：把既有 `movement.dash`
+    // （direct_generic、无 resolver、有依赖声明）整条改为 metadata_backed——
+    // 依赖声明按 id 匹配仍然存在，resolver 缺失，命中 wiring 门的缺 resolver 分支，
+    // 同样证明生产 `cultivation::register` 在 full-app 启动时执行了 wiring 校验。
+    let assets_root = copied_assets_root("wiring-missing-resolver-with-dependency");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    let dash_start = techniques
+        .find("id = \"movement.dash\"")
+        .expect("checked-in catalog must contain movement.dash");
+    let dash_end = techniques[dash_start..]
+        .find("\n[[techniques]]")
+        .map(|offset| dash_start + offset)
+        .unwrap_or(techniques.len());
+    let entry = &techniques[dash_start..dash_end];
+    assert!(
+        entry.contains("dispatch = \"direct_generic\""),
+        "movement.dash entry must be direct_generic, got: {entry}"
+    );
+    techniques = format!(
+        "{}{}{}",
+        &techniques[..dash_start],
+        entry.replace(
+            "dispatch = \"direct_generic\"",
+            "dispatch = \"metadata_backed\"",
+        ),
+        &techniques[dash_end..]
+    );
+    fs::write(&techniques_path, techniques).expect("modified technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject metadata_backed without resolver; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique wiring"),
+        "startup failure must identify the wiring validator; output:\n{combined}"
+    );
+}
+
+#[test]
+fn full_app_startup_smoke_rejects_direct_generic_resolver_conflict() {
+    // 把既有 metadata_backed 且带 resolver 的条目 `sword_path.qi_slash` 改为
+    // direct_generic——resolver 已注册，dispatch 却声明 direct_generic，命中冲突分支。
+    let assets_root = copied_assets_root("wiring-direct-generic-conflict");
+    let techniques_path = assets_root.join("assets/cultivation/techniques.toml");
+    let mut techniques =
+        fs::read_to_string(&techniques_path).expect("copied technique catalog must be readable");
+    // 找到 qi_slash 条目块并替换其 dispatch。
+    let qi_slash_start = techniques
+        .find("id = \"sword_path.qi_slash\"")
+        .expect("checked-in catalog must contain sword_path.qi_slash");
+    let qi_slash_end = techniques[qi_slash_start..]
+        .find("\n[[techniques]]")
+        .map(|offset| qi_slash_start + offset)
+        .unwrap_or(techniques.len());
+    let entry = &techniques[qi_slash_start..qi_slash_end];
+    assert!(
+        entry.contains("dispatch = \"metadata_backed\""),
+        "sword_path.qi_slash entry must be metadata_backed, got: {entry}"
+    );
+    techniques = format!(
+        "{}{}{}",
+        &techniques[..qi_slash_start],
+        entry.replace(
+            "dispatch = \"metadata_backed\"",
+            "dispatch = \"direct_generic\""
+        ),
+        &techniques[qi_slash_end..]
+    );
+    fs::write(&techniques_path, techniques).expect("modified technique catalog must be writable");
+
+    let output = run_full_app_startup(&assets_root);
+    fs::remove_dir_all(&assets_root).expect("remove copied assets after startup smoke");
+
+    assert!(
+        !output.status.success(),
+        "startup must reject direct_generic with a registered resolver; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("startup rejected technique wiring"),
+        "startup failure must identify the wiring validator; output:\n{combined}"
+    );
+}
+
+#[test]
 fn production_readiness_is_published_by_poststartup() {
     let directory = unique_test_directory("readiness");
     fs::create_dir(&directory).expect("create readiness smoke directory");
