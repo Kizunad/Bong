@@ -37,6 +37,8 @@ export type ElderEncounterEventKindV1 = Static<typeof ElderEncounterEventKindV1>
  */
 export const ElderEncounterEventV1 = Type.Object(
   {
+    /** Durable terminal delivery identity; present on restart-redriven death events. */
+    event_id: Type.Optional(Type.String({ minLength: 1 })),
     /** 大能所在 TSY zone 名称（agent zone-scoped narration 用）。 */
     zone_name: Type.String({ minLength: 1 }),
     /** 大能 MC protocol entity_id（i32，Valence EntityId::get()，从 1 起分配；0=sentinel（无遭遇），合法 MC protocol id ≥ 1）。 */

@@ -385,6 +385,9 @@ export const CHANNELS = {
   /** Server → Agent: 垂死大能遭遇事件（appeared / dan_received / betrayal / dead_*，agent narration） */
   ELDER_ENCOUNTER: "bong:elder_encounter",
 
+  /** Server → Agent: 已提交的垂死大能终态队列（RPUSH + processing list ACK）。 */
+  ELDER_ENCOUNTER_DURABLE: "bong:elder_encounter:durable",
+
   // ─── 我流虚蚀（plan-combat-skill-feedback-bridges-v1 P3） ────────────────────
   /** Server → Agent: 虚蚀阶段推进事件（我流虚蚀整链激活，agent narration） */
   VOID_EROSION_EVENT: "bong:void_erosion_event",

@@ -12,9 +12,10 @@ use crate::combat::CombatClock;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 use crate::qi_physics::{
-    qi_release_to_zone, QiAccountId, QiPhysicsError, QiTransfer, QiTransferReason, WorldQiAccount,
+    qi_flow_overflow_account, transfer_ledger_qi_to_zone, QiAccountId, QiPhysicsError, QiTransfer,
+    QiTransferReason, WorldQiAccount,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -26,9 +27,6 @@ pub const RAT_PHASE_QI_GRADIENT_THRESHOLD: f32 = 0.20;
 pub const SURGE_TRIGGER_THRESHOLD: f32 = 1.0;
 pub const TRANSITION_DURATION_TICKS: u16 = 600;
 pub const RAT_DRAINED_CHUNK_WINDOW: usize = 8;
-/// ★守恒红线 blocker 修正——与 `network::command_executor` / `world::pseudo_vein_runtime`
-/// 同源数值的本地拷贝（仓库既有惯例：无共享符号，每个调用点各自维护同值 const）。
-const ZONE_SPIRIT_QI_MIN: f64 = -1.0;
 const ZONE_SPIRIT_QI_MAX: f64 = 1.0;
 
 type RatPhaseReadQuery<'w, 's> = Query<
@@ -351,7 +349,15 @@ pub fn apply_rat_phase_visual_system(mut rats: RatPhaseVisualQuery<'_, '_>) {
 
 pub fn release_drained_qi_on_death_system(
     mut deaths: EventReader<DeathEvent>,
-    rats: Query<(&Position, Option<&CurrentDimension>, &RatBlackboard), With<NpcMarker>>,
+    rats: Query<
+        (
+            &Position,
+            Option<&CurrentDimension>,
+            &RatBlackboard,
+            &crate::cultivation::life_record::LifeRecord,
+        ),
+        With<NpcMarker>,
+    >,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
 ) {
@@ -361,7 +367,7 @@ pub fn release_drained_qi_on_death_system(
     };
 
     for death in deaths.read() {
-        let Ok((position, dimension, rat)) = rats.get(death.target) else {
+        let Ok((position, dimension, rat, life_record)) = rats.get(death.target) else {
             continue;
         };
         if rat.drained_qi <= 0.0 {
@@ -375,7 +381,7 @@ pub fn release_drained_qi_on_death_system(
             continue;
         };
         if let Some(zone) = zones.find_zone_mut(zone_name.as_str()) {
-            let rat_account = QiAccountId::npc(format!("rat:{}", death.target.index()));
+            let rat_account = QiAccountId::npc(life_record.character_id.as_str());
             if let Err(error) = transfer_rat_drained_qi_to_zone(ledger, zone, &rat_account) {
                 tracing::debug!(
                     "[bong][fauna] rat death qi transfer to zone failed for {:?}: {:?}",
@@ -387,28 +393,12 @@ pub fn release_drained_qi_on_death_system(
     }
 }
 
-/// §8.1 决议 #3（promote 博弈 blocker 修正 v2）—— field-authority 三段式："鼠 -> zone" 这一腿
-/// 从"account-only 转账"改为"同步→accepted/overflow 分流→写回字段"。
+/// 把鼠体内累积的真元从稳定 NPC 账户原子结算到外部 Zone owner；Zone 吃不下的余量
+/// 进入固定、可持久化的 `qi_flow_overflow`，不再创建 `zone:*` 或动态 overflow 影子。
 ///
-/// **v1 遗留漏洞**（本次 blocker）：v1 把 `amount` 100% 无条件转进 zone 账户、只 clamp 写回的
-/// **字段**、不 clamp **账户**。zone 逼近 cap 时账户会越过 cap，字段被 clamp 后账户/字段失配；
-/// 下一次任何覆盖式重同步（本函数为下一只鼠调用时开场的 `set_balance`，或生产常驻
-/// `npc::dormant::apply_dormant_regen_with_multiplier` / `world::heartbeat::zone_qi_inflow_tick`
-/// 门 `spirit_qi > QI_NPC_ABSORB_FLOOR` 时的 `set_balance(zone_account,
-/// spirit_qi.max(0)*CAP)`）会把账户覆写回 `field.clamp * CAP`，无对偿地销毁溢出——`ledger_qi`
-/// 净减、无对应增长，违反 qi_physics 守恒律。
-///
-/// v2 修法：复用 `qi_physics::release::qi_release_to_zone` 算出 accepted/overflow 分流
-/// （`accepted = amount.min(room)`，`room = (zone_cap - zone_current).max(0)`），accepted 腿
-/// 用它返回的 `ZoneReleaseOutcome::transfer`（reason=`ReleaseToZone`，语义比旧 `RatBiteDrain`
-/// 更准——这一腿是"释放回 zone"而非"咬取"）真实入账；overflow 腿另建一条
-/// `rat_account -> QiAccountId::overflow("rat_bite_drain:<rat_account.id>")` 转账
-/// （命名/reason 均照抄 `cultivation::death_hooks::release_qi_overflow_from` 的
-/// overflow 账户 + `ReleaseToZone` 约定），进可审计的 overflow 账户而不是蒸发。
-/// 两腿相加 == amount，`rat_account` 必然被全额抽干（不留僵尸余额）。
-///
-/// `zone_account` 由 `zone.name` 内部派生，不再由调用方单独传入，防止字段/账户对错 zone。
-/// `ledger.balance(rat_account) <= 0.0` 时 no-op，返回 `Ok(0.0)`。
+/// 两段结算先在 cloned ledger/zone 上 staging，全部成功后一次提交，因此第二段 overflow
+/// credit 失败时不会留下已扣鼠账户或已增 Zone 的前缀。`ledger.balance(rat_account) <= 0`
+/// 时为 no-op。
 pub fn transfer_rat_drained_qi_to_zone(
     ledger: &mut WorldQiAccount,
     zone: &mut Zone,
@@ -419,47 +409,42 @@ pub fn transfer_rat_drained_qi_to_zone(
         return Ok(0.0);
     }
 
-    let zone_account = QiAccountId::zone(zone.name.clone());
-    // 转账前：把 zone 账户镜像同步到字段真实值，accepted/overflow 分流针对的是真实容量，
-    // 而不是陈旧的镜像余额（同 `zone_qi_inflow_tick` / `inject_zone_for_pseudo_vein` 范式）。
-    ledger.set_balance(
-        zone_account.clone(),
-        zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY,
-    )?;
-
-    let zone_current = zone.spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY;
-    let zone_cap = ZONE_SPIRIT_QI_MAX * QI_ZONE_UNIT_CAPACITY;
-    let outcome = qi_release_to_zone(
-        amount,
-        rat_account.clone(),
-        zone_account.clone(),
-        zone_current,
-        zone_cap,
-    )?;
-
-    // accepted 腿：截到 zone 剩余容量为止，绝不越 cap。
-    if let Some(transfer) = outcome.transfer {
-        ledger.transfer(transfer)?;
+    let mut staged_ledger = ledger.clone();
+    let mut staged_zone_qi = zone.spirit_qi;
+    if !staged_zone_qi.is_finite() {
+        return Err(QiPhysicsError::InvalidAmount {
+            field: "zone.spirit_qi",
+            value: staged_zone_qi,
+        });
     }
+    let zone_room =
+        ((ZONE_SPIRIT_QI_MAX - staged_zone_qi).max(0.0) * QI_ZONE_UNIT_CAPACITY).min(f64::MAX);
+    let zone_requested = amount.min(zone_room);
 
-    // overflow 腿：zone 吃不下的部分进可审计 overflow 账户，绝不蒸发。
-    if outcome.overflow > QI_EPSILON {
-        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat_account.id));
-        let overflow_transfer = QiTransfer::new(
+    if zone_requested > 0.0 {
+        transfer_ledger_qi_to_zone(
+            &mut staged_ledger,
             rat_account.clone(),
-            overflow_account,
-            outcome.overflow,
+            zone.name.as_str(),
+            &mut staged_zone_qi,
+            zone_requested,
+            ZONE_SPIRIT_QI_MAX,
             QiTransferReason::ReleaseToZone,
         )?;
-        ledger.transfer(overflow_transfer)?;
     }
 
-    // 转账后写回字段——此时账户余额已 <= zone_cap，clamp 仍保留作防御但不再是"救火"。
-    // 缺了这行，下一次生产常驻覆盖式重同步（见上方 doc-comment）依旧会用陈旧字段值
-    // 覆写账户，造成二次蒸发。
-    zone.spirit_qi = (ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY)
-        .clamp(ZONE_SPIRIT_QI_MIN, ZONE_SPIRIT_QI_MAX);
+    let overflow = amount - zone_requested;
+    if overflow > 0.0 {
+        staged_ledger.transfer(QiTransfer::new(
+            rat_account.clone(),
+            qi_flow_overflow_account(),
+            overflow,
+            QiTransferReason::ReleaseToZone,
+        )?)?;
+    }
 
+    *ledger = staged_ledger;
+    zone.spirit_qi = staged_zone_qi;
     Ok(amount)
 }
 
@@ -842,18 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn rat_death_transfers_full_drained_qi_to_zone_account() {
-        // §P0 验收抓手 #2（替换旧 1% 归还 pin）——鼠死亡必须把 `npc:rat:<id>` 账户
-        // 100% 转入 `zone:<name>` 账户（不再是 1%），并同步写回 `zone.spirit_qi` 字段
-        // （§8.1 决议 #3 blocker 修正核心：漏写字段会被下一次覆盖式重同步二次抹掉）。
-        //
-        // ★promote 博弈 blocker v2 修正后的调值说明：drained_qi 从旧版 100.0 降到 10.0。
-        // `QI_ZONE_UNIT_CAPACITY`=50 是 zone 账户的绝对上限（`spirit_qi` 恒 clamp 在
-        // [-1,1]），旧版 100.0 在 initial_spirit_qi=0.5（room=25）下必然溢出 75——这正是
-        // blocker 本身要修的"无条件全额转账不截断"bug，若不调值，本测试会在 accepted/overflow
-        // 分流后自然由绿转红（账户被正确截到 cap=50，不再是旧断言的 125）。调小到 10.0 后
-        // room 充足，accepted==full 10.0、overflow==0，专测"非满 zone 全额落袋"场景，不与
-        // 下方 `rat_death_near_cap_zone_routes_overflow_conserving` 的满 zone/overflow 场景重叠。
+    fn rat_death_transfers_full_drained_qi_to_external_zone_owner() {
         let mut app = App::new();
         app.add_event::<DeathEvent>();
         app.add_systems(Update, release_drained_qi_on_death_system);
@@ -877,8 +851,14 @@ mod tests {
                 blackboard,
             ))
             .id();
+        let rat_character_id = crate::npc::brain::canonical_npc_id(rat);
+        app.world_mut()
+            .entity_mut(rat)
+            .insert(crate::cultivation::life_record::LifeRecord::new(
+                rat_character_id.clone(),
+            ));
 
-        let rat_account = QiAccountId::npc(format!("rat:{}", rat.index()));
+        let rat_account = QiAccountId::npc(rat_character_id);
         let mut ledger = WorldQiAccount::default();
         ledger
             .set_balance(rat_account.clone(), 10.0)
@@ -895,33 +875,12 @@ mod tests {
         app.update();
 
         let ledger_after = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            ledger_after.balance(&rat_account),
-            0.0,
-            "鼠死亡后 npc:rat 账户必须清零（100% 转账，不再是只归还 1% 留 99% 僵尸余额）"
-        );
-
-        // 转账前，zone 账户先按 field-authority 三段式同步到 `spirit_qi * CAPACITY`
-        // 真实值，再吸收 rat 账户全额 10.0（room=25 充足，accepted==full、overflow==0）——
-        // 最终账户余额 = 同步基线 + 10.0。
-        let zone_account = QiAccountId::zone("spawn");
-        let expected_zone_account_balance =
-            initial_spirit_qi.max(0.0) * QI_ZONE_UNIT_CAPACITY + 10.0;
+        assert_eq!(ledger_after.balance(&rat_account), 0.0);
         assert!(
-            (ledger_after.balance(&zone_account) - expected_zone_account_balance).abs() < 1e-9,
-            "鼠死亡必须把 drained_qi 100% 转入 zone:<name> 账户（§8.1 决议 #1/#3），\
-             期望 {expected_zone_account_balance}，实际 {}",
-            ledger_after.balance(&zone_account)
+            !ledger_after.has_account(&QiAccountId::zone("spawn")),
+            "Zone.spirit_qi is the sole environment owner; rat death must not leave a zone shadow"
         );
-
-        // room 充足场景不应产生 overflow，overflow 账户必须为空——确认 accepted/overflow
-        // 分流在"非满 zone"场景下退化为纯 100% 落袋，不误伤既有行为。
-        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat_account.id));
-        assert_eq!(
-            ledger_after.balance(&overflow_account),
-            0.0,
-            "room 充足（25 > drained 10.0）时不应产生 overflow，overflow 账户应保持空账"
-        );
+        assert_eq!(ledger_after.balance(&qi_flow_overflow_account()), 0.0);
 
         let zone_after = app
             .world()
@@ -929,37 +888,14 @@ mod tests {
             .find_zone_by_name("spawn")
             .expect("spawn zone must still exist")
             .spirit_qi;
-        let expected_spirit_qi =
-            (expected_zone_account_balance / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
         assert!(
-            (zone_after - expected_spirit_qi).abs() < 1e-9,
-            "§8.1 #3 blocker 修正：zone.spirit_qi 字段必须与账户转账同步写回（不能只改账户\
-             不改字段），期望 {expected_spirit_qi}，实际 {zone_after}——相等于旧值说明字段被\
-             漏写，下一次覆盖式重同步会二次抹掉刚转入的账户余额"
+            (zone_after - 0.7).abs() < 1e-9,
+            "10 absolute qi must add 10 / QI_ZONE_UNIT_CAPACITY to the external Zone owner"
         );
     }
 
-    /// ★守恒红线 blocker 的锁——zone 逼近 cap（0.98）时鼠转入必然溢出（room 只剩 1.0，
-    /// drained 20.0 里 19.0 吃不下）。v1 bug：无条件 100% 转账只 clamp **字段**、不 clamp
-    /// **账户**——账户越过 cap 后，字段被 clamp 成 1.0，下一次任何覆盖式重同步
-    /// （`set_balance(zone_account, spirit_qi.max(0)*CAP)`，本函数被第二只鼠调用时开场即会
-    /// 执行，`npc::dormant::apply_dormant_regen_with_multiplier` / `zone_qi_inflow_tick`
-    /// 同款）都会把账户覆写回 `1.0*CAP`，无对偿销毁溢出的 19.0——`ledger_qi` 净减、无对应
-    /// 增长，撞穿 qi_physics 守恒律。
-    ///
-    /// 本测试断言 v2 修法后的四点：① rat 账户全额抽干为 0 ② zone 账户被截到 cap（不越界）
-    /// ③ overflow 账户吃住溢出量（不蒸发）④ 三账户合计（rat+zone+overflow）转账前后严格
-    /// 守恒。随后额外调用第二只鼠（本身就会重新执行"同步 zone 账户到字段值"这条覆盖式
-    /// 重同步逻辑）验证第一只鼠的 overflow 账户余额纹丝不动——证明溢出不会被下一次
-    /// `set_balance` 覆盖销毁。
-    ///
-    /// 红→绿证据（本次实测）：把函数体换回 v1"无条件全额转账 + 只 clamp 字段"版本时，本测试
-    /// 在 ③ 处撞红——`overflow_account` 余额断言 `19.0` 实际读到 `0.0`（旧版压根没有 overflow
-    /// 账户这个概念，溢出的 19.0 单位随字段 clamp 直接从账本蒸发，只是账户余额仍留 125，
-    /// 与 `zone_account_after=50.0` 的 cap 断言也对不上）。接回 v2 accepted/overflow 分流后
-    /// 全部转绿。
     #[test]
-    fn rat_death_near_cap_zone_routes_overflow_conserving() {
+    fn rat_death_near_cap_zone_routes_overflow_to_fixed_durable_pool() {
         const CAP: f64 = QI_ZONE_UNIT_CAPACITY;
 
         let mut ledger = WorldQiAccount::default();
@@ -970,116 +906,100 @@ mod tests {
         let initial_spirit_qi = 0.98_f64;
         zone.spirit_qi = initial_spirit_qi;
 
-        // 预置 zone 账户已与字段同步（照抄既有 end-to-end pin 的"活服务器已跑过一次
-        // inflow tick"前提），让"转账前后三账户合计守恒"这条断言不掺入 mirror-sync 本身
-        // 的初始化噪声。
-        let zone_account = QiAccountId::zone("spawn");
-        ledger
-            .set_balance(zone_account.clone(), initial_spirit_qi * CAP)
-            .expect("pre-syncing the zone ledger mirror must succeed");
-
-        let rat1_account = QiAccountId::npc("rat:1".to_string());
+        let rat1_account = QiAccountId::npc("rat:1");
         let rat1_drained = 20.0_f64;
         ledger
             .set_balance(rat1_account.clone(), rat1_drained)
             .expect("seeding rat1 ledger balance must succeed");
-
-        let before_total = ledger.balance(&rat1_account) + ledger.balance(&zone_account);
+        let before_total = initial_spirit_qi * CAP + ledger.total();
 
         let accounted = transfer_rat_drained_qi_to_zone(&mut ledger, zone, &rat1_account)
-            .expect("near-cap transfer must succeed (accepted/overflow split, never an error)");
-        assert!(
-            (accounted - rat1_drained).abs() < 1e-9,
-            "返回值必须报告全部处理掉的 amount（accepted+overflow），期望 {rat1_drained}，实际 {accounted}"
-        );
+            .expect("near-cap transfer must succeed atomically");
+        assert_eq!(accounted, rat1_drained);
 
-        let overflow_account = QiAccountId::overflow(format!("rat_bite_drain:{}", rat1_account.id));
-        let room = (CAP - initial_spirit_qi * CAP).max(0.0); // 1.0
-        let expected_accepted = rat1_drained.min(room); // 1.0
-        let expected_overflow = rat1_drained - expected_accepted; // 19.0
-
-        // ①rat 账户全额抽干。
-        assert_eq!(
-            ledger.balance(&rat1_account),
-            0.0,
-            "rat 账户必须被全额抽干（accepted+overflow 两腿相加 == amount），不留僵尸余额"
-        );
-        // ②zone 账户被截到 cap，不越界。
-        let zone_account_after = ledger.balance(&zone_account);
+        let room = (CAP - initial_spirit_qi * CAP).max(0.0);
+        let expected_overflow = rat1_drained - room;
+        assert_eq!(ledger.balance(&rat1_account), 0.0);
         assert!(
-            (zone_account_after - CAP).abs() < 1e-9,
-            "zone 账户吸满 room 后必须精确停在 cap={CAP}（room={room}，accepted={expected_accepted}），\
-             实际 {zone_account_after}——越过此值说明账户没有被截断，字段 clamp 只是掩盖了越界"
+            !ledger.has_account(&QiAccountId::zone("spawn")),
+            "settlement must not synthesize a zone ledger mirror"
         );
         assert!(
-            zone_account_after <= CAP + 1e-9,
-            "zone 账户绝不可越过 cap={CAP}，实际 {zone_account_after}"
+            (ledger.balance(&qi_flow_overflow_account()) - expected_overflow).abs() < 1e-9,
+            "zone overflow must enter the fixed persistent qi_flow_overflow account"
         );
-        // ③overflow 账户吃住溢出量，不蒸发。
-        let overflow_after = ledger.balance(&overflow_account);
-        assert!(
-            (overflow_after - expected_overflow).abs() < 1e-9,
-            "溢出的 {expected_overflow} 必须被记入可审计 overflow 账户，实际 {overflow_after}——\
-             不等说明溢出量在 clamp 字段时被无对偿销毁（★blocker 复现的蒸发路径）"
-        );
-        // ④三账户合计（rat+zone+overflow）转账前后严格守恒。
-        let after_total =
-            ledger.balance(&rat1_account) + ledger.balance(&zone_account) + overflow_after;
+        assert!((zone.spirit_qi - ZONE_SPIRIT_QI_MAX).abs() < 1e-9);
+        let after_total = zone.spirit_qi * CAP + ledger.total();
         assert!(
             (before_total - after_total).abs() < 1e-9,
-            "worldview §二守恒律：rat+zone+overflow 三账户合计转账前后必须严格相等，\
-             before={before_total} after={after_total}——不等说明真元在 clamp 字段/账户失配处\
-             凭空蒸发或创生"
+            "external Zone + stable ledger owner sum must remain conserved"
         );
 
-        // zone.spirit_qi 字段必须与账户同步写回、且不越 ZONE_SPIRIT_QI_MAX。
-        let zone_after_field = zones
-            .find_zone_by_name("spawn")
-            .expect("spawn zone must still exist")
-            .spirit_qi;
-        assert!(
-            (zone_after_field - ZONE_SPIRIT_QI_MAX).abs() < 1e-9,
-            "zone 吸满后字段必须精确停在 ZONE_SPIRIT_QI_MAX={ZONE_SPIRIT_QI_MAX}，实际 {zone_after_field}"
-        );
-
-        // 再关键：第二只鼠调用本函数——开场就会执行"同步 zone 账户到字段值"这条覆盖式
-        // 重同步逻辑（`set_balance(zone_account, zone.spirit_qi.max(0)*CAP)`），验证它不会
-        // 把 rat1 的 overflow 账户覆写销毁。
-        let zone = zones
-            .find_zone_mut("spawn")
-            .expect("spawn zone must still exist for second rat call");
-        let rat2_account = QiAccountId::npc("rat:2".to_string());
+        let first_overflow = ledger.balance(&qi_flow_overflow_account());
+        let rat2_account = QiAccountId::npc("rat:2");
         let rat2_drained = 5.0_f64;
         ledger
             .set_balance(rat2_account.clone(), rat2_drained)
             .expect("seeding rat2 ledger balance must succeed");
-
         transfer_rat_drained_qi_to_zone(&mut ledger, zone, &rat2_account)
-            .expect("second near-cap transfer must also succeed");
+            .expect("full-zone transfer must settle entirely to fixed overflow");
+        assert_eq!(ledger.balance(&rat2_account), 0.0);
+        assert_eq!(
+            ledger.balance(&qi_flow_overflow_account()),
+            first_overflow + rat2_drained,
+            "repeated rat releases must accumulate in the same durable overflow owner"
+        );
+        assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
+    }
 
-        assert_eq!(
-            ledger.balance(&overflow_account),
-            overflow_after,
-            "第二只鼠触发的覆盖式重同步（set_balance(zone_account, ...)）绝不能动 rat1 的\
-             overflow 账户——溢出账户与 zone 账户是不同 key，重同步只应触碰 zone 账户"
-        );
-        assert_eq!(
-            ledger.balance(&rat2_account),
-            0.0,
-            "zone 已满（room=0）时 rat2 也必须被全额抽干（100% 转入 rat2 自己的 overflow 账户）"
-        );
-        let rat2_overflow_account =
-            QiAccountId::overflow(format!("rat_bite_drain:{}", rat2_account.id));
-        assert_eq!(
-            ledger.balance(&rat2_overflow_account),
-            rat2_drained,
-            "zone 已满时 rat2 的 drained_qi 必须 100% 落进它自己的 overflow 账户，不蒸发"
-        );
-        let zone_account_still_capped = ledger.balance(&zone_account);
-        assert!(
-            (zone_account_still_capped - CAP).abs() < 1e-9,
-            "zone 已在 cap，第二只鼠不应再让账户继续增长，实际 {zone_account_still_capped}"
-        );
+    #[test]
+    fn rat_death_overflow_failure_keeps_rat_zone_ledger_and_audit_unchanged() {
+        let mut ledger = WorldQiAccount::default();
+        let rat_account = QiAccountId::npc("rat:atomic");
+        ledger
+            .set_balance(rat_account.clone(), 5.0)
+            .expect("fixture rat balance should be valid");
+        ledger
+            .set_balance(qi_flow_overflow_account(), f64::MAX)
+            .expect("fixture overflow balance should be valid");
+        let audit_before = ledger.transfers().to_vec();
+        let mut zones = ZoneRegistry::fallback();
+        let zone = zones
+            .find_zone_mut("spawn")
+            .expect("fallback ZoneRegistry must have spawn zone");
+        zone.spirit_qi = ZONE_SPIRIT_QI_MAX;
+
+        transfer_rat_drained_qi_to_zone(&mut ledger, zone, &rat_account)
+            .expect_err("full stable overflow destination must reject without a committed prefix");
+
+        assert_eq!(ledger.balance(&rat_account), 5.0);
+        assert_eq!(ledger.balance(&qi_flow_overflow_account()), f64::MAX);
+        assert_eq!(zone.spirit_qi, ZONE_SPIRIT_QI_MAX);
+        assert_eq!(ledger.transfers(), audit_before);
+        assert!(!ledger.has_account(&QiAccountId::zone("spawn")));
+    }
+
+    #[test]
+    fn rat_death_invalid_signed_zone_fails_without_mutating_any_owner() {
+        let mut ledger = WorldQiAccount::default();
+        let rat_account = QiAccountId::npc("rat:invalid-zone");
+        ledger
+            .set_balance(rat_account.clone(), 5.0)
+            .expect("fixture rat balance should be valid");
+        let audit_before = ledger.transfers().to_vec();
+        let mut zones = ZoneRegistry::fallback();
+        let zone = zones
+            .find_zone_mut("spawn")
+            .expect("fallback ZoneRegistry must have spawn zone");
+        zone.spirit_qi = f64::NAN;
+
+        transfer_rat_drained_qi_to_zone(&mut ledger, zone, &rat_account)
+            .expect_err("invalid signed Zone owner must fail before staging any transfer");
+
+        assert_eq!(ledger.balance(&rat_account), 5.0);
+        assert!(zone.spirit_qi.is_nan());
+        assert_eq!(ledger.transfers(), audit_before);
+        assert_eq!(ledger.balance(&qi_flow_overflow_account()), 0.0);
     }
 
     #[test]

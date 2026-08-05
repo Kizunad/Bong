@@ -5,7 +5,7 @@ use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{App, Client, EventReader, Query, Update};
 
-use crate::cultivation::components::Cultivation;
+use crate::cultivation::components::{Cultivation, CultivationQiInit};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QiCmd {
@@ -56,16 +56,26 @@ pub fn handle_qi(
                     client.send_chat_message("[dev] qi set rejected: value must be finite >= 0");
                     continue;
                 }
-                let before = cultivation.qi_current;
-                cultivation.qi_current = value.min(cultivation.qi_max.max(0.0));
+                let before = cultivation.qi_current();
+                let snapshot = cultivation.qi_snapshot();
+                let target = value.min(snapshot.max);
+                if let Err(error) = cultivation.set_for_dev_only(CultivationQiInit {
+                    current: target,
+                    max: snapshot.max,
+                    frozen: snapshot.frozen,
+                }) {
+                    client.send_chat_message(format!("[dev] qi set rejected: {error}"));
+                    continue;
+                }
                 tracing::warn!(
                     "[dev-cmd] bypass ledger: qi_current {:.3} -> {:.3}",
                     before,
-                    cultivation.qi_current
+                    cultivation.qi_current()
                 );
                 client.send_chat_message(format!(
                     "[dev] qi set {:.1} -> {:.1}",
-                    before, cultivation.qi_current
+                    before,
+                    cultivation.qi_current()
                 ));
             }
             QiCmd::Max { value } => {
@@ -73,17 +83,27 @@ pub fn handle_qi(
                     client.send_chat_message("[dev] qi max rejected: value must be finite >= 0");
                     continue;
                 }
-                let before_max = cultivation.qi_max;
-                cultivation.qi_max = value;
-                cultivation.qi_current = cultivation.qi_current.min(value);
+                let snapshot = cultivation.qi_snapshot();
+                let frozen_cap =
+                    value * crate::cultivation::breakthrough::BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO;
+                if let Err(error) = cultivation.set_for_dev_only(CultivationQiInit {
+                    current: snapshot.current.min(value),
+                    max: value,
+                    frozen: snapshot.frozen.map(|frozen| frozen.min(frozen_cap)),
+                }) {
+                    client.send_chat_message(format!("[dev] qi max rejected: {error}"));
+                    continue;
+                }
                 tracing::warn!(
                     "[dev-cmd] bypass ledger: qi_max {:.3} -> {:.3}",
-                    before_max,
-                    cultivation.qi_max
+                    snapshot.max,
+                    cultivation.qi_max()
                 );
                 client.send_chat_message(format!(
                     "[dev] qi max {:.1} -> {:.1}; current={:.1}",
-                    before_max, cultivation.qi_max, cultivation.qi_current
+                    snapshot.max,
+                    cultivation.qi_max(),
+                    cultivation.qi_current()
                 ));
             }
         }

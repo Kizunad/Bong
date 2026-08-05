@@ -108,6 +108,11 @@ type CultivationBundleQueryItem<'a> = (
     Option<&'a DigestionLoad>,
 );
 
+type CultivationBundleQueryFilter = (
+    With<Client>,
+    Without<crate::cultivation::CultivationBundleLoadFailed>,
+);
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
     app.insert_resource(PlayerStatePersistence::default());
@@ -372,22 +377,25 @@ pub(crate) fn despawn_disconnected_clients(
         Option<&CraftSession>,
         Option<&Lifecycle>,
     )>,
-    cultivation_bundle: Query<(
-        &Cultivation,
-        &MeridianSystem,
-        &QiColor,
-        &Karma,
-        &PracticeLog,
-        &Contamination,
-        &LifeRecord,
-        &InsightQuota,
-        &UnlockedPerceptions,
-        &InsightModifiers,
-        Option<&TutorialState>,
-        Option<&MeridianSeveredPermanent>,
-        Option<&PoisonToxicity>,
-        Option<&DigestionLoad>,
-    )>,
+    cultivation_bundle: Query<
+        (
+            &Cultivation,
+            &MeridianSystem,
+            &QiColor,
+            &Karma,
+            &PracticeLog,
+            &Contamination,
+            &LifeRecord,
+            &InsightQuota,
+            &UnlockedPerceptions,
+            &InsightModifiers,
+            Option<&TutorialState>,
+            Option<&MeridianSeveredPermanent>,
+            Option<&PoisonToxicity>,
+            Option<&DigestionLoad>,
+        ),
+        Without<crate::cultivation::CultivationBundleLoadFailed>,
+    >,
 ) {
     let combat_clock_tick = combat_clock.as_deref().map_or(0, |clock| clock.tick);
     for entity in disconnected_clients.read() {
@@ -558,22 +566,25 @@ fn flush_connected_players_on_shutdown(
         ),
         With<Client>,
     >,
-    cultivation_bundle: Query<(
-        &Cultivation,
-        &MeridianSystem,
-        &QiColor,
-        &Karma,
-        &PracticeLog,
-        &Contamination,
-        &LifeRecord,
-        &InsightQuota,
-        &UnlockedPerceptions,
-        &InsightModifiers,
-        Option<&TutorialState>,
-        Option<&MeridianSeveredPermanent>,
-        Option<&PoisonToxicity>,
-        Option<&DigestionLoad>,
-    )>,
+    cultivation_bundle: Query<
+        (
+            &Cultivation,
+            &MeridianSystem,
+            &QiColor,
+            &Karma,
+            &PracticeLog,
+            &Contamination,
+            &LifeRecord,
+            &InsightQuota,
+            &UnlockedPerceptions,
+            &InsightModifiers,
+            Option<&TutorialState>,
+            Option<&MeridianSeveredPermanent>,
+            Option<&PoisonToxicity>,
+            Option<&DigestionLoad>,
+        ),
+        Without<crate::cultivation::CultivationBundleLoadFailed>,
+    >,
 ) {
     if app_exit.read().next().is_none() {
         return;
@@ -766,7 +777,7 @@ fn autosave_player_slow_and_ui_slices(
 fn autosave_player_cultivation_bundles(
     settings: Res<PersistenceSettings>,
     timer: Res<PlayerStateAutosaveTimer>,
-    players: Query<CultivationBundleQueryItem<'_>, With<Client>>,
+    players: Query<CultivationBundleQueryItem<'_>, CultivationBundleQueryFilter>,
 ) {
     if !timer.ticks.is_multiple_of(CULTIVATION_FLUSH_INTERVAL_TICKS) {
         return;
@@ -1181,6 +1192,46 @@ mod tests {
             .expect("player_cultivation row should exist")
     }
 
+    fn insert_cultivation_bundle_fixture(app: &mut App, entity: Entity, cultivation: Cultivation) {
+        app.world_mut().entity_mut(entity).insert((
+            cultivation,
+            MeridianSystem::default(),
+            QiColor::default(),
+            Karma::default(),
+            PracticeLog::default(),
+            Contamination::default(),
+            LifeRecord::new(crate::player::state::canonical_player_id("Azure")),
+            InsightQuota::default(),
+            UnlockedPerceptions::default(),
+            InsightModifiers::new(),
+        ));
+    }
+
+    fn persist_cultivation_bundle_fixture(
+        settings: &PersistenceSettings,
+        cultivation: &Cultivation,
+    ) {
+        persist_player_cultivation_bundle(
+            settings,
+            "Azure",
+            cultivation,
+            &MeridianSystem::default(),
+            &QiColor::default(),
+            &Karma::default(),
+            &Contamination::default(),
+            &LifeRecord::new(crate::player::state::canonical_player_id("Azure")),
+            &PracticeLog::default(),
+            &InsightQuota::default(),
+            &UnlockedPerceptions::default(),
+            &InsightModifiers::new(),
+            None,
+            &MeridianSeveredPermanent::default(),
+            None,
+            None,
+        )
+        .expect("baseline cultivation bundle should persist");
+    }
+
     #[test]
     fn player_flushes_core_slow_inventory_and_ui_slices() {
         let (persistence, data_dir, db_path) = sqlite_persistence("flush-slices");
@@ -1416,6 +1467,166 @@ mod tests {
              要么漏判要么误判）"
         );
 
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn cultivation_bundle_load_failure_blocks_periodic_autosave_writeback() {
+        let (_persistence, data_dir, db_path) =
+            sqlite_persistence("cultivation-load-failed-autosave");
+        let settings = PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-cultivation-load-failed-autosave",
+        );
+        let persisted = Cultivation {
+            qi_current: 7.0,
+            qi_max: 21.0,
+            ..Default::default()
+        };
+        persist_cultivation_bundle_fixture(&settings, &persisted);
+        let durable_before = read_cultivation_json(&db_path);
+
+        let mut app = App::new();
+        app.insert_resource(settings);
+        app.insert_resource(PlayerStateAutosaveTimer {
+            ticks: CULTIVATION_FLUSH_INTERVAL_TICKS - 1,
+        });
+        app.add_systems(
+            Update,
+            (
+                tick_player_persistence_timer,
+                autosave_player_cultivation_bundles.after(tick_player_persistence_timer),
+            ),
+        );
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        insert_cultivation_bundle_fixture(
+            &mut app,
+            entity,
+            Cultivation {
+                qi_current: 19.0,
+                qi_max: 30.0,
+                ..Default::default()
+            },
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::CultivationBundleLoadFailed);
+
+        app.update();
+
+        assert_eq!(
+            read_cultivation_json(&db_path),
+            durable_before,
+            "periodic autosave must not overwrite a bundle after any known sibling failed to load"
+        );
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn cultivation_bundle_load_failure_blocks_disconnect_writeback() {
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("cultivation-load-failed-disconnect");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        let settings = PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-cultivation-load-failed-disconnect",
+        );
+        let persisted = Cultivation {
+            qi_current: 7.0,
+            qi_max: 21.0,
+            ..Default::default()
+        };
+        persist_cultivation_bundle_fixture(&settings, &persisted);
+        let durable_before = read_cultivation_json(&db_path);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(settings);
+        app.add_systems(Update, despawn_disconnected_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(PlayerState::default());
+        insert_cultivation_bundle_fixture(
+            &mut app,
+            entity,
+            Cultivation {
+                qi_current: 19.0,
+                qi_max: 30.0,
+                ..Default::default()
+            },
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::CultivationBundleLoadFailed)
+            .remove::<Client>();
+
+        app.update();
+
+        assert_eq!(
+            read_cultivation_json(&db_path),
+            durable_before,
+            "disconnect cleanup must preserve the durable bundle after a join-time sibling decode failure"
+        );
+        assert!(app.world().get::<Despawned>(entity).is_some());
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn cultivation_bundle_load_failure_blocks_shutdown_writeback() {
+        let (persistence, data_dir, db_path) =
+            sqlite_persistence("cultivation-load-failed-shutdown");
+        crate::player::state::save_player_state(&persistence, "Azure", &PlayerState::default())
+            .expect("baseline player state should persist");
+        let settings = PersistenceSettings::with_paths(
+            &db_path,
+            data_dir.join("deceased"),
+            "player-cultivation-load-failed-shutdown",
+        );
+        let persisted = Cultivation {
+            qi_current: 7.0,
+            qi_max: 21.0,
+            ..Default::default()
+        };
+        persist_cultivation_bundle_fixture(&settings, &persisted);
+        let durable_before = read_cultivation_json(&db_path);
+
+        let mut app = App::new();
+        app.insert_resource(persistence);
+        app.insert_resource(settings);
+        app.add_event::<AppExit>();
+        app.add_systems(Last, flush_connected_players_on_shutdown);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(PlayerState::default());
+        insert_cultivation_bundle_fixture(
+            &mut app,
+            entity,
+            Cultivation {
+                qi_current: 19.0,
+                qi_max: 30.0,
+                ..Default::default()
+            },
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::CultivationBundleLoadFailed);
+        app.world_mut().send_event(AppExit::Success);
+
+        app.update();
+
+        assert_eq!(
+            read_cultivation_json(&db_path),
+            durable_before,
+            "shutdown flush must preserve the durable bundle after a join-time sibling decode failure"
+        );
         let _ = fs::remove_dir_all(&data_dir);
     }
 

@@ -12,7 +12,7 @@ use crate::fauna::components::BeastKind;
 use crate::npc::spawn::spawn_beast_npc_of_kind_at;
 use crate::npc::territory::Territory;
 use crate::qi_physics::constants::QI_EPSILON;
-use crate::qi_physics::ledger::QiTransfer;
+use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::tools::{has_required_tool, ToolKind};
 use crate::world::dimension::{CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer};
 use crate::world::era::WorldEraState;
@@ -63,7 +63,7 @@ pub fn hazard_hints_for_kind(
         .collect()
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn tick_harvest_hazards(
     gameplay_tick: Option<Res<crate::player::gameplay::GameplayTick>>,
     store: Res<HarvestSessionStore>,
@@ -80,6 +80,7 @@ pub fn tick_harvest_hazards(
         With<Client>,
     >,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let Some(_gameplay_tick) = gameplay_tick else {
@@ -113,7 +114,7 @@ pub fn tick_harvest_hazards(
         else {
             continue;
         };
-        let Ok((entity, position, current_dimension, life_record, mut cultivation)) =
+        let Ok((_entity, position, current_dimension, life_record, mut cultivation)) =
             positions.get_mut(session.client_entity)
         else {
             continue;
@@ -132,17 +133,23 @@ pub fn tick_harvest_hazards(
             continue;
         }
 
-        cultivation.qi_current = (cultivation.qi_current - actual_drain).max(0.0);
-        release_qi_amount_to_zone(
-            entity,
+        let outcome = release_qi_amount_to_zone(
+            &mut cultivation,
             actual_drain,
             Some(position),
             current_dimension,
             life_record,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfer_events.as_deref_mut(),
             "botany_harvest_hazard",
         );
+        if let Err(error) = outcome {
+            tracing::warn!(
+                ?error,
+                "[bong][botany] harvest hazard qi release failed closed"
+            );
+        }
     }
 }
 
@@ -482,6 +489,7 @@ mod tests {
     fn make_hazard_app() -> App {
         let mut app = App::new();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, tick_harvest_hazards);
         app.insert_resource(GameplayTick::default());
         app.insert_resource(HarvestSessionStore::default());
