@@ -10026,6 +10026,42 @@ mod tests {
     }
 
     #[test]
+    fn learn_skill_scroll_routes_positive_craft_recipe_unlock() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern")),
+            ))
+            .id();
+
+        send_skill_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let player_id = canonical_player_id("Azure");
+        assert!(
+            app.world()
+                .resource::<crate::craft::RecipeUnlockState>()
+                .is_unlocked(
+                    &player_id,
+                    &crate::craft::RecipeId::new("workbench.shelter.lantern")
+                ),
+            "LearnSkillScroll must route craft recipe scrolls to the craft unlock consumer"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(entity)
+                .unwrap()
+                .containers[0]
+                .items
+                .is_empty(),
+            "successful craft recipe scroll use must consume exactly one scroll"
+        );
+    }
+
+    #[test]
     fn queued_duplicate_craft_scroll_requests_consume_one_from_stack() {
         let mut app = production_scroll_request_app();
         let (client_bundle, _helper) = create_mock_client("Azure");

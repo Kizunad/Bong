@@ -327,6 +327,14 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
         id if id.starts_with("blueprint_scroll_") => {
             (Some("blueprint_scroll".to_string()), None, None)
         }
+        id if id.starts_with("scroll_workbench_")
+            || matches!(
+                id,
+                "scroll_fake_skin_light" | "scroll_herb_knife_iron" | "scroll_zhenfa_trap_iron"
+            ) =>
+        {
+            (Some("craft_recipe_scroll".to_string()), None, None)
+        }
         _ => (None, None, None),
     }
 }

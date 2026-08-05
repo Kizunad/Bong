@@ -205,7 +205,7 @@ impl CraftRecipe {
             });
         }
         let mut material_templates = std::collections::HashSet::new();
-        for (template, count) in &self.materials {
+        for (index, (template, count)) in self.materials.iter().enumerate() {
             if !material_templates.insert(template) {
                 return Err(RecipeValidationError::DuplicateMaterialTemplate {
                     id: self.id.clone(),
@@ -220,6 +220,7 @@ impl CraftRecipe {
             if *count == 0 {
                 return Err(RecipeValidationError::ZeroCount {
                     id: self.id.clone(),
+                    index,
                     template: template.clone(),
                 });
             }
@@ -257,6 +258,14 @@ impl CraftRecipe {
                 });
             }
         }
+        if let Some(skill_lv_min) = self.requirements.skill_lv_min {
+            if skill_lv_min > crate::skill::curve::SKILL_MAX_LEVEL {
+                return Err(RecipeValidationError::SkillLevelTooHigh {
+                    id: self.id.clone(),
+                    skill_lv_min,
+                });
+            }
+        }
         // unlock_sources 内每个 string payload 非空（避免"永远无法匹配"的源）
         for src in &self.unlock_sources {
             match src {
@@ -290,6 +299,7 @@ pub enum RecipeValidationError {
     },
     ZeroCount {
         id: RecipeId,
+        index: usize,
         template: String,
     },
     DuplicateMaterialTemplate {
@@ -316,6 +326,10 @@ pub enum RecipeValidationError {
     NoUnlockSources {
         id: RecipeId,
     },
+    SkillLevelTooHigh {
+        id: RecipeId,
+        skill_lv_min: u8,
+    },
     InvalidQiColorMinShare {
         id: RecipeId,
         color: ColorKind,
@@ -335,7 +349,9 @@ impl std::fmt::Display for RecipeValidationError {
             Self::EmptyMaterialTemplate { id } => {
                 write!(f, "recipe `{id}` has empty material template_id")
             }
-            Self::ZeroCount { id, template } => {
+            Self::ZeroCount {
+                id, template, ..
+            } => {
                 write!(f, "recipe `{id}` material `{template}` count is 0")
             }
             Self::DuplicateMaterialTemplate { id, template } => write!(
@@ -356,6 +372,11 @@ impl std::fmt::Display for RecipeValidationError {
             Self::NoUnlockSources { id } => write!(
                 f,
                 "recipe `{id}` has no unlock_sources (legacy; empty now means material-discovery path)"
+            ),
+            Self::SkillLevelTooHigh { skill_lv_min, .. } => write!(
+                f,
+                "recipe skill_lv_min {skill_lv_min} exceeds runtime maximum {}",
+                crate::skill::curve::SKILL_MAX_LEVEL
             ),
             Self::InvalidQiColorMinShare { id, color, share } => write!(
                 f,
@@ -556,6 +577,23 @@ mod tests {
         assert!(r.validate().is_ok());
     }
 
+    #[test]
+    fn validate_rejects_skill_requirement_above_runtime_maximum() {
+        let mut recipe = ok_recipe();
+        recipe.requirements.skill_lv_min = Some(crate::skill::curve::SKILL_MAX_LEVEL + 1);
+        assert!(matches!(
+            recipe.validate(),
+            Err(RecipeValidationError::SkillLevelTooHigh { skill_lv_min, .. })
+                if skill_lv_min == crate::skill::curve::SKILL_MAX_LEVEL + 1
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_skill_requirement_at_runtime_maximum() {
+        let mut recipe = ok_recipe();
+        recipe.requirements.skill_lv_min = Some(crate::skill::curve::SKILL_MAX_LEVEL);
+        assert!(recipe.validate().is_ok());
+    }
     #[test]
     fn validate_rejects_qi_color_min_share_above_one() {
         let mut r = ok_recipe();

@@ -204,7 +204,7 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
     private final LabelComponent[] filterLabels = new LabelComponent[4];
 
     record PillMenuAction(String label, ActionKind kind) {}
-    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, READ_SCROLL }
+    enum ActionKind { SELF_USE, MERIDIAN_TARGET, PLACE_FORGE_STATION, PLACE_SPIRIT_NICHE, REPAIR_SPIRIT_NICHE, TECHNIQUE_SCROLL_USE, CRAFT_RECIPE_SCROLL_USE, READ_SCROLL }
     record PillContextMenuState(InventoryItem item, int x, int y, List<PillMenuAction> actions) {}
     record PendingMeridianUse(InventoryItem item) {}
     record WeaponMenuAction(String label, WeaponActionKind kind) {}
@@ -3155,6 +3155,9 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
         if (isSpiritNicheRepairKit(item)) {
             actions.add(new PillMenuAction("修补灵龛", ActionKind.REPAIR_SPIRIT_NICHE));
         }
+        if (item.isCraftRecipeScroll()) {
+            actions.add(new PillMenuAction("研读制作残卷", ActionKind.CRAFT_RECIPE_SCROLL_USE));
+        }
         if (item.isTechniqueScroll() && isKnownTechniqueScroll(item) && !isKnownTechnique(item)) {
             actions.add(new PillMenuAction("研读功法", ActionKind.TECHNIQUE_SCROLL_USE));
         }
@@ -3220,6 +3223,10 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             case REPAIR_SPIRIT_NICHE -> {
                 pendingMeridianUse = null;
                 dispatchRepairSpiritNiche(item);
+            }
+            case CRAFT_RECIPE_SCROLL_USE -> {
+                pendingMeridianUse = null;
+                dispatchCraftRecipeScrollUse(item);
             }
             case TECHNIQUE_SCROLL_USE -> {
                 pendingMeridianUse = null;
@@ -3762,6 +3769,15 @@ public class InspectScreen extends BaseOwoScreen<FlowLayout> {
             return false;
         }
         skillScrollDropFeedback = "已送出顿悟请求";
+        com.bong.client.network.ClientRequestSender.sendLearnSkillScroll(item.instanceId());
+        return true;
+    }
+
+    boolean dispatchCraftRecipeScrollUse(InventoryItem item) {
+        if (item == null || item.instanceId() == 0L || !item.isCraftRecipeScroll()) {
+            return false;
+        }
+        skillScrollDropFeedback = "已送出制作残卷请求";
         com.bong.client.network.ClientRequestSender.sendLearnSkillScroll(item.instanceId());
         return true;
     }

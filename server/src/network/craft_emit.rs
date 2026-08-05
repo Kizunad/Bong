@@ -1805,6 +1805,63 @@ mod tests {
     }
 
     #[test]
+    fn production_skill_gate_reads_caster_skill_set() {
+        let mut recipe = make_recipe("craft.skill.integration", &[("fan_tie", 1)], vec![]);
+        recipe.requirements.skill_lv_min = Some(2);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.add_systems(Update, apply_craft_start_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inv_with(&[("fan_tie", 1)]))
+            .insert(Cultivation::default())
+            .insert(QiColor::default())
+            .insert(SkillSet::default())
+            .insert(Position::new([0.0, 64.0, 0.0]))
+            .id();
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Azure", RecipeId::new("craft.skill.integration"));
+        app.world_mut()
+            .get_mut::<SkillSet>(player)
+            .unwrap()
+            .skills
+            .insert(
+                crate::skill::components::SkillId::Alchemy,
+                crate::skill::components::SkillEntry {
+                    lv: 1,
+                    ..Default::default()
+                },
+            );
+        app.world_mut().send_event(CraftStartIntent {
+            caster: player,
+            recipe_id: RecipeId::new("craft.skill.integration"),
+            quantity: 1,
+        });
+
+        app.update();
+
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "production bridge must reject a caster below loaded skill requirement"
+        );
+        assert_eq!(
+            count_template_in_inventory(
+                app.world().get::<PlayerInventory>(player).unwrap(),
+                "fan_tie"
+            ),
+            1,
+            "production skill rejection must not consume materials"
+        );
+        assert!(
+            !current_failed_events(&app).is_empty(),
+            "production skill rejection must emit the observable craft failure"
+        );
+    }
+
+    #[test]
     fn duplicate_start_intents_same_frame_consume_materials_only_once() {
         let recipe = make_recipe("craft.tool.workbench", &[("fan_tie", 2)], vec![]);
         let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);

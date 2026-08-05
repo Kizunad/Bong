@@ -2042,6 +2042,91 @@ mod tests {
     }
 
     #[test]
+    fn start_craft_uses_highest_non_herbalism_skill() {
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        let mut recipe = simple_recipe("skill_gate_any_skill");
+        recipe.requirements.skill_lv_min = Some(2);
+        registry.register(recipe).unwrap();
+        unlock.unlock("offline:Alice", RecipeId::new("skill_gate_any_skill"));
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut skills = SkillSet::default();
+        skills.skills.insert(
+            crate::skill::components::SkillId::Alchemy,
+            crate::skill::components::SkillEntry {
+                lv: 2,
+                ..Default::default()
+            },
+        );
+        let result = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate_any_skill"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                Some(&skills),
+            ),
+        );
+        assert!(
+            result.is_ok(),
+            "any learned skill at the requirement must permit craft: {result:?}"
+        );
+    }
+
+    #[test]
+    fn start_craft_applies_realm_skill_cap_before_comparison() {
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        cult.realm = Realm::Awaken;
+        let mut recipe = simple_recipe("skill_gate_cap");
+        recipe.requirements.skill_lv_min = Some(4);
+        registry.register(recipe).unwrap();
+        unlock.unlock("offline:Alice", RecipeId::new("skill_gate_cap"));
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut skills = SkillSet::default();
+        skills.skills.insert(
+            crate::skill::components::SkillId::Alchemy,
+            crate::skill::components::SkillEntry {
+                lv: 5,
+                ..Default::default()
+            },
+        );
+        let error = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate_cap"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                Some(&skills),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            StartCraftError::SkillTooLow {
+                required: 4,
+                current: crate::cultivation::breakthrough::skill_cap_for_realm(Realm::Awaken),
+            },
+            "real skill level above realm cap must compare using effective level"
+        );
+    }
+    #[test]
     fn start_craft_workbench_recipe_fails_without_nearby_workbench() {
         // station: Some(Workbench) 且 has_nearby_workbench: false → StationOutOfRange
         let mut registry = CraftRegistry::new();
@@ -2078,7 +2163,7 @@ mod tests {
                 ledger: &mut ledger,
                 existing_session: None,
                 skill_set: None,
-                has_nearby_workbench: false, // 附近没有制作台
+                has_nearby_workbench: false,
             },
         )
         .unwrap_err();
@@ -2088,14 +2173,12 @@ mod tests {
             StartCraftError::StationOutOfRange,
             "workbench recipe must fail with StationOutOfRange when no workbench is nearby"
         );
-        // 失败时不扣材料
         assert_eq!(
             count_template_in_inventory(&inv, "herb_a"),
             5,
             "materials must not be consumed on StationOutOfRange rejection"
         );
     }
-
     #[test]
     fn start_craft_workbench_recipe_passes_with_nearby_workbench() {
         // station: Some(Workbench) 且 has_nearby_workbench: true → 正常通过

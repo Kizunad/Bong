@@ -37,6 +37,34 @@ class InspectScreenSkillScrollTest {
     }
 
     @Test
+    void sendsLearnSkillScrollForCraftRecipeScroll() {
+        install();
+        InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
+        var item = com.bong.client.inventory.model.InventoryItem.createFullWithScrollMeta(
+            1006L,
+            "scroll_workbench_lantern",
+            "灯笼残卷",
+            1, 2, 0.05, "common", "烧焦一角的残页", 1, 1.0, 1.0,
+            "craft_recipe_scroll", "", 0
+        );
+
+        assertTrue(screen.dispatchCraftRecipeScrollUse(item));
+        assertEquals("已送出制作残卷请求", screen.debugSkillScrollDropFeedback());
+        assertEquals(
+            "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":1006}",
+            sent.get(0).body()
+        );
+    }
+
+    @Test
+    void rejectsNonCraftRecipeScrollForCraftAction() {
+        InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
+        var item = com.bong.client.inventory.model.InventoryItem.simple("recipe_scroll_qixue_pill", "丹方残卷");
+
+        assertFalse(screen.dispatchCraftRecipeScrollUse(item));
+    }
+
+    @Test
     void rejectsNonSkillScroll() {
         InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
         var item = com.bong.client.inventory.model.InventoryItem.createFull(

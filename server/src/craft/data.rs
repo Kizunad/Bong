@@ -782,8 +782,8 @@ fn validation_field(error: &RecipeValidationError) -> String {
         RecipeValidationError::EmptyMaterialTemplate { .. } => {
             "materials[].template_id".to_string()
         }
-        RecipeValidationError::ZeroCount { template, .. } => {
-            format!("materials[{template}].count")
+        RecipeValidationError::ZeroCount { index, .. } => {
+            format!("materials[{index}].count")
         }
         RecipeValidationError::DuplicateMaterialTemplate { template, .. } => {
             format!("materials[].template_id ({template})")
@@ -793,6 +793,7 @@ fn validation_field(error: &RecipeValidationError) -> String {
         RecipeValidationError::InvalidQiCost { .. } => "qi_cost".to_string(),
         RecipeValidationError::ZeroTimeTicks { .. } => "time_sec".to_string(),
         RecipeValidationError::NoUnlockSources { .. } => "unlock_sources".to_string(),
+        RecipeValidationError::SkillLevelTooHigh { .. } => "requirements.skill_lv_min".to_string(),
         RecipeValidationError::InvalidQiColorMinShare { .. } => {
             "requirements.qi_color_min.min_share".to_string()
         }
@@ -1161,23 +1162,33 @@ station = "none"
         );
         write_toml(&directory, "z/second.toml", &second);
         let first = replace_required_line(
-            minimal_recipe(),
-            "id = \"fixture.recipe\"",
-            "id = \"fixture.a\"",
+            replace_required_line(
+                minimal_recipe(),
+                "id = \"fixture.recipe\"",
+                "id = \"fixture.duplicate\"",
+            ),
+            "display_name = \"Fixture\"",
+            "display_name = \"first\"",
         );
-        write_toml(&directory, "a/first.toml", &first);
+        let second_duplicate =
+            replace_required_line(second, "id = \"fixture.z\"", "id = \"fixture.duplicate\"");
+        write_toml(&directory, "z/second.toml", &second_duplicate);
+        let first_path = write_toml(&directory, "a/first.toml", &first);
 
         let mut registry = CraftRegistry::new();
-        load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap();
-        assert_eq!(registry.len(), 2);
-        assert_eq!(
-            registry.get(&RecipeId::new("fixture.z")).unwrap().materials,
-            vec![
-                ("iron_ingot".to_string(), 1),
-                ("iron_needle".to_string(), 2)
-            ],
-            "material vector order is an observable craft consumption contract"
-        );
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("duplicate ids must expose deterministic sorted source paths");
+        match error {
+            CraftDataError::DuplicateId {
+                path: actual_second,
+                first_path: Some(actual_first),
+                ..
+            } => {
+                assert_eq!(actual_first, first_path);
+                assert_eq!(actual_second, directory.join("z/second.toml"));
+            }
+            other => panic!("expected duplicate-id error, got {other:?}"),
+        }
         clean(directory);
     }
 
@@ -1284,11 +1295,8 @@ station = "none"
         let fifo_directory = temp_dir("non-regular-toml");
         write_toml(&fifo_directory, "valid.toml", &minimal_recipe());
         let fifo_path = fifo_directory.join("named-pipe.toml");
-        let status = std::process::Command::new("mkfifo")
-            .arg(&fifo_path)
-            .status()
-            .expect("mkfifo must be available for the Unix loader regression test");
-        assert!(status.success(), "mkfifo fixture creation must succeed");
+        let listener = std::os::unix::net::UnixListener::bind(&fifo_path)
+            .expect("Unix socket fixture must be creatable without external tools");
 
         let mut registry = CraftRegistry::new();
         let error = load_craft_recipes_from_dir(&fifo_directory, &mut registry, &item_registry())
@@ -1298,8 +1306,9 @@ station = "none"
         assert!(error.to_string().contains(&fifo_path.display().to_string()));
         assert!(
             registry.is_empty(),
-            "a named-pipe *.toml entry must fail before any blocking read or registry commit"
+            "a non-regular *.toml entry must fail before any blocking read or registry commit"
         );
+        drop(listener);
         clean(fifo_directory);
     }
 
@@ -1345,11 +1354,29 @@ station = "none"
         assert!(matches!(error, CraftDataError::Parse { .. }));
         assert!(error.to_string().contains(&malformed.display().to_string()));
         assert!(error.to_string().contains("document"));
-        clean(directory);
-    }
+        fs::remove_file(&malformed).unwrap();
+        let zero_count = replace_required_line(
+            minimal_recipe(),
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+            "materials = [{ template_id = \"iron_ingot\", count = 0 }]",
+        );
+        let zero_path = write_toml(&directory, "zero-count.toml", &zero_count);
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        assert_conversion_error_field(error, &zero_path, "fixture.recipe", "materials[0].count");
+        fs::remove_file(&zero_path).unwrap();
 
-    #[test]
-    fn rejects_unknown_fields_at_document_recipe_and_nested_levels() {
+        let empty = write_toml(&directory, "empty.toml", "recipes = []\n");
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        match error {
+            CraftDataError::Parse { field, .. } => assert_eq!(field, "recipes"),
+            other => panic!("expected empty recipes parse error, got {other:?}"),
+        }
+        fs::remove_file(&empty).unwrap();
+        clean(directory);
         let directory = temp_dir("unknown-fields");
         let top = write_toml(&directory, "top.toml", "unknown = true");
         let error =
