@@ -235,6 +235,10 @@ pub enum ClientRequestV1 {
                 checker, "enum_variants", return_value=values["enum_variants"]
             ), patch.object(
                 checker, "matrix_variants", return_value=values["matrix_variants"]
+            ), patch.object(
+                checker, "generated_schema_variants", return_value=["alpha", "beta"]
+            ), patch.object(
+                checker, "KNOWN_TYPEBOX_GAPS", frozenset()
             ), redirect_stderr(io.StringIO()):
                 self.assertEqual(checker.main(), 1)
 
@@ -350,7 +354,26 @@ pub enum ClientRequestV1 {
                 ],
             )
 
-    def test_rejects_duplicate_p0_matrix_sections(self) -> None:
+    def test_typebox_contract_exercises_documented_gap_baseline(self) -> None:
+        enum = ["Alpha", "CoffinBreak"]
+        matrix = ["Alpha", "CoffinBreak"]
+        with patch.object(checker, "KNOWN_TYPEBOX_GAPS", frozenset({"coffin_break"})):
+            self.assertEqual(
+                checker.typebox_contract_errors(enum, matrix, ["alpha"]),
+                [],
+            )
+            self.assertEqual(
+                checker.typebox_contract_errors(enum, matrix, ["alpha", "coffin_break"]),
+                ["documented TypeBox gaps are now present in schema: ['coffin_break']"],
+            )
+            self.assertEqual(
+                checker.typebox_contract_errors(["Alpha"], ["Alpha"], ["alpha"]),
+                ["TypeBox gap baseline names are not Rust variants: ['coffin_break']"],
+            )
+
+    def test_serde_snake_case_preserves_acronym_boundaries(self) -> None:
+        self.assertEqual(checker.rust_variant_to_wire("HTTPStatus"), "h_t_t_p_status")
+
         plan = """## P0 2 变体门禁矩阵
 
 | # | `ClientRequestV1` | 距离 | 维度 | 所有权 / participant | 状态前置 | P0 现状结论 |

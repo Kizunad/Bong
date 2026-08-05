@@ -428,9 +428,7 @@ def matrix_variants() -> tuple[list[int], list[str]]:
 
 
 def rust_variant_to_wire(name: str) -> str:
-    name = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", name)
-    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
-    return name.lower()
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def generated_schema_variants() -> list[str]:
@@ -472,6 +470,10 @@ def typebox_contract_errors(enum: list[str], matrix: list[str], schema: list[str
         errors.append(f"TypeBox gap baseline names are not Rust variants: {unknown_gaps}")
     if duplicates(schema):
         errors.append(f"duplicate TypeBox schema variants: {duplicates(schema)}")
+
+    stale_gaps = sorted(KNOWN_TYPEBOX_GAPS & schema_set)
+    if stale_gaps:
+        errors.append(f"documented TypeBox gaps are now present in schema: {stale_gaps}")
 
     extra_schema = sorted(schema_set - rust_set)
     if extra_schema:
