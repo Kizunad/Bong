@@ -22,14 +22,14 @@
 |---|---|---|
 | `I-01` | `CastSession` | 一个 server transport 连接内的施法命名空间，由 `(session_id, session_generation)` 唯一标识。 |
 | `I-02` | `CastAttempt` | 一次进入 admission 的请求，包括 accepted 与所有 pre-cast reject；每次恰分配一个 `cast_instance_id`。 |
-| `I-03` | `CastIdentity` | `(session_id, cast_instance_id)`；accepted、reject、terminal、PLAY、STOP 全链路不变。 |
+| `I-03` | `CastIdentity` | `(session_id, session_generation, cast_instance_id)`；accepted、reject、terminal、PLAY、STOP 全链路携带并按完整三元组匹配，禁止只用 session 或 instance 局部匹配。 |
 | `I-04` | authoritative gameplay event | `CastSync(CASTING/COMPLETE/INTERRUPT)`；只有它能建立或终结 authoritative active cast。 |
 | `I-05` | attempt feedback | `CastSync(IDLE + Reject*)`；只描述某次 attempt 被拒，不能冒充 active cast 终态。 |
 | `I-06` | advisory AV event | `CastPlayAnim` / `CastStopAnim`；只操作同 identity 的 AV ownership，不决定 gameplay 生命周期。 |
 | `I-07` | session gate | client 对 caster 保存的 generation、session、floor、exhaustion 与 advertised active 边界。 |
 | `I-08` | `AH` / `TH` | attempt high-water / authoritative terminal high-water；`TH` 只能由 COMPLETE/INTERRUPT 推进。 |
 | `I-09` | gameplay tombstone | authoritative terminal identity 的有界记录；只由 COMPLETE/INTERRUPT 写入。 |
-| `I-10` | AV owner / AV tombstone | 当前动画 token 的 identity，以及阻止迟到 PLAY 复活的独立有界标记；不得复用 `TH` 或 gameplay tombstone。 |
+| `I-10` | AV owner / AV tombstone | 当前动画 token 的 identity，以及阻止迟到 PLAY 复活的独立有界标记；`av_supersession_floor` 只记录当前 authoritative active identity 已被 STOP/terminal/supersession 拒绝的 identity，不得复用 `TH` 或 gameplay tombstone。 |
 | `I-11` | player authorization | 玩家 `KnownTechniques` 中 learned 且 active；与某 ID 存在于 global registration 是两件事。 |
 | `I-12` | pipeline boundary | real producer → transport → bridge → router → reducer → AV owner → shipped asset pack。fixture 直调任何中段都不等于生产可达。 |
 
@@ -73,7 +73,7 @@ protobuf field number 与 oneof number 仍须显式稳定 pin，但不能改变 
 |---|---|
 | `P-01` | R9 authors/reviews the cast domain meaning in the canonical TypeBox content (BEGIN/CastSync/identity/source/target/outcome/PLAY/STOP); the repo-wide TypeBox source remains the schema authority. R6 owns the generation pipeline and all generated/constrained mirrors, including package dist, JSON Schema, proto/Rust/Java artifacts and samples; R9 must not duplicate or re-own those artifacts. |
 | `P-02` | `CanonicalUint64String` 是 `1..=u64::MAX` 的无符号十进制字符串；拒绝 JSON number、0、符号、空串、前导零、非数字和 overflow。Rust/protobuf 内部为 `u64/uint64`，TypeBox/JSON/Java bridge 保留 canonical string 或无损无符号解析。 |
-| `P-03` | `CastIdentity { session_id: UUID, cast_instance_id: CanonicalUint64String }`；字段 required、拒绝 unknown field。 |
+| `P-03` | `CastIdentity { session_id: UUID, session_generation: CanonicalUint64String, cast_instance_id: CanonicalUint64String }`；三个字段 required、拒绝 unknown field；所有非-BEGIN payload 必须携带并按完整三元组匹配。 |
 | `P-04` | `CastSessionBegin { target_player: UUID, target_entity_id: int32, session_id: UUID, session_generation: CanonicalUint64String, allocator_exhausted: boolean, active_cast_instance_id?: CanonicalUint64String, minimum_cast_instance_id?: CanonicalUint64String }`。 |
 | `P-05` | BEGIN 合法形状恰为四种：open/no-active=`false,None,Some(next)`；open/active=`false,Some(a),Some(a)`；exhausted/no-active=`true,None,None`；exhausted/active=`true,Some(a),Some(a)`。active/floor 必须非零且相等。 |
 | `P-06` | `CastSourceV1 = QUICK_SLOT | SKILL_BAR | DEDICATED`。QuickSlot item cast 的 `skill_id=null`；SkillBar/Dedicated 的 `skill_id` required non-empty。unknown source fail-closed，无 fallback。 |
@@ -109,33 +109,33 @@ reduce(state, message) -> { next_state, disposition, side_effects }
 gate      = { session_id, generation, floor?, exhausted, reserved_active? }
 attempt   = { AH, latest_disposition?, reject_feedback? }
 gameplay  = { active_identity?, TH, terminal_tombstones[<=256], outcome_by_tombstone }
-av         = { owner?: (identity, animation_id, token), av_tombstones[<=256] }
+av         = { owner?: (identity, animation_id, token), av_tombstones[<=256], av_supersession_floor?: identity }
 ```
 
 七态只是上述字段的派生视图，不是第二状态机：`U` 无 gate；`O` open/no active；`R` open/reserved；`A` open/active；`X` exhausted/no active；`XR` exhausted/reserved；`XA` exhausted/active。`disposition = ACC | ACC_IDEM | IGN | SUP`。`IGN` 必须让四分区 byte-for-byte 不变。
 
 ### 3.2 规范 transition rows
 
-条件按表从上到下首个匹配；所有非 BEGIN message 必须先通过 `P-03/P-12/P-14/P-15`、session/generation/floor gate。reserved/active identity 即使低于后来 reject 推高的 `AH` 仍可完成自己的 authoritative lifecycle。
+条件按表从上到下首个匹配；所有非 BEGIN message 必须先通过 `P-03/P-12/P-14/P-15`、完整 `(session_id,generation,cast_instance_id)` identity、session/generation/floor gate。`av_supersession_floor` 是当前 active identity 的 AV rejection floor：它随该 active 的 terminal、控制 supersession 或 BEGIN generation replacement 原子写入/清除，不能被 tombstone 容量维护驱逐。reserved/active identity 即使低于后来 reject 推高的 `AH` 仍可完成自己的 authoritative lifecycle。
 
 | ID | message / guard | transition 与唯一副作用 |
 |---|---|---|
-| `R-01` | 合法 BEGIN，首个或 generation 更高 | `ACC/SUP`；停止旧 AV token，原子替换四分区；按 `P-05` 安装 `O/R/X/XR`。有 advertised active `a` 时 `reserved=a, AH=a, TH=0`；无 active 时 `AH=TH=0`。 |
+| `R-01` | 合法 BEGIN，首个或 generation 更高 | `ACC/SUP`；停止旧 AV token，原子替换四分区并清除旧 generation 的 `av_supersession_floor`；按 `P-05` 安装 `O/R/X/XR`。有 advertised active `a` 时 `reserved=a, AH=a, TH=0`；无 active 时 `AH=TH=0`。 |
 | `R-02` | 合法 BEGIN，generation/session 相等 | 仅 exhaustion 可单向 `false→true`、floor 可单调提高且不得排除 reserved/active；advertised active 不得增删/改写。合法为 `ACC_IDEM`，否则 `R-03`。 |
 | `R-03` | 旧 generation、等 generation 不同 session、BEGIN 非法/回退 | `IGN`。 |
 | `R-04` | 新 Reject attempt，`n>AH` 且未 terminal | `ACC`；`AH=n`、latest=`REJECTED`、替换 feedback。保留不相同的 reserved/active/AV owner；`n=max` 只令 gate exhausted，不终结其它 identity。 |
 | `R-05` | 同 identity、同 outcome 的 Reject replay | `ACC_IDEM`；不重复 HUD。其它 `n<=AH` reject 为 `R-14`。 |
-| `R-06` | CASTING 命中 reserved，或 `n>AH/TH` 的新 accepted attempt | `ACC/SUP`；若存在较旧 authoritative active，先在同一 reducer transition 中为旧 identity 产生权威 `INTERRUPT(INTERRUPT_CONTROL)`，推进 `TH`、写旧 identity gameplay tombstone/outcome、清旧 active/reserved，并发送 matching advisory STOP；随后清较旧 feedback，置 `AH=n/latest=CASTING`，建立新 active。旧 identity 的 terminal side effects 与新 identity admission 必须原子完成，不能只写 AV tombstone。 |
+| `R-06` | CASTING 命中 reserved，或 `n>AH/TH` 的新 accepted attempt | `ACC/SUP`；若存在较旧 authoritative active，先在同一 reducer transition 中为旧 identity 产生权威 `INTERRUPT(INTERRUPT_CONTROL)`，推进 `TH`、写旧 identity gameplay tombstone/outcome、清旧 active/reserved，并发送 matching advisory STOP、写旧 identity 的 AV tombstone/floor；随后清较旧 feedback，置 `AH=n/latest=CASTING`，建立新 active 并清除仅属于旧 identity 的 floor。旧 identity 的 terminal side effects 与新 identity admission 必须原子完成，不能只写 AV tombstone。 |
 | `R-07` | CASTING 命中同 active 且 latest=`CASTING` | `ACC_IDEM`；不得重复 gameplay/AV。rejected/terminal identity 的 CASTING 为 `R-14`。 |
-| `R-08` | COMPLETE/INTERRUPT；若 identity 已有 gameplay tombstone 则走 `R-09`；若 identity 未在 tombstone 中但 `n<=TH`（说明该 terminal tombstone 已被 `R-16` 驱逐）则 `ACC_IDEM` 且四分区与所有 terminal side effects 不变；否则 identity 未 terminal、未以同 identity reject 且通过 gate | 新 terminal 才 `ACC`：`TH=max(TH,n)`、写 gameplay tombstone+outcome、latest 在 `n>=AH` 时置 `TERMINAL`、清 matching reserved/active、停 matching AV owner并写 AV tombstone。迟到旧 terminal 不得改写较新 attempt feedback/disposition；被驱逐 terminal 的 replay 只能幂等 no-op，绝不能重新执行 outcome/HUD/release/complete/interrupt。 |
+| `R-08` | COMPLETE/INTERRUPT；若 identity 已有 gameplay tombstone 则走 `R-09`；若 identity 是当前 active/reserved，则即使 `n<=TH` 也必须先完成该 active 的 authoritative terminal；若 identity 不同于当前 active 且 `n>active_instance_id`，执行 supersession cascade；仅在上述两者都不成立且 identity 未在 tombstone 中但 `n<=TH`（说明该 terminal tombstone 已被 `R-16` 驱逐）时，才 `ACC_IDEM`；否则 identity 未 terminal、未以同 identity reject 且通过 gate | 新 terminal 才 `ACC`。普通 terminal 写 identity 的 gameplay tombstone/outcome、`TH=max(TH,n)`、latest 在 `n>=AH` 时置 `TERMINAL`，清 matching reserved/active；若它是当前 active/reserved，则停 matching AV owner并写该 identity 的 AV tombstone/floor。supersession cascade 必须在同一 reducer transition 中先为旧 active `a` 写权威 `INTERRUPT(INTERRUPT_CONTROL)`、推进 `TH`、写 `a` 的 gameplay tombstone/outcome、清旧 active/reserved、停旧 AV owner并写其 AV tombstone/floor，再接受 `n` 的 terminal并清除仅属于 `a` 的 floor；两组 terminal side effects 原子完成，最终不得留下旧 active。迟到旧 terminal 不得改写较新 attempt feedback/disposition；被驱逐 terminal 的 replay 只能幂等 no-op，绝不能重新执行 outcome/HUD/release/complete/interrupt。 |
 | `R-09` | COMPLETE/INTERRUPT 命中 gameplay tombstone | `ACC_IDEM`；不重复 outcome/HUD/release/complete/interrupt/token。冲突 outcome fail-closed 为 `R-14`。 |
-| `R-10` | PLAY 命中 active identity、无 gameplay/AV tombstone | 首次 `ACC` 并武装 owner/token；完全相同 replay 为 `ACC_IDEM`。PLAY 不建立 active，不推进 AH/TH。 |
-| `R-11` | STOP 命中当前 AV owner identity | `ACC`；只停 token、清 owner、写 AV tombstone。**gameplay、attempt、TH、gameplay tombstone、outcome 全不变。** |
-| `R-12` | STOP 通过 gate但非 owner，且 identity 尚无 AV tombstone | `ACC`；只写 AV tombstone，允许 terminal-before-PLAY/STOP-before-terminal 的迟到 PLAY no-op。不得分类 attempt，后续 `R-08` 仍须完整生效。 |
+| `R-10` | PLAY 命中 active identity、无 gameplay tombstone、无 AV tombstone，且 identity 严格高于 `av_supersession_floor`（若存在） | 首次 `ACC` 并武装 owner/token；完全相同 replay 为 `ACC_IDEM`。PLAY 不建立 active，不推进 AH/TH。低于或等于 AV floor 的迟到 PLAY 为 `R-14`，即使对应 AV tombstone 已被驱逐也不得复活。 |
+| `R-11` | STOP 命中当前 AV owner identity | `ACC`；只停 token、清 owner、写 AV tombstone，并令 `av_supersession_floor=max(floor,identity)`；**gameplay、attempt、TH、gameplay tombstone、outcome 全不变。** |
+| `R-12` | STOP 通过 gate但非 owner，且 identity 尚无 AV tombstone | `ACC`；只写 AV tombstone；仅当 STOP identity 等于当前 authoritative active identity 时，才令 `av_supersession_floor=identity`，否则不改变当前 active 的 floor。这样无关 identity 的 bounded tombstone churn 不会阻止当前 active 的 PLAY；terminal-before-PLAY/STOP-before-terminal 的迟到 PLAY 仍由 matching tombstone 或 floor 拒绝。不得分类 attempt，后续 `R-08` 仍须完整生效。 |
 | `R-13` | STOP 命中 AV tombstone | `ACC_IDEM`；四分区除既有 AV tombstone外不变。 |
 | `R-14` | unknown/malformed/session mismatch/below floor/forbidden combination/stale message | `IGN`。 |
 | `R-15` | tracking unload / disconnect lifecycle input | caster eviction 原子清四分区；这是 lifecycle teardown，不是 cast terminal，不生成 outcome。 |
-| `R-16` | 容量维护 | gameplay tombstone 与 AV tombstone 各自最多 256；驱逐 gameplay tombstone 不得降低 `TH/AH`，并且 `R-08` 以 `n<=TH` 将任何已驱逐 terminal replay 分类为 `ACC_IDEM` no-op；驱逐 AV tombstone 不得让迟到 PLAY 复活，仍由 AV high-water/gate 拒绝。 |
+| `R-16` | 容量维护 | gameplay tombstone 与 AV tombstone 各自最多 256；驱逐 gameplay tombstone 不得降低 `TH/AH`，并且 `R-08` 以 `n<=TH` 将任何已驱逐 terminal replay 分类为 `ACC_IDEM` no-op；驱逐 AV tombstone 时只移除 tombstone entry，**不得移除或降低 `av_supersession_floor`**，`R-10` 仍因 floor gate 拒绝对应迟到 PLAY。floor 仅在 matching active 的 terminal、控制 supersession 或 BEGIN generation replacement 的原子 transition 中写入/清除，不能由容量维护驱逐。 |
 
 ### 3.3 规范 traces（所有场景只能写成这些 row 的组合）
 
@@ -173,9 +173,25 @@ T-09  A(active=7,owner=7,AH=7,TH=0) --CASTING(8)[R-06]-->
 T-10  A(active=8) --COMPLETE(8)[R-08]--> O(TH=8,gameplay_tombstone=8,outcome=COMPLETED)
       --EVICT gameplay_tombstone(8)[R-16]--> O(TH=8,no tombstone 8)
       --COMPLETE(8)[R-08]--> O(ACC_IDEM,no side effects)
+
+T-11  BEGIN(S,generation=1,active=8)[R-01] --COMPLETE(S,generation=1,8)[R-08]--> O
+      --BEGIN(S,generation=2,active=8)[R-01]--> A(generation=2,active=8)
+      --COMPLETE(S,generation=1,8)[R-14]--> A(generation=2,active=8)
+      old-generation terminal cannot match the generation-2 active despite reusing session and instance IDs.
+
+T-12  A(active=1,owner=1) --STOP(1)[R-11]--> A(active=1,av_tombstone=1,av_floor=1)
+      --STOP(2..257)[R-12]--> A(active=1,av_tombstones=2..257,av_floor=1)
+      --EVICT av_tombstone(1)[R-16]--> A(active=1,no av_tombstone=1,av_floor=1)
+      --PLAY(1)[R-14]--> A(active=1,no owner)
+      evicting the tombstone cannot resurrect the delayed PLAY, while unrelated STOP churn cannot raise the active-1 floor.
+
+T-13  A(active=7) --COMPLETE(8)[R-08]-->
+      O(TH=8,gameplay_tombstones=7,8,outcomes=INTERRUPT_CONTROL/COMPLETED,no active)
+      side_effects = INTERRUPT_CONTROL(7) + matching STOP(7) + COMPLETED(8);
+      the newer instant terminal atomically supersedes and closes older active 7.
 ```
 
-`T-06` 明确禁止旧文档的 `O -> PLAY`；`T-03/T-05/T-08` 明确证明 STOP 不消费 terminal；`T-09` 固定 supersede 必须先终结旧 active；`T-10` 固定已驱逐 terminal replay 不重放副作用。任何新增 scenario 必须列初态、每条 message、命中的 `R-*` 和终态；若无法逐边命中，本 plan 有错，禁止用 prose 为场景开例外。
+`T-06` 明确禁止旧文档的 `O -> PLAY`；`T-03/T-05/T-08` 明确证明 STOP 不消费 terminal；`T-09` 固定 supersede 必须先终结旧 active；`T-10` 固定已驱逐 terminal replay 不重放副作用；`T-11` 固定 generation 必须进入非-BEGIN identity；`T-12` 固定 AV tombstone eviction 不得移除 floor；`T-13` 固定 newer terminal 的 supersession cascade 必须清理旧 active。任何新增 scenario 必须列初态、每条 message、命中的 `R-*` 和终态；若无法逐边命中，本 plan 有错，禁止用 prose 为场景开例外。
 
 ---
 
@@ -343,29 +359,29 @@ WAVE-1/2 PRODUCTION:
 | `D-01` | `cast_protocol_shape_cross_stack` | `P-01..P-15` |
 | `D-02` | `cast_outcome_all_variants` | `P-08,P-09,P-15,C-01..C-03` |
 | `D-03` | `cast_reducer_all_rows_all_states` | `I-04..I-10,INV-01..INV-04,R-01..R-16` |
-| `D-04` | `cast_trace_static_consistency` | `INV-04,R-01..R-16,T-01..T-10` |
+| `D-04` | `cast_trace_static_consistency` | `INV-04,R-01..R-16,T-01..T-13` |
 | `D-05` | `cast_session_lifecycle_churn` | `P-04,P-05,P-12..P-14,R-01..R-03,R-15,R-16,C-11` |
 | `D-06` | `cast_real_producer_mapping` | `P-06..P-10,A-01,A-03..A-06,C-04` |
 | `D-07` | `cast_known_techniques_bind_cast` | `I-11,A-02..A-04,A-07,C-13` |
 | `D-08` | `cast_active_preservation_on_reject` | `INV-03,R-04,R-05,R-08,A-06` |
 | `D-09` | `cast_allocator_exhaustion` | `P-02,P-04,P-05,P-13,R-01,R-04,R-08,R-12,R-15` |
 | `D-10` | `cast_live_four_arm_dispatch` | `P-11,P-14,C-05..C-11,C-INV-01..C-INV-05` |
-| `D-11` | `cast_stop_never_terminal` | `INV-01,INV-02,R-08,R-09,R-11..R-13,T-03,T-05,T-08` |
+| `D-11` | `cast_stop_never_terminal` | `INV-01,INV-02,R-08,R-09,R-11..R-13,R-16,T-03,T-05,T-08,T-12` |
 | `D-12` | `p2_av_single_owner` | `A-09,A-11,A-12,C-12` |
-| `D-13` | `p2_terminal_state_matrix` | `I-04,I-06,R-08,R-11..R-15,C-12` |
-| `D-14` | `p2_stop_reordering` | `R-06,R-08,R-10..R-14,A-12,C-12` |
+| `D-13` | `p2_terminal_state_matrix` | `I-04,I-06,R-08,R-11..R-16,T-10,T-13,C-12` |
+| `D-14` | `p2_stop_reordering` | `R-06,R-08,R-10..R-14,R-16,A-12,C-12,T-12,T-13` |
 | `D-15` | `p2_meditate_animation_pin` | `C-12` |
 | `D-16` | `p2_av_phase_binding` | `A-09,A-11,A-12,C-12` |
 | `D-17` | `p3_registration_projection` | `A-02..A-13,C-13,C-INV-06` |
 | `D-18` | `p3_resourcepack_release` | `C-14,C-INV-07` |
 | `D-19` | `p3_iris_capability_fallback` | `A-13,C-13,C-14` |
 | `D-20` | `cast_registry_reachability` | `A-01..A-08,C-13` |
-| `D-21` | `cast_stop_semantics` | `R-08..R-15,A-12,C-08..C-12` |
+| `D-21` | `cast_stop_semantics` | `R-08..R-16,A-12,C-08..C-12,T-12,T-13` |
 | `D-22` | `cast_av_uniqueness` | `A-07..A-13,C-12,C-13` |
-| `D-23` | `cast_wire_identity` | `P-01..P-15,C-01..C-07,I-03,I-04,INV-05` |
+| `D-23` | `cast_wire_identity` | `P-01..P-15,C-01..C-07,I-03,I-04,INV-05,T-11` |
 | `D-24` | `cast_av_phase_regression` | `A-09,A-11,A-12,C-12,I-06,INV-01,INV-02` |
 | `D-25` | `cast_registration_projection` | `A-07..A-13,C-13,C-INV-06` |
-| `D-26` | `cast_juice_identity_bridge` | `R-08..R-14,C-05..C-11` |
+| `D-26` | `cast_juice_identity_bridge` | `R-08..R-14,C-05..C-11,I-03,I-10,T-11..T-13` |
 | `D-27` | runClient 远处读招/HUD/icon/循环停止 + Iris present/absent | `A-08..A-13,C-13,C-14` |
 
 `D-15` 的资产 oracle 原样固定为：用 headless 渲染/姿态断言 `meditate_sit.json` 维持直立 torso（`torso.pitch=0`）、垂目 head pitch 约 `+0.2094395rad`（+12°）及双腿目标盘坐姿态：两腿 pitch 必须落在明确的修复区间 `[-0.698132, 0.0]rad`（[-40°, 0°]），双腿 yaw 保持相反符号且绝对值约 `0.436332rad`（25°），双腿 bend 约 `1.570796rad`（90°）承担折腿；不得再出现当前 `-1.3962634rad`（-80°）过旋。循环动画每个使用轴在 endTick 有同值关键帧，P4 复跑同一完整姿态 oracle。
@@ -469,7 +485,7 @@ bot 场景主题保留为：`cast_registry_reachability`、`cast_stop_semantics`
 
 | outcome | 本文落点 | 机器检查 |
 |---|---|---|
-| one normative reducer | `INV-04`、`R-01..R-16`、`T-01..T-10` | `D-03,D-04`：所有 scenario 边必须命中一个 reducer row |
+| one normative reducer | `INV-04`、`R-01..R-16`、`T-01..T-13` | `D-03,D-04`：所有 scenario 边必须命中一个 reducer row |
 | one schema authority | `INV-05`、`P-01..P-15` | `D-01,D-02`：TypeBox-first 全 mirror/all-outcome 对拍 |
 | one ownership/cutover DAG | `C-01..C-15`、`C-INV-01..C-INV-07` | `D-10,D-18`：四-arm live reachability + release hash，禁止丢包中间态 |
 | one acceptance index | `D-01..D-27` | static lint：acceptance 只引用存在的 `P/R/A/C/I/INV/T` IDs，不复制 transition |
