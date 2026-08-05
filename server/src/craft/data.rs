@@ -387,13 +387,14 @@ fn commit_staged_recipes(
     let mut first_paths: HashMap<String, PathBuf> = HashMap::new();
     for located in &staged {
         let id = located.recipe.id.as_str().to_owned();
-        if let Some(first_path) = first_paths.insert(id.clone(), located.path.clone()) {
+        if let Some(first_path) = first_paths.get(&id) {
             return Err(CraftDataError::DuplicateId {
                 path: located.path.clone(),
                 recipe_id: id,
-                first_path: Some(first_path),
+                first_path: Some(first_path.clone()),
             });
         }
+        first_paths.insert(id.clone(), located.path.clone());
         if registry.get(&located.recipe.id).is_some() {
             return Err(CraftDataError::DuplicateId {
                 path: located.path.clone(),
@@ -1128,6 +1129,58 @@ station = "none"
         assert_eq!(
             actual, expected,
             "P0 TOML loader output must equal the committed pre-migration fixture field-for-field"
+        );
+    }
+
+    #[test]
+    fn default_assets_match_pre_migration_registrar_oracle_field_for_field() {
+        // major #10 修复：baseline fixture 与 TOML 同批产生，不能充当独立迁移
+        // oracle。这里用迁移前真实 Rust registrar 的程序化副本（fixtures/
+        // legacy_p0_registrar.rs，来源 commit 6a6a262cecf9）独立重建 95 条
+        // canonical 配方，逐字段对拍 TOML loader 输出 —— fixture 与 TOML 一起
+        // 同批误改时也会撞红。
+        let oracle = crate::craft::fixtures::legacy_p0_registrar::legacy_p0_oracle_registry();
+        let mut expected: Vec<_> = oracle.iter().map(canonical).collect();
+        expected.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            expected.len(),
+            95,
+            "pre-migration registrar must rebuild exactly 95 canonical recipes"
+        );
+        // 文档化例外：verdict-1906-r2 major #9 —— coffin.stone_coffin 的展示名
+        // 已从旧 registrar 的 "玄石棺" 改为正典合规的 "乌石棺"（末法禁词"玄"）。
+        // oracle 保留迁移前真源值；对拍前把 expected 中该条 display_name 同步为
+        // 迁移后值，其余 94 条逐字段严格相等。
+        let stone_oracle = oracle
+            .get(&RecipeId::new("coffin.stone_coffin"))
+            .expect("oracle must contain stone coffin recipe");
+        assert_eq!(
+            stone_oracle.display_name, "玄石棺",
+            "oracle 保留迁移前真源名，用于对照"
+        );
+        for entry in &mut expected {
+            if entry.id == "coffin.stone_coffin" {
+                entry.display_name = "乌石棺".to_owned();
+            }
+        }
+
+        let mut registry = CraftRegistry::new();
+        load_default_craft_recipes_for_parity(&mut registry)
+            .expect("default P0 craft assets must parse for oracle parity");
+        let mut actual: Vec<_> = registry.iter().map(canonical).collect();
+        actual.sort_by(|left, right| left.id.cmp(&right.id));
+
+        assert_eq!(
+            actual, expected,
+            "P0 TOML loader output must equal the pre-migration registrar oracle field-for-field \
+             (coffin.stone_coffin display_name 例外见上)"
+        );
+        let stone_actual = registry
+            .get(&RecipeId::new("coffin.stone_coffin"))
+            .expect("stone coffin recipe must load from TOML");
+        assert_eq!(
+            stone_actual.display_name, "乌石棺",
+            "stone coffin recipe display_name must use the canonical-compliant 乌石棺"
         );
     }
 
@@ -1923,6 +1976,56 @@ skill_lv_min = 1
         assert!(rendered.contains(&second.display().to_string()));
         assert!(rendered.contains("fixture.recipe"));
         assert!(registry.is_empty());
+        clean(directory);
+    }
+
+    #[test]
+    fn duplicate_id_reports_earliest_occurrence_across_three_files() {
+        // verdict-1906-r2 major #7（minor）回归：三文件同 id 时 first_path 必须
+        // 保留最早出现的 A，而不能被第三次覆盖成 C（first_paths.get 先查再 insert
+        // 修复前会把 first_path 覆盖为最后一次）。A/B/C 三文件 + 明确断言最早路径。
+        let directory = temp_dir("duplicate-abc");
+        let base_a = replace_required_line(
+            minimal_recipe(),
+            "display_name = \"Fixture\"",
+            "display_name = \"first\"",
+        );
+        let base_b = replace_required_line(
+            minimal_recipe(),
+            "display_name = \"Fixture\"",
+            "display_name = \"second\"",
+        );
+        let base_c = replace_required_line(
+            minimal_recipe(),
+            "display_name = \"Fixture\"",
+            "display_name = \"third\"",
+        );
+        let path_a = write_toml(&directory, "a/aaa.toml", &base_a);
+        write_toml(&directory, "b/bbb.toml", &base_b);
+        write_toml(&directory, "c/ccc.toml", &base_c);
+
+        let mut registry = CraftRegistry::new();
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap_err();
+        match error {
+            CraftDataError::DuplicateId {
+                path: actual,
+                recipe_id,
+                first_path: Some(actual_first),
+            } => {
+                assert_eq!(recipe_id, "fixture.recipe");
+                assert_eq!(
+                    actual_first, path_a,
+                    "first_path must be the earliest file A, not the last duplicate C"
+                );
+                assert_eq!(actual, directory.join("b/bbb.toml"));
+            }
+            other => panic!("expected duplicate-id error with first_path, got {other:?}"),
+        }
+        assert!(
+            registry.is_empty(),
+            "duplicate preflight must not mutate registry"
+        );
         clean(directory);
     }
 

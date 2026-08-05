@@ -934,16 +934,12 @@ pub fn apply_unlock_intents(
     mut unlock_state: ResMut<RecipeUnlockState>,
     registry: Res<CraftRegistry>,
     clock: Res<CombatClock>,
-    names: Query<&Username>,
 ) {
     for intent in intents.read() {
-        let player_id = match names.get(intent.caster) {
-            Ok(u) => canonical_player_id(u.0.as_str()),
-            Err(_) => format!("entity:{}", intent.caster.to_bits()),
-        };
+        let player_id = intent.player_id.as_str();
         let Some(recipe) = registry.get(&intent.recipe_id) else {
             if let UnlockEventSource::Scroll { .. } = &intent.source {
-                unlock_state.release_scroll_unlock_reservation(&player_id, &intent.recipe_id);
+                unlock_state.release_scroll_unlock_reservation(player_id, &intent.recipe_id);
             }
             tracing::warn!(
                 "[bong][craft] unlock intent ignored: recipe `{}` not in registry",
@@ -953,17 +949,17 @@ pub fn apply_unlock_intents(
         };
         let outcome = match &intent.source {
             UnlockEventSource::Scroll { item_template } => {
-                unlock_via_scroll(&mut unlock_state, &player_id, recipe, item_template)
+                unlock_via_scroll(&mut unlock_state, player_id, recipe, item_template)
             }
             UnlockEventSource::Mentor { npc_archetype } => {
-                unlock_via_mentor(&mut unlock_state, &player_id, recipe, npc_archetype)
+                unlock_via_mentor(&mut unlock_state, player_id, recipe, npc_archetype)
             }
             UnlockEventSource::Insight { trigger } => {
-                unlock_via_insight(&mut unlock_state, &player_id, recipe, *trigger)
+                unlock_via_insight(&mut unlock_state, player_id, recipe, *trigger)
             }
         };
         if let UnlockEventSource::Scroll { .. } = &intent.source {
-            unlock_state.release_scroll_unlock_reservation(&player_id, &intent.recipe_id);
+            unlock_state.release_scroll_unlock_reservation(player_id, &intent.recipe_id);
         }
         match outcome {
             UnlockOutcome::Newly { source } => {

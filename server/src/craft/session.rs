@@ -2127,6 +2127,169 @@ mod tests {
         );
     }
     #[test]
+    fn start_craft_missing_skill_set_treats_level_as_zero_without_side_effects() {
+        // verdict-1906-r2 major #8 回归：SkillSet 组件缺失时 skill 门槛按 0 处理
+        // （fail-closed：达不到任何 skill_lv_min），且不产生任何真元/材料副作用。
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        let mut recipe = simple_recipe("skill_gate_no_set");
+        recipe.requirements.skill_lv_min = Some(1);
+        registry.register(recipe).unwrap();
+        unlock.unlock("offline:Alice", RecipeId::new("skill_gate_no_set"));
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let before_inventory = count_template_in_inventory(&inventory, "herb_a");
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate_no_set"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                None, // 组件缺失
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            StartCraftError::SkillTooLow {
+                required: 1,
+                current: 0
+            },
+            "missing SkillSet must fail closed with current=0"
+        );
+        assert_eq!(
+            count_template_in_inventory(&inventory, "herb_a"),
+            before_inventory,
+            "missing-skill rejection must not consume materials"
+        );
+        assert_eq!(
+            cult.qi_current, 50.0,
+            "missing-skill rejection must not move qi"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "missing-skill rejection must not write any qi ledger transfer"
+        );
+    }
+
+    #[test]
+    fn start_craft_empty_skill_set_treats_level_as_zero_without_side_effects() {
+        // 同 major #8：SkillSet 存在但 skills 为空（新玩家未学任何技能）。
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        let mut recipe = simple_recipe("skill_gate_empty");
+        recipe.requirements.skill_lv_min = Some(1);
+        registry.register(recipe).unwrap();
+        unlock.unlock("offline:Alice", RecipeId::new("skill_gate_empty"));
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let before_inventory = count_template_in_inventory(&inventory, "herb_a");
+        let skills = SkillSet::default();
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate_empty"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                Some(&skills),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            StartCraftError::SkillTooLow {
+                required: 1,
+                current: 0
+            },
+            "empty SkillSet must fail closed with current=0"
+        );
+        assert_eq!(
+            count_template_in_inventory(&inventory, "herb_a"),
+            before_inventory,
+            "empty-skill rejection must not consume materials"
+        );
+        assert_eq!(
+            cult.qi_current, 50.0,
+            "empty-skill rejection must not move qi"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "empty-skill rejection must not write any qi ledger transfer"
+        );
+    }
+
+    #[test]
+    fn start_craft_skill_set_below_requirement_reports_effective_level() {
+        // AnySkill 门槛取所有已存在技能的最高 effective level；这里的 Forging Lv.1
+        // 低于要求 2，因此拒绝时应报告当前等级 1，而不是错误地声称没有任何技能。
+        let (mut registry, mut unlock, mut cult, color, mut ledger) = make_world();
+        let mut recipe = simple_recipe("skill_gate_below_requirement");
+        recipe.requirements.skill_lv_min = Some(2);
+        registry.register(recipe).unwrap();
+        unlock.unlock(
+            "offline:Alice",
+            RecipeId::new("skill_gate_below_requirement"),
+        );
+        let mut inventory = make_inventory(&[("herb_a", 5), ("iron_needle", 5)]);
+        let mut skills = SkillSet::default();
+        skills.skills.insert(
+            crate::skill::components::SkillId::Forging,
+            crate::skill::components::SkillEntry {
+                lv: 1,
+                ..Default::default()
+            },
+        );
+
+        let err = start_craft(
+            StartCraftRequest {
+                caster: caster_entity(),
+                player_id: "offline:Alice",
+                recipe_id: &RecipeId::new("skill_gate_below_requirement"),
+                current_tick: 0,
+                quantity: 1,
+            },
+            ok_deps_for_player(
+                &registry,
+                &unlock,
+                &mut inventory,
+                &mut cult,
+                &color,
+                &mut ledger,
+                Some(&skills),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            StartCraftError::SkillTooLow {
+                required: 2,
+                current: 1
+            },
+            "存在 Lv.1 技能但要求 Lv.2 时必须报告 current=1"
+        );
+        assert!(
+            ledger.transfers().is_empty(),
+            "low-skill rejection must not write any qi ledger transfer"
+        );
+    }
+
+    #[test]
     fn start_craft_workbench_recipe_fails_without_nearby_workbench() {
         // station: Some(Workbench) 且 has_nearby_workbench: false → StationOutOfRange
         let mut registry = CraftRegistry::new();

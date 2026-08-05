@@ -79,7 +79,7 @@
     {
       "id": "coffin.stone_coffin",
       "category": "misc",
-      "display_name": "玄石棺",
+      "display_name": "乌石棺",
       "materials": [
         {
           "template_id": "xuan_iron",

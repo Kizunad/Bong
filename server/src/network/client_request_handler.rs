@@ -3053,6 +3053,7 @@ fn handle_craft_recipe_scroll(
     for recipe_id in recipe_ids {
         craft_unlock_tx.send(crate::craft::CraftUnlockIntent {
             caster: entity,
+            player_id: player_id.clone(),
             recipe_id,
             source: crate::craft::UnlockEventSource::Scroll {
                 item_template: template_id.clone(),
@@ -10058,6 +10059,120 @@ mod tests {
                 .items
                 .is_empty(),
             "successful craft recipe scroll use must consume exactly one scroll"
+        );
+    }
+
+    #[test]
+    fn craft_scroll_unlock_uses_stable_player_id_when_caster_entity_is_gone() {
+        // verdict-1906-r2 major #3 回归：残卷 reservation 与 unlock 以
+        // `intent.player_id`（canonical 稳定身份）为准，而非 caster entity。
+        // 历史上 consumer 反查 caster 的 Username，查不到时 fallback
+        // `entity:{bits}` —— reservation 以 canonical_player_id 落账却永不
+        // 释放，同玩家再拿一张同卷会被 reserve 永久拒绝。这里直接构造
+        // "caster 实体已不存在"的 intent（换线重连后旧 entity id 失效），
+        // 走 production 全链路（request → reserve → consume → intent →
+        // apply_unlock_intents），断言 unlock 仍提交。
+        let mut app = production_scroll_request_app();
+        let player_id = canonical_player_id("Azure");
+        let recipe_id = crate::craft::RecipeId::new("workbench.shelter.lantern");
+
+        // 正常路径先 unlock 一次（走真实请求链路，锁住 production bridge）。
+        {
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern")),
+                ))
+                .id();
+            send_skill_scroll_use(&mut app, entity, 42);
+            app.update();
+            assert!(
+                app.world()
+                    .resource::<crate::craft::RecipeUnlockState>()
+                    .is_unlocked(&player_id, &recipe_id),
+                "first unlock via real request must commit"
+            );
+            app.world_mut().despawn(entity);
+        }
+
+        // 已解锁 → reserve 返回 false（防止再扣第二张卷）。该行为不变。
+        {
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let second = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory_with_skill_scroll(skill_scroll_item(43, "scroll_workbench_lantern")),
+                ))
+                .id();
+            let re_reserved = app
+                .world_mut()
+                .resource_mut::<crate::craft::RecipeUnlockState>()
+                .reserve_scroll_unlock(&player_id, &recipe_id);
+            assert!(
+                !re_reserved,
+                "already-unlocked recipe must not reserve again (no double consume)"
+            );
+            app.world_mut().despawn(second);
+        }
+    }
+
+    #[test]
+    fn craft_scroll_unlock_with_dead_caster_entity_still_commits_via_player_id() {
+        // verdict-1906-r2 major #3 的第二面：intent 携带的 caster 实体在消费帧
+        // 已不存在（队列跨帧 + 实体换线/死亡清场）时，apply_unlock_intents 必须
+        // 用 intent.player_id 完成解锁 + 释放 reservation，而不是因反查 caster
+        // 失败而丢弃（旧实现 fallback entity:{bits} 导致 canonical reservation
+        // 永久残留）。
+        let mut app = production_scroll_request_app();
+        let player_id = canonical_player_id("Azure");
+        let recipe_id = crate::craft::RecipeId::new("workbench.shelter.lantern");
+
+        // 先 reserve（模拟请求帧已扣物品、reservation 落账）。
+        assert!(
+            app.world_mut()
+                .resource_mut::<crate::craft::RecipeUnlockState>()
+                .reserve_scroll_unlock(&player_id, &recipe_id),
+            "reservation must succeed before intent processing"
+        );
+        // spawn 后立即 despawn：caster 实体在消费帧不存在。
+        let dead_caster = app.world_mut().spawn_empty().id();
+        app.world_mut().despawn(dead_caster);
+
+        app.world_mut().send_event(crate::craft::CraftUnlockIntent {
+            caster: dead_caster,
+            player_id: player_id.clone(),
+            recipe_id: recipe_id.clone(),
+            source: crate::craft::UnlockEventSource::Scroll {
+                item_template: "scroll_workbench_lantern".to_string(),
+            },
+        });
+        app.update();
+
+        let unlock_state = app.world().resource::<crate::craft::RecipeUnlockState>();
+        assert!(
+            unlock_state.is_unlocked(&player_id, &recipe_id),
+            "unlock must commit via intent.player_id even when caster entity is already despawned"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .count(),
+            1,
+            "dead-caster intent must still emit one observable unlock"
+        );
+        // 旧实现会遗留 `entity:{bits}` 错位 reservation —— 解锁后再次请求同一
+        // 卷，若残留锁未清，reserve 会返回 false 且第二张卷被吞。断言解锁后
+        // reservation 被释放（未解锁配方可以重新 reserve）。
+        let another_recipe = crate::craft::RecipeId::new("workbench.shelter.torch");
+        assert!(
+            app.world_mut()
+                .resource_mut::<crate::craft::RecipeUnlockState>()
+                .reserve_scroll_unlock(&player_id, &another_recipe),
+            "reservation bookkeeping must stay consistent after dead-caster intent"
         );
     }
 

@@ -36,6 +36,17 @@ pub mod unlock;
 pub mod workbench;
 #[cfg(test)]
 mod workbench_recipes;
+/// 迁移前 registrar oracle（test 与 bin-test 共用）。
+///
+/// `legacy_p0_registrar` 由迁移前真实 Rust registrar 源码（commit
+/// `6a6a262cecf9`）程序化重建 95 条 canonical 配方，不读 TOML / JSON，
+/// 独立充当 parity 测试的第三真源。它只做纯内存构建，不加载任何资源，
+/// 因此不带 `#[cfg(test)]` —— 否则 lib 的 cfg(test) 模块对 bin crate 的
+/// 测试不可见（`craft::fixtures` 在 main.rs smoke 测试中无法访问）。
+#[doc(hidden)]
+pub mod fixtures {
+    pub mod legacy_p0_registrar;
+}
 
 use valence::prelude::{App, Last, Update};
 
@@ -860,21 +871,13 @@ mod tests {
         );
     }
 
+    /// 迁移前 registrar oracle 的完整配方 id 集合。
+    ///
+    /// 由 `fixtures/legacy_p0_registrar.rs` 程序化重建（不读 TOML / JSON），
+    /// 作为数据资产与 baseline fixture 之外的第三个独立真源。
     fn p0_legacy_baseline_ids() -> std::collections::HashSet<String> {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "fixtures/registry_datafication_p0_baseline.json"
-        ))
-        .expect("P0 baseline fixture must stay valid JSON");
-        fixture["recipes"]
-            .as_array()
-            .expect("P0 baseline fixture must contain a recipes array")
-            .iter()
-            .map(|recipe| {
-                recipe["id"]
-                    .as_str()
-                    .expect("baseline recipe id must be a string")
-                    .to_string()
-            })
+        fixtures::legacy_p0_registrar::legacy_p0_oracle_ids()
+            .into_iter()
             .collect()
     }
 
@@ -887,6 +890,8 @@ mod tests {
         );
         register(&mut app);
         let assembled = app.world().resource::<CraftRegistry>();
+        // 生产注册 = data-owned TOML（95 条 oracle）+ code-owned registrar。
+        // 数据侧必须与 oracle 逐 id 完全相等：任何 TOML 丢/增配方都会撞红。
         let expected = p0_legacy_baseline_ids();
         let actual: std::collections::HashSet<String> = assembled
             .iter()
@@ -896,6 +901,45 @@ mod tests {
         assert_eq!(
             actual, expected,
             "production craft::register must retain every migrated TOML recipe"
+        );
+        // 生产注册必须比数据资产多出 code-owned 配方（anqi/zhenfa/tuike/...）。
+        assert!(
+            assembled.len() > expected.len(),
+            "production craft::register must also run code-owned registrars on top of data assets"
+        );
+    }
+
+    #[test]
+    fn production_register_rejects_missing_toml_item_reference() {
+        // major #1 回归：只把生产 register 改成 parity loader（绕过 ItemRegistry
+        // 校验）时，完整 ID 集测试仍会通过；这里从真实 item registry 移除一个
+        // TOML 材料，再直接调用生产注册入口，必须在启动边界 fail fast。
+        let real_items = crate::inventory::load_item_registry()
+            .expect("craft registration test requires real ItemRegistry");
+        let mut templates: std::collections::HashMap<_, _> = real_items
+            .iter_templates()
+            .cloned()
+            .map(|template| (template.id.clone(), template))
+            .collect();
+        assert!(
+            templates.remove("iron_ingot").is_some(),
+            "test fixture must remove an item referenced by migrated craft TOML"
+        );
+
+        let mut app = App::new();
+        app.insert_resource(crate::inventory::ItemRegistry::from_map(templates));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            register(&mut app);
+        }))
+        .expect_err("production craft::register must reject missing TOML item references");
+        let message = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+            .unwrap_or_else(|| format!("{panic:?}"));
+        assert!(
+            message.contains("iron_ingot"),
+            "strict production loader panic must identify the missing item reference, got: {message}"
         );
     }
 

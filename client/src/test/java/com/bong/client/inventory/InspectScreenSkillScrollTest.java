@@ -57,6 +57,37 @@ class InspectScreenSkillScrollTest {
     }
 
     @Test
+    void craftRecipeScrollContextMenuExposesActionAndSendsThroughProductionPath() {
+        install();
+        InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
+        var item = com.bong.client.inventory.model.InventoryItem.createFullWithScrollMeta(
+            1007L,
+            "scroll_gathering_axe_bone",
+            "骨斧采集残卷",
+            1, 2, 0.05, "common", "断裂的采集图页", 1, 1.0, 1.0,
+            "craft_recipe_scroll", "", 0
+        );
+
+        List<InspectScreen.PillMenuAction> actions = screen.availablePillMenuActions(item);
+        assertEquals(1, actions.size(), "制作残卷应只暴露研读制作残卷入口");
+        assertEquals("研读制作残卷", actions.get(0).label());
+        assertEquals(InspectScreen.ActionKind.CRAFT_RECIPE_SCROLL_USE, actions.get(0).kind());
+
+        assertTrue(screen.openPillContextMenu(item, 30, 40));
+        assertTrue(screen.hasOpenPillContextMenu(), "打开右键菜单后必须保留菜单状态等待动作选择");
+        screen.triggerPillMenuAction(actions.get(0).kind());
+
+        assertFalse(screen.hasOpenPillContextMenu(), "触发菜单动作后必须关闭菜单");
+        assertEquals(1, sent.size());
+        assertEquals(new Identifier("bong", "client_request"), sent.get(0).channel());
+        assertEquals(
+            "{\"type\":\"learn_skill_scroll\",\"v\":1,\"instance_id\":1007}",
+            sent.get(0).body(),
+            "context menu 必须沿生产 dispatch 路径发出 learn_skill_scroll wire"
+        );
+    }
+
+    @Test
     void rejectsNonCraftRecipeScrollForCraftAction() {
         InspectScreen screen = new InspectScreen(com.bong.client.inventory.model.InventoryModel.empty());
         var item = com.bong.client.inventory.model.InventoryItem.simple("recipe_scroll_qixue_pill", "丹方残卷");
