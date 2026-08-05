@@ -97,7 +97,7 @@
 
 - `#1576` blueprint dimension default：确认 dimension 的权威输入和缺失值行为。
 - `#1653`、`#1705` scalar `mofa_decay` layer shape：确认 scalar 与 raster/layer shape 的规范表示，阻止 profile 间隐式 shape 漂移。
-- `#1656` unknown depth tier 的 `anomaly_threshold` 查表：确认未知 tier 的显式校验和错误边界；是否由 anomaly 计划拥有见开放问题。
+- `#1656` unknown depth tier 的 `anomaly_threshold` 查表：unknown tier 必须在 validation 入口 fail-closed，返回包含 profile、字段名和 tier 值的稳定可定位错误；禁止泄漏原始 Python `KeyError`、静默 fallback 或交给未声明 consumer 兜底。最终 ownership 见开放问题。
 - `#1884` `spring_marsh` island mask：修复或重新定义 waterline/height/mask 的矛盾条件，确保 mask 具有非空且符合 profile 语义的可测结果。
 
 **涉及模块 / 路径：**
@@ -111,7 +111,7 @@
 
 1. 每个 umbrella-owned profile 输入都有明确 required/default/invalid 状态，且缺失/未知值不会静默采用与其它 profile 不同的隐式行为。
 2. `mofa_decay` 等 layer 的 scalar、per-column、per-cell 形状经过统一规范化或显式拒绝；`LAYER_REGISTRY`、exporter 和 checker 对同一 shape 解释一致。
-3. depth-tier threshold 表对所有合法 tier 有正向 case，对 unknown tier 有 fail-closed case；若移交 anomaly 计划，本文留下对应 cross-plan contract 和验收证据。
+3. depth-tier threshold 表对所有合法 tier 有正向 case；unknown tier 必须在 validation 入口 fail-closed，并返回包含 profile、字段名和 tier 值的稳定可定位错误。无论最终由本计划还是 anomaly 计划实现，都禁止原始 Python `KeyError`、静默 fallback 或未声明 consumer 兜底；若移交，本文留下同一错误合同和验收证据。
 4. `spring_marsh` island mask 至少覆盖满足业务语义的正向样本、边界样本和矛盾输入；不再以互相排斥条件造成恒假结果。
 5. 由真实 profile 生成 raster/manifest，运行 checker，再由 server loader/consumer 解析；测试断言外部产物和值域，而非只断言私有 helper 调用次数。
 6. 变更不会改写动态 qi 物理：涉及 `qi_density` 的测试使用现有常量/预算合同，不写字面总量或自定义衰减率。
@@ -120,7 +120,7 @@
 
 - `#1576`：缺省/显式 dimension 的正反样本均生成相同的规范 manifest；非法或缺失且无授权 default 的输入以非零退出并包含字段名和 profile 名。
 - `#1653/#1705`：至少覆盖 scalar、正确 raster shape、空/错 shape、跨 profile 对拍；exported layer 的 dtype、shape、safe default 和 server decode 结果一致。
-- `#1656`：合法 depth tiers 全部命中；unknown tier 不产生 Python `KeyError` 以外的未解释异常，必须输出稳定的 validation failure 或由已决议的 anomaly consumer 明确拒绝。
+- `#1656`：合法 depth tiers 全部命中；unknown tier 必须在 validation 入口 fail-closed，并返回包含 profile、字段名和 tier 值的稳定可定位错误。原始 Python `KeyError`、静默 fallback 和未声明 consumer 兜底均为验收失败；若 ownership 转交 anomaly 计划，该计划也必须实现并测试同一错误合同。
 - `#1884`：mask 生成包含满足 contract 的 true sample、false sample 和 waterline/height 边界 sample；恒假回归测试失败。
 - P0 真实 profile → raster export → validation → server parse/consumer 集成测试通过；所有失败分支有可定位错误信息。
 
@@ -272,7 +272,7 @@
 
 ### §2 `#1656` 与 anomaly raster plan 的边界
 
-unknown depth tier 的 `anomaly_threshold` lookup 是否直接属于 `plan-bughunt-anomaly-raster-runtime-consumer-v1` 的 runtime threshold contract？若转入，需保留本 umbrella 对 profile 输入/导出完整性的接缝验收；若不转入，P0 必须拥有完整 validation path。
+unknown depth tier 的 `anomaly_threshold` lookup 是否直接属于 `plan-bughunt-anomaly-raster-runtime-consumer-v1` 的 runtime threshold contract？若转入，需保留本 umbrella 对 profile 输入/导出完整性的接缝验收，并要求 anomaly 计划实现完全相同的 fail-closed 错误合同：错误包含 profile、字段名和 tier 值，禁止原始 Python `KeyError`、静默 fallback 或未声明 consumer 兜底；若不转入，P0 必须拥有该完整 validation path。
 
 ### §3 Layer shape 的 canonical representation
 
@@ -335,3 +335,33 @@ P0-P3 当前预期是 worldgen/server 逻辑；需确认 console/regen/preview �
 3. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
 4. 确认 `#1623/#1627/#1853` 仍由 `plan-bughunt-structure-manifest-loot-consumer-v1` 拥有，并仅在 P4 做 cross-reference。
 5. active promotion 时更新阶段状态表和 current `file:line` 锚点；`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。promotion 前本 skeleton 不由 `/consume-plan` 消费，source issue 也不得仅凭 skeleton 登记就宣称已修复。
+
+## §10 实施工作流
+
+本计划 scope 覆盖 P0–P4，按单计划多 PR 串行消费；前一 PR 合入并完成验收后，才进入下一 PR。skeleton 阶段不执行以下实施步骤，亦不以本节替代 `docs/CLAUDE.md` §五的 `§N.1 决议` 门。
+
+### §10.1 资产与布局变更的三轮打磨
+
+P1 涉及 NBT、layout、placement 或复杂预览资产时，必须按 Round 1 first cut、Round 2 结构 dump/渲染/ASCII 自评、Round 3 终轮一致性复核执行；对应提交按 `(round 1/3)`、`(round 2/3)`、`(round 3/3)` 标记，终轮提交附 `<PROMISE>`，并覆盖 seed、bounds、orientation、anchor 和 footprint 证据。纯校验逻辑不适用该资产打磨门。
+
+### §10.2 PR 序列与职责边界
+
+1. **PR-1（P0）**：profile/default、layer shape、depth-tier unknown 输入和 island mask 的 canonical validation 与 pin/integration fixture。
+2. **PR-2（P1）**：deterministic seed、layout rotation、bounds/orientation/anchor 及结构验证器。
+3. **PR-3（P2）**：terrain/POI boundary、biome classification 与 Python exporter → Rust consumer 对拍。
+4. **PR-4（P3）**：regen generation/原子发布、marker refresh、preview compositor width 回归 pin。
+5. **PR-5（P4）**：与 structure-manifest plan 的真实跨计划 integration fixture；依赖未完成时只提交明确 `BLOCKED` 证据。
+
+每个 PR 只修改本阶段实际 owner 的代码、测试和本 active plan；不得修改 `docs/worldview.md`、`docs/finished_plans/` 或 excluded issue 的 owner plan。
+
+### §10.3 独立实施与审查闭环
+
+每个 PR 由独立实施 agent 按本节、对应阶段交付物和测试合同执行，完成后由无上下文只读 validator 对待审 HEAD 做第一性核验；validator 必须回报 HEAD 对拍和 PASS/FAIL。FAIL 时针对新 HEAD 返工并重新验证；任何合并主线造成 HEAD 变化也必须重新验证。实施、validator 和 review 结果不得以孤立 Python 单测替代真实 exporter/manifest/server consumer 链路。
+
+### §10.4 本地门禁、主线同步与 review 等待
+
+按受影响栈执行对应完整门禁；worldgen/server 跨栈变更同时跑两端门禁。推送前紧邻执行 `git fetch origin && git merge origin/main`，若 merge 带入受影响变更则重跑门禁和 validator。开 PR 后使用仓库规定的独立 review 入口和 CodeRabbit 检查；检查 pending 时按 `docs/CLAUDE.md` §六的 `ScheduleWakeup` 等待协议，不以本地自判替代复审。
+
+### §10.5 单次 consume-plan 收口
+
+用户提交 `/consume-plan` 后，消费流程按 PR-1→PR-5 串行推进：每个 PR 完成实现、validator、栈门禁、主线同步、review 收敛和合入后再开下一 PR；全部 P 阶段完成后更新状态、补 `## Finish Evidence`，最后将 active plan 迁入 `docs/finished_plans/`。任一 excluded plan 或上游合同未完成时保留可核验 `BLOCKED` 证据，不得把未实施 issue 宣称为完成。
