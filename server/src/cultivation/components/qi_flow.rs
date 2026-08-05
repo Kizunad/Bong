@@ -528,6 +528,68 @@ impl Cultivation {
     }
 }
 
+/// 把 live actor 的 `Cultivation` 真元结算进外部 canonical owner 的物理保留字段
+/// （例如道伥 blackboard 的 `daozhan_qi`）。
+///
+/// source 字段与 target 物理字段共用活体事务的同一失败原子性边界：任一步失败即整体
+/// 保持原样，不产生部分写入；审计轨迹与守恒断言与 `transfer_to_external_actor` 同一族。
+pub(crate) fn transfer_cultivation_to_external_owner(
+    source: &mut Cultivation,
+    target_current: &mut f64,
+    ledger: &mut WorldQiAccount,
+    source_identity: &ActorQiIdentity,
+    target_identity: &ActorQiIdentity,
+    requested: f64,
+    reason: QiTransferReason,
+) -> Result<QiFlowOutcome, QiFlowError> {
+    source.validate_qi_state()?;
+    let target_before = finite_non_negative(*target_current, "external_qi_target.current")?;
+    let requested = finite_non_negative(requested, "transfer_to_external_owner.requested")?;
+    reject_audit_only_qi_reason(reason)?;
+    if requested > source.qi_current {
+        return Err(QiFlowError::InsufficientCurrent {
+            available: source.qi_current,
+            requested,
+        });
+    }
+    if requested == 0.0 {
+        return Ok(QiFlowOutcome::noop(0.0));
+    }
+
+    let transfer = QiTransfer::new(
+        source_identity.account(),
+        target_identity.account(),
+        requested,
+        reason,
+    )?;
+    reject_same_account(&transfer)?;
+    let source_after = if requested == source.qi_current {
+        0.0
+    } else {
+        checked_sub_progress(
+            source.qi_current,
+            requested,
+            "cultivation.qi_current.external_owner_source",
+        )?
+    };
+    let target_after =
+        checked_add_progress(target_before, requested, "external_qi_target.current")?;
+
+    source.qi_current = source_after;
+    *target_current = target_after;
+    ledger.push_transfer_audit(transfer.clone());
+
+    Ok(QiFlowOutcome {
+        requested,
+        source_debited: requested,
+        target_credited: requested,
+        zone_accepted: 0.0,
+        overflow_credited: 0.0,
+        untransferred: 0.0,
+        transfers: vec![transfer],
+    })
+}
+
 /// 从非 [`Cultivation`] 的外部 owner 释放 raw qi（例如道伥 blackboard）。
 ///
 /// source 字段、signed zone、稳定 overflow 与审计共用活体事务的同一失败原子性边界；

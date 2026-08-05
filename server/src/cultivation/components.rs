@@ -632,7 +632,7 @@ mod qi_flow;
 pub use persisted::{
     decode_persisted_cultivation, encode_persisted_cultivation, PersistedCultivationV1,
 };
-pub(crate) use qi_flow::release_external_qi_to_zone;
+pub(crate) use qi_flow::{release_external_qi_to_zone, transfer_cultivation_to_external_owner};
 pub use qi_flow::{
     ActorQiIdentity, ActorQiKind, CultivationQiInit, CultivationQiSnapshot, PersistentQiSink,
     QiFlowError, QiFlowOutcome, QiResizeOutcome,
