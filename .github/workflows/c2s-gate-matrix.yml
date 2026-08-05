@@ -6,8 +6,8 @@ on:
       - main
     paths:
       - "server/src/schema/client_request.rs"
-      - "agent/packages/schema/src/client-request.ts"
-      - "agent/packages/schema/generated/client-request-v1.json"
+      - "agent/packages/schema/src/**"
+      - "agent/packages/schema/generated/**"
       - "docs/plan-refactor-c2s-gate-v1.md"
       - "scripts/check_c2s_gate_matrix.py"
       - "scripts/tests/check_c2s_gate_matrix_test.py"
@@ -15,8 +15,8 @@ on:
   pull_request:
     paths:
       - "server/src/schema/client_request.rs"
-      - "agent/packages/schema/src/client-request.ts"
-      - "agent/packages/schema/generated/client-request-v1.json"
+      - "agent/packages/schema/src/**"
+      - "agent/packages/schema/generated/**"
       - "docs/plan-refactor-c2s-gate-v1.md"
       - "scripts/check_c2s_gate_matrix.py"
       - "scripts/tests/check_c2s_gate_matrix_test.py"
