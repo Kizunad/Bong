@@ -1,12 +1,9 @@
-use valence::prelude::{EventReader, EventWriter, Query, Res, ResMut};
+use valence::prelude::{EventReader, EventWriter, Res, ResMut};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
-use crate::cultivation::life_record::LifeRecord;
 use crate::npc::dormant::census::{assign_status, compute_faction_census, LastFactionCensus};
-use crate::npc::dormant::{
-    effective_group, DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated,
-};
+use crate::npc::dormant::{DormantCombatOutcome, NpcDormantStore, PendingDormantRelicCreated};
 use crate::npc::faction::{
     FactionEventNotice, FactionRelationMatrix, FactionStore, NamedFactionDecayEvent,
     NamedFactionId, NamedFactionLeaderDownEvent, NamedFactionRegistry,
@@ -26,22 +23,14 @@ const NPC_EVENT_VERSION: u8 = 1;
 pub fn publish_npc_spawn_events(
     redis: Res<RedisBridgeResource>,
     game_tick: Option<Res<GameTick>>,
-    life_records: Query<&LifeRecord>,
     mut events: EventReader<NpcSpawnNotice>,
 ) {
     let at_tick = current_game_tick(game_tick.as_deref());
     for ev in events.read() {
-        let Ok(life_record) = life_records.get(ev.entity) else {
-            tracing::warn!(
-                target = ?ev.entity,
-                "[bong][npc_event_bridge] dropped NpcSpawned without canonical LifeRecord"
-            );
-            continue;
-        };
         let wire = NpcSpawnedV1 {
             v: NPC_EVENT_VERSION,
             kind: "npc_spawned".to_string(),
-            npc_id: life_record.character_id.clone(),
+            npc_id: ev.npc_id.clone(),
             archetype: ev.archetype.as_str().to_string(),
             source: ev.source.as_str().to_string(),
             zone: ev.home_zone.clone(),
@@ -304,13 +293,11 @@ fn publish_named_faction_snapshot(
 /// `WarConflictStore` 里的涌现冲突。**纯计数**（`pressure += 1.0`/条），切断真元语义关联；
 /// 真元流动仍唯一走 P2 `release_dormant_qi_to_zone`。
 ///
-/// - 每条 `DormantCombatOutcome` 读 zone + winner/loser char_id → 查 dormant store 反查
-///   `effective_group`（有则取，无则跳过 group 累积但仍更新 pressure/casualties）。
+/// - 每条 `DormantCombatOutcome` 直接携带结算前捕获的 winner/loser group；败者从 dormant
+///   store 移除后仍可完整累积双方群体。
 /// - 越阈且 ≥2 group 后调 `WarConflictStore::escalate_or_create`，每次相变 emit `WarPhaseChanged`。
 pub fn accumulate_zone_conflict_pressure(
     mut combat_events: EventReader<DormantCombatOutcome>,
-    dormant_store: Res<NpcDormantStore>,
-    faction_store: Res<FactionStore>,
     mut pressure: ResMut<ZoneConflictPressure>,
     mut war_store: ResMut<WarConflictStore>,
     mut phase_changed: EventWriter<WarPhaseChanged>,
@@ -320,18 +307,8 @@ pub fn accumulate_zone_conflict_pressure(
 
     for ev in combat_events.read() {
         let entry = pressure.entry(&ev.zone);
-        // 反查 winner/loser 的 effective_group（dormant store + faction store 联查）。
-        // 查不到的 char_id 不阻止 pressure 累积，只是该群体不被计入 groups。
-        let winner_group = dormant_store
-            .snapshots
-            .get(ev.winner.as_str())
-            .and_then(|snap| effective_group(snap, &faction_store));
-        let loser_group = dormant_store
-            .snapshots
-            .get(ev.loser.as_str())
-            .and_then(|snap| effective_group(snap, &faction_store));
 
-        match (winner_group, loser_group) {
+        match (ev.winner_group, ev.loser_group) {
             (Some(w), Some(l)) => entry.accumulate(w, l, now),
             (Some(w), None) => {
                 // winner 侧有 group，loser 侧无：累积 pressure/casualties + wins_by_group[w]+1
@@ -457,17 +434,16 @@ mod tests {
     };
     use crate::npc::lifecycle::{NpcArchetype, NpcDeathReason};
     use crossbeam_channel::{unbounded, Receiver};
-    use valence::prelude::{App, Commands, DVec3, EventWriter, PostUpdate, Update};
+    use valence::prelude::{App, Commands, DVec3, EventWriter, IntoSystemConfigs, Update};
 
-    fn emit_spawn_notice_with_deferred_life_record(
+    fn emit_spawn_notice_before_entity_materializes(
         mut commands: Commands,
         mut notices: EventWriter<NpcSpawnNotice>,
     ) {
-        let entity = commands
-            .spawn(LifeRecord::new("npc:stable:deferred-spawn"))
-            .id();
+        let entity = commands.spawn_empty().id();
         notices.send(NpcSpawnNotice {
             entity,
+            npc_id: "npc:stable:deferred-spawn".to_string(),
             archetype: NpcArchetype::Rogue,
             source: crate::npc::lifecycle::NpcSpawnSource::AgentCommand,
             home_zone: "green_cloud_peak".to_string(),
@@ -528,6 +504,7 @@ mod tests {
 
         app.world_mut().send_event(NpcSpawnNotice {
             entity: spawned_npc,
+            npc_id: "npc:stable:spawn-1".to_string(),
             archetype: NpcArchetype::Rogue,
             source: crate::npc::lifecycle::NpcSpawnSource::AgentCommand,
             home_zone: "green_cloud_peak".to_string(),
@@ -563,18 +540,24 @@ mod tests {
     }
 
     #[test]
-    fn post_update_spawn_publisher_observes_deferred_life_record() {
+    fn spawn_publisher_uses_notice_identity_before_entity_materializes() {
         let (mut app, rx) = setup_app();
         app.add_event::<NpcSpawnNotice>();
         app.insert_resource(GameTick(655));
-        app.add_systems(Update, emit_spawn_notice_with_deferred_life_record);
-        app.add_systems(PostUpdate, publish_npc_spawn_events);
+        app.add_systems(
+            Update,
+            (
+                emit_spawn_notice_before_entity_materializes,
+                publish_npc_spawn_events,
+            )
+                .chain(),
+        );
 
         app.update();
 
         let outbound = rx
             .try_recv()
-            .expect("PostUpdate publisher must observe the deferred LifeRecord");
+            .expect("publisher must use the stable identity carried by the spawn notice");
         let RedisOutbound::NpcSpawned(payload) = outbound else {
             panic!("expected NpcSpawned outbound");
         };
@@ -590,6 +573,7 @@ mod tests {
         let unowned_entity = app.world_mut().spawn_empty().id();
         app.world_mut().send_event(NpcSpawnNotice {
             entity: unowned_entity,
+            npc_id: "npc:unowned".to_string(),
             archetype: NpcArchetype::Rogue,
             source: crate::npc::lifecycle::NpcSpawnSource::AgentCommand,
             home_zone: "green_cloud_peak".to_string(),
@@ -749,6 +733,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
@@ -1392,6 +1377,46 @@ mod tests {
             "after the strongest falls (population 3→2): status must be Waning, got {:?}",
             after[0].status
         );
+    }
+
+    #[test]
+    fn combat_outcome_groups_survive_loser_removal_and_escalate_war() {
+        let (mut app, _rx) = setup_app();
+        app.add_event::<DormantCombatOutcome>();
+        app.insert_resource(ZoneConflictPressure::default());
+        app.insert_resource(WarConflictStore::default());
+        app.insert_resource(GameTick(88));
+        app.add_systems(Update, accumulate_zone_conflict_pressure);
+
+        for index in 0..crate::npc::war::WAR_PRESSURE_THRESHOLD as usize {
+            app.world_mut().send_event(DormantCombatOutcome {
+                winner: format!("npc:winner:{index}"),
+                loser: format!("npc:loser:{index}"),
+                zone: "spawn".to_string(),
+                qi_released: 0.0,
+                winner_group: Some(EmergentGroupId(11)),
+                loser_group: Some(EmergentGroupId(22)),
+            });
+        }
+
+        app.update();
+
+        let pressure = app.world().resource::<ZoneConflictPressure>();
+        let entry = pressure
+            .get("spawn")
+            .expect("outcomes must accumulate pressure for their zone");
+        assert_eq!(entry.groups, vec![EmergentGroupId(11), EmergentGroupId(22)]);
+        assert_eq!(entry.wins_by_group.get(&EmergentGroupId(11)), Some(&30));
+        assert_eq!(entry.casualties, 30);
+
+        let wars = app.world().resource::<WarConflictStore>();
+        let war_id = wars
+            .zone_active
+            .get("spawn")
+            .copied()
+            .expect("both outcome groups must create a war without loser store lookup");
+        let war = wars.wars.get(&war_id).expect("active war must be retained");
+        assert_eq!(war.groups, vec![EmergentGroupId(11), EmergentGroupId(22)]);
     }
 
     #[test]

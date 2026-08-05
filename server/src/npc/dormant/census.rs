@@ -228,6 +228,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {

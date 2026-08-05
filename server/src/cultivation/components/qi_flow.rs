@@ -76,8 +76,11 @@ impl ActorQiIdentity {
         life_record: &LifeRecord,
         kind: ActorQiKind,
     ) -> Result<Self, QiFlowError> {
-        let character_id = life_record.character_id.trim();
-        if character_id.is_empty() || character_id == "unassigned:life_record" {
+        let character_id = life_record.character_id.as_str();
+        if character_id.is_empty()
+            || character_id.trim() != character_id
+            || character_id == "unassigned:life_record"
+        {
             return Err(QiFlowError::InvalidActorIdentity);
         }
         let account = match kind {
@@ -94,8 +97,11 @@ impl ActorQiIdentity {
     pub(crate) fn from_canonical_npc_id(
         canonical_id: impl AsRef<str>,
     ) -> Result<Self, QiFlowError> {
-        let canonical_id = canonical_id.as_ref().trim();
-        if canonical_id.is_empty() {
+        let canonical_id = canonical_id.as_ref();
+        if canonical_id.is_empty()
+            || canonical_id.trim() != canonical_id
+            || canonical_id == "unassigned:life_record"
+        {
             return Err(QiFlowError::InvalidActorIdentity);
         }
         Ok(Self {
@@ -526,6 +532,63 @@ impl Cultivation {
             })
         }
     }
+}
+
+pub(crate) fn transfer_cultivation_to_external_owner(
+    source: &mut Cultivation,
+    target_current: &mut f64,
+    ledger: &mut WorldQiAccount,
+    source_identity: &ActorQiIdentity,
+    target_identity: &ActorQiIdentity,
+    requested: f64,
+    reason: QiTransferReason,
+) -> Result<QiFlowOutcome, QiFlowError> {
+    source.validate_qi_state()?;
+    let target_before = finite_non_negative(*target_current, "external_qi_target.current")?;
+    let requested = finite_non_negative(requested, "transfer_to_external_owner.requested")?;
+    reject_audit_only_qi_reason(reason)?;
+    if requested > source.qi_current {
+        return Err(QiFlowError::InsufficientCurrent {
+            available: source.qi_current,
+            requested,
+        });
+    }
+    if requested == 0.0 {
+        return Ok(QiFlowOutcome::noop(0.0));
+    }
+
+    let transfer = QiTransfer::new(
+        source_identity.account(),
+        target_identity.account(),
+        requested,
+        reason,
+    )?;
+    reject_same_account(&transfer)?;
+    let source_after = if requested == source.qi_current {
+        0.0
+    } else {
+        checked_sub_progress(
+            source.qi_current,
+            requested,
+            "cultivation.qi_current.external_owner_source",
+        )?
+    };
+    let target_after =
+        checked_add_progress(target_before, requested, "external_qi_target.current")?;
+
+    source.qi_current = source_after;
+    *target_current = target_after;
+    ledger.push_transfer_audit(transfer.clone());
+
+    Ok(QiFlowOutcome {
+        requested,
+        source_debited: requested,
+        target_credited: requested,
+        zone_accepted: 0.0,
+        overflow_credited: 0.0,
+        untransferred: 0.0,
+        transfers: vec![transfer],
+    })
 }
 
 /// 从非 [`Cultivation`] 的外部 owner 释放 raw qi（例如道伥 blackboard）。
@@ -1474,13 +1537,21 @@ mod tests {
     }
 
     #[test]
-    fn canonical_npc_identity_constructor_fixes_kind_and_rejects_blank_id() {
+    fn canonical_npc_identity_constructor_fixes_kind_and_rejects_noncanonical_id() {
         let npc = ActorQiIdentity::from_canonical_npc_id("daozhan:7v2").unwrap();
         assert_eq!(npc.account, QiAccountId::npc("daozhan:7v2"));
-        assert!(matches!(
-            ActorQiIdentity::from_canonical_npc_id("   "),
-            Err(QiFlowError::InvalidActorIdentity)
-        ));
+        for invalid in [
+            "",
+            "   ",
+            "unassigned:life_record",
+            " daozhan:7v2",
+            "daozhan:7v2 ",
+        ] {
+            assert!(matches!(
+                ActorQiIdentity::from_canonical_npc_id(invalid),
+                Err(QiFlowError::InvalidActorIdentity)
+            ));
+        }
     }
 
     #[test]

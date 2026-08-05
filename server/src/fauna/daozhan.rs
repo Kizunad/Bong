@@ -45,8 +45,8 @@ use valence::prelude::{
 
 use crate::combat::events::DeathEvent;
 use crate::cultivation::components::{
-    release_external_qi_to_zone, ActorQiIdentity, ActorQiKind, ActorQiTarget, Cultivation,
-    QiFlowTarget, Realm,
+    release_external_qi_to_zone, transfer_cultivation_to_external_owner, ActorQiIdentity,
+    ActorQiKind, Cultivation, Realm,
 };
 use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::drop::{build_fauna_item_instance, fauna_drop_seed, jittered_drop_pos};
@@ -911,20 +911,16 @@ pub(crate) fn daozhan_ambush_action_system(
                         continue;
                     }
                 };
-                let mut staged_daozhan_qi = Cultivation {
-                    qi_current: daozhan_blackboard.daozhan_qi,
-                    qi_max: f64::MAX,
-                    ..Default::default()
-                };
-                match player_cultivation.transfer_to(
-                    QiFlowTarget::Actor(ActorQiTarget::new(&mut staged_daozhan_qi, target)),
+                match transfer_cultivation_to_external_owner(
+                    &mut player_cultivation,
+                    &mut daozhan_blackboard.daozhan_qi,
                     &mut ledger,
                     &source,
+                    &target,
                     drained,
                     QiTransferReason::DaoZhangDrain,
                 ) {
                     Ok(outcome) => {
-                        daozhan_blackboard.daozhan_qi = staged_daozhan_qi.qi_current;
                         for transfer in outcome.transfers {
                             qi_transfer_events.send(transfer);
                         }

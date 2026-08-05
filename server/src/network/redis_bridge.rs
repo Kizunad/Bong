@@ -2882,6 +2882,7 @@ mod redis_bridge_tests {
     use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeSkillIdV1, TuikeSkillVisualContractV1};
     use crate::schema::zhenmai_v2::{ZhenmaiAttackKindV1, ZhenmaiSkillIdV1};
     use serde_json::json;
+    use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -3338,6 +3339,87 @@ mod redis_bridge_tests {
             dormant_temp_key("bong:other/store"),
             "expected distinct logical keys to map to distinct temp keys so unrelated replaces never collide; got identical temp keys"
         );
+    }
+
+    async fn mock_multiplexed_connection(
+        responses: Vec<&'static [u8]>,
+    ) -> redis::aio::MultiplexedConnection {
+        let (client, mut server) = duplex(16 * 1024);
+        let (connection, driver) =
+            redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
+                .await
+                .expect("test duplex must construct a multiplexed Redis connection");
+        task::spawn(driver);
+        task::spawn(async move {
+            let mut request = vec![0_u8; 4096];
+            for response in responses {
+                let bytes_read = server
+                    .read(&mut request)
+                    .await
+                    .expect("mock Redis must read the next command");
+                assert!(
+                    bytes_read > 0,
+                    "executor closed before sending expected command"
+                );
+                server
+                    .write_all(response)
+                    .await
+                    .expect("mock Redis must send its configured response");
+            }
+        });
+        connection
+    }
+
+    #[tokio::test]
+    async fn hash_replace_executor_reports_correlated_success_and_failure_receipts() {
+        let success_entries = vec![("npc_a".to_string(), "{}".to_string())];
+        let (success_tx, success_rx) = crossbeam_channel::unbounded();
+        let mut success_connection =
+            mock_multiplexed_connection(vec![b":0\r\n", b":1\r\n", b"+OK\r\n"]).await;
+        let success = execute_outbound_command(
+            &mut success_connection,
+            &RedisIoCommand::HashReplaceWithReceipt {
+                key: NPC_DORMANT_REDIS_KEY,
+                entries: success_entries,
+                delivery_id: "revision-success".to_string(),
+                receipt_tx: success_tx,
+            },
+        )
+        .await;
+        assert_eq!(success, Ok(()));
+        let receipt = success_rx
+            .try_recv()
+            .expect("successful executor path must always emit a receipt");
+        assert_eq!(receipt.delivery_id, "revision-success");
+        assert_eq!(receipt.outcome, Ok(()));
+
+        let (failure_tx, failure_rx) = crossbeam_channel::unbounded();
+        let mut failure_connection = mock_multiplexed_connection(vec![
+            b":0\r\n",
+            b"-ERR injected HSET failure\r\n",
+            b":0\r\n",
+        ])
+        .await;
+        let failure = execute_outbound_command(
+            &mut failure_connection,
+            &RedisIoCommand::HashReplaceWithReceipt {
+                key: NPC_DORMANT_REDIS_KEY,
+                entries: vec![("npc_b".to_string(), "{}".to_string())],
+                delivery_id: "revision-failure".to_string(),
+                receipt_tx: failure_tx,
+            },
+        )
+        .await;
+        assert!(failure.is_err());
+        let receipt = failure_rx
+            .try_recv()
+            .expect("failed executor path must emit a correlated negative receipt");
+        assert_eq!(receipt.delivery_id, "revision-failure");
+        assert_eq!(receipt.outcome, failure);
+        assert!(receipt
+            .outcome
+            .as_ref()
+            .is_err_and(|error| error.contains("injected HSET failure")));
     }
 
     #[test]

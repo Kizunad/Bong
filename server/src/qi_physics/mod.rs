@@ -62,12 +62,13 @@ pub use ledger::{
     assert_conservation, build_qi_ledger_hash_fields, credit_pending_inflow,
     dying_elder_dan_excess_account, dying_elder_release_overflow_account, pending_inflow_account,
     persistent_runtime_qi_accounts, qi_flow_overflow_account, reject_audit_only_qi_reason,
-    snapshot_for_ipc, summarize_world_qi, transfer_external_qi_to_ledger,
+    rift_drain_account, snapshot_for_ipc, summarize_world_qi, transfer_external_qi_to_ledger,
     transfer_ledger_qi_to_zone, transfer_zone_qi_to_ledger, AttritionOpKind, QiAccountId,
     QiAccountKind, QiPhysicsIpcSnapshot, QiTransfer, QiTransferReason, WorldQiAccount,
     WorldQiBudget, WorldQiSnapshot, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
     PERSISTENT_RUNTIME_QI_ACCOUNT_IDS, QI_FLOW_OVERFLOW_ACCOUNT_ID, QI_LEDGER_ACCOUNT_FIELD_PREFIX,
+    RIFT_DRAIN_ACCOUNT_ID,
 };
 pub use prepare::{prepare_transfer, TransferPlan};
 pub use projectile::{

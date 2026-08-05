@@ -23,13 +23,14 @@ use crate::cultivation::tribulation::{
 #[cfg(test)]
 use crate::fauna::daozhan::FakeBehavior;
 use crate::fauna::daozhan::{DaoZhangBehaviorBlackboard, DaoZhangState};
+use crate::fauna::mimic_spider::{MimicSpiderBlackboard, SpiderDisguiseState, SpiderTrapPotential};
 use crate::npc::brain::NPC_TRIBULATION_WAVES_DEFAULT;
 use crate::npc::dormant::{
     durable_npc_identity_error, dvec3_from_array, planar_distance, vec3_to_array,
     DormantBehaviorIntent, DormantDaoxiangOriginSnapshot, DormantDaozhanSnapshot,
-    DormantFuyaAuraSnapshot, DormantGuardianRelicSnapshot, DormantPatrolSnapshot,
-    DormantTsyHostileSnapshot, DormantTsySentinelSnapshot, DormantZhinianPhase, NpcDormantSnapshot,
-    NpcDormantStore, NpcVirtualizationConfig,
+    DormantFuyaAuraSnapshot, DormantGuardianRelicSnapshot, DormantMimicSpiderSnapshot,
+    DormantPatrolSnapshot, DormantTsyHostileSnapshot, DormantTsySentinelSnapshot,
+    DormantZhinianPhase, NpcDormantSnapshot, NpcDormantStore, NpcVirtualizationConfig,
 };
 use crate::npc::faction::{FactionMembership, FactionRank};
 use crate::npc::interaction_memory::NpcMemoryComponent;
@@ -48,6 +49,7 @@ use crate::npc::spawn::{
     NpcSkinSpawnContext,
 };
 use crate::npc::spawn_rat::RatBlackboard;
+use crate::npc::spawn_spider::spawn_ash_spider_npc_at;
 use crate::npc::territory::Territory;
 use crate::npc::trade::NpcPlayerReputation;
 use crate::npc::tsy_hostile::{
@@ -77,6 +79,9 @@ pub struct DormantExtraComponentQueries<'w, 's> {
     daozhan_blackboards:
         Query<'w, 's, Option<&'static DaoZhangBehaviorBlackboard>, With<NpcMarker>>,
     rat_blackboards: Query<'w, 's, Option<&'static RatBlackboard>, With<NpcMarker>>,
+    spider_states: Query<'w, 's, Option<&'static SpiderDisguiseState>, With<NpcMarker>>,
+    spider_blackboards: Query<'w, 's, Option<&'static MimicSpiderBlackboard>, With<NpcMarker>>,
+    spider_traps: Query<'w, 's, Option<&'static SpiderTrapPotential>, With<NpcMarker>>,
     /// plan-tsy-sentinel-dormant-regression-v1 §P1：TSY 秘境守灵身份 marker（dehydrate 侧读取）。
     tsy_sentinel_markers: Query<'w, 's, Option<&'static TsySentinelMarker>, With<NpcMarker>>,
     /// dehydrate 侧 `guarding_container: Option<Entity>` 是精确已知的单个 `Entity`，
@@ -448,6 +453,36 @@ pub fn dehydrate_far_npcs_system(
             );
             continue;
         }
+        let mimic_spider = match extras.spider_blackboards.get(entity).ok().flatten() {
+            Some(blackboard)
+                if blackboard.trapped_by.is_none()
+                    && extras.spider_traps.get(entity).ok().flatten().is_none()
+                    && blackboard.drained_qi.is_finite()
+                    && blackboard.drained_qi >= 0.0 =>
+            {
+                Some(DormantMimicSpiderSnapshot {
+                    state: extras
+                        .spider_states
+                        .get(entity)
+                        .ok()
+                        .flatten()
+                        .copied()
+                        .unwrap_or_default(),
+                    home_zone: blackboard.home_zone.clone(),
+                    home_pos: vec3_to_array(blackboard.home_pos),
+                    drained_qi: blackboard.drained_qi,
+                })
+            }
+            Some(_) => {
+                tracing::warn!(
+                    entity = ?entity,
+                    character_id = %lifecycle.character_id,
+                    "[bong][npc] refusing to dehydrate spider with ephemeral ownership or invalid telemetry"
+                );
+                continue;
+            }
+            None => None,
+        };
         let tsy_marker = extras.tsy_markers.get(entity).ok().flatten();
         let daozhan = match extras.daozhan_blackboards.get(entity).ok().flatten() {
             Some(blackboard)
@@ -553,6 +588,7 @@ pub fn dehydrate_far_npcs_system(
                     extras.guardian_duties.get(entity).ok().flatten(),
                     extras.trial_evals.get(entity).ok().flatten(),
                 ),
+                mimic_spider,
                 tsy_hostile: dormant_tsy_hostile_snapshot(
                     tsy_marker,
                     extras.zhinian_minds.get(entity).ok().flatten(),
@@ -819,6 +855,7 @@ fn spawn_from_snapshot(
     // E0382 partial-move 借用检查；这里提前把需要的值拷进独立局部变量规避）。
     let mut resolved_sentinel_guarding_container: Option<Entity> = None;
     let mut resolved_sentinel_family_id: Option<String> = None;
+    let mimic_spider = snapshot.mimic_spider.clone();
     let entity = match snapshot.archetype {
         NpcArchetype::Zombie => spawn_zombie_npc_at(commands, layer, home_zone, pos, patrol_target),
         NpcArchetype::Commoner => spawn_commoner_npc_at(
@@ -841,14 +878,23 @@ fn spawn_from_snapshot(
             snapshot.cultivation.realm,
             snapshot.lifespan.age_ticks,
         ),
-        NpcArchetype::Beast => spawn_beast_npc_at(
-            commands,
-            layer,
-            home_zone,
-            pos,
-            Territory::new(patrol_target, 40.0),
-            snapshot.lifespan.age_ticks,
-        ),
+        NpcArchetype::Beast => match mimic_spider.as_ref() {
+            Some(spider) => spawn_ash_spider_npc_at(
+                commands,
+                layer,
+                spider.home_zone.as_str(),
+                pos,
+                patrol_target,
+            ),
+            None => spawn_beast_npc_at(
+                commands,
+                layer,
+                home_zone,
+                pos,
+                Territory::new(patrol_target, 40.0),
+                snapshot.lifespan.age_ticks,
+            ),
+        },
         NpcArchetype::Disciple => spawn_disciple_npc_at(
             commands,
             NpcSkinSpawnContext::new(skin_pool, skin_policy),
@@ -1011,6 +1057,17 @@ fn spawn_from_snapshot(
         },
         CurrentDimension(snapshot.dimension),
     ));
+    if let Some(spider) = mimic_spider {
+        entity_commands.insert((
+            spider.state,
+            MimicSpiderBlackboard {
+                home_zone: spider.home_zone,
+                home_pos: dvec3_from_array(spider.home_pos),
+                drained_qi: spider.drained_qi,
+                trapped_by: None,
+            },
+        ));
+    }
     if let Some(memory) = snapshot.memory {
         entity_commands.insert(memory);
     }
@@ -1190,6 +1247,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
@@ -1772,6 +1830,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
@@ -2536,6 +2595,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: crate::npc::dormant::DormantBehaviorIntent::Cultivate {
@@ -3686,6 +3746,162 @@ mod tests {
             "TSY 秘境守灵死亡掉落必须精确走 tsy_sentinel 分流键——身份没有在 dehydrate/hydrate \
              任何一步被洗平成普通 GuardianRelic 或其它 archetype 的掉落表"
         );
+    }
+
+    #[test]
+    fn spider_survives_full_dehydrate_hydrate_cycle() {
+        let mut app = App::new();
+        app.add_event::<InitiateXuhuaTribulation>();
+        let overworld = app.world_mut().spawn_empty().id();
+        let tsy = app.world_mut().spawn_empty().id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(
+            Update,
+            (
+                hydrate_dormant_near_players_system,
+                dehydrate_far_npcs_system,
+            )
+                .chain(),
+        );
+
+        let live = app.world_mut().spawn_empty().id();
+        let mut bundle =
+            crate::npc::lifecycle::npc_runtime_bundle(live, NpcArchetype::Beast, Realm::Awaken);
+        bundle.cultivation.qi_current = 4.0;
+        let mut blackboard = MimicSpiderBlackboard::new("spawn", DVec3::new(20.0, 64.0, 21.0));
+        blackboard.drained_qi = 3.25;
+        app.world_mut().entity_mut(live).insert((
+            NpcMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+            SpiderDisguiseState::Ambush,
+            blackboard,
+            bundle,
+        ));
+
+        app.update();
+        let dormant = app
+            .world()
+            .resource::<NpcDormantStore>()
+            .snapshots
+            .get(&crate::npc::brain::canonical_npc_id(live))
+            .and_then(|snapshot| snapshot.mimic_spider.as_ref())
+            .expect("spider behavior carrier must be durable");
+        assert_eq!(dormant.state, SpiderDisguiseState::Ambush);
+        assert_eq!(dormant.home_pos, [20.0, 64.0, 21.0]);
+        assert_eq!(dormant.drained_qi, 3.25);
+
+        app.world_mut().spawn((
+            valence::client::ClientMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+        ));
+        app.update();
+
+        let restored = {
+            let world = app.world_mut();
+            let mut query = world.query::<(&SpiderDisguiseState, &MimicSpiderBlackboard)>();
+            query
+                .iter(world)
+                .map(|(state, blackboard)| (*state, blackboard.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].0, SpiderDisguiseState::Ambush);
+        assert_eq!(restored[0].1.home_pos, DVec3::new(20.0, 64.0, 21.0));
+        assert_eq!(restored[0].1.drained_qi, 3.25);
+        assert!(restored[0].1.trapped_by.is_none());
+    }
+
+    #[test]
+    fn dehydrate_refuses_spider_with_ephemeral_trap_owner() {
+        let mut app = App::new();
+        app.insert_resource(NpcDormantStore::default());
+        app.insert_resource(NpcVirtualizationConfig {
+            transition_interval_ticks: 1,
+            dehydrate_without_players: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, dehydrate_far_npcs_system);
+        let owner = app.world_mut().spawn_empty().id();
+        let spider = app.world_mut().spawn_empty().id();
+        let bundle =
+            crate::npc::lifecycle::npc_runtime_bundle(spider, NpcArchetype::Beast, Realm::Awaken);
+        let mut blackboard = MimicSpiderBlackboard::new("spawn", DVec3::ZERO);
+        blackboard.trapped_by = Some(owner);
+        app.world_mut().entity_mut(spider).insert((
+            NpcMarker,
+            Position(DVec3::new(10.0, 64.0, 10.0)),
+            SpiderDisguiseState::Disguised,
+            blackboard,
+            SpiderTrapPotential {
+                trap_owner: owner,
+                placed_at: DVec3::ZERO,
+                placed_tick: 0,
+            },
+            bundle,
+        ));
+
+        app.update();
+
+        assert!(app.world().resource::<NpcDormantStore>().is_empty());
+        assert!(app.world().get::<Despawned>(spider).is_none());
+        assert!(app.world().get::<MimicSpiderBlackboard>(spider).is_some());
+    }
+
+    #[test]
+    fn dehydrate_rejects_invalid_daozhan_qi_and_missing_tsy_identity() {
+        for (case, daozhan_qi, include_tsy_marker) in [
+            ("negative", -1.0, true),
+            ("nan", f64::NAN, true),
+            ("positive_infinity", f64::INFINITY, true),
+            ("missing_tsy_marker", 1.0, false),
+        ] {
+            let mut app = App::new();
+            app.insert_resource(NpcDormantStore::default());
+            app.insert_resource(NpcVirtualizationConfig {
+                transition_interval_ticks: 1,
+                dehydrate_without_players: true,
+                ..Default::default()
+            });
+            app.add_systems(Update, dehydrate_far_npcs_system);
+            let entity = app.world_mut().spawn_empty().id();
+            let bundle = crate::npc::lifecycle::npc_runtime_bundle(
+                entity,
+                NpcArchetype::GuardianRelic,
+                Realm::Awaken,
+            );
+            let mut blackboard =
+                DaoZhangBehaviorBlackboard::new("tsy_lingxu_01", DVec3::ZERO, None);
+            blackboard.daozhan_qi = daozhan_qi;
+            app.world_mut().entity_mut(entity).insert((
+                NpcMarker,
+                Position(DVec3::new(10.0, 64.0, 10.0)),
+                DaoZhangState::Mimicry,
+                blackboard,
+                bundle,
+            ));
+            if include_tsy_marker {
+                app.world_mut().entity_mut(entity).insert(TsyHostileMarker {
+                    family_id: "tsy_lingxu_01".to_string(),
+                });
+            }
+
+            app.update();
+
+            assert!(
+                app.world().resource::<NpcDormantStore>().is_empty(),
+                "case={case}: invalid Daozhan owner must not enter durable storage"
+            );
+            assert!(
+                app.world().get::<Despawned>(entity).is_none(),
+                "case={case}: failed preflight must preserve the live behavior carrier"
+            );
+        }
     }
 
     #[test]

@@ -369,6 +369,7 @@ pub fn spawn_notice(
 ) -> NpcSpawnNotice {
     NpcSpawnNotice {
         entity,
+        npc_id: crate::npc::brain::canonical_npc_id(entity),
         archetype,
         source,
         home_zone: home_zone.to_string(),

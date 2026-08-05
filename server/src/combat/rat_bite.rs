@@ -1,6 +1,6 @@
 use valence::prelude::{
-    bevy_ecs, Client, Commands, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
-    ResMut, With, Without,
+    bevy_ecs, Client, Commands, DVec3, Despawned, Entity, Event, EventReader, EventWriter,
+    Position, Query, ResMut, With, Without,
 };
 use valence::protocol::encode::WritePacket;
 use valence::protocol::packets::play::DamageTiltS2c;
@@ -43,11 +43,14 @@ pub struct RatBiteEvent {
     pub qi_steal: u32,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn apply_rat_bite_qi_drain(
     mut bites: EventReader<RatBiteEvent>,
-    mut cultivators: Query<(&mut Cultivation, &LifeRecord), Without<NpcMarker>>,
-    mut rats: Query<(&mut RatBlackboard, &LifeRecord), With<NpcMarker>>,
+    mut cultivators: Query<
+        (&mut Cultivation, &LifeRecord),
+        (Without<NpcMarker>, Without<Despawned>),
+    >,
+    mut rats: Query<(&mut RatBlackboard, &LifeRecord), (With<NpcMarker>, Without<Despawned>)>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut qi_transfers: EventWriter<QiTransfer>,
     mut ledger: Option<ResMut<WorldQiAccount>>,

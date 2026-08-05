@@ -1237,6 +1237,7 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
 struct WorldStateContextParams<'w> {
     tiandao_blind_zones: Option<Res<'w, crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>>,
     world_era_state: Option<Res<'w, WorldEraState>>,
+    persistence: Option<Res<'w, crate::persistence::PersistenceSettings>>,
 }
 
 /// Periodically publish world state snapshot to Redis
@@ -1324,8 +1325,23 @@ fn publish_world_state_to_redis(
     // in flight. A receipt confirms or re-arms that revision before a newer
     // snapshot may be enqueued, so background writes cannot land out of order.
     if let Some(dormant_store) = dormant_store.as_mut() {
-        dormant_store.apply_persistence_receipts();
+        if let Some(settings) = ctx.persistence.as_deref() {
+            dormant_store.apply_persistence_receipts_with_settings(settings);
+        } else {
+            dormant_store.apply_persistence_receipts();
+        }
         if let Some(revision) = dormant_store.begin_persistence() {
+            if let Some(settings) = ctx.persistence.as_deref() {
+                if let Err(error) =
+                    dormant_store.bind_unbound_terminal_tombstones(settings, revision)
+                {
+                    dormant_store.requeue_persistence(revision);
+                    tracing::warn!(
+                        "[bong][network] failed to bind dormant terminal cleanup revision {revision}: {error}"
+                    );
+                    return;
+                }
+            }
             match dormant_store.to_redis_hash_payloads() {
                 Ok(entries) => {
                     tracing::debug!(
@@ -3848,6 +3864,7 @@ mod tests {
                 patrol: None,
                 loot_table: None,
                 guardian_relic: None,
+                mimic_spider: None,
                 tsy_hostile: None,
                 tsy_sentinel: None,
                 intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },

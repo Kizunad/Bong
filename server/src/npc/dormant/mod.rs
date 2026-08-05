@@ -24,7 +24,8 @@ use std::path::{Path, PathBuf};
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use valence::prelude::{
-    bevy_ecs, App, DVec3, Event, EventWriter, Res, ResMut, Resource, Startup, Update,
+    bevy_ecs, App, DVec3, Event, EventWriter, IntoSystemConfigs, Res, ResMut, Resource, Startup,
+    Update,
 };
 
 use crate::body_plan::{resolve_race_to_plan, BodyPlanRegistry, RaceRegistry};
@@ -34,8 +35,8 @@ use crate::cultivation::breakthrough::{
     MIN_ZONE_QI_TO_GUYUAN,
 };
 use crate::cultivation::components::{
-    ActorQiIdentity, ActorQiKind, Contamination, Cultivation, MeridianSystem,
-    PersistedCultivationV1, QiFlowError, QiFlowOutcome, Realm,
+    release_external_qi_to_zone, ActorQiIdentity, ActorQiKind, Contamination, Cultivation,
+    MeridianSystem, PersistedCultivationV1, QiFlowError, QiFlowOutcome, Realm,
 };
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
 use crate::cultivation::lifespan::{
@@ -237,6 +238,14 @@ pub struct DormantDaoxiangOriginSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DormantMimicSpiderSnapshot {
+    pub state: crate::fauna::mimic_spider::SpiderDisguiseState,
+    pub home_zone: String,
+    pub home_pos: [f64; 3],
+    pub drained_qi: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DormantDaozhanSnapshot {
     pub state: DaoZhangState,
     pub home_zone: String,
@@ -376,6 +385,8 @@ pub struct NpcDormantSnapshot {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub guardian_relic: Option<DormantGuardianRelicSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mimic_spider: Option<DormantMimicSpiderSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tsy_hostile: Option<DormantTsyHostileSnapshot>,
     /// plan-tsy-sentinel-dormant-regression-v1 P1：TSY 秘境守灵身份载荷，`Some` 时 hydrate
     /// 路由必须走 `spawn_tsy_sentinel_at`（不得洗成普通 `spawn_relic_guard_npc_at`）。
@@ -434,6 +445,19 @@ impl NpcDormantSnapshot {
     pub fn durable_identity_error(&self) -> Option<String> {
         durable_npc_identity_error(&self.char_id, &self.life_record, &self.death_registry)
     }
+
+    fn durable_qi_owner_error(&self) -> Option<String> {
+        self.tsy_hostile
+            .as_ref()
+            .and_then(|hostile| hostile.daozhan.as_ref())
+            .filter(|daozhan| !daozhan.daozhan_qi.is_finite() || daozhan.daozhan_qi < 0.0)
+            .map(|daozhan| {
+                format!(
+                    "invalid dormant Daozhan qi owner `{}` for `{}`",
+                    daozhan.daozhan_qi, self.char_id
+                )
+            })
+    }
 }
 
 pub fn durable_npc_identity_error(
@@ -441,12 +465,17 @@ pub fn durable_npc_identity_error(
     life_record: &LifeRecord,
     death_registry: &DeathRegistry,
 ) -> Option<String> {
-    if life_record.character_id == canonical_char_id && death_registry.char_id == canonical_char_id
+    let valid_canonical = !canonical_char_id.is_empty()
+        && canonical_char_id.trim() == canonical_char_id
+        && canonical_char_id != "unassigned:life_record";
+    if valid_canonical
+        && life_record.character_id == canonical_char_id
+        && death_registry.char_id == canonical_char_id
     {
         return None;
     }
     Some(format!(
-        "durable identity tuple mismatch (canonical=`{canonical_char_id}`, life_record=`{}`, death_registry=`{}`)",
+        "durable identity tuple mismatch or invalid canonical id (canonical=`{canonical_char_id}`, life_record=`{}`, death_registry=`{}`)",
         life_record.character_id, death_registry.char_id
     ))
 }
@@ -458,6 +487,7 @@ struct DormantPersistenceRuntime {
     in_flight_revision: Option<u64>,
     receipt_tx: Sender<crate::network::redis_bridge::RedisDeliveryReceipt>,
     receipt_rx: Receiver<crate::network::redis_bridge::RedisDeliveryReceipt>,
+    tombstones: HashMap<CharId, crate::persistence::DormantTerminalCommitRecord>,
 }
 
 impl Default for DormantPersistenceRuntime {
@@ -469,6 +499,7 @@ impl Default for DormantPersistenceRuntime {
             in_flight_revision: None,
             receipt_tx,
             receipt_rx,
+            tombstones: HashMap::new(),
         }
     }
 }
@@ -515,8 +546,11 @@ impl NpcDormantStore {
     /// Every code path that mutates a snapshot must call this so persistence
     /// never silently drops a change.
     pub fn mark_dirty(&mut self) {
+        if !self.dirty {
+            self.persistence.mutation_revision =
+                self.persistence.mutation_revision.saturating_add(1);
+        }
         self.dirty = true;
-        self.persistence.mutation_revision = self.persistence.mutation_revision.saturating_add(1);
     }
 
     pub fn persistence_receipt_sender(
@@ -526,7 +560,7 @@ impl NpcDormantStore {
     }
 
     pub fn begin_persistence(&mut self) -> Option<u64> {
-        if !self.dirty || self.persistence.in_flight_revision.is_some() {
+        if self.restore_failed || !self.dirty || self.persistence.in_flight_revision.is_some() {
             return None;
         }
         self.dirty = false;
@@ -542,7 +576,72 @@ impl NpcDormantStore {
         self.dirty = true;
     }
 
+    pub fn install_terminal_tombstones(
+        &mut self,
+        records: Vec<crate::persistence::DormantTerminalCommitRecord>,
+    ) {
+        self.persistence.tombstones = records
+            .into_iter()
+            .map(|record| (record.char_id.clone(), record))
+            .collect();
+        if !self.persistence.tombstones.is_empty() {
+            self.mark_dirty();
+        }
+    }
+
+    fn has_terminal_tombstone(&self, char_id: &str) -> bool {
+        self.persistence.tombstones.contains_key(char_id)
+    }
+
+    fn track_terminal_tombstone(
+        &mut self,
+        record: crate::persistence::DormantTerminalCommitRecord,
+    ) {
+        self.persistence
+            .tombstones
+            .entry(record.char_id.clone())
+            .or_insert(record);
+    }
+
+    pub fn bind_unbound_terminal_tombstones(
+        &mut self,
+        settings: &crate::persistence::PersistenceSettings,
+        revision: u64,
+    ) -> std::io::Result<()> {
+        let char_ids: Vec<String> = self
+            .persistence
+            .tombstones
+            .values()
+            .filter(|record| record.cleanup_revision.is_none())
+            .map(|record| record.char_id.clone())
+            .collect();
+        if char_ids.is_empty() {
+            return Ok(());
+        }
+        crate::persistence::bind_dormant_terminal_cleanup_revision(settings, &char_ids, revision)?;
+        for char_id in char_ids {
+            if let Some(record) = self.persistence.tombstones.get_mut(&char_id) {
+                record.cleanup_revision = Some(revision);
+            }
+        }
+        Ok(())
+    }
+
     pub fn apply_persistence_receipts(&mut self) {
+        self.apply_persistence_receipts_inner(None);
+    }
+
+    pub fn apply_persistence_receipts_with_settings(
+        &mut self,
+        settings: &crate::persistence::PersistenceSettings,
+    ) {
+        self.apply_persistence_receipts_inner(Some(settings));
+    }
+
+    fn apply_persistence_receipts_inner(
+        &mut self,
+        settings: Option<&crate::persistence::PersistenceSettings>,
+    ) {
         while let Ok(receipt) = self.persistence.receipt_rx.try_recv() {
             let Ok(revision) = receipt.delivery_id.parse::<u64>() else {
                 tracing::warn!(
@@ -561,6 +660,21 @@ impl NpcDormantStore {
             match receipt.outcome {
                 Ok(()) => {
                     self.persistence.persisted_revision = revision;
+                    if let Some(settings) = settings {
+                        match crate::persistence::clear_dormant_terminal_commits_through_revision(
+                            settings, revision,
+                        ) {
+                            Ok(_) => self.persistence.tombstones.retain(|_, record| {
+                                record.cleanup_revision.is_none_or(|bound| bound > revision)
+                            }),
+                            Err(error) => {
+                                self.dirty = true;
+                                tracing::warn!(
+                                    "[bong][npc] retained terminal tombstones after HASH revision {revision}: {error}"
+                                );
+                            }
+                        }
+                    }
                 }
                 Err(error) => {
                     self.dirty = true;
@@ -673,6 +787,7 @@ impl NpcDormantStore {
     pub fn to_redis_hash_payloads(&self) -> Result<Vec<(String, String)>, serde_json::Error> {
         self.sorted_snapshots()
             .into_iter()
+            .filter(|snapshot| !self.has_terminal_tombstone(&snapshot.char_id))
             .map(|snapshot| {
                 serde_json::to_string(snapshot).map(|payload| (snapshot.char_id.clone(), payload))
             })
@@ -703,17 +818,17 @@ pub struct DormantCombatOutcome {
     pub loser: CharId,
     pub zone: String,
     pub qi_released: f64,
+    pub winner_group: Option<EmergentGroupId>,
+    pub loser_group: Option<EmergentGroupId>,
 }
 
 /// plan-offscreen-war-v1 P3：一名**克制判定通过**的离屏战死者要在战场留下的待物化遗物
 /// （deferred-on-hydrate）的内部 event。
 ///
-/// 由 `run_dormant_combat_phase` 在败者**真元已守恒释放完毕**（`release_dormant_qi_to_zone`
-/// 之后、`store.snapshots.remove` 之前）且 [`combat::should_leave_relic`] 为真时 emit；
-/// `persistence::persist_pending_dormant_relics_system` 消费它写进 sqlite `pending_dormant_relics`
-/// 表。**守恒红线（§10.1 #5 ④）**：本 event 不携带任何真元——遗物 loot 物化时 `spirit_quality=0`，
-/// 持久层完全不碰 `WorldQiAccount` / ledger。emit 时机严格在 release 之后保证「先把残余真元
-/// 守恒还给 zone，再用快照创建零真元遗物」，绝无「先留遗物 / 先 remove、qi 没释放」的吞真元窗口。
+/// 由 `run_dormant_combat_phase` 在败者**真元已守恒释放完毕**且 SQLite terminal transaction
+/// 已原子持久化 sink、tombstone 与可选遗物后 emit，作为进程内物化通知。兼容 consumer 对同一
+/// deterministic relic id 的重复 upsert 是幂等的，但不再承担终局持久化授权；终局 transaction
+/// 失败时不会 emit、remove 或改变任何物理 owner。遗物不携带真元，物化时 `spirit_quality=0`。
 ///
 /// `loot_seed` 是 [`combat::relic_loot_seed`] 算出的 deterministic 种子；玩家靠近 hydrate 时
 /// 用它 `roll_loot(default_loot_for_archetype(archetype), loot_seed)`，保证遗物 loot 可复现。
@@ -739,7 +854,10 @@ pub fn register(app: &mut App) {
         .add_event::<DormantSeveredAt>()
         .add_event::<DormantCombatOutcome>()
         .add_event::<PendingDormantRelicCreated>()
-        .add_systems(Startup, load_dormant_store_from_redis_system)
+        .add_systems(
+            Startup,
+            load_dormant_store_from_redis_system.after(crate::persistence::PersistenceBootstrapSet),
+        )
         .add_systems(
             Update,
             (
@@ -754,10 +872,22 @@ pub fn register(app: &mut App) {
     relic_hydrate::register(app);
 }
 
-fn load_dormant_store_from_redis_system(mut store: ResMut<NpcDormantStore>) {
+fn load_dormant_store_from_redis_system(
+    mut store: ResMut<NpcDormantStore>,
+    persistence: Res<crate::persistence::PersistenceSettings>,
+) {
     if !store.is_empty() {
         return;
     }
+    let tombstones = match crate::persistence::rearm_dormant_terminal_commits(&persistence) {
+        Ok(records) => records,
+        Err(error) => {
+            tracing::warn!("[bong][npc] failed dormant terminal tombstone restore: {error}");
+            store.mark_restore_failed();
+            return;
+        }
+    };
+    store.install_terminal_tombstones(tombstones);
     match load_dormant_snapshots_from_redis(&mut store) {
         Ok(0) => {}
         Ok(count) => {
@@ -811,45 +941,60 @@ fn tmp_keys_to_purge(scanned: &[String]) -> Vec<String> {
         .collect()
 }
 
+const DORMANT_TEMP_SCAN_COUNT: usize = 512;
+const DORMANT_TEMP_DELETE_BATCH: usize = 128;
+
+fn tmp_key_delete_batches(scanned: &[String]) -> Vec<Vec<String>> {
+    tmp_keys_to_purge(scanned)
+        .chunks(DORMANT_TEMP_DELETE_BATCH)
+        .map(<[String]>::to_vec)
+        .collect()
+}
+
 /// Best-effort sweep of leaked dormant temp keys on a blocking connection.
 /// Never returns an error: persistence restore must proceed even if the
 /// janitor cannot run (e.g. SCAN unsupported by a proxy).
 fn purge_leaked_dormant_temp_keys(connection: &mut redis::Connection) {
     let pattern = dormant_tmp_scan_pattern();
-    // `Cmd::iter` takes `self` by value, so the builder must be owned (not the
-    // `&mut Cmd` the chained `.arg(..)` calls return) before iterating.
-    let mut scan_cmd = redis::cmd("SCAN");
-    scan_cmd
-        .cursor_arg(0)
-        .arg("MATCH")
-        .arg(pattern.as_str())
-        .arg("COUNT")
-        .arg(512);
-    let scanned: Vec<String> = match scan_cmd.iter::<String>(connection) {
-        Ok(iter) => iter.collect(),
-        Err(error) => {
-            tracing::warn!(
-                "[bong][npc] dormant temp-key janitor SCAN failed (skipping cleanup): {error}"
-            );
-            return;
+    let mut cursor = 0_u64;
+    loop {
+        let (next_cursor, scanned) = match redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern.as_str())
+            .arg("COUNT")
+            .arg(DORMANT_TEMP_SCAN_COUNT)
+            .query::<(u64, Vec<String>)>(connection)
+        {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::warn!(
+                    "[bong][npc] dormant temp-key janitor SCAN failed (skipping remaining cleanup): {error}"
+                );
+                return;
+            }
+        };
+
+        for batch in tmp_key_delete_batches(&scanned) {
+            let mut del = redis::cmd("DEL");
+            for key in &batch {
+                del.arg(key.as_str());
+            }
+            match del.query::<i64>(connection) {
+                Ok(deleted) => tracing::info!(
+                    "[bong][npc] dormant temp-key janitor purged {deleted} leaked `{NPC_DORMANT_REDIS_KEY}:tmp*` key(s)"
+                ),
+                Err(error) => tracing::warn!(
+                    "[bong][npc] dormant temp-key janitor DEL failed (left {} key(s)): {error}",
+                    batch.len()
+                ),
+            }
         }
-    };
-    let purgeable = tmp_keys_to_purge(&scanned);
-    if purgeable.is_empty() {
-        return;
-    }
-    let mut del = redis::cmd("DEL");
-    for key in &purgeable {
-        del.arg(key.as_str());
-    }
-    match del.query::<i64>(connection) {
-        Ok(deleted) => tracing::info!(
-            "[bong][npc] dormant temp-key janitor purged {deleted} leaked `{NPC_DORMANT_REDIS_KEY}:tmp*` key(s)"
-        ),
-        Err(error) => tracing::warn!(
-            "[bong][npc] dormant temp-key janitor DEL failed (left {} key(s)): {error}",
-            purgeable.len()
-        ),
+
+        if next_cursor == 0 {
+            break;
+        }
+        cursor = next_cursor;
     }
 }
 
@@ -868,17 +1013,30 @@ fn load_dormant_snapshots_from_hash_entries(
     let mut staged = Vec::with_capacity(entries.len());
     let mut invalid = Vec::new();
     for (hash_char_id, payload) in entries {
+        if store.has_terminal_tombstone(&hash_char_id) {
+            tracing::warn!(
+                "[bong][npc] suppressed stale dormant Redis source `{hash_char_id}` after terminal commit"
+            );
+            continue;
+        }
         match serde_json::from_str::<NpcDormantSnapshot>(&payload) {
-            Ok(snapshot)
-                if snapshot.char_id == hash_char_id
-                    && snapshot.life_record.character_id == snapshot.char_id
-                    && snapshot.death_registry.char_id == snapshot.char_id => staged.push(snapshot),
-            Ok(snapshot) => invalid.push(format!(
-                "`{hash_char_id}`: durable identity tuple mismatch (outer=`{}`, life_record=`{}`, death_registry=`{}`)",
-                snapshot.char_id,
-                snapshot.life_record.character_id,
-                snapshot.death_registry.char_id
-            )),
+            Ok(snapshot) => {
+                let validation_error = if snapshot.char_id != hash_char_id {
+                    Some(format!(
+                        "durable identity `{}` does not match HASH field `{hash_char_id}`",
+                        snapshot.char_id
+                    ))
+                } else {
+                    snapshot
+                        .durable_identity_error()
+                        .or_else(|| snapshot.durable_qi_owner_error())
+                };
+                if let Some(error) = validation_error {
+                    invalid.push(format!("`{hash_char_id}`: {error}"));
+                } else {
+                    staged.push(snapshot);
+                }
+            }
             Err(error) => invalid.push(format!("`{hash_char_id}`: {error}")),
         }
     }
@@ -937,6 +1095,7 @@ fn dormant_global_tick_system(
     mut store: ResMut<NpcDormantStore>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
+    persistence: Option<Res<crate::persistence::PersistenceSettings>>,
     mut death_notices: EventWriter<NpcDeathNotice>,
     mut combat_outcomes: EventWriter<DormantCombatOutcome>,
     mut pending_relics: EventWriter<PendingDormantRelicCreated>,
@@ -948,7 +1107,11 @@ fn dormant_global_tick_system(
     races: Option<Res<RaceRegistry>>,
 ) {
     let tick = current_tick(game_tick.as_deref());
-    store.apply_persistence_receipts();
+    if let Some(persistence) = persistence.as_deref() {
+        store.apply_persistence_receipts_with_settings(persistence);
+    } else {
+        store.apply_persistence_receipts();
+    }
     if !should_run_interval(tick, config.dormant_tick_interval_ticks) {
         return;
     }
@@ -956,6 +1119,7 @@ fn dormant_global_tick_system(
     ids.sort();
 
     let mut expired = Vec::new();
+    let mut committed_tombstones = Vec::new();
     let mut indexes_dirty = false;
     // Whether this tick actually advanced any snapshot (position / aging / regen
     // / breakthrough) or removed an expired one. Drives the persistence dirty
@@ -1020,29 +1184,94 @@ fn dormant_global_tick_system(
         }
 
         if snapshot.lifespan.is_expired() {
-            let settlement_committed = if snapshot.cultivation.qi_current == 0.0 {
-                true
-            } else if let (Some(zones), Some(ledger)) =
-                (zones.as_deref_mut(), ledger.as_deref_mut())
-            {
-                release_dormant_qi_to_zone(snapshot, zones, ledger).is_ok()
-                    && snapshot.cultivation.qi_current == 0.0
-            } else {
-                false
+            let mut staged_snapshot = snapshot.clone();
+            let Some(zones) = zones.as_deref_mut() else {
+                continue;
             };
-            if !settlement_committed || snapshot.cultivation.qi_current != 0.0 {
-                tracing::warn!(
-                    "[bong][npc] retained expired dormant NPC `{}` until {:.6} qi settles",
-                    snapshot.char_id,
-                    snapshot.cultivation.qi_current
-                );
+            let Some(ledger) = ledger.as_deref_mut() else {
+                continue;
+            };
+            let mut staged_zones = zones.clone();
+            let mut staged_ledger = ledger.clone();
+            let settlement = if dormant_terminal_qi_is_settled(&staged_snapshot) {
+                QiFlowOutcome {
+                    requested: 0.0,
+                    source_debited: 0.0,
+                    target_credited: 0.0,
+                    zone_accepted: 0.0,
+                    overflow_credited: 0.0,
+                    untransferred: 0.0,
+                    transfers: Vec::new(),
+                }
+            } else {
+                let Ok(settlement) = release_dormant_qi_to_zone(
+                    &mut staged_snapshot,
+                    &mut staged_zones,
+                    &mut staged_ledger,
+                ) else {
+                    tracing::warn!(
+                        "[bong][npc] retained expired dormant NPC `{}` until all qi owners settle",
+                        snapshot.char_id
+                    );
+                    continue;
+                };
+                settlement
+            };
+            if !dormant_terminal_qi_is_settled(&staged_snapshot) {
                 continue;
             }
-            death_notices.send(dormant_natural_death_notice(snapshot));
+
+            let tombstone = crate::persistence::DormantTerminalCommitRecord {
+                char_id: snapshot.char_id.clone(),
+                cause: "natural_aging".to_string(),
+                at_tick: tick,
+                zone: snapshot.zone_name.clone(),
+                winner: None,
+                winner_group: None,
+                loser_group: faction_store
+                    .as_deref()
+                    .and_then(|store| effective_group(snapshot, store))
+                    .map(|group| u64::from(group.0)),
+                zone_accepted: settlement.zone_accepted,
+                cleanup_revision: None,
+            };
+            let first_commit = if let Some(persistence) = persistence.as_deref() {
+                match crate::persistence::persist_dormant_terminal_commit(
+                    persistence,
+                    &tombstone,
+                    &staged_zones,
+                    &staged_ledger,
+                    None,
+                ) {
+                    Ok(crate::persistence::PersistDormantTerminalOutcome::Committed) => true,
+                    Ok(crate::persistence::PersistDormantTerminalOutcome::AlreadyCommitted) => {
+                        false
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "[bong][npc] retained expired dormant NPC `{}` after terminal persistence failure: {error}",
+                            snapshot.char_id
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                true
+            };
+            if first_commit {
+                *snapshot = staged_snapshot;
+                *zones = staged_zones;
+                *ledger = staged_ledger;
+                death_notices.send(dormant_natural_death_notice(snapshot));
+            }
             expired.push(char_id);
+            committed_tombstones.push(tombstone);
         }
     }
 
+    for tombstone in committed_tombstones {
+        store.track_terminal_tombstone(tombstone);
+    }
     let mut removed_expired = !expired.is_empty();
     for char_id in expired {
         store.snapshots.remove(&char_id);
@@ -1077,6 +1306,7 @@ fn dormant_global_tick_system(
             tick,
             zones,
             ledger,
+            persistence.as_deref(),
             &mut death_notices,
             &mut combat_outcomes,
             &mut pending_relics,
@@ -1143,6 +1373,7 @@ fn run_dormant_combat_phase(
     tick: u64,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
     death_notices: &mut EventWriter<NpcDeathNotice>,
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
@@ -1152,10 +1383,12 @@ fn run_dormant_combat_phase(
     // pending 快照始终被 `collect_zone_combat_pairs` 排除，不会重新 roll。
     let mut outcome = run_pending_combat_release_retry(
         store,
+        faction_store,
         config,
         tick,
         zones,
         ledger,
+        persistence,
         death_notices,
         combat_outcomes,
         pending_relics,
@@ -1203,17 +1436,20 @@ fn run_dormant_combat_phase(
 /// plan-offscreen-war-v1 P3 review-fix：重试上轮因守恒事务失败而保留的离屏战死者。
 ///
 /// pending snapshot 已持久化 `pending_combat_winner`，因此本函数可以在 typed settlement
-/// 成功且 source 严格为零后发布唯一 death/outcome，再造遗物并移除 owner。缺 winner 的历史或
-/// 损坏快照保持 fail-closed，不猜测事件上下文。
+/// 成功且 source 严格为零后发布唯一 death/outcome，再造遗物并移除 owner。缺 winner 的历史
+/// 行仍结算并终局，只跳过依赖 winner 的 combat outcome；不猜测缺失的事件上下文。
 ///
 /// 返回 [`CombatPhaseOutcome`]：成功 retry 会 remove（`removed=true`）；失败 retry 不改任何
 /// owner，只保留既有 marker，因此不会制造虚假的 partial mutation。
+#[allow(clippy::too_many_arguments)]
 fn run_pending_combat_release_retry(
     store: &mut NpcDormantStore,
+    faction_store: &FactionStore,
     config: &NpcVirtualizationConfig,
     tick: u64,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
+    persistence: Option<&crate::persistence::PersistenceSettings>,
     death_notices: &mut EventWriter<NpcDeathNotice>,
     combat_outcomes: &mut EventWriter<DormantCombatOutcome>,
     pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
@@ -1235,67 +1471,102 @@ fn run_pending_combat_release_retry(
     pending_ids.sort();
 
     for loser_id in pending_ids {
-        let Some(loser) = store.snapshots.get_mut(&loser_id) else {
+        let (winner, winner_group, loser_group) = {
+            let Some(loser) = store.snapshots.get(&loser_id) else {
+                continue;
+            };
+            let winner = loser.pending_combat_winner.clone();
+            let winner_group = winner.as_ref().and_then(|winner_id| {
+                store
+                    .snapshots
+                    .get(winner_id)
+                    .and_then(|winner| effective_group(winner, faction_store))
+            });
+            let loser_group = effective_group(loser, faction_store);
+            (winner, winner_group, loser_group)
+        };
+        let Some(original) = store.snapshots.get(&loser_id).cloned() else {
             continue;
         };
-        let Some(winner) = loser.pending_combat_winner.clone() else {
-            tracing::warn!(
-                "[bong][npc] retained combat-dead dormant NPC `{}` because its durable winner context is missing",
-                loser_id
-            );
+        let mut staged_loser = original.clone();
+        let mut staged_zones = zones.clone();
+        let mut staged_ledger = ledger.clone();
+        let Ok(settlement) =
+            release_dormant_qi_to_zone(&mut staged_loser, &mut staged_zones, &mut staged_ledger)
+        else {
             continue;
         };
-        // 重试守恒 settlement。成功会全量清空 actor owner（zone 余量进入 fixed overflow）；
-        // 失败则所有 owner 与 audit 原样不动，保留 flag 等下轮重试。
-        let Ok(settlement) = release_dormant_qi_to_zone(loser, zones, ledger) else {
-            continue;
-        };
-        outcome.mutated = true;
-        if loser.cultivation.qi_current != 0.0 {
+        if !dormant_terminal_qi_is_settled(&staged_loser) {
             continue;
         }
-        death_notices.send(dormant_combat_death_notice(loser));
-        combat_outcomes.send(DormantCombatOutcome {
-            winner,
-            loser: loser_id.clone(),
-            zone: loser.zone_name.clone(),
-            qi_released: settlement.zone_accepted,
-        });
-        let _ = loser;
-        finalize_released_combat_death(store, &loser_id, tick, config, pending_relics);
+        let relic = if combat::should_leave_relic(&staged_loser) {
+            Some(PendingDormantRelicCreated {
+                char_id: loser_id.clone(),
+                zone: staged_loser.zone_name.clone(),
+                position: staged_loser.position,
+                archetype: staged_loser.archetype,
+                loot_seed: combat::relic_loot_seed(&loser_id, tick, config.sim_seed),
+                created_tick: tick,
+            })
+        } else {
+            None
+        };
+        let tombstone = crate::persistence::DormantTerminalCommitRecord {
+            char_id: loser_id.clone(),
+            cause: "combat".to_string(),
+            at_tick: tick,
+            zone: staged_loser.zone_name.clone(),
+            winner: winner.clone(),
+            winner_group: winner_group.map(|group| u64::from(group.0)),
+            loser_group: loser_group.map(|group| u64::from(group.0)),
+            zone_accepted: settlement.zone_accepted,
+            cleanup_revision: None,
+        };
+        let first_commit = if let Some(persistence) = persistence {
+            match crate::persistence::persist_dormant_terminal_commit(
+                persistence,
+                &tombstone,
+                &staged_zones,
+                &staged_ledger,
+                relic.as_ref(),
+            ) {
+                Ok(crate::persistence::PersistDormantTerminalOutcome::Committed) => true,
+                Ok(crate::persistence::PersistDormantTerminalOutcome::AlreadyCommitted) => false,
+                Err(error) => {
+                    tracing::warn!(
+                        "[bong][npc] retained dormant combat loser `{loser_id}` after terminal persistence failure: {error}"
+                    );
+                    continue;
+                }
+            }
+        } else {
+            true
+        };
+
+        if first_commit {
+            *zones = staged_zones;
+            *ledger = staged_ledger;
+            death_notices.send(dormant_combat_death_notice(&staged_loser));
+            if let Some(winner) = winner {
+                combat_outcomes.send(DormantCombatOutcome {
+                    winner,
+                    loser: loser_id.clone(),
+                    zone: staged_loser.zone_name.clone(),
+                    qi_released: settlement.zone_accepted,
+                    winner_group,
+                    loser_group,
+                });
+            }
+            if let Some(relic) = relic {
+                pending_relics.send(relic);
+            }
+        }
+        store.snapshots.remove(&loser_id);
+        store.track_terminal_tombstone(tombstone);
+        outcome.mutated = true;
         outcome.removed = true;
     }
     outcome
-}
-
-/// plan-offscreen-war-v1 P3：离屏战死者**真元已守恒释放完毕此刻**的收尾——造零真元遗物
-/// （若 `should_leave_relic` 通过）+ 从 store 移除。
-///
-/// **守恒时序红线**（§10.1 #5 ④ / docs/CLAUDE.md §四）：调用方必须保证已经 `release_dormant_qi_to_zone`
-/// 且 `qi_current == 0.0`——「先把残余真元守恒还给 zone，再用快照创建零真元遗物，最后
-/// remove」，绝无吞真元窗口。遗物 event 在此 emit 一次（每个逻辑死亡至多一次：初次死亡释放完 or
-/// retry 释放完，二者互斥）。
-fn finalize_released_combat_death(
-    store: &mut NpcDormantStore,
-    loser_id: &CharId,
-    tick: u64,
-    config: &NpcVirtualizationConfig,
-    pending_relics: &mut EventWriter<PendingDormantRelicCreated>,
-) {
-    if let Some(dead) = store.snapshots.get(loser_id) {
-        if combat::should_leave_relic(dead) {
-            let loot_seed = combat::relic_loot_seed(loser_id, tick, config.sim_seed);
-            pending_relics.send(PendingDormantRelicCreated {
-                char_id: loser_id.clone(),
-                zone: dead.zone_name.clone(),
-                position: dead.position,
-                archetype: dead.archetype,
-                loot_seed,
-                created_tick: tick,
-            });
-        }
-    }
-    store.snapshots.remove(loser_id);
 }
 
 /// plan-npc-realm-distribution-v1 P3 §8.1 #3：一次性迁移 marker 文件路径。
@@ -1737,6 +2008,7 @@ fn dormant_rogue_seed_snapshot(
         patrol,
         loot_table: Some(default_loot_for_archetype(archetype)),
         guardian_relic: None,
+        mimic_spider: None,
         tsy_hostile: None,
         tsy_sentinel: None,
         intent,
@@ -2132,34 +2404,75 @@ fn advance_dormant_breakthrough_with_roll<R: RollSource>(
     }
 }
 
+fn dormant_terminal_qi_is_settled(snapshot: &NpcDormantSnapshot) -> bool {
+    snapshot.cultivation.qi_current == 0.0
+        && snapshot
+            .tsy_hostile
+            .as_ref()
+            .and_then(|hostile| hostile.daozhan.as_ref())
+            .is_none_or(|daozhan| daozhan.daozhan_qi == 0.0)
+}
+
 pub fn release_dormant_qi_to_zone(
     snapshot: &mut NpcDormantSnapshot,
     zones: &mut ZoneRegistry,
     ledger: &mut WorldQiAccount,
 ) -> Result<QiFlowOutcome, QiFlowError> {
-    let amount = snapshot.cultivation.qi_current();
-
     let actor = ActorQiIdentity::from_life_record(&snapshot.life_record, ActorQiKind::Npc)?;
-    let pos = snapshot.position_vec();
-    let zone_name = zones
-        .find_zone(snapshot.dimension, pos)
+    let mut staged_snapshot = snapshot.clone();
+    let mut staged_zones = zones.clone();
+    let mut staged_ledger = ledger.clone();
+    let pos = staged_snapshot.position_vec();
+    let zone_name = staged_zones
+        .find_zone(staged_snapshot.dimension, pos)
         .map(|zone| zone.name.clone())
         .or_else(|| {
-            zones
-                .find_zone_mut(snapshot.zone_name.as_str())
+            staged_zones
+                .find_zone_mut(staged_snapshot.zone_name.as_str())
                 .map(|zone| zone.name.clone())
         });
-    let zone = zone_name
-        .as_deref()
-        .and_then(|zone_name| zones.find_zone_mut(zone_name));
-    let outcome = snapshot.cultivation.release_to_zone(
-        zone,
-        ledger,
+
+    let cultivation_amount = staged_snapshot.cultivation.qi_current();
+    let cultivation_outcome = staged_snapshot.cultivation.release_to_zone(
+        zone_name
+            .as_deref()
+            .and_then(|name| staged_zones.find_zone_mut(name)),
+        &mut staged_ledger,
         &actor,
-        amount,
+        cultivation_amount,
         QiTransferReason::ReleaseToZone,
     )?;
-    snapshot.qi_ledger_net -= outcome.source_debited;
+
+    let mut outcome = cultivation_outcome;
+    if let Some(daozhan) = staged_snapshot
+        .tsy_hostile
+        .as_mut()
+        .and_then(|hostile| hostile.daozhan.as_mut())
+    {
+        let daozhan_amount = daozhan.daozhan_qi;
+        let daozhan_outcome = release_external_qi_to_zone(
+            &mut daozhan.daozhan_qi,
+            actor.account(),
+            zone_name
+                .as_deref()
+                .and_then(|name| staged_zones.find_zone_mut(name)),
+            &mut staged_ledger,
+            daozhan_amount,
+            QiTransferReason::ReleaseToZone,
+        )?;
+        outcome.requested += daozhan_outcome.requested;
+        outcome.source_debited += daozhan_outcome.source_debited;
+        outcome.target_credited += daozhan_outcome.target_credited;
+        outcome.zone_accepted += daozhan_outcome.zone_accepted;
+        outcome.overflow_credited += daozhan_outcome.overflow_credited;
+        outcome.untransferred += daozhan_outcome.untransferred;
+        outcome.transfers.extend(daozhan_outcome.transfers);
+    }
+
+    staged_snapshot.qi_ledger_net -= outcome.source_debited;
+    *snapshot = staged_snapshot;
+    *zones = staged_zones;
+    *ledger = staged_ledger;
     Ok(outcome)
 }
 
@@ -2214,8 +2527,10 @@ fn dormant_combat_death_notice(snapshot: &NpcDormantSnapshot) -> NpcDeathNotice 
 mod tests {
     use super::*;
     use crate::cultivation::components::{MeridianId, Realm};
+    use crate::qi_physics::QiAccountId;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, DEFAULT_SPAWN_ZONE_NAME};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use valence::prelude::Events;
 
     /// P0 bug② contract: the startup janitor purges leaked `{key}:tmp*` keys
@@ -2271,6 +2586,22 @@ mod tests {
             !purge.contains(&"bong:world_state".to_string()),
             "expected unrelated keys to be left untouched by the dormant janitor; an unrelated key was selected for deletion"
         );
+
+        let many = (0..(DORMANT_TEMP_DELETE_BATCH * 2 + 3))
+            .map(|index| format!("{NPC_DORMANT_REDIS_KEY}:tmp:{index}"))
+            .collect::<Vec<_>>();
+        let batches = tmp_key_delete_batches(&many);
+        assert_eq!(
+            batches.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![DORMANT_TEMP_DELETE_BATCH, DORMANT_TEMP_DELETE_BATCH, 3],
+            "delete commands must remain bounded while preserving a short final page"
+        );
+        assert!(
+            batches
+                .iter()
+                .all(|batch| batch.len() <= DORMANT_TEMP_DELETE_BATCH),
+            "no janitor DEL command may exceed the fixed batch limit"
+        );
     }
 
     fn zone() -> Zone {
@@ -2319,6 +2650,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
@@ -2577,6 +2909,170 @@ mod tests {
             !store.take_dirty(),
             "expected a second take_dirty with no intervening mutation to return false because the gate was already cleared; it returned true"
         );
+    }
+
+    #[test]
+    fn dormant_receipts_reject_malformed_stale_and_failed_authorization() {
+        let mut store = NpcDormantStore::default();
+        store.insert(snapshot("npc_receipt", DVec3::new(10.0, 64.0, 10.0)));
+        let revision = store
+            .begin_persistence()
+            .expect("dirty store must start a HASH revision");
+        let tx = store.persistence_receipt_sender();
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: "not-a-revision".to_string(),
+            outcome: Ok(()),
+        })
+        .unwrap();
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: (revision + 1).to_string(),
+            outcome: Ok(()),
+        })
+        .unwrap();
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: revision.to_string(),
+            outcome: Err("redis unavailable".to_string()),
+        })
+        .unwrap();
+        store.apply_persistence_receipts();
+        assert!(
+            store.is_dirty(),
+            "failed current receipt must re-arm the mutation"
+        );
+        assert_eq!(
+            store.begin_persistence(),
+            Some(revision),
+            "retry must retain the failed revision instead of advancing it"
+        );
+    }
+
+    #[test]
+    fn dormant_receipt_cleanup_requires_current_success_and_keeps_tombstone_on_sqlite_failure() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "bong-dormant-receipt-{}-{unique}",
+            std::process::id()
+        ));
+        let settings = crate::persistence::PersistenceSettings::with_paths(
+            root.join("data").join("bong.db"),
+            root.join("deceased"),
+            "dormant-receipt-tombstone",
+        );
+        std::fs::create_dir_all(settings.db_path().parent().unwrap())
+            .expect("receipt test database parent should exist");
+        crate::persistence::bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let record = crate::persistence::DormantTerminalCommitRecord {
+            char_id: "npc:receipt:tombstone".to_string(),
+            cause: "combat".to_string(),
+            at_tick: 9,
+            zone: "spawn".to_string(),
+            winner: None,
+            winner_group: None,
+            loser_group: None,
+            zone_accepted: 0.0,
+            cleanup_revision: None,
+        };
+        crate::persistence::persist_dormant_terminal_commit(
+            &settings,
+            &record,
+            &crate::world::zone::ZoneRegistry::fallback(),
+            &crate::qi_physics::WorldQiAccount::default(),
+            None,
+        )
+        .expect("terminal fixture should commit");
+
+        let mut store = NpcDormantStore::default();
+        store.install_terminal_tombstones(vec![record.clone()]);
+        store.insert(snapshot(&record.char_id, DVec3::new(10.0, 64.0, 10.0)));
+        assert!(
+            store
+                .to_redis_hash_payloads()
+                .expect("tombstoned HASH serialization should succeed")
+                .into_iter()
+                .all(|(char_id, _)| char_id != record.char_id),
+            "a tombstone must exclude its stale source even if a snapshot is accidentally retained"
+        );
+        let revision = store
+            .begin_persistence()
+            .expect("restored tombstone must publish a cleanup HASH");
+        store
+            .bind_unbound_terminal_tombstones(&settings, revision)
+            .expect("cleanup revision should bind in sqlite");
+        let tx = store.persistence_receipt_sender();
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: (revision + 1).to_string(),
+            outcome: Ok(()),
+        })
+        .unwrap();
+        store.apply_persistence_receipts_with_settings(&settings);
+        assert!(
+            store.has_terminal_tombstone(&record.char_id),
+            "non-current success must not authorize stale-source cleanup"
+        );
+
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: revision.to_string(),
+            outcome: Err("delete publish failed".to_string()),
+        })
+        .unwrap();
+        store.apply_persistence_receipts_with_settings(&settings);
+        assert!(
+            store.has_terminal_tombstone(&record.char_id),
+            "failed deletion receipt must keep the tombstone for retry"
+        );
+
+        let retry = store
+            .begin_persistence()
+            .expect("failed deletion must re-arm the HASH revision");
+        store
+            .bind_unbound_terminal_tombstones(&settings, retry)
+            .expect("retry cleanup revision should bind");
+        let blocked_parent = root.join("not-a-directory");
+        std::fs::write(&blocked_parent, b"block sqlite parent")
+            .expect("cleanup failure fixture should create a regular file");
+        let unavailable_settings = crate::persistence::PersistenceSettings::with_paths(
+            blocked_parent.join("bong.db"),
+            root.join("unavailable-deceased"),
+            "dormant-receipt-unavailable",
+        );
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: retry.to_string(),
+            outcome: Ok(()),
+        })
+        .unwrap();
+        store.apply_persistence_receipts_with_settings(&unavailable_settings);
+        assert!(
+            store.has_terminal_tombstone(&record.char_id),
+            "a current successful HASH receipt must retain the tombstone when SQLite cleanup fails"
+        );
+        assert_eq!(
+            crate::persistence::load_dormant_terminal_commits(&settings)
+                .expect("failed cleanup must leave the original SQLite tombstone readable")
+                .len(),
+            1
+        );
+
+        let cleanup_revision = store
+            .begin_persistence()
+            .expect("SQLite cleanup failure must re-arm the HASH revision");
+        tx.send(crate::network::redis_bridge::RedisDeliveryReceipt {
+            delivery_id: cleanup_revision.to_string(),
+            outcome: Ok(()),
+        })
+        .unwrap();
+        store.apply_persistence_receipts_with_settings(&settings);
+        assert!(
+            !store.has_terminal_tombstone(&record.char_id),
+            "only a current successful receipt plus successful SQLite cleanup may clear the tombstone"
+        );
+        assert!(crate::persistence::load_dormant_terminal_commits(&settings)
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2951,6 +3447,86 @@ mod tests {
     }
 
     #[test]
+    fn daozhan_terminal_release_settles_both_external_owners_atomically() {
+        let mut snapshot = snapshot("npc_daozhan", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.qi_current = 0.4;
+        snapshot.tsy_hostile = Some(DormantTsyHostileSnapshot {
+            family_id: "family-a".to_string(),
+            zhinian_phase: None,
+            zhinian_phase_entered_at_tick: None,
+            fuya_aura: None,
+            daoxiang_origin: None,
+            daozhan: Some(DormantDaozhanSnapshot {
+                state: DaoZhangState::default(),
+                home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                home_pos: snapshot.position,
+                daozhan_qi: 0.6,
+                origin_realm: None,
+                behavior_queue: Vec::new(),
+                current_behavior_ticks: 0,
+            }),
+        });
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut ledger = WorldQiAccount::default();
+
+        let outcome = release_dormant_qi_to_zone(&mut snapshot, &mut zones, &mut ledger)
+            .expect("both dormant external owners should settle in one staged transaction");
+
+        assert_eq!(outcome.source_debited, 1.0);
+        assert_eq!(outcome.zone_accepted, 1.0);
+        assert!(dormant_terminal_qi_is_settled(&snapshot));
+        assert_eq!(outcome.transfers.len(), 2);
+        assert!(outcome
+            .transfers
+            .iter()
+            .all(|transfer| transfer.from == QiAccountId::npc("npc_daozhan")));
+        assert_eq!(ledger.transfers().len(), 2);
+    }
+
+    #[test]
+    fn daozhan_terminal_release_rolls_back_cultivation_when_second_owner_fails() {
+        let mut snapshot = snapshot("npc_daozhan", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.qi_current = 0.4;
+        snapshot.tsy_hostile = Some(DormantTsyHostileSnapshot {
+            family_id: "family-a".to_string(),
+            zhinian_phase: None,
+            zhinian_phase_entered_at_tick: None,
+            fuya_aura: None,
+            daoxiang_origin: None,
+            daozhan: Some(DormantDaozhanSnapshot {
+                state: DaoZhangState::default(),
+                home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                home_pos: snapshot.position,
+                daozhan_qi: f64::NAN,
+                origin_realm: None,
+                behavior_queue: Vec::new(),
+                current_behavior_ticks: 0,
+            }),
+        });
+        let before = snapshot.clone();
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let zones_before = zones.clone();
+        let mut ledger = WorldQiAccount::default();
+
+        release_dormant_qi_to_zone(&mut snapshot, &mut zones, &mut ledger)
+            .expect_err("invalid Daozhan owner must roll back the earlier cultivation transfer");
+
+        assert_eq!(snapshot.cultivation, before.cultivation);
+        assert!(snapshot
+            .tsy_hostile
+            .as_ref()
+            .and_then(|hostile| hostile.daozhan.as_ref())
+            .is_some_and(|daozhan| daozhan.daozhan_qi.is_nan()));
+        assert_eq!(zones, zones_before);
+        assert_eq!(ledger.total(), 0.0);
+        assert!(ledger.transfers().is_empty());
+    }
+
+    #[test]
     fn death_qi_release_routes_zone_overflow_to_fixed_durable_pool() {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
         snapshot.cultivation.qi_current = 2.0;
@@ -3080,7 +3656,7 @@ mod tests {
     }
 
     #[test]
-    fn dormant_global_tick_settles_expired_snapshot_into_zone_and_fixed_overflow() {
+    fn dormant_global_tick_settles_expired_daozhan_cultivation_and_drain_owners() {
         let mut app = App::new();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<DormantCombatOutcome>();
@@ -3097,8 +3673,24 @@ mod tests {
         });
         app.insert_resource(WorldQiAccount::default());
         let mut expired = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
-        expired.cultivation.qi_current = 2.0;
+        expired.cultivation.qi_current = 1.0;
         expired.cultivation.qi_max = 2.0;
+        expired.tsy_hostile = Some(DormantTsyHostileSnapshot {
+            family_id: "family-a".to_string(),
+            zhinian_phase: None,
+            zhinian_phase_entered_at_tick: None,
+            fuya_aura: None,
+            daoxiang_origin: None,
+            daozhan: Some(DormantDaozhanSnapshot {
+                state: DaoZhangState::default(),
+                home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                home_pos: expired.position,
+                daozhan_qi: 1.0,
+                origin_realm: None,
+                behavior_queue: Vec::new(),
+                current_behavior_ticks: 0,
+            }),
+        });
         expired.lifespan.age_ticks = expired.lifespan.max_age_ticks + 1.0;
         let mut store = NpcDormantStore::default();
         store.insert(expired);
@@ -3115,6 +3707,16 @@ mod tests {
         let zones = app.world().resource::<ZoneRegistry>();
         assert!((zones.zones[0].spirit_qi - 1.0).abs() < 1e-9);
         let ledger = app.world().resource::<WorldQiAccount>();
+        let release_total: f64 = ledger
+            .transfers()
+            .iter()
+            .filter(|transfer| transfer.reason == QiTransferReason::ReleaseToZone)
+            .map(|transfer| transfer.amount)
+            .sum();
+        assert!(
+            (release_total - 2.0).abs() < 1e-9,
+            "cultivation and Daozhan owners must release their full combined 2.0 qi through typed transfers"
+        );
         assert!(
             (ledger.balance(&crate::qi_physics::qi_flow_overflow_account()) - 1.5).abs() < 1e-9,
             "the amount rejected by the near-full zone must persist in fixed overflow"
@@ -3357,6 +3959,52 @@ mod tests {
     }
 
     #[test]
+    fn dormant_breakthrough_settlement_failure_rolls_back_all_state() {
+        let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
+        snapshot.cultivation.realm = Realm::Awaken;
+        snapshot.cultivation.qi_current = 20.0;
+        snapshot.cultivation.qi_max = 100.0;
+        snapshot.lifespan.age_ticks = 1_100.0;
+        open_regular_meridians(&mut snapshot, 3);
+        let before_cultivation = snapshot.cultivation.clone();
+        let before_meridians = snapshot.meridian_system.clone();
+        let before_net = snapshot.qi_ledger_net;
+        let mut roll = FixedRoll(0.0);
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        zones.zones[0].spirit_qi = 1.0;
+        let before_zone = zones.zones[0].spirit_qi;
+        let overflow = crate::qi_physics::qi_flow_overflow_account();
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(overflow.clone(), f64::MAX)
+            .expect("saturated overflow fixture must be valid");
+        let before_audit = ledger.transfers().to_vec();
+
+        let result = advance_dormant_breakthrough_with_roll(
+            &mut snapshot,
+            &mut zones,
+            &mut ledger,
+            1200,
+            None,
+            None,
+            &mut roll,
+        );
+
+        assert!(
+            result.is_none(),
+            "failed qi settlement must abort breakthrough"
+        );
+        assert_eq!(snapshot.cultivation, before_cultivation);
+        assert_eq!(snapshot.meridian_system, before_meridians);
+        assert_eq!(snapshot.qi_ledger_net, before_net);
+        assert_eq!(zones.zones[0].spirit_qi, before_zone);
+        assert_eq!(ledger.balance(&overflow), f64::MAX);
+        assert_eq!(ledger.transfers(), before_audit);
+    }
+
+    #[test]
     fn redis_payload_roundtrips_snapshot() {
         let mut store = NpcDormantStore::default();
         store.insert(snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0)));
@@ -3459,6 +4107,42 @@ mod tests {
     }
 
     #[test]
+    fn terminal_tombstone_suppresses_even_corrupt_stale_row_before_batch_validation() {
+        let tombstoned_id = "npc_terminal_stale";
+        let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
+        let entries = HashMap::from([
+            (tombstoned_id.to_string(), "{stale-corrupt-json".to_string()),
+            (
+                valid.char_id.clone(),
+                serde_json::to_string(&valid).expect("serialize valid owner row"),
+            ),
+        ]);
+        let mut store = NpcDormantStore::default();
+        store.install_terminal_tombstones(vec![crate::persistence::DormantTerminalCommitRecord {
+            char_id: tombstoned_id.to_string(),
+            cause: "combat".to_string(),
+            at_tick: 42,
+            zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            winner: Some("npc_winner".to_string()),
+            winner_group: None,
+            loser_group: None,
+            zone_accepted: 1.0,
+            cleanup_revision: None,
+        }]);
+
+        let count = load_dormant_snapshots_from_hash_entries(&mut store, entries)
+            .expect("a committed stale source is suppressed by its HASH identity before decoding");
+
+        assert_eq!(count, 1);
+        assert!(store.contains("npc_valid"));
+        assert!(!store.contains(tombstoned_id));
+        assert!(
+            store.is_dirty(),
+            "installed tombstone must retain the cleanup HASH mutation"
+        );
+    }
+
+    #[test]
     fn redis_hash_restore_rejects_partial_corruption_without_mutating_live_store() {
         let existing = snapshot("npc_existing", DVec3::new(1.0, 64.0, 1.0));
         let incoming = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
@@ -3492,6 +4176,79 @@ mod tests {
             !store.is_dirty(),
             "failed restore must not arm a full-HASH write that could erase corrupt owners"
         );
+    }
+
+    #[test]
+    fn failed_restore_blocks_tombstone_cleanup_hash_replacement() {
+        let mut store = NpcDormantStore::default();
+        store.install_terminal_tombstones(vec![crate::persistence::DormantTerminalCommitRecord {
+            char_id: "npc_terminal_stale".to_string(),
+            cause: "combat".to_string(),
+            at_tick: 42,
+            zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            winner: None,
+            winner_group: None,
+            loser_group: None,
+            zone_accepted: 1.0,
+            cleanup_revision: None,
+        }]);
+        store.mark_restore_failed();
+
+        assert!(
+            store.is_dirty(),
+            "restored tombstone should still remember that its stale row needs deletion"
+        );
+        assert_eq!(
+            store.begin_persistence(),
+            None,
+            "an untrusted partial restore must never replace the full HASH, even for tombstone cleanup"
+        );
+        assert!(store.has_terminal_tombstone("npc_terminal_stale"));
+    }
+
+    #[test]
+    fn redis_hash_restore_rejects_negative_daozhan_owner_atomically() {
+        let existing = snapshot("npc_existing", DVec3::new(1.0, 64.0, 1.0));
+        let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
+        let mut invalid = snapshot("npc_daozhan", DVec3::new(10.0, 64.0, 10.0));
+        invalid.tsy_hostile = Some(DormantTsyHostileSnapshot {
+            family_id: "family-a".to_string(),
+            zhinian_phase: None,
+            zhinian_phase_entered_at_tick: None,
+            fuya_aura: None,
+            daoxiang_origin: None,
+            daozhan: Some(DormantDaozhanSnapshot {
+                state: DaoZhangState::default(),
+                home_zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+                home_pos: invalid.position,
+                daozhan_qi: -0.25,
+                origin_realm: None,
+                behavior_queue: Vec::new(),
+                current_behavior_ticks: 0,
+            }),
+        });
+        let entries = HashMap::from([
+            (
+                valid.char_id.clone(),
+                serde_json::to_string(&valid).expect("serialize valid row"),
+            ),
+            (
+                invalid.char_id.clone(),
+                serde_json::to_string(&invalid).expect("serialize invalid owner row"),
+            ),
+        ]);
+        let mut store = NpcDormantStore::default();
+        store.insert(existing);
+        store.take_dirty();
+
+        let error = load_dormant_snapshots_from_hash_entries(&mut store, entries)
+            .expect_err("negative Daozhan qi must reject the complete Redis HASH");
+
+        assert!(error.contains("invalid dormant Daozhan qi owner"));
+        assert_eq!(store.len(), 1);
+        assert!(store.contains("npc_existing"));
+        assert!(!store.contains("npc_valid") && !store.contains("npc_daozhan"));
+        assert!(!store.is_dirty());
     }
 
     #[test]
@@ -3529,15 +4286,25 @@ mod tests {
         assert!(!store.is_dirty());
     }
 
+    fn mutate_life_record(snapshot: &mut NpcDormantSnapshot) {
+        snapshot.life_record.character_id = "spoofed".to_string();
+    }
+
+    fn mutate_death_registry(snapshot: &mut NpcDormantSnapshot) {
+        snapshot.death_registry.char_id = "spoofed".to_string();
+    }
+
     #[test]
     fn redis_hash_restore_rejects_every_nested_identity_mismatch_atomically() {
         for (case, mutate) in [
-            ("life_record", |snapshot: &mut NpcDormantSnapshot| {
-                snapshot.life_record.character_id = "spoofed".to_string()
-            }),
-            ("death_registry", |snapshot: &mut NpcDormantSnapshot| {
-                snapshot.death_registry.char_id = "spoofed".to_string()
-            }),
+            (
+                "life_record",
+                mutate_life_record as fn(&mut NpcDormantSnapshot),
+            ),
+            (
+                "death_registry",
+                mutate_death_registry as fn(&mut NpcDormantSnapshot),
+            ),
         ] {
             let existing = snapshot("npc_existing", DVec3::new(1.0, 64.0, 1.0));
             let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
@@ -4153,7 +4920,7 @@ mod tests {
     // outcome / 防吞真元 retain，全部走 `run_dormant_combat_phase` 这个真实结算入口
     // （而非私有中间步），接入面变了也不应红。
 
-    use crate::qi_physics::{QiAccountId, WorldQiAccount};
+    use crate::qi_physics::WorldQiAccount;
 
     /// 一帧 `dormant_global_tick_system` 后收回的全部相关 event（P2 死亡/战果 + P3 待物化遗物）。
     /// 用具名 struct 而非裸三元组，让断言读起来是 `events.relics` 而非 `.2`。
@@ -4209,6 +4976,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: DormantBehaviorIntent::Cultivate {
@@ -4221,6 +4989,26 @@ mod tests {
             combat_dead_pending_release: false,
             pending_combat_winner: None,
         }
+    }
+
+    fn with_daozhan_owner(mut snapshot: NpcDormantSnapshot, daozhan_qi: f64) -> NpcDormantSnapshot {
+        snapshot.tsy_hostile = Some(DormantTsyHostileSnapshot {
+            family_id: "family-a".to_string(),
+            zhinian_phase: None,
+            zhinian_phase_entered_at_tick: None,
+            fuya_aura: None,
+            daoxiang_origin: None,
+            daozhan: Some(DormantDaozhanSnapshot {
+                state: DaoZhangState::default(),
+                home_zone: snapshot.zone_name.clone(),
+                home_pos: snapshot.position,
+                daozhan_qi,
+                origin_realm: None,
+                behavior_queue: Vec::new(),
+                current_behavior_ticks: 0,
+            }),
+        });
+        snapshot
     }
 
     /// 跑一次完整 `dormant_global_tick_system`（含 combat phase）并收回本帧 death + outcome。
@@ -4374,6 +5162,172 @@ mod tests {
             physical_owner_total(&store, &zones, &ledger),
             owner_total_before_retry
         );
+    }
+
+    #[test]
+    fn failed_pending_combat_hash_receipt_preserves_all_terminal_state_until_retry_succeeds() {
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let zone_before = zones.zones[0].spirit_qi;
+        let mut store = NpcDormantStore::default();
+        store.insert(with_daozhan_owner(
+            combat_snapshot("atk", FactionId::Attack, 5.0, DVec3::new(10.0, 64.0, 10.0)),
+            1.0,
+        ));
+        store.insert(with_daozhan_owner(
+            combat_snapshot("def", FactionId::Defend, 5.0, DVec3::new(11.0, 64.0, 11.0)),
+            1.0,
+        ));
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let pending = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert!(pending.deaths.is_empty());
+        assert!(pending.outcomes.is_empty());
+        assert!(pending.relics.is_empty());
+        let loser_id = store
+            .snapshots
+            .iter()
+            .find_map(|(char_id, snapshot)| {
+                snapshot
+                    .combat_dead_pending_release
+                    .then_some(char_id.clone())
+            })
+            .expect("combat tick must persist one pending loser");
+        let owner_total_before_receipt = physical_owner_total(&store, &zones, &ledger);
+        let revision = store
+            .begin_persistence()
+            .expect("pending combat mutation must start a HASH revision");
+        store
+            .persistence_receipt_sender()
+            .send(crate::network::redis_bridge::RedisDeliveryReceipt {
+                delivery_id: revision.to_string(),
+                outcome: Err("redis unavailable".to_string()),
+            })
+            .unwrap();
+
+        let failed = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
+
+        assert!(failed.deaths.is_empty());
+        assert!(failed.outcomes.is_empty());
+        assert!(failed.relics.is_empty());
+        assert_eq!(store.persistence.persisted_revision, 0);
+        assert!(store.is_dirty());
+        let retained = &store.snapshots[&loser_id];
+        assert!(retained.combat_dead_pending_release);
+        assert!(retained.pending_combat_winner.is_some());
+        assert!(retained.cultivation.qi_current > 0.0);
+        assert!(retained
+            .tsy_hostile
+            .as_ref()
+            .and_then(|hostile| hostile.daozhan.as_ref())
+            .is_some_and(|daozhan| daozhan.daozhan_qi > 0.0));
+        assert_eq!(zones.zones[0].spirit_qi, zone_before);
+        assert!(ledger.transfers().is_empty());
+        assert_eq!(
+            physical_owner_total(&store, &zones, &ledger),
+            owner_total_before_receipt
+        );
+
+        assert_eq!(
+            store.begin_persistence(),
+            Some(revision),
+            "failed receipt must retry the same pending mutation revision"
+        );
+        store
+            .persistence_receipt_sender()
+            .send(crate::network::redis_bridge::RedisDeliveryReceipt {
+                delivery_id: revision.to_string(),
+                outcome: Ok(()),
+            })
+            .unwrap();
+        let committed = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 9);
+
+        assert_eq!(committed.deaths.len(), 1);
+        assert_eq!(committed.outcomes.len(), 1);
+        assert_eq!(committed.relics.len(), 1);
+        assert!(!store.snapshots.contains_key(&loser_id));
+        assert_eq!(store.persistence.persisted_revision, revision);
+        assert_eq!(ledger.transfers().len(), 2);
+        assert_eq!(
+            physical_owner_total(&store, &zones, &ledger),
+            owner_total_before_receipt
+        );
+    }
+
+    #[test]
+    fn combat_terminal_settles_daozhan_cultivation_and_drain_owners_after_hash_receipt() {
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let owner_total_before = zones.zones[0].spirit_qi * QI_ZONE_UNIT_CAPACITY + 12.0;
+        let mut store = NpcDormantStore::default();
+        store.insert(with_daozhan_owner(
+            combat_snapshot("atk", FactionId::Attack, 5.0, DVec3::new(10.0, 64.0, 10.0)),
+            1.0,
+        ));
+        store.insert(with_daozhan_owner(
+            combat_snapshot("def", FactionId::Defend, 5.0, DVec3::new(11.0, 64.0, 11.0)),
+            1.0,
+        ));
+        store.take_dirty();
+        let mut ledger = WorldQiAccount::default();
+        let config = NpcVirtualizationConfig::default();
+
+        let pending = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 7);
+        assert!(pending.deaths.is_empty() && pending.outcomes.is_empty());
+        assert_eq!(store.len(), 2);
+        assert!(ledger.transfers().is_empty());
+
+        acknowledge_dormant_persistence(&mut store);
+        let committed = run_combat_tick(&mut store, &mut zones, &mut ledger, &config, 8);
+
+        assert_eq!(committed.deaths.len(), 1);
+        assert_eq!(committed.outcomes.len(), 1);
+        assert_eq!(store.len(), 1);
+        assert_eq!(
+            ledger.transfers().len(),
+            2,
+            "combat loser cultivation and Daozhan owners must each emit one typed release"
+        );
+        assert!((physical_owner_total(&store, &zones, &ledger) - owner_total_before).abs() < 1e-9);
+    }
+
+    #[test]
+    fn legacy_pending_combat_without_winner_still_settles_and_terminates() {
+        let mut zones = ZoneRegistry {
+            zones: vec![zone()],
+        };
+        let mut legacy = with_daozhan_owner(
+            combat_snapshot(
+                "legacy-loser",
+                FactionId::Attack,
+                5.0,
+                DVec3::new(10.0, 64.0, 10.0),
+            ),
+            1.0,
+        );
+        legacy.combat_dead_pending_release = true;
+        legacy.pending_combat_winner = None;
+        let mut store = NpcDormantStore::default();
+        store.insert(legacy);
+        acknowledge_dormant_persistence(&mut store);
+        let mut ledger = WorldQiAccount::default();
+
+        let committed = run_combat_tick(
+            &mut store,
+            &mut zones,
+            &mut ledger,
+            &NpcVirtualizationConfig::default(),
+            8,
+        );
+
+        assert!(!store.contains("legacy-loser"));
+        assert_eq!(committed.deaths.len(), 1);
+        assert!(committed.outcomes.is_empty());
+        assert_eq!(ledger.transfers().len(), 2);
     }
 
     #[test]
@@ -5215,7 +6169,7 @@ mod tests {
         let mut restored_store = NpcDormantStore::default();
         load_dormant_snapshots_from_hash_entries(
             &mut restored_store,
-            vec![(loser_id.clone(), payload)],
+            std::collections::HashMap::from([(loser_id.clone(), payload)]),
         )
         .expect("pending loser must restore through the production HASH boundary");
         for tick in [8, 9, 10] {
@@ -5266,7 +6220,14 @@ mod tests {
         let dormant_qi: f64 = store
             .snapshots
             .values()
-            .map(|snapshot| snapshot.cultivation.qi_current())
+            .map(|snapshot| {
+                snapshot.cultivation.qi_current()
+                    + snapshot
+                        .tsy_hostile
+                        .as_ref()
+                        .and_then(|hostile| hostile.daozhan.as_ref())
+                        .map_or(0.0, |daozhan| daozhan.daozhan_qi)
+            })
             .sum();
         let zone_qi: f64 = zones
             .zones

@@ -676,7 +676,7 @@ pub fn tsy_collapse_completed_cleanup(
                     let amount = daozhan.daozhan_qi;
                     crate::cultivation::components::release_external_qi_to_zone(
                         &mut daozhan.daozhan_qi,
-                        &identity,
+                        identity.account(),
                         None,
                         &mut staged_ledger,
                         amount,

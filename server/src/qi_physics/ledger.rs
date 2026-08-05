@@ -837,13 +837,16 @@ pub const QI_FLOW_OVERFLOW_ACCOUNT_ID: &str = "qi_flow_overflow";
 pub const DYING_ELDER_DAN_EXCESS_ACCOUNT_ID: &str = "dying_elder_dan_excess";
 /// 垂死大能死亡时 zone 无法接收部分的稳定聚合池。
 pub const DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID: &str = "dying_elder_release";
+/// 坍缩渊与负压 drain 的稳定真元池。该余额无 ECS 字段承载，必须跨重启恢复。
+pub const RIFT_DRAIN_ACCOUNT_ID: &str = "rift_drain";
 
 /// 没有 ECS/zone 字段承载、必须经 `qi_runtime_accounts` 持久化的完整白名单。
-pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 4] = [
+pub const PERSISTENT_RUNTIME_QI_ACCOUNT_IDS: [&str; 5] = [
     PENDING_INFLOW_ACCOUNT_ID,
     QI_FLOW_OVERFLOW_ACCOUNT_ID,
     DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID,
+    RIFT_DRAIN_ACCOUNT_ID,
 ];
 
 /// 独立待分配池账户（`QiAccountKind::Overflow` + 固定 id，见 [`PENDING_INFLOW_ACCOUNT_ID`]）。
@@ -863,8 +866,18 @@ pub fn dying_elder_release_overflow_account() -> QiAccountId {
     QiAccountId::overflow(DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID)
 }
 
-pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 4] {
-    PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.map(QiAccountId::overflow)
+pub fn rift_drain_account() -> QiAccountId {
+    QiAccountId::rift(RIFT_DRAIN_ACCOUNT_ID)
+}
+
+pub fn persistent_runtime_qi_accounts() -> [QiAccountId; 5] {
+    [
+        pending_inflow_account(),
+        qi_flow_overflow_account(),
+        dying_elder_dan_excess_account(),
+        dying_elder_release_overflow_account(),
+        rift_drain_account(),
+    ]
 }
 
 /// plan-zone-qi-economy-v1 P0 §8.1 决议 #1 — 消耗（开脉 / 突破）真元回充独立待分配池。
@@ -1657,6 +1670,15 @@ mod tests {
         let account = pending_inflow_account();
         assert_eq!(account.kind, QiAccountKind::Overflow);
         assert_eq!(account.id, PENDING_INFLOW_ACCOUNT_ID);
+    }
+
+    #[test]
+    fn fixed_runtime_accounts_preserve_physical_kinds_and_stable_ids() {
+        let accounts = persistent_runtime_qi_accounts();
+        assert_eq!(accounts.len(), PERSISTENT_RUNTIME_QI_ACCOUNT_IDS.len());
+        assert_eq!(rift_drain_account().kind, QiAccountKind::Rift);
+        assert_eq!(rift_drain_account().id, RIFT_DRAIN_ACCOUNT_ID);
+        assert!(accounts.contains(&rift_drain_account()));
     }
 
     #[test]

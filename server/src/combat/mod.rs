@@ -410,6 +410,7 @@ pub fn register(app: &mut App) {
         Update,
         rat_bite::apply_rat_bite_qi_drain
             .in_set(CombatSystemSet::Resolve)
+            .in_set(crate::npc::spawn::ambient_scheduler::AmbientTerminalSystemSet::PostRecycle)
             .after(resolve::resolve_attack_intents),
     );
     // plan-ambient-threat-v1 P2: 鼠咬打断打坐（对齐兽潮咬击既有语义），独立于守恒扣减。

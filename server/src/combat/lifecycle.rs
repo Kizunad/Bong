@@ -110,6 +110,8 @@ type DeathArbiterQueryItem<'a> = (
     Option<&'a Position>,
     Option<&'a NpcVisualProfile>,
     Option<&'a NpcMarker>,
+    Option<&'a crate::npc::lifecycle::NpcArchetype>,
+    Option<&'a crate::npc::patrol::NpcPatrol>,
 );
 
 type NearDeathPersistenceQueryItem<'a> = (
@@ -382,6 +384,8 @@ pub fn death_arbiter_tick(
             position,
             npc_visual_profile,
             npc_marker,
+            _npc_archetype,
+            _npc_patrol,
         )) = lifecycle_q.get_mut(event.target)
         else {
             continue;
@@ -464,8 +468,6 @@ pub fn death_arbiter_tick(
                     authorize_loot: true,
                     actor_qi_identity,
                     reproduction: None,
-                    narration_outbox: None,
-                    loot_outbox: None,
                 });
             continue;
         }
@@ -639,6 +641,8 @@ pub fn death_arbiter_tick(
             position,
             npc_visual_profile,
             npc_marker,
+            npc_archetype,
+            npc_patrol,
         )) = lifecycle_q.get_mut(event.entity)
         else {
             continue;
@@ -728,9 +732,15 @@ pub fn death_arbiter_tick(
                     attacker_player_id: None,
                     authorize_loot: event.cause != CultivationDeathCause::NaturalAging,
                     actor_qi_identity,
-                    reproduction: None,
-                    narration_outbox: None,
-                    loot_outbox: None,
+                    reproduction: if event.cause == CultivationDeathCause::NaturalAging {
+                        crate::npc::lifecycle::natural_aging_reproduction_request(
+                            npc_archetype,
+                            position,
+                            npc_patrol,
+                        )
+                    } else {
+                        None
+                    },
                 });
             continue;
         }
@@ -1012,8 +1022,6 @@ pub fn near_death_tick(
                     authorize_loot: true,
                     actor_qi_identity,
                     reproduction: None,
-                    narration_outbox: None,
-                    loot_outbox: None,
                 });
             hide_death_screen(&mut clients, entity);
             continue;

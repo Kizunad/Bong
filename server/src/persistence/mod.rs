@@ -37,7 +37,7 @@ use crate::qi_physics::ledger::{
 use crate::qi_physics::ledger::{
     persistent_runtime_qi_accounts, QiAccountId, WorldQiAccount, DYING_ELDER_DAN_EXCESS_ACCOUNT_ID,
     DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, PENDING_INFLOW_ACCOUNT_ID,
-    QI_FLOW_OVERFLOW_ACCOUNT_ID,
+    QI_FLOW_OVERFLOW_ACCOUNT_ID, RIFT_DRAIN_ACCOUNT_ID,
 };
 use crate::schema::common::NpcStateKind;
 use crate::schema::pseudo_vein::PseudoVeinSeasonV1;
@@ -63,8 +63,9 @@ const DEFAULT_DECEASED_PUBLIC_DIR: &str = "../library-web/public/deceased";
 /// v39 新增 `player_lifecycle`（bughunt player-lifecycle-relog-death-consequence-wipe：
 /// 断线重连此前从未持久化 `Lifecycle` 死亡/复活状态机，`fortune_remaining`/
 /// `awaiting_decision`/`state` 全部被 `Lifecycle::default()` 抹回满状态新角色）；
-/// v40 持久化 R5 真元事务固定 overflow 池。
-const CURRENT_USER_VERSION: i32 = 40;
+/// v40 持久化 R5 真元事务固定 overflow 池；v41 持久化坍缩渊 drain 固定池；
+/// v42 新增 dormant 终局 tombstone，跨 SQLite sink 与 Redis source deletion 防重放。
+const CURRENT_USER_VERSION: i32 = 42;
 const AGENT_WORLD_MODEL_ROW_ID: i64 = 1;
 const ASCENSION_QUOTA_ROW_ID: i64 = 1;
 const TRIBULATION_KIND_DU_XU: &str = "du_xu";
@@ -354,6 +355,25 @@ pub struct PendingDormantRelicRecord {
     pub loot_seed: u64,
     pub created_tick: i64,
     pub created_wall: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistDormantTerminalOutcome {
+    Committed,
+    AlreadyCommitted,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DormantTerminalCommitRecord {
+    pub char_id: String,
+    pub cause: String,
+    pub at_tick: u64,
+    pub zone: String,
+    pub winner: Option<String>,
+    pub winner_group: Option<u64>,
+    pub loser_group: Option<u64>,
+    pub zone_accepted: f64,
+    pub cleanup_revision: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2384,6 +2404,53 @@ fn apply_migrations(connection: &mut Connection) -> rusqlite::Result<()> {
         transaction.commit()?;
     }
 
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 41 {
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "
+            INSERT INTO qi_runtime_accounts (
+                account_id, balance, schema_version, last_updated_wall
+            ) VALUES (?1, 0.0, ?2, 0)
+            ON CONFLICT(account_id) DO NOTHING
+            ",
+            params![RIFT_DRAIN_ACCOUNT_ID, CURRENT_SCHEMA_VERSION],
+        )?;
+        transaction.execute_batch("PRAGMA user_version = 41;")?;
+        transaction.commit()?;
+    }
+
+    let current_version: i32 =
+        connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+    if current_version < 42 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS dormant_terminal_commits (
+                char_id                 TEXT PRIMARY KEY,
+                cause                   TEXT NOT NULL,
+                at_tick                 INTEGER NOT NULL CHECK (at_tick >= 0),
+                zone                    TEXT NOT NULL,
+                winner                  TEXT,
+                winner_group            INTEGER,
+                loser_group             INTEGER,
+                zone_accepted           REAL NOT NULL CHECK (zone_accepted >= 0),
+                cleanup_revision        INTEGER CHECK (cleanup_revision >= 0),
+                created_wall            INTEGER NOT NULL CHECK (created_wall >= 0),
+                schema_version          INTEGER NOT NULL CHECK (schema_version >= 1)
+            );
+            ",
+        )?;
+        assert_dormant_terminal_commits_schema_ready(&transaction)?;
+        transaction.execute_batch("PRAGMA user_version = 42;")?;
+        transaction.commit()?;
+    }
+
+    let terminal_schema_transaction = connection.transaction()?;
+    assert_dormant_terminal_commits_schema_ready(&terminal_schema_transaction)?;
+    terminal_schema_transaction.commit()?;
+
     let final_version: i32 = connection.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
     if final_version != CURRENT_USER_VERSION {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -2633,6 +2700,54 @@ fn assert_pending_dormant_relics_schema_ready(
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             io::Error::other(format!(
                 "v26 migration completed but pending_dormant_relics primary key mismatch: expected relic_id got {primary_key:?}"
+            )),
+        )));
+    }
+    Ok(())
+}
+
+fn assert_dormant_terminal_commits_schema_ready(
+    transaction: &rusqlite::Transaction<'_>,
+) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "dormant_terminal_commits")?;
+    let required = [
+        "char_id",
+        "cause",
+        "at_tick",
+        "zone",
+        "winner",
+        "winner_group",
+        "loser_group",
+        "zone_accepted",
+        "cleanup_revision",
+        "created_wall",
+        "schema_version",
+    ];
+    if let Some(missing) = required
+        .iter()
+        .find(|column| !columns.iter().any(|name| name == **column))
+    {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v42 migration completed but dormant_terminal_commits column {missing} missing"
+            )),
+        )));
+    }
+
+    let mut statement = transaction.prepare("PRAGMA table_info(dormant_terminal_commits)")?;
+    let primary_key = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i32>(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|(_, pk_ordinal)| *pk_ordinal > 0)
+        .collect::<Vec<_>>();
+    let expected_primary_key = [("char_id".to_owned(), 1)];
+    if primary_key.as_slice() != expected_primary_key.as_slice() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::other(format!(
+                "v42 migration completed but dormant_terminal_commits primary key mismatch: expected char_id got {primary_key:?}"
             )),
         )));
     }
@@ -4469,7 +4584,7 @@ pub fn persist_termination_transition(
     lifecycle: &Lifecycle,
     life_record: &LifeRecord,
 ) -> io::Result<()> {
-    persist_termination_transition_inner(settings, lifecycle, life_record, None, None)
+    persist_termination_transition_inner(settings, lifecycle, life_record, None, None, None)
 }
 
 pub fn persist_termination_transition_with_death_context(
@@ -4485,6 +4600,26 @@ pub fn persist_termination_transition_with_death_context(
         life_record,
         death_registry_cause,
         lifespan_event,
+        None,
+    )
+}
+
+pub fn persist_npc_termination_with_qi_snapshot(
+    settings: &PersistenceSettings,
+    lifecycle: &Lifecycle,
+    life_record: &LifeRecord,
+    death_registry_cause: &str,
+    lifespan_event: Option<&LifespanEventRecord>,
+    zones: &crate::world::zone::ZoneRegistry,
+    qi_ledger: &WorldQiAccount,
+) -> io::Result<()> {
+    persist_termination_transition_inner(
+        settings,
+        lifecycle,
+        life_record,
+        Some(death_registry_cause),
+        lifespan_event,
+        Some((zones, qi_ledger)),
     )
 }
 
@@ -4494,6 +4629,7 @@ fn persist_termination_transition_inner(
     life_record: &LifeRecord,
     death_registry_cause: Option<&str>,
     lifespan_event: Option<&LifespanEventRecord>,
+    qi_snapshot: Option<(&crate::world::zone::ZoneRegistry, &WorldQiAccount)>,
 ) -> io::Result<()> {
     let entry = latest_biography_entry(life_record)?;
     let wall_clock = current_unix_seconds();
@@ -4522,9 +4658,9 @@ fn persist_termination_transition_inner(
         None
     };
 
-    let mut connection = open_persistence_connection(settings)?;
-    let transaction = connection.transaction().map_err(io::Error::other)?;
     let persisted = (|| -> io::Result<()> {
+        let mut connection = open_persistence_connection(settings)?;
+        let transaction = connection.transaction().map_err(io::Error::other)?;
         upsert_life_record(&transaction, life_record, wall_clock)?;
         append_life_event(
             &transaction,
@@ -4548,6 +4684,10 @@ fn persist_termination_transition_inner(
                 lifespan_event,
                 wall_clock,
             )?;
+        }
+        if let Some((zones, qi_ledger)) = qi_snapshot {
+            persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+            upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
         }
         upsert_deceased_snapshot(
             &transaction,
@@ -5505,9 +5645,162 @@ fn upsert_pending_dormant_relic(
     Ok(())
 }
 
-/// plan-offscreen-war-v1 P3：写入一行待物化战场遗物（现开连接 + 显式事务，仿 npc_digest
-/// 写路径）。战死结算 emit 的 [`PendingDormantRelicCreated`](crate::npc::dormant::PendingDormantRelicCreated)
-/// 由 `persist_pending_dormant_relics_system` 消费后调本函数落盘。
+/// 原子持久化 dormant 终局：staged zone sink、固定 runtime qi accounts、幂等 tombstone
+/// 与可选零真元遗物在同一个 SQLite transaction 中提交。首次提交返回 `Committed`；同一
+/// `char_id` 已有 tombstone 时返回 `AlreadyCommitted`，且绝不重写 sink 或终局上下文。
+pub fn persist_dormant_terminal_commit(
+    settings: &PersistenceSettings,
+    record: &DormantTerminalCommitRecord,
+    zones: &crate::world::zone::ZoneRegistry,
+    qi_ledger: &WorldQiAccount,
+    relic: Option<&crate::npc::dormant::PendingDormantRelicCreated>,
+) -> io::Result<PersistDormantTerminalOutcome> {
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    let exists = transaction
+        .query_row(
+            "SELECT 1 FROM dormant_terminal_commits WHERE char_id = ?1",
+            params![record.char_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(io::Error::other)?
+        .is_some();
+    if exists {
+        transaction.rollback().map_err(io::Error::other)?;
+        return Ok(PersistDormantTerminalOutcome::AlreadyCommitted);
+    }
+
+    let wall_clock = current_unix_seconds();
+    persist_zone_runtime_records(&transaction, zones, wall_clock)?;
+    upsert_runtime_qi_account_balances(&transaction, qi_ledger, wall_clock)?;
+    if let Some(event) = relic {
+        let relic = PendingDormantRelicRecord {
+            relic_id: deterministic_relic_id(event),
+            char_id: event.char_id.clone(),
+            zone: event.zone.clone(),
+            pos_x: event.position[0],
+            pos_y: event.position[1],
+            pos_z: event.position[2],
+            archetype: event.archetype.as_str().to_string(),
+            loot_seed: event.loot_seed,
+            created_tick: i64::try_from(event.created_tick).unwrap_or(i64::MAX),
+            created_wall: wall_clock,
+        };
+        upsert_pending_dormant_relic(&transaction, &relic)?;
+    }
+    transaction
+        .execute(
+            "
+            INSERT INTO dormant_terminal_commits (
+                char_id, cause, at_tick, zone, winner, winner_group, loser_group,
+                zone_accepted, cleanup_revision, created_wall, schema_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)
+            ",
+            params![
+                record.char_id,
+                record.cause,
+                i64::try_from(record.at_tick).unwrap_or(i64::MAX),
+                record.zone,
+                record.winner,
+                record.winner_group.map(|value| value as i64),
+                record.loser_group.map(|value| value as i64),
+                record.zone_accepted,
+                wall_clock,
+                NPC_ROW_SCHEMA_VERSION,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)?;
+    Ok(PersistDormantTerminalOutcome::Committed)
+}
+
+pub fn load_dormant_terminal_commits(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<DormantTerminalCommitRecord>> {
+    let connection = open_persistence_connection(settings)?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT char_id, cause, at_tick, zone, winner, winner_group, loser_group,
+                   zone_accepted, cleanup_revision
+            FROM dormant_terminal_commits
+            ORDER BY char_id
+            ",
+        )
+        .map_err(io::Error::other)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(DormantTerminalCommitRecord {
+                char_id: row.get(0)?,
+                cause: row.get(1)?,
+                at_tick: row.get::<_, i64>(2)? as u64,
+                zone: row.get(3)?,
+                winner: row.get(4)?,
+                winner_group: row.get::<_, Option<i64>>(5)?.map(|value| value as u64),
+                loser_group: row.get::<_, Option<i64>>(6)?.map(|value| value as u64),
+                zone_accepted: row.get(7)?,
+                cleanup_revision: row.get::<_, Option<i64>>(8)?.map(|value| value as u64),
+            })
+        })
+        .map_err(io::Error::other)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)
+}
+
+pub fn rearm_dormant_terminal_commits(
+    settings: &PersistenceSettings,
+) -> io::Result<Vec<DormantTerminalCommitRecord>> {
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    transaction
+        .execute(
+            "UPDATE dormant_terminal_commits SET cleanup_revision = NULL",
+            [],
+        )
+        .map_err(io::Error::other)?;
+    transaction.commit().map_err(io::Error::other)?;
+    load_dormant_terminal_commits(settings)
+}
+
+pub fn bind_dormant_terminal_cleanup_revision(
+    settings: &PersistenceSettings,
+    char_ids: &[String],
+    revision: u64,
+) -> io::Result<()> {
+    let mut connection = open_persistence_connection(settings)?;
+    let transaction = connection.transaction().map_err(io::Error::other)?;
+    for char_id in char_ids {
+        transaction
+            .execute(
+                "
+                UPDATE dormant_terminal_commits
+                SET cleanup_revision = ?2
+                WHERE char_id = ?1 AND cleanup_revision IS NULL
+                ",
+                params![char_id, i64::try_from(revision).unwrap_or(i64::MAX)],
+            )
+            .map_err(io::Error::other)?;
+    }
+    transaction.commit().map_err(io::Error::other)
+}
+
+pub fn clear_dormant_terminal_commits_through_revision(
+    settings: &PersistenceSettings,
+    revision: u64,
+) -> io::Result<usize> {
+    let connection = open_persistence_connection(settings)?;
+    connection
+        .execute(
+            "
+            DELETE FROM dormant_terminal_commits
+            WHERE cleanup_revision IS NOT NULL AND cleanup_revision <= ?1
+            ",
+            params![i64::try_from(revision).unwrap_or(i64::MAX)],
+        )
+        .map_err(io::Error::other)
+}
+
 pub fn persist_pending_dormant_relic(
     settings: &PersistenceSettings,
     record: &PendingDormantRelicRecord,
@@ -7939,34 +8232,41 @@ fn stage_public_deceased_export(
     let index_path = settings.deceased_public_dir().join("_index.json");
     let previous_snapshot = fs::read(&snapshot_path).ok();
     let previous_index = fs::read(&index_path).ok();
-    fs::write(&snapshot_path, snapshot_json.as_bytes())?;
-
     let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
-    let mut entries = read_deceased_index(&index_path)?;
-    entries.retain(|entry| entry.char_id != char_id);
-    entries.push(DeceasedIndexEntry {
-        char_id: char_id.to_string(),
-        died_at_tick,
-        path: relative_snapshot_path.clone(),
-        termination_category: termination_category.to_string(),
-    });
-    entries.sort_by(|left, right| {
-        left.died_at_tick
-            .cmp(&right.died_at_tick)
-            .then_with(|| left.char_id.cmp(&right.char_id))
-    });
-    let index_json = serde_json::to_string_pretty(&entries)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    fs::write(&index_path, index_json.as_bytes())?;
-
-    Ok(StagedDeceasedExport {
+    let staged = StagedDeceasedExport {
         snapshot_path,
         index_path,
         previous_snapshot,
         previous_index,
         relative_snapshot_path,
         _guard: guard,
-    })
+    };
+
+    let write_result = (|| -> io::Result<()> {
+        fs::write(&staged.snapshot_path, snapshot_json.as_bytes())?;
+        let mut entries = read_deceased_index(&staged.index_path)?;
+        entries.retain(|entry| entry.char_id != char_id);
+        entries.push(DeceasedIndexEntry {
+            char_id: char_id.to_string(),
+            died_at_tick,
+            path: staged.relative_snapshot_path.clone(),
+            termination_category: termination_category.to_string(),
+        });
+        entries.sort_by(|left, right| {
+            left.died_at_tick
+                .cmp(&right.died_at_tick)
+                .then_with(|| left.char_id.cmp(&right.char_id))
+        });
+        let index_json = serde_json::to_string_pretty(&entries)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        fs::write(&staged.index_path, index_json.as_bytes())
+    })();
+    if let Err(error) = write_result {
+        staged.rollback();
+        return Err(error);
+    }
+
+    Ok(staged)
 }
 
 fn read_deceased_index(index_path: &Path) -> io::Result<Vec<DeceasedIndexEntry>> {
@@ -12411,6 +12711,56 @@ mod persistence_tests {
     }
 
     #[test]
+    fn public_deceased_staging_failure_restores_existing_files_and_skips_sqlite() {
+        let (settings, root) = persistence_settings("deceased-export-stage-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        fs::create_dir_all(settings.deceased_public_dir())
+            .expect("deceased directory should exist");
+        let snapshot_path = settings.deceased_public_dir().join("offline_Ancestor.json");
+        let index_path = settings.deceased_public_dir().join("_index.json");
+        let previous_snapshot = b"previous snapshot";
+        let corrupt_index = b"{not-json";
+        fs::write(&snapshot_path, previous_snapshot).expect("snapshot fixture should write");
+        fs::write(&index_path, corrupt_index).expect("index fixture should write");
+
+        let life_record = LifeRecord {
+            character_id: "offline:Ancestor".to_string(),
+            created_at: 11,
+            biography: vec![BiographyEntry::Terminated {
+                cause: "fortune_exhausted".to_string(),
+                tick: 77,
+            }],
+            ..LifeRecord::default()
+        };
+        let lifecycle = Lifecycle {
+            character_id: life_record.character_id.clone(),
+            state: crate::combat::components::LifecycleState::Terminated,
+            ..Lifecycle::default()
+        };
+
+        persist_termination_transition(&settings, &lifecycle, &life_record)
+            .expect_err("corrupt public index must fail before SQLite commit");
+
+        assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+        assert_eq!(fs::read(&index_path).unwrap(), corrupt_index);
+        let connection = Connection::open(settings.db_path()).expect("db should open");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM deceased_snapshots WHERE char_id = ?1",
+                    params!["offline:Ancestor"],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0,
+            "failed public staging must not authorize the SQLite terminal snapshot"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn persist_termination_transition_rewrites_existing_public_index_entry_for_same_char() {
         let (settings, root) = persistence_settings("deceased-export-rewrite");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
@@ -16245,8 +16595,332 @@ mod persistence_tests {
     }
 
     #[test]
+    fn v42_migration_creates_guarded_dormant_terminal_commits_schema() {
+        let db_path = database_path("v42-dormant-terminal-schema");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v42-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE dormant_terminal_commits;
+                PRAGMA user_version = 41;
+                ",
+            )
+            .expect("fixture should emulate a v41 database");
+
+        apply_migrations(&mut connection).expect("v42 migration should create the terminal table");
+        let columns = table_columns(
+            &connection.transaction().unwrap(),
+            "dormant_terminal_commits",
+        )
+        .expect("terminal table columns should query");
+        for required in [
+            "char_id",
+            "cause",
+            "at_tick",
+            "zone",
+            "winner",
+            "winner_group",
+            "loser_group",
+            "zone_accepted",
+            "cleanup_revision",
+            "created_wall",
+            "schema_version",
+        ] {
+            assert!(
+                columns.iter().any(|column| column == required),
+                "v42 terminal table must contain `{required}`"
+            );
+        }
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(user_version, CURRENT_USER_VERSION);
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v42_migration_rejects_preexisting_terminal_table_with_wrong_schema() {
+        let db_path = database_path("v42-dormant-terminal-bad-schema");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v42-bad-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE dormant_terminal_commits;
+                CREATE TABLE dormant_terminal_commits (
+                    char_id TEXT NOT NULL,
+                    cause TEXT PRIMARY KEY
+                );
+                PRAGMA user_version = 41;
+                ",
+            )
+            .expect("fixture should install a malformed preexisting table");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("v42 migration must reject a malformed preexisting terminal table");
+        assert!(
+            error
+                .to_string()
+                .contains("dormant_terminal_commits column"),
+            "schema guard should identify the missing terminal column: {error}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(
+            user_version, 41,
+            "failed v42 schema validation must not advance user_version"
+        );
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn current_v42_database_rejects_malformed_terminal_schema() {
+        let db_path = database_path("v42-current-dormant-terminal-bad-schema");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v42-current-bad-fixture")
+            .expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DROP TABLE dormant_terminal_commits;
+                CREATE TABLE dormant_terminal_commits (
+                    char_id TEXT NOT NULL,
+                    cause TEXT PRIMARY KEY
+                );
+                PRAGMA user_version = 42;
+                ",
+            )
+            .expect("fixture should install a malformed current-version table");
+
+        let error = apply_migrations(&mut connection)
+            .expect_err("current v42 schema must be validated on every bootstrap");
+        assert!(
+            error
+                .to_string()
+                .contains("dormant_terminal_commits column"),
+            "current-version schema guard should identify the missing terminal column: {error}"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should remain readable");
+        assert_eq!(
+            user_version, 42,
+            "schema validation must fail without mutating current user_version"
+        );
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn terminal_commit_record(char_id: &str, zone_accepted: f64) -> DormantTerminalCommitRecord {
+        DormantTerminalCommitRecord {
+            char_id: char_id.to_string(),
+            cause: "combat".to_string(),
+            at_tick: 77,
+            zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            winner: Some("npc:winner".to_string()),
+            winner_group: Some(11),
+            loser_group: Some(22),
+            zone_accepted,
+            cleanup_revision: None,
+        }
+    }
+
+    fn terminal_relic_event(char_id: &str) -> crate::npc::dormant::PendingDormantRelicCreated {
+        crate::npc::dormant::PendingDormantRelicCreated {
+            char_id: char_id.to_string(),
+            zone: DEFAULT_SPAWN_ZONE_NAME.to_string(),
+            position: [12.5, 64.0, -8.25],
+            archetype: crate::npc::lifecycle::NpcArchetype::Disciple,
+            loot_seed: 0xA55A,
+            created_tick: 77,
+        }
+    }
+
+    #[test]
+    fn dormant_terminal_commit_is_atomic_and_duplicate_does_not_rewrite_sink() {
+        let (settings, root) = persistence_settings("dormant-terminal-atomic");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let char_id = "npc:terminal:atomic";
+        let record = terminal_commit_record(char_id, 2.5);
+        let relic = terminal_relic_event(char_id);
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.42;
+        zones.zones[0].danger_level = 3;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(crate::qi_physics::ledger::rift_drain_account(), 7.25)
+            .expect("fixture runtime balance should be valid");
+
+        assert_eq!(
+            persist_dormant_terminal_commit(&settings, &record, &zones, &ledger, Some(&relic))
+                .expect("first terminal transaction should commit"),
+            PersistDormantTerminalOutcome::Committed
+        );
+        assert_eq!(
+            load_dormant_terminal_commits(&settings).unwrap(),
+            vec![record.clone()]
+        );
+        assert_eq!(
+            load_pending_dormant_relics_for_zone(&settings, DEFAULT_SPAWN_ZONE_NAME)
+                .expect("terminal relic should load")
+                .len(),
+            1
+        );
+
+        let mut replacement_zones = zones.clone();
+        replacement_zones.zones[0].spirit_qi = 0.11;
+        let mut replacement_ledger = WorldQiAccount::default();
+        replacement_ledger
+            .set_balance(crate::qi_physics::ledger::rift_drain_account(), 99.0)
+            .expect("replacement runtime balance should be valid");
+        let mut duplicate = record.clone();
+        duplicate.cause = "natural_aging".to_string();
+        duplicate.zone_accepted = 9.0;
+        assert_eq!(
+            persist_dormant_terminal_commit(
+                &settings,
+                &duplicate,
+                &replacement_zones,
+                &replacement_ledger,
+                None,
+            )
+            .expect("duplicate terminal transaction should be recognized"),
+            PersistDormantTerminalOutcome::AlreadyCommitted
+        );
+
+        let connection = open_persistence_connection(&settings).expect("db should reopen");
+        let persisted_zone: f64 = connection
+            .query_row(
+                "SELECT spirit_qi FROM zones_runtime WHERE zone_id = ?1",
+                params![DEFAULT_SPAWN_ZONE_NAME],
+                |row| row.get(0),
+            )
+            .expect("terminal zone sink should exist");
+        let persisted_rift: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("terminal runtime sink should exist");
+        assert_eq!(
+            persisted_zone, 0.42,
+            "duplicate must not rewrite the zone sink"
+        );
+        assert_eq!(
+            persisted_rift, 7.25,
+            "duplicate must not rewrite runtime qi"
+        );
+        assert_eq!(
+            load_dormant_terminal_commits(&settings).unwrap(),
+            vec![record]
+        );
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dormant_terminal_commit_rolls_back_all_rows_when_tombstone_insert_fails() {
+        let (settings, root) = persistence_settings("dormant-terminal-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let mut zones = crate::world::zone::ZoneRegistry::fallback();
+        zones.zones[0].spirit_qi = 0.37;
+        let mut ledger = WorldQiAccount::default();
+        ledger
+            .set_balance(crate::qi_physics::ledger::rift_drain_account(), 8.5)
+            .expect("fixture runtime balance should be valid");
+        let char_id = "npc:terminal:rollback";
+        let invalid = terminal_commit_record(char_id, -1.0);
+        let relic = terminal_relic_event(char_id);
+
+        persist_dormant_terminal_commit(&settings, &invalid, &zones, &ledger, Some(&relic))
+            .expect_err("negative zone_accepted must fail at the final tombstone insert");
+
+        assert!(load_dormant_terminal_commits(&settings).unwrap().is_empty());
+        assert!(
+            load_pending_dormant_relics_for_zone(&settings, DEFAULT_SPAWN_ZONE_NAME)
+                .unwrap()
+                .is_empty(),
+            "relic written before the failing tombstone insert must roll back"
+        );
+        let connection = open_persistence_connection(&settings).expect("db should reopen");
+        let zone_rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM zones_runtime", [], |row| row.get(0))
+            .expect("zone row count should query");
+        let rift_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("bootstrap runtime row should exist");
+        assert_eq!(zone_rows, 0, "staged zone sink must roll back");
+        assert_eq!(rift_balance, 0.0, "staged runtime qi must roll back");
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dormant_terminal_cleanup_rearms_on_restart_and_clears_only_confirmed_revision() {
+        let (settings, root) = persistence_settings("dormant-terminal-rearm");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture sqlite should bootstrap");
+        let record = terminal_commit_record("npc:terminal:rearm", 0.0);
+        persist_dormant_terminal_commit(
+            &settings,
+            &record,
+            &crate::world::zone::ZoneRegistry::fallback(),
+            &WorldQiAccount::default(),
+            None,
+        )
+        .expect("terminal fixture should commit");
+
+        bind_dormant_terminal_cleanup_revision(&settings, std::slice::from_ref(&record.char_id), 7)
+            .expect("first cleanup revision should bind");
+        assert_eq!(
+            load_dormant_terminal_commits(&settings).unwrap()[0].cleanup_revision,
+            Some(7)
+        );
+        let rearmed = rearm_dormant_terminal_commits(&settings)
+            .expect("restart must reset uncertain pre-crash bindings");
+        assert_eq!(rearmed[0].cleanup_revision, None);
+
+        bind_dormant_terminal_cleanup_revision(&settings, std::slice::from_ref(&record.char_id), 9)
+            .expect("post-restart deletion revision should bind");
+        assert_eq!(
+            clear_dormant_terminal_commits_through_revision(&settings, 8).unwrap(),
+            0
+        );
+        assert_eq!(load_dormant_terminal_commits(&settings).unwrap().len(), 1);
+        assert_eq!(
+            clear_dormant_terminal_commits_through_revision(&settings, 9).unwrap(),
+            1
+        );
+        assert!(load_dormant_terminal_commits(&settings).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn runtime_qi_accounts_persist_and_fresh_ledger_hydrate_roundtrip() {
-        let (settings, root) = persistence_settings("runtime-qi-four-account-roundtrip");
+        let (settings, root) = persistence_settings("runtime-qi-five-account-roundtrip");
         bootstrap_sqlite(settings.db_path(), settings.server_run_id())
             .expect("fixture sqlite should bootstrap");
 
@@ -16261,7 +16935,7 @@ mod persistence_tests {
                 crate::qi_physics::ledger::dying_elder_release_overflow_account(),
                 33.75,
             ),
-            (qi_flow_overflow_account(), 44.0),
+            (crate::qi_physics::ledger::rift_drain_account(), 55.5),
         ];
         let expected_total = expected.iter().map(|(_, balance)| balance).sum::<f64>();
         let mut source = WorldQiAccount::default();
@@ -16281,13 +16955,13 @@ mod persistence_tests {
             None,
             &source,
         )
-        .expect("production snapshot path should persist four runtime balances");
+        .expect("production snapshot path should persist five runtime balances");
 
         let mut hydrated = WorldQiAccount::default();
         assert_eq!(
             hydrate_runtime_qi_accounts(&settings, &mut hydrated)
                 .expect("fresh ledger should hydrate all stable runtime accounts"),
-            4
+            5
         );
         for (account, balance) in expected {
             assert_eq!(hydrated.balance(&account), balance, "account={account}");

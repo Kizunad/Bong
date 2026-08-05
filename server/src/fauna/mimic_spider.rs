@@ -18,7 +18,8 @@
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Component, DVec3, Entity, Event, Position, Query, Res, ResMut, With,
+    bevy_ecs, Component, DVec3, Despawned, Entity, Event, IntoSystemConfigs, Position, Query, Res,
+    ResMut, With, Without,
 };
 
 #[cfg(test)]
@@ -176,7 +177,7 @@ type SpiderAbsorbQuery<'w, 's> = Query<
         &'static LifeRecord,
         &'static mut crate::cultivation::components::Cultivation,
     ),
-    With<NpcMarker>,
+    (With<NpcMarker>, Without<Despawned>),
 >;
 
 pub fn spider_disguised_qi_absorb_system(
@@ -324,7 +325,9 @@ pub fn register(app: &mut valence::prelude::App) {
     app.add_systems(
         valence::prelude::Update,
         (
-            spider_disguised_qi_absorb_system,
+            spider_disguised_qi_absorb_system.in_set(
+                crate::npc::spawn::ambient_scheduler::AmbientTerminalSystemSet::PostRecycle,
+            ),
             spider_trap_timeout_system,
         ),
     );
