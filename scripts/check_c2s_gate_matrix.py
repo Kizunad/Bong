@@ -10,7 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
 ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
-ATTRIBUTE_LINE_RE = re.compile(r"(?m)^[ \t]*#\[[^\n]*\][ \t]*$")
 MATRIX_SECTION_RE = re.compile(r"^## P0 (\d+) 变体门禁矩阵\s*$")
 MATRIX_HEADER_RE = re.compile(
     r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|(?:[^|\n]*\|){5}\s*$"
@@ -118,6 +117,33 @@ def _leading_attributes(code: str) -> tuple[list[str], str]:
     return attributes, code
 
 
+def _enum_attributes(masked: str, source: str, declaration_start: int) -> list[str]:
+    attributes: list[tuple[int, int, str]] = []
+    for match in re.finditer(r"(?m)^[ \t]*#\[", masked[:declaration_start]):
+        depth = 0
+        end = None
+        for index in range(match.start(), declaration_start):
+            char = masked[index]
+            if char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is not None:
+            attributes.append((match.start(), end, source[match.start() : end].strip()))
+
+    selected: list[str] = []
+    cursor = declaration_start
+    for start, end, attribute in reversed(attributes):
+        if masked[end:cursor].strip():
+            break
+        selected.append(attribute)
+        cursor = start
+    return list(reversed(selected))
+
+
 def _wrapped_suffix(suffix: str, opening: str, closing: str) -> bool:
     if not suffix.startswith(opening):
         return False
@@ -180,15 +206,10 @@ def parse_enum_variants(source: str) -> list[str]:
     if not declaration:
         raise RuntimeError(f"cannot parse ClientRequestV1 from {ENUM_PATH}")
     serde = None
-    attribute_end = declaration.start()
-    for match in reversed(list(ATTRIBUTE_LINE_RE.finditer(masked, 0, declaration.start()))):
-        if masked[match.end() : attribute_end].strip():
-            break
-        attribute = source[match.start() : match.end()].strip()
-        if attribute.startswith("#[serde(") and attribute.endswith(")]"):
+    for attribute in _enum_attributes(masked, source, declaration.start()):
+        if attribute.startswith("#[serde(") and attribute.endswith(")]" ):
             serde = _mask_rust_non_code(attribute, mask_strings=False)[len("#[serde(") : -2]
             break
-        attribute_end = match.start()
     tag_options = re.findall(r'\btag\s*=\s*"([^"]*)"', serde or "")
     rename_options = re.findall(r'\brename_all\s*=\s*"([^"]*)"', serde or "")
     if len(tag_options) != 1 or tag_options[0] != "type":
@@ -245,6 +266,8 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
         if not header_seen:
             if MATRIX_HEADER_RE.fullmatch(line):
                 header_seen = True
+            elif line.startswith("|") and "ClientRequestV1" in line:
+                raise RuntimeError(f"malformed C2S matrix header at line {line_number}: {line!r}")
             continue
         if not divider_seen:
             if MATRIX_DIVIDER_RE.fullmatch(line):

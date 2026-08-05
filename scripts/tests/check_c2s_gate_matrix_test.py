@@ -129,6 +129,16 @@ class ParserTests(unittest.TestCase):
             ):
                 checker.parse_enum_variants(source)
 
+    def test_accepts_multiline_serde_contract(self) -> None:
+        source = """#[serde(
+    deny_unknown_fields,
+    tag = "type",
+    rename_all = "snake_case",
+)]
+pub enum ClientRequestV1 { Variant, }
+"""
+        self.assertEqual(checker.parse_enum_variants(source), ["Variant"])
+
     def test_accepts_valid_serde_contract_from_original_source(self) -> None:
         source = ENUM_PREFIX + "#[derive(Debug)]\npub enum ClientRequestV1 { Variant, }"
         self.assertEqual(checker.parse_enum_variants(source), ["Variant"])
@@ -195,6 +205,30 @@ pub enum ClientRequestV1 {
         )
         with self.assertRaisesRegex(RuntimeError, "malformed C2S matrix row"):
             checker.parse_matrix_variants(malformed)
+        malformed_columns = {
+            "too few row columns": plan.replace(
+                "| 2 | `Beta` | — | — | — | — | — |",
+                "| 2 | `Beta` | — | — | — | — |",
+            ),
+            "too many row columns": plan.replace(
+                "| 2 | `Beta` | — | — | — | — | — |",
+                "| 2 | `Beta` | — | — | — | — | — | extra |",
+            ),
+            "too few header columns": plan.replace(
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 |",
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 |",
+            ),
+            "too many header columns": plan.replace(
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 |",
+                "| # | `ClientRequestV1` | 距离 | 维度 | 所有权 | 状态 | 结论 | extra |",
+            ),
+        }
+        for label, malformed_source in malformed_columns.items():
+            with self.subTest(label=label), self.assertRaisesRegex(
+                RuntimeError, r"malformed C2S matrix (header|row) at line \d+"
+            ):
+                checker.parse_matrix_variants(malformed_source)
+
         with self.assertRaisesRegex(RuntimeError, "heading count 2 does not match 3 rows"):
             checker.parse_matrix_variants(
                 plan.replace(
