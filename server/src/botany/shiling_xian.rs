@@ -26,7 +26,7 @@ use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::life_record::LifeRecord;
 use crate::npc::spawn::common::NpcMarker;
 use crate::qi_physics::constants::{MOSS_DRAIN_FACTOR, QI_EPSILON};
-use crate::qi_physics::ledger::QiTransfer;
+use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -194,9 +194,10 @@ pub fn moss_drain_system(
         Without<NpcMarker>,
     >,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfer_events: Option<ResMut<Events<QiTransfer>>>,
 ) {
-    for (entity, pos, current_dim, life_record, mut cultivation, tag) in players.iter_mut() {
+    for (_entity, pos, current_dim, life_record, mut cultivation, tag) in players.iter_mut() {
         let drain = tag.drain_per_tick;
         if drain <= QI_EPSILON {
             continue;
@@ -218,20 +219,20 @@ pub fn moss_drain_system(
             continue;
         }
 
-        // 扣真元（守恒：player 减 → zone 增）
-        cultivation.qi_current = (cultivation.qi_current - actual_drain).max(0.0);
-
-        // 守恒：overflow-safe 路由，emit QiTransfer 留痕（溢出量进专用 overflow 账户，不销毁）
-        release_qi_amount_to_zone(
-            entity,
+        let outcome = release_qi_amount_to_zone(
+            &mut cultivation,
             actual_drain,
             Some(pos),
             current_dim,
             life_record,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfer_events.as_deref_mut(),
             "moss_drain",
         );
+        if let Err(error) = outcome {
+            tracing::warn!(?error, "[bong][botany] moss drain qi release failed closed");
+        }
     }
 }
 
@@ -435,6 +436,7 @@ mod tests {
     #[test]
     fn moss_step_on_attaches_drain_tag_when_player_over_moss() {
         let mut app = make_app_with_neg_zone(-0.5);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, (moss_step_on_system, moss_drain_system).chain());
 
         // Spawn 一朵 ShiLingXian at (8, 64, 8)
@@ -498,6 +500,7 @@ mod tests {
     #[test]
     fn moss_drain_reduces_qi_and_emits_qi_transfer_event() {
         let mut app = make_app_with_neg_zone(-0.5);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         let drain_per_tick = 0.2_f64;
@@ -558,6 +561,7 @@ mod tests {
     #[test]
     fn moss_drain_clamps_to_remaining_qi_current() {
         let mut app = make_app_with_neg_zone(-0.5);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         let drain_per_tick = 5.0_f64;
@@ -614,6 +618,7 @@ mod tests {
     #[test]
     fn moss_drain_skips_when_qi_current_is_zero() {
         let mut app = make_app_with_neg_zone(-0.5);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         app.world_mut().spawn((
@@ -646,6 +651,7 @@ mod tests {
     #[test]
     fn moss_drain_accumulates_over_multiple_ticks() {
         let mut app = make_app_with_neg_zone(-0.5);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         let drain_per_tick = 0.2_f64;
@@ -1023,6 +1029,7 @@ mod tests {
         use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         let initial_spirit_qi = -0.5_f64;
         let mut app = make_app_with_neg_zone(initial_spirit_qi);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         let drain_per_tick = 0.5_f64;
@@ -1090,6 +1097,7 @@ mod tests {
         use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
         let initial_spirit_qi = -0.5_f64;
         let mut app = make_app_with_neg_zone(initial_spirit_qi);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         let drain_per_tick = 0.2_f64;
@@ -1229,6 +1237,7 @@ mod tests {
     fn moss_drain_stops_when_zone_spirit_qi_turns_positive() {
         // 第一 tick：zone 负 → drain 应发生
         let mut app = make_app_with_neg_zone(-0.5);
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, moss_drain_system);
 
         let drain_per_tick = 0.2_f64;
