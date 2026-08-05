@@ -1,0 +1,278 @@
+[[recipes]]
+id = "workbench.cultivation.anti_gu"
+category = "dugu_potion"
+display_name = "解蛊散"
+qi_cost = 1.0
+time_sec = 45
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "jie_gu_rui"
+count = 3
+
+[[recipes.materials]]
+template_id = "xiong_huang"
+count = 1
+
+[recipes.output]
+template_id = "anti_gu_powder"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_anti_gu"
+
+[[recipes]]
+id = "workbench.cultivation.bandage"
+category = "misc"
+display_name = "止血绷带"
+qi_cost = 0.0
+time_sec = 10
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 2
+
+[recipes.output]
+template_id = "bandage"
+count = 4
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.cultivation.calming_tea"
+category = "misc"
+display_name = "安神茶"
+qi_cost = 0.0
+time_sec = 30
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "an_shen_guo"
+count = 2
+
+[[recipes.materials]]
+template_id = "clay_pot"
+count = 1
+
+[recipes.output]
+template_id = "calming_tea"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.cultivation.huiyuan_soup"
+category = "misc"
+display_name = "回元芷煎汤"
+qi_cost = 0.0
+time_sec = 60
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "hui_yuan_zhi"
+count = 2
+
+[[recipes.materials]]
+template_id = "clay_pot"
+count = 1
+
+[[recipes.materials]]
+template_id = "spirit_charcoal"
+count = 1
+
+[recipes.output]
+template_id = "huiyuan_decoction"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.cultivation.meditation_mat"
+category = "misc"
+display_name = "蒲团"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "dried_grass"
+count = 6
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 2
+
+[recipes.output]
+template_id = "meditation_mat"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.cultivation.meridian_rub"
+category = "misc"
+display_name = "经脉图拓片"
+qi_cost = 1.0
+time_sec = 35
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "zhenfa_blank_array"
+count = 1
+
+[[recipes.materials]]
+template_id = "spirit_grass"
+count = 1
+
+[recipes.output]
+template_id = "meridian_rubbing"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_meridian_rub"
+
+[[recipes]]
+id = "workbench.cultivation.meridian_salve"
+category = "misc"
+display_name = "养经膏"
+qi_cost = 1.0
+time_sec = 50
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "yang_jing_tai"
+count = 2
+
+[[recipes.materials]]
+template_id = "rat_tail_oil"
+count = 1
+
+[[recipes.materials]]
+template_id = "herb_vial"
+count = 1
+
+[recipes.output]
+template_id = "meridian_salve"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_meridian_salve"
+
+[[recipes]]
+id = "workbench.cultivation.ningmai_prep"
+category = "misc"
+display_name = "凝脉散预制包"
+qi_cost = 0.0
+time_sec = 45
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ning_mai_cao"
+count = 3
+
+[[recipes.materials]]
+template_id = "powder_dan_sha"
+count = 1
+
+[[recipes.materials]]
+template_id = "herb_vial"
+count = 1
+
+[recipes.output]
+template_id = "ningmai_prep_kit"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_ningmai_prep"
+
+[[recipes]]
+id = "workbench.cultivation.qi_talisman"
+category = "misc"
+display_name = "灵气引导符"
+qi_cost = 2.0
+time_sec = 50
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "zhenfa_blank_array"
+count = 1
+
+[[recipes.materials]]
+template_id = "powder_dan_sha"
+count = 1
+
+[recipes.output]
+template_id = "qi_guide_talisman"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_qi_talisman"
+
+[[recipes]]
+id = "workbench.cultivation.qingzhuo"
+category = "dugu_potion"
+display_name = "清浊散"
+qi_cost = 1.0
+time_sec = 40
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "qing_zhuo_cao"
+count = 2
+
+[[recipes.materials]]
+template_id = "powder_dan_sha"
+count = 1
+
+[recipes.output]
+template_id = "qingzhuo_powder"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_qingzhuo"
+
+[[recipes]]
+id = "workbench.cultivation.spirit_rack"
+category = "misc"
+display_name = "灵石架"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 2
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[recipes.output]
+template_id = "spirit_stone_rack"
+count = 1
+
+[recipes.requirements]

@@ -1,0 +1,292 @@
+[[recipes]]
+id = "workbench.container.dead_drop"
+category = "container"
+display_name = "死信箱"
+qi_cost = 4.0
+time_sec = 120
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 6
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[[recipes.materials]]
+template_id = "zhenfa_blank_array"
+count = 1
+
+[recipes.output]
+template_id = "dead_drop_box"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_dead_drop"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "smuggler"
+
+[[recipes]]
+id = "workbench.container.herb_crate"
+category = "container"
+display_name = "灵草箱"
+qi_cost = 0.0
+time_sec = 45
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 4
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[recipes.output]
+template_id = "herb_crate"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.herb_pouch"
+category = "container"
+display_name = "灵草囊"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 2
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "herb_pouch"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.herb_vial"
+category = "container"
+display_name = "药瓶"
+qi_cost = 0.0
+time_sec = 35
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "stone_chunk"
+count = 2
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[recipes.output]
+template_id = "herb_vial"
+count = 2
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.moisture_guard"
+category = "container"
+display_name = "防潮包"
+qi_cost = 0.0
+time_sec = 25
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[[recipes.materials]]
+template_id = "hui_jin_tai"
+count = 2
+
+[recipes.output]
+template_id = "moisture_guard"
+count = 2
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.ore_sack"
+category = "container"
+display_name = "矿石袋"
+qi_cost = 0.0
+time_sec = 30
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 2
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 1
+
+[recipes.output]
+template_id = "ore_sack"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.projectile_bag"
+category = "container"
+display_name = "暗器袋"
+qi_cost = 0.0
+time_sec = 40
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 2
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "projectile_bag"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.seal_box"
+category = "container"
+display_name = "封灵匣"
+qi_cost = 3.0
+time_sec = 90
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 4
+
+[[recipes.materials]]
+template_id = "ling_tie"
+count = 1
+
+[recipes.output]
+template_id = "spirit_seal_box"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_seal_box"
+
+[[recipes]]
+id = "workbench.container.sealed_envelope"
+category = "container"
+display_name = "密封信封"
+qi_cost = 0.0
+time_sec = 20
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "rough_cloth"
+count = 1
+
+[[recipes.materials]]
+template_id = "rat_tail_oil"
+count = 1
+
+[recipes.output]
+template_id = "sealed_envelope"
+count = 3
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.sealed_vial"
+category = "container"
+display_name = "密封药瓶"
+qi_cost = 1.0
+time_sec = 25
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "herb_vial"
+count = 1
+
+[[recipes.materials]]
+template_id = "spider_silk_cord"
+count = 1
+
+[recipes.output]
+template_id = "sealed_vial"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_workbench_sealed_vial"
+
+[[recipes]]
+id = "workbench.container.trade_crate"
+category = "container"
+display_name = "货箱"
+qi_cost = 0.0
+time_sec = 65
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "wood_plank"
+count = 6
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[recipes.output]
+template_id = "trade_crate"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "workbench.container.water_skin"
+category = "container"
+display_name = "水囊"
+qi_cost = 0.0
+time_sec = 30
+unlock_sources = []
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "tanned_hide"
+count = 1
+
+[[recipes.materials]]
+template_id = "grass_rope"
+count = 1
+
+[recipes.output]
+template_id = "water_skin"
+count = 1
+
+[recipes.requirements]
