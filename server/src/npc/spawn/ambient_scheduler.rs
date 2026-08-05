@@ -4558,6 +4558,7 @@ mod tests {
 
     fn install_zone_registry(app: &mut App, danger_level: u8) {
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "test_zone".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -5454,6 +5455,7 @@ mod tests {
         ));
         install_layers(&mut app);
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "test_zone".to_string(),

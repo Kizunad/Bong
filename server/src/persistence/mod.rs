@@ -11384,6 +11384,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let zones = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -11813,6 +11814,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let zones = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -11862,6 +11864,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let existing_zones = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -12070,6 +12073,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let persisted = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -12349,6 +12353,7 @@ mod persistence_tests {
         app.insert_resource(CultivationClock::default());
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -13970,6 +13975,7 @@ mod persistence_tests {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     let registry = crate::world::zone::ZoneRegistry {
+                        spatial_revision: 0,
                         zones: vec![crate::world::zone::Zone {
                             name: format!("mixed_zone_{index}"),
                             dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -14218,6 +14224,7 @@ mod persistence_tests {
                     let barrier = Arc::clone(&barrier);
                     std::thread::spawn(move || {
                         let registry = crate::world::zone::ZoneRegistry {
+                            spatial_revision: 0,
                             zones: vec![crate::world::zone::Zone {
                                 name: format!("mixed_zone_{batch}_{index}"),
                                 dimension: crate::world::dimension::DimensionKind::Overworld,

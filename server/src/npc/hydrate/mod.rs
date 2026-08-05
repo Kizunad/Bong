@@ -1202,6 +1202,7 @@ mod tests {
 
     fn zone_registry() -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: DimensionKind::Overworld,
@@ -2422,6 +2423,7 @@ mod tests {
 
     fn multi_zone_registry() -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "zone_a".to_string(),

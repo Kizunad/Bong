@@ -570,6 +570,7 @@ mod tests {
     #[test]
     fn configured_zone_recipe_overrides_name_fallback() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "custom_audio_zone",
                 [0.0, 60.0, 0.0],
@@ -594,6 +595,7 @@ mod tests {
     #[test]
     fn zone_change_emits_ambient() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone(
                     "spawn",
@@ -659,6 +661,7 @@ mod tests {
     #[test]
     fn unknown_zone_uses_wilderness_not_spawn_recipe() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "spawn",
                 [0.0, 60.0, 0.0],
@@ -739,6 +742,7 @@ mod tests {
     #[test]
     fn tsy_dimension_triggers_ambient() {
         let mut app = setup_app(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "tsy_lingxu_01_deep",
                 [0.0, 60.0, 0.0],

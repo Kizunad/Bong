@@ -1191,6 +1191,7 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 0 });
         app.insert_resource(FaunaMigrationState::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("draining", 0.52, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.add_event::<ZoneDepletionEvent>();
@@ -1246,6 +1247,7 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 0 });
         app.insert_resource(FaunaMigrationState::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("draining", 0.06, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.add_event::<ZoneDepletionEvent>();
@@ -1288,6 +1290,7 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 0 });
         app.insert_resource(FaunaMigrationState::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("recovering", 0.04, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.add_event::<ZoneDepletionEvent>();
@@ -1338,6 +1341,7 @@ mod tests {
         app.insert_resource(CultivationClock { tick: 0 });
         app.insert_resource(FaunaMigrationState::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_source, zone("spawn", 0.90, 64.0)],
         });
         app.add_event::<ZoneDepletionEvent>();
@@ -1403,6 +1407,7 @@ mod tests {
     fn beast_horde_detect_emits_event_and_flow_field_prototype() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("source", 0.02, 0.0),
                 zone("adjacent", 0.60, 32.0),
@@ -1469,6 +1474,7 @@ mod tests {
     fn active_beast_horde_does_not_duplicate() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.insert_resource(BeastHordeState::default());
@@ -1507,6 +1513,7 @@ mod tests {
     fn flow_field_compute_system_builds_shared_vectors_toward_target_zone() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.insert_resource(FlowFields::default());
@@ -1562,6 +1569,7 @@ mod tests {
     fn horde_assignment_attaches_same_flow_field_to_beasts_only() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         let mut flow_fields = FlowFields::default();
@@ -1632,6 +1640,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1_200 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         let mut flow_fields = FlowFields::default();
@@ -1660,6 +1669,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         let mut flow_fields = FlowFields::default();
@@ -1710,6 +1720,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1_200 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         let mut flow_fields = FlowFields::default();
@@ -1737,6 +1748,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(CultivationClock { tick: 1_199 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         let mut flow_fields = FlowFields::default();
@@ -1788,6 +1800,7 @@ mod tests {
     fn multiple_hordes_keep_independent_flow_fields() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("source_a", 0.02, 0.0),
                 zone("source_b", 0.02, 32.0),
@@ -1820,6 +1833,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.add_systems(Update, migration_to_beast_tide_system);
@@ -1853,6 +1867,7 @@ mod tests {
     fn npc_also_flees() {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("source", 0.02, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.insert_resource(CultivationClock { tick: 77 });
@@ -1993,6 +2008,7 @@ mod tests {
         app.insert_resource(FaunaMigrationState::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("draining", 0.04, 0.0), zone("refuge", 0.90, 64.0)],
         });
         app.add_event::<ZoneDepletionEvent>();

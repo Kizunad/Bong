@@ -117,8 +117,12 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            init_clients,
-            attach_player_state_to_joined_clients.after(init_clients),
+            // fix-spec-1901-v2 §4.2 — 出生/重连位置提交进入统一移动 commit set；
+            // 灵田 post-transfer validator / completion 复验排在其后。
+            init_clients.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+            attach_player_state_to_joined_clients
+                .after(init_clients)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
             attach_inventory_to_joined_clients.after(attach_player_state_to_joined_clients),
             tick_player_persistence_timer,
             autosave_player_core_slices.after(tick_player_persistence_timer),

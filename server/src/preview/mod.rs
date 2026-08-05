@@ -12,8 +12,8 @@
 
 use valence::entity::{HeadYaw, Look};
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Entity, Event, EventReader, Position, Query, Update,
-    ViewDistance, With,
+    bevy_ecs, Added, App, Client, Entity, Event, EventReader, IntoSystemConfigs, Position, Query,
+    Update, ViewDistance, With,
 };
 
 pub mod decorations;
@@ -44,7 +44,10 @@ pub fn register(app: &mut App) {
         app.add_systems(
             Update,
             (
-                handle_preview_teleport,
+                // fix-spec-1901-v2 §4.2 — preview teleport 直接写 `Position`，
+                // 纳入统一移动 commit set。
+                handle_preview_teleport
+                    .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
                 boost_view_distance_for_preview,
                 decorations::spawn_decorations_once_system,
             ),

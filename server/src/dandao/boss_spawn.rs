@@ -937,6 +937,7 @@ mod boss_spawn_tests {
         let initial_spirit_qi = 0.1f64;
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1058,6 +1059,7 @@ mod boss_spawn_tests {
         // 余额，与生产冷启动时 ledger 尚未记过该 zone 的状态一致（balance() 缺省 0.0）。
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1141,6 +1143,7 @@ mod boss_spawn_tests {
         let initial_spirit_qi = -0.001f64;
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1257,6 +1260,7 @@ mod boss_spawn_tests {
         let initial_spirit_qi = 0.2f64;
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
         });
 
@@ -1536,6 +1540,7 @@ mod boss_spawn_tests {
         app.insert_resource(WorldQiAccount::default());
         // ZoneRegistry 存在，但注册的是另一个 zone，不含 BOSS_HOME_ZONE
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(0.5)]
                 .into_iter()
                 .map(|mut z| {
@@ -1640,7 +1645,10 @@ mod boss_spawn_tests {
         let mut zone = baolongwang_zone_fixture(initial_spirit_qi);
         zone.qi_equilibrium = 0.5;
         zone.qi_inflow_per_min = 0.1;
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: 0 });
         app.insert_resource(ZoneQiInflowClock::default());
         app.insert_resource(ActiveEventsResource::default());

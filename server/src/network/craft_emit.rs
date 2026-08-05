@@ -2000,6 +2000,7 @@ mod tests {
         let initial_sink_qi = 0.10;
         let expected_sink_qi = initial_sink_qi + 1.0 / QI_ZONE_UNIT_CAPACITY;
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "full_zone".to_string(),

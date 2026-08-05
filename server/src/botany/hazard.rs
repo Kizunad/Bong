@@ -705,6 +705,7 @@ mod tests {
 
     fn single_zone_registry(zone_name: &str) -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: zone_name.to_string(),
                 dimension: DimensionKind::Overworld,

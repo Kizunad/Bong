@@ -3,7 +3,9 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, DVec3, EventReader, Position, Query, Res, Update};
+use valence::prelude::{
+    App, Client, DVec3, EventReader, IntoSystemConfigs, Position, Query, Res, Update,
+};
 
 use crate::world::poi_novice::PoiNoviceRegistry;
 use crate::world::zone::{Zone, ZoneRegistry};
@@ -61,8 +63,11 @@ impl Command for TppoiCmd {
 }
 
 pub fn register(app: &mut App) {
-    app.add_command::<TppoiCmd>()
-        .add_systems(Update, handle_tppoi);
+    app.add_command::<TppoiCmd>().add_systems(
+        Update,
+        // fix-spec-1901-v2 §4.2 — 直接写 `Position`，纳入统一移动 commit set。
+        handle_tppoi.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+    );
 }
 
 pub fn handle_tppoi(
@@ -170,6 +175,7 @@ mod tests {
         app.add_event::<CommandResultEvent<TppoiCmd>>();
         app.add_systems(Update, handle_tppoi);
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: DAN_ZONG_ZONE.to_string(),
                 dimension: DimensionKind::Overworld,
