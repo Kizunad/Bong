@@ -44,8 +44,11 @@ use valence::prelude::{
 };
 
 use crate::combat::events::DeathEvent;
-use crate::cultivation::components::{Cultivation, Realm};
-use crate::cultivation::death_hooks::release_qi_amount_to_zone;
+use crate::cultivation::components::{
+    release_external_qi_to_zone, transfer_cultivation_to_external_owner, ActorQiIdentity,
+    ActorQiKind, Cultivation, Realm,
+};
+use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::drop::{build_fauna_item_instance, fauna_drop_seed, jittered_drop_pos};
 use crate::fauna::experience::{play_audio, spawn_particle};
 use crate::inventory::{
@@ -58,7 +61,7 @@ use crate::npc::loot::{daozhan_loot_for_tier, roll_loot, NpcLootTable};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
 use crate::npc::tsy_hostile::spawn_tsy_daoxiang_at;
-use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -709,6 +712,7 @@ type DaoZhangAmbushActorQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static Position,
         &'static mut DaoZhangState,
         &'static mut DaoZhangBehaviorBlackboard,
@@ -720,7 +724,12 @@ type DaoZhangAmbushActorQuery<'w, 's> = Query<
 type AmbushTargetPlayerQuery<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static Position, &'static mut Cultivation),
+    (
+        Entity,
+        &'static Position,
+        &'static LifeRecord,
+        &'static mut Cultivation,
+    ),
     (With<ClientMarker>, Without<NpcMarker>),
 >;
 
@@ -733,7 +742,7 @@ pub(crate) fn daozhan_ambush_action_system(
     mut audio_events: EventWriter<PlaySoundRecipeRequest>,
     mut reveal_events: EventWriter<DaoZhangRevealEvent>,
     mut qi_transfer_events: EventWriter<QiTransfer>,
-    mut drain_events: EventWriter<DaoZhangDrainAccumulate>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut commands: Commands,
     game_tick: Option<Res<GameTick>>,
 ) {
@@ -744,7 +753,7 @@ pub(crate) fn daozhan_ambush_action_system(
     let mut pending_drains: Vec<(Entity, u32)> = Vec::new();
 
     for (Actor(actor), mut action_state) in &mut actions {
-        let Ok((pos, mut state, bb, mut chain_opt)) = daozhan.get_mut(*actor) else {
+        let Ok((_entity, pos, mut state, bb, mut chain_opt)) = daozhan.get_mut(*actor) else {
             *action_state = ActionState::Failure;
             continue;
         };
@@ -784,13 +793,13 @@ pub(crate) fn daozhan_ambush_action_system(
                 // ⑤ 找最近玩家初始化连击链
                 let nearest_player = players
                     .iter()
-                    .min_by(|(_, pa, _), (_, pb, _)| {
+                    .min_by(|(_, pa, _, _), (_, pb, _, _)| {
                         npc_pos
                             .distance(pa.get())
                             .partial_cmp(&npc_pos.distance(pb.get()))
                             .unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .map(|(e, _, _)| e);
+                    .map(|(e, _, _, _)| e);
 
                 if let Some(target_player) = nearest_player {
                     // 附加连击链 Component 到 daozhan 实体
@@ -840,12 +849,7 @@ pub(crate) fn daozhan_ambush_action_system(
                 // 记录待处理的 drain（避免同一帧对 player 双重借用）
                 pending_drains.push((chain_state.target_player, actor.index()));
 
-                // 更新连击链（hits_done+1，推进 next_hit_at_tick）— 直接在借用上修改
-                chain_state.hits_done += 1;
-                chain_state.next_hit_at_tick =
-                    tick as u64 + DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS as u64;
-
-                // 注：daozhan_qi 通过 pending_drains 路径在循环外更新（分步处理避免双借）
+                // 真元事务成功后才推进连击计数和下一击时钟；失败路径保持本次 hit 可重试。
                 let _ = bb.daozhan_qi;
             }
 
@@ -859,59 +863,82 @@ pub(crate) fn daozhan_ambush_action_system(
         }
     }
 
-    // 执行 pending drain（守恒：player.qi_current -= drained，daozhan.daozhan_qi += drained）
+    // 执行 pending drain：player Cultivation → 道伥 blackboard，两端物理 owner 与 audit 同步提交。
     for (player_entity, actor_idx) in pending_drains {
-        let Ok((_, _, mut cult)) = players.get_mut(player_entity) else {
+        let daozhan_entity = daozhan
+            .iter_mut()
+            .find_map(|(entity, _, _, _, _)| (entity.index() == actor_idx).then_some(entity));
+        let Some(daozhan_entity) = daozhan_entity else {
             continue;
         };
 
-        // 计算实际可吸取量（不超过玩家当前真元，保证 player qi 不负数）
-        let available = cult.qi_current.max(0.0);
-        let drained = DAOZHAN_DRAIN_AMOUNT_PER_HIT.min(available);
-        if drained <= 0.0 {
-            continue;
-        }
+        let committed = {
+            let Ok((_, _, player_life_record, mut player_cultivation)) =
+                players.get_mut(player_entity)
+            else {
+                continue;
+            };
+            let Ok((_, _, _, mut daozhan_blackboard, _)) = daozhan.get_mut(daozhan_entity) else {
+                continue;
+            };
 
-        // 守恒步骤 ①：玩家减真元（不走 cultivation.qi_current+=X 无对应转移的私造路径）
-        cult.qi_current -= drained;
+            let drained = DAOZHAN_DRAIN_AMOUNT_PER_HIT.min(player_cultivation.qi_current.max(0.0));
+            if drained <= 0.0 {
+                true
+            } else {
+                let source = match ActorQiIdentity::from_life_record(
+                    player_life_record,
+                    ActorQiKind::Player,
+                ) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][fauna] daozhan drain missing canonical player identity"
+                        );
+                        continue;
+                    }
+                };
+                let target = match ActorQiIdentity::from_canonical_npc_id(
+                    crate::npc::brain::canonical_npc_id(daozhan_entity),
+                ) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][fauna] daozhan drain invalid target identity"
+                        );
+                        continue;
+                    }
+                };
+                match transfer_cultivation_to_external_owner(
+                    &mut player_cultivation,
+                    &mut daozhan_blackboard.daozhan_qi,
+                    &mut ledger,
+                    &source,
+                    &target,
+                    drained,
+                    QiTransferReason::DaoZhangDrain,
+                ) {
+                    Ok(outcome) => {
+                        for transfer in outcome.transfers {
+                            qi_transfer_events.send(transfer);
+                        }
+                        true
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "[bong][fauna] daozhan drain failed closed");
+                        false
+                    }
+                }
+            }
+        };
 
-        // 守恒步骤 ②：emit DaoZhangDrainAccumulate（由 daozhan_drain_accumulate_system 同步到 daozhan_qi）
-        // 此 event 在 daozhan 主查询结束后的独立系统中处理，避免 ECS 双重可变借用。
-        drain_events.send(DaoZhangDrainAccumulate {
-            daozhan_idx: actor_idx,
-            amount: drained,
-        });
-
-        // 守恒步骤 ③：emit QiTransfer ledger 事件（audit trail）
-        let from = QiAccountId::player(player_entity.index().to_string());
-        let to = QiAccountId::npc(format!("daozhan:{actor_idx}"));
-        if let Ok(transfer) = QiTransfer::new(from, to, drained, QiTransferReason::DaoZhangDrain) {
-            qi_transfer_events.send(transfer);
-        }
-    }
-}
-
-type DaoZhangBBQuery<'w, 's> = Query<
-    'w,
-    's,
-    (Entity, &'static mut DaoZhangBehaviorBlackboard),
-    (With<NpcMarker>, Without<ClientMarker>),
->;
-
-/// 守恒系统：消费 `DaoZhangDrainAccumulate` 事件，将 `amount` 累积到对应道伥的
-/// `DaoZhangBehaviorBlackboard.daozhan_qi` 字段（保证死亡时 `release_qi_amount_to_zone` 全额归还）。
-///
-/// 独立系统避免与 `daozhan_ambush_action_system` 的双重可变借用冲突。
-pub(crate) fn daozhan_drain_accumulate_system(
-    mut drain_events: valence::prelude::EventReader<DaoZhangDrainAccumulate>,
-    mut daozhan: DaoZhangBBQuery<'_, '_>,
-) {
-    for event in drain_events.read() {
-        // 按 entity raw index 精确定位道伥 blackboard
-        for (entity, mut bb) in daozhan.iter_mut() {
-            if entity.index() == event.daozhan_idx {
-                bb.daozhan_qi += event.amount;
-                break;
+        if committed {
+            if let Ok((_, _, _, _, Some(mut chain_state))) = daozhan.get_mut(daozhan_entity) {
+                chain_state.hits_done = chain_state.hits_done.saturating_add(1);
+                chain_state.next_hit_at_tick =
+                    tick as u64 + DAOZHAN_AMBUSH_HIT_INTERVAL_TICKS as u64;
             }
         }
     }
@@ -923,7 +950,7 @@ pub(crate) fn _qi_account_id_str(id: &QiAccountId) -> &str {
     &id.id
 }
 
-/// P2 辅助事件：记录需累积到道伥 daozhan_qi 的量（避免 ECS 双重借用）。
+/// P2 辅助事件：保留既有 wire / 测试契约；生产伏击路径直接走 typed owner transaction。
 #[derive(Debug, Clone, valence::prelude::Event)]
 pub struct DaoZhangDrainAccumulate {
     /// 道伥 entity raw index。
@@ -934,10 +961,10 @@ pub struct DaoZhangDrainAccumulate {
 
 // ── P2: Bevy 注册 ─────────────────────────────────────────────────────────────
 
-/// Bevy 注册：P2 Ambush 评分器 + 行动 system + 守恒累积 system（供 fauna::mod.rs 调用）。
+/// Bevy 注册：P2 Ambush 评分器 + 行动 system；生产吸取在行动 system 内同步提交两端 owner 与 audit。
 pub fn register_p2(app: &mut App) {
     use big_brain::prelude::BigBrainSet;
-    use valence::prelude::{IntoSystemConfigs, PreUpdate, Update};
+    use valence::prelude::{IntoSystemConfigs, PreUpdate};
 
     app.add_event::<DaoZhangDrainAccumulate>();
     app.add_systems(
@@ -947,11 +974,6 @@ pub fn register_p2(app: &mut App) {
     app.add_systems(
         PreUpdate,
         daozhan_ambush_action_system.in_set(BigBrainSet::Actions),
-    );
-    // 守恒：在 Update 阶段处理 DaoZhangDrainAccumulate，将吸取量累积到 daozhan_qi
-    app.add_systems(
-        Update,
-        daozhan_drain_accumulate_system.after(daozhan_ambush_action_system),
     );
 }
 
@@ -1144,50 +1166,66 @@ pub(crate) fn daozhan_condense_spawn_system(
 
 // ── P3: 死亡 qi 全额归还系统 ─────────────────────────────────────────────────
 
-/// 道伥死亡时将 qi_current 残余 + 累积 daozhan_qi 全额归还 zone。
+/// 道伥死亡时将累积 `daozhan_qi` 全额归还 zone。
 ///
 /// ## 守恒红线
 /// - 全额归还（非 1%）：道伥死亡即阴质瓦解，积蓄真元即时散逸回灵气环境。
-/// - 走 `release_qi_amount_to_zone`（正典 helper），不私造 zone.spirit_qi += X 路径。
-/// - `release_amount = daozhan_qi（累积吸取）`（qi_current 是 NPC 战斗 hp 字段，非 qi 账户）。
+/// - blackboard 是外部物理 owner；通过 typed external-owner transaction 原子扣减，不能伪造
+///   玩家 `LifeRecord`，也不能只 emit `QiTransfer`。
+/// - durable NPC identity 使用 canonical `npc_<index>v<generation>`，不使用 `Entity` Debug。
 pub(crate) fn daozhan_death_qi_release_system(
     mut deaths: EventReader<DeathEvent>,
-    daozhan_q: Query<
+    mut daozhan_q: Query<
         (
             &Position,
             Option<&CurrentDimension>,
-            &DaoZhangBehaviorBlackboard,
+            &mut DaoZhangBehaviorBlackboard,
         ),
         With<NpcMarker>,
     >,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: ResMut<bevy_ecs::event::Events<QiTransfer>>,
 ) {
-    let Some(zones) = zones.as_deref_mut() else {
-        for _ in deaths.read() {}
-        return;
-    };
-
     for death in deaths.read() {
-        let Ok((position, dimension, blackboard)) = daozhan_q.get(death.target) else {
+        let Ok((position, dimension, mut blackboard)) = daozhan_q.get_mut(death.target) else {
             continue;
         };
-        // 全额归还：daozhan_qi（累积吸取量，包括天道凝结初始量）
         let release_amount = blackboard.daozhan_qi;
         if release_amount <= 0.0 {
             continue;
         }
-        // 走 release_qi_amount_to_zone 正典 helper（全额，非1%）
-        release_qi_amount_to_zone(
-            death.target,
+        let zone = match (dimension, zones.as_deref_mut()) {
+            (Some(dimension), Some(zones)) => {
+                let zone_name = zones
+                    .find_zone(dimension.0, position.0)
+                    .map(|zone| zone.name.clone());
+                zone_name.and_then(|zone_name| zones.find_zone_mut(zone_name.as_str()))
+            }
+            _ => None,
+        };
+        let outcome = release_external_qi_to_zone(
+            &mut blackboard.daozhan_qi,
+            QiAccountId::npc(crate::npc::brain::canonical_npc_id(death.target)),
+            zone,
+            &mut ledger,
             release_amount,
-            Some(position),
-            dimension,
-            None, // DaoZhang 无 LifeRecord
-            Some(zones),
-            Some(&mut *qi_transfers),
-            "daozhan_death",
+            QiTransferReason::ReleaseToZone,
         );
+        match outcome {
+            Ok(outcome) => {
+                for transfer in outcome.transfers {
+                    qi_transfers.send(transfer);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    target = ?death.target,
+                    "[bong][daozhan] death qi release failed closed"
+                );
+            }
+        }
     }
 }
 
@@ -2473,6 +2511,230 @@ mod tests {
         assert_eq!(
             score, 0.0,
             "无玩家时 DaoZhangAmbushScorer 应=0，实际={score}"
+        );
+    }
+
+    fn ambush_action_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app.add_event::<VfxEventRequest>();
+        app.add_event::<PlaySoundRecipeRequest>();
+        app.add_event::<DaoZhangRevealEvent>();
+        app.add_event::<QiTransfer>();
+        app.add_systems(Update, daozhan_ambush_action_system);
+        app
+    }
+
+    fn spawn_executing_ambush(
+        app: &mut App,
+        player_qi: f64,
+        player_identity: Option<&str>,
+        daozhan_qi: f64,
+    ) -> (Entity, Entity) {
+        let mut player = app.world_mut().spawn((
+            ClientMarker,
+            Position::new([0.0, 64.0, 3.0]),
+            Cultivation {
+                qi_current: player_qi,
+                qi_max: 100.0,
+                ..Default::default()
+            },
+        ));
+        if let Some(character_id) = player_identity {
+            player.insert(LifeRecord::new(character_id));
+        }
+        let player = player.id();
+
+        let pos = DVec3::new(0.0, 64.0, 0.0);
+        let mut blackboard = DaoZhangBehaviorBlackboard::new("spawn", pos, None);
+        blackboard.daozhan_qi = daozhan_qi;
+        let daozhan = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position::new([pos.x, pos.y, pos.z]),
+                DaoZhangState::Ambush,
+                blackboard,
+                DaoZhangAmbushChainState {
+                    hits_done: 0,
+                    target_player: player,
+                    next_hit_at_tick: 0,
+                },
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Actor(daozhan), ActionState::Executing, DaoZhangAmbushAction));
+        (player, daozhan)
+    }
+
+    #[test]
+    fn ambush_drain_commits_both_owners_and_canonical_audit_together() {
+        let mut app = ambush_action_test_app();
+        let (player, daozhan) = spawn_executing_ambush(&mut app, 20.0, Some("ambush_target"), 5.0);
+
+        app.update();
+
+        let player_qi = app.world().get::<Cultivation>(player).unwrap().qi_current;
+        let daozhan_qi = app
+            .world()
+            .get::<DaoZhangBehaviorBlackboard>(daozhan)
+            .unwrap()
+            .daozhan_qi;
+        assert_eq!(player_qi, 12.0, "伏击命中应从玩家物理 owner 扣除 8 真元");
+        assert_eq!(daozhan_qi, 13.0, "伏击命中应向道伥物理 owner 增加同量真元");
+        assert_eq!(
+            player_qi + daozhan_qi,
+            25.0,
+            "伏击事务前后两个物理 owner 的真元总和必须守恒"
+        );
+
+        let ledger = app.world().resource::<WorldQiAccount>();
+        let transfers: Vec<_> = ledger
+            .transfers()
+            .iter()
+            .filter(|transfer| transfer.reason == QiTransferReason::DaoZhangDrain)
+            .collect();
+        assert_eq!(transfers.len(), 1, "一次命中只能产生一条已提交 audit");
+        assert_eq!(transfers[0].from, QiAccountId::player("ambush_target"));
+        assert_eq!(
+            transfers[0].to,
+            QiAccountId::npc(crate::npc::brain::canonical_npc_id(daozhan))
+        );
+        assert_eq!(transfers[0].amount, 8.0);
+        let chain = app
+            .world()
+            .get::<DaoZhangAmbushChainState>(daozhan)
+            .unwrap();
+        assert_eq!(
+            chain.hits_done, 1,
+            "连击计数只能在两端 owner 与 audit 同步提交后推进"
+        );
+    }
+
+    #[test]
+    fn ambush_drain_with_zero_player_qi_is_a_noop() {
+        let mut app = ambush_action_test_app();
+        let (player, daozhan) = spawn_executing_ambush(&mut app, 0.0, Some("empty_target"), 5.0);
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            0.0
+        );
+        assert_eq!(
+            app.world()
+                .get::<DaoZhangBehaviorBlackboard>(daozhan)
+                .unwrap()
+                .daozhan_qi,
+            5.0
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .iter()
+                .all(|transfer| transfer.reason != QiTransferReason::DaoZhangDrain),
+            "没有真元可吸取时不得伪造 audit"
+        );
+    }
+
+    #[test]
+    fn ambush_drain_without_canonical_player_identity_fails_closed() {
+        for identity in [None, Some("   ")] {
+            let mut app = ambush_action_test_app();
+            let (player, daozhan) = spawn_executing_ambush(&mut app, 20.0, identity, 5.0);
+
+            app.update();
+
+            assert_eq!(
+                app.world().get::<Cultivation>(player).unwrap().qi_current,
+                20.0,
+                "缺失或空白 LifeRecord 时不得用 Entity id 代替玩家 owner"
+            );
+            assert_eq!(
+                app.world()
+                    .get::<DaoZhangBehaviorBlackboard>(daozhan)
+                    .unwrap()
+                    .daozhan_qi,
+                5.0,
+                "身份验证失败时目标 owner 不得变化"
+            );
+            assert!(
+                app.world()
+                    .resource::<WorldQiAccount>()
+                    .transfers()
+                    .iter()
+                    .all(|transfer| transfer.reason != QiTransferReason::DaoZhangDrain),
+                "身份验证失败时不得追加 audit"
+            );
+        }
+    }
+
+    #[test]
+    fn ambush_drain_missing_target_entity_fails_closed() {
+        let mut app = ambush_action_test_app();
+        let (player, daozhan) =
+            spawn_executing_ambush(&mut app, 20.0, Some("despawned_target"), 5.0);
+        app.world_mut().despawn(player);
+
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .get::<DaoZhangBehaviorBlackboard>(daozhan)
+                .unwrap()
+                .daozhan_qi,
+            5.0,
+            "目标已不存在时道伥 owner 不得变化"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .iter()
+                .all(|transfer| transfer.reason != QiTransferReason::DaoZhangDrain),
+            "目标已不存在时不得追加 audit"
+        );
+    }
+
+    #[test]
+    fn ambush_drain_unrepresentable_target_is_fully_atomic() {
+        let mut app = ambush_action_test_app();
+        let target_qi = f64::MAX / 2.0;
+        let (player, daozhan) =
+            spawn_executing_ambush(&mut app, 20.0, Some("ulp_guard_target"), target_qi);
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Cultivation>(player).unwrap().qi_current,
+            20.0,
+            "目标无法表示 +8 时 source debit 必须回滚"
+        );
+        assert_eq!(
+            app.world()
+                .get::<DaoZhangBehaviorBlackboard>(daozhan)
+                .unwrap()
+                .daozhan_qi,
+            target_qi,
+            "目标无法表示 +8 时 target credit 必须回滚"
+        );
+        assert!(
+            app.world()
+                .resource::<WorldQiAccount>()
+                .transfers()
+                .iter()
+                .all(|transfer| transfer.reason != QiTransferReason::DaoZhangDrain),
+            "失败事务不得留下成功 audit"
+        );
+        assert_eq!(
+            app.world()
+                .get::<DaoZhangAmbushChainState>(daozhan)
+                .unwrap()
+                .hits_done,
+            0,
+            "目标无法表示 credit 时本次连击机会必须保留以便重试"
         );
     }
 
