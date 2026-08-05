@@ -2,10 +2,9 @@
 
 > 计划名：`plan-bughunt-worldgen-integrity-determinism-v1`
 >
-> 状态：`docs/plans-skeleton/` 骨架；本文只声明已登记为 skeleton，不追溯声称创建时已完成既有 promotion gate 的历史前置核验。尚未进入 active plan，不参与 `/consume-plan`。下一生命周期转换只能是 skeleton → active；转 active 前须将开放问题收口为 `§N.1 决议`，并重新核对 promotion gate 所需的仓库流程文件证据；证据不可读时保持 `BLOCKED`。
+> 状态：`docs/plans-skeleton/` 候选骨架，尚未满足仓库要求的 plan workflow contract，因此未注册到 master ownership matrix，不参与 `/consume-plan`，生命周期保持 `BLOCKED`。只有在所需 workflow contract 已存在且可读取、并完成注册核验后，才能进入 skeleton → active；转 active 前须将开放问题收口为 `§N.1 决议`，并重新核对 promotion gate 证据。
 >
-> Registry note：本文件进入仓库 registry 的事实是 `docs/plans-skeleton/` 路径与 master §6.12 ownership row；既有 promotion gate 的创建前核验不在本文件中伪造为已完成证据。后续 skeleton → active promotion 必须重新核对当时提交树中实际存在且可读取的仓库流程文件；若所需文件缺失或证据不可读，promotion 保持 `BLOCKED`，不得以本段或外部/会话文档替代。
->
+> Registry note：本文件目前只是待注册候选；由于所需 plan workflow contract 尚未作为可读取仓库证据满足，master §6.12 不包含本文件，任何 source issue/implementation owner/active promotion 都保持 `BLOCKED`。恢复 contract 后，必须先完成独立 skeleton 的注册核验，再按 promotion gate 进入 active；不得以本段或外部/会话文档替代。
 > 范围：worldgen 产物从 blueprint/profile、布局与结构导出，到 raster/manifest、预览与 server runtime consumer 的完整性、确定性和边界合同。
 >
 > 明确不拥有：`#1623`、`#1627`、`#1853`。这三个未解决的 structure-manifest runtime wiring issue 由仍在进行的 `docs/plan-bughunt-structure-manifest-loot-consumer-v1.md` 作为当前 implementation owner；该计划的证据记录 worldgen 顶层 `corpse_mounds` / `ascension_pits` 字段被 Rust `RasterManifest` 丢弃，本文只保留 cross-reference 和跨计划集成验收边界，不宣称其已归档或已完成。
@@ -328,17 +327,17 @@ P0-P3 当前预期是 worldgen/server 逻辑；需确认 console/regen/preview �
 
 ## Skeleton → Active promotion gate
 
-本文件已经是 master §6.12 登记的 Worldgen skeleton，不再经过 draft → skeleton 转换。后续 promotion 只能将其从 `docs/plans-skeleton/` 移到 `docs/plan-*.md`；在此之前：
+本文件目前不在 master §6.12 ownership matrix 中，且不执行 draft → skeleton → active 的后续生命周期转换；只有在所需 plan workflow contract 恢复并完成独立 skeleton 注册后，才可按 promotion gate 进入 active。在此之前：
 
-1. 重新核对当前提交树实际存在且可读取的仓库流程文件，并保留对应读取证据；若 promotion 所需文件缺失或不可读，promotion 保持 `BLOCKED`，不得以外部或会话文档替代。
-2. 为 §1–§15 开放问题补齐只读调查、`§N.1 决议` 和 `file:line + plan section` 双锚点；#1766 先完成 compositor 全宽修复，再以像素回归锁定该修复，不重新打开 geometry redesign。
-3. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
-4. 确认 `#1623/#1627/#1853` 仍由 active structure-manifest plan 负责，本文仅在 P4 做 cross-reference；该 runtime wiring 未完成前必须记录 `BLOCKED`。
-5. active promotion 时更新阶段状态表和当前 `file:line` 锚点；`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。promotion 前本 skeleton 不由 `/consume-plan` 消费，source issue 也不得仅凭 skeleton 登记就宣称已修复。
+1. 保持当前候选为 `BLOCKED`；不得由本文件创建 source issue/implementation owner，也不得由 `/consume-plan` 消费。
+2. 注册恢复后，重新核对当时提交树实际存在且可读取的仓库流程文件，并保留对应读取证据；若 promotion 所需文件缺失或不可读，继续保持 `BLOCKED`，不得以外部或会话文档替代。
+3. 为 §1–§15 开放问题补齐只读调查、`§N.1 决议` 和 `file:line + plan section` 双锚点；这些是注册后的 promotion criteria，不是 P3 implementation deliverables。
+4. 锁定 P0–P4 的最终 owner、共享类型、server consumer 和测试入口；implementation owner 固定为 `worldgen`，未决项不得进入依赖它的实现阶段。
+5. 注册后的 active promotion 只核验上述生命周期/决策/owner 门禁；`#1766` 全宽修复与像素回归仍属于 active P3/PR-4，不能作为 skeleton → active 的前置条件。`## Finish Evidence` 仅在全部阶段验收完成、归档前填写。
 
 ## §10 实施工作流
 
-本计划 scope 覆盖 P0–P4，按单计划多 PR 串行消费；前一 PR 合入并完成验收后，才进入下一 PR。skeleton 阶段不执行以下实施步骤，亦不以本节替代 `docs/CLAUDE.md` §五的 `§N.1 决议` 门。
+本计划 scope 覆盖 P0–P4，按单计划多 PR 串行消费；前一 PR 合入并完成验收后，才进入下一 PR。候选未注册且处于 `BLOCKED` 时不执行以下实施步骤，亦不以本节替代 `docs/CLAUDE.md` §五的 `§N.1 决议` 门。
 
 ### §10.1 资产与布局变更的三轮打磨
 
