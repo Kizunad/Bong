@@ -17,14 +17,14 @@
 - **进料**：全部触真元的域（cultivation、combat 各流派、alchemy、dandao、lingtian、fauna、npc、zhenfa、tsy、yidao、bonecoin）。
 - **出料**：live actor 真元由 `Cultivation` 持有；signed 环境灵压由 `Zone` 持有；无其他物理 owner 的稳定池由 `WorldQiAccount` 持有；`QiTransfer` / ledger audit 是同一事务提交后的可观察轨迹。
 - **共享类型**：只扩 `qi_physics::ledger` 与 `Cultivation` 的受控事务 API，不创建第二套 ledger；测试引用 `DEFAULT_SPIRIT_QI_TOTAL` / `WorldQiBudget`，不写死历史占位值。
-- **跨仓库契约**：本轨 P0-P3 是纯 server 内部重构；P4 bot e2e 通过既有 dev telemetry 校验，不新增 agent/client wire 形状。
+- **跨仓库契约**：本轨 P0-P3 是纯 server 内部重构；P4 bot e2e 通过既有 dev telemetry 校验，不新增 agent/client wire 形状。**本轨不定义、不拥有任何 TypeBox schema 内容**：cast/skill wire 的 TypeBox 内容语义归 R9（`plan-refactor-cast-av-contract-v1`），repo-wide schema generation/transport machinery 归 R6（`plan-refactor-wire-s2c-v1`），跨轨 wire 共同交付按总纲 §4.1 裁决原子切换（见「裁决对齐」）。
 - **worldview 锚点**：`worldview.md §二 L30-L50` 灵压环境；`worldview.md §十 L870-L880` 零和资源。
 - **qi_physics 锚点**：`qi_physics::ledger::{WorldQiAccount, QiTransfer}`、`qi_physics::release::qi_release_to_zone`、`qi_physics::constants::QI_ZONE_UNIT_CAPACITY`；不新增旁路公式。
 
 ## 阶段
 
-- ⏳ P0 设计收口 + 吸收清单验真：完成全部候选分类；冻结 owner 模型、类型化事务入口、signed-zone、缩容、持久化与稳定 overflow 语义；用饱和单测锁失败原子性。
-- ⬜ P1 类型封装落地：`Cultivation.qi_current` / `qi_max` / `qi_max_frozen` 与 `Zone.spirit_qi` 收私有；既有调用按受控 API 平移；all-target 编译扫清全部生产裸写。
+- ✅ 2026-08-02 P0 设计收口 + 吸收清单验真 + 契约底座落地：完成全部候选分类；冻结 owner 模型、类型化事务入口、signed-zone、缩容、持久化与稳定 overflow 语义；用饱和单测锁失败原子性。`server/src/cultivation/components/qi_flow.rs` 已交付 `set_for_init` / `gain_from_zone` / `release_to_zone` / `transfer_to` / `resize_qi_max_and_release_excess` 类型化事务与只读投影；`server/src/qi_physics/ledger.rs` 交付 `reject_audit_only_qi_reason` 与 `ALL_CONCRETE_QI_TRANSFER_REASONS`；join 水合交付 `CultivationBundleTutorialHandoff`（转世时清空）+ `CultivationAttachPending` 退避重试。P0 契约条款见「P0 冻结契约」与「§7.1 决议」。
+- ⬜ P1 类型封装落地：`Cultivation.qi_current` / `qi_max` / `qi_max_frozen` 与 `Zone.spirit_qi` 收私有；既有调用按受控 API 平移；all-target 编译扫清全部生产裸写（`qi_flow.rs` 类型化 API 已落地，P1 迁移余下 `components.rs` / `alchemy/pill.rs` / `zhenfa/mod.rs` / `fauna/bone_coin.rs` 等直写点）。
 - ⬜ P2 修复批次 A（cultivation + 消耗品 + lingtian + botany）：regen、服丹、plot qi、经脉淬炼影子账、attrition、骨币面值、qi_max 缩容、植物生长/采收全部归账。
 - ⬜ P3 修复批次 B（combat + fauna/npc + world/tsy）：overflow、drain、日程回气、暗器 imprint、locust、负域针、dormant、骨煞、TSY filter、医道 cap leak；离屏死亡统一真实释放。
 - ⬜ P4 守恒审计常绿 + 归档：`assert_conservation` 进入 bot e2e 场景收尾；吸收项归档；补齐 `## Finish Evidence` 后迁入 `docs/finished_plans/`。
@@ -56,6 +56,16 @@
 - `QiTransfer` event / `push_transfer_audit` 永远不能替代真实 owner debit/credit；只在真实状态成功提交后投影。
 - outcome 的 `transfers` 顺序必须与 ledger audit 实际提交顺序一致，不承诺按 target kind 排序。
 
+### 4. 生产接线与枚举/边界测试契约（P0 已落地）
+
+以下条款把 P0 已交付实现的契约固化，防止回归；引用均为当前 head 落点。
+
+- **reason 全枚举分类**：`server/src/qi_physics/ledger.rs:392` 的 `ALL_CONCRETE_QI_TRANSFER_REASONS`（36 项）必须被测试遍历，逐项断言 `QiTransferReason::disposition` 分类正确（audit-only 全部拒绝、balance-mutating 全部放行）；`server/src/cultivation/components/qi_flow.rs:1054` 已遍历该常量。
+- **零值与零容量边界**：`gain_from_zone` / `release_to_zone` / `transfer_to` 对 `requested == 0.0` 必须返回真 no-op（零 debit/credit/audit）；`resize_qi_max_and_release_excess` 对 `new_max == 0.0` 必须原子释放全部 current 且守恒成立。tests 覆盖这些正零边界（`server/src/cultivation/components/qi_flow.rs` 零值/零容量用例）。
+- **生产接线可达性**：类型化事务 API 不得只被单测调用；P1 私有化时必须把 `server/src/cultivation/components.rs:679-688`（`recover_current_qi`）、`server/src/alchemy/pill.rs:187`、`server/src/zhenfa/mod.rs:1868`、`server/src/fauna/bone_coin.rs:207` 等真实 gameplay 生产者迁移到类型化事务链，禁止保留绕过新边界的直写路径（此条在 P1 强制化前保持追踪）。
+- **join 水合身份锚**：`server/src/cultivation/mod.rs` 的 bundle hydrate 必须校验 `life_record` 身份锚；`CultivationBundleTutorialHandoff`（`server/src/cultivation/mod.rs:575`）只携带被接受角色的 `accepted_bundle`，`reincarnation` 转世分支置 `None`（`server/src/cultivation/mod.rs:1089-1093`），`server/src/world/spawn_tutorial.rs:252-255` 消费时不得拿到旧角色 tutorial；缺失 / 冲突 / 畸形锚全部 fail closed（三态均有测试）。
+- **pending 恢复退避**：`CultivationAttachPending`（`server/src/cultivation/mod.rs:570`）必须携带 `next_retry_tick` 退避（当前 +20 tick），join 系统只在到期后重试（`server/src/cultivation/mod.rs:596-600`），禁止每 tick 重复 SQLite open/schema 与告警日志；恢复成功后移除 marker（`server/src/cultivation/mod.rs:1088`）。
+
 ## P2/P3 吸收清单（以 2026-07-27 origin/main 验真为准）
 
 ### P2 吸收
@@ -84,6 +94,19 @@
 
 - 隔离：`carrier-resonance-seal-mint`、`fullpower-interrupt-refund-mint` 有历史远端 claim/ref 责任边界，本轨不抢占；API 冻结后由原任务迁移。
 - 排除：`baolongwang-bossdrain-zone-shadow` 已由 #1296 闭环；`heartbeat-pseudo-vein-qi-mint` 生产 injection/settlement 已修，陈旧 skeleton 不作为待实施缺陷，但 heartbeat 的长期 zone mirror 由本轨 P0/P1 基础事务清理。
+- 已由后续独立骨架吸收（P0 不再重复实施，只跟踪接线）：`modifier-effect-consumer-completion`（#1313）、`scatter-bead-ledger-account-cleanup`（#1318）、`duxu-juebi-quota-marker-lifecycle`（#1316）等已在总纲 §6.16a 登记 successor；本轨 P1 私有化时仅需保证这些骨架的接线点走类型化事务链，不重开实施。
+
+## 裁决对齐（PR #1902，2026-08-05）
+
+总纲 `plan-refactor-master-v1.md` §3 Wave 表是全部轨道 inter-track ordering/start/cutover claims 的**唯一权威**（SOLE authority），§4.1 是 cast wire 唯一上位裁决。本轨（R5）据此对齐：
+
+1. **跨轨顺序唯一权威**：本轨的波次/前置/放行只引用总纲 §3 Wave 表，不自行新增跨轨前置。R5 P1（字段收私有全仓大爆破）仍按 §3 在在飞 PR 队列清空窗口单独合入。
+2. **Schema authority（TypeBox source 为 repo-wide source of truth）**：R5 不声明、不定义、不镜像任何 TypeBox schema 内容；R5 全部为 server 内部 qi 事务，无 wire 形状变更。cast/skill wire 的 TypeBox 内容语义归 R9，generation/transport machinery 归 R6；本轨不得复制或重新拥有对方 artifact。
+3. **Domain content vs machinery**：R9 负责 author/review cast domain 的 TypeBox content 与 domain semantics/reducer；R6 负责 repo-wide schema generation/transport machinery 及其生成/受约束 artifact。R5 只消费两者冻结后的 API，不定义任何跨端 wire 契约。
+4. **Atomic production activation**：R5 内部任何 channel/字段迁移（如 qi 字段私有化）在同一 merge unit 内完成 producer/consumer/旧路径移除；跨轨 wire 迁移服从 §3/§4.1 原子切换裁决，本轨不拆分 merge unit。
+5. **Contract-first 可早合**：R5 的 contract-first 工作（类型化事务 API 与 pin tests）不等待 R6/R9 production machinery；同样，这些 contract-first artifact 保持 declared/unwired/test-only，不切换 production traffic 或宣称 live reachable（生产接线按 P1 迁移）。
+
+本轨与 master 总纲同步，master 优先；若 master §3/§4.1 后续 amendment，本轨相应段落随之更新。
 
 ## 文件所有权与边界
 
@@ -109,7 +132,7 @@
 5. 持久化 restore 是否产生 transfer。
 6. zone missing/full overflow 的可恢复落点。
 
-全部已在下节收口。原表保留以备追溯，**实施时以下述 §7.1 决议为准**。
+全部已在下节收口（P0 落地，P1 实施时以下述 §7.1 决议为准）。原表保留以备追溯。
 
 ## §7.1 决议（pre-P0 收口，2026-07-27）
 
