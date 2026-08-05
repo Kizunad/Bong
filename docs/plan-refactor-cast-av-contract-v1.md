@@ -421,7 +421,7 @@ WAVE-2 PRODUCTION:
 
 ### P1 — cast contract ⬜
 
-- 完成 `C-01` 与 `C-04` 的 **contract slice**、`D-01..D-06,D-08..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。七个 `scripts/bot/scenarios/` 文件/anchor 与本阶段 contract/reducer work 同步首次提交，引用冻结的 `D-*` 但保持 inert，不宣称 production reachable。
+- 完成 `C-01` 与 `C-04` 的 **contract slice**、`D-01..D-06,D-08..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。cast_sync 的 source/target/phase、STOP/INTERRUPT 权威事件与 `SkillAvBinding` fail-fast artifacts 首次提交必须同步其完整 pin suite（正例覆盖每个 phase/discriminant，反例覆盖 required field 缺失及 invalid/unknown source/target/phase），不得延期到后续 P4/P5 或仅以 bot/e2e 补测。七个 `scripts/bot/scenarios/` 文件/anchor 与本阶段 contract/reducer work 同步首次提交，引用冻结的 `D-*` 但保持 inert，不宣称 production reachable。
 - 冻结并建立唯一 unified registration lookup（skill entries + item-cast entries）、accepted-key lookup/consumer interface 与 inert entry ledger（`C-13` 的 contract slice），但不让该 lookup 或任何 producer production-reachable，也不创建 test-only 平行 registry。`C-04` 的 connection/tracking-epoch BEGIN producer 与 real-producer live slice 留到 Wave 2 atomic activation；R6 据冻结的 domain content 生成 `C-02/C-03` mirrors，本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。`D-07` 依赖 P3 的 `C-13` full registration migration，留在 P3 gate。
 - PUC-01 只建立 Wave 2 activation 所需的完整 registration ledger：逐项列出全部 accepted producer keys、对应完整五件套、terminal producer 与唯一 consumer；该 ledger 不授权 subset live path。严禁在 duplicate owner 未清、完整 registration/assets 未齐或 unique consumer 未安装时启用任何 real producer。
 
@@ -435,7 +435,7 @@ WAVE-2 PRODUCTION:
 
 - 补齐全量 registry-only definitions、item-cast entries 与缺失五件套；完成 `C-13,C-14` 和 `C-INV-06,C-INV-07`。
 - 仅在总纲 §3 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam、PR #1902 production conditions、P2 duplicate-owner cleanup 与 `D-06` live mapping 全部满足后，在同一 `ATOMIC-ACTIVATION` merge unit 上完成 unified lookup 的全量 init_registry ledger 所列 68 resolver + 3 dedicated 与 item-cast entries、definitions/AV bindings/assets、unique AV consumer、所有 real cast/terminal producers、transport/bridge/router、四 consumers 与旧 receiver removal。删除手写 canonical `TECHNIQUE_DEFINITIONS/TECHNIQUE_IDS`，projection 保留只读派生 API；不得先切 subset 或另建第二 owner/registry。
-- 完成 `D-07,D-10,D-17..D-20,D-22,D-25,D-26`；`cast_registry_reachability`、`cast_av_uniqueness`、`cast_registration_projection` 三个 bot scenario 在同一 atomic activation 中随全量真实 registration/assets 接线并验收；icon placeholder 归零，Iris present/absent 两路均验收。
+- 完成 `D-07,D-10,D-17..D-20,D-22,D-25,D-26`；`cast_registry_reachability`、`cast_av_uniqueness`、`cast_registration_projection` 三个 bot scenario 在同一 atomic activation 中随全量真实 registration/assets 接线并验收。`cast_registry_reachability` 必须从 official entry 走真实 server producer → transport → bridge/router → `CastSyncHandler`/唯一 AV consumer 全链路，逐招断言权威 CASTING 与 cast_sync 的 source/target/phase；`cast_stop_semantics` 的打断路径必须断言 INTERRUPT（而非 STOP）由真实 producer 穿越同一链路，逃跑/断线才断言 STOP，禁止用手工构造 payload 或仅单元注入 INTERRUPT 代替 production evidence。icon placeholder 归零，Iris present/absent 两路均验收。釆用同一 production merge unit 完成 producer、generated/protobuf mirror、Rust conversion、Java bridge/router、client consumer 与旧路径移除；未闭合前旧路径必须完整保留，不得长期双发。
 - 所有新增 animation/VFX/icon 资产执行 3 轮打磨；icon 走 `/gen-image item`，不能运行时标 blocker 但不得把 P3 标完成。未满足 Iris runtime capability gate 的 shader/VFX 只交付 capability gate 与 vanilla/no-op fallback，并列入 skipped，不得宣称 shader effect 已完成。其余未完成项在 activation 前保持完整旧路径。
 
 ### P4 — 派生验收、人工回归与归档 ⬜
