@@ -164,7 +164,8 @@ T-07  A(active=A) --REJECT(max=B)[R-04]--> XA(active=A,feedback=B)
       --PLAY(A)[R-10]--> XA(owner=A) --COMPLETE(A)[R-08]--> X(feedback=B)
 
 T-08  X --STOP(max)[R-12]--> X(av_tombstone=max)
-      --INTERRUPT(max)[R-08]--> X(gameplay tombstone+outcome=max)
+      --INTERRUPT(max)[R-14]--> X(av_tombstone=max)
+      the exhaustion-causing reject already owns identity max; the late terminal is rejected and creates no gameplay tombstone/outcome.
 
 T-09  A(active=7,owner=7,AH=7,TH=0) --CASTING(8)[R-06]-->
       A(active=8,AH=8,TH=7,gameplay_tombstone=7,av_tombstone=7)
@@ -175,9 +176,10 @@ T-10  A(active=8) --COMPLETE(8)[R-08]--> O(TH=8,gameplay_tombstone=8,outcome=COM
       --COMPLETE(8)[R-08]--> O(ACC_IDEM,no side effects)
 
 T-11  BEGIN(S,generation=1,active=8)[R-01] --COMPLETE(S,generation=1,8)[R-08]--> O
-      --BEGIN(S,generation=2,active=8)[R-01]--> A(generation=2,active=8)
-      --COMPLETE(S,generation=1,8)[R-14]--> A(generation=2,active=8)
-      old-generation terminal cannot match the generation-2 active despite reusing session and instance IDs.
+      --BEGIN(S,generation=2,active=8)[R-01]--> R(generation=2,reserved=8)
+      --COMPLETE(S,generation=1,8)[R-14]--> R(generation=2,reserved=8)
+      --COMPLETE(S,generation=2,8)[R-08]--> O
+      old-generation terminal cannot match the generation-2 reserved identity despite reusing session and instance IDs.
 
 T-12  A(active=1,owner=1) --STOP(1)[R-11]--> A(active=1,av_tombstone=1,av_floor=1)
       --STOP(2..257)[R-12]--> A(active=1,av_tombstones=2..257,av_floor=1)
@@ -218,7 +220,7 @@ T-13  A(active=7) --COMPLETE(8)[R-08]-->
 | sword_path | 5 | 5 | 玩家可达 | 已有独立事件 AV；P3 纳入统一 binding |
 | npc-named skills | 3 | 3 | **Player+NPC 双受众**：既在玩家默认 definitions 中，也由 NPC AI 注册调用 | P3 用 `audience=Both` 显式化；玩家侧仍须五件套，NPC caster 使用专属粒子/audio 且明确无玩家骨架动画 |
 | morph | 1 | 1 | 玩家可达 | 已有 AV；P3 纳入统一 binding |
-| **合计** | **68** | **46** | **22 条 registry-only** | 22 = woliu 虚蚀 5 + yidao 5 + dugu v2 5 + baomai 4 + dandao 3 |
+| **合计** | **68** | **46** | **22 条 registry-only** | 22 = woliu 虚蚀 5 + yidao 5 + dugu v2 5 + baomai 4 + dandao 3；逐行 checksum：registry `68`，definitions 命中 `46`，且 `68 = 46 + 22`；另有 definition-only `3`，故 `TECHNIQUE_DEFINITIONS/TECHNIQUE_IDS = 46 + 3 = 49`。 |
 
 另有 definition-only 三条 `movement.dash`、`shield_block`、`body.guangbo_ticao`，它们走专用 intent/system 而非 `SkillRegistry`。P1 不创建或审计任何 registration 形状；P3 在完整 definition/AV 可验后首次落地 `cast_mode=Dedicated`，并与全部 resolver 一起原子切换到统一 registration，最终启动审计断言每条 player definition 恰有一个 resolver 或 dedicated handler。
 
@@ -399,7 +401,7 @@ bot 场景主题保留为：`cast_registry_reachability`、`cast_stop_semantics`
 
 ### P1 — cast contract + 原子 production cutover ⬜
 
-1. **P1 contract-first**：完成 `C-01`、`C-04`、`D-01..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。R6 据冻结的 domain content 生成 `C-02/C-03` mirrors；本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。
+1. **P1 contract-first**：完成 `C-01`、`C-04`、`D-01..D-06,D-08..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。R6 据冻结的 domain content 生成 `C-02/C-03` mirrors；本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。`D-07` 依赖 P3 的 `C-13` registration artifact，留在 P3 gate。
 2. **P1 atomic activation**：在总纲 §3 Wave 1/2 与 PR #1902 adjudication 的 production conditions 满足后，与 R6 组成同一 `ATOMIC-ACTIVATION` merge unit，完成 `C-02/C-03/C-05..C-11` 的 live handoff；四 arms 必须同一安全 merge unit 可达，通过 `D-10,D-11,D-23,D-26`。若不能同一 merge unit，旧 producer/receiver 原样保留。
 3. 删除 `CastSyncHandler.sourceFor()` 与旧 cast `bong:vfx_event` receiver 只能作为上述 atomic activation 的同一交付物；不得保留 dual-form compatibility，也不得先删 receiver 再安装 consumers。
 
@@ -462,7 +464,7 @@ bot 场景主题保留为：`cast_registry_reachability`、`cast_stop_semantics`
 
 ### 9.1 PR 顺序与文件纪律
 
-1. PR-1 contract-first：R9 交付 `C-01,C-04` + `D-01..D-09`，只落 canonical domain content、reducer/producer tests 与未启用声明；R6 可据冻结 content 生成 `C-02,C-03` inert mirrors，但双方均不得宣称 production reachable。
+1. PR-1 contract-first：R9 交付 `C-01,C-04` + `D-01..D-06,D-08..D-09`，只落 canonical domain content、reducer/producer tests 与未启用声明；R6 可据冻结 content 生成 `C-02,C-03` inert mirrors，但双方均不得宣称 production reachable。`D-07` 随 P3 `C-13` registration migration 交付。
 2. PR-2 atomic activation：仅在总纲 §3 Wave 1/2 production conditions 满足后，由 R6/R9 在同一 `ATOMIC-ACTIVATION` merge unit 交付 `C-02,C-03,C-05..C-11` + `D-10,D-11,D-23,D-26`；新 producer、bridge/router、四 concrete consumers 与旧 receiver removal 同时生效。若平台无法形成同一 merge unit，本步骤不得切 producer或删除 receiver，完整旧路径继续保留。
 3. PR-3 P2 single-owner/terminal/meditation：`C-12` + `D-12..D-16,D-24`。
 4. PR-4 P3 registration/assets/release：`C-13,C-14` + `D-07,D-17..D-20,D-22,D-25`。
