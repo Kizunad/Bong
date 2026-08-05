@@ -10,9 +10,7 @@ use crate::network::audio_event_emit::{AudioRecipient, PlaySoundRecipeRequest};
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::patrol::NpcPatrol;
 use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::ledger::{
-    qi_flow_overflow_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
-};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::zone::ZoneRegistry;
@@ -147,7 +145,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
         None => {
             // No patrol component — route to overflow so qi is not lost.
             let from = npc_qi_account(caster);
-            let to = qi_flow_overflow_account();
+            let to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
             route_spent_qi_to_overflow(world, from, to, amount);
             return;
         }
@@ -177,7 +175,10 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                         transfers.push(transfer);
                     }
                     if outcome.overflow > QI_EPSILON {
-                        let overflow_to = qi_flow_overflow_account();
+                        let overflow_to = QiAccountId::overflow(format!(
+                            "npc_skill_overflow:{}",
+                            caster.to_bits()
+                        ));
                         if let Ok(t) = QiTransfer::new(
                             from.clone(),
                             overflow_to,
@@ -195,7 +196,8 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
                         "[bong][npc_skill] invalid qi release for {:?}; route to overflow",
                         caster
                     );
-                    let overflow_to = qi_flow_overflow_account();
+                    let overflow_to =
+                        QiAccountId::overflow(format!("npc_skill_overflow:{}", caster.to_bits()));
                     if let Ok(t) = QiTransfer::new(
                         from.clone(),
                         overflow_to,
@@ -209,7 +211,8 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
             }
         } else {
             // Zone not found in registry — overflow.
-            let overflow_to = qi_flow_overflow_account();
+            let overflow_to =
+                QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
             if let Ok(t) = QiTransfer::new(
                 from.clone(),
                 overflow_to,
@@ -221,7 +224,7 @@ fn release_npc_qi_to_zone(world: &mut bevy_ecs::world::World, caster: Entity, am
             }
         }
     } else {
-        let overflow_to = qi_flow_overflow_account();
+        let overflow_to = QiAccountId::overflow(format!("npc_skill_no_zone:{}", caster.to_bits()));
         if let Ok(t) = QiTransfer::new(
             from.clone(),
             overflow_to,
@@ -1017,7 +1020,8 @@ mod tests {
         let mut world = world_with_zone_registry();
         insert_qi_ledger(&mut world);
         let entity = world.spawn(make_cultivation(Realm::Condense, 50.0)).id();
-        let overflow_account = qi_flow_overflow_account();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
 
         npc_buff_speed(&mut world, entity, 0, None);
 
@@ -1062,7 +1066,8 @@ mod tests {
                 NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account = qi_flow_overflow_account();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_overflow:{}", entity.to_bits()));
         let before = summarize_world_qi(&mut world);
 
         npc_heal_basic(&mut world, entity, 0, None);
@@ -1104,7 +1109,8 @@ mod tests {
                 NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account = qi_flow_overflow_account();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_overflow:{}", entity.to_bits()));
         let before_total = world.get::<Cultivation>(entity).unwrap().qi_current
             + world
                 .resource::<ZoneRegistry>()
@@ -1153,7 +1159,8 @@ mod tests {
                 NpcPatrol::new("missing_zone", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account = qi_flow_overflow_account();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
 
         npc_buff_speed(&mut world, entity, 0, None);
 
@@ -1173,7 +1180,8 @@ mod tests {
                 NpcPatrol::new("spawn", DVec3::new(14.0, 66.0, 14.0)),
             ))
             .id();
-        let overflow_account = qi_flow_overflow_account();
+        let overflow_account =
+            QiAccountId::overflow(format!("npc_skill_no_zone:{}", entity.to_bits()));
 
         npc_buff_speed(&mut world, entity, 0, None);
 

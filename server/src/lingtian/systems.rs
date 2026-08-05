@@ -23,6 +23,7 @@ use valence::prelude::{
 
 use crate::alchemy::residue::{consume_one_residue, inventory_has_usable_residue};
 use crate::botany::{PlantId, PlantKindRegistry};
+use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::Cultivation;
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
@@ -31,7 +32,7 @@ use crate::inventory::{
 };
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
-use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
+use crate::npc::spawn::NpcMarker;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::{
     constants::QI_NPC_ABSORB_FLOOR, QiAccountId, QiTransfer, QiTransferReason,
@@ -871,12 +872,17 @@ pub fn emit_harvest_inventory_snapshots(
 }
 
 pub fn release_lingtian_plot_owner_on_npc_death(
-    mut settlements: EventReader<NpcTerminalSettlementSucceeded>,
+    mut deaths: EventReader<DeathEvent>,
+    dead_npcs: Query<(), With<NpcMarker>>,
     mut plots: Query<&mut LingtianPlot>,
 ) {
-    for settlement in settlements.read() {
+    for death in deaths.read() {
+        if dead_npcs.get(death.target).is_err() {
+            continue;
+        }
+
         for mut plot in &mut plots {
-            if plot.owner == Some(settlement.entity) {
+            if plot.owner == Some(death.target) {
                 plot.owner = None;
             }
         }
@@ -2013,30 +2019,10 @@ mod tests {
         assert!(equipped_main_hand_hoe(&inv).is_none());
     }
 
-    fn terminal_settlement(entity: Entity) -> NpcTerminalSettlementSucceeded {
-        let life_record = LifeRecord::new(format!("npc:lingtian-test:{}", entity.to_bits()));
-        NpcTerminalSettlementSucceeded {
-            entity,
-            at_tick: 1,
-            cause: crate::npc::lifecycle::NpcDeathReason::Combat
-                .as_str()
-                .to_string(),
-            reason: crate::npc::lifecycle::NpcDeathReason::Combat,
-            attacker: None,
-            attacker_player_id: None,
-            authorize_loot: true,
-            actor_qi_identity: crate::cultivation::components::ActorQiIdentity::from_life_record(
-                &life_record,
-                crate::cultivation::components::ActorQiKind::Npc,
-            )
-            .expect("lingtian terminal fixture must have canonical identity"),
-        }
-    }
-
     #[test]
     fn release_lingtian_plot_owner_on_npc_death_clears_npc_owner() {
         let mut app = App::new();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
+        app.add_event::<DeathEvent>();
         app.add_systems(Update, release_lingtian_plot_owner_on_npc_death);
 
         let owner = app.world_mut().spawn(NpcMarker).id();
@@ -2045,26 +2031,37 @@ mod tests {
             .spawn(LingtianPlot::new(BlockPos::new(1, 64, 1), Some(owner)))
             .id();
 
-        app.world_mut().send_event(terminal_settlement(owner));
+        app.world_mut().send_event(DeathEvent {
+            target: owner,
+            cause: "test".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
         app.update();
 
         assert_eq!(app.world().get::<LingtianPlot>(plot).unwrap().owner, None);
     }
 
     #[test]
-    fn release_lingtian_plot_owner_ignores_unrelated_settlement() {
+    fn release_lingtian_plot_owner_ignores_player_death() {
         let mut app = App::new();
-        app.add_event::<NpcTerminalSettlementSucceeded>();
+        app.add_event::<DeathEvent>();
         app.add_systems(Update, release_lingtian_plot_owner_on_npc_death);
 
-        let owner = app.world_mut().spawn(NpcMarker).id();
-        let other_npc = app.world_mut().spawn(NpcMarker).id();
+        let owner = app.world_mut().spawn_empty().id();
         let plot = app
             .world_mut()
             .spawn(LingtianPlot::new(BlockPos::new(1, 64, 1), Some(owner)))
             .id();
 
-        app.world_mut().send_event(terminal_settlement(other_npc));
+        app.world_mut().send_event(DeathEvent {
+            target: owner,
+            cause: "test".into(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
         app.update();
 
         assert_eq!(

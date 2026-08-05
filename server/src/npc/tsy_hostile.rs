@@ -466,10 +466,8 @@ pub fn register(app: &mut App) {
                     .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
                 emit_fuya_aura_vfx,
                 emit_fuya_pressure_hum_audio_system,
-                stop_fuya_pressure_hum_audio_on_death_system
-                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
-                handle_npc_death_drop
-                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+                stop_fuya_pressure_hum_audio_on_death_system,
+                handle_npc_death_drop,
             ),
         );
 }
@@ -1135,20 +1133,17 @@ pub fn emit_fuya_pressure_hum_audio_system(
 }
 
 pub fn stop_fuya_pressure_hum_audio_on_death_system(
-    mut deaths: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
-    fuya_auras: Query<&Position, (With<FuyaAura>, With<NpcMarker>)>,
+    mut deaths: EventReader<crate::combat::events::DeathEvent>,
+    fuya_auras: Query<&Position, With<FuyaAura>>,
     mut audio_events: EventWriter<StopSoundRecipeRequest>,
 ) {
     for death in deaths.read() {
-        if !death.authorize_loot {
-            continue;
-        }
-        let Ok(position) = fuya_auras.get(death.entity) else {
+        let Ok(position) = fuya_auras.get(death.target) else {
             continue;
         };
         let pos = position.get();
         audio_events.send(StopSoundRecipeRequest {
-            instance_id: fuya_pressure_audio_instance_id(death.entity),
+            instance_id: fuya_pressure_audio_instance_id(death.target),
             fade_out_ticks: 20,
             recipient: AudioRecipient::Radius {
                 origin: pos,
@@ -1767,7 +1762,7 @@ fn fuya_enrage_action_system(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_npc_death_drop(
     mut commands: Commands,
-    mut events: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
+    mut events: EventReader<crate::combat::events::DeathEvent>,
     npcs: Query<
         (
             &NpcArchetype,
@@ -1810,11 +1805,8 @@ pub fn handle_npc_death_drop(
     };
 
     for event in events.read() {
-        if !event.authorize_loot {
-            continue;
-        }
         let Ok((archetype, pos, hostile, sentinel, daoxiang_origin, issued)) =
-            npcs.get(event.entity)
+            npcs.get(event.target)
         else {
             continue;
         };
@@ -1842,7 +1834,7 @@ pub fn handle_npc_death_drop(
             source_class: source_class_for_family(family_id),
             guarding_container_kind: guarding_kind,
         };
-        let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.entity.index());
+        let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.target.index());
         let items = roll_drop_entry(entry, &ctx, item_registry, relic_pool, allocator, seed);
         for (idx, item) in items.into_iter().enumerate() {
             let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
@@ -1860,7 +1852,7 @@ pub fn handle_npc_death_drop(
                 },
             );
         }
-        commands.entity(event.entity).insert(TsyNpcDropIssued);
+        commands.entity(event.target).insert(TsyNpcDropIssued);
     }
 }
 

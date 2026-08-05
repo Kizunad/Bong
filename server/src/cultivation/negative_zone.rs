@@ -15,7 +15,7 @@ use super::death_hooks::{
     release_qi_amount_to_zone, CultivationDeathCause, CultivationDeathTrigger,
 };
 use crate::cultivation::life_record::LifeRecord;
-use crate::qi_physics::{QiTransfer, WorldQiAccount};
+use crate::qi_physics::QiTransfer;
 
 pub const SIPHON_FACTOR: f64 = 0.001;
 
@@ -31,7 +31,6 @@ pub fn siphon_amount(zone_qi: f64, qi_max: f64) -> f64 {
 #[allow(clippy::type_complexity)]
 pub fn negative_zone_siphon_tick(
     zones: Option<ResMut<ZoneRegistry>>,
-    mut ledger: ResMut<WorldQiAccount>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut players: Query<(
@@ -60,56 +59,41 @@ pub fn negative_zone_siphon_tick(
             continue;
         }
         if cultivation.qi_current >= siphon {
-            let outcome = release_qi_amount_to_zone(
-                &mut cultivation,
+            cultivation.qi_current -= siphon;
+            release_qi_amount_to_zone(
+                entity,
                 siphon,
                 Some(pos),
                 current_dimension,
                 life_record,
                 Some(&mut *zones),
-                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 "negative_zone_siphon",
             );
-            if let Err(error) = outcome {
-                tracing::warn!(
-                    ?error,
-                    "[bong][cultivation] negative-zone qi release failed closed"
-                );
-            }
             continue;
         }
         // qi 吸干，转抽血肉：本 plan 不持 Health Component，发事件由战斗 plan 消费。
         // 作为最低保障：qi_current 归零，并若尚无命脉收口，直接报死亡触发。
         let drained = cultivation.qi_current.max(0.0);
-        match release_qi_amount_to_zone(
-            &mut cultivation,
+        cultivation.qi_current = 0.0;
+        release_qi_amount_to_zone(
+            entity,
             drained,
             Some(pos),
             current_dimension,
             life_record,
             Some(&mut *zones),
-            &mut ledger,
             qi_transfers.as_deref_mut(),
             "negative_zone_siphon",
-        ) {
-            Ok(_) => {
-                deaths.send(CultivationDeathTrigger {
-                    entity,
-                    cause: CultivationDeathCause::NegativeZoneDrain,
-                    context: serde_json::json!({
-                        "zone": zone_name,
-                        "siphon": siphon,
-                    }),
-                });
-            }
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "[bong][cultivation] negative-zone qi release failed closed"
-                );
-            }
-        }
+        );
+        deaths.send(CultivationDeathTrigger {
+            entity,
+            cause: CultivationDeathCause::NegativeZoneDrain,
+            context: serde_json::json!({
+                "zone": zone_name,
+                "siphon": siphon,
+            }),
+        });
     }
 }
 
@@ -142,7 +126,6 @@ mod tests {
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
         app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, negative_zone_siphon_tick);
 
         let player = app
@@ -179,7 +162,6 @@ mod tests {
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
         app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, negative_zone_siphon_tick);
 
         let player = app
@@ -216,7 +198,6 @@ mod tests {
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = -0.5;
         app.insert_resource(zones);
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, negative_zone_siphon_tick);
         let player = app
             .world_mut()

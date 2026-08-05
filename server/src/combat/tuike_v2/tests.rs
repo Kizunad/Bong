@@ -8,13 +8,11 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, QiColor, Realm,
 };
-use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::inventory::{
     InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, SlotContents, EQUIP_SLOT_CHEST,
 };
-use crate::qi_physics::WorldQiAccount;
 
 use super::events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinDecayedToAshEvent, FalseSkinSheddedEvent,
@@ -591,7 +589,6 @@ fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
-    app.insert_resource(WorldQiAccount::default());
     app.add_systems(Update, false_skin_maintenance_tick);
     let entity = app
         .world_mut()
@@ -1586,7 +1583,6 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
     zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
     app.insert_resource(zones);
 
-    app.insert_resource(WorldQiAccount::default());
     app.add_systems(Update, false_skin_maintenance_tick);
 
     // pitfall (b): 必须插入 CurrentDimension；Position 在 spawn zone bounds 内（-128~128, 64~80, -128~128）
@@ -1605,7 +1601,6 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
             Position::new([0.0_f64, 66.0, 0.0]),
             CurrentDimension(DimensionKind::Overworld),
             PracticeLog::default(),
-            LifeRecord::new(crate::player::state::canonical_player_id("Tuike")),
         ))
         .id();
 
@@ -1679,7 +1674,6 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
     zones.find_zone_mut("spawn").unwrap().spirit_qi = 0.0;
     app.insert_resource(zones);
 
-    app.insert_resource(WorldQiAccount::default());
     app.add_systems(Update, false_skin_maintenance_tick);
 
     // 实体有 Position 但无 CurrentDimension → release_qi_amount_to_zone 走 overflow 分支
@@ -1698,7 +1692,6 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
             Position::new([0.0_f64, 66.0, 0.0]),
             // 故意不插入 CurrentDimension
             PracticeLog::default(),
-            LifeRecord::new(crate::player::state::canonical_player_id("TuikeOverflow")),
         ))
         .id();
 

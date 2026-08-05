@@ -1,14 +1,13 @@
 use valence::prelude::{
     bevy_ecs, Client, Commands, DVec3, Entity, Event, EventReader, EventWriter, Position, Query,
-    ResMut, With, Without,
+    ResMut, With,
 };
 use valence::protocol::encode::WritePacket;
 use valence::protocol::packets::play::DamageTiltS2c;
 use valence::protocol::VarInt;
 
-use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation};
+use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::{CultivationDeathCause, CultivationDeathTrigger};
-use crate::cultivation::life_record::LifeRecord;
 use crate::fauna::rat_phase::MeditatingState;
 use crate::network::agent_bridge::{
     payload_type_label, serialize_server_data_payload, SERVER_DATA_CHANNEL,
@@ -19,9 +18,8 @@ use crate::network::audio_event_emit::{
 use crate::network::gameplay_vfx;
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::{log_payload_build_error, send_server_data_payload};
-use crate::npc::spawn::NpcMarker;
 use crate::npc::spawn_rat::RatBlackboard;
-use crate::qi_physics::ledger::{QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::ledger::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::schema::server_data::{
     CombatEventFloaterEntryV1, CombatEventFloaterV1, ServerDataPayloadV1, ServerDataV1,
 };
@@ -46,8 +44,8 @@ pub struct RatBiteEvent {
 #[allow(clippy::too_many_arguments)]
 pub fn apply_rat_bite_qi_drain(
     mut bites: EventReader<RatBiteEvent>,
-    mut cultivators: Query<(&mut Cultivation, &LifeRecord), Without<NpcMarker>>,
-    mut rats: Query<(&mut RatBlackboard, &LifeRecord), With<NpcMarker>>,
+    mut cultivators: Query<&mut Cultivation>,
+    mut rats: Query<&mut RatBlackboard>,
     mut deaths: EventWriter<CultivationDeathTrigger>,
     mut qi_transfers: EventWriter<QiTransfer>,
     mut ledger: Option<ResMut<WorldQiAccount>>,
@@ -60,75 +58,56 @@ pub fn apply_rat_bite_qi_drain(
         if bite.qi_steal == 0 {
             continue;
         }
-        let Ok((mut cultivation, player_life_record)) = cultivators.get_mut(bite.target) else {
+        let Ok(mut cultivation) = cultivators.get_mut(bite.target) else {
             continue;
         };
-        if cultivation.qi_current() <= 0.0 {
+        if cultivation.qi_current <= 0.0 {
             continue;
         }
-        let Ok((mut rat, rat_life_record)) = rats.get_mut(bite.rat) else {
+        let Ok(mut rat) = rats.get_mut(bite.rat) else {
             continue;
-        };
-        let Some(ledger) = ledger.as_deref_mut() else {
-            tracing::debug!(
-                "[bong][combat] rat bite qi ledger unavailable; preserving source owner {:?}",
-                bite.target
-            );
-            continue;
-        };
-        let source =
-            match ActorQiIdentity::from_life_record(player_life_record, ActorQiKind::Player) {
-                Ok(identity) => identity,
-                Err(error) => {
-                    tracing::debug!(
-                        "[bong][combat] rat bite source identity invalid for {:?}: {error}",
-                        bite.target
-                    );
-                    continue;
-                }
-            };
-        let target = match ActorQiIdentity::from_life_record(rat_life_record, ActorQiKind::Npc) {
-            Ok(identity) => identity,
-            Err(error) => {
-                tracing::debug!(
-                    "[bong][combat] rat bite target identity invalid for {:?}: {error}",
-                    bite.rat
-                );
-                continue;
-            }
         };
 
-        let before = cultivation.qi_current();
-        let requested = f64::from(bite.qi_steal).min(before);
-        let outcome = match cultivation.transfer_to_external_actor(
-            &target,
-            ledger,
-            &source,
-            requested,
-            QiTransferReason::RatBiteDrain,
-        ) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                tracing::debug!(
-                    "[bong][combat] rat bite qi transaction failed for rat {:?}, target {:?}: {error}",
-                    bite.rat,
-                    bite.target
-                );
-                continue;
-            }
-        };
-        let drained = outcome.source_debited;
+        let before = cultivation.qi_current;
+        cultivation.qi_current =
+            (cultivation.qi_current - f64::from(bite.qi_steal)).clamp(0.0, cultivation.qi_max);
+        let drained = (before - cultivation.qi_current).max(0.0);
         if drained > 0.0 {
-            for transfer in outcome.transfers {
+            let from = QiAccountId::player(bite.target.index().to_string());
+            let rat_account = QiAccountId::npc(format!("rat:{}", bite.rat.index()));
+            if let Ok(transfer) = QiTransfer::new(
+                from,
+                rat_account.clone(),
+                drained,
+                QiTransferReason::RatBiteDrain,
+            ) {
+                match ledger.as_deref_mut() {
+                    Some(account) => {
+                        credit_rat_bite_drain(account, &rat_account, drained, transfer.clone());
+                    }
+                    None => {
+                        tracing::debug!(
+                            "[bong][combat] rat bite qi ledger unavailable, skipping credit for {:?}",
+                            rat_account
+                        );
+                    }
+                }
                 qi_transfers.send(transfer);
             }
-            rat.drained_qi = ledger.balance(&target.account());
+            // §8.1 决议 #1 point 4 —— `drained_qi` 从"独立累加"改为镜像 `npc:rat:<id>`
+            // 账户余额（照抄 `fauna::mimic_spider` 的 `blackboard.drained_qi =
+            // ledger.balance(&spider_account)` 镜像模式）；`ledger` 缺席时保留原地累加
+            // fallback，无 ledger 资源的 headless 测试行为不退化。
+            rat.drained_qi = ledger
+                .as_deref()
+                .map(|account| account.balance(&rat_account))
+                .unwrap_or(rat.drained_qi + drained);
             send_bite_feedback(&mut clients, bite.target, drained as f32);
             if let Ok(position) = positions.get(bite.target) {
                 emit_rat_bite_nip_av(position.get(), &mut vfx_events, &mut audio_events);
             }
         }
-        if before > 0.0 && cultivation.qi_current() <= f64::EPSILON {
+        if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
             deaths.send(CultivationDeathTrigger {
                 entity: bite.target,
                 cause: CultivationDeathCause::SwarmQiDrain,
@@ -139,6 +118,32 @@ pub fn apply_rat_bite_qi_drain(
             });
         }
     }
+}
+
+/// §8.1 决议 #1 point 1 —— 鼠咬吸取的真元落入 `npc:rat:<id>` 账户，逻辑照抄
+/// `npc::skull_fiend::credit_skull_fiend_drain`：`set_balance` 累加余额后
+/// `push_transfer_audit` 留下审计轨迹（`transfer` 复用 caller 已构造好的
+/// `QiTransfer`，不重复构造）。`set_balance` 失败（理论上不会发生，`amount` 恒为
+/// 非负有限值）时只记 debug 日志、跳过审计追加，不 panic。
+fn credit_rat_bite_drain(
+    account: &mut WorldQiAccount,
+    rat_account: &QiAccountId,
+    amount: f64,
+    transfer: QiTransfer,
+) {
+    let balance = account.balance(rat_account);
+    if account
+        .set_balance(rat_account.clone(), balance + amount)
+        .is_err()
+    {
+        tracing::debug!(
+            "[bong][combat] rat bite qi ledger credit failed for {:?}, amount={}",
+            rat_account,
+            amount
+        );
+        return;
+    }
+    account.push_transfer_audit(transfer);
 }
 
 /// plan-ambient-threat-v1 P2 —— 咬中瞬间的粒子 + SFX（全复用既有原语：`SpawnParticle`
@@ -238,7 +243,6 @@ mod tests {
     use valence::prelude::{App, ChunkPos, Events, Update};
 
     use crate::cultivation::components::{Cultivation, Realm};
-    use crate::qi_physics::ledger::QiAccountId;
 
     fn cultivation(qi_current: f64) -> Cultivation {
         Cultivation {
@@ -260,33 +264,15 @@ mod tests {
         app.add_event::<QiTransfer>();
         app.add_event::<VfxEventRequest>();
         app.add_event::<PlaySoundRecipeRequest>();
-        app.insert_resource(WorldQiAccount::default());
         app.add_systems(Update, apply_rat_bite_qi_drain);
         app
-    }
-
-    fn spawn_rat(app: &mut App) -> Entity {
-        let rat = app.world_mut().spawn((rat_blackboard(), NpcMarker)).id();
-        app.world_mut()
-            .entity_mut(rat)
-            .insert(LifeRecord::new(crate::npc::brain::canonical_npc_id(rat)));
-        rat
-    }
-
-    fn spawn_target(app: &mut App, qi_current: f64) -> Entity {
-        app.world_mut()
-            .spawn((
-                cultivation(qi_current),
-                LifeRecord::new(crate::player::state::canonical_player_id("RatBiteTarget")),
-            ))
-            .id()
     }
 
     #[test]
     fn rat_bite_drains_only_qi_no_hp_damage() {
         let mut app = rat_bite_app();
-        let rat = spawn_rat(&mut app);
-        let target = spawn_target(&mut app, 5.0);
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
             rat,
@@ -312,8 +298,8 @@ mod tests {
     fn rat_bite_records_qi_transfer_to_rat_account() {
         let mut app = rat_bite_app();
         app.insert_resource(WorldQiAccount::default());
-        let rat = spawn_rat(&mut app);
-        let target = spawn_target(&mut app, 5.0);
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
             rat,
@@ -325,7 +311,7 @@ mod tests {
         let rat_bb = app.world().get::<RatBlackboard>(rat).unwrap();
         assert_eq!(rat_bb.drained_qi, 2.0, "鼠储量应同步累计实际吸取量");
 
-        let rat_account = QiAccountId::npc(crate::npc::brain::canonical_npc_id(rat));
+        let rat_account = QiAccountId::npc(format!("rat:{}", rat.index()));
         let ledger = app.world().resource::<WorldQiAccount>();
         assert_eq!(
             ledger.balance(&rat_account),
@@ -343,7 +329,7 @@ mod tests {
         assert_eq!(transfer.reason, QiTransferReason::RatBiteDrain);
         assert_eq!(
             transfer.from,
-            QiAccountId::player(crate::player::state::canonical_player_id("RatBiteTarget"))
+            QiAccountId::player(target.index().to_string())
         );
         assert_eq!(transfer.to, rat_account);
         assert_eq!(transfer.amount, 2.0);
@@ -356,8 +342,8 @@ mod tests {
         // ZoneRegistry / PlayerInventory，故 zone_qi / container_qi 桶恒为 0，可省略。
         let mut app = rat_bite_app();
         app.insert_resource(WorldQiAccount::default());
-        let rat = spawn_rat(&mut app);
-        let target = spawn_target(&mut app, 5.0);
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
 
         let player_qi_before: f64 = app
             .world_mut()
@@ -399,94 +385,10 @@ mod tests {
     }
 
     #[test]
-    fn rat_bite_missing_ledger_preserves_source_owner_and_emits_no_effects() {
-        let mut app = rat_bite_app();
-        app.world_mut().remove_resource::<WorldQiAccount>();
-        let rat = spawn_rat(&mut app);
-        let target = spawn_target(&mut app, 5.0);
-
-        app.world_mut().send_event(RatBiteEvent {
-            rat,
-            target,
-            qi_steal: 2,
-        });
-        app.update();
-
-        assert_eq!(
-            app.world().get::<Cultivation>(target).unwrap().qi_current(),
-            5.0,
-            "missing ledger must fail closed before the source owner is debited"
-        );
-        assert_eq!(
-            app.world().get::<RatBlackboard>(rat).unwrap().drained_qi,
-            0.0,
-            "missing ledger must not advance the rat reserve mirror"
-        );
-        assert!(app.world().resource::<Events<QiTransfer>>().is_empty());
-        assert!(
-            app.world()
-                .resource::<Events<CultivationDeathTrigger>>()
-                .is_empty(),
-            "a rejected qi transaction must not emit a lethal follow-up"
-        );
-    }
-
-    #[test]
-    fn rat_bite_ledger_credit_failure_is_atomic_for_source_and_observers() {
-        let mut app = rat_bite_app();
-        let rat = spawn_rat(&mut app);
-        let target = spawn_target(&mut app, 5.0);
-        let rat_account = QiAccountId::npc(crate::npc::brain::canonical_npc_id(rat));
-        app.world_mut()
-            .resource_mut::<WorldQiAccount>()
-            .set_balance(rat_account.clone(), f64::MAX)
-            .expect("finite destination setup should succeed");
-        let audit_before = app.world().resource::<WorldQiAccount>().transfers().len();
-
-        app.world_mut().send_event(RatBiteEvent {
-            rat,
-            target,
-            qi_steal: 2,
-        });
-        app.update();
-
-        assert_eq!(
-            app.world().get::<Cultivation>(target).unwrap().qi_current(),
-            5.0,
-            "destination overflow must leave the player owner untouched"
-        );
-        assert_eq!(
-            app.world()
-                .resource::<WorldQiAccount>()
-                .balance(&rat_account),
-            f64::MAX,
-            "failed destination credit must preserve its prior balance"
-        );
-        assert_eq!(
-            app.world().resource::<WorldQiAccount>().transfers().len(),
-            audit_before,
-            "failed destination credit must append no ledger audit"
-        );
-        assert!(app.world().resource::<Events<QiTransfer>>().is_empty());
-        assert_eq!(
-            app.world().get::<RatBlackboard>(rat).unwrap().drained_qi,
-            0.0,
-            "failed transaction must not update the rat reserve mirror"
-        );
-        assert!(app.world().resource::<Events<VfxEventRequest>>().is_empty());
-        assert!(
-            app.world()
-                .resource::<Events<PlaySoundRecipeRequest>>()
-                .is_empty(),
-            "failed transaction must not emit successful bite feedback"
-        );
-    }
-
-    #[test]
     fn rat_bite_without_rat_blackboard_does_not_drain_qi() {
         let mut app = rat_bite_app();
         let rat = app.world_mut().spawn_empty().id();
-        let target = spawn_target(&mut app, 5.0);
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
             rat,
@@ -509,8 +411,8 @@ mod tests {
     #[test]
     fn qi_drain_to_zero_emits_swarm_death_trigger() {
         let mut app = rat_bite_app();
-        let rat = spawn_rat(&mut app);
-        let target = spawn_target(&mut app, 1.0);
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
+        let target = app.world_mut().spawn(cultivation(1.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
             rat,
@@ -531,14 +433,10 @@ mod tests {
     #[test]
     fn rat_bite_emits_particle_and_sfx_feedback_at_target_position() {
         let mut app = rat_bite_app();
-        let rat = spawn_rat(&mut app);
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
         let target = app
             .world_mut()
-            .spawn((
-                cultivation(5.0),
-                LifeRecord::new(crate::player::state::canonical_player_id("RatBiteTarget")),
-                Position::new([1.0, 64.0, 2.0]),
-            ))
+            .spawn((cultivation(5.0), Position::new([1.0, 64.0, 2.0])))
             .id();
 
         app.world_mut().send_event(RatBiteEvent {
@@ -587,9 +485,9 @@ mod tests {
     #[test]
     fn rat_bite_without_target_position_still_drains_qi_but_skips_av() {
         let mut app = rat_bite_app();
-        let rat = spawn_rat(&mut app);
+        let rat = app.world_mut().spawn(rat_blackboard()).id();
         // 目标没有 Position（例如极端测试场景）——守恒路径必须不受影响，只是跳过 AV。
-        let target = spawn_target(&mut app, 5.0);
+        let target = app.world_mut().spawn(cultivation(5.0)).id();
 
         app.world_mut().send_event(RatBiteEvent {
             rat,

@@ -23,7 +23,6 @@ mod tests {
     use crate::inventory::{
         DroppedLootEntry, DroppedLootRegistry, ItemInstance, ItemRarity, PendingTsyDeathDrop,
     };
-    use crate::qi_physics::{QiTransfer, WorldQiAccount};
     use crate::world::dimension::{
         CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer, TsyLayer,
     };
@@ -99,8 +98,6 @@ mod tests {
     /// 构建一个最小测试 App：lifecycle 三个 tick + cleanup + dim transfer。
     fn make_app(initial_tick: u64) -> App {
         let mut app = App::new();
-        app.insert_resource(WorldQiAccount::default());
-        app.add_event::<QiTransfer>();
         app.insert_resource(CombatClock { tick: initial_tick });
         app.insert_resource(ZoneRegistry::fallback());
         app.insert_resource(DroppedLootRegistry::default());

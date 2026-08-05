@@ -26,7 +26,7 @@ use std::{
 };
 
 use valence::prelude::{
-    bevy_ecs, Changed, Client, Commands, Component, Entity, EventReader, EventWriter, Has, Local,
+    bevy_ecs, Changed, Client, Commands, Component, Entity, EventReader, EventWriter, Local,
     Position, Query, Res, ResMut, Username, With,
 };
 
@@ -242,10 +242,7 @@ pub fn apply_craft_start_intents(
     persistence: Option<Res<PlayerStatePersistence>>,
     clock: Res<CombatClock>,
     mut commands: Commands,
-    names: Query<(
-        &Username,
-        Has<crate::cultivation::CultivationBundleLoadFailed>,
-    )>,
+    names: Query<&Username>,
     player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     workbenches: Query<&Position, With<WorkbenchBlock>>,
     mut casters: Query<(
@@ -276,7 +273,7 @@ pub fn apply_craft_start_intents(
         };
         let username = names.get(intent.caster).ok();
         let player_id = username
-            .map(|(username, _)| canonical_player_id(username.0.as_str()))
+            .map(|u| canonical_player_id(u.0.as_str()))
             .unwrap_or_else(|| format!("entity:{}", intent.caster.to_bits()));
         let mut staged_inventory = inventory.clone();
         let mut staged_cultivation = cultivation.clone();
@@ -318,30 +315,13 @@ pub fn apply_craft_start_intents(
         match start_craft(req, deps) {
             Ok(success) => {
                 if let Some(persistence) = persistence.as_deref() {
-                    let Some((username, cultivation_load_failed)) = username else {
+                    let Some(username) = username else {
                         tracing::error!(
                             "[bong][craft] refusing to persist start for {:?} without Username",
                             intent.caster
                         );
                         continue;
                     };
-                    if cultivation_load_failed {
-                        tracing::error!(
-                            "[bong][craft] refusing to persist start for player={}: cultivation bundle failed join-time validation",
-                            username.0,
-                        );
-                        failed_tx.send(CraftFailedEvent {
-                            caster: intent.caster,
-                            recipe_id: intent.recipe_id.clone(),
-                            reason: CraftFailureReason::InternalError,
-                            material_returned: 0,
-                            qi_refunded: 0.0,
-                        });
-                        commands
-                            .entity(intent.caster)
-                            .insert(CraftSessionStateDirty);
-                        continue;
-                    }
                     if let Err(error) = save_player_craft_checkpoint(
                         persistence,
                         username.0.as_str(),
@@ -2000,10 +1980,20 @@ mod tests {
         let player_account = QiAccountId::player(canonical_player_id("Azure"));
         let full_account = QiAccountId::zone("full_zone");
         let sink_account = QiAccountId::zone("craft_sink");
-        let external_zone_qi_before = (0.25 + initial_sink_qi) * QI_ZONE_UNIT_CAPACITY;
+        {
+            let mut ledger = app.world_mut().resource_mut::<WorldQiAccount>();
+            ledger
+                .set_balance(full_account.clone(), 0.25 * QI_ZONE_UNIT_CAPACITY)
+                .expect("full-zone qi mirror fixture should be valid");
+            ledger
+                .set_balance(
+                    sink_account.clone(),
+                    initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
+                )
+                .expect("sink-zone qi mirror fixture should be valid");
+        }
         let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
-            + app.world().resource::<WorldQiAccount>().total()
-            + external_zone_qi_before;
+            + app.world().resource::<WorldQiAccount>().total();
 
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
@@ -2025,28 +2015,18 @@ mod tests {
             );
             assert_eq!(
                 ledger.balance(&full_account),
-                0.0,
-                "制作阶段不得为 external zone 建立长期 ledger 镜像"
+                0.25 * QI_ZONE_UNIT_CAPACITY,
+                "制作阶段不得提前改写已满 zone 的账本镜像"
             );
             assert_eq!(
                 ledger.balance(&sink_account),
-                0.0,
-                "制作阶段不得为 external zone 建立长期 ledger 镜像"
+                initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
+                "制作阶段不得绕过 heartbeat 直接写入目标 zone"
             );
-            let external_zone_qi = app
-                .world()
-                .resource::<ZoneRegistry>()
-                .zones
-                .iter()
-                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
-                .sum::<f64>();
             let cultivation_after = app.world().get::<Cultivation>(player).unwrap();
             assert!(
-                (cultivation_after.qi_current + ledger.total() + external_zone_qi
-                    - observed_before)
-                    .abs()
-                    < 1e-9,
-                "ECS player qi → pending 制作阶段必须保持 external owner 观察总量守恒"
+                (cultivation_after.qi_current + ledger.total() - observed_before).abs() < 1e-9,
+                "ECS player qi → pending 制作阶段必须保持观察总量守恒"
             );
             assert_eq!(
                 ledger.transfers().len(),
@@ -2109,27 +2089,19 @@ mod tests {
         );
         assert_eq!(
             ledger.balance(&full_account),
-            0.0,
-            "已达 equilibrium 的 external zone 不得生成 ledger 镜像"
+            0.25 * QI_ZONE_UNIT_CAPACITY,
+            "已达 equilibrium 的 zone 账本余额必须保持不变"
         );
-        assert_eq!(
-            ledger.balance(&sink_account),
-            0.0,
-            "heartbeat 应直接结算 ZoneRegistry，不得生成 zone ledger 镜像"
-        );
-        let external_zone_qi = zones
-            .zones
-            .iter()
-            .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
-            .sum::<f64>();
         assert!(
-            (app.world().get::<Cultivation>(player).unwrap().qi_current
-                + ledger.total()
-                + external_zone_qi
+            (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs() < 1e-9,
+            "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
+        );
+        assert!(
+            (app.world().get::<Cultivation>(player).unwrap().qi_current + ledger.total()
                 - observed_before)
                 .abs()
                 < 1e-9,
-            "Crafting → pending → external Zone 全链路必须保持观察总量守恒"
+            "Crafting → pending → ZoneInflow 全链路必须保持账本总量守恒"
         );
         assert_eq!(
             ledger.transfers().len(),

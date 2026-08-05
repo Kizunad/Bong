@@ -21,7 +21,7 @@ use valence::prelude::{
 #[cfg(test)]
 use valence::prelude::{ResMut, Resource};
 
-use crate::combat::events::{AttackIntent, AttackSource};
+use crate::combat::events::{AttackIntent, AttackSource, DeathEvent};
 use crate::fauna::components::{BeastKind, FaunaTag};
 use crate::fauna::mundane::{
     preys_on, FaunaPredatorId, FaunaPreyId, MundaneFaunaKind, MundaneFaunaSpecies,
@@ -292,17 +292,16 @@ pub(crate) fn mundane_hunt_action_system(
 /// 逐 tick 回补速率（一次性事件 vs 持续进食，量级刻意不同）。
 pub const MUNDANE_HUNT_KILL_HUNGER_REWARD: f64 = 0.6;
 
-/// durable NPC terminal transaction 成功后才回补捕食者 Hunger。raw `DeathEvent` 只表达
-/// combat lethal 边缘，不能授权在 NPC owner / persistence commit 之前产生 gameplay 收益。
+/// 监听 `DeathEvent`（唯一权威死亡信号，`emit_death_event_if_lethal` 校验过
+/// `was_alive && health_current<=0` 才发出，不会误判"超距回收"之类的非战斗消失）：
+/// 若攻击者是凡兽狼/狐，回补其 Hunger。**不关心受害者是谁**（凡兽同类 or 噬元鼠皆可）——
+/// 猎杀就是猎杀，回补统一。同一只狼同 tick 内不会重复计入（`DeathEvent` 每次死亡只发一次）。
 pub(crate) fn mundane_predator_kill_hunger_reward_system(
-    mut settlements: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
+    mut deaths: EventReader<DeathEvent>,
     mut predators: Query<(&MundaneFaunaSpecies, &mut Hunger)>,
 ) {
-    for settlement in settlements.read() {
-        if settlement.reason != crate::npc::lifecycle::NpcDeathReason::Combat {
-            continue;
-        }
-        let Some(attacker) = settlement.attacker else {
+    for death in deaths.read() {
+        let Some(attacker) = death.attacker else {
             continue;
         };
         let Ok((species, mut hunger)) = predators.get_mut(attacker) else {
@@ -703,7 +702,7 @@ mod tests {
 
     fn hunger_reward_test_app() -> valence::prelude::App {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>();
+        app.add_event::<DeathEvent>();
         app.add_systems(
             valence::prelude::Update,
             mundane_predator_kill_hunger_reward_system,
@@ -711,36 +710,8 @@ mod tests {
         app
     }
 
-    fn send_hunt_settlement(
-        app: &mut valence::prelude::App,
-        victim: Entity,
-        attacker: Option<Entity>,
-        reason: crate::npc::lifecycle::NpcDeathReason,
-    ) {
-        let life_record = crate::cultivation::life_record::LifeRecord::new(format!(
-            "npc:predation-test:{}",
-            victim.to_bits()
-        ));
-        let actor_qi_identity = crate::cultivation::components::ActorQiIdentity::from_life_record(
-            &life_record,
-            crate::cultivation::components::ActorQiKind::Npc,
-        )
-        .expect("predation settlement fixture must have canonical identity");
-        app.world_mut()
-            .send_event(crate::npc::lifecycle::NpcTerminalSettlementSucceeded {
-                entity: victim,
-                at_tick: 0,
-                cause: reason.as_str().to_string(),
-                reason,
-                attacker,
-                attacker_player_id: None,
-                authorize_loot: true,
-                actor_qi_identity,
-            });
-    }
-
     #[test]
-    fn kill_hunger_reward_replenishes_predator_after_terminal_commit() {
+    fn kill_hunger_reward_replenishes_predator_hunger_on_death_event() {
         let mut app = hunger_reward_test_app();
         let wolf = app
             .world_mut()
@@ -750,12 +721,13 @@ mod tests {
             ))
             .id();
         let victim = app.world_mut().spawn_empty().id();
-        send_hunt_settlement(
-            &mut app,
-            victim,
-            Some(wolf),
-            crate::npc::lifecycle::NpcDeathReason::Combat,
-        );
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "hunted".to_string(),
+            attacker: Some(wolf),
+            attacker_player_id: None,
+            at_tick: 0,
+        });
         app.update();
         let hunger = app
             .world()
@@ -781,49 +753,35 @@ mod tests {
             ))
             .id();
         let victim = app.world_mut().spawn_empty().id();
-        send_hunt_settlement(
-            &mut app,
-            victim,
-            Some(rabbit),
-            crate::npc::lifecycle::NpcDeathReason::Combat,
-        );
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "test".to_string(),
+            attacker: Some(rabbit),
+            attacker_player_id: None,
+            at_tick: 0,
+        });
         app.update();
         let hunger = app.world().get::<Hunger>(rabbit).unwrap();
         assert!(
             (hunger.value - 0.2).abs() < 1e-9,
-            "非 predator（兔子）不应因 terminal settlement 回补 Hunger"
+            "非 predator（兔子）不应因 DeathEvent 回补 Hunger"
         );
     }
 
     #[test]
-    fn kill_hunger_reward_ignores_non_combat_or_missing_attacker() {
+    fn kill_hunger_reward_ignores_death_event_with_no_attacker() {
+        // attacker=None（环境死亡/自然死亡等）不应 panic，也不应误触发任何回补。
         let mut app = hunger_reward_test_app();
-        let wolf = app
-            .world_mut()
-            .spawn((
-                MundaneFaunaSpecies(MundaneFaunaKind::Wolf),
-                Hunger::new(0.2),
-            ))
-            .id();
-        let natural_victim = app.world_mut().spawn_empty().id();
-        send_hunt_settlement(
-            &mut app,
-            natural_victim,
-            Some(wolf),
-            crate::npc::lifecycle::NpcDeathReason::NaturalAging,
-        );
-        let unattended_victim = app.world_mut().spawn_empty().id();
-        send_hunt_settlement(
-            &mut app,
-            unattended_victim,
-            None,
-            crate::npc::lifecycle::NpcDeathReason::Combat,
-        );
+        let victim = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "environment".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 0,
+        });
+        // 不应 panic。
         app.update();
-        assert!(
-            (app.world().get::<Hunger>(wolf).unwrap().value - 0.2).abs() < 1e-9,
-            "自然死亡或无攻击者的 commit capability 不得发放捕食收益"
-        );
     }
 
     #[test]
@@ -839,12 +797,13 @@ mod tests {
             ))
             .id();
         let victim = app.world_mut().spawn_empty().id();
-        send_hunt_settlement(
-            &mut app,
-            victim,
-            Some(wolf),
-            crate::npc::lifecycle::NpcDeathReason::Combat,
-        );
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "hunted".to_string(),
+            attacker: Some(wolf),
+            attacker_player_id: None,
+            at_tick: 0,
+        });
         app.update();
         let hunger = app.world().get::<Hunger>(wolf).unwrap();
         assert!(
