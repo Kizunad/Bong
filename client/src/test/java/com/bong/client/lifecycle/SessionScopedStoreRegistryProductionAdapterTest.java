@@ -969,15 +969,16 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 .sorted()
                 .toList();
             assertFalse(sources.isEmpty(), "production lifecycle guard 必须实际扫描 client Java source");
+            Map<String, String> sourceByIdentity = new java.util.LinkedHashMap<>();
             for (Path source : sources) {
                 String identity = sourceRoot.relativize(source).toString().replace('\\', '/');
-                JavaLifecycleSourceInspector.assertProductionLifecycleContracts(
-                    Files.readString(source),
-                    identity,
-                    managedStores,
-                    identity.equals("com/bong/client/lifecycle/SessionScopedStoreRegistry.java")
-                );
+                sourceByIdentity.put(identity, Files.readString(source));
             }
+            JavaLifecycleSourceInspector.assertProductionLifecycleContracts(
+                sourceByIdentity,
+                managedStores,
+                "com/bong/client/lifecycle/SessionScopedStoreRegistry.java"
+            );
         }
     }
 
@@ -1048,6 +1049,27 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     final class Helper {
                         private static LootContainerStateStore getStore() { return null; }
                         static void tearDown() { getStore().clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/OverloadedMethodReturnAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static LootContainerStateStore getStore() { return null; }
+                        private static String getStore(int ignored) { return ""; }
+                        static void tearDown() { getStore().clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/ArrayAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static final LootContainerStateStore[] STORES = { null };
+                        static void tearDown() { STORES[0].clearOnDisconnect(); }
                     }
                     """
             },
@@ -1156,6 +1178,40 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                 managedStores,
                 true
             )
+        );
+    }
+
+    @Test
+    void managedStoreCleanerSingleOwnerGuardRejectsCrossFileMethodReturnAlias() {
+        Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
+        Map<String, String> sources = Map.of(
+            "fixture/ExternalStoreProvider.java",
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class ExternalStoreProvider {
+                    static LootContainerStateStore current() { return null; }
+                }
+                """,
+            "fixture/Helper.java",
+            """
+                final class Helper {
+                    static void tearDown() { ExternalStoreProvider.current().clearOnDisconnect(); }
+                }
+                """
+        );
+
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertProductionLifecycleContracts(
+                sources,
+                managedStores,
+                null
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("Helper.java"),
+            "跨文件 provider 返回 managed Store 后的 cleaner 调用必须由 source-wide guard 拒绝；实际="
+                + failure.getMessage()
         );
     }
 

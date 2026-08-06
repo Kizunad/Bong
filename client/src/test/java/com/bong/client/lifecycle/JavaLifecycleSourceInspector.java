@@ -1,5 +1,6 @@
 package com.bong.client.lifecycle;
 
+import com.sun.source.tree.ArrayAccessTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.ExpressionTree;
@@ -28,6 +29,7 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.net.URI;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -45,6 +47,122 @@ public final class JavaLifecycleSourceInspector {
     private static final String DISCONNECT_CLEANER_METHOD = "clearOnDisconnect";
 
     record StoreRegistration(String storeType, String cleanerOwner, String cleanerMethod) {}
+
+    private record MethodKey(String name, int arity) {}
+
+    private record SourceIndex(
+        Map<String, Map<String, String>> classFieldTypes,
+        Map<String, Map<MethodKey, String>> classMethodReturnTypes,
+        Set<String> classNames
+    ) {
+        private static SourceIndex from(Map<String, String> sources) {
+            Map<String, Map<String, String>> fields = new HashMap<>();
+            Map<String, Map<MethodKey, String>> methods = new HashMap<>();
+            Set<String> classNames = new HashSet<>();
+
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                CompilationUnitTree unit = parse(simpleName(source.getKey()), source.getValue());
+                String packageName = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+                new TreeScanner<Void, Void>() {
+                    private final List<String> classPath = new ArrayList<>();
+
+                    @Override
+                    public Void visitClass(ClassTree type, Void unused) {
+                        String simpleName = type.getSimpleName().toString();
+                        String nestedName = classPath.isEmpty()
+                            ? simpleName
+                            : String.join(".", classPath) + "." + simpleName;
+                        String qualifiedName = packageName.isEmpty()
+                            ? nestedName
+                            : packageName + "." + nestedName;
+                        classNames.add(nestedName);
+                        classNames.add(qualifiedName);
+                        classNames.add(simpleName);
+                        classPath.add(simpleName);
+                        try {
+                            return super.visitClass(type, unused);
+                        } finally {
+                            classPath.remove(classPath.size() - 1);
+                        }
+                    }
+                }.scan(unit, null);
+            }
+
+            for (Map.Entry<String, String> source : sources.entrySet()) {
+                CompilationUnitTree unit = parse(simpleName(source.getKey()), source.getValue());
+                String packageName = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+                new TreeScanner<Void, Void>() {
+                    private final List<String> classPath = new ArrayList<>();
+
+                    @Override
+                    public Void visitClass(ClassTree type, Void unused) {
+                        String simpleName = type.getSimpleName().toString();
+                        String nestedName = classPath.isEmpty()
+                            ? simpleName
+                            : String.join(".", classPath) + "." + simpleName;
+                        String qualifiedName = packageName.isEmpty()
+                            ? nestedName
+                            : packageName + "." + nestedName;
+                        Map<String, String> classFields = new HashMap<>();
+                        Map<MethodKey, String> classMethods = new HashMap<>();
+                        for (Tree member : type.getMembers()) {
+                            if (member instanceof VariableTree variable && variable.getType() != null) {
+                                classFields.put(
+                                    variable.getName().toString(),
+                                    resolveDeclaredTypeName(variable.getType().toString(), unit, classNames)
+                                );
+                            }
+                            if (member instanceof MethodTree method && method.getReturnType() != null) {
+                                classMethods.put(
+                                    new MethodKey(method.getName().toString(), method.getParameters().size()),
+                                    resolveDeclaredTypeName(method.getReturnType().toString(), unit, classNames)
+                                );
+                            }
+                        }
+                        putIfAbsent(fields, nestedName, classFields);
+                        putIfAbsent(fields, qualifiedName, classFields);
+                        putIfAbsent(fields, simpleName, classFields);
+                        putIfAbsent(methods, nestedName, classMethods);
+                        putIfAbsent(methods, qualifiedName, classMethods);
+                        putIfAbsent(methods, simpleName, classMethods);
+                        classPath.add(simpleName);
+                        try {
+                            return super.visitClass(type, unused);
+                        } finally {
+                            classPath.remove(classPath.size() - 1);
+                        }
+                    }
+                }.scan(unit, null);
+            }
+            return new SourceIndex(fields, methods, classNames);
+        }
+
+        private static String resolveDeclaredTypeName(
+            String declaredType,
+            CompilationUnitTree unit,
+            Set<String> classNames
+        ) {
+            String type = rawTypeName(declaredType);
+            if (type.contains(".")) {
+                return type;
+            }
+            for (ImportTree importTree : unit.getImports()) {
+                if (!importTree.isStatic()
+                    && importTree.getQualifiedIdentifier().toString().endsWith("." + type)) {
+                    return importTree.getQualifiedIdentifier().toString();
+                }
+            }
+            String packageName = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+            String samePackageType = packageName.isEmpty() ? type : packageName + "." + type;
+            return classNames.contains(samePackageType) ? samePackageType : type;
+        }
+
+        private static <K, V> void putIfAbsent(Map<String, Map<K, V>> target, String key, Map<K, V> value) {
+            target.putIfAbsent(key, value);
+        }
+    }
+
+    private record ResolvedType(String type, boolean known) {}
 
     private JavaLifecycleSourceInspector() {}
 
@@ -143,10 +261,7 @@ public final class JavaLifecycleSourceInspector {
         assertNoTestResetCalls(parse(simpleName(sourceIdentity), source), sourceIdentity);
     }
 
-    private static void assertNoTestResetCalls(
-        CompilationUnitTree unit,
-        String sourceIdentity
-    ) {
+    private static void assertNoTestResetCalls(CompilationUnitTree unit, String sourceIdentity) {
         String sourceFqcn = sourceIdentity
             .replace('\\', '.')
             .replace('/', '.')
@@ -229,14 +344,461 @@ public final class JavaLifecycleSourceInspector {
         Set<String> storeFqcns,
         boolean registrySource
     ) {
-        CompilationUnitTree unit = parse(simpleName(sourceIdentity), source);
-        assertNoTestResetCalls(unit, sourceIdentity);
+        assertProductionLifecycleContracts(
+            Map.of(sourceIdentity, source),
+            storeFqcns,
+            registrySource ? sourceIdentity : null
+        );
+    }
+
+    static void assertProductionLifecycleContracts(
+        Map<String, String> sources,
+        Set<String> storeFqcns,
+        String registrySourceIdentity
+    ) {
+        SourceIndex sourceIndex = SourceIndex.from(sources);
+        for (Map.Entry<String, String> entry : sources.entrySet()) {
+            String sourceIdentity = entry.getKey();
+            CompilationUnitTree unit = parse(simpleName(sourceIdentity), entry.getValue());
+            assertNoTestResetCalls(unit, sourceIdentity);
+            assertRegistryOwnsManagedStoreCleanerCalls(
+                unit,
+                sourceIdentity,
+                storeFqcns,
+                sourceIdentity.equals(registrySourceIdentity),
+                sourceIndex
+            );
+        }
+    }
+
+    static void assertRegistryOwnsManagedStoreCleanerCalls(
+        String source,
+        String sourceIdentity,
+        Set<String> storeFqcns,
+        boolean registrySource
+    ) {
         assertRegistryOwnsManagedStoreCleanerCalls(
-            unit,
+            parse(simpleName(sourceIdentity), source),
             sourceIdentity,
             storeFqcns,
-            registrySource
+            registrySource,
+            SourceIndex.from(Map.of(sourceIdentity, source))
         );
+    }
+
+    private static void assertRegistryOwnsManagedStoreCleanerCalls(
+        CompilationUnitTree unit,
+        String sourceIdentity,
+        Set<String> storeFqcns,
+        boolean registrySource,
+        SourceIndex sourceIndex
+    ) {
+        String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+        String sourceFqcn = sourceIdentity
+            .replace('\\', '.')
+            .replace('/', '.')
+            .replaceFirst("\\.java$", "");
+        boolean sourceIsManagedStore = storeFqcns.contains(sourceFqcn);
+        Set<String> visibleStoreTypeNames = new TreeSet<>();
+        Set<String> staticallyImportedCleanupMethods = new TreeSet<>();
+        Set<String> forbiddenWildcardImports = new TreeSet<>();
+        for (String fqcn : storeFqcns) {
+            if (packageName(fqcn).equals(sourcePackage)) {
+                visibleStoreTypeNames.add(simpleName(fqcn));
+            }
+        }
+        for (ImportTree importTree : unit.getImports()) {
+            String imported = importTree.getQualifiedIdentifier().toString();
+            for (String fqcn : storeFqcns) {
+                if (!importTree.isStatic() && imported.equals(fqcn)) {
+                    visibleStoreTypeNames.add(simpleName(fqcn));
+                }
+                if (!importTree.isStatic() && imported.equals(packageName(fqcn) + ".*")) {
+                    forbiddenWildcardImports.add(imported);
+                }
+                if (importTree.isStatic() && imported.equals(fqcn + ".*")) {
+                    forbiddenWildcardImports.add("static " + imported);
+                }
+                if (importTree.isStatic() && imported.equals(fqcn + "." + DISCONNECT_CLEANER_METHOD)) {
+                    staticallyImportedCleanupMethods.add(DISCONNECT_CLEANER_METHOD);
+                }
+            }
+        }
+
+        Set<String> violations = new TreeSet<>();
+        forbiddenWildcardImports.forEach(value -> violations.add("wildcard-import:" + value));
+        new TreePathScanner<Void, Void>() {
+            private String enclosingClass;
+            private String enclosingMethod;
+            private final ArrayDeque<Map<String, ResolvedType>> variableTypeScopes = new ArrayDeque<>();
+
+            @Override
+            public Void visitClass(ClassTree type, Void unused) {
+                String previousClass = enclosingClass;
+                enclosingClass = type.getSimpleName().toString();
+                Map<String, ResolvedType> fieldTypes = new HashMap<>();
+                for (Tree member : type.getMembers()) {
+                    if (member instanceof VariableTree variable && variable.getType() != null) {
+                        fieldTypes.put(
+                            variable.getName().toString(),
+                            resolvedDeclaredType(variable.getType().toString(), sourceIndex)
+                        );
+                    }
+                }
+                variableTypeScopes.push(fieldTypes);
+                try {
+                    return super.visitClass(type, unused);
+                } finally {
+                    variableTypeScopes.pop();
+                    enclosingClass = previousClass;
+                }
+            }
+
+            @Override
+            public Void visitMethod(MethodTree method, Void unused) {
+                String previousMethod = enclosingMethod;
+                enclosingMethod = method.getName().toString();
+                Map<String, ResolvedType> parameterTypes = new HashMap<>();
+                for (VariableTree parameter : method.getParameters()) {
+                    if (parameter.getType() != null) {
+                        parameterTypes.put(
+                            parameter.getName().toString(),
+                            resolvedDeclaredType(parameter.getType().toString(), sourceIndex)
+                        );
+                    }
+                }
+                variableTypeScopes.push(parameterTypes);
+                try {
+                    return super.visitMethod(method, unused);
+                } finally {
+                    variableTypeScopes.pop();
+                    enclosingMethod = previousMethod;
+                }
+            }
+
+            @Override
+            public Void visitBlock(com.sun.source.tree.BlockTree block, Void unused) {
+                variableTypeScopes.push(new HashMap<>());
+                try {
+                    return super.visitBlock(block, unused);
+                } finally {
+                    variableTypeScopes.pop();
+                }
+            }
+
+            @Override
+            public Void visitVariable(VariableTree variable, Void unused) {
+                if (!variableTypeScopes.isEmpty()) {
+                    ResolvedType declaredType = variable.getType() == null
+                        ? new ResolvedType(null, false)
+                        : resolvedDeclaredType(variable.getType().toString(), sourceIndex);
+                    if ((variable.getType() == null || variable.getType().toString().equals("var"))
+                        && variable.getInitializer() != null) {
+                        declaredType = inferExpressionType(variable.getInitializer());
+                    }
+                    variableTypeScopes.peek().put(variable.getName().toString(), declaredType);
+                }
+                return super.visitVariable(variable, unused);
+            }
+
+            @Override
+            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
+                String methodName = invokedMethodName(invocation.getMethodSelect());
+                if (!methodName.equals(DISCONNECT_CLEANER_METHOD)) {
+                    return super.visitMethodInvocation(invocation, unused);
+                }
+                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
+                    ResolvedType resolvedOwner = resolveScopedReceiverType(selection.getExpression());
+                    if (!resolvedOwner.known()) {
+                        violations.add("unresolved-receiver:" + invocation.getMethodSelect());
+                    } else if (isForbiddenManagedStoreCall(
+                        resolvedOwner.type(),
+                        storeFqcns,
+                        visibleStoreTypeNames,
+                        sourceIsManagedStore
+                    )) {
+                        violations.add("invoke:" + invocation.getMethodSelect());
+                    }
+                } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
+                    if (staticallyImportedCleanupMethods.contains(methodName)) {
+                        violations.add("static-import:" + methodName);
+                    } else if (sourceIsManagedStore) {
+                        violations.add("self-invoke:" + methodName);
+                    }
+                }
+                return super.visitMethodInvocation(invocation, unused);
+            }
+
+            @Override
+            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
+                String qualifier = reference.getQualifierExpression().toString();
+                if (!reference.getName().contentEquals(DISCONNECT_CLEANER_METHOD)) {
+                    return super.visitMemberReference(reference, unused);
+                }
+                ResolvedType resolvedOwner = resolveScopedReceiverType(reference.getQualifierExpression());
+                if (!resolvedOwner.known()) {
+                    violations.add("unresolved-reference:" + qualifier + "::" + reference.getName());
+                } else if (isManagedStoreOwner(resolvedOwner.type(), storeFqcns, visibleStoreTypeNames)) {
+                    Tree parent = getCurrentPath().getParentPath().getLeaf();
+                    if (!registrySource || !isSanctionedRegistryBinding(reference, parent)) {
+                        violations.add("reference:" + qualifier + "::" + reference.getName());
+                    }
+                }
+                return super.visitMemberReference(reference, unused);
+            }
+
+            private ResolvedType inferExpressionType(ExpressionTree expression) {
+                if (expression instanceof ParenthesizedTree parenthesized) {
+                    return inferExpressionType(parenthesized.getExpression());
+                }
+                if (expression instanceof TypeCastTree cast) {
+                    return resolvedDeclaredType(cast.getType().toString(), sourceIndex);
+                }
+                if (expression instanceof NewClassTree newClass) {
+                    return resolvedDeclaredType(newClass.getIdentifier().toString(), sourceIndex);
+                }
+                if (expression instanceof IdentifierTree identifier) {
+                    return resolveScopedReceiverType(identifier.getName().toString());
+                }
+                if (expression instanceof MemberSelectTree selection) {
+                    return resolveScopedReceiverType(selection);
+                }
+                if (expression instanceof MethodInvocationTree invocation) {
+                    return resolveMethodReturnType(invocation);
+                }
+                if (expression instanceof ArrayAccessTree arrayAccess) {
+                    ResolvedType arrayType = resolveScopedReceiverType(arrayAccess.getExpression());
+                    if (!arrayType.known()) {
+                        return arrayType;
+                    }
+                    return new ResolvedType(arrayType.type(), true);
+                }
+                return new ResolvedType(null, false);
+            }
+
+            private ResolvedType resolveScopedReceiverType(ExpressionTree expression) {
+                if (expression instanceof ParenthesizedTree parenthesized) {
+                    return resolveScopedReceiverType(parenthesized.getExpression());
+                }
+                if (expression instanceof TypeCastTree cast) {
+                    return resolvedDeclaredType(cast.getType().toString(), sourceIndex);
+                }
+                if (expression instanceof IdentifierTree identifier) {
+                    ResolvedType resolved = resolveScopedReceiverType(identifier.getName().toString());
+                    if (resolved.known()) {
+                        return resolved;
+                    }
+                    String typeName = identifier.getName().toString();
+                    return sourceIndex.classNames().contains(typeName) || visibleStoreTypeNames.contains(typeName)
+                        ? new ResolvedType(typeName, true)
+                        : resolved;
+                }
+                if (expression instanceof MemberSelectTree selection) {
+                    String expressionText = selection.toString();
+                    if (sourceIndex.classNames().contains(expressionText)) {
+                        return new ResolvedType(expressionText, true);
+                    }
+                    String resolved = resolveQualifiedFieldType(selection);
+                    return resolved == null
+                        ? new ResolvedType(null, false)
+                        : new ResolvedType(resolved, true);
+                }
+                if (expression instanceof MethodInvocationTree invocation) {
+                    return resolveMethodReturnType(invocation);
+                }
+                if (expression instanceof ArrayAccessTree arrayAccess) {
+                    ResolvedType arrayType = resolveScopedReceiverType(arrayAccess.getExpression());
+                    return arrayType.known()
+                        ? new ResolvedType(arrayType.type(), true)
+                        : arrayType;
+                }
+                return new ResolvedType(null, false);
+            }
+
+            private ResolvedType resolveScopedReceiverType(String owner) {
+                String normalizedOwner = owner.trim();
+                while (normalizedOwner.startsWith("(") && normalizedOwner.endsWith(")")) {
+                    normalizedOwner = normalizedOwner.substring(1, normalizedOwner.length() - 1).trim();
+                }
+                int castEnd = castTypeEnd(normalizedOwner);
+                if (castEnd >= 0) {
+                    return resolvedDeclaredType(normalizedOwner.substring(1, castEnd), sourceIndex);
+                }
+                String variableName = normalizedOwner.startsWith("this.") || normalizedOwner.startsWith("super.")
+                    ? normalizedOwner.substring(normalizedOwner.indexOf('.') + 1)
+                    : normalizedOwner;
+                if (!variableName.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
+                    return new ResolvedType(null, false);
+                }
+                for (Map<String, ResolvedType> scope : variableTypeScopes) {
+                    ResolvedType declaredType = scope.get(variableName);
+                    if (declaredType != null) {
+                        return declaredType;
+                    }
+                }
+                return new ResolvedType(null, false);
+            }
+
+            private String resolveQualifiedFieldType(MemberSelectTree selection) {
+                String member = selection.getIdentifier().toString();
+                ExpressionTree receiver = selection.getExpression();
+                if (receiver instanceof IdentifierTree identifier
+                    && (identifier.getName().contentEquals("this") || identifier.getName().contentEquals("super"))) {
+                    ResolvedType currentFieldType = resolveCurrentClassFieldType(member);
+                    return currentFieldType.known() ? currentFieldType.type() : null;
+                }
+                ResolvedType receiverType = resolveScopedReceiverType(receiver);
+                if (!receiverType.known()) {
+                    return null;
+                }
+                Map<String, String> fields = sourceIndex.classFieldTypes().get(receiverType.type());
+                if (fields == null) {
+                    fields = sourceIndex.classFieldTypes().get(simpleTypeName(receiverType.type()));
+                }
+                return fields == null ? null : fields.get(member);
+            }
+
+            private ResolvedType resolveCurrentClassFieldType(String fieldName) {
+                if (enclosingClass == null) {
+                    return new ResolvedType(null, false);
+                }
+                Map<String, String> fields = sourceIndex.classFieldTypes().get(enclosingClass);
+                String fieldType = fields == null ? null : fields.get(fieldName);
+                return fieldType == null ? new ResolvedType(null, false) : new ResolvedType(fieldType, true);
+            }
+
+            private ResolvedType resolveMethodReturnType(MethodInvocationTree invocation) {
+                String methodName = invokedMethodName(invocation.getMethodSelect());
+                String ownerType;
+                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
+                    ExpressionTree receiver = selection.getExpression();
+                    ownerType = receiver instanceof IdentifierTree identifier
+                        && (identifier.getName().contentEquals("this") || identifier.getName().contentEquals("super"))
+                        ? enclosingClass
+                        : resolveScopedReceiverType(receiver).type();
+                } else {
+                    ownerType = enclosingClass;
+                }
+                if (ownerType == null) {
+                    return new ResolvedType(null, false);
+                }
+                Map<MethodKey, String> methods = sourceIndex.classMethodReturnTypes().get(ownerType);
+                if (methods == null) {
+                    methods = sourceIndex.classMethodReturnTypes().get(simpleTypeName(ownerType));
+                }
+                if (methods == null) {
+                    return new ResolvedType(null, false);
+                }
+                String returnType = methods.get(new MethodKey(methodName, invocation.getArguments().size()));
+                return returnType == null
+                    ? new ResolvedType(null, false)
+                    : new ResolvedType(returnType, true);
+            }
+
+            private ResolvedType resolvedDeclaredType(String declaredType, SourceIndex ignored) {
+                String type = rawTypeName(declaredType);
+                return sourceIndex.classNames().contains(type) || sourceIndex.classNames().contains(simpleTypeName(type))
+                    ? new ResolvedType(type, true)
+                    : new ResolvedType(type, true);
+            }
+
+            private String simpleTypeName(String typeName) {
+                int separator = typeName.lastIndexOf('.');
+                return separator >= 0 ? typeName.substring(separator + 1) : typeName;
+            }
+
+            private int castTypeEnd(String expression) {
+                if (!expression.startsWith("(")) {
+                    return -1;
+                }
+                int close = expression.indexOf(')');
+                if (close <= 1 || close == expression.length() - 1) {
+                    return -1;
+                }
+                String typeText = expression.substring(1, close).trim();
+                return typeText.matches("[A-Za-z_$][A-Za-z0-9_$.]*(?:\\[\\])?") ? close : -1;
+            }
+        }.scan(unit, null);
+
+        if (!violations.isEmpty()) {
+            throw new AssertionError(
+                sourceIdentity + " 不得绕过 SessionScopedStoreRegistry 清理 registry-managed Store：" + violations
+            );
+        }
+    }
+
+    private static boolean isSanctionedRegistryBinding(MemberReferenceTree reference, Tree parent) {
+        if (!reference.getName().contentEquals("clearOnDisconnect")
+            || !(parent instanceof MethodInvocationTree invocation)
+            || !invocation.getMethodSelect().toString().equals("SessionStoreHandle.forStore")
+            || invocation.getArguments().size() != 2
+            || invocation.getArguments().get(1) != reference
+            || !(invocation.getArguments().get(0) instanceof MemberSelectTree classToken)
+            || !classToken.getIdentifier().contentEquals("class")) {
+            return false;
+        }
+        return classToken.getExpression().toString().equals(reference.getQualifierExpression().toString());
+    }
+
+    private static boolean isForbiddenManagedStoreCall(
+        String owner,
+        Set<String> storeFqcns,
+        Set<String> visibleStoreTypeNames,
+        boolean sourceIsManagedStore
+    ) {
+        return isManagedStoreOwner(owner, storeFqcns, visibleStoreTypeNames)
+            || (sourceIsManagedStore && (owner.equals("this") || owner.equals("super")));
+    }
+
+    private static boolean isManagedStoreOwner(
+        String owner,
+        Set<String> storeFqcns,
+        Set<String> visibleStoreTypeNames
+    ) {
+        return storeFqcns.contains(owner) || visibleStoreTypeNames.contains(owner);
+    }
+
+    private static String invokedMethodName(Tree methodSelect) {
+        if (methodSelect instanceof IdentifierTree identifier) {
+            return identifier.getName().toString();
+        }
+        if (methodSelect instanceof MemberSelectTree memberSelect) {
+            return memberSelect.getIdentifier().toString();
+        }
+        return methodSelect.toString();
+    }
+
+    private static void rejectTestResetCall(
+        String methodName,
+        String sourceIdentity,
+        String enclosingClass,
+        String enclosingMethod,
+        String expression,
+        String sourceFqcn,
+        Set<String> externalStaticResetMethods,
+        boolean wildcardStaticResetImport
+    ) {
+        if (!TEST_RESET_METHODS.contains(methodName)) {
+            return;
+        }
+        boolean sourceResetReference = expression.startsWith(enclosingClass + "::")
+            || expression.startsWith(enclosingClass + ".")
+            || expression.startsWith(sourceFqcn + "::")
+            || expression.startsWith(sourceFqcn + ".")
+            || (!expression.contains(".") && !expression.contains("::"));
+        boolean declarationContext = enclosingMethod != null
+            && TEST_RESET_METHODS.contains(enclosingMethod)
+            && sourceResetReference;
+        boolean forbidden = externalStaticResetMethods.contains(methodName)
+            || wildcardStaticResetImport
+            || !declarationContext;
+        if (forbidden) {
+            throw new AssertionError(
+                sourceIdentity + " 的 production source 不得从 "
+                    + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
+                    + " 调用或引用 test reset " + methodName
+            );
+        }
     }
 
     public static void assertMethodUsesOnlyAllowedCallsAndNoStoreReferences(
@@ -320,453 +882,12 @@ public final class JavaLifecycleSourceInspector {
                 + "，Store 引用=" + rejectedStoreReferences);
         }
     }
+
     private static String rawTypeName(String declaredType) {
         int genericStart = declaredType.indexOf('<');
         String raw = genericStart >= 0 ? declaredType.substring(0, genericStart) : declaredType;
         int arrayStart = raw.indexOf('[');
         return arrayStart >= 0 ? raw.substring(0, arrayStart) : raw;
-    }
-
-    static void assertRegistryOwnsManagedStoreCleanerCalls(
-        String source,
-        String sourceIdentity,
-        Set<String> storeFqcns,
-        boolean registrySource
-    ) {
-        assertRegistryOwnsManagedStoreCleanerCalls(
-            parse(simpleName(sourceIdentity), source),
-            sourceIdentity,
-            storeFqcns,
-            registrySource
-        );
-    }
-
-    private static void assertRegistryOwnsManagedStoreCleanerCalls(
-        CompilationUnitTree unit,
-        String sourceIdentity,
-        Set<String> storeFqcns,
-        boolean registrySource
-    ) {
-        String sourcePackage = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
-        String sourceFqcn = sourceIdentity
-            .replace('\\', '.')
-            .replace('/', '.')
-            .replaceFirst("\\.java$", "");
-        boolean sourceIsManagedStore = storeFqcns.contains(sourceFqcn);
-        Set<String> visibleStoreTypeNames = new TreeSet<>();
-        Set<String> staticallyImportedCleanupMethods = new TreeSet<>();
-        Set<String> forbiddenWildcardImports = new TreeSet<>();
-        for (String fqcn : storeFqcns) {
-            if (packageName(fqcn).equals(sourcePackage)) {
-                visibleStoreTypeNames.add(simpleName(fqcn));
-            }
-        }
-        for (ImportTree importTree : unit.getImports()) {
-            String imported = importTree.getQualifiedIdentifier().toString();
-            for (String fqcn : storeFqcns) {
-                if (!importTree.isStatic() && imported.equals(fqcn)) {
-                    visibleStoreTypeNames.add(simpleName(fqcn));
-                }
-                if (!importTree.isStatic() && imported.equals(packageName(fqcn) + ".*")) {
-                    forbiddenWildcardImports.add(imported);
-                }
-                if (importTree.isStatic()
-                    && imported.equals(fqcn + ".*")) {
-                    forbiddenWildcardImports.add("static " + imported);
-                }
-                if (importTree.isStatic()
-                    && imported.equals(fqcn + "." + DISCONNECT_CLEANER_METHOD)) {
-                    staticallyImportedCleanupMethods.add(DISCONNECT_CLEANER_METHOD);
-                }
-            }
-        }
-
-        Set<String> violations = new TreeSet<>();
-        forbiddenWildcardImports.forEach(value -> violations.add("wildcard-import:" + value));
-        Map<String, Map<String, String>> classFieldTypes = new HashMap<>();
-        Map<String, Map<String, String>> classMethodReturnTypes = new HashMap<>();
-        new TreeScanner<Void, Void>() {
-            private final List<String> classPath = new ArrayList<>();
-
-            @Override
-            public Void visitClass(ClassTree type, Void unused) {
-                String simpleName = type.getSimpleName().toString();
-                String qualifiedName = classPath.isEmpty()
-                    ? simpleName
-                    : String.join(".", classPath) + "." + simpleName;
-                Map<String, String> fields = new HashMap<>();
-                Map<String, String> methods = new HashMap<>();
-                for (Tree member : type.getMembers()) {
-                    if (member instanceof VariableTree variable && variable.getType() != null) {
-                        fields.put(variable.getName().toString(), rawTypeName(variable.getType().toString()));
-                    }
-                    if (member instanceof MethodTree method && method.getReturnType() != null) {
-                        methods.put(method.getName().toString(), rawTypeName(method.getReturnType().toString()));
-                    }
-                }
-                classFieldTypes.put(qualifiedName, fields);
-                classFieldTypes.putIfAbsent(simpleName, fields);
-                classMethodReturnTypes.put(qualifiedName, methods);
-                classMethodReturnTypes.putIfAbsent(simpleName, methods);
-                classPath.add(simpleName);
-                try {
-                    return super.visitClass(type, unused);
-                } finally {
-                    classPath.remove(classPath.size() - 1);
-                }
-            }
-        }.scan(unit, null);
-        new TreePathScanner<Void, Void>() {
-            private String enclosingClass;
-            private String enclosingMethod;
-            private final java.util.ArrayDeque<Map<String, String>> variableTypeScopes =
-                new java.util.ArrayDeque<>();
-
-            @Override
-            public Void visitClass(ClassTree type, Void unused) {
-                String previousClass = enclosingClass;
-                enclosingClass = type.getSimpleName().toString();
-                Map<String, String> fieldTypes = new HashMap<>();
-                for (Tree member : type.getMembers()) {
-                    if (member instanceof VariableTree variable && variable.getType() != null) {
-                        fieldTypes.put(
-                            variable.getName().toString(),
-                            rawTypeName(variable.getType().toString())
-                        );
-                    }
-                }
-                variableTypeScopes.push(fieldTypes);
-                try {
-                    return super.visitClass(type, unused);
-                } finally {
-                    variableTypeScopes.pop();
-                    enclosingClass = previousClass;
-                }
-            }
-
-            @Override
-            public Void visitMethod(MethodTree method, Void unused) {
-                String previousMethod = enclosingMethod;
-                enclosingMethod = method.getName().toString();
-                Map<String, String> parameterTypes = new HashMap<>();
-                for (VariableTree parameter : method.getParameters()) {
-                    if (parameter.getType() != null) {
-                        parameterTypes.put(
-                            parameter.getName().toString(),
-                            rawTypeName(parameter.getType().toString())
-                        );
-                    }
-                }
-                variableTypeScopes.push(parameterTypes);
-                try {
-                    return super.visitMethod(method, unused);
-                } finally {
-                    variableTypeScopes.pop();
-                    enclosingMethod = previousMethod;
-                }
-            }
-
-            @Override
-            public Void visitBlock(com.sun.source.tree.BlockTree block, Void unused) {
-                variableTypeScopes.push(new HashMap<>());
-                try {
-                    return super.visitBlock(block, unused);
-                } finally {
-                    variableTypeScopes.pop();
-                }
-            }
-
-            @Override
-            public Void visitVariable(VariableTree variable, Void unused) {
-                if (!variableTypeScopes.isEmpty()) {
-                    String declaredType = variable.getType() == null
-                        ? null
-                        : rawTypeName(variable.getType().toString());
-                    if ((declaredType == null || declaredType.equals("var"))
-                        && variable.getInitializer() != null) {
-                        String inferredType = inferExpressionType(variable.getInitializer());
-                        if (inferredType != null) {
-                            declaredType = inferredType;
-                        }
-                    }
-                    if (declaredType != null) {
-                        variableTypeScopes.peek().put(variable.getName().toString(), declaredType);
-                    }
-                }
-                return super.visitVariable(variable, unused);
-            }
-
-            private String inferExpressionType(ExpressionTree expression) {
-                if (expression instanceof ParenthesizedTree parenthesized) {
-                    return inferExpressionType(parenthesized.getExpression());
-                }
-                if (expression instanceof TypeCastTree cast) {
-                    return rawTypeName(cast.getType().toString());
-                }
-                if (expression instanceof NewClassTree newClass) {
-                    return rawTypeName(newClass.getIdentifier().toString());
-                }
-                if (expression instanceof IdentifierTree identifier) {
-                    return resolveScopedReceiverType(identifier.getName().toString());
-                }
-                if (expression instanceof MemberSelectTree selection) {
-                    return resolveScopedReceiverType(selection);
-                }
-                if (expression instanceof MethodInvocationTree invocation) {
-                    return resolveScopedReceiverType(invocation);
-                }
-                return null;
-            }
-
-            @Override
-            public Void visitMethodInvocation(MethodInvocationTree invocation, Void unused) {
-                String methodName = invokedMethodName(invocation.getMethodSelect());
-                if (!methodName.equals(DISCONNECT_CLEANER_METHOD)) {
-                    return super.visitMethodInvocation(invocation, unused);
-                }
-                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
-                    String resolvedOwner = resolveScopedReceiverType(selection.getExpression());
-                    if (isForbiddenManagedStoreCall(
-                        resolvedOwner,
-                        storeFqcns,
-                        visibleStoreTypeNames,
-                        sourceIsManagedStore
-                    )) {
-                        violations.add("invoke:" + invocation.getMethodSelect());
-                    }
-                } else if (invocation.getMethodSelect() instanceof IdentifierTree) {
-                    if (staticallyImportedCleanupMethods.contains(methodName)) {
-                        violations.add("static-import:" + methodName);
-                    } else if (sourceIsManagedStore && methodName.equals("clearOnDisconnect")) {
-                        // Store 可以在 canonical wrapper / test reset 内委托 legacy/data-only helper；
-                        // 但任何方法反向调用 clearOnDisconnect 都会绕过 registry 唯一所有权。
-                        violations.add("self-invoke:" + methodName);
-                    }
-                }
-                return super.visitMethodInvocation(invocation, unused);
-            }
-
-            @Override
-            public Void visitMemberReference(MemberReferenceTree reference, Void unused) {
-                String qualifier = reference.getQualifierExpression().toString();
-                if (!reference.getName().contentEquals(DISCONNECT_CLEANER_METHOD)
-                    || !isManagedStoreOwner(
-                        resolveScopedReceiverType(reference.getQualifierExpression()),
-                        storeFqcns,
-                        visibleStoreTypeNames
-                    )) {
-                    return super.visitMemberReference(reference, unused);
-                }
-                Tree parent = getCurrentPath().getParentPath().getLeaf();
-                if (!registrySource || !isSanctionedRegistryBinding(reference, parent)) {
-                    violations.add(
-                        "reference:" + qualifier + "::" + reference.getName()
-                    );
-                }
-                return super.visitMemberReference(reference, unused);
-            }
-
-            private String resolveScopedReceiverType(ExpressionTree expression) {
-                if (expression instanceof ParenthesizedTree parenthesized) {
-                    return resolveScopedReceiverType(parenthesized.getExpression());
-                }
-                if (expression instanceof TypeCastTree cast) {
-                    return rawTypeName(cast.getType().toString());
-                }
-                if (expression instanceof IdentifierTree identifier) {
-                    return resolveScopedReceiverType(identifier.getName().toString());
-                }
-                if (expression instanceof MemberSelectTree selection) {
-                    String resolved = resolveQualifiedFieldType(selection);
-                    return resolved != null ? resolved : selection.toString();
-                }
-                if (expression instanceof MethodInvocationTree invocation) {
-                    String resolved = resolveMethodReturnType(invocation);
-                    return resolved != null ? resolved : invocation.toString();
-                }
-                return expression.toString();
-            }
-
-            private String resolveScopedReceiverType(String owner) {
-                String normalizedOwner = owner.trim();
-                while (normalizedOwner.startsWith("(") && normalizedOwner.endsWith(")")) {
-                    normalizedOwner = normalizedOwner.substring(1, normalizedOwner.length() - 1).trim();
-                }
-                int castEnd = castTypeEnd(normalizedOwner);
-                if (castEnd >= 0) {
-                    return rawTypeName(normalizedOwner.substring(1, castEnd));
-                }
-                String variableName = normalizedOwner.startsWith("this.") || normalizedOwner.startsWith("super.")
-                    ? normalizedOwner.substring(normalizedOwner.indexOf('.') + 1)
-                    : normalizedOwner;
-                if (!variableName.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
-                    return normalizedOwner;
-                }
-                for (Map<String, String> scope : variableTypeScopes) {
-                    String declaredType = scope.get(variableName);
-                    if (declaredType != null) {
-                        return declaredType;
-                    }
-                }
-                return normalizedOwner;
-            }
-
-            private String resolveQualifiedFieldType(MemberSelectTree selection) {
-                String member = selection.getIdentifier().toString();
-                ExpressionTree receiver = selection.getExpression();
-                if (receiver instanceof IdentifierTree identifier
-                    && (identifier.getName().contentEquals("this")
-                        || identifier.getName().contentEquals("super"))) {
-                    String currentFieldType = resolveCurrentClassFieldType(member);
-                    if (currentFieldType != null) {
-                        return currentFieldType;
-                    }
-                }
-                String receiverType = resolveScopedReceiverType(receiver);
-                Map<String, String> fields = classFieldTypes.get(receiverType);
-                if (fields == null) {
-                    fields = classFieldTypes.get(simpleTypeName(receiverType));
-                }
-                return fields == null ? null : fields.get(member);
-            }
-
-            private String resolveCurrentClassFieldType(String fieldName) {
-                if (enclosingClass == null) {
-                    return null;
-                }
-                Map<String, String> fields = classFieldTypes.get(enclosingClass);
-                return fields == null ? null : fields.get(fieldName);
-            }
-
-            private String resolveMethodReturnType(MethodInvocationTree invocation) {
-                String methodName = invokedMethodName(invocation.getMethodSelect());
-                String ownerType;
-                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
-                    ExpressionTree receiver = selection.getExpression();
-                    ownerType = receiver instanceof IdentifierTree identifier
-                        && (identifier.getName().contentEquals("this")
-                            || identifier.getName().contentEquals("super"))
-                        ? enclosingClass
-                        : resolveScopedReceiverType(receiver);
-                } else {
-                    ownerType = enclosingClass;
-                }
-                if (ownerType == null) {
-                    return null;
-                }
-                Map<String, String> methods = classMethodReturnTypes.get(ownerType);
-                if (methods == null) {
-                    methods = classMethodReturnTypes.get(simpleTypeName(ownerType));
-                }
-                return methods == null ? null : methods.get(methodName);
-            }
-
-            private String simpleTypeName(String typeName) {
-                int separator = typeName.lastIndexOf('.');
-                return separator >= 0 ? typeName.substring(separator + 1) : typeName;
-            }
-
-            private String rawTypeName(String declaredType) {
-                return JavaLifecycleSourceInspector.rawTypeName(declaredType);
-            }
-
-            private int castTypeEnd(String expression) {
-                if (!expression.startsWith("(")) {
-                    return -1;
-                }
-                int close = expression.indexOf(')');
-                if (close <= 1 || close == expression.length() - 1) {
-                    return -1;
-                }
-                String typeText = expression.substring(1, close).trim();
-                return typeText.matches("[A-Za-z_$][A-Za-z0-9_$.]*(?:\\[\\])?") ? close : -1;
-            }
-        }.scan(unit, null);
-
-        if (!violations.isEmpty()) {
-            throw new AssertionError(
-                sourceIdentity + " 不得绕过 SessionScopedStoreRegistry 清理 registry-managed Store："
-                    + violations
-            );
-        }
-    }
-
-    private static boolean isSanctionedRegistryBinding(
-        MemberReferenceTree reference,
-        Tree parent
-    ) {
-        if (!reference.getName().contentEquals("clearOnDisconnect")
-            || !(parent instanceof MethodInvocationTree invocation)
-            || !invocation.getMethodSelect().toString().equals("SessionStoreHandle.forStore")
-            || invocation.getArguments().size() != 2
-            || invocation.getArguments().get(1) != reference
-            || !(invocation.getArguments().get(0) instanceof MemberSelectTree classToken)
-            || !classToken.getIdentifier().contentEquals("class")) {
-            return false;
-        }
-        return classToken.getExpression().toString()
-            .equals(reference.getQualifierExpression().toString());
-    }
-
-    private static boolean isForbiddenManagedStoreCall(
-        String owner,
-        Set<String> storeFqcns,
-        Set<String> visibleStoreTypeNames,
-        boolean sourceIsManagedStore
-    ) {
-        return isManagedStoreOwner(owner, storeFqcns, visibleStoreTypeNames)
-            || (sourceIsManagedStore && (owner.equals("this") || owner.equals("super")));
-    }
-
-    private static boolean isManagedStoreOwner(
-        String owner,
-        Set<String> storeFqcns,
-        Set<String> visibleStoreTypeNames
-    ) {
-        return storeFqcns.contains(owner) || visibleStoreTypeNames.contains(owner);
-    }
-
-    private static String invokedMethodName(Tree methodSelect) {
-        if (methodSelect instanceof IdentifierTree identifier) {
-            return identifier.getName().toString();
-        }
-        if (methodSelect instanceof MemberSelectTree memberSelect) {
-            return memberSelect.getIdentifier().toString();
-        }
-        return methodSelect.toString();
-    }
-
-    private static void rejectTestResetCall(
-        String methodName,
-        String sourceIdentity,
-        String enclosingClass,
-        String enclosingMethod,
-        String expression,
-        String sourceFqcn,
-        Set<String> externalStaticResetMethods,
-        boolean wildcardStaticResetImport
-    ) {
-        if (!TEST_RESET_METHODS.contains(methodName)) {
-            return;
-        }
-        boolean sourceResetReference = expression.startsWith(enclosingClass + "::")
-            || expression.startsWith(enclosingClass + ".")
-            || expression.startsWith(sourceFqcn + "::")
-            || expression.startsWith(sourceFqcn + ".")
-            || (!expression.contains(".") && !expression.contains("::"));
-        boolean declarationContext = enclosingMethod != null
-            && TEST_RESET_METHODS.contains(enclosingMethod)
-            && sourceResetReference;
-        boolean forbidden = externalStaticResetMethods.contains(methodName)
-            || wildcardStaticResetImport
-            || !declarationContext;
-        if (forbidden) {
-            throw new AssertionError(
-                sourceIdentity + " 的 production source 不得从 "
-                    + (enclosingMethod == null ? "字段/初始化器" : enclosingMethod)
-                    + " 调用或引用 test reset " + methodName
-            );
-        }
     }
 
     private static CompilationUnitTree parse(String simpleName, String source) {
