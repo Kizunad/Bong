@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import math
 import subprocess
@@ -12,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parent
 REPO = MODEL_DIR.parents[2]
@@ -277,10 +280,55 @@ class JianPlayerToolsTest(unittest.TestCase):
                 self.assertNotIn("FileNotFoundError", result.stderr)
 
     def test_render_jian_in_hand_rejects_over_budget_composite(self) -> None:
-        with self.assertRaisesRegex(ValueError, "canvas area"):
-            H.composite_canvas_dimensions(H.MAX_RENDER_SIZE, 4)
+        with self.assertRaisesRegex(ValueError, "render working set"):
+            H.composite_canvas_dimensions(H.MAX_RENDER_SIZE, 16)
         width, height = H.composite_canvas_dimensions(1, 1)
         self.assertGreater(width * height, 0)
+
+    def test_render_jian_in_hand_validates_scale_inputs_at_cli_boundary(self) -> None:
+        self.assertEqual([1.0, 0.75, 2.0], H.validate_scales(" 1.0, 0.75,2 "))
+        for raw in ("", ",,,", "1,broken", "nan", "inf", "-inf", "0", "-0.5"):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "scales"):
+                    H.validate_scales(raw)
+
+    def test_weapon_uvs_scale_from_non_square_source_texture_to_skin_atlas(self) -> None:
+        source = Image.new("RGBA", (128, 32), (80, 90, 100, 255))
+        buffer = io.BytesIO()
+        source.save(buffer, format="PNG")
+        model = {
+            "textures": [{
+                "source": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(),
+            }],
+            "elements": [{
+                "from": [0, 0, 0], "to": [2, 4, 2],
+                "faces": {"up": {"uv": [32, 8, 96, 24]}},
+            }],
+        }
+        with patch.object(H, "load_model_document", return_value=model):
+            tris, _texture = H.weapon_tris(Path("synthetic.bbmodel"))
+        uv = tris[0][1]
+        np.testing.assert_allclose(uv[:, 0], [16.0, 48.0, 48.0])
+        np.testing.assert_allclose(uv[:, 1], [80.0, 80.0, 112.0])
+
+    def test_gen_jian_player_overwrite_guard_rejects_each_hand_edit_signal(self) -> None:
+        script = MODEL_DIR / "gen_jian_player.py"
+        for document in (
+            {"meta": {"format_version": "5.0"}},
+            {"meta": {"format_version": "4.10"}, "groups": []},
+        ):
+            with self.subTest(document=document), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "JianPlayer.bbmodel"
+                output.write_text(json.dumps(document), encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, str(script), "--out", str(output), "--no-render"],
+                    cwd=REPO,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertNotIn("Traceback", result.stdout + result.stderr)
 
     def test_gen_jian_player_creates_nested_output_directory(self) -> None:
         script = MODEL_DIR / "gen_jian_player.py"
