@@ -510,8 +510,8 @@ def part_spine(rig: Rig, P: Profile) -> None:
         rig.cube(
             "hips",
             f"sacral_{i + 1}",
-            (-P.u(0.055), y - P.u(0.036), z - sac_len / 8),
-            (P.u(0.055), y + P.u(0.036), z + sac_len / 8),
+            (-P.u(0.055), y - P.u(0.036), z - sac_len / 7),
+            (P.u(0.055), y + P.u(0.036), z + sac_len / 7),
             mat="bone_dark",
         )
     rig.cube(
@@ -536,12 +536,16 @@ def part_spine(rig: Rig, P: Profile) -> None:
         t = i / 5
         z = _lerp(lum_z0, lum_z1, t)
         y = P.centrum_y(z)
-        step = abs(lum_z0 - lum_z1) / 6
+        # 6 节铺在 5 段间隔上（t = i/5），节距就得除以 5 —— 除以 6 会让每节短 17%，
+        # 椎体两两留缝、腰段整段断开（连通性自检抓的第二处）。
+        step = abs(lum_z0 - lum_z1) / 5
+        # 椎体前后长必须 **≥ 节距**：椎间盘在这个粒度下等于零厚，椎体本就是节节相接的。
+        # 首版写 0.90 节距，六节腰椎各自悬空成岛（连通性自检抓出来的，三视图看不见）。
         rig.cube(
             "lumbar",
             f"lumbar_{6 - i}",
-            (-P.u(0.050), y - P.u(0.038), z - step * 0.45),
-            (P.u(0.050), y + P.u(0.038), z + step * 0.45),
+            (-P.u(0.050), y - P.u(0.038), z - step * 0.55),
+            (P.u(0.050), y + P.u(0.038), z + step * 0.55),
         )
         sp = P.dorsal_y(z) - y
         rig.cube(
@@ -570,11 +574,12 @@ def part_spine(rig: Rig, P: Profile) -> None:
         z = _lerp(P.z_t18, P.z_t1, t)
         y = P.centrum_y(z)
         bone = "thorax_back" if z > z_tmid else "thorax_front"
+        # 同腰椎：前后长取 1.10 倍节距，保证 T1→T18 是一根连续的柱而不是 18 座孤岛
         rig.cube(
             bone,
             f"thoracic_{18 - i}",
-            (-P.u(0.044), y - P.u(0.034), z - seg_t * 0.36),
-            (P.u(0.044), y + P.u(0.034), z + seg_t * 0.36),
+            (-P.u(0.044), y - P.u(0.034), z - seg_t * 0.55),
+            (P.u(0.044), y + P.u(0.034), z + seg_t * 0.55),
         )
         sp = P.dorsal_y(z) - y
         rig.cube(
@@ -1350,6 +1355,90 @@ def build_full(P: Profile) -> Rig:
 
 
 # ================================================================ 自检
+def _obb(e: dict):
+    """element → (中心, 半长, 3×3 旋转)。旋转按 Blockbench/render_bbmodel 的 R=Rz·Ry·Rx 绕 origin 施加。"""
+    import numpy as np
+
+    def rm(deg: float, axis: int):
+        a = math.radians(deg)
+        c, s = math.cos(a), math.sin(a)
+        if axis == 0:
+            return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+        if axis == 1:
+            return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+        return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+
+    f, t = np.array(e["from"], float), np.array(e["to"], float)
+    org = np.array(e["origin"], float)
+    rot = e["rotation"]
+    R = np.eye(3)
+    if any(rot):
+        R = rm(rot[2], 2) @ rm(rot[1], 1) @ rm(rot[0], 0)
+    half = (t - f) / 2
+    center = R @ ((f + t) / 2 - org) + org
+    return center, half, R
+
+
+def connected_components(rig: Rig, tol: float = 0.02) -> list[list[str]]:
+    """把每个 element 当有向包围盒，用分离轴定理判相接，返回连通分量（按件数降序）。
+
+    骨架必须是**单一连通体**。悬空件在三视图和 Blockbench 里都极难发现——首版
+    椎体前后长短于节距，整条脊柱在每个椎间断开，后躯（骨盆+后肢+尾）整块与前躯
+    分离成孤岛，靠目视一直没看出来，是本函数抓的。
+    """
+    import numpy as np
+
+    els = rig.elements
+    boxes = [_obb(e) for e in els]
+    aabb = [
+        (c - np.array([sum(h[i] * abs(R[k, i]) for i in range(3)) for k in range(3)]),
+         c + np.array([sum(h[i] * abs(R[k, i]) for i in range(3)) for k in range(3)]))
+        for c, h, R in boxes
+    ]
+
+    def overlap(a, b) -> bool:
+        ca, ha, Ra = a
+        cb, hb, Rb = b
+        d = cb - ca
+        axes = [Ra[:, i] for i in range(3)] + [Rb[:, i] for i in range(3)]
+        for i in range(3):
+            for j in range(3):
+                cr = np.cross(Ra[:, i], Rb[:, j])
+                n = float(np.linalg.norm(cr))
+                if n > 1e-8:
+                    axes.append(cr / n)
+        for ax in axes:
+            ra = sum(ha[i] * abs(float(ax @ Ra[:, i])) for i in range(3))
+            rb = sum(hb[i] * abs(float(ax @ Rb[:, i])) for i in range(3))
+            if abs(float(ax @ d)) > ra + rb + tol:
+                return False
+        return True
+
+    parent = list(range(len(els)))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(len(els)):
+        lo_i, hi_i = aabb[i]
+        for j in range(i + 1, len(els)):
+            if find(i) == find(j):
+                continue
+            lo_j, hi_j = aabb[j]
+            if bool(np.any(hi_i + tol < lo_j)) or bool(np.any(hi_j + tol < lo_i)):
+                continue
+            if overlap(boxes[i], boxes[j]):
+                parent[find(i)] = find(j)
+
+    comps: dict[int, list[str]] = {}
+    for i, e in enumerate(els):
+        comps.setdefault(find(i), []).append(e["name"])
+    return sorted(comps.values(), key=len, reverse=True)
+
+
 def check(P: Profile, rig: Rig, verbose: bool = True) -> int:
     """结构自检：左右镜像 · 四蹄着地 · 鬐甲高对表 · 比例落在马的常识区间。
 
@@ -1411,6 +1500,13 @@ def check(P: Profile, rig: Rig, verbose: bool = True) -> int:
     if missing:
         problems.append(f"{len(missing)} 个 element 未挂进骨树（Blockbench 打开会丢件）")
 
+    # 连通性：骨架必须是单一连通体，任何独立岛都是悬空件
+    comps = connected_components(rig)
+    if len(comps) > 1:
+        problems.append(f"骨架裂成 {len(comps)} 块（应为 1 块整体）")
+        for c in comps[1:6]:
+            problems.append(f"  悬空岛 {len(c)} 件：{', '.join(sorted(c)[:6])}{' …' if len(c) > 6 else ''}")
+
     wither = max(e["to"][1] for n, e in els.items() if n.startswith("thoracic_sp"))
     if abs(wither - P.wither) > 0.35:
         problems.append(f"鬐甲高 {wither:.2f} 与档位标称 {P.wither:.2f} 不符")
@@ -1445,7 +1541,7 @@ def check(P: Profile, rig: Rig, verbose: bool = True) -> int:
             f"体宽 {max(xs) - min(xs):.2f}"
         )
         print("  " + " · ".join(f"{k} {v:.3f}" for k, v in ratios.items()))
-        print(f"  最低点 y={min(ys):.3f}（蹄底）")
+        print(f"  最低点 y={min(ys):.3f}（蹄底）· 连通分量 {len(comps)}")
         if problems:
             print(f"  ✗ {len(problems)} 处违例：")
             for x in problems[:15]:
@@ -1453,7 +1549,7 @@ def check(P: Profile, rig: Rig, verbose: bool = True) -> int:
             if len(problems) > 15:
                 print(f"     …另 {len(problems) - 15} 处")
         else:
-            print("  ✓ 镜像 / 着地 / 鬐甲对表 / 比例区间 / 骨树 全部通过")
+            print("  ✓ 镜像 / 着地 / 鬐甲对表 / 比例区间 / 骨树 / 连通性 全部通过")
     return len(problems)
 
 
