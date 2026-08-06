@@ -9331,27 +9331,22 @@ mod persistence_tests {
             root.join("data").join("players"),
             settings.db_path(),
         );
-        let mut registry = PersistenceSliceRegistry::empty();
-        registry
-            .register_slice::<KnownTechniquesPersistenceSlice>()
-            .expect("known techniques descriptor should register");
         let mut app = App::new();
-        app.insert_resource(registry)
-            .insert_resource(player_persistence.clone())
-            .insert_resource(KnownTechniquesActivations::default())
-            .insert_resource(PendingKnownTechniquesHandoffs::default())
-            .insert_resource(PersistenceShutdownReader::default())
-            .insert_resource(CultivationClock::default())
-            .add_event::<AppExit>()
-            .add_systems(
-                Update,
-                (
-                    dispatch_known_techniques_reconnects,
-                    flush_changed_known_techniques_slices
-                        .after(dispatch_known_techniques_reconnects),
-                ),
-            )
-            .add_systems(Last, dispatch_persistence_shutdown_flushes);
+        app.add_event::<AppExit>();
+        app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
+        app.insert_resource(CultivationClock::default());
+        app.insert_resource(WorldQiAccount::default());
+        register(&mut app);
+        app.insert_resource(settings.clone());
+        app.insert_resource(player_persistence.clone());
+        app.add_systems(
+            Update,
+            (
+                crate::player::init_clients,
+                crate::player::attach_player_state_to_joined_clients
+                    .after(crate::player::init_clients),
+            ),
+        );
         (app, player_persistence, settings, root)
     }
 
