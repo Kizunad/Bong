@@ -152,6 +152,26 @@ public class BongAnimationPlayerMultiLayerTest {
     }
 
     @Test
+    void replacingLiveStackForSamePlayerAndAnimationMovesOwnership() {
+        AnimationStack oldStack = new AnimationStack();
+        AnimationStack newStack = new AnimationStack();
+
+        assertTrue(BongAnimationPlayer.playOnStack(oldStack, playerId, SWORD_ID, COMBAT_PRIORITY, 0));
+        assertTrue(BongAnimationPlayer.playOnStack(newStack, playerId, SWORD_ID, COMBAT_PRIORITY, 0));
+
+        assertEquals(0, layersIn(oldStack).size(), "实时替换 stack 后旧栈不得保留同动画层");
+        assertEquals(1, layersIn(newStack).size(), "实时替换 stack 后新栈必须持有同动画层");
+        assertTrue(BongAnimationPlayer.activeAnimations(playerId).contains(SWORD_ID));
+        assertFalse(
+            BongAnimationPlayer.stopOnStack(oldStack, playerId, SWORD_ID, 0),
+            "旧栈已失去 ownership，stop 不得误清新栈动画"
+        );
+        assertEquals(1, layersIn(newStack).size(), "旧栈 stop 失败不得影响新栈层");
+        assertTrue(BongAnimationPlayer.stopOnStack(newStack, playerId, SWORD_ID, 0));
+        assertEquals(0, layersIn(newStack).size(), "新栈 owner stop 后必须摘层");
+    }
+
+    @Test
     void differentAnimIdsMapToDistinctModifierLayers() {
         // 虽然不是用户能直接观察的行为，但这是 ACTIVE_LAYERS 存层的隐含契约——
         // 同 key 返回同引用，不同 key 返回不同引用
