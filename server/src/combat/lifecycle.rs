@@ -4728,7 +4728,6 @@ mod tests {
         app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
-        app.add_event::<crate::cultivation::death_hooks::CultivationReviveRequested>();
         app.add_event::<RevivalActionIntent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
@@ -4742,8 +4741,6 @@ mod tests {
                 death_arbiter_tick,
                 near_death_tick.after(death_arbiter_tick),
                 handle_revival_action_intents.after(near_death_tick),
-                crate::cultivation::death_hooks::on_cultivation_revive_requested
-                    .after(near_death_tick),
                 crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
             ),
         );

@@ -66,6 +66,7 @@ pub fn register(app: &mut App) {
     tracing::info!(
         "[bong][npc] registering perf/spatial/faction/spawn/lifecycle/hunger/possession/tribulation/seasonal/patrol/sync/brain/farming/movement/navigator/scenario/schedule/lingtian_pressure/territory/dormant systems"
     );
+    spawn::ambient_scheduler::configure_terminal_schedule(app);
     perf::register(app);
     spatial::register(app);
     faction::register(app);
