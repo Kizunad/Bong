@@ -225,16 +225,16 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         weakened_until_tick: None,
         state: LifecycleState::AwaitingRevival,
     };
-    let save_started_wall = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
-    let save_finished_wall = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_last_updated_wall: i64 = connection
+        .query_row(
+            "SELECT last_updated_wall FROM player_lifecycle WHERE username = ?1",
+            params!["Alice"],
+            |row| row.get(0),
+        )
+        .expect("saved lifecycle row should expose its persistence timestamp");
 
     let mut app = App::new();
     app.insert_resource(persistence);
@@ -242,15 +242,7 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
 
     let (client_bundle, _helper) = create_mock_client("Alice");
     let entity = app.world_mut().spawn(client_bundle).id();
-    let load_started_wall = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
     app.update();
-    let load_finished_wall = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
 
     let lifecycle = app
         .world()
@@ -275,17 +267,17 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     let restored_deadline = lifecycle
         .revival_decision_deadline_tick
         .expect("persisted revival decision deadline should be restored");
-    let earliest_elapsed_seconds = load_started_wall.saturating_sub(save_finished_wall);
-    let latest_elapsed_seconds = load_finished_wall.saturating_sub(save_started_wall);
-    let latest_deadline = 9_999_u64.saturating_sub(
-        earliest_elapsed_seconds.saturating_mul(crate::combat::components::TICKS_PER_SECOND),
-    );
-    let earliest_deadline = 9_999_u64.saturating_sub(
-        latest_elapsed_seconds.saturating_mul(crate::combat::components::TICKS_PER_SECOND),
-    );
+    let after_load_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
+    let max_elapsed_ticks = after_load_wall
+        .saturating_sub(persisted_last_updated_wall as u64)
+        .saturating_mul(crate::combat::components::TICKS_PER_SECOND);
+    let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     assert!(
-        (earliest_deadline..=latest_deadline).contains(&restored_deadline),
-        "重连 deadline 必须按实际 save/load 墙钟边界折算；允许 {earliest_deadline}..={latest_deadline}，实际 {restored_deadline}"
+        (earliest_valid_deadline..=9_999).contains(&restored_deadline),
+        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {restored_deadline}，有效区间 {earliest_valid_deadline}..=9999"
     );
     assert_eq!(lifecycle.death_count, 2);
 

@@ -4447,14 +4447,25 @@ mod player_state_tests {
         // 补回默认值 3 / Alive。
         let (persistence, data_dir) = sqlite_persistence("lifecycle-roundtrip-awaiting");
         let lifecycle = sample_lifecycle_awaiting_revival_zero_fortune();
-        let before_save_wall = current_unix_seconds();
 
         save_player_lifecycle_slice(&persistence, "Azure", &lifecycle, 0)
             .expect("lifecycle slice should persist");
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let persisted_last_updated_wall: i64 = connection
+            .query_row(
+                "SELECT last_updated_wall FROM player_lifecycle WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .expect("saved lifecycle row should expose its persistence timestamp");
         let loaded = load_player_lifecycle_slice(&persistence, "Azure", 0)
             .expect("lifecycle slice should load")
             .expect("lifecycle row should exist after save");
         let after_load_wall = current_unix_seconds();
+        let max_elapsed_ticks = after_load_wall
+            .saturating_sub(persisted_last_updated_wall)
+            .max(0) as u64
+            * crate::combat::components::TICKS_PER_SECOND;
 
         assert_eq!(loaded.character_id, lifecycle.character_id);
         assert_eq!(loaded.death_count, lifecycle.death_count);
@@ -4478,8 +4489,6 @@ mod player_state_tests {
         let expected_deadline_at_save = lifecycle
             .revival_decision_deadline_tick
             .expect("sample awaiting revival lifecycle should have a deadline");
-        let max_elapsed_ticks = after_load_wall.saturating_sub(before_save_wall).max(0) as u64
-            * crate::combat::components::TICKS_PER_SECOND;
         let earliest_valid_deadline = expected_deadline_at_save.saturating_sub(max_elapsed_ticks);
         let loaded_deadline = loaded
             .revival_decision_deadline_tick
