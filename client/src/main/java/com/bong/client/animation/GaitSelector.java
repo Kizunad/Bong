@@ -32,14 +32,23 @@ public final class GaitSelector {
         WALK("lower_walk", true),
         JOG("lower_jog", true),
         SPRINT("lower_sprint", true),
-        DASH("lower_dash", false);
+        DASH("lower_dash", false, 0, 0);
 
         private final Identifier animId;
         private final boolean looped;
+        private final int fadeInTicks;
+        private final int fadeOutTicks;
 
         Gait(String path, boolean looped) {
+            this(path, looped, BongAnimationPlayer.DEFAULT_FADE_IN_TICKS,
+                BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS);
+        }
+
+        Gait(String path, boolean looped, int fadeInTicks, int fadeOutTicks) {
             this.animId = path == null ? null : new Identifier("bong", path);
             this.looped = looped;
+            this.fadeInTicks = fadeInTicks;
+            this.fadeOutTicks = fadeOutTicks;
         }
 
         /** 对应的下半身动画 id；{@link #NONE} 返回 null（= 停掉本通道）。 */
@@ -47,9 +56,17 @@ public final class GaitSelector {
             return animId;
         }
 
-        /** 循环步态 vs 一次性（dash）。一次性动画播完自己结束，不需要显式停。 */
+        /** 循环步态 vs 一次性（dash）。 */
         public boolean looped() {
             return looped;
+        }
+
+        public int fadeInTicks() {
+            return fadeInTicks;
+        }
+
+        public int fadeOutTicks() {
+            return fadeOutTicks;
         }
     }
 

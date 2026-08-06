@@ -114,4 +114,12 @@ class GaitSelectorTest {
         assertTrue(GaitSelector.Gait.SPRINT.looped());
         assertFalse(GaitSelector.Gait.DASH.looped(), "瞬步是一次性动画，播完自行结束");
     }
+
+    @Test
+    void dashUsesImmediateTransitionsAtServerBoundary() {
+        assertEquals(0, GaitSelector.Gait.DASH.fadeInTicks(),
+            "DASH 不应被默认淡入延迟，起始帧必须立即可见");
+        assertEquals(0, GaitSelector.Gait.DASH.fadeOutTicks(),
+            "DASH 在服务端 tick 4 结束时必须立即移除，不能残留淡出姿态");
+    }
 }

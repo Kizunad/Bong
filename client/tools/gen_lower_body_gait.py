@@ -89,7 +89,7 @@ def gait_pose(period: int, swing: float, knee, bob: float, lean: float):
 
 
 def dash_pose():
-    """8 tick 一次性：0 起势 → 2 蹬地爆发 → 4 滞空收腿 → 6 落地缓冲 → 8 归零。"""
+    """4 tick 一次性：0 起势 → 1 蹬地爆发 → 2 滞空收腿 → 3 落地缓冲 → 4 归零。"""
     return {
         0: {
             "easing": "INOUTSINE",
@@ -97,31 +97,34 @@ def dash_pose():
             "leftLeg": dict(pitch=-12.0, bend=30.0),
             "body": dict(y=+0.04, z=0.0, pitch=16.0),
         },
-        2: {
+        1: {
             "easing": "OUTQUAD",
             "rightLeg": dict(pitch=+38.0, bend=8.0),    # 后腿蹬直
             "leftLeg": dict(pitch=-30.0, bend=58.0),    # 前腿高收
             "body": dict(y=+0.01, z=+0.16, pitch=23.0),
         },
-        4: {
+        2: {
             "easing": "OUTQUAD",
             "rightLeg": dict(pitch=-10.0, bend=48.0),   # 滞空双腿收拢
             "leftLeg": dict(pitch=+14.0, bend=34.0),
             "body": dict(y=-0.05, z=+0.30, pitch=19.0),
         },
-        6: {
+        3: {
             "easing": "INOUTSINE",
             "rightLeg": dict(pitch=+10.0, bend=32.0),   # 落地缓冲，膝吃掉冲量
             "leftLeg": dict(pitch=-8.0, bend=26.0),
             "body": dict(y=+0.06, z=+0.12, pitch=9.0),
         },
-        8: {
+        4: {
             "easing": "INOUTSINE",
             "rightLeg": dict(pitch=0.0, bend=0.0),
             "leftLeg": dict(pitch=0.0, bend=0.0),
             "body": dict(y=0.0, z=0.0, pitch=0.0),
         },
     }
+
+
+DASH_DURATION_TICKS = 4
 
 
 LOWER_PARTS = {"leftLeg", "rightLeg", "body"}
@@ -155,8 +158,8 @@ def main():
         pose,
         name="lower_dash",
         description=DASH_DESC,
-        end_tick=8,
-        stop_tick=11,
+        end_tick=DASH_DURATION_TICKS,
+        stop_tick=DASH_DURATION_TICKS,
         is_loop=False,
     )
 

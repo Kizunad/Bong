@@ -59,6 +59,29 @@ class MovementAnimationAssetTest {
     }
 
     @Test
+    void lowerDashEndsAtServerBoundaryWithoutResidualPose() throws IOException {
+        JsonObject emote = readAsset(BongAnimations.LOWER_DASH).getAsJsonObject("emote");
+        Map<String, Map<String, Map<Integer, Double>>> tracks = tracks(emote);
+        int serverDashDurationTicks = 4;
+
+        assertFalse(emote.get("isLoop").getAsBoolean(), "DASH 必须是一次性动画");
+        assertEquals(serverDashDurationTicks, emote.get("endTick").getAsInt(),
+            "DASH 可见时间线必须与服务端四 tick 窗口一致");
+        assertEquals(serverDashDurationTicks, emote.get("stopTick").getAsInt(),
+            "DASH stopTick 不得延伸到服务端动作结束之后");
+
+        for (Map.Entry<String, Map<String, Map<Integer, Double>>> part : tracks.entrySet()) {
+            for (Map.Entry<String, Map<Integer, Double>> axis : part.getValue().entrySet()) {
+                assertTrue(axis.getValue().keySet().stream().allMatch(tick -> tick <= serverDashDurationTicks),
+                    "DASH 在 tick 4 后不得残留关键帧：" + part.getKey() + "." + axis.getKey());
+                assertEquals(0.0, axis.getValue().get(serverDashDurationTicks), 1e-6,
+                    "DASH tick 4 必须归零，避免服务端结束后残留姿态："
+                        + part.getKey() + "." + axis.getKey());
+            }
+        }
+    }
+
+    @Test
     void jianAssetsBindToProductionAssetsAndNeverWriteLowerBodyParts() throws IOException {
         for (Identifier id : BongAnimations.JIAN_ANIMATIONS) {
             JsonObject root = readAsset(id);

@@ -75,12 +75,7 @@ public final class LowerBodyGaitController {
         }
         Identifier animId = next.animId();
         if (animId == null) {
-            AnimationLayerManager.stopOnStack(
-                stack,
-                playerId,
-                AnimationLayerManager.Channel.LOWER_BODY,
-                BongAnimationPlayer.DEFAULT_FADE_OUT_TICKS
-            );
+            stopActive(stack, playerId);
             activeGait = next;
             activePlayerId = playerId;
             activeStack = stack;
@@ -90,13 +85,29 @@ public final class LowerBodyGaitController {
             stack,
             playerId,
             AnimationLayerManager.Channel.LOWER_BODY,
-            animId
+            animId,
+            next.fadeInTicks(),
+            sameOwner ? activeGait.fadeOutTicks() : 0
         );
+
+        if (!played && next == GaitSelector.Gait.DASH) {
+            stopActive(stack, playerId);
+        }
+
         if (played) {
             activeGait = next;
             activePlayerId = playerId;
             activeStack = stack;
         }
+    }
+
+    private static void stopActive(AnimationStack stack, UUID playerId) {
+        AnimationLayerManager.stopOnStack(
+            stack,
+            playerId,
+            AnimationLayerManager.Channel.LOWER_BODY,
+            activeGait.fadeOutTicks()
+        );
     }
 
     public static void clearOnDisconnect() {
