@@ -69,9 +69,10 @@ pub mod slice;
 use slice::{
     dispatch_reconnect_handoff, reconnect_handoff_token, AutosavePolicy, DirtyAcknowledgement,
     DirtyRevision, DirtyTracker, GuardedSlice, LoadFailurePolicy, PersistedRevisionFence,
-    PersistenceSlice, PersistenceSliceRegistry, ShutdownFlushRequest, SliceClock, SliceDescriptor,
-    SliceId, SliceLoad, SliceRunContext, SliceRunError, SliceRunOutcome, SliceRunResult,
-    SliceScope, TimeBasis, WriteAuthority, WriteBinding, WriteDomain, WriteOrdering, WriteOutlet,
+    PersistenceSlice, PersistenceSliceRegistry, ReconnectHandoffReport, ShutdownFlushRequest,
+    SliceClock, SliceDescriptor, SliceId, SliceLoad, SliceRunContext, SliceRunError,
+    SliceRunOutcome, SliceRunReason, SliceRunResult, SliceScope, TimeBasis, WriteAuthority,
+    WriteBinding, WriteDomain, WriteOrdering, WriteOutlet,
 };
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bong.db";
