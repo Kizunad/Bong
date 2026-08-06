@@ -1042,6 +1042,39 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     """
             },
             {
+                "fixture/MethodReturnAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static LootContainerStateStore getStore() { return null; }
+                        static void tearDown() { getStore().clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/QualifiedFieldAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Holder {
+                        LootContainerStateStore field;
+                    }
+                    final class Helper {
+                        static final Holder outer = null;
+                        static void tearDown() { outer.field.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/ThisFieldAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private final LootContainerStateStore store = null;
+                        void tearDown() { this.store.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
                 "fixture/HiddenCleaner.java",
                 """
                     import com.bong.client.hud.LootContainerStateStore;

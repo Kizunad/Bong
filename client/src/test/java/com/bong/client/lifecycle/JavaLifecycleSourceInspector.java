@@ -383,13 +383,49 @@ public final class JavaLifecycleSourceInspector {
 
         Set<String> violations = new TreeSet<>();
         forbiddenWildcardImports.forEach(value -> violations.add("wildcard-import:" + value));
+        Map<String, Map<String, String>> classFieldTypes = new HashMap<>();
+        Map<String, Map<String, String>> classMethodReturnTypes = new HashMap<>();
+        new TreeScanner<Void, Void>() {
+            private final List<String> classPath = new ArrayList<>();
+
+            @Override
+            public Void visitClass(ClassTree type, Void unused) {
+                String simpleName = type.getSimpleName().toString();
+                String qualifiedName = classPath.isEmpty()
+                    ? simpleName
+                    : String.join(".", classPath) + "." + simpleName;
+                Map<String, String> fields = new HashMap<>();
+                Map<String, String> methods = new HashMap<>();
+                for (Tree member : type.getMembers()) {
+                    if (member instanceof VariableTree variable && variable.getType() != null) {
+                        fields.put(variable.getName().toString(), rawTypeName(variable.getType().toString()));
+                    }
+                    if (member instanceof MethodTree method && method.getReturnType() != null) {
+                        methods.put(method.getName().toString(), rawTypeName(method.getReturnType().toString()));
+                    }
+                }
+                classFieldTypes.put(qualifiedName, fields);
+                classFieldTypes.putIfAbsent(simpleName, fields);
+                classMethodReturnTypes.put(qualifiedName, methods);
+                classMethodReturnTypes.putIfAbsent(simpleName, methods);
+                classPath.add(simpleName);
+                try {
+                    return super.visitClass(type, unused);
+                } finally {
+                    classPath.remove(classPath.size() - 1);
+                }
+            }
+        }.scan(unit, null);
         new TreePathScanner<Void, Void>() {
+            private String enclosingClass;
             private String enclosingMethod;
             private final java.util.ArrayDeque<Map<String, String>> variableTypeScopes =
                 new java.util.ArrayDeque<>();
 
             @Override
             public Void visitClass(ClassTree type, Void unused) {
+                String previousClass = enclosingClass;
+                enclosingClass = type.getSimpleName().toString();
                 Map<String, String> fieldTypes = new HashMap<>();
                 for (Tree member : type.getMembers()) {
                     if (member instanceof VariableTree variable && variable.getType() != null) {
@@ -404,6 +440,7 @@ public final class JavaLifecycleSourceInspector {
                     return super.visitClass(type, unused);
                 } finally {
                     variableTypeScopes.pop();
+                    enclosingClass = previousClass;
                 }
             }
 
@@ -473,7 +510,10 @@ public final class JavaLifecycleSourceInspector {
                     return resolveScopedReceiverType(identifier.getName().toString());
                 }
                 if (expression instanceof MemberSelectTree selection) {
-                    return resolveScopedReceiverType(selection.toString());
+                    return resolveScopedReceiverType(selection);
+                }
+                if (expression instanceof MethodInvocationTree invocation) {
+                    return resolveScopedReceiverType(invocation);
                 }
                 return null;
             }
@@ -537,7 +577,12 @@ public final class JavaLifecycleSourceInspector {
                     return resolveScopedReceiverType(identifier.getName().toString());
                 }
                 if (expression instanceof MemberSelectTree selection) {
-                    return resolveScopedReceiverType(selection.toString());
+                    String resolved = resolveQualifiedFieldType(selection);
+                    return resolved != null ? resolved : selection.toString();
+                }
+                if (expression instanceof MethodInvocationTree invocation) {
+                    String resolved = resolveMethodReturnType(invocation);
+                    return resolved != null ? resolved : invocation.toString();
                 }
                 return expression.toString();
             }
@@ -564,6 +609,65 @@ public final class JavaLifecycleSourceInspector {
                     }
                 }
                 return normalizedOwner;
+            }
+
+            private String resolveQualifiedFieldType(MemberSelectTree selection) {
+                String member = selection.getIdentifier().toString();
+                ExpressionTree receiver = selection.getExpression();
+                if (receiver instanceof IdentifierTree identifier
+                    && (identifier.getName().contentEquals("this")
+                        || identifier.getName().contentEquals("super"))) {
+                    String currentFieldType = resolveCurrentClassFieldType(member);
+                    if (currentFieldType != null) {
+                        return currentFieldType;
+                    }
+                }
+                String receiverType = resolveScopedReceiverType(receiver);
+                Map<String, String> fields = classFieldTypes.get(receiverType);
+                if (fields == null) {
+                    fields = classFieldTypes.get(simpleTypeName(receiverType));
+                }
+                return fields == null ? null : fields.get(member);
+            }
+
+            private String resolveCurrentClassFieldType(String fieldName) {
+                if (enclosingClass == null) {
+                    return null;
+                }
+                Map<String, String> fields = classFieldTypes.get(enclosingClass);
+                return fields == null ? null : fields.get(fieldName);
+            }
+
+            private String resolveMethodReturnType(MethodInvocationTree invocation) {
+                String methodName = invokedMethodName(invocation.getMethodSelect());
+                String ownerType;
+                if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
+                    ExpressionTree receiver = selection.getExpression();
+                    ownerType = receiver instanceof IdentifierTree identifier
+                        && (identifier.getName().contentEquals("this")
+                            || identifier.getName().contentEquals("super"))
+                        ? enclosingClass
+                        : resolveScopedReceiverType(receiver);
+                } else {
+                    ownerType = enclosingClass;
+                }
+                if (ownerType == null) {
+                    return null;
+                }
+                Map<String, String> methods = classMethodReturnTypes.get(ownerType);
+                if (methods == null) {
+                    methods = classMethodReturnTypes.get(simpleTypeName(ownerType));
+                }
+                return methods == null ? null : methods.get(methodName);
+            }
+
+            private String simpleTypeName(String typeName) {
+                int separator = typeName.lastIndexOf('.');
+                return separator >= 0 ? typeName.substring(separator + 1) : typeName;
+            }
+
+            private String rawTypeName(String declaredType) {
+                return JavaLifecycleSourceInspector.rawTypeName(declaredType);
             }
 
             private int castTypeEnd(String expression) {
