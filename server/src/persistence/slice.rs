@@ -4963,6 +4963,62 @@ mod tests {
     }
 
     #[test]
+    fn durable_commit_begin_transaction_failure_preserves_writer_and_dirty_state() {
+        let descriptor = SliceDescriptor {
+            write_binding: TEST_BINDING,
+            ..basic_descriptor("player.begin_transaction_failure", 10)
+        };
+        let (_registry, mut guarded) = activate(
+            &descriptor,
+            SliceLoad::<u32, &str>::loaded(9),
+            "player:begin_transaction_failure",
+            DirtyRevision::default(),
+            || 0,
+            |_| 0,
+        );
+        let (mut tracker, mut fence) = guarded.restore_persistence_state().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("BEGIN DEFERRED TRANSACTION")
+            .expect("the outer transaction must be established before the fence commit");
+
+        guarded.mutate(&mut tracker, |value| *value = 10).unwrap();
+        let snapshot = tracker
+            .begin_snapshot(
+                guarded.write_permit(WriteOutlet::Autosave).unwrap(),
+                |value| *value,
+            )
+            .unwrap()
+            .unwrap();
+        let mut writer_calls = 0;
+        let result = fence.commit(&mut connection, snapshot, |_request| {
+            writer_calls += 1;
+            Ok::<(), &str>(())
+        });
+
+        assert!(matches!(
+            result,
+            Err(DurableCommitError::BeginTransaction(_))
+        ));
+        assert_eq!(
+            writer_calls, 0,
+            "the writer must not run before a transaction exists"
+        );
+        assert_eq!(
+            fence.persisted_revision(),
+            DirtyRevision::default(),
+            "a transaction-open failure must not advance the durable revision"
+        );
+        assert!(
+            tracker.is_dirty(),
+            "the dirty snapshot must remain retryable after transaction-open failure"
+        );
+        connection
+            .execute_batch("ROLLBACK")
+            .expect("the injected outer transaction must be cleaned up");
+    }
+
+    #[test]
     fn durable_commit_rejects_success_without_a_current_transaction_write() {
         let descriptor = SliceDescriptor {
             write_binding: TEST_BINDING,
