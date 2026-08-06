@@ -65,4 +65,4 @@ skeleton：coffin-autosave-inflight-race、identity-persist-key-mismatch、miner
 ## 验收与实施边界
 
 - `cargo test --package bong-server persistence -- --nocapture` 覆盖 Slice guard、flush/tick rebase、migration consumer、dropped-loot bound 与 R1 O-01..O-27 durable traces；bot e2e 必须覆盖本 plan §bot 验收场景列出的全部七项：`restart_player_slices`、`restart_world_runtime`、`load_failure_guard`、`tick_rebase`、`tsy_presence_relog_parity`、`tsy_presence_snapshot_atomicity`、`session_delivery_outbox_atomicity`，这是 R3 P5 自身完成门。craft production activation 仍只由 master M-10 的 prerequisites/cutover evidence 放行；TSY attach/restore 仍只消费 master M-12 的 coupled-snapshot evidence，不因 R3 七项场景另建跨轨 release gate。
-- R3 P1 只冻结 inventory seam，不实现 R10 migration/capacity；P2/P4 等依赖合入后才实现 consumer，且不修改 `server/src/inventory/**`。
+- R3 P1 实现 M-04 durable provider 与 M-12 coupled-snapshot implementation：交付 `SessionDeliveryQuota`、reservation/outbox、receipt/history/tombstone storage、atomic CAS 与 coupled-snapshot API，并冻结 inventory seam；不实现 R10 migration/capacity，也不修改 `server/src/inventory/**`。P2/P4 在对应 master M-row 就绪后实现 consumer，R1/R10 只消费冻结接口。
