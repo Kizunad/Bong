@@ -8819,6 +8819,93 @@ mod persistence_tests {
     }
 
     #[test]
+    fn production_connection_outage_stays_read_only_until_reconnect_rehydrates() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-production-connection-outage");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+        app.update();
+
+        let backup_path = root.join("known-techniques-outage-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should make player connection unavailable");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(old_player)
+            .is_some());
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&canonical_player_id("Azure"))
+                .map(|activation| activation.guarded.load_status()),
+            Some(slice::SliceLoadStatus::Failed),
+            "a production connection-open failure must retain Failed provenance"
+        );
+
+        let during_outage = known_techniques_fixture("movement.dash", 0.8);
+        app.world_mut().entity_mut(old_player).insert(during_outage);
+        app.update();
+
+        fs::remove_dir(settings.db_path())
+            .expect("database outage placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("the durable database should be restored after the outage");
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(initial.clone()),
+            "an outage Changed event must not overwrite the existing durable row"
+        );
+
+        let before_reconnect = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(before_reconnect);
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(initial.clone()),
+            "database recovery alone must not make the failed activation writable"
+        );
+
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, _new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&initial),
+            "reconnect must rehydrate the durable row before reopening writes"
+        );
+        assert!(app
+            .world()
+            .get::<KnownTechniquesLoadFailed>(new_player)
+            .is_none());
+
+        let after_reconnect = known_techniques_fixture("movement.dash", 1.0);
+        app.world_mut()
+            .entity_mut(new_player)
+            .insert(after_reconnect.clone());
+        app.update();
+        assert_eq!(
+            persisted_known_techniques(&persistence, "Azure"),
+            Some(after_reconnect),
+            "only the rehydrated activation may resume Changed writes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_missing_known_techniques_row_can_persist_first_change() {
         let (mut app, persistence, _settings, root) =
             known_techniques_app("known-techniques-production-missing");
