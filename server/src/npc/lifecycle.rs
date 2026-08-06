@@ -498,7 +498,7 @@ pub struct NpcTerminalSettlementSucceeded {
 pub struct PendingRetirement;
 
 #[derive(Clone, Copy, Debug, Component)]
-struct NpcTerminalCommitted;
+pub(crate) struct NpcTerminalCommitted;
 
 #[derive(Clone, Debug, Event)]
 pub struct NpcRetireRequest {

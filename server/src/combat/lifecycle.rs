@@ -3899,47 +3899,119 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn near_death_npc_termination_keeps_high_realm_qi_burst_profile() {
+    fn npc_terminal_test_app(test_name: &str) -> (App, PathBuf) {
+        let (settings, root) = persistence_settings(test_name);
         let mut app = App::new();
-        let (settings, root) = persistence_settings("npc-near-death-vfx");
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 200 });
+        app.insert_resource(ZoneRegistry::fallback());
+        app.insert_resource(WorldQiAccount::default());
+        crate::npc::lifecycle::register(&mut app);
         app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
         app.add_event::<DeathCinematicPublished>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(Update, near_death_tick);
-
-        let profile = crate::skin::select_npc_visual_profile(
-            crate::npc::lifecycle::NpcArchetype::Rogue,
-            Realm::Spirit,
-            None,
-            None,
-            0.5,
+        app.add_systems(
+            Update,
+            near_death_tick.in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage),
         );
+        (app, root)
+    }
+
+    fn spawn_near_death_npc(
+        app: &mut App,
+        archetype: crate::npc::lifecycle::NpcArchetype,
+        realm: Realm,
+    ) -> (Entity, f64) {
         let entity = app
             .world_mut()
             .spawn((
-                Lifecycle {
-                    character_id: "npc_high_realm".to_string(),
-                    state: LifecycleState::NearDeath,
-                    near_death_deadline_tick: Some(199),
-                    ..Default::default()
-                },
-                LifeRecord::new("npc_high_realm"),
-                Position::new([0.0, 66.0, 0.0]),
                 NpcMarker,
-                profile,
+                Position::new([0.0, 66.0, 0.0]),
+                CurrentDimension(crate::world::dimension::DimensionKind::Overworld),
             ))
             .id();
+        let mut bundle = crate::npc::lifecycle::npc_runtime_bundle(entity, archetype, realm);
+        bundle.wounds.health_current = 0.0;
+        bundle.wounds.health_max = 100.0;
+        bundle.lifecycle.state = LifecycleState::NearDeath;
+        bundle.lifecycle.near_death_deadline_tick = Some(200 + 600);
+        bundle.cultivation.qi_current = bundle.cultivation.qi_max * 0.5;
+        let initial_qi = bundle.cultivation.qi_current;
+        app.world_mut().entity_mut(entity).insert(bundle);
+        (entity, initial_qi)
+    }
 
-        app.update();
-
+    fn assert_npc_terminal_commit(app: &App, entity: Entity, initial_qi: f64) {
         let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
         assert_eq!(lifecycle.state, LifecycleState::Terminated);
-        assert_eq!(app.world().resource::<Events<PlayerTerminated>>().len(), 1);
+        assert!(
+            app.world()
+                .get::<valence::prelude::Despawned>(entity)
+                .is_some(),
+            "NPC terminal commit must mark the entity Despawned"
+        );
+        assert!(
+            app.world()
+                .get::<crate::npc::lifecycle::NpcTerminalCommitted>(entity)
+                .is_some(),
+            "NPC terminal commit must leave its committed marker"
+        );
+        assert_eq!(
+            app.world().resource::<Events<PlayerTerminated>>().len(),
+            0,
+            "NPC terminal staging must not emit the player-only termination event"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<crate::npc::lifecycle::NpcDeathNotice>>()
+                .iter_current_update_events()
+                .count(),
+            1,
+            "NPC terminal commit must emit one death notice"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<Events<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>>()
+                .iter_current_update_events()
+                .count(),
+            1,
+            "NPC terminal commit must emit one settlement success"
+        );
+        let cultivation = app.world().entity(entity).get::<Cultivation>().unwrap();
+        assert_eq!(cultivation.qi_current, 0.0);
+        let settled_qi: f64 = app
+            .world()
+            .resource::<WorldQiAccount>()
+            .transfers()
+            .iter()
+            .filter(|transfer| {
+                transfer.reason == crate::qi_physics::QiTransferReason::ReleaseToZone
+            })
+            .map(|transfer| transfer.amount)
+            .sum();
+        assert!((settled_qi - initial_qi).abs() < 1e-9);
+    }
+
+    #[test]
+    fn near_death_npc_termination_keeps_high_realm_qi_burst_profile() {
+        let (mut app, root) = npc_terminal_test_app("npc-near-death-vfx");
+        let entity = {
+            let (entity, initial_qi) = spawn_near_death_npc(
+                &mut app,
+                crate::npc::lifecycle::NpcArchetype::Rogue,
+                Realm::Spirit,
+            );
+            let profile = crate::skin::select_npc_visual_profile(
+                crate::npc::lifecycle::NpcArchetype::Rogue,
+                Realm::Spirit,
+                None,
+                None,
+                0.5,
+            );
+            app.world_mut().entity_mut(entity).insert(profile);
+            app.update();
+            assert_npc_terminal_commit(&app, entity, initial_qi);
+            entity
+        };
 
         let vfx_events = app.world().resource::<Events<VfxEventRequest>>();
         let mut reader = vfx_events.get_reader();
@@ -3950,114 +4022,45 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(
-            event_ids.contains(&"bong:npc_death_smoke"),
-            "terminating an NPC through near-death should emit death smoke"
-        );
-        assert!(
-            event_ids.contains(&"bong:npc_death_qi_burst"),
-            "high-realm NPC profile should survive the near-death wrapper and emit qi burst"
-        );
-
-        let _ = fs::remove_dir_all(root);
+        assert!(event_ids.contains(&"bong:death_soul_dissipate"));
+        assert!(event_ids.contains(&"bong:npc_death_smoke"));
+        assert!(event_ids.contains(&"bong:npc_death_qi_burst"));
+        let _ = (entity, fs::remove_dir_all(root));
     }
 
     #[test]
     fn near_death_rat_terminates_without_waiting_for_player_revival_window() {
-        let mut app = App::new();
-        let (settings, root) = persistence_settings("rat-near-death-immediate");
-        app.insert_resource(settings);
-        app.insert_resource(CombatClock { tick: 200 });
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<DeathCinematicPublished>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(Update, near_death_tick);
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Lifecycle {
-                    character_id: "rat-immediate".to_string(),
-                    state: LifecycleState::NearDeath,
-                    near_death_deadline_tick: Some(
-                        200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
-                    ),
-                    ..Default::default()
-                },
-                Wounds {
-                    health_current: 0.0,
-                    health_max: 100.0,
-                    entries: Vec::new(),
-                },
-                Position::new([0.0, 66.0, 0.0]),
-                NpcMarker,
-                crate::fauna::components::FaunaTag::new(crate::fauna::components::BeastKind::Rat),
-            ))
-            .id();
-
-        app.update();
-
-        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::Terminated);
-        assert_eq!(
-            app.world().resource::<Events<PlayerTerminated>>().len(),
-            1,
-            "rat should not wait out the player revival near-death window"
+        let (mut app, root) = npc_terminal_test_app("rat-near-death-immediate");
+        let (entity, initial_qi) = spawn_near_death_npc(
+            &mut app,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            Realm::Awaken,
         );
-
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::fauna::components::FaunaTag::new(
+                crate::fauna::components::BeastKind::Rat,
+            ));
+        app.update();
+        assert_npc_terminal_commit(&app, entity, initial_qi);
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn near_death_non_rat_npc_terminates_immediately() {
-        // All NPCs skip the NearDeath wait window — only players use it.
-        let mut app = App::new();
-        let (settings, root) = persistence_settings("spider-near-death-immediate");
-        app.insert_resource(settings);
-        app.insert_resource(CombatClock { tick: 200 });
-        app.add_event::<PlayerRevived>();
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<DeathCinematicPublished>();
-        app.add_event::<VfxEventRequest>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(Update, near_death_tick);
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Lifecycle {
-                    character_id: "spider-immediate".to_string(),
-                    state: LifecycleState::NearDeath,
-                    near_death_deadline_tick: Some(
-                        200 + crate::combat::components::NEAR_DEATH_WINDOW_TICKS,
-                    ),
-                    ..Default::default()
-                },
-                Wounds {
-                    health_current: 0.0,
-                    health_max: 100.0,
-                    entries: Vec::new(),
-                },
-                Position::new([0.0, 66.0, 0.0]),
-                NpcMarker,
-                crate::fauna::components::FaunaTag::new(
-                    crate::fauna::components::BeastKind::Spider,
-                ),
-            ))
-            .id();
-
-        app.update();
-
-        let lifecycle = app.world().entity(entity).get::<Lifecycle>().unwrap();
-        assert_eq!(lifecycle.state, LifecycleState::Terminated);
-        assert_eq!(
-            app.world().resource::<Events<PlayerTerminated>>().len(),
-            1,
-            "all NPCs should terminate immediately without near-death wait"
+        let (mut app, root) = npc_terminal_test_app("spider-near-death-immediate");
+        let (entity, initial_qi) = spawn_near_death_npc(
+            &mut app,
+            crate::npc::lifecycle::NpcArchetype::Beast,
+            Realm::Awaken,
         );
-
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::fauna::components::FaunaTag::new(
+                crate::fauna::components::BeastKind::Spider,
+            ));
+        app.update();
+        assert_npc_terminal_commit(&app, entity, initial_qi);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -4725,6 +4728,7 @@ mod tests {
         app.add_event::<DeathCinematicPublished>();
         app.add_event::<PlayerRevived>();
         app.add_event::<PlayerTerminated>();
+        app.add_event::<crate::cultivation::death_hooks::CultivationReviveRequested>();
         app.add_event::<RevivalActionIntent>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<crate::skill::events::SkillCapChanged>();
