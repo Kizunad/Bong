@@ -44,6 +44,15 @@ OUT_DIR = REPO / "local_models" / "horse"
 
 MATS = ("bone", "bone_dark", "cartilage", "tooth", "socket", "hoof")
 
+# uuid 由**名字**确定性派生，不用 uuid4：产物是要入库的，随机 uuid 会让每次重生成
+# 都产生一份假 diff（几百行只换了 uuid），review 时分不清真改动。名字在本模块内唯一
+# （Rig.cube / Rig.bone 都有重名断言），所以 uuid5 足够。
+_NS = uuid.UUID("6f2a1c84-3d5e-4b17-9c0a-7e51d2b8a943")
+
+
+def uid(kind: str, name: str) -> str:
+    return str(uuid.uuid5(_NS, f"horse/{kind}:{name}"))
+
 _COLORS = {
     "bone": (214, 205, 184),
     "bone_dark": (176, 165, 142),
@@ -293,7 +302,7 @@ class Rig:
         if parent is not None and parent not in self.bones:
             raise ValueError(f"{name} 的父骨骼 {parent} 尚未定义（骨骼须先父后子）")
         self.bones[name] = {
-            "uuid": str(uuid.uuid4()),
+            "uuid": uid("bone", name),
             "pivot": [round(v, 3) for v in pivot],
             "parent": parent,
             "children": [],
@@ -316,9 +325,11 @@ class Rig:
             raise ValueError(f"未定义骨骼: {bone}")
         if mat not in MATS:
             raise ValueError(f"未知材质: {mat}")
+        if any(e["name"] == name for e in self.elements):
+            raise ValueError(f"重复 element 名: {name}（uuid 由名字派生，名字必须唯一）")
         f = [round(min(a, b), 3) for a, b in zip(frm, to)]
         t = [round(max(a, b), 3) for a, b in zip(frm, to)]
-        eid = str(uuid.uuid4())
+        eid = uid("cube", name)
         el = {
             "name": name,
             "box_uv": False,
@@ -386,7 +397,7 @@ class Rig:
                     "visible": True,
                     "mode": "bitmap",
                     "saved": False,
-                    "uuid": str(uuid.uuid4()),
+                    "uuid": uid("texture", model_name),
                     "source": "data:image/png;base64," + _texture_b64(),
                 }
             ],

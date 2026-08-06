@@ -2,11 +2,15 @@
 """马骨架 —— 一键预览：重生成三档模型 + 渲染全部视图到本目录。
 
 产出（均落在 scripts/models/horse/）：
-  render_skeleton_small.png / _medium.png / _large.png   逐档三视图
+  render_skeleton_small.png / _medium.png / _large.png   逐档骨架三视图
   render_compare.png                                     三档并排**同尺**侧视（比例差别只有同尺才看得出来）
   render_head.png                                        头部特写（正 / 侧 / 3-4）
   render_limbs.png                                       前后肢特写（蹄行下肢是这活儿最容易做砸的地方）
   parts_atlas.png                                        逐部件图集（常马）
+  render_muscle_*.png                                    逐档骨+肌三视图
+  render_muscle_bare.png                                 只肌肉（三档并排同尺）
+  render_explode.png                                     延展视图（部件沿径向散开）
+  muscle_atlas.png                                       逐肌群图集（每群单独显示在骨架上）
 
 用法:
   python3 scripts/models/horse/preview.py              # 全部
@@ -35,6 +39,14 @@ from PIL import Image, ImageDraw  # noqa: E402
 BG = (14, 15, 17)
 ORDER = ("small", "medium", "large")
 PARTS = ("spine", "ribcage", "skull", "jaw", "pelvis", "foreleg", "hindleg", "tail")
+MGROUPS = (
+    ("head", "Head: masseter / temporalis"),
+    ("neck", "Neck: nuchal ligament / splenius / brachiocephalicus"),
+    ("torso", "Torso: longissimus / latissimus / serratus sling / abdominals"),
+    ("foreleg", "Foreleg: triceps / spinati / forearm + digital tendons"),
+    ("hindleg", "Hindleg: gluteus / TFL / biceps femoris / gastrocnemius"),
+    ("tail", "Tail: sacrocaudalis"),
+)
 
 
 def _run(script: str, *args: str) -> None:
@@ -62,12 +74,12 @@ def three_views() -> None:
         print(f"  → render_skeleton_{key}.png")
 
 
-def compare(size: int = 520) -> None:
+def _same_scale_row(namer, out: str, size: int = 520) -> None:
     """三档并排，**共用一套取景**——各自自动取景会把三匹马缩放到一样大，
     体型差就全被抹平了，正是这张图要看的东西。"""
     spans = []
     for key in ORDER:
-        tris, _, _, _ = load_bbmodel(MODELS / f"HorseSkeleton_{key}.bbmodel")
+        tris, _, _, _ = load_bbmodel(MODELS / f"{namer(key)}.bbmodel")
         vs = [v for tri in tris for v in tri[0]]
         lo = [min(v[i] for v in vs) for i in range(3)]
         hi = [max(v[i] for v in vs) for i in range(3)]
@@ -79,10 +91,14 @@ def compare(size: int = 520) -> None:
         P = PROFILES[key]
         # 取景中心统一压到地面上方半个 span，四蹄才不会被裁
         focus = ((center[0], span * 0.42, center[2]), span)
-        im, _ = render(MODELS / f"HorseSkeleton_{key}.bbmodel", yaw=90.0, pitch=0.0, size=size, focus=focus)
+        im, _ = render(MODELS / f"{namer(key)}.bbmodel", yaw=90.0, pitch=0.0, size=size, focus=focus)
         tiles.append((f"{P.label} ({key})  鬐甲 {P.wither / 16:.2f} m", im))
-    _grid(tiles, cols=3).save(HERE / "render_compare.png")
-    print("  → render_compare.png")
+    _grid(tiles, cols=3).save(HERE / out)
+    print(f"  → {out}")
+
+
+def compare() -> None:
+    _same_scale_row(lambda k: f"HorseSkeleton_{k}", "render_compare.png")
 
 
 def head(size: int = 460) -> None:
@@ -135,12 +151,40 @@ def parts_atlas(size: int = 400) -> None:
     print("  → parts_atlas.png")
 
 
+def muscle_views() -> None:
+    for key in ORDER:
+        im, _ = render_three_view(MODELS / f"HorseMuscle_{key}.bbmodel", size=470)
+        im.save(HERE / f"render_muscle_{key}.png")
+        print(f"  → render_muscle_{key}.png")
+
+
+def muscle_bare() -> None:
+    _same_scale_row(lambda k: f"HorseMuscle_{k}_bare", "render_muscle_bare.png")
+
+
+def muscle_explode(size: int = 520) -> None:
+    im, _ = render_three_view(MODELS / "HorseMuscle_medium_explode.bbmodel", size=size)
+    im.save(HERE / "render_explode.png")
+    print("  → render_explode.png")
+
+
+def muscle_atlas(size: int = 430) -> None:
+    """逐肌群图集：每群单独显示在完整骨架上，形状与附着点一眼可辨。"""
+    tiles = []
+    for key, label in MGROUPS:
+        _run("gen_muscle.py", "--profile", "medium", "--group", key)
+        im, _ = render(MODELS / f"HorseMuscle_{key}_medium.bbmodel", yaw=142.0, pitch=14.0, size=size)
+        tiles.append((label, im))
+    _grid(tiles, cols=3).save(HERE / "muscle_atlas.png")
+    print("  → muscle_atlas.png")
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="马骨架预览渲染")
+    ap = argparse.ArgumentParser(description="马骨架/肌肉预览渲染")
     ap.add_argument("--skip-gen", action="store_true", help="不重生成 bbmodel，只渲染现有的")
     ap.add_argument(
         "--only",
-        choices=("three", "compare", "head", "limbs", "atlas"),
+        choices=("three", "compare", "head", "limbs", "atlas", "muscle", "bare", "explode", "matlas"),
         help="只出其中一张",
     )
     args = ap.parse_args()
@@ -148,9 +192,22 @@ def main() -> int:
     if not args.skip_gen:
         print("生成模型…")
         _run("gen_skeleton.py")
+        _run("gen_muscle.py")
+        _run("gen_muscle.py", "--only-muscle")
+        _run("gen_muscle.py", "--profile", "medium", "--explode", "5")
 
     print("渲染…")
-    jobs = {"three": three_views, "compare": compare, "head": head, "limbs": limbs, "atlas": parts_atlas}
+    jobs = {
+        "three": three_views,
+        "compare": compare,
+        "head": head,
+        "limbs": limbs,
+        "atlas": parts_atlas,
+        "muscle": muscle_views,
+        "bare": muscle_bare,
+        "explode": muscle_explode,
+        "matlas": muscle_atlas,
+    }
     for key, fn in jobs.items():
         if args.only in (None, key):
             fn()
