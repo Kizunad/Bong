@@ -1090,6 +1090,14 @@ impl TerrainProvider {
         let mut tiles = HashMap::with_capacity(manifest.tiles.len());
         if let (Some(tile_area), Some(raster_root)) = (tile_area, raster_root.as_deref()) {
             for tile in &manifest.tiles {
+                for layer_name in &tile.layers {
+                    if layer_schema(layer_name).is_none() {
+                        diagnostics.push(format!(
+                            "raster: tile ({},{}) '{}' declares unknown layer '{}', not present in the canonical layer registry",
+                            tile.tile_x, tile.tile_z, tile.dir, layer_name
+                        ));
+                    }
+                }
                 let tile_dir = raster_dir.join(&tile.dir);
                 match TileFields::load(&tile_dir, raster_root, &tile.layers, tile_area) {
                     Ok(tile_fields) => {
@@ -3411,6 +3419,121 @@ mod tests {
             &super::super::nbt_registry::DecorationNbtRegistry::empty(),
         )
         .expect_err("symlinked tile ancestor must not escape the raster root");
+        assert!(error.to_string().contains("outside trusted root"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_preflighted_rejects_optional_layer_file_outside_raster_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_dir();
+        let outside = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        fs::write(outside.join("rift_axis_sdf.bin"), [0_u8; 4]).unwrap();
+        symlink(
+            outside.join("rift_axis_sdf.bin"),
+            tile_dir.join("rift_axis_sdf.bin"),
+        )
+        .unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["rift_axis_sdf"]}]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("optional raster symlink outside the root must fail closed");
+        assert!(
+            error.to_string().contains("outside trusted root"),
+            "optional layer escape must preserve trusted-root diagnostics: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn load_preflighted_rejects_unknown_manifest_layer_names() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["flroa_density"]}]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("unknown manifest layer names must reject provider admission");
+        assert!(
+            error.to_string().contains("unknown layer 'flroa_density'"),
+            "unknown layer diagnostics must name the exact producer typo: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn load_preflighted_rejects_optional_layer_reparse_escape() {
+        // Windows reparse-point coverage is exercised by the same loader path;
+        // the no-follow handle admission must reject an external target.
+        let root = unique_temp_dir();
+        let outside = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("rift_axis_sdf.bin"), [0_u8; 4]).unwrap();
+        std::os::windows::fs::symlink_file(
+            outside.join("rift_axis_sdf.bin"),
+            tile_dir.join("rift_axis_sdf.bin"),
+        )
+        .unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["rift_axis_sdf"]}]
+            }"#,
+        )
+        .unwrap();
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("Windows reparse-point layer escape must fail closed");
         assert!(error.to_string().contains("outside trusted root"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
