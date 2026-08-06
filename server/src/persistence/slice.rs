@@ -3519,6 +3519,7 @@ mod tests {
         preserve_new_first_on_abort: bool,
         release_first_during_rebase: bool,
         hydrate_attempts: usize,
+        abort_order: Vec<SliceId>,
     }
 
     impl Resource for AtomicReconnectState {}
@@ -3617,9 +3618,12 @@ mod tests {
         match context.reason {
             SliceRunReason::ReconnectCleanup => state.old_first = None,
             SliceRunReason::ReconnectAbort if !state.preserve_new_first_on_abort => {
+                state.abort_order.push(SliceId::new("player.atomic_first"));
                 state.new_first = None;
             }
-            SliceRunReason::ReconnectAbort => {}
+            SliceRunReason::ReconnectAbort => {
+                state.abort_order.push(SliceId::new("player.atomic_first"));
+            }
             _ => panic!("unexpected reconnect cleanup reason"),
         }
     }
@@ -3628,7 +3632,10 @@ mod tests {
         let mut state = world.resource_mut::<AtomicReconnectState>();
         match context.reason {
             SliceRunReason::ReconnectCleanup => state.old_second = None,
-            SliceRunReason::ReconnectAbort => state.new_second = None,
+            SliceRunReason::ReconnectAbort => {
+                state.abort_order.push(SliceId::new("player.atomic_second"));
+                state.new_second = None;
+            }
             _ => panic!("unexpected reconnect cleanup reason"),
         }
     }
@@ -3929,6 +3936,11 @@ mod tests {
             assert_eq!(report.rebases_completed, 1, "{injected:?}");
             assert_eq!(report.aborts_completed, 2, "{injected:?}");
             let state = world.resource::<AtomicReconnectState>();
+            assert_eq!(
+                state.abort_order,
+                vec![second.id, first.id],
+                "rebase {injected:?} must abort hydrated descriptors in reverse registry order"
+            );
             assert!(state.old_first.is_none() && state.old_second.is_none());
             assert!(state.new_first.is_none() && state.new_second.is_none());
         }
