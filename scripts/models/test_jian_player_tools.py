@@ -17,7 +17,7 @@ import numpy as np
 from PIL import Image
 
 MODEL_DIR = Path(__file__).resolve().parent
-REPO = MODEL_DIR.parents[2]
+REPO = MODEL_DIR.parents[1]
 sys.path.insert(0, str(MODEL_DIR))
 
 import gen_jian_player as J
@@ -229,6 +229,40 @@ class JianPlayerToolsTest(unittest.TestCase):
         ])
         np.testing.assert_allclose(rotated, expected, atol=1e-9)
 
+    def test_load_grouped_resolves_fmt5_group_children_and_leaf_to_root_order(self) -> None:
+        source = Image.new("RGBA", (2, 2), (90, 100, 110, 255))
+        buffer = io.BytesIO()
+        source.save(buffer, format="PNG")
+        root_uuid = "root-group"
+        child_uuid = "child-group"
+        element_uuid = "cube-element"
+        document = {
+            "resolution": {"width": 2, "height": 2},
+            "textures": [{"source": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()}],
+            "elements": [{
+                "uuid": element_uuid,
+                "from": [0, 0, 0], "to": [1, 1, 1],
+                "faces": {
+                    "north": {"uv": [0, 0, 1, 1]},
+                    "up": {"uv": [0, 0, 1, 1]},
+                },
+            }],
+            "outliner": [{"uuid": root_uuid}],
+            "groups": [
+                {"uuid": root_uuid, "origin": [0, 0, 0], "rotation": [0, 0, 90], "children": [child_uuid]},
+                {"uuid": child_uuid, "origin": [0, 0, 0], "rotation": [0, 90, 0], "children": [element_uuid]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fmt5.bbmodel"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            tris, _texture, _resolution, _name = J.load_grouped(path)
+        vertices = np.concatenate([vs for vs, _uvs, _normal in tris])
+        self.assertTrue(
+            any(np.allclose(vertex, [-1.0, 0.0, -1.0]) for vertex in vertices),
+            "UUID-resolved child and parent rotations must apply in leaf-to-root order",
+        )
+
     def test_default_jian_model_fallback_is_reachable_without_writing_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing" / "BambooJianSingle.bbmodel"
@@ -246,7 +280,6 @@ class JianPlayerToolsTest(unittest.TestCase):
                         module.validate_render_size(size)
             self.assertEqual(module.MAX_RENDER_SIZE, module.validate_render_size(module.MAX_RENDER_SIZE))
             self.assertEqual(1, module.validate_render_size(1))
-
     def test_gen_jian_player_size_rejects_before_writing_bbmodel(self) -> None:
         script = MODEL_DIR / "gen_jian_player.py"
         for size in (0, -1, J.MAX_RENDER_SIZE + 1):

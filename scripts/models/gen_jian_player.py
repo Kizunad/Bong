@@ -198,16 +198,19 @@ def load_grouped(path):
             if isinstance(n, str):
                 if n in els:
                     chains[n] = chain
+                    continue
+                src = groups.get(n)
+                if src is None:
+                    continue
             else:
                 src = groups.get(n.get("uuid"), n)
-                rot = src.get("rotation") or [0, 0, 0]
-                piv = np.array(src.get("origin") or [0, 0, 0], float)
-                ch = chain
-                if any(abs(r) > 1e-6 for r in rot):
-                    Rm = R._rotmat(rot[2], 2) @ R._rotmat(rot[1], 1) @ R._rotmat(rot[0], 0)
-                    ch = chain + [(piv, Rm)]
-                children = src.get("children") or n.get("children", [])
-                walk(children, ch)
+            rot = src.get("rotation") or [0, 0, 0]
+            piv = np.array(src.get("origin") or [0, 0, 0], float)
+            ch = chain
+            if any(abs(r) > 1e-6 for r in rot):
+                Rm = R._rotmat(rot[2], 2) @ R._rotmat(rot[1], 1) @ R._rotmat(rot[0], 0)
+                ch = chain + [(piv, Rm)]
+            walk(src.get("children") or [], ch)
 
     walk(d["outliner"], [])
 
