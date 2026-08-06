@@ -32,6 +32,7 @@ source diff.
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,6 +45,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "nbt" / "decorations"))
 
 from nbt_builder import load_structure  # noqa: E402
 
+from gen_crystal import build_frost_cluster  # noqa: E402
 from scripts.terrain_gen.profiles import GLOBAL_DECORATION_PALETTE  # noqa: E402
 from scripts.terrain_gen.profiles.base import (  # noqa: E402
     _SHRUB_DEFAULT_ECOLOGY,
@@ -242,8 +244,11 @@ class StructureSupportTests(unittest.TestCase):
             )
 
     def test_frost_cluster_diagonal_accents_face_up(self) -> None:
-        path = DECORATIONS_ROOT / "crystal" / "frost_cluster_v3.nbt"
-        blocks = _block_positions(path)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "frost_cluster_generated.nbt"
+            build_frost_cluster().save(str(path))
+            blocks = _block_positions(path)
+
         accents = [
             props for (x, _, z), (name, props) in blocks.items()
             if name == "amethyst_cluster" and abs(x - 2) == 1 and abs(z - 2) == 1
@@ -251,12 +256,22 @@ class StructureSupportTests(unittest.TestCase):
         self.assertEqual(
             len(accents),
             4,
-            "frost builder must create four diagonal accents",
+            "build_frost_cluster() must create four diagonal accents",
         )
         self.assertTrue(
             all(props.get("facing") == "up" for props in accents),
-            f"frost builder diagonal accents must face up: {accents}",
+            f"build_frost_cluster() diagonal accents must face up: {accents}",
         )
+
+        shipped = _block_positions(
+            DECORATIONS_ROOT / "crystal" / "frost_cluster_v3.nbt"
+        )
+        self.assertEqual(
+            blocks,
+            shipped,
+            "the shipped frost artifact must match the generator output",
+        )
+
 
     def test_spirit_ore_vein_amethyst_clusters_are_supported(self) -> None:
         # Every upward amethyst cluster must sit on a solid outcrop block; a
