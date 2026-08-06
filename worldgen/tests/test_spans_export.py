@@ -25,6 +25,7 @@ from scripts.terrain_gen.bakers.raster_export import (
     SPANS_COUNT_FILE,
     SPANS_FILE,
     _atomic_write_bytes,
+    _write_atomic_batch,
     _carved_spans_for_tile,
     _tile_carver_assignments,
     _zone_carver_chains,
@@ -148,27 +149,30 @@ class AtomicRasterPublicationTest(unittest.TestCase):
         for failure_name, inject_failure in (
             ("write", self._fail_write),
             ("flush", self._fail_flush),
-            ("fsync", self._fail_fsync),
+            ("sync", self._fail_sync),
             ("replace", self._fail_replace),
         ):
             with self.subTest(failure_name=failure_name):
                 with tempfile.TemporaryDirectory() as td:
-                    path = Path(td) / "layer.bin"
-                    path.write_bytes(b"previous-complete-layer")
+                    paths = [Path(td) / "spans_count.bin", Path(td) / "spans.bin"]
+                    for path in paths:
+                        path.write_bytes(b"previous-complete-layer")
 
                     with inject_failure():
                         with self.assertRaisesRegex(OSError, f"{failure_name} failed"):
-                            _atomic_write_bytes(path, b"new-layer")
+                            _write_atomic_batch(
+                                [(paths[0], b"new-count"), (paths[1], b"new-spans")]
+                            )
 
                     self.assertEqual(
-                        path.read_bytes(),
-                        b"previous-complete-layer",
-                        f"{failure_name} failure must not corrupt the previously published raster",
+                        [path.read_bytes() for path in paths],
+                        [b"previous-complete-layer"] * len(paths),
+                        f"{failure_name} failure must not corrupt the previously published raster batch",
                     )
                     self.assertEqual(
                         list(Path(td).glob(".*.tmp")),
                         [],
-                        f"{failure_name} failure must clean its unique temporary file",
+                        f"{failure_name} failure must clean every staged temporary file",
                     )
 
     @staticmethod
@@ -205,12 +209,59 @@ class AtomicRasterPublicationTest(unittest.TestCase):
         return patch.object(Path, "open", fail_flush)
 
     @staticmethod
-    def _fail_fsync():
-        return patch("scripts.terrain_gen.bakers.raster_export.os.fsync", side_effect=OSError("fsync failed"))
+    def _fail_sync():
+        return patch(
+            "scripts.terrain_gen.bakers.raster_export.os.sync",
+            side_effect=OSError("sync failed"),
+        )
 
     @staticmethod
     def _fail_replace():
         return patch.object(Path, "replace", side_effect=OSError("replace failed"))
+
+    def test_batch_syncs_once_for_multiple_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            paths = [Path(td) / "first.bin", Path(td) / "second.bin"]
+            with patch("scripts.terrain_gen.bakers.raster_export.os.sync") as sync:
+                _write_atomic_batch([(paths[0], b"first"), (paths[1], b"second")])
+
+            sync.assert_called_once_with()
+            self.assertEqual(paths[0].read_bytes(), b"first")
+            self.assertEqual(paths[1].read_bytes(), b"second")
+            self.assertEqual(list(Path(td).glob(".*.tmp")), [])
+
+    def test_publish_failure_after_first_replace_cleans_remaining_staged_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            first = Path(td) / "first.bin"
+            second = Path(td) / "second.bin"
+            first.write_bytes(b"old-first")
+            second.write_bytes(b"old-second")
+            original_replace = Path.replace
+            calls = 0
+
+            def fail_second_replace(path: Path, target: Path):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("replace failed")
+                return original_replace(path, target)
+
+            with patch.object(Path, "replace", fail_second_replace):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    _write_atomic_batch([(first, b"new-first"), (second, b"new-second")])
+
+            self.assertEqual(first.read_bytes(), b"new-first")
+            self.assertEqual(second.read_bytes(), b"old-second")
+            self.assertEqual(list(Path(td).glob(".*.tmp")), [])
+
+    def test_single_file_wrapper_uses_batch_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "layer.bin"
+            with patch(
+                "scripts.terrain_gen.bakers.raster_export._write_atomic_batch"
+            ) as batch:
+                _atomic_write_bytes(path, b"payload")
+            batch.assert_called_once_with([(path, b"payload")])
 
 
 class SpansExportLayoutTest(unittest.TestCase):
