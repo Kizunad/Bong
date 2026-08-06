@@ -65,8 +65,13 @@ public final class LowerBodyGaitController {
         if (player == null || next == null) {
             return;
         }
-        AnimationStack stack = PlayerAnimationAccess.getPlayerAnimLayer(player);
-        UUID playerId = player.getUuid();
+        applyOnStack(PlayerAnimationAccess.getPlayerAnimLayer(player), player.getUuid(), next);
+    }
+
+    static void applyOnStack(AnimationStack stack, UUID playerId, GaitSelector.Gait next) {
+        if (stack == null || playerId == null || next == null) {
+            return;
+        }
         boolean sameOwner = activePlayerId != null
             && activePlayerId.equals(playerId)
             && activeStack == stack;
@@ -75,10 +80,9 @@ public final class LowerBodyGaitController {
         }
         Identifier animId = next.animId();
         if (animId == null) {
-            stopActive(stack, playerId);
-            activeGait = next;
-            activePlayerId = playerId;
-            activeStack = stack;
+            if (stopActive()) {
+                clearActive();
+            }
             return;
         }
         boolean played = AnimationLayerManager.playOnStack(
@@ -90,30 +94,40 @@ public final class LowerBodyGaitController {
             sameOwner ? activeGait.fadeOutTicks() : 0
         );
 
-        if (!played && next == GaitSelector.Gait.DASH) {
-            stopActive(stack, playerId);
+        if (!played) {
+            if (AnimationLayerManager.activeInChannel(
+                playerId, AnimationLayerManager.Channel.LOWER_BODY
+            ) == null) {
+                clearActive();
+            }
+            return;
         }
 
-        if (played) {
-            activeGait = next;
-            activePlayerId = playerId;
-            activeStack = stack;
-        }
+        activeGait = next;
+        activePlayerId = playerId;
+        activeStack = stack;
     }
 
-    private static void stopActive(AnimationStack stack, UUID playerId) {
-        AnimationLayerManager.stopOnStack(
-            stack,
-            playerId,
+    private static boolean stopActive() {
+        if (activePlayerId == null || activeStack == null || activeGait == GaitSelector.Gait.NONE) {
+            return true;
+        }
+        return AnimationLayerManager.stopOnStack(
+            activeStack,
+            activePlayerId,
             AnimationLayerManager.Channel.LOWER_BODY,
             activeGait.fadeOutTicks()
         );
     }
 
-    public static void clearOnDisconnect() {
+    private static void clearActive() {
         activeGait = GaitSelector.Gait.NONE;
         activePlayerId = null;
         activeStack = null;
+    }
+
+    public static void clearOnDisconnect() {
+        clearActive();
     }
 
     static void resetForTests() {
