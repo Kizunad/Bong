@@ -43,7 +43,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event,
-    EventReader, EventWriter, Query, Res, Update, Username, With, Without,
+    EventReader, EventWriter, Or, Query, Res, Update, Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
@@ -63,7 +63,15 @@ use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
 
 type JoinedClientsWithoutRecipes<'a> = (Entity, &'a Username);
-type JoinedClientsWithoutRecipesFilter = (Added<Username>, With<Client>, Without<LearnedRecipes>);
+type JoinedClientsWithoutRecipesFilter = (
+    Or<(
+        Added<Username>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
+    With<Client>,
+    Without<LearnedRecipes>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
 
 #[allow(unused_imports)]
 pub use furnace::{furnace_tier_from_item_id, AlchemyFurnace};
@@ -153,7 +161,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            attach_alchemy_to_joined_clients,
+            attach_alchemy_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients),
             handle_start_alchemy_requests,
             handle_recipe_fragment_learning,
             auto_profile::inject_qi_to_furnace_reserve,

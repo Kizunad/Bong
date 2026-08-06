@@ -544,8 +544,13 @@ pub fn register(app: &mut App) {
 }
 
 type CultivationAttachFilter = (
-    Or<(Added<Client>, Added<CurrentDimension>)>,
+    Or<(
+        Added<Client>,
+        Added<CurrentDimension>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
     Without<Cultivation>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 type CultivationAttachQueryItem<'a> = (
     Entity,

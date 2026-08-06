@@ -60,6 +60,11 @@ type ClientInitQueryItem<'a> = (
     &'a mut GameMode,
 );
 
+type ClientInitQueryFilter = (
+    Added<Client>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
+
 type JoinedClientsWithoutStateQueryItem<'a> = (
     Entity,
     &'a Username,
@@ -69,7 +74,14 @@ type JoinedClientsWithoutStateQueryItem<'a> = (
     &'a mut Position,
     Option<&'a mut Flags>,
 );
-type JoinedClientsWithoutStateQueryFilter = (Added<Client>, Without<PlayerState>);
+type JoinedClientsWithoutStateQueryFilter = (
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
+    Without<PlayerState>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+);
 #[derive(Component, Default)]
 struct InventoryPersistenceDirty;
 
@@ -146,7 +158,7 @@ pub fn initial_game_mode() -> GameMode {
 
 pub(crate) fn init_clients(
     mut commands: Commands,
-    mut clients: Query<ClientInitQueryItem<'_>, Added<Client>>,
+    mut clients: Query<ClientInitQueryItem<'_>, ClientInitQueryFilter>,
     dimension_layers: Option<Res<DimensionLayers>>,
 ) {
     // Spawn defaults route every client into the overworld layer. The follow-up
