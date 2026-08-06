@@ -86,11 +86,8 @@ class MovementAnimationAssetTest {
     void jianAssetsBindToProductionAssetsAndNeverWriteLowerBodyParts() throws IOException {
         for (Identifier id : BongAnimations.JIAN_ANIMATIONS) {
             JsonObject root = readAsset(id);
-            assertEquals(3, root.get("version").getAsInt(), id + " 必须是 Emotecraft v3");
-            assertEquals(id.getPath(), root.get("name").getAsString(), id + " name 必须与文件名一致");
             JsonObject emote = root.getAsJsonObject("emote");
-            assertTrue(emote.get("endTick").getAsInt() > 0, id + " endTick 必须为正");
-            assertFalse(emote.get("degrees").getAsBoolean(), id + " 运行时资产必须使用弧度");
+            assertJianMetadata(id, root, emote);
             assertTrue(emote.getAsJsonArray("moves").size() > 0, id + " 必须含关键帧");
             Map<String, Map<String, Map<Integer, Double>>> tracks = tracks(emote);
             for (Map.Entry<String, Map<String, Map<Integer, Double>>> part : tracks.entrySet()) {
@@ -107,6 +104,46 @@ class MovementAnimationAssetTest {
                     id + " 必须明确声明 contract-first-unwired，避免无生产 producer 的半接线资产");
             }
         }
+    }
+
+    private static void assertJianMetadata(Identifier id, JsonObject root, JsonObject emote) {
+        assertEquals(3, root.get("version").getAsInt(), id + " 必须是 Emotecraft v3");
+        assertEquals("Bong", root.get("author").getAsString(), id + " author 必须保持资产归属");
+        assertEquals(id.getPath(), root.get("name").getAsString(), id + " name 必须与文件名一致");
+        assertEquals(0, emote.get("beginTick").getAsInt(), id + " beginTick 必须从 0 开始");
+        assertEquals(0, emote.get("returnTick").getAsInt(), id + " returnTick 必须保持为 0");
+        assertFalse(emote.get("nsfw").getAsBoolean(), id + " 运行时资产不得标记为 NSFW");
+        assertFalse(emote.get("degrees").getAsBoolean(), id + " 运行时资产必须使用弧度");
+
+        int expectedEndTick;
+        int expectedStopTick;
+        boolean expectedLoop;
+        if (id.equals(BongAnimations.JIAN_DRAW_WAIST)) {
+            expectedEndTick = 24;
+            expectedStopTick = 27;
+            expectedLoop = false;
+        } else if (id.equals(BongAnimations.JIAN_DUAL_SMASH)) {
+            expectedEndTick = 18;
+            expectedStopTick = 21;
+            expectedLoop = false;
+        } else if (id.equals(BongAnimations.JIAN_DUAL_SWEEP)) {
+            expectedEndTick = 22;
+            expectedStopTick = 25;
+            expectedLoop = false;
+        } else if (id.equals(BongAnimations.JIAN_STANCE_HIGH_LOW)) {
+            expectedEndTick = 40;
+            expectedStopTick = 43;
+            expectedLoop = true;
+        } else if (id.equals(BongAnimations.JIAN_WAIST_SPIN_CROSS)) {
+            expectedEndTick = 32;
+            expectedStopTick = 35;
+            expectedLoop = false;
+        } else {
+            throw new AssertionError("未声明的双锏资产元数据契约：" + id);
+        }
+        assertEquals(expectedEndTick, emote.get("endTick").getAsInt(), id + " endTick 不能漂移");
+        assertEquals(expectedStopTick, emote.get("stopTick").getAsInt(), id + " stopTick 不能漂移");
+        assertEquals(expectedLoop, emote.get("isLoop").getAsBoolean(), id + " isLoop 不能漂移");
     }
 
     @Test
