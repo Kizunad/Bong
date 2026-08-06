@@ -36,6 +36,7 @@
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
+use std::mem::size_of;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
@@ -63,6 +64,11 @@ pub const DATA_VERSION: i32 = 3465;
 /// written by a non-conforming tool.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
+/// Maximum compressed bytes admitted for one structure input.
+pub const MAX_COMPRESSED_NBT_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum decompressed NBT payload admitted for one structure input.
+pub const MAX_DECOMPRESSED_NBT_BYTES: usize = 32 * 1024 * 1024;
+
 /// Errors surfaced by [`read_structure_nbt`] / [`write_structure_nbt`].
 #[derive(Debug)]
 pub enum NbtIoError {
@@ -75,6 +81,10 @@ pub enum NbtIoError {
     Malformed(String),
     /// NBT binary decode/encode error from `valence_nbt`.
     Nbt(String),
+    /// The compressed input exceeded the per-file admission limit.
+    CompressedPayloadTooLarge { limit: usize },
+    /// The decompressed NBT payload exceeded the per-file admission limit.
+    DecompressedPayloadTooLarge { limit: usize },
 }
 
 impl std::fmt::Display for NbtIoError {
@@ -88,6 +98,14 @@ impl std::fmt::Display for NbtIoError {
             ),
             NbtIoError::Malformed(msg) => write!(f, "malformed structure nbt: {msg}"),
             NbtIoError::Nbt(msg) => write!(f, "nbt codec error: {msg}"),
+            NbtIoError::CompressedPayloadTooLarge { limit } => write!(
+                f,
+                "compressed structure nbt exceeds the {limit}-byte per-file limit"
+            ),
+            NbtIoError::DecompressedPayloadTooLarge { limit } => write!(
+                f,
+                "decompressed structure nbt exceeds the {limit}-byte per-file limit"
+            ),
         }
     }
 }
@@ -188,7 +206,121 @@ pub struct StructureNbt {
 
 const MAX_PALETTE_INDEX_EXAMPLES: usize = 8;
 
+fn resident_palette_entry_bytes(entry: &PaletteEntry) -> usize {
+    entry.name.capacity()
+        + entry.properties.capacity() * size_of::<(String, String)>()
+        + entry
+            .properties
+            .iter()
+            .map(|(key, value)| key.capacity() + value.capacity())
+            .sum::<usize>()
+}
+
+fn resident_block_entry_bytes(entry: &StructureBlockEntry) -> usize {
+    entry
+        .block_nbt
+        .as_ref()
+        .map(resident_compound_bytes)
+        .unwrap_or_default()
+}
+
+fn resident_compound_bytes(compound: &Compound) -> usize {
+    compound
+        .iter()
+        .map(|(key, value)| {
+            size_of::<(String, Value)>() + key.capacity() + resident_value_bytes(value)
+        })
+        .sum()
+}
+
+fn resident_list_bytes(list: &List) -> usize {
+    match list {
+        List::End => 0,
+        List::Byte(values) => values.capacity() * size_of::<i8>(),
+        List::Short(values) => values.capacity() * size_of::<i16>(),
+        List::Int(values) => values.capacity() * size_of::<i32>(),
+        List::Long(values) => values.capacity() * size_of::<i64>(),
+        List::Float(values) => values.capacity() * size_of::<f32>(),
+        List::Double(values) => values.capacity() * size_of::<f64>(),
+        List::ByteArray(values) => {
+            values.capacity() * size_of::<Vec<i8>>()
+                + values
+                    .iter()
+                    .map(|value| value.capacity() * size_of::<i8>())
+                    .sum::<usize>()
+        }
+        List::String(values) => {
+            values.capacity() * size_of::<String>()
+                + values.iter().map(String::capacity).sum::<usize>()
+        }
+        List::List(values) => {
+            values.capacity() * size_of::<List>()
+                + values.iter().map(resident_list_bytes).sum::<usize>()
+        }
+        List::Compound(values) => {
+            values.capacity() * size_of::<Compound>()
+                + values.iter().map(resident_compound_bytes).sum::<usize>()
+        }
+        List::IntArray(values) => {
+            values.capacity() * size_of::<Vec<i32>>()
+                + values
+                    .iter()
+                    .map(|value| value.capacity() * size_of::<i32>())
+                    .sum::<usize>()
+        }
+        List::LongArray(values) => {
+            values.capacity() * size_of::<Vec<i64>>()
+                + values
+                    .iter()
+                    .map(|value| value.capacity() * size_of::<i64>())
+                    .sum::<usize>()
+        }
+    }
+}
+
+fn resident_value_bytes(value: &Value) -> usize {
+    match value {
+        Value::Byte(_)
+        | Value::Short(_)
+        | Value::Int(_)
+        | Value::Long(_)
+        | Value::Float(_)
+        | Value::Double(_) => 0,
+        Value::ByteArray(values) => values.capacity() * size_of::<i8>(),
+        Value::String(value) => value.capacity(),
+        Value::List(value) => resident_list_bytes(value),
+        Value::Compound(value) => resident_compound_bytes(value),
+        Value::IntArray(values) => values.capacity() * size_of::<i32>(),
+        Value::LongArray(values) => values.capacity() * size_of::<i64>(),
+    }
+}
+
 impl StructureNbt {
+    /// Conservative accounting of owned resident storage used by one template.
+    /// Vec/String capacities are counted so the startup aggregate budget covers
+    /// allocation slack, not only logical payload lengths.
+    pub fn resident_memory_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.palette.capacity() * size_of::<PaletteEntry>()
+            + self
+                .palette
+                .iter()
+                .map(resident_palette_entry_bytes)
+                .sum::<usize>()
+            + self.blocks.capacity() * size_of::<StructureBlockEntry>()
+            + self
+                .blocks
+                .iter()
+                .map(resident_block_entry_bytes)
+                .sum::<usize>()
+            + self.entities.capacity() * size_of::<Compound>()
+            + self
+                .entities
+                .iter()
+                .map(resident_compound_bytes)
+                .sum::<usize>()
+    }
+
     pub fn unresolved_palette_blocks(&self) -> Vec<String> {
         self.palette
             .iter()
@@ -570,9 +702,21 @@ pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> 
     Ok(file)
 }
 
-pub(crate) fn read_structure_nbt_file(mut file: File) -> Result<StructureNbt, NbtIoError> {
+pub(crate) fn read_structure_nbt_file(file: File) -> Result<StructureNbt, NbtIoError> {
+    let length = file.metadata()?.len();
+    if length > MAX_COMPRESSED_NBT_BYTES as u64 {
+        return Err(NbtIoError::CompressedPayloadTooLarge {
+            limit: MAX_COMPRESSED_NBT_BYTES,
+        });
+    }
     let mut raw = Vec::new();
-    file.read_to_end(&mut raw)?;
+    file.take((MAX_COMPRESSED_NBT_BYTES + 1) as u64)
+        .read_to_end(&mut raw)?;
+    if raw.len() > MAX_COMPRESSED_NBT_BYTES {
+        return Err(NbtIoError::CompressedPayloadTooLarge {
+            limit: MAX_COMPRESSED_NBT_BYTES,
+        });
+    }
     read_structure_nbt_bytes(&raw)
 }
 
@@ -587,13 +731,38 @@ pub fn read_structure_nbt(path: &Path) -> Result<StructureNbt, NbtIoError> {
 /// gzip header included). Used by [`read_structure_nbt`] and tests that load
 /// fixtures via `include_bytes!`.
 pub fn read_structure_nbt_bytes(file_bytes: &[u8]) -> Result<StructureNbt, NbtIoError> {
+    read_structure_nbt_bytes_with_limits(
+        file_bytes,
+        MAX_COMPRESSED_NBT_BYTES,
+        MAX_DECOMPRESSED_NBT_BYTES,
+    )
+}
+
+fn read_structure_nbt_bytes_with_limits(
+    file_bytes: &[u8],
+    compressed_limit: usize,
+    decompressed_limit: usize,
+) -> Result<StructureNbt, NbtIoError> {
     if file_bytes.len() < 2 || file_bytes[0..2] != GZIP_MAGIC {
         return Err(NbtIoError::NotGzip);
     }
 
-    let mut decoder = GzDecoder::new(file_bytes);
+    if file_bytes.len() > compressed_limit {
+        return Err(NbtIoError::CompressedPayloadTooLarge {
+            limit: compressed_limit,
+        });
+    }
+
+    let decoder = GzDecoder::new(file_bytes);
     let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed)?;
+    decoder
+        .take((decompressed_limit + 1) as u64)
+        .read_to_end(&mut decompressed)?;
+    if decompressed.len() > decompressed_limit {
+        return Err(NbtIoError::DecompressedPayloadTooLarge {
+            limit: decompressed_limit,
+        });
+    }
 
     let mut slice: &[u8] = &decompressed;
     let (root, _root_name): (Compound, String) =
@@ -601,7 +770,6 @@ pub fn read_structure_nbt_bytes(file_bytes: &[u8]) -> Result<StructureNbt, NbtIo
 
     structure_from_compound(&root)
 }
-
 /// Write a structure to a gzip-compressed `.nbt` file, producing bytes that
 /// `scripts/nbt/nbt_builder.py::load_structure` can read.
 pub fn write_structure_nbt(structure: &StructureNbt, path: &Path) -> Result<(), NbtIoError> {
@@ -1014,6 +1182,7 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(base);
     }
+
     #[cfg(unix)]
     #[test]
     fn open_under_root_rejects_ancestor_swap_restored_before_recheck() {
@@ -1370,6 +1539,107 @@ mod tests {
                 other => panic!("input {bytes:?} must be NotGzip, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn compressed_payload_limit_rejects_before_gzip_decode() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        };
+        let bytes = write_structure_nbt_bytes(&structure).expect("write gzip fixture");
+        let limit = bytes.len() - 1;
+
+        match read_structure_nbt_bytes_with_limits(&bytes, limit, MAX_DECOMPRESSED_NBT_BYTES) {
+            Err(NbtIoError::CompressedPayloadTooLarge { limit: actual }) => {
+                assert_eq!(
+                    actual, limit,
+                    "diagnostic must report the active compressed limit"
+                )
+            }
+            other => panic!(
+                "compressed payload above the active limit must fail before decoding; got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn decompressed_payload_limit_rejects_before_nbt_parse() {
+        let structure = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        };
+        let bytes = write_structure_nbt_bytes(&structure).expect("write gzip fixture");
+
+        match read_structure_nbt_bytes_with_limits(&bytes, MAX_COMPRESSED_NBT_BYTES, 1) {
+            Err(NbtIoError::DecompressedPayloadTooLarge { limit }) => {
+                assert_eq!(limit, 1, "diagnostic must report the active decompressed limit")
+            }
+            other => panic!(
+                "decompressed payload above the active limit must fail before NBT parsing; got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn resident_memory_accounting_reaches_nested_nbt_values() {
+        let base = StructureNbt {
+            data_version: DATA_VERSION,
+            size: [1, 1, 1],
+            palette: vec![PaletteEntry {
+                name: "minecraft:stone".into(),
+                properties: vec![],
+            }],
+            blocks: vec![StructureBlockEntry {
+                pos: [0, 0, 0],
+                state: 0,
+                block_nbt: None,
+            }],
+            entities: vec![],
+        };
+
+        let mut nested = Compound::new();
+        nested.insert("leaf", Value::String("resident payload".into()));
+        nested.insert("bytes", Value::ByteArray(vec![1, 2, 3, 4]));
+        nested.insert("ints", Value::IntArray(vec![5, 6, 7]));
+        nested.insert("longs", Value::LongArray(vec![8, 9]));
+        nested.insert(
+            "lists",
+            Value::List(List::List(vec![List::Compound(vec![nested.clone()])])),
+        );
+
+        let with_nested_values = StructureNbt {
+            blocks: vec![StructureBlockEntry {
+                block_nbt: Some(nested),
+                ..base.blocks[0].clone()
+            }],
+            ..base.clone()
+        };
+
+        assert!(
+            with_nested_values.resident_memory_bytes() > base.resident_memory_bytes(),
+            "resident-memory accounting must include recursively owned compound, list, string, and array storage"
+        );
     }
 
     // ── ④ empty structure (0 blocks) round-trips ────────────────────────────

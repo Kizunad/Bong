@@ -40,6 +40,8 @@ use crate::cmd::dev::gallery::{structure_placements, StampPlacement};
 /// templates. Kept distinct from the existing `dan_zong/` and `wangyintai/`
 /// large-layout structures so decoration loading never sweeps those in.
 pub const DECORATIONS_SUBDIR: &str = "decorations";
+/// Maximum aggregate resident storage admitted for all decoration templates.
+pub const MAX_RESIDENT_TEMPLATE_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 
 /// How a stamped NBT template is positioned relative to the column surface.
 ///
@@ -265,6 +267,13 @@ impl DecorationNbtRegistry {
     }
 
     pub(crate) fn prepare(structures_dir: &Path) -> DecorationNbtPreflight {
+        Self::prepare_with_resident_limit(structures_dir, MAX_RESIDENT_TEMPLATE_MEMORY_BYTES)
+    }
+
+    fn prepare_with_resident_limit(
+        structures_dir: &Path,
+        resident_limit: usize,
+    ) -> DecorationNbtPreflight {
         let deco_dir = structures_dir.join(DECORATIONS_SUBDIR);
         let root_metadata = match std::fs::symlink_metadata(structures_dir) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
@@ -350,6 +359,7 @@ impl DecorationNbtRegistry {
         paths.sort();
 
         let mut templates = HashMap::with_capacity(paths.len());
+        let mut resident_bytes = 0usize;
         for path in paths {
             let id = relative_template_id(structures_dir, &path);
             match nbt_io::open_regular_file_under_root(&path, &trusted_root)
@@ -359,8 +369,15 @@ impl DecorationNbtRegistry {
                 Ok(structure) => {
                     let invalid_palette = structure.palette_diagnostics();
                     if invalid_palette.is_empty() {
-                        if templates.insert(id.clone(), structure).is_some() {
+                        let template_bytes = structure.resident_memory_bytes();
+                        if resident_bytes.saturating_add(template_bytes) > resident_limit {
+                            diagnostics.push(format!(
+                                "decoration template '{id}' would exceed the {resident_limit}-byte aggregate resident memory limit (current {resident_bytes}, template {template_bytes})"
+                            ));
+                        } else if templates.insert(id.clone(), structure).is_some() {
                             diagnostics.push(format!("duplicate decoration template id '{id}'"));
+                        } else {
+                            resident_bytes += template_bytes;
                         }
                     } else {
                         diagnostics.extend(invalid_palette.into_iter().map(|reason| {
@@ -1504,6 +1521,42 @@ mod tests {
         );
 
         drop(listener);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn aggregate_resident_budget_rejects_excess_templates_before_commit() {
+        let dir = temp_structures_dir("resident_budget");
+        write_template(&dir, "decorations/tree/first.nbt", &row_structure());
+        write_template(&dir, "decorations/tree/second.nbt", &column_structure());
+
+        let first_bytes = row_structure().resident_memory_bytes();
+        let second_bytes = column_structure().resident_memory_bytes();
+        let limit = first_bytes.max(second_bytes);
+        assert!(
+            first_bytes + second_bytes > limit,
+            "fixture must require the aggregate budget to reject one template"
+        );
+
+        let preflight = DecorationNbtRegistry::prepare_with_resident_limit(&dir, limit);
+        assert_eq!(
+            preflight.candidate().len(),
+            1,
+            "only the first template within the aggregate budget may enter the candidate"
+        );
+        assert!(
+            preflight
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.contains("aggregate resident memory limit")),
+            "aggregate overflow must be surfaced as a startup diagnostic: {:?}",
+            preflight.diagnostics()
+        );
+        assert!(
+            preflight.into_registry().is_err(),
+            "aggregate overflow must fail closed instead of committing a partial runtime registry"
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 
