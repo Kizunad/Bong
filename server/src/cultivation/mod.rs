@@ -554,6 +554,7 @@ type CultivationAttachFilter = (
     Or<(
         Added<Client>,
         Added<CurrentDimension>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
         With<CultivationAttachPending>,
         Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
     )>,

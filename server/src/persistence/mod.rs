@@ -37,7 +37,6 @@ use crate::player::state::{
     canonical_player_id, load_player_known_techniques_slice, open_player_connection,
     player_username_from_character_id, PlayerStatePersistence, PLAYER_ROW_SCHEMA_VERSION,
 };
-#[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
 #[cfg(test)]
 use crate::qi_physics::ledger::{

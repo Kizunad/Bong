@@ -264,7 +264,7 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         Some(RevivalDecision::Tribulation { chance: 0.15 }),
         "待决策的渡劫结果必须原样恢复，永久终结风险不能被绕过"
     );
-    let revival_deadline = lifecycle
+    let restored_deadline = lifecycle
         .revival_decision_deadline_tick
         .expect("persisted revival decision deadline should be restored");
     let after_load_wall = SystemTime::now()
@@ -276,8 +276,8 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         .saturating_mul(TICKS_PER_SECOND);
     let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     assert!(
-        (earliest_valid_deadline..=9_999).contains(&revival_deadline),
-        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {revival_deadline}，有效区间 {earliest_valid_deadline}..=9999"
+        (earliest_valid_deadline..=9_999).contains(&restored_deadline),
+        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {restored_deadline}，有效区间 {earliest_valid_deadline}..=9999"
     );
     assert_eq!(lifecycle.death_count, 2);
 
