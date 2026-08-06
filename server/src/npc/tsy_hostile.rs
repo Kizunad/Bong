@@ -2442,17 +2442,16 @@ mod tests {
             ActorQiKind::Npc,
         )
         .expect("terminal audio fixture must have canonical NPC identity");
-        app.world_mut()
-            .send_event(NpcTerminalSettlementSucceeded {
-                entity: commoner,
-                at_tick: 1,
-                cause: "test".to_string(),
-                reason: NpcDeathReason::Combat,
-                attacker: None,
-                attacker_player_id: None,
-                authorize_loot: true,
-                actor_qi_identity: identity,
-            });
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: commoner,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 
@@ -2477,29 +2476,23 @@ mod tests {
         let fuya_pos = Position::new([2.0, 64.0, 3.0]);
         let fuya = app
             .world_mut()
-            .spawn((
-                NpcMarker,
-                fuya_pos,
-                NpcArchetype::Fuya,
-                FuyaAura::default(),
-            ))
+            .spawn((NpcMarker, fuya_pos, NpcArchetype::Fuya, FuyaAura::default()))
             .id();
         let identity = ActorQiIdentity::from_life_record(
             &crate::cultivation::life_record::LifeRecord::new("npc:audio:fuya"),
             ActorQiKind::Npc,
         )
         .expect("terminal audio fixture must have canonical NPC identity");
-        app.world_mut()
-            .send_event(NpcTerminalSettlementSucceeded {
-                entity: fuya,
-                at_tick: 1,
-                cause: "test".to_string(),
-                reason: NpcDeathReason::Combat,
-                attacker: None,
-                attacker_player_id: None,
-                authorize_loot: true,
-                actor_qi_identity: identity,
-            });
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: fuya,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 
@@ -2545,17 +2538,16 @@ mod tests {
             ActorQiKind::Npc,
         )
         .expect("terminal audio fixture must have canonical NPC identity");
-        app.world_mut()
-            .send_event(NpcTerminalSettlementSucceeded {
-                entity,
-                at_tick: 1,
-                cause: "test".to_string(),
-                reason: NpcDeathReason::Combat,
-                attacker: None,
-                attacker_player_id: None,
-                authorize_loot: true,
-                actor_qi_identity: identity,
-            });
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 

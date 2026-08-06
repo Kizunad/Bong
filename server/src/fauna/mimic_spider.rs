@@ -664,8 +664,7 @@ mod tests {
             .spirit_qi;
         assert_eq!(
             new_spirit_qi,
-            initial_spirit_qi
-                + 4.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
+            initial_spirit_qi + 4.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
             "death must return the full Cultivation qi to the Zone owner"
         );
         assert_eq!(

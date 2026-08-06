@@ -2046,7 +2046,8 @@ mod tests {
         let sink_account = QiAccountId::zone("craft_sink");
         let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
             + app.world().resource::<WorldQiAccount>().total()
-            + app.world()
+            + app
+                .world()
                 .resource::<ZoneRegistry>()
                 .zones
                 .iter()
@@ -2167,9 +2168,7 @@ mod tests {
             .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
             .sum::<f64>();
         assert!(
-            (app.world().get::<Cultivation>(player).unwrap().qi_current
-                + ledger.total()
-                + zone_qi
+            (app.world().get::<Cultivation>(player).unwrap().qi_current + ledger.total() + zone_qi
                 - observed_before)
                 .abs()
                 < 1e-9,

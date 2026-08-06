@@ -451,9 +451,7 @@ mod tests {
     use crossbeam_channel::{unbounded, Receiver};
     use valence::prelude::{App, DVec3, EventWriter, IntoSystemConfigs, Update};
 
-    fn emit_spawn_notice_before_entity_materializes(
-        mut notices: EventWriter<NpcSpawnNotice>,
-    ) {
+    fn emit_spawn_notice_before_entity_materializes(mut notices: EventWriter<NpcSpawnNotice>) {
         let entity = valence::prelude::Entity::from_raw(usize::MAX);
         notices.send(NpcSpawnNotice {
             entity,
