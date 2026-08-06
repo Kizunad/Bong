@@ -51,5 +51,6 @@
     "player_id": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "1871ea4a9762f30ac36fc08b862725b1b23449607a4d7a2155a7baa122a70739"
 }

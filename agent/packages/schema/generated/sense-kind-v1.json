@@ -48,5 +48,6 @@
       "const": "DyingElderQi",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "94be485b09d84b5e66713d9fae04a466fae1996337425795ddb933d888354f5d"
 }

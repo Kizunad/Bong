@@ -20,6 +20,7 @@ use crate::combat::CombatClock;
 use crate::cultivation::breakthrough::{BreakthroughOutcome, BreakthroughSuccess};
 use crate::cultivation::components::{Cultivation, MeridianSystem, Realm};
 use crate::cultivation::life_record::{BiographyEntry, LifeRecord};
+use crate::cultivation::CultivationBundleTutorialHandoff;
 use crate::forge::learned::LearnedBlueprints;
 use crate::inventory::{
     add_item_to_player_inventory, InventoryInstanceIdAllocator, ItemRegistry, PlayerInventory,
@@ -33,7 +34,6 @@ use crate::npc::spawn::{
     snap_spawn_y_to_surface, spawn_notice, spawn_rogue_npc_at, NpcSkinSpawnContext,
 };
 use crate::npc::spawn_rat::spawn_rat_npc_at;
-use crate::persistence::{load_player_cultivation_bundle, PersistenceSettings};
 use crate::player::gameplay::PendingGameplayNarrations;
 use crate::schema::common::NarrationStyle;
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
@@ -194,12 +194,10 @@ pub struct TutorialTelemetry {
     pub completed_within_30min: u64,
 }
 
-type JoinedTutorialClientQueryItem<'a> = (Entity, &'a Username);
+type JoinedTutorialClientQueryItem<'a> = (Entity, &'a CultivationBundleTutorialHandoff);
 type JoinedTutorialClientFilter = (
-    Or<(
-        Added<Client>,
-        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
-    )>,
+    With<Client>,
+    With<CultivationBundleTutorialHandoff>,
     Without<TutorialState>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
@@ -229,7 +227,8 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_tutorial_state_to_joined_clients
-                .after(crate::player::attach_player_state_to_joined_clients),
+                .after(crate::player::attach_player_state_to_joined_clients)
+                .after(crate::cultivation::attach_cultivation_to_joined_clients),
             send_tutorial_coffin_pos_on_join,
             grant_meridian_primer_on_join,
             handle_coffin_open_requests,
@@ -244,22 +243,23 @@ pub fn register(app: &mut App) {
     );
 }
 
-fn attach_tutorial_state_to_joined_clients(
+pub(crate) fn attach_tutorial_state_to_joined_clients(
     mut commands: Commands,
-    settings: Res<PersistenceSettings>,
     clock: Option<Res<CombatClock>>,
     mut telemetry: ResMut<TutorialTelemetry>,
     joined: Query<JoinedTutorialClientQueryItem<'_>, JoinedTutorialClientFilter>,
 ) {
     let now = clock.as_deref().map(|clock| clock.tick).unwrap_or_default();
-    for (entity, username) in &joined {
-        let restored = load_player_cultivation_bundle(&settings, username.0.as_str())
-            .ok()
-            .flatten()
-            .and_then(|bundle| bundle.get("tutorial_state").cloned())
-            .and_then(|value| serde_json::from_value::<TutorialState>(value).ok());
+    for (entity, handoff) in &joined {
+        let restored = crate::cultivation::accepted_bundle_slice::<TutorialState>(
+            &handoff.accepted_bundle,
+            "tutorial_state",
+        );
         let state = tutorial_state_for_join(restored, now, &mut telemetry);
-        commands.entity(entity).insert(state);
+        commands
+            .entity(entity)
+            .insert(state)
+            .remove::<CultivationBundleTutorialHandoff>();
     }
 }
 

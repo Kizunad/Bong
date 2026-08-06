@@ -1,0 +1,26 @@
+[[recipes]]
+id = "craft.tool.workbench"
+category = "tool"
+display_name = "制作台"
+qi_cost = 0.0
+time_sec = 60
+unlock_sources = []
+station = "none"
+
+[[recipes.materials]]
+template_id = "spirit_wood"
+count = 4
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[[recipes.materials]]
+template_id = "shu_gu"
+count = 2
+
+[recipes.output]
+template_id = "workbench_item"
+count = 1
+
+[recipes.requirements]

@@ -313,6 +313,7 @@ mod tests {
             patrol: None,
             loot_table: None,
             guardian_relic: None,
+            mimic_spider: None,
             tsy_hostile: None,
             tsy_sentinel: None,
             intent: super::super::DormantBehaviorIntent::Cultivate {
@@ -323,6 +324,7 @@ mod tests {
             initial_qi: cultivation.qi_current,
             qi_ledger_net: 0.0,
             combat_dead_pending_release: false,
+            pending_combat_winner: None,
         }
     }
 

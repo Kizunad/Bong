@@ -49,5 +49,6 @@
     "zone": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "f1ccabed8322deabbcad366e73b445758766ba6d8cf4983260e9d320eaeca198"
 }

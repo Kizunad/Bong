@@ -86,6 +86,14 @@ public final class SkillSetSnapshot {
         return skills;
     }
 
+    /** 所有技能的最高 effective level；没有技能时为 0。 */
+    public int maxEffectiveLv() {
+        return skills.values().stream()
+            .mapToInt(Entry::effectiveLv)
+            .max()
+            .orElse(0);
+    }
+
     public Set<String> consumedScrolls() {
         return consumedScrolls;
     }

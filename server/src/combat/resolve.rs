@@ -221,6 +221,9 @@ pub struct CombatResolveEventWriters<'w, 's> {
     status_effect_intents: EventWriter<'w, ApplyStatusEffectIntent>,
     out_events: EventWriter<'w, CombatEvent>,
     qi_transfers: Option<ResMut<'w, Events<QiTransfer>>>,
+    /// R5 P0 — jiemai cost 的物理 settlement owner；与 zone/event 一起收进 SystemParam，
+    /// 避免超过 Bevy 顶层参数上限。
+    qi_ledger: ResMut<'w, crate::qi_physics::WorldQiAccount>,
     multipoint_backfires: Option<ResMut<'w, Events<zhenmai_v2::MultiPointBackfireEvent>>>,
     vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
     audio_events: Option<ResMut<'w, Events<PlaySoundRecipeRequest>>>,
@@ -1092,12 +1095,8 @@ pub fn resolve_attack_intents(
                         .is_some_and(|cost| defender_cultivation.qi_current + f64::EPSILON >= cost)
                     && fov_ok
                 {
-                    let qi_cost = qi_cost.expect("checked Some above");
-                    defender_cultivation.qi_current = (defender_cultivation.qi_current - qi_cost)
-                        .clamp(0.0, defender_cultivation.qi_max);
-
-                    // bughunt r2 QP-003 — 守恒：扣减的格挡真元费用回灌到防御方所在 zone。
-                    // 格挡消耗是"主动施法真元散逸"，语义同 ReleaseToZone。
+                    // bughunt r2 QP-003 — 守恒：格挡真元费用通过 typed transaction
+                    // 原子扣除并回灌防御方所在 zone；失败时不开格挡结果。
                     {
                         let defender_dim = event_writers
                             .defender_dim_q
@@ -1105,16 +1104,24 @@ pub fn resolve_attack_intents(
                             .ok()
                             .flatten();
                         let defender_pos = positions.get(target_entity).ok().map(|(pos, _)| pos);
-                        crate::cultivation::death_hooks::release_qi_amount_to_zone(
-                            target_entity,
-                            qi_cost,
+                        let release = crate::cultivation::death_hooks::release_qi_amount_to_zone(
+                            &mut defender_cultivation,
+                            qi_cost.expect("window guard requires a realm parry qi cost"),
                             defender_pos,
                             defender_dim,
                             life_record.as_deref(),
                             event_writers.zone_registry.as_deref_mut(),
+                            &mut event_writers.qi_ledger,
                             event_writers.qi_transfers.as_deref_mut(),
                             "jiemai_parry",
                         );
+                        if let Err(error) = release {
+                            tracing::warn!(
+                                ?error,
+                                "[bong][combat] jiemai parry qi release failed closed"
+                            );
+                            continue;
+                        }
                     }
 
                     let before = emitted_contam_delta;
@@ -2518,6 +2525,13 @@ fn first_open_or_fallback_meridian(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::qi_physics::WorldQiAccount;
+
+    fn qi_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
 
     // ─────────────────── plan-race-system-v1 P0b: body_part_multipliers ───────────────────
 
@@ -3046,7 +3060,7 @@ mod tests {
 
     #[test]
     fn armor_hit_scales_contamination_and_ticks_item_durability() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -3175,7 +3189,7 @@ mod tests {
 
     #[test]
     fn armor_break_emits_durability_event_and_radius_audio() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1501 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -3423,7 +3437,7 @@ mod tests {
         /// 提前 `None`）。
         fn setup_morph_armor_app(with_morph: bool) -> (App, Entity, Entity) {
             let (body_plans, races) = whale_human_registries();
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.insert_resource(CombatClock { tick: 2000 });
             app.insert_resource(body_plans);
             app.insert_resource(races);
@@ -3725,7 +3739,7 @@ mod tests {
 
     #[test]
     fn hit_emits_direction_vfx() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -3817,7 +3831,7 @@ mod tests {
 
     #[test]
     fn head_hit_emits_head_crit_vfx_not_generic_combat_hit() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -3919,7 +3933,7 @@ mod tests {
 
     #[test]
     fn limb_hit_emits_limb_vfx_distinct_from_head_and_torso() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -4034,7 +4048,7 @@ mod tests {
 
     #[test]
     fn leg_wound_slowdown_emits_ground_blood_decal() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_event::<CombatEvent>();
@@ -4153,7 +4167,7 @@ mod tests {
 
     #[test]
     fn hit_emits_knockback_event_and_pending_movement() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4215,7 +4229,7 @@ mod tests {
 
     #[test]
     fn attack_intent_skips_creative_target_without_damage_events_or_knockback() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4336,7 +4350,7 @@ mod tests {
         expected_state: LifecycleState,
         enter_state: impl FnOnce(&mut Lifecycle),
     ) {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4537,7 +4551,7 @@ mod tests {
         state_name: &str,
         enter_state: impl FnOnce(&mut Lifecycle),
     ) {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4629,7 +4643,7 @@ mod tests {
 
     #[test]
     fn attack_intent_uses_latest_game_mode_component() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4721,7 +4735,7 @@ mod tests {
 
     #[test]
     fn sparring_lethal_hit_ends_without_death_event() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4796,7 +4810,7 @@ mod tests {
 
     #[test]
     fn resolve_debug_attack_applies_damage_contamination_throughput_and_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 12 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -4937,7 +4951,7 @@ mod tests {
 
     #[test]
     fn invalid_debug_attacks_have_no_side_effects() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 3 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5032,7 +5046,7 @@ mod tests {
 
     #[test]
     fn npc_entity_target_attack_intent_flows_through_shared_resolver() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 44 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5134,7 +5148,7 @@ mod tests {
     #[test]
     fn juebi_law_disruption_reduces_hit_and_backfires_attacker() {
         fn run_once(disrupted: bool) -> (f32, f32, f64) {
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.insert_resource(CombatClock { tick: 12 });
             app.add_event::<AttackIntent>();
             app.add_event::<ApplyStatusEffectIntent>();
@@ -5205,7 +5219,7 @@ mod tests {
 
     #[test]
     fn player_to_npc_and_npc_to_player_share_same_resolver_path() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 91 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5322,7 +5336,7 @@ mod tests {
     fn zero_qi_npc_mundane_melee_damages_survival_player() {
         use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 93 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5388,7 +5402,7 @@ mod tests {
 
     #[test]
     fn player_killing_npc_emits_combat_skill_xp() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 92 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5443,7 +5457,7 @@ mod tests {
 
     #[test]
     fn player_to_runtime_spawned_zombie_npc_target_resolves_without_dropping_intent() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 128 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5534,7 +5548,7 @@ mod tests {
 
     #[test]
     fn repeated_hits_on_dead_target_emit_single_death_event() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5599,7 +5613,7 @@ mod tests {
 
     #[test]
     fn debug_attack_resolves_canonical_npc_target_without_client_query_match() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 512 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5692,7 +5706,7 @@ mod tests {
     // 若将 qi_invest 改回 35.0（pre-fix），断言会失败（target wounds 不变）。
     #[test]
     fn heiwushi_melee_physical_path_lands_with_zero_qi_attacker() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5786,7 +5800,7 @@ mod tests {
 
     #[test]
     fn fist_reach_misses_when_target_is_outside_physical_range() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5838,7 +5852,7 @@ mod tests {
 
     #[test]
     fn fist_reach_misses_just_outside_client_melee_upper_bound() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5904,7 +5918,7 @@ mod tests {
 
     #[test]
     fn fist_reach_hits_at_client_melee_distance() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -5971,7 +5985,7 @@ mod tests {
 
     #[test]
     fn insufficient_qi_prevents_attack_side_effects() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 901 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6034,7 +6048,7 @@ mod tests {
 
     #[test]
     fn anticheat_qi_invest_violation_counts_without_changing_rejection() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 903 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6099,7 +6113,7 @@ mod tests {
 
     #[test]
     fn anticheat_reach_violation_counts_without_changing_miss() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 904 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6156,7 +6170,7 @@ mod tests {
 
     #[test]
     fn anticheat_cooldown_violation_counts_without_blocking_hit() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 905 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6224,7 +6238,7 @@ mod tests {
 
     #[test]
     fn debug_target_selection_does_not_change_damage_when_qi_invest_matches() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 902 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6319,7 +6333,7 @@ mod tests {
 
     #[test]
     fn jiemai_window_spends_qi_reduces_contam_and_adds_concussion() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1000 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6444,7 +6458,7 @@ mod tests {
         use crate::qi_physics::ledger::QiTransferReason;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1000 });
         app.insert_resource(ZoneRegistry::fallback());
         // fallback() 的 spawn zone 默认接近满（spirit_qi≈0.9），余量不足以吸收整份格挡费用 →
@@ -6562,7 +6576,7 @@ mod tests {
         use crate::qi_physics::ledger::QiTransferReason;
         use crate::world::zone::ZoneRegistry;
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1000 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<AttackIntent>();
@@ -6646,7 +6660,7 @@ mod tests {
 
     #[test]
     fn jiemai_without_qi_falls_back_to_normal_settlement() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1001 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6727,7 +6741,7 @@ mod tests {
 
     #[test]
     fn expired_jiemai_window_does_not_mitigate() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1006 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6802,7 +6816,7 @@ mod tests {
 
     #[test]
     fn stunned_attacker_cannot_resolve_attack_intent() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1100 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -6866,7 +6880,7 @@ mod tests {
 
     #[test]
     fn apply_defense_intent_ignored_while_stunned() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_systems(Update, apply_defense_intents);
@@ -6904,7 +6918,7 @@ mod tests {
 
     #[test]
     fn apply_defense_intent_uses_realm_armor_and_adds_parry_recovery() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_systems(
@@ -6985,7 +6999,7 @@ mod tests {
 
     #[test]
     fn head_hit_applies_stunned_status() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -7048,7 +7062,7 @@ mod tests {
 
     #[test]
     fn resolver_uses_attack_power_for_outgoing_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1300 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -7152,7 +7166,7 @@ mod tests {
 
     #[test]
     fn resolver_applies_defense_power_to_incoming_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1350 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -7259,7 +7273,7 @@ mod tests {
 
     #[test]
     fn resolver_applies_tuike_naked_window_damage_penalty() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1370 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -7340,7 +7354,7 @@ mod tests {
 
     #[test]
     fn resolver_applies_backfire_amplification_to_defender_incoming_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1360 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -7443,7 +7457,7 @@ mod tests {
     #[test]
     fn weapon_increases_outgoing_damage_versus_unarmed() {
         use crate::combat::weapon::{Weapon, WeaponKind};
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1400 });
         app.insert_resource(weapon_test_registry());
         app.add_event::<AttackIntent>();
@@ -7598,7 +7612,7 @@ mod tests {
     fn iron_sword_increases_damage_by_at_least_20_percent_vs_unarmed() {
         use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1420 });
         app.insert_resource(weapon_test_registry());
         app.add_event::<AttackIntent>();
@@ -7744,7 +7758,7 @@ mod tests {
     #[test]
     fn tool_main_hand_deals_low_damage_above_unarmed_below_entry_sword() {
         for (index, tool_kind) in crate::tools::ALL_TOOL_KINDS.into_iter().enumerate() {
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.insert_resource(CombatClock { tick: 1430 });
             app.add_event::<AttackIntent>();
             app.add_event::<ApplyStatusEffectIntent>();
@@ -7906,7 +7920,7 @@ mod tests {
 
     #[test]
     fn broken_tool_main_hand_uses_unarmed_baseline() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1431 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -8036,7 +8050,7 @@ mod tests {
     #[test]
     fn weapon_breaks_after_durability_depleted() {
         use crate::combat::weapon::{Weapon, WeaponKind};
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.insert_resource(weapon_test_registry());
         app.insert_resource(DroppedLootRegistry::default());
@@ -8177,7 +8191,7 @@ mod tests {
     #[test]
     fn broken_weapon_drops_when_no_container_slot_is_available() {
         use crate::combat::weapon::{Weapon, WeaponKind};
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1600 });
         app.insert_resource(weapon_test_registry());
         app.insert_resource(DroppedLootRegistry::default());
@@ -8340,7 +8354,7 @@ mod tests {
 
     #[test]
     fn cut_and_blunt_hits_produce_different_bleed_and_crack_outputs() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1400 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -8443,7 +8457,7 @@ mod tests {
 
     #[test]
     fn pierce_hit_changes_contamination_output_against_blunt_baseline() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -8533,7 +8547,7 @@ mod tests {
     fn zero_qi_sword_hit_resolves_physical_damage_without_contamination_or_meridian_crack() {
         use crate::combat::weapon::{EquipSlot, Weapon, WeaponKind};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1540 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -8630,7 +8644,7 @@ mod tests {
 
     #[test]
     fn sword_parry_blocks_physical_damage_reflects_and_staggers_attacker() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1541 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -8741,7 +8755,7 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════════
 
     fn make_arm_wound_app() -> App {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 9000 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -9576,7 +9590,7 @@ mod tests {
 
     #[test]
     fn burst_meridian_attack_source_uses_prepaid_qi_without_second_spend() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1550 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -9638,7 +9652,7 @@ mod tests {
 
     #[test]
     fn full_power_attack_source_uses_prepaid_qi_without_second_spend() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1550 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -9706,7 +9720,7 @@ mod tests {
     fn npc_to_npc_duel_via_runtime_bundle_resolves_damage_and_death() {
         use crate::npc::lifecycle::{npc_runtime_bundle, NpcArchetype};
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -9824,7 +9838,7 @@ mod tests {
 
     #[test]
     fn void_core_active_attacker_cannot_deal_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1100 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -9890,7 +9904,7 @@ mod tests {
 
     #[test]
     fn void_core_active_target_cannot_be_hit() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1100 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -9956,7 +9970,7 @@ mod tests {
 
     #[test]
     fn void_core_active_defender_cannot_produce_defense_event() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_systems(Update, apply_defense_intents);
@@ -10009,7 +10023,7 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════════
 
     fn make_shield_block_app() -> App {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 5000 });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -10318,7 +10332,7 @@ mod tests {
     // 也不应施加 per-block ParryRecovery（只有真截脉才有）。
     #[test]
     fn apply_defense_intent_shield_blocking_no_jiemai_window_no_parry_recovery() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<DefenseIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
         app.add_systems(
@@ -10462,7 +10476,7 @@ mod tests {
             ),
         ]));
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 8000 });
         app.insert_resource(registry);
         app.add_event::<AttackIntent>();
@@ -10999,7 +11013,7 @@ mod tests {
 
     /// 构建最小 app：注册 resolve_attack_intents 所需的全部事件，不引入额外系统。
     fn setup_dead_armor_app(tick: u64) -> App {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick });
         app.add_event::<AttackIntent>();
         app.add_event::<ApplyStatusEffectIntent>();
@@ -11981,7 +11995,7 @@ mod tests {
         /// 完全相同）。调用方负责 `send_event(AttackIntent)` + `app.update()`。
         fn setup_single_part_app(plan: crate::body_plan::BodyPlan) -> (App, Entity, Entity) {
             let (body_plans, races) = single_part_registries(plan);
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.insert_resource(CombatClock { tick: 700 });
             app.insert_resource(body_plans);
             app.insert_resource(races);
@@ -12318,7 +12332,7 @@ mod tests {
             target_look_yaw_degrees: f32,
         ) -> (App, Entity) {
             let (body_plans, races) = alien_carrier_registries(plan);
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.insert_resource(CombatClock { tick: 500 });
             app.insert_resource(body_plans);
             app.insert_resource(races);
@@ -12614,7 +12628,7 @@ mod tests {
         fn resolve_attack_intents_routes_contamination_to_non_humanoid_target_own_channel() {
             let (body_plans, races) =
                 dugu_prod_registries(synthetic_beast_plan_with_dugu_mapping());
-            let mut app = App::new();
+            let mut app = qi_test_app();
             app.insert_resource(CombatClock { tick: 500 });
             app.insert_resource(body_plans);
             app.insert_resource(races);

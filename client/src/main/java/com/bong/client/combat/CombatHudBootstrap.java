@@ -90,10 +90,11 @@ public final class CombatHudBootstrap {
     /**
      * Clears non-Store combat HUD runtime adjuncts for the current client session.
      *
-     * <p>Store payload belongs to {@code SessionScopedStoreRegistry}; this bootstrap must
-     * neither clear Store data nor invoke test reset helpers. Existing panel, immersion, and
-     * combat-juice classes expose no production disconnect cleaner on this branch, so they are
-     * intentionally not called here.</p>
+     * <p>{@link CombatKeybindings#clearOnDisconnect()} drains old-session pending presses and
+     * held-edge bookkeeping while preserving process-lifetime key bindings and handlers.
+     * {@code SparringInviteScreenBootstrap.clearOnDisconnect()} closes session-owned sparring
+     * invite UI state. Store payload remains owned by {@code SessionScopedStoreRegistry}; this
+     * bootstrap neither clears Store data nor invokes test reset helpers.</p>
      */
     public static void clearOnDisconnect() {
         CombatKeybindings.clearOnDisconnect();

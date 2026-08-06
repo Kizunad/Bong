@@ -23,7 +23,7 @@ use crate::combat::carrier::CarrierChargedEvent;
 use crate::combat::components::{Lifecycle, Wounds};
 use crate::combat::dugu_v2::skills::DUGU_POISON_SIGNATURE_RECIPE;
 use crate::combat::dugu_v2::ReverseTriggeredEvent;
-use crate::combat::events::{AttackSource, CombatEvent, DeathEvent, DefenseKind};
+use crate::combat::events::{AttackSource, CombatEvent, DefenseKind};
 use crate::combat::needle::QiNeedleChargedEvent;
 use crate::combat::tuike_v2::{ContamTransferredEvent, DonFalseSkinEvent, FalseSkinSheddedEvent};
 use crate::combat::woliu::{VortexBackfireEvent, VortexField};
@@ -54,6 +54,7 @@ use crate::network::audio_event_emit::{
     AUDIO_BROADCAST_RADIUS,
 };
 use crate::npc::brain::canonical_npc_id;
+use crate::npc::lifecycle::{NpcTerminalSettlementSucceeded, NpcTerminalSystemSet};
 use crate::npc::spawn::NpcMarker;
 use crate::schema::tribulation::DuXuOutcomeV1;
 use crate::skill::events::{SkillLvUp, SkillScrollUsed, SkillXpGain, XpGainSource};
@@ -79,7 +80,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             emit_combat_audio_triggers.after(crate::combat::resolve::resolve_attack_intents),
-            emit_npc_death_audio_triggers.after(crate::combat::resolve::resolve_attack_intents),
+            emit_npc_death_audio_triggers
+                .in_set(NpcTerminalSystemSet::PostCommit)
+                .after(crate::combat::resolve::resolve_attack_intents),
             emit_cultivation_audio_triggers,
             emit_tribulation_audio_triggers,
             emit_alchemy_audio_triggers,
@@ -302,29 +305,25 @@ pub fn emit_combat_audio_triggers(
 }
 
 pub fn emit_npc_death_audio_triggers(
-    mut death_events: EventReader<DeathEvent>,
+    mut settlements: EventReader<NpcTerminalSettlementSucceeded>,
     positions: Query<&Position>,
-    npc_markers: Query<(), With<NpcMarker>>,
     mut audio: AudioEmitWriter,
 ) {
     let mut audio = audio.context();
-    for event in death_events.read() {
-        if npc_markers.get(event.target).is_err() {
-            continue;
-        }
-        let Ok(position) = positions.get(event.target) else {
+    for settlement in settlements.read() {
+        let Ok(position) = positions.get(settlement.entity) else {
             continue;
         };
         emit_play(
             &mut audio,
             "npc_death",
-            event.target,
+            settlement.entity,
             position.get(),
             None,
             1.0,
             0.0,
         );
-        if let Some(attacker) = event.attacker {
+        if let Some(attacker) = settlement.attacker {
             emit_play(
                 &mut audio,
                 "kill_confirm",
@@ -1542,7 +1541,7 @@ fn nearby_recipient(origin: DVec3) -> AudioRecipient {
 mod tests {
     use super::*;
     use crate::combat::components::{BodyPart, WoundKind, Wounds};
-    use crate::combat::events::{CombatEvent, DeathEvent};
+    use crate::combat::events::CombatEvent;
     use crate::forge::session::{ForgeSession, ForgeSessionId};
     use valence::prelude::{App, Events, Update};
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -1771,21 +1770,41 @@ mod tests {
     }
 
     #[test]
-    fn npc_death_emits_audio() {
+    fn npc_death_audio_waits_for_terminal_commit_and_attributes_kill() {
         let mut app = App::new();
-        app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<PlaySoundRecipeRequest>();
         app.add_systems(Update, emit_npc_death_audio_triggers);
         let npc = app
             .world_mut()
             .spawn((NpcMarker, Position::new([1.0, 64.0, 0.0])))
             .id();
-        app.world_mut().send_event(DeathEvent {
-            target: npc,
-            cause: "test".to_string(),
-            attacker: None,
-            attacker_player_id: None,
+        let attacker = app.world_mut().spawn_empty().id();
+
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<Events<PlaySoundRecipeRequest>>()
+                .drain()
+                .next()
+                .is_none(),
+            "terminal commit 前不得播放 NPC 死亡音效"
+        );
+
+        let life_record = crate::cultivation::life_record::LifeRecord::new("npc:audio:terminal");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: npc,
             at_tick: 1,
+            cause: "combat".to_string(),
+            reason: crate::npc::lifecycle::NpcDeathReason::Combat,
+            attacker: Some(attacker),
+            attacker_player_id: Some("offline:attacker".to_string()),
+            authorize_loot: true,
+            actor_qi_identity: crate::cultivation::components::ActorQiIdentity::from_life_record(
+                &life_record,
+                crate::cultivation::components::ActorQiKind::Npc,
+            )
+            .expect("audio terminal fixture must use canonical NPC identity"),
         });
 
         app.update();
@@ -1795,8 +1814,12 @@ mod tests {
             .resource_mut::<Events<PlaySoundRecipeRequest>>()
             .drain()
             .collect();
-        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted.len(), 2);
         assert_eq!(emitted[0].recipe_id, "npc_death");
+        assert_eq!(emitted[1].recipe_id, "kill_confirm");
+        assert!(
+            matches!(emitted[1].recipient, AudioRecipient::Single(entity) if entity == attacker)
+        );
     }
 
     #[test]

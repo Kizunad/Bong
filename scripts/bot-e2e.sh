@@ -21,6 +21,27 @@ PORT="${BOT_E2E_PORT:-25565}"
 PROFILE="${BOT_E2E_PROFILE:-release}"
 REUSE="${BOT_E2E_REUSE:-0}"
 AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"
+BOT_E2E_RUN_TAG="${BOT_E2E_RUN_TAG:-$(( $$ % 100000 ))}"
+export BOT_E2E_RUN_TAG
+BOT_E2E_OPERATOR_TAGS=(
+  RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim
+  MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
+)
+BOT_E2E_OPERATORS=""
+for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
+  [ -z "$BOT_E2E_OPERATORS" ] || BOT_E2E_OPERATORS+=,
+  BOT_E2E_OPERATORS+="B${BOT_E2E_RUN_TAG}${bot_tag}"
+done
+# Reuse is safe only when the caller proves that the running offline server has this exact
+# run-tag roster and the explicit username-trust opt-in. Otherwise force the fresh-launch path.
+if [ "$REUSE" = "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && {
+  [ "${BONG_OPERATORS:-}" != "$BOT_E2E_OPERATORS" ] ||
+  [ "${BONG_OPERATORS_ALLOW_OFFLINE:-}" != "1" ]
+}; then
+  echo "[bot-e2e] existing server operator roster does not match this run; disabling BOT_E2E_REUSE=1" >&2
+  REUSE=0
+fi
+
 # Ambient fixture ownership has three intentionally closed values: unset/default, generic 0,
 # and strict owned-fixture 1. Reject typos before creating files or starting tools.
 case "$AMBIENT_FIXTURE_MODE" in
@@ -292,6 +313,8 @@ else
     fi
     export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
     export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+    export BONG_OPERATORS="$BOT_E2E_OPERATORS"
+    export BONG_OPERATORS_ALLOW_OFFLINE=1
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
       export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"
       export BONG_ASSETS_DIR="$ROOT/server"

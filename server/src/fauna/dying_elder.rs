@@ -1587,6 +1587,7 @@ pub(crate) fn dying_elder_p3_emit_appear_event_system(
         // qi_fraction = 1.0：大能刚出现时真元满值（DYING_ELDER_INITIAL_QI / DYING_ELDER_INITIAL_QI）
         let qi_fraction = 1.0_f32;
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: ev.zone_name.clone(),
             elder_entity_id: protocol_id, // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -1650,6 +1651,7 @@ pub(crate) fn dying_elder_p3_emit_death_event_system(
         };
 
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind,
@@ -1706,6 +1708,7 @@ pub(crate) fn dying_elder_p3_emit_dan_received_event_system(
             continue;
         };
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::DanReceived,
@@ -4904,6 +4907,7 @@ mod tests {
 
         // 模拟构建 appeared 事件（qi_fraction=1.0：刚出现时真元满值；elder_entity_id 为 placeholder）
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: 1, // 最小合法 MC protocol entity_id
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -4953,6 +4957,7 @@ mod tests {
                 offered_skill_id: "woliu.heart".to_string(),
                 qi_fraction: 0.7,
                 server_tick: 100,
+                event_id: None,
             };
             let json = serde_json::to_string(&event).unwrap_or_else(|e| {
                 panic!("ElderEncounterEventV1{{kind:{kind:?}}} serialize failed: {e}")

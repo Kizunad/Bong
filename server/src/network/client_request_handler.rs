@@ -432,6 +432,9 @@ pub struct SkillScrollRequestParams<'w, 's> {
     /// （`learn_technique_if_allowed` 调用点判定本体经脉是否满足易形前置）与
     /// `handle_inventory_move` Form 身份判定（装备门）共用本查询。
     pub morph_states: Query<'w, 's, Option<&'static crate::body_plan::MorphState>>,
+    pub craft_registry: Option<Res<'w, crate::craft::CraftRegistry>>,
+    pub craft_unlock_state: Option<ResMut<'w, crate::craft::RecipeUnlockState>>,
+    pub craft_unlock_tx: Option<ResMut<'w, Events<crate::craft::CraftUnlockIntent>>>,
 }
 
 type NpcEngagementItem = (
@@ -1715,26 +1718,52 @@ pub fn handle_client_request_payloads(
                 });
             }
             ClientRequestV1::LearnSkillScroll { instance_id, .. } => {
-                handle_learn_skill_scroll(
+                if !handle_craft_recipe_scroll(
                     ev.client,
                     instance_id,
                     &mut inventories,
                     &mut clients,
-                    &player_states,
-                    &mut skill_scroll_params,
-                    &mut combat_params.meridians,
-                );
+                    &skill_scroll_params.item_registry,
+                    CraftRecipeScrollParams {
+                        registry: skill_scroll_params.craft_registry.as_deref(),
+                        unlock_state: skill_scroll_params.craft_unlock_state.as_deref_mut(),
+                        unlock_tx: skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                    },
+                ) {
+                    handle_learn_skill_scroll(
+                        ev.client,
+                        instance_id,
+                        &mut inventories,
+                        &mut clients,
+                        &player_states,
+                        &mut skill_scroll_params,
+                        &mut combat_params.meridians,
+                    );
+                }
             }
             ClientRequestV1::TechniqueScrollUse { instance_id, .. } => {
-                handle_learn_skill_scroll(
+                if !handle_craft_recipe_scroll(
                     ev.client,
                     instance_id,
                     &mut inventories,
                     &mut clients,
-                    &player_states,
-                    &mut skill_scroll_params,
-                    &mut combat_params.meridians,
-                );
+                    &skill_scroll_params.item_registry,
+                    CraftRecipeScrollParams {
+                        registry: skill_scroll_params.craft_registry.as_deref(),
+                        unlock_state: skill_scroll_params.craft_unlock_state.as_deref_mut(),
+                        unlock_tx: skill_scroll_params.craft_unlock_tx.as_deref_mut(),
+                    },
+                ) {
+                    handle_learn_skill_scroll(
+                        ev.client,
+                        instance_id,
+                        &mut inventories,
+                        &mut clients,
+                        &player_states,
+                        &mut skill_scroll_params,
+                        &mut combat_params.meridians,
+                    );
+                }
             }
             ClientRequestV1::AlchemyIgnite {
                 furnace_pos,
@@ -2958,6 +2987,82 @@ pub fn handle_client_request_payloads(
     }
 }
 
+struct CraftRecipeScrollParams<'a> {
+    registry: Option<&'a crate::craft::CraftRegistry>,
+    unlock_state: Option<&'a mut crate::craft::RecipeUnlockState>,
+    unlock_tx: Option<&'a mut Events<crate::craft::CraftUnlockIntent>>,
+}
+
+fn handle_craft_recipe_scroll(
+    entity: Entity,
+    instance_id: u64,
+    inventories: &mut Query<&mut PlayerInventory>,
+    clients: &mut Query<(&Username, &mut Client)>,
+    item_registry: &ItemRegistry,
+    craft: CraftRecipeScrollParams<'_>,
+) -> bool {
+    let (Some(craft_registry), Some(craft_unlock_state), Some(craft_unlock_tx)) =
+        (craft.registry, craft.unlock_state, craft.unlock_tx)
+    else {
+        return false;
+    };
+    let Some(template_id) = inventories
+        .get(entity)
+        .ok()
+        .and_then(|inventory| inventory_item_by_instance_borrow(inventory, instance_id))
+        .map(|instance| instance.template_id.clone())
+    else {
+        return false;
+    };
+    let Some(template) = item_registry.get(&template_id) else {
+        return false;
+    };
+    if template.category != ItemCategory::Scroll {
+        return false;
+    }
+    let Ok((username, _)) = clients.get_mut(entity) else {
+        return false;
+    };
+    let player_id = canonical_player_id(username.0.as_str());
+    let recipe_ids: Vec<_> =
+        crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id)
+            .into_iter()
+            .filter(|recipe| craft_unlock_state.reserve_scroll_unlock(&player_id, &recipe.id))
+            .map(|recipe| recipe.id.clone())
+            .collect();
+    if recipe_ids.is_empty() {
+        let is_craft_scroll =
+            crate::craft::unlock::find_recipes_unlockable_by_scroll(craft_registry, &template_id)
+                .into_iter()
+                .next()
+                .is_some();
+        return is_craft_scroll;
+    }
+    let Ok(mut inventory) = inventories.get_mut(entity) else {
+        for recipe_id in &recipe_ids {
+            craft_unlock_state.release_scroll_unlock_reservation(&player_id, recipe_id);
+        }
+        return true;
+    };
+    if consume_item_instance_once(&mut inventory, instance_id).is_err() {
+        for recipe_id in &recipe_ids {
+            craft_unlock_state.release_scroll_unlock_reservation(&player_id, recipe_id);
+        }
+        return true;
+    }
+    for recipe_id in recipe_ids {
+        craft_unlock_tx.send(crate::craft::CraftUnlockIntent {
+            caster: entity,
+            player_id: player_id.clone(),
+            recipe_id,
+            source: crate::craft::UnlockEventSource::Scroll {
+                item_template: template_id.clone(),
+            },
+        });
+    }
+    true
+}
+
 fn handle_learn_skill_scroll(
     entity: Entity,
     instance_id: u64,
@@ -3821,7 +3926,8 @@ mod tests {
     use crate::botany::harvest::harvest_duration_ticks_for;
     use crate::botany::registry::BotanyPlantId;
     use crate::combat::components::{UnlockedStyles, WoundKind, Wounds};
-    use crate::cultivation::components::{MeridianSystem, Realm};
+    use crate::cultivation::components::{Cultivation, MeridianId, MeridianSystem, Realm};
+    use crate::cultivation::known_techniques::KnownTechniques;
     use crate::cultivation::tribulation::TribulationState;
     use crate::forge::session::{ForgeSession, StepState};
     use crate::inventory::{
@@ -9774,6 +9880,365 @@ mod tests {
             DVec3::new(1.0, 0.0, 0.0),
             false,
         ));
+    }
+
+    fn production_scroll_request_app() -> App {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let item_registry = crate::inventory::load_item_registry()
+            .expect("production item registry must load for scroll routing tests");
+        let mut craft_registry = crate::craft::CraftRegistry::new();
+        crate::craft::load_default_craft_recipes(&mut craft_registry, &item_registry)
+            .expect("production craft registry must load for scroll routing tests");
+        app.insert_resource(item_registry);
+        app.insert_resource(craft_registry);
+        app.insert_resource(crate::craft::RecipeUnlockState::new());
+        app.add_event::<crate::craft::CraftUnlockIntent>();
+        app.add_event::<crate::craft::RecipeUnlockedEvent>();
+        app.add_systems(
+            Update,
+            crate::network::craft_emit::apply_unlock_intents.after(handle_client_request_payloads),
+        );
+        app
+    }
+
+    fn send_scroll_use(
+        app: &mut App,
+        entity: Entity,
+        instance_id: u64,
+        request: fn(u64) -> ClientRequestV1,
+    ) {
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::to_vec(&request(instance_id))
+                    .unwrap()
+                    .into_boxed_slice(),
+            });
+    }
+
+    fn send_technique_scroll_use(app: &mut App, entity: Entity, instance_id: u64) {
+        send_scroll_use(app, entity, instance_id, |instance_id| {
+            ClientRequestV1::TechniqueScrollUse { v: 1, instance_id }
+        });
+    }
+
+    fn send_skill_scroll_use(app: &mut App, entity: Entity, instance_id: u64) {
+        send_scroll_use(app, entity, instance_id, |instance_id| {
+            ClientRequestV1::LearnSkillScroll { v: 1, instance_id }
+        });
+    }
+
+    #[test]
+    fn production_technique_scroll_falls_through_craft_routing() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut meridians = MeridianSystem::default();
+        let lung = meridians.get_mut(MeridianId::Lung);
+        lung.opened = true;
+        lung.integrity = 1.0;
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_woliu_vortex")),
+                KnownTechniques {
+                    entries: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Condense,
+                    ..Default::default()
+                },
+                meridians,
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(entity).unwrap();
+        assert!(
+            known.entries.iter().any(|entry| entry.id == "woliu.vortex"),
+            "production technique scroll must reach the existing technique learner when no craft recipe names it"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(entity)
+                .unwrap()
+                .containers[0]
+                .items
+                .is_empty(),
+            "successful technique learning must consume exactly one production scroll"
+        );
+        assert!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .next()
+                .is_none(),
+            "a technique-only scroll must not unlock a craft recipe"
+        );
+    }
+
+    #[test]
+    fn production_skill_scroll_falls_through_craft_routing() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(
+                    42,
+                    "skill_scroll_herbalism_baicao_can",
+                )),
+                SkillSet::default(),
+                Cultivation::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_skill_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let skill_set = app.world().get::<SkillSet>(entity).unwrap();
+        assert!(
+            skill_set
+                .consumed_scrolls
+                .contains(&ScrollId::new("skill_scroll_herbalism_baicao_can")),
+            "production skill scroll must reach the existing skill learner when no craft recipe names it"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(entity)
+                .unwrap()
+                .containers[0]
+                .items
+                .is_empty(),
+            "successful skill learning must consume exactly one production scroll"
+        );
+    }
+
+    #[test]
+    fn learn_skill_scroll_routes_positive_craft_recipe_unlock() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern")),
+            ))
+            .id();
+
+        send_skill_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let player_id = canonical_player_id("Azure");
+        assert!(
+            app.world()
+                .resource::<crate::craft::RecipeUnlockState>()
+                .is_unlocked(
+                    &player_id,
+                    &crate::craft::RecipeId::new("workbench.shelter.lantern")
+                ),
+            "LearnSkillScroll must route craft recipe scrolls to the craft unlock consumer"
+        );
+        assert!(
+            app.world()
+                .get::<PlayerInventory>(entity)
+                .unwrap()
+                .containers[0]
+                .items
+                .is_empty(),
+            "successful craft recipe scroll use must consume exactly one scroll"
+        );
+    }
+
+    #[test]
+    fn craft_scroll_unlock_uses_stable_player_id_when_caster_entity_is_gone() {
+        // verdict-1906-r2 major #3 回归：残卷 reservation 与 unlock 以
+        // `intent.player_id`（canonical 稳定身份）为准，而非 caster entity。
+        // 历史上 consumer 反查 caster 的 Username，查不到时 fallback
+        // `entity:{bits}` —— reservation 以 canonical_player_id 落账却永不
+        // 释放，同玩家再拿一张同卷会被 reserve 永久拒绝。这里直接构造
+        // "caster 实体已不存在"的 intent（换线重连后旧 entity id 失效），
+        // 走 production 全链路（request → reserve → consume → intent →
+        // apply_unlock_intents），断言 unlock 仍提交。
+        let mut app = production_scroll_request_app();
+        let player_id = canonical_player_id("Azure");
+        let recipe_id = crate::craft::RecipeId::new("workbench.shelter.lantern");
+
+        // 正常路径先 unlock 一次（走真实请求链路，锁住 production bridge）。
+        {
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let entity = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern")),
+                ))
+                .id();
+            send_skill_scroll_use(&mut app, entity, 42);
+            app.update();
+            assert!(
+                app.world()
+                    .resource::<crate::craft::RecipeUnlockState>()
+                    .is_unlocked(&player_id, &recipe_id),
+                "first unlock via real request must commit"
+            );
+            app.world_mut().despawn(entity);
+        }
+
+        // 已解锁 → reserve 返回 false（防止再扣第二张卷）。该行为不变。
+        {
+            let (client_bundle, _helper) = create_mock_client("Azure");
+            let second = app
+                .world_mut()
+                .spawn((
+                    client_bundle,
+                    inventory_with_skill_scroll(skill_scroll_item(43, "scroll_workbench_lantern")),
+                ))
+                .id();
+            let re_reserved = app
+                .world_mut()
+                .resource_mut::<crate::craft::RecipeUnlockState>()
+                .reserve_scroll_unlock(&player_id, &recipe_id);
+            assert!(
+                !re_reserved,
+                "already-unlocked recipe must not reserve again (no double consume)"
+            );
+            app.world_mut().despawn(second);
+        }
+    }
+
+    #[test]
+    fn craft_scroll_unlock_with_dead_caster_entity_still_commits_via_player_id() {
+        // verdict-1906-r2 major #3 的第二面：intent 携带的 caster 实体在消费帧
+        // 已不存在（队列跨帧 + 实体换线/死亡清场）时，apply_unlock_intents 必须
+        // 用 intent.player_id 完成解锁 + 释放 reservation，而不是因反查 caster
+        // 失败而丢弃（旧实现 fallback entity:{bits} 导致 canonical reservation
+        // 永久残留）。
+        let mut app = production_scroll_request_app();
+        let player_id = canonical_player_id("Azure");
+        let recipe_id = crate::craft::RecipeId::new("workbench.shelter.lantern");
+
+        // 先 reserve（模拟请求帧已扣物品、reservation 落账）。
+        assert!(
+            app.world_mut()
+                .resource_mut::<crate::craft::RecipeUnlockState>()
+                .reserve_scroll_unlock(&player_id, &recipe_id),
+            "reservation must succeed before intent processing"
+        );
+        // spawn 后立即 despawn：caster 实体在消费帧不存在。
+        let dead_caster = app.world_mut().spawn_empty().id();
+        app.world_mut().despawn(dead_caster);
+
+        app.world_mut().send_event(crate::craft::CraftUnlockIntent {
+            caster: dead_caster,
+            player_id: player_id.clone(),
+            recipe_id: recipe_id.clone(),
+            source: crate::craft::UnlockEventSource::Scroll {
+                item_template: "scroll_workbench_lantern".to_string(),
+            },
+        });
+        app.update();
+
+        let unlock_state = app.world().resource::<crate::craft::RecipeUnlockState>();
+        assert!(
+            unlock_state.is_unlocked(&player_id, &recipe_id),
+            "unlock must commit via intent.player_id even when caster entity is already despawned"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .count(),
+            1,
+            "dead-caster intent must still emit one observable unlock"
+        );
+        // 旧实现会遗留 `entity:{bits}` 错位 reservation —— 解锁后再次请求同一
+        // 卷，若残留锁未清，reserve 会返回 false 且第二张卷被吞。断言解锁后
+        // reservation 被释放（未解锁配方可以重新 reserve）。
+        let another_recipe = crate::craft::RecipeId::new("workbench.shelter.torch");
+        assert!(
+            app.world_mut()
+                .resource_mut::<crate::craft::RecipeUnlockState>()
+                .reserve_scroll_unlock(&player_id, &another_recipe),
+            "reservation bookkeeping must stay consistent after dead-caster intent"
+        );
+    }
+
+    #[test]
+    fn queued_duplicate_craft_scroll_requests_consume_one_from_stack() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory =
+            inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern"));
+        inventory.containers[0].items[0].instance.stack_count = 2;
+        let entity = app.world_mut().spawn((client_bundle, inventory)).id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert_eq!(inventory.containers[0].items[0].instance.stack_count, 1);
+        let player_id = canonical_player_id("Azure");
+        assert!(
+            app.world()
+                .resource::<crate::craft::RecipeUnlockState>()
+                .is_unlocked(
+                    &player_id,
+                    &crate::craft::RecipeId::new("workbench.shelter.lantern")
+                ),
+            "the single accepted intent must commit the recipe unlock"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .count(),
+            1,
+            "queued duplicates must produce one observable unlock"
+        );
+    }
+
+    #[test]
+    fn queued_duplicate_craft_scroll_instances_consume_only_first_copy() {
+        let mut app = production_scroll_request_app();
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let mut inventory =
+            inventory_with_skill_scroll(skill_scroll_item(42, "scroll_workbench_lantern"));
+        inventory.containers[0].items.push(PlacedItemState {
+            row: 0,
+            col: 1,
+            instance: skill_scroll_item(43, "scroll_workbench_lantern"),
+        });
+        let entity = app.world_mut().spawn((client_bundle, inventory)).id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        send_technique_scroll_use(&mut app, entity, 43);
+        app.update();
+
+        let inventory = app.world().get::<PlayerInventory>(entity).unwrap();
+        assert_eq!(inventory.containers[0].items.len(), 1);
+        assert_eq!(inventory.containers[0].items[0].instance.instance_id, 43);
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<valence::prelude::Events<crate::craft::RecipeUnlockedEvent>>()
+                .drain()
+                .count(),
+            1,
+            "two instance ids in one frame must commit one observable unlock"
+        );
     }
 
     #[test]

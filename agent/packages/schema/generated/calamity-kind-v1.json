@@ -32,5 +32,6 @@
       "const": "realm_collapse",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "1ddb7e482de913c27b79db222973133672510b2cfa781c52edf8bf5121d462f3"
 }

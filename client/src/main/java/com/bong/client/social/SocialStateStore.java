@@ -135,6 +135,10 @@ public final class SocialStateStore {
     }
 
     public static synchronized void clearOnDisconnect() {
+        clearSessionState();
+    }
+
+    private static void clearSessionState() {
         anonymity = SocialAnonymitySnapshot.empty();
         exposures = List.of();
         relationships = List.of();
@@ -146,8 +150,8 @@ public final class SocialStateStore {
         tradeOffer = null;
     }
 
-    public static void resetForTests() {
-        clearOnDisconnect();
+    public static synchronized void resetForTests() {
+        clearSessionState();
     }
 
     private static <T> List<T> appendBounded(List<T> previous, T entry) {

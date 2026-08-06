@@ -48,6 +48,10 @@ public final class EquippedShieldStore {
         current.set(null);
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     /** 返回当前快照；未装备时为 null。 */
     public static EquippedShield snapshot() {
         return current.get();
