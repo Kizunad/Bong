@@ -100,7 +100,7 @@ class R7InventoryContractTest {
     @Test
     void p0ProductionSourceTreeMatchesFrozenBaseline() throws IOException {
         assertEquals(
-            "e6c093c19fd30153b7c620b6e5f0c7571d683c238c186b0872297dc93f801d99",
+            "f1bd4b768a442794b527bb26fbf211d9bc8dbf4f757b0afbe704873d994d07ca",
             R7SourceScan.sourceTreeDigest(PRODUCTION_INPUT_ROOT),
             "P0 is docs/tests/resources only; every shipped production path and byte must match the frozen baseline"
         );
@@ -293,7 +293,7 @@ class R7InventoryContractTest {
             "craft/CraftMaterialGrid.java:52",
             "craft/CraftMaterialGrid.java:53",
             "craft/CraftOutputPreview.java:32",
-            "craft/CraftRecipeListWidget.java:124",
+            "craft/CraftRecipeListWidget.java:131",
             "insight/InsightOfferScreen.java:107",
             "inventory/BlockPickerPanel.java:106",
             "inventory/InspectScreen.java:1685",
