@@ -103,6 +103,15 @@ public final class BongAnimations {
     public static final Identifier ARM_INJURED_RIGHT = new Identifier(MOD_ID, "arm_injured_right");
     public static final Identifier EXHAUSTED_WALK = new Identifier(MOD_ID, "exhausted_walk");
     public static final Identifier DASH_FORWARD = new Identifier(MOD_ID, "dash_forward");
+    public static final Identifier LOWER_WALK = new Identifier(MOD_ID, "lower_walk");
+    public static final Identifier LOWER_JOG = new Identifier(MOD_ID, "lower_jog");
+    public static final Identifier LOWER_SPRINT = new Identifier(MOD_ID, "lower_sprint");
+    public static final Identifier LOWER_DASH = new Identifier(MOD_ID, "lower_dash");
+    public static final Identifier JIAN_DRAW_WAIST = new Identifier(MOD_ID, "jian_draw_waist");
+    public static final Identifier JIAN_DUAL_SMASH = new Identifier(MOD_ID, "jian_dual_smash");
+    public static final Identifier JIAN_DUAL_SWEEP = new Identifier(MOD_ID, "jian_dual_sweep");
+    public static final Identifier JIAN_STANCE_HIGH_LOW = new Identifier(MOD_ID, "jian_stance_high_low");
+    public static final Identifier JIAN_WAIST_SPIN_CROSS = new Identifier(MOD_ID, "jian_waist_spin_cross");
     public static final Identifier PILL_HUO_XUE = new Identifier(MOD_ID, "pill_huo_xue");
     public static final Identifier PILL_XU_GU = new Identifier(MOD_ID, "pill_xu_gu");
     public static final Identifier PILL_DUAN_XU = new Identifier(MOD_ID, "pill_duan_xu");
@@ -173,7 +182,30 @@ public final class BongAnimations {
     );
 
     public static final List<Identifier> MOVEMENT_V1_ANIMATIONS = List.of(
-        DASH_FORWARD
+        DASH_FORWARD,
+        LOWER_WALK,
+        LOWER_JOG,
+        LOWER_SPRINT,
+        LOWER_DASH
+    );
+
+    public static final List<Identifier> LOWER_BODY_GAIT_ANIMATIONS = List.of(
+        LOWER_WALK,
+        LOWER_JOG,
+        LOWER_SPRINT,
+        LOWER_DASH
+    );
+
+    /**
+     * Contract-first assets: declared for resource and suppression contracts, but intentionally unwired.
+     * P3 of plan-split-body-animation-v1 owns the producer, transport, and UPPER_BODY consumer as one unit.
+     */
+    public static final List<Identifier> JIAN_ANIMATIONS = List.of(
+        JIAN_DRAW_WAIST,
+        JIAN_DUAL_SMASH,
+        JIAN_DUAL_SWEEP,
+        JIAN_STANCE_HIGH_LOW,
+        JIAN_WAIST_SPIN_CROSS
     );
 
     public static final List<Identifier> ALCHEMY_COMBAT_PILL_ANIMATIONS = List.of(

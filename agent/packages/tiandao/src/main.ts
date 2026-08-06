@@ -12,7 +12,10 @@ import { WarOutcomeNarrationRuntime } from "./war-outcome-narration.js";
 import { NamedFactionNarrationRuntime } from "./named-faction-narration.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
 import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
-import { ElderEncounterNarrationRuntime } from "./elder-encounter-narration.js";
+import {
+  ElderEncounterNarrationRuntime,
+  ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+} from "./elder-encounter-narration.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { SpiritTreasureDialogueRuntime } from "./spirit-treasure-dialogue-runtime.js";
@@ -792,12 +795,34 @@ async function startZhenfaV2Runtime(opts: {
   };
 }
 
-// plan-dying-elder-v1 P3
-async function startElderEncounterRuntime(opts: {
-  redisUrl: string;
-}): Promise<() => Promise<void>> {
-  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
-    Redis) as new (url: string) => unknown;
+// plan-dying-elder-v1 P3：生产仅接普通 Pub/Sub；durable worker 保留为 contract-first test-only artifact。
+// 全仓 server + agent 审计确认：server/src/fauna/dying_elder.rs 的三个运行时构造点
+// (1602, 1666, 1723) 都只发送 RedisOutbound::ElderEncounterEvent(event)，没有生成
+// event_id；durable worker 对缺 event_id 的 payload fail-closed。因此不能在这里注入一个
+// 永远收不到合法 payload 的 consumer。
+// 这不是“durable key 必然为空”的断言：server/src/network/redis_bridge.rs 保留了
+// RedisOutbound::ElderEncounterTerminal → ListPushWithReceipt → RPUSH
+// bong:elder_encounter:durable 的 transport capability，agent 侧也保留 processing-list
+// 的 BLMOVE/LMOVE worker API。当前审计未发现生产 runtime 构造 ElderEncounterTerminal，
+// 但历史版本、人工操作或外部 producer 的遗留 payload 不能从代码搜索中排除；future
+// activation owner 必须先对该 key 做一次 LLEN/LRANGE inspection，若非空再决定安全 drain
+// 或 dead-letter，不能为清理遗留数据而在本 PR half-activate consumer。
+// 未来激活归 docs/plans-skeleton/plan-agent-narration-pipeline-v1.md 的 P1/P5 与 §8.1
+// durable transport follow-up，必须把 producer event_id、durable transport、consumer 和旧
+// Pub/Sub disposition 放在同一 merge unit。
+export type RedisClientConstructor = new (url: string) => unknown;
+
+export const ELDER_ENCOUNTER_DURABLE_WIRING = {
+  status: "contract-first-unwired",
+  owner: "docs/plans-skeleton/plan-agent-narration-pipeline-v1.md P1/P5 + §8.1",
+} as const;
+
+export async function startElderEncounterRuntime(
+  opts: { redisUrl: string },
+  redisCtor: RedisClientConstructor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as RedisClientConstructor,
+): Promise<() => Promise<void>> {
+  const IORedisCtor = redisCtor;
   const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
     typeof ElderEncounterNarrationRuntime
   >[0]["sub"];
@@ -805,14 +830,9 @@ async function startElderEncounterRuntime(opts: {
     typeof ElderEncounterNarrationRuntime
   >[0]["pub"];
 
-  const durableQueue = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
-    typeof ElderEncounterNarrationRuntime
-  >[0]["durableQueue"];
-
   const runtime = new ElderEncounterNarrationRuntime({
     sub,
     pub,
-    durableQueue,
   });
   runtime
     .connect()
@@ -821,7 +841,9 @@ async function startElderEncounterRuntime(opts: {
       console.warn("[tiandao] elder encounter runtime failed to start:", error),
     );
   return async () => {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    const timeout = new Promise<void>((resolve) =>
+      setTimeout(resolve, ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS),
+    );
     try {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {

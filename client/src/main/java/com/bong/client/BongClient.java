@@ -12,7 +12,9 @@ import com.bong.client.block.BongBlocks;
 import com.bong.client.botany.BotanyHudBootstrap;
 import com.bong.client.botany.BotanyPlantRenderBootstrap;
 import com.bong.client.combat.CombatHudBootstrap;
+import com.bong.client.combat.juice.CastFovController;
 import com.bong.client.combat.juice.CombatJuiceSystem;
+import com.bong.client.combat.juice.JuiceControls;
 import com.bong.client.cultivation.BreakthroughBillboardWorldRenderer;
 import com.bong.client.dandao.BaolongwangRenderBootstrap;
 import com.bong.client.debug.BongAnimCommand;
@@ -89,6 +91,8 @@ public class BongClient implements ClientModInitializer {
         NpcInteractionLogControls.register();
         HudImmersionControls.register();
         MovementKeybindings.register();
+        com.bong.client.animation.LowerBodyGaitController.register();
+        com.bong.client.animation.UpperBodyViewPitchLayer.register();
         DyingElderInteractionKeybindings.register();
         DefaultInteractionHandlers.registerDefaults();
         CultivationScreenBootstrap.register();
@@ -125,9 +129,8 @@ public class BongClient implements ClientModInitializer {
         BongSpawnParticleCommand.register();
         CombatHudBootstrap.register();
         CombatJuiceSystem.bootstrap();
-        // plan-fpv-cast-av-v1 P3 —— 施法瞬间 juice：cast 转换驱动的 FOV 脉冲 + shake（紧跟命中 juice）。
-        com.bong.client.combat.juice.CastFovController.bootstrap();
-        com.bong.client.combat.juice.JuiceControls.register();
+        CastFovController.bootstrap();
+        JuiceControls.register();
         BotanyPlantRenderBootstrap.register();
         BotanyHudBootstrap.register();
         WhaleRenderBootstrap.register();
