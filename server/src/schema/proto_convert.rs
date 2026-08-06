@@ -4426,8 +4426,48 @@ mod tests {
     }
 
     #[test]
+    fn s2c_techniques_snapshot_preserves_f64_qi_cost() {
+        use super::super::combat_hud::{TechniqueEntryV1, TechniquesSnapshotV1};
+        use super::super::server_data::ServerDataPayloadV1;
+        use bong::server_data_envelope::Payload;
+
+        let payload = ServerDataPayloadV1::TechniquesSnapshot(TechniquesSnapshotV1 {
+            entries: vec![TechniqueEntryV1 {
+                id: "sword.cleave".to_string(),
+                display_name: "劈".to_string(),
+                grade: "common".to_string(),
+                proficiency: 0.5,
+                proficiency_label: "熟练".to_string(),
+                active: true,
+                description: String::new(),
+                required_realm: "Awaken".to_string(),
+                required_meridians: vec![],
+                qi_cost: 16_777_217.0,
+                stamina_cost: 0.0,
+                cast_ticks: 1,
+                cooldown_ticks: 1,
+                range: 1.0,
+            }],
+        });
+        let proto_payload = server_data_to_proto_payload(&payload);
+        let envelope = bong::ServerDataEnvelope {
+            payload: Some(proto_payload),
+        };
+        let bytes = envelope.encode_to_vec();
+        let decoded = bong::ServerDataEnvelope::decode(bytes.as_slice())
+            .expect("techniques snapshot proto decode should succeed");
+        match decoded.payload {
+            Some(Payload::TechniquesSnapshot(snapshot)) => {
+                assert_eq!(snapshot.entries[0].qi_cost, 16_777_217.0);
+            }
+            other => panic!("expected TechniquesSnapshot payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn s2c_coffin_state_roundtrip() {
         use super::super::server_data::{CoffinGradeV1, CoffinStateV1};
+
         // mundane grade (baseline)
         s2c_encode_decode_roundtrip(ServerDataPayloadV1::CoffinState(CoffinStateV1 {
             in_coffin: true,

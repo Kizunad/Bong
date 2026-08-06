@@ -75,7 +75,7 @@ public final class TechniquesSnapshotHandler implements ServerDataHandler {
         boolean active = readBoolean(obj, "active", false);
         String description = SkillBarConfigHandler.readString(obj, "description");
         String requiredRealm = SkillBarConfigHandler.readString(obj, "required_realm");
-        float qiCost = (float) readDouble(obj, "qi_cost", 0.0);
+        double qiCost = readDouble(obj, "qi_cost", 0.0);
         int castTicks = (int) SkillBarConfigHandler.readLong(obj, "cast_ticks", 0L);
         int cooldownTicks = (int) SkillBarConfigHandler.readLong(obj, "cooldown_ticks", 0L);
         float range = (float) readDouble(obj, "range", 0.0);

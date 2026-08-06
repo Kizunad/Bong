@@ -1684,7 +1684,7 @@ message TechniqueEntry {
   string                          description         = 7;
   string                          required_realm      = 8;
   repeated TechniqueRequiredMeridian required_meridians = 9;
-  float                           qi_cost             = 10;
+  double                          qi_cost             = 10;
   float                           stamina_cost        = 11;
   uint32                          cast_ticks          = 12;
   uint32                          cooldown_ticks      = 13;

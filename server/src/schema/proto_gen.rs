@@ -4438,7 +4438,7 @@ mod tests {
                     channel: "LargeIntestine".to_string(),
                     min_health: 0.01,
                 }],
-                qi_cost: 0.4,
+                qi_cost: 16_777_217.0,
                 stamina_cost: 0.0,
                 cast_ticks: 8,
                 cooldown_ticks: 60,
@@ -4454,6 +4454,7 @@ mod tests {
         assert_eq!(e.required_meridians.len(), 1);
         assert_eq!(e.required_meridians[0].channel, "LargeIntestine");
         assert_eq!(e.cast_ticks, 8);
+        assert_eq!(e.qi_cost, 16_777_217.0);
         assert_eq!(e.range, 1.3_f32);
     }
 
