@@ -10,6 +10,8 @@ name: Build Resource Pack
       - "server/src/network/resourcepack.rs"
       - "scripts/build-resourcepack.sh"
       - "scripts/test_build_resourcepack.py"
+      - "scripts/models/**"
+      - "client/tools/**"
       - ".github/workflows/build-resourcepack.yml"
   pull_request:
     paths:
@@ -18,6 +20,8 @@ name: Build Resource Pack
       - "server/src/network/resourcepack.rs"
       - "scripts/build-resourcepack.sh"
       - "scripts/test_build_resourcepack.py"
+      - "scripts/models/**"
+      - "client/tools/**"
       - ".github/workflows/build-resourcepack.yml"
   workflow_dispatch:
 
@@ -49,11 +53,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Python model-tool dependencies
+        run: python3 -m pip install numpy pillow
+
       - name: Install zip tooling
         run: sudo apt-get update && sudo apt-get install -y zip
 
       - name: Unit test resource pack builder
         run: python3 -m unittest scripts/test_build_resourcepack.py
+
+      - name: Unit test Python model tools
+        run: python3 -m unittest scripts/models/test_jian_player_tools.py
 
       - name: Build resource pack
         run: bash scripts/build-resourcepack.sh

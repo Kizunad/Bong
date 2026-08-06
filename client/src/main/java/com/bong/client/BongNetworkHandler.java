@@ -4,6 +4,7 @@ import com.bong.client.animation.AnimationLayerManager;
 import com.bong.client.animation.BongAnimationPlayer;
 import com.bong.client.animation.BongAnimationRegistry;
 import com.bong.client.animation.BongPunchCombo;
+import com.bong.client.animation.LowerBodyGaitController;
 import com.bong.client.animation.ClientAnimationBridge;
 import com.bong.client.fauna.FaunaActionBridge;
 import com.bong.client.fauna.RatQiTierHandler;
@@ -1161,6 +1162,7 @@ public class BongNetworkHandler {
             () -> SoundRecipePlayer.instance().clearOnDisconnect(),
             () -> BongAnimationPlayer.clearOnDisconnect(),
             () -> AnimationLayerManager.clearOnDisconnect(),
+            () -> LowerBodyGaitController.clearOnDisconnect(),
             () -> BongPunchCombo.clearOnDisconnect(),
             () -> MutationVisualState.reset(),
             () -> SpiderDisguiseHandler.clearOnDisconnect(),

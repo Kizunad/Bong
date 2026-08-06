@@ -18,7 +18,7 @@ import java.util.UUID;
  * PlayerAnimator 的 priority 排序决定覆盖关系。
  */
 public final class AnimationLayerManager {
-    private static final Map<UUID, EnumMap<Channel, Identifier>> ACTIVE_BY_CHANNEL = new HashMap<>();
+    private static final Map<UUID, EnumMap<Channel, ChannelOwner>> ACTIVE_BY_CHANNEL = new HashMap<>();
 
     private AnimationLayerManager() {
     }
@@ -137,12 +137,12 @@ public final class AnimationLayerManager {
         if (stack == null || playerId == null || channel == null || animId == null) {
             return false;
         }
-        EnumMap<Channel, Identifier> byChannel =
+        EnumMap<Channel, ChannelOwner> byChannel =
             ACTIVE_BY_CHANNEL.computeIfAbsent(playerId, unused -> new EnumMap<>(Channel.class));
-        Identifier previous = byChannel.get(channel);
-        if (previous != null && !previous.equals(animId)) {
+        ChannelOwner previous = byChannel.get(channel);
+        if (previous != null && !previous.animId.equals(animId)) {
             boolean stopped = BongAnimationPlayer.stopOnStack(
-                stack, playerId, previous, Math.max(0, fadeOutTicks)
+                previous.stack, playerId, previous.animId, Math.max(0, fadeOutTicks)
             );
             if (!stopped) {
                 return false;
@@ -157,7 +157,7 @@ public final class AnimationLayerManager {
             Math.max(0, fadeInTicks)
         );
         if (played) {
-            byChannel.put(channel, animId);
+            byChannel.put(channel, new ChannelOwner(stack, animId));
         } else if (byChannel.isEmpty()) {
             ACTIVE_BY_CHANNEL.remove(playerId);
         }
@@ -173,12 +173,13 @@ public final class AnimationLayerManager {
         if (stack == null || playerId == null || animId == null) {
             return false;
         }
-        EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
+        EnumMap<Channel, ChannelOwner> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
         boolean stopped = BongAnimationPlayer.stopOnStack(
             stack, playerId, animId, Math.max(0, fadeOutTicks)
         );
         if (stopped && byChannel != null) {
-            byChannel.entrySet().removeIf(entry -> animId.equals(entry.getValue()));
+            byChannel.entrySet().removeIf(entry ->
+                animId.equals(entry.getValue().animId) && entry.getValue().stack == stack);
             if (byChannel.isEmpty()) {
                 ACTIVE_BY_CHANNEL.remove(playerId);
             }
@@ -195,16 +196,16 @@ public final class AnimationLayerManager {
         if (stack == null || playerId == null || channel == null) {
             return false;
         }
-        EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
+        EnumMap<Channel, ChannelOwner> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
         if (byChannel == null) {
             return false;
         }
-        Identifier active = byChannel.get(channel);
-        if (active == null) {
+        ChannelOwner owner = byChannel.get(channel);
+        if (owner == null || owner.stack != stack) {
             return false;
         }
         boolean stopped = BongAnimationPlayer.stopOnStack(
-            stack, playerId, active, Math.max(0, fadeOutTicks)
+            owner.stack, playerId, owner.animId, Math.max(0, fadeOutTicks)
         );
         if (stopped) {
             byChannel.remove(channel);
@@ -227,8 +228,31 @@ public final class AnimationLayerManager {
     }
 
     static synchronized Identifier activeInChannel(UUID playerId, Channel channel) {
-        EnumMap<Channel, Identifier> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
-        return byChannel == null ? null : byChannel.get(channel);
+        EnumMap<Channel, ChannelOwner> byChannel = ACTIVE_BY_CHANNEL.get(playerId);
+        ChannelOwner owner = byChannel == null ? null : byChannel.get(channel);
+        return owner == null ? null : owner.animId;
+    }
+
+    static synchronized boolean isJianAnimationActive(UUID playerId, AnimationStack stack) {
+        if (playerId == null || stack == null) {
+            return false;
+        }
+        for (Identifier jianId : BongAnimations.JIAN_ANIMATIONS) {
+            if (BongAnimationPlayer.isActiveOnStack(stack, playerId, jianId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final class ChannelOwner {
+        final AnimationStack stack;
+        final Identifier animId;
+
+        ChannelOwner(AnimationStack stack, Identifier animId) {
+            this.stack = stack;
+            this.animId = animId;
+        }
     }
 
     static synchronized void resetForTest() {
