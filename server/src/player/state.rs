@@ -4978,6 +4978,45 @@ mod player_state_tests {
     }
 
     #[test]
+    fn load_player_known_techniques_slice_returns_io_error_when_connection_cannot_open_and_recovers(
+    ) {
+        // 直接命中 canonical slice loader，而不是只测 load_player_slices 的早退分支：先
+        // 写入一条真实功法行，再把 db_path 临时替换成目录模拟 SQLITE_CANTOPEN。这样若
+        // loader 把 outage 错当成 Ok(None)，测试会明确失败；恢复路径验证重新建立连接后
+        // 仍能读回原 durable row。
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-slice-cantopen");
+        let expected = seed_dash_known_techniques_row(&persistence);
+        let db_path = persistence.db_path().to_path_buf();
+        let backup_path = data_dir.join("bong.db.outage-backup");
+
+        fs::rename(&db_path, &backup_path).expect("database file should be movable for outage");
+        fs::create_dir(&db_path).expect("directory placeholder should simulate unavailable DB");
+        let outage_result = load_player_known_techniques_slice(&persistence, "Azure");
+
+        fs::remove_dir(&db_path).expect("outage directory should be removable");
+        fs::rename(&backup_path, &db_path).expect("database file should be restored after outage");
+
+        let error = outage_result.expect_err(
+            "canonical known-techniques loader must return io::Error during DB outage, not Ok(None)",
+        );
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::Other,
+            "open_player_connection maps SQLite CANTOPEN to io::ErrorKind::Other; actual={error}"
+        );
+
+        let recovered = load_player_known_techniques_slice(&persistence, "Azure")
+            .expect("canonical loader should reconnect after the database path is restored");
+        assert_eq!(
+            recovered,
+            Some(expected),
+            "reconnect must recover the existing durable row rather than treating the outage as a missing row"
+        );
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
     fn known_techniques_load_defaults_for_new_player_without_row() {
         let (persistence, data_dir) = sqlite_persistence("known-techniques-new-player");
         save_player_state(&persistence, "Azure", &PlayerState::default())
