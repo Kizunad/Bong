@@ -4380,6 +4380,7 @@ mod tests {
                                     home_zone: "test_zone".to_string(),
                                 },
                                 blackboard,
+                                Cultivation::default(),
                             ))
                             .id();
                         let rat_character_id = crate::npc::brain::canonical_npc_id(stray);
