@@ -4281,7 +4281,8 @@ mod tests {
                 death_arbiter_tick,
                 near_death_tick.after(death_arbiter_tick),
                 handle_revival_action_intents.after(near_death_tick),
-                crate::cultivation::death_hooks::on_player_revived.after(near_death_tick),
+                crate::cultivation::death_hooks::on_cultivation_revive_requested
+                    .after(near_death_tick),
                 crate::cultivation::death_hooks::on_player_terminated.after(near_death_tick),
             ),
         );
