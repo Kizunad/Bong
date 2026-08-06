@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
-    ResMut,
+    ResMut, Without,
 };
 
 use super::color::PracticeLog;
@@ -21,6 +21,7 @@ use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
+use crate::npc::spawn::NpcMarker;
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
 use crate::qi_physics::{QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::SkillId;
@@ -265,7 +266,7 @@ pub fn on_player_terminated(
     mut qi_transfers: EventWriter<QiTransfer>,
     mut ledger: ResMut<WorldQiAccount>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    mut players: Query<TerminatedPlayerQueryItem<'_>>,
+    mut players: Query<TerminatedPlayerQueryItem<'_>, Without<NpcMarker>>,
 ) {
     let mut processed_entities = std::collections::HashSet::new();
     for ev in events.read() {

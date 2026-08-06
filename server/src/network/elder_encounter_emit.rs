@@ -36,10 +36,9 @@ use valence::prelude::{
 };
 
 use crate::fauna::dying_elder::{
-    dying_elder_betray_system, dying_elder_death_system, dying_elder_drain_system,
-    dying_elder_give_dan_system, DyingElderAppearedEvent, DyingElderBlackboard,
-    DyingElderDanAcceptedEvent, DyingElderState,
+    DyingElderAppearedEvent, DyingElderBlackboard, DyingElderDanAcceptedEvent, DyingElderState,
 };
+use crate::npc::lifecycle::{NpcDeathReason, NpcTerminalSettlementSucceeded, NpcTerminalSystemSet};
 use crate::npc::movement::GameTick;
 use crate::npc::spawn::NpcMarker;
 use crate::schema::channels::CH_ELDER_ENCOUNTER;
@@ -156,6 +155,7 @@ pub(crate) fn elder_encounter_s2c_appear_system(
         };
         let protocol_id = entity_id.get();
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: ev.zone_name.clone(),
             elder_entity_id: protocol_id, // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -201,6 +201,7 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
         };
 
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind: ElderEncounterEventKindV1::DanReceived,
@@ -226,8 +227,9 @@ pub(crate) fn elder_encounter_s2c_dan_received_system(
 #[allow(clippy::type_complexity)]
 pub(crate) fn elder_encounter_s2c_death_system(
     mut commands: Commands,
+    mut settlements: EventReader<NpcTerminalSettlementSucceeded>,
     elders: Query<
-        (Entity, &EntityId, &DyingElderBlackboard, &DyingElderState),
+        (&EntityId, &DyingElderBlackboard, &DyingElderState),
         (
             With<NpcMarker>,
             Without<ClientMarker>,
@@ -236,16 +238,21 @@ pub(crate) fn elder_encounter_s2c_death_system(
     >,
     mut players: PlayerQuery<'_, '_>,
     zones: Option<Res<ZoneRegistry>>,
-    game_tick: Option<Res<GameTick>>,
 ) {
     let Some(zones) = zones else { return };
-    let tick = game_tick.as_deref().map(|t| t.0 as u64).unwrap_or(0);
 
-    for (entity, entity_id, bb, state) in elders.iter() {
-        let dead_by_betrayal = match *state {
-            DyingElderState::Dead { dead_by_betrayal } => dead_by_betrayal,
-            _ => continue,
+    for settlement in settlements.read() {
+        let Ok((entity_id, bb, state)) = elders.get(settlement.entity) else {
+            continue;
         };
+        let dead_by_betrayal = settlement.reason == NpcDeathReason::DuoShe
+            || matches!(
+                *state,
+                DyingElderState::Dead {
+                    dead_by_betrayal: true
+                }
+            )
+            || settlement.cause == "dying_elder_betrayal";
 
         let event_kind = if dead_by_betrayal {
             ElderEncounterEventKindV1::Betrayal
@@ -254,6 +261,7 @@ pub(crate) fn elder_encounter_s2c_death_system(
         };
 
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: bb.home_zone.clone(),
             elder_entity_id: entity_id.get(), // MC protocol entity_id（非 ECS index）
             event_kind,
@@ -261,19 +269,22 @@ pub(crate) fn elder_encounter_s2c_death_system(
             dan_count: 0,
             offered_skill_id: String::new(),
             qi_fraction: 0.0,
-            server_tick: tick,
+            server_tick: settlement.at_tick,
         };
         let Some(bytes) = to_json_bytes(&event) else {
             continue;
         };
         send_to_players_in_zone(&mut players, &bb.home_zone, &zones, &bytes);
-        commands.entity(entity).insert(DyingElderDeathS2cBroadcast);
+        commands
+            .entity(settlement.entity)
+            .insert(DyingElderDeathS2cBroadcast);
         tracing::info!(
-            "[bong][elder_encounter_emit] S2C death → entity={:?} protocol_id={} zone='{}' kind={:?} tick={tick}",
-            entity,
+            "[bong][elder_encounter_emit] S2C death → entity={:?} protocol_id={} zone='{}' kind={:?} tick={}",
+            settlement.entity,
             entity_id.get(),
             bb.home_zone,
             event_kind,
+            settlement.at_tick,
         );
     }
 }
@@ -290,12 +301,9 @@ pub fn register(app: &mut App) {
         Update,
         (
             elder_encounter_s2c_appear_system,
-            elder_encounter_s2c_dan_received_system.after(dying_elder_give_dan_system),
-            elder_encounter_s2c_death_system
-                .after(dying_elder_drain_system)
-                .after(dying_elder_betray_system)
-                .after(elder_encounter_s2c_dan_received_system)
-                .before(dying_elder_death_system),
+            elder_encounter_s2c_dan_received_system
+                .after(crate::fauna::dying_elder::dying_elder_give_dan_system),
+            elder_encounter_s2c_death_system.in_set(NpcTerminalSystemSet::PostCommit),
         ),
     );
 }
@@ -308,12 +316,41 @@ mod tests {
     use crate::schema::common::MAX_PAYLOAD_BYTES;
     use crate::schema::elder_encounter::ElderEncounterEventV1;
 
+    fn flush_clients_and_collect_elder_payloads(
+        app: &mut valence::prelude::App,
+        helper: &mut valence::testing::MockClientHelper,
+    ) -> Vec<ElderEncounterEventV1> {
+        use valence::prelude::Client;
+        use valence::protocol::packets::play::CustomPayloadS2c;
+
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
+                (packet.channel.as_str() == CH_ELDER_ENCOUNTER).then(|| {
+                    serde_json::from_slice::<ElderEncounterEventV1>(packet.data.0 .0)
+                        .expect("elder encounter payload should decode")
+                })
+            })
+            .collect()
+    }
+
     // ── payload JSON 结构 pin 测试 ──────────────────────────────────────────
 
     #[test]
     fn appeared_payload_has_correct_json_structure() {
         // 期望：appeared 事件序列化包含所有 client handler 需要的字段
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 1, // MC protocol entity_id（最小合法值=1；Valence 从 1 起分配）
             event_kind: ElderEncounterEventKindV1::Appeared,
@@ -373,11 +410,11 @@ mod tests {
     #[test]
     fn death_s2c_broadcasts_once_while_settlement_remains_unprocessed() {
         use valence::entity::EntityId;
-        use valence::prelude::{App, Client, DVec3, Position, Update};
-        use valence::protocol::packets::play::CustomPayloadS2c;
+        use valence::prelude::{App, DVec3, Position, Update};
         use valence::testing::create_mock_client;
 
         let mut app = App::new();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_systems(Update, elder_encounter_s2c_death_system);
         let mut zones = ZoneRegistry::fallback();
         zones.zones[0].name = "tsy_deep".to_string();
@@ -403,42 +440,41 @@ mod tests {
 
         app.update();
         app.update();
+        flush_clients_and_collect_elder_payloads(&mut app, &mut helper);
+        assert!(
+            !app.world()
+                .entity(elder)
+                .contains::<DyingElderDeathS2cBroadcast>(),
+            "commit 前不得推送死亡 S2C 或插入幂等 marker"
+        );
 
-        let world = app.world_mut();
-        let mut clients = world.query::<&mut Client>();
-        for mut client in clients.iter_mut(world) {
-            client
-                .flush_packets()
-                .expect("mock client packets should flush");
-        }
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: elder,
+            at_tick: 77,
+            cause: "dying_elder_death".to_string(),
+            reason: NpcDeathReason::NaturalAging,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: crate::cultivation::components::ActorQiIdentity::from_life_record(
+                &crate::cultivation::life_record::LifeRecord::new("npc:elder-s2c"),
+                crate::cultivation::components::ActorQiKind::Npc,
+            )
+            .expect("fixture identity must be canonical"),
+        });
+        app.update();
+        app.update();
 
-        let payloads = helper
-            .collect_received()
-            .0
-            .into_iter()
-            .filter_map(|frame| {
-                let packet = frame.decode::<CustomPayloadS2c>().ok()?;
-                if packet.channel.as_str() != CH_ELDER_ENCOUNTER {
-                    return None;
-                }
-                Some(
-                    serde_json::from_slice::<ElderEncounterEventV1>(packet.data.0 .0)
-                        .expect("elder death payload should decode"),
-                )
-            })
-            .collect::<Vec<_>>();
+        let payloads = flush_clients_and_collect_elder_payloads(&mut app, &mut helper);
 
-        assert_eq!(payloads.len(), 1, "未结算死亡跨 tick 也只能推送一次 S2C");
+        assert_eq!(payloads.len(), 1, "commit 后跨 tick 只能推送一次 S2C");
         assert_eq!(
             payloads[0].event_kind,
             ElderEncounterEventKindV1::DeadNatural
         );
+        assert_eq!(payloads[0].server_tick, 77);
         let elder_ref = app.world().entity(elder);
         assert!(elder_ref.contains::<DyingElderDeathS2cBroadcast>());
-        assert!(
-            !elder_ref.contains::<crate::fauna::dying_elder::DyingElderDeathProcessed>(),
-            "测试刻意不注册死亡结算系统，确保通知幂等不依赖结算 marker"
-        );
     }
 
     #[test]
@@ -451,6 +487,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<DyingElderAppearedEvent>();
         app.add_event::<DyingElderDanAcceptedEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         let mut zones = ZoneRegistry::fallback();
         zones.zones[0].name = "tsy_deep".to_string();
         app.insert_resource(zones);
@@ -480,6 +517,20 @@ mod tests {
             qi_gain: 60.0,
             dan_count: crate::fauna::dying_elder::DYING_ELDER_DAN_THRESHOLD,
             qi_fraction: 1.0,
+        });
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: elder,
+            at_tick: 88,
+            cause: "dying_elder_death".to_string(),
+            reason: NpcDeathReason::NaturalAging,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: crate::cultivation::components::ActorQiIdentity::from_life_record(
+                &crate::cultivation::life_record::LifeRecord::new("npc:elder-fifth-dan"),
+                crate::cultivation::components::ActorQiKind::Npc,
+            )
+            .expect("fixture identity must be canonical"),
         });
 
         app.update();
@@ -521,6 +572,7 @@ mod tests {
     fn qi_fraction_zero_for_death_events() {
         // 期望：死亡事件 qi_fraction = 0.0（真元耗尽）
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: "tsy_deep".to_string(),
             elder_entity_id: 5,
             event_kind: ElderEncounterEventKindV1::DeadNatural,
@@ -581,6 +633,7 @@ mod tests {
     fn dan_received_payload_has_qi_fraction_and_dan_count() {
         // 期望：dan_received 事件包含正确 qi_fraction 和 dan_count
         let event = ElderEncounterEventV1 {
+            event_id: None,
             zone_name: "tsy_abyss".to_string(),
             elder_entity_id: 42,
             event_kind: ElderEncounterEventKindV1::DanReceived,
@@ -623,6 +676,7 @@ mod tests {
 
     fn elder_encounter_event_with_skill_len(skill_len: usize) -> ElderEncounterEventV1 {
         ElderEncounterEventV1 {
+            event_id: None,
             zone_name: "spawn".to_string(),
             elder_entity_id: 1,
             event_kind: ElderEncounterEventKindV1::Appeared,

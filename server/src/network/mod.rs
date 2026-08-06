@@ -143,8 +143,8 @@ use redis_bridge::{RedisInbound, RedisOutbound};
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
     bevy_ecs, ident, Added, App, Changed, Client, Commands, DVec3, Entity, EntityKind, EventReader,
-    EventWriter, Events, IntoSystemConfigs, Or, Position, Query, Res, ResMut, Resource, Startup,
-    Update, Username, With,
+    EventWriter, Events, IntoSystemConfigs, Or, Position, PostUpdate, Query, Res, ResMut, Resource,
+    Startup, Update, Username, With,
 };
 
 use crate::combat::components::{Lifecycle, StatusEffects};
@@ -473,7 +473,8 @@ pub(crate) fn register_app_wiring(app: &mut App) {
             emit_zone_info_on_zone_transition,
             emit_event_alerts_on_major_event_creation.after(execute_agent_commands),
             combat_bridge::publish_combat_realtime_events
-                .after(crate::combat::resolve::resolve_attack_intents),
+                .after(crate::combat::resolve::resolve_attack_intents)
+                .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
             combat_bridge::publish_death_insight_requests
                 .after(crate::combat::lifecycle::death_arbiter_tick),
             combat_bridge::publish_combat_summary_on_interval.after(publish_world_state_to_redis),
@@ -497,10 +498,12 @@ pub(crate) fn register_app_wiring(app: &mut App) {
         anticheat_bridge::publish_anticheat_violation_events
             .after(crate::combat::anticheat::emit_anticheat_threshold_reports),
     );
+    // Spawn producers use deferred Commands in Update. Publish their stable LifeRecord identity
+    // only after those commands have been applied at the schedule boundary.
+    app.add_systems(PostUpdate, npc_event_bridge::publish_npc_spawn_events);
     app.add_systems(
         Update,
         (
-            npc_event_bridge::publish_npc_spawn_events,
             npc_event_bridge::publish_npc_death_events,
             // plan-offscreen-war-v1 P2：离屏战果 telemetry → bong:npc/combat。
             npc_event_bridge::publish_dormant_combat_events,
@@ -1234,6 +1237,7 @@ fn redact_redis_url_for_log(redis_url: &str) -> String {
 struct WorldStateContextParams<'w> {
     tiandao_blind_zones: Option<Res<'w, crate::sword_path::heaven_gate::TiandaoBlindZoneRegistry>>,
     world_era_state: Option<Res<'w, WorldEraState>>,
+    persistence: Option<Res<'w, crate::persistence::PersistenceSettings>>,
 }
 
 /// Periodically publish world state snapshot to Redis
@@ -1317,25 +1321,44 @@ fn publish_world_state_to_redis(
     );
 
     let _ = redis.tx_outbound.send(RedisOutbound::WorldState(state));
-    // dormant persistence is dirty-gated: dormant changes are sparse (aging is
-    // a 60 s batch tick), so only re-serialize the whole hash and push it when
-    // something actually changed since the last publish. A clean cycle skips the
-    // full serde + hash replace entirely. `take_dirty` clears the flag so the
-    // next clean cycle is skipped; we clear it regardless of serialize outcome
-    // (a serialize failure is logged and retried on the next genuine change).
+    // Dormant persistence is dirty-gated and allows only one HASH replacement
+    // in flight. A receipt confirms or re-arms that revision before a newer
+    // snapshot may be enqueued, so background writes cannot land out of order.
     if let Some(dormant_store) = dormant_store.as_mut() {
-        if dormant_store.take_dirty() {
+        if let Some(settings) = ctx.persistence.as_deref() {
+            dormant_store.apply_persistence_receipts_with_settings(settings);
+        } else {
+            dormant_store.apply_persistence_receipts();
+        }
+        if let Some(revision) = dormant_store.begin_persistence() {
+            if let Some(settings) = ctx.persistence.as_deref() {
+                if let Err(error) =
+                    dormant_store.bind_unbound_terminal_tombstones(settings, revision)
+                {
+                    dormant_store.requeue_persistence(revision);
+                    tracing::warn!(
+                        "[bong][network] failed to bind dormant terminal cleanup revision {revision}: {error}"
+                    );
+                    return;
+                }
+            }
             match dormant_store.to_redis_hash_payloads() {
                 Ok(entries) => {
                     tracing::debug!(
                         "[bong][network] syncing {} dormant NPC snapshots to Redis HASH",
                         dormant_store.len()
                     );
-                    let _ = redis
-                        .tx_outbound
-                        .send(RedisOutbound::NpcDormantHash(entries));
+                    let outbound = RedisOutbound::NpcDormantHash {
+                        entries,
+                        revision,
+                        receipt_tx: dormant_store.persistence_receipt_sender(),
+                    };
+                    if redis.tx_outbound.send(outbound).is_err() {
+                        dormant_store.requeue_persistence(revision);
+                    }
                 }
                 Err(error) => {
+                    dormant_store.requeue_persistence(revision);
                     tracing::warn!(
                         "[bong][network] failed to serialize dormant NPC Redis HASH payloads: {error}"
                     );
@@ -3841,6 +3864,7 @@ mod tests {
                 patrol: None,
                 loot_table: None,
                 guardian_relic: None,
+                mimic_spider: None,
                 tsy_hostile: None,
                 tsy_sentinel: None,
                 intent: crate::npc::dormant::DormantBehaviorIntent::Wander { drift_radius: 12.0 },
@@ -3849,6 +3873,7 @@ mod tests {
                 initial_qi: cultivation.qi_current,
                 qi_ledger_net: 0.0,
                 combat_dead_pending_release: false,
+                pending_combat_winner: None,
             }
         }
 
@@ -3928,7 +3953,7 @@ mod tests {
             let outbound = rx_outbound
                 .try_recv()
                 .expect("dormant Redis HASH sync should follow world-state publish");
-            let RedisOutbound::NpcDormantHash(entries) = outbound else {
+            let RedisOutbound::NpcDormantHash { entries, .. } = outbound else {
                 panic!("expected dormant Redis HASH outbound, got {outbound:?}");
             };
             assert_eq!(entries.len(), 1);
@@ -3978,11 +4003,29 @@ mod tests {
             assert!(
                 cycle1
                     .iter()
-                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash(_))),
+                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash { .. })),
                 "cycle 1 must emit an NpcDormantHash because the store was dirtied by the insert; got {cycle1:?}"
             );
 
-            // Cycle 2: nothing changed -> WorldState only, NO dormant hash.
+            let (revision, receipt_tx) = cycle1
+                .iter()
+                .find_map(|message| match message {
+                    RedisOutbound::NpcDormantHash {
+                        revision,
+                        receipt_tx,
+                        ..
+                    } => Some((*revision, receipt_tx.clone())),
+                    _ => None,
+                })
+                .expect("cycle 1 must expose the dormant HASH receipt boundary");
+            receipt_tx
+                .send(crate::network::redis_bridge::RedisDeliveryReceipt {
+                    delivery_id: revision.to_string(),
+                    outcome: Ok(()),
+                })
+                .expect("dormant HASH receipt channel must remain connected");
+
+            // Cycle 2: the success receipt is applied and nothing changed, so only WorldState is sent.
             force_publish_cycle(&mut app);
             let mut cycle2 = Vec::new();
             while let Ok(msg) = rx_outbound.try_recv() {
@@ -3997,7 +4040,7 @@ mod tests {
             assert!(
                 !cycle2
                     .iter()
-                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash(_))),
+                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash { .. })),
                 "expected cycle 2 to skip the dormant hash because nothing changed since cycle 1 cleared the dirty flag; an NpcDormantHash was emitted: {cycle2:?}"
             );
 
@@ -4014,7 +4057,7 @@ mod tests {
             assert!(
                 cycle3
                     .iter()
-                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash(_))),
+                    .any(|m| matches!(m, RedisOutbound::NpcDormantHash { .. })),
                 "expected cycle 3 to emit an NpcDormantHash again after a new insert re-dirtied the store; the gate did not re-arm: {cycle3:?}"
             );
         }

@@ -2044,20 +2044,15 @@ mod tests {
         let player_account = QiAccountId::player(canonical_player_id("Azure"));
         let full_account = QiAccountId::zone("full_zone");
         let sink_account = QiAccountId::zone("craft_sink");
-        {
-            let mut ledger = app.world_mut().resource_mut::<WorldQiAccount>();
-            ledger
-                .set_balance(full_account.clone(), 0.25 * QI_ZONE_UNIT_CAPACITY)
-                .expect("full-zone qi mirror fixture should be valid");
-            ledger
-                .set_balance(
-                    sink_account.clone(),
-                    initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
-                )
-                .expect("sink-zone qi mirror fixture should be valid");
-        }
         let observed_before = app.world().get::<Cultivation>(player).unwrap().qi_current
-            + app.world().resource::<WorldQiAccount>().total();
+            + app.world().resource::<WorldQiAccount>().total()
+            + app
+                .world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
 
         app.world_mut().send_event(CraftStartIntent {
             caster: player,
@@ -2077,20 +2072,26 @@ mod tests {
                 5.0,
                 "heartbeat 前制作消耗应全部停留在待分配池"
             );
-            assert_eq!(
-                ledger.balance(&full_account),
-                0.25 * QI_ZONE_UNIT_CAPACITY,
-                "制作阶段不得提前改写已满 zone 的账本镜像"
+            assert!(
+                !ledger.has_account(&full_account),
+                "制作阶段不得为已满 zone 创建长期 ledger mirror"
             );
-            assert_eq!(
-                ledger.balance(&sink_account),
-                initial_sink_qi * QI_ZONE_UNIT_CAPACITY,
-                "制作阶段不得绕过 heartbeat 直接写入目标 zone"
+            assert!(
+                !ledger.has_account(&sink_account),
+                "制作阶段不得为目标 zone 创建长期 ledger mirror"
             );
             let cultivation_after = app.world().get::<Cultivation>(player).unwrap();
+            let zone_qi = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
             assert!(
-                (cultivation_after.qi_current + ledger.total() - observed_before).abs() < 1e-9,
-                "ECS player qi → pending 制作阶段必须保持观察总量守恒"
+                (cultivation_after.qi_current + ledger.total() + zone_qi - observed_before).abs()
+                    < 1e-9,
+                "ECS player qi + Zone field + pending 制作阶段必须保持观察总量守恒"
             );
             assert_eq!(
                 ledger.transfers().len(),
@@ -2151,21 +2152,27 @@ mod tests {
             4.0,
             "一分钟 heartbeat 应从待分配池消费恰好 1 点真元"
         );
-        assert_eq!(
-            ledger.balance(&full_account),
-            0.25 * QI_ZONE_UNIT_CAPACITY,
-            "已达 equilibrium 的 zone 账本余额必须保持不变"
+        assert!(
+            !ledger.has_account(&full_account),
+            "heartbeat 不得为已满 zone 创建长期 ledger mirror"
         );
         assert!(
-            (ledger.balance(&sink_account) - expected_sink_qi * QI_ZONE_UNIT_CAPACITY).abs() < 1e-9,
-            "heartbeat 后的 zone 账本镜像必须与 ZoneRegistry 浓度一致"
+            !ledger.has_account(&sink_account),
+            "heartbeat 不得为目标 zone 创建长期 ledger mirror"
         );
+        let zone_qi = app
+            .world()
+            .resource::<ZoneRegistry>()
+            .zones
+            .iter()
+            .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+            .sum::<f64>();
         assert!(
-            (app.world().get::<Cultivation>(player).unwrap().qi_current + ledger.total()
+            (app.world().get::<Cultivation>(player).unwrap().qi_current + ledger.total() + zone_qi
                 - observed_before)
                 .abs()
                 < 1e-9,
-            "Crafting → pending → ZoneInflow 全链路必须保持账本总量守恒"
+            "Crafting → pending → ZoneInflow 全链路必须保持 ECS、Zone field 与账本总量守恒"
         );
         assert_eq!(
             ledger.transfers().len(),

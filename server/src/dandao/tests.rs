@@ -1161,6 +1161,8 @@ mod boss_spawn_integration {
     use super::super::boss::{BaolongwangBoss, BossPhase};
     use super::super::boss_spawn::{BaolongwangMarker, BOSS_HOME_ZONE};
     use crate::cultivation::components::Cultivation;
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{QiAccountId, QiTransferReason, WorldQiAccount};
     use crate::world::dimension::DimensionKind;
@@ -1196,11 +1198,9 @@ mod boss_spawn_integration {
         // 通过 boss_spawn::register 注册所有系统（含 baolongwang_qi_drain_aura_system）
         super::super::boss_spawn::register(&mut app);
 
-        // 初始化 WorldQiAccount 资源
+        // 初始化 ledger audit 资源；zone 由 ZoneRegistry 独占，不建立镜像。
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        let mut account = WorldQiAccount::default();
-        account.set_balance(zone_id.clone(), 0.0).unwrap();
-        app.insert_resource(account);
+        app.insert_resource(WorldQiAccount::default());
         // baolongwang_qi_drain_aura_system 现在需要 ZoneRegistry 才会吸取（field authority
         // 同步写回 zone.spirit_qi，见 c79bc03e）；不插入会在 find_zone_mut 处整 tick 早退。
         app.insert_resource(ZoneRegistry {
@@ -1231,6 +1231,7 @@ mod boss_spawn_integration {
                     qi_max: initial_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-register-test-player")),
                 Position::new([0.0, 65.0, 0.0]), // 距离 1.0 < QI_DRAIN_AURA_RADIUS
             ))
             .id();
@@ -1244,9 +1245,15 @@ mod boss_spawn_integration {
             .get::<Cultivation>(player)
             .expect("player Cultivation missing")
             .qi_current;
-        let zone_balance = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
         let player_decrease = initial_qi - player_qi_after;
-        let zone_increase = zone_balance;
+        let zone_increase = zone_spirit_qi_after * QI_ZONE_UNIT_CAPACITY;
+
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&zone_id),
+            0.0,
+            "端到端 BossDrain 不得创建 zone ledger mirror"
+        );
 
         assert!(
             player_decrease > 0.0,
@@ -1286,16 +1293,12 @@ mod boss_spawn_integration {
         super::super::boss_spawn::register(&mut app);
 
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        let initial_zone = 5.0f64;
-        let mut account = WorldQiAccount::default();
-        account.set_balance(zone_id.clone(), initial_zone).unwrap();
-        app.insert_resource(account);
+        let initial_zone_spirit_qi = 0.1f64;
+        app.insert_resource(WorldQiAccount::default());
         // 显式插入 ZoneRegistry：本测试要锁住的是 Expel 阶段跳过吸取的分支，
         // 不能靠 ZoneRegistry 缺失早退凑巧得出同样的"不扣真元"结果。
         app.insert_resource(ZoneRegistry {
-            zones: vec![baolongwang_zone_fixture(
-                initial_zone / QI_ZONE_UNIT_CAPACITY,
-            )],
+            zones: vec![baolongwang_zone_fixture(initial_zone_spirit_qi)],
         });
 
         let _boss = app
@@ -1320,6 +1323,7 @@ mod boss_spawn_integration {
                     qi_max: initial_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-register-test-player")),
                 Position::new([0.0, 65.0, 0.0]),
             ))
             .id();
@@ -1332,16 +1336,18 @@ mod boss_spawn_integration {
             .expect("player Cultivation missing")
             .qi_current;
         let zone_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
 
         assert!(
             (player_qi_after - initial_qi).abs() < 1e-9,
             "期望 Expel 阶段 drain system 不扣玩家真元，\
              实际 before={initial_qi} after={player_qi_after}"
         );
+        assert_eq!(zone_after, 0.0, "Expel 阶段不得创建 zone mirror");
         assert!(
-            (zone_after - initial_zone).abs() < 1e-9,
-            "期望 Expel 阶段 zone 余额不变，\
-             实际 before={initial_zone} after={zone_after}"
+            (zone_spirit_qi_after - initial_zone_spirit_qi).abs() < 1e-9,
+            "期望 Expel 阶段 signed zone owner 不变，\
+             实际 before={initial_zone_spirit_qi} after={zone_spirit_qi_after}"
         );
     }
 }

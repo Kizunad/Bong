@@ -15,10 +15,13 @@ use crate::npc::lifecycle::NpcRegistry;
 use crate::npc::spawn::ambient_scheduler::{danger_tide_required_ticks_scale, danger_tide_weight};
 use crate::persistence::HeartbeatPseudoVeinRecord;
 use crate::player::state::canonical_player_id;
+#[cfg(test)]
 use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+#[cfg(test)]
+use crate::qi_physics::QiAccountId;
 use crate::qi_physics::{
-    pending_inflow_account, zone_equilibrium_inflow, QiAccountId, QiTransfer, QiTransferReason,
-    WorldQiAccount,
+    pending_inflow_account, transfer_ledger_qi_to_zone, zone_equilibrium_inflow, QiTransfer,
+    QiTransferReason, WorldQiAccount,
 };
 use crate::schema::agent_command::Command;
 use crate::schema::common::{CommandType, GameEventType};
@@ -383,12 +386,6 @@ impl WorldHeartbeat {
     #[cfg(test)]
     pub(crate) fn active_pseudo_vein_count(&self) -> usize {
         self.active_pseudo_veins.len()
-    }
-
-    pub(crate) fn active_pseudo_vein_zone_ids(&self) -> Vec<String> {
-        let mut zone_ids = self.active_pseudo_veins.keys().cloned().collect::<Vec<_>>();
-        zone_ids.sort();
-        zone_ids
     }
 
     /// `zones_runtime` 是跨重启的物理余额权威；生命周期记录只保存时钟与阶段元数据。
@@ -2487,10 +2484,8 @@ impl Resource for ZoneQiInflowClock {}
 /// plan-zone-qi-economy-v1 P1 §8.1 决议 #1/#5 — 平衡回流：独立待分配池按各 zone 的
 /// `qi_equilibrium` / `qi_inflow_per_min` 配置滴灌回 `zone.spirit_qi`。
 ///
-/// 记账范本照抄 `npc::dormant::apply_dormant_regen_with_multiplier`（先用
-/// `set_balance` 把 zone ledger 镜像同步到真实 `zone.spirit_qi`，再走
-/// `WorldQiAccount::transfer` 做原子记账，最后把转账后余额写回真实字段）——
-/// **不是** audit-only 记账，待分配池与 zone 之间是真实的 `WorldQiAccount::transfer`。
+/// 事务入口直接借记稳定待分配池、增加外部 Zone owner 并追加 audit；不创建长期
+/// `zone:*` 镜像余额，避免 `summarize_world_qi` 把同一份区域真元重复计算。
 ///
 /// 跳过条件（§8.1 #5）：
 /// - `zone.qi_equilibrium <= 0.0` 或 `zone.qi_inflow_per_min <= 0.0`（未配置 / 显式不回流）；
@@ -2553,35 +2548,19 @@ pub fn zone_qi_inflow_tick(
             continue;
         }
 
-        let zone_account = QiAccountId::zone(zone.name.clone());
-        // 先把 zone 的 ledger 镜像同步到真实值（apply_dormant_regen_with_multiplier 范本），
-        // 让 transfer() 的 insufficient 检查针对的是真实容量，而不是陈旧的镜像余额。
-        if ledger
-            .set_balance(
-                zone_account.clone(),
-                (zone.spirit_qi.max(0.0)) * QI_ZONE_UNIT_CAPACITY,
-            )
-            .is_err()
+        if transfer_ledger_qi_to_zone(
+            ledger,
+            pool,
+            zone.name.as_str(),
+            &mut zone.spirit_qi,
+            actual_absolute,
+            zone.qi_equilibrium,
+            QiTransferReason::ZoneInflow,
+        )
+        .is_err()
         {
             continue;
         }
-
-        let Ok(transfer) = QiTransfer::new(
-            pool.clone(),
-            zone_account.clone(),
-            actual_absolute,
-            QiTransferReason::ZoneInflow,
-        ) else {
-            continue;
-        };
-        if ledger.transfer(transfer).is_err() {
-            continue;
-        }
-
-        let updated_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
-        // 再夹一层浮点安全网：数学上 actual_absolute <= needed_absolute 已保证不过冲，
-        // 这里防的是累计误差，绝不允许 spirit_qi 越过 equilibrium。
-        zone.spirit_qi = updated_fraction.min(zone.qi_equilibrium);
     }
 }
 
@@ -2813,7 +2792,12 @@ mod tests {
         qi_ledger
             .set_balance(pending_inflow_account(), 100.0)
             .expect("pending pool fixture should accept a finite balance");
-        let total_before = qi_ledger.total();
+        let physical_total_before = qi_ledger.total()
+            + zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
         let omen = WorldEventOmen {
             kind: OmenKind::PseudoVeinForming,
             zone_name: "waste".to_string(),
@@ -2849,10 +2833,16 @@ mod tests {
             pseudo_zone.spirit_qi, 0.6,
             "expected dynamic zone field to reflect only the amount actually borrowed"
         );
+        let physical_total_after = qi_ledger.total()
+            + zones
+                .zones
+                .iter()
+                .map(|zone| zone.spirit_qi * QI_ZONE_UNIT_CAPACITY)
+                .sum::<f64>();
         assert_eq!(
-            qi_ledger.total(),
-            total_before,
-            "expected pending-pool debit and dynamic-zone credit to preserve ledger total"
+            physical_total_after,
+            physical_total_before,
+            "expected pending-pool debit and external dynamic-zone credit to preserve the complete owner total"
         );
         assert_eq!(zones.find_zone_by_name("waste").unwrap().spirit_qi, 0.1);
     }
@@ -3110,15 +3100,9 @@ mod tests {
             .spirit_qi = before_qi;
         let mut ledger = WorldQiAccount::default();
         ledger
-            .set_balance(
-                QiAccountId::zone(zone_id.as_str()),
-                before_qi * QI_ZONE_UNIT_CAPACITY,
-            )
-            .expect("zone ledger fixture should initialize");
-        ledger
             .set_balance(pending_inflow_account(), 10.0)
             .expect("pending pool fixture should initialize");
-        let total_before = ledger.total();
+        let total_before = before_qi * QI_ZONE_UNIT_CAPACITY + ledger.total();
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3146,10 +3130,19 @@ mod tests {
             0,
             "expected restored heartbeat phase carry to clear after the due evaluation"
         );
-        assert_eq!(
-            app.world().resource::<WorldQiAccount>().total(),
-            total_before,
-            "expected catch-up decay to transfer into pending pool without changing ledger total"
+        let zones = app.world().resource::<ZoneRegistry>();
+        let zone_after = zones
+            .find_zone_by_name(zone_id.as_str())
+            .expect("restored dynamic zone should remain after catch-up")
+            .spirit_qi;
+        let ledger_after = app.world().resource::<WorldQiAccount>();
+        assert!(
+            (zone_after * QI_ZONE_UNIT_CAPACITY + ledger_after.total() - total_before).abs() < 1e-9,
+            "expected catch-up decay to move qi from the external Zone owner into the pending pool"
+        );
+        assert!(
+            !ledger_after.has_account(&QiAccountId::zone(zone_id.as_str())),
+            "catch-up must not recreate a zone:* ledger mirror"
         );
     }
 
@@ -3233,7 +3226,11 @@ mod tests {
             0,
         )
         .expect("funded pending pool should spawn the dynamic pseudo-vein fixture");
-        let total_before = qi_ledger.total();
+        let dynamic_zone_qi = zones
+            .find_zone_by_name("pseudo_vein_heartbeat_0")
+            .expect("spawned pseudo-vein zone should exist")
+            .spirit_qi;
+        let total_before = dynamic_zone_qi * QI_ZONE_UNIT_CAPACITY + qi_ledger.total();
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3259,7 +3256,6 @@ mod tests {
             .expect("active pseudo-vein record must retain its dynamic zone");
         let ledger = app.world().resource::<WorldQiAccount>();
         let zone_account = QiAccountId::zone(record.zone_id.as_str());
-        let ledger_fraction = ledger.balance(&zone_account) / QI_ZONE_UNIT_CAPACITY;
         assert!(
             record.qi_current < 0.6,
             "expected lifecycle qi to decay below 0.6 after one tick, actual {}",
@@ -3272,15 +3268,12 @@ mod tests {
             zone.spirit_qi
         );
         assert!(
-            (zone.spirit_qi - ledger_fraction).abs() < 1e-12,
-            "expected zone field and ledger mirror to match, zone={} ledger={}",
-            zone.spirit_qi,
-            ledger_fraction
+            !ledger.has_account(&zone_account),
+            "the dynamic Zone field is the physical owner; no zone:* ledger mirror may remain"
         );
-        assert_eq!(
-            ledger.total(),
-            total_before,
-            "expected continuous pseudo-vein decay to preserve total ledger qi"
+        assert!(
+            (zone.spirit_qi * QI_ZONE_UNIT_CAPACITY + ledger.total() - total_before).abs() < 1e-9,
+            "continuous pseudo-vein decay must conserve external Zone qi plus stable ledger pools"
         );
         assert!(
             ledger.transfers().iter().any(|transfer| {
@@ -3329,7 +3322,6 @@ mod tests {
             .expect("spawned dynamic zone must exist")
             .spirit_qi = 0.55;
         let zone_account = QiAccountId::zone("pseudo_vein_heartbeat_0");
-        let ledger_balance_before = qi_ledger.balance(&zone_account);
         let ledger_total_before = qi_ledger.total();
         qi_ledger.push_transfer_audit(
             QiTransfer::new(
@@ -3364,15 +3356,14 @@ mod tests {
             "expected PostUpdate sync to observe external zone drain before next heartbeat eval"
         );
         let ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            ledger.balance(&zone_account),
-            ledger_balance_before,
-            "expected frame-end lifecycle sync not to overwrite the ledger without a real transfer"
+        assert!(
+            !ledger.has_account(&zone_account),
+            "frame-end lifecycle sync must not create a Zone ledger mirror"
         );
         assert_eq!(
             ledger.total(),
             ledger_total_before,
-            "expected frame-end lifecycle sync to preserve ledger total, actual {}",
+            "expected frame-end lifecycle sync to preserve stable ledger total, actual {}",
             ledger.total()
         );
         assert!(
@@ -3414,11 +3405,8 @@ mod tests {
 
         let zone_account = QiAccountId::zone(record.zone_id.as_str());
         let zone_absolute = restored_zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-        let mut qi_ledger = WorldQiAccount::default();
-        qi_ledger
-            .set_balance(zone_account.clone(), zone_absolute)
-            .expect("restored zone ledger mirror should accept the persisted balance");
-        let total_before = qi_ledger.total();
+        let qi_ledger = WorldQiAccount::default();
+        let total_before = zone_absolute;
 
         let mut app = App::new();
         app.insert_resource(heartbeat);
@@ -3448,10 +3436,9 @@ mod tests {
             "expected settlement to drain the ephemeral zone before it can be removed"
         );
         let qi_ledger = app.world().resource::<WorldQiAccount>();
-        assert_eq!(
-            qi_ledger.balance(&zone_account),
-            0.0,
-            "expected ephemeral zone ledger balance to be fully settled"
+        assert!(
+            !qi_ledger.has_account(&zone_account),
+            "expected no zone:* mirror after settlement"
         );
         assert_eq!(
             qi_ledger.balance(&pending_inflow_account()),

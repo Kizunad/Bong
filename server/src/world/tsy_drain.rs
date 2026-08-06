@@ -18,8 +18,8 @@ use crate::qi_physics::constants::{
     QI_TSY_REFERENCE_POOL, QI_TSY_SEARCH_EXPOSURE_FACTOR,
 };
 use crate::qi_physics::{
-    qi_excretion_loss, ContainerKind, EnvField, QiAccountId, QiTransfer, QiTransferReason,
-    WorldQiAccount,
+    qi_excretion_loss, rift_drain_account, transfer_external_qi_to_ledger, ContainerKind, EnvField,
+    QiAccountId, QiTransferReason, WorldQiAccount,
 };
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::tsy::TsyPresence;
@@ -76,37 +76,19 @@ pub fn compute_search_drain_multiplier(in_search: bool) -> f64 {
 }
 
 fn record_tsy_drain_transfer(
-    account: Option<&mut WorldQiAccount>,
+    account: &mut WorldQiAccount,
     player: Entity,
-    zone_name: &str,
     amount: f64,
-) {
-    let Some(account) = account else {
-        return;
-    };
-    if amount <= 0.0 {
-        return;
-    }
-    // 审计模式（同 BossDrain）：玩家真元已在 ECS Cultivation.qi_current 扣减，
-    // ledger 只记 rift 账户增量 + audit trail，不触碰玩家账户余额。
-    // 这样 summarize_world_qi 的 total_observed = player_qi(ECS) + ledger_qi(rift)，
-    // 守恒不双计。
+) -> Result<(), crate::qi_physics::QiPhysicsError> {
     let from = QiAccountId::player(format!("entity:{player:?}"));
-    let to = QiAccountId::rift(zone_name.to_string());
-    // 确保 rift 账户存在
-    if !account.has_account(&to) {
-        let _ = account.set_balance(to.clone(), 0.0);
-    }
-    // rift 账户增 amount
-    let rift_balance = account.balance(&to);
-    let _ = account.set_balance(to.clone(), rift_balance + amount);
-    // 仅推审计轨迹，不调 transfer()（后者会检查 from 余额并拒绝）
-    account.push_transfer_audit(QiTransfer {
+    transfer_external_qi_to_ledger(
+        account,
         from,
-        to,
+        rift_drain_account(),
         amount,
-        reason: QiTransferReason::RiftCollapse,
-    });
+        QiTransferReason::RiftCollapse,
+    )?;
+    Ok(())
 }
 
 /// plan-tsy-zone-v1 §2.2 — 抽真元 tick system。
@@ -144,13 +126,22 @@ pub fn tsy_drain_tick(
         let was_alive = cultivation.qi_current > 0.0;
         let before_player_qi = cultivation.qi_current.max(0.0);
         let actual_drain = drain.min(before_player_qi);
-        record_tsy_drain_transfer(
-            qi_account.as_deref_mut(),
-            entity,
-            zone.name.as_str(),
-            actual_drain,
-        );
-        cultivation.qi_current = (cultivation.qi_current - drain).max(0.0);
+        let Some(account) = qi_account.as_deref_mut() else {
+            tracing::warn!(
+                "[bong][tsy_drain] WorldQiAccount missing for player {:?}; keep qi unchanged",
+                entity,
+            );
+            continue;
+        };
+        if let Err(error) = record_tsy_drain_transfer(account, entity, actual_drain) {
+            tracing::warn!(
+                "[bong][tsy_drain] rift ledger failed player={:?} amount={} error={error}; keep qi unchanged",
+                entity,
+                actual_drain,
+            );
+            continue;
+        }
+        cultivation.qi_current = (before_player_qi - actual_drain).max(0.0);
         if was_alive && cultivation.qi_current <= 0.0 {
             // 归零 → P0 发 DeathEvent（cause="tsy_drain"），死亡结算由 P1 plan-tsy-loot 处理。
             // 环境死亡：无攻击者。
@@ -305,19 +296,15 @@ mod tests {
     }
 
     #[test]
-    fn transfer_records_tsy_drain_audit_only_no_player_balance() {
-        // 修复后：玩家账户不写入 ledger（ECS Cultivation 是真元的唯一来源）。
-        // ledger 只记 rift 账户增量 + audit trail。
+    fn transfer_records_tsy_drain_transaction_without_persistent_player_balance() {
+        // 活体 player 账户不长期写入 ledger（ECS Cultivation 是真元的唯一来源）。
+        // helper 临时建立 source shadow，真实 credit 固定 rift_drain 池并追加 audit 后恢复 source。
         let mut account = WorldQiAccount::default();
-        record_tsy_drain_transfer(
-            Some(&mut account),
-            Entity::from_raw(7),
-            "tsy_lingxu_01_deep",
-            3.0,
-        );
+        record_tsy_drain_transfer(&mut account, Entity::from_raw(7), 3.0)
+            .expect("valid drain should commit");
 
         let player_account = QiAccountId::player(format!("entity:{:?}", Entity::from_raw(7)));
-        let rift_account = QiAccountId::rift("tsy_lingxu_01_deep");
+        let rift_account = rift_drain_account();
 
         // 玩家账户余额不应存在于 ledger（balance 返回缺省 0.0，has_account 为 false）
         assert!(
@@ -364,7 +351,8 @@ mod tests {
     fn transfer_no_player_ledger_entry_after_drain() {
         // 补充：drain 后 ledger 中绝对没有 player 账户条目。
         let mut account = WorldQiAccount::default();
-        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(42), "tsy_zone_a", 5.0);
+        record_tsy_drain_transfer(&mut account, Entity::from_raw(42), 5.0)
+            .expect("valid drain should commit");
         let player_account = QiAccountId::player(format!("entity:{:?}", Entity::from_raw(42)));
         assert!(
             !account.has_account(&player_account),
@@ -376,9 +364,11 @@ mod tests {
     fn transfer_rift_balance_accumulates_across_multiple_drains() {
         // rift balance 应跨多次 drain 累积（不覆盖）。
         let mut account = WorldQiAccount::default();
-        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(1), "tsy_zone_b", 2.0);
-        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(2), "tsy_zone_b", 3.5);
-        let rift_account = QiAccountId::rift("tsy_zone_b");
+        record_tsy_drain_transfer(&mut account, Entity::from_raw(1), 2.0)
+            .expect("first drain should commit");
+        record_tsy_drain_transfer(&mut account, Entity::from_raw(2), 3.5)
+            .expect("second drain should commit");
+        let rift_account = rift_drain_account();
         assert_eq!(
             account.balance(&rift_account),
             5.5,
@@ -480,7 +470,7 @@ mod tests {
 
         let delta_ecs = qi_start - qi_after;
 
-        let rift_account = QiAccountId::rift("tsy_zone_sys_test");
+        let rift_account = rift_drain_account();
         let rift_balance = app
             .world()
             .resource::<WorldQiAccount>()
@@ -550,7 +540,7 @@ mod tests {
 
         let delta_ecs = qi_start - qi_after; // 应 == qi_start（扣到 0）
 
-        let rift_account = QiAccountId::rift("tsy_zone_sys_test");
+        let rift_account = rift_drain_account();
         let rift_balance = app
             .world()
             .resource::<WorldQiAccount>()
@@ -579,8 +569,9 @@ mod tests {
     fn transfer_zero_amount_is_noop() {
         // amount=0 时不应写 rift 账户、不应留审计记录。
         let mut account = WorldQiAccount::default();
-        record_tsy_drain_transfer(Some(&mut account), Entity::from_raw(9), "tsy_zone_d", 0.0);
-        let rift_account = QiAccountId::rift("tsy_zone_d");
+        record_tsy_drain_transfer(&mut account, Entity::from_raw(9), 0.0)
+            .expect("zero drain should be a valid no-op");
+        let rift_account = rift_drain_account();
         assert_eq!(
             account.balance(&rift_account),
             0.0,
@@ -590,9 +581,26 @@ mod tests {
     }
 
     #[test]
-    fn transfer_none_account_is_noop() {
-        // account=None 时不应 panic，函数静默返回。
-        record_tsy_drain_transfer(None, Entity::from_raw(11), "tsy_zone_e", 1.5);
-        // 能走到这里不 panic 即通过
+    fn transfer_destination_overflow_is_atomic() {
+        // 固定 durable sink 无法表示加法时，balance 与 audit 都必须保持原样。
+        let mut account = WorldQiAccount::default();
+        account
+            .set_balance(rift_drain_account(), f64::MAX)
+            .expect("max finite fixture should be valid");
+        let before = account.clone();
+        let error = record_tsy_drain_transfer(&mut account, Entity::from_raw(11), 1.5)
+            .expect_err("destination overflow must reject the drain");
+        assert!(matches!(
+            error,
+            crate::qi_physics::QiPhysicsError::InvalidAmount {
+                field: "destination_balance",
+                ..
+            }
+        ));
+        assert_eq!(
+            account.balance(&rift_drain_account()),
+            before.balance(&rift_drain_account())
+        );
+        assert_eq!(account.transfers(), before.transfers());
     }
 }

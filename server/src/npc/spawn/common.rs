@@ -368,6 +368,7 @@ pub fn spawn_notice(
     initial_age_ticks: f64,
 ) -> NpcSpawnNotice {
     NpcSpawnNotice {
+        entity,
         npc_id: crate::npc::brain::canonical_npc_id(entity),
         archetype,
         source,
