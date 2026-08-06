@@ -10,8 +10,7 @@ use valence::prelude::{DVec3, Entity, EventWriter, Position, Query, Res, ResMut,
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
 use crate::qi_physics::{
-    rift_drain_account, transfer_external_qi_to_ledger, QiAccountId, QiTransferReason,
-    WorldQiAccount,
+    rift_drain_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
 };
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -85,13 +84,29 @@ fn record_neg_pressure_drain_transfer(
     entity: Entity,
     amount: f64,
 ) -> Result<(), crate::qi_physics::QiPhysicsError> {
-    transfer_external_qi_to_ledger(
-        account,
-        QiAccountId::player(format!("entity:{entity:?}")),
+    let amount = crate::qi_physics::finite_non_negative(amount, "transfer.amount")?;
+    if amount == 0.0 {
+        return Ok(());
+    }
+
+    let from = QiAccountId::player(format!("entity:{entity:?}"));
+    let transfer = QiTransfer::new(
+        from,
         rift_drain_account(),
         amount,
         QiTransferReason::NegPressureDrain,
     )?;
+    let destination = account.balance(&transfer.to);
+    let destination_after = destination + amount;
+    if !destination_after.is_finite() || destination_after == destination {
+        return Err(crate::qi_physics::QiPhysicsError::InvalidAmount {
+            field: "destination_balance",
+            value: destination_after,
+        });
+    }
+
+    account.set_balance(transfer.to.clone(), destination_after)?;
+    account.push_transfer_audit(transfer);
     Ok(())
 }
 

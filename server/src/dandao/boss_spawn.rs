@@ -346,12 +346,15 @@ pub fn baolongwang_qi_drain_aura_system(
         ),
         Without<BaolongwangMarker>,
     >,
-    mut qi_account: bevy_ecs::system::ResMut<WorldQiAccount>,
+    qi_account: Option<bevy_ecs::system::ResMut<WorldQiAccount>>,
     mut zone_registry: Option<bevy_ecs::system::ResMut<ZoneRegistry>>,
     mut qi_transfer_events: EventWriter<QiTransfer>,
 ) {
-    // zone 缺失（资源未插入 / BOSS_HOME_ZONE 未注册）：跳过本 tick 全部吸取，
-    // 不能先扣玩家再入账失败——原子性要求宁可整 tick 不吸，也不留半截状态。
+    // ledger 或 zone 缺失：跳过本 tick 全部吸取，不能先扣玩家再入账失败。
+    // 原子性要求宁可整 tick 不吸，也不留半截状态。
+    let Some(mut qi_account) = qi_account else {
+        return;
+    };
     let Some(zone_registry) = zone_registry.as_deref_mut() else {
         return;
     };

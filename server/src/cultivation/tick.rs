@@ -1122,6 +1122,7 @@ mod tests {
                     Position::new([8.0, 66.0, 8.0]),
                     meridians,
                     Cultivation::default(),
+                    LifeRecord::new("wind-candle-test".to_string()),
                     lifespan,
                 ))
                 .id();
@@ -1160,6 +1161,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("exhausted-qi-test".to_string()),
             ));
             if let Some(state) = exhausted {
                 entity.insert(state);
@@ -1224,6 +1226,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("juebi-aftershock-test".to_string()),
             ));
             if let Some(debuff) = aftershock {
                 entity.insert(debuff);
@@ -1268,6 +1271,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("turbulence-exposure-test".to_string()),
             ));
             if let Some(exposure) = turbulence {
                 entity.insert(exposure);
@@ -1306,6 +1310,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("qi-regen-paused-test".to_string()),
             ));
             if let Some(remaining_ticks) = remaining_ticks {
                 entity.insert(StatusEffects {
@@ -1360,6 +1365,7 @@ mod tests {
             Position::new([8.0, 66.0, 8.0]),
             meridians,
             Cultivation::default(),
+            LifeRecord::new("meditate-vfx-test".to_string()),
         ));
 
         app.update();
@@ -1400,6 +1406,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("session-practice-test".to_string()),
                 QiColor {
                     main: ColorKind::Heavy,
                     ..Default::default()
@@ -1792,6 +1799,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("cultivation-acceleration-test".to_string()),
             ));
             if let Some(se) = effects {
                 entity.insert(se);
@@ -1857,6 +1865,7 @@ mod tests {
                     Position::new([8.0, 66.0, 8.0]),
                     meridians,
                     Cultivation::default(),
+                    LifeRecord::new("dominance-regen-test".to_string()),
                 ))
                 .id();
 
@@ -2070,6 +2079,7 @@ mod tests {
                 Position::new([8.0, 66.0, 8.0]),
                 meridians,
                 Cultivation::default(),
+                LifeRecord::new("qi-regen-boost-test".to_string()),
             ));
             if let Some(se) = effects {
                 entity.insert(se);
