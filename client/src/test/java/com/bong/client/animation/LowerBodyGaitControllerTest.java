@@ -44,6 +44,57 @@ class LowerBodyGaitControllerTest {
     }
 
     @Test
+    void sameGaitTickDoesNotRestartOrAddAnotherLayer() {
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK);
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK);
+
+        assertEquals(1, layerCount(stack), "同一档位连续 tick 必须复用已有 LOWER_BODY 层");
+        assertEquals(
+            GaitSelector.Gait.WALK.animId(),
+            AnimationLayerManager.activeInChannel(playerId, AnimationLayerManager.Channel.LOWER_BODY),
+            "同一档位连续 tick 必须保留 WALK 通道所有权"
+        );
+        assertEquals(GaitSelector.Gait.WALK, LowerBodyGaitController.activeGaitForTests());
+    }
+
+    @Test
+    void changedGaitReplacesThePreviousLowerBodyLayer() {
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK);
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.JOG);
+
+        assertEquals(2, layerCount(stack), "档位切换淡出窗口内应同时保留旧层和新层");
+        assertEquals(
+            GaitSelector.Gait.JOG.animId(),
+            AnimationLayerManager.activeInChannel(playerId, AnimationLayerManager.Channel.LOWER_BODY),
+            "档位切换后通道所有权必须立即指向新档位"
+        );
+        assertEquals(GaitSelector.Gait.JOG, LowerBodyGaitController.activeGaitForTests());
+        for (int i = 0; i < GaitSelector.Gait.WALK.fadeOutTicks() + 1; i++) {
+            BongAnimationPlayer.tickPendingRemovalsForTest();
+        }
+        assertEquals(1, layerCount(stack), "旧档位淡出完成后 stack 只应保留新层");
+    }
+
+    @Test
+    void noneStopsTheActiveLowerBodyLayer() {
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK);
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.NONE);
+
+        assertEquals(1, layerCount(stack), "NONE 先执行淡出，旧层应暂留一个淡出窗口");
+        assertNull(
+            AnimationLayerManager.activeInChannel(playerId, AnimationLayerManager.Channel.LOWER_BODY),
+            "NONE 后 LOWER_BODY 不得残留通道所有权"
+        );
+        assertEquals(GaitSelector.Gait.NONE, LowerBodyGaitController.activeGaitForTests());
+    }
+
+    @Test
     void idleAfterStackReplacementStopsTheRecordedOldStack() {
         AnimationStack oldStack = new AnimationStack();
         AnimationStack replacementStack = new AnimationStack();
