@@ -213,7 +213,7 @@ impl TechniqueRegistry {
                 definition.required_realm.as_str(),
             ]
             .into_iter()
-            .map(json_string_upper_bound)
+            .map(Self::json_string_upper_bound)
             .sum::<usize>()
                 + PROFICIENCY_LABEL_UPPER_BOUND;
             let meridian_bytes: usize = definition
