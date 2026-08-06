@@ -53,6 +53,7 @@ REPO = Path(__file__).resolve().parents[2]
 SRC_JIAN = REPO / "local_models" / "BambooJianSingle.bbmodel"
 OUT_BB = REPO / "local_models" / "JianPlayer.bbmodel"
 OUT_PNG = REPO / "scripts" / "models" / "render_JianPlayer.png"
+MAX_RENDER_SIZE = 4096
 
 ATLAS = H.ATLAS          # 128
 V_OFF = H.WEAPON_V_OFF   # 64
@@ -230,7 +231,14 @@ def load_grouped(path):
     return tris, tex, (res["width"], res["height"]), d.get("name", "jian_player")
 
 
+def validate_render_size(size: int) -> int:
+    if not 1 <= size <= MAX_RENDER_SIZE:
+        raise ValueError(f"--size must be between 1 and {MAX_RENDER_SIZE}, got {size}")
+    return size
+
+
 def render(path, size=420):
+    validate_render_size(size)
     from PIL import ImageDraw
     orig = R.load_bbmodel
     R.load_bbmodel = load_grouped
@@ -263,6 +271,10 @@ def main():
     ap.add_argument("--no-render", action="store_true")
     ap.add_argument("--size", type=int, default=420)
     args = ap.parse_args()
+    try:
+        validate_render_size(args.size)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     out_bb = Path(args.out) if args.out else OUT_BB
     if out_bb.exists() and not args.force:

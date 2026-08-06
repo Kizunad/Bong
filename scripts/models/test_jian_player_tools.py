@@ -99,6 +99,53 @@ class JianPlayerToolsTest(unittest.TestCase):
             self.assertEqual("jian_player", model["name"])
             self.assertFalse(missing.exists(), "默认 fallback 应在内存中生成，不应写回源模型")
 
+    def test_render_size_bounds_cover_zero_negative_max_and_over(self) -> None:
+        for module in (J, H):
+            for size in (0, -1, module.MAX_RENDER_SIZE + 1):
+                with self.subTest(module=module.__name__, size=size):
+                    with self.assertRaisesRegex(ValueError, "between 1 and 4096"):
+                        module.validate_render_size(size)
+            self.assertEqual(module.MAX_RENDER_SIZE, module.validate_render_size(module.MAX_RENDER_SIZE))
+            self.assertEqual(1, module.validate_render_size(1))
+
+    def test_gen_jian_player_size_rejects_before_writing_bbmodel(self) -> None:
+        script = MODEL_DIR / "gen_jian_player.py"
+        for size in (0, -1, J.MAX_RENDER_SIZE + 1):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "JianPlayer.bbmodel"
+                result = subprocess.run(
+                    [sys.executable, str(script), "--size", str(size), "--out", str(output)],
+                    cwd=REPO,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(output.exists(), "非法尺寸必须在生成 bbmodel 前失败")
+                self.assertIn("between 1 and 4096", result.stderr)
+
+    def test_render_jian_in_hand_size_rejects_before_loading_model(self) -> None:
+        script = MODEL_DIR / "render_jian_in_hand.py"
+        missing_model = Path("does-not-exist.bbmodel")
+        for size in (0, -1, H.MAX_RENDER_SIZE + 1):
+            with self.subTest(size=size):
+                result = subprocess.run(
+                    [sys.executable, str(script), "--size", str(size), "--model", str(missing_model)],
+                    cwd=REPO,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("between 1 and 4096", result.stderr)
+                self.assertNotIn("FileNotFoundError", result.stderr)
+
+    def test_render_jian_in_hand_rejects_over_budget_composite(self) -> None:
+        with self.assertRaisesRegex(ValueError, "canvas area"):
+            H.composite_canvas_dimensions(H.MAX_RENDER_SIZE, 4)
+        width, height = H.composite_canvas_dimensions(1, 1)
+        self.assertGreater(width * height, 0)
+
     def test_gen_jian_player_creates_nested_output_directory(self) -> None:
         script = MODEL_DIR / "gen_jian_player.py"
         with tempfile.TemporaryDirectory() as tmp:

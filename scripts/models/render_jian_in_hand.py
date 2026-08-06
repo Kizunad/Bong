@@ -98,6 +98,33 @@ POSES = [
     }),
 ]
 ARM_CUBE = {"right": "arm_right", "left": "arm_left"}
+MAX_RENDER_SIZE = 4096
+MAX_COMPOSITE_AREA = 128 * 1024 * 1024
+
+
+def validate_render_size(size: int) -> int:
+    if not 1 <= size <= MAX_RENDER_SIZE:
+        raise ValueError(f"--size must be between 1 and {MAX_RENDER_SIZE}, got {size}")
+    return size
+
+
+def composite_canvas_dimensions(size: int, scale_count: int) -> tuple[int, int]:
+    validate_render_size(size)
+    if scale_count < 1:
+        raise ValueError("--scales 至少需要一个非空缩放值")
+    per_row = scale_count if scale_count > 1 else 2
+    tile_count = 2 * scale_count if scale_count > 1 else len(POSES) * 2
+    rows = (tile_count + per_row - 1) // per_row
+    gap, lab_h = 10, 20
+    width = size * per_row + gap * (per_row + 1)
+    height = (size + lab_h) * rows + gap * (rows + 1)
+    area = width * height
+    if area > MAX_COMPOSITE_AREA:
+        raise ValueError(
+            f"render canvas area {area} exceeds limit {MAX_COMPOSITE_AREA} "
+            f"for size={size}, scales={scale_count}"
+        )
+    return width, height
 
 
 # ── 程序化皮肤（64²，vanilla box-uv 布局）─────────────────────────────────
@@ -267,6 +294,7 @@ def build_atlas(weapon_tex: Image.Image) -> np.ndarray:
 
 
 def render_scene(tris, tex_arr, yaw, pitch, size, bg=(26, 27, 31)):
+    validate_render_size(size)
     orig = R.load_bbmodel
     R.load_bbmodel = lambda _p: (tris, tex_arr, (ATLAS, ATLAS), "in_hand")
     try:
@@ -283,9 +311,17 @@ def main():
     ap.add_argument("--scales", default="1.0",
                     help="逗号分隔的武器缩放档，多档时出垂持对比图（例 1.0,0.85,0.7）")
     args = ap.parse_args()
+    try:
+        validate_render_size(args.size)
+    except ValueError as exc:
+        ap.error(str(exc))
     scales = [float(v) for v in args.scales.split(",") if v.strip()]
     if not scales:
         ap.error("--scales 至少需要一个非空缩放值")
+    try:
+        canvas_width, canvas_height = composite_canvas_dimensions(args.size, len(scales))
+    except ValueError as exc:
+        ap.error(str(exc))
 
     w_tris, w_tex = weapon_tris(Path(args.model))
     tex_arr = build_atlas(w_tex)
@@ -316,9 +352,7 @@ def main():
 
     gap, lab_h = 10, 20
     font = label_font()
-    rows = (len(cols) + per_row - 1) // per_row
-    w = args.size * per_row + gap * (per_row + 1)
-    h = (args.size + lab_h) * rows + gap * (rows + 1)
+    w, h = canvas_width, canvas_height
     canvas = Image.new("RGB", (w, h), (14, 15, 17))
     d = ImageDraw.Draw(canvas)
     for i, (label, im) in enumerate(cols):
