@@ -219,7 +219,7 @@ impl TechniqueRegistry {
             let meridian_bytes: usize = definition
                 .required_meridians
                 .iter()
-                .map(|m| json_string_upper_bound(&m.channel) + 16)
+                .map(|m| Self::json_string_upper_bound(&m.channel) + 16)
                 .sum();
             total += text_bytes + meridian_bytes + PER_ENTRY_OVERHEAD;
         }
