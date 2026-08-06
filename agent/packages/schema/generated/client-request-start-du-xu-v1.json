@@ -14,5 +14,6 @@
       "const": "start_du_xu",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "99a1e7d80c1baea77bd488981b35b2734126f4e070a71dbbec95e4ff87b363ec"
 }

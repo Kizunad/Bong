@@ -1,0 +1,55 @@
+[
+  {
+    "zone_name": "tsy_deep",
+    "elder_entity_id": 42,
+    "event_kind": "appeared",
+    "betray_probability": 0.65,
+    "dan_count": 0,
+    "offered_skill_id": "woliu.heart",
+    "qi_fraction": 0.9,
+    "server_tick": 720000
+  },
+  {
+    "zone_name": "tsy_shallow",
+    "elder_entity_id": 99,
+    "event_kind": "dan_received",
+    "betray_probability": 0,
+    "dan_count": 3,
+    "offered_skill_id": "anqi.echo_fractal",
+    "qi_fraction": 0.6,
+    "server_tick": 720001
+  },
+  {
+    "event_id": "elder:betrayal:7:720002",
+    "zone_name": "tsy_deep",
+    "elder_entity_id": 7,
+    "event_kind": "betrayal",
+    "betray_probability": 0,
+    "dan_count": 5,
+    "offered_skill_id": "",
+    "qi_fraction": 0,
+    "server_tick": 720002
+  },
+  {
+    "event_id": "elder:dead_natural:11:720003",
+    "zone_name": "tsy_abyss",
+    "elder_entity_id": 11,
+    "event_kind": "dead_natural",
+    "betray_probability": 0,
+    "dan_count": 0,
+    "offered_skill_id": "",
+    "qi_fraction": 0,
+    "server_tick": 720003
+  },
+  {
+    "event_id": "elder:dead_player_kill:42:720004",
+    "zone_name": "tsy_deep",
+    "elder_entity_id": 42,
+    "event_kind": "dead_player_kill",
+    "betray_probability": 0,
+    "dan_count": 2,
+    "offered_skill_id": "",
+    "qi_fraction": 0,
+    "server_tick": 720004
+  }
+]

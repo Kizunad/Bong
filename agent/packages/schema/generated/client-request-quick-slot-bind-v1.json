@@ -38,5 +38,6 @@
       "maxLength": 128,
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e719af38ce9d23b13aa987799e500f745a383cdfd74eb78ae9abe6386dc592a3"
 }

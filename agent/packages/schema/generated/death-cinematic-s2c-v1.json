@@ -160,5 +160,6 @@
     "skip_predeath": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "d5c0c17fff0eb3a2a16bafae46abaaa81e305ed61b42dd20665cedd48c93b6ce"
 }

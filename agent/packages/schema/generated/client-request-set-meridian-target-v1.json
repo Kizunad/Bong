@@ -20,5 +20,6 @@
       "description": "经脉 channel id（humanoid 沿用 20 条既有名字，非 humanoid 构型可为任意 id）",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "a575023f79f1b0717cf15a820452e67404d3a34e63b7646a9e29e5220f1b7686"
 }

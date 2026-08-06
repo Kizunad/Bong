@@ -75,5 +75,6 @@
       "maximum": 1,
       "type": "number"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "1bf389635633fd7bdc4d37f76c459aa851251b34f79d3caaffbde9f5c12dd945"
 }

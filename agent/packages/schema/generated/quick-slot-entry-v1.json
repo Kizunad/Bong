@@ -30,5 +30,6 @@
     "icon_texture": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "11419333b84ff5de38ec8ceb3d994c896419331ac068e5050f640ceed016f86e"
 }

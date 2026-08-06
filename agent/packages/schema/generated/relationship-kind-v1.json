@@ -20,5 +20,6 @@
       "const": "feud",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "9167d271baf8b2ffeb1ebd30c63a744fe9c22d7cc7e66990615e904de5792716"
 }
