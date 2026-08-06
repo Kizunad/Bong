@@ -165,6 +165,24 @@ class MinecraftSoundSinkTest {
     // ─── 断线边界：全局 hard-stop + 索引清空 ──────────────────────────────
 
     @Test
+    void publicClearOnDisconnectUsesProductionHardStopBridgeAndClearsIndex() {
+        List<FadeableSoundInstance> hardStopped = new ArrayList<>();
+        MinecraftSoundSink sink = new MinecraftSoundSink(
+            () -> null,
+            (ignoredClient, instance) -> hardStopped.add(instance)
+        );
+        FadeableSoundInstance sound = instance();
+        sink.registerInstanceForTests(20L, sound);
+
+        sink.clearOnDisconnect();
+
+        assertEquals(1, hardStopped.size(),
+            "public clearOnDisconnect 必须把每个实例交给 production bridge，不能只测 internal helper");
+        assertTrue(sound.isDone(), "public disconnect bridge 也必须先静音并标记实例完成");
+        assertEquals(0, sink.trackedInstanceCountForTests(), "public disconnect bridge 必须清空索引");
+    }
+
+    @Test
     void clearOnDisconnectHardStopsActiveAndDelayedInstancesThenClearsIndex() {
         MinecraftSoundSink sink = new MinecraftSoundSink();
         FadeableSoundInstance activeLayer = instance();

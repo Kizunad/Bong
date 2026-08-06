@@ -225,12 +225,16 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         weakened_until_tick: None,
         state: LifecycleState::AwaitingRevival,
     };
-    let before_save_wall = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_last_updated_wall: i64 = connection
+        .query_row(
+            "SELECT last_updated_wall FROM player_lifecycle WHERE username = ?1",
+            params!["Alice"],
+            |row| row.get(0),
+        )
+        .expect("saved lifecycle row should expose its persistence timestamp");
 
     let mut app = App::new();
     app.insert_resource(persistence);
@@ -267,7 +271,8 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
         .as_secs();
-    let max_elapsed_ticks = after_load_wall.saturating_sub(before_save_wall) * TICKS_PER_SECOND;
+    let max_elapsed_ticks =
+        after_load_wall.saturating_sub(persisted_last_updated_wall as u64) * TICKS_PER_SECOND;
     let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     assert!(
         (earliest_valid_deadline..=9_999).contains(&revival_deadline),

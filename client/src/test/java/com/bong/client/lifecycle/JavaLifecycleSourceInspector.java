@@ -2,6 +2,7 @@ package com.bong.client.lifecycle;
 
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.ImportTree;
 import com.sun.source.tree.MemberReferenceTree;
@@ -9,8 +10,10 @@ import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.ParenthesizedTree;
 import com.sun.source.tree.PrimitiveTypeTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.TypeCastTree;
 import com.sun.source.tree.VariableTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePathScanner;
@@ -438,13 +441,41 @@ public final class JavaLifecycleSourceInspector {
 
             @Override
             public Void visitVariable(VariableTree variable, Void unused) {
-                if (variable.getType() != null && !variableTypeScopes.isEmpty()) {
-                    variableTypeScopes.peek().put(
-                        variable.getName().toString(),
-                        rawTypeName(variable.getType().toString())
-                    );
+                if (!variableTypeScopes.isEmpty()) {
+                    String declaredType = variable.getType() == null
+                        ? null
+                        : rawTypeName(variable.getType().toString());
+                    if ((declaredType == null || declaredType.equals("var"))
+                        && variable.getInitializer() != null) {
+                        String inferredType = inferExpressionType(variable.getInitializer());
+                        if (inferredType != null) {
+                            declaredType = inferredType;
+                        }
+                    }
+                    if (declaredType != null) {
+                        variableTypeScopes.peek().put(variable.getName().toString(), declaredType);
+                    }
                 }
                 return super.visitVariable(variable, unused);
+            }
+
+            private String inferExpressionType(ExpressionTree expression) {
+                if (expression instanceof ParenthesizedTree parenthesized) {
+                    return inferExpressionType(parenthesized.getExpression());
+                }
+                if (expression instanceof TypeCastTree cast) {
+                    return rawTypeName(cast.getType().toString());
+                }
+                if (expression instanceof NewClassTree newClass) {
+                    return rawTypeName(newClass.getIdentifier().toString());
+                }
+                if (expression instanceof IdentifierTree identifier) {
+                    return resolveScopedReceiverType(identifier.getName().toString());
+                }
+                if (expression instanceof MemberSelectTree selection) {
+                    return resolveScopedReceiverType(selection.toString());
+                }
+                return null;
             }
 
             @Override
@@ -454,8 +485,7 @@ public final class JavaLifecycleSourceInspector {
                     return super.visitMethodInvocation(invocation, unused);
                 }
                 if (invocation.getMethodSelect() instanceof MemberSelectTree selection) {
-                    String owner = selection.getExpression().toString();
-                    String resolvedOwner = resolveScopedReceiverType(owner);
+                    String resolvedOwner = resolveScopedReceiverType(selection.getExpression());
                     if (isForbiddenManagedStoreCall(
                         resolvedOwner,
                         storeFqcns,
@@ -481,7 +511,7 @@ public final class JavaLifecycleSourceInspector {
                 String qualifier = reference.getQualifierExpression().toString();
                 if (!reference.getName().contentEquals(DISCONNECT_CLEANER_METHOD)
                     || !isManagedStoreOwner(
-                        resolveScopedReceiverType(qualifier),
+                        resolveScopedReceiverType(reference.getQualifierExpression()),
                         storeFqcns,
                         visibleStoreTypeNames
                     )) {
@@ -496,12 +526,36 @@ public final class JavaLifecycleSourceInspector {
                 return super.visitMemberReference(reference, unused);
             }
 
+            private String resolveScopedReceiverType(ExpressionTree expression) {
+                if (expression instanceof ParenthesizedTree parenthesized) {
+                    return resolveScopedReceiverType(parenthesized.getExpression());
+                }
+                if (expression instanceof TypeCastTree cast) {
+                    return rawTypeName(cast.getType().toString());
+                }
+                if (expression instanceof IdentifierTree identifier) {
+                    return resolveScopedReceiverType(identifier.getName().toString());
+                }
+                if (expression instanceof MemberSelectTree selection) {
+                    return resolveScopedReceiverType(selection.toString());
+                }
+                return expression.toString();
+            }
+
             private String resolveScopedReceiverType(String owner) {
-                String variableName = owner.startsWith("this.") || owner.startsWith("super.")
-                    ? owner.substring(owner.indexOf('.') + 1)
-                    : owner;
+                String normalizedOwner = owner.trim();
+                while (normalizedOwner.startsWith("(") && normalizedOwner.endsWith(")")) {
+                    normalizedOwner = normalizedOwner.substring(1, normalizedOwner.length() - 1).trim();
+                }
+                int castEnd = castTypeEnd(normalizedOwner);
+                if (castEnd >= 0) {
+                    return rawTypeName(normalizedOwner.substring(1, castEnd));
+                }
+                String variableName = normalizedOwner.startsWith("this.") || normalizedOwner.startsWith("super.")
+                    ? normalizedOwner.substring(normalizedOwner.indexOf('.') + 1)
+                    : normalizedOwner;
                 if (!variableName.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
-                    return owner;
+                    return normalizedOwner;
                 }
                 for (Map<String, String> scope : variableTypeScopes) {
                     String declaredType = scope.get(variableName);
@@ -509,7 +563,19 @@ public final class JavaLifecycleSourceInspector {
                         return declaredType;
                     }
                 }
-                return owner;
+                return normalizedOwner;
+            }
+
+            private int castTypeEnd(String expression) {
+                if (!expression.startsWith("(")) {
+                    return -1;
+                }
+                int close = expression.indexOf(')');
+                if (close <= 1 || close == expression.length() - 1) {
+                    return -1;
+                }
+                String typeText = expression.substring(1, close).trim();
+                return typeText.matches("[A-Za-z_$][A-Za-z0-9_$.]*(?:\\[\\])?") ? close : -1;
             }
         }.scan(unit, null);
 

@@ -1009,6 +1009,29 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     """
             },
             {
+                "fixture/VarLocalAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() {
+                            var alias = (LootContainerStateStore) null;
+                            alias.clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/CastReceiver.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() {
+                            ((LootContainerStateStore) null).clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
                 "fixture/FieldAlias.java",
                 """
                     import com.bong.client.hud.LootContainerStateStore;
@@ -1081,7 +1104,8 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                     fixture[0],
                     managedStores,
                     false
-                )
+                ),
+                "fixture must be rejected: " + fixture[0]
             );
         }
         assertThrows(

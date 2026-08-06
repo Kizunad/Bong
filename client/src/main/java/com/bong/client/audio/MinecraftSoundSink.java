@@ -11,14 +11,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class MinecraftSoundSink implements SoundSink {
     private final Map<Long, List<FadeableSoundInstance>> activeByInstance = new ConcurrentHashMap<>();
+    private final Supplier<MinecraftClient> clientSupplier;
+    private final BiConsumer<MinecraftClient, FadeableSoundInstance> hardStopBridge;
+
+    public MinecraftSoundSink() {
+        this(MinecraftClient::getInstance, MinecraftSoundSink::stopWithClientSoundManager);
+    }
+
+    MinecraftSoundSink(
+        Supplier<MinecraftClient> clientSupplier,
+        BiConsumer<MinecraftClient, FadeableSoundInstance> hardStopBridge
+    ) {
+        this.clientSupplier = clientSupplier;
+        this.hardStopBridge = hardStopBridge;
+    }
 
     @Override
     public boolean play(AudioScheduledSound sound) {
-        MinecraftClient client = MinecraftClient.getInstance();
+        MinecraftClient client = clientSupplier.get();
         if (client == null || client.getSoundManager() == null) {
             return false;
         }
@@ -61,7 +77,7 @@ public final class MinecraftSoundSink implements SoundSink {
 
     @Override
     public void stop(long instanceId, int fadeOutTicks) {
-        MinecraftClient client = MinecraftClient.getInstance();
+        MinecraftClient client = clientSupplier.get();
         if (client == null || client.getSoundManager() == null) {
             return;
         }
@@ -70,8 +86,8 @@ public final class MinecraftSoundSink implements SoundSink {
 
     @Override
     public void clearOnDisconnect() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        clearOnDisconnectInternal(instance -> stopWithClientSoundManager(client, instance));
+        MinecraftClient client = clientSupplier.get();
+        clearOnDisconnectInternal(instance -> hardStopBridge.accept(client, instance));
     }
 
     private static void stopWithClientSoundManager(
