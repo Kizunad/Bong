@@ -45,8 +45,9 @@ OUT_MATRIX = REPO / "scripts" / "models" / "render_bend_matrix.png"
 OUT_POSE = REPO / "scripts" / "models" / "render_player_pose.png"
 OUT_ANIM = REPO / "scripts" / "models" / "render_anim_pose.png"
 MIN_RENDER_SIZE = 1
-MAX_RENDER_SIZE = 4096
+MAX_RENDER_SIZE = 1024
 ANGLE_AXES = frozenset(("pitch", "yaw", "roll", "bend", "axis"))
+BODY_ROOT = np.array([0.0, 24.0, 0.0])
 
 
 def _validate_size(size, context="size"):
@@ -293,13 +294,27 @@ def render_pose(tris, tex, yaw=180.0, pitch=4.0, size=300, bg=(26, 27, 31)):
     return im
 
 
+MAX_GRID_PIXELS = 32 * 1024 * 1024
+MAX_ANIMATION_FRAMES = 128
+
+
 def grid(cells, per_row, size, out: Path, title=None):
     size = _validate_size(size, "grid size")
+    if not cells:
+        raise ValueError("render grid must contain at least one frame")
     gap, lab = 8, 17
     rows = (len(cells) + per_row - 1) // per_row
     head = 22 if title else 0
-    cv = Image.new("RGB", (size * per_row + gap * (per_row + 1),
-                           (size + lab) * rows + gap * (rows + 1) + head), (14, 15, 17))
+    width = size * per_row + gap * (per_row + 1)
+    height = (size + lab) * rows + gap * (rows + 1) + head
+    pixels = width * height
+    if pixels > MAX_GRID_PIXELS:
+        raise ValueError(
+            f"render grid area {pixels} exceeds limit {MAX_GRID_PIXELS} "
+            f"for {len(cells)} frames at size={size}"
+        )
+    cv = Image.new("RGB", (width, height), (14, 15, 17))
+
     d = ImageDraw.Draw(cv)
     f = H.label_font(13)
     if title:
