@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use valence::entity::Look;
 use valence::prelude::{
     bevy_ecs, Commands, DVec3, Entity, EventReader, EventWriter, Events, Position, Query, Res,
-    ResMut,
+    ResMut, Username,
 };
 
 use crate::body_plan::intrinsic_is_humanoid_from_world;
@@ -40,8 +40,16 @@ use crate::cultivation::meridian::severed::{
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::technique_scroll::realm_rank;
 use crate::network::cast_emit::current_unix_millis;
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
-use crate::world::zone::DEFAULT_SPAWN_ZONE_NAME;
+use crate::player::state::canonical_player_id;
+use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
+use crate::qi_physics::ledger::{
+    pending_inflow_account, transfer_external_qi_to_ledger, QiAccountId, QiTransfer,
+    QiTransferReason, WorldQiAccount,
+};
+use crate::qi_physics::release::qi_release_to_zone;
+use crate::world::dimension::DimensionKind;
+use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+use crate::qi_physics::QiPhysicsError;
 
 use super::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 use super::bond::{SwordBondComponent, SwordShatterEvent};
@@ -114,14 +122,12 @@ fn cast_condense_edge(
     // 去掉"目标无效"门禁（Option B）：凝锋是近战剑势，准星没对准也照常挥出，
     // target 透传 Option —— 有目标命中、无目标 resolver 跳过即空挥（不命中、无误伤）。
     let qi_cost = ctx.definition.qi_cost;
-    if !drain_qi(world, caster, qi_cost) {
+    if !settle_skill_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
-    let injected = inject_bond_qi(world, caster, qi_cost);
-    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     world.send_event(AttackIntent {
         attacker: caster,
@@ -164,14 +170,12 @@ fn cast_qi_slash(
     // 去掉"目标无效"门禁（Option B）：剑气斩是方向招，准星没对准也照常释放，target
     // 透传 Option —— 有目标命中、无目标 resolver 跳过即空斩；朝向无目标时落到玩家面朝向。
     let qi_cost = ctx.definition.qi_cost;
-    if !drain_qi(world, caster, qi_cost) {
+    if !settle_skill_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
-    let injected = inject_bond_qi(world, caster, qi_cost);
-    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     world.send_event(AttackIntent {
         attacker: caster,
@@ -243,14 +247,12 @@ fn cast_resonance(
     };
 
     let qi_cost = ctx.definition.qi_cost;
-    if !drain_qi(world, caster, qi_cost) {
+    if !settle_skill_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
-    let injected = inject_bond_qi(world, caster, qi_cost);
-    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     // 6 格 AoE：扫范围内有 StatusEffects 的实体打 Slowed。
     // 范围内目标列表先 collect 出来，避免持有 query borrow 时 send_event。
@@ -308,14 +310,12 @@ fn cast_manifest(
     // 去掉"目标无效"门禁（Option B）：化形是方向招，准星没对准也照常释放，target 透传
     // Option —— 有目标命中、无目标 resolver 跳过即空放（不命中、无误伤）。
     let qi_cost = ctx.definition.qi_cost;
-    if !drain_qi(world, caster, qi_cost) {
+    if !settle_skill_qi(world, caster, qi_cost) {
         return CastResult::Rejected {
             reason: CastRejectReason::QiInsufficient,
         };
     }
     apply_cast_costs(world, caster, slot, ctx.now_tick, &ctx.definition);
-    let injected = inject_bond_qi(world, caster, qi_cost);
-    credit_skill_qi_to_zone(world, caster, qi_cost, injected);
 
     // 化形完整版（plan-sword-path-complete §C）：spawn SwordIntentEntity 追踪实体，
     // 5s 内追击目标 5 次，每次发 AttackIntent。
@@ -938,26 +938,249 @@ fn insert_casting(
     });
 }
 
-fn drain_qi(world: &mut bevy_ecs::world::World, caster: Entity, cost: f64) -> bool {
-    if cost <= 0.0 {
-        return true;
+#[derive(Debug, Clone)]
+struct QiSettlementPlan {
+    ledger: WorldQiAccount,
+    transfers: Vec<QiTransfer>,
+    zone_name: Option<String>,
+    zone_after: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct ZoneSettlementTarget {
+    name: String,
+    current: f64,
+}
+
+fn zone_settlement_target(
+    registry: Option<&ZoneRegistry>,
+    position: DVec3,
+) -> Option<ZoneSettlementTarget> {
+    registry
+        .and_then(|registry| registry.find_zone(DimensionKind::Overworld, position))
+        .filter(|zone| zone.spirit_qi.is_finite() && zone.spirit_qi >= 0.0)
+        .map(|zone| ZoneSettlementTarget {
+            name: zone.name.clone(),
+            current: zone.spirit_qi.clamp(0.0, 1.0) * QI_ZONE_UNIT_CAPACITY,
+        })
+}
+
+fn append_external_transfer(
+    ledger: &mut WorldQiAccount,
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    to: QiAccountId,
+    amount: f64,
+    reason: QiTransferReason,
+) -> Result<(), QiPhysicsError> {
+    if let Some(transfer) = transfer_external_qi_to_ledger(ledger, from, to, amount, reason)? {
+        transfers.push(transfer);
     }
-    let Some(mut cultivation) = world.get_mut::<Cultivation>(caster) else {
+    Ok(())
+}
+
+fn append_zone_release(
+    ledger: &mut WorldQiAccount,
+    transfers: &mut Vec<QiTransfer>,
+    from: QiAccountId,
+    amount: f64,
+    target: Option<&ZoneSettlementTarget>,
+    zone_current: &mut Option<f64>,
+) -> Result<(), QiPhysicsError> {
+    if amount == 0.0 {
+        return Ok(());
+    }
+
+    let Some(target) = target else {
+        return append_external_transfer(
+            ledger,
+            transfers,
+            from,
+            pending_inflow_account(),
+            amount,
+            QiTransferReason::ReleaseToZone,
+        );
+    };
+
+    let current = zone_current
+        .as_mut()
+        .expect("zone settlement target must have a mutable current balance");
+    let zone_account = QiAccountId::zone(target.name.clone());
+    let outcome = qi_release_to_zone(
+        amount,
+        from.clone(),
+        zone_account.clone(),
+        *current,
+        QI_ZONE_UNIT_CAPACITY,
+    )?;
+    append_external_transfer(
+        ledger,
+        transfers,
+        from.clone(),
+        zone_account,
+        outcome.accepted,
+        QiTransferReason::ReleaseToZone,
+    )?;
+    append_external_transfer(
+        ledger,
+        transfers,
+        from,
+        pending_inflow_account(),
+        outcome.overflow,
+        QiTransferReason::ReleaseToZone,
+    )?;
+    *current = outcome.zone_after;
+    Ok(())
+}
+
+fn apply_qi_settlement_plan(
+    ledger: &mut WorldQiAccount,
+    zone_registry: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+    plan: QiSettlementPlan,
+) {
+    *ledger = plan.ledger;
+    if let (Some(zone_name), Some(zone_after), Some(registry)) =
+        (plan.zone_name.as_deref(), plan.zone_after, zone_registry)
+    {
+        if let Some(zone) = registry.find_zone_mut(zone_name) {
+            zone.spirit_qi = zone_after / QI_ZONE_UNIT_CAPACITY;
+        }
+    }
+    if let Some(events) = qi_transfers {
+        for transfer in plan.transfers {
+            events.send(transfer);
+        }
+    }
+}
+
+fn settle_skill_qi(
+    world: &mut bevy_ecs::world::World,
+    caster: Entity,
+    qi_cost: f64,
+) -> bool {
+    let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
         return false;
     };
-    if cultivation.qi_current + f64::EPSILON < cost {
+    let Some(username) = world.get::<Username>(caster) else {
+        return false;
+    };
+    if !qi_cost.is_finite() || qi_cost < 0.0 {
         return false;
     }
-    cultivation.qi_current = (cultivation.qi_current - cost).clamp(0.0, cultivation.qi_max);
+    if qi_cost == 0.0 {
+        return true;
+    }
+    if !cultivation.qi_current.is_finite()
+        || cultivation.qi_current + QI_EPSILON < qi_cost
+    {
+        return false;
+    }
+
+    let player_id = canonical_player_id(username.0.as_str());
+    let player_account = QiAccountId::player(player_id.clone());
+    let bond_snapshot = world.get::<SwordBondComponent>().cloned();
+    let position = world
+        .get::<Position>(caster)
+        .map(Position::get)
+        .unwrap_or(DVec3::ZERO);
+    let target = zone_settlement_target(
+        world.get_resource::<ZoneRegistry>(),
+        position,
+    );
+    let mut zone_current = target.as_ref().map(|target| target.current);
+    let mut ledger = world
+        .get_resource::<WorldQiAccount>()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(target) = target.as_ref() {
+        ledger
+            .set_balance(
+                QiAccountId::zone(target.name.clone()),
+                target.current,
+            )
+            .is_ok()
+            .then_some(())
+            .ok_or(())
+            .unwrap_or(());
+    }
+
+    let settlement = (|| -> Result<(QiSettlementPlan, f64), QiPhysicsError> {
+        let injected = bond_snapshot
+            .as_ref()
+            .filter(|bond| bond.grade.can_store_qi())
+            .map(|bond| {
+                if !bond.stored_qi.is_finite() {
+                    return Err(QiPhysicsError::InvalidAmount {
+                        field: "bond.stored_qi",
+                        value: bond.stored_qi,
+                    });
+                }
+                let headroom = (bond.grade.stored_qi_cap() - bond.stored_qi).max(0.0);
+                Ok((qi_cost * super::bond::QI_INJECT_RATIO).min(headroom))
+            })
+            .transpose()?
+            .unwrap_or(0.0);
+        let mut transfers = Vec::new();
+        if injected > 0.0 {
+            append_external_transfer(
+                &mut ledger,
+                &mut transfers,
+                player_account.clone(),
+                QiAccountId::container(format!("sword_bond:{player_id}")),
+                injected,
+                QiTransferReason::Channeling,
+            )?;
+        }
+        append_zone_release(
+            &mut ledger,
+            &mut transfers,
+            player_account.clone(),
+            qi_cost - injected,
+            target.as_ref(),
+            &mut zone_current,
+        )?;
+        Ok((
+            QiSettlementPlan {
+                ledger: ledger.clone(),
+                transfers,
+                zone_name: target.as_ref().map(|target| target.name.clone()),
+                zone_after: zone_current,
+            },
+            injected,
+        ))
+    })();
+
+    let Ok((plan, injected)) = settlement else {
+        return false;
+    };
+    let zone_name = plan.zone_name.clone();
+    let zone_after = plan.zone_after;
+    world.insert_resource(plan.ledger.clone());
+    if let (Some(zone_name), Some(zone_after)) = (zone_name.as_deref(), zone_after) {
+        if let Some(mut registry) = world.get_resource_mut::<ZoneRegistry>() {
+            if let Some(zone) = registry.find_zone_mut(zone_name) {
+                zone.spirit_qi = zone_after / QI_ZONE_UNIT_CAPACITY;
+            }
+        }
+    }
+    if let Some(mut current) = world.get_mut::<Cultivation>(caster) {
+        current.qi_current = (current.qi_current - qi_cost).clamp(0.0, current.qi_max);
+    }
+    if injected > 0.0 {
+        if let Some(mut bond) = world.get_mut::<SwordBondComponent>(caster) {
+            bond.stored_qi += injected;
+        }
+    }
+    if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+        for transfer in plan.transfers {
+            events.send(transfer);
+        }
+    }
     true
 }
 
 /// P4 — emit 剑道一招的 AV 呈现事件（粒子 / 音效 / 动画走 network 侧双系统）。
-///
-/// **纯 cosmetic**：只发 `SwordPathSkillCastEvent`，不触碰任何战斗 / 真元状态。
-/// `direction` 用于剑气斩的朝向 line trail；其余招式传 `None`。
-/// caster 无 `Position`（测试 / 异常态）时落到 `DVec3::ZERO`，AV 系统会再次按
-/// Position 查询渲染目标，缺失即静默 skip。
 fn emit_skill_av(
     world: &mut bevy_ecs::world::World,
     caster: Entity,
@@ -978,161 +1201,84 @@ fn emit_skill_av(
     });
 }
 
-/// 化虚 aftermath：`qi_current` 归零后直写 `zone.spirit_qi`（worldview §二 守恒）。
-///
-/// 与 `credit_skill_qi_to_zone`（ExclusiveSystem 版）逻辑一致，但接受已分解的
-/// Bevy 资源引用而非 `&mut World`，故可在普通 Schedule system 内调用。
-///
-/// `QiTransfer` 是 audit-only（无 `EventReader`），不能代替直写，见 sword_basics.rs:433。
-fn credit_qi_current_to_zone(
-    caster: Entity,
+fn prepare_heaven_gate_settlement(
+    ledger: &WorldQiAccount,
     position: DVec3,
-    qi_drained: f64,
-    zone_registry: Option<&mut crate::world::zone::ZoneRegistry>,
+    player_id: &str,
+    qi_current: f64,
+    staging_buffer: f64,
+    zone_registry: Option<&ZoneRegistry>,
+) -> Result<QiSettlementPlan, QiPhysicsError> {
+    let target = zone_settlement_target(zone_registry, position);
+    let mut zone_current = target.as_ref().map(|target| target.current);
+    let mut ledger = ledger.clone();
+    if let Some(target) = target.as_ref() {
+        ledger.set_balance(QiAccountId::zone(target.name.clone()), target.current)?;
+    }
+    let mut transfers = Vec::new();
+    let player_account = QiAccountId::player(player_id.to_string());
+    append_zone_release(
+        &mut ledger,
+        &mut transfers,
+        player_account.clone(),
+        qi_current,
+        target.as_ref(),
+        &mut zone_current,
+    )?;
+    append_zone_release(
+        &mut ledger,
+        &mut transfers,
+        player_account,
+        staging_buffer,
+        target.as_ref(),
+        &mut zone_current,
+    )?;
+    Ok(QiSettlementPlan {
+        ledger,
+        transfers,
+        zone_name: target.as_ref().map(|target| target.name.clone()),
+        zone_after: zone_current,
+    })
+}
+
+fn emit_settlement_events(
     qi_transfers: Option<&mut Events<QiTransfer>>,
+    transfers: Vec<QiTransfer>,
 ) {
-    if qi_drained <= f64::EPSILON {
-        return;
-    }
-    // 先读 zone 名（不可变路径），释放不可变借用后再写（可变路径）。
-    let zone_name: String = match &zone_registry {
-        Some(r) => r
-            .find_zone(crate::world::dimension::DimensionKind::Overworld, position)
-            .map(|z| z.name.clone())
-            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string()),
-        None => DEFAULT_SPAWN_ZONE_NAME.to_string(),
-    };
-    // 直写 zone.spirit_qi（QiTransfer 是 audit-only，不驱动这条写路径）。
-    if let Some(reg) = zone_registry {
-        if let Some(zone) = reg.find_zone_mut(&zone_name) {
-            zone.spirit_qi = (zone.spirit_qi
-                + qi_drained / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-                .clamp(-1.0, 1.0);
-        }
-    }
-    // Audit event（供 summarize_world_qi 统计，不代替上面直写）。
-    if let Some(transfers) = qi_transfers {
-        if let Ok(transfer) = QiTransfer::new(
-            QiAccountId::player(format!("entity:{caster:?}")),
-            QiAccountId::zone(zone_name),
-            qi_drained,
-            QiTransferReason::ReleaseToZone,
-        ) {
-            transfers.send(transfer);
-        }
-    }
-}
-
-/// 向灵剑注入真元，返回实际注入量（bond 不存在或品阶 < 凝脉时返回 0）。
-/// 调用方**必须**随后对 `(qi_cost - injected)` 调用 `credit_skill_qi_to_zone`
-/// 以保证守恒律（worldview §二）。
-fn inject_bond_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: f64) -> f64 {
-    // 灵剑必须 ≥ 凝脉品阶才有存储能力。注入按 plan §bond::QI_INJECT_RATIO = 0.1。
-    let injected = match world.get_mut::<SwordBondComponent>(caster) {
-        Some(mut bond) if bond.grade.can_store_qi() => bond.try_inject_qi(qi_cost),
-        _ => 0.0,
-    };
-    if injected > f64::EPSILON {
-        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
-            if let Ok(transfer) = QiTransfer::new(
-                QiAccountId::player(format!("entity:{caster:?}")),
-                QiAccountId::container(format!("sword_bond:{caster:?}")),
-                injected,
-                QiTransferReason::Channeling,
-            ) {
-                events.send(transfer);
-            }
-        }
-    }
-    injected
-}
-
-/// 将剑道招式消耗中未注入灵剑的余量（`cost - injected`）归还给 caster 所在 zone，
-/// 并发守恒审计事件。
-///
-/// M23 blocker：zone 容量受 `QI_ZONE_UNIT_CAPACITY` 约束，满时不能把超出部分静默
-/// clamp 掉却仍 emit 全额 audit（玩家已扣、zone 未收 → 真元蒸发）。结算统一走
-/// `qi_release_to_zone`（accept 入 zone / overflow 路由 Overflow 账户），保证
-/// 玩家扣减总有目的账户承接。
-///
-/// - 若 ZoneRegistry 不存在（测试 / 早期启动期）则静默 skip。
-/// - 若 remainder ≤ ε 则无需操作。
-fn credit_skill_qi_to_zone(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    qi_cost: f64,
-    injected: f64,
-) {
-    let remainder = qi_cost - injected;
-    if remainder <= crate::qi_physics::constants::QI_EPSILON {
-        return;
-    }
-    let pos = world
-        .get::<Position>(caster)
-        .map(|p| p.get())
-        .unwrap_or(DVec3::ZERO);
-    // 找到 caster 所在 zone 名（只读），再通过名字拿可变引用。
-    let zone_name: String = {
-        let Some(registry) = world.get_resource::<crate::world::zone::ZoneRegistry>() else {
-            return;
-        };
-        registry
-            .find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
-            .map(|z| z.name.clone())
-            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string())
-    };
-    let zone_current = world
-        .get_resource::<crate::world::zone::ZoneRegistry>()
-        .and_then(|registry| registry.find_zone_by_name(&zone_name))
-        .map(|zone| zone.spirit_qi * crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY)
-        .unwrap_or(0.0);
-    let from = QiAccountId::player(format!("entity:{caster:?}"));
-    let to = QiAccountId::zone(zone_name.clone());
-    let outcome = match crate::qi_physics::release::qi_release_to_zone(
-        remainder,
-        from.clone(),
-        to,
-        zone_current,
-        crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
-    ) {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                "[bong][sword_path] invalid skill qi release for {:?}; dropped",
-                caster,
-            );
-            return;
-        }
-    };
-    if let Some(mut registry) = world.get_resource_mut::<crate::world::zone::ZoneRegistry>() {
-        if let Some(zone) = registry.find_zone_mut(&zone_name) {
-            zone.spirit_qi =
-                outcome.zone_after / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
-        }
-    }
-    if let Some(transfer) = outcome.transfer {
-        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
+    if let Some(events) = qi_transfers {
+        for transfer in transfers {
             events.send(transfer);
         }
     }
-    if outcome.overflow > crate::qi_physics::constants::QI_EPSILON {
-        tracing::warn!(
-            "[bong][sword_path] skill qi release for {:?} overflowed zone cap by {}; routing to overflow",
-            caster,
-            outcome.overflow,
-        );
-        if let Some(mut events) = world.get_resource_mut::<Events<QiTransfer>>() {
-            if let Ok(transfer) = QiTransfer::new(
-                from,
-                QiAccountId::overflow(format!("sword_path:{caster:?}")),
-                outcome.overflow,
-                QiTransferReason::ReleaseToZone,
-            ) {
-                events.send(transfer);
-            }
-        }
+}
+
+fn settle_heaven_gate_player(
+    players: &mut Query<(
+        &mut crate::cultivation::components::Cultivation,
+        Option<&mut SwordBondComponent>,
+    )>,
+    caster: Entity,
+    qi_max_snapshot: f64,
+    staging_stored_qi: f64,
+    plan: QiSettlementPlan,
+    ledger: &mut WorldQiAccount,
+    zone_registry: Option<&mut ZoneRegistry>,
+    qi_transfers: Option<&mut Events<QiTransfer>>,
+) -> bool {
+    let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) else {
+        return false;
+    };
+    cultivation.qi_max = (qi_max_snapshot * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
+    cultivation.qi_current = 0.0;
+    cultivation.realm = Realm::Solidify;
+    if let Some(mut bond) = bond_opt {
+        bond.stored_qi = 0.0;
     }
+    let transfers = plan.transfers.clone();
+    apply_qi_settlement_plan(ledger, zone_registry, qi_transfers, plan);
+    let _ = staging_stored_qi;
+    let _ = transfers;
+    true
 }
 
 #[cfg(test)]
