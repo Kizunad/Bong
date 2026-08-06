@@ -126,7 +126,7 @@
 2. API 不返回字段引用，不允许 client/schema 投影层获得 mutation capability。
 3. P1 私有化时，schema、HUD、action snapshot 只迁移读法，不创建 `QiTransfer`。
 
-**落点**：`server/src/cultivation/components/qi_flow.rs:212-241`（依据代码）/ plan “P0 冻结契约 §2”与 P1。
+**落点**：`server/src/cultivation/components/qi_flow.rs:226-255`（`Cultivation::{qi_current, qi_max, qi_max_frozen, effective_qi_max, qi_room, qi_snapshot}`）/ plan “P0 冻结契约 §2”与 P1。
 
 ### #2 signed 负灵域语义
 
@@ -135,7 +135,7 @@
 2. actor 向负域释放正量时先偿还赤字；zone `<= 0` 时普通吸收收益为 0 且 zone 原值不变。
 3. `.max(0)` 只允许计算正向 availability 或消除吸收后的浮点尾差，不能用于通用 signed state 写回。
 
-**落点**：`docs/worldview.md:30-50`、`server/src/qi_physics/release.rs:12-47`、`server/src/cultivation/components/qi_flow.rs:260-417`（依据代码）/ plan “P0 冻结契约 §2”与 P3。
+**落点**：`docs/worldview.md:30-50`、`server/src/qi_physics/release.rs:12-47`、`server/src/cultivation/components/qi_flow.rs:280-342`（`gain_from_zone`）、`:344-363`（`release_to_zone` wrapper）、`:365-420`（`transfer_to`）；实际 signed-zone/overflow 提交另见 `:593-728`（`release_external_qi_to_zone`）/ plan “P0 冻结契约 §2”与 P3。
 
 ### #3 P1 私有化策略
 
@@ -153,7 +153,7 @@
 2. `qi_max_frozen` 是容量 metadata，不是 qi balance；缩容后 clamp 到 `new_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO`，当前 canonical ratio 为 `0.5`。
 3. stored current 可以合法高于 `effective_qi_max`（冻结影响恢复 room，不反向蒸发现有真元）；仅要求 `current <= raw qi_max`。
 
-**落点**：`server/src/cultivation/breakthrough.rs:46-50`、`server/src/cultivation/components/qi_flow.rs:503-558`（依据代码）/ plan “P0 冻结契约 §2”与 P2。
+**落点**：`server/src/cultivation/breakthrough.rs:46-50`、`server/src/cultivation/components/qi_flow.rs:484-516`（`resize_qi_max_and_release_excess`；含先释放 excess 再提交 capacity）与 `:531-590`（`transfer_cultivation_to_external_owner` 边界）/ plan “P0 冻结契约 §2”与 P2。
 
 ### #5 持久化初始化边界
 
@@ -162,7 +162,7 @@
 2. production persistence 必须 decode 专用 wire DTO，再以 `set_for_init` 验证 qi 三字段；非法 finite/range/frozen snapshot fail closed，不 silent clamp。
 3. P1 后 domain `Cultivation` 不再作为可直接 `Deserialize` 后整体替换的运行时入口；非 qi 字段由 validated conversion 原样保留。
 
-**落点**：`server/src/cultivation/mod.rs` 的 cultivation bundle hydrate、`server/src/cultivation/components/qi_flow.rs:243-258`（依据代码）/ plan P0 与 P1。
+**落点**：`server/src/cultivation/mod.rs:573-681` 的 cultivation bundle hydrate/reject path、`server/src/cultivation/components/qi_flow.rs:226-271`（只读 projection + `set_for_init`；`valid_snapshot` 在 `:781-790`）/ plan P0 与 P1。
 
 ### #6 stable overflow 与持久化
 
