@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, Added, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event,
-    EventReader, EventWriter, IntoSystemConfigs, Local, Or, Position, Query, Res, ResMut, Resource,
-    Update, Username, With, Without,
+    bevy_ecs, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event, EventReader,
+    EventWriter, IntoSystemConfigs, Local, Position, Query, Res, ResMut, Resource, Update,
+    Username, With, Without,
 };
 
 use crate::alchemy::learned::LearnedRecipes;
