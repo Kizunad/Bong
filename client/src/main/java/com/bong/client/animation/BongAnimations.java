@@ -196,6 +196,10 @@ public final class BongAnimations {
         LOWER_DASH
     );
 
+    /**
+     * Contract-first assets: declared for resource and suppression contracts, but intentionally unwired.
+     * P3 of plan-split-body-animation-v1 owns the producer, transport, and UPPER_BODY consumer as one unit.
+     */
     public static final List<Identifier> JIAN_ANIMATIONS = List.of(
         JIAN_DRAW_WAIST,
         JIAN_DUAL_SMASH,
