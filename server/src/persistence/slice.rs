@@ -1064,6 +1064,12 @@ fn audit_aborted_hydrate_leases(
             LeaseMutationKind::Released => *balance -= 1,
         }
     }
+    if let Some((domain, _)) = balances.iter().find(|(_, balance)| **balance != 0) {
+        return Err(SliceDispatchError::UnexpectedHydrateLease {
+            slice_id: failed_descriptor.id,
+            domain: *domain,
+        });
+    }
 
     let active = world
         .get_resource::<PersistenceSliceRegistry>()
@@ -1084,12 +1090,6 @@ fn audit_aborted_hydrate_leases(
         return Err(SliceDispatchError::UnexpectedHydrateLease {
             slice_id: failed_descriptor.id,
             domain,
-        });
-    }
-    if let Some((domain, _)) = balances.iter().find(|(_, balance)| **balance != 0) {
-        return Err(SliceDispatchError::UnexpectedHydrateLease {
-            slice_id: failed_descriptor.id,
-            domain: *domain,
         });
     }
     Ok(())
