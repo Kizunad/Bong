@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -5384,6 +5385,15 @@ fn persist_npc_deceased_archive_with_connection(
     archive: &NpcDeceasedArchiveRecord,
     open_connection: impl FnOnce(&PersistenceSettings) -> io::Result<Connection>,
 ) -> io::Result<()> {
+    persist_npc_deceased_archive_with_hooks(settings, archive, open_connection, write_zstd_bundle)
+}
+
+fn persist_npc_deceased_archive_with_hooks(
+    settings: &PersistenceSettings,
+    archive: &NpcDeceasedArchiveRecord,
+    open_connection: impl FnOnce(&PersistenceSettings) -> io::Result<Connection>,
+    write_bundle: impl FnOnce(&Path, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     let archive_path = npc_deceased_archive_absolute_path(
         settings,
         archive.char_id.as_str(),
@@ -5394,7 +5404,10 @@ fn persist_npc_deceased_archive_with_connection(
     let previous_archive = fs::read(&archive_path).ok();
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    write_zstd_bundle(&archive_path, &archive_json)?;
+    if let Err(error) = write_bundle(&archive_path, &archive_json) {
+        rollback_file(&archive_path, previous_archive.as_deref());
+        return Err(error);
+    }
 
     let persisted = (|| -> io::Result<()> {
         let mut connection = open_connection(settings)?;
@@ -9051,11 +9064,42 @@ fn resolve_persistence_relative_path(
 }
 
 fn write_zstd_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
+    write_zstd_bundle_with_writer(path, payload, |file, compressed| file.write_all(compressed))
+}
+
+fn write_zstd_bundle_with_writer(
+    path: &Path,
+    payload: &[u8],
+    write_temp: impl FnOnce(&mut fs::File, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let compressed = zstd::stream::encode_all(payload, 3).map_err(io::Error::other)?;
-    fs::write(path, compressed)
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "bundle".to_string());
+    let temp_path = path.with_file_name(format!(
+        ".{filename}.tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut temp_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)?;
+    let result = (|| {
+        write_temp(&mut temp_file, &compressed)?;
+        temp_file.sync_all()?;
+        drop(temp_file);
+        fs::rename(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -9580,6 +9624,7 @@ mod persistence_tests {
 
         let _ = fs::remove_dir_all(root);
     }
+
 
     #[test]
     fn production_failed_load_stays_read_only_and_recovers_on_reconnect() {
@@ -15577,6 +15622,112 @@ mod persistence_tests {
             fs::read(&archive_path).expect("previous archive should be restored"),
             previous_bundle,
             "transaction-begin failure after bundle replacement must restore the previous archive bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_replacement_write_failure_preserves_bundle_and_index() {
+        let (settings, root) = persistence_settings("npc-archive-replacement-write-rollback");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+
+        let capture = sample_npc_capture("npc_archive_replacement_write_rollback");
+        let mut archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 730,
+            archived_at_wall: 1_704_067_280,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("initial archive should establish the durable baseline");
+
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        let previous_bundle = fs::read(&archive_path).expect("baseline bundle should exist");
+        let previous_index: (String, i64, String) = {
+            let connection = Connection::open(settings.db_path()).expect("db should open");
+            connection
+                .query_row(
+                    "SELECT archetype, died_at_tick, path FROM npc_deceased_index WHERE char_id = ?1",
+                    params![archive.char_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("baseline index row should exist")
+        };
+
+        archive.death_count = 2;
+        archive.died_at_tick = 731;
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            open_persistence_connection,
+            |path, payload| {
+                write_zstd_bundle_with_writer(path, payload, |file, compressed| {
+                    let partial_len = (compressed.len() / 2).max(1).min(compressed.len());
+                    file.write_all(&compressed[..partial_len])?;
+                    Err(io::Error::other("injected replacement short write"))
+                })
+            },
+        )
+        .expect_err("a replacement short write must abort before touching the final bundle");
+        assert!(
+            error
+                .to_string()
+                .contains("injected replacement short write"),
+            "the injected write failure should remain observable"
+        );
+        assert_eq!(
+            fs::read(&archive_path).expect("the previous final bundle must remain present"),
+            previous_bundle,
+            "a failed replacement write must preserve the complete previous bundle"
+        );
+
+        let connection = Connection::open(settings.db_path()).expect("db should reopen");
+        let current_index: (String, i64, String) = connection
+            .query_row(
+                "SELECT archetype, died_at_tick, path FROM npc_deceased_index WHERE char_id = ?1",
+                params![archive.char_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the previous index row must remain present");
+        assert_eq!(
+            current_index, previous_index,
+            "a failed replacement write must not advance npc_deceased_index"
+        );
+        drop(connection);
+
+        let loaded = load_npc_deceased_archive(&settings, archive.char_id.as_str())
+            .expect("the unchanged baseline bundle must remain readable")
+            .expect("the baseline archive should remain indexed");
+        assert_eq!(loaded.died_at_tick, 730);
+        assert_eq!(loaded.death_count, 1);
+        let temporary_files = fs::read_dir(
+            archive_path
+                .parent()
+                .expect("archive bundle should have a parent directory"),
+        )
+        .expect("archive directory should remain readable")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".npc_archive_replacement_write_rollback.json.zst.tmp-")
+        })
+        .count();
+        assert_eq!(
+            temporary_files, 0,
+            "a failed temporary replacement write must clean up its partial file"
         );
 
         let _ = fs::remove_dir_all(root);
