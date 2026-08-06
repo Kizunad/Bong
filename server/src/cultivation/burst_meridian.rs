@@ -915,6 +915,11 @@ fn apply_stamina_cost(
     }
     if let Some(mut stamina) = world.get_mut::<Stamina>(caster) {
         stamina.current = (stamina.current - stamina_cost).clamp(0.0, stamina.max);
+        stamina.state = if stamina.current <= 0.0 {
+            StaminaState::Exhausted
+        } else {
+            StaminaState::Combat
+        };
         stamina.last_drain_tick = Some(now_tick);
     }
 }
@@ -2166,6 +2171,40 @@ mod tests {
         assert_eq!(stamina.last_drain_tick, Some(10), "M31: 必须打 drain tick");
         let position = app.world().get::<Position>(caster).unwrap().get();
         assert!((position.z - 7.5).abs() < 1e-9 && position.x.abs() < 1e-9);
+    }
+
+    #[test]
+    fn xue_beng_bu_exact_stamina_cost_enters_exhausted() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_realm = "Awaken".to_string();
+                definition.qi_cost = 6.25;
+                definition.range = 7.5;
+                definition.stamina_cost = 3.0;
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Awaken, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut().entity_mut(caster).insert(Stamina {
+            current: 3.0,
+            max: 20.0,
+            recover_per_sec: 1.0,
+            last_drain_tick: None,
+            state: StaminaState::Idle,
+        });
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert!(matches!(result, CastResult::Started { .. }));
+        let stamina = app.world().get::<Stamina>(caster).unwrap();
+        assert_eq!(stamina.current, 0.0);
+        assert_eq!(
+            stamina.state,
+            StaminaState::Exhausted,
+            "爆脉施法扣空体力后必须进入 Exhausted，不能保留 Idle"
+        );
+        assert_eq!(stamina.last_drain_tick, Some(10));
     }
 
     #[test]
