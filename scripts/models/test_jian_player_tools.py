@@ -20,6 +20,7 @@ MODEL_DIR = Path(__file__).resolve().parent
 REPO = MODEL_DIR.parents[1]
 sys.path.insert(0, str(MODEL_DIR))
 
+import gen_bamboo_jian as B
 import gen_jian_player as J
 import render_jian_in_hand as H
 import render_player_pose as P
@@ -271,6 +272,13 @@ class JianPlayerToolsTest(unittest.TestCase):
             self.assertGreater(len(model["elements"]), len(H.PLAYER_CUBES))
             self.assertEqual("jian_player", model["name"])
             self.assertFalse(missing.exists(), "默认 fallback 应在内存中生成，不应写回源模型")
+
+    def test_default_bamboo_jian_build_is_a_pair_with_distinct_sides(self) -> None:
+        model, cubes, _texture = B.build_bbmodel()
+        self.assertEqual(2, len(model["outliner"]))
+        self.assertEqual(2, len({cube[2].rsplit("_", 1)[1] for cube in cubes}))
+        self.assertEqual(len(B.build_cubes()) * 2, len(cubes))
+        self.assertTrue(all(name.endswith(("_r", "_l")) for _bone, _material, name, *_rest in cubes))
 
     def test_render_size_bounds_cover_zero_negative_max_and_over(self) -> None:
         for module in (J, H):
