@@ -367,7 +367,7 @@ def anim_pose_table(json_path: Path):
         pose = {}
         for part in kfs:
             axes = RA.sample_part(kfs, part, float(tick))
-            # sample_part 回来的角度是弧度，位移是米/px 原值
+            # sample_part 保持输入角度单位，位移是米/px 原值
             conv = {}
             for k, v in axes.items():
                 conv[k] = math.degrees(v) if not degrees_flag and k in ANGLE_AXES else v
