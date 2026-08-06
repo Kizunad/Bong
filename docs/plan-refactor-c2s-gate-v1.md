@@ -1,6 +1,6 @@
 # plan-refactor-c2s-gate-v1 — C2S 请求统一门禁中间件 + client_request_handler 巨石拆分（重构轨 R4）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：给所有 `ClientRequestV1` 变体建立穷尽式声明门禁（距离 / 维度 / 所有权 / 状态前置），同时把 `client_request_handler.rs` 拆成按域注册的 handler 模块，使“只信裸坐标即可跨维远程操作”这一类缺陷不能再静默进入生产。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：给所有 `ClientRequestV1` 变体建立穷尽式声明门禁（距离 / 维度 / 所有权 / 状态前置），同时把 `client_request_handler.rs` 拆成按域注册的 handler 模块，使“只信裸坐标即可跨维远程操作”这一类缺陷不能再静默进入生产。
 
 ## 阶段总览
 

@@ -1,6 +1,6 @@
 # plan-agent-craft-schema-v1 — Craft lifecycle Agent schema 生产批次（总纲 A-CS）
 
-> 所属总纲：`plan-refactor-master-v1.md`。遵循 PR 1902 settled rulings：TypeBox 是 shape/validation source of truth；A-CS 拥有 craft domain contracts，R6 只拥有 generation/wire machinery 与 atomic activation。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。遵循 PR 1902 settled rulings：TypeBox 是 shape/validation source of truth；A-CS 拥有 craft domain contracts，R6 只拥有 generation/wire machinery 与 atomic activation。
 
 ## 阶段总览
 

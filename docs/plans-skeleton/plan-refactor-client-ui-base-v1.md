@@ -1,6 +1,6 @@
 # plan-refactor-client-ui-base-v1 — Client UI 公共基类 + InspectScreen 拆解 + 输入/线程纪律（重构轨 R7）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：给 28 个各写各的 owo Screen 建公共基类（store 订阅/tick 刷新/关闭清理/礼貌抢屏），diff-then-patch 列表组件化，keybind 注册表防冲突，网络线程→client 线程 marshal 强制化，并拆掉 4647 行的 `InspectScreen`——owo 布局/输入/线程整簇（16+ 份 plan）收口。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：给 28 个各写各的 owo Screen 建公共基类（store 订阅/tick 刷新/关闭清理/礼貌抢屏），diff-then-patch 列表组件化，keybind 注册表防冲突，网络线程→client 线程 marshal 强制化，并拆掉 4647 行的 `InspectScreen`——owo 布局/输入/线程整簇（16+ 份 plan）收口。
 
 ## 现状证据（2026-07-27 侦察）
 

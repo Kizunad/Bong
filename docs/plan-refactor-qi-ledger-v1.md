@@ -1,6 +1,6 @@
 # plan-refactor-qi-ledger-v1 — 真元守恒 Ledger 架构强制化（重构轨 R5）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：把 `qi_physics::ledger` 从“参与式记账”升级为“架构强制”——`qi_current` / `zone.spirit_qi` 的 gameplay 裸算术写入在类型层面不可能，全部真元流动只剩受控事务入口；mint、蒸发、zone-shadow 整簇根除。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：把 `qi_physics::ledger` 从“参与式记账”升级为“架构强制”——`qi_current` / `zone.spirit_qi` 的 gameplay 裸算术写入在类型层面不可能，全部真元流动只剩受控事务入口；mint、蒸发、zone-shadow 整簇根除。
 
 ## 现状证据（2026-07-27 侦察）
 
