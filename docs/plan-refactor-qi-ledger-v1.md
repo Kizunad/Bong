@@ -135,7 +135,7 @@
 2. actor 向负域释放正量时先偿还赤字；zone `<= 0` 时普通吸收收益为 0 且 zone 原值不变。
 3. `.max(0)` 只允许计算正向 availability 或消除吸收后的浮点尾差，不能用于通用 signed state 写回。
 
-**落点**：`docs/worldview.md:30-50`、`server/src/qi_physics/release.rs:12-47`、`server/src/cultivation/components/qi_flow.rs:280-342`（`gain_from_zone`）、`:344-363`（`release_to_zone` wrapper）、`:365-420`（`transfer_to`）；实际 signed-zone/overflow 提交另见 `:593-728`（`release_external_qi_to_zone`）/ plan “P0 冻结契约 §2”与 P3。
+**落点**：`docs/worldview.md:30-50`、`server/src/qi_physics/release.rs:12-47`（`qi_release_to_zone`）、`server/src/qi_physics/constants.rs:88`（`QI_ZONE_UNIT_CAPACITY`）；`server/src/cultivation/components/qi_flow.rs:259-271`（`set_for_init`）、`:280-342`（`gain_from_zone`）、`:344-363`（`release_to_zone` wrapper）、`:365-420`（`transfer_to`）、`:422-482`（`transfer_to_external_actor`）、`:593-728`（`release_external_qi_to_zone` 实际 signed-zone/overflow 提交）；真实 ledger/audit 边界见 `server/src/qi_physics/ledger.rs:459-480`（`QiTransfer`）、`:492-532`（audit-only gate 与 preflight）、`:554-590`（`WorldQiAccount::transfer`）、`:600-606`（`push_transfer_audit`）/ plan “P0 冻结契约 §2”与 P3。
 
 ### #3 P1 私有化策略
 
@@ -144,7 +144,7 @@
 2. P0 先冻结并饱和测试所有 capability；P1 在开放大型代码 PR 清空窗口里改字段 visibility，让 all-target 编译成为漏点审计器。
 3. P1 开始前与 push 前均紧邻 fetch/merge main；merge 带入任何变化就重跑完整 server gate 和新 HEAD validator。
 
-**落点**：`server/src/cultivation/components.rs:627-652`、`server/src/world/zone.rs` 的 `Zone` 定义（依据代码）/ plan P1 与“文件所有权与边界”。
+**落点**：`server/src/cultivation/components/qi_flow.rs:64-137`（`ActorQiKind`、`ActorQiIdentity` capability 与 `PersistentQiSink`）、`:792-800`（`reject_same_account`）；目标字段仍见 `server/src/cultivation/components.rs:641-647` 与 `server/src/world/zone.rs:34-53`（当前仍为 `pub`，私有化尚未完成）/ plan P1 与“文件所有权与边界”。
 
 ### #4 qi_max 缩容与 frozen
 
@@ -153,7 +153,7 @@
 2. `qi_max_frozen` 是容量 metadata，不是 qi balance；缩容后 clamp 到 `new_max * BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO`，当前 canonical ratio 为 `0.5`。
 3. stored current 可以合法高于 `effective_qi_max`（冻结影响恢复 room，不反向蒸发现有真元）；仅要求 `current <= raw qi_max`。
 
-**落点**：`server/src/cultivation/breakthrough.rs:46-50`、`server/src/cultivation/components/qi_flow.rs:484-516`（`resize_qi_max_and_release_excess`；含先释放 excess 再提交 capacity）与 `:531-590`（`transfer_cultivation_to_external_owner` 边界）/ plan “P0 冻结契约 §2”与 P2。
+**落点**：`server/src/cultivation/breakthrough.rs:50`（`BREAKTHROUGH_FAIL_FROZEN_CAP_RATIO`）、`server/src/cultivation/components/qi_flow.rs:484-516`（`resize_qi_max_and_release_excess`；含先释放 excess 再提交 capacity）、`:531-590`（`transfer_cultivation_to_external_owner`）、`:597-728`（外部 owner release 的 signed-zone/overflow 提交）/ plan “P0 冻结契约 §2”与 P2。
 
 ### #5 持久化初始化边界
 
@@ -162,7 +162,7 @@
 2. production persistence 必须 decode 专用 wire DTO，再以 `set_for_init` 验证 qi 三字段；非法 finite/range/frozen snapshot fail closed，不 silent clamp。
 3. P1 后 domain `Cultivation` 不再作为可直接 `Deserialize` 后整体替换的运行时入口；非 qi 字段由 validated conversion 原样保留。
 
-**落点**：`server/src/cultivation/mod.rs:573-681` 的 cultivation bundle hydrate/reject path、`server/src/cultivation/components/qi_flow.rs:226-271`（只读 projection + `set_for_init`；`valid_snapshot` 在 `:781-790`）/ plan P0 与 P1。
+**落点**：`server/src/cultivation/components/persisted.rs:10-70`（`PersistedCultivationV1`、`TryFrom`、`decode_persisted_cultivation`）、`server/src/cultivation/mod.rs:573-681`（joined-client bundle hydrate/reject path）、`server/src/cultivation/components/qi_flow.rs:226-271`（只读 projection + `set_for_init`；`valid_snapshot` 在 `:781-790`）/ plan P0 与 P1。
 
 ### #6 stable overflow 与持久化
 
@@ -171,4 +171,4 @@
 2. 该账户加入 `persistent_runtime_qi_accounts()` 完整 whitelist，与 pending inflow / dying-elder pools 一起原子 snapshot/hydrate；缺行或非法余额 fail closed。
 3. migration 从历史已知 0 起步；最终 migration version 在 push 前按最新 main 顺延，避免与在飞 migration 冲突。
 
-**落点**：`server/src/qi_physics/ledger.rs` 的 `QI_FLOW_OVERFLOW_ACCOUNT_ID` / `persistent_runtime_qi_accounts`、`server/src/persistence/mod.rs` runtime qi migration（依据代码）/ plan “P0 冻结契约 §1/§3”与 P0。
+**落点**：`server/src/cultivation/components/qi_flow.rs:344-363`（`release_to_zone` wrapper）、`:593-728`（`release_external_qi_to_zone` 实际 zone/overflow 提交）；`server/src/qi_physics/release.rs:12-47`（`qi_release_to_zone`）、`server/src/qi_physics/ledger.rs:629-671`（external owner→ledger）、`:679-755`（ledger→signed zone）、`:763-817`（signed zone→ledger）、`:835-880`（固定 overflow identity 与 persistent whitelist）、`:1083-1101`（`assert_conservation`）；持久化落点为 `server/src/persistence/mod.rs:2369-2385`（v40 migration）、`:5829-5866`（snapshot upsert）、`:6679-6733`（load/hydrate）、`:719-768`（startup hydrate）；真实 balance/audit 入口见 `server/src/qi_physics/ledger.rs:459-480`（`QiTransfer`）、`:554-590`（`WorldQiAccount::transfer`）、`:600-606`（`push_transfer_audit`）/ plan “P0 冻结契约 §1/§3”与 P0。
