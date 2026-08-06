@@ -48,7 +48,7 @@ use crate::qi_physics::ledger::{
 };
 use crate::qi_physics::release::qi_release_to_zone;
 use crate::world::dimension::DimensionKind;
-use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+use crate::world::zone::ZoneRegistry;
 use crate::qi_physics::QiPhysicsError;
 
 use super::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
@@ -425,10 +425,12 @@ pub fn heaven_gate_cast_system(
     clock: Res<CombatClock>,
     mut events: EventReader<HeavenGateCastEvent>,
     mut players: Query<(&mut Cultivation, Option<&mut SwordBondComponent>)>,
+    usernames: Query<&Username>,
     targets: Query<(Entity, &Position)>,
     mut combat_intents: Option<ResMut<Events<AttackIntent>>>,
     mut shatter_events: Option<ResMut<Events<SwordShatterEvent>>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     technique_registry: Res<TechniqueRegistry>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
     mut zone_registry: Option<ResMut<crate::world::zone::ZoneRegistry>>,
@@ -500,58 +502,45 @@ pub fn heaven_gate_cast_system(
         // 上方 emit 的 SwordPathSkillCastEvent(HeavenGateRelease) 独立触发（见
         // network::vfx_animation_trigger / audio_trigger），逻辑上不走通用 shatter pipeline。
         let _shatter_events_unused = shatter_events.as_deref_mut(); // 保留 ResMut 借出以维持系统签名兼容性
-                                                                    // 守恒修复（#qi-sweep-heaven-gate-drain）：在归零前先快照 qi_current，
-                                                                    // 随后直写 zone.spirit_qi。QiTransfer 是 audit-only（无 EventReader），
-                                                                    // 不能代替 zone.spirit_qi 直写，见 sword_basics.rs:433 注释。
-        let qi_drained = if let Ok((mut cultivation, bond_opt)) = players.get_mut(event.caster) {
-            let qi_drained = cultivation.qi_current;
-            cultivation.qi_max = (cultivation.qi_max * effects::HEAVEN_GATE_QI_MAX_RETAIN).max(0.0);
-            cultivation.qi_current = 0.0;
-            cultivation.realm = Realm::Solidify;
-            if let Some(mut bond) = bond_opt {
-                bond.stored_qi = 0.0;
-            }
-            qi_drained
-        } else {
-            0.0
-        };
-        // players borrow 已释放——现在可以安全地写 zone_registry。
-        credit_qi_current_to_zone(
-            event.caster,
+        let qi_current = players
+            .get(event.caster)
+            .map(|(cultivation, _)| cultivation.qi_current)
+            .unwrap_or(0.0);
+        let player_id = usernames
+            .get(event.caster)
+            .map(|username| canonical_player_id(username.0.as_str()))
+            .unwrap_or_else(|_| format!("entity:{}", event.caster.to_bits()));
+        let mut settlement_ledger = qi_ledger.as_deref().cloned().unwrap_or_default();
+        if let Ok(plan) = prepare_heaven_gate_settlement(
+            &settlement_ledger,
             event.position,
-            qi_drained,
-            zone_registry.as_deref_mut(),
-            qi_transfers.as_deref_mut(),
-        );
+            &player_id,
+            qi_current,
+            staging_buffer,
+            zone_registry.as_deref(),
+        ) {
+            if settle_heaven_gate_player(
+                &mut players,
+                event.caster,
+                event.qi_max,
+                event.stored_qi,
+                plan,
+                &mut settlement_ledger,
+                zone_registry.as_deref_mut(),
+                qi_transfers.as_deref_mut(),
+            ) {
+                if let Some(ledger) = qi_ledger.as_deref_mut() {
+                    *ledger = settlement_ledger;
+                }
+            }
+        }
 
         // 盲区注册：把 caster 藏 5 min，agent world_state 不再推送其 snapshot。
         let zone = create_blind_zone_from_cast(&event, clock.tick, heaven_gate_range);
         blind_registry.add(zone);
 
-        // 守恒：staging_buffer 进 caster 当前所在 zone（worldview §二 真元守恒、
-        // zone 级储量必须按位置归账）。compute 函数算出 qi_max_lost / new_qi_max
-        // 数值已在上面写入 cultivation，这里仅保留 ledger entry 并解析目标 zone。
+        // 保留旧 helper 的计算调用，供 legacy path 的 aftermath 数值契约继续 pin。
         let _outcome = compute_heaven_gate_shatter(event.qi_max, event.stored_qi);
-        let target_zone = zone_registry
-            .as_deref()
-            .and_then(|r| {
-                r.find_zone(
-                    crate::world::dimension::DimensionKind::Overworld,
-                    event.position,
-                )
-            })
-            .map(|z| z.name.clone())
-            .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
-        if let Some(transfers) = qi_transfers.as_deref_mut() {
-            if let Ok(transfer) = QiTransfer::new(
-                QiAccountId::player(format!("entity:{:?}", event.caster)),
-                QiAccountId::zone(target_zone),
-                staging_buffer,
-                QiTransferReason::ReleaseToZone,
-            ) {
-                transfers.send(transfer);
-            }
-        }
     }
 }
 
@@ -580,16 +569,17 @@ pub fn heaven_gate_phase_system(
         &mut crate::cultivation::components::Cultivation,
         Option<&mut SwordBondComponent>,
     )>,
+    usernames: Query<&Username>,
     targets: Query<(Entity, &Position)>,
     mut combat_intents: Option<ResMut<Events<AttackIntent>>>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_ledger: Option<ResMut<WorldQiAccount>>,
     mut blind_registry: ResMut<TiandaoBlindZoneRegistry>,
     mut zone_registry: Option<ResMut<crate::world::zone::ZoneRegistry>>,
     mut av_events: EventWriter<SwordPathSkillCastEvent>,
     mut vfx_events: EventWriter<crate::network::vfx_event_emit::VfxEventRequest>,
     mut commands: Commands,
 ) {
-    use crate::cultivation::components::Realm;
     use crate::schema::vfx_event::VfxEventPayloadV1;
 
     let now = clock.tick;
@@ -693,32 +683,38 @@ pub fn heaven_gate_phase_system(
             let staging_buffer = channeling.qi_max + channeling.stored_qi;
             let caster = channeling.caster;
 
-            // Caster 修为 / 灵剑 aftermath（与 heaven_gate_cast_system 完全一致的账目）
-            // 守恒修复（#qi-sweep-heaven-gate-drain）：先快照 qi_current，归零后直写 zone。
-            let qi_drained = if let Ok((mut cultivation, bond_opt)) = players.get_mut(caster) {
-                // 用 cast 时快照 channeling.qi_max（非 aftermath 时刻的 live 值），
-                // 与 ledger 释放的 staging_buffer 快照一致；蓄力期间若有 buff 改 qi_max 不致账目漂移。
-                let qi_drained = cultivation.qi_current;
-                cultivation.qi_max = (channeling.qi_max
-                    * super::techniques::effects::HEAVEN_GATE_QI_MAX_RETAIN)
-                    .max(0.0);
-                cultivation.qi_current = 0.0;
-                cultivation.realm = Realm::Solidify;
-                if let Some(mut bond) = bond_opt {
-                    bond.stored_qi = 0.0;
-                }
-                qi_drained
-            } else {
-                0.0
-            };
-            // players borrow 已释放——现在可以安全地写 zone_registry。
-            credit_qi_current_to_zone(
-                caster,
+            let qi_current = players
+                .get(caster)
+                .map(|(cultivation, _)| cultivation.qi_current)
+                .unwrap_or(0.0);
+            let player_id = usernames
+                .get(caster)
+                .map(|username| canonical_player_id(username.0.as_str()))
+                .unwrap_or_else(|_| format!("entity:{}", caster.to_bits()));
+            let mut settlement_ledger = qi_ledger.as_deref().cloned().unwrap_or_default();
+            if let Ok(plan) = prepare_heaven_gate_settlement(
+                &settlement_ledger,
                 origin,
-                qi_drained,
-                zone_registry.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
-            );
+                &player_id,
+                qi_current,
+                staging_buffer,
+                zone_registry.as_deref(),
+            ) {
+                if settle_heaven_gate_player(
+                    &mut players,
+                    caster,
+                    channeling.qi_max,
+                    channeling.stored_qi,
+                    plan,
+                    &mut settlement_ledger,
+                    zone_registry.as_deref_mut(),
+                    qi_transfers.as_deref_mut(),
+                ) {
+                    if let Some(ledger) = qi_ledger.as_deref_mut() {
+                        *ledger = settlement_ledger;
+                    }
+                }
+            }
 
             // 盲区注册
             let blind_zone_event = HeavenGateCastEvent {
@@ -730,24 +726,9 @@ pub fn heaven_gate_phase_system(
             let zone = create_blind_zone_from_cast(&blind_zone_event, now, channeling.range);
             blind_registry.add(zone);
 
-            // 守恒：staging_buffer 通过 QiTransfer ledger 释放回 zone。
-            let target_zone = zone_registry
-                .as_deref()
-                .and_then(|r| {
-                    r.find_zone(crate::world::dimension::DimensionKind::Overworld, origin)
-                })
-                .map(|z| z.name.clone())
-                .unwrap_or_else(|| DEFAULT_SPAWN_ZONE_NAME.to_string());
-            if let Some(transfers) = qi_transfers.as_deref_mut() {
-                if let Ok(transfer) = QiTransfer::new(
-                    QiAccountId::player(format!("entity:{caster:?}")),
-                    QiAccountId::zone(target_zone),
-                    staging_buffer,
-                    QiTransferReason::ReleaseToZone,
-                ) {
-                    transfers.send(transfer);
-                }
-            }
+            // `prepare_heaven_gate_settlement` 已把 qi_current 与 staging_buffer
+            // 一并提交到同一份 ledger，避免旧路径的重复 audit-only 转账。
+            let _outcome = compute_heaven_gate_shatter(channeling.qi_max, channeling.stored_qi);
 
             // Release AV（一剑开天 flash / release 动画）
             av_events.send(SwordPathSkillCastEvent {
@@ -1079,10 +1060,10 @@ fn settle_skill_qi(
 
     let player_id = canonical_player_id(username.0.as_str());
     let player_account = QiAccountId::player(player_id.clone());
-    let bond_snapshot = world.get::<SwordBondComponent>().cloned();
+    let bond_snapshot = world.get::<SwordBondComponent>(caster).cloned();
     let position = world
         .get::<Position>(caster)
-        .map(Position::get)
+        .map(|position| position.get())
         .unwrap_or(DVec3::ZERO);
     let target = zone_settlement_target(
         world.get_resource::<ZoneRegistry>(),
@@ -1239,17 +1220,6 @@ fn prepare_heaven_gate_settlement(
         zone_name: target.as_ref().map(|target| target.name.clone()),
         zone_after: zone_current,
     })
-}
-
-fn emit_settlement_events(
-    qi_transfers: Option<&mut Events<QiTransfer>>,
-    transfers: Vec<QiTransfer>,
-) {
-    if let Some(events) = qi_transfers {
-        for transfer in transfers {
-            events.send(transfer);
-        }
-    }
 }
 
 fn settle_heaven_gate_player(
