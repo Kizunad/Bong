@@ -298,12 +298,14 @@ MAX_GRID_PIXELS = 32 * 1024 * 1024
 MAX_ANIMATION_FRAMES = 128
 
 
-def grid(cells, per_row, size, out: Path, title=None):
+def _grid_dimensions(cell_count, per_row, size, title=None):
     size = _validate_size(size, "grid size")
-    if not cells:
+    if cell_count < 1:
         raise ValueError("render grid must contain at least one frame")
+    if per_row < 1:
+        raise ValueError("render grid must contain at least one column")
     gap, lab = 8, 17
-    rows = (len(cells) + per_row - 1) // per_row
+    rows = (cell_count + per_row - 1) // per_row
     head = 22 if title else 0
     width = size * per_row + gap * (per_row + 1)
     height = (size + lab) * rows + gap * (rows + 1) + head
@@ -311,8 +313,15 @@ def grid(cells, per_row, size, out: Path, title=None):
     if pixels > MAX_GRID_PIXELS:
         raise ValueError(
             f"render grid area {pixels} exceeds limit {MAX_GRID_PIXELS} "
-            f"for {len(cells)} frames at size={size}"
+            f"for {cell_count} frames at size={size}"
         )
+    return width, height
+
+
+def grid(cells, per_row, size, out: Path, title=None):
+    width, height = _grid_dimensions(len(cells), per_row, size, title)
+    gap, lab = 8, 17
+    head = 22 if title else 0
     cv = Image.new("RGB", (width, height), (14, 15, 17))
 
     d = ImageDraw.Draw(cv)
@@ -329,36 +338,49 @@ def grid(cells, per_row, size, out: Path, title=None):
 
 
 # ── 弯曲能力扫描 ──────────────────────────────────────────────────────────
-def bend_matrix(size=250):
+def bend_matrix(size=250, with_jian=False):
     size = _validate_size(size, "bend_matrix size")
-    tex = skin_atlas()
+    _grid_dimensions(18, 6, size, title=True)
+    tex = skin_atlas(with_jian)
     cells = []
 
     # 1) 手臂 bend 扫描（pitch=-85 前平举，看小臂折到哪）
     for bv in (0, 30, 60, 90, 120, 150):
         pose = {"rightArm": dict(pitch=-85, bend=bv, axis=0),
                 "leftArm": dict(pitch=-85, bend=bv, axis=0)}
+        tris = pose_tris(pose)
+        if with_jian:
+            tris += jian_tris(pose, H.WEAPON_V_OFF)
         cells.append((f"arm.bend {bv}° (pitch-85, axis0)",
-                      render_pose(pose_tris(pose), tex, yaw=135.0, pitch=10.0, size=size)))
+                      render_pose(tris, tex, yaw=135.0, pitch=10.0, size=size)))
 
     # 2) bendAxis 扫描（固定 bend=90，看折弯方向绕主轴转）
     for ba in (0, 90, 180, 270):
         pose = {"rightArm": dict(pitch=-85, bend=90, axis=ba),
                 "leftArm": dict(pitch=-85, bend=90, axis=ba)}
+        tris = pose_tris(pose)
+        if with_jian:
+            tris += jian_tris(pose, H.WEAPON_V_OFF)
         cells.append((f"arm.axis {ba}° (bend90)",
-                      render_pose(pose_tris(pose), tex, yaw=135.0, pitch=10.0, size=size)))
+                      render_pose(tris, tex, yaw=135.0, pitch=10.0, size=size)))
 
     # 3) 腿：pitch 单独加大 → 腿腹断连；同等视觉强度改用 bend
     for lp, lb, tag in ((20, 0, "轻微"), (40, 0, "约定上限"), (60, 0, "断连"), (40, 90, "pitch40+bend90")):
         pose = {"rightLeg": dict(pitch=lp, bend=lb), "leftLeg": dict(pitch=-lp * 0.4)}
+        tris = pose_tris(pose)
+        if with_jian:
+            tris += jian_tris(pose, H.WEAPON_V_OFF)
         cells.append((f"leg.pitch {lp}° bend {lb}° — {tag}",
-                      render_pose(pose_tris(pose), tex, yaw=100.0, pitch=6.0, size=size)))
+                      render_pose(tris, tex, yaw=100.0, pitch=6.0, size=size)))
 
     # 4) 躯干：pitch（整体绕腰转，胯不跟 → 腰断） vs bend（腰部折弯）
     for tp, tb, tag in ((30, 0, "torso.pitch 30"), (60, 0, "torso.pitch 60"),
                         (0, 30, "torso.bend 30"), (0, 60, "torso.bend 60")):
         pose = {"torso": dict(pitch=tp, bend=tb, axis=0)}
-        cells.append((f"{tag}", render_pose(pose_tris(pose), tex, yaw=100.0, pitch=6.0, size=size)))
+        tris = pose_tris(pose)
+        if with_jian:
+            tris += jian_tris(pose, H.WEAPON_V_OFF)
+        cells.append((f"{tag}", render_pose(tris, tex, yaw=100.0, pitch=6.0, size=size)))
 
     return grid(cells, 6, size, OUT_MATRIX,
                 title="玩家模型弯曲能力扫描 — 每肢仅 1 个 bend；head 不可 bend")
@@ -398,17 +420,29 @@ def render_anim(json_path: Path, size=280, yaw=90.0, pitch=6.0, with_jian=False)
     """按关键帧 tick 逐帧渲染（步态看侧面、招式看 3/4）。"""
     size = _validate_size(size, "render_anim size")
     name, emote, table = anim_pose_table(json_path)
+    if not table:
+        raise ValueError(f"animation {name!r} must contain at least one keyframe")
+    if len(table) > MAX_ANIMATION_FRAMES:
+        raise ValueError(
+            f"animation {name!r} has {len(table)} keyframes, "
+            f"exceeds limit {MAX_ANIMATION_FRAMES}"
+        )
     tex = skin_atlas(with_jian)
     cells, frames = [], []
     for tick, pose in table:
         body = pose.pop("_body", {})
+        if not isinstance(body, dict):
+            raise ValueError(f"animation {name!r} body pose must be an object")
         tris = pose_tris(pose)
         if with_jian:
             tris = tris + jian_tris(pose, H.WEAPON_V_OFF)
-        if body:  # body.* 是整体变换：位移(米→px ×16) + 绕脚底的整体旋转
+        if body:
             M = part_matrix(body.get("pitch", 0.0), body.get("yaw", 0.0), body.get("roll", 0.0))
             off = np.array([body.get("x", 0.0), -body.get("y", 0.0), body.get("z", 0.0)]) * 16.0
-            tris = [(np.array([M @ v + off for v in vs]), uvs, M @ n) for vs, uvs, n in tris]
+            tris = [
+                (np.array([M @ (v - BODY_ROOT) + BODY_ROOT + off for v in vs]), uvs, M @ n)
+                for vs, uvs, n in tris
+            ]
         frames.append((tick, tris))
 
     # render_bbmodel 每次按自身 bbox 自适应缩放 → 逐帧尺度不一致，举锏那帧人会被缩小。
@@ -454,11 +488,13 @@ def main():
         return
 
     if args.bend_matrix or args.pose is None:
-        p = bend_matrix(size=args.size)
+        p = bend_matrix(size=args.size, with_jian=args.with_jian)
         print(f"→ {p.relative_to(REPO)}")
         return
-    tex = skin_atlas()
+    tex = skin_atlas(args.with_jian)
     tris = pose_tris(POSES[args.pose])
+    if args.with_jian:
+        tris += jian_tris(POSES[args.pose], H.WEAPON_V_OFF)
     pose_size = _validate_size(args.size, "pose render size")
     cells = [(lab, render_pose(tris, tex, yaw=yaw, pitch=pitch, size=pose_size))
              for lab, yaw, pitch in (("正面", 180.0, 4.0), ("侧面", 90.0, 4.0), ("3/4", 145.0, 10.0))]

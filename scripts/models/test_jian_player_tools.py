@@ -107,6 +107,8 @@ class JianPlayerToolsTest(unittest.TestCase):
             empty = Path(tmp) / "empty.json"
             empty.write_text(json.dumps({"name": "empty", "emote": {"degrees": False, "moves": []}}), encoding="utf-8")
             self.assertEqual([], P.anim_pose_table(empty)[2])
+            with self.assertRaisesRegex(ValueError, "must contain at least one keyframe"):
+                P.render_anim(empty, size=1)
 
             malformed = Path(tmp) / "malformed.json"
             malformed.write_text("{}", encoding="utf-8")
@@ -134,11 +136,11 @@ class JianPlayerToolsTest(unittest.TestCase):
         self.assertEqual(1, P._validate_size(1))
         self.assertEqual(P.MAX_RENDER_SIZE, P._validate_size(P.MAX_RENDER_SIZE))
         for size in (0, -1, P.MAX_RENDER_SIZE + 1, True, 1.5):
-            with self.assertRaisesRegex(ValueError, r"1 <= size <= 4096"):
+            with self.assertRaisesRegex(ValueError, rf"1 <= size <= {P.MAX_RENDER_SIZE}"):
                 P._validate_size(size)
-        with self.assertRaisesRegex(ValueError, r"render_pose size.*1 <= size <= 4096"):
+        with self.assertRaisesRegex(ValueError, rf"render_pose size.*1 <= size <= {P.MAX_RENDER_SIZE}"):
             P.render_pose([], np.zeros((1, 1, 3)), size=0)
-        with self.assertRaisesRegex(ValueError, r"render_anim size.*1 <= size <= 4096"):
+        with self.assertRaisesRegex(ValueError, rf"render_anim size.*1 <= size <= {P.MAX_RENDER_SIZE}"):
             P.render_anim(Path("unused.json"), size=0)
 
     def test_render_player_pose_cli_rejects_invalid_size_and_accepts_maximum(self) -> None:
@@ -151,7 +153,7 @@ class JianPlayerToolsTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(2, invalid.returncode)
-        self.assertIn("1 <= size <= 4096", invalid.stderr)
+        self.assertIn(f"1 <= size <= {P.MAX_RENDER_SIZE}", invalid.stderr)
 
         negative = subprocess.run(
             [sys.executable, str(script), "--size", "-1"],
@@ -161,27 +163,68 @@ class JianPlayerToolsTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(2, negative.returncode)
-        self.assertIn("1 <= size <= 4096", negative.stderr)
+        self.assertIn(f"1 <= size <= {P.MAX_RENDER_SIZE}", negative.stderr)
 
         maximum = subprocess.run(
-            [sys.executable, str(script), "--size", "4096", "--help"],
+            [sys.executable, str(script), "--pose", "stand", "--size", str(P.MAX_RENDER_SIZE)],
             cwd=REPO,
             text=True,
             capture_output=True,
             check=False,
         )
         self.assertEqual(0, maximum.returncode, maximum.stdout + maximum.stderr)
-        self.assertNotIn("size must", maximum.stderr)
 
         over_limit = subprocess.run(
-            [sys.executable, str(script), "--size", "4097"],
+            [sys.executable, str(script), "--size", str(P.MAX_RENDER_SIZE + 1)],
             cwd=REPO,
             text=True,
             capture_output=True,
             check=False,
         )
         self.assertEqual(2, over_limit.returncode)
-        self.assertIn("1 <= size <= 4096", over_limit.stderr)
+        self.assertIn(f"1 <= size <= {P.MAX_RENDER_SIZE}", over_limit.stderr)
+
+    def test_render_player_pose_with_jian_reaches_each_render_mode(self) -> None:
+        with patch.object(P, "skin_atlas", return_value=np.zeros((1, 1, 3))) as atlas:
+            with patch.object(P, "jian_tris", return_value=[]) as jian:
+                with patch.object(P, "render_pose", return_value=object()):
+                    with patch.object(P, "grid", return_value=Path("preview.png")):
+                        with tempfile.TemporaryDirectory() as tmp:
+                            animation = Path(tmp) / "one.json"
+                            animation.write_text(json.dumps({
+                                "name": "one",
+                                "emote": {"degrees": True, "endTick": 1, "moves": [
+                                    {"tick": 0, "body": {"pitch": 0.0}},
+                                ]},
+                            }), encoding="utf-8")
+                            P.render_anim(animation, size=1, with_jian=True)
+                        P.bend_matrix(size=1, with_jian=True)
+                        atlas.assert_called_with(True)
+                        self.assertGreaterEqual(jian.call_count, 19)
+
+                        jian.reset_mock()
+                        with patch.object(P, "grid", return_value=P.OUT_POSE):
+                            with patch.object(sys, "argv", [str(MODEL_DIR / "render_player_pose.py"), "--pose", "stand", "--with-jian", "--size", "1"]):
+                                P.main()
+                        atlas.assert_called_with(True)
+                        self.assertEqual(1, jian.call_count)
+                        jian.assert_called_once_with(P.POSES["stand"], H.WEAPON_V_OFF)
+
+    def test_body_animation_rotates_around_model_root(self) -> None:
+        pose = {
+            "_body": {"pitch": 90.0},
+            "head": {},
+        }
+        transformed = P.part_tris("head", pose["head"])
+        root = P.BODY_ROOT
+        body = pose["_body"]
+        matrix = P.part_matrix(body["pitch"], body.get("yaw", 0.0), body.get("roll", 0.0))
+        rotated = np.array([matrix @ (v - root) + root for v in transformed[0][0]])
+        expected = np.array([
+            root + np.array([v[0] - root[0], v[2] - root[2], -(v[1] - root[1])])
+            for v in transformed[0][0]
+        ])
+        np.testing.assert_allclose(rotated, expected, atol=1e-9)
 
     def test_default_jian_model_fallback_is_reachable_without_writing_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -196,7 +239,7 @@ class JianPlayerToolsTest(unittest.TestCase):
         for module in (J, H):
             for size in (0, -1, module.MAX_RENDER_SIZE + 1):
                 with self.subTest(module=module.__name__, size=size):
-                    with self.assertRaisesRegex(ValueError, "between 1 and 4096"):
+                    with self.assertRaisesRegex(ValueError, rf"between 1 and {module.MAX_RENDER_SIZE}"):
                         module.validate_render_size(size)
             self.assertEqual(module.MAX_RENDER_SIZE, module.validate_render_size(module.MAX_RENDER_SIZE))
             self.assertEqual(1, module.validate_render_size(1))
@@ -215,7 +258,7 @@ class JianPlayerToolsTest(unittest.TestCase):
                 )
                 self.assertNotEqual(0, result.returncode)
                 self.assertFalse(output.exists(), "非法尺寸必须在生成 bbmodel 前失败")
-                self.assertIn("between 1 and 4096", result.stderr)
+                self.assertIn(f"between 1 and {J.MAX_RENDER_SIZE}", result.stderr)
 
     def test_render_jian_in_hand_size_rejects_before_loading_model(self) -> None:
         script = MODEL_DIR / "render_jian_in_hand.py"
@@ -230,7 +273,7 @@ class JianPlayerToolsTest(unittest.TestCase):
                     check=False,
                 )
                 self.assertNotEqual(0, result.returncode)
-                self.assertIn("between 1 and 4096", result.stderr)
+                self.assertIn(f"between 1 and {H.MAX_RENDER_SIZE}", result.stderr)
                 self.assertNotIn("FileNotFoundError", result.stderr)
 
     def test_render_jian_in_hand_rejects_over_budget_composite(self) -> None:
