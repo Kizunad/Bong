@@ -53,7 +53,10 @@ REPO = Path(__file__).resolve().parents[2]
 SRC_JIAN = REPO / "local_models" / "BambooJianSingle.bbmodel"
 OUT_BB = REPO / "local_models" / "JianPlayer.bbmodel"
 OUT_PNG = REPO / "scripts" / "models" / "render_JianPlayer.png"
-MAX_RENDER_SIZE = 4096
+MAX_RENDER_SIZE = 768
+MAX_RENDER_WORKING_BYTES = 128 * 1024 * 1024
+RGB_BYTES = 3
+RASTER_BYTES_PER_PIXEL = 32
 
 ATLAS = H.ATLAS          # 128
 V_OFF = H.WEAPON_V_OFF   # 64
@@ -233,8 +236,24 @@ def load_grouped(path):
 
 
 def validate_render_size(size: int) -> int:
+    if isinstance(size, bool) or not isinstance(size, int):
+        raise ValueError(f"--size must be an integer between 1 and {MAX_RENDER_SIZE}, got {size!r}")
     if not 1 <= size <= MAX_RENDER_SIZE:
         raise ValueError(f"--size must be between 1 and {MAX_RENDER_SIZE}, got {size}")
+    tile_count = 3
+    gap, lab_h = 10, 20
+    width = size * tile_count + gap * (tile_count + 1)
+    height = size + lab_h + gap * 2
+    bytes_required = (
+        tile_count * size * size * RGB_BYTES
+        + width * height * RGB_BYTES
+        + size * size * RASTER_BYTES_PER_PIXEL
+    )
+    if bytes_required > MAX_RENDER_WORKING_BYTES:
+        raise ValueError(
+            f"render working set requires {bytes_required} bytes, exceeds limit "
+            f"{MAX_RENDER_WORKING_BYTES} for size={size}"
+        )
     return size
 
 
