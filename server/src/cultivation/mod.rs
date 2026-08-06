@@ -3302,6 +3302,7 @@ mod tests {
 
         app.world_mut()
             .insert_resource(player_state_persistence_for(&settings, &root));
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 20 });
         app.update();
 
         let cultivation = app

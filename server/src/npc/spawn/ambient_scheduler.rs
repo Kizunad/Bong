@@ -4418,7 +4418,8 @@ mod tests {
                             blackboard,
                             bundle,
                         ));
-                        let expected = 0.55;
+                        let expected =
+                            0.5 + 5.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
                         (stray, None, expected)
                     }
                 };
@@ -5205,7 +5206,11 @@ mod tests {
             .find_zone_by_name("test_zone")
             .expect("test_zone 必须仍存在")
             .spirit_qi;
-        assert_eq!(zone_after, 0.55);
+        assert_eq!(
+            zone_after,
+            0.5 + 5.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
+            "recycle must return the full Cultivation qi to the Zone owner"
+        );
         assert_eq!(
             app.world().get::<Cultivation>(stray).unwrap().qi_current(),
             0.0,

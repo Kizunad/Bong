@@ -662,7 +662,12 @@ mod tests {
             .find_zone_by_name("spawn")
             .expect("spawn zone must still exist")
             .spirit_qi;
-        assert_eq!(new_spirit_qi, initial_spirit_qi + 0.04);
+        assert_eq!(
+            new_spirit_qi,
+            initial_spirit_qi
+                + 4.0 / crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY,
+            "death must return the full Cultivation qi to the Zone owner"
+        );
         assert_eq!(
             app.world()
                 .get::<crate::cultivation::components::Cultivation>(spider)

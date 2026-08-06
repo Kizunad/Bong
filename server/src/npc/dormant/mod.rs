@@ -4349,16 +4349,25 @@ mod tests {
             let valid = snapshot("npc_valid", DVec3::new(2.0, 64.0, 2.0));
             let invalid = snapshot("npc_invalid", DVec3::new(3.0, 64.0, 3.0));
             let template_json =
-                serde_json::to_string(&invalid).expect("serialize invalid row template");
-            let invalid_json = template_json.replacen(
-                "\"qi_current\":0.0",
-                &format!("\"qi_current\":{qi_current}"),
-                1,
-            );
+                serde_json::to_value(&invalid).expect("serialize invalid row template");
+            let mut invalid_json = template_json.clone();
+            invalid_json
+                .get_mut("cultivation")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("snapshot fixture must contain a cultivation object")
+                .insert(
+                    "qi_current".to_string(),
+                    qi_current
+                        .parse::<f64>()
+                        .map(serde_json::Value::from)
+                        .unwrap_or_else(|_| serde_json::json!(qi_current)),
+                );
             assert_ne!(
                 invalid_json, template_json,
-                "case={case}: cultivation fixture replacement must target qi_current"
+                "case={case}: cultivation fixture mutation must target nested qi_current"
             );
+            let invalid_json = serde_json::to_string(&invalid_json)
+                .expect("mutated invalid row must remain serializable");
             let entries = HashMap::from([
                 (
                     valid.char_id.clone(),
