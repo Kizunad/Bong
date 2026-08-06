@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""腐羽鹫 —— 一键预览：重生成三档模型 + 渲染全部视图到本目录。
+
+产出（均落在 scripts/models/fuyu_vulture/）：
+  render_<size>.png          单档三视图（收翼站姿）
+  render_<size>_spread.png   单档三视图（展翼）
+  render_scale.png           三档**同比例尺**并排 —— 档位差异只有这张图说得清
+  render_parts_<size>.png    逐部件图集（每件单独显示，形状与接续一眼可辨）
+  render_head_<size>.png     头部特写（喙钩 / 眼眶 / 巩膜环）
+
+用法:
+  python3 scripts/models/fuyu_vulture/preview.py             # 全部
+  python3 scripts/models/fuyu_vulture/preview.py --size mid  # 只出一档
+  python3 scripts/models/fuyu_vulture/preview.py --skip-gen  # 不重生成，只渲染
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[2]
+MODELS = REPO / "local_models" / "fuyu_vulture"
+
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))  # 复用 scripts/models/render_bbmodel.py
+
+from gen_skeleton import PARTS, SPECS, build  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
+from render_bbmodel import render, render_three_view  # noqa: E402
+
+SIZES = ("small", "mid", "large")
+
+
+def _run(*args: str) -> None:
+    subprocess.run([sys.executable, str(HERE / "gen_skeleton.py"), *args], check=True)
+
+
+def _grid(tiles: list[tuple[str, Image.Image]], cols: int, out: Path, hdr: int = 20) -> None:
+    gap = 10
+    tw, th = tiles[0][1].size
+    rows = (len(tiles) + cols - 1) // cols
+    canvas = Image.new(
+        "RGB",
+        (cols * tw + gap * (cols + 1), rows * (th + hdr) + gap * (rows + 1)),
+        (14, 15, 17),
+    )
+    draw = ImageDraw.Draw(canvas)
+    for i, (label, im) in enumerate(tiles):
+        r, c = divmod(i, cols)
+        x = gap + c * (tw + gap)
+        y = gap + r * (th + hdr + gap)
+        draw.text((x + 3, y + 4), label, fill=(224, 206, 180))
+        canvas.paste(im, (x, y + hdr))
+    canvas.save(out)
+    print(f"  → {out.name}")
+
+
+def three_view(model: str, out: str, size: int = 430) -> None:
+    im, _ = render_three_view(MODELS / f"{model}.bbmodel", size=size)
+    im.save(HERE / out)
+    print(f"  → {out}")
+
+
+def scale_sheet(size: int = 520) -> None:
+    """三档并排，**共用一个比例尺**。
+
+    各自自动取景的话三只鸟会渲成一样大，"小中大"就全白做了 —— 档位差异是本资产的
+    全部意义，必须在一张图里量得出来。
+    """
+    spans, centers = {}, {}
+    for key in SIZES:
+        rig, _ = build(SPECS[key])
+        (x0, y0, z0), (x1, y1, z1) = rig.bounds()
+        centers[key] = ((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+        spans[key] = max(x1 - x0, y1 - y0, z1 - z0)
+    span = max(spans.values()) * 1.06  # 统一尺：以最大档为准
+
+    tiles = []
+    for key in SIZES:
+        spec = SPECS[key]
+        im, _ = render(
+            MODELS / f"{spec.model}.bbmodel",
+            yaw=118.0, pitch=12.0, size=size,
+            focus=(centers[key], span),
+        )
+        tiles.append((f"{key}  {spec.cn}  {spec.stand_h / 16:.2f} m", im))
+    _grid(tiles, 3, HERE / "render_scale.png")
+
+
+def parts_sheet(key: str, size: int = 340) -> None:
+    spec = SPECS[key]
+    tiles = []
+    for part, (label, _) in PARTS.items():
+        _run("--size", key, "--part", part)
+        im, _ = render(MODELS / f"{spec.model}_{part}.bbmodel", yaw=132.0, pitch=14.0, size=size)
+        tiles.append((f"{part} · {label}", im))
+    _grid(tiles, 3, HERE / f"render_parts_{key}.png")
+
+
+def head_shot(key: str, size: int = 520) -> None:
+    spec = SPECS[key]
+    tiles = []
+    for tag, yaw, pitch in (("SIDE", 90.0, 0.0), ("3/4", 138.0, 12.0), ("FRONT", 178.0, 6.0)):
+        im, _ = render(MODELS / f"{spec.model}.bbmodel", yaw=yaw, pitch=pitch, size=size)
+        tiles.append((tag, im))
+    _grid(tiles, 3, HERE / f"render_head_{key}.png")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="腐羽鹫预览渲染")
+    ap.add_argument("--size", choices=SIZES, help="只出一档")
+    ap.add_argument("--skip-gen", action="store_true", help="不重生成 bbmodel，只渲染")
+    ap.add_argument("--parts", action="store_true", help="只出部件图集")
+    args = ap.parse_args()
+
+    keys = [args.size] if args.size else list(SIZES)
+
+    if not args.skip_gen:
+        print("生成模型…")
+        for k in keys:
+            _run("--size", k)
+            _run("--size", k, "--pose", "spread")
+
+    print("渲染…")
+    if args.parts:
+        for k in keys:
+            parts_sheet(k)
+        return 0
+
+    for k in keys:
+        spec = SPECS[k]
+        three_view(spec.model, f"render_{k}.png")
+        three_view(f"{spec.model}_spread", f"render_{k}_spread.png")
+        head_shot(k)
+    if len(keys) == len(SIZES):
+        scale_sheet()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
