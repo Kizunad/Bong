@@ -1477,6 +1477,7 @@ mod boss_spawn_tests {
             let initial_spirit_qi = 0.1f64;
             app.insert_resource(WorldQiAccount::default());
             app.insert_resource(ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![baolongwang_zone_fixture(initial_spirit_qi)],
             });
 
