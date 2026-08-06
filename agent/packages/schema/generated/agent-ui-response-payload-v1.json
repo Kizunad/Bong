@@ -52,5 +52,6 @@
       "pattern": "^(?:(?![\\uD800-\\uDFFF])[\\s\\S]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]){1,128}(?![\\s\\S])",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "737a7e6e44c46a29693024b13d93d3c09e17dc72cc7b9301025457e9842368f7"
 }

@@ -34,5 +34,6 @@
       "pattern": ".*\\S.*",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "8dc186c5dc6a5a0b34b21c4fa2344cba58228c7b6b4e9d296d5309932d1e2369"
 }

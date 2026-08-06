@@ -89,5 +89,6 @@
       "const": "dash",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "820b26770149f91cab5ef00e75ad80202544145b906dc87c8ea75b4ef921aed0"
 }
