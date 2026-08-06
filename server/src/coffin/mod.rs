@@ -355,7 +355,7 @@ pub fn register(app: &mut App) {
 
 pub fn register_craft_recipes(registry: &mut CraftRegistry) -> Result<(), RegistryError> {
     // 凡木棺 ×0.9 — 手搓（station: None），Scroll 解锁
-    // 寒玉/玄石/青铜棺 workbench 配方由 craft::workbench_recipes 统一注册（plan-coffin-tiers-v1 P4）
+    // 寒玉/玄石/青铜棺配方由 craft 数据资产统一注册（plan-coffin-tiers-v1 P4）
     registry.register(CraftRecipe {
         id: RecipeId::new("coffin.mundane_coffin"),
         category: CraftCategory::Misc,
@@ -1368,7 +1368,7 @@ mod tests {
     fn craft_registry_with_coffin() -> CraftRegistry {
         let mut registry = CraftRegistry::new();
         register_craft_recipes(&mut registry).expect("coffin mundane recipe should register");
-        // P4: jade/stone/bronze 配方在 workbench_recipes 注册
+        // P4: jade/stone/bronze 配方由 craft 数据资产加载
         crate::craft::register_workbench_recipes(&mut registry)
             .expect("workbench recipes should register (includes P4 coffin tiers)");
         registry

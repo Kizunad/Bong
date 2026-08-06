@@ -62,9 +62,18 @@ use crate::schema::craft::{
     CraftSessionStateV1, RecipeListV1, RecipeUnlockedV1, UnlockEventSourceV1,
 };
 use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
+use crate::skill::components::SkillSet;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 
 const DEFAULT_REFUND_GROUND_POS: [f64; 3] = [0.0, 64.0, 0.0];
+
+type CraftStarterQuery<'a> = (
+    &'a mut PlayerInventory,
+    &'a mut Cultivation,
+    &'a QiColor,
+    Option<&'a SkillSet>,
+    Option<&'a CraftSession>,
+);
 
 /// 每隔 N tick 对在线 session 推一次进度（20 tick = 1 秒）。
 const SESSION_STATE_PUSH_INTERVAL_TICKS: u64 = 20;
@@ -245,12 +254,7 @@ pub fn apply_craft_start_intents(
     names: Query<&Username>,
     player_contexts: Query<(&Position, Option<&CurrentDimension>)>,
     workbenches: Query<&Position, With<WorkbenchBlock>>,
-    mut casters: Query<(
-        &mut PlayerInventory,
-        &mut Cultivation,
-        &QiColor,
-        Option<&CraftSession>,
-    )>,
+    mut casters: Query<CraftStarterQuery<'_>>,
 ) {
     // ── start ───────────────────────────────────────────────
     let mut processed_start_casters = HashSet::new();
@@ -262,7 +266,7 @@ pub fn apply_craft_start_intents(
             );
             continue;
         }
-        let Ok((mut inventory, mut cultivation, qi_color, existing)) =
+        let Ok((mut inventory, mut cultivation, qi_color, skill_set, existing)) =
             casters.get_mut(intent.caster)
         else {
             tracing::warn!(
@@ -309,6 +313,7 @@ pub fn apply_craft_start_intents(
             qi_color,
             ledger: &mut staged_ledger,
             existing_session: existing,
+            skill_set,
             has_nearby_workbench,
         };
 
@@ -929,14 +934,13 @@ pub fn apply_unlock_intents(
     mut unlock_state: ResMut<RecipeUnlockState>,
     registry: Res<CraftRegistry>,
     clock: Res<CombatClock>,
-    names: Query<&Username>,
 ) {
     for intent in intents.read() {
-        let player_id = match names.get(intent.caster) {
-            Ok(u) => canonical_player_id(u.0.as_str()),
-            Err(_) => format!("entity:{}", intent.caster.to_bits()),
-        };
+        let player_id = intent.player_id.as_str();
         let Some(recipe) = registry.get(&intent.recipe_id) else {
+            if let UnlockEventSource::Scroll { .. } = &intent.source {
+                unlock_state.release_scroll_unlock_reservation(player_id, &intent.recipe_id);
+            }
             tracing::warn!(
                 "[bong][craft] unlock intent ignored: recipe `{}` not in registry",
                 intent.recipe_id
@@ -945,15 +949,18 @@ pub fn apply_unlock_intents(
         };
         let outcome = match &intent.source {
             UnlockEventSource::Scroll { item_template } => {
-                unlock_via_scroll(&mut unlock_state, &player_id, recipe, item_template)
+                unlock_via_scroll(&mut unlock_state, player_id, recipe, item_template)
             }
             UnlockEventSource::Mentor { npc_archetype } => {
-                unlock_via_mentor(&mut unlock_state, &player_id, recipe, npc_archetype)
+                unlock_via_mentor(&mut unlock_state, player_id, recipe, npc_archetype)
             }
             UnlockEventSource::Insight { trigger } => {
-                unlock_via_insight(&mut unlock_state, &player_id, recipe, *trigger)
+                unlock_via_insight(&mut unlock_state, player_id, recipe, *trigger)
             }
         };
+        if let UnlockEventSource::Scroll { .. } = &intent.source {
+            unlock_state.release_scroll_unlock_reservation(player_id, &intent.recipe_id);
+        }
         match outcome {
             UnlockOutcome::Newly { source } => {
                 tracing::info!(
@@ -1790,6 +1797,63 @@ mod tests {
                 .get::<CraftSession>(caster_without_inventory)
                 .is_none(),
             "缺少 inventory/session 的 caster 不应被 cancel 路径补写 CraftSession"
+        );
+    }
+
+    #[test]
+    fn production_skill_gate_reads_caster_skill_set() {
+        let mut recipe = make_recipe("craft.skill.integration", &[("fan_tie", 1)], vec![]);
+        recipe.requirements.skill_lv_min = Some(2);
+        let mut app = craft_refund_test_app(recipe, &[("fan_tie", 64)], 10);
+        app.add_systems(Update, apply_craft_start_intents);
+
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let player = app
+            .world_mut()
+            .spawn(client_bundle)
+            .insert(inv_with(&[("fan_tie", 1)]))
+            .insert(Cultivation::default())
+            .insert(QiColor::default())
+            .insert(SkillSet::default())
+            .insert(Position::new([0.0, 64.0, 0.0]))
+            .id();
+        app.world_mut()
+            .resource_mut::<RecipeUnlockState>()
+            .unlock("offline:Azure", RecipeId::new("craft.skill.integration"));
+        app.world_mut()
+            .get_mut::<SkillSet>(player)
+            .unwrap()
+            .skills
+            .insert(
+                crate::skill::components::SkillId::Alchemy,
+                crate::skill::components::SkillEntry {
+                    lv: 1,
+                    ..Default::default()
+                },
+            );
+        app.world_mut().send_event(CraftStartIntent {
+            caster: player,
+            recipe_id: RecipeId::new("craft.skill.integration"),
+            quantity: 1,
+        });
+
+        app.update();
+
+        assert!(
+            app.world().get::<CraftSession>(player).is_none(),
+            "production bridge must reject a caster below loaded skill requirement"
+        );
+        assert_eq!(
+            count_template_in_inventory(
+                app.world().get::<PlayerInventory>(player).unwrap(),
+                "fan_tie"
+            ),
+            1,
+            "production skill rejection must not consume materials"
+        );
+        assert!(
+            !current_failed_events(&app).is_empty(),
+            "production skill rejection must emit the observable craft failure"
         );
     }
 
@@ -2850,7 +2914,7 @@ mod tests {
         // state 的新玩家必须直接出现在列表里且 unlocked=true —— 它是 workbench
         // 配方树的入口，被材料发现藏住会让玩家不知道有制作台这条路。
         let mut registry = CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        crate::craft::register_workbench_recipes(&mut registry).unwrap();
 
         let empty = RecipeUnlockState::new();
         let payload = build_recipe_list_payload("offline:Newbie", &registry, &empty);
@@ -3006,6 +3070,10 @@ mod tests {
         // 分页 / 增量下发来根治。这是 plan-craft-v1 既有的 payload 设计待办，材料发现
         // 改动并未抬高这一上限（终态全表集合与改动前一致）。
         let mut app = App::new();
+        app.insert_resource(
+            crate::inventory::load_item_registry()
+                .expect("craft emission test requires ItemRegistry"),
+        );
         crate::craft::register(&mut app);
         let registry = app.world().resource::<CraftRegistry>();
         let mut unlock_state = RecipeUnlockState::new();

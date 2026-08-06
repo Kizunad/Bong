@@ -1,0 +1,135 @@
+[[recipes]]
+id = "craft.example.eclipse_needle.iron"
+category = "anqi_carrier"
+display_name = "蚀针（凡铁档）"
+qi_cost = 8.0
+time_sec = 180
+unlock_sources = []
+station = "none"
+
+[[recipes.materials]]
+template_id = "iron_needle"
+count = 3
+
+[[recipes.materials]]
+template_id = "chi_sui_cao"
+count = 1
+
+[recipes.output]
+template_id = "eclipse_needle_iron"
+count = 3
+
+[recipes.requirements.qi_color_min]
+kind = "insidious"
+min_share = 0.05000000074505806
+
+[[recipes]]
+id = "craft.example.fake_skin.light"
+category = "tuike_skin"
+display_name = "伪灵皮（轻档）"
+qi_cost = 2.0
+time_sec = 120
+station = "none"
+
+[[recipes.materials]]
+template_id = "rabbit_pelt"
+count = 4
+
+[[recipes.materials]]
+template_id = "yu_yi_zhi"
+count = 1
+
+[recipes.output]
+template_id = "fake_skin_light"
+count = 1
+
+[recipes.requirements]
+realm_min = "induce"
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_fake_skin_light"
+
+[[recipes.unlock_sources]]
+kind = "insight"
+trigger = "near_death"
+
+[[recipes]]
+id = "craft.example.herb_knife.iron"
+category = "tool"
+display_name = "采药刀（凡铁）"
+qi_cost = 0.0
+time_sec = 30
+station = "none"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 1
+
+[[recipes.materials]]
+template_id = "wood_handle"
+count = 1
+
+[recipes.output]
+template_id = "herb_knife_iron"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_herb_knife_iron"
+
+[[recipes]]
+id = "craft.example.poison_decoction.fan"
+category = "dugu_potion"
+display_name = "毒源煎汤（凡毒）"
+qi_cost = 4.0
+time_sec = 90
+unlock_sources = []
+station = "none"
+
+[[recipes.materials]]
+template_id = "shao_hou_man"
+count = 2
+
+[[recipes.materials]]
+template_id = "clay_pot"
+count = 1
+
+[recipes.output]
+template_id = "poison_decoction_fan"
+count = 1
+
+[recipes.requirements]
+
+[[recipes]]
+id = "craft.example.zhenfa_trap.iron"
+category = "zhenfa_trap"
+display_name = "真元诡雷（凡铁芯）"
+qi_cost = 6.0
+time_sec = 240
+station = "none"
+
+[[recipes.materials]]
+template_id = "iron_ingot"
+count = 2
+
+[[recipes.materials]]
+template_id = "zhenfa_blank_array"
+count = 1
+
+[recipes.output]
+template_id = "zhenfa_trap_iron"
+count = 1
+
+[recipes.requirements]
+realm_min = "induce"
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_zhenfa_trap_iron"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "array_scribe"

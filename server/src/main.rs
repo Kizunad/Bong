@@ -200,9 +200,49 @@ fn run_full_app_startup_smoke() {
     ));
 
     assert_full_app_core_resources(&app);
+    #[cfg(test)]
+    assert_craft_registry_matches_pre_migration_oracle(&app);
     app.update();
     assert_full_app_core_resources(&app);
+    #[cfg(test)]
+    assert_craft_registry_matches_pre_migration_oracle(&app);
     println!("full app startup smoke ok");
+}
+
+#[cfg(test)]
+fn assert_craft_registry_matches_pre_migration_oracle(app: &App) {
+    // major #2 修复：不再只查两个 sentinel。生产 CraftRegistry 的数据侧必须与
+    // 迁移前 registrar oracle（95 条）逐 id 完全相等 —— 任何"只加载两条配方"
+    // 的回归都会立刻撞红。oracle 由 `fixtures/legacy_p0_registrar.rs` 程序化
+    // 重建（不读 TOML / JSON），独立于数据资产。
+    let world = app.world();
+    let craft_registry = world
+        .get_resource::<craft::CraftRegistry>()
+        .expect("full server App must install CraftRegistry (craft::register())");
+    let oracle_ids: std::collections::HashSet<String> =
+        craft::fixtures::legacy_p0_registrar::legacy_p0_oracle_ids()
+            .into_iter()
+            .collect();
+    let data_owned_ids: std::collections::HashSet<String> = craft_registry
+        .iter()
+        .map(|recipe| recipe.id.as_str().to_owned())
+        .collect();
+    let missing: Vec<_> = oracle_ids
+        .difference(&data_owned_ids)
+        .map(String::as_str)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "CraftRegistry must contain every data-owned oracle recipe after strict TOML \
+         startup loading; missing: {missing:?}"
+    );
+    assert!(
+        data_owned_ids.len() > oracle_ids.len(),
+        "CraftRegistry must contain the full data-owned oracle set ({}) plus code-owned \
+         registrars, got only {}",
+        oracle_ids.len(),
+        data_owned_ids.len()
+    );
 }
 
 fn assert_full_app_core_resources(app: &App) {
@@ -222,6 +262,18 @@ fn assert_full_app_core_resources(app: &App) {
     assert!(
         world.contains_resource::<PersistenceSettings>(),
         "full server App must install PersistenceSettings"
+    );
+    let craft_registry = world
+        .get_resource::<craft::CraftRegistry>()
+        .expect("full server App must install CraftRegistry (craft::register())");
+    assert!(
+        craft_registry
+            .get(&craft::RecipeId::new("craft.example.eclipse_needle.iron"))
+            .is_some()
+            && craft_registry
+                .get(&craft::RecipeId::new("craft.tool.workbench"))
+                .is_some(),
+        "CraftRegistry must contain data-owned recipes after strict TOML startup loading"
     );
     // plan-race-system-v1 P4 CRITICAL fix guard —— `emit_morph_state_payloads`
     // 取 `ResMut<MorphStateEmitState>`，Bevy 0.14 缺资源无条件 panic；此前生产

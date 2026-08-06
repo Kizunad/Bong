@@ -1,6 +1,7 @@
 package com.bong.client.craft;
 
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.skill.SkillSetSnapshot;
 import io.wispforest.owo.ui.component.ButtonComponent;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -80,7 +81,17 @@ public final class CraftActionBar {
     }
 
     public void refresh(CraftRecipe recipe, InventoryModel inventory, CraftSessionStateView session) {
+        refresh(recipe, inventory, session, SkillSetSnapshot.empty());
+    }
+
+    public void refresh(
+        CraftRecipe recipe,
+        InventoryModel inventory,
+        CraftSessionStateView session,
+        SkillSetSnapshot skills
+    ) {
         this.recipe = recipe;
+        SkillSetSnapshot skillSnapshot = skills == null ? SkillSetSnapshot.empty() : skills;
         maxQuantity = CraftInventoryCounter.maxCraftable(recipe, inventory);
         if (quantity < 1) {
             quantity = 1;
@@ -92,15 +103,27 @@ public final class CraftActionBar {
 
         boolean hasRecipe = recipe != null;
         boolean activeSession = session != null && session.active();
-        boolean canStart = hasRecipe && recipe.unlocked() && maxQuantity > 0 && !activeSession;
+        boolean skillSatisfied = skillSatisfied(recipe, skillSnapshot);
+        boolean canStart = hasRecipe && recipe.unlocked() && skillSatisfied
+            && maxQuantity > 0 && !activeSession;
         fillButton.active(hasRecipe && recipe.unlocked() && !activeSession);
         minusButton.active(maxQuantity > 0 && quantity > 1 && !activeSession);
         plusButton.active(maxQuantity > 0 && quantity < maxQuantity && !activeSession);
         startButton.active(canStart);
-        statusLabel.text(Text.literal(statusText(recipe, maxQuantity, activeSession)));
-        startButton.tooltip(Text.literal(canStart ? "起手搓 " + recipe.displayName() + " x" + quantity : statusText(recipe, maxQuantity, activeSession)));
+        String status = statusText(recipe, maxQuantity, activeSession, skillSatisfied);
+        statusLabel.text(Text.literal(status));
+        startButton.tooltip(Text.literal(canStart
+            ? "起手搓 " + recipe.displayName() + " x" + quantity
+            : status));
     }
 
+    static boolean skillSatisfied(CraftRecipe recipe, SkillSetSnapshot skills) {
+        if (recipe == null || recipe.requirements().skillLvMin() == null) {
+            return true;
+        }
+        SkillSetSnapshot snapshot = skills == null ? SkillSetSnapshot.empty() : skills;
+        return snapshot.maxEffectiveLv() >= recipe.requirements().skillLvMin();
+    }
     public void setQuantityToMax() {
         if (maxQuantity > 0) {
             setQuantity(maxQuantity, true);
@@ -121,7 +144,12 @@ public final class CraftActionBar {
         }
     }
 
-    private static String statusText(CraftRecipe recipe, int maxQuantity, boolean activeSession) {
+    private static String statusText(
+        CraftRecipe recipe,
+        int maxQuantity,
+        boolean activeSession,
+        boolean skillSatisfied
+    ) {
         if (activeSession) {
             return "制作进行中";
         }
@@ -130,6 +158,9 @@ public final class CraftActionBar {
         }
         if (!recipe.unlocked()) {
             return "配方未解锁";
+        }
+        if (!skillSatisfied) {
+            return "技艺不足";
         }
         if (maxQuantity <= 0) {
             return "材料不足";

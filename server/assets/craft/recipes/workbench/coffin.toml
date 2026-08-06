@@ -1,0 +1,102 @@
+[[recipes]]
+id = "coffin.bronze_coffin"
+category = "misc"
+display_name = "青铜棺"
+qi_cost = 6.0
+time_sec = 180
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "xuan_iron"
+count = 3
+
+[[recipes.materials]]
+template_id = "ling_mu_ban"
+count = 3
+
+[[recipes.materials]]
+template_id = "gu_tong_pian"
+count = 4
+
+[[recipes.materials]]
+template_id = "zhen_shi_chu"
+count = 2
+
+[recipes.output]
+template_id = "bronze_coffin"
+count = 1
+
+[recipes.requirements]
+realm_min = "induce"
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_bronze_coffin"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "hermit_builder"
+
+[[recipes]]
+id = "coffin.jade_coffin"
+category = "misc"
+display_name = "寒玉棺"
+qi_cost = 2.0
+time_sec = 120
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "ling_mu_ban"
+count = 4
+
+[[recipes.materials]]
+template_id = "yu_sui"
+count = 3
+
+[[recipes.materials]]
+template_id = "xue_po_lian"
+count = 2
+
+[recipes.output]
+template_id = "jade_coffin"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_jade_coffin"
+
+[[recipes]]
+id = "coffin.stone_coffin"
+category = "misc"
+display_name = "乌石棺"
+qi_cost = 4.0
+time_sec = 150
+station = "workbench"
+
+[[recipes.materials]]
+template_id = "xuan_iron"
+count = 4
+
+[[recipes.materials]]
+template_id = "zhen_shi_chu"
+count = 2
+
+[[recipes.materials]]
+template_id = "wu_yao"
+count = 2
+
+[recipes.output]
+template_id = "stone_coffin"
+count = 1
+
+[recipes.requirements]
+
+[[recipes.unlock_sources]]
+kind = "scroll"
+item_template = "scroll_stone_coffin"
+
+[[recipes.unlock_sources]]
+kind = "mentor"
+npc_archetype = "array_scribe"
