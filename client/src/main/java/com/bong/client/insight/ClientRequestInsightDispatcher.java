@@ -52,8 +52,13 @@ public final class ClientRequestInsightDispatcher implements InsightChoiceDispat
 
     @Override
     public void dispatch(InsightDecision decision) {
+        dispatch(decision, offerSupplier.get());
+    }
+
+    @Override
+    public void dispatch(InsightDecision decision, InsightOfferViewModel claimedOffer) {
         Objects.requireNonNull(decision, "decision");
-        Integer idx = resolveIdx(decision);
+        Integer idx = resolveIdx(decision, claimedOffer);
         LOG.info("[insight] dispatch {} -> {} (idx={})", decision.triggerId(), decision.summary(), idx);
         if (decision.triggerId().startsWith(HEART_DEMON_TRIGGER_PREFIX)) {
             heartDemonSendFn.accept(idx);
@@ -62,11 +67,10 @@ public final class ClientRequestInsightDispatcher implements InsightChoiceDispat
         sendFn.accept(decision.triggerId(), idx);
     }
 
-    private Integer resolveIdx(InsightDecision decision) {
+    private Integer resolveIdx(InsightDecision decision, InsightOfferViewModel offer) {
         if (decision.kind() != InsightDecision.Kind.CHOSEN) {
             return null;
         }
-        InsightOfferViewModel offer = offerSupplier.get();
         if (offer == null || !offer.triggerId().equals(decision.triggerId())) {
             LOG.warn("[insight] cannot resolve idx: offer snapshot missing or stale for {}", decision.triggerId());
             return null;
