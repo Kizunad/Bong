@@ -1,10 +1,16 @@
 package com.bong.client.animation;
 
 import dev.kosmx.playerAnim.api.TransformType;
+import dev.kosmx.playerAnim.api.layered.AnimationStack;
+import dev.kosmx.playerAnim.core.data.AnimationFormat;
+import dev.kosmx.playerAnim.core.data.KeyframeAnimation;
 import dev.kosmx.playerAnim.core.util.Vec3f;
 import org.junit.jupiter.api.Test;
 
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -127,6 +133,56 @@ class UpperBodyViewPitchLayerTest {
         assertTrue(atEnd > atStart, "tickDelta=1 期望取当前 tick 的值，渲染帧间应连续过渡");
         float mid = l.bendRadians(0.5f);
         assertEquals((atStart + atEnd) / 2.0f, mid, 1e-5, "中间 tickDelta 期望线性插值");
+    }
+
+    @Test
+    void activeJianAnimationSuppressesViewPitchThroughProductionBridge() {
+        BongAnimationPlayer.resetForTest();
+        AnimationLayerManager.resetForTest();
+        UUID playerId = UUID.randomUUID();
+        AnimationStack stack = new AnimationStack();
+        BongAnimationRegistry.register(BongAnimations.JIAN_DRAW_WAIST, minimalAnimation());
+        assertTrue(AnimationLayerManager.playOnStack(
+            stack,
+            playerId,
+            AnimationLayerManager.Channel.UPPER_BODY,
+            BongAnimations.JIAN_DRAW_WAIST,
+            0,
+            0
+        ));
+
+        UpperBodyViewPitchLayer l = new UpperBodyViewPitchLayer(
+            () -> 90.0,
+            () -> true,
+            () -> AnimationLayerManager.isJianAnimationActive(playerId, stack)
+        );
+        Vec3f in = new Vec3f(0.5f, 0.25f, 0.0f);
+        l.tick();
+
+        assertTrue(AnimationLayerManager.isJianAnimationActive(playerId, stack),
+            "真实 Jian producer/manager bridge 必须报告当前 stack 上有 Jian 动画");
+        assertEquals(0.0f, l.targetDeg(), 1e-6f,
+            "Jian 招式活跃时视角目标必须归零，避免继续驱动躯干");
+        assertSame(in, l.get3DTransform("torso", TransformType.BEND, 1.0f, in),
+            "Jian 招式活跃时必须直接透传已有 bend，不能与视角层叠加");
+
+        assertTrue(AnimationLayerManager.stopOnStack(
+            stack, playerId, AnimationLayerManager.Channel.UPPER_BODY, 0
+        ));
+        assertFalse(AnimationLayerManager.isJianAnimationActive(playerId, stack),
+            "Jian 停止后 production suppression bridge 必须恢复为 false");
+        assertTrue(l.targetDeg() > 0.0f,
+            "Jian 停止后视角层必须恢复目标折弯");
+        AnimationLayerManager.resetForTest();
+        BongAnimationPlayer.resetForTest();
+    }
+
+    private static KeyframeAnimation minimalAnimation() {
+        KeyframeAnimation.AnimationBuilder builder =
+            new KeyframeAnimation.AnimationBuilder(AnimationFormat.UNKNOWN);
+        builder.endTick = 1;
+        builder.isLooped = false;
+        return builder.build();
     }
 
     @Test
