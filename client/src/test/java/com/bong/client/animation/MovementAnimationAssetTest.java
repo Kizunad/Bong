@@ -85,7 +85,12 @@ class MovementAnimationAssetTest {
     void jianAssetsBindToProductionAssetsAndNeverWriteLowerBodyParts() throws IOException {
         for (Identifier id : BongAnimations.JIAN_ANIMATIONS) {
             JsonObject root = readAsset(id);
+            assertEquals(3, root.get("version").getAsInt(), id + " 必须是 Emotecraft v3");
+            assertEquals(id.getPath(), root.get("name").getAsString(), id + " name 必须与文件名一致");
             JsonObject emote = root.getAsJsonObject("emote");
+            assertTrue(emote.get("endTick").getAsInt() > 0, id + " endTick 必须为正");
+            assertFalse(emote.get("degrees").getAsBoolean(), id + " 运行时资产必须使用弧度");
+            assertTrue(emote.getAsJsonArray("moves").size() > 0, id + " 必须含关键帧");
             Map<String, Map<String, Map<Integer, Double>>> tracks = tracks(emote);
             for (Map.Entry<String, Map<String, Map<Integer, Double>>> part : tracks.entrySet()) {
                 assertTrue(JIAN_PARTS.contains(part.getKey()),
