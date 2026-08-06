@@ -32,15 +32,21 @@
 //! below exercises every public entry point regardless.
 #![allow(dead_code)]
 
+#[cfg(windows)]
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 #[cfg(windows)]
+use std::os::windows::ffi::OsStringExt;
+#[cfg(windows)]
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-use std::path::Path;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -298,6 +304,141 @@ pub(crate) fn set_open_regular_file_after_open_test_hook(hook: impl FnOnce() + '
     });
 }
 
+#[cfg(unix)]
+fn descriptor_open_path(file: &File) -> PathBuf {
+    let fd = file.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    let link = format!("/proc/self/fd/{fd}");
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let link = format!("/dev/fd/{fd}");
+    PathBuf::from(link)
+}
+
+#[cfg(unix)]
+fn descriptor_path(file: &File) -> io::Result<PathBuf> {
+    let link = descriptor_open_path(file);
+    std::fs::read_link(&link).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to resolve opened descriptor {}: {error}",
+                link.display()
+            ),
+        )
+    })
+}
+
+#[cfg(windows)]
+fn descriptor_path(file: &File) -> io::Result<PathBuf> {
+    type Dword = u32;
+    type Handle = *mut std::ffi::c_void;
+    unsafe extern "system" {
+        fn GetFinalPathNameByHandleW(
+            hFile: Handle,
+            lpszFilePath: *mut u16,
+            cchFilePath: Dword,
+            dwFlags: Dword,
+        ) -> Dword;
+    }
+
+    const VOLUME_NAME_DOS: Dword = 0;
+    let handle = file.as_raw_handle() as Handle;
+    let mut buffer = vec![0_u16; 512];
+    loop {
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                buffer.as_mut_ptr(),
+                buffer.len() as Dword,
+                VOLUME_NAME_DOS,
+            )
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if (length as usize) < buffer.len() {
+            return Ok(PathBuf::from(OsString::from_wide(
+                &buffer[..length as usize],
+            )));
+        }
+        buffer.resize(buffer.len() * 2, 0);
+    }
+}
+
+#[cfg(unix)]
+fn open_directory_no_follow(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    options.custom_flags(0o400_000); // O_NOFOLLOW.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    options.custom_flags(0x0000_0100); // O_NOFOLLOW.
+
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(open_error) => {
+            if std::fs::symlink_metadata(path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!(
+                        "{} must be a real directory, not a symlink (open failed: {open_error})",
+                        path.display()
+                    ),
+                ));
+            }
+            return Err(open_error);
+        }
+    };
+    if !file.metadata()?.is_dir() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} must be a directory", path.display()),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_regular_file_from_root(path: &Path, trusted_root: &Path) -> io::Result<File> {
+    let relative = path.strip_prefix(trusted_root).map_err(|_| {
+        io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{} is not beneath trusted root {}",
+                path.display(),
+                trusted_root.display()
+            ),
+        )
+    })?;
+    let components = relative.components().collect::<Vec<_>>();
+    let Some((final_component, parent_components)) = components.split_last() else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} must name a file below trusted root", path.display()),
+        ));
+    };
+    if !matches!(final_component, std::path::Component::Normal(_))
+        || parent_components
+            .iter()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!("{} contains an unsafe path component", path.display()),
+        ));
+    }
+
+    let mut directory = open_directory_no_follow(trusted_root)?;
+    for component in parent_components {
+        let next = descriptor_open_path(&directory).join(component.as_os_str());
+        directory = open_directory_no_follow(&next)?;
+    }
+    let final_path = descriptor_open_path(&directory).join(final_component.as_os_str());
+    open_regular_file_no_follow(&final_path)
+}
+
 pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> io::Result<File> {
     let canonical_path = std::fs::canonicalize(path)?;
     if !canonical_path.starts_with(trusted_root) {
@@ -331,20 +472,33 @@ pub(crate) fn open_regular_file_under_root(path: &Path, trusted_root: &Path) -> 
             hook();
         }
     });
-    let file = open_regular_file_no_follow(path)?;
-    #[cfg(target_os = "linux")]
+    let file = {
+        #[cfg(unix)]
+        {
+            let open_path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            open_regular_file_from_root(&open_path, trusted_root)?
+        }
+        #[cfg(not(unix))]
+        {
+            open_regular_file_no_follow(path)?
+        }
+    };
+    #[cfg(any(unix, windows))]
     {
-        if let Ok(actual) = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())) {
-            if !actual.starts_with(trusted_root) {
-                return Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    format!(
-                        "{} resolves outside trusted root {}",
-                        path.display(),
-                        trusted_root.display()
-                    ),
-                ));
-            }
+        let actual = descriptor_path(&file)?;
+        if !actual.starts_with(trusted_root) {
+            return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!(
+                    "{} resolves outside trusted root {}",
+                    path.display(),
+                    trusted_root.display()
+                ),
+            ));
         }
     }
     let admitted_path = std::fs::canonicalize(path)?;
@@ -787,7 +941,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn open_under_root_rejects_target_swap_between_identity_capture_and_open() {
         let nonce = std::time::SystemTime::now()
@@ -845,33 +999,37 @@ mod tests {
         ));
         let root = base.join("root");
         let nested = root.join("decorations/tree");
-        let external = base.join("external");
         std::fs::create_dir_all(&nested).unwrap();
-        std::fs::create_dir_all(&external).unwrap();
         std::fs::write(nested.join("template.nbt"), b"original").unwrap();
-        std::fs::write(external.join("template.nbt"), b"outside").unwrap();
         let trusted_root = std::fs::canonicalize(&root).unwrap();
 
-        // before open: move the original (same inode) out and point the ancestor at it.
+        // After the descriptor is opened through the trusted parent directory,
+        // move the original file and parent inode outside the root, briefly expose
+        // the external file through an ancestor symlink, then restore the original
+        // parent inode and hard-link the same external file beneath it. Path and
+        // inode checks now all see an apparently valid in-root state; only the
+        // descriptor's own final location can reject the admission.
         let moved = base.join("moved");
+        let saved_parent = base.join("saved_parent");
         std::fs::create_dir_all(&moved).unwrap();
         let hook_nested = nested.clone();
         let hook_moved = moved.clone();
-        set_open_regular_file_before_open_test_hook(move || {
+        let hook_saved_parent = saved_parent.clone();
+        set_open_regular_file_after_open_test_hook(move || {
             std::fs::rename(
                 hook_nested.join("template.nbt"),
                 hook_moved.join("template.nbt"),
             )
             .unwrap();
-            std::fs::remove_dir(&hook_nested).unwrap();
+            std::fs::rename(&hook_nested, &hook_saved_parent).unwrap();
             symlink(&hook_moved, &hook_nested).unwrap();
-        });
-        // after open: restore the ancestor with a *different* inode under the same path.
-        let hook_restored = nested.clone();
-        set_open_regular_file_after_open_test_hook(move || {
-            std::fs::remove_file(&hook_restored).unwrap(); // removes the symlink itself
-            std::fs::create_dir_all(&hook_restored).unwrap();
-            std::fs::write(hook_restored.join("template.nbt"), b"restored").unwrap();
+            std::fs::remove_file(&hook_nested).unwrap();
+            std::fs::rename(&hook_saved_parent, &hook_nested).unwrap();
+            std::fs::hard_link(
+                hook_moved.join("template.nbt"),
+                hook_nested.join("template.nbt"),
+            )
+            .unwrap();
         });
 
         let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
@@ -882,6 +1040,49 @@ mod tests {
             message.contains("resolves outside trusted root")
                 || message.contains("changed during trusted-root admission"),
             "descriptor-location violation must be diagnosed, got: {message}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_under_root_rejects_ancestor_swap_before_directory_open() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_ancestor_swap_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        let nested = root.join("decorations/tree");
+        let external = base.join("external");
+        let saved_parent = base.join("saved_parent");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(nested.join("template.nbt"), b"inside").unwrap();
+        std::fs::write(external.join("template.nbt"), b"outside").unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        let hook_nested = nested.clone();
+        let hook_external = external.clone();
+        let hook_saved_parent = saved_parent.clone();
+        set_open_regular_file_before_open_test_hook(move || {
+            std::fs::rename(&hook_nested, &hook_saved_parent).unwrap();
+            symlink(&hook_external, &hook_nested).unwrap();
+        });
+        let error = open_regular_file_under_root(&nested.join("template.nbt"), &trusted_root)
+            .expect_err("an ancestor symlink introduced during admission must be rejected");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            error.to_string().contains("real directory")
+                || error.to_string().contains("outside trusted root"),
+            "ancestor symlink diagnostic must identify the trust-boundary violation: {error}"
         );
 
         let _ = std::fs::remove_dir_all(base);

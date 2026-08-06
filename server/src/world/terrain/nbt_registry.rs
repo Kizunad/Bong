@@ -27,6 +27,8 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use valence::prelude::{BlockPos, Resource};
@@ -264,11 +266,32 @@ impl DecorationNbtRegistry {
 
     pub(crate) fn prepare(structures_dir: &Path) -> DecorationNbtPreflight {
         let deco_dir = structures_dir.join(DECORATIONS_SUBDIR);
-        if std::fs::symlink_metadata(&deco_dir).is_err_and(|error| {
-            error.kind() == std::io::ErrorKind::NotFound
-                && std::fs::symlink_metadata(structures_dir)
-                    .is_err_and(|root_error| root_error.kind() == std::io::ErrorKind::NotFound)
-        }) {
+        let root_metadata = match std::fs::symlink_metadata(structures_dir) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return DecorationNbtPreflight {
+                    candidate: Self::empty(),
+                    diagnostics: vec![format!(
+                        "structures directory {} must be a real directory, not a symlink or special file",
+                        structures_dir.display()
+                    )],
+                };
+            }
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return DecorationNbtPreflight {
+                    candidate: Self::empty(),
+                    diagnostics: vec![format!(
+                        "failed to inspect structures directory {}: {error}",
+                        structures_dir.display()
+                    )],
+                };
+            }
+        };
+        if root_metadata.is_none()
+            && std::fs::symlink_metadata(&deco_dir)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
             return DecorationNbtPreflight {
                 candidate: Self::empty(),
                 diagnostics: Vec::new(),
@@ -286,6 +309,39 @@ impl DecorationNbtRegistry {
                 };
             }
         };
+        if let Some(expected) = root_metadata {
+            let anchored = match std::fs::metadata(&trusted_root) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    return DecorationNbtPreflight {
+                        candidate: Self::empty(),
+                        diagnostics: vec![format!(
+                            "failed to recheck structures directory {}: {error}",
+                            structures_dir.display()
+                        )],
+                    };
+                }
+            };
+            #[cfg(unix)]
+            let same_root = {
+                use std::os::unix::fs::MetadataExt;
+                (expected.dev(), expected.ino()) == (anchored.dev(), anchored.ino())
+            };
+            #[cfg(windows)]
+            let same_root = (expected.volume_serial_number(), expected.file_index())
+                == (anchored.volume_serial_number(), anchored.file_index());
+            #[cfg(not(any(unix, windows)))]
+            let same_root = true;
+            if !same_root {
+                return DecorationNbtPreflight {
+                    candidate: Self::empty(),
+                    diagnostics: vec![format!(
+                        "structures directory {} changed while being anchored",
+                        structures_dir.display()
+                    )],
+                };
+            }
+        }
         let NbtFileScan {
             mut paths,
             mut diagnostics,
@@ -1018,6 +1074,20 @@ mod tests {
     #[test]
     fn load_rejects_root_and_nested_symlinks() {
         use std::os::unix::fs::symlink;
+
+        let root_link = temp_structures_dir("structures_root_symlink");
+        let root_target = root_link.with_file_name("structures_root_symlink_target");
+        fs::create_dir_all(root_target.join(DECORATIONS_SUBDIR)).unwrap();
+        fs::remove_dir_all(&root_link).unwrap();
+        symlink(&root_target, &root_link).unwrap();
+        let root_error = DecorationNbtRegistry::load(&root_link)
+            .expect_err("the structures directory itself must not be a symlink");
+        assert!(
+            root_error.to_string().contains("real directory"),
+            "structures-root symlink diagnostic must explain the trust boundary: {root_error}"
+        );
+        let _ = fs::remove_file(&root_link);
+        let _ = fs::remove_dir_all(&root_target);
 
         let root_case = temp_structures_dir("root_symlink");
         let external = root_case.join("external");
