@@ -147,6 +147,24 @@ class MovementAnimationAssetTest {
     }
 
     @Test
+    void jianLoopAndStopContractsRemainPinned() throws IOException {
+        assertJianLoopContract(BongAnimations.JIAN_STANCE_HIGH_LOW, true, 40, 43);
+        assertJianLoopContract(BongAnimations.JIAN_DUAL_SWEEP, false, 22, 25);
+    }
+
+    private static void assertJianLoopContract(
+        Identifier id,
+        boolean expectedLoop,
+        int expectedEndTick,
+        int expectedStopTick
+    ) throws IOException {
+        JsonObject emote = readAsset(id).getAsJsonObject("emote");
+        assertEquals(expectedLoop, emote.get("isLoop").getAsBoolean(), id + " isLoop 契约不能由资产自身推导");
+        assertEquals(expectedEndTick, emote.get("endTick").getAsInt(), id + " endTick 契约不能漂移");
+        assertEquals(expectedStopTick, emote.get("stopTick").getAsInt(), id + " stopTick 契约不能漂移");
+    }
+
+    @Test
     void jianActionTimelinesRetainAuthoredPhases() throws IOException {
         assertActionTimeline(
             BongAnimations.JIAN_DRAW_WAIST,
