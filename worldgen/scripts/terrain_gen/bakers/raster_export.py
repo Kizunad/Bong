@@ -3,8 +3,23 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional
+
+
+_ATOMIC_TEMP_COUNTER = threading.Lock()
+_ATOMIC_TEMP_SEQUENCE = 0
+
+
+def _next_atomic_temp_sequence() -> int:
+    global _ATOMIC_TEMP_SEQUENCE
+    with _ATOMIC_TEMP_COUNTER:
+        sequence = _ATOMIC_TEMP_SEQUENCE
+        _ATOMIC_TEMP_SEQUENCE += 1
+    return sequence
+
+
 
 import numpy as np
 
@@ -100,12 +115,16 @@ def _layer_file_name(layer_name: str) -> str:
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    temp_path = path.with_name(f".{path.name}.tmp")
-    with temp_path.open("wb") as file:
-        file.write(data)
-        file.flush()
-        os.fsync(file.fileno())
-    temp_path.replace(path)
+    sequence = _next_atomic_temp_sequence()
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{sequence}.tmp")
+    try:
+        with temp_path.open("xb") as file:
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _write_float_layer(path: Path, values: np.ndarray) -> None:

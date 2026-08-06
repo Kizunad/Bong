@@ -13,14 +13,18 @@ End-to-end export of a real profile, asserting the on-disk contract:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.terrain_gen.bakers.raster_export import (
     SPANS_COUNT_FILE,
     SPANS_FILE,
+    _atomic_write_bytes,
     _carved_spans_for_tile,
     _tile_carver_assignments,
     _zone_carver_chains,
@@ -115,8 +119,60 @@ def _export(profile: str, temp_dir: str):
     return manifest, artifacts["raster_dir"], fields, plan
 
 
+class AtomicRasterPublicationTest(unittest.TestCase):
+    def test_concurrent_writes_to_one_target_publish_complete_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "layer.bin"
+            payloads = [bytes([index]) * 4096 for index in range(8)]
+            barrier = threading.Barrier(len(payloads))
+
+            def publish(payload: bytes) -> None:
+                barrier.wait()
+                _atomic_write_bytes(path, payload)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(payloads)) as pool:
+                list(pool.map(publish, payloads))
+
+            self.assertIn(
+                path.read_bytes(),
+                payloads,
+                "concurrent publication must leave one complete writer payload, never a mixed or truncated file",
+            )
+            self.assertEqual(
+                list(Path(td).glob(".*.tmp")),
+                [],
+                "unique temporary files must be cleaned after concurrent publication",
+            )
+
+    def test_failed_publication_preserves_previous_target(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "layer.bin"
+            path.write_bytes(b"previous-complete-layer")
+            temp_paths = []
+
+            def fail_replace(_source: Path, _target: Path) -> None:
+                temp_paths.append(_source)
+                raise OSError("replace failed")
+
+            with patch.object(Path, "replace", fail_replace):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    _atomic_write_bytes(path, b"new-layer")
+
+            self.assertEqual(
+                path.read_bytes(),
+                b"previous-complete-layer",
+                "a replace failure must not corrupt the previously published raster",
+            )
+            self.assertEqual(
+                list(Path(td).glob(".*.tmp")),
+                [],
+                "failed publication must clean its unique temporary file",
+            )
+
+
 class SpansExportLayoutTest(unittest.TestCase):
     def test_manifest_is_version_2_with_spans_encoding(self) -> None:
+
         with tempfile.TemporaryDirectory() as td:
             manifest, _raster_dir, _fields, _plan = _export("sky_isle", td)
         self.assertEqual(manifest["version"], 2)
