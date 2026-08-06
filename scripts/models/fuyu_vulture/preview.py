@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))  # 复用 scripts/models/render_bbmodel.py
 
 from gen_muscle import GROUP_LABEL as MGROUP_LABEL  # noqa: E402
+from gen_pelt import MORPHS  # noqa: E402
 from gen_muscle import GROUPS as MGROUPS  # noqa: E402
 from gen_skeleton import PARTS, SPECS, build  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
@@ -147,6 +148,46 @@ def muscle_top(key: str, size: int = 500) -> None:
     _grid(tiles, 2, HERE / f"render_muscle_top_{key}.png")
 
 
+def _run_pelt(*args: str) -> None:
+    subprocess.run([sys.executable, str(HERE / "gen_pelt.py"), *args], check=True,
+                   capture_output=True)
+
+
+def pelt_views(key: str, morph: str = "jin") -> None:
+    name = f"{SPECS[key].model.replace('Skeleton', 'Pelt')}_{morph}"
+    three_view(name, f"render_pelt_{key}_{morph}.png")
+    three_view(f"{name}_spread", f"render_pelt_{key}_{morph}_spread.png")
+
+
+def morph_sheet(key: str, size: int = 440) -> None:
+    """一档三变色并排 —— 变色是本层的交付物，必须能一眼比出来。"""
+    base = SPECS[key].model.replace("Skeleton", "Pelt")
+    tiles = []
+    for mo, meta in MORPHS.items():
+        im, _ = render(MODELS / f"{base}_{mo}.bbmodel", yaw=138.0, pitch=12.0, size=size)
+        tiles.append((f"{mo} · {meta['cn']} — {meta['note']}", im))
+    _grid(tiles, 3, HERE / f"render_morphs_{key}.png")
+
+
+def pelt_scale_sheet(morph: str = "jin", size: int = 520) -> None:
+    """三档同一比例尺的最终外观。"""
+    spans, centers = {}, {}
+    for key in SIZES:
+        rig, _ = build(SPECS[key])
+        (x0, y0, z0), (x1, y1, z1) = rig.bounds()
+        centers[key] = ((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+        spans[key] = max(x1 - x0, y1 - y0, z1 - z0)
+    span = max(spans.values()) * 1.12
+    tiles = []
+    for key in SIZES:
+        spec = SPECS[key]
+        base = spec.model.replace("Skeleton", "Pelt")
+        im, _ = render(MODELS / f"{base}_{morph}.bbmodel", yaw=118.0, pitch=12.0, size=size,
+                       focus=(centers[key], span))
+        tiles.append((f"{key}  {spec.cn}  {spec.stand_h / 16:.2f} m", im))
+    _grid(tiles, 3, HERE / f"render_pelt_scale_{morph}.png")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="腐羽鹫预览渲染")
     ap.add_argument("--size", choices=SIZES, help="只出一档")
@@ -154,6 +195,7 @@ def main() -> int:
     ap.add_argument("--parts", action="store_true", help="只出骨架部件图集")
     ap.add_argument("--muscle", action="store_true", help="只出肌肉层视图")
     ap.add_argument("--muscle-groups", action="store_true", help="只出肌群图集")
+    ap.add_argument("--pelt", action="store_true", help="只出羽层视图 + 变色对比")
     args = ap.parse_args()
 
     keys = [args.size] if args.size else list(SIZES)
@@ -167,6 +209,8 @@ def main() -> int:
             _run_muscle("--size", k, "--pose", "spread")
             _run_muscle("--size", k, "--only-muscle")
             _run_muscle("--size", k, "--explode", "4")
+            _run_pelt("--size", k)
+            _run_pelt("--size", k, "--pose", "spread")
 
     print("渲染…")
     if args.parts:
@@ -182,6 +226,13 @@ def main() -> int:
             muscle_views(k)
             muscle_top(k)
         return 0
+    if args.pelt:
+        for k in keys:
+            pelt_views(k)
+            morph_sheet(k)
+        if len(keys) == len(SIZES):
+            pelt_scale_sheet()
+        return 0
 
     for k in keys:
         spec = SPECS[k]
@@ -190,8 +241,11 @@ def main() -> int:
         head_shot(k)
         muscle_views(k)
         muscle_top(k)
+        pelt_views(k)
+        morph_sheet(k)
     if len(keys) == len(SIZES):
         scale_sheet()
+        pelt_scale_sheet()
     return 0
 
 

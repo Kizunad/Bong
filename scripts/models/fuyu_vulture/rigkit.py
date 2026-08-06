@@ -362,14 +362,20 @@ def element_bounds(elements: list[dict]) -> tuple[Vec, Vec]:
 
 
 def mirror_violations(elements: list[dict], tol: float = 0.02) -> list[str]:
-    """左右件必须 x 取反、y/z 相等。
+    """左右件必须 x 取反、y/z 相等；不带 _l/_r 的件必须**自身**关于中线对称。
 
-    目视核不出这些 —— 一侧的一串件整体平移（漏乘 sx）而非镜像，三视图上
-    完全看不出来，只有对拍能抓。
+    目视核不出这些 —— 一侧的一串件整体平移（漏乘 sx）而非镜像，三视图上完全看不
+    出来，只有对拍能抓。中线件更阴险：它没有配对方，光查左右配对根本照不到它，
+    写偏了就是一块孤零零飘在身旁的方块。
     """
     els = {e["name"]: e for e in elements}
     out: list[str] = []
     for name, e in els.items():
+        if not (name.endswith(("_l", "_r")) or "_l_" in name or "_r_" in name):
+            if abs(e["from"][0] + e["to"][0]) > tol:
+                out.append(f"{name}: 中线件未对称（x {e['from'][0]}..{e['to'][0]}，"
+                           f"中心 {(e['from'][0] + e['to'][0]) / 2:.2f} 应为 0）")
+            continue
         if not (name.endswith("_l") or "_l_" in name):
             continue
         mate = name.replace("_l_", "_r_") if "_l_" in name else name[:-2] + "_r"
