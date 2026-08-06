@@ -80,6 +80,7 @@
    - master 只裁决 owner、跨轨顺序与 invariants；只有在 owner plan 已定义 phase/artifact/consumer 后才可引用其名称，不得替 owner plan 首次定义交付细节或验收步骤。
    - 若所需 upstream artifact 尚不存在，consumer track 只能先落 contract-first stub（declared、unwired、test-only，不接 production）；真实 artifact 的名称、phase 与验收由 owner track plan 定义，且 production dependency **不得反写成 start gate**。
    - 两份 track plan 出现 sequencing conflict 时，先 amendment §3 Wave 表并形成唯一裁决，再同步双方；禁止靠任一子 plan prose 抢占 authority。R9 contract-first start 以 Wave 0 为准，production activation 以 Wave 2 与本节 atomicity invariant 为准。
+7. **Contract-first 与 freshness gate 的兼容规则**：§4.1.1 的 mirror freshness/pin gate 只约束**已存在 generation pipeline 且已实际产出 committed mirrors** 的 generated/constrained artifact——即 R6 P1 generation chain contract 落地（manifest/tooling/pin inventory 就绪）、R6 P3 运行 pipeline 实际产出 committed mirrors 之后，CI 才对当前 TypeBox source 与已生成 mirror 做 fail-closed 一致性检查。此前的 declared/unwired/test-only contract-first TypeBox 提交（如 R9 P1 的 cast `source`/`target`/`phase` 与 STOP/INTERRUPT 变更）不触发 mirror freshness gate（尚无 committed mirrors 可对 pin）；R6 P3 产出 committed mirrors 时若 source 已变化，由 R6 P3 一并刷新 mirrors 并更新 pin——该提交只须随附 §4.1.5 的 contract pin tests，不得要求 contract-first 提交方更新 R6-owned mirrors，也不得因镜像刷新义务被阻塞。mirror 的生成与刷新仍归 R6 P3 的 atomic activation merge unit。wire 接线状态与 artifact freshness 是独立关注点，禁止用 freshness gate 把 contract-first 提交变相升级为 production activation 的 start gate。
 
 ### 4.2 Craft lifecycle artifact ledger（M-09/M-10）
 
