@@ -4,7 +4,7 @@ pub mod gameplay;
 pub mod ping;
 pub mod registry_pin;
 
-use valence::prelude::{App, PostStartup};
+use valence::prelude::{App, ConnectionMode, NetworkSettings, PostStartup};
 use valence::EventLoopPreUpdate;
 
 pub fn register(app: &mut App) {
@@ -23,13 +23,17 @@ fn register_for_dev_mode(app: &mut App, dev_mode_enabled: bool) {
 }
 
 /// 测试用：注册全部命令的最小 App（completions / registry_pin 测试共用）。
-#[cfg(test)]
 pub fn test_command_app() -> App {
-    test_command_app_for_dev_mode(true)
+    test_command_app_with_connection_mode(ConnectionMode::Offline)
 }
 
-#[cfg(test)]
-fn test_command_app_for_dev_mode(dev_mode_enabled: bool) -> App {
+/// 测试用：使用生产 command registration，并保留可驱动 packet input 的 event loop。
+/// `connection_mode` 必须在 registration 前插入，因为 operator permission 在注册时快照它。
+pub fn test_command_app_with_connection_mode(connection_mode: ConnectionMode) -> App {
+    test_command_app_for_dev_mode(connection_mode, true)
+}
+
+fn test_command_app_for_dev_mode(connection_mode: ConnectionMode, dev_mode_enabled: bool) -> App {
     use crate::combat::events::DebugCombatCommand;
     use crate::cultivation::tribulation::StartDuXuRequest;
     use crate::fauna::rat_phase::RatPhaseChangeEvent;
@@ -40,7 +44,14 @@ fn test_command_app_for_dev_mode(dev_mode_enabled: bool) -> App {
     use crate::world::tsy_dev_command::TsySpawnRequested;
 
     let mut app = App::new();
-    app.add_plugins(valence::command::manager::CommandPlugin);
+    app.insert_resource(NetworkSettings {
+        connection_mode,
+        ..Default::default()
+    });
+    app.add_plugins((
+        valence::event_loop::EventLoopPlugin,
+        valence::command::manager::CommandPlugin,
+    ));
     app.add_event::<DebugCombatCommand>();
     app.add_event::<RatPhaseChangeEvent>();
     app.add_event::<TsySpawnRequested>();
@@ -51,6 +62,7 @@ fn test_command_app_for_dev_mode(dev_mode_enabled: bool) -> App {
     app.insert_resource(GameplayActionQueue::default());
     app.insert_resource(ShaderStatePayload::default());
     register_for_dev_mode(&mut app, dev_mode_enabled);
+    crate::identity::command::register(&mut app);
     app.finish();
     app.cleanup();
     app.update();
@@ -71,7 +83,7 @@ mod tests {
 
     #[test]
     fn production_command_registry_does_not_expose_ambient_spawn() {
-        let app = test_command_app_for_dev_mode(false);
+        let app = test_command_app_for_dev_mode(ConnectionMode::Offline, false);
         let registry = app.world().resource::<CommandRegistry>();
         let roots = registry
             .graph
