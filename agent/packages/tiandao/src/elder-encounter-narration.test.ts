@@ -558,18 +558,17 @@ describe("ElderEncounterNarrationRuntime", () => {
   });
 
   it("durable connect 只恢复有界数量，并保持 processing 右端到 source 左端的 FIFO", async () => {
-    const queue = makeDurableQueueClient();
+    const queue = makeDurableQueueClient({ blockReadNumber: 1 });
     queue.processing.push(...Array.from({ length: MAX_DURABLE_RECOVERY_BATCH + 1 }, (_, index) => `pending-${index}`));
     const durableRuntime = queueRuntime(makeMockClient(), makeMockClient(), queue);
 
     await durableRuntime.connect();
-    await durableRuntime.disconnect();
 
     expect(queue.processing, "恢复达到上限时应保留剩余 processing，避免启动阶段无界搬运").toHaveLength(1);
     expect(queue.source.slice(0, 3), "恢复应从 processing 右端移到 source 左端，保持最早消息先重试").toEqual([
-      "pending-0",
       "pending-1",
       "pending-2",
+      "pending-3",
     ]);
     expect(queue.lmove.mock.calls[0], "恢复应使用 processing RIGHT→source LEFT，实际参数必须体现 FIFO 方向").toEqual([
       ELDER_ENCOUNTER_DURABLE_PROCESSING,
@@ -577,10 +576,13 @@ describe("ElderEncounterNarrationRuntime", () => {
       "RIGHT",
       "LEFT",
     ]);
+    const disconnectPromise = durableRuntime.disconnect();
+    queue.releaseBlockedRead();
+    await disconnectPromise;
   });
 
   it("durable worker retry 将 processing 右端移回 source 左端，而不是反向吞掉 payload", async () => {
-    const queue = makeDurableQueueClient();
+    const queue = makeDurableQueueClient({ blockReadNumber: 2 });
     const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:worker-retry" });
     queue.source.push(payload);
     const workerRuntime = queueRuntime(sub, pub, queue);
@@ -591,10 +593,12 @@ describe("ElderEncounterNarrationRuntime", () => {
       () => queue.source.includes(payload) && queue.processing.length === 0,
       "Redis 暂时失败后 payload 应从 processing 回到 source，原因是失败可重试且 processing 必须清空",
     );
-    await workerRuntime.disconnect();
-
     expect(queue.source, "retry 后 source 应重新拥有原 payload，实际队列不能丢消息").toContain(payload);
     expect(queue.lmove.mock.calls.some((call) => call[0] === ELDER_ENCOUNTER_DURABLE_PROCESSING && call[1] === ELDER_ENCOUNTER_DURABLE && call[2] === "RIGHT" && call[3] === "LEFT"), "retry 应使用 processing RIGHT→source LEFT，避免错误端点导致重复/丢失").toBe(true);
+
+    const disconnectPromise = workerRuntime.disconnect();
+    queue.releaseBlockedRead();
+    await disconnectPromise;
   });
 
   it("durable worker 将不可恢复 poison pill 移入 dead-letter，不进行无限 retry", async () => {
