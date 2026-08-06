@@ -8,7 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, Weak,
     },
 };
@@ -362,6 +362,71 @@ impl fmt::Display for SliceRegistryError {
 
 impl std::error::Error for SliceRegistryError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaseMutationKind {
+    Acquired,
+    Released,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LeaseMutation {
+    domain: WriteDomain,
+    subject: PersistenceSubjectKey,
+    kind: LeaseMutationKind,
+}
+
+#[derive(Debug, Default)]
+struct LeaseBook {
+    active_subjects: Mutex<HashMap<PersistenceSubjectKey, HashMap<WriteDomain, Weak<LeaseToken>>>>,
+    audit: Mutex<Option<Vec<LeaseMutation>>>,
+    audit_poisoned: AtomicBool,
+}
+
+impl LeaseBook {
+    fn begin_audit(&self) -> Result<(), SliceDispatchError> {
+        let mut audit = self
+            .audit
+            .lock()
+            .map_err(|_| SliceDispatchError::PoisonedSubjectRegistry)?;
+        if audit.is_some() {
+            return Err(SliceDispatchError::LeaseAuditAlreadyActive);
+        }
+        *audit = Some(Vec::new());
+        self.audit_poisoned.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    fn record(
+        &self,
+        domain: WriteDomain,
+        subject: &PersistenceSubjectKey,
+        kind: LeaseMutationKind,
+    ) {
+        let Ok(mut audit) = self.audit.lock() else {
+            self.audit_poisoned.store(true, Ordering::Release);
+            return;
+        };
+        if let Some(events) = audit.as_mut() {
+            events.push(LeaseMutation {
+                domain,
+                subject: subject.clone(),
+                kind,
+            });
+        }
+    }
+
+    fn finish_audit(&self) -> Result<Vec<LeaseMutation>, SliceDispatchError> {
+        if self.audit_poisoned.load(Ordering::Acquire) {
+            return Err(SliceDispatchError::PoisonedSubjectRegistry);
+        }
+        let mut audit = self
+            .audit
+            .lock()
+            .map_err(|_| SliceDispatchError::PoisonedSubjectRegistry)?;
+        audit.take().ok_or(SliceDispatchError::LeaseAuditNotActive)
+    }
+}
+
 /// Sorted registry of persistence lifecycle descriptors.
 ///
 /// The type itself, its construction, and descriptor-token issuance are restricted to
@@ -371,7 +436,7 @@ impl std::error::Error for SliceRegistryError {}
 #[derive(Debug)]
 pub(in crate::persistence) struct PersistenceSliceRegistry {
     descriptors: Vec<&'static SliceDescriptor>,
-    active_subjects: Mutex<HashMap<(WriteDomain, PersistenceSubjectKey), Weak<()>>>,
+    leases: Arc<LeaseBook>,
 }
 
 impl Resource for PersistenceSliceRegistry {}
@@ -390,7 +455,7 @@ impl PersistenceSliceRegistry {
     pub(in crate::persistence) fn empty() -> Self {
         Self {
             descriptors: Vec::new(),
-            active_subjects: Mutex::new(HashMap::new()),
+            leases: Arc::new(LeaseBook::default()),
         }
     }
 
@@ -478,22 +543,65 @@ impl PersistenceSliceRegistry {
         subject_key: &PersistenceSubjectKey,
         domain: WriteDomain,
     ) -> bool {
-        let Ok(mut active_subjects) = self.active_subjects.lock() else {
+        let Ok(mut subjects) = self.leases.active_subjects.lock() else {
             return true;
         };
-        active_subjects.retain(|_, subject| subject.strong_count() > 0);
-        active_subjects.contains_key(&(domain, subject_key.clone()))
+        let Some(domains) = subjects.get_mut(subject_key) else {
+            return false;
+        };
+        domains.retain(|_, subject| subject.strong_count() > 0);
+        let active = domains.contains_key(&domain);
+        if domains.is_empty() {
+            subjects.remove(subject_key);
+        }
+        active
     }
 
     pub(in crate::persistence) fn active_subject_leases(
         &self,
     ) -> Result<HashSet<(WriteDomain, PersistenceSubjectKey)>, SliceDispatchError> {
-        let mut active_subjects = self
+        let mut subjects = self
+            .leases
             .active_subjects
             .lock()
             .map_err(|_| SliceDispatchError::PoisonedSubjectRegistry)?;
-        active_subjects.retain(|_, subject| subject.strong_count() > 0);
-        Ok(active_subjects.keys().cloned().collect())
+        let mut leases = HashSet::new();
+        subjects.retain(|subject, domains| {
+            domains.retain(|_, lease| lease.strong_count() > 0);
+            for domain in domains.keys().copied() {
+                leases.insert((domain, subject.clone()));
+            }
+            !domains.is_empty()
+        });
+        Ok(leases)
+    }
+
+    pub(in crate::persistence) fn active_subject_domains(
+        &self,
+        subject_key: &PersistenceSubjectKey,
+    ) -> Result<HashSet<WriteDomain>, SliceDispatchError> {
+        let mut subjects = self
+            .leases
+            .active_subjects
+            .lock()
+            .map_err(|_| SliceDispatchError::PoisonedSubjectRegistry)?;
+        let Some(domains) = subjects.get_mut(subject_key) else {
+            return Ok(HashSet::new());
+        };
+        domains.retain(|_, lease| lease.strong_count() > 0);
+        let result = domains.keys().copied().collect();
+        if domains.is_empty() {
+            subjects.remove(subject_key);
+        }
+        Ok(result)
+    }
+
+    fn begin_lease_audit(&self) -> Result<(), SliceDispatchError> {
+        self.leases.begin_audit()
+    }
+
+    fn finish_lease_audit(&self) -> Result<Vec<LeaseMutation>, SliceDispatchError> {
+        self.leases.finish_audit()
     }
 
     pub(in crate::persistence) fn registered_descriptor(
@@ -566,22 +674,25 @@ impl PersistenceSliceRegistry {
             return load.refuse_startup(descriptor.id);
         }
 
-        let mut active_subjects = self.active_subjects.lock().map_err(|_| {
+        let domain = descriptor.write_binding.domain();
+        let mut subjects = self.leases.active_subjects.lock().map_err(|_| {
             SliceActivationError::PoisonedSubjectRegistry {
                 slice_id: descriptor.id,
             }
         })?;
-        let lease_key = (descriptor.write_binding.domain(), subject_key.clone());
-        active_subjects.retain(|_, subject| subject.strong_count() > 0);
-        if active_subjects.contains_key(&lease_key) {
+        let domains = subjects.entry(subject_key.clone()).or_default();
+        domains.retain(|_, lease| lease.strong_count() > 0);
+        if domains.contains_key(&domain) {
             return Err(SliceActivationError::DuplicateSubject {
                 slice_id: descriptor.id,
-                domain: descriptor.write_binding.domain(),
+                domain,
             });
         }
-        let subject = SliceSubject::new();
-        active_subjects.insert(lease_key, Arc::downgrade(&subject.0));
-        drop(active_subjects);
+        let subject = SliceSubject::new(self.leases.clone(), subject_key.clone(), domain);
+        domains.insert(domain, Arc::downgrade(&subject.0));
+        self.leases
+            .record(domain, &subject_key, LeaseMutationKind::Acquired);
+        drop(subjects);
 
         Ok(load.activate(
             registered,
@@ -646,6 +757,8 @@ pub struct ShutdownFlushReport {
 pub enum SliceDispatchError {
     MissingCanonicalRegistry,
     PoisonedSubjectRegistry,
+    LeaseAuditAlreadyActive,
+    LeaseAuditNotActive,
     MissingHydrateLease {
         slice_id: SliceId,
         domain: WriteDomain,
@@ -676,6 +789,12 @@ impl fmt::Display for SliceDispatchError {
             }
             Self::PoisonedSubjectRegistry => {
                 formatter.write_str("canonical persistence subject registry is poisoned")
+            }
+            Self::LeaseAuditAlreadyActive => {
+                formatter.write_str("canonical persistence lease audit is already active")
+            }
+            Self::LeaseAuditNotActive => {
+                formatter.write_str("canonical persistence lease audit is not active")
             }
             Self::MissingHydrateLease { slice_id, domain } => write!(
                 formatter,
@@ -835,58 +954,80 @@ fn active_reconnect_lease(
     }))
 }
 
-fn reconnect_lease_snapshot(
-    world: &World,
-) -> Result<HashSet<(WriteDomain, PersistenceSubjectKey)>, SliceDispatchError> {
+fn reconnect_lease_audit_begin(world: &World) -> Result<(), SliceDispatchError> {
     world
         .get_resource::<PersistenceSliceRegistry>()
         .ok_or(SliceDispatchError::MissingCanonicalRegistry)?
-        .active_subject_leases()
+        .begin_lease_audit()
+}
+
+fn reconnect_lease_audit_finish(world: &World) -> Result<Vec<LeaseMutation>, SliceDispatchError> {
+    world
+        .get_resource::<PersistenceSliceRegistry>()
+        .ok_or(SliceDispatchError::MissingCanonicalRegistry)?
+        .finish_lease_audit()
 }
 
 fn audit_successful_hydrate_lease(
+    world: &World,
     descriptor: &'static SliceDescriptor,
     expected_subject: &PersistenceSubjectKey,
-    before: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
-    after: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
+    mutations: &[LeaseMutation],
 ) -> Result<(), SliceDispatchError> {
-    let target = (descriptor.write_binding.domain(), expected_subject.clone());
-    if before.contains(&target) {
-        return Err(SliceDispatchError::DuplicateSubject {
+    let expected_domain = descriptor.write_binding.domain();
+    if let Some(mutation) = mutations
+        .iter()
+        .find(|mutation| mutation.subject != *expected_subject)
+    {
+        return Err(SliceDispatchError::UnexpectedHydrateSubject {
             slice_id: descriptor.id,
-            domain: target.0,
+            domain: mutation.domain,
         });
     }
-    if let Some((domain, subject)) = after.difference(before).find(|lease| **lease != target) {
-        return Err(if subject != expected_subject {
-            SliceDispatchError::UnexpectedHydrateSubject {
-                slice_id: descriptor.id,
-                domain: *domain,
-            }
-        } else {
-            SliceDispatchError::UnexpectedHydrateLease {
-                slice_id: descriptor.id,
-                domain: *domain,
-            }
-        });
-    }
-    if !after.contains(&target) {
-        return Err(SliceDispatchError::MissingHydrateLease {
+    if let Some(mutation) = mutations
+        .iter()
+        .find(|mutation| mutation.domain != expected_domain)
+    {
+        return Err(SliceDispatchError::UnexpectedHydrateLease {
             slice_id: descriptor.id,
-            domain: target.0,
+            domain: mutation.domain,
         });
     }
 
-    let mut expected_after = before.clone();
-    expected_after.insert(target);
-    if after != &expected_after {
-        let domain = after
-            .symmetric_difference(&expected_after)
-            .next()
-            .map_or(descriptor.write_binding.domain(), |lease| lease.0);
+    let active = world
+        .get_resource::<PersistenceSliceRegistry>()
+        .ok_or(SliceDispatchError::MissingCanonicalRegistry)?
+        .active_subject_domains(expected_subject)?;
+    if mutations.is_empty() {
+        return if active.contains(&expected_domain) {
+            Err(SliceDispatchError::DuplicateSubject {
+                slice_id: descriptor.id,
+                domain: expected_domain,
+            })
+        } else {
+            Err(SliceDispatchError::MissingHydrateLease {
+                slice_id: descriptor.id,
+                domain: expected_domain,
+            })
+        };
+    }
+    if mutations.len() != 1
+        || mutations[0].domain != expected_domain
+        || mutations[0].subject != *expected_subject
+        || mutations[0].kind != LeaseMutationKind::Acquired
+    {
+        let domain = mutations
+            .first()
+            .map_or(expected_domain, |mutation| mutation.domain);
         return Err(SliceDispatchError::UnexpectedHydrateLease {
             slice_id: descriptor.id,
             domain,
+        });
+    }
+    if !active.contains(&expected_domain) {
+        return Err(SliceDispatchError::MissingHydrateLease {
+            slice_id: descriptor.id,
+            domain: expected_domain,
         });
     }
     Ok(())
@@ -894,40 +1035,97 @@ fn audit_successful_hydrate_lease(
 
 fn audit_aborted_hydrate_leases(
     world: &World,
-    leases_before_hydrate: &HashSet<(WriteDomain, PersistenceSubjectKey)>,
+    mutations: &[LeaseMutation],
     descriptors: &[&'static SliceDescriptor],
     expected_subject: &PersistenceSubjectKey,
     failed_descriptor: &'static SliceDescriptor,
 ) -> Result<(), SliceDispatchError> {
-    let active = reconnect_lease_snapshot(world)?;
-    if active == *leases_before_hydrate {
-        return Ok(());
+    let expected_domains: HashSet<_> = descriptors
+        .iter()
+        .map(|descriptor| descriptor.write_binding.domain())
+        .collect();
+    let mut balances: HashMap<WriteDomain, i32> = HashMap::new();
+    for mutation in mutations {
+        if mutation.subject != *expected_subject {
+            return Err(SliceDispatchError::UnexpectedHydrateSubject {
+                slice_id: failed_descriptor.id,
+                domain: mutation.domain,
+            });
+        }
+        if !expected_domains.contains(&mutation.domain) {
+            return Err(SliceDispatchError::UnexpectedHydrateLease {
+                slice_id: failed_descriptor.id,
+                domain: mutation.domain,
+            });
+        }
+        let balance = balances.entry(mutation.domain).or_default();
+        match mutation.kind {
+            LeaseMutationKind::Acquired => *balance += 1,
+            LeaseMutationKind::Released => *balance -= 1,
+        }
     }
-    if let Some((domain, _)) = active
-        .difference(leases_before_hydrate)
-        .find(|lease| lease.1 != *expected_subject)
-    {
-        return Err(SliceDispatchError::UnexpectedHydrateSubject {
+    if let Some((domain, _)) = balances.iter().find(|(_, balance)| **balance != 0) {
+        return Err(SliceDispatchError::UnexpectedHydrateLease {
             slice_id: failed_descriptor.id,
             domain: *domain,
         });
     }
-    if let Some(descriptor) = descriptors.iter().find(|descriptor| {
-        active.contains(&(descriptor.write_binding.domain(), expected_subject.clone()))
-    }) {
-        return Err(SliceDispatchError::DuplicateSubject {
-            slice_id: descriptor.id,
-            domain: descriptor.write_binding.domain(),
+
+    let active = world
+        .get_resource::<PersistenceSliceRegistry>()
+        .ok_or(SliceDispatchError::MissingCanonicalRegistry)?
+        .active_subject_domains(expected_subject)?;
+    if let Some(domain) = active
+        .iter()
+        .copied()
+        .find(|domain| expected_domains.contains(domain))
+    {
+        let slice_id = descriptors
+            .iter()
+            .find(|descriptor| descriptor.write_binding.domain() == domain)
+            .map_or(failed_descriptor.id, |descriptor| descriptor.id);
+        return Err(SliceDispatchError::DuplicateSubject { slice_id, domain });
+    }
+    if let Some(domain) = active.iter().copied().next() {
+        return Err(SliceDispatchError::UnexpectedHydrateLease {
+            slice_id: failed_descriptor.id,
+            domain,
         });
     }
-    let domain = active
-        .symmetric_difference(leases_before_hydrate)
-        .next()
-        .map_or(failed_descriptor.write_binding.domain(), |lease| lease.0);
-    Err(SliceDispatchError::UnexpectedHydrateLease {
-        slice_id: failed_descriptor.id,
-        domain,
-    })
+    Ok(())
+}
+
+fn audit_rebase_leases(
+    descriptor: &'static SliceDescriptor,
+    mutations: &[LeaseMutation],
+) -> Result<(), SliceDispatchError> {
+    if let Some(mutation) = mutations.first() {
+        return Err(SliceDispatchError::UnexpectedRebaseLease {
+            slice_id: descriptor.id,
+            domain: mutation.domain,
+        });
+    }
+    Ok(())
+}
+
+fn reconnect_cleanup_audit(
+    world: &mut World,
+    descriptors: &[&'static SliceDescriptor],
+    runtime_tick: u64,
+    wall_unix_millis: u64,
+    handoff_key: &Option<String>,
+) -> Result<(usize, Vec<LeaseMutation>), SliceDispatchError> {
+    reconnect_lease_audit_begin(world)?;
+    let completed = cleanup_reconnect_activations(
+        world,
+        descriptors,
+        SliceRunReason::ReconnectAbort,
+        runtime_tick,
+        wall_unix_millis,
+        handoff_key,
+    );
+    let mutations = reconnect_lease_audit_finish(world)?;
+    Ok((completed, mutations))
 }
 
 fn cleanup_reconnect_activations(
@@ -1080,15 +1278,15 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         return Err(error);
     }
 
-    let leases_before_hydrate = reconnect_lease_snapshot(world)?;
     let mut hydrated_descriptors = Vec::new();
+    let mut handoff_mutations = Vec::new();
     for descriptor in &descriptors {
         let Some(load) = descriptor.hydrate else {
             continue;
         };
         hydrated_descriptors.push(*descriptor);
         report.loads_attempted += 1;
-        let leases_before_call = reconnect_lease_snapshot(world)?;
+        reconnect_lease_audit_begin(world)?;
         let activation = ReconnectActivationCapability {
             subject_key: subject_key.clone(),
         };
@@ -1101,16 +1299,11 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         };
         let outcome = load(world, &context);
         drop(context);
-        let leases_after_call = reconnect_lease_snapshot(world)?;
+        let mutations = reconnect_lease_audit_finish(world)?;
+        handoff_mutations.extend(mutations.iter().cloned());
         let lease_error = match &outcome {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) => {
-                audit_successful_hydrate_lease(
-                    descriptor,
-                    &subject_key,
-                    &leases_before_call,
-                    &leases_after_call,
-                )
-                .err()
+                audit_successful_hydrate_lease(world, descriptor, &subject_key, &mutations).err()
             }
             Ok(SliceRunOutcome::SkippedBlocked) | Err(_) => None,
         };
@@ -1128,6 +1321,7 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         }
         if lease_error.is_some() || !report.blocked_loads.is_empty() || !report.failures.is_empty()
         {
+            reconnect_lease_audit_begin(world)?;
             report.aborts_completed = cleanup_reconnect_activations(
                 world,
                 &hydrated_descriptors,
@@ -1136,9 +1330,10 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
                 wall_unix_millis,
                 &handoff_key,
             );
+            handoff_mutations.extend(reconnect_lease_audit_finish(world)?);
             audit_aborted_hydrate_leases(
                 world,
-                &leases_before_hydrate,
+                &handoff_mutations,
                 &hydrated_descriptors,
                 &subject_key,
                 descriptor,
@@ -1150,13 +1345,12 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
         }
     }
 
-    let leases_before_rebase = reconnect_lease_snapshot(world)?;
     for descriptor in &descriptors {
         let Some(rebase) = descriptor.rebase else {
             continue;
         };
         report.rebases_attempted += 1;
-        let leases_before_call = reconnect_lease_snapshot(world)?;
+        reconnect_lease_audit_begin(world)?;
         let context = SliceRunContext {
             reason: SliceRunReason::Rebase,
             runtime_tick,
@@ -1165,20 +1359,9 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             reconnect_activation: None,
         };
         let outcome = rebase(world, &context);
-        let leases_after_call = reconnect_lease_snapshot(world)?;
-        let lease_error = (leases_after_call == leases_before_call)
-            .then_some(())
-            .is_none()
-            .then(|| {
-                let domain = leases_after_call
-                    .symmetric_difference(&leases_before_call)
-                    .next()
-                    .map_or(descriptor.write_binding.domain(), |lease| lease.0);
-                SliceDispatchError::UnexpectedRebaseLease {
-                    slice_id: descriptor.id,
-                    domain,
-                }
-            });
+        let mutations = reconnect_lease_audit_finish(world)?;
+        handoff_mutations.extend(mutations.iter().cloned());
+        let lease_error = audit_rebase_leases(descriptor, &mutations).err();
         match outcome {
             Ok(SliceRunOutcome::Clean | SliceRunOutcome::Flushed) if lease_error.is_none() => {
                 report.rebases_completed += 1;
@@ -1192,17 +1375,18 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             }),
         }
         if let Some(error) = lease_error {
-            report.aborts_completed = cleanup_reconnect_activations(
+            let (completed, cleanup_mutations) = reconnect_cleanup_audit(
                 world,
                 &hydrated_descriptors,
-                SliceRunReason::ReconnectAbort,
                 runtime_tick,
                 wall_unix_millis,
                 &handoff_key,
-            );
+            )?;
+            report.aborts_completed = completed;
+            handoff_mutations.extend(cleanup_mutations);
             audit_aborted_hydrate_leases(
                 world,
-                &leases_before_hydrate,
+                &handoff_mutations,
                 &hydrated_descriptors,
                 &subject_key,
                 descriptor,
@@ -1210,35 +1394,24 @@ pub(in crate::persistence) fn dispatch_reconnect_handoff(
             return Err(error);
         }
         if !report.blocked_rebases.is_empty() || !report.failures.is_empty() {
-            report.aborts_completed = cleanup_reconnect_activations(
+            let (completed, cleanup_mutations) = reconnect_cleanup_audit(
                 world,
                 &hydrated_descriptors,
-                SliceRunReason::ReconnectAbort,
                 runtime_tick,
                 wall_unix_millis,
                 &handoff_key,
-            );
+            )?;
+            report.aborts_completed = completed;
+            handoff_mutations.extend(cleanup_mutations);
             audit_aborted_hydrate_leases(
                 world,
-                &leases_before_hydrate,
+                &handoff_mutations,
                 &hydrated_descriptors,
                 &subject_key,
                 descriptor,
             )?;
             return Ok(report);
         }
-    }
-
-    let leases_after_rebase = reconnect_lease_snapshot(world)?;
-    if leases_after_rebase != leases_before_rebase {
-        let domain = leases_after_rebase
-            .symmetric_difference(&leases_before_rebase)
-            .next()
-            .map_or(WriteDomain::new("reconnect.rebase"), |lease| lease.0);
-        return Err(SliceDispatchError::UnexpectedRebaseLease {
-            slice_id: SliceId::new("reconnect.rebase.final-audit"),
-            domain,
-        });
     }
 
     Ok(report)
@@ -1387,12 +1560,55 @@ impl PersistenceSubjectKey {
 }
 
 /// Opaque identity shared only by state derived from one active durable subject.
+#[derive(Debug)]
+struct LeaseToken {
+    lease_book: Arc<LeaseBook>,
+    subject: PersistenceSubjectKey,
+    domain: WriteDomain,
+    released: AtomicBool,
+}
+
+impl LeaseToken {
+    fn release(&self) {
+        if self.released.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Ok(mut subjects) = self.lease_book.active_subjects.lock() else {
+            return;
+        };
+        let Some(domains) = subjects.get_mut(&self.subject) else {
+            return;
+        };
+        domains.remove(&self.domain);
+        if domains.is_empty() {
+            subjects.remove(&self.subject);
+        }
+        self.lease_book
+            .record(self.domain, &self.subject, LeaseMutationKind::Released);
+    }
+}
+
+impl Drop for LeaseToken {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 #[derive(Debug, Clone)]
-struct SliceSubject(Arc<()>);
+struct SliceSubject(Arc<LeaseToken>);
 
 impl SliceSubject {
-    fn new() -> Self {
-        Self(Arc::new(()))
+    fn new(
+        lease_book: Arc<LeaseBook>,
+        subject: PersistenceSubjectKey,
+        domain: WriteDomain,
+    ) -> Self {
+        Self(Arc::new(LeaseToken {
+            lease_book,
+            subject,
+            domain,
+            released: AtomicBool::new(false),
+        }))
     }
 
     fn is_same(&self, other: &Self) -> bool {
@@ -2454,6 +2670,38 @@ mod tests {
             )
             .unwrap();
         (registry, guarded)
+    }
+
+    #[test]
+    fn lease_audit_rejects_nested_and_unmatched_lifecycle() {
+        let registry = PersistenceSliceRegistry::empty();
+
+        assert_eq!(
+            registry.finish_lease_audit(),
+            Err(SliceDispatchError::LeaseAuditNotActive),
+            "finishing without begin must fail closed instead of fabricating an empty journal"
+        );
+        registry.begin_lease_audit().unwrap();
+        assert_eq!(
+            registry.begin_lease_audit(),
+            Err(SliceDispatchError::LeaseAuditAlreadyActive),
+            "a second begin must not overwrite the first journal"
+        );
+        assert!(registry
+            .finish_lease_audit()
+            .expect("the active journal must finish exactly once")
+            .is_empty());
+        assert_eq!(
+            registry.finish_lease_audit(),
+            Err(SliceDispatchError::LeaseAuditNotActive),
+            "finishing twice must expose a residual lifecycle violation"
+        );
+
+        registry.begin_lease_audit().unwrap();
+        assert!(registry
+            .finish_lease_audit()
+            .expect("a fresh journal must remain usable after a clean finish")
+            .is_empty());
     }
 
     #[test]
