@@ -145,29 +145,72 @@ class AtomicRasterPublicationTest(unittest.TestCase):
             )
 
     def test_failed_publication_preserves_previous_target(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "layer.bin"
-            path.write_bytes(b"previous-complete-layer")
-            temp_paths = []
+        for failure_name, inject_failure in (
+            ("write", self._fail_write),
+            ("flush", self._fail_flush),
+            ("fsync", self._fail_fsync),
+            ("replace", self._fail_replace),
+        ):
+            with self.subTest(failure_name=failure_name):
+                with tempfile.TemporaryDirectory() as td:
+                    path = Path(td) / "layer.bin"
+                    path.write_bytes(b"previous-complete-layer")
 
-            def fail_replace(_source: Path, _target: Path) -> None:
-                temp_paths.append(_source)
-                raise OSError("replace failed")
+                    with inject_failure():
+                        with self.assertRaisesRegex(OSError, f"{failure_name} failed"):
+                            _atomic_write_bytes(path, b"new-layer")
 
-            with patch.object(Path, "replace", fail_replace):
-                with self.assertRaisesRegex(OSError, "replace failed"):
-                    _atomic_write_bytes(path, b"new-layer")
+                    self.assertEqual(
+                        path.read_bytes(),
+                        b"previous-complete-layer",
+                        f"{failure_name} failure must not corrupt the previously published raster",
+                    )
+                    self.assertEqual(
+                        list(Path(td).glob(".*.tmp")),
+                        [],
+                        f"{failure_name} failure must clean its unique temporary file",
+                    )
 
-            self.assertEqual(
-                path.read_bytes(),
-                b"previous-complete-layer",
-                "a replace failure must not corrupt the previously published raster",
-            )
-            self.assertEqual(
-                list(Path(td).glob(".*.tmp")),
-                [],
-                "failed publication must clean its unique temporary file",
-            )
+    @staticmethod
+    def _fail_write():
+        original_open = Path.open
+
+        def fail_write(path: Path, mode: str = "r", *args, **kwargs):
+            file = original_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return file
+
+            original_write = file.write
+
+            def write(_data):
+                original_write(b"partial")
+                raise OSError("write failed")
+
+            file.write = write
+            return file
+
+        return patch.object(Path, "open", fail_write)
+
+    @staticmethod
+    def _fail_flush():
+        original_open = Path.open
+
+        def fail_flush(path: Path, mode: str = "r", *args, **kwargs):
+            file = original_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return file
+            file.flush = lambda: (_ for _ in ()).throw(OSError("flush failed"))
+            return file
+
+        return patch.object(Path, "open", fail_flush)
+
+    @staticmethod
+    def _fail_fsync():
+        return patch("scripts.terrain_gen.bakers.raster_export.os.fsync", side_effect=OSError("fsync failed"))
+
+    @staticmethod
+    def _fail_replace():
+        return patch.object(Path, "replace", side_effect=OSError("replace failed"))
 
 
 class SpansExportLayoutTest(unittest.TestCase):
