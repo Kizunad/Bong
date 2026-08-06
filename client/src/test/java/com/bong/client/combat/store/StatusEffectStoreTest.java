@@ -38,6 +38,19 @@ class StatusEffectStoreTest {
         assertEquals(StatusEffectStore.TOP_BAR_LIMIT, StatusEffectStore.topBar().size());
     }
 
+    @Test void clearOnDisconnectResetsEffectsAndCultivationAcceleration() {
+        StatusEffectStore.replace(List.of(
+            new StatusEffectStore.Effect(
+                "haste", "加速", StatusEffectStore.Kind.BUFF, 1, 10_000, 0xFF00FF00, "", 0)
+        ));
+        StatusEffectStore.setCultivationAcceleration(2.5);
+
+        StatusEffectStore.clearOnDisconnect();
+
+        assertTrue(StatusEffectStore.snapshot().isEmpty());
+        assertEquals(1.0, StatusEffectStore.cultivationAcceleration());
+    }
+
     @Test void kindFromWireDefaultsUnknown() {
         assertEquals(StatusEffectStore.Kind.DOT, StatusEffectStore.Kind.fromWire("dot"));
         assertEquals(StatusEffectStore.Kind.UNKNOWN, StatusEffectStore.Kind.fromWire("not-a-kind"));

@@ -1,0 +1,31 @@
+# path	class_name	kind	adapter_style	base_migration_eligible	note
+agentui/AgentUiScreen.java	AgentUiScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory
+alchemy/AlchemyScreen.java	AlchemyScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+coffin/CoffinMenuScreen.java	CoffinMenuScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen, not a direct base migration
+combat/screen/DeathScreen.java	DeathScreen	VANILLA_SCREEN	VANILLA	false	System-terminal screen
+combat/screen/ForgeCarrierScreen.java	ForgeCarrierScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+combat/screen/RepairScreen.java	RepairScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+combat/screen/TerminateScreen.java	TerminateScreen	VANILLA_SCREEN	VANILLA	false	System-terminal screen
+combat/screen/ZhenfaLayoutScreen.java	ZhenfaLayoutScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+craft/CraftScreen.java	CraftScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+craft/WorkbenchScreen.java	WorkbenchScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+cultivation/TechniqueScrollReadScreen.java	TechniqueScrollReadScreen	NON_SCREEN_HELPER	NONE	false	Suffix matches Screen.java but class is a toast/text helper
+cultivation/voidaction/VoidActionScreen.java	VoidActionScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+forge/ForgeScreen.java	ForgeScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+identity/IdentityPanelScreen.java	IdentityPanelScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+insight/InsightOfferScreen.java	InsightOfferScreen	BASE_OWO	CODE	true	Code-built modal FlowLayout
+inspect/ItemInspectScreen.java	ItemInspectScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+inventory/InspectScreen.java	InspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout; P3 split target
+inventory/LootContainerScreen.java	LootContainerScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+lingtian/LingtianActionScreen.java	LingtianActionScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+npc/NpcDialogueScreen.java	NpcDialogueScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+npc/NpcInspectScreen.java	NpcInspectScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+npc/NpcTradeScreen.java	NpcTradeScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+processing/ProcessingActionScreen.java	ProcessingActionScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+scroll/ScrollReadScreen.java	ScrollReadScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+social/SparringInviteScreen.java	SparringInviteScreen	VANILLA_SCREEN	VANILLA	false	Vanilla modal screen
+social/TradeOfferScreen.java	TradeOfferScreen	VANILLA_SCREEN	VANILLA	false	Vanilla modal screen
+spirittreasure/SpiritTreasureScreen.java	SpiritTreasureScreen	VANILLA_SCREEN	VANILLA	false	Vanilla Screen
+ui/CultivationScreen.java	CultivationScreen	BASE_OWO	CODE	true	Code-built FlowLayout
+ui/DynamicXmlScreen.java	DynamicXmlScreen	BASE_OWO	XML_MODEL	true	UIModel adapter; base must not hard-code a root factory
+cultivation/voidaction/LegacyAssignPanel.java	LegacyAssignPanel	VANILLA_SCREEN	VANILLA	false	Real Screen missed by the Screen.java suffix inventory

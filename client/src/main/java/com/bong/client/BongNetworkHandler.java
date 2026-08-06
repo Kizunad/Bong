@@ -1132,7 +1132,10 @@ public class BongNetworkHandler {
 
     static void clearClientStateOnDisconnect() {
         SessionScopedStoreRegistry.clearAllOnDisconnect();
+        runAdjunctDisconnectTeardown();
+    }
 
+    private static void runAdjunctDisconnectTeardown() {
         runDisconnectCleanups(
             () -> EnvironmentEffectController.clearOnDisconnect(),
             () -> BongShaderState.clearOnDisconnect(),
@@ -1154,7 +1157,7 @@ public class BongNetworkHandler {
             () -> NpcFootstepAudioController.clearOnDisconnect(),
             () -> BongAnimationRegistry.clearOnDisconnect(),
             () -> NpcDialogueBubbleRenderer.clear(),
-            () -> com.bong.client.audio.MusicStateMachine.instance().clear(),
+            () -> com.bong.client.audio.MusicStateMachine.clearOnDisconnect(),
             () -> SoundRecipePlayer.instance().clearOnDisconnect(),
             () -> BongAnimationPlayer.clearOnDisconnect(),
             () -> AnimationLayerManager.clearOnDisconnect(),
