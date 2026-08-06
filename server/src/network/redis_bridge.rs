@@ -57,7 +57,7 @@ use crate::schema::channels::{
     CH_WOLIU_BACKFIRE, CH_WOLIU_PROJECTILE_DRAINED, CH_WOLIU_V2_BACKFIRE, CH_WOLIU_V2_CAST,
     CH_WOLIU_V2_TURBULENCE, CH_WORLD_STATE, CH_YIDAO_EVENT, CH_ZHENFA_V2_EVENT,
     CH_ZHENMAI_SKILL_EVENT, CH_ZONE_ENVIRONMENT_UPDATE, CH_ZONE_PRESSURE_CROSSED,
-    CH_ZONG_CORE_ACTIVATED, QI_LEDGER_REDIS_KEY,
+    CH_ZONG_CORE_ACTIVATED, ELDER_ENCOUNTER_DURABLE_REDIS_KEY, QI_LEDGER_REDIS_KEY,
 };
 use crate::schema::chat_message::ChatMessageV1;
 use crate::schema::combat_carrier::{
@@ -136,6 +136,12 @@ const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const OUTBOUND_DRAIN_BUDGET: usize = 16;
 const CHAT_MESSAGE_MAX_LENGTH: usize = 256;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedisDeliveryReceipt {
+    pub delivery_id: String,
+    pub outcome: Result<(), String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum RedisInbound {
     AgentCommand(AgentCommandV1),
@@ -152,7 +158,11 @@ pub enum RedisInbound {
 #[derive(Debug, Clone)]
 pub enum RedisOutbound {
     WorldState(WorldStateV1),
-    NpcDormantHash(Vec<(String, String)>),
+    NpcDormantHash {
+        entries: Vec<(String, String)>,
+        revision: u64,
+        receipt_tx: Sender<RedisDeliveryReceipt>,
+    },
     /// plan-offscreen-war-v1 P0：守恒 telemetry HASH（`bong:qi/ledger`）。
     QiLedgerHash(Vec<(String, String)>),
     SeasonChanged(SeasonChangedV1),
@@ -296,6 +306,12 @@ pub enum RedisOutbound {
     BaomaiV4ResonanceLockEnd(BaomaiV4ResonanceLockEndV1),
     /// plan-combat-skill-feedback-bridges-v1 P3 — 虚蚀阶段推进叙事事件（bong:void_erosion_event）。
     VoidErosionEvent(VoidErosionEventV1),
+    /// Durable terminal narration source entry. RPUSH is acknowledged only after Redis stores it.
+    ElderEncounterTerminal {
+        delivery_id: String,
+        event: ElderEncounterEventV1,
+        receipt_tx: Sender<RedisDeliveryReceipt>,
+    },
     /// plan-dying-elder-v1 P3 — 垂死大能遭遇事件（bong:elder_encounter）。
     ElderEncounterEvent(ElderEncounterEventV1),
     /// plan-territory-v1 P3 — 领地霸主变动叙事请求（bong:territory_narration_request）。
@@ -311,8 +327,14 @@ pub enum RedisOutbound {
     ),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum RedisIoCommand {
+    ListPushWithReceipt {
+        key: &'static str,
+        payload: String,
+        delivery_id: String,
+        receipt_tx: Sender<RedisDeliveryReceipt>,
+    },
     Publish {
         channel: &'static str,
         payload: String,
@@ -324,6 +346,12 @@ enum RedisIoCommand {
     ListPush {
         key: &'static str,
         payload: String,
+    },
+    HashReplaceWithReceipt {
+        key: &'static str,
+        entries: Vec<(String, String)>,
+        delivery_id: String,
+        receipt_tx: Sender<RedisDeliveryReceipt>,
     },
     HashReplace {
         key: &'static str,
@@ -559,9 +587,15 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
-        RedisOutbound::NpcDormantHash(entries) => Ok(RedisIoCommand::HashReplace {
+        RedisOutbound::NpcDormantHash {
+            entries,
+            revision,
+            receipt_tx,
+        } => Ok(RedisIoCommand::HashReplaceWithReceipt {
             key: NPC_DORMANT_REDIS_KEY,
             entries,
+            delivery_id: revision.to_string(),
+            receipt_tx,
         }),
         RedisOutbound::QiLedgerHash(entries) => Ok(RedisIoCommand::HashReplace {
             key: QI_LEDGER_REDIS_KEY,
@@ -1684,6 +1718,23 @@ fn prepare_outbound_command(message: RedisOutbound) -> Result<RedisIoCommand, Va
                 payload,
             })
         }
+        RedisOutbound::ElderEncounterTerminal {
+            delivery_id,
+            event,
+            receipt_tx,
+        } => {
+            let payload = serde_json::to_string(&event).map_err(|error| {
+                ValidationError::new(format!(
+                    "failed to serialize durable ElderEncounterEventV1: {error}"
+                ))
+            })?;
+            Ok(RedisIoCommand::ListPushWithReceipt {
+                key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
+                payload,
+                delivery_id,
+                receipt_tx,
+            })
+        }
         RedisOutbound::ElderEncounterEvent(evt) => {
             let payload = serde_json::to_string(&evt).map_err(|error| {
                 ValidationError::new(format!(
@@ -1810,21 +1861,17 @@ async fn dispatch_outbound_command(
 }
 
 fn runs_on_background_redis_connection(command: &RedisIoCommand) -> bool {
-    // Both world_state Publish and dormant HashReplace must never block the
-    // primary outbound connection: a slow / timing-out dormant write previously
-    // pinned `pending_command` and starved every other channel (world_state,
-    // combat, chat). Routing them onto the cloned background connection makes
-    // them fire-and-forget — failures only `warn!` and never become a
-    // `pending_command`. `HashReplace` is exclusively produced by
-    // `RedisOutbound::NpcDormantHash` (see `prepare_outbound_command`), so the
-    // sole key it ever targets is `NPC_DORMANT_REDIS_KEY`; matching the variant
-    // is equivalent to "only dormant runs in the background".
+    // World-state publish and HASH replacements must never block the primary
+    // outbound connection. Dormant receipt-bearing HASH writes report their
+    // outcome back to `NpcDormantStore`; ordinary telemetry HASH failures only
+    // warn and never become a `pending_command`.
     matches!(
         command,
         RedisIoCommand::Publish {
             channel: CH_WORLD_STATE,
             ..
-        } | RedisIoCommand::HashReplace { .. }
+        } | RedisIoCommand::HashReplaceWithReceipt { .. }
+            | RedisIoCommand::HashReplace { .. }
     )
 }
 
@@ -1833,6 +1880,21 @@ async fn execute_outbound_command(
     command: &RedisIoCommand,
 ) -> Result<(), String> {
     match command {
+        RedisIoCommand::ListPushWithReceipt {
+            key,
+            payload,
+            delivery_id,
+            receipt_tx,
+        } => {
+            let outcome = execute_list_push(pub_conn, key, payload).await;
+            if outcome.is_ok() {
+                let _ = receipt_tx.send(RedisDeliveryReceipt {
+                    delivery_id: delivery_id.clone(),
+                    outcome: Ok(()),
+                });
+            }
+            outcome
+        }
         RedisIoCommand::Publish { channel, payload } => {
             execute_publish(pub_conn, channel, payload).await
         }
@@ -1843,31 +1905,50 @@ async fn execute_outbound_command(
             Ok(())
         }
         RedisIoCommand::ListPush { key, payload } => {
-            match tokio::time::timeout(
-                REDIS_IO_TIMEOUT,
-                redis::cmd("RPUSH")
-                    .arg(key)
-                    .arg(payload)
-                    .query_async::<i64>(pub_conn),
-            )
-            .await
-            {
-                Ok(Ok(list_len)) => {
-                    tracing::debug!(
-                        "[bong][redis] pushed payload onto {key}; list length {list_len}"
-                    );
-                    Ok(())
-                }
-                Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
-                Err(_) => Err(format!(
-                    "timed out RPUSH {key} after {:?}",
-                    REDIS_IO_TIMEOUT
-                )),
-            }
+            execute_list_push(pub_conn, key, payload).await
+        }
+        RedisIoCommand::HashReplaceWithReceipt {
+            key,
+            entries,
+            delivery_id,
+            receipt_tx,
+        } => {
+            let outcome = execute_hash_replace(pub_conn, key, entries).await;
+            let _ = receipt_tx.send(RedisDeliveryReceipt {
+                delivery_id: delivery_id.clone(),
+                outcome: outcome.clone(),
+            });
+            outcome
         }
         RedisIoCommand::HashReplace { key, entries } => {
             execute_hash_replace(pub_conn, key, entries).await
         }
+    }
+}
+
+async fn execute_list_push(
+    pub_conn: &mut redis::aio::MultiplexedConnection,
+    key: &'static str,
+    payload: &str,
+) -> Result<(), String> {
+    match tokio::time::timeout(
+        REDIS_IO_TIMEOUT,
+        redis::cmd("RPUSH")
+            .arg(key)
+            .arg(payload)
+            .query_async::<i64>(pub_conn),
+    )
+    .await
+    {
+        Ok(Ok(list_len)) => {
+            tracing::debug!("[bong][redis] pushed payload onto {key}; list length {list_len}");
+            Ok(())
+        }
+        Ok(Err(error)) => Err(format!("failed to RPUSH {key}: {error}")),
+        Err(_) => Err(format!(
+            "timed out RPUSH {key} after {:?}",
+            REDIS_IO_TIMEOUT
+        )),
     }
 }
 
@@ -2723,6 +2804,20 @@ fn expect_array_field<'a>(
 mod redis_bridge_tests {
     use super::*;
 
+    fn dormant_hash_outbound(
+        entries: Vec<(String, String)>,
+    ) -> (RedisOutbound, Receiver<RedisDeliveryReceipt>) {
+        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+        (
+            RedisOutbound::NpcDormantHash {
+                entries,
+                revision: 7,
+                receipt_tx,
+            },
+            receipt_rx,
+        )
+    }
+
     /// bug-hunt-1: war_outcome / dying_elder_* 是 agent 端生产 narration kind
     /// （war-outcome-narration.ts / elder-encounter-narration.ts）。此前 server 白名单
     /// 漏列导致 validate_narration_entry 拒收 → 整 batch 在 redis_bridge.rs:2224
@@ -2787,6 +2882,7 @@ mod redis_bridge_tests {
     use crate::schema::tuike_v2::{FalseSkinTierV1, TuikeSkillIdV1, TuikeSkillVisualContractV1};
     use crate::schema::zhenmai_v2::{ZhenmaiAttackKindV1, ZhenmaiSkillIdV1};
     use serde_json::json;
+    use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
     use tokio::task;
 
     fn sample_world_state() -> WorldStateV1 {
@@ -2801,6 +2897,69 @@ mod redis_bridge_tests {
             "../../../agent/packages/schema/samples/chat-message.sample.json"
         ))
         .expect("chat-message sample should deserialize")
+    }
+
+    fn sample_durable_elder_event(event_id: &str) -> ElderEncounterEventV1 {
+        ElderEncounterEventV1 {
+            event_id: Some(event_id.to_string()),
+            zone_name: "tsy_deep".to_string(),
+            elder_entity_id: 42,
+            event_kind: crate::schema::elder_encounter::ElderEncounterEventKindV1::DeadNatural,
+            betray_probability: 0.0,
+            dan_count: 0,
+            offered_skill_id: String::new(),
+            qi_fraction: 0.0,
+            server_tick: 91,
+        }
+    }
+
+    #[test]
+    fn durable_elder_terminal_encodes_correlated_inline_list_push() {
+        let (receipt_tx, receipt_rx) = crossbeam_channel::unbounded();
+        let event_id = "terminal:npc:42:91";
+        let command = prepare_outbound_command(RedisOutbound::ElderEncounterTerminal {
+            delivery_id: event_id.to_string(),
+            event: sample_durable_elder_event(event_id),
+            receipt_tx,
+        })
+        .expect("durable terminal event should encode");
+
+        assert!(
+            !runs_on_background_redis_connection(&command),
+            "durable terminal publish must stay inline so reconnect retains it as pending_command"
+        );
+        match command {
+            RedisIoCommand::ListPushWithReceipt {
+                key,
+                payload,
+                delivery_id,
+                receipt_tx: encoded_tx,
+            } => {
+                assert_eq!(key, ELDER_ENCOUNTER_DURABLE_REDIS_KEY);
+                assert_eq!(delivery_id, event_id);
+                let decoded: ElderEncounterEventV1 =
+                    serde_json::from_str(&payload).expect("durable payload should be valid JSON");
+                assert_eq!(decoded, sample_durable_elder_event(event_id));
+                assert!(
+                    receipt_rx.try_recv().is_err(),
+                    "encoding must not forge delivery receipt"
+                );
+                encoded_tx
+                    .send(RedisDeliveryReceipt {
+                        delivery_id,
+                        outcome: Ok(()),
+                    })
+                    .expect("encoded receipt channel should remain correlated");
+                assert_eq!(
+                    receipt_rx.recv().expect("receipt should arrive"),
+                    RedisDeliveryReceipt {
+                        delivery_id: event_id.to_string(),
+                        outcome: Ok(()),
+                    }
+                );
+            }
+            other => panic!("expected ListPushWithReceipt, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2897,15 +3056,21 @@ mod redis_bridge_tests {
             "npc_a".to_string(),
             serde_json::json!({"char_id": "npc_a"}).to_string(),
         )];
-        let command = prepare_outbound_command(RedisOutbound::NpcDormantHash(entries.clone()))
+        let command = prepare_outbound_command(dormant_hash_outbound(entries.clone()).0)
             .expect("dormant hash payload should produce a hash replace command");
 
         match command {
-            RedisIoCommand::HashReplace { key, entries: got } => {
+            RedisIoCommand::HashReplaceWithReceipt {
+                key,
+                entries: got,
+                delivery_id,
+                ..
+            } => {
                 assert_eq!(key, NPC_DORMANT_REDIS_KEY);
                 assert_eq!(got, entries);
+                assert_eq!(delivery_id, "7");
             }
-            other => panic!("expected hash replace command, got {other:?}"),
+            other => panic!("expected hash replace command with receipt, got {other:?}"),
         }
     }
 
@@ -3052,10 +3217,13 @@ mod redis_bridge_tests {
     #[test]
     fn dormant_hash_replace_failure_does_not_starve_other_outbound() {
         // The would-be slow / failing dormant write.
-        let dormant = prepare_outbound_command(RedisOutbound::NpcDormantHash(vec![(
-            "npc_slow".to_string(),
-            serde_json::json!({"char_id": "npc_slow"}).to_string(),
-        )]))
+        let dormant = prepare_outbound_command(
+            dormant_hash_outbound(vec![(
+                "npc_slow".to_string(),
+                serde_json::json!({"char_id": "npc_slow"}).to_string(),
+            )])
+            .0,
+        )
         .expect("dormant payload should produce a HashReplace command");
         assert!(
             runs_on_background_redis_connection(&dormant),
@@ -3104,6 +3272,18 @@ mod redis_bridge_tests {
                 payload: "{}".to_string(),
             }),
             "expected non-world_state Publish to stay inline; only world_state is large enough to warrant the background connection"
+        );
+        // Correlated durable ListPushWithReceipt -> inline. It must be eligible for
+        // pending_command retry and may emit a receipt only after Redis stores the list entry.
+        let (receipt_tx, _receipt_rx) = crossbeam_channel::unbounded();
+        assert!(
+            !runs_on_background_redis_connection(&RedisIoCommand::ListPushWithReceipt {
+                key: ELDER_ENCOUNTER_DURABLE_REDIS_KEY,
+                payload: "{}".to_string(),
+                delivery_id: "terminal:npc:42:91".to_string(),
+                receipt_tx,
+            }),
+            "expected durable terminal list push to stay inline so failures retain the exact command for reconnect retry"
         );
         // ListPush (e.g. player_chat) -> inline.
         assert!(
@@ -3159,6 +3339,137 @@ mod redis_bridge_tests {
             dormant_temp_key("bong:other/store"),
             "expected distinct logical keys to map to distinct temp keys so unrelated replaces never collide; got identical temp keys"
         );
+    }
+
+    async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> Vec<u8> {
+        let mut line = Vec::new();
+        loop {
+            let mut byte = [0_u8; 1];
+            server
+                .read_exact(&mut byte)
+                .await
+                .expect("mock Redis must read the complete RESP line");
+            line.push(byte[0]);
+            if line.ends_with(b"\r\n") {
+                return line;
+            }
+        }
+    }
+
+    async fn read_resp_request(server: &mut tokio::io::DuplexStream) {
+        let line = read_resp_line(server).await;
+        assert_eq!(
+            line.first().copied(),
+            Some(b'*'),
+            "request must be RESP array"
+        );
+        let argument_count = std::str::from_utf8(&line[1..line.len() - 2])
+            .expect("RESP array count must be UTF-8")
+            .parse::<usize>()
+            .expect("RESP array count must be numeric");
+        for _ in 0..argument_count {
+            let line = read_resp_line(server).await;
+            assert_eq!(
+                line.first().copied(),
+                Some(b'$'),
+                "argument must be bulk string"
+            );
+            let length = std::str::from_utf8(&line[1..line.len() - 2])
+                .expect("RESP bulk length must be UTF-8")
+                .parse::<usize>()
+                .expect("RESP bulk length must be numeric");
+            let mut payload = vec![0_u8; length + 2];
+            server
+                .read_exact(&mut payload)
+                .await
+                .expect("mock Redis must read the complete RESP bulk string");
+            assert_eq!(
+                &payload[length..],
+                b"\r\n",
+                "RESP bulk string must end with CRLF"
+            );
+        }
+    }
+
+    async fn mock_multiplexed_connection(
+        responses: Vec<&'static [u8]>,
+    ) -> redis::aio::MultiplexedConnection {
+        let (client, mut server) = duplex(16 * 1024);
+        task::spawn(async move {
+            for _ in 0..2 {
+                read_resp_request(&mut server).await;
+            }
+            server
+                .write_all(b"+OK\r\n+OK\r\n")
+                .await
+                .expect("mock Redis must send both setup responses");
+
+            for response in responses {
+                read_resp_request(&mut server).await;
+                server
+                    .write_all(response)
+                    .await
+                    .expect("mock Redis must send its configured response");
+            }
+        });
+        let (connection, driver) =
+            redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
+                .await
+                .expect("test duplex must construct a multiplexed Redis connection");
+        task::spawn(driver);
+        connection
+    }
+
+    #[tokio::test]
+    async fn hash_replace_executor_reports_correlated_success_and_failure_receipts() {
+        let success_entries = vec![("npc_a".to_string(), "{}".to_string())];
+        let (success_tx, success_rx) = crossbeam_channel::unbounded();
+        let mut success_connection =
+            mock_multiplexed_connection(vec![b":0\r\n", b":1\r\n", b"+OK\r\n"]).await;
+        let success = execute_outbound_command(
+            &mut success_connection,
+            &RedisIoCommand::HashReplaceWithReceipt {
+                key: NPC_DORMANT_REDIS_KEY,
+                entries: success_entries,
+                delivery_id: "revision-success".to_string(),
+                receipt_tx: success_tx,
+            },
+        )
+        .await;
+        assert_eq!(success, Ok(()));
+        let receipt = success_rx
+            .try_recv()
+            .expect("successful executor path must always emit a receipt");
+        assert_eq!(receipt.delivery_id, "revision-success");
+        assert_eq!(receipt.outcome, Ok(()));
+
+        let (failure_tx, failure_rx) = crossbeam_channel::unbounded();
+        let mut failure_connection = mock_multiplexed_connection(vec![
+            b":0\r\n",
+            b"-ERR injected HSET failure\r\n",
+            b":0\r\n",
+        ])
+        .await;
+        let failure = execute_outbound_command(
+            &mut failure_connection,
+            &RedisIoCommand::HashReplaceWithReceipt {
+                key: NPC_DORMANT_REDIS_KEY,
+                entries: vec![("npc_b".to_string(), "{}".to_string())],
+                delivery_id: "revision-failure".to_string(),
+                receipt_tx: failure_tx,
+            },
+        )
+        .await;
+        assert!(failure.is_err());
+        let receipt = failure_rx
+            .try_recv()
+            .expect("failed executor path must emit a correlated negative receipt");
+        assert_eq!(receipt.delivery_id, "revision-failure");
+        assert_eq!(receipt.outcome, failure);
+        assert!(receipt
+            .outcome
+            .as_ref()
+            .is_err_and(|error| error.contains("injected HSET failure")));
     }
 
     #[test]
@@ -5466,7 +5777,7 @@ mod redis_bridge_tests {
         // exact bug this plan fixes).
         assert!(
             runs_on_background_redis_connection(
-                &prepare_outbound_command(RedisOutbound::NpcDormantHash(Vec::new())).unwrap()
+                &prepare_outbound_command(dormant_hash_outbound(Vec::new()).0).unwrap()
             ),
             "expected dormant HashReplace to run on the background connection so it cannot starve other outbound IPC; got inline routing"
         );

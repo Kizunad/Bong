@@ -1,0 +1,9 @@
+{
+  "elder_entity_id": 42,
+  "event_kind": "appeared",
+  "betray_probability": 0.65,
+  "dan_count": 0,
+  "offered_skill_id": "woliu.heart",
+  "qi_fraction": 0.9,
+  "server_tick": 720000
+}

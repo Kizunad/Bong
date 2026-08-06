@@ -35,5 +35,6 @@
     "broken": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e9da383832802b126b9d9bd6b09550dd60ef73e02ea993ee905c7774e2c047f7"
 }

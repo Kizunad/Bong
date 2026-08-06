@@ -37,5 +37,6 @@
       "maximum": 255,
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "37fe1d75969e37d3368f4e628c0ba91566a5fade027176cdae1f8017d3d422cd"
 }

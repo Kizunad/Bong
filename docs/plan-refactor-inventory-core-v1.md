@@ -1,6 +1,6 @@
 # plan-refactor-inventory-core-v1 — Inventory 核心事务契约（重构轨 R10）
 
-> 所属总纲：`plan-refactor-master-v1.md`。P0 只冻结事实、失败边界、跨轨 owner 与审核要求的 pins；不把设计当实现。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。P0 只冻结事实、失败边界、跨轨 owner 与审核要求的 pins；不把设计当实现。
 
 ## 阶段
 
@@ -10,7 +10,7 @@
 - ⬜ P3：pickup/merge txn；R4/R5/R6 consumer 与 receipt/attrition 接缝只引用 master M-14/M-15。
 - ⬜ P4：联合 bot/e2e + plan 收口；完成 evidence 需覆盖对应 M-row 与 canonical O-row。
 
-所有跨轨 start/order/cutover 只引用 `plan-refactor-master-v1.md §3/§4.1` 与 PR 1902；本阶段表不复制箭头。
+所有跨轨 start/order/cutover 只引用草案总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §3/§4.1 与 PR 1902；本阶段表不复制箭头。
 
 ## 1. 完整 contract surface
 

@@ -398,6 +398,8 @@ mod tests {
 
     fn mundane_thinker_scenario_with_kind(kind: MundaneFaunaKind) -> (App, Entity) {
         let mut app = App::new();
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+        app.add_event::<crate::qi_physics::QiTransfer>();
         crate::npc::lifecycle::register(&mut app);
         crate::npc::brain::register(&mut app);
         app.add_event::<crate::combat::events::AttackIntent>();

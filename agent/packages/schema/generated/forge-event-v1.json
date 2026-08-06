@@ -39,5 +39,6 @@
     "success": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "22434b16d311f27c720c7b54c3214101ab1b96bc712b720e132dba0a0bae793d"
 }

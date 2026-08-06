@@ -14,5 +14,6 @@
       "const": "cancel_extract_request",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "21aee10bf92ec0f8cc568297dc996eeceebe8b707db4c15bc17a21c6bb8e691f"
 }

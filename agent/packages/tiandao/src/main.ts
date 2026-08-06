@@ -805,7 +805,15 @@ async function startElderEncounterRuntime(opts: {
     typeof ElderEncounterNarrationRuntime
   >[0]["pub"];
 
-  const runtime = new ElderEncounterNarrationRuntime({ sub, pub });
+  const durableQueue = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
+    typeof ElderEncounterNarrationRuntime
+  >[0]["durableQueue"];
+
+  const runtime = new ElderEncounterNarrationRuntime({
+    sub,
+    pub,
+    durableQueue,
+  });
   runtime
     .connect()
     .then(() => console.log("[tiandao] elder encounter narration runtime online"))

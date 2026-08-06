@@ -5,23 +5,19 @@ use std::sync::{Mutex, MutexGuard};
 use bong_server::cmd::dev;
 use bong_server::cmd::dev::qi::{QiCmd, QiCmd as RepresentativeDevCommand};
 use bong_server::cmd::dev::season::{self, SeasonCmd, SeasonCmd as SeasonDevCommand};
-use bong_server::cmd::gameplay::war::FactionCmd;
-use bong_server::cmd::gameplay::BongCmd;
-use bong_server::cmd::ping::PingCmd;
 use bong_server::cmd::registry_pin;
-use bong_server::identity::command::IdentityCmd;
+use bong_server::cultivation::components::Cultivation;
 use bong_server::world::season::{Season, WorldSeasonState};
 use valence::command::handler::CommandResultEvent;
-use valence::command::manager::CommandPlugin;
 use valence::command::scopes::{CommandScopeRegistry, CommandScopes};
-use valence::command::{AddCommand, CommandExecutionEvent, CommandRegistry};
-use valence::prelude::{
-    App, Client, ConnectionMode, Entity, EventLoopPreUpdate, EventLoopUpdate, Events,
-    NetworkSettings, Schedule,
-};
+use valence::command::CommandRegistry;
+use valence::prelude::{App, Client, ConnectionMode, Entity, EventLoopPreUpdate, Events, Schedule};
 use valence::protocol::packets::play::command_tree_s2c::NodeData;
-use valence::protocol::packets::play::GameMessageS2c;
+use valence::protocol::packets::play::{CommandExecutionC2s, GameMessageS2c};
+use valence::protocol::{Bounded, FixedBitSet, VarInt};
 use valence::testing::{create_mock_client, MockClientHelper};
+
+const EXPECTED_PUBLIC_COMMAND_ROOTS: &[&str] = &["bong", "faction", "identity", "ping"];
 
 static ENV_MUTEX: Mutex<()> = Mutex::new(());
 const DEV_COMMAND_SCOPE: &str = "bong.dev";
@@ -68,22 +64,7 @@ impl Drop for ScopedEnvVars {
 }
 
 fn setup_app(connection_mode: ConnectionMode) -> App {
-    let mut app = App::new();
-    app.insert_resource(NetworkSettings {
-        connection_mode,
-        ..Default::default()
-    });
-    app.add_event::<valence::event_loop::PacketEvent>();
-    app.add_plugins(CommandPlugin);
-    dev::register(&mut app);
-    app.add_command::<PingCmd>();
-    app.add_command::<BongCmd>();
-    app.add_command::<FactionCmd>();
-    app.add_command::<IdentityCmd>();
-    app.finish();
-    app.cleanup();
-    app.world_mut().run_schedule(valence::prelude::PostStartup);
-    app
+    bong_server::cmd::test_command_app_with_connection_mode(connection_mode)
 }
 
 fn online_mode() -> ConnectionMode {
@@ -94,22 +75,21 @@ fn online_mode() -> ConnectionMode {
 
 fn spawn_client(app: &mut App, username: &str) -> (Entity, MockClientHelper) {
     let (client_bundle, helper) = create_mock_client(username);
-    let player = app
-        .world_mut()
-        .spawn((client_bundle, CommandScopes::new()))
-        .id();
+    let player = app.world_mut().spawn(client_bundle).id();
+    app.update();
     (player, helper)
 }
 
-fn execute(app: &mut App, executor: Entity, command: &str) {
-    app.world_mut()
-        .resource_mut::<Events<CommandExecutionEvent>>()
-        .send(CommandExecutionEvent {
-            command: command.to_string(),
-            executor,
-        });
-    app.world_mut().run_schedule(EventLoopPreUpdate);
-    app.world_mut().run_schedule(EventLoopUpdate);
+fn execute(app: &mut App, helper: &mut MockClientHelper, command: &str) {
+    helper.send(&CommandExecutionC2s {
+        command: Bounded(command),
+        timestamp: 0,
+        salt: 0,
+        argument_signatures: Vec::new(),
+        message_count: VarInt(0),
+        acknowledgement: FixedBitSet::default(),
+    });
+    app.update();
 }
 
 fn qi_command_is_accepted(
@@ -124,8 +104,8 @@ fn qi_command_is_accepted(
         ("BONG_OPERATORS_ALLOW_OFFLINE", allow_offline),
     ]);
     let mut app = setup_app(connection_mode);
-    let (player, _helper) = spawn_client(&mut app, username);
-    execute(&mut app, player, "qi set 40");
+    let (_player, mut helper) = spawn_client(&mut app, username);
+    execute(&mut app, &mut helper, "qi set 40");
     !app.world()
         .resource::<Events<CommandResultEvent<RepresentativeDevCommand>>>()
         .is_empty()
@@ -297,10 +277,9 @@ fn configured_operator_from_env_can_use_dev_command_in_online_mode() {
         ("BONG_OPERATORS_ALLOW_OFFLINE", None),
     ]);
     let mut app = setup_app(online_mode());
-    let (operator, _operator_helper) = spawn_client(&mut app, "Builder");
+    let (_operator, mut operator_helper) = spawn_client(&mut app, "Builder");
     app.world_mut().run_schedule(EventLoopPreUpdate);
-
-    execute(&mut app, operator, "qi set 40");
+    execute(&mut app, &mut operator_helper, "qi set 40");
     let events = app
         .world()
         .resource::<Events<CommandResultEvent<RepresentativeDevCommand>>>();
@@ -322,9 +301,9 @@ fn offline_mode_denies_username_operator_by_default() {
         ("BONG_OPERATORS_ALLOW_OFFLINE", None),
     ]);
     let mut app = setup_app(ConnectionMode::Offline);
-    let (spoofed_operator, mut helper) = spawn_client(&mut app, "Builder");
+    let (_spoofed_operator, mut helper) = spawn_client(&mut app, "Builder");
 
-    execute(&mut app, spoofed_operator, "qi set 40");
+    execute(&mut app, &mut helper, "qi set 40");
 
     assert!(
         app.world()
@@ -348,9 +327,9 @@ fn offline_mode_allows_username_operator_only_with_explicit_opt_in() {
         ("BONG_OPERATORS_ALLOW_OFFLINE", Some("1")),
     ]);
     let mut app = setup_app(ConnectionMode::Offline);
-    let (operator, _helper) = spawn_client(&mut app, "Builder");
+    let (_operator, mut helper) = spawn_client(&mut app, "Builder");
 
-    execute(&mut app, operator, "qi set 40");
+    execute(&mut app, &mut helper, "qi set 40");
 
     let events = app
         .world()
@@ -379,11 +358,10 @@ fn every_public_root_remains_reachable_to_non_operators() {
         .iter()
         .map(|(name, _)| name.as_str())
         .collect::<BTreeSet<_>>();
-    let mut expected_roots = registry_pin::COMMAND_NAMES
+    let expected_roots = registry_pin::COMMAND_NAMES
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    expected_roots.insert("identity");
     assert_eq!(
         actual_roots, expected_roots,
         "gate test must cover every root-level literal registered in production"
@@ -396,7 +374,7 @@ fn every_public_root_remains_reachable_to_non_operators() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         public_roots,
-        dev::PUBLIC_COMMAND_ROOTS.iter().copied().collect(),
+        EXPECTED_PUBLIC_COMMAND_ROOTS.iter().copied().collect(),
         "the complete public root set must remain reachable without operator scopes"
     );
 }
@@ -440,7 +418,7 @@ fn every_dev_root_blocks_non_operators_and_allows_operators() {
 }
 
 #[test]
-fn every_dev_root_enforces_event_time_operator_authorization() {
+fn dev_command_event_time_gate_proves_unauthorized_command_has_no_side_effect() {
     let _env = ScopedEnvVars::set(&[
         ("BONG_DEV_MODE", Some("1")),
         ("BONG_OPERATORS", Some("Builder")),
@@ -451,36 +429,52 @@ fn every_dev_root_enforces_event_time_operator_authorization() {
     let (operator, mut operator_helper) = spawn_client(&mut app, "Builder");
     app.world_mut().run_schedule(EventLoopPreUpdate);
 
-    let dev_roots = root_scopes(&app)
-        .into_iter()
-        .filter(|(root, required_scopes)| {
-            !dev::PUBLIC_COMMAND_ROOTS.contains(&root.as_str())
-                && required_scopes == &[DEV_COMMAND_SCOPE.to_string()]
-        })
-        .map(|(root, _)| root)
-        .collect::<Vec<_>>();
+    let initial_qi = 5.0;
+    for entity in [player, operator] {
+        app.world_mut().entity_mut(entity).insert(Cultivation {
+            qi_current: initial_qi,
+            qi_max: 100.0,
+            ..Default::default()
+        });
+    }
+
+    execute(&mut app, &mut player_helper, "qi set 40");
     assert!(
-        !dev_roots.is_empty(),
-        "the gate test must discover registered dev roots"
+        chat_messages(&mut app, &mut player_helper)
+            .iter()
+            .any(|message| message.contains("Command requires operator permission")),
+        "non-operator execution of /qi set must receive the operator rejection"
+    );
+    assert!(
+        app.world()
+            .resource::<Events<CommandResultEvent<QiCmd>>>()
+            .is_empty(),
+        "unauthorized /qi set must not emit a command result"
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(player).unwrap().qi_current,
+        initial_qi,
+        "unauthorized /qi set must not mutate Cultivation"
     );
 
-    for root in dev_roots {
-        execute(&mut app, player, &root);
-        assert!(
-            chat_messages(&mut app, &mut player_helper)
-                .iter()
-                .any(|message| message.contains("Command requires operator permission")),
-            "non-operator execution of /{root} must receive the operator rejection"
-        );
-
-        execute(&mut app, operator, &root);
-        assert!(
-            !chat_messages(&mut app, &mut operator_helper)
-                .iter()
-                .any(|message| message.contains("Command requires operator permission")),
-            "operator execution of /{root} must not receive the operator rejection"
-        );
-    }
+    execute(&mut app, &mut operator_helper, "qi set 40");
+    assert!(
+        !chat_messages(&mut app, &mut operator_helper)
+            .iter()
+            .any(|message| message.contains("Command requires operator permission")),
+        "operator execution of /qi set must not receive the operator rejection"
+    );
+    assert!(
+        !app.world()
+            .resource::<Events<CommandResultEvent<QiCmd>>>()
+            .is_empty(),
+        "authorized /qi set must emit a command result"
+    );
+    assert_eq!(
+        app.world().get::<Cultivation>(operator).unwrap().qi_current,
+        40.0,
+        "authorized /qi set must reach the command handler"
+    );
 }
 
 #[test]
@@ -491,9 +485,9 @@ fn configured_operator_can_use_season_through_shared_permission_source() {
         ("BONG_OPERATORS_ALLOW_OFFLINE", None),
     ]);
     let mut app = setup_app(online_mode());
-    let (operator, _helper) = spawn_client(&mut app, "Builder");
+    let (_operator, mut helper) = spawn_client(&mut app, "Builder");
 
-    execute(&mut app, operator, "season set winter");
+    execute(&mut app, &mut helper, "season set winter");
     let events = app
         .world()
         .resource::<Events<CommandResultEvent<SeasonDevCommand>>>();

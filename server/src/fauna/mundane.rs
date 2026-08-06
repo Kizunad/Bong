@@ -15,7 +15,7 @@
 
 use valence::prelude::{
     bevy_ecs, App, Commands, Component, DVec3, Despawned, Entity, EntityKind, EventWriter,
-    Position, Query, Res, Update, Without,
+    IntoSystemConfigs, Position, Query, Res, Update, Without,
 };
 
 use crate::cultivation::dead_zone::is_dead_zone;
@@ -564,7 +564,11 @@ pub fn register(app: &mut App) {
             // 不进 plan-ambient-threat-v1 的 zone 威胁密度统计。
             false,
         ))
-        .add_systems(Update, ambient_scheduler_system::<MundaneFaunaMarker>)
+        .add_systems(
+            Update,
+            ambient_scheduler_system::<MundaneFaunaMarker>
+                .in_set(crate::npc::spawn::ambient_scheduler::AmbientTerminalSystemSet::Recycle),
+        )
         // P2 — 负灵域灭杀（§七:759）。防御性 add_event（可能已由其它模块全局注册，
         // Bevy 允许重复调用，同 `fauna::experience`/`fauna::migration` 既有先例）。
         .add_event::<VfxEventRequest>()

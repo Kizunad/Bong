@@ -54,7 +54,7 @@
 
 - **Wave 0（立即并行）**：V（bot 骨干 + build token 最先）、R3、R5、R2、registry-datafication；同时全部轨道的 P0（设计收口 + 吸收清单验真）都可开工；R6 的 contract-first 工作与 R9 的 cast domain contract-first 工作均可在本波次按各自 plan 开工，不等待 production activation 条件。
 - **Wave 1**：R6、R7（R2 合入后）、R1（R3 P1 合入后）按各自 plan 推进；涉及 R2-owned production 接缝的工作须等待 R2 P1。
-- **Wave 2**：R4、R9 production activation（R5、R6、R2 的所属责任按各自 plan 就绪后，服从 §4.1 的 ownership 与 atomicity invariants）、R10 P1（R3 P1 后）。**R6 dropped-loot P3 production activation merge unit 仅在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后放行；此前只允许 declared/unwired/test-only 的 contract 与 pin artifacts。R10 P2b `OwnerOnly` private-writer activation 必须在该 R6 P3 merge unit 合入后放行，不得把 R6 P1/P2 的 unwired artifacts 当作 production consumer。**本表只裁决跨轨顺序与 activation 边界；各轨具体 deliverable inventory、phase mapping 与验收证据由各自 plan 定义，不在总纲重述。
+- **Wave 2**：R4、R9 production activation（R5、R6、R2 的所属责任按各自 plan 就绪后，服从 §4.1 的 ownership 与 atomicity invariants）、R10 P1（R3 P1 后）。**Craft activation 由 M-10 原子切换放行：M-09 的 R2/R6 contract-first artifacts 可在 Wave 0/1 交付，M-10 的 R1 producer、R3 persistence、R6 transport 与 R2 consumer 必须在同一 production merge unit 中闭合。** **R6 dropped-loot P3 production activation merge unit 仅在 R10 P2a `DroppedLootEntry.owner/visibility` metadata provider 与 R3 P4 dropped-loot migration/hydration consumer 均合入后放行；此前只允许 declared/unwired/test-only 的 contract 与 pin artifacts。R10 P2b `OwnerOnly` private-writer activation 必须在该 R6 P3 merge unit 合入后放行，不得把 R6 P1/P2 的 unwired artifacts 当作 production consumer。**本表只裁决跨轨顺序与 activation 边界；各轨具体 deliverable inventory、phase mapping 与验收证据由各自 plan 定义，不在总纲重述。
 - **R3/R6 dropped-loot child-plan ordering**：R10 P1 migration helper 与 R3 P2 persistence seam/legacy compatibility pins 就绪后，R3 P4 dropped-loot hydration consumer 必须先于 R6 P3 dropped-loot projection/page production activation；R3 P4 inventory-layout overflow consumer 是独立子批次，仅在 R10 P3 合入后执行。
 - **R10 child-plan ordering**：顺序固定为 **R3 P1 → R10 P1 → R3 P2 → R10 P2a → R3 P4 dropped-loot hydration → R6 P3 → (R5 P3 + R6 P4) → R10 P3 → R4 pickup consumer → R10 P2b → R3 P4 inventory-layout overflow → R10 P4**；其中 R10 P2a 不得早于 R3 P2，R10 P3 不得早于 R5 P3/R6 P4，R4 pickup consumer 不得早于 R10 P3，R10 P2b 必须等待前述 R3/R6/R5/R10/R4 production consumers 全部完成。具体 phase/artifact/验收仍以 R3、R6、R10、R4、R5 各 owner plan 为准。
 - 近完成独立 plan（§6.9）在 Wave 0 窗口内优先收尾清场。
@@ -80,6 +80,18 @@
    - master 只裁决 owner、跨轨顺序与 invariants；只有在 owner plan 已定义 phase/artifact/consumer 后才可引用其名称，不得替 owner plan 首次定义交付细节或验收步骤。
    - 若所需 upstream artifact 尚不存在，consumer track 只能先落 contract-first stub（declared、unwired、test-only，不接 production）；真实 artifact 的名称、phase 与验收由 owner track plan 定义，且 production dependency **不得反写成 start gate**。
    - 两份 track plan 出现 sequencing conflict 时，先 amendment §3 Wave 表并形成唯一裁决，再同步双方；禁止靠任一子 plan prose 抢占 authority。R9 contract-first start 以 Wave 0 为准，production activation 以 Wave 2 与本节 atomicity invariant 为准。
+7. **Contract-first 与 freshness gate 的兼容规则**：§4.1.1 的 mirror freshness/pin gate 只约束**已存在 generation pipeline 且已实际产出 committed mirrors** 的 generated/constrained artifact——即 R6 P1 generation chain contract 落地（manifest/tooling/pin inventory 就绪）、R6 P3 运行 pipeline 实际产出 committed mirrors 之后，CI 才对当前 TypeBox source 与已生成 mirror 做 fail-closed 一致性检查。此前的 declared/unwired/test-only contract-first TypeBox 提交（如 R9 P1 的 cast `source`/`target`/`phase` 与 STOP/INTERRUPT 变更）不触发 mirror freshness gate（尚无 committed mirrors 可对 pin）；R6 P3 产出 committed mirrors 时若 source 已变化，由 R6 P3 一并刷新 mirrors 并更新 pin——该提交只须随附 §4.1.5 的 contract pin tests，不得要求 contract-first 提交方更新 R6-owned mirrors，也不得因镜像刷新义务被阻塞。mirror 的生成与刷新仍归 R6 P3 的 atomic activation merge unit。wire 接线状态与 artifact freshness 是独立关注点，禁止用 freshness gate 把 contract-first 提交变相升级为 production activation 的 start gate。
+
+### 4.2 Craft lifecycle artifact ledger（M-09/M-10）
+
+为使 R1/R2/R6/R7 对 craft restore 的引用可执行，以下两行是 `M-09` 与 `M-10` 的唯一 artifact、owner、阶段和验收登记；子计划不得另造同名含义。
+
+| Artifact | owner / phase | canonical deliverable | acceptance / cutover evidence |
+|---|---|---|---|
+| **M-09** CraftStore lifecycle + A-06/A-08 handler contract | A-CS P3 冻结 A-row；R2 P1 生产 `CraftStore` lifecycle/freshness/request-latch；R6 P1 craft machinery 生产 declared、unwired、test-only bridge/router contract | `CraftStore` 是 client craft session-state 唯一 owner，维护 accepted identity/generation/phase revision、`OpenPending` 与 armed `CraftRestoreGuard`；R6 registration 对拍 A-CS SHA 的 ordinary A-06 (`Initial | Rollover`)、guarded `Restore`、A-08 correlation/reason 和 control-frame 字段；contract-first 阶段不得接 production traffic | R2 Store state/revision/guard pins、R6 converter/router roundtrip pins、A-CS source/generated/dist SHA 对拍全部通过；M-09 只证明 contract-first artifacts 冻结，不证明 producer→consumer live reachability |
+| **M-10** Craft production atomic activation | R1 P1/P4 authoritative state/rejection producer；R3 P1 M-04/M-12 guard/checkpoint persistence；R6 P3 proto/generated/converter/transport/router；R2 P1 bridge/`CraftStore` consumer；R4 admission gate 与 R7 intent 只接入各自 owner contract | 单一 merge unit 原子启用 S-01 correlated A-08、S-07 `ReconnectGuard` persistence、`CraftRestoreGuard` control frame、A-06 guarded `Restore` 与 client arm/accept；Restore 必须满足 owner/session/generation/token 匹配且 `phase_revision > guard.phase_revision`，成功消费 guard，不保留旧 producer/receiver 双轨 | producer→persistence→frame→A-06 Restore→`CraftStore` 的全链 trace、A-08 matching reject、strictly-higher revision、stale/replay no-op、旧路径移除和 bot/e2e evidence 全部在同一 activation merge unit 中通过；未闭合前仅保留 M-09 contract-first artifacts |
+
+M-09 是 contract-first handoff，M-10 是唯一 craft production cutover；两者均服从本节 §4.1 的 TypeBox ownership、atomicity 与 pin-test invariants。
 
 ## 5. 工作流（GPT tmux 多会话）
 
@@ -117,7 +129,7 @@
 
 1. 9 条轨道全部归档（各自 bot 场景常绿 + 吸收 plan 全部归档/验伪结案）；
 2. 三个 2 万行级 god file（inventory/mod.rs、client_request_handler.rs、persistence/mod.rs）不复存在，最大单文件 < 3000 行；
-3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；113 C2S 变体全部有显式 GateSpec/no_gate 声明；28 旁路 channel 收编或豁免登记；
+3. `qi_current` 裸写编译不过；client 无未登记的会话态 store；届时现行 `ClientRequestV1` 全部变体均有显式 GateSpec/no_gate 声明（2026-08-03 P0 基线为 104，新增变体自动纳入）；28 旁路 channel 收编或豁免登记；
 4. bot 场景数从 ~30 增至 ≥80，CI e2e 是唯一主门禁且无已知假绿。
 5. `flash-review` label 下 open issue 全部显式处置（fixed / dup / 验伪关闭 / 促升 skeleton，见 §10），无静默积压。
 

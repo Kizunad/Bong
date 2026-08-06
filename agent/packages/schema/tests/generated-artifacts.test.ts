@@ -20,6 +20,7 @@ import {
   assertGeneratedSchemasFresh,
   GENERATED_DIR,
   getGeneratedSchemaDrift,
+  getGeneratedSchemaSourceHashes,
   renderGeneratedSchemas,
   writeGeneratedSchemas,
 } from "../src/generated-artifacts.js";
@@ -190,12 +191,31 @@ describe("generated schema freshness gate", () => {
       missing: ["narration-v1.json"],
       changed: ["chat-message-v1.json"],
       unexpected: ["unexpected.json"],
+      pinMismatches: [],
     });
 
     writeGeneratedSchemas(outputDir);
 
     expect(existsSync(unexpectedFile)).toBe(false);
     expect(() => assertGeneratedSchemasFresh(outputDir)).not.toThrow();
+  });
+
+  it("fails closed when a generated artifact source pin is missing or stale", () => {
+    const outputDir = createTempDir();
+    writeGeneratedSchemas(outputDir);
+    const filePath = join(outputDir, "chat-message-v1.json");
+    const artifact = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
+
+    delete artifact["x-bong-typebox-source-sha256"];
+    writeFileSync(filePath, `${JSON.stringify(artifact, null, 2)}\n`);
+    expect(getGeneratedSchemaDrift(outputDir).pinMismatches).toEqual(["chat-message-v1.json"]);
+    expect(() => assertGeneratedSchemasFresh(outputDir)).toThrowError(
+      /source hash mismatch: chat-message-v1\.json/,
+    );
+
+    artifact["x-bong-typebox-source-sha256"] = "stale";
+    writeFileSync(filePath, `${JSON.stringify(artifact, null, 2)}\n`);
+    expect(getGeneratedSchemaDrift(outputDir).pinMismatches).toEqual(["chat-message-v1.json"]);
   });
 
   it("uses a stable generated snapshot even if runtime schema objects are mutated", () => {
@@ -211,6 +231,7 @@ describe("generated schema freshness gate", () => {
         missing: [],
         changed: [],
         unexpected: [],
+        pinMismatches: [],
       });
       expect(() => assertGeneratedSchemasFresh(GENERATED_DIR)).not.toThrow();
     } finally {
@@ -302,7 +323,18 @@ describe("generated schema freshness gate", () => {
       missing: [],
       changed: [],
       unexpected: [],
+      pinMismatches: [],
     });
     expect(() => assertGeneratedSchemasFresh(GENERATED_DIR)).not.toThrow();
+  });
+
+  it("pins every generated artifact to the current TypeBox source hash", () => {
+    const expectedHashes = getGeneratedSchemaSourceHashes();
+    for (const [fileName, expectedHash] of Object.entries(expectedHashes)) {
+      const artifact = JSON.parse(
+        readFileSync(join(GENERATED_DIR, fileName), "utf8"),
+      ) as Record<string, unknown>;
+      expect(artifact["x-bong-typebox-source-sha256"], fileName).toBe(expectedHash);
+    }
   });
 });

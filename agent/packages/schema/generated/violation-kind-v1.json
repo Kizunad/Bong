@@ -12,5 +12,6 @@
       "const": "qi_invest_exceeded",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "15486cc87fb613c3fba1d515c8702f2c8a5547a78f1297d72e575c662a5e77ee"
 }

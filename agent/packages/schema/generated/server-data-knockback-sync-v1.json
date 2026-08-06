@@ -48,5 +48,6 @@
     "block_broken": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "895a1b1a583b49943702adb2ea26e58b761e48cc9bfd37add5b2a83db0652398"
 }

@@ -1,6 +1,6 @@
 # plan-agent-narration-pipeline-v1（骨架）
 
-> **骨架（草案）**。一句话主题：把 Tiandao 的 narration 从“各 runtime 各自 drain、各自改状态、各自 Redis publish”收口为一条可去重、可校验、可路由、可记录 publisher-side resolve，且支持 pending store 写入后的内部恢复/重试的 agent 发布事务管道；处理 cluster 3 排除已 falsified #1551、并将 #1590 复核为 documented-compatible route 后的 25 个 confirmed source，并把与 bounded concurrency 交付物同根的跨簇 #1702 纳入本 plan，共 26 个 confirmed source，其中 4 个是 #1470 的重复证据，另有 8 个跨簇 follow-up 不计入本 plan 账本。
+> **骨架（草案）**。一句话主题：把 Tiandao 的 narration 从“各 runtime 各自 drain、各自改状态、各自 Redis publish”收口为一条可去重、可校验、可路由、可记录 publisher-side resolve，且支持 pending store 写入后的内部恢复/重试的 agent 发布事务管道；处理 cluster 3 排除已 falsified #1551、并将 #1590 复核为 documented-compatible route 后的 narration ledger：共 26 个 confirmed source，其中 #1702 已直接纳入 routing-and-delivery 清单，4 个是 #1470 的重复证据，另有 8 个跨簇 follow-up 不计入本 plan 账本。
 
 ## 阶段总览
 
@@ -26,7 +26,7 @@
 
 ### 0.1 来源与实现 owner
 
-- **来源**：2026-08-03 flash-review cluster 3；合并汇总将其归类为“agent 发布/叙事管道”。triage 原始 source ledger 有 30 个 issue ID；其中 #1551 已由 shard-2 判定为 falsified，#1590 经本轮复核确认其 `offline:<name>` producer representation 与 server selector 的 documented normalization 相容，故当前 narration cluster 中保留 25 个 confirmed source；这 25 个中 #1475/#1509/#1527/#1538 是 #1470 的重复证据，并非 4 个独立根因。跨簇 #1702 与本 plan 的 bounded concurrency 交付物完全重合，故一并纳入，共 26 个 confirmed source。其余 8 个真实但属于其他 cluster 或独立 world-model/query-tool owner 的编号见 §4.4，不计入本 plan 账本。
+- **来源**：2026-08-03 flash-review cluster 3；合并汇总将其归类为“agent 发布/叙事管道”。triage 原始 source ledger 有 30 个 issue ID；其中 #1551 已由 shard-2 判定为 falsified，#1590 经本轮复核确认其 `offline:<name>` producer representation 与 server selector 的 documented normalization 相容，故当前 narration ledger 共 26 个 confirmed source；其中 #1475/#1509/#1527/#1538 是 #1470 的重复证据，并非 4 个独立根因，#1702 已包含在 §4.2 的 routing-and-delivery 清单中。其余 8 个真实但属于其他 cluster 或独立 world-model/query-tool owner 的编号见 §4.4，不计入本 plan 账本。
 - **唯一实现 owner**：`agent`（Tiandao runtime / schema / Redis IPC）；不归入 R1-R10 server/client 重构轨道。
 - **Master matrix note**：`docs/plans-skeleton/plan-refactor-master-v1.md §6.11` 已独立登记 `agent-narration-pipeline` 的 Agent 轨归属；本 skeleton 只引用该既有 matrix row，不声称 matrix registration 与本 skeleton 在同一 docs-only 修订中原子产生。
 - **流程前置**：implementation owner 为 `agent`；实施者必须在进入 P0 前读取当前 checkout 中实际存在的仓库流程约束，并在验证记录中写出读取到的路径与 commit。若所需流程文件在 checkout 中不存在，必须停在人工恢复流程文件，不得用外部或会话文档替代。
@@ -131,7 +131,7 @@
 | #1679 | publish 失败后以新 batch id 重发 command，cursor 不变。 | 重试必须复用 stable idempotency key，不得每次生成新 batch id。 |
 | #1738 | narration recipient scope 泄露隐私。 | 当前幂等/route 无 authorization 输入或 enforcing consumer；不得在本 plan 内伪造 recipient key，等待 §8.9 完整契约。 |
 
-> 注：#1616、#1619、#1738 等可同时落入多个调查分类；但 #1738 因缺 authorization 数据和 enforcing consumer，不进入本 plan P 阶段锁，只保留为 §8 contract gap。正式账本为 cluster 3 排除 falsified #1551 与 documented-compatible #1590 后的 25 个 confirmed source，加上由 bounded concurrency 交付物直接吸收的跨簇 #1702，共 26 个 confirmed source；其中 #1475/#1509/#1527/#1538 是 #1470 的重复证据。其余 8 个跨簇或独立域 follow-up 见 §4.4，不计入本 plan source ledger。
+> 注：#1616、#1619、#1738 等可同时落入多个调查分类；但 #1738 因缺 authorization 数据和 enforcing consumer，不进入本 plan P 阶段锁，只保留为 §8 contract gap。正式账本为 cluster 3 排除 falsified #1551 与 documented-compatible #1590 后的 26 个 confirmed source；#1702 已在 §4.2 的 routing-and-delivery 清单中直接计入，其中 #1475/#1509/#1527/#1538 是 #1470 的重复证据。其余 8 个跨簇或独立域 follow-up 见 §4.4，不计入本 plan source ledger。
 
 ## 4. Source issue 清单与唯一聚类
 
@@ -245,7 +245,7 @@
 ### P0：收口契约与吸收边界
 
 - [ ] 在 P0 记录当前 checkout 实际存在且已读取的流程约束文件路径、commit 和适用章节；若根 `CLAUDE.md` 或 `docs/CLAUDE.md` 不存在，立即阻塞并转人工恢复，不得以外部/会话副本替代；同时确认 implementation owner 为 `agent`。
-- [ ] 建立 26 个 confirmed source issue 的唯一映射表，标明 shared infrastructure owner；其中 4 个是 #1470 的重复证据，#1702 由 bounded concurrency 交付物直接吸收，#1590 以 documented-compatible compatibility pin 记录；另将 §4.4 的 8 个跨簇或独立域 follow-up 单独登记为外部 owner，不纳入本 plan acceptance。
+- [ ] 建立 26 个 confirmed source issue 的唯一映射表（#1702 已包含在 §4.2 清单中），标明 shared infrastructure owner；其中 4 个是 #1470 的重复证据，#1702 由 bounded concurrency 交付物直接吸收，#1590 以 documented-compatible compatibility pin 记录；另将 §4.4 的 8 个跨簇或独立域 follow-up 单独登记为外部 owner，不纳入本 plan acceptance。
 - [ ] 盘点所有 Tiandao narration Redis channel、`RuntimeRedis` drain、直接 `publishNarrations` callsite、业务状态/cooldown/cursor 写点。
 - [ ] 定义 envelope、event_id、dedupe_key、ordering_key、tick_epoch、ack/state transition 及 pending/dead-letter 语义。
 - [ ] 定义现有 server selector 可接受的 canonical scope/target contract；dimension、SpiritNiche recipient authorization 和 consumed receipt 作为 §8 明示 contract gap，不进入当前 P 阶段实现锁。
@@ -314,7 +314,7 @@
 - dead-letter boundedness 测试验证：malformed/publish-exhaustion/queue-overflow 终态不会超过配置的最大 item/byte 容量；TTL/retention 到期会清理或归档；容量已满时执行冻结的 overflow policy 并发出可查询 telemetry，不能静默无限增长。
 - bot harness 回归测试必须独立覆盖 §0.3 的身份与复用矩阵：exact roster + offline opt-in 保持复用；roster 内容不完全相等或 offline opt-in 缺失/错误时强制禁用复用；fresh launch 导出 exact generated roster 与 opt-in；非法 `BOT_E2E_RUN_TAG` 在创建 roster/fixture/server 前 fail-fast；同时对当前 `env.new_bot(...)` tag 清单做 freshness 检查，缺少任一 command-using tag（特别是 `Sword` 或 `NRift`）即失败。
 - 生产代码中不存在绕过集中 publisher 的 direct `publishNarrations` 或等价 Redis publish 调用；扫描结果与集中注册表一致。
-- 26 个 confirmed source issue 都有唯一映射：#1475/#1509/#1527/#1538 作为 #1470 的重复证据共享根因，#1702 由 bounded concurrency 交付物覆盖，#1590 以 documented-compatible `offline:<name>` normalization pin 记录；#1607/#1674/#1746 作为 §4.4 独立 query-tool/world-model follow-up，不计入本 plan acceptance；可实现的 in-scope source 需有修复 commit/测试证据。#1738 因明确 contract gap 保持 open，不得以 plan 归档代替实现关闭。§4.4 的 8 个 follow-up 由各自 owner 提供独立证据。
+- 26 个 confirmed source issue 都有唯一映射：#1475/#1509/#1527/#1538 作为 #1470 的重复证据共享根因，#1702 已在 §4.2 routing-and-delivery 清单中计入并由 bounded concurrency 交付物覆盖，#1590 以 documented-compatible `offline:<name>` normalization pin 记录；#1607/#1674/#1746 作为 §4.4 独立 query-tool/world-model follow-up，不计入本 plan acceptance；可实现的 in-scope source 需有修复 commit/测试证据。#1738 因明确 contract gap 保持 open，不得以 plan 归档代替实现关闭。§4.4 的 8 个 follow-up 由各自 owner 提供独立证据。
 
 ## 8. Open questions（P0 内收口；P0 退出前冻结依赖决策）
 
