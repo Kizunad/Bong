@@ -42,6 +42,12 @@ pub struct KnownTechnique {
 #[derive(Debug, Component)]
 pub struct KnownTechniquesLoadFailed;
 
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectBlocked;
+
+#[derive(Debug, Component)]
+pub struct KnownTechniquesReconnectReady;
+
 #[cfg(feature = "dev-techniques")]
 impl Default for KnownTechniques {
     fn default() -> Self {

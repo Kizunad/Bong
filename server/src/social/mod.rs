@@ -16,7 +16,7 @@ use valence::message::SendMessage;
 use valence::prelude::bevy_ecs::system::ParamSet;
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, DVec3, DiggingEvent,
-    DiggingState, Entity, EventReader, EventWriter, Events, IntoSystemConfigs, Position, Query,
+    DiggingState, Entity, EventReader, EventWriter, Events, IntoSystemConfigs, Or, Position, Query,
     Res, ResMut, Resource, Update, Username, With, Without,
 };
 
@@ -268,7 +268,14 @@ fn attach_social_bundle_to_joined_clients(
     persistence: Option<Res<PersistenceSettings>>,
     mut joined_clients: Query<
         (valence::prelude::Entity, Option<&mut Lifecycle>),
-        (Added<Client>, Without<Anonymity>),
+        (
+            Or<(
+                Added<Client>,
+                Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+            )>,
+            Without<Anonymity>,
+            Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
+        ),
     >,
 ) {
     for (entity, mut lifecycle) in &mut joined_clients {

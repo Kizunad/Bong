@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
-    bevy_ecs, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event, EventReader,
-    EventWriter, IntoSystemConfigs, Local, Position, Query, Res, ResMut, Resource, Update,
-    Username, With, Without,
+    bevy_ecs, Added, App, Client, Commands, Component, DVec3, Entity, EntityLayerId, Event,
+    EventReader, EventWriter, IntoSystemConfigs, Local, Or, Position, Query, Res, ResMut, Resource,
+    Update, Username, With, Without,
 };
 
 use crate::alchemy::learned::LearnedRecipes;
@@ -199,6 +199,7 @@ type JoinedTutorialClientFilter = (
     With<Client>,
     With<CultivationBundleTutorialHandoff>,
     Without<TutorialState>,
+    Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 /// F9 跨层修复 — 还没收到 `tutorial_coffin_pos` 广播的 client entity。
 type UnsentTutorialCoffinPosQueryItem<'a> = (Entity, &'a mut Client);
@@ -226,6 +227,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             attach_tutorial_state_to_joined_clients
+                .after(crate::player::attach_player_state_to_joined_clients)
                 .after(crate::cultivation::attach_cultivation_to_joined_clients),
             send_tutorial_coffin_pos_on_join,
             grant_meridian_primer_on_join,
