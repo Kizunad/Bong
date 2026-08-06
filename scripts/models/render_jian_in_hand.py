@@ -24,6 +24,7 @@ import argparse
 import base64
 import io
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -98,14 +99,36 @@ POSES = [
     }),
 ]
 ARM_CUBE = {"right": "arm_right", "left": "arm_left"}
-MAX_RENDER_SIZE = 4096
-MAX_COMPOSITE_AREA = 128 * 1024 * 1024
+MAX_RENDER_SIZE = 768
+MAX_RENDER_WORKING_BYTES = 128 * 1024 * 1024
+RGB_BYTES = 3
+RASTER_BYTES_PER_PIXEL = 32
 
 
 def validate_render_size(size: int) -> int:
+    if isinstance(size, bool) or not isinstance(size, int):
+        raise ValueError(f"--size must be an integer between 1 and {MAX_RENDER_SIZE}, got {size!r}")
     if not 1 <= size <= MAX_RENDER_SIZE:
         raise ValueError(f"--size must be between 1 and {MAX_RENDER_SIZE}, got {size}")
     return size
+
+
+def validate_scales(raw: str) -> list[float]:
+    values = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            value = float(token)
+        except ValueError as exc:
+            raise ValueError(f"--scales contains a non-numeric value: {token!r}") from exc
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"--scales values must be finite and positive, got {token!r}")
+        values.append(value)
+    if not values:
+        raise ValueError("--scales 至少需要一个非空缩放值")
+    return values
 
 
 def composite_canvas_dimensions(size: int, scale_count: int) -> tuple[int, int]:
@@ -118,13 +141,17 @@ def composite_canvas_dimensions(size: int, scale_count: int) -> tuple[int, int]:
     gap, lab_h = 10, 20
     width = size * per_row + gap * (per_row + 1)
     height = (size + lab_h) * rows + gap * (rows + 1)
-    area = width * height
-    if area > MAX_COMPOSITE_AREA:
+    tile_bytes = size * size * RGB_BYTES
+    canvas_bytes = width * height * RGB_BYTES
+    raster_bytes = size * size * RASTER_BYTES_PER_PIXEL
+    bytes_required = tile_count * tile_bytes + canvas_bytes + raster_bytes
+    if bytes_required > MAX_RENDER_WORKING_BYTES:
         raise ValueError(
-            f"render canvas area {area} exceeds limit {MAX_COMPOSITE_AREA} "
-            f"for size={size}, scales={scale_count}"
+            f"render working set requires {bytes_required} bytes, exceeds limit "
+            f"{MAX_RENDER_WORKING_BYTES} for size={size}, scales={scale_count}"
         )
     return width, height
+
 
 
 # ── 程序化皮肤（64²，vanilla box-uv 布局）─────────────────────────────────
@@ -259,6 +286,10 @@ def weapon_tris(path: Path):
             if not fd:
                 continue
             u1, v1, u2, v2 = fd["uv"]
+            scale_u = SKIN / tex.width
+            scale_v = SKIN / tex.height
+            u1, u2 = u1 * scale_u, u2 * scale_u
+            v1, v2 = v1 * scale_v, v2 * scale_v
             cs = [np.array(c, float) for c in corner_fn(f, t)]
             n = np.array(normal, float)
             if Rc is not None:
@@ -315,9 +346,10 @@ def main():
         validate_render_size(args.size)
     except ValueError as exc:
         ap.error(str(exc))
-    scales = [float(v) for v in args.scales.split(",") if v.strip()]
-    if not scales:
-        ap.error("--scales 至少需要一个非空缩放值")
+    try:
+        scales = validate_scales(args.scales)
+    except ValueError as exc:
+        ap.error(str(exc))
     try:
         canvas_width, canvas_height = composite_canvas_dimensions(args.size, len(scales))
     except ValueError as exc:
