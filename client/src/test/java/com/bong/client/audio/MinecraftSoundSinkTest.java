@@ -1,13 +1,22 @@
 package com.bong.client.audio;
 
+import net.minecraft.Bootstrap;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.option.GameOptions;
 import net.minecraft.client.sound.SoundInstance;
+import net.minecraft.client.sound.SoundManager;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.random.Random;
 import org.junit.jupiter.api.Test;
+import sun.misc.Unsafe;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -165,21 +174,135 @@ class MinecraftSoundSinkTest {
     // ─── 断线边界：全局 hard-stop + 索引清空 ──────────────────────────────
 
     @Test
-    void publicClearOnDisconnectUsesProductionHardStopBridgeAndClearsIndex() {
-        List<FadeableSoundInstance> hardStopped = new ArrayList<>();
-        MinecraftSoundSink sink = new MinecraftSoundSink(
-            () -> null,
-            (ignoredClient, instance) -> hardStopped.add(instance)
-        );
-        FadeableSoundInstance sound = instance();
-        sink.registerInstanceForTests(20L, sound);
+    void publicClearOnDisconnectUsesDefaultProductionSoundManagerBridge() throws Exception {
+        markMinecraftBootstrapReadyForSoundManagerInitialization();
+        MinecraftClient client = allocateHeadlessClient();
+        MinecraftClient previous = swapMinecraftClientInstance(client);
+        TrackingSoundManager soundManager = new TrackingSoundManager(allocateHeadlessGameOptions());
+        try {
+            setSoundManager(client, soundManager);
+            MinecraftSoundSink sink = new MinecraftSoundSink();
+            FadeableSoundInstance sound = instance();
+            sink.registerInstanceForTests(20L, sound);
 
-        sink.clearOnDisconnect();
+            sink.clearOnDisconnect();
 
-        assertEquals(1, hardStopped.size(),
-            "public clearOnDisconnect 必须把每个实例交给 production bridge，不能只测 internal helper");
-        assertTrue(sound.isDone(), "public disconnect bridge 也必须先静音并标记实例完成");
-        assertEquals(0, sink.trackedInstanceCountForTests(), "public disconnect bridge 必须清空索引");
+            assertEquals(1, soundManager.stopped().size(),
+                "默认构造器必须经 MinecraftClient.getInstance() 和 production bridge 调用 SoundManager.stop");
+            assertSame(sound, soundManager.stopped().get(0),
+                "production bridge 必须把实际断线实例交给 client.getSoundManager().stop");
+            assertTrue(sound.isDone(), "public disconnect bridge 也必须先静音并标记实例完成");
+            assertEquals(0, sink.trackedInstanceCountForTests(), "public disconnect bridge 必须清空索引");
+        } finally {
+            swapMinecraftClientInstance(previous);
+        }
+    }
+
+    @Test
+    void publicClearOnDisconnectWithNullClientStillSilencesAndClears() {
+        MinecraftClient previous = swapMinecraftClientInstance(null);
+        try {
+            MinecraftSoundSink sink = new MinecraftSoundSink();
+            FadeableSoundInstance sound = instance();
+            sink.registerInstanceForTests(23L, sound);
+
+            assertDoesNotThrow(sink::clearOnDisconnect,
+                "默认 production bridge 在客户端实例不可用时必须 fail-safe 完成断线清理");
+            assertTrue(sound.isDone(), "client 为 null 时仍必须先静音并标记实例完成");
+            assertEquals(0, sink.trackedInstanceCountForTests(), "client 为 null 时仍必须清空索引");
+        } finally {
+            swapMinecraftClientInstance(previous);
+        }
+    }
+
+    @Test
+    void publicClearOnDisconnectWithNullSoundManagerStillSilencesAndClears() throws Exception {
+        MinecraftClient client = allocateHeadlessClient();
+        MinecraftClient previous = swapMinecraftClientInstance(client);
+        try {
+            setSoundManager(client, null);
+            MinecraftSoundSink sink = new MinecraftSoundSink();
+            FadeableSoundInstance sound = instance();
+            sink.registerInstanceForTests(24L, sound);
+
+            assertDoesNotThrow(sink::clearOnDisconnect,
+                "默认 production bridge 在 SoundManager 不可用时必须 fail-safe 完成断线清理");
+            assertTrue(sound.isDone(), "SoundManager 为 null 时仍必须先静音并标记实例完成");
+            assertEquals(0, sink.trackedInstanceCountForTests(), "SoundManager 为 null 时仍必须清空索引");
+        } finally {
+            swapMinecraftClientInstance(previous);
+        }
+    }
+
+    private static MinecraftClient allocateHeadlessClient() throws Exception {
+        return (MinecraftClient) unsafe().allocateInstance(MinecraftClient.class);
+    }
+
+    private static GameOptions allocateHeadlessGameOptions() throws Exception {
+        return (GameOptions) unsafe().allocateInstance(GameOptions.class);
+    }
+
+    private static void markMinecraftBootstrapReadyForSoundManagerInitialization() {
+        try {
+            Unsafe unsafe = unsafe();
+            Field field = Bootstrap.class.getDeclaredField("initialized");
+            Object base = unsafe.staticFieldBase(field);
+            long offset = unsafe.staticFieldOffset(field);
+            unsafe.putBooleanVolatile(base, offset, true);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法设置 SoundManager 测试所需的 Minecraft bootstrap 状态", exception);
+        }
+    }
+
+    private static MinecraftClient swapMinecraftClientInstance(MinecraftClient replacement) {
+        try {
+            Unsafe unsafe = unsafe();
+            Field field = MinecraftClient.class.getDeclaredField("instance");
+            Object base = unsafe.staticFieldBase(field);
+            long offset = unsafe.staticFieldOffset(field);
+            MinecraftClient previous = (MinecraftClient) unsafe.getObject(base, offset);
+            unsafe.putObject(base, offset, replacement);
+            return previous;
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法替换 MinecraftClient 单例测试边界", exception);
+        }
+    }
+
+    private static void setSoundManager(MinecraftClient client, SoundManager soundManager) {
+        try {
+            Unsafe unsafe = unsafe();
+            Field field = MinecraftClient.class.getDeclaredField("soundManager");
+            unsafe.putObject(client, unsafe.objectFieldOffset(field), soundManager);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法安装 MinecraftClient SoundManager 测试边界", exception);
+        }
+    }
+
+    private static Unsafe unsafe() {
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            return (Unsafe) field.get(null);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("无法取得 headless client 测试所需 Unsafe", exception);
+        }
+    }
+
+    private static final class TrackingSoundManager extends SoundManager {
+        private final List<SoundInstance> stopped = new ArrayList<>();
+
+        private TrackingSoundManager(GameOptions options) {
+            super(options);
+        }
+
+        @Override
+        public void stop(SoundInstance instance) {
+            stopped.add(instance);
+        }
+
+        private List<SoundInstance> stopped() {
+            return stopped;
+        }
     }
 
     @Test
