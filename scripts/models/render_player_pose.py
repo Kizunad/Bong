@@ -286,7 +286,16 @@ def skin_atlas(with_jian: bool = False) -> np.ndarray:
 def render_pose(tris, tex, yaw=180.0, pitch=4.0, size=300, bg=(26, 27, 31)):
     size = _validate_size(size, "render_pose size")
     orig = R.load_bbmodel
-    R.load_bbmodel = lambda _p: (tris, tex, (H.ATLAS, H.ATLAS), "pose")
+
+    def load_pose(_path, xform=None):
+        if xform:
+            raise ValueError(
+                "render_pose uses pre-baked triangles and cannot apply "
+                "element-level xform"
+            )
+        return tris, tex, (H.ATLAS, H.ATLAS), "pose"
+
+    R.load_bbmodel = load_pose
     try:
         im, _ = R.render("<pose>", yaw=yaw, pitch=pitch, size=size, bg=bg)
     finally:
