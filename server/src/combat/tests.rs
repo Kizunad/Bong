@@ -273,7 +273,7 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         .as_secs();
     let max_elapsed_ticks = after_load_wall
         .saturating_sub(persisted_last_updated_wall as u64)
-        .saturating_mul(TICKS_PER_SECOND);
+        .saturating_mul(crate::combat::components::TICKS_PER_SECOND);
     let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     assert!(
         (earliest_valid_deadline..=9_999).contains(&restored_deadline),
