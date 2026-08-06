@@ -43,7 +43,7 @@ use std::collections::HashSet;
 
 use valence::prelude::{
     bevy_ecs, Added, App, BlockPos, BlockState, ChunkLayer, Client, Commands, Entity, Event,
-    EventReader, EventWriter, Or, Query, Res, Update, Username, With, Without,
+    EventReader, EventWriter, IntoSystemConfigs, Or, Query, Res, Update, Username, With, Without,
 };
 
 use crate::combat::components::{BodyPart, Lifecycle, LifecycleState, Wound, WoundKind, Wounds};
