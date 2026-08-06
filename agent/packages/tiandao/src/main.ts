@@ -792,7 +792,7 @@ async function startZhenfaV2Runtime(opts: {
   };
 }
 
-// plan-dying-elder-v1 P3
+// plan-dying-elder-v1 P3：生产仅接普通 Pub/Sub；durable worker 保留为 contract-first test-only artifact。
 async function startElderEncounterRuntime(opts: {
   redisUrl: string;
 }): Promise<() => Promise<void>> {
@@ -805,14 +805,9 @@ async function startElderEncounterRuntime(opts: {
     typeof ElderEncounterNarrationRuntime
   >[0]["pub"];
 
-  const durableQueue = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
-    typeof ElderEncounterNarrationRuntime
-  >[0]["durableQueue"];
-
   const runtime = new ElderEncounterNarrationRuntime({
     sub,
     pub,
-    durableQueue,
   });
   runtime
     .connect()
