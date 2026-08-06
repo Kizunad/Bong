@@ -16,5 +16,6 @@
       "const": "duo_she",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "f09b35608b7a00a548910ea9452806bec10c64324ba6438eebc51d083d071fac"
 }

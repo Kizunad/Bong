@@ -1,0 +1,223 @@
+# plan-registry-datafication-v1 P0 — canonical craft 配方残卷模板。
+# `UnlockSource::Scroll` 以精确 template ID 关联配方，新增条目必须与配方资产逐一对拍。
+# [BLOCKED: 需 /gen-image item 为本文件 20 张残卷生成正式 GUI icon；当前图像后端 502]
+
+[[item]]
+id = "scroll_fake_skin_light"
+name = "轻制伪灵皮残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "油渍浸透的残页，记着兔皮浸脂、缝成轻薄伪皮的粗法。"
+
+[[item]]
+id = "scroll_herb_knife_iron"
+name = "凡铁采药刀残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "药农留下的破纸样，标着凡铁短刃与木柄的铆接位置。"
+
+[[item]]
+id = "scroll_zhenfa_trap_iron"
+name = "凡铁芯诡雷残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "焦黑残页上画着凡铁包芯与阵纸折叠法，边角残留爆裂痕。"
+
+[[item]]
+id = "scroll_workbench_sealed_vial"
+name = "密封药瓶残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "记着以蛛丝绳扎紧药瓶口的简陋封存手法。"
+
+[[item]]
+id = "scroll_workbench_seal_box"
+name = "封灵匣残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "残页绘有木板与灵铁封缝成匣的装配次序。"
+
+[[item]]
+id = "scroll_workbench_dead_drop"
+name = "死信箱残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "商旅暗号旁夹着死信箱加固与藏匿的制作尺寸。"
+
+[[item]]
+id = "scroll_workbench_qi_talisman"
+name = "灵气引导符残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "丹砂线条已经褪色，只剩引导灵气的基本符路可辨。"
+
+[[item]]
+id = "scroll_workbench_meridian_rub"
+name = "经脉图拓片残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.25
+description = "破损拓纸标着把阵法白纸与灵草压成经脉图纹的方法。"
+
+[[item]]
+id = "scroll_workbench_ningmai_prep"
+name = "凝脉散预制包残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "药师残笺列着三份凝脉草、一份丹砂粉与药瓶的分包次序。"
+
+[[item]]
+id = "scroll_workbench_meridian_salve"
+name = "养经膏残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "沾着药膏的残页，记有养经苔、鼠尾油与药瓶的慢熬次序。"
+
+[[item]]
+id = "scroll_workbench_anti_gu"
+name = "解蛊散残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "发黄残页写着三份解蛊蕊配一份雄黄的研磨比例。"
+
+[[item]]
+id = "scroll_workbench_qingzhuo"
+name = "清浊散残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "草汁染绿的残页，留下两份清浊草配一份丹砂粉的配伍笔记。"
+
+[[item]]
+id = "scroll_workbench_array_flag"
+name = "凡阵旗残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.25
+description = "粗布残页描着木柄、布面与丹砂阵纹的装配法。"
+
+[[item]]
+id = "scroll_workbench_array_eye"
+name = "凡阵眼残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "褪色图纸标着灵晶与两块凡铁嵌成阵眼的位置。"
+
+[[item]]
+id = "scroll_workbench_decoy_stake"
+name = "欺天阵木桩残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "残页写着用灵木、粗布与兽骨把木桩伪作修士气息的方法。"
+
+[[item]]
+id = "scroll_workbench_scatter_bead"
+name = "散真元珠残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.35
+description = "阵师废稿记录了灵晶与骨粉压成散真元珠的次序。"
+
+[[item]]
+id = "scroll_workbench_gather_base"
+name = "聚灵阵基座残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "rare"
+spirit_quality_initial = 0.45
+description = "厚纸残图保留了灵铁、阵法白纸与灵晶组成基座的阵线。"
+
+[[item]]
+id = "scroll_workbench_niche_repair"
+name = "灵龛修补料残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "泥灰斑驳的纸条，列着三块粗石配一块灵铁的修补比例。"
+
+[[item]]
+id = "scroll_workbench_lantern"
+name = "灯笼残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "common"
+spirit_quality_initial = 0.2
+description = "烧焦一角的残页，标着凡铁、灵炭与灵晶的灯架结构。"
+
+[[item]]
+id = "scroll_workbench_niche_base"
+name = "灵龛基座残卷"
+category = "scroll"
+grid_w = 1
+grid_h = 2
+base_weight = 0.05
+rarity = "uncommon"
+spirit_quality_initial = 0.3
+description = "破旧拓纸记录了灵龛石、灵铁与木板搭成龛座的尺寸。"

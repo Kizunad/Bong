@@ -1,6 +1,6 @@
 # plan-refactor-client-ui-base-v1 — Client UI 公共基类 + InspectScreen 拆解 + 输入/线程纪律（重构轨 R7）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：给 28 个各写各的 owo Screen 建公共基类（store 订阅/tick 刷新/关闭清理/礼貌抢屏），diff-then-patch 列表组件化，keybind 注册表防冲突，网络线程→client 线程 marshal 强制化，并拆掉 4647 行的 `InspectScreen`——owo 布局/输入/线程整簇（16+ 份 plan）收口。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：给 28 个各写各的 owo Screen 建公共基类（store 订阅/tick 刷新/关闭清理/礼貌抢屏），diff-then-patch 列表组件化，keybind 注册表防冲突，网络线程→client 线程 marshal 强制化，并拆掉 4647 行的 `InspectScreen`——owo 布局/输入/线程整簇（16+ 份 plan）收口。
 
 ## 现状证据（2026-07-27 侦察）
 
@@ -16,13 +16,13 @@
 - **进料**：R2 的 `SessionScopedStore`（Screen 订阅的一律是会话态 store）；`ServerDataRouter` handler（一律经 client-thread marshal 投递 UI）。
 - **出料**：Screen/HUD 展示；HUD 纪律沿用既有 memory 约束（未解锁隐藏不灰掉、沉浸式极简）。
 - **共享类型**：新 `BongScreenBase`（生命周期 + 订阅 + 关闭清理）、`DiffListWidget`（推广 craft 范本）、`BongKeybindRegistry`（注册时冲突检测 + 测试期断言）、`ClientThreadMarshal` helper、`ScreenOpenPolicy`（礼貌抢屏：战斗中/已有模态时排队）。
-- **跨仓库契约**：零 wire 改动。
+- **跨仓库契约**：本轨不定义 wire，只消费 A-CS A-row、R6 P1 craft machinery contract、master M-09/M-10 与 R1 S-row。Idle/no-session 初次 `CraftOpen { request_id, target }` 后进入同 request_id 的 client-local `OpenPending`（不是 gameplay phase）；server identity 尚未 hydrate 时普通 close 置一次性 `pause_when_hydrated`，不得发送缺 identity 的 `CraftPause`。matching `Running` hydration 到达后只发一次带 `session_key + generation` 的 `CraftPause` 且不重开 Screen；matching A-08 reject 立即清 pending/latch并展示 reason，stale/mismatched reject no-op。S-10 guarded reconnect restore 不依赖已清除的 `OpenPending`：只接受带 `restore_token` 的独立 A-06 `Restore { restore_token }` variant、当前 reconnect guard、matching owner/session identity/generation 与严格更高 `phase_revision` 的 server-authoritative `Paused` projection，不发送普通 Pause。已 hydrate close 发 `CraftPause`，选择配方发 matching `CraftStart { session_key, generation, recipe_id, quantity }`，explicit cancel 发 matching generation-bound `CraftCancel`，仅匹配 server-hydrated `Paused` session 发一次 `CraftResume`。R1 `HandoffPreparing`/`Ended` 或 stale identity 均不发 Start/Resume/Cancel；delivery Pending/InFlight/DeadLetter 是 obligation 状态，R7 不把它们存为 resumable gameplay phase。
 
 ## 阶段
 
 - ⬜ P0 设计收口 + 吸收清单验真：92 处 fill(100) 全量分类（根节点合法/子节点顶飞）；28 Screen 普查；冻结基类 API 与四个共享组件。
 - ⬜ P1 基础组件落地：BongScreenBase/DiffListWidget/KeybindRegistry/ClientThreadMarshal/ScreenOpenPolicy 上线；keybind 冲突全数改绑（T/L/O/U/G 簇）。
-- ⬜ P2 Screen 迁移批次 A：炼丹/锻造/手搓/交易屏迁基类，fill(100) 顶飞点与 clearChildren 回弹点随迁修复。
+- ⬜ P2 Screen 迁移批次 A：炼丹/锻造/手搓/交易屏迁基类，随迁修复 fill(100)/clearChildren；Craft Screen 接线为 Idle→带 request_id 与 `Handcraft` 或 retained `Workbench { workbench_key }` 的 `CraftOpen`，未 hydration close→matching `OpenPending.pause_when_hydrated`，matching Running hydrate 后恰一次 `CraftPause`，matching A-08 reject→clear+reason，已 hydration close→`CraftPause`，选择 recipe/quantity→`CraftStart`，显式取消→generation-bound `CraftCancel`，matching paused hydrate→恰一次 `CraftResume`。client 单测锁住 Open/Start/Pause/Cancel/Resume 不互相替代、Start 仍携 recipe/quantity、Cancel 使用当前 identity、不可恢复 phase/stale identity不发 intent，以及 `Open→close→Running hydrate→Pause once`、Open→reject→可重试、duplicate/stale/mismatched hydrate/reject no-op、disconnect/session clear 丢弃 latch、Paused/HandoffPreparing/Ended hydrate 只清 latch且不重开/误发；S-10 guarded restore 另覆盖 disconnect 后 `OpenPending` 已清除时 matching `restore_token` + reconnect guard + owner/session identity/generation + strictly higher `phase_revision` 接受 authoritative `Paused`，missing/wrong/stale token 或 mismatch、Running/Ended/HandoffPreparing projection 均 no-op，不发送普通 Pause、不重开第二个 Screen。
 - ⬜ P3 InspectScreen 拆解：按 tab/section 拆组件文件（body/container/tooltip 已有雏形），行为不变。
 - ⬜ P4 Screen 迁移批次 B + 网络线程 marshal 强制（handler 层静态检查/测试）+ 删旧。
 - ⬜ P5 验收 + 吸收 plan 批量归档。
@@ -36,13 +36,14 @@ skeleton：alchemy-screen-fill100-eviction 与 alchemy-screen-fill-overflow（�
 
 - 独占：client 全部 Screen/`ui/`/`hud/` 结构性改动、keybind 注册、`InspectScreen.java`。
 - 不碰：store 生命周期接口（R2 域，本轨消费）；`network/` 桥与 router（R6 域——marshal helper 由本轨提供、在 handler 注册处的接线与 R6 协调）；server 一切。
-- 依赖：R2 P1 先合（基类要绑 SessionScopedStore）；与 R6 在 handler 投递点有一条接缝，P4 前对齐。
+- 依赖：本轨只引用 A-CS A-row、R6 P1 craft machinery contract、master M-09/M-10 与 R1 S-row；R2 Store、R6 machinery、R4 gate 与 R1 session 的 production 接缝在 master atomic activation row 完成前只能提交 contract pins，不宣称端到端可达。
 
 ## 验收
 
-bot 测不到 client 渲染，本轨主验收 = client 单测（基类生命周期 pin、DiffListWidget 滚动保持、keybind 注册表无冲突断言、marshal 强制扫描）+ `./gradlew runClient` 人工过一遍五大屏。bot 配合：`ui_c2s_smoke`（各屏的 C2S 动作链路照常可达，防拆解断线）。
+bot 测不到 client 渲染，本轨主验收 = client 单测（基类生命周期 pin、DiffListWidget 滚动保持、keybind 注册表无冲突断言、marshal 强制扫描、CraftOpen/CraftStart/CraftPause/CraftCancel/CraftResume 五条 intent producer pin，以及 close-before-hydration/rejected-open latch 全矩阵）+ `./gradlew runClient` 人工过一遍五大屏。bot 配合：`ui_c2s_smoke`（各屏的 C2S 动作链路照常可达，防拆解断线）。
 
 ## 开放问题（pre-P0 收口）
 
 1. InspectScreen 拆解粒度（按 tab 还是按 section）；拆解与 R10 server 侧 inventory 拆分是否同窗口进行。
 2. ScreenOpenPolicy 的排队语义（战斗中挂起邀请到何时弹出）——涉及玩法体验，需人工拍板。
+3. `OpenPending` 仅是等待 server identity/rejection 的 client-local latch，不进入 A-06/R1 phase enum；R2/R6 Store 先按 request_id/session token 拒绝 stale/mismatched hydration/rejection，latch 同时禁止 unresolved 期间发送第二个 `CraftOpen`。matching hydration one-shot、matching reject clear/retry、typed rejection与断线清理语义已由 P2 acceptance 冻结；latch 不按本地 timeout 自行丢弃，也不得以 Cancel 替代普通 close。

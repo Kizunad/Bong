@@ -3,10 +3,13 @@ package com.bong.client.craft;
 import com.bong.client.inventory.model.EquipSlotType;
 import com.bong.client.inventory.model.InventoryItem;
 import com.bong.client.inventory.model.InventoryModel;
+import com.bong.client.skill.SkillId;
+import com.bong.client.skill.SkillSetSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -130,6 +133,52 @@ class CraftUxViewModelTest {
         assertEquals("引气 / 残卷 / 师承", CraftRecipeFilter.unlockHint(locked));
         assertTrue(CraftRecipeFilter.matches(locked, "???"));
         assertFalse(CraftRecipeFilter.matches(locked, "secret"));
+    }
+
+    @Test
+    void skillGateTreatsMissingSkillAsLevelZero() {
+        CraftRecipe recipe = skillRecipe(2);
+        assertFalse(CraftActionBar.skillSatisfied(recipe, SkillSetSnapshot.empty()),
+            "缺失技能快照必须按 Lv.0 处理，不能让客户端显示可制作");
+    }
+
+    @Test
+    void skillGateAcceptsExactBoundaryAndRejectsOneBelow() {
+        CraftRecipe recipe = skillRecipe(2);
+        SkillSetSnapshot below = SkillSetSnapshot.of(Map.of(
+            SkillId.FORGING, new SkillSetSnapshot.Entry(1, 0, 100, 0, 10, 0, 0)
+        ));
+        SkillSetSnapshot exact = SkillSetSnapshot.of(Map.of(
+            SkillId.FORGING, new SkillSetSnapshot.Entry(2, 0, 100, 0, 10, 0, 0)
+        ));
+
+        assertFalse(CraftActionBar.skillSatisfied(recipe, below), "Lv.1 不得通过 Lv.2 门槛");
+        assertTrue(CraftActionBar.skillSatisfied(recipe, exact), "Lv.2 应通过 Lv.2 门槛");
+    }
+
+    @Test
+    void skillGateUsesEffectiveCapAndAnySkillMaximum() {
+        CraftRecipe recipe = skillRecipe(3);
+        SkillSetSnapshot capped = SkillSetSnapshot.of(Map.of(
+            SkillId.HERBALISM, new SkillSetSnapshot.Entry(10, 0, 100, 0, 2, 0, 0),
+            SkillId.FORGING, new SkillSetSnapshot.Entry(3, 0, 100, 0, 5, 0, 0)
+        ));
+        assertTrue(CraftActionBar.skillSatisfied(recipe, capped),
+            "技能门使用各条目的 effectiveLv 最大值，另一条 capped Lv.10 不应污染结果");
+    }
+
+    @Test
+    void recipesWithoutSkillRequirementAlwaysPassSkillGate() {
+        CraftRecipe recipe = recipe("plain", CraftCategory.TOOL, true, List.of(), 0.0);
+        assertTrue(CraftActionBar.skillSatisfied(recipe, SkillSetSnapshot.empty()));
+    }
+
+    private static CraftRecipe skillRecipe(int required) {
+        return new CraftRecipe(
+            "skill.recipe", CraftCategory.TOOL, "技能配方",
+            List.of(), 0.0, 60L, "skill.output", 1,
+            new CraftRecipe.Requirements(null, null, null, required), true
+        );
     }
 
     private static CraftRecipe recipe(

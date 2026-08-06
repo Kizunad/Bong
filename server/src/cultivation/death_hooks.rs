@@ -1,25 +1,29 @@
 //! 死亡对外契约（plan §4）— 修炼侧只 emit 致死触发，生死判定由战斗 plan 收口。
 //!
-//! 另外提供 `PlayerRevived` 监听：战斗 plan 完成重生后发事件，本 plan
-//! 应用境界-1、qi=0、composure=0.3、contam 清空、LIFO 关脉等惩罚。
-//! `PlayerTerminated` 也有监听 hook，停止该实体的所有修炼 tick（通过
+//! 另提供 `CultivationReviveRequested` 监听：dev command 恢复战斗生命周期后发请求，
+//! 修炼层应用境界-1、qi=0、composure=0.3、contam 清空、LIFO 关脉等惩罚。
+//! `PlayerRevived` 仅表示复活全链已完成，供下游刷新快照、音频与 HUD；
+//! `PlayerTerminated` 监听 hook 则停止该实体的所有修炼 tick（通过
 //! 移除 Cultivation Component 实现）。
 
 use serde::{Deserialize, Serialize};
 use valence::prelude::{
     bevy_ecs, Commands, Entity, Event, EventReader, EventWriter, Events, Position, Query, Res,
-    ResMut,
+    ResMut, Without,
 };
 
 use super::color::PracticeLog;
-use super::components::{Contamination, Cultivation, MeridianSystem, QiColor, Realm};
+use super::components::{
+    ActorQiIdentity, ActorQiKind, Contamination, Cultivation, MeridianSystem, QiColor, QiFlowError,
+    QiFlowOutcome, Realm,
+};
 use super::life_record::{BiographyEntry, LifeRecord};
 use super::qi_zero_decay::{close_meridian, pick_closures};
 use super::tick::CultivationClock;
 use super::tribulation::AscensionQuotaOpened;
+use crate::npc::spawn::NpcMarker;
 use crate::persistence::{release_ascension_quota_slot, PersistenceSettings};
-use crate::qi_physics::constants::{QI_EPSILON, QI_ZONE_UNIT_CAPACITY};
-use crate::qi_physics::{qi_release_to_zone, QiAccountId, QiTransfer, QiTransferReason};
+use crate::qi_physics::{QiTransfer, QiTransferReason, WorldQiAccount};
 use crate::skill::components::SkillId;
 use crate::skill::events::SkillCapChanged;
 use crate::world::dimension::CurrentDimension;
@@ -50,17 +54,57 @@ pub struct PlayerRevived {
     pub entity: Entity,
 }
 
+/// 请求修仙层执行 dev-only 复活惩罚与真元结算。
+///
+/// 生产战斗复活会先在 `revive_lifecycle` 的持久化事务内完成同一结算，再只发
+/// [`PlayerRevived`] 通知；将请求与通知拆开后，不再依赖 CombatClock/CultivationClock
+/// tick 恰好相等来防双罚。
+#[derive(Debug, Clone, Event)]
+pub struct CultivationReviveRequested {
+    pub entity: Entity,
+}
+
 #[derive(Debug, Clone, Event)]
 pub struct PlayerTerminated {
     pub entity: Entity,
 }
 
 type TerminatedPlayerQueryItem<'a> = (
-    &'a Cultivation,
+    &'a mut Cultivation,
     Option<&'a Position>,
     Option<&'a CurrentDimension>,
     Option<&'a LifeRecord>,
 );
+
+fn release_cultivation_qi_to_zone(
+    cultivation: &mut Cultivation,
+    position: Option<&Position>,
+    current_dimension: Option<&CurrentDimension>,
+    life_record: &LifeRecord,
+    zones: Option<&mut ZoneRegistry>,
+    ledger: &mut WorldQiAccount,
+) -> Result<Vec<QiTransfer>, QiFlowError> {
+    let actor = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Player)?;
+    let zone = match (position, current_dimension, zones) {
+        (Some(position), Some(current_dimension), Some(zones)) => {
+            let zone_name = zones
+                .find_zone(current_dimension.0, position.0)
+                .map(|zone| zone.name.clone());
+            zone_name.and_then(|zone_name| zones.find_zone_mut(zone_name.as_str()))
+        }
+        _ => None,
+    };
+    let amount = cultivation.qi_snapshot().current;
+    cultivation
+        .release_to_zone(
+            zone,
+            ledger,
+            &actor,
+            amount,
+            QiTransferReason::ReleaseToZone,
+        )
+        .map(|outcome| outcome.transfers)
+}
 
 /// 重生响应：境界 -1、qi=0、composure=0.3、contam 清空、LIFO 关脉至对应境界。
 pub fn apply_revive_penalty(
@@ -107,13 +151,15 @@ pub fn apply_revive_penalty(
 
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
-pub fn on_player_revived(
+pub fn on_cultivation_revive_requested(
     clock: Res<CultivationClock>,
     settings: Res<PersistenceSettings>,
-    mut events: EventReader<PlayerRevived>,
+    mut events: EventReader<CultivationReviveRequested>,
+    mut completed: EventWriter<PlayerRevived>,
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
     mut skill_cap_events: EventWriter<SkillCapChanged>,
-    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut zones: Option<ResMut<ZoneRegistry>>,
     mut players: Query<(
         &mut Cultivation,
@@ -129,24 +175,48 @@ pub fn on_player_revived(
         if let Ok((mut c, mut ms, mut cn, mut life, position, current_dimension)) =
             players.get_mut(ev.entity)
         {
-            if matches!(
-                life.biography.last(),
-                Some(BiographyEntry::Rebirth { tick, .. }) if *tick == now
-            ) {
-                continue;
-            }
             let prior = c.realm;
-            let released_qi = apply_revive_penalty(&mut c, &mut ms, &mut cn);
-            release_qi_amount_to_zone(
-                ev.entity,
-                released_qi,
+            let mut staged_cultivation = c.clone();
+            let mut staged_meridians = ms.clone();
+            let mut staged_contam = cn.clone();
+            apply_revive_penalty(
+                &mut staged_cultivation,
+                &mut staged_meridians,
+                &mut staged_contam,
+            );
+            let transfers = match release_cultivation_qi_to_zone(
+                &mut c,
                 position,
                 current_dimension,
-                Some(&life),
+                &life,
                 zones.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
-                "revive_penalty",
-            );
+                &mut ledger,
+            ) {
+                Ok(transfers) => transfers,
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        "[bong][cultivation] revive qi release failed closed for {:?}",
+                        ev.entity,
+                    );
+                    continue;
+                }
+            };
+            let qi_state = c.qi_snapshot();
+            let staged_qi = staged_cultivation.qi_snapshot();
+            staged_cultivation
+                .set_for_init(super::components::CultivationQiInit {
+                    current: qi_state.current,
+                    max: staged_qi.max,
+                    frozen: staged_qi.frozen,
+                })
+                .expect("revive penalty staged qi capacity must remain valid");
+            *c = staged_cultivation;
+            *ms = staged_meridians;
+            *cn = staged_contam;
+            for transfer in transfers {
+                qi_transfers.send(transfer);
+            }
             if prior == Realm::Void && c.realm != Realm::Void {
                 match release_ascension_quota_slot(&settings) {
                     Ok(release) if release.opened_slot => {
@@ -176,6 +246,7 @@ pub fn on_player_revived(
                     new_cap,
                 });
             }
+            completed.send(PlayerRevived { entity: ev.entity });
             tracing::info!(
                 "[bong][cultivation] applied revive penalty to {:?}: realm {:?} -> {:?}",
                 ev.entity,
@@ -186,14 +257,16 @@ pub fn on_player_revived(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn on_player_terminated(
     settings: Res<PersistenceSettings>,
     mut commands: Commands,
     mut events: EventReader<PlayerTerminated>,
     mut quota_opened: EventWriter<AscensionQuotaOpened>,
-    mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
+    mut qi_transfers: EventWriter<QiTransfer>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut zones: Option<ResMut<ZoneRegistry>>,
-    players: Query<TerminatedPlayerQueryItem<'_>>,
+    mut players: Query<TerminatedPlayerQueryItem<'_>, Without<NpcMarker>>,
 ) {
     let mut processed_entities = std::collections::HashSet::new();
     for ev in events.read() {
@@ -205,18 +278,38 @@ pub fn on_player_terminated(
             continue;
         }
         let was_void;
-        if let Ok((cultivation, position, current_dimension, life_record)) = players.get(ev.entity)
+        if let Ok((mut cultivation, position, current_dimension, life_record)) =
+            players.get_mut(ev.entity)
         {
             was_void = cultivation.realm == Realm::Void;
-            release_terminated_qi_to_zone(
-                ev.entity,
-                cultivation,
+            let Some(life_record) = life_record else {
+                tracing::warn!(
+                    "[bong][cultivation] termination qi release failed closed for {:?}: missing LifeRecord",
+                    ev.entity,
+                );
+                continue;
+            };
+            let transfers = match release_cultivation_qi_to_zone(
+                &mut cultivation,
                 position,
                 current_dimension,
                 life_record,
                 zones.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
-            );
+                &mut ledger,
+            ) {
+                Ok(transfers) => transfers,
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        "[bong][cultivation] termination qi release failed closed for {:?}",
+                        ev.entity,
+                    );
+                    continue;
+                }
+            };
+            for transfer in transfers {
+                qi_transfers.send(transfer);
+            }
         } else {
             was_void = false;
         }
@@ -252,179 +345,47 @@ pub fn on_player_terminated(
     }
 }
 
-fn release_terminated_qi_to_zone(
-    entity: Entity,
-    cultivation: &Cultivation,
-    position: Option<&Position>,
-    current_dimension: Option<&CurrentDimension>,
-    life_record: Option<&LifeRecord>,
-    zones: Option<&mut ZoneRegistry>,
-    qi_transfers: Option<&mut Events<QiTransfer>>,
-) {
-    let amount = cultivation.qi_current.max(0.0);
-    release_qi_amount_to_zone(
-        entity,
-        amount,
-        position,
-        current_dimension,
-        life_record,
-        zones,
-        qi_transfers,
-        "terminated",
-    );
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn release_qi_amount_to_zone(
-    entity: Entity,
+    cultivation: &mut Cultivation,
     amount: f64,
     position: Option<&Position>,
     current_dimension: Option<&CurrentDimension>,
     life_record: Option<&LifeRecord>,
     zones: Option<&mut ZoneRegistry>,
+    ledger: &mut WorldQiAccount,
     mut qi_transfers: Option<&mut Events<QiTransfer>>,
     source: &'static str,
-) -> f64 {
-    if amount <= QI_EPSILON {
-        return 0.0;
-    }
-    let Some(position) = position else {
+) -> Result<QiFlowOutcome, QiFlowError> {
+    let Some(life_record) = life_record else {
         tracing::warn!(
-            "[bong][cultivation] {source} {:?} with qi={} but no Position; route qi to overflow",
-            entity,
-            amount,
+            "[bong][cultivation] reject {source} qi release without canonical LifeRecord",
         );
-        return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
+        return Err(QiFlowError::InvalidActorIdentity);
     };
-    let Some(zones) = zones else {
-        tracing::warn!(
-            "[bong][cultivation] {source} {:?} with qi={} but no ZoneRegistry; route qi to overflow",
-            entity,
-            amount,
-        );
-        return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
+    let actor = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Player)?;
+    let zone = match (position, current_dimension, zones) {
+        (Some(position), Some(current_dimension), Some(zones)) => {
+            let zone_name = zones
+                .find_zone(current_dimension.0, position.0)
+                .map(|zone| zone.name.clone());
+            zone_name.and_then(|zone_name| zones.find_zone_mut(zone_name.as_str()))
+        }
+        _ => None,
     };
-    let Some(current_dimension) = current_dimension else {
-        tracing::warn!(
-            "[bong][cultivation] {source} {:?} with qi={} but no CurrentDimension; route qi to overflow",
-            entity,
-            amount,
-        );
-        return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
-    };
-    let dimension = current_dimension.0;
-    let Some(zone_name) = zones
-        .find_zone(dimension, position.0)
-        .map(|zone| zone.name.clone())
-    else {
-        tracing::warn!(
-            "[bong][cultivation] {source} {:?} with qi={} outside known zone; route qi to overflow",
-            entity,
-            amount,
-        );
-        return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
-    };
-    let Some(zone) = zones.find_zone_mut(zone_name.as_str()) else {
-        return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
-    };
-
-    let from = terminated_qi_account_id(entity, life_record);
-    let to = QiAccountId::zone(zone.name.clone());
-    let zone_current = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
-    let outcome = match qi_release_to_zone(
+    let outcome = cultivation.release_to_zone(
+        zone,
+        ledger,
+        &actor,
         amount,
-        from.clone(),
-        to,
-        zone_current,
-        QI_ZONE_UNIT_CAPACITY,
-    ) {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                "[bong][cultivation] invalid {source} qi release for {:?}; route qi to overflow",
-                entity,
-            );
-            return release_qi_overflow(entity, amount, life_record, &mut qi_transfers, source);
-        }
-    };
-
-    zone.spirit_qi = outcome.zone_after / QI_ZONE_UNIT_CAPACITY;
-    if let Some(transfer) = outcome.transfer {
-        if let Some(qi_transfers) = qi_transfers.as_mut() {
-            qi_transfers.send(transfer);
-        } else {
-            tracing::warn!(
-                "[bong][cultivation] {source} qi release for {:?} has no QiTransfer event resource",
-                entity,
-            );
-        }
-    }
-    let mut accounted = outcome.accepted;
-    if outcome.overflow > QI_EPSILON {
-        tracing::warn!(
-            "[bong][cultivation] {source} qi release for {:?} overflowed zone cap by {}",
-            entity,
-            outcome.overflow,
-        );
-        accounted +=
-            release_qi_overflow_from(entity, from, outcome.overflow, &mut qi_transfers, source);
-    }
-    accounted
-}
-
-fn release_qi_overflow(
-    entity: Entity,
-    amount: f64,
-    life_record: Option<&LifeRecord>,
-    qi_transfers: &mut Option<&mut Events<QiTransfer>>,
-    source: &'static str,
-) -> f64 {
-    let from = terminated_qi_account_id(entity, life_record);
-    release_qi_overflow_from(entity, from, amount, qi_transfers, source)
-}
-
-fn release_qi_overflow_from(
-    entity: Entity,
-    from: QiAccountId,
-    amount: f64,
-    qi_transfers: &mut Option<&mut Events<QiTransfer>>,
-    source: &'static str,
-) -> f64 {
-    if amount <= QI_EPSILON {
-        return 0.0;
-    }
-    let to = QiAccountId::overflow(format!("{source}:{entity:?}"));
-    let transfer = match QiTransfer::new(from, to, amount, QiTransferReason::ReleaseToZone) {
-        Ok(transfer) => transfer,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                "[bong][cultivation] invalid {source} overflow qi transfer for {:?}",
-                entity,
-            );
-            return 0.0;
-        }
-    };
+        QiTransferReason::ReleaseToZone,
+    )?;
     if let Some(qi_transfers) = qi_transfers.as_mut() {
-        qi_transfers.send(transfer);
-        amount
-    } else {
-        tracing::warn!(
-            "[bong][cultivation] {source} overflow qi for {:?} has no QiTransfer event resource",
-            entity,
-        );
-        0.0
-    }
-}
-
-fn terminated_qi_account_id(entity: Entity, life_record: Option<&LifeRecord>) -> QiAccountId {
-    if let Some(life_record) = life_record {
-        if !life_record.character_id.trim().is_empty() {
-            return QiAccountId::player(life_record.character_id.clone());
+        for transfer in outcome.transfers.iter().cloned() {
+            qi_transfers.send(transfer);
         }
     }
-    QiAccountId::player(format!("entity:{entity:?}"))
+    Ok(outcome)
 }
 
 /// 将致死触发转发到生平卷（by caller）与 Redis 外发通道（留给 network 模块接入）。
@@ -448,14 +409,14 @@ pub fn log_death_trigger(
 mod tests {
     use super::*;
     use crate::cultivation::color::PracticeLog;
-    use crate::cultivation::components::{ColorKind, MeridianId};
+    use crate::cultivation::components::MeridianId;
     use crate::cultivation::tick::CultivationClock;
     use crate::persistence::{
         complete_tribulation_ascension, load_ascension_quota, persist_active_tribulation,
         ActiveTribulationRecord,
     };
     use crate::player::state::canonical_player_id;
-    use crate::qi_physics::{QiAccountId, QiTransferReason};
+    use crate::qi_physics::{qi_flow_overflow_account, QiAccountId, QiTransferReason};
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use valence::prelude::{App, Events, Position};
@@ -520,10 +481,13 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<CultivationReviveRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
-        app.add_systems(valence::prelude::Update, on_player_revived);
+        app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(valence::prelude::Update, on_cultivation_revive_requested);
 
         let entity = app
             .world_mut()
@@ -540,7 +504,8 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(CultivationReviveRequested { entity });
         app.update();
 
         let life = app
@@ -566,11 +531,13 @@ mod tests {
             .unwrap()
             .spirit_qi = 0.2;
         app.insert_resource(zones);
+        app.add_event::<CultivationReviveRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
         app.add_event::<QiTransfer>();
-        app.add_systems(valence::prelude::Update, on_player_revived);
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(valence::prelude::Update, on_cultivation_revive_requested);
         let before = app
             .world()
             .resource::<ZoneRegistry>()
@@ -594,7 +561,8 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(CultivationReviveRequested { entity });
         app.update();
 
         let after = app
@@ -614,14 +582,73 @@ mod tests {
     }
 
     #[test]
-    fn revived_hook_skips_when_rebirth_already_recorded_for_tick() {
+    fn completed_revival_notification_does_not_apply_cultivation_penalty() {
         let mut app = App::new();
         app.insert_resource(PersistenceSettings::default());
         app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<CultivationReviveRequested>();
         app.add_event::<PlayerRevived>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<SkillCapChanged>();
-        app.add_systems(valence::prelude::Update, on_player_revived);
+        app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(valence::prelude::Update, on_cultivation_revive_requested);
+
+        let mut meridians = MeridianSystem::default();
+        meridians.get_mut(MeridianId::Lung).opened = true;
+        let expected_meridians = meridians.clone();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Cultivation {
+                    realm: Realm::Induce,
+                    qi_current: 8.0,
+                    composure: 0.9,
+                    ..Default::default()
+                },
+                meridians,
+                Contamination::default(),
+                LifeRecord::new(canonical_player_id("Alice")),
+            ))
+            .id();
+
+        app.world_mut().send_event(PlayerRevived { entity });
+        app.update();
+
+        let cultivation = app
+            .world()
+            .get::<Cultivation>(entity)
+            .expect("cultivation should remain attached");
+        let meridians = app
+            .world()
+            .get::<MeridianSystem>(entity)
+            .expect("meridians should remain attached");
+        let life = app
+            .world()
+            .get::<LifeRecord>(entity)
+            .expect("life record should remain attached");
+
+        assert_eq!(cultivation.realm, Realm::Induce);
+        assert!((cultivation.qi_current - 8.0).abs() < 1e-9);
+        assert!((cultivation.composure - 0.9).abs() < 1e-9);
+        assert_eq!(meridians, &expected_meridians);
+        assert!(life.biography.is_empty());
+        assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+        assert_eq!(app.world().resource::<Events<SkillCapChanged>>().len(), 0);
+    }
+
+    #[test]
+    fn revive_request_is_not_suppressed_by_rebirth_at_same_cultivation_tick() {
+        let mut app = App::new();
+        app.insert_resource(PersistenceSettings::default());
+        app.insert_resource(CultivationClock { tick: 42 });
+        app.add_event::<CultivationReviveRequested>();
+        app.add_event::<PlayerRevived>();
+        app.add_event::<AscensionQuotaOpened>();
+        app.add_event::<SkillCapChanged>();
+        app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
+        app.add_systems(valence::prelude::Update, on_cultivation_revive_requested);
 
         let entity = app
             .world_mut()
@@ -651,7 +678,8 @@ mod tests {
             ))
             .id();
 
-        app.world_mut().send_event(PlayerRevived { entity });
+        app.world_mut()
+            .send_event(CultivationReviveRequested { entity });
         app.update();
 
         let cultivation = app
@@ -663,8 +691,17 @@ mod tests {
             .get::<LifeRecord>(entity)
             .expect("life record should remain attached");
 
-        assert_eq!(cultivation.realm, Realm::Induce);
-        assert_eq!(life.biography.len(), 1);
+        assert_eq!(cultivation.realm, Realm::Awaken);
+        assert_eq!(life.biography.len(), 2);
+        assert!(matches!(
+            life.biography.last(),
+            Some(BiographyEntry::Rebirth {
+                prior_realm: Realm::Induce,
+                new_realm: Realm::Awaken,
+                tick: 42,
+            })
+        ));
+        assert_eq!(app.world().resource::<Events<PlayerRevived>>().len(), 1);
     }
 
     #[test]
@@ -693,6 +730,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -704,6 +742,7 @@ mod tests {
                 },
                 MeridianSystem::default(),
                 Contamination::default(),
+                LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
         app.world_mut().send_event(PlayerTerminated { entity });
@@ -731,6 +770,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -739,6 +779,7 @@ mod tests {
                 Cultivation::default(),
                 MeridianSystem::default(),
                 Contamination::default(),
+                LifeRecord::new(canonical_player_id("Azure")),
                 PracticeLog::default(),
                 QiColor::default(),
             ))
@@ -767,6 +808,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -778,9 +820,9 @@ mod tests {
                 },
                 MeridianSystem::default(),
                 Contamination::default(),
+                LifeRecord::new(canonical_player_id("Azure")),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
-                LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
         app.world_mut().send_event(PlayerTerminated { entity });
@@ -826,6 +868,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -837,9 +880,9 @@ mod tests {
                 },
                 MeridianSystem::default(),
                 Contamination::default(),
+                LifeRecord::new(canonical_player_id("Azure")),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
-                LifeRecord::new(canonical_player_id("Azure")),
             ))
             .id();
         app.world_mut().send_event(PlayerTerminated { entity });
@@ -880,6 +923,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -891,6 +935,7 @@ mod tests {
                 },
                 MeridianSystem::default(),
                 Contamination::default(),
+                LifeRecord::new(canonical_player_id("Azure")),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -915,10 +960,7 @@ mod tests {
         assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert!((transfers[0].amount - 2.5).abs() < 1e-9);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
-        assert_eq!(
-            transfers[1].to,
-            QiAccountId::overflow(format!("terminated:{entity:?}"))
-        );
+        assert_eq!(transfers[1].to, qi_flow_overflow_account());
         assert!((transfers[1].amount - 7.5).abs() < 1e-9);
         assert_eq!(transfers[1].reason, QiTransferReason::ReleaseToZone);
     }
@@ -930,6 +972,7 @@ mod tests {
         app.add_event::<PlayerTerminated>();
         app.add_event::<AscensionQuotaOpened>();
         app.add_event::<QiTransfer>();
+        app.insert_resource(WorldQiAccount::default());
         app.add_systems(valence::prelude::Update, on_player_terminated);
 
         let entity = app
@@ -958,21 +1001,29 @@ mod tests {
             transfers[0].from,
             QiAccountId::player(canonical_player_id("Azure"))
         );
-        assert_eq!(
-            transfers[0].to,
-            QiAccountId::overflow(format!("terminated:{entity:?}"))
-        );
+        assert_eq!(transfers[0].to, qi_flow_overflow_account());
         assert!((transfers[0].amount - 10.0).abs() < 1e-9);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
     }
 
-    /// 直接面向 `release_qi_amount_to_zone` 的饱和单测组——把 helper 的每条
-    /// 前置条件、overflow 分支、account-id 解析锁住在 unit 颗粒度，独立于
-    /// `on_player_terminated` 等 caller。这样后续 helper 重命名 / 重构内部
-    /// 控制流时，单测能立刻撞红，不必依赖 caller 集成测试间接覆盖。
+    /// 直接面向 `release_qi_amount_to_zone` 的饱和单测组。这里锁定 facade 的外部契约：
+    /// canonical actor identity、signed zone、固定稳定 overflow、可选广播投影与失败原子性。
     mod release_qi_amount_to_zone_unit_tests {
         use super::*;
-        use crate::qi_physics::QiAccountKind;
+        use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+        use crate::qi_physics::{qi_flow_overflow_account, QiAccountId};
+
+        fn cultivation_with_qi(current: f64) -> Cultivation {
+            Cultivation {
+                qi_current: current,
+                qi_max: current.max(100.0),
+                ..Default::default()
+            }
+        }
+
+        fn life_record(name: &str) -> LifeRecord {
+            LifeRecord::new(canonical_player_id(name))
+        }
 
         fn fresh_zones_with_qi(spirit_qi: f64) -> ZoneRegistry {
             let mut zones = ZoneRegistry::fallback();
@@ -981,17 +1032,6 @@ mod tests {
                 .expect("spawn zone should exist")
                 .spirit_qi = spirit_qi;
             zones
-        }
-
-        fn fresh_qi_transfer_events() -> Events<QiTransfer> {
-            Events::<QiTransfer>::default()
-        }
-
-        /// 通过临时 App 拿到一个稳定的 Entity；helper 内部不读 ECS 组件，
-        /// 只用 Entity 给 tracing / account id 做标签。
-        fn fresh_entity() -> Entity {
-            let mut app = App::new();
-            app.world_mut().spawn_empty().id()
         }
 
         fn overworld_dim() -> CurrentDimension {
@@ -1003,555 +1043,297 @@ mod tests {
         }
 
         #[test]
-        fn returns_zero_and_emits_no_transfer_for_zero_amount() {
-            let entity = fresh_entity();
+        fn zero_amount_is_a_valid_noop() {
+            let mut cultivation = cultivation_with_qi(5.0);
+            let life_record = life_record("Mira");
             let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
+            let mut ledger = WorldQiAccount::default();
+            let mut events = Events::<QiTransfer>::default();
             let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+            let dimension = overworld_dim();
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
+            let outcome = release_qi_amount_to_zone(
+                &mut cultivation,
                 0.0,
                 Some(&position),
-                Some(&dim),
-                None,
+                Some(&dimension),
+                Some(&life_record),
                 Some(&mut zones),
+                &mut ledger,
                 Some(&mut events),
                 "unit-zero",
-            );
-            assert_eq!(accounted, 0.0);
+            )
+            .expect("zero release should be a valid no-op");
+
+            assert_eq!(outcome.source_debited, 0.0);
+            assert_eq!(cultivation.qi_current, 5.0);
+            assert_eq!(ledger.total(), 0.0);
+            assert!(ledger.transfers().is_empty());
             assert!(events.drain().next().is_none());
         }
 
         #[test]
-        fn returns_zero_for_subepsilon_amount() {
-            let entity = fresh_entity();
+        fn invalid_amount_fails_without_mutating_any_owner_or_audit() {
+            let mut cultivation = cultivation_with_qi(5.0);
+            let life_record = life_record("Mira");
             let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
+            let mut ledger = WorldQiAccount::default();
+            let mut events = Events::<QiTransfer>::default();
             let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+            let dimension = overworld_dim();
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                QI_EPSILON / 2.0,
-                Some(&position),
-                Some(&dim),
-                None,
-                Some(&mut zones),
-                Some(&mut events),
-                "unit-subepsilon",
-            );
-            assert_eq!(accounted, 0.0);
-            assert!(events.drain().next().is_none());
-        }
-
-        /// NaN 不被 `<= QI_EPSILON` 截走（NaN 比较恒为 false），但会被
-        /// `qi_release_to_zone` 验证为 InvalidAmount → 路由到 overflow，
-        /// 后续 `release_qi_overflow_from` 又被 NaN 在 `<= QI_EPSILON` 拦下
-        /// （同样为 false），最终在 `QiTransfer::new` 验证 amount 处出错，
-        /// 走兜底 0.0。zone 不变，事件不发。
-        #[test]
-        fn nan_amount_falls_through_to_zero_without_emitting_transfer_or_mutating_zone() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
-
-            let accounted = release_qi_amount_to_zone(
-                entity,
+            let error = release_qi_amount_to_zone(
+                &mut cultivation,
                 f64::NAN,
                 Some(&position),
-                Some(&dim),
-                None,
+                Some(&dimension),
+                Some(&life_record),
                 Some(&mut zones),
+                &mut ledger,
                 Some(&mut events),
                 "unit-nan",
+            )
+            .expect_err("NaN release must fail closed");
+
+            assert!(matches!(error, QiFlowError::Physics(_)));
+            assert_eq!(cultivation.qi_current, 5.0);
+            assert_eq!(
+                zones
+                    .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi,
+                0.2
             );
-            assert_eq!(accounted, 0.0);
+            assert_eq!(ledger.total(), 0.0);
+            assert!(ledger.transfers().is_empty());
             assert!(events.drain().next().is_none());
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!((zone_after - 0.2).abs() < 1e-9);
         }
 
         #[test]
-        fn routes_to_overflow_when_position_missing() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let dim = overworld_dim();
-            let life_record = LifeRecord::new(canonical_player_id("Mira"));
+        fn missing_or_blank_actor_identity_fails_closed() {
+            for life_record in [None, Some(LifeRecord::new("   "))] {
+                let mut cultivation = cultivation_with_qi(5.0);
+                let mut ledger = WorldQiAccount::default();
+                let error = release_qi_amount_to_zone(
+                    &mut cultivation,
+                    3.0,
+                    None,
+                    None,
+                    life_record.as_ref(),
+                    None,
+                    &mut ledger,
+                    None,
+                    "unit-invalid-identity",
+                )
+                .expect_err("durable releases require canonical identity");
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
+                assert!(matches!(error, QiFlowError::InvalidActorIdentity));
+                assert_eq!(cultivation.qi_current, 5.0);
+                assert_eq!(ledger.total(), 0.0);
+                assert!(ledger.transfers().is_empty());
+            }
+        }
+
+        #[test]
+        fn missing_location_credits_fixed_persistent_overflow() {
+            let mut cultivation = cultivation_with_qi(5.0);
+            let life_record = life_record("Mira");
+            let mut ledger = WorldQiAccount::default();
+            let mut events = Events::<QiTransfer>::default();
+
+            let outcome = release_qi_amount_to_zone(
+                &mut cultivation,
                 5.0,
                 None,
-                Some(&dim),
+                None,
                 Some(&life_record),
-                Some(&mut zones),
+                None,
+                &mut ledger,
                 Some(&mut events),
-                "unit-no-pos",
-            );
-            assert!((accounted - 5.0).abs() < 1e-9);
+                "arbitrary-source-label",
+            )
+            .expect("missing location should route to stable overflow");
 
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
+            assert_eq!(cultivation.qi_current, 0.0);
+            assert_eq!(outcome.overflow_credited, 5.0);
+            assert_eq!(ledger.balance(&qi_flow_overflow_account()), 5.0);
+            assert_eq!(ledger.transfers().len(), 1);
+            assert_eq!(ledger.transfers()[0].to, qi_flow_overflow_account());
             assert_eq!(
-                collected[0].from,
+                ledger.transfers()[0].from,
                 QiAccountId::player(canonical_player_id("Mira"))
             );
-            assert_eq!(
-                collected[0].to,
-                QiAccountId::overflow(format!("unit-no-pos:{entity:?}"))
-            );
-            assert!((collected[0].amount - 5.0).abs() < 1e-9);
-            assert_eq!(collected[0].reason, QiTransferReason::ReleaseToZone);
-
-            // 守恒：zone 不变
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!((zone_after - 0.2).abs() < 1e-9);
+            let broadcast: Vec<_> = events.drain().collect();
+            assert_eq!(broadcast, ledger.transfers());
         }
 
         #[test]
-        fn routes_to_overflow_when_zone_registry_missing() {
-            let entity = fresh_entity();
-            let mut events = fresh_qi_transfer_events();
+        fn happy_path_debits_actor_and_credits_signed_zone() {
+            let mut cultivation = cultivation_with_qi(5.0);
+            let life_record = life_record("Mira");
+            let mut zones = fresh_zones_with_qi(-0.4);
+            let mut ledger = WorldQiAccount::default();
+            let mut events = Events::<QiTransfer>::default();
             let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+            let dimension = overworld_dim();
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
+            let outcome = release_qi_amount_to_zone(
+                &mut cultivation,
                 5.0,
                 Some(&position),
-                Some(&dim),
-                None,
-                None,
-                Some(&mut events),
-                "unit-no-zones",
-            );
-            assert!((accounted - 5.0).abs() < 1e-9);
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
-        }
-
-        #[test]
-        fn routes_to_overflow_when_current_dimension_missing() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                5.0,
-                Some(&position),
-                None, // ← no CurrentDimension
-                None,
-                Some(&mut zones),
-                Some(&mut events),
-                "unit-no-dim",
-            );
-            assert!((accounted - 5.0).abs() < 1e-9);
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
-
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!(
-                (zone_after - 0.2).abs() < 1e-9,
-                "zone qi must not change when CurrentDimension missing",
-            );
-        }
-
-        #[test]
-        fn routes_to_overflow_when_position_outside_any_zone() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            // 默认 spawn zone bounds 不包含极端坐标
-            let position = Position::new([1.0e9, 1.0e9, 1.0e9]);
-            let dim = overworld_dim();
-
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                5.0,
-                Some(&position),
-                Some(&dim),
-                None,
-                Some(&mut zones),
-                Some(&mut events),
-                "unit-outside-zone",
-            );
-            assert!((accounted - 5.0).abs() < 1e-9);
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
-        }
-
-        /// 玩家在 Tsy 维度 + ZoneRegistry 只有 Overworld zones：维度过滤后查不到
-        /// zone → outside-known-zone → overflow。这条用例锁定"严格按维度过滤"
-        /// 的 invariant，避免未来误改成默认 Overworld 时跨维度漏账复活。
-        #[test]
-        fn routes_to_overflow_when_dimension_does_not_match_any_zone() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let tsy_dim = CurrentDimension(DimensionKind::Tsy);
-
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                5.0,
-                Some(&position),
-                Some(&tsy_dim),
-                None,
-                Some(&mut zones),
-                Some(&mut events),
-                "unit-tsy-no-zone",
-            );
-            assert!((accounted - 5.0).abs() < 1e-9);
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            assert!(matches!(collected[0].to.kind, QiAccountKind::Overflow));
-            // Overworld zone 不应被改写
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!((zone_after - 0.2).abs() < 1e-9);
-        }
-
-        #[test]
-        fn happy_path_returns_accepted_emits_zone_transfer_and_writes_zone() {
-            let entity = fresh_entity();
-            let mut zones = fresh_zones_with_qi(0.2);
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
-            let life_record = LifeRecord::new(canonical_player_id("Mira"));
-
-            let accounted = release_qi_amount_to_zone(
-                entity,
-                5.0,
-                Some(&position),
-                Some(&dim),
+                Some(&dimension),
                 Some(&life_record),
                 Some(&mut zones),
+                &mut ledger,
                 Some(&mut events),
-                "unit-happy",
-            );
-            assert!((accounted - 5.0).abs() < 1e-9);
+                "unit-signed-zone",
+            )
+            .expect("negative zone should accept release toward zero");
 
+            assert_eq!(cultivation.qi_current, 0.0);
+            assert_eq!(outcome.zone_accepted, 5.0);
+            assert_eq!(outcome.overflow_credited, 0.0);
             let zone_after = zones
                 .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
                 .unwrap()
                 .spirit_qi;
-            assert!((zone_after - (0.2 + 5.0 / QI_ZONE_UNIT_CAPACITY)).abs() < 1e-9);
-
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            let t = &collected[0];
-            assert_eq!(t.reason, QiTransferReason::ReleaseToZone);
-            assert_eq!(t.from, QiAccountId::player(canonical_player_id("Mira")));
-            assert_eq!(t.to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-            assert!((t.amount - 5.0).abs() < 1e-9);
+            assert!((zone_after - (-0.4 + 5.0 / QI_ZONE_UNIT_CAPACITY)).abs() < 1e-9);
+            assert_eq!(ledger.total(), 0.0, "external zone must not be mirrored");
+            assert_eq!(ledger.transfers().len(), 1);
+            assert_eq!(
+                ledger.transfers()[0].to,
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME)
+            );
+            assert_eq!(events.drain().count(), 1);
         }
 
-        /// zone 接近 cap 时，accepted 进 zone 账户、overflow 进 Overflow 账户。
-        /// 守恒断言：accounted == accepted + overflow == 完整 input amount。
         #[test]
-        fn cap_overflow_emits_two_transfers_zone_and_overflow_with_full_accounting() {
-            let entity = fresh_entity();
-            // 0.95 zone qi 折算 = 47.5；cap 50；剩 2.5 headroom
+        fn partial_zone_release_commits_overflow_then_zone_with_full_accounting() {
+            let mut cultivation = cultivation_with_qi(10.0);
+            let life_record = life_record("Mira");
             let mut zones = fresh_zones_with_qi(0.95);
-            let mut events = fresh_qi_transfer_events();
+            let mut ledger = WorldQiAccount::default();
+            let mut events = Events::<QiTransfer>::default();
             let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+            let dimension = overworld_dim();
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
+            let outcome = release_qi_amount_to_zone(
+                &mut cultivation,
                 10.0,
                 Some(&position),
-                Some(&dim),
-                None,
+                Some(&dimension),
+                Some(&life_record),
                 Some(&mut zones),
+                &mut ledger,
                 Some(&mut events),
-                "unit-cap-overflow",
+                "unit-partial",
+            )
+            .expect("partial release should account for every unit");
+
+            assert_eq!(cultivation.qi_current, 0.0);
+            assert!((outcome.zone_accepted - 2.5).abs() < 1e-9);
+            assert!((outcome.overflow_credited - 7.5).abs() < 1e-9);
+            assert!((outcome.source_debited - 10.0).abs() < 1e-9);
+            assert_eq!(ledger.balance(&qi_flow_overflow_account()), 7.5);
+            assert_eq!(outcome.transfers[0].to, qi_flow_overflow_account());
+            assert_eq!(
+                outcome.transfers[1].to,
+                QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME)
             );
-            // 守恒：完整 amount 都被入账（一部分进 zone，一部分进 overflow）
-            assert!((accounted - 10.0).abs() < 1e-9);
-
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!((zone_after - 1.0).abs() < 1e-9);
-
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 2);
-            // 第一条进 zone：accepted = 2.5
-            assert!(matches!(collected[0].to.kind, QiAccountKind::Zone));
-            assert!((collected[0].amount - 2.5).abs() < 1e-9);
-            // 第二条进 overflow：overflow = 7.5
-            assert!(matches!(collected[1].to.kind, QiAccountKind::Overflow));
-            assert!((collected[1].amount - 7.5).abs() < 1e-9);
-            // 两条都是 ReleaseToZone reason
-            assert_eq!(collected[0].reason, QiTransferReason::ReleaseToZone);
-            assert_eq!(collected[1].reason, QiTransferReason::ReleaseToZone);
+            assert_eq!(events.drain().collect::<Vec<_>>(), outcome.transfers);
         }
 
-        /// 缺 `Events<QiTransfer>` 资源时，overflow 路径无法 emit，按设计返回 0
-        /// （丢失，但 tracing warn 留下排错抓手）。zone 仍按 accepted 写回。
-        /// 锁住"无 transfer 资源时 overflow 不静默写 zone account 错位"的不变量。
         #[test]
-        fn cap_overflow_without_transfer_resource_loses_overflow_returns_only_accepted() {
-            let entity = fresh_entity();
-            // 0.95 zone qi 折算 = 47.5；cap 50；剩 2.5 headroom
+        fn missing_event_resource_does_not_change_physical_settlement() {
+            let mut cultivation = cultivation_with_qi(10.0);
+            let life_record = life_record("Mira");
             let mut zones = fresh_zones_with_qi(0.95);
+            let mut ledger = WorldQiAccount::default();
             let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
+            let dimension = overworld_dim();
 
-            let accounted = release_qi_amount_to_zone(
-                entity,
+            let outcome = release_qi_amount_to_zone(
+                &mut cultivation,
                 10.0,
                 Some(&position),
-                Some(&dim),
-                None,
+                Some(&dimension),
+                Some(&life_record),
                 Some(&mut zones),
+                &mut ledger,
                 None,
-                "unit-cap-overflow-no-events",
-            );
-            // 没有 events 资源，overflow 那 7.5 走 release_qi_overflow_from 的
-            // "no qi_transfers resource" 分支返回 0；accepted 那 2.5 写到 zone
-            // 但也没 emit 事件。accounted = 2.5（accepted 部分）+ 0（overflow lost）
-            assert!((accounted - 2.5).abs() < 1e-9);
-            let zone_after = zones
-                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-                .unwrap()
-                .spirit_qi;
-            assert!((zone_after - 1.0).abs() < 1e-9, "zone clamped at 1.0");
+                "unit-no-events",
+            )
+            .expect("broadcast projection must be optional");
+
+            assert_eq!(cultivation.qi_current, 0.0);
+            assert!((outcome.zone_accepted - 2.5).abs() < 1e-9);
+            assert!((ledger.balance(&qi_flow_overflow_account()) - 7.5).abs() < 1e-9);
+            assert_eq!(ledger.transfers().len(), 2);
         }
 
-        /// account_id 解析：character_id 非空时取它。
         #[test]
-        fn account_id_uses_character_id_when_life_record_present_and_non_blank() {
-            let entity = fresh_entity();
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
-            let life_record = LifeRecord::new(canonical_player_id("Azure"));
+        fn insufficient_actor_qi_fails_before_mutation() {
+            let mut cultivation = cultivation_with_qi(2.0);
+            let life_record = life_record("Mira");
+            let mut ledger = WorldQiAccount::default();
 
-            // 走无 zone 路径触发 overflow，便于在 transfer.from 上断言 account_id
-            release_qi_amount_to_zone(
-                entity,
+            let error = release_qi_amount_to_zone(
+                &mut cultivation,
                 3.0,
-                Some(&position),
-                Some(&dim),
+                None,
+                None,
                 Some(&life_record),
                 None,
+                &mut ledger,
+                None,
+                "unit-insufficient",
+            )
+            .expect_err("release cannot debit more than the actor owns");
+
+            assert!(matches!(error, QiFlowError::InsufficientCurrent { .. }));
+            assert_eq!(cultivation.qi_current, 2.0);
+            assert_eq!(ledger.total(), 0.0);
+            assert!(ledger.transfers().is_empty());
+        }
+
+        #[test]
+        fn stable_ledger_failure_keeps_actor_zone_and_audit_unchanged() {
+            let mut cultivation = cultivation_with_qi(5.0);
+            let life_record = life_record("Mira");
+            let mut zones = fresh_zones_with_qi(1.0);
+            let mut ledger = WorldQiAccount::default();
+            ledger
+                .set_balance(qi_flow_overflow_account(), f64::MAX)
+                .expect("finite sink fixture");
+            let mut events = Events::<QiTransfer>::default();
+            let position = pos_in_spawn_zone();
+            let dimension = overworld_dim();
+
+            let error = release_qi_amount_to_zone(
+                &mut cultivation,
+                5.0,
+                Some(&position),
+                Some(&dimension),
+                Some(&life_record),
+                Some(&mut zones),
+                &mut ledger,
                 Some(&mut events),
-                "unit-account-id",
-            );
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
+                "unit-ledger-failure",
+            )
+            .expect_err("overflow destination that cannot progress must fail closed");
+
+            assert!(matches!(error, QiFlowError::Physics(_)));
+            assert_eq!(cultivation.qi_current, 5.0);
             assert_eq!(
-                collected[0].from,
-                QiAccountId::player(canonical_player_id("Azure"))
+                zones
+                    .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                    .unwrap()
+                    .spirit_qi,
+                1.0
             );
+            assert_eq!(ledger.balance(&qi_flow_overflow_account()), f64::MAX);
+            assert!(ledger.transfers().is_empty());
+            assert!(events.drain().next().is_none());
         }
-
-        /// account_id 解析：缺 life_record 兜底 entity:{:?}，避免空 character_id。
-        #[test]
-        fn account_id_falls_back_to_entity_when_life_record_missing() {
-            let entity = fresh_entity();
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
-
-            release_qi_amount_to_zone(
-                entity,
-                3.0,
-                Some(&position),
-                Some(&dim),
-                None,
-                None,
-                Some(&mut events),
-                "unit-account-id-fallback",
-            );
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            // entity:{:?} 兜底
-            assert!(collected[0].from.id.starts_with("entity:"));
-            assert!(matches!(collected[0].from.kind, QiAccountKind::Player));
-        }
-
-        /// account_id 解析：character_id 全空白也走兜底。
-        #[test]
-        fn account_id_falls_back_when_character_id_blank() {
-            let entity = fresh_entity();
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
-            let life_record = LifeRecord::new("   ");
-
-            release_qi_amount_to_zone(
-                entity,
-                3.0,
-                Some(&position),
-                Some(&dim),
-                Some(&life_record),
-                None,
-                Some(&mut events),
-                "unit-account-id-blank",
-            );
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 1);
-            assert!(collected[0].from.id.starts_with("entity:"));
-        }
-
-        /// `source` 参数应该如实拼到 overflow account 的 id 里，便于排查现场。
-        /// 锁住"两条不同 source 落到不同 overflow account"的细分 invariant。
-        #[test]
-        fn source_label_propagates_to_overflow_account_id() {
-            let entity = fresh_entity();
-            let mut events = fresh_qi_transfer_events();
-            let position = pos_in_spawn_zone();
-            let dim = overworld_dim();
-
-            release_qi_amount_to_zone(
-                entity,
-                1.0,
-                Some(&position),
-                Some(&dim),
-                None,
-                None,
-                Some(&mut events),
-                "ctx-A",
-            );
-            release_qi_amount_to_zone(
-                entity,
-                1.0,
-                Some(&position),
-                Some(&dim),
-                None,
-                None,
-                Some(&mut events),
-                "ctx-B",
-            );
-            let collected: Vec<_> = events.drain().collect();
-            assert_eq!(collected.len(), 2);
-            assert!(collected[0].to.id.starts_with("ctx-A:"));
-            assert!(collected[1].to.id.starts_with("ctx-B:"));
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // P5: 死亡清零 — color 相关补充测试（plan-color-v1 P5 §②）
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /// 死亡时 PracticeLog 中已有非零权重也被完全移除（清零不只是 default，是 remove component）
-    #[test]
-    fn terminated_player_with_nonempty_practice_log_is_removed() {
-        let mut app = App::new();
-        app.insert_resource(PersistenceSettings::default());
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(valence::prelude::Update, on_player_terminated);
-
-        // 构造非空 PracticeLog（Sharp 主色状态）
-        let mut log = PracticeLog::default();
-        log.add(ColorKind::Sharp, 70.0);
-        log.add(ColorKind::Heavy, 20.0);
-        let qi_color = QiColor {
-            main: ColorKind::Sharp,
-            secondary: Some(ColorKind::Heavy),
-            is_chaotic: false,
-            is_hunyuan: false,
-            permanent_lock_mask: Default::default(),
-        };
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Cultivation::default(),
-                MeridianSystem::default(),
-                Contamination::default(),
-                log,
-                qi_color,
-            ))
-            .id();
-
-        // 触发死亡清零
-        app.world_mut().send_event(PlayerTerminated { entity });
-        app.update();
-
-        // PracticeLog 应完全移除（不是置空，是 remove component）
-        assert!(
-            app.world().get::<PracticeLog>(entity).is_none(),
-            "期望死亡后 PracticeLog 从 entity 移除（非零权重也应被清除），因为 on_player_terminated 调用 e.remove::<PracticeLog>()；实际 component 仍存在"
-        );
-        // QiColor 也应移除
-        assert!(
-            app.world().get::<QiColor>(entity).is_none(),
-            "期望死亡后 QiColor 从 entity 移除（含已演化的 Sharp 主色），因为 on_player_terminated 调用 e.remove::<QiColor>()；实际 component 仍存在"
-        );
-    }
-
-    /// 死亡时杂色（is_chaotic=true）的 QiColor 也被正确移除（不因 is_chaotic 走不同路径）
-    #[test]
-    fn terminated_player_with_chaotic_qi_color_is_also_removed() {
-        let mut app = App::new();
-        app.insert_resource(PersistenceSettings::default());
-        app.add_event::<PlayerTerminated>();
-        app.add_event::<AscensionQuotaOpened>();
-        app.add_event::<QiTransfer>();
-        app.add_systems(valence::prelude::Update, on_player_terminated);
-
-        let mut log = PracticeLog::default();
-        log.add(ColorKind::Sharp, 40.0);
-        log.add(ColorKind::Heavy, 30.0);
-        log.add(ColorKind::Mellow, 30.0); // 三色各 > 15% → is_chaotic
-        let qi_color = QiColor {
-            main: ColorKind::Sharp,
-            secondary: None,
-            is_chaotic: true, // 杂色状态
-            is_hunyuan: false,
-            permanent_lock_mask: Default::default(),
-        };
-
-        let entity = app
-            .world_mut()
-            .spawn((
-                Cultivation::default(),
-                MeridianSystem::default(),
-                Contamination::default(),
-                log,
-                qi_color,
-            ))
-            .id();
-
-        app.world_mut().send_event(PlayerTerminated { entity });
-        app.update();
-
-        assert!(
-            app.world().get::<PracticeLog>(entity).is_none(),
-            "期望杂色死亡后 PracticeLog 移除（杂色不走特殊路径），实际 component 仍存在"
-        );
-        assert!(
-            app.world().get::<QiColor>(entity).is_none(),
-            "期望杂色死亡后 QiColor 移除（is_chaotic=true 不影响清零逻辑），实际 component 仍存在"
-        );
     }
 }

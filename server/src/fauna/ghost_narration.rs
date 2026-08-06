@@ -500,6 +500,7 @@ mod tests {
     fn make_e2e_app(spirit_qi: f64) -> App {
         let mut app = App::new();
         app.add_event::<QiTransfer>();
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
         let mut zones = ZoneRegistry::fallback();
         zones.find_zone_mut("spawn").unwrap().spirit_qi = spirit_qi;
         app.insert_resource(zones);

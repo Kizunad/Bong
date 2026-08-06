@@ -28,5 +28,6 @@
     "profile_name": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "9c2b4c4f11649dd4704519d7e78663a0b4032e6861da215e8bf65f73b2afa416"
 }

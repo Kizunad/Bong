@@ -38,7 +38,7 @@ use valence::prelude::{
 };
 
 use crate::combat::CombatClock;
-use crate::cultivation::components::Realm;
+use crate::cultivation::components::{ActorQiIdentity, ActorQiKind, Cultivation, Realm};
 use crate::fauna::daozhan::{daozhan_spawn_roll, DaoZhangBehaviorBlackboard, DaoZhangState};
 use crate::inventory::ancient_relics::AncientRelicSource;
 use crate::inventory::corpse::CorpseEmbalmed;
@@ -50,6 +50,7 @@ use crate::npc::navigator::Navigator;
 use crate::npc::patrol::NpcPatrol;
 use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
 use crate::npc::tsy_hostile::TsyHostileMarker;
+use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::world::dimension::{DimensionKind, DimensionLayers, TsyLayer};
 use crate::world::dimension_transfer::{DimensionTransferRequest, DimensionTransferSet};
 use crate::world::tsy::{DimensionAnchor, TsyPresence};
@@ -275,8 +276,9 @@ pub fn compute_layer_spirit_qi(layer: TsyDepth, skeleton_ratio: f64, is_collapsi
     } else {
         after_decay
     };
-    // Zone.spirit_qi 校验区间是 [-1, 1]，clamp 防止下溢。
-    result.clamp(-1.0, 1.0)
+    // `Zone.spirit_qi` 是 signed 灵压；坍缩渊按正典可低于 -1.0，不能用通用
+    // normalized clamp 抹掉深层负压（plan-refactor-qi-ledger-v1 §7.1 #2）。
+    result
 }
 
 /// plan §1.4 — 状态机推进 + remaining_skeleton 同步。
@@ -552,11 +554,21 @@ pub fn tsy_collapse_completed_cleanup(
     mut state_reg: ResMut<TsyZoneStateRegistry>,
     mut loot_registry: ResMut<DroppedLootRegistry>,
     presence_q: Query<(Entity, &TsyPresence)>,
-    daoxiang_q: Query<(Entity, &Position, &NpcArchetype)>,
+    mut daoxiang_q: Query<(
+        Entity,
+        &Position,
+        &NpcArchetype,
+        Option<&mut Cultivation>,
+        Option<&mut DaoZhangBehaviorBlackboard>,
+        Option<&crate::cultivation::life_record::LifeRecord>,
+    )>,
+
     corpse_q: Query<(Entity, &Position, &CorpseEmbalmed)>,
     layers: Option<Res<DimensionLayers>>,
     clock: Res<CombatClock>,
     mut dim_transfer: EventWriter<DimensionTransferRequest>,
+    mut qi_ledger: ResMut<WorldQiAccount>,
+    mut qi_transfers: EventWriter<QiTransfer>,
 ) {
     for ev in events.read() {
         let family = ev.family_id.clone();
@@ -580,6 +592,134 @@ pub fn tsy_collapse_completed_cleanup(
             }
         }
 
+        // 先确定尸体激活和现存道伥的唯一一轮 deterministic 结果，再完成所有即将随秘境
+        // 消失的 live qi owner 事务。此 preflight 必须发生在 loot、干尸、zone 等任何不可逆
+        // cleanup 之前；任一 owner 失败时整个 family 保持原样并重试。
+        let layer_entity = layers.as_deref().map(|layers| layers.tsy);
+        let mut rng_seed = collapse_seed(&family, clock.tick);
+        let mut corpse_actions = Vec::new();
+        for (corpse_entity, pos, corpse) in &corpse_q {
+            if corpse.family_id != family
+                || corpse.activated_to_daoxiang
+                || !point_in_any_aabb(pos.0, &aabbs)
+            {
+                continue;
+            }
+            let should_attempt_spawn = if let Some(realm) = corpse.origin_realm {
+                let seed = corpse
+                    .died_at_tick
+                    .wrapping_mul(0x6C62_272E_07BB_0142)
+                    .wrapping_add(rng_seed);
+                let (hit, next) = daozhan_spawn_roll(realm, seed);
+                rng_seed = next;
+                hit
+            } else {
+                false
+            };
+            let should_spawn = should_attempt_spawn && layer_entity.is_some();
+            let ejection_target = if should_spawn {
+                let (will_eject, next_seed) = collapse_roll(rng_seed);
+                rng_seed = next_seed;
+                if will_eject {
+                    let target = ejection_target(main_world_anchor.pos, rng_seed);
+                    rng_seed = rng_seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
+                    Some(target)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            corpse_actions.push((corpse_entity, should_spawn, ejection_target));
+        }
+
+        let mut settlement_blocked = false;
+        let mut staged_ledger = qi_ledger.clone();
+        let audit_start = staged_ledger.transfers().len();
+        let mut staged_owners = Vec::new();
+        let mut daoxiang_actions = Vec::new();
+        for (entity, pos, archetype, cultivation, daozhan, life_record) in &mut daoxiang_q {
+            if !matches!(archetype, NpcArchetype::Daoxiang) || !point_in_any_aabb(pos.0, &aabbs) {
+                continue;
+            }
+            let (will_eject, next_seed) = collapse_roll(rng_seed);
+            rng_seed = next_seed;
+            if will_eject {
+                let target = ejection_target(main_world_anchor.pos, rng_seed);
+                rng_seed = rng_seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
+                daoxiang_actions.push((entity, Some(target)));
+                continue;
+            }
+            let Some(life_record) = life_record else {
+                settlement_blocked = true;
+                break;
+            };
+            let Ok(identity) = ActorQiIdentity::from_life_record(life_record, ActorQiKind::Npc)
+            else {
+                settlement_blocked = true;
+                break;
+            };
+            let mut staged_cultivation = cultivation.as_deref().cloned();
+            let mut staged_daozhan = daozhan.as_deref().cloned();
+            let result = (|| {
+                if let Some(cultivation) = staged_cultivation.as_mut() {
+                    let amount = cultivation.qi_current();
+                    cultivation.release_to_zone(
+                        None,
+                        &mut staged_ledger,
+                        &identity,
+                        amount,
+                        crate::qi_physics::QiTransferReason::ReleaseToZone,
+                    )?;
+                }
+                if let Some(daozhan) = staged_daozhan.as_mut() {
+                    let amount = daozhan.daozhan_qi;
+                    crate::cultivation::components::release_external_qi_to_zone(
+                        &mut daozhan.daozhan_qi,
+                        identity.account(),
+                        None,
+                        &mut staged_ledger,
+                        amount,
+                        crate::qi_physics::QiTransferReason::ReleaseToZone,
+                    )?;
+                }
+                Ok::<(), crate::cultivation::components::QiFlowError>(())
+            })();
+            if result.is_err() {
+                settlement_blocked = true;
+                break;
+            }
+            staged_owners.push((entity, staged_cultivation, staged_daozhan));
+            daoxiang_actions.push((entity, None));
+        }
+        if settlement_blocked {
+            if let Some(state) = state_reg.by_family.get_mut(&family) {
+                state.lifecycle = TsyLifecycle::Collapsing;
+                state.dead_at_tick = None;
+                state.collapsing_started_at_tick = Some(clock.tick);
+            }
+            tracing::warn!(
+                family = %family,
+                "[bong][tsy] deferred family teardown until all live qi owners can settle"
+            );
+            continue;
+        }
+        for (entity, staged_cultivation, staged_daozhan) in staged_owners {
+            if let Ok((_, _, _, cultivation, daozhan, _)) = daoxiang_q.get_mut(entity) {
+                if let (Some(mut cultivation), Some(staged)) = (cultivation, staged_cultivation) {
+                    *cultivation = staged;
+                }
+                if let (Some(mut daozhan), Some(staged)) = (daozhan, staged_daozhan) {
+                    *daozhan = staged;
+                }
+            }
+        }
+        let committed_transfers = staged_ledger.transfers()[audit_start..].to_vec();
+        *qi_ledger = staged_ledger;
+        for transfer in committed_transfers {
+            qi_transfers.send(transfer);
+        }
+
         // Step 2: 凡物 / 残留 ancient relic 随 zone 蒸发。
         //
         // **过滤规则（Codex review P1）**：仅删除 `source_container_id` 带本 family 标记的 entries。
@@ -601,84 +741,46 @@ pub fn tsy_collapse_completed_cleanup(
             !point_in_any_aabb(pos, &aabbs)
         });
 
-        // Step 3+4: 道伥喷出 / despawn；干尸先被加速激活成道伥再走同一 Roll
-        // 用 family + tick 派生确定性 RNG，免引入 rand 依赖。
-        let mut rng_seed = collapse_seed(&family, clock.tick);
-
-        // 4a: 把 zone 内未激活的 CorpseEmbalmed 转成道伥（占用临时 vec 因为 spawn API 需要 Commands）
-        let layer_entity = layers.as_deref().map(|l| l.tsy);
-        for (corpse_entity, pos, corpse) in &corpse_q {
-            if corpse.family_id != family || corpse.activated_to_daoxiang {
-                continue;
-            }
-            if !point_in_any_aabb(pos.0, &aabbs) {
-                continue;
-            }
-            // 加速激活：与自然激活同样 spawn，但立刻进 Roll 决定喷不喷。
-            // plan-daozhan-v1 P0 — 先做境界概率门控，再做喷出 Roll。
-            // 无境界信息的历史干尸不生成道伥（概率 0%），直接跳过 spawn 流程。
-            let should_attempt_spawn = if let Some(realm) = corpse.origin_realm {
-                let seed = corpse
-                    .died_at_tick
-                    .wrapping_mul(0x6C62_272E_07BB_0142)
-                    .wrapping_add(rng_seed);
-                let (hit, next) = daozhan_spawn_roll(realm, seed);
-                rng_seed = next;
-                hit
-            } else {
-                false
-            };
-            if let Some(layer) = layer_entity {
-                if should_attempt_spawn {
-                    let spawn_pos = pos.0;
-                    let new_entity = spawn_daoxiang_from_corpse(
-                        &mut commands,
-                        layer,
-                        &zones,
-                        corpse,
-                        spawn_pos,
-                        clock.tick,
-                    );
-                    let (decision, next_seed) = collapse_roll(rng_seed);
-                    rng_seed = next_seed;
-                    if decision {
-                        let offset_pos = ejection_target(main_world_anchor.pos, rng_seed);
-                        rng_seed = rng_seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
-                        dim_transfer.send(DimensionTransferRequest {
-                            entity: new_entity,
-                            target: main_world_anchor.dimension,
-                            target_pos: offset_pos,
-                        });
-                    } else {
-                        commands
-                            .entity(new_entity)
-                            .insert(valence::prelude::Despawned);
-                    }
+        // Step 3+4: 现在才执行已 preflight 的干尸激活/道伥喷出或 despawn 计划。
+        for (corpse_entity, should_spawn, ejection_target) in corpse_actions {
+            if should_spawn {
+                let Some(layer) = layer_entity else {
+                    unreachable!("corpse action may spawn only when the TSY layer exists");
+                };
+                let Ok((_, pos, corpse)) = corpse_q.get(corpse_entity) else {
+                    continue;
+                };
+                let new_entity = spawn_daoxiang_from_corpse(
+                    &mut commands,
+                    layer,
+                    &zones,
+                    corpse,
+                    pos.0,
+                    clock.tick,
+                );
+                if let Some(target_pos) = ejection_target {
+                    dim_transfer.send(DimensionTransferRequest {
+                        entity: new_entity,
+                        target: main_world_anchor.dimension,
+                        target_pos,
+                    });
+                } else {
+                    commands
+                        .entity(new_entity)
+                        .insert(valence::prelude::Despawned);
                 }
             }
-            // 干尸本体一律消失（已被激活或已检查概率）
             commands
                 .entity(corpse_entity)
                 .insert(valence::prelude::Despawned);
         }
 
-        // 4b: 已存在的 Daoxiang NPC 同样走 50% Roll
-        for (entity, pos, archetype) in &daoxiang_q {
-            if !matches!(archetype, NpcArchetype::Daoxiang) {
-                continue;
-            }
-            if !point_in_any_aabb(pos.0, &aabbs) {
-                continue;
-            }
-            let (decision, next_seed) = collapse_roll(rng_seed);
-            rng_seed = next_seed;
-            if decision {
-                let offset_pos = ejection_target(main_world_anchor.pos, rng_seed);
-                rng_seed = rng_seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
+        for (entity, target_pos) in daoxiang_actions {
+            if let Some(target_pos) = target_pos {
                 dim_transfer.send(DimensionTransferRequest {
                     entity,
                     target: main_world_anchor.dimension,
-                    target_pos: offset_pos,
+                    target_pos,
                 });
             } else {
                 commands.entity(entity).insert(valence::prelude::Despawned);
@@ -952,6 +1054,8 @@ pub fn on_first_enter(
 
 pub fn register(app: &mut App) {
     app.insert_resource(TsyZoneStateRegistry::default())
+        .init_resource::<WorldQiAccount>()
+        .add_event::<QiTransfer>()
         .add_event::<TsyZoneActivated>()
         .add_event::<TsyCollapseStarted>()
         .add_event::<TsyCollapseCompleted>()
@@ -1108,22 +1212,24 @@ mod tests {
     }
 
     #[test]
-    fn compute_layer_spirit_qi_zero_skeleton_at_max_depth_factor() {
+    fn compute_layer_spirit_qi_zero_skeleton_preserves_signed_negative_pressure() {
         // shallow: -0.3 + (-0.3) * 1 = -0.6
         assert!((compute_layer_spirit_qi(TsyDepth::Shallow, 0.0, false) - (-0.6)).abs() < 1e-9);
-        // deep: -0.9 + (-0.3) * 1 = -1.2 → clamp 到 -1.0
-        assert!((compute_layer_spirit_qi(TsyDepth::Deep, 0.0, false) - (-1.0)).abs() < 1e-9);
+        // deep: -0.9 + (-0.3) * 1 = -1.2；signed zone 不得 clamp 到 -1.0。
+        assert!((compute_layer_spirit_qi(TsyDepth::Deep, 0.0, false) - (-1.2)).abs() < 1e-9);
     }
 
     #[test]
-    fn compute_layer_spirit_qi_collapsing_doubles_then_clamps() {
-        // shallow ratio=0 base value = -0.6, ×2 = -1.2 → clamp -1.0
+    fn compute_layer_spirit_qi_collapsing_preserves_canonical_race_out_pressure() {
+        // shallow ratio=0 base value = -0.6, ×2 = -1.2（正典 race-out）。
         assert!(
-            (compute_layer_spirit_qi(TsyDepth::Shallow, 0.0, true) - (-1.0)).abs() < 1e-9,
-            "shallow collapsing should clamp at -1.0"
+            (compute_layer_spirit_qi(TsyDepth::Shallow, 0.0, true) - (-1.2)).abs() < 1e-9,
+            "shallow collapsing should preserve canonical -1.2 pressure"
         );
-        // mid ratio=1.0 base = -0.6, ×2 = -1.2 → clamp -1.0
-        assert!((compute_layer_spirit_qi(TsyDepth::Mid, 1.0, true) - (-1.0)).abs() < 1e-9);
+        // mid ratio=1.0 base = -0.6, ×2 = -1.2，同样不能被通用 clamp 抹平。
+        assert!((compute_layer_spirit_qi(TsyDepth::Mid, 1.0, true) - (-1.2)).abs() < 1e-9);
+        // deep ratio=0 的完整公式达到 -2.4，signed owner 仍应原样保留。
+        assert!((compute_layer_spirit_qi(TsyDepth::Deep, 0.0, true) - (-2.4)).abs() < 1e-9);
     }
 
     #[test]

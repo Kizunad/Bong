@@ -79,5 +79,6 @@
     "bind_accepted": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "83415f8f803dde7e90a0d6c85ae1c71b7ef5ee40f68dcb44df7f5a5fef4ae590"
 }

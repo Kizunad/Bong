@@ -23,6 +23,7 @@ mod tests {
     use crate::combat::CombatClock;
     use crate::cultivation::components::Cultivation;
     use crate::inventory::{InventoryRevision, ItemInstance, ItemRarity, PlayerInventory};
+    use crate::qi_physics::WorldQiAccount;
     use crate::world::dimension::{
         CurrentDimension, DimensionKind, DimensionLayers, OverworldLayer, TsyLayer,
     };
@@ -41,6 +42,7 @@ mod tests {
     fn fresh_app() -> App {
         let mut app = App::new();
         app.insert_resource(CombatClock::default());
+        app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<DimensionTransferRequest>();
         app.add_event::<TsyEnterEmit>();

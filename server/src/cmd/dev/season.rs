@@ -1,53 +1,18 @@
-use std::collections::HashSet;
-
 use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::{CommandArg, CommandArgParseError, ParseInput};
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, App, Client, EventReader, EventWriter, Query, Res, ResMut, Resource, Update, Username,
+    App, Client, EventReader, EventWriter, Query, Res, ResMut, Update, Username,
 };
 use valence::protocol::packets::play::command_tree_s2c::Parser;
 
+use crate::cmd::dev::DevCommandPermissions;
 use crate::cultivation::tick::CultivationClock;
 use crate::world::season::{
     query_season, Season, SeasonChangedEvent, WorldSeasonState, VANILLA_DAY_TICKS, YEAR_TICKS,
 };
-
-#[derive(Debug, Clone, Resource)]
-pub struct SeasonCommandPermissions {
-    allowed_usernames: HashSet<String>,
-    allow_all: bool,
-}
-
-impl Default for SeasonCommandPermissions {
-    fn default() -> Self {
-        let mut allowed_usernames = HashSet::new();
-        allowed_usernames.insert("Admin".to_string());
-        allowed_usernames.insert("admin".to_string());
-        Self {
-            allowed_usernames,
-            allow_all: false,
-        }
-    }
-}
-
-impl SeasonCommandPermissions {
-    #[cfg(test)]
-    pub fn allow_user(username: impl Into<String>) -> Self {
-        let mut allowed_usernames = HashSet::new();
-        allowed_usernames.insert(username.into());
-        Self {
-            allowed_usernames,
-            allow_all: false,
-        }
-    }
-
-    pub fn is_allowed(&self, username: &str) -> bool {
-        self.allow_all || self.allowed_usernames.contains(username)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SeasonPhaseArg(pub Season);
@@ -135,7 +100,6 @@ impl Command for SeasonCmd {
 pub fn register(app: &mut App) {
     app.init_resource::<WorldSeasonState>()
         .add_event::<SeasonChangedEvent>()
-        .insert_resource(SeasonCommandPermissions::default())
         .add_command::<SeasonCmd>()
         .add_systems(Update, handle_season);
 }
@@ -144,7 +108,7 @@ pub fn handle_season(
     mut events: EventReader<CommandResultEvent<SeasonCmd>>,
     clock: Option<Res<CultivationClock>>,
     mut season_state: ResMut<WorldSeasonState>,
-    permissions: Res<SeasonCommandPermissions>,
+    permissions: Res<DevCommandPermissions>,
     usernames: Query<&Username>,
     mut clients: Query<&mut Client>,
     mut season_events: EventWriter<SeasonChangedEvent>,
@@ -155,7 +119,7 @@ pub fn handle_season(
             .get(event.executor)
             .map(|username| username.0.as_str())
             .unwrap_or_default();
-        if !permissions.is_allowed(username) {
+        if !permissions.is_operator(username) {
             send_direct_message(
                 &mut clients,
                 event.executor,
@@ -273,9 +237,9 @@ mod tests {
         app.insert_resource(WorldSeasonState::default());
         app.insert_resource(CultivationClock::default());
         if allow_alice {
-            app.insert_resource(SeasonCommandPermissions::allow_user("Alice"));
+            app.insert_resource(DevCommandPermissions::allow_user("Alice"));
         } else {
-            app.insert_resource(SeasonCommandPermissions::default());
+            app.insert_resource(DevCommandPermissions::default());
         }
         app.add_systems(Update, handle_season);
         app

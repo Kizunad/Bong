@@ -35,7 +35,7 @@ const DEFAULT_UNLOCK_PATH: &str = "data/craft/recipe_unlocks.json";
 
 /// 基线常显配方 — 不经任何解锁渠道，对所有玩家恒可见、恒可做，死亡重生也不清。
 ///
-/// 目前仅制作台自身（`workbench_recipes::register_workbench_self_recipe`）：
+/// 目前仅制作台自身（`craft.tool.workbench`）：
 /// 它是整棵 workbench 配方树的物理入口。若连它也走材料发现，玩家没摸过
 /// spirit_wood / iron_ingot / shu_gu 之前根本不知道"制作台"这条路存在，
 /// 入口配方被入口自身的原料锁死。秘传配方（残卷/师承/顿悟）不属于此列。
@@ -74,6 +74,8 @@ pub struct RecipeUnlockState {
     /// `canonical_player_id`（如 `"offline:Alice"`）→ 已解锁配方集合。
     /// 玩家未注册时返回空 set，等同未解锁任何配方。
     by_player: HashMap<String, HashSet<RecipeId>>,
+    /// 本帧已排队、尚未由 `apply_unlock_intents` 提交的残卷解锁，防止同一卷轴被重复消费。
+    pending_scroll_unlocks: HashSet<(String, RecipeId)>,
     /// 自上次 flush 以来是否有未落盘的变更。
     dirty: bool,
     /// 距上次 flush 累计 tick 数，用于节流。
@@ -90,6 +92,7 @@ impl Default for RecipeUnlockState {
     fn default() -> Self {
         Self {
             by_player: HashMap::new(),
+            pending_scroll_unlocks: HashSet::new(),
             dirty: false,
             flush_clock: 0,
             flush_interval_ticks: 600,
@@ -138,6 +141,20 @@ impl RecipeUnlockState {
             .unwrap_or(false)
     }
 
+    /// 预留本帧将由残卷提交的解锁，防止队列中的重复请求重复扣物品。
+    pub fn reserve_scroll_unlock(&mut self, player: &str, recipe: &RecipeId) -> bool {
+        if self.is_unlocked(player, recipe) {
+            return false;
+        }
+        self.pending_scroll_unlocks
+            .insert((player.to_owned(), recipe.clone()))
+    }
+
+    pub fn release_scroll_unlock_reservation(&mut self, player: &str, recipe: &RecipeId) {
+        self.pending_scroll_unlocks
+            .remove(&(player.to_owned(), recipe.clone()));
+    }
+
     /// 直接解锁（不区分来源，三渠道辅助函数最终都走这里）。
     /// 返回 true = 实际新增，false = 已解锁的 noop。
     pub fn unlock(&mut self, player: impl Into<String>, recipe: RecipeId) -> bool {
@@ -151,6 +168,8 @@ impl RecipeUnlockState {
 
     /// 玩家死透重生时调用 — 清空该玩家所有 unlock state。
     pub fn clear_for_player(&mut self, player: &str) {
+        self.pending_scroll_unlocks
+            .retain(|(pending_player, _)| pending_player != player);
         if self.by_player.remove(player).is_some() {
             self.dirty = true;
         }
@@ -662,7 +681,7 @@ mod tests {
         // 常量与真实注册表对拍：BASELINE_RECIPES 里的每个 id 必须真实存在于
         // registry，防止配方改名后豁免名单静默漂移成空挂。
         let mut registry = super::super::registry::CraftRegistry::new();
-        crate::craft::workbench_recipes::register_workbench_recipes(&mut registry).unwrap();
+        crate::craft::register_workbench_recipes(&mut registry).unwrap();
         for id in BASELINE_RECIPES {
             let rid = RecipeId::new(*id);
             assert!(is_baseline_recipe(&rid));
@@ -677,6 +696,25 @@ mod tests {
                  否则秘传门控被常显豁免绕过"
             );
         }
+    }
+
+    #[test]
+    fn scroll_unlock_reservation_blocks_duplicates_until_released_or_cleared() {
+        let mut state = RecipeUnlockState::new();
+        let recipe = RecipeId::new("craft.secret.test");
+
+        assert!(state.reserve_scroll_unlock("offline:Alice", &recipe));
+        assert!(!state.reserve_scroll_unlock("offline:Alice", &recipe));
+        assert!(state.reserve_scroll_unlock("offline:Bob", &recipe));
+
+        state.release_scroll_unlock_reservation("offline:Alice", &recipe);
+        assert!(state.reserve_scroll_unlock("offline:Alice", &recipe));
+        state.clear_for_player("offline:Alice");
+        assert!(state.reserve_scroll_unlock("offline:Alice", &recipe));
+
+        state.release_scroll_unlock_reservation("offline:Alice", &recipe);
+        assert!(state.unlock("offline:Alice", recipe.clone()));
+        assert!(!state.reserve_scroll_unlock("offline:Alice", &recipe));
     }
 
     #[test]

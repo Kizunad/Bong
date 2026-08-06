@@ -24,5 +24,6 @@
       "const": "disperse",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "cbfbe57939bf76767c38b00d8e1fddee5b72f351ef80f8376c0796449ec91b23"
 }

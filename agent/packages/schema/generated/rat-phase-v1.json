@@ -30,5 +30,6 @@
       "const": "gregarious",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "b7df6a2cef6bdf2e0b0bab04b807bc2150d95b1ec0e66cc104c2c13a2fb39948"
 }

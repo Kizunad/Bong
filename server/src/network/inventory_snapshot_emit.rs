@@ -327,6 +327,21 @@ fn skill_scroll_metadata(template_id: &str) -> (Option<String>, Option<String>, 
         id if id.starts_with("blueprint_scroll_") => {
             (Some("blueprint_scroll".to_string()), None, None)
         }
+        id if id.starts_with("scroll_workbench_")
+            || id.starts_with("scroll_gathering_")
+            || matches!(
+                id,
+                "scroll_fake_skin_light"
+                    | "scroll_herb_knife_iron"
+                    | "scroll_zhenfa_trap_iron"
+                    | "scroll_jade_coffin"
+                    | "scroll_stone_coffin"
+                    | "scroll_bronze_coffin"
+                    | "scroll_mundane_coffin"
+            ) =>
+        {
+            (Some("craft_recipe_scroll".to_string()), None, None)
+        }
         _ => (None, None, None),
     }
 }
@@ -1370,6 +1385,63 @@ mod tests {
         );
         assert!(blueprint_view.scroll_skill_id.is_none());
         assert!(blueprint_view.scroll_xp_grant.is_none());
+    }
+
+    #[test]
+    fn item_view_marks_craft_recipe_scroll_metadata_for_coffin_and_gathering() {
+        // verdict-1906-r2 major #5/#11 回归：coffin 四卷 + gathering 六卷必须被
+        // 识别为 craft_recipe_scroll，否则客户端 isCraftRecipeScroll()=false，
+        // 右键菜单"研读制作残卷"不可达。
+        let cases = [
+            "scroll_jade_coffin",
+            "scroll_stone_coffin",
+            "scroll_bronze_coffin",
+            "scroll_mundane_coffin",
+            "scroll_gathering_axe_bone",
+            "scroll_gathering_axe_iron",
+            "scroll_gathering_axe_copper",
+            "scroll_gathering_pickaxe_bone",
+            "scroll_gathering_pickaxe_iron",
+            "scroll_gathering_pickaxe_copper",
+        ];
+        for (index, template_id) in cases.iter().enumerate() {
+            let item = make_item(3100 + index as u64, template_id, "配方残卷", 0.05, 1);
+            let view = item_view_from_instance(&item);
+            assert_eq!(
+                view.scroll_kind.as_deref(),
+                Some("craft_recipe_scroll"),
+                "`{template_id}` must be classified as craft_recipe_scroll"
+            );
+            assert!(
+                view.scroll_skill_id.is_none(),
+                "`{template_id}` must not carry a skill id"
+            );
+            assert!(
+                view.scroll_xp_grant.is_none(),
+                "`{template_id}` must not carry xp grant"
+            );
+        }
+        // workbench 前缀仍然成立（既有分支不回归）。
+        let workbench = make_item(3111, "scroll_workbench_lantern", "制作残卷", 0.05, 1);
+        let workbench_view = item_view_from_instance(&workbench);
+        assert_eq!(
+            workbench_view.scroll_kind.as_deref(),
+            Some("craft_recipe_scroll")
+        );
+        // 负例：技能卷必须保持 skill_scroll，不受 craft 分支污染。
+        let skill = make_item(
+            3112,
+            "skill_scroll_herbalism_baicao_can",
+            "《百草图考·残》",
+            0.05,
+            1,
+        );
+        let skill_view = item_view_from_instance(&skill);
+        assert_eq!(skill_view.scroll_kind.as_deref(), Some("skill_scroll"));
+        // 负例：普通 misc 物品必须为 None。
+        let plain = make_item(3113, "iron_ingot", "铁锭", 1.0, 1);
+        let plain_view = item_view_from_instance(&plain);
+        assert!(plain_view.scroll_kind.is_none());
     }
 
     #[test]

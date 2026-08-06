@@ -3,6 +3,8 @@ package com.bong.client.craft;
 import com.bong.client.inventory.model.InventoryModel;
 import com.bong.client.inventory.state.InventoryStateStore;
 import com.bong.client.network.ClientRequestSender;
+import com.bong.client.skill.SkillSetSnapshot;
+import com.bong.client.skill.SkillSetStore;
 import io.wispforest.owo.ui.base.BaseOwoScreen;
 import io.wispforest.owo.ui.component.Components;
 import io.wispforest.owo.ui.component.LabelComponent;
@@ -55,6 +57,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
     private final Consumer<CraftStore.CraftOutcomeEvent> outcomeListener;
     private final Consumer<CraftStore.RecipeUnlockedEvent> unlockListener = event -> scheduleRefresh(this::refreshAll);
     private final Consumer<InventoryModel> inventoryListener = inventory -> scheduleRefresh(this::refreshInventoryOnly);
+    private final Consumer<SkillSetSnapshot> skillListener = skills -> scheduleRefresh(this::refreshSkillOnly);
 
     public CraftScreen() {
         this(CraftOutcomeFeedback::playDefaultCompleteSound, null);
@@ -188,6 +191,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         CraftStore.addOutcomeListener(outcomeListener);
         CraftStore.addUnlockListener(unlockListener);
         InventoryStateStore.addListener(inventoryListener);
+        SkillSetStore.addListener(skillListener);
     }
 
     private void detachListeners() {
@@ -200,6 +204,7 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         CraftStore.removeOutcomeListener(outcomeListener);
         CraftStore.removeUnlockListener(unlockListener);
         InventoryStateStore.removeListener(inventoryListener);
+        SkillSetStore.removeListener(skillListener);
     }
 
     /** 初始化 / 配方集合或解锁态变化（recipeListener、unlockListener）：结构可能变，全量刷新。 */
@@ -208,11 +213,12 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
-        ensureSelection();
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
+        ensureSelection(skills);
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
-        recipeList.refresh(inventory);
-        refreshActionAndMaterial(selected, inventory);
+        recipeList.refresh(inventory, skills);
+        refreshActionAndMaterial(selected, inventory, skills);
         outputPreview.refresh(selected, flashTicks);
         updateSubtitle(selected, inventory);
     }
@@ -223,8 +229,9 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
         CraftRecipe selected = currentRecipe();
-        refreshActionAndMaterial(selected, inventory);
+        refreshActionAndMaterial(selected, inventory, skills);
         outputPreview.refresh(selected, flashTicks);
         updateSubtitle(selected, inventory);
     }
@@ -239,10 +246,25 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
         CraftRecipe selected = currentRecipe();
         recipeList.setSelectedId(selectedId);
-        recipeList.refresh(inventory);
-        refreshActionAndMaterial(selected, inventory);
+        recipeList.refresh(inventory, skills);
+        refreshActionAndMaterial(selected, inventory, skills);
+        updateSubtitle(selected, inventory);
+    }
+
+    private void refreshSkillOnly() {
+        if (recipeList == null || materialGrid == null || actionBar == null) {
+            return;
+        }
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
+        InventoryModel inventory = InventoryStateStore.snapshot();
+        ensureSelection(skills);
+        CraftRecipe selected = currentRecipe();
+        recipeList.setSelectedId(selectedId);
+        recipeList.refresh(inventory, skills);
+        refreshActionAndMaterial(selected, inventory, skills);
         updateSubtitle(selected, inventory);
     }
 
@@ -251,7 +273,11 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         if (materialGrid == null || actionBar == null) {
             return;
         }
-        refreshActionAndMaterial(currentRecipe(), InventoryStateStore.snapshot());
+        refreshActionAndMaterial(
+            currentRecipe(),
+            InventoryStateStore.snapshot(),
+            SkillSetStore.snapshot()
+        );
     }
 
     /** outcomeListener：制作完成/失败后 outputPreview 需要反映最新产物；inventory 快照会另行
@@ -261,16 +287,21 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
             return;
         }
         InventoryModel inventory = InventoryStateStore.snapshot();
+        SkillSetSnapshot skills = SkillSetStore.snapshot();
         CraftRecipe selected = currentRecipe();
         outputPreview.refresh(selected, flashTicks);
-        refreshActionAndMaterial(selected, inventory);
+        refreshActionAndMaterial(selected, inventory, skills);
     }
 
     /** 五条刷新路径共用的 actionBar+materialGrid 段：session 现取现用，quantity 依赖
      * actionBar 先 refresh 完再读，顺序不能倒。 */
-    private void refreshActionAndMaterial(CraftRecipe selected, InventoryModel inventory) {
+    private void refreshActionAndMaterial(
+        CraftRecipe selected,
+        InventoryModel inventory,
+        SkillSetSnapshot skills
+    ) {
         CraftSessionStateView session = CraftStore.sessionState();
-        actionBar.refresh(selected, inventory, session);
+        actionBar.refresh(selected, inventory, session, skills);
         materialGrid.refresh(selected, inventory, session, actionBar.quantity());
     }
 
@@ -286,19 +317,30 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
         }
         int known = (int) CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).count();
         int craftable = selected == null ? 0 : CraftInventoryCounter.maxCraftable(selected, inventory);
-        subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable));
+        String skillHint = selected != null && !CraftActionBar.skillSatisfied(selected, SkillSetStore.snapshot())
+            ? " · 技艺不足"
+            : "";
+        subtitle.text(Text.literal("C 关闭 · 已知配方 " + known + " · 当前可做 x" + craftable + skillHint));
     }
 
-    private void ensureSelection() {
+    private void ensureSelection(SkillSetSnapshot skills) {
         // 仅在手搓配方(station=null)内选择：制作台配方归 WorkbenchScreen，不在此屏出现。
         if (selectedId != null
-            && CraftStore.recipe(selectedId).filter(CraftRecipe::isHandcraft).isPresent()) {
+            && CraftStore.recipe(selectedId)
+                .filter(CraftRecipe::isHandcraft)
+                .filter(recipe -> recipe.unlocked() && CraftActionBar.skillSatisfied(recipe, skills))
+                .isPresent()) {
             return;
         }
         selectedId = CraftStore.recipes().stream()
             .filter(CraftRecipe::isHandcraft)
             .filter(CraftRecipe::unlocked)
+            .filter(recipe -> CraftActionBar.skillSatisfied(recipe, skills))
             .findFirst()
+            .or(() -> CraftStore.recipes().stream()
+                .filter(CraftRecipe::isHandcraft)
+                .filter(CraftRecipe::unlocked)
+                .findFirst())
             .or(() -> CraftStore.recipes().stream().filter(CraftRecipe::isHandcraft).findFirst())
             .map(CraftRecipe::id)
             .orElse(null);
@@ -310,7 +352,9 @@ public final class CraftScreen extends BaseOwoScreen<FlowLayout> {
 
     private void startCraft(int quantity) {
         CraftRecipe selected = currentRecipe();
-        if (selected == null) {
+        if (selected == null
+            || !selected.unlocked()
+            || !CraftActionBar.skillSatisfied(selected, SkillSetStore.snapshot())) {
             return;
         }
         ClientRequestSender.sendCraftStart(selected.id(), Math.max(1, quantity));

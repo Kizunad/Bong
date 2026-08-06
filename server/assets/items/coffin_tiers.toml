@@ -19,7 +19,7 @@ description = "寒玉研磨内嵌，棺壁冷灵内敛。卧于其中寿火消�
 
 [[item]]
 id = "stone_coffin"
-name = "玄石棺"
+name = "乌石棺"
 category = "misc"
 grid_w = 2
 grid_h = 3
@@ -58,7 +58,7 @@ description = "泛白残页，记着以寒玉研粉内嵌棺壁冷却寿火的�
 
 [[item]]
 id = "scroll_stone_coffin"
-name = "玄石棺残卷"
+name = "乌石棺残卷"
 category = "scroll"
 grid_w = 1
 grid_h = 2
