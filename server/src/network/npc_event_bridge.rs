@@ -1,4 +1,4 @@
-use valence::prelude::{EventReader, EventWriter, Res, ResMut};
+use valence::prelude::{EventReader, EventWriter, Query, Res, ResMut};
 
 use super::redis_bridge::RedisOutbound;
 use super::RedisBridgeResource;
@@ -24,9 +24,24 @@ pub fn publish_npc_spawn_events(
     redis: Res<RedisBridgeResource>,
     game_tick: Option<Res<GameTick>>,
     mut events: EventReader<NpcSpawnNotice>,
+    life_records: Query<Option<&crate::cultivation::life_record::LifeRecord>>,
 ) {
     let at_tick = current_game_tick(game_tick.as_deref());
     for ev in events.read() {
+        match life_records.get(ev.entity) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                tracing::warn!(
+                    "[bong][npc_event_bridge] dropped materialized NpcSpawned without canonical LifeRecord entity={:?}",
+                    ev.entity
+                );
+                continue;
+            }
+            Err(_) => {
+                // Spawn notices can precede entity materialization; the notice carries the stable
+                // identity that must be published before the ECS entity exists.
+            }
+        }
         let wire = NpcSpawnedV1 {
             v: NPC_EVENT_VERSION,
             kind: "npc_spawned".to_string(),
@@ -434,13 +449,12 @@ mod tests {
     };
     use crate::npc::lifecycle::{NpcArchetype, NpcDeathReason};
     use crossbeam_channel::{unbounded, Receiver};
-    use valence::prelude::{App, Commands, DVec3, EventWriter, IntoSystemConfigs, Update};
+    use valence::prelude::{App, DVec3, EventWriter, IntoSystemConfigs, Update};
 
     fn emit_spawn_notice_before_entity_materializes(
-        mut commands: Commands,
         mut notices: EventWriter<NpcSpawnNotice>,
     ) {
-        let entity = commands.spawn_empty().id();
+        let entity = valence::prelude::Entity::from_raw(usize::MAX);
         notices.send(NpcSpawnNotice {
             entity,
             npc_id: "npc:stable:deferred-spawn".to_string(),
@@ -1383,6 +1397,7 @@ mod tests {
     fn combat_outcome_groups_survive_loser_removal_and_escalate_war() {
         let (mut app, _rx) = setup_app();
         app.add_event::<DormantCombatOutcome>();
+        app.add_event::<WarPhaseChanged>();
         app.insert_resource(ZoneConflictPressure::default());
         app.insert_resource(WarConflictStore::default());
         app.insert_resource(GameTick(88));

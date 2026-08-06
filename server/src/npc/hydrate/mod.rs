@@ -3804,7 +3804,10 @@ mod tests {
 
         let restored = {
             let world = app.world_mut();
-            let mut query = world.query::<(&SpiderDisguiseState, &MimicSpiderBlackboard)>();
+            let mut query = world.query_filtered::<
+                (&SpiderDisguiseState, &MimicSpiderBlackboard),
+                Without<Despawned>,
+            >();
             query
                 .iter(world)
                 .map(|(state, blackboard)| (*state, blackboard.clone()))
@@ -3996,8 +3999,10 @@ mod tests {
         assert!(app.world().resource::<NpcDormantStore>().is_empty());
         let restored = {
             let world = app.world_mut();
-            let mut query = world
-                .query_filtered::<(&DaoZhangState, &DaoZhangBehaviorBlackboard), With<NpcMarker>>();
+            let mut query = world.query_filtered::<
+                (&DaoZhangState, &DaoZhangBehaviorBlackboard),
+                (With<NpcMarker>, Without<Despawned>),
+            >();
             query
                 .iter(world)
                 .map(|(state, blackboard)| (*state, blackboard.clone()))
