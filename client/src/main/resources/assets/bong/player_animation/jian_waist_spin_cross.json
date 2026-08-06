@@ -3,6 +3,7 @@
   "author": "Bong",
   "name": "jian_waist_spin_cross",
   "description": "双锏·腰转交叉斩。腰向右拧到底蓄满 → 猛回转 → 双臂身前交叉成 X → 惯性拖过头 → 回弹收架。",
+  "wiring": "contract-first-unwired",
   "emote": {
     "beginTick": 0,
     "endTick": 32,

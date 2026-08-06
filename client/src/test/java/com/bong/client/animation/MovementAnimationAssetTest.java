@@ -101,6 +101,10 @@ class MovementAnimationAssetTest {
                 }
             }
             assertBoundaryTracks(id, emote, tracks, emote.get("isLoop").getAsBoolean());
+            if (id.equals(BongAnimations.JIAN_WAIST_SPIN_CROSS)) {
+                assertEquals("contract-first-unwired", root.get("wiring").getAsString(),
+                    id + " 必须明确声明 contract-first-unwired，避免无生产 producer 的半接线资产");
+            }
         }
     }
 
