@@ -71,6 +71,32 @@ def shaft_box(a: Vec, b: Vec, rx: float, rz: float, extend: float = 0.0):
     )
 
 
+def normalize(v: Vec) -> Vec:
+    n = math.sqrt(sum(c * c for c in v)) or 1.0
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def perp_to(a: Vec, b: Vec, ref: Vec) -> Vec:
+    """骨轴 a→b 的「岔开方向」单位向量：把参考向量 ref 对骨轴做正交化。
+
+    并排的两根骨（桡/尺）、骨两侧的一对肌（伸腕/屈腕）都靠它岔开；沿同一条线摆
+    就会重叠成一根。
+
+    用正交化而不是叉积：叉积是赝矢量，左右镜像时结果**不**跟着 x 取反，两侧会各岔
+    各的。正交化只要 ref 本身 x 分量为 0，结果就天然镜像对称——这条约束在这里
+    强制检查，因为违反它的症状（左右不对称）在三视图上几乎看不出来。
+    """
+    if abs(ref[0]) > 1e-9:
+        raise ValueError(f"参考向量 x 分量须为 0（否则左右不镜像），收到 {ref}")
+    d = normalize((b[0] - a[0], b[1] - a[1], b[2] - a[2]))
+    dot = sum(ref[i] * d[i] for i in range(3))
+    v = tuple(ref[i] - d[i] * dot for i in range(3))
+    m = math.sqrt(sum(c * c for c in v))
+    if m < 1e-4:  # 骨轴与参考共线，退化到另一个轴
+        return normalize((0.0, ref[2], -ref[1]))
+    return (v[0] / m, v[1] / m, v[2] / m)
+
+
 def _center(f: list[float], t: list[float]) -> list[float]:
     return [(a + b) / 2 for a, b in zip(f, t)]
 
@@ -301,48 +327,234 @@ class Rig:
 
     # ---------------------------------------------------------------- 自检
     def bounds(self) -> tuple[Vec, Vec]:
-        """**旋转后**的真实包围盒。
-
-        直接取 from/to 的极值是错的：斜置的骨干（趾骨、肋弓、喙）在局部坐标里是一根
-        沿 +Y 的长柱，from[1] 落在离实际端点很远的地方 —— 量出来的"贴地"和"全长"
-        会凭空差出半根骨头，而这些数字正是逐轮调参的唯一依据。
-        """
-        lo = [math.inf] * 3
-        hi = [-math.inf] * 3
-        for e in self.elements:
-            f, t = e["from"], e["to"]
-            rot, org = e.get("rotation") or (0, 0, 0), e.get("origin") or _center(f, t)
-            corners = [
-                (f[0] if i & 1 else t[0], f[1] if i & 2 else t[1], f[2] if i & 4 else t[2])
-                for i in range(8)
-            ]
-            if any(rot):
-                corners = [_rotate(c, rot, org) for c in corners]
-            for c in corners:
-                for a in range(3):
-                    lo[a] = min(lo[a], c[a])
-                    hi[a] = max(hi[a], c[a])
-        return ((lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2]))
+        return element_bounds(self.elements)
 
     def mirror_violations(self, tol: float = 0.02) -> list[str]:
-        """左右件必须 x 取反、y/z 相等。
+        return mirror_violations(self.elements, tol)
 
-        目视核不出这些 —— 一侧的一串骨整体平移（漏乘 sx）而非镜像，三视图上
-        完全看不出来，只有对拍能抓。
+
+# ================================================================ 元素级工具
+def element_bounds(elements: list[dict]) -> tuple[Vec, Vec]:
+    """一组 element **旋转后**的真实包围盒。
+
+    直接取 from/to 的极值是错的：斜置的骨干（趾骨、肋弓、喙）在局部坐标里是一根
+    沿 +Y 的长柱，from[1] 落在离实际端点很远的地方 —— 量出来的"贴地"和"全长"
+    会凭空差出半根骨头，而这些数字正是逐轮调参的唯一依据。
+    """
+    if not elements:
+        raise ValueError("空元素集，量不出包围盒")
+    lo = [math.inf] * 3
+    hi = [-math.inf] * 3
+    for e in elements:
+        f, t = e["from"], e["to"]
+        rot, org = e.get("rotation") or (0, 0, 0), e.get("origin") or _center(f, t)
+        corners = [
+            (f[0] if i & 1 else t[0], f[1] if i & 2 else t[1], f[2] if i & 4 else t[2])
+            for i in range(8)
+        ]
+        if any(rot):
+            corners = [_rotate(c, rot, org) for c in corners]
+        for c in corners:
+            for a in range(3):
+                lo[a] = min(lo[a], c[a])
+                hi[a] = max(hi[a], c[a])
+    return ((lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2]))
+
+
+def mirror_violations(elements: list[dict], tol: float = 0.02) -> list[str]:
+    """左右件必须 x 取反、y/z 相等。
+
+    目视核不出这些 —— 一侧的一串件整体平移（漏乘 sx）而非镜像，三视图上
+    完全看不出来，只有对拍能抓。
+    """
+    els = {e["name"]: e for e in elements}
+    out: list[str] = []
+    for name, e in els.items():
+        if not (name.endswith("_l") or "_l_" in name):
+            continue
+        mate = name.replace("_l_", "_r_") if "_l_" in name else name[:-2] + "_r"
+        m = els.get(mate)
+        if m is None:
+            out.append(f"{name}: 缺镜像件 {mate}")
+            continue
+        if abs(e["from"][0] + m["to"][0]) > tol or abs(e["to"][0] + m["from"][0]) > tol:
+            out.append(f"{name}: x 未镜像（{e['from'][0]}..{e['to'][0]} vs {m['from'][0]}..{m['to'][0]}）")
+        for axis, label in ((1, "y"), (2, "z")):
+            if abs(e["from"][axis] - m["from"][axis]) > tol or abs(e["to"][axis] - m["to"][axis]) > tol:
+                out.append(f"{name}: {label} 与镜像件不等")
+    return out
+
+
+# ================================================================ 读已有骨架
+class Skeleton:
+    """读一份 .bbmodel，供上层往里挂新 element（肌肉 / 皮毛层用）。
+
+    **读文件**而不是直接调生成器：骨架一旦被 Blockbench 手工精修过（fmt 5.0 存盘），
+    重跑生成器就会把那些改动冲掉。上层只认文件，骨架怎么来的与它无关。
+
+    兼容 fmt 4.x（outliner 内联 group）与 fmt 5.0（groups 数组 + uuid 引用树）。
+    """
+
+    def __init__(self, path) -> None:
+        import json
+        from pathlib import Path
+
+        self.path = Path(path)
+        self.data = json.loads(self.path.read_text())
+        self.groups = {g["uuid"]: g for g in self.data.get("groups", [])}
+        self.nodes: dict[str, dict] = {}  # 骨骼名 → outliner 节点（用于挂 cube）
+        self.pivots: dict[str, Vec] = {}
+        for root in self.data["outliner"]:
+            self._walk(root)
+        if not self.pivots:
+            raise SystemExit(f"{self.path}: 读不到骨骼层级")
+        self.by_name = {e["name"]: e for e in self.data["elements"]}
+
+    def _walk(self, node) -> None:
+        if isinstance(node, str):  # element uuid 叶子
+            return
+        meta = self.groups.get(node["uuid"], node)
+        name = meta.get("name")
+        if name is not None:
+            self.nodes[name] = node
+            self.pivots[name] = tuple(meta["origin"])
+        for child in node.get("children", []):
+            self._walk(child)
+
+    def P(self, bone: str) -> Vec:
+        if bone not in self.pivots:
+            raise KeyError(f"骨架里没有骨骼 {bone}（现有 {len(self.pivots)} 根）")
+        return self.pivots[bone]
+
+    def box(self, prefix: str) -> tuple[Vec, Vec]:
+        """名字以 prefix 开头的那组骨块的包围盒。
+
+        龙骨突、胸骨这类附着面的位置要从**骨架实际几何**取，不能在肌肉层重算一遍
+        —— 两处各算各的，骨架一改肌肉就浮空了。
         """
-        els = {e["name"]: e for e in self.elements}
-        out: list[str] = []
-        for name, e in els.items():
-            if not (name.endswith("_l") or "_l_" in name):
-                continue
-            mate = name.replace("_l_", "_r_") if "_l_" in name else name[:-2] + "_r"
-            m = els.get(mate)
-            if m is None:
-                out.append(f"{name}: 缺镜像件 {mate}")
-                continue
-            if abs(e["from"][0] + m["to"][0]) > tol or abs(e["to"][0] + m["from"][0]) > tol:
-                out.append(f"{name}: x 未镜像（{e['from'][0]}..{e['to'][0]} vs {m['from'][0]}..{m['to'][0]}）")
-            for axis, label in ((1, "y"), (2, "z")):
-                if abs(e["from"][axis] - m["from"][axis]) > tol or abs(e["to"][axis] - m["to"][axis]) > tol:
-                    out.append(f"{name}: {label} 与镜像件不等")
-        return out
+        hit = [e for n, e in self.by_name.items() if n.startswith(prefix)]
+        if not hit:
+            raise KeyError(f"骨架里没有名字以 {prefix} 开头的骨块")
+        return element_bounds(hit)
+
+    def attach(self, bone: str, element: dict) -> None:
+        if bone not in self.nodes:
+            raise KeyError(f"骨架里没有骨骼 {bone}")
+        self.data["elements"].append(element)
+        self.nodes[bone]["children"].append(element["uuid"])
+
+    def added(self, flag: str = "_muscle") -> list[dict]:
+        return [e for e in self.data["elements"] if e.get(flag)]
+
+    def keep_only_added(self, flag: str = "_muscle") -> None:
+        """--only-muscle：摘掉原骨骼 cube，只留新挂上去的。"""
+        keep = {e["uuid"] for e in self.data["elements"] if e.get(flag)}
+        self.data["elements"] = [e for e in self.data["elements"] if e["uuid"] in keep]
+
+        def prune(node):
+            if isinstance(node, str):
+                return node in keep
+            node["children"] = [c for c in node.get("children", []) if prune(c)]
+            return True
+
+        for root in self.data["outliner"]:
+            prune(root)
+
+    def extend_texture(self, mats: Mapping[str, RGB], row: int, swatch: int = 8) -> None:
+        """在原贴图上追加一行色块（不动已有色块，读进来的骨骼 UV 保持有效）。"""
+        src = self.data["textures"][0]["source"].split(",", 1)[1]
+        img = Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA")
+        px = img.load()
+        if (row + 1) * swatch > img.height:
+            raise ValueError(f"贴图只有 {img.height}px 高，放不下第 {row} 行色块")
+        for i, (_name, (r, g, b)) in enumerate(mats.items()):
+            ox, oy = i * swatch, row * swatch
+            for y in range(swatch):
+                for x in range(swatch):
+                    n = ((x * 7 + y * 13 + i * 5) % 3) - 1  # 轻噪，肌面不是平涂塑料
+                    px[ox + x, oy + y] = (
+                        max(0, min(255, r + n * 4)),
+                        max(0, min(255, g + n * 3)),
+                        max(0, min(255, b + n * 3)),
+                        255,
+                    )
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        self.data["textures"][0]["source"] = (
+            "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        )
+
+    def write(self, out, name: str) -> None:
+        import json
+        from pathlib import Path
+
+        self.data["name"] = name
+        self.data["model_identifier"] = name
+        Path(out).write_text(json.dumps(self.data, ensure_ascii=False, indent=1))
+
+
+class SoftTissue:
+    """往 Skeleton 上挂软组织（肌腹 / 腱 / 膜）。UV 指向贴图的指定行。"""
+
+    def __init__(self, skel: Skeleton, mats: Mapping[str, RGB], row: int, swatch: int = 8) -> None:
+        self.skel = skel
+        self.mats = tuple(mats)
+        self.row = row
+        self.swatch = swatch
+        self.count = 0
+
+    def _faces(self, mat: str) -> dict:
+        if mat not in self.mats:
+            raise ValueError(f"未知软组织材质: {mat}")
+        ox, oy = self.mats.index(mat) * self.swatch, self.row * self.swatch
+        uv = [ox + 1.0, oy + 1.0, ox + self.swatch - 1.0, oy + self.swatch - 1.0]
+        return {d: {"uv": list(uv), "texture": 0} for d in ("north", "south", "east", "west", "up", "down")}
+
+    def piece(self, bone: str, name: str, frm: Vec, to: Vec, *, rot=None, org=None, mat: str = "muscle") -> None:
+        f = [round(min(a, b), 3) for a, b in zip(frm, to)]
+        t = [round(max(a, b), 3) for a, b in zip(frm, to)]
+        self.skel.attach(bone, {
+            "name": name,
+            "box_uv": False,
+            "rescale": False,
+            "locked": False,
+            "render_order": "default",
+            "allow_mirror_modeling": True,
+            "type": "cube",
+            "uuid": str(uuid.uuid4()),
+            "_muscle": True,
+            "from": f,
+            "to": t,
+            "autouv": 0,
+            "color": 4,
+            "origin": [round(v, 3) for v in (org or _center(f, t))],
+            "rotation": [round(v, 3) for v in (rot or (0.0, 0.0, 0.0))],
+            "faces": self._faces(mat),
+        })
+        self.count += 1
+
+    def strut(self, bone: str, name: str, a: Vec, b: Vec, rx: float, rz: float | None = None,
+              *, mat: str = "muscle") -> None:
+        """等截面的一段（腱、膜条）。"""
+        frm, to, rot, org = shaft_box(a, b, rx, rx if rz is None else rz)
+        self.piece(bone, name, frm, to, rot=rot, org=org, mat=mat)
+
+    def belly(self, bone: str, name: str, a: Vec, b: Vec, r_mid: float, *,
+              r_end: float | None = None, mat: str = "muscle", flat: float = 1.0) -> None:
+        """梭形肌腹：沿 a→b 分 3 段，中段最粗。
+
+        单段直筒看着像水管 —— 肌肉两端收进腱，中间鼓起来，这个形状是"活体感"的来源。
+        flat<1 = 扁片（阔肌一类）。
+        """
+        r_end = r_mid * 0.5 if r_end is None else r_end
+        cuts = (0.0, 0.26, 0.74, 1.0)
+        radii = ((r_end + r_mid) / 2, r_mid, (r_mid + r_end) / 2)
+        for i, r in enumerate(radii):
+            p0 = _mix(a, b, cuts[i])
+            p1 = _mix(a, b, cuts[i + 1])
+            frm, to, rot, org = shaft_box(p0, p1, r * flat, r)
+            self.piece(bone, f"{name}_{i + 1}", frm, to, rot=rot, org=org, mat=mat)
+
+
+def _mix(a: Vec, b: Vec, t: float) -> Vec:
+    return (lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t))

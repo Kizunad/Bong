@@ -28,6 +28,8 @@ MODELS = REPO / "local_models" / "fuyu_vulture"
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))  # 复用 scripts/models/render_bbmodel.py
 
+from gen_muscle import GROUP_LABEL as MGROUP_LABEL  # noqa: E402
+from gen_muscle import GROUPS as MGROUPS  # noqa: E402
 from gen_skeleton import PARTS, SPECS, build  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 from render_bbmodel import render, render_three_view  # noqa: E402
@@ -110,11 +112,48 @@ def head_shot(key: str, size: int = 520) -> None:
     _grid(tiles, 3, HERE / f"render_head_{key}.png")
 
 
+def _run_muscle(*args: str) -> None:
+    subprocess.run([sys.executable, str(HERE / "gen_muscle.py"), *args], check=True,
+                   capture_output=True)
+
+
+def muscle_views(key: str) -> None:
+    """骨+肌 / 只肌 / 延展 / 展翼，四张。"""
+    name = SPECS[key].model.replace("Skeleton", "Muscle")
+    for suffix, tag in (("", ""), ("_bare", "_bare"), ("_explode", "_explode"),
+                        ("_spread", "_spread")):
+        three_view(f"{name}{suffix}", f"render_muscle{tag}_{key}.png")
+
+
+def muscle_groups_sheet(key: str, size: int = 340) -> None:
+    """逐肌群图集：每群单独挂在骨架上，形状与附着点一眼可辨。"""
+    name = SPECS[key].model.replace("Skeleton", "Muscle")
+    tiles = []
+    for g in MGROUPS:
+        _run_muscle("--size", key, "--group", g)
+        im, _ = render(MODELS / f"{name}_{g}.bbmodel", yaw=132.0, pitch=14.0, size=size)
+        tiles.append((f"{g} · {MGROUP_LABEL[g]}", im))
+    _grid(tiles, 3, HERE / f"render_muscle_groups_{key}.png")
+
+
+def muscle_top(key: str, size: int = 500) -> None:
+    """俯视对比：翼膜在水平面内展开，只有从上往下看才看得见它撑出的前缘。"""
+    sk = SPECS[key].model
+    mu = sk.replace("Skeleton", "Muscle")
+    tiles = []
+    for label, model in (("骨架 · 展翼", f"{sk}_spread"), ("骨+肌 · 展翼", f"{mu}_spread")):
+        im, _ = render(MODELS / f"{model}.bbmodel", yaw=180.0, pitch=88.0, size=size)
+        tiles.append((label, im))
+    _grid(tiles, 2, HERE / f"render_muscle_top_{key}.png")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="腐羽鹫预览渲染")
     ap.add_argument("--size", choices=SIZES, help="只出一档")
     ap.add_argument("--skip-gen", action="store_true", help="不重生成 bbmodel，只渲染")
-    ap.add_argument("--parts", action="store_true", help="只出部件图集")
+    ap.add_argument("--parts", action="store_true", help="只出骨架部件图集")
+    ap.add_argument("--muscle", action="store_true", help="只出肌肉层视图")
+    ap.add_argument("--muscle-groups", action="store_true", help="只出肌群图集")
     args = ap.parse_args()
 
     keys = [args.size] if args.size else list(SIZES)
@@ -124,11 +163,24 @@ def main() -> int:
         for k in keys:
             _run("--size", k)
             _run("--size", k, "--pose", "spread")
+            _run_muscle("--size", k)
+            _run_muscle("--size", k, "--pose", "spread")
+            _run_muscle("--size", k, "--only-muscle")
+            _run_muscle("--size", k, "--explode", "4")
 
     print("渲染…")
     if args.parts:
         for k in keys:
             parts_sheet(k)
+        return 0
+    if args.muscle_groups:
+        for k in keys:
+            muscle_groups_sheet(k)
+        return 0
+    if args.muscle:
+        for k in keys:
+            muscle_views(k)
+            muscle_top(k)
         return 0
 
     for k in keys:
@@ -136,6 +188,8 @@ def main() -> int:
         three_view(spec.model, f"render_{k}.png")
         three_view(f"{spec.model}_spread", f"render_{k}_spread.png")
         head_shot(k)
+        muscle_views(k)
+        muscle_top(k)
     if len(keys) == len(SIZES):
         scale_sheet()
     return 0

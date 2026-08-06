@@ -45,7 +45,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from rigkit import Rig, Vec, lerp  # noqa: E402
+from rigkit import Rig, Vec, lerp, normalize, perp_to  # noqa: E402
 
 REPO = HERE.parents[2]
 OUT_DIR = REPO / "local_models" / "fuyu_vulture"
@@ -288,7 +288,10 @@ class Anatomy:
         self.jaw_hinge = (0.0, self.skull_y - 2.4 * U, self.occiput_z + 0.4 * U)
 
         # ---- 肩带 / 翼 ----
-        self.shoulder = lambda sx: (sx * 2.35 * U, ty + 1.9 * U, self.t1_z + 0.9 * U)
+        # 关节盂在脊柱**略下方**外侧（肩胛贴着肋骨背侧走，乌喙骨从这儿斜下去撑住胸骨）。
+        # 早先放在 ty+1.9U —— 比背线还高，于是龙骨到肩凭空拉开 10 单位，胸大肌只能
+        # 拉成两片垂到腹下的长板，翼也折到背脊上头去了。
+        self.shoulder = lambda sx: (sx * 2.35 * U, ty - 0.35 * U, self.t1_z + 0.9 * U)
         self.furcula_bottom = (0.0, self.sternum_y + 1.2 * U, self.sternum_front_z - 0.6 * U)
         W = spec.wing_half_r * L  # 翼骨半跨（肩 → 指尖的伸展长度）
         self.wing_span_half = W
@@ -312,10 +315,12 @@ class Anatomy:
         """
         sh = self.shoulder(sx)
         if self.pose == "spread":
-            # 展开：略向前扫（鸟翼前缘不是垂直于体轴的直线），末端微上翘
-            d_hu = (sx * 0.96, 0.16, -0.24)
-            d_ul = (sx * 0.99, 0.10, -0.10)
-            d_mn = (sx * 0.99, 0.06, 0.14)
+            # 展开：**肘后掠、腕前伸**，翼尖再微收。这个折线关系决定了前缘 ——
+            # 肩腕连线靠前、肘落在它后方，翼膜才有地方绷成一条直边。
+            # 反过来让肘凸向前，膜就只能填到后缘去，翼前缘成了折线。
+            d_hu = (sx * 0.94, 0.16, 0.30)
+            d_ul = (sx * 0.98, 0.10, -0.16)
+            d_mn = (sx * 0.99, 0.05, -0.12)
         else:
             # 收翼：肱骨向后下 → 前臂折回向前上 → 手再向后，Z 字贴体侧
             d_hu = (sx * 0.26, -0.62, 0.74)
@@ -838,29 +843,9 @@ def part_wing(rig: Rig, A: Anatomy, sx: int, side: str) -> None:
         rig.shaft(mn, f"alula_claw_{side}", al_end, claw_tip, 0.16 * U * r, 0.20 * U * r, mat="claw")
 
 
-def _perp(a: Vec, b: Vec, ref: Vec) -> Vec:
-    """骨轴的「岔开方向」单位向量：把参考向量 ref 对骨轴做正交化。
-
-    前臂两骨若沿同一条线摆，桡尺就重叠成一根；必须沿这个方向岔开。
-
-    用正交化而不是叉积：叉积是赝矢量，左右镜像时结果**不**跟着 x 取反，
-    两侧前臂会各岔各的（check 的镜像对拍逮得到，但先想明白省一轮）。
-    正交化只要 ref 本身 x 分量为 0，结果就天然镜像对称。
-    """
-    if abs(ref[0]) > 1e-9:
-        raise ValueError(f"参考向量 x 分量须为 0（否则左右不镜像），收到 {ref}")
-    d = _norm((b[0] - a[0], b[1] - a[1], b[2] - a[2]))
-    dot = sum(ref[i] * d[i] for i in range(3))
-    v = tuple(ref[i] - d[i] * dot for i in range(3))
-    m = math.sqrt(sum(c * c for c in v))
-    if m < 1e-4:  # 骨轴与参考共线，退化到另一个轴
-        v, m = (0.0, ref[2], -ref[1]), 1.0
-    return (v[0] / m, v[1] / m, v[2] / m)
-
-
-def _norm(v: Vec) -> Vec:
-    n = math.sqrt(sum(c * c for c in v)) or 1.0
-    return (v[0] / n, v[1] / n, v[2] / n)
+# 岔开方向 / 归一化搬去 rigkit 供肌肉层共用（前臂的伸屈肌要沿同一条轴岔开）
+_perp = perp_to
+_norm = normalize
 
 
 # ================================================================ 部件：腿
