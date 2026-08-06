@@ -33,6 +33,7 @@ use crate::inventory::{
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
+use crate::npc::spawn::NpcMarker;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::{
     constants::QI_NPC_ABSORB_FLOOR, QiAccountId, QiTransfer, QiTransferReason,
