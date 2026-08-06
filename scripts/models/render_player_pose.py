@@ -44,6 +44,39 @@ REPO = Path(__file__).resolve().parents[2]
 OUT_MATRIX = REPO / "scripts" / "models" / "render_bend_matrix.png"
 OUT_POSE = REPO / "scripts" / "models" / "render_player_pose.png"
 OUT_ANIM = REPO / "scripts" / "models" / "render_anim_pose.png"
+MIN_RENDER_SIZE = 1
+MAX_RENDER_SIZE = 4096
+ANGLE_AXES = frozenset(("pitch", "yaw", "roll", "bend", "axis"))
+
+
+def _validate_size(size, context="size"):
+    if isinstance(size, bool) or not isinstance(size, (int, np.integer)):
+        raise ValueError(
+            f"{context} must be an integer with {MIN_RENDER_SIZE} <= size <= "
+            f"{MAX_RENDER_SIZE}; got {size!r}"
+        )
+    size = int(size)
+    if not MIN_RENDER_SIZE <= size <= MAX_RENDER_SIZE:
+        raise ValueError(
+            f"{context} must satisfy {MIN_RENDER_SIZE} <= size <= {MAX_RENDER_SIZE}; "
+            f"got {size}"
+        )
+    return size
+
+
+def _parse_size(value):
+    try:
+        size = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"size must be an integer with {MIN_RENDER_SIZE} <= size <= {MAX_RENDER_SIZE}; "
+            f"got {value!r}"
+        ) from exc
+    try:
+        return _validate_size(size)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
 
 # vanilla BipedEntityModel（已换算到 y-up）：pivot / cuboid / bend 中心 / skin box-uv。
 # bendable 取自 PlayerAnimator AnimationBuilder：head 与两个 item 槽不可 bend，其余可。
@@ -71,6 +104,34 @@ def _rot_axis(axis, deg):
     c, s = math.cos(t), math.sin(t)
     K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
     return np.eye(3) * c + K * s + np.outer(a, a) * (1 - c)
+
+
+def _stable_orthogonal_axis(direction):
+    direction = np.asarray(direction, dtype=float)
+    basis = np.eye(3)[int(np.argmin(np.abs(direction)))]
+    axis = np.cross(direction, basis)
+    return axis / np.linalg.norm(axis)
+
+
+def _align_up_to_direction(direction):
+    """Return a proper rotation that maps +Y to a nonzero direction."""
+    target = np.asarray(direction, dtype=float)
+    if target.shape != (3,) or not np.isfinite(target).all():
+        raise ValueError(f"direction must be a finite 3-vector; got {direction!r}")
+    norm = np.linalg.norm(target)
+    if norm <= 1e-12:
+        raise ValueError(f"direction must be nonzero; got {direction!r}")
+    target = target / norm
+
+    up = np.array([0.0, 1.0, 0.0])
+    cross = np.cross(up, target)
+    dot = float(np.clip(np.dot(up, target), -1.0, 1.0))
+    cross_norm = np.linalg.norm(cross)
+    if cross_norm <= 1e-12:
+        if dot > 0.0:
+            return np.eye(3)
+        return _rot_axis(_stable_orthogonal_axis(target), 180.0)
+    return _rot_axis(cross, math.degrees(math.atan2(cross_norm, dot)))
 
 
 def part_matrix(pitch=0.0, yaw=0.0, roll=0.0):
@@ -195,13 +256,7 @@ def jian_tris(pose: dict, v_off: int):
         forearm_dir = _rot_axis(axis, -bend_v) @ np.array([0.0, -1.0, 0.0])
         world_dir = M @ forearm_dir
         # 把锏的 +y（柄尾→锏尖）对到小臂朝向，握把中心落在手心
-        up = np.array([0.0, 1.0, 0.0])
-        v = np.cross(up, world_dir)
-        c = float(np.dot(up, world_dir))
-        if np.linalg.norm(v) < 1e-8:
-            A = np.eye(3) * (1.0 if c > 0 else -1.0)
-        else:
-            A = _rot_axis(v, math.degrees(math.acos(max(-1.0, min(1.0, c)))))
+        A = _align_up_to_direction(world_dir)
         for vs, uvs, n in base:
             out.append((np.array([A @ (p - H.GRIP_ANCHOR) + hand for p in vs]), uvs, A @ n))
     return out
@@ -228,6 +283,7 @@ def skin_atlas(with_jian: bool = False) -> np.ndarray:
 
 
 def render_pose(tris, tex, yaw=180.0, pitch=4.0, size=300, bg=(26, 27, 31)):
+    size = _validate_size(size, "render_pose size")
     orig = R.load_bbmodel
     R.load_bbmodel = lambda _p: (tris, tex, (H.ATLAS, H.ATLAS), "pose")
     try:
@@ -238,6 +294,7 @@ def render_pose(tris, tex, yaw=180.0, pitch=4.0, size=300, bg=(26, 27, 31)):
 
 
 def grid(cells, per_row, size, out: Path, title=None):
+    size = _validate_size(size, "grid size")
     gap, lab = 8, 17
     rows = (len(cells) + per_row - 1) // per_row
     head = 22 if title else 0
@@ -258,6 +315,7 @@ def grid(cells, per_row, size, out: Path, title=None):
 
 # ── 弯曲能力扫描 ──────────────────────────────────────────────────────────
 def bend_matrix(size=250):
+    size = _validate_size(size, "bend_matrix size")
     tex = skin_atlas()
     cells = []
 
@@ -292,10 +350,16 @@ def bend_matrix(size=250):
 
 
 def anim_pose_table(json_path: Path):
-    """读 emotecraft v3 JSON → [(tick, pose dict)]，角度转度数（本脚本用度）。"""
+    """Read Emotecraft v3 poses and normalize angle units to degrees."""
     import json as _json
     doc = _json.loads(Path(json_path).read_text())
     emote = doc["emote"]
+    degrees_flag = emote.get("degrees", True)
+    if not isinstance(degrees_flag, bool):
+        raise ValueError(
+            "emote.degrees must be a boolean discriminator: false means radians, "
+            "true means degrees"
+        )
     kfs = RA.collect_keyframes(emote)
     ticks = sorted({t for part in kfs.values() for axis in part.values() for t, *_ in axis})
     out = []
@@ -306,7 +370,7 @@ def anim_pose_table(json_path: Path):
             # sample_part 回来的角度是弧度，位移是米/px 原值
             conv = {}
             for k, v in axes.items():
-                conv[k] = math.degrees(v) if k in ("pitch", "yaw", "roll", "bend", "axis") else v
+                conv[k] = math.degrees(v) if not degrees_flag and k in ANGLE_AXES else v
             if part == "body":       # body 走 MatrixStack，本渲染器按整体位移近似
                 pose["_body"] = conv
             elif part in PARTS:
@@ -317,6 +381,7 @@ def anim_pose_table(json_path: Path):
 
 def render_anim(json_path: Path, size=280, yaw=90.0, pitch=6.0, with_jian=False):
     """按关键帧 tick 逐帧渲染（步态看侧面、招式看 3/4）。"""
+    size = _validate_size(size, "render_anim size")
     name, emote, table = anim_pose_table(json_path)
     tex = skin_atlas(with_jian)
     cells, frames = [], []
@@ -360,7 +425,12 @@ def main():
     ap.add_argument("--anim", default=None, help="emotecraft v3 JSON → 逐关键帧三视图")
     ap.add_argument("--yaw", type=float, default=90.0)
     ap.add_argument("--with-jian", action="store_true", help="双手挂上竹节锏一起渲")
-    ap.add_argument("--size", type=int, default=250)
+    ap.add_argument(
+        "--size",
+        type=_parse_size,
+        default=250,
+        help=f"每个渲染单元的边长（{MIN_RENDER_SIZE}..{MAX_RENDER_SIZE}）",
+    )
     args = ap.parse_args()
 
     if args.anim:
@@ -374,9 +444,10 @@ def main():
         return
     tex = skin_atlas()
     tris = pose_tris(POSES[args.pose])
-    cells = [(lab, render_pose(tris, tex, yaw=yaw, pitch=pitch, size=args.size * 2))
+    pose_size = _validate_size(args.size, "pose render size")
+    cells = [(lab, render_pose(tris, tex, yaw=yaw, pitch=pitch, size=pose_size))
              for lab, yaw, pitch in (("正面", 180.0, 4.0), ("侧面", 90.0, 4.0), ("3/4", 145.0, 10.0))]
-    p = grid(cells, 3, args.size * 2, OUT_POSE, title=f"pose: {args.pose}")
+    p = grid(cells, 3, pose_size, OUT_POSE, title=f"pose: {args.pose}")
     print(f"→ {p.relative_to(REPO)}")
 
 

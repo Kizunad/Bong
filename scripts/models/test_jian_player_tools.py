@@ -63,6 +63,7 @@ class JianPlayerToolsTest(unittest.TestCase):
             "version": 3,
             "name": "body_probe",
             "emote": {
+                "degrees": False,
                 "endTick": 1,
                 "moves": [{
                     "tick": 0,
@@ -81,14 +82,106 @@ class JianPlayerToolsTest(unittest.TestCase):
             self.assertEqual(0.125, body["z"])
             self.assertAlmostEqual(math.degrees(0.1), body["pitch"])
 
+            degrees_path = Path(tmp) / "degrees.json"
+            degrees_path.write_text(json.dumps({
+                "name": "degrees",
+                "emote": {
+                    "degrees": True,
+                    "moves": [{"tick": 0, "body": {"pitch": 45.0}}],
+                },
+            }), encoding="utf-8")
+            degrees_body = P.anim_pose_table(degrees_path)[2][0][1]["_body"]
+            self.assertEqual(45.0, degrees_body["pitch"])
+
+            for invalid in (None, 0, 1, "false", []):
+                invalid_path = Path(tmp) / f"invalid_{repr(invalid)}.json"
+                invalid_path.write_text(json.dumps({
+                    "emote": {
+                        "degrees": invalid,
+                        "moves": [{"tick": 0, "body": {"pitch": 0.1}}],
+                    },
+                }), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, r"emote\.degrees.*false means radians.*true means degrees"):
+                    P.anim_pose_table(invalid_path)
+
             empty = Path(tmp) / "empty.json"
-            empty.write_text(json.dumps({"name": "empty", "emote": {"moves": []}}), encoding="utf-8")
+            empty.write_text(json.dumps({"name": "empty", "emote": {"degrees": False, "moves": []}}), encoding="utf-8")
             self.assertEqual([], P.anim_pose_table(empty)[2])
 
             malformed = Path(tmp) / "malformed.json"
             malformed.write_text("{}", encoding="utf-8")
             with self.assertRaises(KeyError):
                 P.anim_pose_table(malformed)
+
+    def test_up_alignment_is_a_finite_proper_rotation_for_all_direction_regimes(self) -> None:
+        up = np.array([0.0, 1.0, 0.0])
+        for direction in (
+            np.array([0.0, -1.0, 0.0]),
+            np.array([1e-10, -1.0, 1e-10]),
+            np.array([1.0, 2.0, -3.0]),
+        ):
+            matrix = P._align_up_to_direction(direction)
+            target = direction / np.linalg.norm(direction)
+            np.testing.assert_allclose(matrix @ up, target, atol=1e-9)
+            np.testing.assert_allclose(matrix.T @ matrix, np.eye(3), atol=1e-9)
+            self.assertAlmostEqual(1.0, np.linalg.det(matrix), places=9)
+            self.assertTrue(np.isfinite(matrix).all())
+
+        with self.assertRaisesRegex(ValueError, "nonzero"):
+            P._align_up_to_direction(np.zeros(3))
+
+    def test_render_size_validation_covers_boundary_and_error_values(self) -> None:
+        self.assertEqual(1, P._validate_size(1))
+        self.assertEqual(P.MAX_RENDER_SIZE, P._validate_size(P.MAX_RENDER_SIZE))
+        for size in (0, -1, P.MAX_RENDER_SIZE + 1, True, 1.5):
+            with self.assertRaisesRegex(ValueError, r"1 <= size <= 4096"):
+                P._validate_size(size)
+        with self.assertRaisesRegex(ValueError, r"render_pose size.*1 <= size <= 4096"):
+            P.render_pose([], np.zeros((1, 1, 3)), size=0)
+        with self.assertRaisesRegex(ValueError, r"render_anim size.*1 <= size <= 4096"):
+            P.render_anim(Path("unused.json"), size=0)
+
+    def test_render_player_pose_cli_rejects_invalid_size_and_accepts_maximum(self) -> None:
+        script = MODEL_DIR / "render_player_pose.py"
+        invalid = subprocess.run(
+            [sys.executable, str(script), "--size", "0"],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(2, invalid.returncode)
+        self.assertIn("1 <= size <= 4096", invalid.stderr)
+
+        negative = subprocess.run(
+            [sys.executable, str(script), "--size", "-1"],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(2, negative.returncode)
+        self.assertIn("1 <= size <= 4096", negative.stderr)
+
+        maximum = subprocess.run(
+            [sys.executable, str(script), "--size", "4096", "--help"],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, maximum.returncode, maximum.stdout + maximum.stderr)
+        self.assertNotIn("size must", maximum.stderr)
+
+        over_limit = subprocess.run(
+            [sys.executable, str(script), "--size", "4097"],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(2, over_limit.returncode)
+        self.assertIn("1 <= size <= 4096", over_limit.stderr)
 
     def test_default_jian_model_fallback_is_reachable_without_writing_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
