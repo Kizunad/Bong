@@ -22,6 +22,7 @@ sys.path.insert(0, str(MODEL_DIR))
 
 import gen_bamboo_jian as B
 import gen_jian_player as J
+import gen_jian_player_anim as A
 import render_jian_in_hand as H
 import render_player_pose as P
 
@@ -280,8 +281,33 @@ class JianPlayerToolsTest(unittest.TestCase):
         self.assertEqual(len(B.build_cubes()) * 2, len(cubes))
         self.assertTrue(all(name.endswith(("_r", "_l")) for _bone, _material, name, *_rest in cubes))
 
+    def test_jian_player_animation_converter_pins_axes_body_and_lower_filler(self) -> None:
+        elements, _outliner, gmap, _atlas = A.build_geometry()
+        self.assertGreater(len(elements), 0)
+        self.assertEqual(3, len(A.AXIS_LAYERS))
+        self.assertEqual(("pitch", 0, 1.0), A.AXIS_LAYERS[0])
+        self.assertEqual(("yaw", 1, -1.0), A.AXIS_LAYERS[1])
+        self.assertEqual(("roll", 2, -1.0), A.AXIS_LAYERS[2])
+        animation = A.convert_animation(A.ANIM_DIR / "lower_walk.json", gmap)
+        self.assertEqual("loop", animation["loop"])
+        self.assertAlmostEqual(1.0, animation["length"])
+        tracks = {track["name"]: track for track in animation["animators"].values()}
+        self.assertIn("root_pos", tracks)
+        self.assertIn("root_pitch", tracks)
+        self.assertIn("arm_right_pitch", tracks)
+        self.assertIn("arm_left_pitch", tracks)
+        self.assertEqual(5, len(tracks["root_pos"]["keyframes"]))
+        self.assertEqual(5, len(tracks["arm_right_pitch"]["keyframes"]))
+
     def test_render_size_bounds_cover_zero_negative_max_and_over(self) -> None:
         for module in (J, H):
+            for size in (0, -1, module.MAX_RENDER_SIZE + 1):
+                with self.subTest(module=module.__name__, size=size):
+                    with self.assertRaisesRegex(ValueError, rf"between 1 and {module.MAX_RENDER_SIZE}"):
+                        module.validate_render_size(size)
+            self.assertEqual(module.MAX_RENDER_SIZE, module.validate_render_size(module.MAX_RENDER_SIZE))
+            self.assertEqual(1, module.validate_render_size(1))
+
             for size in (0, -1, module.MAX_RENDER_SIZE + 1):
                 with self.subTest(module=module.__name__, size=size):
                     with self.assertRaisesRegex(ValueError, rf"between 1 and {module.MAX_RENDER_SIZE}"):
