@@ -189,6 +189,10 @@ public final class HallucinationLayerStore {
      * 断线清理（由 BongNetworkHandler onDisconnect 调用）。
      */
     public static void clearOnDisconnect() {
+        clearSessionState();
+    }
+
+    private static void clearSessionState() {
         active = false;
         remainingTicks = 0;
         durationTicks = 0;
@@ -202,7 +206,7 @@ public final class HallucinationLayerStore {
 
     /** 仅供测试：完全重置所有状态。 */
     static void resetForTest() {
-        clearOnDisconnect();
+        clearSessionState();
     }
 
     /** 仅供测试：直接注入 fadeProgress。 */

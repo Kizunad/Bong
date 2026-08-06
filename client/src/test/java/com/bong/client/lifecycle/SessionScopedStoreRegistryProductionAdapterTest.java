@@ -183,15 +183,18 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SessionScopedStoreRegistryProductionAdapterTest {
@@ -352,9 +355,13 @@ class SessionScopedStoreRegistryProductionAdapterTest {
                         true, "old", 1d, 2d, 1L, 1L)),
                     () -> !FullPowerStateStore.charging().active()),
                 adapter(37, StatusEffectStore.class,
-                    () -> StatusEffectStore.replace(List.of(new StatusEffectStore.Effect(
-                        "old", "old", StatusEffectStore.Kind.BUFF, 1, 1L, 0, "old", 1))),
-                    () -> StatusEffectStore.snapshot().isEmpty()),
+                    () -> {
+                        StatusEffectStore.replace(List.of(new StatusEffectStore.Effect(
+                            "old", "old", StatusEffectStore.Kind.BUFF, 1, 1L, 0, "old", 1)));
+                        StatusEffectStore.setCultivationAcceleration(2.5);
+                    },
+                    () -> StatusEffectStore.snapshot().isEmpty()
+                        && StatusEffectStore.cultivationAcceleration() == 1.0),
                 adapter(39, TribulationBroadcastStore.class,
                     () -> TribulationBroadcastStore.replace(new TribulationBroadcastStore.State(
                         true, "old", "warn", 1d, 1d, 1L, false, 1d)),
@@ -929,24 +936,510 @@ class SessionScopedStoreRegistryProductionAdapterTest {
     }
 
     @Test
-    void productionRegisteredStoreCleanersNeverCallTestResetVariants() throws Exception {
+    void productionRegisteredStoresDeclareCanonicalCleaner() throws Exception {
         String registrySource = Files.readString(
             productionSourceRoot().resolve("com/bong/client/lifecycle/SessionScopedStoreRegistry.java")
         );
         for (SessionStoreHandle handle : SessionScopedStoreRegistry.registeredHandlesForTests()) {
             String simpleName = handle.storeType().getSimpleName();
             List<String> cleanerNames = registeredCleanerNames(registrySource, simpleName);
-            assertEquals(1, cleanerNames.size(), "每个 production Store 必须恰好登记一个 cleaner：" + handle.fqcn());
+            assertEquals(
+                List.of("clearOnDisconnect"),
+                cleanerNames,
+                "每个 production Store 必须恰好登记 canonical cleaner clearOnDisconnect：" + handle.fqcn()
+            );
             Path source = productionSourceRoot().resolve(handle.fqcn().replace('.', '/') + ".java");
             assertTrue(Files.exists(source), "registry handle 必须对应 production Store source：" + handle.fqcn());
-            String method = staticVoidMethod(Files.readString(source), cleanerNames.get(0));
-            assertFalse(method.contains("resetForTests("),
-                handle.fqcn() + " 的 production cleaner 不得调用 resetForTests");
-            assertFalse(method.contains("resetForTest("),
-                handle.fqcn() + " 的 production cleaner 不得调用 resetForTest");
-            assertFalse(method.contains("clearForTests("),
-                handle.fqcn() + " 的 production cleaner 不得调用 clearForTests");
+            JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
+                Files.readString(source),
+                cleanerNames.get(0),
+                handle.fqcn()
+            );
         }
+    }
+
+    @Test
+    void productionSourcesRespectLifecycleContracts() throws Exception {
+        Path sourceRoot = productionSourceRoot();
+        Set<String> managedStores = ClientStoreScopeManifest.registryManagedSessionStores();
+        try (Stream<Path> paths = Files.walk(sourceRoot.resolve("com/bong/client"))) {
+            List<Path> sources = paths
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".java"))
+                .sorted()
+                .toList();
+            assertFalse(sources.isEmpty(), "production lifecycle guard 必须实际扫描 client Java source");
+            Map<String, String> sourceByIdentity = new java.util.LinkedHashMap<>();
+            for (Path source : sources) {
+                String identity = sourceRoot.relativize(source).toString().replace('\\', '/');
+                sourceByIdentity.put(identity, Files.readString(source));
+            }
+            JavaLifecycleSourceInspector.assertProductionLifecycleContracts(
+                sourceByIdentity,
+                managedStores,
+                "com/bong/client/lifecycle/SessionScopedStoreRegistry.java"
+            );
+        }
+    }
+
+    @Test
+    void managedStoreCleanerSingleOwnerGuardRejectsHiddenCallsAndReferences() {
+        Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
+        for (String[] fixture : new String[][] {
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    package com.bong.client.hud;
+                    final class AllowlistedAdjunct {
+                        static void clearOnDisconnect() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/LocalAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() {
+                            LootContainerStateStore alias = null;
+                            alias.clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/VarLocalAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() {
+                            var alias = (LootContainerStateStore) null;
+                            alias.clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/CastReceiver.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        static void tearDown() {
+                            ((LootContainerStateStore) null).clearOnDisconnect();
+                        }
+                    }
+                    """
+            },
+            {
+                "fixture/FieldAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static final LootContainerStateStore STORE = null;
+                        static void tearDown() { STORE.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/MethodReturnAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static LootContainerStateStore getStore() { return null; }
+                        static void tearDown() { getStore().clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/OverloadedMethodReturnAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static LootContainerStateStore getStore() { return null; }
+                        private static String getStore(int ignored) { return ""; }
+                        static void tearDown() { getStore().clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/ArrayAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private static final LootContainerStateStore[] STORES = { null };
+                        static void tearDown() { STORES[0].clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/QualifiedFieldAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Holder {
+                        LootContainerStateStore field;
+                    }
+                    final class Helper {
+                        static final Holder outer = null;
+                        static void tearDown() { outer.field.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/ThisFieldAlias.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        private final LootContainerStateStore store = null;
+                        void tearDown() { this.store.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class Helper {
+                        Helper() { LootContainerStateStore.clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    final class Helper {
+                        Runnable cleaner = com.bong.client.hud.LootContainerStateStore::clearOnDisconnect;
+                    }
+                    """
+            },
+            {
+                "fixture/HiddenCleaner.java",
+                """
+                    import static com.bong.client.hud.LootContainerStateStore.clearOnDisconnect;
+                    final class Helper {
+                        static void clear() { clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/StaticWildcard.java",
+                """
+                    import static com.bong.client.hud.LootContainerStateStore.*;
+                    final class Helper {
+                        static void tearDown() { clearOnDisconnect(); }
+                    }
+                    """
+            },
+            {
+                "fixture/PackageWildcard.java",
+                """
+                    import com.bong.client.hud.*;
+                    final class Helper {
+                        static void tearDown() { }
+                    }
+                    """
+            },
+            {
+                "com/bong/client/lifecycle/SessionScopedStoreRegistry.java",
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class SessionScopedStoreRegistry {
+                        static void clearDirectly() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
+                    }
+                    """
+            }
+        }) {
+            assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+                    fixture[1],
+                    fixture[0],
+                    managedStores,
+                    false
+                ),
+                "fixture must be rejected: " + fixture[0]
+            );
+        }
+        assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+                """
+                    import com.bong.client.hud.LootContainerStateStore;
+                    final class SessionScopedStoreRegistry {
+                        static void clearDirectly() {
+                            LootContainerStateStore.clearOnDisconnect();
+                        }
+                    }
+                    """,
+                "com/bong/client/lifecycle/SessionScopedStoreRegistry.java",
+                managedStores,
+                true
+            )
+        );
+    }
+
+    @Test
+    void managedStoreCleanerSingleOwnerGuardRejectsCrossFileMethodReturnAlias() {
+        Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
+        Map<String, String> sources = Map.of(
+            "fixture/ExternalStoreProvider.java",
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class ExternalStoreProvider {
+                    static LootContainerStateStore current() { return null; }
+                }
+                """,
+            "fixture/Helper.java",
+            """
+                final class Helper {
+                    static void tearDown() { ExternalStoreProvider.current().clearOnDisconnect(); }
+                }
+                """
+        );
+
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertProductionLifecycleContracts(
+                sources,
+                managedStores,
+                null
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("Helper.java"),
+            "跨文件 provider 返回 managed Store 后的 cleaner 调用必须由 source-wide guard 拒绝；实际="
+                + failure.getMessage()
+        );
+    }
+
+    @Test
+    void managedStoreCleanerSingleOwnerGuardAllowsDeclarationsAndExactRegistryBinding() {
+        Set<String> managedStores = Set.of("com.bong.client.hud.LootContainerStateStore");
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
+                package com.bong.client.hud;
+                final class LootContainerStateStore {
+                    public static void clearOnDisconnect() { }
+                }
+                """,
+            "com/bong/client/hud/LootContainerStateStore.java",
+            managedStores,
+            false
+        ));
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
+                package com.example;
+                final class LootContainerStateStore {
+                    static void clearOnDisconnect() { }
+                }
+                final class UnrelatedOwner {
+                    static void clear() { LootContainerStateStore.clearOnDisconnect(); }
+                }
+                """,
+            "com/example/UnrelatedOwner.java",
+            managedStores,
+            false
+        ));
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class BusinessLifecycle {
+                    static void finishEncounter() {
+                        LootContainerStateStore.clear();
+                        LootContainerStateStore.clearAll();
+                        LootContainerStateStore.reset();
+                    }
+                    Runnable clear = LootContainerStateStore::clear;
+                    Runnable clearAll = LootContainerStateStore::clearAll;
+                    Runnable reset = LootContainerStateStore::reset;
+                }
+                """,
+            "com/example/BusinessLifecycle.java",
+            managedStores,
+            false
+        ));
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertRegistryOwnsManagedStoreCleanerCalls(
+            """
+                import com.bong.client.hud.LootContainerStateStore;
+                final class SessionScopedStoreRegistry {
+                    Object handle = SessionStoreHandle.forStore(
+                        LootContainerStateStore.class,
+                        LootContainerStateStore::clearOnDisconnect
+                    );
+                }
+                """,
+            "com/bong/client/lifecycle/SessionScopedStoreRegistry.java",
+            managedStores,
+            true
+        ));
+    }
+
+    @Test
+    void productionCleanerDeclarationGuardTargetsDeclaredStoreWhenHelperTypePrecedesIt() {
+        String fixture = """
+            final class PreludeType {
+                static void differentLifecycleHook() { }
+            }
+            final class FixtureStore {
+                public static void clearOnDisconnect() { }
+            }
+            """;
+
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
+            fixture,
+            "clearOnDisconnect",
+            "com.example.FixtureStore"
+        ));
+    }
+
+    @Test
+    void productionCleanerDeclarationGuardRequiresPublicStaticNoArgVoidEntry() {
+        for (String fixture : List.of(
+            "final class FixtureStore { public void clearOnDisconnect() { } }",
+            "final class FixtureStore { public static void clearOnDisconnect(long now) { } }",
+            "final class FixtureStore { static void clearOnDisconnect() { } }",
+            """
+                record Result() { }
+                final class FixtureStore {
+                    public static Result clearOnDisconnect() { return new Result(); }
+                }
+                """
+        )) {
+            AssertionError failure = assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
+                    fixture,
+                    "clearOnDisconnect",
+                    "com.example.FixtureStore"
+                )
+            );
+            assertTrue(
+                failure.getMessage().contains("必须能定位 production cleaner"),
+                "canonical registry cleaner 必须是目标 Store 自己声明的 public static void 无参入口；实际="
+                    + failure.getMessage()
+            );
+        }
+    }
+
+    @Test
+    void productionCleanerDeclarationGuardRejectsMissingDeclaredStoreType() {
+        AssertionError failure = assertThrows(
+            AssertionError.class,
+            () -> JavaLifecycleSourceInspector.assertDeclaresProductionCleaner(
+                "final class DifferentStore { static void clearOnDisconnect() { } }",
+                "clearOnDisconnect",
+                "com.example.FixtureStore"
+            )
+        );
+        assertTrue(
+            failure.getMessage().contains("无法定位 production Store 类型"),
+            "source guard 必须 fail-closed，不能把其它顶层类型当成目标 Store；实际=" + failure.getMessage()
+        );
+    }
+
+    @Test
+    void productionTestResetGuardRejectsEveryCallOrReferenceShapeFailClosed() {
+        List<String> forbiddenFixtures = List.of(
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() { Helper.clear(); }
+                    public static void resetForTests() { }
+                }
+                final class Helper {
+                    static void clear() { FixtureStore.resetForTests(); }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    static final Runnable RESET = FixtureStore::resetForTests;
+                    public static void clearOnDisconnect() { RESET.run(); }
+                    public static void resetForTests() { }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() { Helper.clear(); }
+                    public static void resetForTest() { }
+                    static final class Helper {
+                        static void clear() { FixtureStore.resetForTest(); }
+                    }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    FixtureStore() { clearForTests(); }
+                    public static void clearOnDisconnect() { new FixtureStore(); }
+                    public static void clearForTests() { }
+                }
+                """,
+            """
+                import static com.example.FixtureStore.resetForTests;
+                public final class Consumer {
+                    static void clear() { resetForTests(); }
+                }
+                final class FixtureStore {
+                    static void resetForTests() { }
+                }
+                """,
+            """
+                import static com.example.FixtureStore.*;
+                public final class Consumer {
+                    static void clear() { clearForTests(); }
+                }
+                final class FixtureStore {
+                    static void clearForTests() { }
+                }
+                """,
+            """
+                public final class FixtureStore {
+                    public static void clearOnDisconnect() {
+                        new Unrelated().resetForTests(1);
+                    }
+                }
+                final class Unrelated {
+                    void resetForTests(int unused) { }
+                }
+                """
+        );
+
+        for (String fixture : forbiddenFixtures) {
+            AssertionError failure = assertThrows(
+                AssertionError.class,
+                () -> JavaLifecycleSourceInspector.assertNoTestResetCalls(
+                    fixture,
+                    "FixtureStore.java"
+                )
+            );
+            assertTrue(
+                failure.getMessage().contains("test reset"),
+                "字段、构造器、嵌套、跨类型、static import 和同名 overload 的 production 调用均须撞红；实际="
+                    + failure.getMessage()
+            );
+        }
+    }
+
+    @Test
+    void productionTestResetGuardAllowsDeclarationsAndUnrelatedNames() {
+        String fixture = """
+            public final class FixtureStore {
+                private static final java.util.List<String> CACHE = java.util.List.of();
+                public static void clearOnDisconnect() { CACHE.clear(); }
+                public static void clear() { }
+                public static void clear(int unused) { }
+                public static void resetForTests() { clearForTests(); }
+                public static void clearForTests() {
+                    Runnable reset = FixtureStore::resetForTests;
+                }
+            }
+            """;
+
+        assertDoesNotThrow(() -> JavaLifecycleSourceInspector.assertNoTestResetCalls(
+            fixture,
+            "FixtureStore.java"
+        ));
     }
 
     @Test
@@ -1335,27 +1828,6 @@ class SessionScopedStoreRegistryProductionAdapterTest {
             names.add(matcher.group(1));
         }
         return names;
-    }
-
-    private static String staticVoidMethod(String source, String methodName) {
-        java.util.regex.Pattern signature = java.util.regex.Pattern.compile(
-            "(?:public|protected|private)?\\s*static\\s+(?:synchronized\\s+)?void\\s+"
-                + java.util.regex.Pattern.quote(methodName)
-                + "\\s*\\(\\s*\\)\\s*\\{"
-        );
-        java.util.regex.Matcher matcher = signature.matcher(source);
-        assertTrue(matcher.find(), "必须能定位 production cleaner：" + methodName);
-        int bodyStart = source.indexOf('{', matcher.start());
-        int depth = 0;
-        for (int index = bodyStart; index < source.length(); index++) {
-            char current = source.charAt(index);
-            if (current == '{') {
-                depth++;
-            } else if (current == '}' && --depth == 0) {
-                return source.substring(matcher.start(), index + 1);
-            }
-        }
-        throw new AssertionError("无法圈定 production cleaner：" + methodName);
     }
 
     private static void resetTestOnlyState() {

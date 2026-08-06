@@ -1,6 +1,6 @@
 use crate::combat::{
     attach_combat_bundle_to_joined_clients,
-    components::{Lifecycle, LifecycleState, RevivalDecision},
+    components::{Lifecycle, LifecycleState, RevivalDecision, TICKS_PER_SECOND},
     is_damageable,
 };
 use crate::persistence::bootstrap_sqlite;
@@ -227,6 +227,14 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     };
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
+    let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+    let persisted_last_updated_wall: i64 = connection
+        .query_row(
+            "SELECT last_updated_wall FROM player_lifecycle WHERE username = ?1",
+            params!["Alice"],
+            |row| row.get(0),
+        )
+        .expect("saved lifecycle row should expose its persistence timestamp");
 
     let mut app = App::new();
     app.insert_resource(persistence);
@@ -256,7 +264,20 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         Some(RevivalDecision::Tribulation { chance: 0.15 }),
         "待决策的渡劫结果必须原样恢复，永久终结风险不能被绕过"
     );
-    assert_eq!(lifecycle.revival_decision_deadline_tick, Some(9_999));
+    let revival_deadline = lifecycle
+        .revival_decision_deadline_tick
+        .expect("待决策状态必须保留 revival deadline");
+    let after_load_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
+    let max_elapsed_ticks =
+        after_load_wall.saturating_sub(persisted_last_updated_wall as u64) * TICKS_PER_SECOND;
+    let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
+    assert!(
+        (earliest_valid_deadline..=9_999).contains(&revival_deadline),
+        "deadline 应扣除测试期间真实流逝的墙钟时间；实际 {revival_deadline}，有效区间 {earliest_valid_deadline}..=9999"
+    );
     assert_eq!(lifecycle.death_count, 2);
 
     let _ = std::fs::remove_dir_all(root);

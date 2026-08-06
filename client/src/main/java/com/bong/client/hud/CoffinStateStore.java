@@ -26,6 +26,11 @@ public final class CoffinStateStore {
         snapshot = OUT;
     }
 
+
+    public static synchronized void clearOnDisconnect() {
+        clear();
+    }
+
     public static void resetForTests() {
         clear();
     }

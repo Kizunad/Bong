@@ -119,8 +119,8 @@ import java.util.function.Consumer;
 public final class SessionScopedStoreRegistry {
     private static final Logger LOGGER = LoggerFactory.getLogger("bong/session-store-lifecycle");
     private static final List<SessionStoreHandle> REGISTERED = List.of(
-        SessionStoreHandle.forStore(AgentUiStore.class, AgentUiStore::clear),
-        SessionStoreHandle.forStore(AgentUiVfxStore.class, AgentUiVfxStore::clear),
+        SessionStoreHandle.forStore(AgentUiStore.class, AgentUiStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(AgentUiVfxStore.class, AgentUiVfxStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             AlchemyAttemptHistoryStore.class,
             AlchemyAttemptHistoryStore::clearOnDisconnect
@@ -141,16 +141,16 @@ public final class SessionScopedStoreRegistry {
             BotanyPlantRenderProfileStore.class,
             BotanyPlantRenderProfileStore::clearOnDisconnect
         ),
-        SessionStoreHandle.forStore(BotanyPlantStageVisualStore.class, BotanyPlantStageVisualStore::clear),
+        SessionStoreHandle.forStore(BotanyPlantStageVisualStore.class, BotanyPlantStageVisualStore::clearOnDisconnect),
         SessionStoreHandle.forStore(HarvestSessionStore.class, HarvestSessionStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             TutorialCoffinPosStore.class,
             TutorialCoffinPosStore::clearOnDisconnect
         ),
         SessionStoreHandle.forStore(CastStateStore.class, CastStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(CombatHudStateStore.class, CombatHudStateStore::clear),
+        SessionStoreHandle.forStore(CombatHudStateStore.class, CombatHudStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(DefenseWindowStore.class, DefenseWindowStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(EquippedShieldStore.class, EquippedShieldStore::clear),
+        SessionStoreHandle.forStore(EquippedShieldStore.class, EquippedShieldStore::clearOnDisconnect),
         SessionStoreHandle.forStore(QuickUseSlotStore.class, QuickUseSlotStore::clearOnDisconnect),
         SessionStoreHandle.forStore(SkillBarStore.class, SkillBarStore::clearOnDisconnect),
         SessionStoreHandle.forStore(SkillConfigStore.class, SkillConfigStore::clearOnDisconnect),
@@ -159,9 +159,9 @@ public final class SessionScopedStoreRegistry {
         SessionStoreHandle.forStore(UnifiedEventStore.class, UnifiedEventStore::clearOnDisconnect),
         SessionStoreHandle.forStore(UnlockedStylesStore.class, UnlockedStylesStore::clearOnDisconnect),
         SessionStoreHandle.forStore(WeaponEquippedStore.class, WeaponEquippedStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(BaomaiV3HudStateStore.class, BaomaiV3HudStateStore::clear),
-        SessionStoreHandle.forStore(CrackReadingHudStateStore.class, CrackReadingHudStateStore::clear),
-        SessionStoreHandle.forStore(ResonanceLockHudStateStore.class, ResonanceLockHudStateStore::clear),
+        SessionStoreHandle.forStore(BaomaiV3HudStateStore.class, BaomaiV3HudStateStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(CrackReadingHudStateStore.class, CrackReadingHudStateStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(ResonanceLockHudStateStore.class, ResonanceLockHudStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(AscensionQuotaStore.class, AscensionQuotaStore::clearOnDisconnect),
         SessionStoreHandle.forStore(CarrierStateStore.class, CarrierStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(DamageFloaterStore.class, DamageFloaterStore::clearOnDisconnect),
@@ -170,19 +170,19 @@ public final class SessionScopedStoreRegistry {
         SessionStoreHandle.forStore(DuguPoisonStateStore.class, DuguPoisonStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(FalseSkinHudStateStore.class, FalseSkinHudStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(FullPowerStateStore.class, FullPowerStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(HalfStepRechallengeStore.class, HalfStepRechallengeStore::clear),
-        SessionStoreHandle.forStore(StatusEffectStore.class, StatusEffectStore::clear),
+        SessionStoreHandle.forStore(HalfStepRechallengeStore.class, HalfStepRechallengeStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(StatusEffectStore.class, StatusEffectStore::clearOnDisconnect),
         SessionStoreHandle.forStore(TerminateStateStore.class, TerminateStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(TribulationBroadcastStore.class, TribulationBroadcastStore::clear),
-        SessionStoreHandle.forStore(TribulationStateStore.class, TribulationStateStore::clear),
+        SessionStoreHandle.forStore(TribulationBroadcastStore.class, TribulationBroadcastStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(TribulationStateStore.class, TribulationStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(VortexStateStore.class, VortexStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(WoundsStore.class, WoundsStore::clear),
-        SessionStoreHandle.forStore(CraftStore.class, CraftStore::clear),
+        SessionStoreHandle.forStore(WoundsStore.class, WoundsStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(CraftStore.class, CraftStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             BreakthroughRenderStateStore.class,
             BreakthroughRenderStateStore::clearOnDisconnect
         ),
-        SessionStoreHandle.forStore(QiColorObservedStore.class, QiColorObservedStore::clear),
+        SessionStoreHandle.forStore(QiColorObservedStore.class, QiColorObservedStore::clearOnDisconnect),
         SessionStoreHandle.forStore(VoidActionStore.class, VoidActionStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             DyingElderEncounterStore.class,
@@ -197,16 +197,16 @@ public final class SessionScopedStoreRegistry {
         SessionStoreHandle.forStore(ForgeSessionStore.class, ForgeSessionStore::clearOnDisconnect),
         SessionStoreHandle.forStore(ForgeStationStore.class, ForgeStationStore::clearOnDisconnect),
         SessionStoreHandle.forStore(GatheringSessionStore.class, GatheringSessionStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(AnqiHudStateStore.class, AnqiHudStateStore::clear),
-        SessionStoreHandle.forStore(BongHudStateStore.class, BongHudStateStore::clear),
-        SessionStoreHandle.forStore(CoffinStateStore.class, CoffinStateStore::clear),
+        SessionStoreHandle.forStore(AnqiHudStateStore.class, AnqiHudStateStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(BongHudStateStore.class, BongHudStateStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(CoffinStateStore.class, CoffinStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(DuguV2HudStateStore.class, DuguV2HudStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(LootContainerStateStore.class, LootContainerStateStore::clear),
-        SessionStoreHandle.forStore(PoisonTraitHudStateStore.class, PoisonTraitHudStateStore::clear),
+        SessionStoreHandle.forStore(LootContainerStateStore.class, LootContainerStateStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(PoisonTraitHudStateStore.class, PoisonTraitHudStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(SearchHudStateStore.class, SearchHudStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(SwordBondHudStateStore.class, SwordBondHudStateStore::clear),
+        SessionStoreHandle.forStore(SwordBondHudStateStore.class, SwordBondHudStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(TargetInfoStateStore.class, TargetInfoStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(ZhenmaiHudStateStore.class, ZhenmaiHudStateStore::clear),
+        SessionStoreHandle.forStore(ZhenmaiHudStateStore.class, ZhenmaiHudStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             IdentityPanelStateStore.class,
             IdentityPanelStateStore::clearOnDisconnect
@@ -225,11 +225,11 @@ public final class SessionScopedStoreRegistry {
         SessionStoreHandle.forStore(RaceGateMetaStore.class, RaceGateMetaStore::clearOnDisconnect),
         SessionStoreHandle.forStore(RemainsStore.class, RemainsStore::clearOnDisconnect),
         SessionStoreHandle.forStore(LingtianSessionStore.class, LingtianSessionStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(MovementStateStore.class, MovementStateStore::clear),
+        SessionStoreHandle.forStore(MovementStateStore.class, MovementStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(NpcInteractionLogStore.class, NpcInteractionLogStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(NpcLodStore.class, NpcLodStore::clearAll),
-        SessionStoreHandle.forStore(NpcMetadataStore.class, NpcMetadataStore::clearAll),
-        SessionStoreHandle.forStore(NpcMoodStore.class, NpcMoodStore::clearAll),
+        SessionStoreHandle.forStore(NpcLodStore.class, NpcLodStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(NpcMetadataStore.class, NpcMetadataStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(NpcMoodStore.class, NpcMoodStore::clearOnDisconnect),
         SessionStoreHandle.forStore(OmenStateStore.class, OmenStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(FreshnessStore.class, FreshnessStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
@@ -244,21 +244,21 @@ public final class SessionScopedStoreRegistry {
         SessionStoreHandle.forStore(SocialStateStore.class, SocialStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             SpiritTreasureDialogueStore.class,
-            SpiritTreasureDialogueStore::clear
+            SpiritTreasureDialogueStore::clearOnDisconnect
         ),
-        SessionStoreHandle.forStore(SpiritTreasureStateStore.class, SpiritTreasureStateStore::clear),
+        SessionStoreHandle.forStore(SpiritTreasureStateStore.class, SpiritTreasureStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(PlayerStateStore.class, PlayerStateStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             RealmCollapseHudStateStore.class,
             RealmCollapseHudStateStore::clearOnDisconnect
         ),
         SessionStoreHandle.forStore(SeasonStateStore.class, SeasonStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(TiandaoPresenceStore.class, TiandaoPresenceStore::clear),
+        SessionStoreHandle.forStore(TiandaoPresenceStore.class, TiandaoPresenceStore::clearOnDisconnect),
         SessionStoreHandle.forStore(ExtractStateStore.class, ExtractStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(TsyBossHealthStore.class, TsyBossHealthStore::reset),
+        SessionStoreHandle.forStore(TsyBossHealthStore.class, TsyBossHealthStore::clearOnDisconnect),
         SessionStoreHandle.forStore(TsyContainerStateStore.class, TsyContainerStateStore::clearOnDisconnect),
-        SessionStoreHandle.forStore(TsyDeathVfxStore.class, TsyDeathVfxStore::reset),
-        SessionStoreHandle.forStore(VoidErosionVisualStore.class, VoidErosionVisualStore::reset),
+        SessionStoreHandle.forStore(TsyDeathVfxStore.class, TsyDeathVfxStore::clearOnDisconnect),
+        SessionStoreHandle.forStore(VoidErosionVisualStore.class, VoidErosionVisualStore::clearOnDisconnect),
         SessionStoreHandle.forStore(
             PerceptionEdgeStateStore.class,
             PerceptionEdgeStateStore::clearOnDisconnect
