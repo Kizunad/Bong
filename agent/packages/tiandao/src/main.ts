@@ -12,7 +12,10 @@ import { WarOutcomeNarrationRuntime } from "./war-outcome-narration.js";
 import { NamedFactionNarrationRuntime } from "./named-faction-narration.js";
 import { PoliticalNarrationRuntime } from "./political-narration.js";
 import { PoisonTraitNarrationRuntime } from "./poison-trait-runtime.js";
-import { ElderEncounterNarrationRuntime } from "./elder-encounter-narration.js";
+import {
+  ElderEncounterNarrationRuntime,
+  ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+} from "./elder-encounter-narration.js";
 import { ScatteredCultivatorNarrationRuntime } from "./scattered-cultivator-narration.js";
 import { SkillLvUpNarrationRuntime } from "./skill-lv-up-runtime.js";
 import { SpiritTreasureDialogueRuntime } from "./spirit-treasure-dialogue-runtime.js";
@@ -816,7 +819,9 @@ async function startElderEncounterRuntime(opts: {
       console.warn("[tiandao] elder encounter runtime failed to start:", error),
     );
   return async () => {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 500));
+    const timeout = new Promise<void>((resolve) =>
+      setTimeout(resolve, ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS),
+    );
     try {
       await Promise.race([runtime.disconnect(), timeout]);
     } catch (error) {

@@ -16,6 +16,11 @@ import { CHANNELS } from "@bong/schema";
 
 import {
   DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
+  DURABLE_QUEUE_READ_TIMEOUT_SECONDS,
+  ELDER_ENCOUNTER_DURABLE_DEAD_LETTER,
+  ELDER_ENCOUNTER_DURABLE_PROCESSING,
+  ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+  MAX_DURABLE_RECOVERY_BATCH,
   MAX_SEEN_DURABLE_EVENT_IDS,
   SEEN_DURABLE_EVENT_ID_TTL_MS,
   ElderEncounterNarrationRuntime,
@@ -61,50 +66,111 @@ function makeMockClient() {
   };
 }
 
-function makeDurableQueueClient() {
-  const source: string[] = [];
-  const processing: string[] = [];
+function makeDurableQueueClient(options: { blockReadNumber?: number } = {}) {
+  const lists = new Map<string, string[]>();
+  let releaseBlockedRead: (() => void) | undefined;
+  let readCount = 0;
+  const list = (key: string): string[] => {
+    const existing = lists.get(key);
+    if (existing !== undefined) return existing;
+    const created: string[] = [];
+    lists.set(key, created);
+    return created;
+  };
+  const source = list(ELDER_ENCOUNTER_DURABLE);
+  const processing = list(ELDER_ENCOUNTER_DURABLE_PROCESSING);
+  const deadLetter = list(ELDER_ENCOUNTER_DURABLE_DEAD_LETTER);
 
   return {
+    lists,
     source,
     processing,
+    deadLetter,
+    releaseBlockedRead: () => {
+      releaseBlockedRead?.();
+      releaseBlockedRead = undefined;
+    },
     blmove: vi.fn(
       async (
-        _source: string,
-        _destination: string,
+        sourceKey: string,
+        destinationKey: string,
         sourceSide: "LEFT" | "RIGHT",
         destinationSide: "LEFT" | "RIGHT",
         _timeoutSeconds: number,
       ) => {
-        const value = sourceSide === "LEFT" ? source.shift() : source.pop();
-        if (value === undefined) return null;
-        if (destinationSide === "LEFT") processing.unshift(value);
-        else processing.push(value);
+        readCount += 1;
+        if (options.blockReadNumber === readCount) {
+          await new Promise<void>((resolve) => {
+            releaseBlockedRead = resolve;
+          });
+        }
+        const sourceList = list(sourceKey);
+        const destinationList = list(destinationKey);
+        const value = sourceSide === "LEFT" ? sourceList.shift() : sourceList.pop();
+        if (value === undefined) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return null;
+        }
+        if (destinationSide === "LEFT") destinationList.unshift(value);
+        else destinationList.push(value);
         return value;
       },
     ),
-    lrem: vi.fn(async (_key: string, _count: number, value: string) => {
-      const index = processing.indexOf(value);
+    lrem: vi.fn(async (key: string, _count: number, value: string) => {
+      const target = list(key);
+      const index = target.indexOf(value);
       if (index === -1) return 0;
-      processing.splice(index, 1);
+      target.splice(index, 1);
       return 1;
     }),
     lmove: vi.fn(
       async (
-        _source: string,
-        _destination: string,
+        sourceKey: string,
+        destinationKey: string,
         sourceSide: "LEFT" | "RIGHT",
         destinationSide: "LEFT" | "RIGHT",
       ) => {
-        const value = sourceSide === "LEFT" ? processing.shift() : processing.pop();
+        const sourceList = list(sourceKey);
+        const destinationList = list(destinationKey);
+        const value = sourceSide === "LEFT" ? sourceList.shift() : sourceList.pop();
         if (value === undefined) return null;
-        if (destinationSide === "LEFT") source.unshift(value);
-        else source.push(value);
+        if (destinationSide === "LEFT") destinationList.unshift(value);
+        else destinationList.push(value);
         return value;
       },
     ),
     disconnect: vi.fn(() => {}),
   };
+}
+
+async function waitForQueueState(
+  predicate: () => boolean,
+  message: string,
+): Promise<void> {
+  await vi.waitFor(() => {
+    expect(predicate(), message).toBe(true);
+  });
+}
+
+function silenceLogger() {
+  return { info: vi.fn(), warn: vi.fn() };
+}
+
+function queueRuntime(
+  sub: ReturnType<typeof makeMockClient>,
+  pub: ReturnType<typeof makeMockClient>,
+  queue: ReturnType<typeof makeDurableQueueClient>,
+) {
+  return new ElderEncounterNarrationRuntime({
+    sub,
+    pub,
+    durableQueue: queue,
+    logger: silenceLogger(),
+  });
+}
+
+async function stopQueueRuntime(runtime: ElderEncounterNarrationRuntime): Promise<void> {
+  await runtime.disconnect();
 }
 
 // ──── payload helpers ────────────────────────────────────────────────────────
@@ -489,6 +555,81 @@ describe("ElderEncounterNarrationRuntime", () => {
     expect(pub.publish).not.toHaveBeenCalled();
     expect(pub.eval).not.toHaveBeenCalled();
     expect(durableRuntime.stats.rejectedContract).toBe(1);
+  });
+
+  it("durable connect 只恢复有界数量，并保持 processing 右端到 source 左端的 FIFO", async () => {
+    const queue = makeDurableQueueClient();
+    queue.processing.push(...Array.from({ length: MAX_DURABLE_RECOVERY_BATCH + 1 }, (_, index) => `pending-${index}`));
+    const durableRuntime = queueRuntime(makeMockClient(), makeMockClient(), queue);
+
+    await durableRuntime.connect();
+    await durableRuntime.disconnect();
+
+    expect(queue.processing, "恢复达到上限时应保留剩余 processing，避免启动阶段无界搬运").toHaveLength(1);
+    expect(queue.source.slice(0, 3), "恢复应从 processing 右端移到 source 左端，保持最早消息先重试").toEqual([
+      "pending-0",
+      "pending-1",
+      "pending-2",
+    ]);
+    expect(queue.lmove.mock.calls[0], "恢复应使用 processing RIGHT→source LEFT，实际参数必须体现 FIFO 方向").toEqual([
+      ELDER_ENCOUNTER_DURABLE_PROCESSING,
+      ELDER_ENCOUNTER_DURABLE,
+      "RIGHT",
+      "LEFT",
+    ]);
+  });
+
+  it("durable worker retry 将 processing 右端移回 source 左端，而不是反向吞掉 payload", async () => {
+    const queue = makeDurableQueueClient();
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:worker-retry" });
+    queue.source.push(payload);
+    const workerRuntime = queueRuntime(sub, pub, queue);
+    pub.eval.mockRejectedValueOnce(new Error("redis unavailable"));
+
+    await workerRuntime.connect();
+    await waitForQueueState(
+      () => queue.source.includes(payload) && queue.processing.length === 0,
+      "Redis 暂时失败后 payload 应从 processing 回到 source，原因是失败可重试且 processing 必须清空",
+    );
+    await workerRuntime.disconnect();
+
+    expect(queue.source, "retry 后 source 应重新拥有原 payload，实际队列不能丢消息").toContain(payload);
+    expect(queue.lmove.mock.calls.some((call) => call[0] === ELDER_ENCOUNTER_DURABLE_PROCESSING && call[1] === ELDER_ENCOUNTER_DURABLE && call[2] === "RIGHT" && call[3] === "LEFT"), "retry 应使用 processing RIGHT→source LEFT，避免错误端点导致重复/丢失").toBe(true);
+  });
+
+  it("durable worker 将不可恢复 poison pill 移入 dead-letter，不进行无限 retry", async () => {
+    const queue = makeDurableQueueClient();
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:dead-letter" });
+    queue.source.push(payload);
+    const pubWithoutEval = makeMockClient();
+    delete (pubWithoutEval as Partial<typeof pubWithoutEval>).eval;
+    const workerRuntime = queueRuntime(sub, pubWithoutEval, queue);
+
+    await workerRuntime.connect();
+    await waitForQueueState(
+      () => queue.deadLetter.includes(payload) && queue.processing.length === 0,
+      "缺少 EVAL 的 durable payload 应进入 dead-letter，原因是该契约缺陷不可通过重试修复",
+    );
+    await workerRuntime.disconnect();
+
+    expect(queue.deadLetter, "poison pill 应只进入 dead-letter 一次，实际不能留在 source 重试").toEqual([payload]);
+    expect(queue.source, "dead-letter 后 source 应为空，避免 poison pill 无限回灌").toEqual([]);
+  });
+
+  it("durable worker 的 BLMove 读取超时与 shutdown timeout 有严格边界", async () => {
+    const queue = makeDurableQueueClient({ blockReadNumber: 1 });
+    const workerRuntime = queueRuntime(sub, pub, queue);
+
+    await workerRuntime.connect();
+    expect(queue.blmove.mock.calls[0]?.[4], "worker 应以 1 秒阻塞读取，实际 timeout 必须固定为契约值").toBe(
+      DURABLE_QUEUE_READ_TIMEOUT_SECONDS,
+    );
+    expect(
+      ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+      "shutdown timeout 必须严格大于最长 BLMove 阻塞，避免 500ms 提前截断 worker 清理",
+    ).toBeGreaterThan(DURABLE_QUEUE_READ_TIMEOUT_SECONDS * 1000);
+    queue.releaseBlockedRead();
+    await workerRuntime.disconnect();
   });
 
   // ── disconnect ─────────────────────────────────────────────────────────────
