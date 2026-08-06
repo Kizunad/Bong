@@ -23,9 +23,13 @@ const {
 } = CHANNELS;
 const ELDER_ENCOUNTER_DURABLE_PROCESSING = `${ELDER_ENCOUNTER_DURABLE}:processing`;
 
+export const DURABLE_NARRATION_DEDUPE_TTL_SECONDS = 24 * 60 * 60;
+export const MAX_SEEN_DURABLE_EVENT_IDS = 1024;
+export const SEEN_DURABLE_EVENT_ID_TTL_MS = 5 * 60 * 1000;
+
 const DURABLE_NARRATION_DEDUPE_PREFIX = "bong:dedupe:elder_encounter:";
 const PUBLISH_DURABLE_NARRATION_SCRIPT = `
-local claimed = redis.call("SET", KEYS[1], "1", "NX")
+local claimed = redis.call("SET", KEYS[1], "1", "NX", "EX", ARGV[3])
 if not claimed then
   return 0
 end
@@ -100,7 +104,7 @@ export class ElderEncounterNarrationRuntime {
     ignored: 0,
   };
 
-  private readonly seenDurableEventIds = new Set<string>();
+  private readonly seenDurableEventIds = new Map<string, number>();
   private readonly onMessage = (channel: string, message: string): void => {
     if (channel !== ELDER_ENCOUNTER) return;
     void this.handlePayload(message);
@@ -226,7 +230,7 @@ export class ElderEncounterNarrationRuntime {
       );
       return false;
     }
-    if (payload.event_id !== undefined && this.seenDurableEventIds.has(payload.event_id)) {
+    if (payload.event_id !== undefined && this.isRecentlySeen(payload.event_id)) {
       this.stats.ignored += 1;
       return true;
     }
@@ -281,10 +285,35 @@ export class ElderEncounterNarrationRuntime {
       `${DURABLE_NARRATION_DEDUPE_PREFIX}${payload.event_id}`,
       AGENT_NARRATE,
       envelopeJson,
+      DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
     );
     const published = result === 1 || result === "1";
-    this.seenDurableEventIds.add(payload.event_id);
+    if (published) {
+      this.rememberDurableEventId(payload.event_id);
+    }
     return published;
+  }
+
+  private isRecentlySeen(eventId: string): boolean {
+    const seenAt = this.seenDurableEventIds.get(eventId);
+    if (seenAt === undefined) return false;
+    if (Date.now() - seenAt >= SEEN_DURABLE_EVENT_ID_TTL_MS) {
+      this.seenDurableEventIds.delete(eventId);
+      return false;
+    }
+    this.seenDurableEventIds.delete(eventId);
+    this.seenDurableEventIds.set(eventId, seenAt);
+    return true;
+  }
+
+  private rememberDurableEventId(eventId: string): void {
+    this.seenDurableEventIds.delete(eventId);
+    this.seenDurableEventIds.set(eventId, Date.now());
+    while (this.seenDurableEventIds.size > MAX_SEEN_DURABLE_EVENT_IDS) {
+      const oldest = this.seenDurableEventIds.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.seenDurableEventIds.delete(oldest);
+    }
   }
 
   private renderNarration(payload: ElderEncounterEventV1): Narration | null {

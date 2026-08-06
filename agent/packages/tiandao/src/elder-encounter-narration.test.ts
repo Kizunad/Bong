@@ -15,6 +15,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CHANNELS } from "@bong/schema";
 
 import {
+  DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
+  MAX_SEEN_DURABLE_EVENT_IDS,
+  SEEN_DURABLE_EVENT_ID_TTL_MS,
   ElderEncounterNarrationRuntime,
   renderAppearedNarration,
   renderDanReceivedNarration,
@@ -48,9 +51,7 @@ function makeMockClient() {
       async (
         _script: string,
         _numKeys: number,
-        _dedupeKey: string | number,
-        _channel: string | number,
-        _message: string | number,
+        ..._args: Array<string | number>
       ) => 1,
     ),
 
@@ -312,9 +313,15 @@ describe("ElderEncounterNarrationRuntime", () => {
       string,
       string,
     ];
-    expect(keyCount).toBe(1);
-    expect(dedupeKey).toBe("bong:dedupe:elder_encounter:terminal:npc:42:720000");
-    expect(channel).toBe(AGENT_NARRATE);
+    expect(keyCount, "Redis 去重脚本应只声明一个 key，避免 claim 与发布状态分裂").toBe(1);
+    expect(dedupeKey, "去重 key 应绑定 durable event_id，避免不同遭遇互相抑制").toBe(
+      "bong:dedupe:elder_encounter:terminal:npc:42:720000",
+    );
+    expect(channel, "原子脚本应发布到 AGENT_NARRATE，实际发布端点必须保持稳定").toBe(AGENT_NARRATE);
+    expect(
+      pub.eval.mock.calls[0]?.[5],
+      `去重 claim 应带 ${DURABLE_NARRATION_DEDUPE_TTL_SECONDS}s TTL，避免 Redis key 永久泄漏`,
+    ).toBe(DURABLE_NARRATION_DEDUPE_TTL_SECONDS);
     expect(runtime.stats.published).toBe(1);
     expect(runtime.stats.ignored).toBe(1);
   });
@@ -346,6 +353,85 @@ describe("ElderEncounterNarrationRuntime", () => {
     expect(runtime.stats.received).toBe(2);
     expect(runtime.stats.published).toBe(1);
     expect(runtime.stats.ignored).toBe(0);
+  });
+
+  it("durable 去重缓存按 TTL 淘汰后允许完整消息路径再次处理", async () => {
+    vi.useFakeTimers();
+    try {
+      const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:ttl" });
+      await runtime.handlePayload(payload);
+      vi.advanceTimersByTime(SEEN_DURABLE_EVENT_ID_TTL_MS + 1);
+      pub.eval.mockResolvedValueOnce(1);
+      await runtime.handlePayload(payload);
+
+      expect(
+        pub.eval,
+        "本地去重缓存过期后应重新执行 Redis claim，原因是短 TTL 只抑制重复突发而非永久丢弃事件",
+      ).toHaveBeenCalledTimes(2);
+      expect(runtime.stats.published, "去重缓存过期后应再次发布，实际发布次数必须为 2").toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("durable 去重缓存超过上限时淘汰最旧 ID，避免进程内存无界增长", async () => {
+    for (let index = 0; index < MAX_SEEN_DURABLE_EVENT_IDS + 1; index += 1) {
+      await runtime.handlePayload(
+        makePayload("dead_natural", { event_id: `terminal:npc:42:lru:${index}` }),
+      );
+    }
+    pub.eval.mockResolvedValueOnce(1);
+    await runtime.handlePayload(makePayload("dead_natural", { event_id: "terminal:npc:42:lru:0" }));
+
+    expect(
+      pub.eval,
+      "超过本地 LRU 上限后最旧 ID 应可再次走 Redis claim，避免 seen 集合无界增长",
+    ).toHaveBeenCalledTimes(MAX_SEEN_DURABLE_EVENT_IDS + 2);
+    expect(runtime.stats.published, "最旧 ID 被淘汰后应重新发布，实际发布次数应包含重试").toBe(
+      MAX_SEEN_DURABLE_EVENT_IDS + 2,
+    );
+  });
+
+  it("durable 消息通过订阅 emit 走完整去重状态转换", async () => {
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:emit" });
+    sub.emit(ELDER_ENCOUNTER, payload);
+    await vi.waitFor(() => expect(pub.eval).toHaveBeenCalledOnce());
+    sub.emit(ELDER_ENCOUNTER, payload);
+    await vi.waitFor(() => expect(runtime.stats.ignored).toBe(1));
+
+    expect(pub.publish, "durable 订阅消息应只走原子 eval，不应旁路普通 publish").not.toHaveBeenCalled();
+    expect(runtime.stats.published, "重复 durable 订阅消息应只发布一次，实际发布次数应为 1").toBe(1);
+  });
+
+  it("durable 去重脚本返回非 1 时不污染本地 seen，后续状态可重试", async () => {
+    pub.eval.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:claim-retry" });
+
+    await runtime.handlePayload(payload);
+    await runtime.handlePayload(payload);
+
+    expect(pub.eval, "Redis claim 未成功时后续同 ID 必须可重试，不能被本地 seen 错误吞掉").toHaveBeenCalledTimes(2);
+    expect(runtime.stats.published, "第二次 claim 成功后应发布一次，实际发布次数应为 1").toBe(1);
+  });
+
+  it("durable event_id 通过 Redis 原子 claim+publish，重复输入不再发布", async () => {
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:duplicate-cache" });
+
+    await runtime.handlePayload(payload);
+    await runtime.handlePayload(payload);
+
+    expect(runtime.stats.ignored, "成功发布后本地 seen 应抑制短时间重复输入，实际 ignored 应为 1").toBe(1);
+  });
+
+  it("durable event_id 的 Redis TTL 与本地 TTL 都是有界策略", () => {
+    expect(
+      DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
+      "Redis 去重键必须有正 TTL，避免跨 runtime 的永久 key 泄漏",
+    ).toBeGreaterThan(0);
+    expect(
+      SEEN_DURABLE_EVENT_ID_TTL_MS,
+      "本地去重缓存必须有正 TTL，避免进程内重复 ID 永久占用",
+    ).toBeGreaterThan(0);
   });
 
   it("durable payload 缺少 EVAL 能力时 fail closed，不退化为普通 PUBLISH", async () => {
