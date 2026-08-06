@@ -10336,6 +10336,7 @@ mod persistence_tests {
         let _ = fs::remove_dir_all(root);
     }
 
+
     #[test]
     fn production_failed_load_stays_read_only_and_recovers_on_reconnect() {
         let (mut app, persistence, settings, root) =
