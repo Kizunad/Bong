@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
+import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -334,7 +336,62 @@ pub enum ClientRequestV1 {
         ):
             self.assertEqual(checker.main(), 0)
 
+    def test_generated_schema_variants_accepts_valid_any_of(self) -> None:
+        document = {
+            "anyOf": [
+                {"properties": {"type": {"const": "alpha"}}},
+                {"properties": {"type": {"const": "beta"}}},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "client-request-v1.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with patch.object(checker, "GENERATED_SCHEMA_PATH", path):
+                self.assertEqual(checker.generated_schema_variants(), ["alpha", "beta"])
+
+    def test_generated_schema_variants_fails_closed(self) -> None:
+        invalid_documents = {
+            "invalid JSON": "{",
+            "non-object document": [],
+            "missing anyOf": {},
+            "empty anyOf": {"anyOf": []},
+            "non-object member": {"anyOf": ["alpha"]},
+            "missing properties": {"anyOf": [{}]},
+            "missing type": {"anyOf": [{"properties": {}}]},
+            "missing const": {"anyOf": [{"properties": {"type": {}}}]},
+            "non-string const": {"anyOf": [{"properties": {"type": {"const": 1}}}]},
+            "empty const": {"anyOf": [{"properties": {"type": {"const": ""}}}]},
+        }
+        for label, document in invalid_documents.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "client-request-v1.json"
+                if isinstance(document, str):
+                    path.write_text(document, encoding="utf-8")
+                else:
+                    path.write_text(json.dumps(document), encoding="utf-8")
+                with patch.object(checker, "GENERATED_SCHEMA_PATH", path), self.assertRaises(
+                    RuntimeError
+                ):
+                    checker.generated_schema_variants()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "missing-client-request-v1.json"
+            with patch.object(checker, "GENERATED_SCHEMA_PATH", path), self.assertRaises(
+                RuntimeError
+            ):
+                checker.generated_schema_variants()
+
+    def test_typebox_contract_rejects_duplicate_schema_discriminants(self) -> None:
+        with patch.object(checker, "KNOWN_TYPEBOX_GAPS", frozenset()):
+            self.assertEqual(
+                checker.typebox_contract_errors(
+                    ["Alpha", "Beta"], ["Alpha", "Beta"], ["alpha", "beta", "beta"]
+                ),
+                ["duplicate TypeBox schema variants: ['beta']"],
+            )
+
     def test_typebox_contract_rejects_unexpected_schema_drift(self) -> None:
+
         enum = ["Alpha", "Beta"]
         matrix = ["Alpha", "Beta"]
         with patch.object(checker, "KNOWN_TYPEBOX_GAPS", frozenset()):
@@ -394,6 +451,28 @@ stale notes
 """
         with self.assertRaisesRegex(RuntimeError, "duplicate P0 matrix sections"):
             checker.parse_matrix_variants(plan)
+
+        indented = plan.replace(
+            "## 后续清单", "   ## P0 2 变体门禁矩阵\n\n## 后续清单"
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate P0 matrix sections"):
+            checker.parse_matrix_variants(indented)
+
+        decorated = plan.replace(
+            "## 后续清单",
+            "## P0 2 变体门禁矩阵 (旧)\n\n## 后续清单",
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate P0 matrix sections"):
+            checker.parse_matrix_variants(decorated)
+
+        for heading in (
+            "## P0 变体门禁矩阵",
+            "## P0 2 变体门禁矩阵 (旧)",
+        ):
+            with self.subTest(heading=heading), self.assertRaisesRegex(
+                RuntimeError, "malformed C2S matrix heading"
+            ):
+                checker.parse_matrix_variants(heading)
 
 
 if __name__ == "__main__":

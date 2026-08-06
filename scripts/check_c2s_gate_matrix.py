@@ -12,7 +12,11 @@ ENUM_PATH = ROOT / "server/src/schema/client_request.rs"
 PLAN_PATH = ROOT / "docs/plan-refactor-c2s-gate-v1.md"
 GENERATED_SCHEMA_PATH = ROOT / "agent/packages/schema/generated/client-request-v1.json"
 ENUM_DECL_RE = re.compile(r"(?m)^[ \t]*pub\s+enum\s+ClientRequestV1\s*\{")
-MATRIX_SECTION_RE = re.compile(r"^## P0 (\d+) 变体门禁矩阵\s*$")
+MATRIX_SECTION_RE = re.compile(r"^ {0,3}## P0 (\d+) 变体门禁矩阵\s*$")
+MATRIX_SECTION_CANDIDATE_RE = re.compile(
+    r"^ {0,3}##\s+P0\b.*变体门禁矩阵.*$"
+)
+MARKDOWN_H2_RE = re.compile(r"^ {0,3}##(?:\s|$)")
 MATRIX_HEADER_RE = re.compile(
     r"^\|\s*#\s*\|\s*`ClientRequestV1`\s*\|\s*距离\s*\|\s*维度\s*\|\s*所有权 / participant\s*\|\s*状态前置\s*\|\s*P0 现状结论\s*\|\s*$"
 )
@@ -356,29 +360,33 @@ def parse_matrix_variants(source: str) -> tuple[list[int], list[str]]:
     header_seen = False
     divider_seen = False
     table_ended = False
+    lines = source.splitlines()
 
     # The C2S gate matrix is a singular contract: exactly one `## P0 N
     # 变体门禁矩阵` section may exist in the plan. A second authoritative-
     # looking matrix (stale, reordered, or with extra variants) must fail
     # closed instead of being silently ignored after the first section.
     matrix_sections = [
-        line
-        for line in source.splitlines()
-        if MATRIX_SECTION_RE.fullmatch(line)
+        (line_number, line)
+        for line_number, line in enumerate(lines, start=1)
+        if MATRIX_SECTION_CANDIDATE_RE.fullmatch(line)
     ]
     if len(matrix_sections) > 1:
         raise RuntimeError(
             "C2S plan contains duplicate P0 matrix sections: "
-            f"{len(matrix_sections)} headings ({matrix_sections[0]!r}, "
-            f"{matrix_sections[1]!r}, ...)"
+            f"{len(matrix_sections)} headings ({matrix_sections[0][1]!r}, "
+            f"{matrix_sections[1][1]!r}, ...)"
         )
+    if matrix_sections and not MATRIX_SECTION_RE.fullmatch(matrix_sections[0][1]):
+        line_number, line = matrix_sections[0]
+        raise RuntimeError(f"malformed C2S matrix heading at line {line_number}: {line!r}")
 
-    for line_number, line in enumerate(source.splitlines(), start=1):
+    for line_number, line in enumerate(lines, start=1):
         if expected_count is None:
             if section := MATRIX_SECTION_RE.fullmatch(line):
                 expected_count = int(section.group(1))
             continue
-        if line.startswith("## "):
+        if MARKDOWN_H2_RE.match(line):
             break
         if not header_seen:
             if MATRIX_HEADER_RE.fullmatch(line):
