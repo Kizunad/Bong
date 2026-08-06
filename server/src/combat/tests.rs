@@ -266,17 +266,18 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
     );
     let revival_deadline = lifecycle
         .revival_decision_deadline_tick
-        .expect("待决策状态必须保留 revival deadline");
+        .expect("persisted revival decision deadline should be restored");
     let after_load_wall = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
         .as_secs();
-    let max_elapsed_ticks =
-        after_load_wall.saturating_sub(persisted_last_updated_wall as u64) * TICKS_PER_SECOND;
+    let max_elapsed_ticks = after_load_wall
+        .saturating_sub(persisted_last_updated_wall as u64)
+        .saturating_mul(TICKS_PER_SECOND);
     let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
     assert!(
         (earliest_valid_deadline..=9_999).contains(&revival_deadline),
-        "deadline 应扣除测试期间真实流逝的墙钟时间；实际 {revival_deadline}，有效区间 {earliest_valid_deadline}..=9999"
+        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {revival_deadline}，有效区间 {earliest_valid_deadline}..=9999"
     );
     assert_eq!(lifecycle.death_count, 2);
 
