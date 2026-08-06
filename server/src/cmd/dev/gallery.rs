@@ -319,6 +319,15 @@ pub fn structure_from_region(
                     continue;
                 }
                 let entry = PaletteEntry::from_block_state(state);
+                entry.block_state().map_err(|error| {
+                    format!(
+                        "block at [{},{},{}] cannot be saved because the closed worldgen catalog rejects '{}': {error}",
+                        world.x,
+                        world.y,
+                        world.z,
+                        entry.name
+                    )
+                })?;
                 let palette_idx = match palette.iter().position(|p| *p == entry) {
                     Some(idx) => idx,
                     None => {
@@ -1027,6 +1036,56 @@ mod tests {
             err.contains("unloaded chunk"),
             "abort message should explain the unloaded-chunk cause for the player; got: {err}"
         );
+    }
+
+    #[test]
+    fn closed_catalog_rejection_preserves_existing_target_bytes() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after the Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "bong_gallery_closed_catalog_{}_{}.nbt",
+            std::process::id(),
+            nonce
+        ));
+        let existing = b"existing authored nbt remains untouched";
+        std::fs::write(&path, existing).expect("write the existing target sentinel");
+
+        let scenario = valence::testing::ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        let mut layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(scenario.layer)
+            .expect("test layer should carry ChunkLayer");
+        layer.insert_chunk([0, 0], valence::prelude::UnloadedChunk::new());
+        layer.set_block(
+            BlockPos::new(0, 64, 0),
+            Block::new(BlockState::GOLD_BLOCK, None),
+        );
+
+        let mut gallery = GalleryState::default();
+        gallery.slots.push(GallerySlot {
+            name: "gold.nbt".into(),
+            nbt_path: path.clone(),
+            origin: [0, 64, 0],
+            size: [1, 1, 1],
+        });
+
+        let report = save_structure(&layer, &gallery, "gold.nbt");
+        assert!(
+            report.contains("aborted")
+                && report.contains("gold_block")
+                && report.contains("unknown catalog block"),
+            "production save boundary must reject the closed-catalog block: {report}"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("read the existing target sentinel"),
+            existing,
+            "catalog rejection must happen before any NBT write and preserve the prior target"
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 
     /// CR major + 任务 #8：region save→write→read 闭环必须保住逐块 block entity nbt。
