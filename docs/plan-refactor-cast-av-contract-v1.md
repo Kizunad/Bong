@@ -83,7 +83,7 @@ protobuf field number 与 oneof number 仍须显式稳定 pin，但不能改变 
 | `P-10` | `CastPlayAnim { identity, av_binding_key, animation_id }` 与 `CastStopAnim { identity, av_binding_key, animation_id }` 都 required 完整 identity 与同一 canonical `av_binding_key`；该 key 必须等于触发它们的 accepted CastSync binding（registration-owned skill key，或 QUICK_SLOT 的 item-template/cast-variant key），且 PLAY/STOP 只允许 accepted cast，不适用于 reject envelope。非 cast 通用动画不得伪造 identity 或 binding key 进入此通道。 |
 | `P-11` | `ServerDataV1` 有独立 `cast_session_begin`、`cast_sync`、`vfx_event.cast_play_anim`、`vfx_event.cast_stop_anim` arms；四者统一走 `bong:server_data`。 |
 | `P-12` | `target_entity_id` 是 caster 在 recipient 当前 tracking epoch 的 Minecraft protocol entity ID，不是 ECS Entity bits；client 仅在该 ID 当前解析到 BEGIN 的 `caster`（player 或 NPC）时安装 session。connection/tracking entry 与 observer re-entry 都必须重发该 caster 的权威 BEGIN；其后 CastSync/PLAY/STOP 只接受同一 `(caster,session_id,session_generation)` gate。 |
-| `P-13` | generation 进程级单调非零；同 session 重发复用。connection 内 identity 从 1 单调分配；发出 `u64::MAX` 后 exhausted，后续 admission 无 identity、gameplay、AV 或 reject 副作用。 |
+| `P-13` | generation 进程级单调非零；同 session 重发复用。connection 内 identity 从 1 单调分配；任何被接受的 attempt（Reject、CASTING、COMPLETE 或 INTERRUPT）一旦消费 `u64::MAX`，必须在同一 transition 后将 session 标为 exhausted；后续 admission 无 identity、gameplay、AV 或 reject 副作用。 |
 | `P-14` | server 必须在 caster connection/tracking epoch entry 向每个 recipient 发合法 BEGIN，才可发送该 caster session 的其余 cast payload；observer 重进 tracking 时重新发送同一 caster 的权威 floor/active/exhaustion 快照。player 与 NPC caster 均走此 BEGIN → CastSync → PLAY/STOP → reducer/AV consumer 链，fixture 注入 BEGIN 不能代替真实 entry producer。 |
 | `P-15` | unknown arm、unknown field、malformed UUID、非法 canonical uint64、非法 phase/outcome/source/target 组合均 fail-closed，且不得 coerce。 |
 
@@ -125,12 +125,12 @@ av         = { owner?: (identity, av_binding_key, animation_id, token), av_tombs
 | `R-03` | 旧 generation、等 generation 不同 session、BEGIN 非法/回退 | `IGN`。 |
 | `R-04` | 新 Reject attempt，`n>AH` 且未 terminal | `ACC`；`AH=n`、latest=`REJECTED`、`reject_feedback` 替换为最新反馈，并将该 identity/outcome 插入 `rejected_attempts`（同 identity 只保留一次）。保留不相同的 reserved/active/AV owner；`n=max` 只令 gate exhausted，不终结其它 identity。 |
 | `R-05` | 同 identity、同 outcome 的 Reject replay | `ACC_IDEM`；不重复 HUD。其它 `n<=AH` reject 为 `R-14`。若 identity 已在 `rejected_attempts` 但 outcome 冲突，直接 `R-14`。 |
-| `R-06` | CASTING 命中 reserved，或 `n>AH/TH` 的新 accepted attempt | `ACC/SUP`；matching `pending_identity/reserved_active` 的 CASTING 先消费并清除同 identity 的 `pending_pre_admission_stop`，该 marker 不得转成 AV tombstone/floor，因而后续合法 PLAY 仍可走 `R-10`。若存在较旧 authoritative active，先在同一 reducer transition 中为旧 identity 产生权威 `INTERRUPT(INTERRUPT_CONTROL)`，推进 `TH`、写旧 identity terminal record、清旧 active/reserved，并发送 matching advisory STOP、写旧 identity 的 AV tombstone/floor；随后清较旧 feedback，清 `pending_identity`，置 `AH=n/latest=CASTING`，建立新 active 并清除仅属于旧 identity 的 floor。旧 identity 的 terminal side effects 与新 identity admission 必须原子完成，不能只写 AV tombstone。 |
+| `R-06` | CASTING 命中 reserved，或 `n>AH/TH` 的新 accepted attempt | `ACC/SUP`；matching `pending_identity/reserved_active` 的 CASTING 先消费并清除同 identity 的 `pending_pre_admission_stop`，该 marker 不得转成 AV tombstone/floor，因而后续合法 PLAY 仍可走 `R-10`。若存在较旧 authoritative active，先在同一 reducer transition 中为旧 identity 产生权威 `INTERRUPT(INTERRUPT_CONTROL)`，推进 `TH`、写旧 identity terminal record、清旧 active/reserved，并发送 matching advisory STOP、写旧 identity 的 AV tombstone/floor；随后清较旧 feedback，清 `pending_identity`，置 `AH=n/latest=CASTING`，建立新 active 并清除仅属于旧 identity 的 floor。旧 identity 的 terminal side effects 与新 identity admission 必须原子完成，不能只写 AV tombstone。任何被本行接受的 `n=u64::MAX` 都在同一 transition 原子设置 `gate.exhausted=true`；新 gameplay active 仍在时派生为 `XA`，否则派生为 `X`，且后续 admission 不得再产生 identity、gameplay、AV 或 reject 副作用。 |
 | `R-07` | CASTING 命中同 active 且 latest=`CASTING` | `ACC_IDEM`；不得重复 gameplay/AV。rejected/terminal identity 的 CASTING 为 `R-14`。 |
-| `R-08` | COMPLETE/INTERRUPT；若 identity 已有 terminal record 则走 `R-09`；若 identity 是当前 active/reserved，则即使 `n<=TH` 也必须先完成该 active 的 authoritative terminal；若 identity 已由 `R-04` 记录为 rejected，则直接 `R-14`，不得进入 supersession；若 identity 不同于当前 active 且 `n>active_instance_id`，仅在未 rejected 时执行 supersession cascade；仅在上述两者都不成立且 identity 未在 terminal records 中但 `n<=TH`（说明该 terminal record 已被 `R-16` 驱逐）时，才 `ACC_IDEM`；否则 identity 未 terminal、未以同 identity reject 且通过 gate | 新 terminal 才 `ACC`。普通 terminal 写 identity+outcome 的 terminal record、`TH=max(TH,n)`，并同步 `AH=max(AH,n)`；若 `n` 不低于 terminal 前的 `AH`，latest 置 `TERMINAL`，从而 delayed reject 不得覆盖该 feedback；清 matching reserved/active/pending identity 与 matching pending marker；若它是当前 active/reserved，则停 matching AV owner并写该 identity 的 AV tombstone/floor。supersession cascade 必须在同一 reducer transition 中先为旧 active `a` 写权威 `INTERRUPT(INTERRUPT_CONTROL)`、推进 `TH` 与 `AH`、写 `a` 的 terminal record、清旧 active/reserved、停旧 AV owner并写其 AV tombstone/floor，再接受 `n` 的 terminal、写其 terminal record 并同步推进 `AH/TH`，最后清除仅属于 `a` 的 floor；两组 terminal side effects 原子完成，最终不得留下旧 active。迟到旧 terminal、尤其是已被 `R-04` 拒绝的 attempt，不得改写较新 attempt feedback/disposition 或 supersede active；被驱逐 terminal record 的 replay 只能幂等 no-op，绝不能重新执行 outcome/HUD/release/complete/interrupt。 |
+| `R-08` | COMPLETE/INTERRUPT；若 identity 已有 terminal record 则走 `R-09`；若 identity 是当前 active/reserved，则即使 `n<=TH` 也必须先完成该 active 的 authoritative terminal；若 identity 已由 `R-04` 记录为 rejected，则直接 `R-14`，不得进入 supersession；若 identity 不同于当前 active 且 `n>active_instance_id`，仅在未 rejected 时执行 supersession cascade；仅在上述两者都不成立且 identity 未在 terminal records 中但 `n<=TH`（说明该 terminal record 已被 `R-16` 驱逐）时，才 `ACC_IDEM`；否则 identity 未 terminal、未以同 identity reject 且通过 gate | 新 terminal 才 `ACC`。普通 terminal 写 identity+outcome 的 terminal record、`TH=max(TH,n)`，并同步 `AH=max(AH,n)`；若 `n` 不低于 terminal 前的 `AH`，latest 置 `TERMINAL`，从而 delayed reject 不得覆盖该 feedback；清 matching reserved/active/pending identity 与 matching pending marker；若它是当前 active/reserved，则停 matching AV owner并写该 identity 的 AV tombstone/floor。supersession cascade 必须在同一 reducer transition 中先为旧 active `a` 写权威 `INTERRUPT(INTERRUPT_CONTROL)`、推进 `TH` 与 `AH`、写 `a` 的 terminal record、清旧 active/reserved、停旧 AV owner并写其 AV tombstone/floor，再接受 `n` 的 terminal、写其 terminal record 并同步推进 `AH/TH`，最后清除仅属于 `a` 的 floor；两组 terminal side effects 原子完成，最终不得留下旧 active。任何被本行接受的 `n=u64::MAX` 都在同一 transition 原子设置 `gate.exhausted=true`；若 terminal 清掉最后的 gameplay active/reserved，派生为 `X`，若仍有 gameplay active 则派生为 `XA`，后续 admission 无 identity、gameplay、AV 或 reject 副作用。迟到旧 terminal、尤其是已被 `R-04` 拒绝的 attempt，不得改写较新 attempt feedback/disposition 或 supersede active；被驱逐 terminal record 的 replay 只能幂等 no-op，绝不能重新执行 outcome/HUD/release/complete/interrupt。 |
 | `R-09` | COMPLETE/INTERRUPT 命中 terminal record | `ACC_IDEM`；同 identity、同 outcome 不重复 outcome/HUD/release/complete/interrupt/token；冲突 outcome fail-closed 为 `R-14`。被 `R-16` 驱逐的 record 不在本行命中，由 `R-08` 依据 `TH` 处理为无副作用幂等 replay。 |
-| `R-10` | PLAY 命中 active identity 与相同 `av_binding_key`、无 terminal record、无 AV tombstone，且 identity 严格高于 `av_supersession_floor`（若存在） | 首次 `ACC` 并以 `(identity,av_binding_key,animation_id)` 武装 owner/token；完全相同 replay 为 `ACC_IDEM`。PLAY 不建立 active，不推进 AH/TH。binding key 不匹配、低于或等于 AV floor 的迟到 PLAY 为 `R-14`，即使对应 AV tombstone 已被驱逐也不得复活。 |
-| `R-11` | STOP 命中当前 AV owner identity 与相同 `av_binding_key` | `ACC`；只停同一 `(identity,av_binding_key,animation_id)` token、清 owner、写 AV tombstone，并令 `av_supersession_floor=max(floor,identity)`；**gameplay、attempt、TH、terminal record、outcome 全不变。** |
+| `R-10` | PLAY 命中 active identity 与相同 `av_binding_key`、无 terminal record、无 AV tombstone，且 identity 严格高于 `av_supersession_floor`（若存在） | 首次 `ACC` 并以 `(identity,av_binding_key,animation_id)` 武装 owner/token；完全相同 replay 为 `ACC_IDEM`。若已有 owner 且 identity/binding 相同但 `animation_id` 不同，或 identity/binding 已命中拒绝 floor/tombstone，走 `R-14` 且不得替换 owner。PLAY 不建立 active，不推进 AH/TH。binding key 不匹配、低于或等于 AV floor 的迟到 PLAY 为 `R-14`，即使对应 AV tombstone 已被驱逐也不得复活。 |
+| `R-11` | STOP 命中当前 AV owner identity 与相同 `av_binding_key` | `ACC`；只停同一 `(identity,av_binding_key,animation_id)` token、清 owner、写 AV tombstone，并令 `av_supersession_floor=max(floor,identity)`；**gameplay、attempt、TH、terminal record、outcome 全不变。** STOP 命中 identity/binding 但 `animation_id` 与当前 owner 冲突时走 `R-14`，不得清 owner 或写 tombstone。 |
 | `R-12` | STOP 通过 gate但非 owner，且 identity/`av_binding_key` 尚无 AV tombstone | matching `pending_identity == reserved_active == identity` 且尚未收到 CASTING 时，`ACC`；只写 attempt-scoped `pending_pre_admission_stop=identity`，重复 marker 为 `ACC_IDEM`，不写 AV tombstone/floor、不推进 `AH/TH`，也不清 authoritative active/reserved；后续 matching `R-06` CASTING 必须消费 marker，合法 PLAY 仍走 `R-10`。其它 identity 才按普通非 owner STOP `ACC`；只写完整 `(identity,av_binding_key,animation_id)` AV tombstone，并在同一 R-12 transition 的容量后置条件中执行 R-16 的有界 eviction；仅当 STOP identity 等于当前 authoritative active identity 时，才令 `av_supersession_floor=identity`，否则不改变当前 active 的 floor。这样无关 identity 的 bounded tombstone churn 不会阻止当前 active 的 PLAY；terminal-before-PLAY/STOP-before-terminal 的迟到 PLAY 仍由 matching tombstone 或 floor 拒绝。不得分类 attempt，后续 `R-08` 仍须完整生效。 |
 | `R-13` | STOP 命中相同 `(identity,av_binding_key,animation_id)` 的 AV tombstone | `ACC_IDEM`；四分区除既有 AV tombstone外不变。 |
 | `R-14` | unknown/malformed/session mismatch/below floor/forbidden combination/stale message | `IGN`。 |
@@ -171,9 +171,9 @@ T-09  A(active=7,owner=7,AH=7,TH=0) --CASTING(8)[R-06]-->
       A(active=8,AH=8,TH=7,terminal_record=7,av_tombstone=7)
       side_effects = INTERRUPT_CONTROL(7) + matching STOP(7); identity 7 is terminal before 8 becomes active
 
-T-10  A(active=257,AH=256,TH=256,terminal_records full,oldest identity=8) --COMPLETE(257)[R-08]--> O(TH=257,terminal_records full,oldest identity=9)
-      the R-08 transition adds terminal 257 and its mandatory R-16 postcondition evicts terminal record 8;
-      --COMPLETE(8)[R-08]--> O(ACC_IDEM,no side effects)
+T-10  A(active=257,AH=257,TH=256,terminal_records full,oldest identity=1) --COMPLETE(257)[R-08]--> O(TH=257,terminal_records full,oldest identity=2)
+      the R-08 transition adds terminal 257 and its mandatory R-16 postcondition evicts terminal record 1;
+      --COMPLETE(1)[R-08]--> O(ACC_IDEM,no side effects)
 
 T-11  BEGIN(S,generation=1,active=8)[R-01] --COMPLETE(S,generation=1,8)[R-08]--> O
       --BEGIN(S,generation=2,active=8)[R-01]--> R(generation=2,reserved=8)
@@ -227,8 +227,8 @@ T-15  A(active=7,AH=7) --REJECT(8)[R-04]--> A(active=7,AH=8,feedback=8,rejected_
 | woliu 虚蚀路径 | 5 | 0 | **玩家定义断链** | 五招 animation 资源也缺失；P3 同时补 definition 与五件套 |
 | yidao | 5 | 0 | **玩家定义断链** | resolver 有两段动画及 VFX/audio spec；P3 补权威定义/HUD/icon 后统一注册 |
 | dugu v2 | 5 | 0 | **玩家定义断链** | 局部五件套结构存在但正式技能栏/HUD/icon 断链；P3 修 |
-| baomai v3 | 6 | 2 | 4 招玩家定义断链 | resolver/event 双源仍在；P2 去重，P3 补 4 条定义 |
-| tuike v2 | 3 | 3 | 玩家可达 | `shed` 音频已单源；其余视觉及 `don/transfer_taint` 音频仍双路，P2 收口 |
+| baomai v3 | 6 | 2 | 4 招玩家定义断链 | resolver/event 双源仍在；Wave 2 atomic activation 前去重，P3 补 4 条定义 |
+| tuike v2 | 3 | 3 | 玩家可达 | `shed` 音频已单源；其余视觉及 `don/transfer_taint` 音频仍双路；Wave 2 atomic activation 前去重 |
 | sword_basics | 4 | 4 | 玩家可达 | 已有分散 AV；P3 纳入统一 binding |
 | cultivation::dugu | 2 | 2 | 玩家可达 | 已有分散 AV；P3 纳入统一 binding |
 | dandao | 3 | 0 | **玩家定义断链** | 三招仅局部粒子素材，正式 animation/VFX/SFX/HUD/icon 未闭环；P3 修 |
@@ -237,9 +237,9 @@ T-15  A(active=7,AH=7) --REJECT(8)[R-04]--> A(active=7,AH=8,feedback=8,rejected_
 | morph | 1 | 1 | 玩家可达 | 已有 AV；P3 纳入统一 binding |
 | **合计** | **68** | **46** | **22 条 registry-only** | exact `init_registry()` module ledger：`carrier=1 + anqi_v2=5 + burst_meridian=4 + zhenmai_v2=5 + woliu=1 + yidao=5 + woliu_v2=15 + dugu_v2=5 + baomai_v3=6 + tuike_v2=3 + sword_basics=4 + cultivation::dugu=2 + dandao=3 + sword_path=5 + npc=3 + morph=1 = 68`；definition 命中非零项：`carrier/anqi=6 + burst_meridian=4 + zhenmai_v2=5 + woliu v1/v2/v3=11 + baomai_v3=2 + tuike_v2=3 + sword_basics=4 + cultivation::dugu=2 + sword_path=5 + npc=3 + morph=1 = 46`，其余四行命中为零；registry-only：`woliu 虚蚀=5 + yidao=5 + dugu v2=5 + baomai_v3=4 + dandao=3 = 22`；definition-only `3`，故 `TECHNIQUE_DEFINITIONS/TECHNIQUE_IDS = 46+3=49`。唯一计数来源是 `server/src/cultivation/skill_registry.rs::init_registry()` 具体注册函数，禁止从视觉族名重复计数。 |
 
-另有 definition-only 三条 `movement.dash`、`shield_block`、`body.guangbo_ticao`，它们走专用 intent/system 而非 `SkillRegistry`。`SkillRegistration` 的 canonical shape、唯一 lookup 与 consumer interface 在 P1 contract-first 冻结并建立为同一 authority 的 inert implementation/entry ledger；P1 允许创建和审计该 canonical lookup，但不让它 production-reachable，也不创建 test-only 平行 registry。Wave 2 activation 只启用这一已冻结的 lookup 与 unique AV consumer；所有已启用 producer 只读它。P3 在该同一 shape 上补齐完整 68 resolver + 3 dedicated、definitions/AV bindings/assets、projection 与旧 canonical table 删除，不重新定义 lookup 或另建 authority。
+另有 definition-only 三条 `movement.dash`、`shield_block`、`body.guangbo_ticao`，它们走专用 intent/system 而非 `SkillRegistry`。`SkillRegistration` 的 canonical shape、唯一 lookup 与 consumer interface 在 P1 contract-first 冻结并建立为同一 authority 的 inert implementation/entry ledger；该 lookup 必须同时支持两类 entry：`SkillRegistration::Skill { skill_id, definition, resolver/dedicated handler, av }` 与 `SkillRegistration::ItemCast { item_template_id, cast_variant, av_binding_key, av }`。后者是 QUICK_SLOT 的唯一权威 AV entry，`skill_id` 保持 null，不通过隐式 item→skill 映射解析。P1 只建立并审计该统一 lookup 的 inert shape/ledger，不让它 production-reachable，也不创建 test-only 平行 registry。Wave 2 production activation 必须等待 P2 双源清除与 P3 registration/assets 就绪；P3 在同一 atomic activation merge unit 内完成全量 68 resolver + 3 dedicated 与 item-cast entries、definitions/AV bindings/assets、唯一 AV consumer 和 producer cutover。不得用“先启用已完成子集、再在 P3 补其余 registration”的分段 live path 绕过完整 registration authority。
 
-本矩阵中的“五件套已有”只表示当前代码能找到对应局部映射/资产，不代表已由机器证明唯一消费。P1 冻结唯一 `SkillRegistration` shape、accepted-key lookup contract 与唯一 consumer interface，但不切换生产 registration；P2 清除双源并补齐所有退出终态，同时按本阶段测试矩阵锁住双发与终态；P3 在同一 canonical lookup 上补齐已知资产/定义缺口后，一次性把全部 68 resolver + 3 dedicated 原子迁入并删除旧 canonical 表。P3 的 registry 精确集合测试逐条验证完整 definition 以及 animation、VFX/audio/HUD 的 start/release/complete/interrupt phase binding、icon 均非空且真实存在，缺口数必须为零。
+本矩阵中的“五件套已有”只表示当前代码能找到对应局部映射/资产，不代表已由机器证明唯一消费。P1 冻结统一 lookup、accepted-key contract 与唯一 consumer interface，但不切换生产 registration；P2 清除 duplicate owners 并锁定终态契约；Wave 2 只在 P3 全量 registration/binding/assets、duplicate owner 清零且 unique consumer 已就绪后，将全部 real cast producers 原子切换。P3 在同一 unified lookup 上完成全量 68 resolver + 3 dedicated 与 item-cast entries，并删除旧 canonical 表。P3 的 registry 精确集合测试逐条验证完整 definition 以及 animation、VFX/audio/HUD 的 start/release/complete/interrupt phase binding、icon 均非空且真实存在，缺口数必须为零。
 
 ### 4.2 权威 producer / authorization rows
 
@@ -256,7 +256,7 @@ T-15  A(active=7,AH=7) --REJECT(8)[R-04]--> A(active=7,AH=8,feedback=8,rejected_
 
 ### 4.3 `SkillAvBinding` 冻结
 
-`SkillAvBinding` 由 registration key 索引；QUICK_SLOT 的 `av_binding_key` 是 `(item_template_id, cast_variant)` 的 canonical 字符串，SKILL_BAR/DEDICATED 使用 `skill_id` 对应 registration 的同一 key，NPC DEDICATED 使用相同 registration key 但选择 `SkillVisualBinding::Npc`/`Both` 的 NPC arm。任何 producer 或 consumer 都不得从 `skill_id=null` 猜测 binding，也不得另建 item→skill 隐式表。
+`SkillAvBinding` 由统一 registration lookup 索引；skill entry 以 `skill_id` 识别，item-cast entry 以 `(item_template_id, cast_variant)` 识别并拥有自己的 canonical `av_binding_key`。QUICK_SLOT 的 `skill_id` 保持 null，只能查 item-cast entry；SKILL_BAR/DEDICATED 使用 skill entry 的 `skill_id` 与同一 registration key，NPC DEDICATED 选择 `SkillVisualBinding::Npc`/`Both` 的 NPC arm。任何 producer 或 consumer 都不得从 `skill_id=null` 猜测 binding，也不得另建 lookup 或隐式 item→skill 表。
 
 P3 production cutover 的数据形状冻结为：
 
@@ -331,8 +331,8 @@ enum SkillIconBinding {
 | `C-09` | concrete PLAY + STOP consumer → `AnimationLayerManager` / `CastFovController` | R9 | cutover unit | real router dispatch to `R-10..R-14` |
 | `C-10` | `bong:vfx_event` cast producer/receiver removal；all cast emit 改 `bong:server_data` | R6 channel machinery + R9 consumer activation in the same unit | cutover unit | old receiver zero-hit + new live path |
 | `C-11` | `CastSessionRegistry`、lifecycle adapter、FPV identity/token、movement/contamination/control/user-cancel/death/disconnect/dimension-change terminal producer adapters；Fled generic tribulation brace 不属于 cast producer，沿独立 non-cast animation lifecycle 处理 | R9（消费 R2 P1 lifecycle API） | cutover unit | `R-15/R-16` churn + juice identity + every cast terminal producer reaches authoritative `R-08/R-11..R-15` on the live path；Fled 由其 generic `StopAnim` contract 单独验收，不伪造 CastIdentity |
-| `C-12` | Baomai/Tuike single owner 与 `meditate_sit.json` pose oracle：torso.pitch=0；head.pitch≈+0.2094395rad；both leg.pitch∈[-0.698132,0]rad；opposite leg yaw≈±0.436332rad；leg bend≈1.570796rad；each used loop axis repeats at endTick；对 Wave 2 已启用的 terminal producers 做 P2 强制回归 | R9 | P2 | `A-09/A-11/A-12` pins + `D-21` live stop semantics regression；本阶段不得首次接入 terminal producer |
-| `C-13` | P1 冻结并建立唯一 `SkillRegistration` shape、accepted-key lookup 与 unique AV consumer interface 的 inert contract/entry ledger；Wave 2 启用该同一 lookup/consumer（覆盖所有 Wave 2 producer 会发出的 accepted binding key）；init_registry ledger 所列 68 resolver + 3 dedicated、definitions/AV bindings/assets 为 P3 completion slice | R9 | P1 contract-first（shape/lookup/consumer contract）+ Wave 2 activation（唯一 lookup/consumer enablement）+ P3（full registration migration） | P1 `D-06` 只验 contract mapping 与 inert lookup shape；Wave 2 的 `D-06`/`D-10` 必须证明 accepted producer 的 registration-owned key 可由该唯一 lookup 进入唯一 consumer；P3 的 `A-02..A-13` projection/real-entry tests 与 `D-25` 再按完整 ledger 逐项对拍 |
+| `C-12` | Baomai/Tuike single owner 与 `meditate_sit.json` pose oracle：torso.pitch=0；head.pitch≈+0.2094395rad；both leg.pitch∈[-0.698132,0]rad；opposite leg yaw≈±0.436332rad；leg bend≈1.570796rad；each used loop axis repeats at endTick；P2 先清除 duplicate owners，Wave 2 activation 再切换 canonical consumer/producer | R9 | P2（single-owner cleanup + pose）+ Wave 2 activation（cutover） | P2 `A-09/A-11/A-12` pins prove no duplicate emit owner；Wave 2 `D-21` proves live stop semantics；不得在 duplicate owners 仍存在时启用新 consumer |
+| `C-13` | P1 冻结并建立唯一 registration lookup（skill entries + item-cast entries）、accepted-key lookup 与 unique AV consumer interface 的 inert contract/entry ledger；P2 清除 Baomai/Tuike duplicate owners；P3 在同一 Wave 2 atomic activation merge unit 内完成全量 68 resolver + 3 dedicated、item-cast entries、definitions/AV bindings/assets、consumer enablement 与 producer cutover | R9 | P1 contract-first（shape/lookup/consumer contract）+ P2 single-owner cleanup + P3/Wave 2 atomic activation（full registration migration/cutover） | P1 `D-06` 只验 contract mapping 与 inert lookup shape；P2 `D-12` 必须证明 duplicate owner 已为零；P3/Wave 2 的 `D-06`/`D-10` 必须证明每个 accepted producer key（含 QUICK_SLOT item-cast key）可由同一 lookup 进入唯一 consumer，并与 transport/terminal producers 同一 merge unit 切换；`A-02..A-13` projection/real-entry tests 与 `D-25` 逐项对拍 |
 | `C-14` | `client/resourcepack/manifest.json`、built zip SHA-1/size、`server/src/network/resourcepack.rs::DEFAULT_RESOURCE_PACK_MANIFEST` | R9 asset PR | P3 same delivery | build-resourcepack + committed SHA-1/size exact match |
 | `C-15` | contract/live/bot/release evidence 与 absorbed-plan archive | R9 | P4 | §6 derived index 全绿 |
 
@@ -347,24 +347,26 @@ WAVE-0 CONTRACT-FIRST:
        └── R6 consumes the frozen domain content for C-02/C-03 generation contract
 
 WAVE-2 PRODUCTION:
-  R5 P1 + R6 generation/transport artifacts + R2 P1 seam
+  R5 P1 + R6 generation/transport artifacts + R2 P1 seam + P2 C-12 single-owner cleanup
        │
-       └── ATOMIC-ACTIVATION = enable C-13 canonical lookup + unique AV consumer
-                               + C-05+C-06+C-07+C-08+C-09+C-10+C-11
+       └── P3 FULL REGISTRATION + ATOMIC-ACTIVATION = complete all 68+3/item-cast registrations/bindings/assets
+                                                  + enable C-13 canonical lookup + unique AV consumer
+                                                  + C-05+C-06+C-07+C-08+C-09+C-10+C-11
+                                                  + cut all real producers and required terminal producers
                                │
-                               └── P2 C-12 -> P3 C-13 full 68+3 migration + C-14 -> P4 C-15
+                               └── C-14 -> P4 C-15
 ```
 
-`C-13` is intentionally split by delivery slice: P1 freezes and lays down the single canonical `SkillRegistration` shape plus its inert accepted-key lookup/consumer interface; Wave 2 enables that same lookup and unique AV consumer for the accepted keys used by real producers; P3 then completes the 68-resolver + 3-dedicated migration, definitions/assets, projection checks and old-table removal. No accepted live cast may be activated before the Wave 2 enablement, and no second registry may be introduced.
+`C-13` is intentionally split by delivery slice: P1 freezes and lays down one canonical lookup shape covering skill and item-cast entries plus its inert accepted-key lookup/consumer interface; P2 removes the known Baomai/Tuike duplicate owners; P3 then completes the full 68-resolver + 3-dedicated and item-cast registration/binding/asset migration and, in the same Wave 2 atomic activation merge unit, enables the unique AV consumer and cuts all real producers/required terminal producers over. No accepted live cast may be activated before its complete registration entry and consumer are present. P3 does not redefine the lookup or introduce a second registry.
 
 | ID | merge invariant |
 |---|---|
 | `C-INV-01` | contract phase只增加 declarations、generated mirrors、reducer/producer tests，以及 P1 已冻结的 canonical `SkillRegistration` shape/lookup/consumer interface 与 inert entry ledger；未激活的 arms 不得宣称 production reachable。 |
-| `C-INV-02` | production cutover 默认是同一 merge unit：新 channel producer、四 key router、BEGIN/CastSync/PLAY/STOP concrete consumers、bridge/conversion、Wave 2 才启用的唯一 registration lookup 与 AV consumer、旧 cast receiver removal，以及 movement/contamination/control/user-cancel/death/disconnect/dimension-change cast terminal producers 同时生效；generic Fled brace 不在 cast cutover。 |
-| `C-INV-03` | 若跨 track 必须拆 PR，只允许先合入 inert declarations/conversions 与 P1 已冻结但 Wave 2 前不被 producer 使用的 canonical registration lookup entries；旧 receiver 与旧 producer保持完整。最终 activation PR 必须同一 merge unit切 producer、启用四 consumers、启用该唯一 lookup/AV consumer并删除旧 receiver。 |
+| `C-INV-02` | production cutover 默认是同一 merge unit：新 channel producer、四 key router、BEGIN/CastSync/PLAY/STOP concrete consumers、bridge/conversion、P2 已清除 duplicate owners、P3 已完成全量 registration/binding/assets、唯一 registration lookup 与 AV consumer、旧 cast receiver removal，以及 movement/contamination/control/user-cancel/death/disconnect/dimension-change cast terminal producers 同时生效；generic Fled brace 不在 cast cutover。Wave 2 前任何未完成 registration/binding 或仍有 duplicate owner 的 producer 都必须保持完整旧路径，不得被新 consumer 部分接管。 |
+| `C-INV-03` | 若跨 track 必须拆 PR，只允许先合入 inert declarations/conversions 与 P1 已冻结但 Wave 2 前不被 producer 使用的 unified lookup entries；旧 receiver 与旧 producer保持完整。最终 activation PR 必须同一 merge unit 完成 P2 duplicate-owner removal 后的全量 registration/binding/assets、切所有 real producer、启用四 consumers、启用该唯一 lookup/AV consumer并删除旧 receiver；不得以“先开 consumer、后补 registration/去重”的中间态宣称 production reachable。 |
 | `C-INV-04` | **禁止 receiver-removed-before-consumer-installed window**；也禁止 producer 双投旧/新 channel造成 AV 双发。每个可合入中间态必须是“完整旧路径”或“完整新路径”，不能是半条路径。 |
 | `C-INV-05` | “可开始”只由 WAVE-0 CONTRACT-FIRST 决定；“可宣称生产可达”必须 ATOMIC-ACTIVATION 和 live evidence 全绿。R6 generation/transport artifacts 与 R2 seam 属 production reachability gate，不是 R9 contract start gate。 |
-| `C-INV-06` | P3 full registration migration includes init_registry ledger 所列 68 resolver + 3 dedicated production registrations、definitions、projection 与旧 canonical tables 删除；这些条目必须沿用 P1 已冻结的 canonical shape/lookup，Wave 2 只启用该同一 lookup/unique AV consumer before any real producer is enabled；禁止 test-only 平行 registry。 |
+| `C-INV-06` | P3 full registration migration includes init_registry ledger 所列 68 resolver + 3 dedicated production registrations、item-cast entries、definitions、projection 与旧 canonical tables 删除；这些条目必须沿用 P1 已冻结的 unified lookup，且只有在 P2 duplicate-owner removal 完成后，才能与 Wave 2 的同一 activation unit 一起启用该 lookup/unique AV consumer、全部 real producer 与 required terminal producers；禁止 subset live path、第二 registry 或 registration 未齐时的 consumer activation。 |
 | `C-INV-07` | 新增/修改任何 client asset 的 PR 同时拥有 `C-14`，不得把 manifest/SHA-1/size 留给后续补丁。 |
 
 
@@ -385,7 +387,7 @@ WAVE-2 PRODUCTION:
 | `D-07` | `cast_known_techniques_bind_cast` | `I-11,A-02..A-04,A-07,C-13` |
 | `D-08` | `cast_active_preservation_on_reject` | `INV-03,R-04,R-05,R-08,A-06,T-15` |
 | `D-09` | `cast_allocator_exhaustion` | `P-02,P-04,P-05,P-13,R-01,R-04,R-08,R-12,R-15` |
-| `D-10` | `cast_live_four_arm_dispatch`（只有在 Wave 2 `C-13` registration lookup + unique AV consumer 已安装且 `D-06` live mapping 已通过后才切 real producers） | `P-11,P-14,C-05..C-11,C-13,C-INV-01..C-INV-05` |
+| `D-10` | `cast_live_four_arm_dispatch`（只有在 Wave 2 atomic activation 同时完成 P2 duplicate-owner cleanup、C-13 全量 registration/binding/assets、unique AV consumer 安装与 `D-06` live mapping 后，才切 real producers） | `P-11,P-14,C-05..C-11,C-13,C-INV-01..C-INV-05` |
 | `D-11` | `cast_stop_never_terminal` | `INV-01,INV-02,R-08,R-09,R-11..R-13,R-16,T-03,T-05,T-08,T-12,T-14` |
 | `D-12` | `p2_av_single_owner` | `A-09,A-11,A-12,C-12` |
 | `D-13` | `p2_terminal_state_matrix` | `I-04,I-06,R-08,R-11..R-16,T-10,T-13,T-14,C-12` |
@@ -417,24 +419,24 @@ WAVE-2 PRODUCTION:
 - 已形成 §1 不变量、§2 TypeBox-first authority、§3 唯一 reducer、§4 producer 授权表、§5 cutover DAG、§6 derived index。
 - P0 static review 只检查 ID 唯一、引用存在、每个 trace 逐边命中 reducer、STOP 不引用 gameplay terminal side effect。
 
-### P1 — cast contract + Wave 2 atomic production cutover ⬜
+### P1 — cast contract ⬜
 
-1. **P1 contract-first**：完成 `C-01` 与 `C-04` 的 **contract slice**、`D-01..D-06,D-08..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。七个 `scripts/bot/scenarios/` 文件/anchor 与本阶段 contract/reducer work 同步首次提交，引用冻结的 `D-*` 但保持 inert，不宣称 production reachable。P1 同时冻结并建立唯一 canonical `SkillRegistration` shape、accepted-key lookup/consumer interface 与 inert entry ledger（`C-13` 的 contract slice），但不让该 lookup 或任何 producer production-reachable，也不创建 test-only 平行 registry。`C-04` 的 connection/tracking-epoch BEGIN producer 与 real-producer **live slice** 留到下面的 Wave 2 atomic activation，届时才验真实 connection entry、caster tracking entry、observer re-entry；R6 据冻结的 domain content 生成 `C-02/C-03` mirrors，本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。`D-07` 依赖 P3 的 `C-13` full registration migration，留在 P3 gate。
-2. **Wave 2 atomic activation**：仅在总纲 §3 的 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam、PR #1902 adjudication production conditions 与 `D-06` live mapping test 全部满足后，与 R6 组成同一 `ATOMIC-ACTIVATION` merge unit，先启用 P1 已冻结的 `C-13` canonical registration lookup + unique AV consumer，再交付 `C-02/C-03/C-05..C-11` live handoff；transport/bridge/router/四 arms consumer、C-04 的 connection/tracking-epoch BEGIN producer 与 movement、contamination、control、user-cancel、death、disconnect、dimension-change cast terminal producers 必须同时生效。generic Fled brace 不在该 cast activation，继续走独立 non-cast `StopAnim` lifecycle。`cast_wire_identity` 与 `cast_juice_identity_bridge` 随真实 transport/bridge/consumer 接线启用，通过 `D-06` 既有 mapping gate 以及 `D-10,D-11,D-23,D-26`；旧 producer/receiver 在同一 unit 完成切换前原样保留。
-3. 删除 `CastSyncHandler.sourceFor()` 与旧 cast `bong:vfx_event` receiver 只能作为上述 atomic activation 的同一交付物；不得保留 dual-form compatibility，也不得先删 receiver 再安装 consumers。
+- 完成 `C-01` 与 `C-04` 的 **contract slice**、`D-01..D-06,D-08..D-09`；只增加 R9 domain declarations/reducer/producer tests 与未启用声明。七个 `scripts/bot/scenarios/` 文件/anchor 与本阶段 contract/reducer work 同步首次提交，引用冻结的 `D-*` 但保持 inert，不宣称 production reachable。
+- 冻结并建立唯一 unified registration lookup（skill entries + item-cast entries）、accepted-key lookup/consumer interface 与 inert entry ledger（`C-13` 的 contract slice），但不让该 lookup 或任何 producer production-reachable，也不创建 test-only 平行 registry。`C-04` 的 connection/tracking-epoch BEGIN producer 与 real-producer live slice 留到 Wave 2 atomic activation；R6 据冻结的 domain content 生成 `C-02/C-03` mirrors，本阶段不激活 production path，也不等待 R5/R6/R2 production artifacts。`D-07` 依赖 P3 的 `C-13` full registration migration，留在 P3 gate。
+- PUC-01 只建立 Wave 2 activation 所需的完整 registration ledger：逐项列出全部 accepted producer keys、对应完整五件套、terminal producer 与唯一 consumer；该 ledger 不授权 subset live path。严禁在 duplicate owner 未清、完整 registration/assets 未齐或 unique consumer 未安装时启用任何 real producer。
 
 ### P2 — 双源清除 + 全退出终态 ⬜
 
-- 完成 `C-12`：Baomai/Tuike 余下双源归一；对 Wave 2 atomic activation 已接入的移动、污染、控制、用户取消、死亡、断线、换维度 cast producer 做 `R-08/R-11..R-15` 强制回归，不在 P2 首次接线。generic Fled brace 继续由独立 non-cast lifecycle 验收，不列入 `D-21` cast stop semantics。`cast_stop_semantics`、`cast_av_phase_regression` 两个 bot scenario 在本阶段以真实 single-owner/cast terminal producer live path 验收。
+- 完成 `C-12`：Baomai/Tuike 余下双源归一；duplicate-owner removal 是 Wave 2 activation 的前置门，不能推迟到 consumer 已启用之后。对 Wave 2 将接入的移动、污染、控制、用户取消、死亡、断线、换维度 cast producer 做 `R-08/R-11..R-15` 强制回归，但不在 P2 首次接线。generic Fled brace 继续由独立 non-cast lifecycle 验收，不列入 `D-21` cast stop semantics。`cast_stop_semantics`、`cast_av_phase_regression` 两个 bot scenario 在本阶段锁定 single-owner/终态契约，Wave 2 再接入真实 live path。其余 producer 继续完整旧路径。
 - 完成 `D-12..D-16,D-21,D-24`；`D-21` 是 P2 completion gate，必须覆盖 movement/contamination/control/user-cancel/death/disconnect/dimension-change 的真实 cast stop semantics；`dugu.penetrate` 只保留现状防回归 pin。
 - 视觉资产 `meditate_sit.json` 按三轮打磨，Round 3 commit 带 `<PROMISE>`。
 
-### P3 — 定义/资产补齐 + registration 原子迁移 ⬜
+### P3 — 全量 registration/assets + Wave 2 原子切换 ⬜
 
-- 补 22 条 registry-only definitions 与缺失五件套；完成 `C-13,C-14` 和 `C-INV-06,C-INV-07`。
-- 原子迁入 init_registry ledger 所列 68 resolver + 3 dedicated；删除手写 canonical `TECHNIQUE_DEFINITIONS/TECHNIQUE_IDS`，projection 保留只读派生 API。
-- 完成 `D-07,D-17..D-20,D-22,D-25`；`cast_registry_reachability`、`cast_av_uniqueness`、`cast_registration_projection` 三个 bot scenario 在本阶段随真实 registration/assets 接线并验收；icon placeholder 归零，Iris present/absent 两路均验收。
-- 所有新增 animation/VFX/icon 资产执行 3 轮打磨；icon 走 `/gen-image item`，不能运行时标 blocker 但不得把 P3 标完成。
+- 补齐全量 registry-only definitions、item-cast entries 与缺失五件套；完成 `C-13,C-14` 和 `C-INV-06,C-INV-07`。
+- 仅在总纲 §3 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam、PR #1902 production conditions、P2 duplicate-owner cleanup 与 `D-06` live mapping 全部满足后，在同一 `ATOMIC-ACTIVATION` merge unit 上完成 unified lookup 的全量 init_registry ledger 所列 68 resolver + 3 dedicated 与 item-cast entries、definitions/AV bindings/assets、unique AV consumer、所有 real cast/terminal producers、transport/bridge/router、四 consumers 与旧 receiver removal。删除手写 canonical `TECHNIQUE_DEFINITIONS/TECHNIQUE_IDS`，projection 保留只读派生 API；不得先切 subset 或另建第二 owner/registry。
+- 完成 `D-07,D-10,D-17..D-20,D-22,D-25,D-26`；`cast_registry_reachability`、`cast_av_uniqueness`、`cast_registration_projection` 三个 bot scenario 在同一 atomic activation 中随全量真实 registration/assets 接线并验收；icon placeholder 归零，Iris present/absent 两路均验收。
+- 所有新增 animation/VFX/icon 资产执行 3 轮打磨；icon 走 `/gen-image item`，不能运行时标 blocker 但不得把 P3 标完成。未满足 Iris runtime capability gate 的 shader/VFX 只交付 capability gate 与 vanilla/no-op fallback，并列入 skipped，不得宣称 shader effect 已完成。其余未完成项在 activation 前保持完整旧路径。
 
 ### P4 — 派生验收、人工回归与归档 ⬜
 
@@ -482,11 +484,10 @@ WAVE-2 PRODUCTION:
 
 ### 9.1 PR 顺序与文件纪律
 
-1. **PR-1 contract-first**：R9 交付 `C-01` 与 `C-04` 的 contract slice + `D-01..D-06,D-08..D-09`，只落 canonical domain content、reducer/producer tests、唯一 `SkillRegistration` shape/lookup/consumer interface 与未启用声明；P1 可建立该 canonical lookup 的 inert entry ledger，但不得让它 production-reachable，也不得另建 test-only registry。`C-04` 的 connection/tracking-epoch BEGIN producer 与 real-producer live slice 明确留到 PR-2 atomic activation，R6 可据冻结 content 生成 `C-02,C-03` inert mirrors，但双方均不得宣称 production reachable。`D-07` 随 P3 `C-13` registration migration 交付。
-2. **PR-2 atomic activation**：仅在总纲 §3 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam 与 PR #1902 production conditions 满足后，由 R6/R9 在同一 `ATOMIC-ACTIVATION` merge unit **先启用 P1 已冻结的唯一 `C-13` canonical registration lookup + unique AV consumer，再完成并通过 `D-06` 的 live mapping slice，最后才启用任何 real cast producer**；随后交付 `C-02,C-03,C-05..C-11` + `D-10,D-11,D-23,D-26`。generic Fled brace 不属于 cast producer，继续走独立 non-cast `StopAnim` lifecycle；新 producer、bridge/router、四 concrete consumers、全部 required cast terminal/lifecycle producers 与旧 receiver removal 只能在该顺序完成后同时生效。若平台无法形成同一 merge unit，本步骤不得切 producer或删除 receiver，完整旧路径继续保留。
-3. PR-3 P2 single-owner/terminal/meditation：`C-12` + `D-12..D-16,D-21,D-24`；`D-21` 是该 PR 的 mandatory live stop gate，不得推迟到 P4。
-4. PR-4 P3 registration/assets/release：`C-13,C-14` + `D-07,D-17..D-20,D-22,D-25`。
-5. PR-5 P4 full evidence/archive：`C-15` + `D-01..D-27`。
+1. **PR-1 contract-first**：R9 交付 `C-01` 与 `C-04` 的 contract slice + `D-01..D-06,D-08..D-09`，只落 canonical domain content、reducer/producer tests、统一 skill/item-cast registration lookup shape/consumer interface 与未启用声明；P1 可建立该 lookup 的 inert entry ledger，但不得让它 production-reachable，也不得另建 test-only registry。`C-04` 的 connection/tracking-epoch BEGIN producer 与 real-producer live slice 留到 Wave 2 atomic activation，R6 可据冻结 content 生成 `C-02,C-03` inert mirrors，但双方均不得宣称 production reachable。`D-07` 随 P3 `C-13` full registration migration 交付。
+2. **PR-2 P2 single-owner/terminal/meditation**：完成 `C-12` + `D-12..D-16,D-21,D-24`；`D-21` 是 mandatory live-path preparation gate，Wave 2 前必须证明 duplicate-owner 已清零，但不在本 PR 删除旧 receiver 或切新 producer。
+3. **PR-3 P3/Wave 2 atomic activation**：仅在总纲 §3 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam、PR #1902 production conditions 与 P2 single-owner gate 满足后，由 R6/R9 在同一 `ATOMIC-ACTIVATION` merge unit 完成全量 `C-13,C-14` registration/binding/assets、启用唯一 AV consumer、交付 `C-02,C-03,C-05..C-11` 与 `D-06,D-07,D-10,D-11,D-17..D-20,D-22,D-23,D-25,D-26`，最后切换全部 real cast/terminal producers 并删除旧 receiver。generic Fled brace 不属于 cast producer，继续走独立 non-cast `StopAnim` lifecycle；若无法形成同一 merge unit，完整旧路径继续保留。
+4. **PR-4 P4 full evidence/archive**：`C-15` + `D-01..D-27`。
 
 本顺序显式执行总纲 `plan-refactor-master-v1.md` §3/§4.1 与 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：contract-first 可在 Wave 0 合入，R9 production activation 必须在 **Wave 2** 按上述依赖原子切换。前一 PR merge 后才开始后一 PR；每次 fetch 最新 `origin/main` 后验证 DAG gate。跨 owner 文件只能按 §5 owner/handoff 修改，不得复制 converter、bridge、router 或 consumer 绕门。任何 visual asset PR 执行 3 轮打磨与 `<PROMISE>`；资源包同步是同 PR 交付物。
 
