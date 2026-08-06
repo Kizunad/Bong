@@ -131,9 +131,10 @@
 ### #2 signed 负灵域语义
 
 **决议**：
-1. `Zone.spirit_qi` 保持 signed；坍缩渊可低至正典示例 `-1.2`，不得被通用配置 clamp `-1.0` 改写。
-2. actor 向负域释放正量时先偿还赤字；zone `<= 0` 时普通吸收收益为 0 且 zone 原值不变。
-3. `.max(0)` 只允许计算正向 availability 或消除吸收后的浮点尾差，不能用于通用 signed state 写回。
+1. `Zone.spirit_qi` 保持 signed；普通权威 `server/zones.json` 的加载路径才使用 `SpiritQiFloor::RuntimeBounded`，其运行时下限为 `-1.0`（`server/src/world/zone.rs:25-27`、`:631-641`、`:699-715`）。这是普通 authoritative path 的配置边界，不是全局 canonical signed-zone floor。
+2. `ZoneRegistry::load()` 先加载普通配置，再通过 `merge_tsy_blueprint_from_path` 合并 TSY blueprint，并使用 `SpiritQiFloor::TsyBlueprint`（`server/src/world/zone.rs:225-234`、`:401-426`）；该路径不套用普通 `-1.0` floor。`server/zones.tsy.json:76`、`:170`、`:274` 已有 `-1.1` / `-1.15`，TSY/collapse signed pressure 必须保留到正典示例 `-1.2` 的语义，不能为了普通 runtime path 而统一数值。
+3. R5 transaction/release helpers（`qi_release_to_zone`、`release_to_zone`、`release_external_qi_to_zone` 及其 ledger 提交边界）必须原样保留并提交 signed zone value；禁止用通用 `clamp(-1.0, 1.0)` 或等价写回覆盖 signed state。actor 向负域释放正量时先偿还赤字；zone `<= 0` 时普通吸收收益为 0 且 zone 原值不变。
+4. `.max(0)` 只允许计算正向 availability 或消除吸收后的浮点尾差，不能用于通用 signed state 写回。后续必须把所有 zone mutation caller 扫描并迁移到统一 signed-zone API，已知 offender 包括 `server/src/world/tsy_lifecycle.rs:533`；在该 sweep 完成前，不得重新考虑扩大普通 authoritative runtime floor。
 
 **落点**：`docs/worldview.md:30-50`、`server/src/qi_physics/release.rs:12-47`（`qi_release_to_zone`）、`server/src/qi_physics/constants.rs:88`（`QI_ZONE_UNIT_CAPACITY`）；`server/src/cultivation/components/qi_flow.rs:259-271`（`set_for_init`）、`:280-342`（`gain_from_zone`）、`:344-363`（`release_to_zone` wrapper）、`:365-420`（`transfer_to`）、`:422-482`（`transfer_to_external_actor`）、`:593-728`（`release_external_qi_to_zone` 实际 signed-zone/overflow 提交）；真实 ledger/audit 边界见 `server/src/qi_physics/ledger.rs:459-480`（`QiTransfer`）、`:492-532`（audit-only gate 与 preflight）、`:554-590`（`WorldQiAccount::transfer`）、`:600-606`（`push_transfer_audit`）/ plan “P0 冻结契约 §2”与 P3。
 
