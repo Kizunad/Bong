@@ -983,6 +983,37 @@ mod tests {
     /// consistent in-range picture; only comparing the opened descriptor's own
     /// identity against the re-canonicalized path (Linux `/proc/self/fd`, or the
     /// non-Linux fd↔path identity branch) rejects the admission.
+    #[cfg(windows)]
+    #[test]
+    fn windows_trusted_root_rejects_reparse_point_even_when_target_is_inside_root() {
+        use std::os::windows::fs::symlink_file;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "bong_nbt_windows_reparse_{}_{}",
+            std::process::id(),
+            nonce
+        ));
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("target.nbt");
+        let reparse = root.join("reparse.nbt");
+        std::fs::write(&target, b"inside trusted root").unwrap();
+        symlink_file(&target, &reparse).unwrap();
+        let trusted_root = std::fs::canonicalize(&root).unwrap();
+
+        let error = open_regular_file_under_root(&reparse, &trusted_root)
+            .expect_err("a reparse-point input must be rejected even when its target is in-root");
+        assert!(
+            matches!(error.kind(), ErrorKind::InvalidInput | ErrorKind::PermissionDenied),
+            "Windows reparse-point admission must fail closed, got {error:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
     #[cfg(unix)]
     #[test]
     fn open_under_root_rejects_ancestor_swap_restored_before_recheck() {
