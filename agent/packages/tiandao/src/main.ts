@@ -796,11 +796,24 @@ async function startZhenfaV2Runtime(opts: {
 }
 
 // plan-dying-elder-v1 P3：生产仅接普通 Pub/Sub；durable worker 保留为 contract-first test-only artifact。
-async function startElderEncounterRuntime(opts: {
-  redisUrl: string;
-}): Promise<() => Promise<void>> {
-  const IORedisCtor = ((Redis as unknown as { default?: unknown }).default ??
-    Redis) as new (url: string) => unknown;
+// 当前 server producer 只发布普通 Pub/Sub，且三个事件构造点都没有 event_id；durable worker
+// 对缺 event_id 的 payload fail-closed。因此不能在这里注入一个永远收不到合法 payload 的 consumer。
+// 未来激活归 docs/plans-skeleton/plan-agent-narration-pipeline-v1.md 的 P1/P5 与 §8.1
+// durable transport follow-up，必须把 producer event_id、durable transport、consumer 和旧
+// Pub/Sub disposition 放在同一 merge unit。
+export type RedisClientConstructor = new (url: string) => unknown;
+
+export const ELDER_ENCOUNTER_DURABLE_WIRING = {
+  status: "contract-first-unwired",
+  owner: "docs/plans-skeleton/plan-agent-narration-pipeline-v1.md P1/P5 + §8.1",
+} as const;
+
+export async function startElderEncounterRuntime(
+  opts: { redisUrl: string },
+  redisCtor: RedisClientConstructor = ((Redis as unknown as { default?: unknown }).default ??
+    Redis) as RedisClientConstructor,
+): Promise<() => Promise<void>> {
+  const IORedisCtor = redisCtor;
   const sub = new IORedisCtor(opts.redisUrl) as ConstructorParameters<
     typeof ElderEncounterNarrationRuntime
   >[0]["sub"];

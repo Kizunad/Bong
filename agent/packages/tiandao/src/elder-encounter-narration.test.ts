@@ -13,6 +13,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHANNELS } from "@bong/schema";
+import {
+  ELDER_ENCOUNTER_DURABLE_WIRING,
+  startElderEncounterRuntime,
+  type RedisClientConstructor,
+} from "./main.js";
 
 import {
   DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
@@ -63,6 +68,24 @@ function makeMockClient() {
     emit(channel: string, message: string) {
       (listeners.get("message") ?? []).forEach((l) => l(channel, message));
     },
+  };
+}
+
+function makeProductionRedisConstructor() {
+  const clients: Array<{
+    url: string;
+    client: ReturnType<typeof makeMockClient>;
+  }> = [];
+  const Constructor = class {
+    constructor(url: string) {
+      const client = makeMockClient();
+      clients.push({ url, client });
+      return client;
+    }
+  };
+  return {
+    Constructor: Constructor as unknown as RedisClientConstructor,
+    clients,
   };
 }
 
@@ -216,6 +239,49 @@ describe("ElderEncounterNarrationRuntime", () => {
       sub.subscribe,
       `connect() 应订阅 ${ELDER_ENCOUNTER} 频道以接收遭遇事件`,
     ).toHaveBeenCalledWith(ELDER_ENCOUNTER);
+  });
+
+  it("生产 bootstrap 明确只启动 Pub/Sub，durable consumer 保持未接线", async () => {
+    const { Constructor, clients } = makeProductionRedisConstructor();
+    const cleanup = await startElderEncounterRuntime(
+      { redisUrl: "redis://production-bootstrap-test" },
+      Constructor,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        expect(clients[0]?.client.subscribe).toHaveBeenCalledWith(ELDER_ENCOUNTER);
+      });
+      expect(ELDER_ENCOUNTER_DURABLE_WIRING.status).toBe("contract-first-unwired");
+      expect(ELDER_ENCOUNTER_DURABLE_WIRING.owner).toContain(
+        "plan-agent-narration-pipeline-v1.md",
+      );
+      expect(clients, "生产 elder bootstrap 应只创建 sub + pub 两个 Redis 客户端").toHaveLength(2);
+      expect(clients.map(({ url }) => url)).toEqual([
+        "redis://production-bootstrap-test",
+        "redis://production-bootstrap-test",
+      ]);
+      expect(
+        clients.every(({ client }) => !("blmove" in client)),
+        "生产断开态不得把 durable queue client 注入 runtime",
+      ).toBe(true);
+
+      const [productionSub, productionPub] = clients;
+      expect(productionSub?.client.subscribe).toHaveBeenCalledTimes(1);
+      expect(productionSub?.client.subscribe).not.toHaveBeenCalledWith(ELDER_ENCOUNTER_DURABLE);
+      productionSub?.client.emit(ELDER_ENCOUNTER, makePayload("appeared"));
+      await vi.waitFor(() => {
+        expect(productionPub?.client.publish).toHaveBeenCalledWith(
+          AGENT_NARRATE,
+          expect.any(String),
+        );
+      });
+    } finally {
+      await cleanup();
+    }
+
+    expect(clients[0]?.client.disconnect).toHaveBeenCalledOnce();
+    expect(clients[1]?.client.disconnect).toHaveBeenCalledOnce();
   });
 
   it("stats 初始为 0", () => {
