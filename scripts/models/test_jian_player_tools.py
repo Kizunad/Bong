@@ -23,6 +23,7 @@ sys.path.insert(0, str(MODEL_DIR))
 import gen_bamboo_jian as B
 import gen_jian_player as J
 import gen_jian_player_anim as A
+import gen_lower_body_gait as G
 import render_jian_in_hand as H
 import render_player_pose as P
 
@@ -298,6 +299,23 @@ class JianPlayerToolsTest(unittest.TestCase):
         self.assertIn("arm_left_pitch", tracks)
         self.assertEqual(5, len(tracks["root_pos"]["keyframes"]))
         self.assertEqual(5, len(tracks["arm_right_pitch"]["keyframes"]))
+
+    def test_lower_body_generators_match_committed_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            original_resolve = G.AC.resolve_output_path
+            G.AC.resolve_output_path = lambda name: output_dir / f"{name}.json"
+            try:
+                G.main()
+            finally:
+                G.AC.resolve_output_path = original_resolve
+            for name in G.GAITS:
+                generated = json.loads((output_dir / f"{name}.json").read_text())
+                committed = json.loads((REPO / "client/src/main/resources/assets/bong/player_animation" / f"{name}.json").read_text())
+                self.assertEqual(generated["emote"], committed["emote"], name)
+            generated_dash = json.loads((output_dir / "lower_dash.json").read_text())
+            committed_dash = json.loads((REPO / "client/src/main/resources/assets/bong/player_animation/lower_dash.json").read_text())
+            self.assertEqual(generated_dash["emote"], committed_dash["emote"])
 
     def test_render_size_bounds_cover_zero_negative_max_and_over(self) -> None:
         for module in (J, H):
