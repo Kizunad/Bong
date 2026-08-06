@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import hashlib
 import io
 import json
 import sys
@@ -73,6 +74,10 @@ def _rel(p: Path) -> str:
         return str(p.resolve().relative_to(REPO))
     except ValueError:
         return str(p)
+
+
+def _file_signature(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def player_elements(names=None):
@@ -297,6 +302,7 @@ def main():
         ap.error(str(exc))
 
     out_bb = Path(args.out) if args.out else OUT_BB
+    original_signature = None
     if out_bb.exists() and not args.force:
         # Blockbench 存盘会升到 fmt 5.0 并把 group 属性搬进顶层 groups——这是手改过的信号
         prev = json.loads(out_bb.read_text())
@@ -305,9 +311,15 @@ def main():
                 f"{_rel(out_bb)} 像是 Blockbench 手改过的（fmt "
                 f"{prev.get('meta', {}).get('format_version')}），拒绝覆盖。\n"
                 f"  想留手改 → 加 --out 另存；确定要覆盖 → 加 --force")
+        original_signature = _file_signature(out_bb)
 
     model, label = build(args.pose)
+    if original_signature is not None:
+        if not out_bb.exists() or _file_signature(out_bb) != original_signature:
+            raise SystemExit(f"{_rel(out_bb)} 在生成期间发生变化，拒绝覆盖。")
     out_bb.parent.mkdir(parents=True, exist_ok=True)
+    if original_signature is not None and _file_signature(out_bb) != original_signature:
+        raise SystemExit(f"{_rel(out_bb)} 在写入前发生变化，拒绝覆盖。")
     out_bb.write_text(json.dumps(model, ensure_ascii=False, indent=1))
     n_player = len(H.PLAYER_CUBES)
     print(f"JianPlayer（姿态：{label}）:")

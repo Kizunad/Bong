@@ -330,6 +330,23 @@ class JianPlayerToolsTest(unittest.TestCase):
                 self.assertNotEqual(0, result.returncode)
                 self.assertNotIn("Traceback", result.stdout + result.stderr)
 
+    def test_gen_jian_player_rejects_output_changed_during_build(self) -> None:
+        original = J.build
+        script = MODEL_DIR / "gen_jian_player.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "JianPlayer.bbmodel"
+            output.write_text(json.dumps({"meta": {"format_version": "4.10"}}), encoding="utf-8")
+
+            def build_and_modify(pose_key):
+                model, label = original(pose_key)
+                output.write_text("external Blockbench save", encoding="utf-8")
+                return model, label
+
+            with patch.object(J, "build", side_effect=build_and_modify):
+                with patch.object(sys, "argv", [str(script), "--out", str(output), "--no-render"]):
+                    with self.assertRaisesRegex(SystemExit, "生成期间发生变化"):
+                        J.main()
+
     def test_gen_jian_player_creates_nested_output_directory(self) -> None:
         script = MODEL_DIR / "gen_jian_player.py"
         with tempfile.TemporaryDirectory() as tmp:
