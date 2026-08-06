@@ -159,7 +159,7 @@ impl TechniqueRegistry {
     }
 
     /// 从任意 TOML 文本构造 registry（仅测试用），让其他模块的测试能直接 pin loader
-    /// 的拒绝边界（如 M14 的 f32 wire 上限）。
+    /// 的拒绝边界。
     #[cfg(test)]
     pub(crate) fn load_from_contents_for_tests(text: &str) -> Result<Self, TechniqueLoadError> {
         Self::from_toml_contents(
@@ -513,20 +513,6 @@ fn validate_and_convert(
                 format!("{field} must be finite and non-negative, got {value}"),
             ));
         }
-    }
-    // M14：qi_cost 的 wire 契约是 f32（TechniqueEntryV1.qi_cost），snapshot 用 `as f32`
-    // 窄化。若 loader 放行超过 f32::MAX 的值，1e40 这类输入会被窄化成 +inf 推给 client。
-    // 这里必须在 loader 侧拒绝（错误消息点名 f32 边界），与 f32 精度边界 M32 配套。
-    if raw.qi_cost > f64::from(f32::MAX) {
-        return Err(TechniqueLoadError::invalid(
-            path,
-            Some(technique_id.clone()),
-            format!(
-                "qi_cost exceeds the f32 wire contract (f32::MAX = {}), got {}",
-                f32::MAX,
-                raw.qi_cost
-            ),
-        ));
     }
     if raw.id == "body.guangbo_ticao" && raw.qi_cost <= 0.0 {
         return Err(TechniqueLoadError::invalid(

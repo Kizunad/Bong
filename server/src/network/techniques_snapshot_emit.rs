@@ -72,7 +72,7 @@ fn build_techniques_snapshot(
                             min_health: required.min_health,
                         })
                         .collect(),
-                    qi_cost: definition.qi_cost as f32,
+                    qi_cost: definition.qi_cost,
                     stamina_cost: definition.stamina_cost,
                     cast_ticks: definition.cast_ticks,
                     cooldown_ticks: definition.cooldown_ticks,
@@ -148,65 +148,8 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_qi_cost_above_f32_range_is_rejected_at_loader_and_not_emitted() {
-        // M14：qi_cost 的 wire 契约是 f32——loader 必须拒绝超过 f32::MAX 的值，
-        // 否则 snapshot 的 `as f32` 会把 1e40 窄化成 +inf 推给 client。先证明
-        // 1e40 在 loader 里被拒（边界测试），再证明 snapshot 对合法最大值以内的
-        // 值不溢出。
-        let error = TechniqueRegistry::load_from_contents_for_tests(
-            r#"
-[[techniques]]
-id = "sword.cleave"
-display_name = "劈"
-grade = "common"
-description = "基础劈砍"
-required_realm = "Awaken"
-required_meridians = []
-required_race = { kind = "humanoid" }
-qi_cost = 1e40
-stamina_cost = 0.0
-cast_ticks = 10
-cooldown_ticks = 30
-range = 3.0
-icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
-category = "attack"
-dispatch = "metadata_backed"
-"#,
-        )
-        .expect_err("qi_cost above f32::MAX must be rejected by the loader (M14)");
-        assert!(
-            format!("{error}").contains("f32"),
-            "rejection message should name the f32 wire boundary, got {error}"
-        );
-
-        // 合法最大值以内（f32::MAX 同量级但可表示）的值 snapshot 不产生 infinity。
-        let registry =
-            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
-                definition.qi_cost = f64::from(f32::MAX);
-            });
-        let known = KnownTechniques {
-            entries: vec![KnownTechnique {
-                id: "sword.cleave".to_string(),
-                proficiency: 0.5,
-                active: true,
-            }],
-        };
-        let snapshot = build_techniques_snapshot(&registry, &known);
-        assert_eq!(snapshot.entries.len(), 1);
-        assert!(
-            snapshot.entries[0].qi_cost.is_finite(),
-            "f32::MAX 可表示值 snapshot 必须有限，实际 {}",
-            snapshot.entries[0].qi_cost
-        );
-        assert_eq!(snapshot.entries[0].qi_cost, f32::MAX);
-    }
-
-    #[test]
-    fn snapshot_qi_cost_16777217_precision_boundary_rounds_but_stays_finite() {
-        // M32：f32 精度边界——16777217 不能被 f32 精确表示（变 16777216）。
-        // loader 接受该值（≤ f32::MAX 且有限），snapshot 必须保持有限（不能
-        // infinity），客户端显示与服务器扣费的小幅精度差是可接受的 wire 契约
-        // 行为，但不能是非有限值。
+    fn snapshot_qi_cost_preserves_f64_precision_boundary() {
+        // registry 的 f64 成本必须原样进入快照，避免服务端扣费与客户端展示不一致。
         let registry =
             TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
                 definition.qi_cost = 16_777_217.0;
@@ -220,13 +163,9 @@ dispatch = "metadata_backed"
         };
         let snapshot = build_techniques_snapshot(&registry, &known);
         assert_eq!(snapshot.entries.len(), 1);
-        assert!(
-            snapshot.entries[0].qi_cost.is_finite(),
-            "16777217 窄化后必须有限（M32）"
-        );
         assert_eq!(
-            snapshot.entries[0].qi_cost, 16_777_216.0_f32,
-            "f32 无法表示 16777217，应精确落在 16777216（M32 精度边界）"
+            snapshot.entries[0].qi_cost, 16_777_217.0,
+            "快照必须保留 registry 的 f64 真元成本，不能窄化成 16777216"
         );
     }
 
