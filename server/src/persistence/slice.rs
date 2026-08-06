@@ -2469,6 +2469,14 @@ mod tests {
             autosave: AutosavePolicy::EveryTicks(0),
             ..basic_descriptor("player.zero_cadence", 40)
         }));
+        let one_cadence = Box::leak(Box::new(SliceDescriptor {
+            autosave: AutosavePolicy::EveryTicks(1),
+            ..basic_descriptor("player.one_cadence", 41)
+        }));
+        let max_cadence = Box::leak(Box::new(SliceDescriptor {
+            autosave: AutosavePolicy::EveryTicks(u64::MAX),
+            ..basic_descriptor("player.max_cadence", 42)
+        }));
         let missing_hydrate = Box::leak(Box::new(SliceDescriptor {
             time_basis: TimeBasis::RemainingLogicalTicks,
             rebase: Some(noop_rebase),
@@ -2552,6 +2560,16 @@ mod tests {
             registry.register(zero_cadence),
             Err(SliceRegistryError::ZeroAutosaveCadence { .. })
         ));
+        assert_eq!(
+            registry.register(one_cadence),
+            Ok(()),
+            "the smallest positive autosave cadence must be accepted"
+        );
+        assert_eq!(
+            registry.register(max_cadence),
+            Ok(()),
+            "u64::MAX must remain a valid positive autosave cadence"
+        );
         assert!(matches!(
             registry.register(missing_hydrate),
             Err(SliceRegistryError::MissingHydrateHook { .. })
