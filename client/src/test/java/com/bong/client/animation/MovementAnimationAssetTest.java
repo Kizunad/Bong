@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -105,6 +106,65 @@ class MovementAnimationAssetTest {
                 assertEquals("contract-first-unwired", root.get("wiring").getAsString(),
                     id + " 必须明确声明 contract-first-unwired，避免无生产 producer 的半接线资产");
             }
+        }
+    }
+
+    @Test
+    void jianActionTimelinesRetainAuthoredPhases() throws IOException {
+        assertActionTimeline(
+            BongAnimations.JIAN_DRAW_WAIST,
+            Set.of(0, 6, 9, 14, 17, 24),
+            Map.of(0, "INOUTSINE", 6, "INOUTSINE", 9, "INOUTSINE",
+                14, "OUTQUAD", 17, "OUTQUAD", 24, "INOUTSINE"),
+            Map.of(
+                "rightArm.pitch", Map.of(6, -0.5235988, 14, -1.5358897, 17, -1.8151424),
+                "torso.pitch", Map.of(6, 0.100531, 14, -0.1256637, 17, -0.1759292),
+                "body.y", Map.of(6, 0.05, 14, -0.05, 17, -0.03)
+            )
+        );
+        assertActionTimeline(
+            BongAnimations.JIAN_DUAL_SMASH,
+            Set.of(0, 6, 8, 11, 13, 15, 18),
+            Map.of(0, "INOUTSINE", 6, "INOUTSINE", 8, "INOUTSINE",
+                11, "OUTQUAD", 13, "OUTQUAD", 15, "INOUTSINE", 18, "INOUTSINE"),
+            Map.of(
+                "rightArm.bend", Map.of(6, 0.3839724, 8, 0.3141593, 11, 0.0872665, 15, 0.3141593),
+                "torso.pitch", Map.of(6, -0.2261947, 8, -0.2638938, 11, 0.3267256, 13, 0.4021239),
+                "body.z", Map.of(6, -0.05, 8, -0.06, 11, 0.14, 13, 0.1)
+            )
+        );
+    }
+
+    private static void assertActionTimeline(
+        Identifier id,
+        Set<Integer> expectedTicks,
+        Map<Integer, String> expectedEasing,
+        Map<String, Map<Integer, Double>> expectedValues
+    ) throws IOException {
+        JsonObject emote = readAsset(id).getAsJsonObject("emote");
+        JsonArray moves = emote.getAsJsonArray("moves");
+        Set<Integer> actualTicks = new HashSet<>();
+        Map<Integer, String> actualEasing = new HashMap<>();
+        Map<String, Map<Integer, Double>> actualValues = new HashMap<>();
+        for (JsonElement element : moves) {
+            JsonObject move = element.getAsJsonObject();
+            int tick = move.get("tick").getAsInt();
+            actualTicks.add(tick);
+            actualEasing.putIfAbsent(tick, move.get("easing").getAsString());
+            for (Map.Entry<String, Map<Integer, Double>> expectedTrack : expectedValues.entrySet()) {
+                String[] path = expectedTrack.getKey().split("\\.");
+                if (expectedTrack.getValue().containsKey(tick)
+                    && move.has(path[0]) && move.getAsJsonObject(path[0]).has(path[1])) {
+                    actualValues.computeIfAbsent(expectedTrack.getKey(), unused -> new HashMap<>())
+                        .put(tick, move.getAsJsonObject(path[0]).get(path[1]).getAsDouble());
+                }
+            }
+        }
+        assertEquals(expectedTicks, actualTicks, id + " authored timeline ticks must not disappear");
+        assertEquals(expectedEasing, actualEasing, id + " authored easing phases must remain intact");
+        for (Map.Entry<String, Map<Integer, Double>> expectedTrack : expectedValues.entrySet()) {
+            assertEquals(expectedTrack.getValue(), actualValues.get(expectedTrack.getKey()),
+                id + " representative pose track must retain authored values: " + expectedTrack.getKey());
         }
     }
 
