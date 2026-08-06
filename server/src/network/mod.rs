@@ -4960,7 +4960,7 @@ mod tests {
                 repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
             assert!(
                 tsx.is_file(),
-                "cross-stack test requires npm dependencies at {}; run npm ci in agent first",
+                "cross-stack test requires the locked @bong/tiandao devDependency `tsx` at {}; run `cd agent && npm ci` from the repository root first",
                 tsx.display()
             );
             assert!(
