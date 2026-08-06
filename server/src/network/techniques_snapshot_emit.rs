@@ -221,4 +221,73 @@ dispatch = "metadata_backed"
             "rejection message should name the description field, got {error}"
         );
     }
+
+    #[test]
+    fn control_character_snapshot_is_rejected_before_json_send() {
+        let encoded_control_bytes = r"\u0001".repeat(1_000);
+        let mut catalog = String::new();
+        for index in 0..8 {
+            catalog.push_str(&format!(
+                r#"
+[[techniques]]
+id = "bulk.{index}"
+display_name = "批"
+grade = "common"
+description = "{encoded_control_bytes}"
+required_realm = "Awaken"
+required_meridians = []
+required_race = {{ kind = "any" }}
+qi_cost = 1.0
+stamina_cost = 0.0
+cast_ticks = 10
+cooldown_ticks = 30
+range = 3.0
+icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+category = "attack"
+dispatch = "direct_generic"
+"#
+            ));
+        }
+
+        let registry = TechniqueRegistry::load_from_contents_for_tests(&catalog)
+            .expect("control-character descriptions under 1024 bytes must load");
+        let known = KnownTechniques {
+            entries: registry
+                .iter()
+                .map(|definition| KnownTechnique {
+                    id: definition.id.clone(),
+                    proficiency: 0.5,
+                    active: true,
+                })
+                .collect(),
+        };
+        let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(
+            build_techniques_snapshot(&registry, &known),
+        ));
+        let actual_json = payload
+            .to_json_bytes_checked()
+            .expect_err("control-character snapshot must exceed the JSON wire limit");
+        assert!(
+            matches!(
+                actual_json,
+                crate::schema::server_data::ServerDataBuildError::Oversize { .. }
+            ),
+            "the real JSON serializer must report Oversize, got {actual_json:?}"
+        );
+        assert!(
+            registry.aggregate_snapshot_size() > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "startup estimate must cover the six-byte control-character escapes"
+        );
+
+        let error = crate::cultivation::known_techniques::validate_startup_wiring(
+            &registry,
+            &crate::cultivation::skill_registry::SkillRegistry::default(),
+            &crate::cultivation::meridian::severed::SkillMeridianDependencies::default(),
+        )
+        .expect_err("a registry whose real JSON snapshot is oversized must fail startup wiring");
+        assert!(
+            error.to_string().contains("MAX_PAYLOAD_BYTES"),
+            "startup rejection must identify the payload limit, got {error}"
+        );
+    }
 }

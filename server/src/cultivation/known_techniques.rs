@@ -192,41 +192,49 @@ impl TechniqueRegistry {
     }
 
     /// 最坏情况下（玩家学会全部 catalog 条目）techniques_snapshot 聚合 payload 的保守
-    /// 字节上界。每条目按 JSON 转义最坏情况（每个字节都可能转义为 `\u00XX` → 6×）与
-    /// 结构开销估算，再与 wire 上限 `MAX_PAYLOAD_BYTES` 比对——编码检查在发送端是
-    /// 逐玩家逐 tick 执行的，启动期先做一次聚合门禁（`validate_startup_wiring`），
-    /// 保证"catalog 被接受 ⇒ 任何全量快照都能完整送达"。
+    /// 字节上界。每个 JSON 字符串按控制字符的 `\\u00XX` 六字节逃逸计算，再加结构开销，
+    /// 与 wire 上限 `MAX_PAYLOAD_BYTES` 比对。编码检查在发送端逐玩家逐 tick 执行，
+    /// 启动期先做一次聚合门禁（`validate_startup_wiring`），保证 catalog 被接受后，
+    /// registry 文本不会让完整快照在发送端才被丢弃。
     ///
-    /// 基底只取固定信封开销（实测 `{"v":1,"type":"techniques_snapshot",...}` 约 54
-    /// 字节），不能按 `MAX_PAYLOAD_BYTES` 比例预留——否则小 catalog 会被错误拒绝
-    /// （例如 20 条 × ~500B 条目 + 16 KiB 基底 > 32 KiB，真实 payload 却只有 5 KiB）。
-    ///
-    /// 编码器（`serialize_server_data_payload` → serde_json）对 CJK 写原生 UTF-8（1×）、
-    /// 对控制字符写 `\u00XX`（6×）——3× 是对混合文本的保守上界。wire 条目
-    /// `TechniqueEntryV1`（schema/combat_hud.rs）不携带 `icon_texture`，故不计入。
+    /// 基底只取固定信封开销，不能按 `MAX_PAYLOAD_BYTES` 比例预留，否则小 catalog 会被
+    /// 错误拒绝。wire 条目 `TechniqueEntryV1` 不携带 `icon_texture`，故不计入。
     pub fn aggregate_snapshot_size(&self) -> usize {
         const ENVELOPE_OVERHEAD: usize = 1024;
         const PER_ENTRY_OVERHEAD: usize = 192;
-        let mut total = ENVELOPE_OVERHEAD; // 信封 / 类型 / 元数据开销余量
+        const PROFICIENCY_LABEL_UPPER_BOUND: usize = 98;
+        let mut total = ENVELOPE_OVERHEAD;
         for definition in &self.definitions {
-            // 3 倍 UTF-8 字节数 ≈ JSON 转义最坏情况上界；字符串字段 = id + display_name
-            // + grade + description + required_realm + proficiency_label（`sword_proficiency_label`
-            // 最长为五段 label 之一，~16B）。min_health 等数值字段走 serde 数字序列化，
-            // 开销已含在 PER_ENTRY_OVERHEAD。
-            let text_bytes = definition.id.len()
-                + definition.display_name.len()
-                + definition.grade.len()
-                + definition.description.len()
-                + definition.required_realm.len()
-                + 16; // proficiency_label 保守余量
+            let text_bytes = [
+                definition.id.as_str(),
+                definition.display_name.as_str(),
+                definition.grade.as_str(),
+                definition.description.as_str(),
+                definition.required_realm.as_str(),
+            ]
+            .into_iter()
+            .map(json_string_upper_bound)
+            .sum::<usize>()
+                + PROFICIENCY_LABEL_UPPER_BOUND;
             let meridian_bytes: usize = definition
                 .required_meridians
                 .iter()
-                .map(|m| m.channel.len() * 3 + 16)
+                .map(|m| json_string_upper_bound(&m.channel) + 16)
                 .sum();
-            total += 3 * text_bytes + meridian_bytes + PER_ENTRY_OVERHEAD;
+            total += text_bytes + meridian_bytes + PER_ENTRY_OVERHEAD;
         }
         total
+    }
+
+    fn json_string_upper_bound(value: &str) -> usize {
+        2 + value
+            .chars()
+            .map(|character| match character {
+                '"' | '\\' => 2,
+                '\u{0000}'..='\u{001f}' => 6,
+                _ => character.len_utf8(),
+            })
+            .sum::<usize>()
     }
 
     /// 读取并验证任意 techniques TOML。读取、反序列化、跨表验证完成前不会构造任何可见
