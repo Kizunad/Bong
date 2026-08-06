@@ -95,6 +95,56 @@ class LowerBodyGaitControllerTest {
     }
 
     @Test
+    void failedPlaybackKeepsThePreviousControllerOwner() {
+        AnimationStack stack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK);
+        BongAnimationPlayer.resetForTest();
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.DASH);
+
+        assertEquals(GaitSelector.Gait.WALK, LowerBodyGaitController.activeGaitForTests(),
+            "新步态播放失败时控制器必须保留可停止的旧档位状态");
+        assertEquals(
+            GaitSelector.Gait.WALK.animId(),
+            AnimationLayerManager.activeInChannel(playerId, AnimationLayerManager.Channel.LOWER_BODY),
+            "新步态播放失败时 LOWER_BODY ownership 不得被错误覆盖"
+        );
+    }
+
+    @Test
+    void replacementStackUpdatesControllerOwnerAfterNewPlaybackSucceeds() {
+        AnimationStack oldStack = new AnimationStack();
+        AnimationStack replacementStack = new AnimationStack();
+
+        LowerBodyGaitController.applyOnStack(oldStack, playerId, GaitSelector.Gait.WALK);
+        LowerBodyGaitController.applyOnStack(replacementStack, playerId, GaitSelector.Gait.JOG);
+
+        assertEquals(GaitSelector.Gait.JOG, LowerBodyGaitController.activeGaitForTests(),
+            "新 stack 播放成功后控制器 owner 必须切到新档位");
+        assertEquals(
+            GaitSelector.Gait.JOG.animId(),
+            AnimationLayerManager.activeInChannel(playerId, AnimationLayerManager.Channel.LOWER_BODY),
+            "新 stack 播放成功后 LOWER_BODY ownership 必须指向新动画"
+        );
+        for (int i = 0; i < GaitSelector.Gait.WALK.fadeOutTicks() + 1; i++) {
+            BongAnimationPlayer.tickPendingRemovalsForTest();
+        }
+        assertEquals(0, layerCount(oldStack), "旧 stack 淡出完成后不得残留旧步态层");
+        assertEquals(1, layerCount(replacementStack), "新 stack 必须保留当前步态层");
+    }
+
+    @Test
+    void disconnectClearsControllerState() {
+        AnimationStack stack = new AnimationStack();
+        LowerBodyGaitController.applyOnStack(stack, playerId, GaitSelector.Gait.WALK);
+
+        LowerBodyGaitController.clearOnDisconnect();
+
+        assertEquals(GaitSelector.Gait.NONE, LowerBodyGaitController.activeGaitForTests(),
+            "断线后控制器不得把旧玩家档位带入下一 session");
+    }
+
+    @Test
     void idleAfterStackReplacementStopsTheRecordedOldStack() {
         AnimationStack oldStack = new AnimationStack();
         AnimationStack replacementStack = new AnimationStack();
