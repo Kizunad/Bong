@@ -452,7 +452,7 @@ mod tests {
     use valence::prelude::{App, DVec3, EventWriter, IntoSystemConfigs, Update};
 
     fn emit_spawn_notice_before_entity_materializes(mut notices: EventWriter<NpcSpawnNotice>) {
-        let entity = valence::prelude::Entity::from_raw(usize::MAX);
+        let entity = valence::prelude::Entity::from_raw(u32::MAX);
         notices.send(NpcSpawnNotice {
             entity,
             npc_id: "npc:stable:deferred-spawn".to_string(),
