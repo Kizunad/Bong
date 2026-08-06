@@ -3210,6 +3210,131 @@ mod tests {
         );
     }
 
+    // ─── M33：通用 scorer system 必须消费注入 registry 的 override 值 ───────────
+    //
+    // 若 npc_technique_scorer_system 改读默认/静态 catalog 的 qi_cost，override 后
+    // 的通用功法会错误通过 affordability gate。
+
+    #[test]
+    fn technique_scorer_system_follows_injected_registry_affordability() {
+        use big_brain::prelude::{Actor, Score};
+        use valence::prelude::{App, Update};
+
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "sword.cleave",
+            |definition| {
+                definition.qi_cost = 101.0;
+            },
+        ));
+        app.insert_resource(NpcCooldownMap::default());
+        app.insert_resource(SkillMeridianDependencies::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
+        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
+        app.insert_resource(crate::npc::lod::NpcLodTick(0));
+        app.add_systems(Update, npc_technique_scorer_system);
+
+        let target = app.world_mut().spawn_empty().id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "sword.cleave".to_string(),
+                        proficiency: 1.0,
+                        active: true,
+                    }],
+                },
+                crate::npc::spawn::NpcMarker,
+                crate::npc::lod::NpcLodTier::Near,
+            ))
+            .id();
+        let scorer_entity = app
+            .world_mut()
+            .spawn((NpcTechniqueScorer, Actor(npc), Score::default()))
+            .id();
+
+        app.update();
+
+        let score = app
+            .world()
+            .get::<Score>(scorer_entity)
+            .map(|score| score.get())
+            .unwrap();
+        assert_eq!(
+            score, 0.0,
+            "通用 scorer 必须消费注入的 101 qi_cost 并拒绝 qi=100 的唯一候选"
+        );
+
+        let mut app = App::new();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "sword.cleave",
+            |definition| {
+                definition.qi_cost = 1.0;
+            },
+        ));
+        app.insert_resource(NpcCooldownMap::default());
+        app.insert_resource(SkillMeridianDependencies::default());
+        app.insert_resource(crate::cultivation::tick::CultivationClock { tick: 100 });
+        app.insert_resource(crate::npc::lod::NpcLodConfig::default());
+        app.insert_resource(crate::npc::lod::NpcLodTick(0));
+        app.add_systems(Update, npc_technique_scorer_system);
+
+        let target = app.world_mut().spawn_empty().id();
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcBlackboard {
+                    nearest_player: Some(target),
+                    player_distance: 3.0,
+                    ..Default::default()
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    qi_current: 100.0,
+                    qi_max: 100.0,
+                    ..Default::default()
+                },
+                KnownTechniques {
+                    entries: vec![KnownTechnique {
+                        id: "sword.cleave".to_string(),
+                        proficiency: 1.0,
+                        active: true,
+                    }],
+                },
+                crate::npc::spawn::NpcMarker,
+                crate::npc::lod::NpcLodTier::Near,
+            ))
+            .id();
+        let scorer_entity = app
+            .world_mut()
+            .spawn((NpcTechniqueScorer, Actor(npc), Score::default()))
+            .id();
+
+        app.update();
+
+        let score = app
+            .world()
+            .get::<Score>(scorer_entity)
+            .map(|score| score.get())
+            .unwrap();
+        assert_eq!(
+            score, 0.85,
+            "通用 scorer 必须跟随注入的 1 qi_cost，选择可负担的唯一候选"
+        );
+    }
+
     // ─── M33：heal scorer system 必须消费注入 registry 的 override 值 ───────────
     //
     // 若 npc_heal_scorer_system 改读默认/静态 catalog 的 qi_cost，override 后
