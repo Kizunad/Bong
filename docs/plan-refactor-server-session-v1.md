@@ -1,6 +1,6 @@
 # plan-refactor-server-session-v1 — Server 交互 Session 生命周期与终态交付（重构轨 R1）
 
-> 所属总纲：`plan-refactor-master-v1.md`。本轨唯一负责 gameplay session；终态交付的 durable 语义由本文件的 canonical contract 定义，R3/R10 只实现其存储与消费投影。跨轨排序引用总纲 §3 及 PR 1902 五项裁决，不在本文件另建依赖图。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。本轨唯一负责 gameplay session；终态交付的 durable 语义由本文件的 canonical contract 定义，R3/R10 只实现其存储与消费投影。跨轨排序引用总纲 §3 及 PR 1902 五项裁决，不在本文件另建依赖图。
 
 ## 阶段总览
 
@@ -14,7 +14,7 @@
 
 ## 0. 外部决议与边界
 
-- 总纲 `plan-refactor-master-v1.md §3/§4` 是跨轨 start/order/cutover 的唯一 authority。本计划引用 master artifact/phase ID，不复制 A-CS→R6→R4→R7→R3→R10 的箭头。
+- 草案总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §3/§4 是跨轨 start/order/cutover 的唯一 authority。本计划引用 master artifact/phase ID，不复制 A-CS→R6→R4→R7→R3→R10 的箭头。
 - PR 1902（`origin/docs/master-r9-r6-ownership-adjudication`，五项 settled rulings）作为外部已定上下文：TypeBox 是全仓 schema source of truth；domain content 与 generation machinery 分权；contract-first 可先合入但不可宣称 live；production activation 必须原子切换；track plan 不得创建第二套 sequencing authority。
 - R1 独占 gameplay session registry、session reducer 和七域 adapter；R3 独占 SQL/checkpoint/outbox storage；R10 独占 inventory/spill transaction 与 worker；R4/R6/R7/R2 各自拥有其 gate/wire/UI/store。任何轨只消费冻结 API，不复制另一轨的状态语义。
 - durable checkpoint 不以 Bevy `Entity` 为主键。`workbench_key` 是当前进程 `WorkbenchOpen.entity_id` 的 runtime locator；checkpoint 只保存 R3 P4 提供的 stable `placed_id`。
@@ -33,7 +33,7 @@
 | mineral | `server/src/mineral/session.rs:16` `MiningSession` | P3 volatile adapter；释放矿点/工具 claim |
 | spiritwood | `server/src/spiritwood/session.rs:59` store | P3 volatile adapter；`settling` 与 teardown 同步 |
 
-已确认的接线缺口包括保存前未统一 teardown、跨维残留 owner、TSY Search/Extract 双向 busy 缺失、PendingInsightOffer 无 deadline，以及取回路径先 `end_session` 后 delivery 失败。P0 吸收验真以本节七域表（§1.1）为域清单，逐项对照总纲 `plan-refactor-master-v1.md §6` 所列各轨吸收清单；被 R2/R3/R4/R10 明确拥有的实现不在 R1 重复登记，并在本轨 P0/Finish Evidence 记录验真结论。
+已确认的接线缺口包括保存前未统一 teardown、跨维残留 owner、TSY Search/Extract 双向 busy 缺失、PendingInsightOffer 无 deadline，以及取回路径先 `end_session` 后 delivery 失败。P0 吸收验真以本节七域表（§1.1）为域清单，逐项对照草案总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §6 所列各轨吸收清单；被 R2/R3/R4/R10 明确拥有的实现不在 R1 重复登记，并在本轨 P0/Finish Evidence 记录验真结论。
 
 ## 2. 术语与两个 ownership domain
 
@@ -184,7 +184,7 @@ pub trait InteractionSession {
 7. `maintenance_auth`：对 S-13、O-18 与 O-19 分别执行 console allow、current-executor capability allow、wrong-executor capability deny、offline/username/owner spoof deny、普通玩家 deny；拒绝时命中 S-17/O-27，DeadLetter payload/Q/state 不变。
 8. `workbench_restore`：`workbench_key` 0/1/u64::MAX 与 malformed/stale/despawned/cross-dimension/out-of-range；成功后只保存/恢复 `placed_id`，新 runtime Entity 可 rebind。
 9. `tsy_presence_snapshot`：routine autosave、disconnect、shutdown 每个写边界 crash 后 presence/position/dimension 只能全旧或全新。
-10. named bot scenarios（按总纲 `plan-refactor-master-v1.md §0` 的每轨 3-8 场景上限固定为以下八项）：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_craft_pause_resume_wire` 均只引用上述 row/trace ID。`session_craft_generation_cancel`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 属跨轨/共享证据，不计入 R1 的 bot 场景交付数。
+10. named bot scenarios（按草案总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §0 的每轨 3-8 场景上限固定为以下八项）：`session_disconnect_cleanup`、`session_dimension_transfer`、`session_restart_recovery`、`session_busy_mutex`、`session_full_inventory_delivery`、`session_suspension_reclamation`、`session_delivery_crash_atomicity`、`session_craft_pause_resume_wire` 均只引用上述 row/trace ID。`session_craft_generation_cancel`、`session_tsy_presence_relog`、`session_pending_insight_offer_deadline` 属跨轨/共享证据，不计入 R1 的 bot 场景交付数。
 
 ## 7. 本轨实施阶段
 

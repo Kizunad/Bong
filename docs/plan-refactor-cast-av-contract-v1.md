@@ -1,6 +1,6 @@
 # plan-refactor-cast-av-contract-v1 — 施法同步/技能栏/AV 单一事实源契约（重构轨 R9）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：以 TypeBox-first 协议、唯一 reducer、真实 producer 授权表和原子 cutover DAG 收敛施法身份、终态与每招 AV 五件套。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：以 TypeBox-first 协议、唯一 reducer、真实 producer 授权表和原子 cutover DAG 收敛施法身份、终态与每招 AV 五件套。
 >
 > 阶段总览：P0 ✅ 2026-08-04；P1 ⬜；P2 ⬜；P3 ⬜；P4 ⬜。
 
@@ -489,7 +489,7 @@ WAVE-2 PRODUCTION:
 3. **PR-3 P3/Wave 2 atomic activation**：仅在总纲 §3 **Wave 2**、R5 P1、R6 generation/transport artifacts、R2 P1 seam、PR #1902 production conditions 与 P2 single-owner gate 满足后，由 R6/R9 在同一 `ATOMIC-ACTIVATION` merge unit 完成全量 `C-13,C-14` registration/binding/assets、启用唯一 AV consumer、交付 `C-02,C-03,C-05..C-11` 与 `D-06,D-07,D-10,D-11,D-17..D-20,D-22,D-23,D-25,D-26`，最后切换全部 real cast/terminal producers 并删除旧 receiver。generic Fled brace 不属于 cast producer，继续走独立 non-cast `StopAnim` lifecycle；若无法形成同一 merge unit，完整旧路径继续保留。
 4. **PR-4 P4 full evidence/archive**：`C-15` + `D-01..D-27`。
 
-本顺序显式执行总纲 `plan-refactor-master-v1.md` §3/§4.1 与 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：contract-first 可在 Wave 0 合入，R9 production activation 必须在 **Wave 2** 按上述依赖原子切换。前一 PR merge 后才开始后一 PR；每次 fetch 最新 `origin/main` 后验证 DAG gate。跨 owner 文件只能按 §5 owner/handoff 修改，不得复制 converter、bridge、router 或 consumer 绕门。任何 visual asset PR 执行 3 轮打磨与 `<PROMISE>`；资源包同步是同 PR 交付物。
+本顺序显式执行草案总纲 `docs/plans-skeleton/plan-refactor-master-v1.md` §3/§4.1 与 adjudication commit `1d7a257ab7d1f72261aa290a8901df1be3e1dc43`（PR #1902）：contract-first 可在 Wave 0 合入，R9 production activation 必须在 **Wave 2** 按上述依赖原子切换。前一 PR merge 后才开始后一 PR；每次 fetch 最新 `origin/main` 后验证 DAG gate。跨 owner 文件只能按 §5 owner/handoff 修改，不得复制 converter、bridge、router 或 consumer 绕门。任何 visual asset PR 执行 3 轮打磨与 `<PROMISE>`；资源包同步是同 PR 交付物。
 
 ### 9.2 必跑 gate
 

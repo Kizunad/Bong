@@ -1,6 +1,6 @@
 # plan-refactor-client-store-lifecycle-v1 — Client 状态 Store 统一断线生命周期（重构轨 R2）
 
-> 所属总纲：`plan-refactor-master-v1.md`。一句话：把 client 侧 108 个各自为政的静态 Store 收敛到统一 `SessionScopedStore` 契约 + 显式静态登记清理；P0 仅建立分类、框架与分阶段门禁，待 P3 全量登记、P4 重连验收完成后，系统性阻止“断线残留/跨会话串味”这一整类 bug（现存 14 份断线核心）。
+> 所属总纲：`docs/plans-skeleton/plan-refactor-master-v1.md`（草案权威）。一句话：把 client 侧 108 个各自为政的静态 Store 收敛到统一 `SessionScopedStore` 契约 + 显式静态登记清理；P0 仅建立分类、框架与分阶段门禁，待 P3 全量登记、P4 重连验收完成后，系统性阻止“断线残留/跨会话串味”这一整类 bug（现存 14 份断线核心）。
 
 ## 现状证据（2026-07-27 侦察）
 
