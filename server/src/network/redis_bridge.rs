@@ -3341,32 +3341,82 @@ mod redis_bridge_tests {
         );
     }
 
+    async fn read_resp_line(server: &mut tokio::io::DuplexStream) -> Vec<u8> {
+        let mut line = Vec::new();
+        loop {
+            let mut byte = [0_u8; 1];
+            server
+                .read_exact(&mut byte)
+                .await
+                .expect("mock Redis must read the complete RESP line");
+            line.push(byte[0]);
+            if line.ends_with(b"\r\n") {
+                return line;
+            }
+        }
+    }
+
+    async fn read_resp_request(server: &mut tokio::io::DuplexStream) {
+        let line = read_resp_line(server).await;
+        assert_eq!(
+            line.first().copied(),
+            Some(b'*'),
+            "request must be RESP array"
+        );
+        let argument_count = std::str::from_utf8(&line[1..line.len() - 2])
+            .expect("RESP array count must be UTF-8")
+            .parse::<usize>()
+            .expect("RESP array count must be numeric");
+        for _ in 0..argument_count {
+            let line = read_resp_line(server).await;
+            assert_eq!(
+                line.first().copied(),
+                Some(b'$'),
+                "argument must be bulk string"
+            );
+            let length = std::str::from_utf8(&line[1..line.len() - 2])
+                .expect("RESP bulk length must be UTF-8")
+                .parse::<usize>()
+                .expect("RESP bulk length must be numeric");
+            let mut payload = vec![0_u8; length + 2];
+            server
+                .read_exact(&mut payload)
+                .await
+                .expect("mock Redis must read the complete RESP bulk string");
+            assert_eq!(
+                &payload[length..],
+                b"\r\n",
+                "RESP bulk string must end with CRLF"
+            );
+        }
+    }
+
     async fn mock_multiplexed_connection(
         responses: Vec<&'static [u8]>,
     ) -> redis::aio::MultiplexedConnection {
         let (client, mut server) = duplex(16 * 1024);
-        let (connection, driver) =
-            redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
-                .await
-                .expect("test duplex must construct a multiplexed Redis connection");
-        task::spawn(driver);
         task::spawn(async move {
-            let mut request = vec![0_u8; 4096];
+            for _ in 0..2 {
+                read_resp_request(&mut server).await;
+            }
+            server
+                .write_all(b"+OK\r\n+OK\r\n")
+                .await
+                .expect("mock Redis must send both setup responses");
+
             for response in responses {
-                let bytes_read = server
-                    .read(&mut request)
-                    .await
-                    .expect("mock Redis must read the next command");
-                assert!(
-                    bytes_read > 0,
-                    "executor closed before sending expected command"
-                );
+                read_resp_request(&mut server).await;
                 server
                     .write_all(response)
                     .await
                     .expect("mock Redis must send its configured response");
             }
         });
+        let (connection, driver) =
+            redis::aio::MultiplexedConnection::new(&redis::RedisConnectionInfo::default(), client)
+                .await
+                .expect("test duplex must construct a multiplexed Redis connection");
+        task::spawn(driver);
         connection
     }
 
