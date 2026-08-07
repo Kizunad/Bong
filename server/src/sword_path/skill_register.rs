@@ -1572,6 +1572,40 @@ mod tests {
         );
     }
 
+    /// M13：Condense Edge 的 stamina 扣费也必须来自 injected definition——override
+    /// 已把 stamina_cost 提到 3.0，若 resolver 改读旧常量/不扣体力，这里撞红。
+    #[test]
+    fn condense_edge_runtime_drains_overridden_stamina_cost() {
+        let (mut app, caster) = setup_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_CONDENSE_EDGE_ID,
+            |definition| {
+                definition.qi_cost = 12.5;
+                definition.stamina_cost = 3.0;
+                definition.cast_ticks = 7;
+                definition.cooldown_ticks = 11;
+                definition.range = 2.5;
+            },
+        ));
+        let stamina_before = app.world().get::<Stamina>(caster).unwrap().current;
+
+        let result = cast_condense_edge(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 11,
+                anim_duration_ticks: 7,
+            },
+            "overridden cast/cooldown must drive the CastResult payload"
+        );
+        let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
+        assert!(
+            (stamina_before - stamina_after - 3.0).abs() < 1e-6,
+            "condense edge must drain the overridden stamina_cost: {stamina_before} -> {stamina_after}"
+        );
+    }
+
     #[test]
     fn qi_slash_runtime_rejects_overridden_meridian_health_requirement() {
         let (mut app, caster) = setup_app();
@@ -1789,12 +1823,14 @@ mod tests {
             SWORD_PATH_RESONANCE_ID,
             |definition| {
                 definition.qi_cost = 9.0;
+                definition.stamina_cost = 3.0;
                 definition.cast_ticks = 4;
                 definition.cooldown_ticks = 13;
                 definition.range = 2.0;
             },
         ));
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let stamina_before = app.world().get::<Stamina>(caster).unwrap().current;
         // caster 在原点；范围内放一个 StatusEffects 实体（命中），范围外放一个（不命中）。
         let in_range = app
             .world_mut()
@@ -1819,6 +1855,11 @@ mod tests {
         assert!(
             (charged - 9.0).abs() < 1e-6,
             "resonance must drain the overridden qi_cost, got {charged}"
+        );
+        let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
+        assert!(
+            (stamina_before - stamina_after - 3.0).abs() < 1e-6,
+            "resonance must drain the overridden stamina_cost: {stamina_before} -> {stamina_after}"
         );
         let intents: Vec<_> = app
             .world()
@@ -1851,6 +1892,7 @@ mod tests {
             },
         ));
         let qi_before = app.world().get::<Cultivation>(caster).unwrap().qi_current;
+        let stamina_before = app.world().get::<Stamina>(caster).unwrap().current;
         let target = app.world_mut().spawn(Position::default()).id();
 
         let result = cast_manifest(app.world_mut(), caster, 0, Some(target));
@@ -1867,6 +1909,11 @@ mod tests {
         assert!(
             (charged - 15.0).abs() < 1e-6,
             "manifest must drain the overridden qi_cost, got {charged}"
+        );
+        let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
+        assert!(
+            (stamina_before - stamina_after - 2.0).abs() < 1e-6,
+            "manifest must drain the overridden stamina_cost: {stamina_before} -> {stamina_after}"
         );
         assert_eq!(drain_av(&app), vec![SwordPathSkillId::Manifest]);
     }
@@ -2841,6 +2888,79 @@ mod tests {
                 .all(|intent| (intent.reach.base - configured_range).abs() < f32::EPSILON),
             "emitted AttackReach must carry overridden metadata range"
         );
+    }
+
+    /// M13：天门是最后一个没有完整字段覆盖的 sword resolver——range 已有专属测试，
+    /// 这里补齐 stamina/cast/cooldown 并断言扣费、Casting 组件、冷却登记与
+    /// channeling range 快照全部来自注入 registry。
+    #[test]
+    fn heaven_gate_runtime_consumes_overridden_stamina_timing_and_cooldown() {
+        let (mut app, caster) = setup_app();
+        let configured_stamina_cost = 4.0_f32;
+        let configured_cast_ticks = 14;
+        let configured_cooldown_ticks = 33;
+        let configured_range = 6.0_f32;
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            SWORD_PATH_HEAVEN_GATE_ID,
+            |definition| {
+                definition.stamina_cost = configured_stamina_cost;
+                definition.cast_ticks = configured_cast_ticks;
+                definition.cooldown_ticks = configured_cooldown_ticks;
+                definition.range = configured_range;
+            },
+        ));
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(SkillBarBindings::default());
+        let stamina_before = app.world().get::<Stamina>(caster).unwrap().current;
+
+        let result = cast_heaven_gate(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: u64::from(configured_cooldown_ticks),
+                anim_duration_ticks: configured_cast_ticks,
+            },
+            "heaven gate timing must come from the injected TechniqueRegistry"
+        );
+        let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
+        assert!(
+            (stamina_before - stamina_after - f64::from(configured_stamina_cost)).abs() < 1e-6,
+            "heaven gate stamina charge must use overridden metadata: {stamina_before} -> {stamina_after}"
+        );
+        let channeling = app
+            .world()
+            .get::<HeavenGateChanneling>(caster)
+            .expect("cast must insert channeling");
+        assert_eq!(
+            channeling.range,
+            f64::from(configured_range),
+            "channeling must snapshot the overridden registry range"
+        );
+        let casting = app
+            .world()
+            .get::<Casting>(caster)
+            .expect("Casting component");
+        assert_eq!(
+            casting.duration_ticks,
+            u64::from(configured_cast_ticks),
+            "Casting duration must use overridden cast_ticks"
+        );
+        assert_eq!(
+            casting.complete_cooldown_ticks,
+            u64::from(configured_cooldown_ticks),
+            "Casting cooldown must use overridden cooldown_ticks"
+        );
+        let bindings = app.world().get::<SkillBarBindings>(caster).unwrap();
+        assert!(bindings.is_on_cooldown(
+            SWORD_PATH_HEAVEN_GATE_ID,
+            100 + u64::from(configured_cooldown_ticks) - 1
+        ));
+        assert!(!bindings.is_on_cooldown(
+            SWORD_PATH_HEAVEN_GATE_ID,
+            100 + u64::from(configured_cooldown_ticks)
+        ));
     }
 
     /// §D — AoE 只结算一次（aoe_done guard）。
