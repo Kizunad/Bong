@@ -97,6 +97,9 @@ jobs:
         working-directory: agent
         run: npm ci
 
+      - name: Build-token contract
+        run: bash scripts/tests/build_token_test.sh
+
       - name: Client stage (gradlew test)
         working-directory: client
         run: ./gradlew test
