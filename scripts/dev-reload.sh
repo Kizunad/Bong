@@ -154,14 +154,24 @@ launch_detached_job() {
     ) &
     pid=$!
     if ! detach_background_job "$pid"; then
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-        return 1
+        if background_process_is_running "$pid"; then
+            # Job tracking glitched while the wrapper is still live: fail
+            # closed instead of handing an untracked process to the caller.
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            return 1
+        fi
+        # The wrapper already completed its whole life inside the detach
+        # window (it never exec'd the expected image). Hand it to the caller's
+        # exec-acknowledgement poller so the failure is reported with the
+        # standard "did not exec expected executable" diagnostic instead of a
+        # scheduling-dependent "not running in this shell" misattribution.
+        DETACHED_PID="$pid"
+        return 0
     fi
     if ! background_process_is_running "$pid"; then
-        echo "FAIL: detached background process $pid exited during launch" >&2
-        wait "$pid" 2>/dev/null || true
-        return 1
+        DETACHED_PID="$pid"
+        return 0
     fi
     DETACHED_PID="$pid"
 }
@@ -237,7 +247,9 @@ launch_bong_server() {
         return 1
     fi
     SERVER_PID="$launched_pid"
-    if ! sleep "$startup_grace"; then
+    # Zero grace must not fork an external sleep: a fork failure at exactly
+    # this point would misreport an otherwise healthy launch.
+    if [ "$startup_grace" != 0 ] && ! sleep "$startup_grace"; then
         echo "FAIL: bong server startup grace wait failed: $startup_grace" >&2
         rollback_launched_server "$SERVER_PID" "startup grace wait" || return $?
         SERVER_PID=""
