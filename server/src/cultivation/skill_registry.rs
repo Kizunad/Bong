@@ -288,7 +288,7 @@ mod tests {
     ///
     /// 故意に declare を削除すると本テストが赤くなり、将来の register-without-declare 漏れを防ぐ。
     #[test]
-    fn every_player_castable_skill_has_meridian_dependency_declaration() {
+    fn every_player_castable_skill_has_aligned_meridian_dependencies() {
         use std::collections::HashSet;
 
         let techniques = crate::cultivation::known_techniques::TechniqueRegistry::load_from_path(
@@ -297,17 +297,48 @@ mod tests {
             &crate::body_plan::RaceRegistry::default(),
         )
         .expect("checked-in technique catalog must load");
-        let player_castable: HashSet<&str> = techniques
-            .iter()
-            .map(|definition| definition.id.as_str())
-            .collect();
         let deps = build_production_deps();
         let registry = init_registry();
 
+        let runtime_only_dependency_ids = [
+            "zhenmai.multipoint",
+            "baomai.full_power_charge",
+            "baomai.full_power_release",
+        ];
         let mut missing: Vec<&str> = Vec::new();
+        let mut misaligned: Vec<String> = Vec::new();
         for (skill_id, _fn_ptr) in registry.iter() {
-            if player_castable.contains(*skill_id) && !deps.is_declared(skill_id) {
+            let Some(definition) = techniques.get(skill_id) else {
+                continue;
+            };
+            if !deps.is_declared(skill_id) {
                 missing.push(skill_id);
+                continue;
+            }
+
+            if runtime_only_dependency_ids.contains(&definition.id.as_str()) {
+                assert!(
+                    definition.required_meridians.is_empty(),
+                    "{} 的运行时静态经脉依赖不是 metadata gate；若 TOML 开始声明经脉，必须移出 runtime-only 例外并对齐两份契约",
+                    definition.id
+                );
+                continue;
+            }
+
+            let metadata_meridians: HashSet<_> = definition
+                .required_meridians
+                .iter()
+                .map(|required| {
+                    crate::cultivation::technique_scroll::parse_meridian_id(&required.channel)
+                        .expect("loaded technique metadata must contain known meridian channels")
+                })
+                .collect();
+            let declared_meridians: HashSet<_> = deps.lookup(skill_id).iter().copied().collect();
+            if metadata_meridians != declared_meridians {
+                misaligned.push(format!(
+                    "{}: metadata={metadata_meridians:?}, declared={declared_meridians:?}",
+                    definition.id
+                ));
             }
         }
         missing.sort_unstable();
@@ -315,11 +346,15 @@ mod tests {
             missing.is_empty(),
             "SkillRegistry に登録された player-castable 招式が SkillMeridianDependencies \
              に未宣言です。declare_meridian_dependencies に追加してください。\
-             注意：本不変量は宣言の存在のみを保証し、resolver が実行時に \
-             check_meridian_dependencies を呼び出すかどうかは検証しません \
-             （経脈ゲートの運行時強制は P0 cast-entry 統一拦截の範疇）。\
              未宣言の招式: {:?}",
             missing
+        );
+        assert!(
+            misaligned.is_empty(),
+            "TechniqueRegistry.required_meridians と SkillMeridianDependencies の集合が不一致です。\
+             TOML と静的 declare を同じ変更で更新してください。\
+             不一致: {:?}",
+            misaligned
         );
     }
 
