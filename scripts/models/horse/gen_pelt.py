@@ -776,6 +776,10 @@ def part_tail(p: Pelt, env: Envelope, P) -> None:
                 (-wide * 0.76, min(a[1], b[1]) - drop, zc - deep * 0.8),
                 (wide * 0.76, min(a[1], b[1]) - drop + Pr.u(0.075), zc + deep * 0.8),
                 mat="mane_tip",
+                # 梢与它所属的那股是同一束毛，`loose` 必须跟着——漏了这个标记，
+                # 下游把它当刚性焊件：马具层的贴合自检报"蹄铁陷进尾梢 0.93"
+                # （倒毙侧躺时尾正好搭在后蹄上），那本来就该发生。
+                loose=True,
             )
 
 

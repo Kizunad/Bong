@@ -35,7 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 from gen_muscle import Skeleton
 from gen_pelt import FINAL, STAGES, SWATCH, _corners
-from gen_skeleton import PROFILES, Profile, connected_components, uid
+from gen_skeleton import PROFILES, Profile, _obb, connected_components, uid
 from PIL import Image
 
 TACK_DIR = FINAL / "tack"
@@ -43,6 +43,10 @@ TACK_ROW = 4  # 贴图第 5 行起（0-1 行骨/肌，2-3 行皮），追加不�
 GEOM_COAT = "rust"  # 几何三色同源，取一份当尺寸来源（另两份由 check_geom_same_across_coats 对拍）
 
 Vec = tuple[float, float, float]
+
+
+def _lerpf(a: float, b: float, s: float) -> float:
+    return a + (b - a) * s
 
 # 材质表**只准追加不准插入**：UV 索引由这里的顺序派生，插一行会把已出的马具整体错位。
 TACK_MATS: dict[str, tuple[int, int, int]] = {
@@ -58,6 +62,16 @@ TACK_MATS: dict[str, tuple[int, int, int]] = {
     "lingtie_dark": (34, 48, 88),
     "glow": (152, 216, 240),  # 灵纹：淡蓝
     "nail": (156, 152, 144),  # 钉头：磨亮的白铁
+    # --- 马鞍起追加（只准往后加：UV 索引由顺序派生）---
+    # 毡往**浅**里推、革往**深**里推：三种毛色（锈骝 128,72,43 / 枯原 148,126,82 /
+    # 碎雪 146,140,131）都落在中等明度的暖色带上，马具挤进这条带里就整片糊掉。
+    # 一浅一深各自绕开——首版毡 (122,114,100) 离碎雪暗部只有 24.8、革 (118,82,52)
+    # 离锈骝身色只有 16.8，正是"棕鞍配栗马"这个经典读不出来的组合。
+    "felt": (186, 180, 168),  # 旧毡：洗到发灰的白
+    "felt_dark": (140, 134, 122),
+    "leather": (58, 40, 32),  # 粗革：鞣得不匀、油到发乌的深棕
+    "leather_dark": (38, 26, 22),
+    "rope": (150, 134, 96),  # 麻绳
 }
 
 
@@ -132,6 +146,70 @@ class Tack:
             },
         )
         self.count += 1
+
+
+# ================================================================ 皮层表面采样
+# 马具靠它贴上去的皮件。**必须逐个正则匹配，不能只看前缀**：`dorsal_1` 是三色共有的
+# 背中线，`dorsal_stripe_1` 是枯原专属的鳝背线——前缀写 "dorsal_" 会把后者一起读进来，
+# 于是马具尺寸随毛色变（`check_geom_same_across_coats` 立刻撞红，就是这么发现的）。
+SHAPE_RE = re.compile(r"(torso_\w+|dorsal_\d+|croup_cap_\d+|chest_front)$")
+
+
+def is_shape(name: str) -> bool:
+    return bool(SHAPE_RE.fullmatch(name))
+
+
+class Torso:
+    """皮层躯干的断面采样器。马鞍 / 肚带 / 马甲都靠它贴上去。
+
+    躯干皮是**轴对齐盒**堆出来的（`gen_pelt.part_torso`），所以"哪些盒盖住这个点"
+    直接就是真形状，不必再解一遍肌肉包络。三个查询各对应一种贴法：
+      · `at(z)`  —— 该 z 的半宽 / 背顶 / 腹底，定马具的纵向范围；
+      · `top_at(z, x)` —— 背在横向某处的高度。**背不是平的**，鞍垫按一个高度铺过去，
+        中间压进脊里、两边悬在空中；
+      · `half_at(z, y)` —— 桶身在某高度的半宽。肚带垂直挂下去只在最宽处贴着，
+        上下两头都是空的。
+    """
+
+    def __init__(self, pelt_els: list[dict]) -> None:
+        self.boxes = [(e["from"], e["to"]) for e in pelt_els if is_shape(e["name"])]
+        if not self.boxes:
+            raise SystemExit("皮层里找不到躯干件——马具无处可贴")
+
+    def _cover(self, q: dict[int, float]):
+        for f, t in self.boxes:
+            if all(f[i] - 1e-6 <= v <= t[i] + 1e-6 for i, v in q.items()):
+                yield f, t
+
+    def at(self, z: float) -> tuple[float, float, float]:
+        got = list(self._cover({2: z}))
+        if not got:
+            raise SystemExit(f"躯干在 z={z:.2f} 处没有皮件——马具定位越界了")
+        return (max(max(t[0], -f[0]) for f, t in got),
+                max(t[1] for f, t in got),
+                min(f[1] for f, t in got))
+
+    def top_at(self, z: float, x: float) -> float:
+        got = list(self._cover({0: x, 2: z}))
+        if not got:
+            raise SystemExit(f"躯干在 (x={x:.2f}, z={z:.2f}) 处没有皮件")
+        return max(t[1] for f, t in got)
+
+    def half_at(self, z: float, y: float) -> float:
+        got = list(self._cover({1: y, 2: z}))
+        if not got:
+            raise SystemExit(f"躯干在 (y={y:.2f}, z={z:.2f}) 处没有皮件")
+        return max(max(t[0], -f[0]) for f, t in got)
+
+
+@dataclass
+class Fit:
+    """马具装配所需的全部「来自皮层的量」。装配函数只准从这里取数，不准另写常数。"""
+
+    P: Profile
+    pelt_els: list[dict]
+    hooves: dict[str, "HoofFit"]
+    torso: Torso
 
 
 # ================================================================ 蹄铁
@@ -380,16 +458,316 @@ def part_shoe(t: Tack, fit: HoofFit, spec: ShoeSpec, avoid: list[dict]) -> None:
             )
 
 
-def build_shoes(t: Tack, fits: dict[str, HoofFit], spec: ShoeSpec, pelt_els: list[dict]) -> None:
+def build_shoes(t: Tack, fit: Fit, spec: ShoeSpec) -> None:
     for key in ("f_l", "f_r", "h_l", "h_r"):
-        avoid = [e for e in pelt_els if e["name"] not in (f"hoof_{key}", f"hoof_top_{key}")]
-        part_shoe(t, fits[key], spec, avoid)
+        avoid = [e for e in fit.pelt_els if e["name"] not in (f"hoof_{key}", f"hoof_top_{key}")]
+        part_shoe(t, fit.hooves[key], spec, avoid)
 
 
-# name → (中文名, 分档表, 装配函数)
-KINDS = {
-    "shoe": ("蹄铁", SHOES, build_shoes),
+# ================================================================ 马鞍
+# 整副鞍挂在**一根骨**上（`SADDLE_BONE`）。理由不是省事：真鞍有硬鞍架，本来就是刚体，
+# 马背在它下面屈伸。若为了"贴合"把鞍拆到两根骨上，脊一弯鞍就从中间裂开——那是把
+# 皮层的接缝问题原样搬进马具层。刚体挂一根骨，代价只是前后端在大幅屈伸时略微陷进皮里
+# 一点，这一项由 `check_anim_fit` 逐帧盯着。
+SADDLE_BONE = "thorax_back"
+
+# 骑手坐姿需要的最小座面（单位；1 单位 = 1 体素 = 6.25 cm）。玩家模型的胯宽 8 单位、
+# 臀深约 4 单位——座面小于这个数，后面做骑乘动画时人就是浮在鞍上而不是坐在鞍上。
+# 这条现在就断言，不等做动画时才发现鞍根本坐不下人。
+SEAT_MIN_Z = 4.0
+SEAT_MIN_X = 3.0
+
+# 镫底在座面**以下**多少（单位）。这是**骑手的尺寸，不是马的**——玩家模型腿长约 12
+# 单位，屈膝踩镫时脚落在髋下 9–12 单位处。首版按鬐甲高的比例给（0.50–0.52W），于是
+# 常马的镫离座面 15.3 单位、挽马 18.3 —— 玩家的腿根本够不着，做骑乘动画时脚只能悬空
+# 或者把腿拉长。三档马一个骑手，这个量当然得是绝对值。
+STIRRUP_DROP = 10.5
+STIRRUP_REACH = (8.0, 12.0)  # 可接受的座→镫落差区间
+
+
+@dataclass(frozen=True)
+class SaddleSpec:
+    key: str
+    label: str
+    blurb: str
+    mat: str  # 主面
+    mat_dark: str  # 暗部 / 鞍桥
+    mat_trim: str  # 金属件（镫、扣、包角）
+    length: float  # 鞍全长 / 体长
+    pad_th: float  # 鞍垫厚（× 鬐甲高）
+    pad_half: float  # 鞍垫横向覆盖（× 该处躯干半宽）
+    seat_h: float  # 座面高出鞍垫（× 鬐甲高）
+    pommel: float  # 前鞍桥高出座面（× 鬐甲高）；0 = 无鞍桥（光垫子）
+    cantle: float  # 后鞍桥高出座面
+    flap: float  # 鞍翼下垂（× 鬐甲高）；0 = 无
+    girth_w: float  # 肚带宽（× 体长）
+    stirrup: bool  # 有没有镫（高度不由分档定，见 STIRRUP_DROP）
+    glow: bool = False
+
+
+SADDLES: dict[str, SaddleSpec] = {
+    # 一档：一块折了几折的旧毡，麻绳一捆。没有鞍架、没有镫——上马靠跳，骑久了磨大腿。
+    "felt": SaddleSpec(
+        key="felt", label="破毡鞍", blurb="几折旧毡加一道麻绳。没有鞍桥没有镫，骑久了磨腿。",
+        mat="felt", mat_dark="felt_dark", mat_trim="rope",
+        length=0.25, pad_th=0.080, pad_half=0.76, seat_h=0.0,
+        pommel=0.0, cantle=0.0, flap=0.0, girth_w=0.030, stirrup=False,
+    ),
+    # 二档：木鞍架蒙粗皮。有前后鞍桥、鞍翼、粗铁镫——这是"能长途骑"的分界线。
+    "leather": SaddleSpec(
+        key="leather", label="粗革鞍", blurb="木鞍架蒙粗皮，前后鞍桥齐全，粗铁镫。能骑长途。",
+        mat="leather", mat_dark="leather_dark", mat_trim="iron_crude",
+        length=0.29, pad_th=0.050, pad_half=0.82, seat_h=0.076,
+        pommel=0.078, cantle=0.090, flap=0.190, girth_w=0.040, stirrup=True,
+    ),
+    # 三档：皮面灵铁骨。鞍桥包灵铁、沿鞍桥一道灵纹，镫也是灵铁。
+    "lingtie": SaddleSpec(
+        key="lingtie", label="灵铁鞍", blurb="皮面灵铁骨，鞍桥包铁刻纹，落鞍时泛淡蓝。",
+        # 主面仍是革——二三档本来就都是皮鞍，差别在**配件**（鞍桥包灵铁 + 灵纹 + 灵铁镫）。
+        # 硬给三档换一种棕色反而是为了分档而分档，玩家读到的也不是"材质更好"。
+        mat="leather", mat_dark="lingtie_dark", mat_trim="lingtie",
+        length=0.31, pad_th=0.056, pad_half=0.86, seat_h=0.086,
+        pommel=0.094, cantle=0.108, flap=0.210, girth_w=0.046, stirrup=True,
+        glow=True,
+    ),
 }
+
+# 座面占鞍垫横向的比例。首版 0.62 —— 于是座比垫窄了近一半，整副鞍从侧面读成"插在杆上
+# 的一块板"。真鞍的座板与鞍垫几乎同宽，垫只在边缘多出一圈。
+SEAT_WF = 0.88
+
+PAD_NZ, PAD_NX = 3, 3  # 鞍垫的纵向 / 横向分段：背不是平的，一块板铺过去中间压脊两边悬空
+
+
+def part_saddle(t: Tack, fit: Fit, spec: SaddleSpec) -> None:
+    Pr, T, b = fit.P, fit.torso, SADDLE_BONE
+    L, W = Pr.L, Pr.wither
+    # 鞍位：鬐甲峰后一点起，长度按分档。真鞍就压在肩胛之后、最后一根肋之前。
+    z0 = Pr.z_wither_peak + 0.055 * L
+    z1 = z0 + spec.length * L
+    pad_th = Pr.u(spec.pad_th)
+
+    # **骑手不随马缩小**：矮马按比例出的鞍座只有 2.9×3.6 单位，坐不下人（`SEAT_MIN_*`）。
+    # 真实里给小马配成年人的鞍，看上去也确实偏大——所以这里是把座面**撑到绝对下限**，
+    # 而不是放宽断言。撑座面就得同时撑鞍垫，否则座板悬在垫外。
+    seat_frac = 0.60
+    z1 = max(z1, z0 + (SEAT_MIN_Z * 1.08) / seat_frac)
+    hw_ref = T.at((z0 + z1) / 2)[0]
+    half_need = max(hw_ref * spec.pad_half, SEAT_MIN_X * 1.08 / 2 / SEAT_WF)
+    xs = [half_need * k / PAD_NX for k in range(PAD_NX + 1)]
+    zs = [_lerpf(z0, z1, k / PAD_NZ) for k in range(PAD_NZ + 1)]
+    tops = {(i, j): T.top_at((zs[i] + zs[i + 1]) / 2, (xs[j] + xs[j + 1]) / 2)
+            for i in range(PAD_NZ) for j in range(PAD_NX)}
+    # **所有格共用一个底面**（取全场最低的那格再往下留一点）。各格按自己的背高单独定底，
+    # 背一弯，中带比外带高出一个厚度以上，相邻两格在 y 上就不再重叠——鞍垫散成一堆
+    # 互不相连的小板（连通性断言报的就是这个）。共用底面多出来的部分埋在马体内，看不见。
+    floor = min(tops.values()) - pad_th * 0.45
+    pad_top: dict[tuple[int, int], float] = {}
+    for i in range(PAD_NZ):
+        for j in range(PAD_NX):
+            top = tops[(i, j)]
+            pad_top[(i, j)] = top + pad_th
+            for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                if j == 0 and side == "r":
+                    continue  # 中带跨脊，只出一件
+                xa = sgn * xs[j] if j else -xs[1]
+                xb = sgn * xs[j + 1] if j else xs[1]
+                nm = f"saddle_pad_{i + 1}{j + 1}" if j == 0 else f"saddle_pad_{i + 1}{j + 1}_{side}"
+                t.box(b, nm, (xa, floor, zs[i]), (xb, top + pad_th, zs[i + 1]), mat=spec.mat_dark)
+
+    seat_base = max(pad_top.values())
+    seat_top_y = seat_base  # 光垫子档骑手就坐在垫顶；有鞍架的在下面覆盖
+    x_seat = xs[PAD_NX] * SEAT_WF
+
+    if spec.seat_h == 0.0:
+        # 光垫子档：没有鞍架，只在垫上压一道卷边，好认出"这是马具不是马"
+        t.box(b, "saddle_roll_front", (-x_seat, seat_base - pad_th * 0.3, z0), (x_seat, seat_base + pad_th * 0.7, z0 + 0.02 * L), mat=spec.mat)
+        t.box(b, "saddle_roll_back", (-x_seat, seat_base - pad_th * 0.3, z1 - 0.02 * L), (x_seat, seat_base + pad_th * 0.7, z1), mat=spec.mat)
+    else:
+        # --- 座 + 前后鞍桥 ---
+        # 座**要凹**：前高、中低、后高才是马鞍的剪影。首版是一块平板加两根立柱，
+        # 侧视读出来是"板上插了两根天线"。三段各自定高，中段压下去一截。
+        seat_h = Pr.u(spec.seat_h)
+        m = (1.0 - seat_frac) / 2
+        sz0, sz1 = _lerpf(z0, z1, m), _lerpf(z0, z1, 1.0 - m)
+        dip = seat_h * 0.34
+        seg = ((0.00, 0.30, 0.10), (0.30, 0.68, 1.00), (0.68, 1.00, 0.22))  # (起, 止, 下凹比例)
+        for k, (a, c, dp) in enumerate(seg):
+            t.box(b, f"saddle_seat_{k + 1}", (-x_seat, seat_base - pad_th * 0.2, _lerpf(sz0, sz1, a)),
+                  (x_seat, seat_base + seat_h - dip * dp, _lerpf(sz0, sz1, c)), mat=spec.mat)
+        seat_top = seat_top_y = seat_base + seat_h
+        # 鞍桥分两级收进去：一块盒子直上直下读成柱子，两级才读得出"拱"。
+        for nm, hgt, za, zb, wf in (
+            ("pommel", spec.pommel, z0 + 0.008 * L, sz0 + 0.010 * L, 0.80),
+            ("cantle", spec.cantle, sz1 - 0.010 * L, z1 - 0.008 * L, 0.98),
+        ):
+            xw, h1 = x_seat * wf, Pr.u(hgt)
+            t.box(b, f"saddle_{nm}", (-xw, seat_base, za), (xw, seat_top + h1 * 0.55, zb), mat=spec.mat_dark)
+            zc = (za + zb) / 2
+            t.box(b, f"saddle_{nm}_cap", (-xw * 0.80, seat_top + h1 * 0.45, _lerpf(za, zc, 0.22)),
+                  (xw * 0.80, seat_top + h1, _lerpf(zc, zb, 0.78)), mat=spec.mat_dark)
+            if spec.glow:  # 灵纹刻在鞍桥顶棱上，贴面不支鳍（同蹄铁）
+                gy = seat_top + h1
+                t.box(b, f"saddle_{nm}_glow", (-xw * 0.74, gy - Pr.u(0.012), _lerpf(za, zc, 0.26)),
+                      (xw * 0.74, gy + Pr.u(0.004), _lerpf(zc, zb, 0.74)), mat="glow", glow=True)
+
+    # --- 鞍翼：两侧垂下的皮片。**必须挂在桶身外面** ---
+    # 首版把它放在鞍垫的外缘（x = xs[3] ≈ 2.6），可桶身在那个高度已经宽到 3.2 ——
+    # 整片鞍翼埋在马体内，一点看不见。鞍是搭在背上的，背窄；鞍翼垂到肋上，肋宽。
+    # 所以横向位置得**按鞍翼自己那一段高度上的桶身半宽**来定，不能继承鞍垫的。
+    fz0, fz1 = _lerpf(z0, z1, 0.14), _lerpf(z0, z1, 0.88)
+    zc_f = (fz0 + fz1) / 2
+    y_side_top = min(pad_top[(i, PAD_NX - 1)] for i in range(PAD_NZ))
+    y_side_bot = y_side_top - Pr.u(max(spec.flap, 0.16))
+    hw_side = max(T.half_at(zc_f, _lerpf(y_side_bot, y_side_top, k / 6)) for k in range(7))
+    if spec.flap:
+        for sgn, side in ((-1.0, "l"), (1.0, "r")):
+            xo = sgn * hw_side
+            t.box(b, f"saddle_flap_{side}", (xo - sgn * Pr.u(0.014), y_side_top - Pr.u(spec.flap), fz0),
+                  (xo + sgn * Pr.u(0.020), y_side_top, fz1), mat=spec.mat)
+
+    # --- 肚带：绕桶身一圈。侧带分 3 段各按该高度的半宽收，直上直下只在最宽处贴着 ---
+    zg0 = z0 + 0.015 * L
+    zg1 = zg0 + spec.girth_w * L
+    zgc = (zg0 + zg1) / 2
+    _hw_g, ytop_g, ybot_g = T.at(zgc)
+    gt = Pr.u(0.018)
+    ys = [_lerpf(ybot_g, min(ytop_g, seat_base), k / 3) for k in range(4)]
+    # 每一格的 x 覆盖**该格上下两端各自的半宽**，不是格中点那一个值。桶身自下而上变宽，
+    # 按中点算的话相邻两格在 x 上错开一整个台阶，肚带从中间断成几截（连通性断言撞红）。
+    # 覆盖两端 → 相邻格必然在交界的半宽上共面，接得上，同时台阶也顺着桶身走。
+    eps = gt * 0.25
+    hws = [T.half_at(zgc, min(max(y, ybot_g + eps), ys[3] - eps)) for y in ys]
+    for k in range(3):
+        lo, hi = min(hws[k], hws[k + 1]) - gt * 0.5, max(hws[k], hws[k + 1]) + gt * 0.5
+        for sgn, side in ((-1.0, "l"), (1.0, "r")):
+            t.box(b, f"saddle_girth_{side}{k + 1}", (sgn * lo, ys[k], zg0), (sgn * hi, ys[k + 1], zg1), mat=spec.mat_dark)
+    hw_b = hws[0] + gt * 0.5
+    t.box(b, "saddle_girth_belly", (-hw_b, ybot_g - gt * 0.5, zg0), (hw_b, ybot_g + gt * 0.6, zg1), mat=spec.mat_dark)
+    # 束带（billet）：肚带上端拐进鞍垫底下与鞍连成一体。真鞍就是这么系的，而在模型里
+    # 它同时是**结构必需**——没有它，两条侧带的最高一格在 x 上比鞍垫还宽，整副鞍在
+    # 连通性断言里散成"鞍 + 左带 + 右带"三块。
+    for sgn, side in ((-1.0, "l"), (1.0, "r")):
+        xi = sgn * xs[PAD_NX] * 0.55
+        # 外端必须够到**最上一格侧带的外面**：桶身自上而下变宽，按束带自己那个高度算
+        # 出来的半宽比侧带窄，够不着——两者中间留一道缝，鞍与带还是两块。
+        xo = sgn * (max(T.half_at(zgc, ys[3] - gt), T.half_at(zgc, (ys[2] + ys[3]) / 2)) + gt * 0.7)
+        t.box(b, f"saddle_billet_{side}", (xi, ys[3] - gt * 1.4, zg0), (xo, ys[3], zg1), mat=spec.mat_dark)
+    # 扣：肚带侧面一枚金属件，一眼看出这是"束紧的带子"不是"画上去的一道深色"
+    t.box(b, "saddle_buckle_l", (-T.half_at(zgc, ys[2]) - gt, ys[2], zg0 - gt * 0.4),
+          (-T.half_at(zgc, ys[2]) + gt * 0.4, ys[2] + gt * 2.2, zg1 + gt * 0.4), mat=spec.mat_trim)
+    t.box(b, "saddle_buckle_r", (T.half_at(zgc, ys[2]) - gt * 0.4, ys[2], zg0 - gt * 0.4),
+          (T.half_at(zgc, ys[2]) + gt, ys[2] + gt * 2.2, zg1 + gt * 0.4), mat=spec.mat_trim)
+
+    # --- 马镫：革带 + 铁环。踏板高度按 spec 定，骑乘动画的脚就落在这上面 ---
+    if spec.stirrup:
+        for sgn, side in ((-1.0, "l"), (1.0, "r")):
+            # 镫挂在鞍翼外侧——同样按桶身实际半宽定，不继承鞍垫的
+            xo = sgn * (hw_side + Pr.u(0.030))
+            # 镫挂在座的中后段——骑手的腿在那儿，而不是压在马肩上。首版取 0.42 偏前，
+            # 肩臂大幅前摆时直接扫过镫环（实测穿插 1.55）。
+            ztop = _lerpf(z0, z1, 0.56)
+            y_bot = seat_top_y - STIRRUP_DROP
+            y_top = min(pad_top.values())
+            lz = Pr.u(0.024)
+            t.box(b, f"saddle_stirrup_leather_{side}", (xo - sgn * Pr.u(0.010), y_bot + Pr.u(0.040), ztop - lz),
+                  (xo + sgn * Pr.u(0.010), y_top, ztop + lz), mat=spec.mat)
+            # 镫革挂点（stirrup bar）：真鞍的鞍架上就有这么一根横档，革带穿在上面。
+            # 在模型里它同时是**结构必需**——革带整条挂在鞍垫外侧，不加这根横档，
+            # 镫与革带合起来是一块飘在马腿旁边的孤岛。
+            t.box(b, f"saddle_stirrup_bar_{side}", (sgn * xs[PAD_NX] * 0.70, y_top - Pr.u(0.022), ztop - lz),
+                  (xo + sgn * Pr.u(0.010), y_top, ztop + lz), mat=spec.mat_trim)
+            rw, rt, rh = Pr.u(0.040), Pr.u(0.013), Pr.u(0.052)
+            # 环：左右两根竖梁 + 踏板 + **顶梁**，中间留孔（实心方块读不成"环"）。
+            # 顶梁不是装饰：革带只有 ±0.010W 宽，正好从两根竖梁中间穿过去谁也碰不着，
+            # 镫整个成了飘在腿边的孤岛（连通性断言报的就是这个）。真镫本来也是闭合的环。
+            for i, dx in enumerate((-1.0, 1.0)):
+                t.box(b, f"saddle_stirrup_ring_{side}_{i + 1}",
+                      (xo + dx * rw, y_bot, ztop - lz * 1.5), (xo + dx * (rw - rt), y_bot + rh, ztop + lz * 1.5),
+                      mat=spec.mat_trim)
+            t.box(b, f"saddle_stirrup_tread_{side}", (xo - rw, y_bot, ztop - lz * 1.5),
+                  (xo + rw, y_bot + rt, ztop + lz * 1.5), mat=spec.mat_trim)
+            t.box(b, f"saddle_stirrup_bow_{side}", (xo - rw, y_bot + rh - rt, ztop - lz * 1.5),
+                  (xo + rw, y_bot + rh, ztop + lz * 1.5), mat=spec.mat_trim)
+            if spec.glow:
+                t.box(b, f"saddle_stirrup_glow_{side}", (xo - rw * 0.8, y_bot + rt, ztop - lz * 0.5),
+                      (xo + rw * 0.8, y_bot + rt + Pr.u(0.008), ztop + lz * 0.5), mat="glow", glow=True)
+
+
+def build_saddle(t: Tack, fit: Fit, spec: SaddleSpec) -> None:
+    part_saddle(t, fit, spec)
+
+
+def check_saddle(t: Tack, fit: Fit, spec: SaddleSpec) -> list[str]:
+    """马鞍自检。除通用三条外，四条各挡一种翻车：
+
+      · **坐在背上**：鞍垫与躯干皮有实交，且鞍垫顶面高过背线。悬在背上方半个单位，
+        侧视图看不出来（鞍本来就该在背上），跑起来就是一副飘着的鞍。
+      · **人坐得下**：座面必须有一块够大的近水平区域。这条现在断言，是因为骑乘动画
+        要拿它当落点——等做动画时才发现鞍坐不下人，就得回来重做几何。
+      · **肚带真的绕过去了**：肚带最低点必须低于腹底，且与鞍垫连成一体。侧视里
+        "带子贴在肚子侧面"和"带子绕过肚子"长得一模一样。
+      · **镫够得着**：镫底离地高度要落在骑手能踩到的范围。太高人骑上去脚悬空，
+        太低扫地。
+    """
+    Pr, T = fit.P, fit.torso
+    els = tack_els(t)
+    bad = check_common(t, fit, lambda b: b == SADDLE_BONE)
+    if not els:
+        return bad
+    by_name = {e["name"]: e for e in els}
+    pads = [e for e in els if e["name"].startswith("saddle_pad_")]
+    if not pads:
+        return bad + ["没有鞍垫件"]
+
+    torso_els = [e for e in fit.pelt_els if is_shape(e["name"])]
+    bite = sum(_overlap_vol(p, pe) for p in pads for pe in torso_els)
+    if bite < 1.0:
+        bad.append(f"鞍垫没坐在背上：与躯干皮交体积仅 {bite:.3f}")
+    for p in pads:
+        zc = (p["from"][2] + p["to"][2]) / 2
+        xc = (abs(p["from"][0]) + abs(p["to"][0])) / 2
+        if p["to"][1] <= T.top_at(zc, xc) + 1e-6:
+            bad.append(f"{p['name']} 埋在背线以下（顶 {p['to'][1]:.2f} ≤ 背 {T.top_at(zc, xc):.2f}）")
+
+    # 座面：有鞍架就是座板本身；光垫子档骑手直接坐在垫上，座面是**整块垫的并集**
+    # ——按单格算会得出 1.7×2.0，那是格子的尺寸不是能坐的面积。
+    seats = [e for e in els if e["name"].startswith("saddle_seat")] or pads
+    sx = max(e["to"][0] for e in seats) - min(e["from"][0] for e in seats)
+    sz = max(e["to"][2] for e in seats) - min(e["from"][2] for e in seats)
+    seat_top = max(e["to"][1] for e in seats)
+    if sz < SEAT_MIN_Z or sx < SEAT_MIN_X:
+        bad.append(f"座面 {sx:.1f}×{sz:.1f} 单位，坐不下骑手（至少 {SEAT_MIN_X}×{SEAT_MIN_Z}）")
+
+    girth = [e for e in els if "girth" in e["name"]]
+    if not girth:
+        bad.append("没有肚带——鞍会滑下去")
+    else:
+        zc = (min(e["from"][2] for e in girth) + max(e["to"][2] for e in girth)) / 2
+        belly = T.at(zc)[2]
+        low = min(e["from"][1] for e in girth)
+        if low > belly + 0.02:
+            bad.append(f"肚带没绕到腹下：最低 {low:.2f} > 腹底 {belly:.2f}")
+
+    stir = [e for e in els if "stirrup_tread" in e["name"]]
+    if spec.stirrup:
+        if not stir:
+            bad.append("分档声明有镫，却一件都没出")
+        else:
+            # 判据以**骑手**为基准（座面到镫的落差），不是以地面为基准。同一个骑手要能
+            # 骑三档马，"离地多高"在三档上意义完全不同，"腿够不够得着"才是一样的。
+            drop = seat_top - min(e["from"][1] for e in stir)
+            lo, hi = STIRRUP_REACH
+            if not lo <= drop <= hi:
+                bad.append(f"座面到镫底 {drop:.1f} 单位，不在骑手腿够得着的 {lo}–{hi}（玩家腿长约 12）")
+    elif stir:
+        bad.append("分档声明无镫，却出了镫件")
+
+    comps = connected_components(_Shim(els))
+    if len(comps) != 1:
+        detail = " / ".join(f"{len(c)} 件({c[0]}…)" for c in comps[:3])
+        bad.append(f"整副鞍应是一整体，实为 {len(comps)} 块：{detail}")
+    return bad
 
 
 # ================================================================ 自检
@@ -411,6 +789,14 @@ def _overlap_vol(a: dict, b: dict) -> float:
     return float(np.prod(d)) if (d > 0).all() else 0.0
 
 
+def comp_type(name: str) -> str:
+    """件名 → **部件类型**（去掉序号与左右）。`shoe_f_l_nail_l2` → `shoe_nail`。
+    分档核验拿它比"这一档是不是真多了东西"，而不是比件数——件数多可能只是同一部件
+    切得更碎。"""
+    toks = [re.sub(r"\d+$", "", p) for p in name.split("_")]
+    return "_".join(p for p in toks if p and p not in ("l", "r", "f", "h"))
+
+
 def _mirror_suffix(sfx: str) -> str:
     """件名尾的 _l/_r（含 nail_l2 这种带序号的）翻个面；居中件（toe）映射到自己。"""
     m = re.fullmatch(r"(.*)_([lr])(\d*)", sfx)
@@ -424,8 +810,33 @@ MIN_SHOW = 0.10  # 露出蹄外的下限（单位）
 STRAY_TOL = 0.02  # 与"不该碰的皮件"的容许交体积
 
 
-def check_tack(t: Tack, pelt_els: list[dict], fits: dict[str, HoofFit], spec: ShoeSpec) -> list[str]:
-    """马具层自检。四条各自对应一种在渲染图上看不出来的翻车：
+def tack_els(t: Tack) -> list[dict]:
+    return [e for e in t.skel.data["elements"] if e.get("_tack")]
+
+
+def check_common(t: Tack, fit: Fit, bone_ok) -> list[str]:
+    """不分种类的三条：不穿地、只挂允许的骨、件名前缀一致。
+
+    「只挂允许的骨」是最要紧的一条：马具挂错骨不会报错、静止姿一模一样，只有跑起来
+    才会看见鞍随着后腿甩、蹄铁留在原地。静帧永远抓不到。
+    """
+    els = tack_els(t)
+    bad: list[str] = []
+    if not els:
+        return ["马具层一件都没有"]
+    lo_all = min(float(_aabb(e)[0][1]) for e in els)
+    if lo_all < -0.02:
+        who = sorted(e["name"] for e in els if float(_aabb(e)[0][1]) <= lo_all + 0.02)
+        bad.append(f"马具穿到地下：最低 y={lo_all:.3f}（{', '.join(who[:4])}）")
+    for e in els:
+        bone = _bone_of(t.skel.data, e["uuid"])
+        if not bone_ok(bone):
+            bad.append(f"{e['name']} 挂在 {bone}，不在本种马具允许的骨上（跨关节会被扯裂 / 随错的部位甩动）")
+    return bad
+
+
+def check_shoe(t: Tack, fit: Fit, spec: ShoeSpec) -> list[str]:
+    """蹄铁自检。四条各自对应一种在渲染图上看不出来的翻车：
 
       · **穿地 / 悬空**：铁条底面必须恰在 y=0。差 0.1 个单位，静止侧视看不出来，
         但绑定层拿最低点当蹄底，四蹄触地点就整体偏了（皮层的距毛就是这么翻的车）。
@@ -436,21 +847,17 @@ def check_tack(t: Tack, pelt_els: list[dict], fits: dict[str, HoofFit], spec: Sh
 
     外加连通性（钉头/灵纹悬空）与左右镜像（单侧写错数）。
     """
-    els = [e for e in t.skel.data["elements"] if e.get("_tack")]
-    bad: list[str] = []
+    pelt_els, fits = fit.pelt_els, fit.hooves
+    els = tack_els(t)
+    bad = check_common(t, fit, lambda b: bool(b) and b.startswith("hoof_"))
     if not els:
-        return ["马具层一件都没有"]
+        return bad
 
     by_foot: dict[str, list[dict]] = {}
     for e in els:
         # 件名形如 shoe_<tag>_<side>_<...>
         parts = e["name"].split("_")
         by_foot.setdefault(f"{parts[1]}_{parts[2]}", []).append(e)
-
-    lo_all = min(float(_aabb(e)[0][1]) for e in els)
-    if lo_all < -0.02:
-        who = sorted(e["name"] for e in els if float(_aabb(e)[0][1]) <= lo_all + 0.02)
-        bad.append(f"马具穿到地下：最低 y={lo_all:.3f}（{', '.join(who[:4])}）")
 
     pelt_by_name = {e["name"]: e for e in pelt_els}
     for key, fit in fits.items():
@@ -510,12 +917,32 @@ def check_tack(t: Tack, pelt_els: list[dict], fits: dict[str, HoofFit], spec: Sh
             dyz = max(abs(e[q][i] - o[q][i]) for q in ("from", "to") for i in (1, 2))
             if dx > 0.01 or dyz > 0.01:
                 bad.append(f"{pre}{sfx} 与 {pre}{m} 不镜像（Δx={dx:.3f} Δyz={dyz:.3f}）")
-
-    for e in els:
-        bone = _bone_of(t.skel.data, e["uuid"])
-        if not bone or not bone.startswith("hoof_"):
-            bad.append(f"{e['name']} 挂在 {bone}，蹄铁只应挂在 hoof_* 骨上（否则会跨关节被扯裂）")
     return bad
+
+
+# ================================================================ 种类注册
+@dataclass(frozen=True)
+class Kind:
+    label: str
+    table: dict
+    build: object
+    check: object
+    against: tuple[str, ...]  # 它压在**哪种毛色材质**上——配色对比度按这些查
+    min_contrast: float  # 对比度下限。按"颜色在这件马具里承担多少辨识职责"定，见下
+
+
+# 对比度门槛为什么分种类：**颜色承担的辨识职责不一样**。
+#   · 蹄铁是贴在蹄上的一条细带，不改变剪影——玩家能不能看出马蹄上有铁，全靠颜色，
+#     所以门槛高（45）。
+#   · 马鞍改变整只马的剪影（鞍桥、垂下的鞍翼、晃着的镫、绕过肚子的带），远处一眼
+#     就知道"这马配了鞍"。颜色只需"不是同一块颜色"，不必抢眼，所以门槛低（32）。
+# 三种毛色（锈骝 128,72,43 / 枯原 148,126,82 / 碎雪 146,140,131）连同各自的暗部
+# 几乎铺满了中等明度的暖色带，一刀切 45 会把**所有**棕色皮革排除掉——那不是在保证
+# 可辨识，是在替美术拍板。
+KINDS: dict[str, Kind] = {
+    "shoe": Kind("蹄铁", SHOES, build_shoes, check_shoe, ("hoof",), 45.0),
+    "saddle": Kind("马鞍", SADDLES, build_saddle, check_saddle, ("coat", "coat_dark"), 32.0),
+}
 
 
 def _bone_of(data: dict, uuid_: str) -> str | None:
@@ -536,35 +963,29 @@ def _bone_of(data: dict, uuid_: str) -> str | None:
     return found[0] if found else None
 
 
-# ---------------------------------------------------------------- 动画期贴地
-_FRAMES: dict[str, dict[str, list]] = {}
+# ---------------------------------------------------------------- 动画期核验
+_FRAMES: dict[str, list] = {}
 
 
-def hoof_frames(pkey: str, n: int = 32) -> dict[str, list]:
-    """每档体型的**蹄骨世界变换**逐帧表，按体型缓存一次。
+def bone_frames(pkey: str, n: int = 32) -> list[tuple[str, float, dict]]:
+    """每档体型的**全骨世界变换**逐帧表，按体型缓存一次。
 
-    蹄铁刚性挂在蹄骨上，所以"动画里会不会铲地"只取决于蹄骨的世界变换 + 马具自己的
-    角点——与分档无关。先把变换算出来存着，三档蹄铁共用，省掉两轮逆解。
+    马具刚性挂在骨上，所以"动画里会不会铲地 / 会不会陷进皮里"只取决于骨的世界变换
+    加上马具自己的角点——与分档无关。算一次三档共用，省掉两轮逆解。
     """
-    if pkey in _FRAMES:
-        return _FRAMES[pkey]
-    import gen_anim as G
-    from rig import Rig
+    if pkey not in _FRAMES:
+        import gen_anim as G
+        from rig import Rig
 
-    P = PROFILES[pkey]
-    rig = Rig(FINAL / f"HorsePelt_{GEOM_COAT}_{pkey}.bbmodel")
-    out: dict[str, list] = {}
-    for name in G.ANIMS:
-        for i in range(n):
-            pose = G.sample(rig, P, name, i / n)
-            W = rig.world(pose)
-            for tag in ("f", "h"):
-                for side in ("l", "r"):
-                    bone = f"hoof_{tag}_{side}"
-                    out.setdefault(bone, []).append((name, i / n, W[bone]))
-    rig.residuals.clear()
-    _FRAMES[pkey] = out
-    return out
+        P = PROFILES[pkey]
+        rig = Rig(FINAL / f"HorsePelt_{GEOM_COAT}_{pkey}.bbmodel")
+        out = []
+        for name in G.ANIMS:
+            for i in range(n):
+                out.append((name, i / n, rig.world(G.sample(rig, P, name, i / n))))
+        rig.residuals.clear()
+        _FRAMES[pkey] = out
+    return _FRAMES[pkey]
 
 
 SINK_TOL = 0.12  # 与皮层动画自检同一把尺（1 单位 = 1 体素 = 6.25 cm）
@@ -611,51 +1032,162 @@ def check_anim_bones(data: dict) -> list[str]:
     return [f"动画引用了 {len(miss)} 根本文件没有的骨（轨道会被静默忽略）"] if miss else []
 
 
+def _by_bone(data: dict, pred) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for e in data["elements"]:
+        if pred(e):
+            out.setdefault(_bone_of(data, e["uuid"]), []).append(e)
+    return out
+
+
 def check_anim_ground(t: Tack, pkey: str) -> tuple[float, str]:
     """动画里马具的最深穿地。蹄只转 12°，但蹄铁比蹄宽出一截，外缘的力臂更长——
     "蹄自己没穿地"推不出"蹄铁没穿地"，得单独量。"""
-    frames = hoof_frames(pkey)
-    pts: dict[str, np.ndarray] = {}
-    for e in t.skel.data["elements"]:
-        if not e.get("_tack"):
-            continue
-        bone = _bone_of(t.skel.data, e["uuid"])
-        pts.setdefault(bone, []).extend(_corners(e))
+    pts = {b: np.array([c for e in els for c in _corners(e)], float)
+           for b, els in _by_bone(t.skel.data, lambda e: e.get("_tack")).items()}
     worst, who = 0.0, ""
-    for bone, corners in pts.items():
-        A = np.array(corners, float)
-        for name, tt, W in frames[bone]:
-            y = (A @ W[:3, :3].T + W[:3, 3])[:, 1].min()
+    for name, tt, W in bone_frames(pkey):
+        for bone, A in pts.items():
+            y = (A @ W[bone][:3, :3].T + W[bone][:3, 3])[:, 1].min()
             if -y > worst:
                 worst, who = float(-y), f"{bone}@{name} t={tt:.2f}"
     return worst, who
 
 
+# 容许增量按**这一对各自能保证什么**分三档，不是一刀切：
+#   · body —— 刚性主体（鞍垫/座/鞍桥/鞍翼、整副蹄铁）对着躯干。这是"马具不会陷进
+#     马里"的核心保证，卡得最紧。
+#   · strap —— 束具（肚带/束带/扣）对着躯干。带子在真马身上是**被顶开**的，刚体盒
+#     做不到，所以躯干一屈伸它必然陷进去一点。
+#   · limb —— 任何马具对着**腿**。马腿收在桶身底下（前肢中线 x≈2.3，桶身半宽≈3.4，
+#     腿在体内侧不在体外侧），肚带绕桶身一圈就必然横在肘的摆动弧上；袭步与倒毙里前臂
+#     折到腹下，从肚带中间穿过去。这是本方案已知且接受的代价，给它一个**量出来的**
+#     上限，而不是混进前两档里放大到谁都拦不住。
+# body 定在 0.45：挽马倒毙那一帧鞍垫前段陷进背 0.40，这是"刚体鞍挂一根骨"这个决定
+# **量出来的**代价（背在鞍下屈伸，鞍不跟着弯）。0.40 单位 = 2.5 cm，且方向是**陷进去**
+# ——那一侧被马体挡着看不见；真正难看的是反方向（鞍浮起来离背），那条另有 `CONTACT`
+# 断言专管，不靠这个数兜。
+FIT_TOL = {"body": 0.45, "strap": 0.85, "limb": 2.40}
+LIMB_BONES = ("scapula", "humerus", "radius", "carpus", "femur", "tibia", "tarsus", "fetlock", "hoof")
+STRAP_WORDS = ("girth", "billet", "buckle")
+# 必须**全程贴着马**的部件类型：鞍垫是鞍与马之间唯一的接触面，它一旦整片离开马体，
+# 玩家看到的就是一副浮在背上方的鞍——比陷进去难看得多，而陷入深度那条判据完全看不见
+# 这个方向（它只会报 0）。所以单独立一条：这些件在每一帧都必须与马体有实交。
+MUST_CONTACT = ("saddle_pad",)
+
+
+def check_anim_fit(t: Tack, pkey: str) -> dict[str, tuple[float, str]]:
+    """动画里马具**比静止姿更深地陷进皮**多少，按上面三档分别取最大。
+
+    马鞍是刚体、只挂一根骨，而它下面的背在屈伸——这是设计上就接受的代价（见
+    `SADDLE_BONE` 注释），但"接受"必须有个数。
+
+    三处判据设计要点：
+      · 查的是**增量**不是绝对深度。鞍垫本来就该嵌进皮里一截（那是贴合），只有"动画
+        让它比静止时陷得更深"才是问题。
+      · 增量必须**逐对**算。首版拿"全场静止姿最深"当唯一基线去减每帧的"全场最深"，
+        而鞍垫为了连通性共用底面、深埋在躯干里，那个全局基线一口气把腿穿过肚带的
+        1.8 单位减没了——报出来只有 0.75，还以为没事。
+      · **跳过皮层声明 `_loose` 的件**（耳/唇/额发/尾鬃股）。那些本来就是各自飘的，
+        马蹄从垂下的尾鬃里穿过去不是缺陷。这跟 `shell_check` 认同一个声明——造型层
+        说了哪些件不参与刚体贴合判定，两处判据都照办，不各猜各的。
+
+    只比对**挂在别的骨上**的皮件：同骨的相对位置永不改变，算了也是零，白烧时间。
+    """
+    tack_by_bone = _by_bone(t.skel.data, lambda e: e.get("_tack"))
+    pelt_by_bone = _by_bone(t.skel.data, lambda e: e.get("_pelt") and not e.get("_loose"))
+    empty = {k: (0.0, "") for k in FIT_TOL}
+    if not pelt_by_bone:  # 纯马具文件（没带皮），这条无从查起
+        return empty
+    tack = [(tb, e["name"], np.array(_corners(e), float),
+             "strap" if any(w in e["name"] for w in STRAP_WORDS) else "body")
+            for tb, els in tack_by_bone.items() for e in els]
+    pelt = [(pb, e["name"], np.array(_corners(e), float), *_obb(e),
+             pb.startswith(LIMB_BONES)) for pb, els in pelt_by_bone.items() for e in els]
+
+    contact: dict[str, float] = {}  # 每个"必须贴着"的件，在全部帧里最差的那一次接触深度
+
+    def scan(W, acc: dict, tag: str) -> None:
+        # 先用世界 AABB 粗筛：47 × 155 对里真正靠近的只有个位数，逐对做 OBB 是白烧
+        tw = [(tb, tn, A @ W[tb][:3, :3].T + W[tb][:3, 3], cls) for tb, tn, A, cls in tack]
+        pw = [(pb, pn, C @ W[pb][:3, :3].T + W[pb][:3, 3], c, h, R, lb) for pb, pn, C, c, h, R, lb in pelt]
+        tb_box = [(w.min(axis=0), w.max(axis=0)) for _, _, w, _ in tw]
+        pb_box = [(w.min(axis=0), w.max(axis=0)) for _, _, w, _, _, _, _ in pw]
+        for i, (tbone, tn, world, cls) in enumerate(tw):
+            tlo, thi = tb_box[i]
+            best = -1e9
+            want = comp_type(tn) in MUST_CONTACT
+            for j, (pbone, pn, _pw, c, h, R, is_limb) in enumerate(pw):
+                same = pbone == tbone
+                if same and not want:
+                    continue
+                plo, phi = pb_box[j]
+                if (thi < plo).any() or (phi < tlo).any():
+                    continue
+                Wp = W[pbone]
+                q = np.abs(((world - Wp[:3, 3]) @ Wp[:3, :3] - c) @ R)
+                d = float((h[None, :] - q).min(axis=1).max())
+                # 接触判据要把**同骨**的皮件也算进来：鞍垫压着的躯干件多半就挂在
+                # thorax_back 上，与鞍同骨——按"增量"那条的规矩跳过同骨，接触这边就
+                # 一个候选都不剩，`best` 停在哨兵值上，报出来是 −1e9 这种鬼数。
+                # 同骨恰恰是最实的接触：相对位置永不改变，贴上了就永远贴着。
+                if want and not is_limb and d > best:
+                    best = d
+                if same:
+                    continue
+                k = (tn, pn)
+                if d > acc.get(k, (0.0, "", ""))[0]:
+                    acc[k] = (d, "limb" if is_limb else cls, tag)
+            if want and tag != "rest":
+                # 一个候选都没有 = 这一帧整片飘在体外。哨兵值不要直接漏进报告里
+                # （−1e9 读起来像 bug 不像结论），压成一个能看的负数。
+                contact[tn] = min(contact.get(tn, 1e9), max(best, -9.99))
+
+    rest: dict = {}
+    scan({b: np.eye(4) for b in {*tack_by_bone, *pelt_by_bone}}, rest, "rest")
+    worst: dict = {}
+    for name, tt, W in bone_frames(pkey):
+        scan(W, worst, f"{name} t={tt:.2f}")
+
+    out = dict(empty)
+    for (tn, pn), (d, bucket, when) in worst.items():
+        inc = d - rest.get((tn, pn), (0.0,))[0]
+        if inc > out[bucket][0]:
+            out[bucket] = (inc, f"{tn}↔{pn}@{when}")
+    if contact:
+        tn = min(contact, key=lambda k: contact[k])
+        out["contact"] = (contact[tn], tn)
+    return out
+
+
 # ================================================================ 装配 / CLI
-def build(pkey: str, kind: str, tier: str, with_horse: bool) -> tuple[Tack, list[dict], dict[str, HoofFit]]:
+def build(pkey: str, kind: str, tier: str) -> tuple[Tack, Fit]:
     pelt = FINAL / f"HorsePelt_{GEOM_COAT}_{pkey}.bbmodel"
     if not pelt.is_file():
         raise SystemExit(f"找不到皮层: {pelt}（先跑 gen_pelt.py）")
     skel = Skeleton(pelt)
     pelt_els = [dict(e) for e in skel.data["elements"] if e.get("_pelt")]
-    fits = read_hooves(skel.data)
+    fit = Fit(P=PROFILES[pkey], pelt_els=pelt_els, hooves=read_hooves(skel.data), torso=Torso(pelt_els))
     extend_texture(skel.data)
-    t = Tack(skel, PROFILES[pkey])
-    _label, table, fn = KINDS[kind]
-    fn(t, fits, table[tier], pelt_els)
-    if not with_horse:
-        keep = {e["uuid"] for e in skel.data["elements"] if e.get("_tack")}
-        skel.data["elements"] = [e for e in skel.data["elements"] if e["uuid"] in keep]
+    t = Tack(skel, fit.P)
+    KINDS[kind].build(t, fit, KINDS[kind].table[tier])
+    return t, fit
 
-        def prune(node):
-            if isinstance(node, str):
-                return node in keep
-            node["children"] = [c for c in node.get("children", []) if prune(c)]
-            return True
 
-        for root in skel.data["outliner"]:
-            prune(root)
-    return t, pelt_els, fits
+def drop_pelt(t: Tack) -> None:
+    """裁掉皮件、**保留整棵骨树**——动画轨道按骨 uuid 索引，骨树缺一根那条轨道就被
+    静默忽略（`check_anim_bones` 查的就是这个）。"""
+    keep = {e["uuid"] for e in t.skel.data["elements"] if e.get("_tack")}
+    t.skel.data["elements"] = [e for e in t.skel.data["elements"] if e["uuid"] in keep]
+
+    def prune(node):
+        if isinstance(node, str):
+            return node in keep
+        node["children"] = [c for c in node.get("children", []) if prune(c)]
+        return True
+
+    for root in t.skel.data["outliner"]:
+        prune(root)
 
 
 MIN_CONTRAST = 45.0  # 主色与蹄色的最小 RGB 欧氏距离
@@ -674,33 +1206,43 @@ def check_contrast() -> list[str]:
     from gen_pelt import COATS
 
     bad = []
-    for kind, (_label, table, _fn) in KINDS.items():
-        for tk, spec in table.items():
+    for kind, K in KINDS.items():
+        for tk, spec in K.table.items():
             r0, g0, b0 = TACK_MATS[spec.mat]
-            for ck, coat in COATS.items():
-                r1, g1, b1 = coat.mats["hoof"]
-                d = ((r0 - r1) ** 2 + (g0 - g1) ** 2 + (b0 - b1) ** 2) ** 0.5
-                if d < MIN_CONTRAST:
-                    bad.append(f"{kind}/{tk} 的 {spec.mat} 与「{coat.label}」的蹄色只差 {d:.1f}，远处看不出穿没穿")
+            for coat in COATS.values():
+                for key in K.against:
+                    r1, g1, b1 = coat.mats[key]
+                    d = ((r0 - r1) ** 2 + (g0 - g1) ** 2 + (b0 - b1) ** 2) ** 0.5
+                    if d < K.min_contrast:
+                        bad.append(f"{kind}/{tk} 的 {spec.mat} 与「{coat.label}」的 {key} 只差 {d:.1f}"
+                                   f"（下限 {K.min_contrast:.0f}），远处看不出穿没穿")
     return bad
 
 
 def check_geom_same_across_coats(pkey: str) -> list[str]:
-    """三种毛色的蹄件必须几何全等——马具只按一种毛色量尺寸，这条塌了就是量错了马。"""
+    """马具**读到的每一件**皮件在三种毛色里必须几何全等。
+
+    马具只按一种毛色量尺寸（`GEOM_COAT`），这条塌了就是量错了马。范围必须覆盖
+    `is_shape` 认的那些与蹄件——只查蹄的话，鞍读的躯干件漂了照样查不出来。
+    毛色专属的花纹件（dorsal_stripe / dapple）本来就只在一种毛色里存在，所以采样器
+    从一开始就不读它们；这条断言与那条排除是同一个约定的两面。
+    """
     from gen_pelt import COATS
 
-    ref: dict[str, list] | None = None
+    ref: dict[str, tuple] | None = None
     bad = []
     for ck in sorted(COATS):
         f = FINAL / f"HorsePelt_{ck}_{pkey}.bbmodel"
         if not f.is_file():
             continue
-        els = {e["name"]: (e["from"], e["to"]) for e in json.loads(f.read_text())["elements"] if e.get("_pelt")}
-        cur = {k: v for k, v in els.items() if k.startswith("hoof_")}
+        cur = {e["name"]: (tuple(e["from"]), tuple(e["to"]))
+               for e in json.loads(f.read_text())["elements"]
+               if e.get("_pelt") and (is_shape(e["name"]) or e["name"].startswith("hoof_"))}
         if ref is None:
             ref = cur
         elif cur != ref:
-            bad.append(f"{ck} 的蹄件几何与 {GEOM_COAT} 不同——马具尺寸来源不成立")
+            diff = sorted(set(cur) ^ set(ref)) or [k for k in cur if ref.get(k) != cur[k]]
+            bad.append(f"{ck} 的皮件几何与 {GEOM_COAT} 不同（{', '.join(diff[:3])}）——马具尺寸来源不成立")
     return bad
 
 
@@ -715,10 +1257,10 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.list:
-        for k, (label, table, _fn) in KINDS.items():
-            print(f"{k}（{label}）：")
-            for tk, spec in table.items():
-                print(f"  {tk:8s} {spec.label:12s} {spec.blurb}")
+        for k, K in KINDS.items():
+            print(f"{k}（{K.label}）：")
+            for tk, spec in K.table.items():
+                print(f"  {tk:9s} {spec.label:8s} {spec.blurb}")
         return 0
 
     pkeys = sorted(PROFILES) if args.profile == "all" else [args.profile]
@@ -734,22 +1276,44 @@ def main() -> int:
             rc = 1
 
     for kind in kinds:
-        label, table, _fn = KINDS[kind]
-        tiers = [args.tier] if args.tier else list(table)
+        K = KINDS[kind]
+        tiers = [args.tier] if args.tier else list(K.table)
         vols: dict[str, list[float]] = {}
         for pk in pkeys:
             for tier in tiers:
-                if tier not in table:
-                    print(f"未知分档 {tier}（{kind} 有 {', '.join(table)}）")
+                if tier not in K.table:
+                    print(f"未知分档 {tier}（{kind} 有 {', '.join(K.table)}）")
                     return 2
-                spec = table[tier]
-                t, pelt_els, fits = build(pk, kind, tier, args.with_horse)
+                spec = K.table[tier]
+                t, fit = build(pk, kind, tier)
+                vols.setdefault(tier, []).append((
+                    sum(float(np.prod(np.array(e["to"]) - np.array(e["from"]))) for e in tack_els(t)),
+                    {comp_type(e["name"]) for e in tack_els(t)},
+                ))
+                bad = K.check(t, fit, spec)
+                # 贴合类核验必须在**裁掉皮层之前**做——裁完就没有可比对的皮了
+                sink = 0.0
+                who = ""
+                fits = {k: (0.0, "") for k in FIT_TOL}
+                if not args.skip_anim:
+                    sink, who = check_anim_ground(t, pk)
+                    if sink > SINK_TOL:
+                        bad.append(f"动画里马具铲地 {sink:.2f} > {SINK_TOL}（{who}）")
+                    fits = check_anim_fit(t, pk)
+                    for bucket, (d, w) in fits.items():
+                        if bucket in FIT_TOL and d > FIT_TOL[bucket]:
+                            bad.append(f"[{bucket}] 比静止姿多陷进皮 {d:.2f} > {FIT_TOL[bucket]}（{w}）")
+                    if "contact" in fits and fits["contact"][0] <= 0.0:
+                        bad.append(f"鞍垫在动画里整片离开马体（{fits['contact'][1]} 最差接触 "
+                                   f"{fits['contact'][0]:.2f}）——鞍会看着浮在背上方")
+
                 name = f"Horse{kind.capitalize()}_{tier}_{pk}" + ("_on_horse" if args.with_horse else "")
+                if not args.with_horse:
+                    drop_pelt(t)
                 t.skel.data["name"] = name
                 t.skel.data["model_identifier"] = name
                 out = (STAGES if args.with_horse else TACK_DIR) / f"{name}.bbmodel"
                 out.parent.mkdir(parents=True, exist_ok=True)
-                bad = check_tack(t, pelt_els, fits, spec)
                 if not args.skip_anim:
                     t.skel.data["animations"] = anim_block(pk)
                     bad += check_anim_bones(t.skel.data)
@@ -758,32 +1322,29 @@ def main() -> int:
                 else:
                     out.write_text(json.dumps(t.skel.data, ensure_ascii=False, indent=1))
 
-                sink, who = (0.0, "") if args.skip_anim else check_anim_ground(t, pk)
-                if sink > SINK_TOL:
-                    bad.append(f"动画里马具铲地 {sink:.2f} > {SINK_TOL}（{who}）")
-                vols.setdefault(tier, []).append(
-                    sum(
-                        float(np.prod(np.array(e["to"]) - np.array(e["from"])))
-                        for e in t.skel.data["elements"]
-                        if e.get("_tack")
-                    )
-                )
                 mark = "✓" if not bad else "✗"
-                extra = "" if args.skip_anim else f" 动画贴地 {sink:.2f}"
+                extra = "" if args.skip_anim else (
+                    f" 贴地 {sink:.2f} " + " ".join(f"{k}{fits[k][0]:+.2f}" for k in FIT_TOL))
                 print(f"{mark} {out.relative_to(FINAL.parents[1])}  【{spec.label} · {PROFILES[pk].label}】"
                       f"件 {t.count}{extra}")
                 for m in bad:
                     print(f"    ✗ {m}")
                     rc = 1
 
-        # 分档必须**看得出来**：体积严格递增是"远处能分辨"最省事的代理指标。
-        if len(tiers) == len(table) and len(pkeys) > 0:
-            order = list(table)
+        # 分档必须**看得出来**。首版只查"用料递增 ≥1.15×"——对蹄铁成立（那一档差别
+        # 就是铁更厚更宽），对马鞍不成立：二档与三档都是皮鞍，差别在**配件**（鞍桥包
+        # 灵铁、灵纹、灵铁镫），硬要求体积多 15% 只会逼出一副没来由的大鞍。
+        # 改成两条一起查：**必须多出新的部件类型**（真的多了东西）+ **用料不得减少**。
+        if len(tiers) == len(K.table) and len(pkeys) > 0:
+            order = list(K.table)
             for i in range(len(order) - 1):
                 a, b = vols.get(order[i], []), vols.get(order[i + 1], [])
-                for j, (va, vb) in enumerate(zip(a, b)):
-                    if vb <= va * 1.15:
-                        print(f"    ✗ {order[i + 1]} 的用料没比 {order[i]} 明显多（{va:.2f} → {vb:.2f}），分档看不出来")
+                for (va, ca), (vb, cb) in zip(a, b):
+                    if not cb - ca:
+                        print(f"    ✗ {order[i + 1]} 相对 {order[i]} 没有任何新部件类型，分档看不出来")
+                        rc = 1
+                    if vb <= va:
+                        print(f"    ✗ {order[i + 1]} 的用料没比 {order[i]} 多（{va:.1f} → {vb:.1f}）")
                         rc = 1
     return rc
 
