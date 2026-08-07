@@ -170,6 +170,37 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_qi_cost_survives_above_f32_max() {
+        // M14：wire 真值是 f64/double——finite f64 成本即使超过 f32::MAX
+        // （~3.4e38，旧 f32 窄化会溢出成 infinity）也必须原样进入快照，
+        // 不能出现无限大成本或服务端扣费与客户端展示分裂。
+        let above_f32_max = 1.0e40_f64;
+        assert!(above_f32_max > f64::from(f32::MAX), "fixture must exceed f32::MAX");
+        assert!(above_f32_max.is_finite());
+        let registry =
+            TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
+                definition.qi_cost = above_f32_max;
+            });
+        let known = KnownTechniques {
+            entries: vec![KnownTechnique {
+                id: "sword.cleave".to_string(),
+                proficiency: 0.5,
+                active: true,
+            }],
+        };
+        let snapshot = build_techniques_snapshot(&registry, &known);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(
+            snapshot.entries[0].qi_cost, above_f32_max,
+            "快照必须携带超过 f32::MAX 的 finite f64 成本，不能窄化成 infinity"
+        );
+        assert!(
+            snapshot.entries[0].qi_cost.is_finite(),
+            "over-f32::MAX 成本不得以 infinity 出现在 wire 上"
+        );
+    }
+
+    #[test]
     fn aggregate_snapshot_bound_accepts_checked_in_catalog() {
         // M18：catalog 被接受 ⇒ 学会全部条目的玩家必能收到完整快照。checked-in catalog
         // 49 条、最长 description 41 字节，最坏聚合大小必须显著低于 32 KiB wire 上限。
