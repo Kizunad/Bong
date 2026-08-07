@@ -498,6 +498,98 @@ def neck_centers(P: Profile) -> list[Vec]:
     return [(0.0, P.centrum_y(_lerp(z0, z1, i / 6)), _lerp(z0, z1, i / 6)) for i in range(7)]
 
 
+# ---------------------------------------------------------------- 颈：一椎一骨
+# 首版颈只有三根骨（base/mid/top），而颈皮与鬃各有 7 段。吃草要把颈弯到 −112°，三根骨
+# 摊下来单关节 37-51°，交界两侧的刚性盒子绕 pivot 张成楔形，离 pivot 6 个单位的鬃直接
+# 裂开 5 个单位——渲出来颈上一排缺口、鬃像梳子一样炸开（用户在 Blockbench 里看到的
+# 就是这个）。裂口宽度是 2r·sin(θ/2)，**只能靠把 θ 摊薄**：关节数翻一倍多，裂口按
+# sin 线性收窄，剩下的由皮层的接缝交叠吃掉（见 gen_pelt.seam_overlap）。
+NECK_JOINTS = 7
+# 单个颈关节的活动范围（度）。**壳按这个数留交叠、动画按这个数被断言**——两头认同一个
+# 数，接缝才不会在某条动画里突然张开。真马颈椎间的屈伸活动度约 15-25°，取 24。
+NECK_ROM = 28.0
+NECK = tuple(f"neck_{i + 1}" for i in range(NECK_JOINTS))  # 自鬐甲向上：neck_1 → neck_7
+TAIL_ROM = 24.0  # 单节尾骨的活动范围（甩尾 / 人立时尾整体扬起 130°，摊到 8 节）
+
+
+# 各关节的活动范围（度，相对静止姿的最大转角）。**这张表是壳与动画的共同契约**：
+# 皮层照它给接缝留交叠（gen_pelt.seam_pad），动画层被断言不许超（gen_anim.sanity）。
+# 两头认同一个数，接缝才不会在某条动画里突然张开——各写各的就等于没约定。
+# 数值取真马活动度并对现有十条动画留一成余量；腿的屈伸与 rig.LIMITS 同源（gen_anim
+# 起手会对拍，谁改了对不上就撞红）。
+JOINT_ROM: dict[str, float] = {
+    "root": 90.0,  # 整体骨，倒毙侧翻 84°
+    "hips": 14.0,
+    "lumbar": 12.0,
+    "thorax_back": 12.0,
+    "thorax_front": 10.0,
+    "skull": 84.0,  # 吃草时头相对末节颈骨几乎垂下来
+    "jaw": 24.0,
+    "scapula": 20.0,
+    "humerus": 56.0,
+    "radius": 80.0,
+    "carpus": 108.0,
+    "fetlock_f": 24.0,
+    "hoof_f": 12.0,
+    "femur": 48.0,
+    "tibia": 60.0,
+    "tarsus": 70.0,
+    "fetlock_h": 96.0,
+    "hoof_h": 12.0,
+}
+
+
+def rom(bone: str) -> float:
+    """这根骨允许的最大转角。颈 / 尾按族给，四肢去掉 _l/_r 后缀查表。"""
+    if bone in JOINT_ROM:
+        return JOINT_ROM[bone]
+    if bone.startswith("neck_"):
+        return NECK_ROM
+    if bone.startswith("tail_"):
+        return TAIL_ROM
+    base = bone[:-2] if bone.endswith(("_l", "_r")) else bone
+    if base in JOINT_ROM:
+        return JOINT_ROM[base]
+    raise KeyError(f"{bone} 没有登记活动范围——新骨必须进 JOINT_ROM，否则皮层不知道留多少交叠")
+
+
+def neck_seams(P: Profile) -> list[Vec]:
+    """8 个分界点 = 7 个椎间关节 + 顶端。相邻两点之间正好是一节颈椎，也正好是一根颈骨、
+    一段颈皮、一段鬃 —— 骨 / 椎 / 皮 / 鬃四者的分界从此是同一组数。
+
+    分界取**椎体中心的中点**而不是椎体中心：关节在椎与椎之间，不在椎体上。
+    """
+    cen = neck_centers(P)
+    chain = [(0.0, P.centrum_y(P.z_t1), P.z_t1), *cen, (0.0, P.y_occiput, P.z_occiput)]
+    return [_mid(chain[i], chain[i + 1]) for i in range(NECK_JOINTS + 1)]
+
+
+def neck_pivots(P: Profile) -> list[Vec]:
+    """7 根颈骨的 pivot —— 落在颈皮**相邻两段的共用面**上。
+
+    pivot 必须落在接缝上：这样关节一转，两段仍在 pivot 处相接，张开的只是随半径线性
+    增长的楔形（可以用交叠吃掉）；pivot 一旦偏离接缝，整个接缝面平移，从第一度起就裂。
+    """
+    return neck_seams(P)[:NECK_JOINTS]
+
+
+def neck_bone_at(P: Profile, z: float) -> str:
+    """按 z 落到哪一节颈骨。颈皮 / 鬃 / 肌肉共用这一个分界函数，别各写一份阈值——
+    首版颈皮按 t<0.34/0.72 分、鬃按 t<0.28/0.62 分，两条带的接缝落在不同的地方。"""
+    zs = [p[2] for p in neck_seams(P)]  # 自鬐甲向头单调递减
+    for i in range(NECK_JOINTS):
+        if z >= min(zs[i], zs[i + 1]) - 1e-9:
+            return NECK[i]
+    return NECK[-1]
+
+
+def _neck_bones(rig: Rig, P: Profile) -> None:
+    parent = "thorax_front"
+    for name, piv in zip(NECK, neck_pivots(P)):
+        rig.bone(name, piv, parent=parent)
+        parent = name
+
+
 # ================================================================ 部件：脊柱
 def part_spine(rig: Rig, P: Profile) -> None:
     """颈 7 · 胸 18 · 腰 6 · 荐 5（融合）。棘突高度由 dorsal_y 反推，鬐甲峰值恰好落在 wither。"""
@@ -506,11 +598,7 @@ def part_spine(rig: Rig, P: Profile) -> None:
     z_tmid = (P.z_t1 + P.z_t18) / 2
     rig.bone("thorax_back", (0.0, P.centrum_y(P.z_t18), P.z_t18), parent="lumbar")
     rig.bone("thorax_front", (0.0, P.centrum_y(z_tmid), z_tmid), parent="thorax_back")
-    rig.bone("neck_base", (0.0, P.centrum_y(P.z_t1), P.z_t1), parent="thorax_front")
-    z_nm = _lerp(P.z_t1, P.z_occiput, 0.45)
-    z_nt = _lerp(P.z_t1, P.z_occiput, 0.80)
-    rig.bone("neck_mid", (0.0, P.centrum_y(z_nm), z_nm), parent="neck_base")
-    rig.bone("neck_top", (0.0, P.centrum_y(z_nt), z_nt), parent="neck_mid")
+    _neck_bones(rig, P)
 
     seg_t = (P.z_t18 - P.z_t1) / 17.0  # 胸椎节距
 
@@ -623,7 +711,7 @@ def part_spine(rig: Rig, P: Profile) -> None:
         t = i / 6
         idx = 7 - i  # C7 … C1
         _x, y, z = cen[i]
-        bone = "neck_base" if t < 0.34 else ("neck_mid" if t < 0.72 else "neck_top")
+        bone = NECK[i]  # 一椎一骨
         half_w = P.u(0.038) if idx > 2 else P.u(0.050)
         a = _mid(chain[i], chain[i + 1])
         b = _mid(chain[i + 1], chain[i + 2])
@@ -651,7 +739,7 @@ def part_spine(rig: Rig, P: Profile) -> None:
     _x, y_ax, z_ax = cen[5]
     _shaft(
         rig,
-        "neck_top",
+        neck_bone_at(P, z_ax),
         "axis_crest",
         (0.0, y_ax + P.u(0.030), z_ax - P.u(0.030)),
         (0.0, y_ax + P.u(0.086), z_ax + P.u(0.075)),
@@ -855,7 +943,7 @@ def part_skull(rig: Rig, P: Profile) -> None:
       ② **面部极长**——颊齿列到门齿之间隔着一整段齿隙；
       ③ **面嵴**——自眶下向前的一道横棱，活马脸上看得见。
     """
-    rig.bone("skull", (0.0, P.y_occiput, P.z_occiput), parent="neck_top")
+    rig.bone("skull", (0.0, P.y_occiput, P.z_occiput), parent=NECK[-1])
     hs = head_space(rig, P)
     h = P.h  # 头长比例 → 绝对
 
@@ -1321,11 +1409,7 @@ def _spine_stub(rig: Rig, P: Profile) -> None:
     z_tmid = (P.z_t1 + P.z_t18) / 2
     rig.bone("thorax_back", (0.0, P.centrum_y(P.z_t18), P.z_t18), parent="lumbar")
     rig.bone("thorax_front", (0.0, P.centrum_y(z_tmid), z_tmid), parent="thorax_back")
-    rig.bone("neck_base", (0.0, P.centrum_y(P.z_t1), P.z_t1), parent="thorax_front")
-    z_nm = _lerp(P.z_t1, P.z_occiput, 0.45)
-    z_nt = _lerp(P.z_t1, P.z_occiput, 0.80)
-    rig.bone("neck_mid", (0.0, P.centrum_y(z_nm), z_nm), parent="neck_base")
-    rig.bone("neck_top", (0.0, P.centrum_y(z_nt), z_nt), parent="neck_mid")
+    _neck_bones(rig, P)
 
 
 def _both(fn):

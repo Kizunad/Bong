@@ -36,7 +36,7 @@ import math
 import uuid
 from pathlib import Path
 
-from gen_skeleton import HEAD_PITCH, PROFILES, HeadSpace, Profile, neck_centers, shaft_box, uid
+from gen_skeleton import NECK, HEAD_PITCH, PROFILES, HeadSpace, Profile, neck_bone_at, neck_centers, shaft_box, uid
 from gen_skeleton import rib_surface_point as _rib_pt
 from PIL import Image
 
@@ -282,12 +282,12 @@ def grp_neck(m: MuscleBuilder, P) -> None:
     poll = (0.0, Pr.y_poll + Pr.u(0.012), Pr.z_occiput + Pr.u(0.020))
 
     # 索状部：鬐甲棘突 → 项嵴，一根粗弹性索。颈脊的高度由它定
-    m.belly("neck_base", "nuchal_funicular", wither_top, poll, m.r(0.044), r_end=m.r(0.030), mat="tendon", flat=0.62)
+    m.belly(NECK[0], "nuchal_funicular", wither_top, poll, m.r(0.044), r_end=m.r(0.030), mat="tendon", flat=0.62)
 
     # 颈腹侧带（长颈肌 + 气管沟软组织）：沿颈椎链**下缘**铺一条，把颈的下轮廓补出来。
     # 只铺项韧带侧和两侧的肌，从下方看整条颈椎是裸的（裸骨诊断 [腹] 点名 cervical_2/3）。
     m.strip(
-        "neck_base",
+        NECK[0],
         "ventral_neck",
         [_off(c, 0.0, -Pr.u(0.052), 0.0) for c in neck_centers(Pr)],
         m.r(0.040),
@@ -299,7 +299,7 @@ def grp_neck(m: MuscleBuilder, P) -> None:
         top = _lerp3(wither_top, poll, t)
         z = top[2]
         m.belly(
-            "neck_mid" if t > 0.5 else "neck_base",
+            neck_bone_at(Pr, z),
             f"nuchal_lamina_{k + 1}",
             top,
             (0.0, Pr.centrum_y(z) + Pr.u(0.040), z),
@@ -314,7 +314,7 @@ def grp_neck(m: MuscleBuilder, P) -> None:
         # 横向必须推到**颈椎横突之外**（C1 寰椎翼伸到 ±0.15W）：贴着中线挂就成了
         # 一条埋在骨头里的肌，横突一根根裸在体表（裸骨诊断点名 cervical/axis_crest）。
         m.belly(
-            "neck_base",
+            NECK[0],
             f"splenius_{side}",
             _off(wither_top, sx * Pr.u(0.078), -Pr.u(0.030)),
             _off(poll, sx * Pr.u(0.052), -Pr.u(0.040), Pr.u(0.030)),
@@ -324,7 +324,7 @@ def grp_neck(m: MuscleBuilder, P) -> None:
         )
         # 臂头肌：枕/下颌角 → 肱骨。颈前下缘那条长肌，颈静脉沟的上界
         m.belly(
-            "neck_base",
+            NECK[0],
             f"brachiocephalicus_{side}",
             _off(P("skull"), sx * Pr.u(0.052), -Pr.u(0.030), Pr.u(0.020)),
             _off(P(f"humerus_{side}"), sx * Pr.u(0.020), Pr.u(0.020), -Pr.u(0.012)),
@@ -339,7 +339,7 @@ def grp_neck(m: MuscleBuilder, P) -> None:
         for k in range(len(cen) - 1):
             a, b = cen[k], cen[k + 1]
             m.belly(
-                "neck_mid" if k >= 3 else "neck_base",
+                neck_bone_at(Pr, (a[2] + b[2]) / 2),
                 f"cervical_wrap_{k + 1}_{side}",
                 _off(a, sx * Pr.u(0.058)),
                 _off(b, sx * Pr.u(0.050)),
@@ -349,7 +349,7 @@ def grp_neck(m: MuscleBuilder, P) -> None:
             )
         # 胸头肌：胸骨柄 → 下颌角。颈静脉沟的下界；与臂头肌之间**留槽**
         m.belly(
-            "neck_base",
+            NECK[0],
             f"sternocephalicus_{side}",
             (sx * Pr.u(0.020), Pr.y_chest + Pr.u(0.090), Pr.z_t1 - Pr.u(0.030)),
             _off(P("skull"), sx * Pr.u(0.058), -Pr.u(0.086), Pr.u(0.050)),
@@ -388,7 +388,7 @@ def grp_torso(m: MuscleBuilder, P) -> None:
         flat=0.72,
     )
 
-    chain = ["hips", "lumbar", "thorax_back", "thorax_front", "neck_base"]
+    chain = ["hips", "lumbar", "thorax_back", "thorax_front", NECK[0]]
     radii = (0.062, 0.066, 0.062, 0.054)
     for sx, side in ((-1, "l"), (1, "r")):
         # 竖脊肌：荐 → 颈的一条连续肌索，背线的隆起主要来自它
@@ -434,7 +434,7 @@ def grp_torso(m: MuscleBuilder, P) -> None:
         m.belly(
             "thorax_front",
             f"serratus_cervicis_{side}",
-            _off(P("neck_mid"), sx * Pr.u(0.044), -Pr.u(0.020)),
+            _off(P(NECK[3]), sx * Pr.u(0.044), -Pr.u(0.020)),
             _off(P(f"scapula_{side}"), sx * Pr.u(0.004), -Pr.u(0.020), Pr.u(0.040)),
             m.r(0.050),
             r_end=m.r(0.030),

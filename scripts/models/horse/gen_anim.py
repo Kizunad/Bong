@@ -38,16 +38,16 @@ from pathlib import Path
 
 import numpy as np
 
+import shell_check
 from gen_pelt import COATS
-from gen_skeleton import PROFILES
-from rig import FINAL, Pose, Rig, bb_pos, bb_rot, contact_report, rotmat
+from gen_skeleton import NECK, NECK_JOINTS, NECK_ROM, PROFILES, rom
+from rig import FINAL, LIMITS, Pose, Rig, bb_pos, bb_rot, contact_report, rotmat
 
 STAGES = FINAL / "stages"
 NAMESPACE = "bong"
 MODEL_ID = "horse"
 
 TAIL = tuple(f"tail_{i:02d}" for i in range(1, 9))
-NECK = ("neck_base", "neck_mid", "neck_top")
 LEGS = (("l", False), ("r", False), ("l", True), ("r", True))
 TOEOFF_PITCH = 10.0  # 蹬离时蹄翻起的角度；支撑相末尾与摆动相起点共用，保证交界连续
 
@@ -356,10 +356,27 @@ def plant(rig: Rig, pose: Pose, ground: dict[str, np.ndarray], pitches: dict[str
             rig.solve_leg(pose, side, hind, ground[k], foot_pitch=(pitches or {}).get(k, 0.0))
 
 
-def neck_bend(pose: Pose, deg: float, *, skull: float = 0.0, share=(0.42, 0.34, 0.24)) -> None:
-    """把总弯曲度数分摊到三节颈骨（正 = 抬头，负 = 低头）+ 颅骨补偿。
+def neck_share(taper: float = 0.57) -> tuple[float, ...]:
+    """自颈根到颈顶线性递减的分摊权重（归一化）。taper = 顶节 / 根节。
 
-    逐节写同一个角度是最常见的错：三节各 −25° 累加是 −75°，头会从胸口穿出去。
+    颈根担得多是真马的样子（低头主要靠颈根那一段沉下去）。默认 0.57 沿用三节时代的
+    0.42/0.34/0.24 那条斜率，只是重采样到 7 节。
+    """
+    w = [1.0 - (1.0 - taper) * i / (NECK_JOINTS - 1) for i in range(NECK_JOINTS)]
+    s = sum(w)
+    return tuple(x / s for x in w)
+
+
+NECK_SHARE = neck_share()
+NECK_SHARE_LOW = neck_share(0.48)  # 低头/吃草：颈根再多担一点
+
+
+def neck_bend(pose: Pose, deg: float, *, skull: float = 0.0, share=NECK_SHARE) -> None:
+    """把总弯曲度数分摊到七节颈骨（正 = 抬头，负 = 低头）+ 颅骨补偿。
+
+    逐节写同一个角度是最常见的错：七节各 −25° 累加是 −175°，头会从胸口穿出去。
+    分摊而不是硬写，还有第二个理由：单关节转角决定皮壳接缝张开多宽（见 gen_pelt.seam_pad），
+    超出 JOINT_ROM 就会在 Blockbench 里裂开——sanity() 会逐帧断言。
     """
     for b, w in zip(NECK, share):
         pose[b].rot[0] += deg * w
@@ -504,18 +521,25 @@ def graze_bend(rig: Rig, P) -> tuple[float, float]:
     def muzzle_y(bend: float, skull: float) -> float:
         p = Pose()
         p["thorax_front"].rot[0] = GRAZE_THORAX  # 与 anim_graze 同步，漏了会让解出的高度偏 0.3
-        neck_bend(p, bend, skull=skull, share=(0.46, 0.32, 0.22))
+        neck_bend(p, bend, skull=skull, share=NECK_SHARE_LOW)
         W = rig.world(p)
         return min(float((pts @ W[n][:3, :3].T + W[n][:3, 3])[:, 1].min()) for n, pts in head_pts.items() if len(pts))
 
     # 颈弯与颅骨补偿**必须一起解**：只扫颈弯（颅骨按固定系数跟随）时，吻端最低只到 3.3，
     # 因为静止姿的头是相对颈折着的，不把头掰直，整条链根本够不到地。二维扫，代价里带一项
     # 对"脸接近垂直"的偏好（真马吃草脸就是近垂直的），免得解出个头朝天的怪姿势。
+    # 搜索范围由**登记的关节活动范围**定死，不是拍脑袋给个大区间：皮层按 JOINT_ROM
+    # 留接缝交叠，动画一旦解出超范围的姿势，壳就在那一帧裂开（挽马首版颅骨解到 114°，
+    # 超出登记的 84° 整整 30°）。够不够得着地面由几何说了算，超范围换低头不算解。
+    bend_max = 2.0 * math.floor(NECK_ROM / max(NECK_SHARE_LOW) / 2.0)
+    # 留 4° 给动画在解出的姿势之上再叠的小动作（吃草时头还在左右微摆 3°）——
+    # 合成转角是三轴一起算的，只按俯仰卡到边界，一叠偏航就超出去。
+    skull_max = rom("skull") - 4.0
     best, best_cost = (-90.0, 40.0), 1e9
-    for i in range(71):  # 颈弯 −140 … 0，2° 步长
-        bend = -140.0 + i * 2.0
-        for j in range(91):  # 颅骨 −60 … +120，2° 步长（上界要够：静止姿的头是折着的，
-            skull = -60.0 + j * 2.0  # 不把头掰过来整条链够不到地，+60 的上界三档都顶死）
+    for i in range(int(bend_max / 2.0) + 1):
+        bend = -bend_max + i * 2.0
+        for j in range(int((60.0 + skull_max) / 2.0) + 1):  # 颅骨 −60 … +ROM，2° 步长
+            skull = -60.0 + j * 2.0
             my = muzzle_y(bend, skull)
             if my < 0.05:  # 吻端不许扎进草面以下——"接近地面"和"穿过地面"是两回事
                 continue
@@ -532,7 +556,7 @@ def anim_graze(rig: Rig, P, t: float) -> Pose:
     down = keyed(t, [(0.0, 1.0), (0.62, 1.0), (0.72, 0.0), (0.86, 0.0), (0.97, 1.0), (1.0, 1.0)])
     chew = math.sin(2.0 * math.pi * 12.0 * t) * down
     bend, skull = graze_bend(rig, P)
-    neck_bend(p, bend * down, skull=skull * down, share=(0.46, 0.32, 0.22))
+    neck_bend(p, bend * down, skull=skull * down, share=NECK_SHARE_LOW)
     p["skull"].rot[1] = 3.0 * down * math.sin(2.0 * math.pi * 2.0 * t)
     p["jaw"].rot[0] = (5.0 + 4.0 * chew) * down + 1.0
     p["thorax_front"].rot[0] = GRAZE_THORAX * down
@@ -963,7 +987,13 @@ def footfall_chart(g: Gait, n: int = 40) -> str:
     return "\n".join(rows)
 
 
-def sanity(rig: Rig, P, name: str, n: int = 48) -> tuple[float, float, str]:
+def joint_angle(rot) -> float:
+    """三轴欧拉 → 转角大小（度）。三个分量各自不大不代表合成转角不大。"""
+    R = np.array(rotmat(rot[2], 2) @ rotmat(rot[1], 1) @ rotmat(rot[0], 0))
+    return math.degrees(math.acos(max(-1.0, min(1.0, (float(np.trace(R)) - 1.0) / 2.0))))
+
+
+def sanity(rig: Rig, P, name: str, n: int = 48) -> tuple[float, float, float, str]:
     """全动画通用自检：逐帧的**逆解残差**与**穿地深度**。
 
     首版只验了四种步态，行为类（graze/rear/kick/hurt/death）一条没验——用户翻车的
@@ -972,8 +1002,12 @@ def sanity(rig: Rig, P, name: str, n: int = 48) -> tuple[float, float, str]:
       · 逆解残差：目标够不到时 `solve_leg` 会把关节夹到限位并**照常返回**，蹄停在半空。
         残差一直是被返回的，只是从没有人读。渲静帧完全看不出来。
       · 穿地：躯干大幅摆动的动作（人立 / 倒毙）很容易把肢体转到地面以下。
+      · 超 ROM：单关节转多少度决定皮壳接缝张开多宽（gen_pelt.seam_pad 按 JOINT_ROM
+        留的交叠）。动画一旦超出登记的 ROM，壳就在那一帧裂开——这是壳与动画之间的
+        契约，两头认同一个数才有意义，所以在这里断言而不是"渲出来看看"。
     """
     worst_ik, worst_ik_leg, worst_sink, sink_who = 0.0, "", 0.0, ""
+    worst_rom, rom_who = 0.0, ""
     for i in range(n):
         t = i / n
         rig.residuals.clear()
@@ -983,6 +1017,9 @@ def sanity(rig: Rig, P, name: str, n: int = 48) -> tuple[float, float, str]:
                 worst_ik, worst_ik_leg = r, f"{leg}@t={t:.2f}"
         W = rig.world(pose)
         for bone in rig.order:
+            over = joint_angle(pose[bone].rot) - rom(bone) if bone in pose else 0.0
+            if over > worst_rom:
+                worst_rom, rom_who = over, f"{bone}@t={t:.2f}"
             pts = rig.bone_points(bone)
             if not len(pts):
                 continue
@@ -990,20 +1027,35 @@ def sanity(rig: Rig, P, name: str, n: int = 48) -> tuple[float, float, str]:
             if -lo > worst_sink:
                 worst_sink, sink_who = -lo, f"{bone}@t={t:.2f}"
     rig.residuals.clear()
-    note = f"逆解残差 {worst_ik:.2f}({worst_ik_leg or '—'})  穿地 {worst_sink:.2f}({sink_who or '—'})"
-    return worst_ik, worst_sink, note
+    note = (f"逆解残差 {worst_ik:.2f}({worst_ik_leg or '—'})  穿地 {worst_sink:.2f}({sink_who or '—'})"
+            f"  超 ROM {worst_rom:.1f}°({rom_who or '—'})")
+    return worst_ik, worst_sink, worst_rom, note
+
+
+def rom_table_agrees() -> list[str]:
+    """腿的 JOINT_ROM 必须罩得住 rig.LIMITS 的极值。两张表分居两个文件：一边放宽了
+    关节限位、另一边还按老数给皮层留交叠，壳就会在新放开的那段角度里裂开。"""
+    bad = []
+    for key, (lo, hi) in LIMITS.items():
+        need, got = max(abs(lo), abs(hi)), rom(f"{key}_l")
+        if got + 1e-9 < need:
+            bad.append(f"JOINT_ROM[{key}]={got:.0f}° 罩不住 LIMITS 的 {need:.0f}°")
+    return bad
 
 
 def check(rig: Rig, P, names: list[str]) -> int:
-    """自检：逆解残差 + 穿地 + 步态贴地/滑步 + 循环接缝。撞红就是动画有硬伤。"""
+    """自检：逆解残差 + 穿地 + 关节 ROM + 外壳裂口 + 步态贴地/滑步 + 循环接缝。"""
     bad = 0
+    gaps = dict((r[0], r[1:]) for r in shell_check.check(rig, lambda n, t: sample(rig, P, n, t), names))
     for name in names:
         length, loop, _n, _ = ANIMS[name]
-        worst_ik, worst_sink, note = sanity(rig, P, name)
+        worst_ik, worst_sink, worst_rom, note = sanity(rig, P, name)
+        gap, gap_who, gap_t = gaps[name]
         # 阈值按**体素**定，不按浮点洁癖：1 单位 = 1 体素 = 6.25 cm，0.12 是五分之一体素，
         # 已经在渲染上不可辨；再收紧只会逼着人去追数值噪声。
-        ok_basic = worst_ik <= 0.20 and worst_sink <= 0.12
+        ok_basic = worst_ik <= 0.20 and worst_sink <= 0.12 and worst_rom <= 0.01 and gap <= shell_check.GAP_TOL
         bad += 0 if ok_basic else 1
+        note += f"  裂口 {gap:.2f}({gap_who}@t={gap_t:.2f})"
         print(f"  {name:<7} {'✓' if ok_basic else '✗'} {note}")
         if name in GAITS:
             g = Gait(rig, P, **GAITS[name])
@@ -1045,6 +1097,10 @@ def main() -> int:
     names = args.only or list(ANIMS)
     pkeys = sorted(PROFILES) if args.profile == "all" else [args.profile]
     rc = 0
+
+    for msg in rom_table_agrees():
+        print(f"  ✗ {msg}")
+        rc += 1
 
     for pk in pkeys:
         P = PROFILES[pk]

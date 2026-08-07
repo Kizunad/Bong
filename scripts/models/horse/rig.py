@@ -35,7 +35,7 @@ FINAL = HERE.parents[2] / "local_models" / "horse"
 # 腿链：前三节由 IK 解，末端骨只定世界俯仰（其下的管骨/系/蹄随之刚性摆动）
 FORELEG = ("scapula_{s}", "humerus_{s}", "radius_{s}", "carpus_{s}")
 HINDLEG = ("femur_{s}", "tibia_{s}", "tarsus_{s}", "fetlock_h_{s}")
-SPINE = ("hips", "lumbar", "thorax_back", "thorax_front", "neck_base", "neck_mid", "neck_top", "skull")
+SPINE = ("hips", "lumbar", "thorax_back", "thorax_front", *(f"neck_{i + 1}" for i in range(7)), "skull")
 TAIL = tuple(f"tail_{i:02d}" for i in range(1, 9))
 
 # 各关节相对静止姿的活动范围（度，绕 X = 矢状面）。限位不是装饰：不夹的话解会把

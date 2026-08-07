@@ -35,7 +35,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gen_muscle import Skeleton
-from gen_skeleton import HEAD_PITCH, PROFILES, HeadSpace, Profile, neck_centers, shaft_box, uid
+from gen_skeleton import (
+    HEAD_PITCH,
+    NECK,
+    NECK_JOINTS,
+    PROFILES,
+    HeadSpace,
+    Profile,
+    neck_seams,
+    rom,
+    shaft_box,
+    uid,
+)
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[3]
@@ -160,12 +171,64 @@ def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
+# ---------------------------------------------------------------- 接缝交叠
+# 皮是一串**刚性**盒子，弯曲全部集中在骨与骨的交界。接缝落在关节 pivot 上时，转角 θ
+# 会把接缝张成楔形，半径 r 处开口 2r·sin(θ/2)——首版颈只有三根骨、单关节摊到 51°，
+# 鬃在离 pivot 6 个单位处直接裂开 5 个单位（Blockbench 里看就是颈上一排缺口、鬃炸成
+# 梳子）。解法两条一起上：① 骨加密（一椎一骨，θ 摊薄）；② 接缝两侧各外扩 δ。
+#
+# δ 的取法有推导、不是拍的：两侧各外扩 δ 后，半径 r 处 A 的边界在 +δ、B 的边界转到
+# θ−atan(δ/r)，不透光的条件是 θ ≤ 2·atan(δ/r)，即 **δ ≥ r·tan(θ/2)**。θ 取该关节
+# 登记的 JOINT_ROM，于是这条保证与具体动画无关：只要动画不超 ROM（gen_anim 断言），
+# 壳就闭合。
+#
+# 为什么不做榫（单独一枚细一点的插销）：带内相邻两段的截面本来就在变（颈自 0.098W
+# 收到 0.056W），直接外扩不会出现共面 z-fighting；等宽的躯干段另说，见 part_torso。
+# 闭式解是**平面铰链**的下界：种子点实际落在交叠体内部（真半径 hypot(r,δ) > r），
+# 关节又是俯仰+偏航复合，所以照 δ=r·tan(θ/2) 给总差一口气。这一档余量是量出来的：
+# 1.0 时三档十条动画还剩 0.4-1.3 单位的缝，1.35 才全部收进 0.30 以内（shell_check 逐帧核过）。
+SEAM_MARGIN = 1.35
+
+
+def seam_pad(r: float, rom_deg: float) -> float:
+    return SEAM_MARGIN * r * math.tan(math.radians(rom_deg) / 2.0)
+
+
+def face_r(pivot: Vec, half_w: float, y_lo: float, y_hi: float) -> float:
+    """接缝面上离关节 pivot 最远的点的距离（面在 z=pivot_z 上，跨 ±half_w × [y_lo,y_hi]）。"""
+    return max(math.hypot(half_w, y - pivot[1]) for y in (y_lo, y_hi))
+
+
+def seam_pads(seams: list[Vec], seg: list[tuple[float, float, float]], roms: list[float]) -> list[float]:
+    """一条带的每个分界该外扩多少。
+
+    半径必须取**接缝两侧的并集**：颈自根向头收细，若各段按自己的截面算，细的那侧给的
+    交叠就不够——两侧加起来达不到 2r·tan(θ/2)，缝在粗的那一侧照裂（实测 graze 里
+    neck_1↔neck_2 还漏 1.9 个单位）。带的两个自由端按各自那一段算。
+    """
+    out = []
+    for k in range(len(seg) + 1):
+        near = [seg[i] for i in (k - 1, k) if 0 <= i < len(seg)]
+        hw = max(s[0] for s in near)
+        lo = min(s[1] for s in near)
+        hi = max(s[2] for s in near)
+        out.append(seam_pad(face_r(seams[k], hw, lo, hi), roms[k]))
+    return out
+
+
 def _lerp3(a: Vec, b: Vec, t: float) -> Vec:
     return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
 
 
 def _off(p: Vec, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> Vec:
     return (p[0] + dx, p[1] + dy, p[2] + dz)
+
+
+def _beyond(a: Vec, b: Vec, d: float) -> Vec:
+    """自 a 沿 b→a 方向再走 d。单侧外扩用——对称外扩会把筒伸到下一个关节上去。"""
+    v = [a[i] - b[i] for i in range(3)]
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return tuple(a[i] + v[i] / n * d for i in range(3))
 
 
 # ---------------------------------------------------------------- 肌肉包络
@@ -303,7 +366,11 @@ class Pelt:
     def has(self, feature: str) -> bool:
         return feature in self.coat.features
 
-    def box(self, bone: str, name: str, frm: Vec, to: Vec, *, rot=None, org=None, mat: str = "coat") -> None:
+    def box(self, bone: str, name: str, frm: Vec, to: Vec, *, rot=None, org=None, mat: str = "coat",
+            loose: bool = False) -> None:
+        """loose=True：这件**本来就该和邻件分开**（耳、唇、额发——它们随各自的骨独立动，
+        静止姿蹭在一起只是巧合）。外壳连续性自检据此跳过，否则"张嘴"会被报成裂口。
+        这层语义只有造型代码知道，所以在这里声明，不在自检里猜。"""
         if name in self._names:
             raise ValueError(f"重复皮层件名: {name}（uuid 由名字派生，名字必须唯一）")
         self._names.add(name)
@@ -323,6 +390,7 @@ class Pelt:
                 "type": "cube",
                 "uuid": uid("pelt", name),
                 "_pelt": True,
+                "_loose": loose,
                 "from": f,
                 "to": t,
                 "autouv": 0,
@@ -334,10 +402,18 @@ class Pelt:
         )
         self.count += 1
 
-    def limb(self, bone: str, name: str, a: Vec, b: Vec, r0: float, r1: float | None = None, *, mat="coat", flat=1.0) -> None:
-        """沿关节 a→b 包一节皮筒（两端半径取均值 —— 轴对齐盒装不下真锥体）。"""
+    def limb(self, bone: str, name: str, a: Vec, b: Vec, r0: float, r1: float | None = None, *,
+             mat="coat", flat=1.0, joint_rom: float | None = None, slack: float = 0.0) -> None:
+        """沿关节 a→b 包一节皮筒（两端半径取均值 —— 轴对齐盒装不下真锥体）。
+
+        joint_rom：该端关节的活动范围。给了就按**截面角点**的力臂算两端外扩量——
+        角点不是边心：flat=0.8 的截面，角点力臂比 rz 大 27%，按 rz 算出来的交叠一律偏小。
+        slack：筒端离关节 pivot 还差多远，补进外扩里（否则交叠是从筒端算的，不是从
+        pivot 算的，差多少就漏多少）。
+        """
         r = (r0 + (r0 if r1 is None else r1)) / 2
-        frm, to, rot, org = shaft_box(a, b, r * flat, r)
+        ext = 0.0 if joint_rom is None else seam_pad(math.hypot(r * flat, r), joint_rom) + slack
+        frm, to, rot, org = shaft_box(a, b, r * flat, r, extend=ext)
         self.box(bone, name, frm, to, rot=rot, org=org, mat=mat)
 
 
@@ -365,17 +441,34 @@ def part_torso(p: Pelt, env: Envelope, P) -> None:
         ("back", 0.80, 1.00, 0.58, "coat_dark"),
     )
 
+    def _torso_bone(z: float) -> str:
+        return "thorax_front" if z < Pr.z_t1 + 0.22 * Pr.L else ("thorax_back" if z < Pr.z_t18 else "lumbar" if z < Pr.z_l6 + 0.02 * Pr.L else "hips")
+
+    seg = []
     for i, (z, hw, lo, hi) in enumerate(prof[:-1]):
-        zz = prof[i + 1][0]
-        # 段界严格对接（不重叠也不留缝）：重叠会让共面的侧面 z-fighting，缝会露出内腔
-        za, zb = z, zz
-        bone = "thorax_front" if z < Pr.z_t1 + 0.22 * Pr.L else ("thorax_back" if z < Pr.z_t18 else "lumbar" if z < Pr.z_l6 + 0.02 * Pr.L else "hips")
         # 腰收：肋后到髋前那一段最窄
         waist = 1.0 - 0.10 * math.exp(-(((z - (Pr.z_t18 + 0.05 * Pr.L)) / (0.10 * Pr.L)) ** 2))
-        hw *= waist
         # 收腹：腹线自胸围（最深处）向后上抬，马的侧影靠这条线
         tuck = Pr.u(0.115) / (1.0 + math.exp(-(z - (Pr.z_t18 - 0.04 * Pr.L)) / (0.055 * Pr.L)))
-        lo += tuck
+        seg.append((_torso_bone(z), hw * waist, lo + tuck, hi))
+
+    # 段界**同骨时严格对接**（重叠会让共面的侧面 z-fighting，缝会露出内腔），
+    # **跨骨时按 ROM 外扩**——脊柱一节只转 10-14°，但躯干半宽有 5 个单位，
+    # 不留交叠时倒毙/受伤那两条会在腰上裂开半个单位。
+    pads = []
+    for k in range(len(seg) + 1):
+        near = [seg[i] for i in (k - 1, k) if 0 <= i < len(seg)]
+        cross = len(near) == 2 and near[0][0] != near[1][0]
+        if not cross:
+            pads.append(0.0)
+            continue
+        hw = max(s[1] for s in near)
+        y0, y1 = min(s[2] for s in near), max(s[3] for s in near)
+        r = max(face_r(P(s[0]), hw, y0, y1) for s in near)  # 两根骨的 pivot 取远的那个
+        pads.append(seam_pad(r, max(rom(s[0]) for s in near)))
+
+    for i, (bone, hw, lo, hi) in enumerate(seg):
+        za, zb = prof[i][0] + pads[i], prof[i + 1][0] - pads[i + 1]
         span = hi - lo
         for tag, y0f, y1f, wf, mat in TIERS:
             p.box(bone, f"torso_{tag}_{i + 1}", (-hw * wf, lo + span * y0f, za), (hw * wf, lo + span * y1f, zb), mat=mat)
@@ -386,6 +479,9 @@ def part_torso(p: Pelt, env: Envelope, P) -> None:
         zb = prof[min(j + 2, len(prof) - 1)][0]
         top = min(prof[k][3] for k in range(j, min(j + 3, len(prof))))
         bone = "thorax_back" if za < Pr.z_t18 else "lumbar"
+        # 背中线也跨骨：同样按 ROM 两端外扩，否则腰上那道接缝在倒毙里裂开
+        dpad = seam_pad(face_r(P(bone), Pr.u(0.054), top - Pr.u(0.020), top + Pr.u(0.026)), rom(bone))
+        za, zb = za - dpad, zb + dpad
         p.box(bone, f"dorsal_{j // 2 + 1}", (-Pr.u(0.048), top - Pr.u(0.020), za), (Pr.u(0.048), top + Pr.u(0.014), zb), mat="coat_dark")
         # 鳝背线：必须比它下面那条背中线**更宽**（0.054 > 0.048），否则侧视里被背中线
         # 的侧面挡在后面，等于没画。窄条压在宽条上是看不见的。
@@ -418,30 +514,50 @@ def part_torso(p: Pelt, env: Envelope, P) -> None:
         )
 
 
+def crest_y(Pr, z: float) -> float:
+    """项韧带那条弦（颈脊）在给定 z 上的高度。鬃与颈皮共用，别各插各的值。"""
+    wither_top = (Pr.wither - Pr.u(0.030), Pr.z_wither_peak)
+    poll = (Pr.y_poll + Pr.u(0.012), Pr.z_occiput + Pr.u(0.020))
+    t = (z - wither_top[1]) / (poll[1] - wither_top[1])
+    return _lerp(wither_top[0], poll[0], min(1.0, max(0.0, t))) + Pr.u(0.030)
+
+
 def part_neck(p: Pelt, env: Envelope, P) -> None:
     """颈皮：断面窄而高（侧扁），上缘走项韧带那条弦（颈脊），下缘在颈椎之下。
 
     马颈不是圆筒 —— 上宽下窄、左右扁。照猫科套一个圆筒，鬃毛就没地方长。
+
+    分段与颈骨**一一对应**（seams 来自 gen_skeleton，骨/椎/皮/鬃四者同一组分界），
+    接缝正落在关节 pivot 上，再按 ROM 两端外扩——见本文件顶上 seam_pad 的推导。
     """
     Pr = p.P
-    cen = neck_centers(Pr)
-    wither_top = (0.0, Pr.wither - Pr.u(0.030), Pr.z_wither_peak)
-    poll = (0.0, Pr.y_poll + Pr.u(0.012), Pr.z_occiput + Pr.u(0.020))
-    pts = [(0.0, Pr.centrum_y(Pr.z_t1), Pr.z_t1), *cen]
+    seams = neck_seams(Pr)
 
-    for i in range(len(pts) - 1):
-        t0, t1 = i / (len(pts) - 1), (i + 1) / (len(pts) - 1)
-        za, zb = pts[i][2], pts[i + 1][2]
-        # 上缘：项韧带弦（颈脊）；下缘：颈椎下方一段（喉侧）
-        crest_a = _lerp3(wither_top, poll, t0)[1] + Pr.u(0.030)
-        crest_b = _lerp3(wither_top, poll, t1)[1] + Pr.u(0.030)
-        throat_a = pts[i][1] - Pr.u(_lerp(0.115, 0.070, t0))
-        throat_b = pts[i + 1][1] - Pr.u(_lerp(0.115, 0.070, t1))
+    seg = []
+    for i in range(NECK_JOINTS):
+        a, b = seams[i], seams[i + 1]  # a = 根侧（本骨 pivot），b = 头侧（下一关节）
+        t0, t1 = i / NECK_JOINTS, (i + 1) / NECK_JOINTS
         hw = Pr.u(_lerp(0.098, 0.056, t0))
-        bone = "neck_base" if t0 < 0.34 else ("neck_mid" if t0 < 0.72 else "neck_top")
-        p.box(bone, f"neck_{i + 1}", (-hw, min(throat_a, throat_b), zb), (hw, max(crest_a, crest_b), za))
-        # 喉下缘提亮（多数毛色颈腹偏浅）
-        p.box(bone, f"neck_throat_{i + 1}", (-hw * 0.82, min(throat_a, throat_b), zb), (hw * 0.82, min(throat_a, throat_b) + Pr.u(0.040), za), mat="belly")
+        # 上缘：项韧带弦（颈脊）；下缘：颈椎下方一段（喉侧）
+        y_hi = max(crest_y(Pr, a[2]), crest_y(Pr, b[2]))
+        y_lo = min(a[1] - Pr.u(_lerp(0.115, 0.070, t0)), b[1] - Pr.u(_lerp(0.115, 0.070, t1)))
+        seg.append((hw, y_lo, y_hi))
+    pad = seam_pads(seams, seg, [rom(b) for b in NECK] + [rom("skull")])
+    pad[0] *= 2.0  # 鬐甲那道缝是单边的：躯干壳不朝颈里伸，交叠得由颈这边全出
+
+    for i in range(NECK_JOINTS):
+        a, b = seams[i], seams[i + 1]
+        hw, y_lo, y_hi = seg[i]
+        pad_a, pad_b = pad[i], pad[i + 1]
+        p.box(NECK[i], f"neck_{i + 1}", (-hw, y_lo, b[2] - pad_b), (hw, y_hi, a[2] + pad_a))
+        # 喉下缘提亮（多数毛色颈腹偏浅）。下缘刻意再压 0.02：与颈皮底面共面会 z-fighting。
+        p.box(
+            NECK[i],
+            f"neck_throat_{i + 1}",
+            (-hw * 0.82, y_lo - 0.02, b[2] - pad_b),
+            (hw * 0.82, y_lo + Pr.u(0.040), a[2] + pad_a),
+            mat="belly",
+        )
 
     # 肩章（枯原）：肩上一道横斑。x 要推到躯干半宽**之外**才贴在体表上——
     # 首版 0.070→0.118W 整条埋在肩肌里，渲出来一点看不见。
@@ -468,7 +584,7 @@ def part_head(p: Pelt, env: Envelope, P) -> None:
     h = Pr.h
     dark_head = p.has("dark_head")
 
-    def hbox(name, lo, hi, *, mat="coat", bone="skull", dp=0.0):
+    def hbox(name, lo, hi, *, mat="coat", bone="skull", dp=0.0, loose=False):
         c = tuple((a + b) / 2 for a, b in zip(lo, hi))
         half = tuple(abs(a - b) / 2 for a, b in zip(lo, hi))
         wc = hs.to_world(c)
@@ -480,6 +596,7 @@ def part_head(p: Pelt, env: Envelope, P) -> None:
             rot=(HEAD_PITCH + dp, 0.0, 0.0),
             org=wc,
             mat=mat,
+            loose=loose,
         )
 
     base = "coat_dark" if dark_head else "coat"
@@ -502,25 +619,25 @@ def part_head(p: Pelt, env: Envelope, P) -> None:
 
     for sx, side in ((-1, "l"), (1, "r")):
         # ---- 腮：下颌角那块圆鼓，挂在 jaw 上（张口时跟着动）----
-        hbox(f"jowl_{side}", (sx * h(0.086), -h(0.400), -h(0.420)), (sx * h(0.168), -h(0.040), -h(0.090)), mat=base, bone="jaw")
-        hbox(f"jaw_line_{side}", (sx * h(0.060), -h(0.330), -h(0.900)), (sx * h(0.104), -h(0.170), -h(0.410)), mat=base, bone="jaw")
+        hbox(f"jowl_{side}", (sx * h(0.086), -h(0.400), -h(0.420)), (sx * h(0.168), -h(0.040), -h(0.090)), mat=base, bone="jaw", loose=True)
+        hbox(f"jaw_line_{side}", (sx * h(0.060), -h(0.330), -h(0.900)), (sx * h(0.104), -h(0.170), -h(0.410)), mat=base, bone="jaw", loose=True)
         # ---- 眼：头侧上方、外凸。眼球本体 + 上眼睑 + 一点高光 ----
         hbox(f"eye_socket_{side}", (sx * h(0.140), h(0.010), -h(0.430)), (sx * h(0.176), h(0.110), -h(0.290)), mat=base)
         hbox(f"eye_{side}", (sx * h(0.166), h(0.022), -h(0.412)), (sx * h(0.194), h(0.096), -h(0.308)), mat="eye")
         hbox(f"eye_gloss_{side}", (sx * h(0.190), h(0.062), -h(0.392)), (sx * h(0.202), h(0.088), -h(0.352)), mat="eye_gloss")
         hbox(f"eye_lid_{side}", (sx * h(0.160), h(0.096), -h(0.424)), (sx * h(0.198), h(0.124), -h(0.296)), mat="coat_dark")
         # ---- 耳：尖而窄，向上略外张；耳内深色 ----
-        hbox(f"ear_{side}", (sx * h(0.048), h(0.185), -h(0.215)), (sx * h(0.130), h(0.430), -h(0.055)), dp=-8.0, mat=base)
-        hbox(f"ear_tip_{side}", (sx * h(0.066), h(0.420), -h(0.200)), (sx * h(0.112), h(0.530), -h(0.090)), dp=-8.0, mat="points")
-        hbox(f"ear_inner_{side}", (sx * h(0.040), h(0.198), -h(0.198)), (sx * h(0.070), h(0.416), -h(0.072)), dp=-8.0, mat="coat_dark")
+        hbox(f"ear_{side}", (sx * h(0.048), h(0.185), -h(0.215)), (sx * h(0.130), h(0.430), -h(0.055)), dp=-8.0, mat=base, loose=True)
+        hbox(f"ear_tip_{side}", (sx * h(0.066), h(0.420), -h(0.200)), (sx * h(0.112), h(0.530), -h(0.090)), dp=-8.0, mat="points", loose=True)
+        hbox(f"ear_inner_{side}", (sx * h(0.040), h(0.198), -h(0.198)), (sx * h(0.070), h(0.416), -h(0.072)), dp=-8.0, mat="coat_dark", loose=True)
         # ---- 鼻孔：大而斜，马的鼻孔能张 ----
         hbox(f"nostril_{side}", (sx * h(0.026), -h(0.115), -h(1.045)), (sx * h(0.072), -h(0.010), -h(0.955)), mat="nostril")
 
     # ---- 口鼻：软唇 + 下唇 + 颏 ----
     hbox("muzzle_front", (-h(0.076), -h(0.250), -h(1.048)), (h(0.076), -h(0.100), -h(0.930)), mat="muzzle")
-    hbox("lip_upper", (-h(0.068), -h(0.255), -h(1.040)), (h(0.068), -h(0.195), -h(0.900)), mat="muzzle")
-    hbox("lip_lower", (-h(0.060), -h(0.320), -h(1.020)), (h(0.060), -h(0.250), -h(0.890)), mat="muzzle", bone="jaw")
-    hbox("chin", (-h(0.052), -h(0.360), -h(0.980)), (h(0.052), -h(0.300), -h(0.860)), mat=base, bone="jaw")
+    hbox("lip_upper", (-h(0.068), -h(0.255), -h(1.040)), (h(0.068), -h(0.195), -h(0.900)), mat="muzzle", loose=True)
+    hbox("lip_lower", (-h(0.060), -h(0.320), -h(1.020)), (h(0.060), -h(0.250), -h(0.890)), mat="muzzle", bone="jaw", loose=True)
+    hbox("chin", (-h(0.052), -h(0.360), -h(0.980)), (h(0.052), -h(0.300), -h(0.860)), mat=base, bone="jaw", loose=True)
 
 
 # ================================================================ 鬃 / 尾
@@ -533,47 +650,58 @@ def part_mane(p: Pelt, env: Envelope, P) -> None:
     左右对称的鬃会读成莫西干头盔——真马的鬃就是偏向一边的。这里刻意做**不对称**。
     """
     Pr = p.P
-    wither_top = (0.0, Pr.wither - Pr.u(0.030), Pr.z_wither_peak)
-    poll = (0.0, Pr.y_poll + Pr.u(0.012), Pr.z_occiput + Pr.u(0.020))
+    seams = neck_seams(Pr)
     sx = MANE_SIDE
-    n = 7
+    n = NECK_JOINTS
     thick = {"small": 1.20, "medium": 1.0, "large": 1.15}[Pr.key]  # 矮马/挽马鬃更厚
 
+    # 鬃分段与颈骨一一对应（i=0 在鬐甲、i=6 在枕后），首版按自己一套 t 阈值分骨，
+    # 与颈皮的分界错开，两条带在不同的地方裂。
+    # 鬃离 pivot 远（垂下大半个颈高），同样的转角在这里张开得最凶——交叠按鬃自己的
+    # 半径算，不能跟颈皮共用一个数。
+    drops = [Pr.u(0.115 + 0.185 * math.sin(math.pi * (n - i - 0.5) / n)) * thick for i in range(n)]
+    seg = []
     for i in range(n):
-        t0, t1 = i / n, (i + 1) / n
-        a = _lerp3(poll, wither_top, t0)
-        b = _lerp3(poll, wither_top, t1)
-        bone = "neck_top" if t0 < 0.28 else ("neck_mid" if t0 < 0.62 else "neck_base")
-        # 相邻段在 z 上留 12% 重叠，否则七段之间七条缝，鬃读成一排栅栏
-        pad = abs(a[2] - b[2]) * 0.12
-        za, zb = max(a[2], b[2]) + pad, min(a[2], b[2]) - pad
+        ya, yb = crest_y(Pr, seams[i][2]), crest_y(Pr, seams[i + 1][2])
+        seg.append((Pr.u(0.086) * thick, min(ya, yb) - drops[i], max(ya, yb) + Pr.u(0.080) * thick))
+    # 顶端是**自由端**：鬃到枕后就没了，头上接的是额发（另一条带、随头动）。照 skull 的
+    # ROM 给交叠只会把鬃往脸里怼出五个单位，还凭空多出一处"接缝"。
+    pads = seam_pads(seams, seg, [rom(b) for b in NECK] + [0.0])
+    pads[0] *= 2.0  # 同颈皮：鬃根压在鬐甲上，背那边不朝颈里伸
+
+    for i in range(n):
+        a, b = seams[i], seams[i + 1]
+        ya, yb = crest_y(Pr, a[2]), crest_y(Pr, b[2])
+        y_lo, y_hi = min(ya, yb), max(ya, yb)
+        drop = drops[i]
+        pad_a, pad_b = pads[i], pads[i + 1]
+        za, zb = a[2] + pad_a, b[2] - pad_b
         # 鬃根：骑在颈脊上
         p.box(
-            bone,
+            NECK[i],
             f"mane_root_{i + 1}",
-            (-Pr.u(0.034), min(a[1], b[1]) + Pr.u(0.004), zb),
-            (Pr.u(0.034), max(a[1], b[1]) + Pr.u(0.080) * thick, za),
+            (-Pr.u(0.034), y_lo + Pr.u(0.004), zb),
+            (Pr.u(0.034), y_hi + Pr.u(0.080) * thick, za),
             mat="mane",
         )
         # 鬃披：向一侧垂下，越靠中段越长
-        drop = Pr.u(0.115 + 0.185 * math.sin(math.pi * (i + 0.5) / n)) * thick
         p.box(
-            bone,
+            NECK[i],
             f"mane_fall_{i + 1}",
-            (sx * Pr.u(0.004), min(a[1], b[1]) - drop, zb),
-            (sx * Pr.u(0.086) * thick, max(a[1], b[1]) + Pr.u(0.056), za),
+            (sx * Pr.u(0.004), y_lo - drop, zb),
+            (sx * Pr.u(0.086) * thick, y_hi + Pr.u(0.056), za),
             rot=(0.0, 0.0, sx * -14.0),
-            org=(0.0, max(a[1], b[1]), (a[2] + b[2]) / 2),
+            org=(0.0, y_hi, (a[2] + b[2]) / 2),
             mat="mane",
         )
         if i in (2, 4):  # 鬃梢：挑两段做出梢色分层，整条同色会读成一块板
             p.box(
-                bone,
+                NECK[i],
                 f"mane_tip_{i + 1}",
-                (sx * Pr.u(0.012), min(a[1], b[1]) - drop, zb + Pr.u(0.014)),
-                (sx * Pr.u(0.082) * thick, min(a[1], b[1]) - drop + Pr.u(0.064), za - Pr.u(0.014)),
+                (sx * Pr.u(0.012), y_lo - drop, zb + Pr.u(0.014)),
+                (sx * Pr.u(0.082) * thick, y_lo - drop + Pr.u(0.064), za - Pr.u(0.014)),
                 rot=(0.0, 0.0, sx * -14.0),
-                org=(0.0, max(a[1], b[1]), (a[2] + b[2]) / 2),
+                org=(0.0, y_hi, (a[2] + b[2]) / 2),
                 mat="mane_tip",
             )
 
@@ -597,6 +725,7 @@ def part_mane(p: Pelt, env: Envelope, P) -> None:
             rot=(HEAD_PITCH, 0.0, 0.0),
             org=wc,
             mat="mane" if k == 0 else "mane_tip",
+            loose=True,  # 额发挂在头上、鬃挂在颈上，两者只在静止姿相接
         )
 
 
@@ -609,7 +738,8 @@ def part_tail(p: Pelt, env: Envelope, P) -> None:
     # 肉尾根：包住前 3 节尾椎
     for k in range(min(3, len(pts) - 1)):
         r = Pr.u(0.070 - 0.012 * k)
-        p.limb(f"tail_{idx[k]:02d}", f"dock_{k + 1}", pts[k], pts[k + 1], r, mat="coat_dark")
+        p.limb(f"tail_{idx[k]:02d}", f"dock_{k + 1}", pts[k], pts[k + 1], r,
+               joint_rom=rom(f"tail_{idx[k]:02d}"), mat="coat_dark")
 
     # 尾鬃：自第 2 节起一路加长加宽，末端垂到接近跗关节高度。
     # 马尾看着有分量是因为它是**一大束**，首版每节只挂一片薄板，读成一根黑棍。
@@ -621,13 +751,21 @@ def part_tail(p: Pelt, env: Envelope, P) -> None:
         drop = Pr.u(0.130 + 0.330 * t)
         bone = f"tail_{idx[k]:02d}"
         zc = (a[2] + b[2]) / 2
-        p.box(
-            bone,
-            f"tailhair_{k}",
-            (-wide, min(a[1], b[1]) - drop, zc - deep),
-            (wide, max(a[1], b[1]) + Pr.u(0.030), zc + deep),
-            mat="mane",
-        )
+        # 尾鬃悬在尾骨下方大半个尾长，力臂极大——甩尾 / 人立时每个尾关节转 17-21°，
+        # 不留交叠就是一节一条缝（shell_check 在 rear 上量到 4.0）。只朝**尾根**方向外扩：
+        # 朝尾梢扩会把尾整条加长，那是外形改动不是接缝修补。
+        # 尾鬃是**毛**不是皮：它悬在尾骨下方大半个尾长，力臂 10 个单位往上，照 seam_pad
+        # 给交叠会把尾整条加长两三个单位、还垂到地里去（实测穿地 0.75）。所以只沿链向
+        # 朝**尾根**外扩一小段把接缝盖住，外轮廓（drop / wide）一点不动。
+        dy, dz = a[1] - b[1], a[2] - b[2]  # b→a 即朝尾根
+        n_ = math.hypot(dy, dz) or 1.0
+        pad = min(seam_pad(math.hypot(wide, deep), rom(bone)), n_ * 0.9)
+        py, pz = pad * abs(dy) / n_, pad * abs(dz) / n_
+        y0 = min(a[1], b[1]) - drop - (py if dy < 0 else 0.0)
+        y1 = max(a[1], b[1]) + Pr.u(0.030) + (py if dy > 0 else 0.0)
+        z0 = min(a[2], b[2]) - deep - (pz if dz < 0 else 0.0)
+        z1 = max(a[2], b[2]) + deep + (pz if dz > 0 else 0.0)
+        p.box(bone, f"tailhair_{k}", (-wide, y0, z0), (wide, y1, z1), mat="mane", loose=True)
         if k % 2 == 0:
             p.box(
                 bone,
@@ -664,17 +802,32 @@ def _leg_column(p: Pelt, P, side: str, sx: int, tag: str) -> None:
 
     gauge = Pr.bone_gauge
     # 上段（前臂 / 小腿）：上粗下细
-    p.limb(upper_bone, f"leg_upper_{tag}_{side}", elbow, _lerp3(elbow, knee, 0.55), r_top * gauge, mat="coat")
-    p.limb(upper_bone, f"leg_upper2_{tag}_{side}", _lerp3(elbow, knee, 0.50), knee, r_knee * 1.24 * gauge, mat="coat")
-    # 腕 / 跗：一个明确的关节鼓
-    p.limb(low_bone, f"leg_joint_{tag}_{side}", _off(knee, 0, Pr.u(0.026)), _off(knee, 0, -Pr.u(0.026)), r_knee * 1.16 * gauge, mat="coat")
+    up_pad = seam_pad(math.hypot(r_top * gauge, r_top * gauge), rom(upper_bone))
+    p.limb(upper_bone, f"leg_upper_{tag}_{side}", _beyond(elbow, knee, up_pad), _lerp3(elbow, knee, 0.55), r_top * gauge, mat="coat")
+    p.limb(upper_bone, f"leg_upper2_{tag}_{side}", _lerp3(elbow, knee, 0.50), knee, r_knee * 1.24 * gauge, mat="coat",
+           joint_rom=rom(low_bone))
+    # 腕 / 跗：一个明确的关节鼓。**做成以关节中心为心的方块，不是沿骨的筒**——
+    # 腕/跗的活动范围到 96°，而"接缝两侧各外扩 δ"这条路在 θ→90° 时 δ=r·tan(θ/2) 发散，
+    # 轴向交叠根本堵不住。以 pivot 为心的方块则不然：绕心转多少度，它罩住的那个半径
+    # h 的球都原样还在，裂口只可能出现在 h 之外，所以把 h 取到该处壳的外表面就够了。
+    joint_r = r_knee * 1.75 * gauge
+    p.box(low_bone, f"leg_joint_{tag}_{side}",
+          (knee[0] - joint_r, knee[1] - joint_r, knee[2] - joint_r),
+          (knee[0] + joint_r, knee[1] + joint_r, knee[2] + joint_r), mat="coat")
     # 管骨段：细而扁（前后略宽），下肢深色
     mat_low = "points" if dark_lower else "coat"
-    p.limb(low_bone, f"cannon_{tag}_{side}", _off(knee, 0, -Pr.u(0.014)), fet, Pr.u(0.034) * gauge, mat=mat_low, flat=0.80)
-    # 球节：鼓出来的那个球
-    p.limb(fet_bone, f"fetlock_{tag}_{side}", _off(fet, 0, Pr.u(0.020)), _off(fet, 0, -Pr.u(0.016)), Pr.u(0.040) * gauge, mat=mat_low)
+    p.limb(low_bone, f"cannon_{tag}_{side}", _off(knee, 0, -Pr.u(0.014)), fet, Pr.u(0.034) * gauge, mat=mat_low, flat=0.80,
+           joint_rom=rom(fet_bone))
+    # 球节：鼓出来的那个球。同腕/跗，96° 的活动范围只能靠"以关节为心的块"堵。
+    fet_r = Pr.u(0.040) * 1.35 * gauge
+    p.box(fet_bone, f"fetlock_{tag}_{side}",
+          (fet[0] - fet_r, fet[1] - fet_r, fet[2] - fet_r),
+          (fet[0] + fet_r, fet[1] + fet_r, fet[2] + fet_r), mat=mat_low)
     # 系：52° 前倾插进蹄冠
-    p.limb(fet_bone, f"pastern_{tag}_{side}", _off(fet, 0, -Pr.u(0.010)), _off(hoofj, 0, Pr.u(0.020)), Pr.u(0.031) * gauge, mat=mat_low)
+    pa_r = Pr.u(0.031) * gauge
+    p.limb(fet_bone, f"pastern_{tag}_{side}",
+           _beyond(_off(fet, 0, -Pr.u(0.010)), hoofj, seam_pad(math.hypot(pa_r, pa_r), rom(fet_bone))),
+           _off(hoofj, 0, Pr.u(0.020)), pa_r, mat=mat_low)
     # 蹄：外张的承重环 + 蹄尖上段
     r = Pr.hoof_r * 1.12
     wall_top = Pr.u(0.070) if tag == "f" else Pr.u(0.065)
@@ -733,9 +886,11 @@ def part_legs(p: Pelt, env: Envelope, P) -> None:
     Pr = p.P
     for sx, side in ((-1, "l"), (1, "r")):
         sh = P(f"humerus_{side}")
-        p.limb(f"humerus_{side}", f"upper_arm_{side}", _off(sh, 0, Pr.u(0.020)), P(f"radius_{side}"), Pr.u(0.086) * Pr.bone_gauge, mat="coat", flat=0.80)
+        p.limb(f"humerus_{side}", f"upper_arm_{side}", _off(sh, 0, Pr.u(0.020)), P(f"radius_{side}"), Pr.u(0.086) * Pr.bone_gauge, mat="coat", flat=0.80,
+                joint_rom=rom(f"radius_{side}"))
         st = P(f"tibia_{side}")
-        p.limb(f"femur_{side}", f"thigh_{side}", _off(P(f"femur_{side}"), 0, -Pr.u(0.020)), _off(st, 0, Pr.u(0.030)), Pr.u(0.108) * Pr.bone_gauge, mat="coat", flat=0.76)
+        p.limb(f"femur_{side}", f"thigh_{side}", _off(P(f"femur_{side}"), 0, -Pr.u(0.020)), _off(st, 0, Pr.u(0.030)), Pr.u(0.108) * Pr.bone_gauge, mat="coat", flat=0.76,
+                joint_rom=rom(f"tibia_{side}"), slack=Pr.u(0.030))
 
 
 GROUPS = {
