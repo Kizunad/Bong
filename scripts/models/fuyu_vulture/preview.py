@@ -29,12 +29,32 @@ MODELS = FINAL / "layers"  # 骨架 / 肌肉 / 各种预览产物
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))  # 复用 scripts/models/render_bbmodel.py
 
+import tempfile  # noqa: E402
 from gen_muscle import GROUP_LABEL as MGROUP_LABEL  # noqa: E402
 from gen_pelt import MORPHS  # noqa: E402
 from gen_muscle import GROUPS as MGROUPS  # noqa: E402
 from gen_skeleton import PARTS, SPECS, build  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 from render_bbmodel import render, render_three_view  # noqa: E402
+from rigkit import bake_file  # noqa: E402
+
+
+_BAKED: dict[str, str] = {}
+
+
+def baked(path: Path) -> str:
+    """渲染前把坐标烘到世界系。
+
+    render_bbmodel 只读 elements 不读 outliner，而自带骨的飞羽（gen_pelt 的 quill）存的
+    是**骨局部坐标**、朝向烙在骨的绑定旋转里 —— 直接渲出来是一根根竖着的板，不是这只鸟。
+    骨架/肌肉层没有带绑定旋转的骨，烘焙是恒等变换，一律走同一条路省得漏。
+    """
+    key = str(path)
+    if key not in _BAKED:
+        tmp = tempfile.NamedTemporaryFile(suffix=".bbmodel", delete=False)
+        tmp.close()
+        _BAKED[key] = bake_file(path, tmp.name)
+    return _BAKED[key]
 
 SIZES = ("small", "mid", "large")
 
@@ -64,7 +84,7 @@ def _grid(tiles: list[tuple[str, Image.Image]], cols: int, out: Path, hdr: int =
 
 
 def three_view(model: str, out: str, size: int = 430, root: Path | None = None) -> None:
-    im, _ = render_three_view((root or MODELS) / f"{model}.bbmodel", size=size)
+    im, _ = render_three_view(baked((root or MODELS) / f"{model}.bbmodel"), size=size)
     im.save(HERE / out)
     print(f"  → {out}")
 
@@ -87,7 +107,7 @@ def scale_sheet(size: int = 520) -> None:
     for key in SIZES:
         spec = SPECS[key]
         im, _ = render(
-            MODELS / f"{spec.model}.bbmodel",
+            baked(MODELS / f"{spec.model}.bbmodel"),
             yaw=118.0, pitch=12.0, size=size,
             focus=(centers[key], span),
         )
@@ -100,7 +120,7 @@ def parts_sheet(key: str, size: int = 340) -> None:
     tiles = []
     for part, (label, _) in PARTS.items():
         _run("--size", key, "--part", part)
-        im, _ = render(MODELS / f"{spec.model}_{part}.bbmodel", yaw=132.0, pitch=14.0, size=size)
+        im, _ = render(baked(MODELS / f"{spec.model}_{part}.bbmodel"), yaw=132.0, pitch=14.0, size=size)
         tiles.append((f"{part} · {label}", im))
     _grid(tiles, 3, HERE / f"render_parts_{key}.png")
 
@@ -109,7 +129,7 @@ def head_shot(key: str, size: int = 520) -> None:
     spec = SPECS[key]
     tiles = []
     for tag, yaw, pitch in (("SIDE", 90.0, 0.0), ("3/4", 138.0, 12.0), ("FRONT", 178.0, 6.0)):
-        im, _ = render(MODELS / f"{spec.model}.bbmodel", yaw=yaw, pitch=pitch, size=size)
+        im, _ = render(baked(MODELS / f"{spec.model}.bbmodel"), yaw=yaw, pitch=pitch, size=size)
         tiles.append((tag, im))
     _grid(tiles, 3, HERE / f"render_head_{key}.png")
 
@@ -133,7 +153,7 @@ def muscle_groups_sheet(key: str, size: int = 340) -> None:
     tiles = []
     for g in MGROUPS:
         _run_muscle("--size", key, "--group", g)
-        im, _ = render(MODELS / f"{name}_{g}.bbmodel", yaw=132.0, pitch=14.0, size=size)
+        im, _ = render(baked(MODELS / f"{name}_{g}.bbmodel"), yaw=132.0, pitch=14.0, size=size)
         tiles.append((f"{g} · {MGROUP_LABEL[g]}", im))
     _grid(tiles, 3, HERE / f"render_muscle_groups_{key}.png")
 
@@ -144,7 +164,7 @@ def muscle_top(key: str, size: int = 500) -> None:
     mu = sk.replace("Skeleton", "Muscle")
     tiles = []
     for label, model in (("骨架 · 展翼", f"{sk}_spread"), ("骨+肌 · 展翼", f"{mu}_spread")):
-        im, _ = render(MODELS / f"{model}.bbmodel", yaw=180.0, pitch=88.0, size=size)
+        im, _ = render(baked(MODELS / f"{model}.bbmodel"), yaw=180.0, pitch=88.0, size=size)
         tiles.append((label, im))
     _grid(tiles, 2, HERE / f"render_muscle_top_{key}.png")
 
@@ -165,7 +185,7 @@ def morph_sheet(key: str, size: int = 440) -> None:
     base = SPECS[key].model.replace("Skeleton", "Pelt")
     tiles = []
     for mo, meta in MORPHS.items():
-        im, _ = render(FINAL / f"{base}_{mo}.bbmodel", yaw=138.0, pitch=12.0, size=size)
+        im, _ = render(baked(FINAL / f"{base}_{mo}.bbmodel"), yaw=138.0, pitch=12.0, size=size)
         tiles.append((f"{mo} · {meta['cn']} — {meta['note']}", im))
     _grid(tiles, 3, HERE / f"render_morphs_{key}.png")
 
@@ -183,7 +203,7 @@ def pelt_scale_sheet(morph: str = "jin", size: int = 520) -> None:
     for key in SIZES:
         spec = SPECS[key]
         base = spec.model.replace("Skeleton", "Pelt")
-        im, _ = render(FINAL / f"{base}_{morph}.bbmodel", yaw=118.0, pitch=12.0, size=size,
+        im, _ = render(baked(FINAL / f"{base}_{morph}.bbmodel"), yaw=118.0, pitch=12.0, size=size,
                        focus=(centers[key], span))
         tiles.append((f"{key}  {spec.cn}  {spec.stand_h / 16:.2f} m", im))
     _grid(tiles, 3, HERE / f"render_pelt_scale_{morph}.png")

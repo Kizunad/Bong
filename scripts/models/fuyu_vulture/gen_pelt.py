@@ -46,7 +46,8 @@ sys.path.insert(0, str(HERE))
 from gen_muscle import Body  # noqa: E402
 from gen_skeleton import SPECS  # noqa: E402
 from rigkit import (  # noqa: E402
-    Skeleton, SoftTissue, Vec, element_bounds, lerp, mirror_violations, normalize, perp_to,
+    Skeleton, SoftTissue, Vec, bake_file, element_bounds, lerp, mirror_violations,
+    normalize, perp_to,
 )
 
 REPO = HERE.parents[2]
@@ -657,10 +658,17 @@ def _leak_check(size: str, morph: str, res: int = 160) -> list[str]:
     _sys.path.insert(0, str(HERE.parent))
     from render_bbmodel import render  # noqa: PLC0415
 
+    import tempfile  # noqa: PLC0415
+
     name = SPECS[size].model.replace("Skeleton", "Pelt") + f"_{morph}"
     src = FINAL_DIR / f"{name}.bbmodel"
     if not src.exists():
         return []  # 还没生成，跳过（--check 可以在生成前跑）
+    # render_bbmodel 只读 elements 不读 outliner，而自带骨的羽存的是骨局部坐标 —— 直接
+    # 渲会看到一堆竖板，漏光检查等于对整片翼失明。先烘到世界系再渲。
+    tmp = tempfile.NamedTemporaryFile(suffix=".bbmodel", delete=False)
+    tmp.close()
+    src = bake_file(src, tmp.name)
     out = []
     for label, yaw, pitch in (("正面", 178.0, 4.0), ("前侧", 145.0, 10.0),
                               ("后方", 2.0, 6.0), ("腹下", 178.0, -55.0)):
@@ -684,6 +692,7 @@ def _leak_check(size: str, morph: str, res: int = 160) -> list[str]:
         # 一片片铺的，相邻片之间难免漏出几十像素——那是体素羽毛的固有特性，不是缺陷。
         if holes > res * res * 0.0018:
             out.append(f"{label}视图漏光：{holes} 个被模型围住的背景像素（体表有破口）")
+    Path(src).unlink(missing_ok=True)
     return out
 
 
@@ -743,8 +752,13 @@ def _joined_check(elements: list[dict], U: float) -> list[str]:
 
 def check(size: str, morph: str, verbose: bool = True) -> int:
     skel, B = build(size, morph)
+    # **先把坐标烘到世界系**再做任何按坐标判事的检查。自带骨的羽（quill）存的是骨局部
+    # 坐标、rotation 归零，朝向烙在骨的绑定旋转里 —— 直接读 element 拿到的是一根根竖着
+    # 的板。少了这一步，镜像/贴地/连通/漏光四项会对整片翼**静悄悄地全部通过**。
+    baked = {e["uuid"]: e for e in skel.baked_elements()}
+    world = [baked.get(e["uuid"], e) for e in skel.data["elements"]]
     # 羽层挂的件带 _muscle 标记（SoftTissue 统一打的），这里只看本层新增的那批
-    added = [e for e in skel.added() if _is_pelt(e["name"])]
+    added = [baked.get(e["uuid"], e) for e in skel.added() if _is_pelt(e["name"])]
     problems = list(mirror_violations(added))
 
     (_x0, y0, _z0), (_x1, y1, _z1) = element_bounds(added)
@@ -762,7 +776,7 @@ def check(size: str, morph: str, verbose: bool = True) -> int:
         if (e["from"][2] + e["to"][2]) / 2 < head_z + 2.0 * B.U:
             problems.append(f"{e['name']}: 羽长到头颈上了（秃鹫的头颈是裸的）")
 
-    problems += _joined_check(skel.data["elements"], B.U)
+    problems += _joined_check(world, B.U)
     problems += _leak_check(size, morph)
 
     tagged = [e for e in skel.data["elements"] if e.get("_muscle")]

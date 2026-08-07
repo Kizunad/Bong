@@ -130,6 +130,27 @@ def perp_to(a: Vec, b: Vec, ref: Vec) -> Vec:
     return (v[0] / m, v[1] / m, v[2] / m)
 
 
+def _rotmat3(rot) -> list[list[float]]:
+    """R = Rz·Ry·Rx（与 Blockbench / render_bbmodel 一致）。"""
+    rx, ry, rz = (math.radians(v) for v in rot)
+    cx, sx = math.cos(rx), math.sin(rx)
+    cy, sy = math.cos(ry), math.sin(ry)
+    cz, sz = math.cos(rz), math.sin(rz)
+    return [
+        [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+        [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+        [-sy, cy * sx, cy * cx],
+    ]
+
+
+def _matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+def _mul(R: list[list[float]], v, t) -> tuple[float, float, float]:
+    return tuple(sum(R[i][j] * v[j] for j in range(3)) + t[i] for i in range(3))
+
+
 def _center(f: list[float], t: list[float]) -> list[float]:
     return [(a + b) / 2 for a, b in zip(f, t)]
 
@@ -511,6 +532,46 @@ class Skeleton:
         self.data["elements"].append(element)
         self.nodes[bone]["children"].append(element["uuid"])
 
+    def baked_elements(self) -> list[dict]:
+        """把每个 element 的坐标从**骨局部系**烘到世界系（绑定姿）。
+
+        quill 出来的羽件 from/to 存的是骨局部坐标、rotation 归零，朝向烙在骨的绑定旋转
+        里。任何直接读 element 的东西（自检的镜像/贴地/连通/漏光、render_bbmodel 的默认
+        路径）拿到的都是"一根根竖着的板"，不是真几何 —— 会静悄悄地全部通过，等于对整片
+        翼失明。所有按坐标判事的地方都必须先过这一道。
+        """
+        out: list[dict] = []
+        by_uuid = {e["uuid"]: e for e in self.data["elements"]}
+
+        def walk(node, R, t):
+            if isinstance(node, str):
+                e = by_uuid.get(node)
+                if e is None:
+                    return
+                o = e.get("origin") or _center(e["from"], e["to"])
+                o2 = _mul(R, o, t)
+                Re = _rotmat3(e.get("rotation") or (0.0, 0.0, 0.0))
+                d = [o2[i] - o[i] for i in range(3)]
+                out.append({**e,
+                            "from": [e["from"][i] + d[i] for i in range(3)],
+                            "to": [e["to"][i] + d[i] for i in range(3)],
+                            "origin": list(o2),
+                            "rotation": list(_euler_zyx(_matmul(R, Re)))})
+                return
+            meta = self.groups.get(node["uuid"], node)
+            g = _rotmat3(meta.get("rotation") or (0.0, 0.0, 0.0))
+            piv = meta.get("origin") or (0.0, 0.0, 0.0)
+            # 骨的局部仿射：绕自己的 pivot 转，再接到父的变换上
+            R2 = _matmul(R, g)
+            t2 = _mul(R, [piv[i] - sum(g[i][j] * piv[j] for j in range(3)) for i in range(3)], t)
+            for c in node.get("children", []):
+                walk(c, R2, t2)
+
+        eye = [[1.0 if i == j else 0.0 for j in range(3)] for i in range(3)]
+        for root in self.data["outliner"]:
+            walk(root, eye, (0.0, 0.0, 0.0))
+        return out
+
     def added(self, flag: str = "_muscle") -> list[dict]:
         return [e for e in self.data["elements"] if e.get(flag)]
 
@@ -566,6 +627,24 @@ class Skeleton:
         # 骨架一旦被 Blockbench 5 手工存过盘，肌肉/皮毛层的产物就悄悄变成 5.0，而 5.0 在
         # 4.x 里打开是一个 cube 都看不见（见 to_fmt410 的说明）——不报错，只是空场景。
         Path(out).write_text(json.dumps(ensure_410(self.data), ensure_ascii=False, indent=1))
+
+
+def bake_file(src, dst) -> str:
+    """读一份 bbmodel，把坐标烘到世界系后另存 —— 给**只读 elements** 的工具用。
+
+    render_bbmodel 默认不读 outliner，所以自带骨的羽（quill）在它眼里是一根根竖着的板。
+    出预览图、做漏光检查这类"看图判事"的地方必须先过这一道，否则看的根本不是这只鸟。
+    骨架层与肌肉层没有带绑定旋转的骨，烘焙是恒等变换，照走无妨。
+    """
+    import json
+    from pathlib import Path
+
+    sk = Skeleton(src)
+    doc = dict(sk.data)
+    doc["elements"] = sk.baked_elements()
+    doc["outliner"] = [e["uuid"] for e in doc["elements"]]
+    Path(dst).write_text(json.dumps(doc, ensure_ascii=False))
+    return str(dst)
 
 
 class SoftTissue:
