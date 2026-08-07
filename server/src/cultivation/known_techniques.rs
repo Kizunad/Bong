@@ -1323,6 +1323,23 @@ dispatch = "metadata_backed"
         }
     }
 
+    #[test]
+    fn accepts_min_health_at_exact_upper_bound() {
+        // min_health 契约是 (0, 1]：上界 1.0 必须可加载（旧测试只钉了下界 0 与越界 1.1）。
+        let input = minimal_toml().replace(
+            "required_meridians = []",
+            "required_meridians = [{ channel = \"Lung\", min_health = 1.0 }]",
+        );
+        let registry = load(&input).expect("min_health == 1.0 is the valid (0,1] upper bound");
+        let definition = registry.get("test.skill").expect("technique must load");
+        assert_eq!(definition.required_meridians.len(), 1);
+        assert_eq!(definition.required_meridians[0].channel, "Lung");
+        assert_eq!(
+            definition.required_meridians[0].min_health, 1.0,
+            "exact upper bound must survive load"
+        );
+    }
+
     fn noop_skill(
         _world: &mut bevy_ecs::world::World,
         _caster: bevy_ecs::entity::Entity,

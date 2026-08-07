@@ -1983,6 +1983,122 @@ mod tests {
     }
 
     #[test]
+    fn tie_shan_kao_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::RaceMismatch),
+            "M19: race gate must follow definition.required_race override"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Stomach),
+            1.0,
+            "Stomach must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn tie_shan_kao_tears_first_overridden_meridian_not_hard_coded_stomach() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![
+                    TechniqueRequiredMeridian {
+                        channel: "Lung".to_string(),
+                        min_health: 0.5,
+                    },
+                    TechniqueRequiredMeridian {
+                        channel: "Stomach".to_string(),
+                        min_health: 0.5,
+                    },
+                ];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 70,
+                anim_duration_ticks: 10,
+            }
+        );
+        assert_eq!(qi(&app, caster), 65.0, "100 - 35 flat qi_cost");
+        assert!(
+            (meridian_integrity(&app, caster, MeridianId::Lung) - 0.8).abs() < 1e-12,
+            "M19: torn meridian must follow the FIRST registry required_meridian (Lung -> 0.8)"
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Stomach),
+            1.0,
+            "Stomach must NOT be torn even though present in required_meridians"
+        );
+    }
+
+    #[test]
+    fn tie_shan_kao_rejects_closed_overridden_meridian_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            TIE_SHAN_KAO_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.5,
+                }];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = false;
+        let target = spawn_target(&mut app, DVec3::new(1.0, 0.0, 0.0));
+
+        let result = resolve_tie_shan_kao(app.world_mut(), caster, 0, Some(target));
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "M19: meridian gate must report the registry-overridden meridian, not the legacy default"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Lung),
+            1.0,
+            "Lung must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
     fn tie_shan_kao_happy_path_spends_qi_tears_stomach_and_strikes() {
         let mut app = full_app();
         let caster = spawn_caster(&mut app, Realm::Condense, 100.0, DVec3::ZERO);
@@ -2171,6 +2287,129 @@ mod tests {
         assert_eq!(stamina.last_drain_tick, Some(10), "M31: 必须打 drain tick");
         let position = app.world().get::<Position>(caster).unwrap().get();
         assert!((position.z - 7.5).abs() < 1e-9 && position.x.abs() < 1e-9);
+    }
+
+    #[test]
+    fn xue_beng_bu_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::RaceMismatch),
+            "M19: race gate must follow definition.required_race override"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Gallbladder),
+            1.0,
+            "GallBladder must be untouched on rejection"
+        );
+        assert_eq!(
+            app.world().get::<Position>(caster).unwrap().get(),
+            DVec3::ZERO,
+            "no dash on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn xue_beng_bu_tears_first_overridden_meridian_not_hard_coded_gallbladder() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![
+                    TechniqueRequiredMeridian {
+                        channel: "Lung".to_string(),
+                        min_health: 0.4,
+                    },
+                    TechniqueRequiredMeridian {
+                        channel: "GallBladder".to_string(),
+                        min_health: 0.4,
+                    },
+                ];
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 50,
+                anim_duration_ticks: 6,
+            }
+        );
+        assert_eq!(qi(&app, caster), 75.0, "100 - 25 flat qi_cost");
+        assert!(
+            (meridian_integrity(&app, caster, MeridianId::Lung) - 0.75).abs() < 1e-12,
+            "M19: torn meridian must follow the FIRST registry required_meridian (Lung -> 0.75)"
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Gallbladder),
+            1.0,
+            "GallBladder must NOT be torn even though present in required_meridians"
+        );
+    }
+
+    #[test]
+    fn xue_beng_bu_rejects_closed_overridden_meridian_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            XUE_BENG_BU_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.4,
+                }];
+            },
+        ));
+        let caster = spawn_caster_with_look(&mut app, Realm::Condense, 100.0, DVec3::ZERO, 0.0);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = false;
+
+        let result = resolve_xue_beng_bu(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "M19: meridian gate must report the registry-overridden meridian, not the legacy default"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Lung),
+            1.0,
+            "Lung must be untouched on rejection"
+        );
+        assert_eq!(
+            app.world().get::<Position>(caster).unwrap().get(),
+            DVec3::ZERO,
+            "no dash on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
     }
 
     #[test]
@@ -2429,6 +2668,127 @@ mod tests {
             app.world().get::<Casting>(caster).unwrap().duration_ticks,
             15
         );
+    }
+
+    #[test]
+    fn ni_mai_hu_ti_uses_overridden_runtime_race_gate_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::RaceMismatch),
+            "M19: race gate must follow definition.required_race override"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Pericardium),
+            1.0,
+            "Pericardium must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
+    }
+
+    #[test]
+    fn ni_mai_hu_ti_tears_first_overridden_meridian_not_hard_coded_pericardium() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![
+                    TechniqueRequiredMeridian {
+                        channel: "Lung".to_string(),
+                        min_health: 0.55,
+                    },
+                    TechniqueRequiredMeridian {
+                        channel: "Pericardium".to_string(),
+                        min_health: 0.55,
+                    },
+                ];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            CastResult::Started {
+                cooldown_ticks: 120,
+                anim_duration_ticks: 12,
+            }
+        );
+        assert_eq!(qi(&app, caster), 55.0, "100 - 45 flat qi_cost");
+        assert!(
+            (meridian_integrity(&app, caster, MeridianId::Lung) - 0.7).abs() < 1e-12,
+            "M19: torn meridian must follow the FIRST registry required_meridian (Lung -> 0.7)"
+        );
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Pericardium),
+            1.0,
+            "Pericardium must NOT be torn even though present in required_meridians"
+        );
+    }
+
+    #[test]
+    fn ni_mai_hu_ti_rejects_closed_overridden_meridian_without_mutation() {
+        let mut app = full_app();
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            NI_MAI_HU_TI_SKILL_ID,
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "Lung".to_string(),
+                    min_health: 0.55,
+                }];
+            },
+        ));
+        let caster = spawn_caster(&mut app, Realm::Solidify, 100.0, DVec3::ZERO);
+        app.world_mut()
+            .get_mut::<MeridianSystem>(caster)
+            .unwrap()
+            .get_mut(MeridianId::Lung)
+            .opened = false;
+
+        let result = resolve_ni_mai_hu_ti(app.world_mut(), caster, 0, None);
+
+        assert_eq!(
+            result,
+            rejected(CastRejectReason::MeridianSevered(Some(MeridianId::Lung))),
+            "M19: meridian gate must report the registry-overridden meridian, not the legacy default"
+        );
+        assert_eq!(qi(&app, caster), 100.0, "qi must be untouched on rejection");
+        assert_eq!(
+            meridian_integrity(&app, caster, MeridianId::Lung),
+            1.0,
+            "Lung must be untouched on rejection"
+        );
+        assert!(app.world().get::<Casting>(caster).is_none());
+        assert!(app
+            .world()
+            .resource::<Events<ApplyStatusEffectIntent>>()
+            .is_empty());
+        assert!(app
+            .world()
+            .resource::<Events<BurstMeridianEvent>>()
+            .is_empty());
     }
 
     #[test]
