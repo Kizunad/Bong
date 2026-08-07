@@ -4,6 +4,10 @@ set -euo pipefail
 
 TOKEN=$(realpath "$(dirname "$0")/../build-token.sh")
 SANDBOX=$(mktemp -d /tmp/build-token-test.XXXXXX)
+FAKE_REPO=$(mktemp -d /tmp/build-token-root-test.XXXXXX)
+mkdir -p "$FAKE_REPO/scripts" "$FAKE_REPO/server" "$FAKE_REPO/client"
+cp "$TOKEN" "$FAKE_REPO/scripts/build-token.sh"
+chmod +x "$FAKE_REPO/scripts/build-token.sh"
 PIDS=()
 cleanup() {
   trap - EXIT
@@ -12,7 +16,7 @@ cleanup() {
     kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
-  rm -rf "$SANDBOX"
+  rm -rf "$SANDBOX" "$FAKE_REPO"
 }
 trap cleanup EXIT
 
@@ -58,13 +62,41 @@ touch "$BUILD_TOKEN_TEST_DIR/$name.started"
 while [ ! -f "$BUILD_TOKEN_TEST_DIR/$name.release" ]; do sleep 0.02; done
 printf 'end %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
 EOF
-chmod +x "$SANDBOX/bin/cargo" "$SANDBOX/gradlew"
-
-export PATH="$SANDBOX/bin:$PATH"
+cat >"$FAKE_REPO/server/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$PWD" >"$BUILD_TOKEN_TEST_DIR/root-cargo.cwd"
+if [[ ${1:-} == root_cargo ]]; then
+  exit 0
+fi
+exec "$BUILD_TOKEN_TEST_DIR/bin/cargo" "$@"
+EOF
+cat >"$FAKE_REPO/client/gradlew" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$PWD" >"$BUILD_TOKEN_TEST_DIR/root-gradle.cwd"
+if [[ ${1:-} == root_gradle ]]; then
+  exit 0
+fi
+exec "$BUILD_TOKEN_TEST_DIR/gradlew" "$@"
+EOF
+chmod +x "$SANDBOX/bin/cargo" "$SANDBOX/gradlew" "$FAKE_REPO/server/cargo" "$FAKE_REPO/client/gradlew"
 export BUILD_TOKEN_TEST_DIR="$SANDBOX"
 export BUILD_TOKEN_TEST_LOG="$SANDBOX/events.log"
 export BONG_BUILD_TOKEN_TEST_MODE=1
 export BONG_BUILD_TOKEN_DIR="$SANDBOX/locks"
+TEST_TOKEN="$FAKE_REPO/scripts/build-token.sh"
+ORIGINAL_PATH=$PATH
+if ! (cd "$FAKE_REPO" && PATH="$FAKE_REPO/server:$ORIGINAL_PATH" "$TEST_TOKEN" cargo root_cargo) >"$SANDBOX/root-cargo.out" 2>"$SANDBOX/root-cargo.err"; then
+  fail "根目录 cargo 调用未能到达 server 构建根目录"
+fi
+if ! (cd "$FAKE_REPO" && PATH="$ORIGINAL_PATH" "$TEST_TOKEN" gradle root_gradle) >"$SANDBOX/root-gradle.out" 2>"$SANDBOX/root-gradle.err"; then
+  fail "根目录 gradle 调用未能到达 client 构建根目录"
+fi
+export PATH="$FAKE_REPO/server:$ORIGINAL_PATH"
+[ "$(cat "$SANDBOX/root-cargo.cwd")" = "$FAKE_REPO/server" ] || fail "根目录 cargo 调用未切到 server"
+[ "$(cat "$SANDBOX/root-gradle.cwd")" = "$FAKE_REPO/client" ] || fail "根目录 gradle 调用未切到 client";
+TOKEN="$TEST_TOKEN"
 
 wait_file() {
   local file=$1

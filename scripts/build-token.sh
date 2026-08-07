@@ -9,6 +9,8 @@
 # BONG_BUILD_TOKEN_TEST_MODE=1 + BONG_BUILD_TOKEN_DIR 指向私有 sandbox。
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
 usage() {
   cat >&2 <<'EOF'
 用法：scripts/build-token.sh <cargo|gradle> <args...>
@@ -44,10 +46,12 @@ fi
 case "$kind" in
   cargo)
     slots=2
+    build_root="$ROOT/server"
     command=(cargo "$@")
     ;;
   gradle)
     slots=1
+    build_root="$ROOT/client"
     command=(./gradlew "$@")
     ;;
   *)
@@ -124,6 +128,7 @@ while true; do
       printf ' %q' "${command[@]}" >&2
       printf '\n' >&2
 
+      cd "$build_root"
       set +e
       "${command[@]}" 9>&-
       status=$?
