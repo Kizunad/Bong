@@ -3259,6 +3259,7 @@ mod tests {
         use crate::combat::events::DeathEvent;
         use crate::combat::rat_bite::{apply_rat_bite_qi_drain, RatBiteEvent};
         use crate::cultivation::death_hooks::CultivationDeathTrigger;
+        use crate::cultivation::life_record::LifeRecord;
         use crate::cultivation::tick::CultivationClock;
         use crate::fauna::rat_phase::release_drained_qi_on_death_system;
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
@@ -3310,11 +3311,14 @@ mod tests {
 
         let target = app
             .world_mut()
-            .spawn(Cultivation {
-                qi_current: 20.0,
-                qi_max: 20.0,
-                ..Default::default()
-            })
+            .spawn((
+                Cultivation {
+                    qi_current: 20.0,
+                    qi_max: 20.0,
+                    ..Default::default()
+                },
+                LifeRecord::new(crate::player::state::canonical_player_id("RatBiteTarget")),
+            ))
             .id();
         let rat = app
             .world_mut()
@@ -3324,6 +3328,9 @@ mod tests {
                 RatBlackboard::new("spawn", ChunkPos::new(0, 0)),
             ))
             .id();
+        app.world_mut()
+            .entity_mut(rat)
+            .insert(LifeRecord::new(crate::npc::brain::canonical_npc_id(rat)));
 
         let before = summarize_world_qi(app.world_mut());
 

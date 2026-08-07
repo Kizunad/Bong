@@ -4191,7 +4191,7 @@ mod tests {
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
     use crate::persistence::{bootstrap_sqlite, load_active_tribulation};
-    use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+    use crate::qi_physics::{qi_flow_overflow_account, QiAccountId, QiTransfer, QiTransferReason};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use std::fs;
     use std::path::PathBuf;
@@ -4256,6 +4256,7 @@ mod tests {
     }
 
     fn spawn_tribulation_spectator(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
+        let character_id = format!("offline:{name}");
         app.world_mut()
             .spawn((
                 Position::new(pos),
@@ -4272,9 +4273,10 @@ mod tests {
                     entries: Vec::new(),
                 },
                 Lifecycle {
-                    character_id: format!("offline:{name}"),
+                    character_id: character_id.clone(),
                     ..Default::default()
                 },
+                LifeRecord::new(character_id),
             ))
             .id()
     }
@@ -6232,6 +6234,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
                 TribulationState {
                     kind: TribulationKind::DuXu,
                     phase: TribulationPhase::Wave(5),
@@ -6735,6 +6738,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6875,6 +6879,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6933,6 +6938,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -7099,6 +7105,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
                 TribulationState {
                     kind: TribulationKind::DuXu,
                     phase: TribulationPhase::Wave(5),
@@ -7317,6 +7324,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
         let _ = tribulator;
@@ -7681,7 +7689,7 @@ mod tests {
             .spawn((
                 Cultivation {
                     realm: Realm::Spirit,
-                    qi_current: 880.0,
+                    qi_current: 210.0,
                     qi_max: 210.0,
                     last_qi_zero_at: Some(77),
                     pending_material_bonus: 0.3,
@@ -7797,13 +7805,10 @@ mod tests {
             "tribulation failure should release cleared qi back to the current zone"
         );
         assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].to, qi_flow_overflow_account());
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
-        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert_eq!(
-            transfers[1].to,
-            QiAccountId::overflow(format!("tribulation_failure:{entity:?}"))
-        );
         assert_eq!(transfers[1].reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(transfers[1].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")
@@ -8351,6 +8356,7 @@ mod tests {
                 character_id: "offline:Victim".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("offline:Victim"),
             TribulationState {
                 kind: TribulationKind::DuXu,
                 phase: TribulationPhase::Wave(1),
@@ -8383,6 +8389,7 @@ mod tests {
                     character_id: "offline:Killer".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Killer"),
             ))
             .id();
 
@@ -10481,6 +10488,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10657,6 +10665,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10754,6 +10763,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 

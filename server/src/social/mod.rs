@@ -6806,6 +6806,7 @@ mod tests {
                 character_id: "char:negative".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("char:negative"),
             inventory_with_item(spirit_niche_test_item(9001)),
             Cultivation {
                 realm: Realm::Awaken,
@@ -6896,6 +6897,7 @@ mod tests {
                 character_id: "char:lowqi".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("char:lowqi"),
             inventory_with_item(spirit_niche_test_item(9002)),
             Cultivation {
                 realm: Realm::Awaken,
@@ -7105,6 +7107,7 @@ mod tests {
                 character_id: "char:voidrealm".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("char:voidrealm"),
             inventory_with_item(spirit_niche_test_item(9004)),
             Cultivation {
                 realm: Realm::Void,
