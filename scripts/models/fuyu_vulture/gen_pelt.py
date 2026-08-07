@@ -50,7 +50,8 @@ from rigkit import (  # noqa: E402
 )
 
 REPO = HERE.parents[2]
-MODELS = REPO / "local_models" / "fuyu_vulture"
+FINAL_DIR = REPO / "local_models" / "fuyu_vulture"  # 最终 9 个外观
+MODELS = FINAL_DIR / "layers"  # 底层与各种预览产物
 
 # 羽毛材质追加在贴图第 3 行（第 1 行骨、第 2 行肌，都保持原位不动）。
 PELT_ROW = 2
@@ -566,6 +567,10 @@ def main() -> int:
                 for root in skel.data["outliner"]:
                     prune(root)
             name = SPECS[s].model.replace("Skeleton", "Pelt") + f"_{mo}"
+            # 只有「收翼 · 全羽区 · 不叠解剖 · 不摘底层」这一种组合是交付物，
+            # 其余（展翼 / 单羽区 / bare / anatomy）都是看细节用的中间产物。
+            final = not (args.with_anatomy or args.only_pelt or args.tract
+                         or args.pose != "folded")
             if args.with_anatomy:
                 name += "_anatomy"
             if args.pose == "spread":
@@ -574,7 +579,9 @@ def main() -> int:
                 name += f"_{args.tract}"
             if args.only_pelt:
                 name += "_bare"
-            out = MODELS / f"{name}.bbmodel"
+            out_dir = FINAL_DIR if final else MODELS
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out = out_dir / f"{name}.bbmodel"
             skel.write(out, name)
             print(f"→ {out.relative_to(REPO)}  ({len(skel.data['elements'])} 件)")
     return 0

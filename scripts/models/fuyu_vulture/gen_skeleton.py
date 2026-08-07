@@ -48,7 +48,8 @@ sys.path.insert(0, str(HERE))
 from rigkit import Rig, Vec, lerp, normalize, perp_to  # noqa: E402
 
 REPO = HERE.parents[2]
-OUT_DIR = REPO / "local_models" / "fuyu_vulture"
+# 骨架 / 肌肉 / 各种预览都是**中间产物**，一律落 layers/；顶层只放最终的 9 个外观。
+OUT_DIR = REPO / "local_models" / "fuyu_vulture" / "layers"
 
 # ---------------------------------------------------------------- 材质
 # socket = 深色"孔洞"色。体素没有布尔减法，正交投影也没有凹陷阴影——眼窝/鼻孔/腕掌窗

@@ -23,7 +23,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-MODELS = REPO / "local_models" / "fuyu_vulture"
+FINAL = REPO / "local_models" / "fuyu_vulture"  # 最终 9 个外观
+MODELS = FINAL / "layers"  # 骨架 / 肌肉 / 各种预览产物
 
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))  # 复用 scripts/models/render_bbmodel.py
@@ -62,8 +63,8 @@ def _grid(tiles: list[tuple[str, Image.Image]], cols: int, out: Path, hdr: int =
     print(f"  → {out.name}")
 
 
-def three_view(model: str, out: str, size: int = 430) -> None:
-    im, _ = render_three_view(MODELS / f"{model}.bbmodel", size=size)
+def three_view(model: str, out: str, size: int = 430, root: Path | None = None) -> None:
+    im, _ = render_three_view((root or MODELS) / f"{model}.bbmodel", size=size)
     im.save(HERE / out)
     print(f"  → {out}")
 
@@ -155,7 +156,7 @@ def _run_pelt(*args: str) -> None:
 
 def pelt_views(key: str, morph: str = "jin") -> None:
     name = f"{SPECS[key].model.replace('Skeleton', 'Pelt')}_{morph}"
-    three_view(name, f"render_pelt_{key}_{morph}.png")
+    three_view(name, f"render_pelt_{key}_{morph}.png", root=FINAL)  # 交付物在顶层
     three_view(f"{name}_spread", f"render_pelt_{key}_{morph}_spread.png")
 
 
@@ -164,7 +165,7 @@ def morph_sheet(key: str, size: int = 440) -> None:
     base = SPECS[key].model.replace("Skeleton", "Pelt")
     tiles = []
     for mo, meta in MORPHS.items():
-        im, _ = render(MODELS / f"{base}_{mo}.bbmodel", yaw=138.0, pitch=12.0, size=size)
+        im, _ = render(FINAL / f"{base}_{mo}.bbmodel", yaw=138.0, pitch=12.0, size=size)
         tiles.append((f"{mo} · {meta['cn']} — {meta['note']}", im))
     _grid(tiles, 3, HERE / f"render_morphs_{key}.png")
 
@@ -182,7 +183,7 @@ def pelt_scale_sheet(morph: str = "jin", size: int = 520) -> None:
     for key in SIZES:
         spec = SPECS[key]
         base = spec.model.replace("Skeleton", "Pelt")
-        im, _ = render(MODELS / f"{base}_{morph}.bbmodel", yaw=118.0, pitch=12.0, size=size,
+        im, _ = render(FINAL / f"{base}_{morph}.bbmodel", yaw=118.0, pitch=12.0, size=size,
                        focus=(centers[key], span))
         tiles.append((f"{key}  {spec.cn}  {spec.stand_h / 16:.2f} m", im))
     _grid(tiles, 3, HERE / f"render_pelt_scale_{morph}.png")

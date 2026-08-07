@@ -50,7 +50,7 @@ from rigkit import (  # noqa: E402
 )
 
 REPO = HERE.parents[2]
-MODELS = REPO / "local_models" / "fuyu_vulture"
+MODELS = REPO / "local_models" / "fuyu_vulture" / "layers"  # 肌肉层是中间产物
 
 # 肌肉材质追加在贴图第 2 行（第 1 行 8 个骨/角/爪色块保持原位，
 # 这样读进来的骨骼 element 的 UV 一个都不用改）。
