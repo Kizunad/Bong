@@ -13,8 +13,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CHANNELS } from "@bong/schema";
+import {
+  ELDER_ENCOUNTER_DURABLE_WIRING,
+  startElderEncounterRuntime,
+  type RedisClientConstructor,
+} from "./main.js";
 
 import {
+  DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
+  DURABLE_QUEUE_READ_TIMEOUT_SECONDS,
+  ELDER_ENCOUNTER_DURABLE_DEAD_LETTER,
+  ELDER_ENCOUNTER_DURABLE_PROCESSING,
+  ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+  MAX_DURABLE_RECOVERY_BATCH,
+  MAX_SEEN_DURABLE_EVENT_IDS,
+  SEEN_DURABLE_EVENT_ID_TTL_MS,
   ElderEncounterNarrationRuntime,
   renderAppearedNarration,
   renderDanReceivedNarration,
@@ -48,9 +61,7 @@ function makeMockClient() {
       async (
         _script: string,
         _numKeys: number,
-        _dedupeKey: string | number,
-        _channel: string | number,
-        _message: string | number,
+        ..._args: Array<string | number>
       ) => 1,
     ),
 
@@ -60,50 +71,129 @@ function makeMockClient() {
   };
 }
 
-function makeDurableQueueClient() {
-  const source: string[] = [];
-  const processing: string[] = [];
+function makeProductionRedisConstructor() {
+  const clients: Array<{
+    url: string;
+    client: ReturnType<typeof makeMockClient>;
+  }> = [];
+  const Constructor = class {
+    constructor(url: string) {
+      const client = makeMockClient();
+      clients.push({ url, client });
+      return client;
+    }
+  };
+  return {
+    Constructor: Constructor as unknown as RedisClientConstructor,
+    clients,
+  };
+}
+
+function makeDurableQueueClient(options: { blockReadNumber?: number } = {}) {
+  const lists = new Map<string, string[]>();
+  let releaseBlockedRead: (() => void) | undefined;
+  let readCount = 0;
+  const list = (key: string): string[] => {
+    const existing = lists.get(key);
+    if (existing !== undefined) return existing;
+    const created: string[] = [];
+    lists.set(key, created);
+    return created;
+  };
+  const source = list(ELDER_ENCOUNTER_DURABLE);
+  const processing = list(ELDER_ENCOUNTER_DURABLE_PROCESSING);
+  const deadLetter = list(ELDER_ENCOUNTER_DURABLE_DEAD_LETTER);
 
   return {
+    lists,
     source,
     processing,
+    deadLetter,
+    releaseBlockedRead: () => {
+      releaseBlockedRead?.();
+      releaseBlockedRead = undefined;
+    },
     blmove: vi.fn(
       async (
-        _source: string,
-        _destination: string,
+        sourceKey: string,
+        destinationKey: string,
         sourceSide: "LEFT" | "RIGHT",
         destinationSide: "LEFT" | "RIGHT",
         _timeoutSeconds: number,
       ) => {
-        const value = sourceSide === "LEFT" ? source.shift() : source.pop();
-        if (value === undefined) return null;
-        if (destinationSide === "LEFT") processing.unshift(value);
-        else processing.push(value);
+        readCount += 1;
+        if (options.blockReadNumber === readCount) {
+          await new Promise<void>((resolve) => {
+            releaseBlockedRead = resolve;
+          });
+        }
+        const sourceList = list(sourceKey);
+        const destinationList = list(destinationKey);
+        const value = sourceSide === "LEFT" ? sourceList.shift() : sourceList.pop();
+        if (value === undefined) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return null;
+        }
+        if (destinationSide === "LEFT") destinationList.unshift(value);
+        else destinationList.push(value);
         return value;
       },
     ),
-    lrem: vi.fn(async (_key: string, _count: number, value: string) => {
-      const index = processing.indexOf(value);
+    lrem: vi.fn(async (key: string, _count: number, value: string) => {
+      const target = list(key);
+      const index = target.indexOf(value);
       if (index === -1) return 0;
-      processing.splice(index, 1);
+      target.splice(index, 1);
       return 1;
     }),
     lmove: vi.fn(
       async (
-        _source: string,
-        _destination: string,
+        sourceKey: string,
+        destinationKey: string,
         sourceSide: "LEFT" | "RIGHT",
         destinationSide: "LEFT" | "RIGHT",
       ) => {
-        const value = sourceSide === "LEFT" ? processing.shift() : processing.pop();
+        const sourceList = list(sourceKey);
+        const destinationList = list(destinationKey);
+        const value = sourceSide === "LEFT" ? sourceList.shift() : sourceList.pop();
         if (value === undefined) return null;
-        if (destinationSide === "LEFT") source.unshift(value);
-        else source.push(value);
+        if (destinationSide === "LEFT") destinationList.unshift(value);
+        else destinationList.push(value);
         return value;
       },
     ),
     disconnect: vi.fn(() => {}),
   };
+}
+
+async function waitForQueueState(
+  predicate: () => boolean,
+  message: string,
+): Promise<void> {
+  await vi.waitFor(() => {
+    expect(predicate(), message).toBe(true);
+  });
+}
+
+function silenceLogger() {
+  return { info: vi.fn(), warn: vi.fn() };
+}
+
+function queueRuntime(
+  sub: ReturnType<typeof makeMockClient>,
+  pub: ReturnType<typeof makeMockClient>,
+  queue: ReturnType<typeof makeDurableQueueClient>,
+) {
+  return new ElderEncounterNarrationRuntime({
+    sub,
+    pub,
+    durableQueue: queue,
+    logger: silenceLogger(),
+  });
+}
+
+async function stopQueueRuntime(runtime: ElderEncounterNarrationRuntime): Promise<void> {
+  await runtime.disconnect();
 }
 
 // ──── payload helpers ────────────────────────────────────────────────────────
@@ -149,6 +239,49 @@ describe("ElderEncounterNarrationRuntime", () => {
       sub.subscribe,
       `connect() 应订阅 ${ELDER_ENCOUNTER} 频道以接收遭遇事件`,
     ).toHaveBeenCalledWith(ELDER_ENCOUNTER);
+  });
+
+  it("生产 bootstrap 明确只启动 Pub/Sub，durable consumer 保持未接线", async () => {
+    const { Constructor, clients } = makeProductionRedisConstructor();
+    const cleanup = await startElderEncounterRuntime(
+      { redisUrl: "redis://production-bootstrap-test" },
+      Constructor,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        expect(clients[0]?.client.subscribe).toHaveBeenCalledWith(ELDER_ENCOUNTER);
+      });
+      expect(ELDER_ENCOUNTER_DURABLE_WIRING.status).toBe("contract-first-unwired");
+      expect(ELDER_ENCOUNTER_DURABLE_WIRING.owner).toContain(
+        "plan-agent-narration-pipeline-v1.md",
+      );
+      expect(clients, "生产 elder bootstrap 应只创建 sub + pub 两个 Redis 客户端").toHaveLength(2);
+      expect(clients.map(({ url }) => url)).toEqual([
+        "redis://production-bootstrap-test",
+        "redis://production-bootstrap-test",
+      ]);
+      expect(
+        clients.every(({ client }) => !("blmove" in client)),
+        "生产断开态不得把 durable queue client 注入 runtime",
+      ).toBe(true);
+
+      const [productionSub, productionPub] = clients;
+      expect(productionSub?.client.subscribe).toHaveBeenCalledTimes(1);
+      expect(productionSub?.client.subscribe).not.toHaveBeenCalledWith(ELDER_ENCOUNTER_DURABLE);
+      productionSub?.client.emit(ELDER_ENCOUNTER, makePayload("appeared"));
+      await vi.waitFor(() => {
+        expect(productionPub?.client.publish).toHaveBeenCalledWith(
+          AGENT_NARRATE,
+          expect.any(String),
+        );
+      });
+    } finally {
+      await cleanup();
+    }
+
+    expect(clients[0]?.client.disconnect).toHaveBeenCalledOnce();
+    expect(clients[1]?.client.disconnect).toHaveBeenCalledOnce();
   });
 
   it("stats 初始为 0", () => {
@@ -312,9 +445,15 @@ describe("ElderEncounterNarrationRuntime", () => {
       string,
       string,
     ];
-    expect(keyCount).toBe(1);
-    expect(dedupeKey).toBe("bong:dedupe:elder_encounter:terminal:npc:42:720000");
-    expect(channel).toBe(AGENT_NARRATE);
+    expect(keyCount, "Redis 去重脚本应只声明一个 key，避免 claim 与发布状态分裂").toBe(1);
+    expect(dedupeKey, "去重 key 应绑定 durable event_id，避免不同遭遇互相抑制").toBe(
+      "bong:dedupe:elder_encounter:terminal:npc:42:720000",
+    );
+    expect(channel, "原子脚本应发布到 AGENT_NARRATE，实际发布端点必须保持稳定").toBe(AGENT_NARRATE);
+    expect(
+      pub.eval.mock.calls[0]?.[5],
+      `去重 claim 应带 ${DURABLE_NARRATION_DEDUPE_TTL_SECONDS}s TTL，避免 Redis key 永久泄漏`,
+    ).toBe(DURABLE_NARRATION_DEDUPE_TTL_SECONDS);
     expect(runtime.stats.published).toBe(1);
     expect(runtime.stats.ignored).toBe(1);
   });
@@ -346,6 +485,85 @@ describe("ElderEncounterNarrationRuntime", () => {
     expect(runtime.stats.received).toBe(2);
     expect(runtime.stats.published).toBe(1);
     expect(runtime.stats.ignored).toBe(0);
+  });
+
+  it("durable 去重缓存按 TTL 淘汰后允许完整消息路径再次处理", async () => {
+    vi.useFakeTimers();
+    try {
+      const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:ttl" });
+      await runtime.handlePayload(payload);
+      vi.advanceTimersByTime(SEEN_DURABLE_EVENT_ID_TTL_MS + 1);
+      pub.eval.mockResolvedValueOnce(1);
+      await runtime.handlePayload(payload);
+
+      expect(
+        pub.eval,
+        "本地去重缓存过期后应重新执行 Redis claim，原因是短 TTL 只抑制重复突发而非永久丢弃事件",
+      ).toHaveBeenCalledTimes(2);
+      expect(runtime.stats.published, "去重缓存过期后应再次发布，实际发布次数必须为 2").toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("durable 去重缓存超过上限时淘汰最旧 ID，避免进程内存无界增长", async () => {
+    for (let index = 0; index < MAX_SEEN_DURABLE_EVENT_IDS + 1; index += 1) {
+      await runtime.handlePayload(
+        makePayload("dead_natural", { event_id: `terminal:npc:42:lru:${index}` }),
+      );
+    }
+    pub.eval.mockResolvedValueOnce(1);
+    await runtime.handlePayload(makePayload("dead_natural", { event_id: "terminal:npc:42:lru:0" }));
+
+    expect(
+      pub.eval,
+      "超过本地 LRU 上限后最旧 ID 应可再次走 Redis claim，避免 seen 集合无界增长",
+    ).toHaveBeenCalledTimes(MAX_SEEN_DURABLE_EVENT_IDS + 2);
+    expect(runtime.stats.published, "最旧 ID 被淘汰后应重新发布，实际发布次数应包含重试").toBe(
+      MAX_SEEN_DURABLE_EVENT_IDS + 2,
+    );
+  });
+
+  it("durable 消息通过订阅 emit 走完整去重状态转换", async () => {
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:emit" });
+    sub.emit(ELDER_ENCOUNTER, payload);
+    await vi.waitFor(() => expect(pub.eval).toHaveBeenCalledOnce());
+    sub.emit(ELDER_ENCOUNTER, payload);
+    await vi.waitFor(() => expect(runtime.stats.ignored).toBe(1));
+
+    expect(pub.publish, "durable 订阅消息应只走原子 eval，不应旁路普通 publish").not.toHaveBeenCalled();
+    expect(runtime.stats.published, "重复 durable 订阅消息应只发布一次，实际发布次数应为 1").toBe(1);
+  });
+
+  it("durable 去重脚本返回非 1 时不污染本地 seen，后续状态可重试", async () => {
+    pub.eval.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:claim-retry" });
+
+    await runtime.handlePayload(payload);
+    await runtime.handlePayload(payload);
+
+    expect(pub.eval, "Redis claim 未成功时后续同 ID 必须可重试，不能被本地 seen 错误吞掉").toHaveBeenCalledTimes(2);
+    expect(runtime.stats.published, "第二次 claim 成功后应发布一次，实际发布次数应为 1").toBe(1);
+  });
+
+  it("durable event_id 通过 Redis 原子 claim+publish，重复输入不再发布", async () => {
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:duplicate-cache" });
+
+    await runtime.handlePayload(payload);
+    await runtime.handlePayload(payload);
+
+    expect(runtime.stats.ignored, "成功发布后本地 seen 应抑制短时间重复输入，实际 ignored 应为 1").toBe(1);
+  });
+
+  it("durable event_id 的 Redis TTL 与本地 TTL 都是有界策略", () => {
+    expect(
+      DURABLE_NARRATION_DEDUPE_TTL_SECONDS,
+      "Redis 去重键必须有正 TTL，避免跨 runtime 的永久 key 泄漏",
+    ).toBeGreaterThan(0);
+    expect(
+      SEEN_DURABLE_EVENT_ID_TTL_MS,
+      "本地去重缓存必须有正 TTL，避免进程内重复 ID 永久占用",
+    ).toBeGreaterThan(0);
   });
 
   it("durable payload 缺少 EVAL 能力时 fail closed，不退化为普通 PUBLISH", async () => {
@@ -403,6 +621,85 @@ describe("ElderEncounterNarrationRuntime", () => {
     expect(pub.publish).not.toHaveBeenCalled();
     expect(pub.eval).not.toHaveBeenCalled();
     expect(durableRuntime.stats.rejectedContract).toBe(1);
+  });
+
+  it("durable connect 只恢复有界数量，并保持 processing 右端到 source 左端的 FIFO", async () => {
+    const queue = makeDurableQueueClient({ blockReadNumber: 1 });
+    queue.processing.push(...Array.from({ length: MAX_DURABLE_RECOVERY_BATCH + 1 }, (_, index) => `pending-${index}`));
+    const durableRuntime = queueRuntime(makeMockClient(), makeMockClient(), queue);
+
+    await durableRuntime.connect();
+
+    expect(queue.processing, "恢复达到上限时应保留剩余 processing，避免启动阶段无界搬运").toHaveLength(1);
+    expect(queue.source.slice(0, 3), "恢复应从 processing 右端移到 source 左端，保持最早消息先重试").toEqual([
+      "pending-1",
+      "pending-2",
+      "pending-3",
+    ]);
+    expect(queue.lmove.mock.calls[0], "恢复应使用 processing RIGHT→source LEFT，实际参数必须体现 FIFO 方向").toEqual([
+      ELDER_ENCOUNTER_DURABLE_PROCESSING,
+      ELDER_ENCOUNTER_DURABLE,
+      "RIGHT",
+      "LEFT",
+    ]);
+    const disconnectPromise = durableRuntime.disconnect();
+    queue.releaseBlockedRead();
+    await disconnectPromise;
+  });
+
+  it("durable worker retry 将 processing 右端移回 source 左端，而不是反向吞掉 payload", async () => {
+    const queue = makeDurableQueueClient({ blockReadNumber: 2 });
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:worker-retry" });
+    queue.source.push(payload);
+    const workerRuntime = queueRuntime(sub, pub, queue);
+    pub.eval.mockRejectedValueOnce(new Error("redis unavailable"));
+
+    await workerRuntime.connect();
+    await waitForQueueState(
+      () => queue.source.includes(payload) && queue.processing.length === 0,
+      "Redis 暂时失败后 payload 应从 processing 回到 source，原因是失败可重试且 processing 必须清空",
+    );
+    expect(queue.source, "retry 后 source 应重新拥有原 payload，实际队列不能丢消息").toContain(payload);
+    expect(queue.lmove.mock.calls.some((call) => call[0] === ELDER_ENCOUNTER_DURABLE_PROCESSING && call[1] === ELDER_ENCOUNTER_DURABLE && call[2] === "RIGHT" && call[3] === "LEFT"), "retry 应使用 processing RIGHT→source LEFT，避免错误端点导致重复/丢失").toBe(true);
+
+    const disconnectPromise = workerRuntime.disconnect();
+    queue.releaseBlockedRead();
+    await disconnectPromise;
+  });
+
+  it("durable worker 将不可恢复 poison pill 移入 dead-letter，不进行无限 retry", async () => {
+    const queue = makeDurableQueueClient();
+    const payload = makePayload("dead_natural", { event_id: "terminal:npc:42:dead-letter" });
+    queue.source.push(payload);
+    const pubWithoutEval = makeMockClient();
+    delete (pubWithoutEval as Partial<typeof pubWithoutEval>).eval;
+    const workerRuntime = queueRuntime(sub, pubWithoutEval, queue);
+
+    await workerRuntime.connect();
+    await waitForQueueState(
+      () => queue.deadLetter.includes(payload) && queue.processing.length === 0,
+      "缺少 EVAL 的 durable payload 应进入 dead-letter，原因是该契约缺陷不可通过重试修复",
+    );
+    await workerRuntime.disconnect();
+
+    expect(queue.deadLetter, "poison pill 应只进入 dead-letter 一次，实际不能留在 source 重试").toEqual([payload]);
+    expect(queue.source, "dead-letter 后 source 应为空，避免 poison pill 无限回灌").toEqual([]);
+  });
+
+  it("durable worker 的 BLMove 读取超时与 shutdown timeout 有严格边界", async () => {
+    const queue = makeDurableQueueClient({ blockReadNumber: 1 });
+    const workerRuntime = queueRuntime(sub, pub, queue);
+
+    await workerRuntime.connect();
+    expect(queue.blmove.mock.calls[0]?.[4], "worker 应以 1 秒阻塞读取，实际 timeout 必须固定为契约值").toBe(
+      DURABLE_QUEUE_READ_TIMEOUT_SECONDS,
+    );
+    expect(
+      ELDER_ENCOUNTER_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+      "shutdown timeout 必须严格大于最长 BLMove 阻塞，避免 500ms 提前截断 worker 清理",
+    ).toBeGreaterThan(DURABLE_QUEUE_READ_TIMEOUT_SECONDS * 1000);
+    queue.releaseBlockedRead();
+    await workerRuntime.disconnect();
   });
 
   // ── disconnect ─────────────────────────────────────────────────────────────

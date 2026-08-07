@@ -14,7 +14,7 @@ if [[ ! -x "$JAVA_HOME/bin/java" ]] || ! "$JAVA_HOME/bin/java" -version 2>&1 | g
   exit 1
 fi
 
-./gradlew test \
+"$ROOT/scripts/build-token.sh" gradle test \
   --tests '*ScreenTransitionTest' \
   --tests '*LoadingOverlayTest' \
   --tests '*ConnectionStatusIndicatorTest' \

@@ -111,6 +111,33 @@ terminate_background_process() {
     wait "$pid" 2>/dev/null || true
 }
 
+rollback_launched_server() {
+    local pid="${1:-}"
+    local operation="${2:-failed bong-server launch}"
+    local status starttime executable executable_identity
+
+    if bong_server_process_is_running "$pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    case "$status" in
+        1)
+            wait "$pid" 2>/dev/null || true
+            return 0
+            ;;
+        2)
+            echo "FAIL: could not inspect failed bong-server launch pid $pid; preserving it for diagnosis" >&2
+            return 2
+            ;;
+    esac
+    starttime="$(bong_server_process_starttime "$pid")" || return 2
+    executable="$(bong_server_process_executable "$pid")" || return 2
+    executable_identity="$(bong_server_process_executable_identity "$pid")" || return 2
+    bong_server_rollback_pinned_managed_process \
+        "$pid" "$starttime" "$executable" "$executable_identity" "$operation"
+}
+
 launch_detached_job() {
     local pid
 
@@ -204,7 +231,7 @@ launch_bong_server() {
     launched_pid="$DETACHED_PID"
     if ! wait_for_process_executable "$launched_pid" "$resolved_expected_executable"; then
         echo "FAIL: bong server process $launched_pid did not exec expected executable $resolved_expected_executable" >&2
-        terminate_background_process "$launched_pid"
+        rollback_launched_server "$launched_pid" "final executable verification" || return $?
         SERVER_PID=""
         DETACHED_PID=""
         return 1
@@ -212,14 +239,14 @@ launch_bong_server() {
     SERVER_PID="$launched_pid"
     if ! sleep "$startup_grace"; then
         echo "FAIL: bong server startup grace wait failed: $startup_grace" >&2
-        terminate_background_process "$SERVER_PID"
+        rollback_launched_server "$SERVER_PID" "startup grace wait" || return $?
         SERVER_PID=""
         DETACHED_PID=""
         return 1
     fi
     if ! bong_server_write_record "$SERVER_PID" "$resolved_expected_executable"; then
         echo "FAIL: could not record managed bong server pid $SERVER_PID" >&2
-        terminate_background_process "$SERVER_PID"
+        rollback_launched_server "$SERVER_PID" "managed PID record publish" || return $?
         SERVER_PID=""
         DETACHED_PID=""
         return 1
@@ -333,7 +360,7 @@ stop_managed_server_before_reload || return $?
 
 # --- Step 4: Rebuild server ---
 echo "==> [4/5] Building server..."
-(cd server && cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
+(cd server && "$ROOT/scripts/build-token.sh" cargo build 2>&1) || { echo "FAIL: cargo build failed"; exit 1; }
 echo "    OK"
 
 # --- Step 5: Launch server ---

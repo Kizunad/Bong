@@ -9,7 +9,7 @@
 //!   资产存在性扫描 + 缺资产 allowlist 棘轮。
 //!
 //! 快照**不可手改**——唯一重生成入口：
-//! `cd server && BONG_REGEN_ICON_SNAPSHOT=1 cargo test technique_icon_snapshot`。
+//! `BONG_REGEN_ICON_SNAPSHOT=1 scripts/build-token.sh cargo test technique_icon_snapshot`。
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use super::known_techniques::TECHNIQUE_DEFINITIONS;
 
 const REGEN_HINT: &str = "快照由 TECHNIQUE_DEFINITIONS 单向生成、禁止手改；重生成：\
-    cd server && BONG_REGEN_ICON_SNAPSHOT=1 cargo test technique_icon_snapshot";
+    BONG_REGEN_ICON_SNAPSHOT=1 scripts/build-token.sh cargo test technique_icon_snapshot";
 
 /// 图标允许的命名空间集合（plan-skill-av-relink-v1 P0 决议：skill_scroll 单一真相源
 /// 在 `bong-client:`，既有 HUD 特化例外留 `bong:`；此外一律判红）。

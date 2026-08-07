@@ -12,17 +12,17 @@ fail() { echo "  ✗ $1"; ((FAIL+=1)); }
 
 echo "=== [1/4] Rust fmt + clippy ==="
 cd "$ROOT/server"
-if cargo fmt --check 2>/dev/null; then pass "cargo fmt"; else fail "cargo fmt"; fi
-if cargo clippy --all-targets -- -D warnings 2>/dev/null; then pass "clippy"; else fail "clippy"; fi
+if "$ROOT/scripts/build-token.sh" cargo fmt --check 2>/dev/null; then pass "cargo fmt"; else fail "cargo fmt"; fi
+if "$ROOT/scripts/build-token.sh" cargo clippy --all-targets -- -D warnings 2>/dev/null; then pass "clippy"; else fail "clippy"; fi
 
 echo ""
 echo "=== [2/4] Rust tests ==="
-if cargo test 2>&1 | tee /tmp/bong-test.log | tail -5; then pass "cargo test"; else fail "cargo test"; fi
+if "$ROOT/scripts/build-token.sh" cargo test 2>&1 | tee /tmp/bong-test.log | tail -5; then pass "cargo test"; else fail "cargo test"; fi
 
 echo ""
 echo "=== [3/4] Server smoke run (30s) ==="
-if cargo build 2>/dev/null; then pass "cargo build"; else fail "cargo build"; fi
-timeout 30s cargo run 2>&1 | tee /tmp/bong-smoke.log || true
+if "$ROOT/scripts/build-token.sh" cargo build 2>/dev/null; then pass "cargo build"; else fail "cargo build"; fi
+timeout 30s "$ROOT/scripts/build-token.sh" cargo run 2>&1 | tee /tmp/bong-smoke.log || true
 grep -q "\[bong\]\[bridge\] tokio runtime started" /tmp/bong-smoke.log && pass "bridge startup" || fail "bridge startup"
 grep -q "\[bong\]\[world\] creating overworld test area" /tmp/bong-smoke.log && pass "world creation" || fail "world creation"
 grep -q "\[bong\]\[player\] registering player init/cleanup systems" /tmp/bong-smoke.log && pass "player system" || fail "player system"
@@ -37,7 +37,7 @@ if [ -f "$ROOT/client/gradlew" ]; then
         export PATH="$JAVA_HOME/bin:$PATH"
     fi
     export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/tmp/bong-gradle}"
-    if ./gradlew test build 2>&1 | tail -10; then
+    if "$ROOT/scripts/build-token.sh" gradle test build 2>&1 | tail -10; then
         pass "gradlew test build"
         JAR=$(find build/libs -name "*.jar" -not -name "*-sources*" 2>/dev/null | head -1)
         if [ -n "$JAR" ]; then pass "jar: $JAR"; else fail "no jar produced"; fi

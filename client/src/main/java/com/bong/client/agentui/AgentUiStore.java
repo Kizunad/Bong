@@ -120,6 +120,10 @@ public final class AgentUiStore {
         pendingErrorClose = null;
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     private record PendingErrorClose(
         String requestId,
         long startedAtNanos,

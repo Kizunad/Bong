@@ -262,6 +262,33 @@ run_hup_case detached true
 
 source "$DEV_RELOAD"
 
+ROLLBACK_CALL_MARKER="$TEST_ROOT/rollback-call.marker"
+original_write_record="$(declare -f bong_server_write_record)"
+original_rollback_managed="$(declare -f bong_server_rollback_pinned_managed_process)"
+bong_server_write_record() {
+    return 1
+}
+bong_server_rollback_pinned_managed_process() {
+    printf '%s\n' "$1" > "$ROLLBACK_CALL_MARKER"
+    eval "$original_rollback_managed"
+}
+READY_FILE="$TEST_ROOT/rollback-ready"
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$STUB_SCRIPT"
+BONG_SERVER_LOG="$TEST_ROOT/rollback-server.log"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE"; then
+    fail "managed PID publish failure unexpectedly succeeded"
+fi
+[ -s "$ROLLBACK_CALL_MARKER" ] \
+    || fail "production launch failure did not reach pinned managed rollback wrapper"
+[ -z "$SERVER_PID" ] || fail "rollback launch failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "rollback launch failure left DETACHED_PID=$DETACHED_PID"
+eval "$original_write_record"
+eval "$original_rollback_managed"
+ENV_ARGS=()
+
 original_stop_managed="$(declare -f bong_server_stop_managed)"
 managed_stop_status=0
 bong_server_stop_managed() { return "$managed_stop_status"; }

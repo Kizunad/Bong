@@ -23,6 +23,10 @@ public final class CombatHudStateStore {
         snapshot = CombatHudState.empty();
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     public static void resetForTests() {
         clear();
     }

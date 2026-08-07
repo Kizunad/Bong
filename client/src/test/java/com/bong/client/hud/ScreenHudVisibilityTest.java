@@ -4,6 +4,7 @@ import com.bong.client.agentui.AgentUiScreen;
 import com.bong.client.insight.InsightCategory;
 import com.bong.client.insight.InsightChoice;
 import com.bong.client.insight.InsightOfferScreen;
+import com.bong.client.insight.InsightOfferStore;
 import com.bong.client.insight.InsightOfferViewModel;
 import com.bong.client.inventory.InspectScreen;
 import com.bong.client.inventory.model.InventoryModel;
@@ -61,9 +62,11 @@ class ScreenHudVisibilityTest {
             ScreenHudVisibility.forScreen(new CultivationScreen(PlayerStateViewModel.empty()))
         );
         assertEquals(ScreenHudVisibility.CAST_BAR_ONLY, ScreenHudVisibility.forScreen(dynamicXmlScreen));
+        InsightOfferViewModel offer = insightOffer();
+        InsightOfferStore.replace(offer);
         assertEquals(
             ScreenHudVisibility.CAST_BAR_ONLY,
-            ScreenHudVisibility.forScreen(new InsightOfferScreen(insightOffer()))
+            ScreenHudVisibility.forScreen(new InsightOfferScreen(offer))
         );
         assertEquals(
             ScreenHudVisibility.HIDDEN,
@@ -86,6 +89,7 @@ class ScreenHudVisibilityTest {
 
     private static InsightOfferViewModel insightOffer() {
         return new InsightOfferViewModel(
+            "insight:1:trigger",
             "trigger",
             "触发",
             "醒灵",
