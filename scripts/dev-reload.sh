@@ -9,23 +9,25 @@
 # vite + three.js viewer is started separately:
 #   cd worldgen/console && npm install && npm run dev
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/bong-server-lifecycle.sh"
-detach_background_job() {
+background_job_is_running() {
     local pid="${1:-}"
     local running_pid
-    local is_running=false
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    while IFS= read -r running_pid; do
+        [ "$running_pid" = "$pid" ] && return 0
+    done < <(jobs -pr)
+    return 1
+}
+
+detach_background_job() {
+    local pid="${1:-}"
 
     if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
         echo "FAIL: invalid background job pid: ${pid:-<empty>}" >&2
         return 1
     fi
-
-    while IFS= read -r running_pid; do
-        if [ "$running_pid" = "$pid" ]; then
-            is_running=true
-            break
-        fi
-    done < <(jobs -pr)
-    if [ "$is_running" != true ]; then
+    if ! background_job_is_running "$pid"; then
         echo "FAIL: background job $pid is not running in this shell" >&2
         return 1
     fi
@@ -162,6 +164,8 @@ launch_detached_job() {
     local pid
     local expected_executable="${2:-}"
     local inspect_status
+    local identity_dir identity_pipe identity_fd
+    local reported_pid reported_starttime
 
     DETACHED_PID=""
     DETACHED_STARTTIME=""
@@ -170,24 +174,63 @@ launch_detached_job() {
         return 1
     fi
 
+    identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/bong-launch-identity.XXXXXX")" || {
+        echo "FAIL: could not create background identity channel" >&2
+        return 1
+    }
+    identity_pipe="$identity_dir/identity"
+    if ! mkfifo -m 600 "$identity_pipe"; then
+        echo "FAIL: could not create background identity channel" >&2
+        rmdir "$identity_dir" 2>/dev/null || true
+        return 1
+    fi
+    if ! exec {identity_fd}<>"$identity_pipe"; then
+        echo "FAIL: could not open background identity channel" >&2
+        rm -f "$identity_pipe"
+        rmdir "$identity_dir" 2>/dev/null || true
+        return 1
+    fi
+    if ! rm -f "$identity_pipe" || ! rmdir "$identity_dir"; then
+        echo "FAIL: could not unlink background identity channel" >&2
+        exec {identity_fd}>&-
+        return 1
+    fi
+
     (
+        local child_pid child_starttime
+
         trap '' HUP
         trap - EXIT
+        child_pid="$BASHPID"
+        child_starttime="$(bong_server_process_starttime "$child_pid")" || exit 125
+        printf '%s %s\n' "$child_pid" "$child_starttime" >&"$identity_fd" || exit 125
+        exec {identity_fd}>&-
         exec < /dev/null
         "$@"
     ) &
     pid=$!
-    # Pin the process start time at fork, before any detach or death window:
-    # the pid is this shell's own child at this instant, so the pin can never
-    # bind to a recycled process. exec preserves pid and start time, so the
-    # pin remains the identity of the launched server through the
-    # wrapper -> image transition.
-    DETACHED_STARTTIME="$(bong_server_process_starttime "$pid")" || {
-        echo "FAIL: could not capture start time of background job $pid; failing closed" >&2
-        kill "$pid" 2>/dev/null || true
+    # The child reports its own identity while it is necessarily still alive.
+    # The parent never reads /proc through a pid that may already be recycled;
+    # exec preserves the reported pid and start time through image transition.
+    if ! IFS=' ' read -r -t 5 -u "$identity_fd" reported_pid reported_starttime; then
+        echo "FAIL: background job $pid did not report its fork-time identity" >&2
+        exec {identity_fd}>&-
+        if background_job_is_running "$pid"; then
+            kill "$pid" 2>/dev/null || true
+        fi
         wait "$pid" 2>/dev/null || true
         return 1
-    }
+    fi
+    exec {identity_fd}>&-
+    if [ "$reported_pid" != "$pid" ] || [[ ! "$reported_starttime" =~ ^[0-9]+$ ]]; then
+        echo "FAIL: background job $pid reported an invalid fork-time identity" >&2
+        if background_job_is_running "$pid"; then
+            kill "$pid" 2>/dev/null || true
+        fi
+        wait "$pid" 2>/dev/null || true
+        return 1
+    fi
+    DETACHED_STARTTIME="$reported_starttime"
     if ! detach_background_job "$pid"; then
         # Tri-state probe (bong_server_process_is_running: 0=live, 1=confirmed
         # absent/zombie, 2=UNKNOWN inspection). Only confirmed death may be
