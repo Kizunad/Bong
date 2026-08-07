@@ -55,7 +55,9 @@ class ProtoBreakingBaseRefContractTest(unittest.TestCase):
         )
         return sha
 
-    def _run(self, *, proto_kind: str) -> tuple[subprocess.CompletedProcess[str], str, pathlib.Path]:
+    def _run(
+        self, *, proto_kind: str, base_ref: str = "base"
+    ) -> tuple[subprocess.CompletedProcess[str], str, pathlib.Path]:
         sha = self._commit_base(proto_kind=proto_kind)
         scripts = self.checkout / "scripts"
         scripts.mkdir()
@@ -72,7 +74,7 @@ class ProtoBreakingBaseRefContractTest(unittest.TestCase):
         )
         fake_buf.chmod(0o700)
         env = os.environ.copy()
-        env.update({"BASE_REF": "base", "BUF_LOG": str(buf_log), "PATH": f"{bin_dir}:{env['PATH']}"})
+        env.update({"BASE_REF": base_ref, "BUF_LOG": str(buf_log), "PATH": f"{bin_dir}:{env['PATH']}"})
         result = subprocess.run(
             ["bash", str(local_check)],
             cwd=self.checkout,
@@ -101,6 +103,16 @@ class ProtoBreakingBaseRefContractTest(unittest.TestCase):
         result, _sha, buf_log = self._run(proto_kind="blob")
         self.assertEqual(result.returncode, 1)
         self.assertIn("unexpected git object type: blob", result.stderr)
+        self.assertFalse(buf_log.exists())
+
+    def test_missing_base_ref_fails_closed_not_first_pr_skip(self) -> None:
+        # The remote only ever receives the real "base" branch, so requesting a
+        # ref the remote cannot resolve must fail the step — a fetch failure is
+        # a verification-environment error, never the "first PR without proto/"
+        # skip path (plan-bughunt-proto-breaking-check-shallow-skip-v1 TODO 3).
+        result, _sha, buf_log = self._run(proto_kind="tree", base_ref="__definitely_missing_base_ref__")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("skipping breaking check (first PR)", result.stdout)
         self.assertFalse(buf_log.exists())
 
     def test_ci_invokes_the_executable_contract(self) -> None:
