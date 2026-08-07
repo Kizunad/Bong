@@ -1470,9 +1470,7 @@ mod tests {
 
     fn world_with_override(
         id: &str,
-        override_definition: impl FnOnce(
-            &mut crate::cultivation::known_techniques::TechniqueDefinition,
-        ),
+        override_definition: impl FnOnce(&mut crate::cultivation::known_techniques::TechniqueDefinition),
     ) -> bevy_ecs::world::World {
         let mut world = bevy_ecs::world::World::new();
         world.insert_resource(Events::<ApplyStatusEffectIntent>::default());
@@ -1499,11 +1497,19 @@ mod tests {
         });
 
         let entity = world
-            .spawn((make_cultivation(Realm::Induce, 20.0), make_wounds(50.0, 100.0, vec![])))
+            .spawn((
+                make_cultivation(Realm::Induce, 20.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
             .id();
         let result = npc_heal_basic(&mut world, entity, 0, None);
         assert!(
-            matches!(result, CastResult::Rejected { reason: CastRejectReason::QiInsufficient }),
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
             "overridden cost 40.0 must reject qi=20 (constant 8.0 would pass); got {result:?}"
         );
 
@@ -1546,7 +1552,12 @@ mod tests {
             .id();
         let result = npc_buff_speed(&mut world, entity, 0, None);
         assert!(
-            matches!(result, CastResult::Rejected { reason: CastRejectReason::QiInsufficient }),
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
             "overridden cost 30.0 must reject qi=6 (constant 5.0 would pass); got {result:?}"
         );
 
@@ -1585,7 +1596,12 @@ mod tests {
             .id();
         let result = npc_buff_defense(&mut world, entity, 0, None);
         assert!(
-            matches!(result, CastResult::Rejected { reason: CastRejectReason::QiInsufficient }),
+            matches!(
+                result,
+                CastResult::Rejected {
+                    reason: CastRejectReason::QiInsufficient
+                }
+            ),
             "overridden cost 25.0 must reject qi=7 (constant 6.0 would pass); got {result:?}"
         );
 
@@ -1606,7 +1622,11 @@ mod tests {
         let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
         let mut reader = intents.get_reader();
         let intents = reader.read(intents).collect::<Vec<_>>();
-        assert_eq!(intents.len(), 1, "DamageReduction intent must fire on success");
+        assert_eq!(
+            intents.len(),
+            1,
+            "DamageReduction intent must fire on success"
+        );
         assert_eq!(intents[0].kind, StatusEffectKind::DamageReduction);
     }
 

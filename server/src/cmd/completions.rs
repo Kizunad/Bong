@@ -727,7 +727,11 @@ mod tests {
     /// 构造跑 [`answer_command_completions`] 的最小 App + mock client，
     /// 把 `text` 封成真实 `RequestCommandCompletionsC2s` wire 帧注入 PacketEvent。
     fn completion_roundtrip(text: &str, transaction_id: i32) -> Vec<SuggestionsReply> {
-        completion_roundtrip_with_registry(text, transaction_id, TechniqueRegistry::load_for_tests())
+        completion_roundtrip_with_registry(
+            text,
+            transaction_id,
+            TechniqueRegistry::load_for_tests(),
+        )
     }
 
     /// 同 [`completion_roundtrip`]，但注入调用方给定的 registry（runtime-only 契约测试用）。

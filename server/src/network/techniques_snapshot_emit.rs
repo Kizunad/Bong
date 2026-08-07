@@ -175,7 +175,10 @@ mod tests {
         // （~3.4e38，旧 f32 窄化会溢出成 infinity）也必须原样进入快照，
         // 不能出现无限大成本或服务端扣费与客户端展示分裂。
         let above_f32_max = 1.0e40_f64;
-        assert!(above_f32_max > f64::from(f32::MAX), "fixture must exceed f32::MAX");
+        assert!(
+            above_f32_max > f64::from(f32::MAX),
+            "fixture must exceed f32::MAX"
+        );
         assert!(above_f32_max.is_finite());
         let registry =
             TechniqueRegistry::load_for_tests_with_override("sword.cleave", |definition| {
