@@ -323,7 +323,7 @@ else
       # The owned server is the harness capability boundary; REUSE never enters this branch.
       export BONG_DEV_MODE=1
     fi
-    exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
+    exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
 

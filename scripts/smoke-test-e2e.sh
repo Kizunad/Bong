@@ -142,7 +142,7 @@ if (
   export PATH="$RUST_PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  cargo test
+  "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_LOG" 2>&1; then
   pass "server cargo test"
 else

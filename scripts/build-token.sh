@@ -128,7 +128,9 @@ while true; do
       printf ' %q' "${command[@]}" >&2
       printf '\n' >&2
 
-      cd "$build_root"
+      if [[ "$(pwd -P)" == "$ROOT" ]]; then
+        cd "$build_root"
+      fi
       set +e
       "${command[@]}"
       status=$?

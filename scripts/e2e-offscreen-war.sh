@@ -1586,7 +1586,7 @@ start_server() {
     export BONG_SIM_SEED="$SIM_SEED"
     export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
     cd "$ROOT/server"
-    cargo run --release
+    "$ROOT/scripts/build-token.sh" cargo run --release
   ) >"$server_log" 2>&1 &
   SERVER_PID="$!"
 
@@ -1963,7 +1963,7 @@ fi
   export BONG_SIM_SEED="$SIM_SEED"
   export BONG_DORMANT_TICK_INTERVAL="$DORMANT_TICK_INTERVAL"
   cd "$ROOT/server"
-  cargo run --release
+  "$ROOT/scripts/build-token.sh" cargo run --release
 ) >"$P7_SERVER_LOG" 2>&1 &
 P7_SERVER_PID="$!"
 

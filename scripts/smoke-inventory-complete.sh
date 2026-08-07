@@ -40,9 +40,9 @@ echo "=== [2/4] Server inventory 模块 targeted tests ==="
 cd "$ROOT/server"
 # cargo test 按 module path / function name 过滤。inventory:: 模块含所有 inventory/discard/
 # pickup/death-drop/weight 测试；network::inventory_snapshot_emit 是单独 emit 模块。
-run_with_log "cargo test inventory" /tmp/bong-server-inventory.log cargo test --package bong-server inventory
-run_with_log "cargo test inventory_snapshot_emit" /tmp/bong-server-inventory-emit.log cargo test --package bong-server inventory_snapshot_emit
-run_with_log "cargo test dropped_loot" /tmp/bong-server-dropped-loot.log cargo test --package bong-server dropped_loot
+run_with_log "cargo test inventory" /tmp/bong-server-inventory.log "$ROOT/scripts/build-token.sh" cargo test --package bong-server inventory
+run_with_log "cargo test inventory_snapshot_emit" /tmp/bong-server-inventory-emit.log "$ROOT/scripts/build-token.sh" cargo test --package bong-server inventory_snapshot_emit
+run_with_log "cargo test dropped_loot" /tmp/bong-server-dropped-loot.log "$ROOT/scripts/build-token.sh" cargo test --package bong-server dropped_loot
 
 echo ""
 echo "=== [3/4] Client inventory + HUD targeted tests ==="
@@ -50,22 +50,22 @@ cd "$ROOT/client"
 # DroppedItemStore tie-breaker + DroppedLootSyncHandler + InventoryEventHandler +
 # InspectScreen apply-pill / move-intent + Overweight/DroppedItem HUD planner
 run_with_log "client DroppedItem* tests" /tmp/bong-client-dropped.log \
-    ./gradlew test --tests "*DroppedItem*"
+    "$ROOT/scripts/build-token.sh" gradle test --tests "*DroppedItem*"
 run_with_log "client Inventory* tests" /tmp/bong-client-inventory.log \
-    ./gradlew test --tests "*Inventory*"
+    "$ROOT/scripts/build-token.sh" gradle test --tests "*Inventory*"
 run_with_log "client InspectScreen* tests" /tmp/bong-client-inspect.log \
-    ./gradlew test --tests "*InspectScreen*"
+    "$ROOT/scripts/build-token.sh" gradle test --tests "*InspectScreen*"
 run_with_log "client Overweight + BongHud tests" /tmp/bong-client-hud.log \
-    ./gradlew test --tests "*Overweight*" --tests "*BongHud*"
+    "$ROOT/scripts/build-token.sh" gradle test --tests "*Overweight*" --tests "*BongHud*"
 
 echo ""
 echo "=== [4/4] 全量 build gates（保护不破别的模块）==="
 cd "$ROOT/server"
-run_with_log "server cargo check" /tmp/bong-server-check.log cargo check
-run_with_log "server cargo test" /tmp/bong-server-test.log cargo test
+run_with_log "server cargo check" /tmp/bong-server-check.log "$ROOT/scripts/build-token.sh" cargo check
+run_with_log "server cargo test" /tmp/bong-server-test.log "$ROOT/scripts/build-token.sh" cargo test
 
 cd "$ROOT/client"
-run_with_log "client gradle test build" /tmp/bong-client-build.log ./gradlew test build
+run_with_log "client gradle test build" /tmp/bong-client-build.log "$ROOT/scripts/build-token.sh" gradle test build
 
 echo ""
 echo "=========================="

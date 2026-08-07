@@ -102,7 +102,7 @@ jobs:
 
       - name: Client stage (gradlew test)
         working-directory: client
-        run: ./gradlew test
+        run: ../scripts/build-token.sh gradle test
 
       - name: Pre-pull Redis image with retry
         run: |
@@ -135,11 +135,11 @@ jobs:
 
       - name: Build server release binary
         working-directory: server
-        run: cargo build --release
+        run: ../scripts/build-token.sh cargo build --release
 
       - name: Server stage (cargo test)
         working-directory: server
-        run: cargo test
+        run: ../scripts/build-token.sh cargo test
 
       - name: Smoke/E2E stage (Task 13 harness)
         env:

@@ -11,7 +11,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 echo "[smoke-tsy-zone] running cargo test (server)..."
-(cd server && cargo test --bin bong-server)
+(cd server && "$REPO_ROOT/scripts/build-token.sh" cargo test --bin bong-server)
 
 echo "[smoke-tsy-zone] running schema vitest + check..."
 (cd agent/packages/schema && npm test && npm run check)

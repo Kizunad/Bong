@@ -155,9 +155,9 @@ return { design, implResults, verdicts, blocked: (implResults.find(r => r.blocke
 ```bash
 cd "$WT_ABS"
 # Rust（server/ 改动）：
-cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test
 # Java（client/ 改动）：
-cd client && ./gradlew test build
+scripts/build-token.sh gradle test build
 # TypeScript（agent/ 改动）：
 cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/schema && npm test)
 # Python 改动：ruff PostToolUse hook 会自动格式化
