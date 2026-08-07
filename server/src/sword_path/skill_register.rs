@@ -47,9 +47,9 @@ use crate::qi_physics::ledger::{
     QiTransferReason, WorldQiAccount,
 };
 use crate::qi_physics::release::qi_release_to_zone;
+use crate::qi_physics::QiPhysicsError;
 use crate::world::dimension::DimensionKind;
 use crate::world::zone::ZoneRegistry;
-use crate::qi_physics::QiPhysicsError;
 
 use super::av_event::{SwordPathSkillCastEvent, SwordPathSkillId};
 use super::bond::{SwordBondComponent, SwordShatterEvent};
@@ -1035,11 +1035,7 @@ fn apply_qi_settlement_plan(
     }
 }
 
-fn settle_skill_qi(
-    world: &mut bevy_ecs::world::World,
-    caster: Entity,
-    qi_cost: f64,
-) -> bool {
+fn settle_skill_qi(world: &mut bevy_ecs::world::World, caster: Entity, qi_cost: f64) -> bool {
     let Some(cultivation) = world.get::<Cultivation>(caster).cloned() else {
         return false;
     };
@@ -1052,9 +1048,7 @@ fn settle_skill_qi(
     if qi_cost == 0.0 {
         return true;
     }
-    if !cultivation.qi_current.is_finite()
-        || cultivation.qi_current + QI_EPSILON < qi_cost
-    {
+    if !cultivation.qi_current.is_finite() || cultivation.qi_current + QI_EPSILON < qi_cost {
         return false;
     }
 
@@ -1065,10 +1059,7 @@ fn settle_skill_qi(
         .get::<Position>(caster)
         .map(|position| position.get())
         .unwrap_or(DVec3::ZERO);
-    let target = zone_settlement_target(
-        world.get_resource::<ZoneRegistry>(),
-        position,
-    );
+    let target = zone_settlement_target(world.get_resource::<ZoneRegistry>(), position);
     let mut zone_current = target.as_ref().map(|target| target.current);
     let mut ledger = world
         .get_resource::<WorldQiAccount>()
@@ -1076,10 +1067,7 @@ fn settle_skill_qi(
         .unwrap_or_default();
     if let Some(target) = target.as_ref() {
         ledger
-            .set_balance(
-                QiAccountId::zone(target.name.clone()),
-                target.current,
-            )
+            .set_balance(QiAccountId::zone(target.name.clone()), target.current)
             .is_ok()
             .then_some(())
             .ok_or(())
