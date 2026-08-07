@@ -223,10 +223,10 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn control_character_snapshot_is_rejected_before_json_send() {
+    fn oversized_protobuf_snapshot_is_rejected_before_send() {
         let encoded_control_bytes = r"\u0001".repeat(1_000);
         let mut catalog = String::new();
-        for index in 0..8 {
+        for index in 0..40 {
             catalog.push_str(&format!(
                 r#"
 [[techniques]]
@@ -264,19 +264,17 @@ dispatch = "direct_generic"
         let payload = ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(
             build_techniques_snapshot(&registry, &known),
         ));
-        let actual_json = payload
-            .to_json_bytes_checked()
-            .expect_err("control-character snapshot must exceed the JSON wire limit");
+        let actual_proto = payload.to_proto_bytes();
         assert!(
-            matches!(
-                actual_json,
-                crate::schema::server_data::ServerDataBuildError::Oversize { .. }
-            ),
-            "the real JSON serializer must report Oversize, got {actual_json:?}"
+            actual_proto.len() > crate::schema::common::MAX_PAYLOAD_BYTES,
+            "the production protobuf snapshot must exceed the wire limit, bytes={}",
+            actual_proto.len()
         );
         assert!(
-            registry.aggregate_snapshot_size() > crate::schema::common::MAX_PAYLOAD_BYTES,
-            "startup estimate must cover the six-byte control-character escapes"
+            registry.aggregate_snapshot_size() >= actual_proto.len(),
+            "startup protobuf estimate must upper-bound the production sender: estimate={}, actual={}",
+            registry.aggregate_snapshot_size(),
+            actual_proto.len()
         );
 
         let error = crate::cultivation::known_techniques::validate_startup_wiring(
@@ -284,7 +282,9 @@ dispatch = "direct_generic"
             &crate::cultivation::skill_registry::SkillRegistry::default(),
             &crate::cultivation::meridian::severed::SkillMeridianDependencies::default(),
         )
-        .expect_err("a registry whose real JSON snapshot is oversized must fail startup wiring");
+        .expect_err(
+            "a registry whose real protobuf snapshot is oversized must fail startup wiring",
+        );
         assert!(
             error.to_string().contains("MAX_PAYLOAD_BYTES"),
             "startup rejection must identify the payload limit, got {error}"

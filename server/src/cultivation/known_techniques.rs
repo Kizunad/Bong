@@ -16,6 +16,10 @@ use crate::body_plan::{RaceGateOwned, RaceRegistry};
 use crate::cultivation::components::Realm;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::SkillRegistry;
+use crate::schema::combat_hud::{
+    TechniqueEntryV1, TechniqueRequiredMeridianV1, TechniquesSnapshotV1,
+};
+use crate::schema::server_data::{ServerDataPayloadV1, ServerDataV1};
 
 /// 相对 server assets 根目录的功法 metadata 文件。
 pub const DEFAULT_TECHNIQUES_PATH: &str = "assets/cultivation/techniques.toml";
@@ -191,50 +195,56 @@ impl TechniqueRegistry {
         self.definitions.is_empty()
     }
 
-    /// 最坏情况下（玩家学会全部 catalog 条目）techniques_snapshot 聚合 payload 的保守
-    /// 字节上界。每个 JSON 字符串按控制字符的 `\\u00XX` 六字节逃逸计算，再加结构开销，
-    /// 与 wire 上限 `MAX_PAYLOAD_BYTES` 比对。编码检查在发送端逐玩家逐 tick 执行，
-    /// 启动期先做一次聚合门禁（`validate_startup_wiring`），保证 catalog 被接受后，
-    /// registry 文本不会让完整快照在发送端才被丢弃。
-    ///
-    /// 基底只取固定信封开销，不能按 `MAX_PAYLOAD_BYTES` 比例预留，否则小 catalog 会被
-    /// 错误拒绝。wire 条目 `TechniqueEntryV1` 不携带 `icon_texture`，故不计入。
+    /// 最坏情况下（玩家学会全部 catalog 条目）techniques_snapshot 聚合 payload 的
+    /// protobuf 字节上界。生产发送端与这里共用 `ServerDataV1::to_proto_bytes()` 的
+    /// encoder；所有可省略的 scalar 字段都用非默认值构造，避免启动门禁因默认值省略
+    /// 而低估真实 wire 大小。这样估算与实际 `MAX_PAYLOAD_BYTES` gate 使用同一编码，
+    /// 不会用 JSON 转义开销误拒绝合法 catalog。
     pub fn aggregate_snapshot_size(&self) -> usize {
-        const ENVELOPE_OVERHEAD: usize = 1024;
-        const PER_ENTRY_OVERHEAD: usize = 192;
-        const PROFICIENCY_LABEL_UPPER_BOUND: usize = 98;
-        let mut total = ENVELOPE_OVERHEAD;
-        for definition in &self.definitions {
-            let text_bytes = [
-                definition.id.as_str(),
-                definition.display_name.as_str(),
-                definition.grade.as_str(),
-                definition.description.as_str(),
-                definition.required_realm.as_str(),
-            ]
-            .into_iter()
-            .map(Self::json_string_upper_bound)
-            .sum::<usize>()
-                + PROFICIENCY_LABEL_UPPER_BOUND;
-            let meridian_bytes: usize = definition
-                .required_meridians
+        let snapshot = TechniquesSnapshotV1 {
+            entries: self
+                .definitions
                 .iter()
-                .map(|m| Self::json_string_upper_bound(&m.channel) + 16)
-                .sum();
-            total += text_bytes + meridian_bytes + PER_ENTRY_OVERHEAD;
-        }
-        total
-    }
-
-    fn json_string_upper_bound(value: &str) -> usize {
-        2 + value
-            .chars()
-            .map(|character| match character {
-                '"' | '\\' => 2,
-                '\u{0000}'..='\u{001f}' => 6,
-                _ => character.len_utf8(),
-            })
-            .sum::<usize>()
+                .map(|definition| TechniqueEntryV1 {
+                    id: definition.id.clone(),
+                    display_name: definition.display_name.clone(),
+                    grade: definition.grade.clone(),
+                    proficiency: 1.0,
+                    proficiency_label: "化境".to_string(),
+                    active: true,
+                    description: definition.description.clone(),
+                    required_realm: definition.required_realm.clone(),
+                    required_meridians: definition
+                        .required_meridians
+                        .iter()
+                        .map(|meridian| TechniqueRequiredMeridianV1 {
+                            channel: meridian.channel.clone(),
+                            min_health: 1.0,
+                        })
+                        .collect(),
+                    qi_cost: if definition.qi_cost == 0.0 {
+                        1.0
+                    } else {
+                        definition.qi_cost
+                    },
+                    stamina_cost: if definition.stamina_cost == 0.0 {
+                        1.0
+                    } else {
+                        definition.stamina_cost
+                    },
+                    cast_ticks: u32::MAX,
+                    cooldown_ticks: u32::MAX,
+                    range: if definition.range == 0.0 {
+                        1.0
+                    } else {
+                        definition.range
+                    },
+                })
+                .collect(),
+        };
+        ServerDataV1::new(ServerDataPayloadV1::TechniquesSnapshot(snapshot))
+            .to_proto_bytes()
+            .len()
     }
 
     /// 读取并验证任意 techniques TOML。读取、反序列化、跨表验证完成前不会构造任何可见
@@ -1427,10 +1437,9 @@ dispatch = "metadata_backed"
     #[test]
     fn oversize_aggregate_snapshot_is_rejected_at_startup_wiring() {
         // M18：catalog 聚合快照超过 `MAX_PAYLOAD_BYTES`（32 KiB）时必须启动期拒绝，
-        // 而不是等发送端 `PayloadBuildError::Oversize` 整包丢弃。单条 1024 字节上限
-        // 与 512 条总量上限都放行时，聚合大小门禁是最后一道防线——这里用 400 条
-        // description 都顶到 900 字节（仍低于 1024 单条上限）来压过 32 KiB 上限：
-        // 400 × (3×900 + 192) ≈ 1.1 MB ≫ 32 KiB。
+        // 而不是等发送端把 protobuf 整包丢弃。单条 1024 字节上限与 512 条总量上限
+        // 都放行时，聚合大小门禁是最后一道防线——这里用 400 条 description 都顶到
+        // 900 字节（仍低于 1024 单条上限）来压过 32 KiB 上限。
         let mut catalog = String::new();
         for index in 0..400 {
             catalog.push_str(&format!(
@@ -1471,6 +1480,45 @@ dispatch = "direct_generic"
             error.to_string().contains("MAX_PAYLOAD_BYTES"),
             "wiring rejection should name the payload limit, got {error}"
         );
+    }
+
+    #[test]
+    fn protobuf_sized_short_catalog_is_accepted_at_startup_wiring() {
+        let mut catalog = String::new();
+        for index in 0..102 {
+            catalog.push_str(&format!(
+                r#"
+[[techniques]]
+ id = "bulk.{index}"
+ display_name = "批"
+ grade = "common"
+ description = "短"
+ required_realm = "Awaken"
+ required_meridians = []
+ required_race = {{ kind = "any" }}
+ qi_cost = 0.0
+ stamina_cost = 0.0
+ cast_ticks = 0
+ cooldown_ticks = 0
+ range = 0.0
+ icon_texture = "bong-client:textures/gui/items/skill_scroll_sword_cleave.png"
+ category = "attack"
+ dispatch = "direct_generic"
+"#
+            ));
+        }
+        let registry = load(&catalog).expect("short direct_generic catalog must load");
+        let aggregate = registry.aggregate_snapshot_size();
+        assert!(
+            aggregate <= crate::schema::common::MAX_PAYLOAD_BYTES,
+            "protobuf-sized short catalog must fit the wire limit, aggregate={aggregate}"
+        );
+        validate_startup_wiring(
+            &registry,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect("a catalog whose protobuf snapshot fits must pass startup wiring");
     }
 
     #[test]
