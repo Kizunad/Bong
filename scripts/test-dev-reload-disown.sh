@@ -577,6 +577,32 @@ grep -Fq "did not exec expected executable" "$DELAYED_EXEC_FAILURE_LOG" \
 [ -z "$DETACHED_PID" ] || fail "delayed exec failure left DETACHED_PID=$DETACHED_PID"
 unset DELAYED_MISSING_EXECUTABLE
 
+# Regression pin for the flake: a wrapper that completes its entire life inside
+# launch_detached_job's detach window must still be reported with the standard
+# exec-identity diagnostic, not a scheduling-dependent alternative.
+FAST_EXEC_FAILURE_SCRIPT="$TEST_ROOT/fast-exec-failure.sh"
+FAST_EXEC_FAILURE_LOG="$TEST_ROOT/fast-exec-failure.err"
+FAST_EXEC_SERVER_LOG="$TEST_ROOT/fast-exec-failure-server.log"
+cat > "$FAST_EXEC_FAILURE_SCRIPT" <<'FAST_EXEC_FAILURE'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$FAST_MISSING_EXECUTABLE"
+FAST_EXEC_FAILURE
+chmod +x "$FAST_EXEC_FAILURE_SCRIPT"
+export FAST_MISSING_EXECUTABLE="$TEST_ROOT/does-not-exist-fast"
+ENV_ARGS=()
+BONG_SERVER_EXECUTABLE="$FAST_EXEC_FAILURE_SCRIPT"
+BONG_SERVER_LOG="$FAST_EXEC_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$FAST_EXEC_FAILURE_LOG"; then
+    fail "zero-grace launch returned success before an immediate final exec failure"
+fi
+grep -Fq "did not exec expected executable" "$FAST_EXEC_FAILURE_LOG" \
+    || fail "immediate exec failure did not include its executable identity diagnostic"
+[ -z "$SERVER_PID" ] || fail "immediate exec failure left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "immediate exec failure left DETACHED_PID=$DETACHED_PID"
+unset FAST_MISSING_EXECUTABLE
+
 FAIL_SLEEP_DIR="$TEST_ROOT/fail-sleep-bin"
 FAIL_SLEEP_SCRIPT="$FAIL_SLEEP_DIR/sleep"
 RUNTIME_SLEEP_LOG="$TEST_ROOT/runtime-sleep.err"
