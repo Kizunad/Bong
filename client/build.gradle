@@ -234,11 +234,11 @@ tasks.named('test') {
 // client/run/ 作为 cwd 时的相对路径误解）。
 //
 // 调用：
-//   ./gradlew runClientPreview                      # 用默认 client/preview-harness.json
-//   BONG_PREVIEW_CONFIG=/abs/cfg.json ./gradlew runClientPreview
+//   ../scripts/build-token.sh gradle runClientPreview                      # 用默认 client/preview-harness.json
+//   BONG_PREVIEW_CONFIG=/abs/cfg.json ../scripts/build-token.sh gradle runClientPreview
 //
 // CI 上需 xvfb-run 包：
-//   xvfb-run -a --server-args='-screen 0 1280x720x24' ./gradlew runClientPreview
+//   xvfb-run -a --server-args='-screen 0 1280x720x24' ../scripts/build-token.sh gradle runClientPreview
 // loom 1.6-SNAPSHOT 不带 useXVFB，须显式包；ubuntu-24.04 预装 xvfb 21.x，无需 apt。
 //
 // 退出条件由 mod 内 PreviewSession 调用 client.scheduleStop()（不会自然退出）。

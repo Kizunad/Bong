@@ -38,7 +38,7 @@ run_with_log "schema generate" /tmp/bong-schema-generate.log npm run generate
 echo ""
 echo "=== [2/4] Server inventory 模块 targeted tests ==="
 cd "$ROOT/server"
-# cargo test 按 module path / function name 过滤。inventory:: 模块含所有 inventory/discard/
+# 构建令牌 wrapper cargo test 按 module path / function name 过滤。inventory:: 模块含所有 inventory/discard/
 # pickup/death-drop/weight 测试；network::inventory_snapshot_emit 是单独 emit 模块。
 run_with_log "cargo test inventory" /tmp/bong-server-inventory.log "$ROOT/scripts/build-token.sh" cargo test --package bong-server inventory
 run_with_log "cargo test inventory_snapshot_emit" /tmp/bong-server-inventory-emit.log "$ROOT/scripts/build-token.sh" cargo test --package bong-server inventory_snapshot_emit

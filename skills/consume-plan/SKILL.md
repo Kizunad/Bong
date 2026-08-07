@@ -333,7 +333,7 @@ gh pr checks "$PR_NUM" --watch --fail-fast
 ### CI 失败修复策略（≤2 轮）
 
 1. `cd "$WT_ABS" && gh run view --log-failed` 拉失败日志
-2. **在 `$WT_ABS` 内复现**失败 step 的命令（通常是 `cargo clippy` / `./gradlew test` / `npm test`）
+2. **在 `$WT_ABS` 内复现**失败 step 的命令（通常是 `scripts/build-token.sh cargo clippy` / `scripts/build-token.sh gradle test` / `npm test`）
 3. 本地能复现 → 本地修 + atomic fix commit + `cd "$WT_ABS" && git push` → 回到 step 5 重等
    - 最多 **2 轮修复**（首次失败后最多再推 2 次）
    - 每轮修复必须先在本地测试通过才 push

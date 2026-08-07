@@ -5,7 +5,7 @@
 #   bash scripts/preview/run-server-headless.sh [--release|--debug] [--timeout 60]
 #
 # 行为:
-#   1. 后台启动 cargo run（默认 --release，速度更接近 CI）
+#   1. 后台经构建令牌 wrapper 启动 cargo run（默认 --release，速度更接近 CI）
 #   2. 把进程 PID 写到 /tmp/bong-preview-server.pid
 #   3. 轮询 TCP 127.0.0.1:25565，accept 即 ready
 #   4. 超时（默认 90s）→ 打印 server log + 杀进程 + exit 1

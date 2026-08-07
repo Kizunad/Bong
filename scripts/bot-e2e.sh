@@ -9,7 +9,7 @@
 #   BOT_E2E_PROFILE=debug bash scripts/bot-e2e.sh    # 用 debug 构建（快）
 #   BOT_E2E_REUSE=1 bash scripts/bot-e2e.sh          # 复用已在 25565 跑着的 server
 #
-# 注意：必须经 cargo run 从**当前 checkout** 构建运行，不要直接跑共享 target 里的旧
+# 注意：必须经构建令牌 wrapper 从**当前 checkout**构建运行，不要直接跑共享 target 里的旧
 # 二进制——CARGO_MANIFEST_DIR 是编译期烙死的，旧二进制可能指向已删 worktree 的资产路径
 # 启动即 panic（loot_pools.json not found 实证）。
 

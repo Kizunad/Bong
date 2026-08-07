@@ -130,7 +130,7 @@ run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agen
 stage "4/10" "Server entrypoint startup"
 run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
 server_start_exit=0
-echo "[run][server-start] timeout 20s cargo run"
+echo "[run][server-start] timeout 20s 构建令牌 wrapper cargo run"
 timeout 20s bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo run" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
 echo "[server-start] exit=${server_start_exit}, log=${SERVER_BOOT_LOG}"
 if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
@@ -169,7 +169,7 @@ stage "9/10" "Cross-layer closure proof"
 echo "[closure] world_state publication -> server world_state_tests::uses_real_player_names_and_positions"
 echo "[closure] tiandao startup entrypoint -> npm run start:mock with tick anchors"
 echo "[closure] agent command/narration path -> tiandao runtime + redis-ipc + main-loop tests"
-echo "[closure] server startup entrypoint -> timeout cargo run with bridge/world/player/redis anchors"
+echo "[closure] server startup entrypoint -> timeout 构建令牌 wrapper cargo run with bridge/world/player/redis anchors"
 echo "[closure] server execution path -> command_executor_tests::applies_modify_zone + narration_tests::player_scope_matches_username_and_offline_id"
 echo "[closure] client payload parsing -> BongNetworkHandlerTest + NarrationPayloadParserTest"
 

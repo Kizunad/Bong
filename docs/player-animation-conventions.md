@@ -287,7 +287,7 @@ addPartIfExists(part.bendDirection, "axis", partNode, degrees, tick, easing, tur
 
 ### §9.1 为什么迁 JSON
 
-Java `AnimationBuilder` 的优势是编译期校验、参数可以跑单测、可以在运行时根据玩家属性调参。劣势是**每次改 3° 都要 `./gradlew build` + 重启客户端**。对于"艺术感觉"驱动的姿态调参（绝大多数战斗动画），反馈循环 2-3 分钟完全是浪费。
+Java `AnimationBuilder` 的优势是编译期校验、参数可以跑单测、可以在运行时根据玩家属性调参。劣势是**每次改 3° 都要 `scripts/build-token.sh gradle build` + 重启客户端**。对于"艺术感觉"驱动的姿态调参（绝大多数战斗动画），反馈循环 2-3 分钟完全是浪费。
 
 JSON 资源文件：
 - 改完 `python3 tools/gen_fist_punch_right.py` + `python3 tools/render_animation.py ...` → 1 秒出 PNG → Claude `Read` 看姿态对不对 → 不对再改 → 循环

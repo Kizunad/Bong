@@ -112,7 +112,7 @@ def main() -> int:
     if not check_server_reachable(args.host, args.port, timeout=5.0):
         print(
             f"server {args.host}:{args.port} 不可达——先起 server"
-            "（bash scripts/bot-e2e.sh 会自动起，或手动 cd server && cargo run）",
+            "（bash scripts/bot-e2e.sh 会自动起，或手动 scripts/build-token.sh cargo run）",
             file=sys.stderr,
         )
         return 2

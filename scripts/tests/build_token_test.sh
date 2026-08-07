@@ -124,6 +124,11 @@ not_started_briefly() {
   done
   return 0
 }
+process_is_running() {
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null || true)
+  [[ -n "$state" && "$state" != Z* ]]
+}
 start_cargo() {
   local name=$1
   shift
@@ -234,7 +239,7 @@ if wait_file "$SANDBOX/crash_holder.started" && wait_file "$SANDBOX/survivor.sta
     else
       fail "orphan build 结束后等待者未获得槽位"
     fi
-    if kill -0 "$crash_child_pid" 2>/dev/null; then
+    if process_is_running "$crash_child_pid"; then
       fail "crash build child 在 release 后仍存活"
       kill "$crash_child_pid" 2>/dev/null || true
     else

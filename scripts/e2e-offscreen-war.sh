@@ -59,7 +59,7 @@ set -euo pipefail
 #
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
-# fork 自 scripts/e2e-redis.sh：同款 redis 三级 fallback + cargo run 起服 +
+# fork 自 scripts/e2e-redis.sh：同款 redis 三级 fallback + 构建令牌 wrapper 起服 +
 # ioredis subscriber + wait_for_pattern + cleanup trap。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1944,7 +1944,7 @@ echo "=== [11/12] P7 TPS 门禁：1000 Dormant ≥18 TPS（headless server 自�
 #   此测试的目的是：验证 1000 Dormant 规模下 tick budget 健康（≥18 TPS），
 #   不是 Near/Mid 分档渲染（那条路需要 client，转人工 runClient 验收）。
 #
-# Near(100)+Mid(500) 分档 TPS：人工验收（需 ./gradlew runClient，§10.1 #6）。
+# Near(100)+Mid(500) 分档 TPS：人工验收（需 scripts/build-token.sh gradle runClient，§10.1 #6）。
 
 # 停掉 P6 server（现有 SERVER_PID）
 stop_server

@@ -165,4 +165,4 @@ bash scripts/smoke-test.sh
 - **防火墙**: 如果连不上，检查 Windows 防火墙是否放行 25565
 - **Java 版本切换**: `sdk use` 只影响当前终端，不会改变全局默认
 - **ConnectionMode::Offline**: 服务端不验证正版，Prism Launcher 离线模式可直接连
-- **首次 cargo build**: 需要下载 ~348 个 crate，确保网络通畅
+- **首次 server build**: 需要下载 ~348 个 crate，确保网络通畅

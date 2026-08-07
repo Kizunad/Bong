@@ -255,9 +255,9 @@ if (
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
-  pass "server cargo test"
+  pass "server wrapper cargo test"
 else
-  fail "server cargo test"
+  fail "server wrapper cargo test"
 fi
 
 if (

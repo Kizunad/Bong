@@ -137,7 +137,7 @@ jobs:
         working-directory: server
         run: ../scripts/build-token.sh cargo build --release
 
-      - name: Server stage (cargo test)
+      - name: Server stage (build-token cargo test)
         working-directory: server
         run: ../scripts/build-token.sh cargo test
 
