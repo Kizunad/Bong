@@ -957,11 +957,13 @@ mod tests {
             .drain()
             .collect();
         assert_eq!(transfers.len(), 2);
-        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert!((transfers[0].amount - 2.5).abs() < 1e-9);
+        // split release 的顺序以真实 ledger commit 顺序为准（qi_flow.rs：overflow 先落稳定池，
+        // zone audit 后追加），调用方不得假设 zone 总在第一项。
+        assert_eq!(transfers[0].to, qi_flow_overflow_account());
+        assert!((transfers[0].amount - 7.5).abs() < 1e-9);
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
-        assert_eq!(transfers[1].to, qi_flow_overflow_account());
-        assert!((transfers[1].amount - 7.5).abs() < 1e-9);
+        assert_eq!(transfers[1].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
+        assert!((transfers[1].amount - 2.5).abs() < 1e-9);
         assert_eq!(transfers[1].reason, QiTransferReason::ReleaseToZone);
     }
 
