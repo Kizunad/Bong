@@ -289,12 +289,12 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
                          for k in range(n_cov)]
             for k in range(n_cov):
                 t = k / max(1, n_cov - 1)
-                # 覆羽要**压在**飞羽根部上面，不能和它同高（两组羽根都铺在骨线上时只差
-                # 0.06，从正上方看是互相穿插的窄条）。但抬升量必须**小于板厚**：羽板只有
-                # 0.20U 厚，早先每层抬 0.30U，层与层之间各留 0.10 的空气 —— 俯视看不出
-                # 来，从正后方是边缘视角，整片翼当场读成三张分开的板。0.15U 让相邻层压掉
-                # 四分之一，接成一整面。
-                root = _off(cov_roots[k], dy=0.15 * layer * U) if spread else cov_roots[k]
+                # 覆羽与飞羽只错开**极小**一点：够躲开共面 z-fighting，不够形成可见的
+                # 台阶。抬 0.15U 时三层叠出 0.47 的总厚（两片板高），近看就是一层黑块浮
+                # 在翼面上；0.06U 之后总厚 0.33，读作一整片翼。
+                # 完全同高也不行 —— 两组羽根都铺在骨线上时只差 0.06，从正上方看是互相
+                # 穿插的窄条。
+                root = _off(cov_roots[k], dy=0.06 * layer * U) if spread else cov_roots[k]
                 ln = hum_len * frac
                 end = _step(root, back_fore, ln)
                 rx, rz = plate(cov_roots, k, t, 0.08 * U, lambda tt: lerp(0.44, 0.34, tt) * U)
@@ -311,7 +311,7 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
         sca_roots = [_mix(sh, el, lerp(a0, a1, k / (n_sca - 1))) for k in range(n_sca)]
         for k in range(n_sca):
             t = k / (n_sca - 1)
-            root = _off(sca_roots[k], dy=0.15 * U) if spread else sca_roots[k]
+            root = _off(sca_roots[k], dy=0.06 * U) if spread else sca_roots[k]
             # 展翼时弦长要往肘端**变长**才接得上次级飞羽（0.88 hum_len）；收翼时相反，
             # 越靠肘越短才收得进体侧。
             chord = lerp(0.60, 0.90, t) if spread else lerp(0.62, 0.48, t)
