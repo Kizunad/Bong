@@ -762,5 +762,94 @@ mod tests {
                 .all(|entry| entry.id != "runtime.only"),
             "remove 必须能移除注入 registry 的 runtime-only 招式（M03）"
         );
+
+        // add：移除后仍必须从注入 registry 重新学会 runtime-only 招式。
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Add {
+                id: "runtime.only".to_string(),
+            },
+        );
+        run_update(&mut app);
+        let entry = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.id == "runtime.only")
+            .expect("add 必须从注入 registry 学会 runtime-only 招式（M03）");
+        assert_eq!(
+            entry.proficiency, 0.5,
+            "add 的 runtime-only 招式必须使用 dev 初始熟练度"
+        );
+        assert!(entry.active, "add 的 runtime-only 招式必须默认激活");
+
+        // proficiency：注入 registry 认识 runtime-only 后，才能修改其熟练度。
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Proficiency {
+                id: "runtime.only".to_string(),
+                value: 0.875,
+            },
+        );
+        run_update(&mut app);
+        let entry = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.id == "runtime.only")
+            .unwrap();
+        assert_eq!(
+            entry.proficiency, 0.875,
+            "proficiency 必须修改注入 registry 的 runtime-only 招式"
+        );
+
+        // active：同一 runtime-only entry 的激活状态必须可切换。
+        send(
+            &mut app,
+            player,
+            TechniqueCmd::Active {
+                id: "runtime.only".to_string(),
+                value: false,
+            },
+        );
+        run_update(&mut app);
+        let entry = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.id == "runtime.only")
+            .unwrap();
+        assert!(
+            !entry.active,
+            "active false 必须作用于注入 registry 的 runtime-only 招式"
+        );
+
+        // reset_all：重置集合仍必须来自注入 registry，并保留 runtime-only 条目。
+        send(&mut app, player, TechniqueCmd::ResetAll);
+        run_update(&mut app);
+        let entry = app
+            .world()
+            .get::<KnownTechniques>(player)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.id == "runtime.only")
+            .expect("reset_all 必须从注入 registry 恢复 runtime-only 招式（M03）");
+        assert_eq!(
+            entry.proficiency, 0.5,
+            "reset_all 必须恢复 runtime-only 招式的默认熟练度"
+        );
+        assert!(
+            entry.active,
+            "reset_all 必须恢复 runtime-only 招式的激活状态"
+        );
     }
 }
