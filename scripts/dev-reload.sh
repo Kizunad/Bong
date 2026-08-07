@@ -124,9 +124,11 @@ terminate_background_process() {
 
 rollback_launched_server() {
     local pid="${1:-}"
-    local operation="${2:-failed bong-server launch}"
+    local expected_starttime="${2:-}"
+    local operation="${3:-failed bong-server launch}"
     local status starttime executable executable_identity
 
+    [[ "$expected_starttime" =~ ^[0-9]+$ ]] || return 2
     if bong_server_process_is_running "$pid"; then
         status=0
     else
@@ -143,6 +145,13 @@ rollback_launched_server() {
             ;;
     esac
     starttime="$(bong_server_process_starttime "$pid")" || return 2
+    # Rollback may only signal the process this launch actually started. If the
+    # pid was recycled before rollback, the current occupant has a different
+    # start time and must be left alone - the launched process is already gone.
+    if [ "$starttime" != "$expected_starttime" ]; then
+        echo "INFO: failed bong-server launch pid $pid is no longer the launched process (recycled); nothing to roll back" >&2
+        return 0
+    fi
     executable="$(bong_server_process_executable "$pid")" || return 2
     executable_identity="$(bong_server_process_executable_identity "$pid")" || return 2
     bong_server_rollback_pinned_managed_process \
@@ -151,8 +160,11 @@ rollback_launched_server() {
 
 launch_detached_job() {
     local pid
+    local expected_executable="${2:-}"
+    local inspect_status
 
     DETACHED_PID=""
+    DETACHED_STARTTIME=""
     if [ "$#" -eq 0 ]; then
         echo "FAIL: no background command provided" >&2
         return 1
@@ -165,13 +177,22 @@ launch_detached_job() {
         "$@"
     ) &
     pid=$!
+    # Pin the process start time at fork, before any detach or death window:
+    # the pid is this shell's own child at this instant, so the pin can never
+    # bind to a recycled process. exec preserves pid and start time, so the
+    # pin remains the identity of the launched server through the
+    # wrapper -> image transition.
+    DETACHED_STARTTIME="$(bong_server_process_starttime "$pid")" || {
+        echo "FAIL: could not capture start time of background job $pid; failing closed" >&2
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        return 1
+    }
     if ! detach_background_job "$pid"; then
         # Tri-state probe (bong_server_process_is_running: 0=live, 1=confirmed
-        # absent/zombie, 2=UNKNOWN inspection). Only confirmed death may hand
-        # the pid to the caller's exec poller - a failed inspection means
-        # kill -0 succeeded, the wrapper may still be live and never detached,
-        # and publishing it would violate the fail-closed lifecycle contract.
-        local inspect_status
+        # absent/zombie, 2=UNKNOWN inspection). Only confirmed death may be
+        # reported as a launch failure - a failed inspection means kill -0
+        # succeeded, the wrapper may still be live and never detached.
         if bong_server_process_is_running "$pid"; then
             inspect_status=0
         else
@@ -185,20 +206,47 @@ launch_detached_job() {
             fi
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
+            DETACHED_PID=""
+            DETACHED_STARTTIME=""
             return 1
         fi
-        # The wrapper died inside the detach window - it never exec'd the
-        # expected image and its /proc identity is gone, so the start time
-        # cannot be pinned. Refuse the handoff outright: a dead pid published
-        # to the exec poller could be recycled and accepted as the server,
-        # and rollback would then signal a process we do not own.
+        # The wrapper died inside the detach window, so there is no live
+        # process that can be handed to the exec poller. Refuse the handoff
+        # outright: publishing a dead pid would let a recycled occupant be
+        # mistaken for this launch. The exec-identity diagnostic is still
+        # reported so the failure reads the same regardless of where in the
+        # detach window the wrapper died.
+        if [ -n "$expected_executable" ]; then
+            echo "FAIL: bong server process $pid did not exec expected executable $expected_executable" >&2
+        fi
         echo "FAIL: background job $pid died before detach completed; refusing to publish its pid" >&2
         wait "$pid" 2>/dev/null || true
+        DETACHED_PID=""
+        DETACHED_STARTTIME=""
         return 1
     fi
-    if ! background_process_is_running "$pid"; then
-        DETACHED_PID="$pid"
-        return 0
+    # Post-detach tri-state probe: only a confirmed-live process may be
+    # published. A dead wrapper's pid could be recycled and then accepted by
+    # the exec poller as the server; an uninspectable one cannot be verified.
+    if ! bong_server_process_is_running "$pid"; then
+        inspect_status=$?
+        if [ "$inspect_status" -eq 2 ]; then
+            echo "FAIL: could not inspect background job $pid after detach; failing closed" >&2
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            DETACHED_PID=""
+            DETACHED_STARTTIME=""
+            return 1
+        fi
+        if [ -n "$expected_executable" ]; then
+            echo "FAIL: bong server process $pid did not exec expected executable $expected_executable" >&2
+        else
+            echo "FAIL: background job $pid died after detach; refusing to publish its pid" >&2
+        fi
+        wait "$pid" 2>/dev/null || true
+        DETACHED_PID=""
+        DETACHED_STARTTIME=""
+        return 1
     fi
     DETACHED_PID="$pid"
 }
@@ -233,6 +281,7 @@ launch_bong_server() {
 
     SERVER_PID=""
     DETACHED_PID=""
+    DETACHED_STARTTIME=""
     if [[ ! "$startup_grace" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
         echo "FAIL: BONG_SERVER_STARTUP_GRACE_SECONDS must be a non-negative number: $startup_grace" >&2
         return 1
@@ -264,25 +313,18 @@ launch_bong_server() {
     else
         resolved_expected_executable="$resolved_executable"
     fi
-    launch_detached_job run_bong_server || return 1
+    launch_detached_job run_bong_server "$resolved_expected_executable" || return 1
     launched_pid="$DETACHED_PID"
-    # Pin the process start time at handoff so the exec acknowledgement cannot
-    # accept a recycled pid running the same binary. A wrapper that died before
-    # its exec could be acknowledged has no readable /proc stat - that reads as
-    # NOT-OUR-PROCESS and fails closed, reported with the exec-identity
-    # diagnostic because the wrapper is by definition not the server image.
-    launched_starttime="$(bong_server_process_starttime "$launched_pid")" || {
-        echo "FAIL: bong server process $launched_pid did not exec expected executable $resolved_expected_executable; refusing to proceed (could not capture start time)" >&2
-        rollback_launched_server "$launched_pid" "handoff identity capture" || return $?
-        SERVER_PID=""
-        DETACHED_PID=""
-        return 1
-    }
-    if ! wait_for_process_executable "$launched_pid" "$resolved_expected_executable" "$launched_starttime"; then
+    # The start time was pinned at fork inside launch_detached_job, before any
+    # detach or death window, so it can never bind to a recycled pid. The exec
+    # acknowledgement compares the current occupant against that pin: a
+    # recycled pid running the same binary is NOT-OUR-PROCESS and fails closed.
+    if ! wait_for_process_executable "$launched_pid" "$resolved_expected_executable" "$DETACHED_STARTTIME"; then
         echo "FAIL: bong server process $launched_pid did not exec expected executable $resolved_expected_executable" >&2
-        rollback_launched_server "$launched_pid" "final executable verification" || return $?
+        rollback_launched_server "$launched_pid" "$DETACHED_STARTTIME" "final executable verification" || return $?
         SERVER_PID=""
         DETACHED_PID=""
+        DETACHED_STARTTIME=""
         return 1
     fi
     SERVER_PID="$launched_pid"
@@ -293,16 +335,18 @@ launch_bong_server() {
     # the fork.
     if [[ ! "$startup_grace" =~ ^0*([.][0]*)?$ ]] && ! sleep "$startup_grace"; then
         echo "FAIL: bong server startup grace wait failed: $startup_grace" >&2
-        rollback_launched_server "$SERVER_PID" "startup grace wait" || return $?
+        rollback_launched_server "$SERVER_PID" "$DETACHED_STARTTIME" "startup grace wait" || return $?
         SERVER_PID=""
         DETACHED_PID=""
+        DETACHED_STARTTIME=""
         return 1
     fi
     if ! bong_server_write_record "$SERVER_PID" "$resolved_expected_executable"; then
         echo "FAIL: could not record managed bong server pid $SERVER_PID" >&2
-        rollback_launched_server "$SERVER_PID" "managed PID record publish" || return $?
+        rollback_launched_server "$SERVER_PID" "$DETACHED_STARTTIME" "managed PID record publish" || return $?
         SERVER_PID=""
         DETACHED_PID=""
+        DETACHED_STARTTIME=""
         return 1
     fi
 }
