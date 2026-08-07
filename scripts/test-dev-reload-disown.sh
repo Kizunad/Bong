@@ -522,37 +522,95 @@ for invalid_grace in not-a-duration -1; do
         || fail "invalid startup grace $invalid_grace left DETACHED_PID=$DETACHED_PID"
 done
 
-ZERO_GRACE_LOG="$TEST_ROOT/zero-grace.log"
-ZERO_GRACE_READY="$TEST_ROOT/zero-grace.ready"
-ZERO_GRACE_PID_FILE="$TEST_ROOT/zero-grace.pid"
+# Zero grace must never fork an external sleep, for every textual form the
+# format check accepts (0, 0.0, 00, .0, 0.00). A recording sleep mock at the
+# front of PATH proves the negative: a zero form that still forked sleep would
+# leave a call record, while the launch itself stays green. The mock ignores
+# the exec poll's 0.01 ticks so they cannot pollute the record.
 ZERO_GRACE_BIN_DIR="$TEST_ROOT/zero-grace-bin"
+ZERO_GRACE_SERVER="$ZERO_GRACE_BIN_DIR/bong-zero-grace-server"
+ZERO_GRACE_SLEEP_MOCK="$ZERO_GRACE_BIN_DIR/sleep"
+ZERO_GRACE_CALL_LOG="$TEST_ROOT/zero-grace-sleep-calls.log"
 mkdir -p "$ZERO_GRACE_BIN_DIR"
-ln -s "$STUB_SCRIPT" "$ZERO_GRACE_BIN_DIR/bong-zero-grace-server"
+# Absolute /bin/bash shebang and absolute sleep path: the bin dir shadows
+# PATH for the server wrapper, and the mock must never be reached by the
+# final exec either.
+cat > "$ZERO_GRACE_SERVER" <<ZERO_GRACE_SERVER_STUB
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "\$\$" > "\${STUB_PID_FILE:-/dev/null}"
+printf 'ready\n' > "\${READY_FILE:-/dev/null}"
+exec "$SLEEP_EXECUTABLE" 30
+ZERO_GRACE_SERVER_STUB
+chmod +x "$ZERO_GRACE_SERVER"
+cat > "$ZERO_GRACE_SLEEP_MOCK" <<ZERO_GRACE_SLEEP_STUB
+#!/bin/bash
+if [ "\${1:-}" != "0.01" ]; then
+    printf 'sleep-called:%s\n' "\$*" >> "\${ZERO_GRACE_CALL_LOG:-/dev/null}"
+fi
+exec /bin/sleep "\$@"
+ZERO_GRACE_SLEEP_STUB
+chmod +x "$ZERO_GRACE_SLEEP_MOCK"
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+ENV_ARGS=()
+BONG_SERVER_EXECUTABLE="bong-zero-grace-server"
+export ZERO_GRACE_CALL_LOG
+ORIGINAL_TEST_PATH="$PATH"
+# The grace wait forks sleep from this test process's own PATH, so the mock
+# must lead the test PATH, not just the server wrapper's env.
+export PATH="$ZERO_GRACE_BIN_DIR:$PATH"
+for ZERO_FORM in 0 0.0 00 .0 0.00; do
+    ZERO_GRACE_LOG="$TEST_ROOT/zero-grace-$ZERO_FORM.log"
+    ZERO_GRACE_READY="$TEST_ROOT/zero-grace-$ZERO_FORM.ready"
+    ZERO_GRACE_PID_FILE="$TEST_ROOT/zero-grace-$ZERO_FORM.pid"
+    READY_FILE="$ZERO_GRACE_READY"
+    export STUB_PID_FILE="$ZERO_GRACE_PID_FILE"
+    BONG_SERVER_LOG="$ZERO_GRACE_LOG"
+    BONG_SERVER_STARTUP_GRACE_SECONDS="$ZERO_FORM"
+    : > "$ZERO_GRACE_CALL_LOG"
+    launch_bong_server "$SLEEP_EXECUTABLE" \
+        || fail "zero startup grace $ZERO_FORM rejected a server which completed its final exec"
+    [ ! -s "$ZERO_GRACE_CALL_LOG" ] \
+        || fail "zero startup grace $ZERO_FORM forked an external sleep: $(cat "$ZERO_GRACE_CALL_LOG")"
+    ACTIVE_CHILD_PID="$SERVER_PID"
+    wait_for_file "$ZERO_GRACE_READY" "zero-grace $ZERO_FORM server readiness"
+    wait_for_file "$ZERO_GRACE_PID_FILE" "zero-grace $ZERO_FORM server pid"
+    grep -Fxq "$SERVER_PID" "$ZERO_GRACE_PID_FILE" \
+        || fail "zero-grace $ZERO_FORM launch returned a pid different from the final server pid"
+    wait_for_process_command "$SERVER_PID" sleep \
+        || fail "zero-grace $ZERO_FORM launch returned before the final sleep exec"
+    terminate_background_process "$ACTIVE_CHILD_PID"
+    if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
+        fail "zero-grace $ZERO_FORM success cleanup did not reap pid $ACTIVE_CHILD_PID"
+    fi
+    SERVER_PID=""
+    DETACHED_PID=""
+    ACTIVE_CHILD_PID=""
+    unset STUB_PID_FILE
+done
+# Positive control: a non-zero grace must fork sleep exactly once, proving the
+# mock actually records (and the production code still sleeps through grace).
+ZERO_GRACE_LOG="$TEST_ROOT/zero-grace-0.5.log"
+ZERO_GRACE_READY="$TEST_ROOT/zero-grace-0.5.ready"
+ZERO_GRACE_PID_FILE="$TEST_ROOT/zero-grace-0.5.pid"
 READY_FILE="$ZERO_GRACE_READY"
 export STUB_PID_FILE="$ZERO_GRACE_PID_FILE"
-BONG_SERVER_WORKDIR="$TEST_ROOT"
-ENV_ARGS=("PATH=$ZERO_GRACE_BIN_DIR:$PATH")
-BONG_SERVER_EXECUTABLE="bong-zero-grace-server"
 BONG_SERVER_LOG="$ZERO_GRACE_LOG"
-BONG_SERVER_STARTUP_GRACE_SECONDS=0
-launch_bong_server sleep \
-    || fail "zero startup grace rejected a server which completed its final exec"
-ACTIVE_CHILD_PID="$SERVER_PID"
-wait_for_file "$ZERO_GRACE_READY" "zero-grace server readiness"
-wait_for_file "$ZERO_GRACE_PID_FILE" "zero-grace server pid"
-grep -Fxq "$SERVER_PID" "$ZERO_GRACE_PID_FILE" \
-    || fail "zero-grace launch returned a pid different from the final server pid"
-wait_for_process_command "$SERVER_PID" sleep \
-    || fail "zero-grace launch returned before the final sleep exec"
-terminate_background_process "$ACTIVE_CHILD_PID"
-if kill -0 "$ACTIVE_CHILD_PID" 2>/dev/null; then
-    fail "zero-grace success cleanup did not reap pid $ACTIVE_CHILD_PID"
-fi
+BONG_SERVER_STARTUP_GRACE_SECONDS=0.5
+: > "$ZERO_GRACE_CALL_LOG"
+launch_bong_server "$SLEEP_EXECUTABLE" \
+    || fail "non-zero startup grace 0.5 rejected a server which completed its final exec"
+grep -Fxq "sleep-called:0.5" "$ZERO_GRACE_CALL_LOG" \
+    || fail "non-zero startup grace 0.5 did not fork sleep as recorded by the mock: $(cat "$ZERO_GRACE_CALL_LOG")"
+terminate_background_process "$SERVER_PID"
 SERVER_PID=""
 DETACHED_PID=""
 ACTIVE_CHILD_PID=""
 unset STUB_PID_FILE
 ENV_ARGS=()
+PATH="$ORIGINAL_TEST_PATH"
+unset ORIGINAL_TEST_PATH
+unset ZERO_GRACE_CALL_LOG
 
 DELAYED_EXEC_FAILURE_SCRIPT="$TEST_ROOT/delayed-exec-failure.sh"
 DELAYED_EXEC_FAILURE_LOG="$TEST_ROOT/delayed-exec-failure.err"
@@ -658,6 +716,79 @@ unset BONG_STUB_FIRST_INSPECTION_DONE
 eval "$original_detach_background_job"
 eval "$original_bong_server_process_is_running"
 unset -f _bong_server_process_is_running_impl
+
+# Regression pin for the handoff contract (1973 rework finding 2): a wrapper
+# confirmed dead in the detach window must never publish its pid - a recycled
+# pid running the same binary could be accepted as the server and rollback
+# would then signal a process we do not own.
+DETACH_DEAD_STUB_SCRIPT="$TEST_ROOT/detach-dead-stub.sh"
+DETACH_DEAD_LOG="$TEST_ROOT/detach-dead.err"
+DETACH_DEAD_SERVER_LOG="$TEST_ROOT/detach-dead-server.log"
+DETACH_DEAD_PID_FILE="$TEST_ROOT/detach-dead.pid"
+cat > "$DETACH_DEAD_STUB_SCRIPT" <<'DETACH_DEAD_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+DETACH_DEAD_STUB
+chmod +x "$DETACH_DEAD_STUB_SCRIPT"
+
+original_detach_dead_job="$(declare -f detach_background_job)"
+original_detach_dead_running="$(declare -f bong_server_process_is_running)"
+_detach_dead_running_impl() {
+    eval "$original_detach_dead_running"
+    bong_server_process_is_running "$@"
+}
+detach_background_job() {
+    printf '%s\n' "${1:-}" > "$DETACH_DEAD_PID_FILE"
+    return 1
+}
+# Deterministic confirmed-dead: the first probe reports death regardless of
+# whether the wrapper has actually exited yet, so the refusal branch is hit
+# on every run instead of racing the wrapper's exit.
+bong_server_process_is_running() {
+    if [ -z "${BONG_STUB_DEAD_DONE:-}" ]; then
+        BONG_STUB_DEAD_DONE=1
+        return 1
+    fi
+    _detach_dead_running_impl "$@"
+}
+BONG_STUB_DEAD_DONE=""
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$DETACH_DEAD_STUB_SCRIPT"
+BONG_SERVER_LOG="$DETACH_DEAD_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DETACH_DEAD_LOG"; then
+    fail "detach failure with a confirmed-dead wrapper did not fail closed"
+fi
+grep -Fq "died before detach completed; refusing to publish its pid" "$DETACH_DEAD_LOG" \
+    || fail "confirmed-dead wrapper refusal lacked its diagnostic"
+[ -z "$SERVER_PID" ] || fail "confirmed-dead refusal left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "confirmed-dead refusal left DETACHED_PID=$DETACHED_PID"
+read -r DETACH_DEAD_PID < "$DETACH_DEAD_PID_FILE"
+[[ "$DETACH_DEAD_PID" =~ ^[0-9]+$ ]] \
+    || fail "confirmed-dead fixture did not record a numeric wrapper pid"
+wait_for_process_exit "$DETACH_DEAD_PID" \
+    || fail "confirmed-dead refusal leaked pid $DETACH_DEAD_PID"
+unset BONG_STUB_DEAD_DONE
+eval "$original_detach_dead_job"
+eval "$original_detach_dead_running"
+unset -f _detach_dead_running_impl
+unset DETACH_DEAD_STUB_SCRIPT DETACH_DEAD_LOG DETACH_DEAD_SERVER_LOG DETACH_DEAD_PID_FILE DETACH_DEAD_PID
+
+# Exec-poll start time contract (1973 rework finding 2): the ack must reject a
+# pid whose start time differs from the handoff moment - a recycled pid running
+# the same binary is NOT-OUR-PROCESS, never the server.
+POLLER_PID="$$"
+POLLER_EXE="$(readlink -f -- "/proc/$POLLER_PID/exe")"
+POLLER_STARTTIME="$(bong_server_process_starttime "$POLLER_PID")" \
+    || fail "poll fixture could not capture its own start time"
+wait_for_process_executable "$POLLER_PID" "$POLLER_EXE" "$POLLER_STARTTIME" \
+    || fail "exec poll rejected a live pid with a matching start time"
+if wait_for_process_executable "$POLLER_PID" "$POLLER_EXE" "not-$POLLER_STARTTIME"; then
+    fail "exec poll accepted a pid with a non-matching start time (PID reuse would publish a foreign process)"
+fi
+unset POLLER_PID POLLER_EXE POLLER_STARTTIME
 
 FAIL_SLEEP_DIR="$TEST_ROOT/fail-sleep-bin"
 FAIL_SLEEP_SCRIPT="$FAIL_SLEEP_DIR/sleep"

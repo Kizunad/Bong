@@ -68,7 +68,9 @@ resolve_executable_path() {
 wait_for_process_executable() {
     local pid="${1:-}"
     local expected_executable="${2:-}"
+    local expected_starttime="${3:-}"
     local actual_executable
+    local actual_starttime
     local attempt
 
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
@@ -82,6 +84,15 @@ wait_for_process_executable() {
         actual_executable="$(readlink -f -- "/proc/$pid/exe" 2>/dev/null)" \
             || actual_executable=""
         if [ "$actual_executable" = "$expected_executable" ]; then
+            if [ -n "$expected_starttime" ]; then
+                # PID-reuse guard: a recycled pid running the same binary must
+                # not be accepted as the server. An unreadable stat or a start
+                # time that differs from the handoff moment reads as
+                # NOT-OUR-PROCESS and fails closed.
+                actual_starttime="$(bong_server_process_starttime "$pid")" \
+                    || return 1
+                [ "$actual_starttime" = "$expected_starttime" ] || return 1
+            fi
             return 0
         fi
         sleep 0.01 || return 1
@@ -176,13 +187,14 @@ launch_detached_job() {
             wait "$pid" 2>/dev/null || true
             return 1
         fi
-        # The wrapper already completed its whole life inside the detach
-        # window (it never exec'd the expected image). Hand it to the caller's
-        # exec-acknowledgement poller so the failure is reported with the
-        # standard "did not exec expected executable" diagnostic instead of a
-        # scheduling-dependent "not running in this shell" misattribution.
-        DETACHED_PID="$pid"
-        return 0
+        # The wrapper died inside the detach window - it never exec'd the
+        # expected image and its /proc identity is gone, so the start time
+        # cannot be pinned. Refuse the handoff outright: a dead pid published
+        # to the exec poller could be recycled and accepted as the server,
+        # and rollback would then signal a process we do not own.
+        echo "FAIL: background job $pid died before detach completed; refusing to publish its pid" >&2
+        wait "$pid" 2>/dev/null || true
+        return 1
     fi
     if ! background_process_is_running "$pid"; then
         DETACHED_PID="$pid"
@@ -254,7 +266,19 @@ launch_bong_server() {
     fi
     launch_detached_job run_bong_server || return 1
     launched_pid="$DETACHED_PID"
-    if ! wait_for_process_executable "$launched_pid" "$resolved_expected_executable"; then
+    # Pin the process start time at handoff so the exec acknowledgement cannot
+    # accept a recycled pid running the same binary. A wrapper that died before
+    # its exec could be acknowledged has no readable /proc stat - that reads as
+    # NOT-OUR-PROCESS and fails closed, reported with the exec-identity
+    # diagnostic because the wrapper is by definition not the server image.
+    launched_starttime="$(bong_server_process_starttime "$launched_pid")" || {
+        echo "FAIL: bong server process $launched_pid did not exec expected executable $resolved_expected_executable; refusing to proceed (could not capture start time)" >&2
+        rollback_launched_server "$launched_pid" "handoff identity capture" || return $?
+        SERVER_PID=""
+        DETACHED_PID=""
+        return 1
+    }
+    if ! wait_for_process_executable "$launched_pid" "$resolved_expected_executable" "$launched_starttime"; then
         echo "FAIL: bong server process $launched_pid did not exec expected executable $resolved_expected_executable" >&2
         rollback_launched_server "$launched_pid" "final executable verification" || return $?
         SERVER_PID=""
@@ -263,8 +287,11 @@ launch_bong_server() {
     fi
     SERVER_PID="$launched_pid"
     # Zero grace must not fork an external sleep: a fork failure at exactly
-    # this point would misreport an otherwise healthy launch.
-    if [ "$startup_grace" != 0 ] && ! sleep "$startup_grace"; then
+    # this point would misreport an otherwise healthy launch. Branch on the
+    # numeric value, not the textual form - every representation the format
+    # check accepts (0, 0.0, 00, .0, 0.00, ...) denotes zero and must skip
+    # the fork.
+    if [[ ! "$startup_grace" =~ ^0*([.][0]*)?$ ]] && ! sleep "$startup_grace"; then
         echo "FAIL: bong server startup grace wait failed: $startup_grace" >&2
         rollback_launched_server "$SERVER_PID" "startup grace wait" || return $?
         SERVER_PID=""
