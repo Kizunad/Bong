@@ -1,0 +1,54 @@
+name: Script Contract Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/tests/cargo_dev_profile_config_test.sh"
+      - "scripts/tests/slot_registry_test.sh"
+      - "scripts/tests/wt_janitor_test.sh"
+      - "scripts/slot_registry.sh"
+      - "scripts/wt-janitor.sh"
+      - "server/.cargo/config.toml"
+      - "server/Cargo.toml"
+      - "server/Cargo.lock"
+      - ".github/workflows/script-contracts.yml"
+  pull_request:
+    paths:
+      - "scripts/tests/cargo_dev_profile_config_test.sh"
+      - "scripts/tests/slot_registry_test.sh"
+      - "scripts/tests/wt_janitor_test.sh"
+      - "scripts/slot_registry.sh"
+      - "scripts/wt-janitor.sh"
+      - "server/.cargo/config.toml"
+      - "server/Cargo.toml"
+      - "server/Cargo.lock"
+      - ".github/workflows/script-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  script-contracts:
+    name: Shell contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust for cargo profile contract
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo dev profile config contract
+        run: bash scripts/tests/cargo_dev_profile_config_test.sh
+
+      - name: Slot registry contract
+        run: bash scripts/tests/slot_registry_test.sh
+
+      - name: Worktree janitor contract
+        run: bash scripts/tests/wt_janitor_test.sh
