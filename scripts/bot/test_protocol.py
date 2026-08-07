@@ -959,12 +959,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         fixture_start = self.source.index('# Owned-fixture mode generates')
         fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
+        self.assertIn(
+            'if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then',
+            fixture,
+        )
         self.assertIn('BOT_FIXTURE_TOKEN="$(python3 -c', fixture)
         self.assertIn('--fixture-token "$BOT_FIXTURE_TOKEN"', fixture)
-        state_start = self.source.index('# Ambient-owned runs pin state')
+        state_start = self.source.index('# Dedicated world evidence pins state')
         state_end = self.source.index('\nport_open() {', state_start)
         state = self.source[state_start:state_end]
+        self.assertIn('if [ "$OWNED_WORLD_MODE" = "1" ]; then', state)
         self.assertIn('elif [ "$REUSE" != "1" ] && [ -z "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', state)
         self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_OWNED', fixture)
         self.assertIn('unset BOT_E2E_AMBIENT_FIXTURE_MANIFEST', fixture)
@@ -973,12 +977,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         redis_start = self.source.index('# ---- redis ----')
         redis_end = self.source.index('\n# ---- server ----', redis_start)
         redis = self.source[redis_start:redis_end]
-        redis_guard = 'if [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        redis_guard = 'elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
         self.assertIn(redis_guard, redis)
         self.assertNotIn('export REDIS_URL=', redis[:redis.index(redis_guard)])
 
     def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
-        runtime_start = self.source.index('if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
+        runtime_start = self.source.index('if [ "$OWNED_WORLD_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
         runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
         runtime = self.source[runtime_start:runtime_end]
         self.assertIn('SERVER_RUNTIME_DIR="$(mktemp -d "$EVIDENCE_DIR/server-runtime.XXXXXX")"', runtime)
@@ -1147,7 +1151,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         self.assertLess(
             self.source.index(ownership, readiness_start),
-            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" --all'),
+            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py"', readiness_start),
             "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
         )
 
@@ -1155,8 +1159,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
-        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
-  python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
+        runner = '''python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
             pipeline.count(runner),
@@ -1216,7 +1219,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
         scenario_start = self.source.index("# ---- 场景 ----")
         scenario = self.source[scenario_start:]
-        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" --all'
+        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py"'
         self.assertIn('while true; do', scenario)
         self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
         self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
@@ -1261,7 +1264,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
 
     def test_owned_fixture_mode_uses_private_cwd_and_generic_uses_checkout_cwd(self):
-        launch_start = self.source.index('  (\n    if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then')
+        launch_start = self.source.index('  (\n    if [ "$OWNED_WORLD_MODE" = "1" ]; then')
         launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
         launch = self.source[launch_start:launch_end]
         for required in (
@@ -1296,8 +1299,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
 
-        adopt_guard = 'if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then'
-        private_guard = 'elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
+        adopt_guard = 'if [ "$REUSE" != "1" ] && [ "$OWNED_WORLD_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then'
+        private_guard = 'elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then'
         self.assertIn(adopt_guard, redis)
         self.assertIn('沿用调用方默认 Redis 127.0.0.1:6379', redis)
         self.assertIn(private_guard, redis)
@@ -1369,8 +1372,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         cleanup_start = self.source.index("cleanup() {")
         cleanup_end = self.source.index("\n}\ntrap cleanup EXIT", cleanup_start)
         cleanup = self.source[cleanup_start:cleanup_end]
-        self.assertIn('if [ "$REUSE" != "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then', redis)
-        self.assertIn('elif [ "$REUSE" != "1" ] && { [ "$AMBIENT_FIXTURE_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$OWNED_WORLD_MODE" != "1" ] && [ -z "${REDIS_URL:-}" ] && port_open 127.0.0.1 6379; then', redis)
+        self.assertIn('elif [ "$REUSE" != "1" ] && { [ "$OWNED_WORLD_MODE" = "1" ] || [ -z "${REDIS_URL:-}" ]; }; then', redis)
         for required in (
             'REDIS_COMPOSE_PROJECT="bong-bot-e2e-${RUN_ID,,}"',
             'BONG_TEST_COMPOSE_PROJECT="$REDIS_COMPOSE_PROJECT" BONG_TEST_REDIS_PORT=0',
