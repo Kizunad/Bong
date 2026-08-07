@@ -1176,7 +1176,10 @@ mod tests {
         let error = open_regular_file_under_root(&reparse, &trusted_root)
             .expect_err("a reparse-point input must be rejected even when its target is in-root");
         assert!(
-            matches!(error.kind(), ErrorKind::InvalidInput | ErrorKind::PermissionDenied),
+            matches!(
+                error.kind(),
+                ErrorKind::InvalidInput | ErrorKind::PermissionDenied
+            ),
             "Windows reparse-point admission must fail closed, got {error:?}"
         );
 
