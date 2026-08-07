@@ -154,9 +154,23 @@ launch_detached_job() {
     ) &
     pid=$!
     if ! detach_background_job "$pid"; then
-        if background_process_is_running "$pid"; then
-            # Job tracking glitched while the wrapper is still live: fail
-            # closed instead of handing an untracked process to the caller.
+        # Tri-state probe (bong_server_process_is_running: 0=live, 1=confirmed
+        # absent/zombie, 2=UNKNOWN inspection). Only confirmed death may hand
+        # the pid to the caller's exec poller - a failed inspection means
+        # kill -0 succeeded, the wrapper may still be live and never detached,
+        # and publishing it would violate the fail-closed lifecycle contract.
+        local inspect_status
+        if bong_server_process_is_running "$pid"; then
+            inspect_status=0
+        else
+            inspect_status=$?
+        fi
+        if [ "$inspect_status" -ne 1 ]; then
+            if [ "$inspect_status" -eq 2 ]; then
+                echo "FAIL: could not inspect background job $pid after detach failure; failing closed" >&2
+            else
+                echo "FAIL: background job $pid is still running after detach failure; failing closed" >&2
+            fi
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
             return 1
