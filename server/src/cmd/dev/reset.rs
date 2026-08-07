@@ -436,8 +436,34 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use valence::prelude::{DVec3, Events};
 
+    #[cfg(feature = "dev-techniques")]
+    fn runtime_registry() -> DevTechniqueRegistry {
+        DevTechniqueRegistry::load_for_tests_with_definition(
+            crate::cultivation::known_techniques::TechniqueDefinition {
+                id: "runtime.only".to_string(),
+                display_name: "运行时专属".to_string(),
+                grade: "common".to_string(),
+                description: "只存在于注入 registry 的 runtime-only 招式".to_string(),
+                required_realm: "Awaken".to_string(),
+                required_meridians: Vec::new(),
+                required_race: crate::body_plan::RaceGateOwned::Any,
+                qi_cost: 1.0,
+                stamina_cost: 1.0,
+                cast_ticks: 10,
+                cooldown_ticks: 20,
+                range: 3.0,
+                icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                    .to_string(),
+                category: crate::cultivation::known_techniques::SkillCategory::Attack,
+                dispatch: crate::cultivation::known_techniques::TechniqueDispatch::DirectGeneric,
+            },
+        )
+    }
+
     fn setup_app() -> App {
         let mut app = App::new();
+        #[cfg(feature = "dev-techniques")]
+        app.insert_resource(runtime_registry());
         app.add_event::<CommandResultEvent<ResetCmd>>();
         register_systems(&mut app);
         app
@@ -627,6 +653,41 @@ mod tests {
             skill_bar,
         ));
         player
+    }
+
+    #[cfg(feature = "dev-techniques")]
+    #[test]
+    fn reset_rebuilds_known_techniques_from_injected_registry() {
+        let mut app = setup_app();
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
+        app.world_mut().entity_mut(player).insert(KnownTechniques {
+            entries: vec![crate::cultivation::known_techniques::KnownTechnique {
+                id: "legacy.stale".to_string(),
+                proficiency: 0.9,
+                active: false,
+            }],
+        });
+
+        send(&mut app, player);
+        run_update(&mut app);
+
+        let expected = KnownTechniques::dev_default(app.world().resource::<DevTechniqueRegistry>());
+        let actual = app.world().get::<KnownTechniques>(player).unwrap();
+        assert_eq!(
+            actual, &expected,
+            "reset 必须从当前注入的 TechniqueRegistry 重建 KnownTechniques，不能回退默认 catalog 或空表"
+        );
+        assert!(
+            actual
+                .entries
+                .iter()
+                .any(|entry| entry.id == "runtime.only"),
+            "reset 后必须保留只存在于注入 registry 的 runtime.only"
+        );
+        assert!(
+            actual.entries.iter().all(|entry| entry.active),
+            "dev reset 授予的 registry entries 必须处于 active 状态"
+        );
     }
 
     #[test]
