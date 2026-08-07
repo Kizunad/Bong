@@ -593,6 +593,12 @@ mod tests {
     use std::collections::HashMap;
     use valence::prelude::{App, Position, Update};
 
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     fn skin(kind: FalseSkinKind) -> FalseSkin {
         FalseSkin::fresh(7, kind, 11)
     }
@@ -1001,7 +1007,7 @@ mod tests {
 
     #[test]
     fn forge_request_system_adds_output_and_spends_inputs() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.add_event::<FalseSkinForgeRequest>();
         app.add_event::<QiTransfer>();
         app.insert_resource(ZoneRegistry::fallback());
