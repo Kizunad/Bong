@@ -86,13 +86,12 @@ jobs:
 
       - name: Proto breaking change check (buf)
         if: github.event_name == 'pull_request'
-        working-directory: proto
-        run: |
-          if git ls-tree origin/${{ github.event.pull_request.base.ref }} proto/ | grep -q .; then
-            buf breaking --against '../.git#branch=origin/${{ github.event.pull_request.base.ref }},subdir=proto'
-          else
-            echo "proto/ not found on base branch — skipping breaking check (first PR)"
-          fi
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: bash scripts/check-proto-breaking.sh
+
+      - name: Proto breaking base-ref contract test
+        run: python3 scripts/tests/proto_breaking_base_ref_contract_test.py
 
       - name: Install agent workspace dependencies
         working-directory: agent
