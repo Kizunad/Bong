@@ -481,7 +481,11 @@ mod tests {
             "exactly one TechniqueLearnedEvent when learning succeeds under override registry"
         );
         assert_eq!(
-            events.iter().next().unwrap().technique_id,
+            events
+                .iter_current_update_events()
+                .next()
+                .unwrap()
+                .technique_id,
             "movement.dash",
             "learned event must carry the injected-registry technique id"
         );

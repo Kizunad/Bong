@@ -2914,7 +2914,7 @@ mod tests {
         );
         let stamina_after = app.world().get::<Stamina>(caster).unwrap().current;
         assert!(
-            (stamina_before - stamina_after - f64::from(configured_stamina_cost)).abs() < 1e-6,
+            (stamina_before - stamina_after - configured_stamina_cost).abs() < 1e-6,
             "heaven gate stamina charge must use overridden metadata: {stamina_before} -> {stamina_after}"
         );
         let channeling = app
