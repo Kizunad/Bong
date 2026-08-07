@@ -1041,6 +1041,7 @@ mod tests {
             app.add_event::<GuangboTicaoPracticeEvent>();
             app.add_event::<QiTransfer>();
             app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
             app.add_systems(Update, consume_guangbo_practice_events);
             app.world_mut()
                 .resource_mut::<ZoneRegistry>()
