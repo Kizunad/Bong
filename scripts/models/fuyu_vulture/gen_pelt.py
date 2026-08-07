@@ -132,6 +132,24 @@ def _len(a: Vec, b: Vec) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
+def _poly_at(pts: list[Vec], s: float) -> Vec:
+    """折线上按**弧长**取点，s∈[0,1]。
+
+    按"每段各分一半采样点"铺是错的：腿的两段长短差着一倍，那样铺出来膝上密、
+    膝下疏 —— 恰恰在最该盖住的那截上稀掉。
+    """
+    segs = [_len(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+    total = sum(segs)
+    if total <= 0.0:
+        return pts[0]
+    d = max(0.0, min(1.0, s)) * total
+    for i, ln in enumerate(segs):
+        if d <= ln or i == len(segs) - 1:
+            return _mix(pts[i], pts[i + 1], d / ln if ln > 0 else 0.0)
+        d -= ln
+    return pts[-1]
+
+
 def _trailing(a: Vec, b: Vec, el: Vec, ref: Vec) -> Vec:
     """翼轴 a→b 的**后缘**方向：翼面内、垂直于轴、指向肘所在的那一侧。
 
@@ -389,17 +407,33 @@ def tract_leg(p: SoftTissue, B: Body) -> None:
     U = B.U
     for sgn, side in ((-1, "l"), (1, "r")):
         hip, knee, ankle, toe = B.leg_chain(side)
-        # 腿羽（"裤子"）：包住髋到膝。一整个大盒会在展翼露腿时现出棋盘纹的方块 ——
-        # 大平面把 8×8 的色块拉开采样，看着像贴错图。拆成几片顺腿倒伏的羽。
-        n_th = 6
-        for k in range(n_th):
-            t = k / (n_th - 1)
-            y = lerp(hip[1] + 2.4 * U, ankle[1] + 1.0 * U, t)
-            r = lerp(2.35, 1.30, t) * U
-            a = (sgn * 2.5 * U, y, lerp(hip[2] + 1.4 * U, knee[2] - 0.4 * U, t))
-            p.strut(f"femur_{side}", f"thigh_feather_{side}_{k + 1}", a,
-                    _off(a, dx=sgn * 0.55 * U, dy=-0.9 * U, dz=1.5 * U),
-                    r, 0.62 * U, mat="feather_body")
+        # --- 裤子：裹住**股骨 + 胫跗骨**，一路到踝 ---
+        # Round 3 只顺着股骨铺（髋→膝，往前下方走），可股骨在鸟身上是横卧着埋进
+        # 躯干的，真正露在体外那截"鸡腿"是胫跗骨（膝→踝，往后下方走）。踝比膝
+        # 靠后 4.4U，于是腹羽底线到跗跖顶之间整条胫跗骨没人管；羽层又把羽下的骨
+        # 剔干净，那段就真的**什么都没有** —— 侧面一看腿是断的。
+        # 沿 髋→膝→踝 折线按弧长铺一层筒，接缝处段段相接，不留空档。
+        joints = [_off(hip, dy=1.6 * U), hip, knee, _mix(ankle, toe, 0.10)]
+        n_seg = 8
+        for k in range(n_seg):
+            a = _poly_at(joints, k / n_seg)
+            b = _poly_at(joints, (k + 1) / n_seg)
+            t = (k + 0.5) / n_seg
+            r = lerp(2.30, 1.02, t) * U  # 大腿蓬松，往踝收紧
+            p.strut(f"femur_{side}" if t < 0.42 else f"tibiotarsus_{side}",
+                    f"thigh_feather_{side}_{k + 1}", a, b, r, r * 0.92,
+                    mat="feather_body")
+        # 外侧几片倒伏的羽：光一个锥筒是条裤管，得有片压片的层次才像羽
+        n_sh = 5
+        for k in range(n_sh):
+            t = k / (n_sh - 1)
+            a = _poly_at(joints, lerp(0.16, 0.68, t))
+            r = lerp(2.15, 1.25, t) * U
+            p.strut(f"femur_{side}" if t < 0.42 else f"tibiotarsus_{side}",
+                    f"thigh_shingle_{side}_{k + 1}",
+                    _off(a, dx=sgn * r * 0.55),
+                    _off(a, dx=sgn * (r * 0.60 + 0.35 * U), dy=-1.5 * U, dz=0.9 * U),
+                    0.50 * U, r * 0.72, mat="feather_covert")
         # 跗跖鳞：一圈薄壳裹住骨，逐节分段（鳞是横向排的）
         n_sc = 4
         for k in range(n_sc):
@@ -423,16 +457,63 @@ def tract_bare(p: SoftTissue, B: Body) -> None:
     U = B.U
     bones = B.neck_bones()
     pts = [B.P(b) for b in bones]
+    skull = B.P("skull")
     for i in range(len(bones) - 1):
         a, b = pts[i], pts[i + 1]
         t = i / max(1, len(bones) - 2)
-        # 越靠头越细：颈根粗、贴到颅骨那截收紧
-        r = lerp(1.45, 1.00, t) * U
+        # bones[0] 是**贴着颅骨**那一节：颈根粗、往头那头收紧。Round 3 把这条插值
+        # 写反了（注释是对的，代码反着写），脖子成了上粗下细的漏斗。
+        r = lerp(1.02, 1.62, t) * U
         p.strut(bones[i], f"neck_skin_{len(bones) - i}", a, b, r, r * 1.05, mat="skin_bare")
-    # 头部裸皮：盖住颅骨但露出喙与眼眶
-    skull = B.P("skull")
-    p.piece("skull", "head_skin", (-1.9 * U, skull[1] - 1.9 * U, skull[2] - 1.2 * U),
-            (1.9 * U, skull[1] + 2.4 * U, skull[2] + 1.4 * U), mat="skin_bare")
+    # 项部这一节：颅骨 → 第一颈椎。原来的链只连 neck_i→neck_{i+1}，头与颈之间
+    # 空着**整整一节**，侧面一看头是浮在脖子上方的。
+    p.strut("skull", "neck_skin_nape", _off(skull, dy=-0.6 * U, dz=0.8 * U), pts[0],
+            1.05 * U, 1.10 * U, mat="skin_bare")
+
+    # --- 头部裸皮 ---
+    # 下缘要压到下颌关节以下：只盖颅骨的话，颌关节那截骨杆吊在头下面晃。
+    # 头皮比巩膜环宽，一块整盒糊上去眼睛就没了 —— 眼那一圈按 y/z 挖出来单独收窄，
+    # 让巩膜环从眼窝里凸出来。秃鹫的辨识度有一半在那只眼上。
+    z_face = skull[2] - 1.2 * U
+    z_back = skull[2] + 1.6 * U
+    y_low, y_high = skull[1] - 2.6 * U, skull[1] + 2.4 * U
+    (ex0, ey0, ez0), (_ex1, ey1, ez1) = B.s.box("sclerotic_r")
+    w = 1.9 * U
+    p.piece("skull", "head_skin_top", (-w, ey1, z_face), (w, y_high, z_back), mat="skin_bare")
+    p.piece("skull", "head_skin_jaw", (-w, y_low, z_face), (w, ey0, z_back), mat="skin_bare")
+    p.piece("skull", "head_skin_nape", (-w, ey0, ez1), (w, ey1, z_back), mat="skin_bare")
+    p.piece("skull", "head_skin_lore", (-w, ey0, z_face), (w, ey1, ez0), mat="skin_bare")
+    p.piece("skull", "head_skin_orbit", (-ex0, ey0, ez0), (ex0, ey1, ez1), mat="skin_bare")
+    # 眼球填住巩膜环的孔。不填的话眼窝就是个方黑洞 —— 环是一圈骨片，中间本来是空的。
+    ins = 0.58 * U
+    for sgn, side in ((-1, "l"), (1, "r")):
+        p.piece("skull", f"eye_{side}", (sgn * ex0, ey0 + ins, ez0 + ins),
+                (sgn * (ex0 + 0.36 * U), ey1 - ins, ez1 - ins), mat="scale_leg")
+    # 面皮：颅骨前壁 → 蜡膜，逐段收细。缺这一截，头到喙之间只剩上颌骨和颧弓两根
+    # 细杆撑着，横截面从 3.9 宽一步跌到 1.8 宽 —— 看上去就是"头和喙断开了"。
+    (cx0, cy0, cz0), (cx1, cy1, cz1) = B.s.box("cere")
+    n_face = 3
+    for k in range(n_face):
+        t0, t1 = k / n_face, (k + 1) / n_face
+        za, zb = lerp(z_face, cz0 + 0.35 * U, t0), lerp(z_face, cz0 + 0.35 * U, t1)
+        # 宽度停在巩膜环外沿以内，眼睛才不会被面皮糊住
+        w = lerp(1.66 * U, (cx1 - cx0) / 2 + 0.12 * U, t1)
+        yl = lerp(skull[1] - 2.2 * U, cy0 - 0.12 * U, t1)
+        yh = lerp(skull[1] + 2.3 * U, cy1 + 0.12 * U, t1)
+        p.piece("skull", f"face_skin_{k + 1}", (-w, yl, zb), (w, yh, za), mat="skin_bare")
+    # 颏下（gular）：下颌两支之间那道皮。不填的话从下方看是两根平行骨条中间通透，
+    # 而秃鹫这里本来就长着一块松垂的裸皮。
+    # 只兜到下颌支中段就收：一路铺到颏尖的话，喙下多出一层肉色台阶，喙就不成喙了。
+    (_mx0, my0, mz0), (mx1, _my1, mz1) = B.s.box("mandible_ramus_r")
+    z_chin = lerp(mz1, mz0, 0.55)
+    n_gu = 3
+    for k in range(n_gu):
+        t0, t1 = k / n_gu, (k + 1) / n_gu
+        za, zb = lerp(mz1 - 0.3 * U, z_chin, t0), lerp(mz1 - 0.3 * U, z_chin, t1)
+        w = lerp(mx1 - 0.05 * U, 0.46 * U, t1)
+        yh = lerp(my0 + 1.05 * U, my0 + 0.55 * U, t1)
+        p.piece("jaw", f"gular_{k + 1}", (-w, my0 - 0.10 * U, zb), (w, yh, za),
+                mat="skin_bare")
     # 喉囊（兀鹫颈前那块垂皮）
     # 要一路兜到领羽根部：颈越长（大档 18 节）裸颈与领羽之间的三角缝越明显，
     # 从前侧一看喉部就是个洞。
@@ -525,6 +606,60 @@ def _leak_check(size: str, morph: str, res: int = 160) -> list[str]:
     return out
 
 
+def _joined_check(elements: list[dict], U: float) -> list[str]:
+    """连通性：整只鸟必须是**一整块**，不许有悬空的零件。
+
+    漏光自检查的是"被轮廓围死的洞"，而缺掉一整截肢体是**朝外敞开**的缺口 ——
+    洪水填充一路从画面外填进去，那条缝根本不算洞，自检照样全绿。头浮在脖子上方
+    （颅骨→第一颈椎那节皮从来没铺过）、腹羽底线到跗跖顶之间整条胫跗骨是空的
+    （裤子只顺着股骨走，而踝在膝后 4.4U），两处都是这么漏过去的，最后靠人眼在
+    Blockbench 里发现。
+
+    做法：件的**旋转后包围盒**两两判交（放宽一点容忍取整），并查集连通。包围盒
+    是保守的（比真盒大），所以只会少报不会多报"断开"。
+    """
+    eps = 0.06 * U
+    boxes = []
+    for e in elements:
+        (x0, y0, z0), (x1, y1, z1) = element_bounds([e])
+        boxes.append((x0 - eps, y0 - eps, z0 - eps, x1 + eps, y1 + eps, z1 + eps))
+
+    parent = list(range(len(boxes)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    # 按 x 排序后扫描：断开处的组数很少，全对比也跑得动，但排序能省掉大半比较
+    order = sorted(range(len(boxes)), key=lambda i: boxes[i][0])
+    for a in range(len(order)):
+        ia = order[a]
+        for b in range(a + 1, len(order)):
+            ib = order[b]
+            if boxes[ib][0] > boxes[ia][3]:
+                break  # x 已经错开，后面按序只会更远
+            if (boxes[ia][1] <= boxes[ib][4] and boxes[ib][1] <= boxes[ia][4]
+                    and boxes[ia][2] <= boxes[ib][5] and boxes[ib][2] <= boxes[ia][5]):
+                ra, rb = find(ia), find(ib)
+                if ra != rb:
+                    parent[ra] = rb
+
+    groups: dict[int, list[int]] = {}
+    for i in range(len(boxes)):
+        groups.setdefault(find(i), []).append(i)
+    if len(groups) <= 1:
+        return []
+    ranked = sorted(groups.values(), key=len, reverse=True)
+    out = [f"模型断成 {len(ranked)} 块（应为 1 块）"]
+    for g in ranked[1:6]:
+        names = sorted({elements[i]["name"] for i in g})
+        out.append(f"    悬空 {len(g)} 件：{', '.join(names[:5])}"
+                   + ("…" if len(names) > 5 else ""))
+    return out
+
+
 def check(size: str, morph: str, verbose: bool = True) -> int:
     skel, B = build(size, morph)
     # 羽层挂的件带 _muscle 标记（SoftTissue 统一打的），这里只看本层新增的那批
@@ -535,14 +670,18 @@ def check(size: str, morph: str, verbose: bool = True) -> int:
     if y0 < -0.05 * B.U:
         problems.append(f"羽层插地：最低点 y={y0:.2f}")
 
-    # 头颈必须**没有**羽 —— 秃鹫的立身之本
+    # 头颈必须**没有羽** —— 秃鹫的立身之本。
+    # 判据取**材质**，不取名字：这条规矩管的是"有没有羽被覆盖上去"，裸皮 / 眼球 /
+    # 角质这些非羽件本来就该在头上。按名字白名单放行的话，新加一种皮就会被当成
+    # "羽长到头上"误杀 —— 改名字比改判据容易得多，那种自检迟早被人绕过去。
     head_z = B.P("skull")[2]
     for e in added:
-        if e["name"].startswith(("neck_skin", "head_skin", "crop_pouch", "ruff")):
+        if not str(e.get("_mat", "")).startswith("feather") or e["name"].startswith("ruff"):
             continue
         if (e["from"][2] + e["to"][2]) / 2 < head_z + 2.0 * B.U:
             problems.append(f"{e['name']}: 羽长到头颈上了（秃鹫的头颈是裸的）")
 
+    problems += _joined_check(skel.data["elements"], B.U)
     problems += _leak_check(size, morph)
 
     tagged = [e for e in skel.data["elements"] if e.get("_muscle")]
@@ -560,7 +699,7 @@ def check(size: str, morph: str, verbose: bool = True) -> int:
             for x in problems[:10]:
                 print(f"     {x}")
         else:
-            print("  ✓ 镜像 / 贴地 / 头颈裸露 全部通过")
+            print("  ✓ 镜像 / 贴地 / 头颈裸露 / 连通 / 漏光 全部通过")
     return len(problems)
 
 
@@ -609,8 +748,9 @@ def _is_pelt(name: str) -> bool:
     return name.startswith((
         "primary", "secondary", "covert", "scapular", "ruff", "contour", "breast_cap",
         "rump_cap", "axillary",
-        "breast", "rectrix", "tail_covert", "thigh_feather", "tarsal_scale", "toe_scale",
-        "neck_skin", "head_skin", "crop_pouch",
+        "breast", "rectrix", "tail_covert", "thigh_feather", "thigh_shingle",
+        "tarsal_scale", "toe_scale",
+        "neck_skin", "head_skin", "face_skin", "gular", "eye_", "crop_pouch",
     ))
 
 

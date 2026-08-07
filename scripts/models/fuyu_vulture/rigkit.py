@@ -529,6 +529,7 @@ class SoftTissue:
             "type": "cube",
             "uuid": str(uuid.uuid4()),
             "_muscle": True,
+            "_mat": mat,  # 自检按材质判类，别再靠名字白名单（漏一项就静默放行/误杀）
             "from": f,
             "to": t,
             "autouv": 0,
