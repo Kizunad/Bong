@@ -83,6 +83,7 @@ public class BongNetworkHandlerTest {
         "SoundRecipePlayer.instance().clearOnDisconnect",
         "BongAnimationPlayer.clearOnDisconnect",
         "AnimationLayerManager.clearOnDisconnect",
+        "LowerBodyGaitController.clearOnDisconnect",
         "BongPunchCombo.clearOnDisconnect",
         "MutationVisualState.reset",
         "SpiderDisguiseHandler.clearOnDisconnect",
