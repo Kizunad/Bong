@@ -1466,6 +1466,150 @@ mod tests {
         );
     }
 
+    // === M08 override：selector 到 resolver 共享同一注入 registry 成本/冷却 ===
+
+    fn world_with_override(
+        id: &str,
+        override_definition: impl FnOnce(
+            &mut crate::cultivation::known_techniques::TechniqueDefinition,
+        ),
+    ) -> bevy_ecs::world::World {
+        let mut world = bevy_ecs::world::World::new();
+        world.insert_resource(Events::<ApplyStatusEffectIntent>::default());
+        world.insert_resource(Events::<QiTransfer>::default());
+        world.insert_resource(Events::<VfxEventRequest>::default());
+        world.insert_resource(Events::<PlaySoundRecipeRequest>::default());
+        world.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
+                id,
+                override_definition,
+            ),
+        );
+        world
+    }
+
+    #[test]
+    fn heal_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.heal_basic 成本到 40.0/冷却 77——qi=20（旧常量 8.0
+        // 本可负担）必须被拒；qi=40 才放行且 cooldown 取 77（旧常量 200 必撞红），
+        // 证明 resolver 结算读的是注入 registry 而非硬编码常量。
+        let mut world = world_with_override(NPC_HEAL_SKILL_ID, |definition| {
+            definition.qi_cost = 40.0;
+            definition.cooldown_ticks = 77;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Induce, 20.0), make_wounds(50.0, 100.0, vec![])))
+            .id();
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(
+            matches!(result, CastResult::Rejected { reason: CastRejectReason::QiInsufficient }),
+            "overridden cost 40.0 must reject qi=20 (constant 8.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((
+                make_cultivation(Realm::Induce, 40.0),
+                make_wounds(50.0, 100.0, vec![]),
+            ))
+            .id();
+        let result = npc_heal_basic(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 77,
+                    anim_duration_ticks: 20
+                }
+            ),
+            "overridden cooldown 77 must be returned (constant 200 would fail); got {result:?}"
+        );
+        let cult = world.get::<Cultivation>(entity).unwrap();
+        assert!(
+            (cult.qi_current - 0.0).abs() < f64::EPSILON,
+            "qi must be charged by overridden cost 40.0, got {}",
+            cult.qi_current
+        );
+    }
+
+    #[test]
+    fn buff_speed_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.buff_speed 成本到 30.0/冷却 88——qi=6（旧常量 5.0
+        // 本可负担）必须被拒；qi=30 才放行、冷却取 88、且发出 SpeedBoost intent。
+        let mut world = world_with_override(NPC_BUFF_SPEED_SKILL_ID, |definition| {
+            definition.qi_cost = 30.0;
+            definition.cooldown_ticks = 88;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 6.0), make_position()))
+            .id();
+        let result = npc_buff_speed(&mut world, entity, 0, None);
+        assert!(
+            matches!(result, CastResult::Rejected { reason: CastRejectReason::QiInsufficient }),
+            "overridden cost 30.0 must reject qi=6 (constant 5.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 30.0), make_position()))
+            .id();
+        let result = npc_buff_speed(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 88,
+                    anim_duration_ticks: 10
+                }
+            ),
+            "overridden cooldown 88 must be returned (constant 400 would fail); got {result:?}"
+        );
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        let intents = reader.read(intents).collect::<Vec<_>>();
+        assert_eq!(intents.len(), 1, "SpeedBoost intent must fire on success");
+        assert_eq!(intents[0].kind, StatusEffectKind::SpeedBoost);
+    }
+
+    #[test]
+    fn buff_defense_resolver_consumes_overridden_registry_cost_and_cooldown() {
+        // M08：override npc.buff_defense 成本到 25.0/冷却 99——qi=7（旧常量 6.0
+        // 本可负担）必须被拒；qi=25 才放行、冷却取 99、且发出 DamageReduction intent。
+        let mut world = world_with_override(NPC_BUFF_DEFENSE_SKILL_ID, |definition| {
+            definition.qi_cost = 25.0;
+            definition.cooldown_ticks = 99;
+        });
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 7.0), make_position()))
+            .id();
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(result, CastResult::Rejected { reason: CastRejectReason::QiInsufficient }),
+            "overridden cost 25.0 must reject qi=7 (constant 6.0 would pass); got {result:?}"
+        );
+
+        let entity = world
+            .spawn((make_cultivation(Realm::Condense, 25.0), make_position()))
+            .id();
+        let result = npc_buff_defense(&mut world, entity, 0, None);
+        assert!(
+            matches!(
+                result,
+                CastResult::Started {
+                    cooldown_ticks: 99,
+                    anim_duration_ticks: 10
+                }
+            ),
+            "overridden cooldown 99 must be returned (constant 400 would fail); got {result:?}"
+        );
+        let intents = world.resource::<Events<ApplyStatusEffectIntent>>();
+        let mut reader = intents.get_reader();
+        let intents = reader.read(intents).collect::<Vec<_>>();
+        assert_eq!(intents.len(), 1, "DamageReduction intent must fire on success");
+        assert_eq!(intents[0].kind, StatusEffectKind::DamageReduction);
+    }
+
     #[test]
     fn av_skipped_without_position_but_cast_still_succeeds() {
         // NPC 缺 Position（罕见，但不能 panic）：招式逻辑照常成功，仅 particle 跳过。
