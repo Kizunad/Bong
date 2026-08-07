@@ -14,7 +14,10 @@
   · 马蹄只有一个着地面（第三指），不像猫掌有四趾垫——着地点就是蹄底那一片。
 
 坐标沿用模型约定：16 单位 = 1 格 = 1 米，地面 y=0，兽头朝 −z。骨旋转沿用 Blockbench
-的 R = Rz·Ry·Rx，绕自身 pivot、在父骨已变换的坐标系里施加。
+element 的 R = Rz·Ry·Rx，绕自身 pivot、在父骨已变换的坐标系里施加。
+
+**骨动画通道另有一套符号约定**，见 `bb_rot` / `bb_pos`——这里的 Pose 一律用几何约定，
+只在写盘/回读那一层转换。
 """
 
 from __future__ import annotations
@@ -56,6 +59,26 @@ ABDUCT = 9.0  # 腿根外展上限（绕 Z）。马的四肢几乎在矢状面�
 # 三分之一），代价全压在肘上，蹬离相肘顶限位。腿根多担一点，远端就松了。
 FORE_SHARE = 0.52  # 肩胛
 HIND_SHARE = 0.58  # 股骨
+
+
+# ---------------------------------------------------------------- Blockbench 骨动画通道约定
+# **实测**于 web.blockbench.net（探针见 verify_anim.py --probe 打印的复现步骤），不是推测：
+# 往 animator 写 rotation (rx,ry,rz)，场景里拿到的是 Rz(rz)·Ry(−ry)·Rx(−rx)；
+# 写 position (px,py,pz)，拿到的位移是 (−px, +py, +pz)；scale 绕 pivot 逐轴相乘、同号。
+#
+# 注意 element **自身**的静态 rotation 不走这套（那是 Rz·Ry·Rx、三轴同号，与本文件的
+# `euler()` 一致）——所以几何层不受影响，只有动画通道要转。这个不对称是 Bedrock 动画格式
+# 带进来的历史包袱，Blockbench 的 BoneAnimator 照单全收。
+#
+# 首版漏了这层转换：预览渲的是内存里的 Pose，Blockbench 播的是写盘的关键帧，两者俯仰
+# 相反。表现是"预览全绿、Blockbench 里马头朝下 / 四肢外翻散架"。
+# 转换是**对合**的（自己是自己的逆），写盘与回读共用同一对函数。
+def bb_rot(v) -> list[float]:
+    return [-v[0], -v[1], v[2]]
+
+
+def bb_pos(v) -> list[float]:
+    return [-v[0], v[1], v[2]]
 
 
 def rotmat(deg: float, axis: int) -> np.ndarray:
@@ -143,6 +166,13 @@ class Rig:
         self._pts: dict[str, np.ndarray] = {}
         self._deep: dict[str, np.ndarray] = {}
         self._rest_stance: dict[str, np.ndarray] | None = None
+        # 逆解残差流水。solve_leg 一直**返回**残差，但所有调用方都把它丢了——目标够不到时
+        # 关节顶死限位、蹄停在半空，而这在静帧上完全看不出来。自检从这里读。
+        self.residuals: list[tuple[str, float]] = []
+        # 上层（步态可达域 / 吃草颈弯 / 倒毙收量）的求解缓存挂在**实例**上。
+        # 别用 `id(rig)` 当外部字典的键：Rig 被回收后新对象会复用同一地址，缓存就跨体型
+        # 串味——实测表现是同一份文件连跑两次结果不同（矮马全绿、挽马一片红）。
+        self.cache: dict = {}
 
     # ---------- 正解 ----------
 
@@ -230,8 +260,33 @@ class Rig:
     def leg_chain(self, side: str, hind: bool) -> list[str]:
         return [n.format(s=side) for n in (HINDLEG if hind else FORELEG)]
 
-    def solve_leg(self, pose: Pose, side: str, hind: bool, target: np.ndarray, *, foot_pitch: float = 0.0) -> float:
-        """腿逆解：腿根按比例预定 + 剩余两节闭式二连杆。返回蹄底落点残差。
+    def solve_leg(self, pose: Pose, side: str, hind: bool, target: np.ndarray, *,
+                  foot_pitch: float = 0.0, level: float = 1.0, refine: int = 3) -> float:
+        """腿逆解 + 不动点修正。返回蹄底落点残差。
+
+        闭式解把"蹄底相对踝的偏移"当成世界空间的常量减掉，这在躯干接近直立时误差可忽略，
+        但躯干**大幅旋转**时会整段失准——倒毙动画侧翻 84° 后前肢残差 5.3，而同一目标在
+        不侧翻时是 0.00。补偿项推起来要卷进整条链的 Rz/Rx 复合次序，不如直接迭代：
+        解一次 → 量实际落点 → 把误差加回目标再解。三轮内收敛到 <0.01，且修正量随目标
+        连续变化，不会在边界跳解支。
+        """
+        goal = np.asarray(target, float)
+        adj = goal.copy()
+        kw = dict(foot_pitch=foot_pitch, level=level)
+        best = self._solve_leg_once(pose, side, hind, adj, **kw)
+        for _ in range(refine):
+            err = goal - best
+            if float(np.linalg.norm(err)) < 1e-3:
+                break
+            adj = adj + err
+            best = self._solve_leg_once(pose, side, hind, adj, **kw)
+        resid = float(np.linalg.norm(best - goal))
+        self.residuals.append((f"{'h' if hind else 'f'}{side}", resid))
+        return resid
+
+    def _solve_leg_once(self, pose: Pose, side: str, hind: bool, target: np.ndarray, *,
+                        foot_pitch: float = 0.0, level: float = 1.0) -> np.ndarray:
+        """单趟闭式解。返回蹄底**实际**落点（世界坐标）。
 
         为什么不是 CCD：三节链对一个点目标是冗余的，CCD 每帧独立求解、又没有时间连续性，
         目标一逼近可达边界就在两个解支之间跳，动画里是腿凭空翻一下。解析解没有这个自由
@@ -249,7 +304,14 @@ class Rig:
         Pinv = np.linalg.inv(P)
 
         ankle_rest = self.bones[foot].origin
-        sole_off = rotmat(foot_pitch, 0) @ (self.contact_point(foot) - ankle_rest)
+        sole_rel = rotmat(foot_pitch, 0) @ (self.contact_point(foot) - ankle_rest)
+        # level=1：末端骨摆到指定**世界**俯仰（承重的蹄要平贴地面）；level=0：俯仰相对
+        # **躯干**。侧卧 / 腾空的肢体必须往 0 走——躺倒的马蹄是跟着身体转的，硬摆平会给
+        # 末端骨补上 +84° 的 Z 旋转，把蹄甩到体侧 10 单位外，二连杆解出来的踝位再准也
+        # 没用（倒毙首版残差 4.5 就是这么来的）。
+        # 取**连续插值**而不是布尔：布尔在切换那一帧整只蹄瞬移，关键帧线性插值会把这一跳
+        # 摊成半个周期的抽搐，而这恰好是本轮要根除的那类不连续。
+        sole_off = level * sole_rel + (1.0 - level) * (P[:3, :3] @ sole_rel)
         t_local = (Pinv @ np.append(np.asarray(target, float) - sole_off, 1.0))[:3]
 
         o0, o1, o2, o3 = b0.origin, b1.origin, b2.origin, ankle_rest
@@ -311,14 +373,15 @@ class Rig:
             lo, hi = LIMITS.get(k, (-45.0, 45.0))
             pose[name].rot[0] = min(hi, max(lo, (th + 180.0) % 360.0 - 180.0))
 
-        # ③ 末端骨摆到指定**世界**俯仰。除了腿链自身，还得抵掉躯干带来的俯仰——只抵腿链
+        # ③ 末端骨摆到指定俯仰。world_level 时还要抵掉躯干带来的俯仰与侧倾——只抵腿链
         # 时，胸椎一低头蹄子就跟着倾，低头吃草那一帧整只前蹄扎进地下。
         fwd = P[:3, :3] @ np.array([0.0, 0.0, -1.0])
-        base_pitch = math.degrees(math.atan2(fwd[1], -fwd[2]))
-        pose[foot].rot[0] = foot_pitch - base_pitch - sum(pose[n].rot[0] for n in chain[:3])
         right = P[:3, :3] @ np.array([1.0, 0.0, 0.0])
-        pose[foot].rot[2] = -math.degrees(math.atan2(right[1], right[0])) - tz
-        return float(np.linalg.norm(self.foot_world(pose, side, hind) - np.asarray(target, float)))
+        base_pitch = level * math.degrees(math.atan2(fwd[1], -fwd[2]))
+        base_roll = level * math.degrees(math.atan2(right[1], right[0]))
+        pose[foot].rot[0] = foot_pitch - base_pitch - sum(pose[n].rot[0] for n in chain[:3])
+        pose[foot].rot[2] = -base_roll - tz
+        return self.foot_world(pose, side, hind)
 
     def foot_world(self, pose: Pose, side: str, hind: bool) -> np.ndarray:
         W = self.world(pose)
@@ -333,6 +396,9 @@ class Rig:
         步态先量可达域再定窗口，比"跑出来不对再回头调数字"可靠得多。
         """
         rest = self.rest_stance()[f"{'h' if hind else 'f'}{side}"]
+        # 探针**故意**去解够不到的目标（二分就是靠"解不出来"收敛的），这些残差不能混进
+        # self.residuals——否则自检会把探针的失败当成动画的失败报出来。退出时截断回去。
+        mark = len(self.residuals)
 
         def ok(dz: float) -> bool:
             pose = Pose()
@@ -352,6 +418,7 @@ class Rig:
                 else:
                     b = m
             out.append(a)
+        del self.residuals[mark:]
         return out[0], out[1]
 
     def rest_stance(self) -> dict[str, np.ndarray]:

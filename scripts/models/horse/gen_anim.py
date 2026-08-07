@@ -40,7 +40,7 @@ import numpy as np
 
 from gen_pelt import COATS
 from gen_skeleton import PROFILES
-from rig import FINAL, Pose, Rig, contact_report
+from rig import FINAL, Pose, Rig, bb_pos, bb_rot, contact_report, rotmat
 
 STAGES = FINAL / "stages"
 NAMESPACE = "bong"
@@ -64,6 +64,17 @@ def smooth(s: float) -> float:
 
 def ease_out(s: float, p: float = 2.0) -> float:
     return 1.0 - (1.0 - min(1.0, max(0.0, s))) ** p
+
+
+def bump(s: float, peak: float = 0.5) -> float:
+    """抬蹄包络：升 / 降两段各自 smoothstep，峰值落在 peak。两端与峰顶导数皆为 0。
+
+    别用 `sin(pi*s**a)**b` 这类指数式：a 或 b 小于 1 时 s→0 处导数发散，那是**尖点**，
+    任何采样率都表示不了。写成线性插值的关键帧后，两帧之间必然留下肉眼可见的偏差
+    ——袭步 tarsus 回读偏差 0.47 单位就是这么来的，加倍采样只能减半。
+    """
+    s = min(1.0, max(0.0, s))
+    return smooth(s / peak if s < peak else (1.0 - s) / (1.0 - peak))
 
 
 def pulse(u: float, center: float, width: float) -> float:
@@ -133,15 +144,11 @@ def flight_window(duty: float, phases: dict[str, float], n: int = 400) -> tuple[
     return (t0, t1 if t1 > t0 else t1 + 1.0)
 
 
-_SPAN_CACHE: dict[int, dict[bool, tuple[float, float]]] = {}
-
-
 def leg_spans(rig: Rig) -> dict[bool, tuple[float, float]]:
-    """量出前 / 后肢在地面上的可达域（缓存，一个 rig 只量一次）。"""
-    key = id(rig)
-    if key not in _SPAN_CACHE:
-        _SPAN_CACHE[key] = {h: rig.reach_span("l", h) for h in (False, True)}
-    return _SPAN_CACHE[key]
+    """量出前 / 后肢在地面上的可达域（缓存在 rig 实例上，一个 rig 只量一次）。"""
+    if "spans" not in rig.cache:
+        rig.cache["spans"] = {h: rig.reach_span("l", h) for h in (False, True)}
+    return rig.cache["spans"]
 
 
 class Gait:
@@ -191,6 +198,10 @@ class Gait:
         self.swing_ease = swing_ease
         self.lift_shape = lift_shape
         self.rest = rig.rest_stance()
+        # 摆动相蹄高要加上**躯干当帧的抬升**：腾空时整只马都在空中，蹄不可能还停在
+        # 地面高度上——袭步腾空段躯干抬 1.6 单位，蹄若按地面高算就超出可达域（残差 2.9）。
+        # 由各动画在构造后填自己的躯干竖直曲线；缺省 0 = 无腾空的步态（走）。
+        self.body_lift = lambda t: 0.0
 
     def key(self, side: str, hind: bool) -> str:
         return f"{'h' if hind else 'f'}{side}"
@@ -224,7 +235,8 @@ class Gait:
             lift = self.hind_lift if hind else self.lift
             # 起点必须接上支撑相末尾的蹬离翻蹄，落点归零准备平蹄着地。
             pitch = -TOEOFF_PITCH * (1.0 - s) - 14.0 * math.sin(math.pi * s)
-            y = r[1] + lift * math.sin(math.pi * s**self.lift_shape) ** 0.75 + half * abs(
+            # lift_shape 保留原意（<1 = 峰值更靠前，快步态抬蹄早），换算成峰值位置。
+            y = r[1] + self.body_lift(t) + lift * bump(s, 0.5 ** (1.0 / self.lift_shape)) + half * abs(
                 math.sin(math.radians(pitch))
             )
         return np.array([r[0], y, z]), pitch
@@ -309,6 +321,33 @@ def breathe(pose: Pose, t: float, P, *, rate: float, depth: float) -> None:
     pose["lumbar"].pos[1] += depth * 0.3 * a * k
 
 
+def body_point(rig: Rig, pose: Pose, local) -> np.ndarray:
+    """体坐标系的点 → 世界点（躯干已摆好之后调用）。
+
+    腾空 / 侧卧的肢体目标必须写在**体坐标系**里。写世界坐标的后果在 death 上很直观：
+    躯干侧翻 84° 之后，四蹄的目标还钉在原地的地面上，逆解够不到就把每个关节都顶死
+    限位——四条腿一起翻成不可能的姿势。写体坐标系则蹄跟着躯干走，侧倒后自然朝侧上方
+    伸出，正是马侧卧的样子。
+    """
+    W = rig.world(pose)["root"]
+    return (W @ np.append(np.asarray(local, float), 1.0))[:3]
+
+
+def air_target(rig: Rig, pose: Pose, rest_pt: np.ndarray, off: np.ndarray) -> np.ndarray:
+    """腾空肢的蹄目标：锚在**躯干**上，再夹到地面以上。
+
+    锚躯干是硬要求——蹄必须始终落在肩 / 髋的可达域内，而肩髋是随躯干走的。往世界地面
+    拉会在躯干还立着时把目标拽到 24.6 单位外（腿总长才 21），人立下落段残差 2.4。
+
+    地面夹持顺带**取代了手写的"何时落地"曲线**：躯干转下来，蹄自然降到地面就停住，
+    落地时机由几何决定而不是拍时间点——真马也是这个顺序（前蹄先着地，躯干再落定）。
+    反过来只锚躯干不夹地，蓄力下蹲那几帧躯干下沉会把还踩在地上的蹄压进地里 1.1。
+    """
+    p = body_point(rig, pose, rest_pt + off)
+    p[1] = max(p[1], 0.0)
+    return p
+
+
 def plant(rig: Rig, pose: Pose, ground: dict[str, np.ndarray], pitches: dict[str, float] | None = None) -> None:
     """躯干摆完之后，把仍在地上的蹄逆解回它们的落点。"""
     for side, hind in LEGS:
@@ -386,6 +425,7 @@ def anim_trot(rig: Rig, P, t: float) -> Pose:
     p = Pose()
     k = P.wither / 24.8
     arc = g.arc(t) + g.arc(wrap(t + 0.5))  # 二拍：一个周期里两段腾空
+    g.body_lift = lambda tt: 0.95 * k * (g.arc(tt) + g.arc(wrap(tt + 0.5)))
     p["root"].pos[1] = 0.95 * k * arc - 0.18 * k
     p["hips"].rot[0] = -1.6 * math.cos(2.0 * math.pi * 2.0 * t)
     p["lumbar"].rot[0] = 2.0 * math.cos(2.0 * math.pi * 2.0 * t)
@@ -407,6 +447,7 @@ def anim_canter(rig: Rig, P, t: float) -> Pose:
     mid = (fw[0] + fw[1]) / 2
     arc = g.arc(t)
     rock = math.cos(2.0 * math.pi * (t - mid))
+    g.body_lift = lambda tt: 1.5 * k * g.arc(tt)
     p["root"].pos[1] = 1.5 * k * arc - 0.22 * k
     p["root"].rot[0] = -3.2 * rock  # 摇椅式俯仰
     p["hips"].rot[0] = -3.0 * rock
@@ -428,6 +469,7 @@ def anim_gallop(rig: Rig, P, t: float) -> Pose:
     mid = (fw[0] + fw[1]) / 2
     arc = g.arc(t)
     flex = math.cos(2.0 * math.pi * (t - mid))  # 腾空最伸展，触地段收缩
+    g.body_lift = lambda tt: 2.2 * k * g.arc(tt)
     p["root"].pos[1] = 2.2 * k * arc - 0.32 * k
     p["root"].rot[0] = -2.4 * flex
     p["hips"].rot[0] = -3.6 * flex
@@ -440,9 +482,6 @@ def anim_gallop(rig: Rig, P, t: float) -> Pose:
     tail_wave(p, t, amp=11.0, freq=1.0, lag=0.05, rise=42.0, curl=4.0, vert=5.0)
     g.solve(p, t)
     return p
-
-
-_GRAZE_BEND: dict[int, tuple[float, float]] = {}
 
 
 GRAZE_FACE = -40.0  # 吃草时头相对静止姿的累计俯仰。静止姿脸已下倾 54°，再加 40 ≈ 垂直
@@ -458,9 +497,8 @@ def graze_bend(rig: Rig, P) -> tuple[float, float]:
     改二分也不行——**吻端高度对弯角不单调**：弯过头整条颈连头一起卷回来，吻端反而
     升高（二分直接跑到 −160° 的下界还判"不够低"）。非单调函数只能扫。
     """
-    key = id(rig)
-    if key in _GRAZE_BEND:
-        return _GRAZE_BEND[key]
+    if "graze_bend" in rig.cache:
+        return rig.cache["graze_bend"]
     head_pts = {n: rig.bone_points(n) for n in ("skull", "jaw")}
 
     def muzzle_y(bend: float, skull: float) -> float:
@@ -484,7 +522,7 @@ def graze_bend(rig: Rig, P) -> tuple[float, float]:
             cost = abs(my - 0.6) + 0.02 * abs(bend + skull - GRAZE_FACE)
             if cost < best_cost:
                 best, best_cost = (bend, skull), cost
-    _GRAZE_BEND[key] = best
+    rig.cache["graze_bend"] = best
     return best
 
 
@@ -505,8 +543,32 @@ def anim_graze(rig: Rig, P, t: float) -> Pose:
     return p
 
 
+REAR_PITCH = 52.0  # 人立时躯干俯仰上限（真马 50–70°；再高尾尖会扫地）
+
+
+def rear_hip(rig: Rig, pitch: float, squat: float) -> np.ndarray:
+    """人立时髋该落在哪。
+
+    首版让根骨绕**模型原点**转，这是错的：原点在体心正下方，转 46° 会把后蹄甩到离地
+    8.8 单位，逆解够不到就把髋/膝/跗全顶死限位——渲出来就是后腿从躯干上"断开"。
+
+    真马人立的支点是**后蹄**，而且不是刚体绕蹄旋转：那样髋会甩到蹄后方 16 单位，腿同样
+    够不到。马是**跗关节深屈**把髋收回蹄的上方（所以人立的马看着像"坐"在后腿上）。
+    所以髋位置 = 后蹄 + 静止腿向量后倾 lean 度、再按屈曲收缩 shrink。两项都随俯仰角
+    连续变化，逆解全程有解（由 check 的残差断言兜底）。
+    """
+    rest = rig.rest_stance()
+    f0 = (rest["hl"] + rest["hr"]) / 2.0
+    h0 = np.array([0.0, rig.bones["femur_l"].origin[1], rig.bones["femur_l"].origin[2]])
+    u = pitch / REAR_PITCH
+    lean = 0.42 * pitch  # 髋向后倾（+z），躯干立起来重心才落在蹄上
+    # 屈曲深度直接决定尻高，尻高又决定尾尖离地：0.30 时尾尖穿地 6 单位，怎么抬尾都救不回来。
+    shrink = 1.0 - 0.18 * u - 0.08 * squat  # 跗关节屈曲带来的腿"变短"
+    return f0 + rotmat(lean, 0) @ (h0 - f0) * shrink
+
+
 def anim_rear(rig: Rig, P, t: float) -> Pose:
-    """人立：后肢蹲坐蓄力 → 前躯拔起 → 前蹄空中刨动 → 落回。
+    """人立：后肢屈跗蓄力 → 前躯拔起 → 前蹄空中刨动 → 落回。
 
     前蹄**离地**，所以不参与逆解——照样 plant 会把腾起的前肢硬拉回地面。
     """
@@ -514,58 +576,73 @@ def anim_rear(rig: Rig, P, t: float) -> Pose:
     crouch = keyed(t, [(0.0, 0.0), (0.14, 1.0), (0.26, 0.4), (1.0, 0.0)])
     up = keyed(t, [(0.10, 0.0), (0.38, 1.0), (0.66, 1.0), (0.90, 0.0), (1.0, 0.0)])
     paw = math.sin(2.0 * math.pi * 3.0 * t) * up
-    k = P.wither / 24.8
 
-    p["root"].rot[0] = -46.0 * up
-    p["root"].pos[1] = -1.6 * k * crouch
-    p["hips"].rot[0] = 10.0 * up + 5.0 * crouch
-    p["lumbar"].rot[0] = -8.0 * up
-    p["thorax_back"].rot[0] = -6.0 * up
-    neck_bend(p, 16.0 * up - 6.0 * crouch, skull=10.0 * up)
+    # 正 = 抬头（本文件一律用几何约定，写盘那层再转 Blockbench 通道符号）。
+    pitch = REAR_PITCH * up
+    hip = rear_hip(rig, pitch, crouch)
+    h0 = np.array([0.0, rig.bones["femur_l"].origin[1], rig.bones["femur_l"].origin[2]])
+    p["root"].rot[0] = pitch
+    p["root"].pos = list(hip - rotmat(pitch, 0) @ h0)  # 让根骨绕后蹄转而不是绕原点
+
+    p["hips"].rot[0] = -10.0 * up - 5.0 * crouch
+    p["lumbar"].rot[0] = 8.0 * up
+    p["thorax_back"].rot[0] = 6.0 * up
+    neck_bend(p, -14.0 * up + 6.0 * crouch, skull=-8.0 * up)  # 立起时头略收，不是仰天
     p["jaw"].rot[0] = 16.0 * up
-    tail_wave(p, t, amp=8.0, freq=2.0, lag=0.10, rise=18.0 * up - 6.0, curl=-8.0, vert=4.0)
+    # 尾巴：人立时甩向后下方。首版 rise 给正值把尾抬到背上，尾尖反而扫到地面，
+    # 再被"整只贴地夹持"顶起来——马就吊在尾巴上飘起来了。
+    # rise 是**整条尾的累计度数**，人立时要给到 130 才够把尾从"垂到地里"甩成"平展在后"。
+    tail_wave(p, t, amp=8.0, freq=2.0, lag=0.10, rise=130.0 * up + 6.0, curl=-8.0, vert=4.0)
 
     rest = rig.rest_stance()
     for side, hind in LEGS:
         key = f"{'h' if hind else 'f'}{side}"
-        if hind:  # 后蹄始终着地，蹲的时候略向前收
-            tgt = rest[key] + np.array([0.0, 0.0, -1.6 * k * crouch])
-            rig.solve_leg(p, side, hind, tgt, foot_pitch=-10.0 * crouch)
-        else:  # 前肢腾空：不逆解到地面，直接给屈曲姿（刨动靠肘/腕交替）
+        if hind:  # 后蹄全程锁在原落点上（人立的支点）
+            # 蓄力时蹄保持平贴：绕蹄心翻 −8° 会把蹄的一角压进地里 0.15（蹄是个盒子，
+            # 逆解锁的只是蹄心那一点）。真马蓄力时后蹄也是平踩的。
+            rig.solve_leg(p, side, hind, rest[key], foot_pitch=0.0)
+        else:  # 前肢腾空：目标写在体坐标系里，蹄收到肘下并前后刨动
             ph = 0.0 if side == "l" else math.pi
-            p[f"scapula_{side}"].rot[0] = -14.0 * up
-            p[f"humerus_{side}"].rot[0] = -42.0 * up + 10.0 * paw * math.cos(ph)
-            p[f"radius_{side}"].rot[0] = 62.0 * up + 16.0 * paw * math.cos(ph + 0.8)
-            p[f"carpus_{side}"].rot[0] = 22.0 * up
-    p["root"].pos[1] -= min(0.0, rig.lowest(p))  # 贴地夹持：别让后蹄转到地下去
+            # 抬量在**体坐标系**里量，别按世界高度想：躯干已立起 52°，0.22W 的体内抬量
+            # 到世界里就是蹄收到胸前。给到 0.42W 直接出可达域（残差 9.4）。
+            lift = P.wither * (0.14 * up + 0.03 * paw * math.cos(ph))
+            back = P.wither * (0.03 * up - 0.05 * paw * math.cos(ph + 0.8))
+            tgt = air_target(rig, p, rest[key], np.array([0.0, lift, back]))
+            rig.solve_leg(p, side, hind, tgt, foot_pitch=-40.0 * up, level=1.0 - up)
     return p
 
 
 def anim_kick(rig: Rig, P, t: float) -> Pose:
-    """后踢：重心前移 → 双后肢向后蹬出 → 收回。马最实用的一招。"""
+    """后踢：重心前移 → 双后肢向后蹬出 → 收回。马最实用的一招。
+
+    躯干是**前低后高**（马靠前肢撑住、把后躯甩起来），所以根骨俯仰取负。
+    """
     p = Pose()
     load = keyed(t, [(0.0, 0.0), (0.22, 1.0), (0.34, 0.9), (0.70, 0.0)])
     kick = keyed(t, [(0.26, 0.0), (0.40, 1.0), (0.52, 0.85), (0.78, 0.0)])
     k = P.wither / 24.8
 
-    p["root"].rot[0] = 14.0 * kick + 4.0 * load
-    p["root"].pos[1] = -0.8 * k * load + 0.6 * k * kick
-    p["hips"].rot[0] = -10.0 * kick
-    p["lumbar"].rot[0] = 8.0 * load - 5.0 * kick
-    p["thorax_back"].rot[0] = 4.0 * load
-    neck_bend(p, -10.0 * kick - 4.0 * load, skull=-6.0 * kick)
-    tail_wave(p, t, amp=10.0, freq=1.5, lag=0.09, rise=30.0 * kick + 6.0, curl=6.0, vert=5.0)
+    p["root"].rot[0] = -16.0 * kick - 4.0 * load
+    # 前肢静止姿已接近伸直，吸收不了多少下沉：给 0.8 会把前蹄顶进地里 0.13。
+    p["root"].pos[1] = -0.3 * k * load + 0.6 * k * kick
+    p["hips"].rot[0] = 10.0 * kick
+    p["lumbar"].rot[0] = -8.0 * load + 5.0 * kick
+    p["thorax_back"].rot[0] = -4.0 * load
+    neck_bend(p, 10.0 * kick + 4.0 * load, skull=6.0 * kick)  # 头相对躯干抬起来护住
+    tail_wave(p, t, amp=10.0, freq=1.5, lag=0.09, rise=-24.0 * kick - 6.0, curl=6.0, vert=5.0)
 
     rest = rig.rest_stance()
     for side, hind in LEGS:
         key = f"{'h' if hind else 'f'}{side}"
         if not hind:  # 前肢承重，蹄锁地
             rig.solve_leg(p, side, hind, rest[key], foot_pitch=0.0)
-        else:  # 后肢向后上蹬出（离地，直接给关节角）
-            p[f"femur_{side}"].rot[0] = 34.0 * kick - 8.0 * load
-            p[f"tibia_{side}"].rot[0] = -26.0 * kick + 14.0 * load
-            p[f"tarsus_{side}"].rot[0] = -44.0 * kick + 10.0 * load
-            p[f"fetlock_h_{side}"].rot[0] = -18.0 * kick
+        else:  # 后肢向后上蹬出：目标写体坐标系，角度由逆解给（手拧四个关节角必写反符号）
+            # lift 不许为负——首版蓄力段给了 −0.06·load，把目标推到地面**以下**，
+            # 蹄直接扎进地里 1.77。蓄力时蹄仍在地上，只是略向前收（back 取负）。
+            lift = P.wither * 0.30 * kick
+            back = P.wither * (0.24 * kick - 0.05 * load)
+            tgt = air_target(rig, p, rest[key], np.array([0.0, lift, back]))
+            rig.solve_leg(p, side, hind, tgt, foot_pitch=28.0 * kick, level=1.0 - kick)
     return p
 
 
@@ -587,8 +664,52 @@ def anim_hurt(rig: Rig, P, t: float) -> Pose:
     return p
 
 
+def death_tuck(rig: Rig, P) -> float:
+    """侧卧时蹄向体侧收多少 —— 二分求**最大可行收量**，不写固定比例。
+
+    固定比例在三档上不通用：0.16W 在常马残差 0.00，同一个数到挽马是 0.26、矮马 0.68
+    （三档的腿长比、骨粗、关节限位都不同）。这类"看着差不多"的常数正是本轮所有翻车的
+    共同形状，交给程序找边界。
+    """
+    if "death_tuck" in rig.cache:
+        return rig.cache["death_tuck"]
+    mark = len(rig.residuals)  # 探针残差不进自检流水（同 reach_span）
+
+    def ok(tk: float) -> bool:
+        """在**真实动画链路**上量。合成姿态探不准：侧倒 84° 加上胸腰各自的旋转会把
+        肩髋挪走，用 Pose() 探出来的边界偏乐观，照它取值残差反而更大（实测 3.0）。"""
+        worst = 0.0
+        for i in range(14):
+            base = len(rig.residuals)
+            _death_pose(rig, P, i / 14, tk)
+            worst = max([worst] + [r for _, r in rig.residuals[base:]])
+            del rig.residuals[base:]
+            if worst > 0.05:
+                return False
+        return True
+
+    lo, hi = 0.0, P.wither * 0.24
+    if ok(hi):
+        lo = hi
+    else:
+        for _ in range(18):
+            m = (lo + hi) / 2
+            if ok(m):
+                lo = m
+            else:
+                hi = m
+    del rig.residuals[mark:]
+    rig.cache["death_tuck"] = lo
+    return lo
+
+
 def anim_death(rig: Rig, P, t: float) -> Pose:
     """倒毙：前膝先软 → 侧倒 → 头最后落地。四足动物倒下都是前肢先失力。"""
+    return _death_pose(rig, P, t, death_tuck(rig, P))
+
+
+def _death_pose(rig: Rig, P, t: float, tuck_max: float) -> Pose:
+    """倒毙姿的本体。收量单独作参数，好让 death_tuck 在真实链路上二分。"""
     p = Pose()
     buckle = keyed(t, [(0.0, 0.0), (0.24, 1.0), (1.0, 1.0)])  # 前膝屈
     sink = keyed(t, [(0.16, 0.0), (0.62, 1.0), (1.0, 1.0)])  # 整体下沉
@@ -615,25 +736,49 @@ def anim_death(rig: Rig, P, t: float) -> Pose:
     for side, hind in LEGS:
         key = f"{'h' if hind else 'f'}{side}"
         fold = buckle if not hind else sink
-        tgt = rest[key] + np.array([0.0, 0.0, (3.6 * k if hind else -2.4 * k) * fold])
-        rig.solve_leg(p, side, hind, tgt, foot_pitch=-16.0 * fold)
+        # 目标随躯干走（体坐标系）。侧倒 84° 之后蹄自然朝侧上方伸出 = 马侧卧的样子；
+        # 钉在世界地面上则四条腿全部够不到、顶死限位（首版就是这样散架的）。
+        # roll 越深、蹄越往体侧收（真马倒地时腿是半屈的，不是笔直伸着）。
+        #
+        # 前肢的折法一开始写反了：让蹄停在原地**前方**，而躯干前段又下沉 25°，腕关节
+        # 被逼到 +78 的屈曲上限顶死（三档全中）。马塌下去是先**跪在腕关节上**、管骨
+        # 向后折、蹄收到身下——所以前肢的折向是往后上，不是往前。
+        tuck = tuck_max * roll
+        if hind:
+            off = np.array([0.0, tuck, 3.6 * k * fold])
+        else:
+            off = np.array([0.0, tuck + 0.9 * k * fold, 2.8 * k * fold])
+        rig.solve_leg(p, side, hind, body_point(rig, p, rest[key] + off),
+                      foot_pitch=(46.0 if not hind else -16.0) * fold, level=1.0 - roll)
 
     p["root"].pos[1] -= rig.lowest(p)  # 贴地夹持：把整只压回地面，别转到地下去
     return p
 
 
+# 采样数由**采样率**定，不再逐条拍脑袋。写盘的关键帧走线性插值，采样点**之间**的偏差
+# 随步长平方下降；首版按"这条大概几帧够了"给数字，袭步 0.56s 只给 26 帧，两帧之间蹄偏离
+# 真实轨迹 0.88 单位——而采样点**上**只有 0.36，所以逐帧比对连拍永远发现不了。
+# 密采样的代价只在生成耗时：RDP 按世界位移抽稀，落在直线上的帧一帧不留（静止段几乎清零）。
+SAMPLE_RATE = 48.0  # 每秒采样数
+SAMPLE_MIN = 56     # 短动画下限（袭步按速率只有 27 帧，快动作恰恰最需要密采样）
+
+
+def sample_count(length: float) -> int:
+    return max(SAMPLE_MIN, round(length * SAMPLE_RATE))
+
+
 # name → (时长秒, 是否循环, 采样数, 生成函数)
 ANIMS = {
-    "idle": (6.0, True, 32, anim_idle),
-    "walk": (1.30, True, 30, anim_walk),
-    "trot": (0.80, True, 26, anim_trot),
-    "canter": (0.74, True, 26, anim_canter),
-    "gallop": (0.56, True, 26, anim_gallop),
-    "graze": (5.0, True, 32, anim_graze),
-    "rear": (2.20, False, 30, anim_rear),
-    "kick": (0.90, False, 24, anim_kick),
-    "hurt": (0.50, False, 20, anim_hurt),
-    "death": (2.80, False, 32, anim_death),
+    "idle": (6.0, True, sample_count(6.0), anim_idle),
+    "walk": (1.30, True, sample_count(1.30), anim_walk),
+    "trot": (0.80, True, sample_count(0.80), anim_trot),
+    "canter": (0.74, True, sample_count(0.74), anim_canter),
+    "gallop": (0.56, True, sample_count(0.56), anim_gallop),
+    "graze": (5.0, True, sample_count(5.0), anim_graze),
+    "rear": (2.20, False, sample_count(2.20), anim_rear),
+    "kick": (0.90, False, sample_count(0.90), anim_kick),
+    "hurt": (0.50, False, sample_count(0.50), anim_hurt),
+    "death": (2.80, False, sample_count(2.80), anim_death),
 }
 GAITS = {"walk": WALK, "trot": TROT, "canter": CANTER, "gallop": GALLOP}
 
@@ -699,12 +844,31 @@ def decimate(vals: list[tuple[float, list[float]]], tol: float) -> list[tuple[fl
     return [v for v, k in zip(vals, keep) if k]
 
 
-# 抽稀容差：旋转 0.25°、位移 0.03 单位（≈0.2 mm）。都远小于逐帧肉眼可辨的量。
-DECIMATE_TOL = {"rotation": 0.40, "position": 0.05, "scale": 0.006}
+# 抽稀容差按**世界位移**定，不按角度。同样 0.4° 的容差，落在尾尖上是 0.02 单位、
+# 落在颈根上（带着整个头颅摆）是 0.5 单位——按角度给等于对长力臂的骨放水，而回读偏差
+# 恰恰全部集中在 skull 这类末端上。这里给每根骨算力臂，再反算它自己的角度容差。
+DECIM_WORLD = 0.05  # 单根骨允许的世界位移误差（单位）。链上会累加，取得比总目标紧
+DECIMATE_TOL = {"position": 0.02, "scale": 0.004}
+
+
+def bone_lever(rig: Rig, bone: str) -> float:
+    """骨的力臂：本骨**及全部子孙**中离该骨 pivot 最远的点。
+
+    必须算上子孙——颈根自己那块骨很短，但它一转，整条颈加头颅跟着走。只看本骨的
+    element 会给颈根一个大得离谱的角度容差。
+    """
+    pts = rig.deep_points(bone)
+    if not len(pts):
+        return 1.0
+    return max(1.0, float(np.linalg.norm(pts - rig.bones[bone].origin, axis=1).max()))
 
 
 def build_tracks(rig: Rig, P, name: str) -> tuple[float, bool, dict[str, dict[str, list]]]:
-    """采样 → 每骨每通道的 (时间, 三元组) 序列。恒定通道直接丢掉。"""
+    """采样 → 每骨每通道的 (时间, 三元组) 序列，**已转成 Blockbench 通道约定**。
+
+    转换（`bb_rot` / `bb_pos`）必须在这里做，不能留给调用方：bbmodel 与 GeckoLib 两条
+    出口都从本函数取值，漏一条就是"一个引擎里对、另一个里翻着"。恒定通道直接丢掉。
+    """
     length, loop, n, _ = ANIMS[name]
     frames = []
     for i in range(n + 1):
@@ -714,13 +878,17 @@ def build_tracks(rig: Rig, P, name: str) -> tuple[float, bool, dict[str, dict[st
             break
         frames.append((t * length, sample(rig, P, name, t)))
 
+    conv = {"rotation": bb_rot, "position": bb_pos, "scale": list}
     tracks: dict[str, dict[str, list]] = {}
     for bone in rig.order:
         for chan, attr, default in (("rotation", "rot", 0.0), ("position", "pos", 0.0), ("scale", "scale", 1.0)):
             vals = [(tt, list(getattr(pz[bone], attr)) if bone in pz else [default] * 3) for tt, pz in frames]
             if all(abs(v[k] - default) < 1e-4 for _, v in vals for k in range(3)):
                 continue
-            tracks.setdefault(bone, {})[chan] = decimate(vals, DECIMATE_TOL[chan])
+            vals = [(tt, conv[chan](v)) for tt, v in vals]
+            tol = (DECIMATE_TOL[chan] if chan in DECIMATE_TOL
+                   else math.degrees(DECIM_WORLD / bone_lever(rig, bone)))
+            tracks.setdefault(bone, {})[chan] = decimate(vals, tol)
     return length, loop, tracks
 
 
@@ -757,9 +925,9 @@ def animations_block(rig: Rig, P, names: list[str]) -> list[dict]:
 def write_geckolib(rig: Rig, P, names: list[str], out: Path) -> None:
     """直出 GeckoLib animation.json —— **参考用，未经引擎侧验证**。
 
-    Bedrock 动画的旋转符号约定与 Blockbench 面板显示是否一致，没有可对拍的实例。
-    正经路径是把带动画的 bbmodel 交给 scripts/models/bbmodel_to_geckolib.py（驱动
-    Blockbench 官方 codec 导出），由 codec 负责这层约定；本函数只用于人眼查看曲线。
+    通道值与 bbmodel 同源（`build_tracks` 已转成 Blockbench/Bedrock 约定），所以曲线
+    符号是对的；未验的是 GeckoLib 运行时对 loop / 插值 / 骨名解析的处理。正经导出路径
+    仍是 scripts/models/bbmodel_to_geckolib.py（驱动 Blockbench 官方 codec）。
     """
     animations = {}
     for name in names:
@@ -768,9 +936,7 @@ def write_geckolib(rig: Rig, P, names: list[str], out: Path) -> None:
         for bone, chans in tracks.items():
             entry = {}
             for chan, vals in chans.items():
-                entry[chan] = {
-                    str(round(tt, 4)): [round(v[0], 4), round(v[1], 4), round(v[2], 4)] for tt, vals_ in [(0, 0)] for tt, v in vals
-                }
+                entry[chan] = {str(round(tt, 4)): [round(c, 4) for c in v] for tt, v in vals}
             bones[bone] = entry
         animations[f"animation.{NAMESPACE}.{MODEL_ID}.{name}"] = {
             "loop": bool(loop),
@@ -797,11 +963,48 @@ def footfall_chart(g: Gait, n: int = 40) -> str:
     return "\n".join(rows)
 
 
+def sanity(rig: Rig, P, name: str, n: int = 48) -> tuple[float, float, str]:
+    """全动画通用自检：逐帧的**逆解残差**与**穿地深度**。
+
+    首版只验了四种步态，行为类（graze/rear/kick/hurt/death）一条没验——用户翻车的
+    两条恰好都在没验的那一半里。两条断言各自对应一类真实翻车：
+
+      · 逆解残差：目标够不到时 `solve_leg` 会把关节夹到限位并**照常返回**，蹄停在半空。
+        残差一直是被返回的，只是从没有人读。渲静帧完全看不出来。
+      · 穿地：躯干大幅摆动的动作（人立 / 倒毙）很容易把肢体转到地面以下。
+    """
+    worst_ik, worst_ik_leg, worst_sink, sink_who = 0.0, "", 0.0, ""
+    for i in range(n):
+        t = i / n
+        rig.residuals.clear()
+        pose = sample(rig, P, name, t)
+        for leg, r in rig.residuals:
+            if r > worst_ik:
+                worst_ik, worst_ik_leg = r, f"{leg}@t={t:.2f}"
+        W = rig.world(pose)
+        for bone in rig.order:
+            pts = rig.bone_points(bone)
+            if not len(pts):
+                continue
+            lo = float((pts @ W[bone][:3, :3].T + W[bone][:3, 3])[:, 1].min())
+            if -lo > worst_sink:
+                worst_sink, sink_who = -lo, f"{bone}@t={t:.2f}"
+    rig.residuals.clear()
+    note = f"逆解残差 {worst_ik:.2f}({worst_ik_leg or '—'})  穿地 {worst_sink:.2f}({sink_who or '—'})"
+    return worst_ik, worst_sink, note
+
+
 def check(rig: Rig, P, names: list[str]) -> int:
-    """步态自检：支撑相贴地 + 滑步残差 + 循环接缝。撞红就是动画有硬伤。"""
+    """自检：逆解残差 + 穿地 + 步态贴地/滑步 + 循环接缝。撞红就是动画有硬伤。"""
     bad = 0
     for name in names:
         length, loop, _n, _ = ANIMS[name]
+        worst_ik, worst_sink, note = sanity(rig, P, name)
+        # 阈值按**体素**定，不按浮点洁癖：1 单位 = 1 体素 = 6.25 cm，0.12 是五分之一体素，
+        # 已经在渲染上不可辨；再收紧只会逼着人去追数值噪声。
+        ok_basic = worst_ik <= 0.20 and worst_sink <= 0.12
+        bad += 0 if ok_basic else 1
+        print(f"  {name:<7} {'✓' if ok_basic else '✗'} {note}")
         if name in GAITS:
             g = Gait(rig, P, **GAITS[name])
             legs = {
@@ -866,6 +1069,13 @@ def main() -> int:
             fp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")))
         write_geckolib(rig, P, names, STAGES / f"horse_{pk}.animation.json")
         print(f"  → 写入 {len(COATS)} 份毛色 · 动画 {len(anims)} 条 · 关键帧 {total}")
+
+        # 回读校验接在写盘之后，**不是可选步骤**。首版的翻车形态正是"生成器里全对、
+        # 文件里不对"：预览渲的是内存 Pose，Blockbench 播的是关键帧，中间隔着采样、
+        # RDP 抽稀、通道符号转换三道有损环节，任何一处出错静帧上都看不出来。
+        from verify_anim import compare
+        bad = compare(FINAL / f"HorsePelt_rust_{pk}.bbmodel", pk)
+        rc += len(bad)
     return 1 if rc else 0
 
 
