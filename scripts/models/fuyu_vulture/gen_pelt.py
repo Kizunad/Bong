@@ -198,6 +198,24 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
         step = _len(roots[k], roots[k - 1 if k else min(1, len(roots) - 1)])
         return cover * step * shrink, thick
 
+    def wing_up(along: Vec, feather: Vec) -> Vec | None:
+        """翼面法线：由「展向」与「羽向」张成的平面的法线，强制朝上。
+
+        展翼时给它，羽板才会跟着翼面倾斜而不是一律平摆。上反角让翼每 1.14 单位升 0.16，
+        平摆的宽板一块块错开，从正后方看整片翼是一段楼梯 —— 俯视完全看不出来。
+        叉积是赝矢量、左右不自动镜像，所以最后统一把 y 分量掰正（两侧同样朝上），这样
+        左右天然对称，不会各歪各的。
+        """
+        if not spread:
+            return None
+        a, b = normalize(along), normalize(feather)
+        n = (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+        m = math.sqrt(sum(c * c for c in n))
+        if m < 1e-4:
+            return None
+        n = tuple(c / m for c in n)
+        return n if n[1] >= 0 else tuple(-c for c in n)
+
     for sgn, side in ((-1, "l"), (1, "r")):
         sh, el, wr, tip = B.wing_chain(side)
         hum_len = _len(sh, el)
@@ -229,8 +247,9 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             end = _step(root, d, ln)
             rx, rz = plate(pri_roots, k, t, 0.10 * U, lambda tt: lerp(0.62, 0.42, tt) * U,
                            cover=0.88)
+            up = wing_up(hand_axis, (end[0] - root[0], end[1] - root[1], end[2] - root[2]))
             p.quill(f"manus_{side}", f"primary_{side}_{k + 1}", root, end, rx, rz,
-                    mat="feather_flight", bone=f"q_primary_{side}_{k + 1}")
+                    mat="feather_flight", bone=f"q_primary_{side}_{k + 1}", up=up)
             # 羽尖压深一档，翼梢那圈深色是猛禽最好认的记号。截面走同一条通道单独给，不从
             # 主羽的 rx/rz 推 —— 推出来收翼姿会差出零点几个百分点，白白动了已过审的交付物。
             tx, tz = plate(pri_roots, k, t, 0.09 * U, lambda tt: lerp(0.52, 0.34, tt) * U,
@@ -239,7 +258,7 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             # 里羽尖与主羽的截面比例并不相等（收翼 0.90 / 展翼 0.94），一个缩放通道不可能
             # 同时对两件都精确 —— 残下的 0.045 单位会被渲染成一条压在翼缘上的亮边。
             p.quill(f"manus_{side}", f"primary_tip_{side}_{k + 1}", _mix(root, end, 0.78), end,
-                    tx, tz, mat="feather_dark", bone=f"q_primary_tip_{side}_{k + 1}")
+                    tx, tz, mat="feather_dark", bone=f"q_primary_tip_{side}_{k + 1}", up=up)
 
         # --- 次级飞羽：长在尺骨上（骨架那排羽茎瘤就是它们的根），短而齐 ---
         n_sec = max(6, int(9 * U ** 0.3))
@@ -259,7 +278,8 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             end = _step(root, back_fore, ln)
             rx, rz = plate(sec_roots, k, t, 0.09 * U, 0.58 * U)
             p.quill(f"ulna_{side}", f"secondary_{side}_{k + 1}", root, end, rx, rz,
-                    mat="feather_flight", bone=f"q_secondary_{side}_{k + 1}")
+                    mat="feather_flight", bone=f"q_secondary_{side}_{k + 1}",
+                    up=wing_up((wr[0] - el[0], wr[1] - el[1], wr[2] - el[2]), back_fore))
 
         # --- 覆羽：两层，盖住飞羽根部，把翼前半段铺平 ---
         for layer, (frac, mat) in enumerate(((0.46, "feather_covert"), (0.24, "feather_body")), start=1):
@@ -268,16 +288,19 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
                          for k in range(n_cov)]
             for k in range(n_cov):
                 t = k / max(1, n_cov - 1)
-                # 覆羽要**压在**飞羽根部上面，不能和它同高。两组羽根都铺在骨线上时高度只
-                # 差 0.06，从正上方看是两组互相穿插的窄条 —— 那正是"翼成了一把梳子"里最
-                # 后没除掉的那一半，光把羽板放平不够。每层抬 0.30U，翼厚增加不到半个像素。
-                root = _off(cov_roots[k], dy=0.30 * layer * U) if spread else cov_roots[k]
+                # 覆羽要**压在**飞羽根部上面，不能和它同高（两组羽根都铺在骨线上时只差
+                # 0.06，从正上方看是互相穿插的窄条）。但抬升量必须**小于板厚**：羽板只有
+                # 0.20U 厚，早先每层抬 0.30U，层与层之间各留 0.10 的空气 —— 俯视看不出
+                # 来，从正后方是边缘视角，整片翼当场读成三张分开的板。0.15U 让相邻层压掉
+                # 四分之一，接成一整面。
+                root = _off(cov_roots[k], dy=0.15 * layer * U) if spread else cov_roots[k]
                 ln = hum_len * frac
                 end = _step(root, back_fore, ln)
                 rx, rz = plate(cov_roots, k, t, 0.08 * U, lambda tt: lerp(0.44, 0.34, tt) * U)
                 p.quill(f"ulna_{side}" if t < 0.62 else f"manus_{side}",
                         f"covert{layer}_{side}_{k + 1}", root, end, rx, rz, mat=mat,
-                        bone=f"q_covert{layer}_{side}_{k + 1}")
+                        bone=f"q_covert{layer}_{side}_{k + 1}",
+                        up=wing_up((wr[0] - el[0], wr[1] - el[1], wr[2] - el[2]), back_fore))
         # 肩羽：盖住肩关节与肱骨，把翼根接进体羽
         # 羽数两姿必须一致：收翼绑定姿是展翼动画的起点，起点少一根，展开后就少一根 ——
         # 早先展翼给 7 根、收翼 4 根，展开之后内翼露出三条骨缝（A/B 对拍里那几道亮线）。
@@ -287,14 +310,15 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
         sca_roots = [_mix(sh, el, lerp(a0, a1, k / (n_sca - 1))) for k in range(n_sca)]
         for k in range(n_sca):
             t = k / (n_sca - 1)
-            root = _off(sca_roots[k], dy=0.30 * U) if spread else sca_roots[k]
+            root = _off(sca_roots[k], dy=0.15 * U) if spread else sca_roots[k]
             # 展翼时弦长要往肘端**变长**才接得上次级飞羽（0.88 hum_len）；收翼时相反，
             # 越靠肘越短才收得进体侧。
             chord = lerp(0.60, 0.90, t) if spread else lerp(0.62, 0.48, t)
             end = _step(root, back_fore, hum_len * chord)
             rx, rz = plate(sca_roots, k, t, 0.14 * U, 0.62 * U)
             p.quill(f"humerus_{side}", f"scapular_{side}_{k + 1}", root, end, rx, rz,
-                    mat="feather_covert", bone=f"q_scapular_{side}_{k + 1}")
+                    mat="feather_covert", bone=f"q_scapular_{side}_{k + 1}",
+                    up=wing_up((el[0] - sh[0], el[1] - sh[1], el[2] - sh[2]), back_fore))
 
 
 # ================================================================ 羽区：领羽

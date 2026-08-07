@@ -150,8 +150,15 @@ def _rots(rig: VultureRig, name: str, t: float) -> dict[str, list[float]]:
 
 
 def _diff(a: dict, b: dict) -> tuple[float, str]:
+    """逐骨最大角度差。按 360 取模 —— euler(θ) 与 euler(θ±360) 是同一个姿态，从旋转矩阵
+    解出来的角度必然会在 ±180 处翻面，那是表示法的跳变不是姿态的跳变（导出时 build_tracks
+    会解缠，真正播出来是连续的）。不取模的话展翼动作会被报成 359° 的假断点。"""
     z = [0.0, 0.0, 0.0]
-    return max((max(abs(a.get(k, z)[i] - b.get(k, z)[i]) for i in range(3)), k)
+
+    def d(x: float, y: float) -> float:
+        return abs((x - y + 180.0) % 360.0 - 180.0)
+
+    return max((max(d(a.get(k, z)[i], b.get(k, z)[i]) for i in range(3)), k)
                for k in set(a) | set(b))
 
 

@@ -46,7 +46,21 @@ def curve(knots: list[tuple[float, float]], x: float) -> float:
     return knots[-1][1]
 
 
-def shaft_box(a: Vec, b: Vec, rx: float, rz: float, extend: float = 0.0):
+def _euler_zyx(m: list[list[float]]) -> tuple[float, float, float]:
+    """从旋转矩阵解出 Blockbench 的 (x, y, z) 度（R = Rz·Ry·Rx）。
+
+    万向锁附近把 z 固定为 0 再解 x —— 该处 x 与 z 本就简并，硬解出来的那一对角度会在
+    相邻件之间乱跳。
+    """
+    sy = max(-1.0, min(1.0, -m[2][0]))
+    if math.sqrt(max(0.0, 1.0 - sy * sy)) < 1e-6:
+        return (math.degrees(math.atan2(-m[1][2], m[1][1])), math.degrees(math.asin(sy)), 0.0)
+    return (math.degrees(math.atan2(m[2][1], m[2][2])),
+            math.degrees(math.asin(sy)),
+            math.degrees(math.atan2(m[1][0], m[0][0])))
+
+
+def shaft_box(a: Vec, b: Vec, rx: float, rz: float, extend: float = 0.0, up: Vec | None = None):
     """把「从关节 a 到关节 b、截面 rx×rz 的柱」解成 (from, to, rotation, origin)。
 
     纯几何，无副作用 —— 骨干、肌腹都靠它定向。
@@ -60,13 +74,32 @@ def shaft_box(a: Vec, b: Vec, rx: float, rz: float, extend: float = 0.0):
     if length < 1e-6:
         raise ValueError("关节 a/b 重合，无法定向")
     half = length / 2 + extend
-    pitch = math.degrees(math.acos(max(-1.0, min(1.0, dy / length))))
-    yaw = math.degrees(math.atan2(dx, dz)) if abs(dx) + abs(dz) > 1e-9 else 0.0
     cx, cy, cz = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)
+    if up is None:
+        pitch = math.degrees(math.acos(max(-1.0, min(1.0, dy / length))))
+        yaw = math.degrees(math.atan2(dx, dz)) if abs(dx) + abs(dz) > 1e-9 else 0.0
+        rot = (pitch, yaw, 0.0)
+    else:
+        # up = 想让**局部 +Z（薄的那一维）**指向的方向，通常是所在曲面的法线。
+        #
+        # 不给 up 时公式只出 (pitch, yaw, 0)，没有滚转 —— 局部 x 恒落在水平面内，扁板
+        # 永远**平摆**。翼面有上反角（每 1.14 单位升 0.16）时，平摆的宽板一块块错开，
+        # 从正后方看就是一段楼梯，而不是一个斜面。给了 up 才能把板转进曲面里。
+        ya = (dx / length, dy / length, dz / length)
+        d = sum(up[i] * ya[i] for i in range(3))
+        za = [up[i] - ya[i] * d for i in range(3)]
+        n = math.sqrt(sum(c * c for c in za))
+        if n < 1e-4:                       # up 与骨轴共线，退回无滚转
+            return shaft_box(a, b, rx, rz, extend)
+        za = [c / n for c in za]
+        xa = [ya[1] * za[2] - ya[2] * za[1],
+              ya[2] * za[0] - ya[0] * za[2],
+              ya[0] * za[1] - ya[1] * za[0]]
+        rot = _euler_zyx([[xa[i], ya[i], za[i]] for i in range(3)])
     return (
         (cx - rx, cy - half, cz - rz),
         (cx + rx, cy + half, cz + rz),
-        (pitch, yaw, 0.0),
+        rot,
         (cx, cy, cz),
     )
 
@@ -577,13 +610,13 @@ class SoftTissue:
         self.count += 1
 
     def strut(self, bone: str, name: str, a: Vec, b: Vec, rx: float, rz: float | None = None,
-              *, mat: str = "muscle") -> None:
-        """等截面的一段（腱、膜条）。"""
-        frm, to, rot, org = shaft_box(a, b, rx, rx if rz is None else rz)
+              *, mat: str = "muscle", up: Vec | None = None) -> None:
+        """等截面的一段（腱、膜条）。up 见 shaft_box：给了才有滚转，扁板才能贴着曲面转。"""
+        frm, to, rot, org = shaft_box(a, b, rx, rx if rz is None else rz, up=up)
         self.piece(bone, name, frm, to, rot=rot, org=org, mat=mat)
 
     def quill(self, parent: str, name: str, a: Vec, b: Vec, rx: float, rz: float | None = None,
-              *, mat: str = "muscle", bone: str | None = None) -> str:
+              *, mat: str = "muscle", bone: str | None = None, up: Vec | None = None) -> str:
         """一根**自带骨**的羽：骨的 pivot 落在羽根、绑定旋转烙住羽轴，元素换算进这根骨的
         坐标系（于是它退化成一个从 pivot 沿局部 +Y 伸出去的正方盒，rotation 归零）。
 
@@ -595,7 +628,7 @@ class SoftTissue:
         一个字节不动 —— 这一点由 check 里的世界坐标对拍守着。
         """
         rz = rx if rz is None else rz
-        frm, to, rot, org = shaft_box(a, b, rx, rz)
+        frm, to, rot, org = shaft_box(a, b, rx, rz, up=up)
         bone = bone or name
         if bone in self.skel.nodes:
             pivot = self.skel.pivots[bone]   # 复用同一根羽的骨（羽尖压色那一段）

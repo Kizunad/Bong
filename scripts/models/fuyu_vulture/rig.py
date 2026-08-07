@@ -26,7 +26,9 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from animkit import Pose, PoseRig, align, clamp01, euler, euler_of, smooth  # noqa: E402
+from animkit import (  # noqa: E402
+    Pose, PoseRig, align, clamp01, euler, euler_of, slerp, smooth,
+)
 
 MODELS = HERE.parents[2] / "local_models" / "fuyu_vulture"
 LAYERS = MODELS / "layers"
@@ -485,13 +487,27 @@ def _quill_box(rig: VultureRig, bone: str) -> np.ndarray:
     return hi - lo
 
 
-def blend_pose(pose: Pose, w: float) -> Pose:
-    """把一个目标姿态按 w∈[0,1] 淡进来（缩放通道从 1 起插，别从 0）。"""
+def blend_pose(rig: VultureRig, pose: Pose, w: float) -> Pose:
+    """把一个目标姿态按 w∈[0,1] 淡进来。
+
+    旋转走**球面插值**而不是按欧拉角线性缩放：收→展每根羽要转近 90°，线性插欧拉角时三
+    个分量各走各的直线，中途的姿态既不在两端"之间"、也不是最短弧 —— 整片翼会散成互不
+    相连的板（t≈0.3~0.45 两帧最明显，正是"炸成三层"的样子）。
+
+    位移线性；**缩放先行**（w^0.45）：收翼的羽是画短画窄的（顺体轴叠成一摞，露在外面
+    只有一截），展开时它既要转出去、也要"长"到全尺寸。两者同速的话，羽根已经分开一半、
+    羽宽才长到一半，中途整片翼是一排互不相连的板。让宽度跑在前面，展开全程都盖得住。
+    缩放从 1 起插，不是从 0。
+    """
     out = Pose()
+    ws = w ** 0.45 if w > 0.0 else 0.0
     for name, ch in pose.items():
-        out[name].rot = [v * w for v in ch.rot]
+        bind = rig.bones[name].rest_rot if name in rig.bones else np.zeros(3)
+        if any(ch.rot):
+            R = slerp(euler(bind), euler(bind + np.array(ch.rot, float)), w)
+            out[name].rot = list(euler_of(R) - bind)
         out[name].pos = [v * w for v in ch.pos]
-        out[name].scale = [1.0 + (v - 1.0) * w for v in ch.scale]
+        out[name].scale = [1.0 + (v - 1.0) * ws for v in ch.scale]
     return out
 
 

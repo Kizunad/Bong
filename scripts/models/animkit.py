@@ -83,6 +83,48 @@ def align(u, v) -> np.ndarray:
     return np.eye(3) + K + K @ K / (1.0 + c)
 
 
+def _quat(R: np.ndarray) -> np.ndarray:
+    t = float(np.trace(R))
+    if t > 0.0:
+        s = math.sqrt(t + 1.0) * 2.0
+        return np.array([(R[2, 1] - R[1, 2]) / s, (R[0, 2] - R[2, 0]) / s,
+                         (R[1, 0] - R[0, 1]) / s, 0.25 * s])
+    i = int(np.argmax(np.diag(R)))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    s = math.sqrt(1.0 + R[i, i] - R[j, j] - R[k, k]) * 2.0
+    q = np.zeros(4)
+    q[3] = (R[k, j] - R[j, k]) / s
+    q[i], q[j], q[k] = 0.25 * s, (R[j, i] + R[i, j]) / s, (R[k, i] + R[i, k]) / s
+    return q
+
+
+def _from_quat(q: np.ndarray) -> np.ndarray:
+    x, y, z, w = q / (np.linalg.norm(q) or 1.0)
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def slerp(R0: np.ndarray, R1: np.ndarray, w: float) -> np.ndarray:
+    """两个旋转之间的**球面**插值。
+
+    别对欧拉角做线性插值：三个分量各走各的直线，合成出来的姿态既不是最短弧、中途也不
+    在两端姿态的"之间"。转角小的时候看不出来，收翼→展翼每根羽要转近 90°，线性插值下
+    整片翼中途会散成互不相连的板（实测 t=0.3~0.45 两帧最明显）。
+    """
+    q0, q1 = _quat(R0), _quat(R1)
+    if float(np.dot(q0, q1)) < 0.0:
+        q1 = -q1                      # 取近端：不翻符号会绕远路转 360° 减去夹角
+    d = float(np.clip(np.dot(q0, q1), -1.0, 1.0))
+    if d > 0.9995:
+        return _from_quat(q0 + (q1 - q0) * w)
+    th = math.acos(d)
+    s = math.sin(th)
+    return _from_quat((math.sin((1 - w) * th) * q0 + math.sin(w * th) * q1) / s)
+
+
 def affine(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     M = np.eye(4)
     M[:3, :3] = R
@@ -549,6 +591,14 @@ def build_tracks(rig: PoseRig, sampler, length: float, loop: bool, n: int,
                                     ("scale", "scale", 1.0)):
             vals = [(tt, list(getattr(pz[bone], attr)) if bone in pz else [default] * 3)
                     for tt, pz in frames]
+            if chan == "rotation":
+                # 解缠：euler(θ) 与 euler(θ±360) 是同一个姿态，但导出的关键帧走线性插值
+                # —— 相邻两帧一个 +179 一个 −179，播出来是整整转一圈。姿态由旋转矩阵解出
+                # 来时（球面插值那条路）必然会在 ±180 处翻面，所以这一步不是可选的。
+                for i in range(1, len(vals)):
+                    prev, cur = vals[i - 1][1], vals[i][1]
+                    for k in range(3):
+                        cur[k] -= 360.0 * round((cur[k] - prev[k]) / 360.0)
             if all(abs(v[k] - default) < 1e-4 for _, v in vals for k in range(3)):
                 continue
             tracks.setdefault(bone, {})[chan] = _prune(

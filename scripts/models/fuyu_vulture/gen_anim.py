@@ -370,7 +370,7 @@ def anim_unfold(rig: VultureRig, t: float) -> Pose:
     """
     k = K(rig)
     w = keyed(t, [(0.0, 0.0), (0.14, 0.05), (0.60, 1.0), (0.76, 1.05), (1.0, 1.0)])
-    p = blend_pose(unfold_of(rig), w)
+    p = blend_pose(rig, unfold_of(rig), w)
     sink = keyed(t, [(0.0, 0.0), (0.18, 1.0), (0.46, 0.0)])
     p["root"].pos[1] += -k.H * 0.055 * sink + k.H * 0.020 * w
     p["hips"].rot[0] += -5.0 * sink + 3.0 * w
@@ -387,7 +387,7 @@ def anim_fold(rig: VultureRig, t: float) -> Pose:
     """收翼：从展翼收回体侧，末尾抖一下把羽理顺。落地站定之后接的就是它。"""
     k = K(rig)
     w = keyed(t, [(0.0, 1.0), (0.12, 1.04), (0.66, 0.0), (1.0, 0.0)])
-    p = blend_pose(unfold_of(rig), w)
+    p = blend_pose(rig, unfold_of(rig), w)
     settle = keyed(t, [(0.60, 0.0), (0.74, 1.0), (1.0, 0.0)])
     shake = math.sin(2.0 * math.pi * 12.0 * t) * settle
     p["root"].pos[1] += k.H * 0.018 * w - k.H * 0.020 * settle
