@@ -100,6 +100,12 @@ fn add_tuike_events(world: &mut bevy_ecs::world::World) {
     world.insert_resource(Events::<crate::skill::events::SkillXpGain>::default());
 }
 
+fn test_app() -> App {
+    let mut app = App::new();
+    app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+    app
+}
+
 fn world_with_player(
     realm: Realm,
     qi_current: f64,
@@ -586,7 +592,7 @@ fn maintenance_discount_does_not_apply_below_threshold() {
 
 #[test]
 fn maintenance_sheds_outer_layer_when_qi_cannot_pay_upkeep() {
-    let mut app = App::new();
+    let mut app = test_app();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
     app.add_systems(Update, false_skin_maintenance_tick);
@@ -1573,7 +1579,7 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
     use valence::prelude::Position;
 
     // Fan tier 维护费 = 0.1 qi/sec（无折扣），tick=120 整除 TICKS_PER_SECOND=20 触发维护。
-    let mut app = App::new();
+    let mut app = test_app();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
     app.add_event::<crate::qi_physics::QiTransfer>();
@@ -1665,7 +1671,7 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
     use crate::world::zone::ZoneRegistry;
     use valence::prelude::Position;
 
-    let mut app = App::new();
+    let mut app = test_app();
     app.insert_resource(CombatClock { tick: 120 });
     app.add_event::<FalseSkinSheddedEvent>();
     app.add_event::<QiTransfer>();
