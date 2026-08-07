@@ -1530,8 +1530,17 @@ mod tests {
         write_template(&dir, "decorations/tree/first.nbt", &row_structure());
         write_template(&dir, "decorations/tree/second.nbt", &column_structure());
 
-        let first_bytes = row_structure().resident_memory_bytes();
-        let second_bytes = column_structure().resident_memory_bytes();
+        let probe = DecorationNbtRegistry::prepare_with_resident_limit(&dir, usize::MAX);
+        let first_bytes = probe
+            .candidate()
+            .get("decorations/tree/first.nbt")
+            .expect("probe must load the first fixture")
+            .resident_memory_bytes();
+        let second_bytes = probe
+            .candidate()
+            .get("decorations/tree/second.nbt")
+            .expect("probe must load the second fixture")
+            .resident_memory_bytes();
         let limit = first_bytes.max(second_bytes);
         assert!(
             first_bytes + second_bytes > limit,
