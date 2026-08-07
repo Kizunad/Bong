@@ -884,6 +884,58 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def test_fallback_readiness_pattern_matches_production_tracing_line(self):
+        pattern_match = re.search(
+            r"^BOT_FALLBACK_READY_PATTERN='([^']+)'$",
+            self.source,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(
+            pattern_match,
+            "bot-e2e.sh 必须声明唯一 canonical fallback readiness pattern",
+        )
+        pattern = pattern_match.group(1)
+        production_line = (
+            "2026-08-07T10:25:04.830194Z  INFO "
+            "[bong][world] BOT_FALLBACK_FLAT_READY "
+            "anchors=3 chunks=5002 view_distance_chunks=20"
+        )
+        matched = subprocess.run(
+            ["grep", "-Eq", "--", pattern],
+            input=f"{production_line}\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            matched.returncode,
+            0,
+            "fallback readiness matcher 必须接受 production tracing 的 timestamp + INFO 前缀完整日志行",
+        )
+
+        for invalid_line in (
+            "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 view_distance_chunks=20",
+            production_line.replace("  INFO ", "  WARN "),
+            production_line.replace("anchors=3", "anchors=0"),
+            production_line.replace("chunks=5002", "chunks=0"),
+            production_line.replace("view_distance_chunks=20", "view_distance_chunks=0"),
+            f"noise {production_line}",
+            f"{production_line} suffix",
+        ):
+            with self.subTest(invalid_line=invalid_line):
+                rejected = subprocess.run(
+                    ["grep", "-Eq", "--", pattern],
+                    input=f"{invalid_line}\n",
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    rejected.returncode,
+                    1,
+                    "fallback readiness matcher 必须拒绝缺少 production INFO envelope、零计数或额外前后缀的近似行",
+                )
+
     def test_mode_contract_distinguishes_generic_inputs_from_owned_fixture_inputs(self):
         guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
         guard = self.source[:guard_end]
