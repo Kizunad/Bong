@@ -173,6 +173,31 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
     spread = B.pose == "spread"
     ref = (0.0, 0.0, 1.0) if spread else (0.0, 1.0, 0.0)
 
+    def plate(roots: list[Vec], k: int, t: float, thick: float, tall,
+              shrink: float = 1.0, cover: float = 0.62) -> tuple[float, float]:
+        """一根羽的横截面 (rx, rz)。**两种姿态要装反过来。**
+
+        shaft_box 只出 (pitch, yaw, 0)、没有滚转，横截面朝向完全由骨轴决定：羽近乎水平
+        时，局部 x 恒落在水平面内、局部 z 恒竖直。于是——
+          · 收翼：羽顺体轴往后叠，竖着的那一面正好是层层压住的瓦片，薄的一面贴着体侧。
+          · 展翼：羽铺在水平的翼面里，宽面必须**横跨翼展**把相邻两根之间的缝盖住，竖直
+            方向只该留一片厚度。
+        早先两种姿态共用一组尺寸：展翼时翼展方向只有 0.21 宽，而羽根间距 1.87 —— 整面翼
+        是一把梳子，八根竖板中间全是空气（正上方看最明显）。
+
+        宽度按**实测羽根间距**给而不是写死：间距随档位和羽数变，写死的常数换个档就露缝。
+        cover 是"半宽相当于几倍羽根间距"：次级与覆羽给 0.62（全宽 1.24 倍间距，稳稳叠成
+        一整面），初级给得更大，因为它们从腕上呈**扇形**发散 —— 羽根挨着不代表羽梢挨着，
+        实测根部只差 0.03 就贴上、羽梢已经张开 1.12。调宽之后内三分之二实心、只有翼梢
+        还留着缝，那正是兀鹫的指状开缝翼尖，不该填掉。
+        shrink 只作用在展翼分支（压深的羽尖要比主羽窄一点才不打架）；收翼分支原样返回
+        旧常数，一位小数都不动 —— 那九个收翼交付物已经过审了。
+        """
+        if not spread:
+            return thick, (tall(t) if callable(tall) else tall)
+        step = _len(roots[k], roots[k - 1 if k else min(1, len(roots) - 1)])
+        return cover * step * shrink, thick
+
     for sgn, side in ((-1, "l"), (1, "r")):
         sh, el, wr, tip = B.wing_chain(side)
         hum_len = _len(sh, el)
@@ -184,9 +209,14 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
         n_pri = 8
         back_hand = _trailing(wr, tip, el, ref)
         hand_axis = normalize((tip[0] - wr[0], tip[1] - wr[1], tip[2] - wr[2]))
+        # 羽根覆盖的骨段范围：收翼姿保持原值（那九个交付物已过审），展翼姿铺满整根骨并在
+        # 关节处相互压过去 —— 各组只铺自己骨段的中间一截时，肩肘腕三处各留一条没羽的带，
+        # 收翼时被体侧挡着看不见，一展开翼就断成三块。
+        p0, p1 = (0.00, 1.00) if spread else (0.12, 0.98)
+        pri_roots = [_mix(wr, tip, lerp(p0, p1, k / (n_pri - 1))) for k in range(n_pri)]
         for k in range(n_pri):
             t = k / (n_pri - 1)
-            root = _mix(wr, tip, 0.12 + 0.86 * t)
+            root = pri_roots[k]
             # 长度：中段最长，翼尖那几根略短（真翼的尖是圆的，不是尖的）
             ln = hum_len * lerp(1.05, 1.62, math.sin(math.pi * (0.25 + 0.62 * t)) ** 0.7)
             if spread:
@@ -197,11 +227,16 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
                 d = tuple(fold_dir[i] + hand_axis[i] * 0.18 for i in range(3))
                 ln *= 0.62  # 收拢时相邻飞羽层层重叠，露在外面的长度只有展开时的一半多
             end = _step(root, d, ln)
-            p.strut(f"manus_{side}", f"primary_{side}_{k + 1}", root, end,
-                    0.10 * U, lerp(0.62, 0.42, t) * U, mat="feather_flight")
-            # 羽尖压深一档，翼梢那圈深色是猛禽最好认的记号
+            rx, rz = plate(pri_roots, k, t, 0.10 * U, lambda tt: lerp(0.62, 0.42, tt) * U,
+                           cover=0.88)
+            p.strut(f"manus_{side}", f"primary_{side}_{k + 1}", root, end, rx, rz,
+                    mat="feather_flight")
+            # 羽尖压深一档，翼梢那圈深色是猛禽最好认的记号。截面走同一条通道单独给，不从
+            # 主羽的 rx/rz 推 —— 推出来收翼姿会差出零点几个百分点，白白动了已过审的交付物。
+            tx, tz = plate(pri_roots, k, t, 0.09 * U, lambda tt: lerp(0.52, 0.34, tt) * U,
+                           shrink=0.94, cover=0.88)
             p.strut(f"manus_{side}", f"primary_tip_{side}_{k + 1}", _mix(root, end, 0.78), end,
-                    0.09 * U, lerp(0.52, 0.34, t) * U, mat="feather_dark")
+                    tx, tz, mat="feather_dark")
 
         # --- 次级飞羽：长在尺骨上（骨架那排羽茎瘤就是它们的根），短而齐 ---
         n_sec = max(6, int(9 * U ** 0.3))
@@ -212,32 +247,47 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
                 back_fore = (-back_fore[0], -back_fore[1], -back_fore[2])
         else:
             back_fore = fold_dir  # 收翼：与初级飞羽一起顺体轴叠好
+        s0, s1 = (-0.03, 1.02) if spread else (0.08, 0.92)
+        sec_roots = [_mix(el, wr, lerp(s0, s1, k / max(1, n_sec - 1))) for k in range(n_sec)]
         for k in range(n_sec):
             t = k / max(1, n_sec - 1)
-            root = _mix(el, wr, 0.08 + 0.84 * t)
+            root = sec_roots[k]
             ln = hum_len * lerp(0.88, 1.05, t)
             end = _step(root, back_fore, ln)
-            p.strut(f"ulna_{side}", f"secondary_{side}_{k + 1}", root, end,
-                    0.09 * U, 0.58 * U, mat="feather_flight")
+            rx, rz = plate(sec_roots, k, t, 0.09 * U, 0.58 * U)
+            p.strut(f"ulna_{side}", f"secondary_{side}_{k + 1}", root, end, rx, rz,
+                    mat="feather_flight")
 
         # --- 覆羽：两层，盖住飞羽根部，把翼前半段铺平 ---
         for layer, (frac, mat) in enumerate(((0.46, "feather_covert"), (0.24, "feather_body")), start=1):
             n_cov = n_sec + 2
+            cov_roots = [_mix(el, _mix(wr, tip, 0.35), 0.02 + 0.92 * (k / max(1, n_cov - 1)))
+                         for k in range(n_cov)]
             for k in range(n_cov):
                 t = k / max(1, n_cov - 1)
-                root = _mix(el, _mix(wr, tip, 0.35), 0.02 + 0.92 * t)
+                # 覆羽要**压在**飞羽根部上面，不能和它同高。两组羽根都铺在骨线上时高度只
+                # 差 0.06，从正上方看是两组互相穿插的窄条 —— 那正是"翼成了一把梳子"里最
+                # 后没除掉的那一半，光把羽板放平不够。每层抬 0.30U，翼厚增加不到半个像素。
+                root = _off(cov_roots[k], dy=0.30 * layer * U) if spread else cov_roots[k]
                 ln = hum_len * frac
                 end = _step(root, back_fore, ln)
+                rx, rz = plate(cov_roots, k, t, 0.08 * U, lambda tt: lerp(0.44, 0.34, tt) * U)
                 p.strut(f"ulna_{side}" if t < 0.62 else f"manus_{side}",
-                        f"covert{layer}_{side}_{k + 1}", root, end,
-                        0.08 * U, lerp(0.44, 0.34, t) * U, mat=mat)
+                        f"covert{layer}_{side}_{k + 1}", root, end, rx, rz, mat=mat)
         # 肩羽：盖住肩关节与肱骨，把翼根接进体羽
-        for k in range(4):
-            t = k / 3
-            root = _mix(sh, el, 0.05 + 0.55 * t)
-            end = _step(root, back_fore, hum_len * lerp(0.62, 0.48, t))
-            p.strut(f"humerus_{side}", f"scapular_{side}_{k + 1}", root, end,
-                    0.14 * U, 0.62 * U, mat="feather_covert")
+        n_sca = 7 if spread else 4
+        a0, a1 = (0.02, 1.02) if spread else (0.05, 0.60)
+        sca_roots = [_mix(sh, el, lerp(a0, a1, k / (n_sca - 1))) for k in range(n_sca)]
+        for k in range(n_sca):
+            t = k / (n_sca - 1)
+            root = _off(sca_roots[k], dy=0.30 * U) if spread else sca_roots[k]
+            # 展翼时弦长要往肘端**变长**才接得上次级飞羽（0.88 hum_len）；收翼时相反，
+            # 越靠肘越短才收得进体侧。
+            chord = lerp(0.60, 0.90, t) if spread else lerp(0.62, 0.48, t)
+            end = _step(root, back_fore, hum_len * chord)
+            rx, rz = plate(sca_roots, k, t, 0.14 * U, 0.62 * U)
+            p.strut(f"humerus_{side}", f"scapular_{side}_{k + 1}", root, end, rx, rz,
+                    mat="feather_covert")
 
 
 # ================================================================ 羽区：领羽
