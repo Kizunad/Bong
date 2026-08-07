@@ -727,6 +727,15 @@ mod tests {
     /// 构造跑 [`answer_command_completions`] 的最小 App + mock client，
     /// 把 `text` 封成真实 `RequestCommandCompletionsC2s` wire 帧注入 PacketEvent。
     fn completion_roundtrip(text: &str, transaction_id: i32) -> Vec<SuggestionsReply> {
+        completion_roundtrip_with_registry(text, transaction_id, TechniqueRegistry::load_for_tests())
+    }
+
+    /// 同 [`completion_roundtrip`]，但注入调用方给定的 registry（runtime-only 契约测试用）。
+    fn completion_roundtrip_with_registry(
+        text: &str,
+        transaction_id: i32,
+        registry: TechniqueRegistry,
+    ) -> Vec<SuggestionsReply> {
         use valence::prelude::{App, Events, Update};
         use valence::protocol::{Bounded, Encode, Packet};
         use valence::testing::create_mock_client;
@@ -739,7 +748,7 @@ mod tests {
             ("fan_tie", "凡铁"),
         ]));
         app.insert_resource(ZoneRegistry::fallback());
-        app.insert_resource(TechniqueRegistry::load_for_tests());
+        app.insert_resource(registry);
         app.add_systems(Update, answer_command_completions);
 
         let (bundle, mut helper) = create_mock_client("Alice");
@@ -815,6 +824,67 @@ mod tests {
             matches[0].1.as_deref(),
             Some("气草"),
             "候选应携带中文 display_name tooltip"
+        );
+    }
+
+    #[test]
+    fn packet_path_completion_consumes_runtime_only_registry() {
+        // M08：packet/ECS 补全路径必须消费注入的 runtime registry——runtime-only
+        // 招式只存在于注入实例；若 answer_command_completions 改读默认/静态
+        // catalog，回包会丢掉 runtime.only 并撞红。
+        use crate::cultivation::known_techniques::TechniqueDispatch;
+        let registry = TechniqueRegistry::load_for_tests_with_definition(TechniqueDefinition {
+            id: "runtime.only".to_string(),
+            display_name: "运行时专属".to_string(),
+            grade: "common".to_string(),
+            description: "只存在于注入 registry 的 runtime-only 招式（M08 契约）。".to_string(),
+            required_realm: "Awaken".to_string(),
+            required_meridians: Vec::new(),
+            required_race: crate::body_plan::RaceGateOwned::Any,
+            qi_cost: 1.0,
+            stamina_cost: 1.0,
+            cast_ticks: 10,
+            cooldown_ticks: 20,
+            range: 3.0,
+            icon_texture: "bong-client:textures/gui/items/skill_scroll_runtime_only.png"
+                .to_string(),
+            category: crate::cultivation::known_techniques::SkillCategory::Attack,
+            dispatch: TechniqueDispatch::DirectGeneric,
+        });
+
+        // 注入 registry 的请求：回包必须含 runtime.only。
+        let replies = completion_roundtrip_with_registry("/technique runtime", 7, registry.clone());
+        assert_eq!(
+            replies.len(),
+            1,
+            "一条命中路由的请求应恰好收到一个 CommandSuggestionsS2c 回包"
+        );
+        let (id, start, length, matches) = &replies[0];
+        assert_eq!(*id, 7, "回包必须回显请求的 transaction_id");
+        assert_eq!(
+            (*start, *length),
+            (11, 7),
+            "`/technique ` = 11 字符，partial = `runtime` 7 字符"
+        );
+        assert!(
+            matches.iter().any(|(v, _)| v == "runtime.only"),
+            "回包候选必须包含注入 registry 的 runtime-only 招式; got {:?}",
+            matches.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            matches.len(),
+            1,
+            "只有 runtime.only 命中 runtime 前缀，不得混入默认 catalog 候选"
+        );
+
+        // 默认 registry 的同一请求：runtime.only 不存在——差异必须来自注入实例。
+        let replies = completion_roundtrip("/technique runtime", 8);
+        assert_eq!(replies.len(), 1);
+        let (id, _, _, matches) = &replies[0];
+        assert_eq!(*id, 8);
+        assert!(
+            !matches.iter().any(|(v, _)| v == "runtime.only"),
+            "默认 registry 下回包不得出现 runtime-only 招式"
         );
     }
 
