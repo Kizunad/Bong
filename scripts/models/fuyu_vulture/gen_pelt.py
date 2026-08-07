@@ -245,9 +245,11 @@ def tract_ruff(p: SoftTissue, B: Body) -> None:
         p.strut(bones[-1], name, root, _step(root, d, ln), 1.05 * U, 0.55 * U,
                 mat="feather_ruff")
 
-    n_pairs = 6
+    # 放射状排列越往外越稀疏，档位越大周长越长 —— 片数得跟上，否则领羽之间
+    # 透出缝来
+    n_pairs = 8
     for k in range(n_pairs):
-        ang = lerp(0.30, math.pi - 0.30, k / (n_pairs - 1))
+        ang = lerp(0.26, math.pi - 0.26, k / (n_pairs - 1))
         for sgn, side in ((-1, "l"), (1, "r")):
             _one(f"ruff_{side}_{k + 1}", sgn * ang)
     _one("ruff_front", 0.0)  # 喉前
@@ -255,24 +257,64 @@ def tract_ruff(p: SoftTissue, B: Body) -> None:
 
 
 # ================================================================ 羽区：体羽
-def _body_surface(B: Body, z: float, theta: float) -> Vec:
+def _body_profile(t: float) -> float:
+    """躯干沿体轴的粗细包络。t=0 胸前，t=1 尾根。
+
+    没有这条包络，躯干就是前后一般粗的**圆筒** —— 正面看是件长袍，侧面看是块板。
+    鸟的躯干是水滴形：胸口饱满、中段最粗、往尾根一路收窄。
+    """
+    return math.sin(math.pi * (0.20 + 0.72 * max(0.0, min(1.0, t)))) ** 0.55
+
+
+def _body_surface(B: Body, z: float, t: float, theta: float, scale: float = 1.0) -> Vec:
     """躯干体表上的一点。theta=0 背中线，±π 腹中线，正号朝右。
 
-    截面取上窄下宽的椭圆：背脊窄，腹部要兜住那道深龙骨。
+    截面取上窄下宽的椭圆（背脊窄、腹部兜着那道深龙骨），整体再乘沿体轴的粗细包络。
     """
     U = B.U
     (_kx0, ky0, _kz0), _hi = B.keel
+    prof = _body_profile(t) * scale
     cy = B.trunk_y - 1.2 * U
-    rw = 2.75 * U
-    up = B.trunk_y + 2.2 * U - cy
-    dn = cy - (ky0 + 1.4 * U)  # 腹羽收在龙骨下缘之上，不兜到最底
+    rw = 3.3 * U * prof
+    up = (B.trunk_y + 2.2 * U - cy) * prof
+    # 腹侧前深后浅：胸口要兜住龙骨，到尾根那边没什么可兜的
+    dn = (cy - (ky0 + 2.6 * U)) * prof * lerp(1.0, 0.62, t)
     c = math.cos(theta)
     rv = up if c >= 0 else dn
     return (math.sin(theta) * rw, cy + c * rv, z)
 
 
+def _contour_ring(p: SoftTissue, B: Body, bone: str, tag: str, z: float, t: float,
+                  reach: float, n_ring: int, *, scale: float = 1.0, lean: float = 1.0) -> None:
+    """在某个体轴位置上环绕一圈羽片。theta 走满 0→π，左右成对 + 背腹两条中线各一片。
+
+    Round 2 只铺 0.42→2.98 那一段：背中线另有一片补上，**腹中线却空着**，正面看
+    就是一条从喉到腹的缝。
+    """
+    U = B.U
+    for j in range(n_ring + 1):
+        th = math.pi * j / n_ring
+        # 越靠腹侧颜色越浅一档（覆羽色），层次才分得开
+        mat = "feather_body" if th < 2.0 else "feather_covert"
+        # 片宽跟着**局部弧长**走：腹侧曲率半径比背侧大一倍多，等角度切片在那里的
+        # 间距也大一倍多 —— 一律给同宽的片，腹部就整片裂开。
+        half = lerp(0.86, 1.55, (1 - math.cos(th)) / 2) * U * scale
+        thin = 0.46 * U
+        # 片要**贴着体表**铺：向后伸的段里 rx 是横向宽、rz 是垂直厚。背腹两处的片
+        # 该横着宽，体侧那圈却该竖着宽 —— 一律按横向给，体侧就成了一排横百叶，
+        # 缝里直接看见身体内部。按 |cos θ| 在两者之间过渡。
+        c = abs(math.cos(th))
+        rx, rz = lerp(thin, half, c), lerp(half, thin, c)
+        mid = j == 0 or j == n_ring  # 背中线 / 腹中线：单片，不成对
+        for sgn, side in (((0, ""),) if mid else ((-1, "l"), (1, "r"))):
+            a = _body_surface(B, z, t, sgn * th, scale)
+            b = (a[0] * 1.04, a[1] - 0.3 * U * lean, a[2] + reach)
+            name = f"{tag}_{j + 1}" if mid else f"{tag}_{j + 1}_{side}"
+            p.strut(bone, name, a, b, rx, rz, mat=mat)
+
+
 def tract_body(p: SoftTissue, B: Body) -> None:
-    """体羽：沿体表铺一层层叠的羽片，从背中线绕到腹中线。
+    """体羽：沿体表铺一层层叠的羽片，环绕整周。
 
     Round 1 用几个轴对齐大矩形分背/侧/腹三带 —— 渲出来身体就是个箱子。羽毛得是
     **一片压一片**的小片，且一律朝后下倒伏（顺着气流的方向），才有羽的质感。
@@ -280,41 +322,42 @@ def tract_body(p: SoftTissue, B: Body) -> None:
     U = B.U
     t1 = B.P("trunk_front")
     hips = B.P("hips")
-    n_z, n_ring = 9, 13
+    n_z, n_ring = 9, 14
     z0, z1 = t1[2] - 0.8 * U, hips[2] + 3.2 * U
     span = (z1 - z0) / n_z
 
     for i in range(n_z):
         tz = i / (n_z - 1)
-        z = lerp(z0, z1, tz)
-        bone = "trunk_front" if tz < 0.55 else "hips"
-        # 背中线一片
-        base = _body_surface(B, z, 0.0)
-        p.strut(bone, f"dorsal_{i + 1}", base, _off(base, dy=-0.25 * U, dz=span * 1.35),
-                1.15 * U, 0.42 * U, mat="feather_body")
-        for j in range(n_ring):
-            th = lerp(0.42, math.pi - 0.16, j / (n_ring - 1))
-            # 越靠腹侧颜色越浅一档（覆羽色），层次才分得开
-            mat = "feather_body" if th < 2.0 else "feather_covert"
-            # 片宽跟着**局部弧长**走：腹侧曲率半径比背侧大一倍多，等角度切片在那里的
-            # 间距也大一倍多 —— 一律给同宽的片，腹部就整片裂开。
-            half = lerp(0.82, 1.45, (1 - math.cos(th)) / 2) * U
-            thin = 0.46 * U
-            # 片要**贴着体表**铺：向后伸的段里 rx 是横向宽、rz 是垂直厚。背腹两处的片
-            # 该横着宽，体侧那圈却该竖着宽 —— 一律按横向给，体侧就成了一排横百叶，
-            # 缝里直接看见身体内部。按 |cos θ| 在两者之间过渡。
-            c = abs(math.cos(th))
-            rx, rz = lerp(thin, half, c), lerp(half, thin, c)
-            for sgn, side in ((-1, "l"), (1, "r")):
-                a = _body_surface(B, z, sgn * th)
-                # 每片向后倒伏 + 略微离体（叠瓦）
-                b = (a[0] * 1.04, a[1] - 0.3 * U, a[2] + span * 1.25)
-                p.strut(bone, f"contour_{i + 1}_{j + 1}_{side}", a, b, rx, rz, mat=mat)
-    # 胸前那一撮（龙骨最前端，兜住喙下方）。必须落在**腹中线**上 ——
-    # theta 给成 0.86π 会把它甩到体侧，成了一块孤零零飘在身旁的方块。
-    front = _body_surface(B, z0 - 0.6 * U, math.pi)
-    p.strut("trunk_front", "breast_front", front, _off(front, dy=1.1 * U, dz=2.0 * U),
-            1.7 * U, 0.55 * U, mat="feather_body")
+        _contour_ring(p, B, "trunk_front" if tz < 0.55 else "hips", f"contour_{i + 1}",
+                      lerp(z0, z1, tz), tz, span * 1.25, n_ring)
+
+    # --- 胸前封盖 ---
+    # 体羽全是"从体表向后伸的片"，只能围成一个**开口朝前的筒**：正面直接看进内腔，
+    # 胸口一个大黑洞。这里再往前叠两圈越收越小的羽把筒口封成圆胸。
+    for k, (dz, sc, nr) in enumerate(((1.1, 0.76, 9), (2.3, 0.44, 5)), start=1):
+        _contour_ring(p, B, "trunk_front", f"breast_cap{k}", z0 - dz * U, 0.0,
+                      dz * U * 0.9, nr, scale=sc, lean=0.4)
+    # 喉下那一撮，接住裸颈与胸羽的交界
+    throat = _body_surface(B, z0 - 2.6 * U, 0.0, math.pi, 0.42)
+    p.strut("trunk_front", "breast_front", throat, _off(throat, dy=1.2 * U, dz=2.2 * U),
+            1.5 * U, 0.55 * U, mat="feather_body")
+
+    # --- 尾根封盖：同理，后端也别留个洞 ---
+    _contour_ring(p, B, "hips", "rump_cap", z1 + 1.2 * U, 1.0, 1.6 * U,
+                  max(6, n_ring // 2), scale=0.62, lean=0.5)
+
+    # --- 腋羽：翼根与体侧之间那一簇 ---
+    # 收拢的翼贴在体侧，但体羽外缘和翼覆羽各自为政，中间留着一条贯通的长缝 ——
+    # 平视看不见，从腹下一看两侧各一道。真鸟这里正好长着腋羽把两边接起来。
+    sh = B.P("humerus_r")
+    for k in range(6):
+        t = k / 5
+        z = lerp(sh[2] - 0.6 * U, sh[2] + 10.5 * U, t)
+        y = B.trunk_y - lerp(1.4, 4.2, t) * U
+        for sgn, side in ((-1, "l"), (1, "r")):
+            p.strut("trunk_front", f"axillary_{k + 1}_{side}",
+                    (sgn * 2.7 * U, y, z), (sgn * 3.4 * U, y - 0.7 * U, z + 2.6 * U),
+                    0.60 * U, 1.95 * U, mat="feather_covert")
 
 
 # ================================================================ 羽区：尾
@@ -348,12 +391,12 @@ def tract_leg(p: SoftTissue, B: Body) -> None:
         hip, knee, ankle, toe = B.leg_chain(side)
         # 腿羽（"裤子"）：包住髋到膝。一整个大盒会在展翼露腿时现出棋盘纹的方块 ——
         # 大平面把 8×8 的色块拉开采样，看着像贴错图。拆成几片顺腿倒伏的羽。
-        n_th = 4
+        n_th = 6
         for k in range(n_th):
             t = k / (n_th - 1)
-            y = lerp(hip[1] + 1.4 * U, ankle[1] + 1.2 * U, t)
-            r = lerp(2.05, 1.35, t) * U
-            a = (sgn * 2.2 * U, y, lerp(hip[2] + 1.0 * U, knee[2] - 0.4 * U, t))
+            y = lerp(hip[1] + 2.4 * U, ankle[1] + 1.0 * U, t)
+            r = lerp(2.35, 1.30, t) * U
+            a = (sgn * 2.5 * U, y, lerp(hip[2] + 1.4 * U, knee[2] - 0.4 * U, t))
             p.strut(f"femur_{side}", f"thigh_feather_{side}_{k + 1}", a,
                     _off(a, dx=sgn * 0.55 * U, dy=-0.9 * U, dz=1.5 * U),
                     r, 0.62 * U, mat="feather_body")
@@ -391,8 +434,10 @@ def tract_bare(p: SoftTissue, B: Body) -> None:
     p.piece("skull", "head_skin", (-1.9 * U, skull[1] - 1.9 * U, skull[2] - 1.2 * U),
             (1.9 * U, skull[1] + 2.4 * U, skull[2] + 1.4 * U), mat="skin_bare")
     # 喉囊（兀鹫颈前那块垂皮）
-    p.piece(bones[-1], "crop_pouch", (-1.5 * U, pts[-1][1] + 1.2 * U, pts[-1][2] - 2.6 * U),
-            (1.5 * U, pts[-1][1] + 4.0 * U, pts[-1][2] - 0.6 * U), mat="skin_bare")
+    # 要一路兜到领羽根部：颈越长（大档 18 节）裸颈与领羽之间的三角缝越明显，
+    # 从前侧一看喉部就是个洞。
+    p.piece(bones[-1], "crop_pouch", (-1.9 * U, pts[-1][1] - 0.6 * U, pts[-1][2] - 3.2 * U),
+            (1.9 * U, pts[-1][1] + 4.4 * U, pts[-1][2] + 0.4 * U), mat="skin_bare")
 
 
 BUILDERS = {
@@ -433,6 +478,53 @@ def build(size: str, morph: str, tracts: tuple[str, ...] = TRACTS, *, pose: str 
     return skel, B
 
 
+def _leak_check(size: str, morph: str, res: int = 160) -> list[str]:
+    """漏光检查：模型是个**空壳**（羽下的骨都剔掉了），体表破一处就能一眼看穿到背景。
+
+    镜像 / 贴地 / 裸露那几条都查不出这个 —— 胸前整整敞着一个口，自检照样全绿，
+    直到在 Blockbench 里正面一看，胸口一个大黑洞。
+
+    做法：从几个方向渲小图，再从图像四边做洪水填充标出**外部**背景；填不到的背景
+    像素就是被模型轮廓整个围住的孔 —— 那才是破口。
+
+    不能用"逐行扫描轮廓内的背景"：头与背之间、两腿之间、翼与尾之间本来就有大片
+    真实空隙，那样查出来全是误报（实测头颈下方一片全被标红）。这些空隙都连通到
+    画面外，洪水填充一路填过去，自然不算。
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(HERE.parent))
+    from render_bbmodel import render  # noqa: PLC0415
+
+    name = SPECS[size].model.replace("Skeleton", "Pelt") + f"_{morph}"
+    src = FINAL_DIR / f"{name}.bbmodel"
+    if not src.exists():
+        return []  # 还没生成，跳过（--check 可以在生成前跑）
+    out = []
+    for label, yaw, pitch in (("正面", 178.0, 4.0), ("前侧", 145.0, 10.0),
+                              ("后方", 2.0, 6.0), ("腹下", 178.0, -55.0)):
+        im, _ = render(src, yaw=yaw, pitch=pitch, size=res, bg=(0, 0, 0))
+        px = im.load()
+        bg = [[sum(px[x, y]) <= 12 for x in range(res)] for y in range(res)]
+        seen = [[False] * res for _ in range(res)]
+        stack = [(x, y) for x in range(res) for y in (0, res - 1) if bg[y][x]]
+        stack += [(x, y) for y in range(res) for x in (0, res - 1) if bg[y][x]]
+        while stack:  # 从画面边缘往里填外部背景
+            x, y = stack.pop()
+            if seen[y][x]:
+                continue
+            seen[y][x] = True
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < res and 0 <= ny < res and bg[ny][nx] and not seen[ny][nx]:
+                    stack.append((nx, ny))
+        holes = sum(bg[y][x] and not seen[y][x] for y in range(res) for x in range(res))
+        # 阈值要能区分**结构性破口**与**羽缝**：胸前那个敞口是几百像素级的，而羽是
+        # 一片片铺的，相邻片之间难免漏出几十像素——那是体素羽毛的固有特性，不是缺陷。
+        if holes > res * res * 0.0018:
+            out.append(f"{label}视图漏光：{holes} 个被模型围住的背景像素（体表有破口）")
+    return out
+
+
 def check(size: str, morph: str, verbose: bool = True) -> int:
     skel, B = build(size, morph)
     # 羽层挂的件带 _muscle 标记（SoftTissue 统一打的），这里只看本层新增的那批
@@ -450,6 +542,8 @@ def check(size: str, morph: str, verbose: bool = True) -> int:
             continue
         if (e["from"][2] + e["to"][2]) / 2 < head_z + 2.0 * B.U:
             problems.append(f"{e['name']}: 羽长到头颈上了（秃鹫的头颈是裸的）")
+
+    problems += _leak_check(size, morph)
 
     tagged = [e for e in skel.data["elements"] if e.get("_muscle")]
     if len(tagged) != len(added):
@@ -513,7 +607,8 @@ def _prune_hidden(skel: Skeleton) -> None:
 
 def _is_pelt(name: str) -> bool:
     return name.startswith((
-        "primary", "secondary", "covert", "scapular", "ruff", "dorsal", "contour",
+        "primary", "secondary", "covert", "scapular", "ruff", "contour", "breast_cap",
+        "rump_cap", "axillary",
         "breast", "rectrix", "tail_covert", "thigh_feather", "tarsal_scale", "toe_scale",
         "neck_skin", "head_skin", "crop_pouch",
     ))
