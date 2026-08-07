@@ -681,12 +681,16 @@ def _leg_column(p: Pelt, P, side: str, sx: int, tag: str) -> None:
     p.box(hoof_bone, f"hoof_{tag}_{side}", (hoofj[0] - r, 0.0, hoofj[2] - r * 1.08), (hoofj[0] + r, wall_top * 0.58, hoofj[2] + r * 0.80), mat="hoof")
     p.box(hoof_bone, f"hoof_top_{tag}_{side}", (hoofj[0] - r * 0.86, wall_top * 0.58, hoofj[2] - r * 1.02), (hoofj[0] + r * 0.86, wall_top, hoofj[2] + r * 0.12), mat="hoof")
 
-    # 距毛：球节后的毛簇。挽马厚、矮马中、常马薄 —— 三档最直观的外观差之一
-    feather = {"small": 0.055, "medium": 0.034, "large": 0.098}[Pr.key]
+    # 距毛：球节后的毛簇。挽马厚、矮马中、常马薄 —— 三档最直观的外观差之一。
+    # 下缘必须夹在 y≥0：挽马那档首版给到 0.098W，比球节离地高度还长，毛垂到 y=−0.37，
+    # 于是绑定层取"最低点"当蹄底时抓的是距毛不是蹄，四蹄触地点整体偏了 0.2 单位，
+    # 步态自检里表现为挽马专有的离地超差（渲染图上完全看不出来）。
+    feather = {"small": 0.055, "medium": 0.034, "large": 0.076}[Pr.key]
+    fy0 = max(0.0, fet[1] - Pr.u(feather) - Pr.u(0.030))
     p.box(
         fet_bone,
         f"feather_{tag}_{side}",
-        (fet[0] - Pr.u(0.044) * gauge, fet[1] - Pr.u(feather) - Pr.u(0.030), fet[2] + Pr.u(0.010)),
+        (fet[0] - Pr.u(0.044) * gauge, fy0, fet[2] + Pr.u(0.010)),
         (fet[0] + Pr.u(0.044) * gauge, fet[1] + Pr.u(0.026), fet[2] + Pr.u(0.030) + Pr.u(feather) * 0.5),
         mat=mat_low,
     )
@@ -767,6 +771,28 @@ def build(P: Profile, coat: Coat, groups, muscle: Path, with_anatomy: bool) -> P
     return p
 
 
+def check_pelt(p: Pelt) -> list[str]:
+    """皮层自检：**贴地**（最低点是四只蹄底，且恰在 y=0）+ 蹄底件齐。
+
+    骨架层有这条断言、皮层层首版漏了 —— 结果挽马的距毛垂到地下 0.37 单位一直没人发现，
+    直到绑定层拿"最低点"当蹄底才暴露。凡是要被下游当基准面用的东西都得有断言。
+    """
+    els = [e for e in p.skel.data["elements"] if e.get("_pelt")]
+    bad: list[str] = []
+    lo = min(e["from"][1] for e in els)
+    if lo < -0.02:
+        who = sorted({e["name"] for e in els if e["from"][1] <= lo + 0.02})
+        bad.append(f"有件穿到地下：最低 y={lo:.3f}（{', '.join(who[:4])}）")
+    for tag in ("f", "h"):
+        for side in ("l", "r"):
+            hoof = next((e for e in els if e["name"] == f"hoof_{tag}_{side}"), None)
+            if hoof is None:
+                bad.append(f"缺蹄件 hoof_{tag}_{side}")
+            elif abs(hoof["from"][1]) > 0.02:
+                bad.append(f"hoof_{tag}_{side} 未着地：y={hoof['from'][1]:.3f}")
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="马皮毛层（读肌肉层包络，不回写）")
     ap.add_argument("--profile", choices=[*sorted(PROFILES), "all"], default="all")
@@ -791,6 +817,7 @@ def main() -> int:
     ckeys = sorted(COATS) if args.coat == "all" else [args.coat]
     todo = [GROUPS[args.group]] if args.group else list(GROUPS.values())
     single = len(pkeys) == 1 and len(ckeys) == 1
+    rc = 0
 
     for ck in ckeys:
         for pk in pkeys:
@@ -812,8 +839,16 @@ def main() -> int:
             out = args.out if (args.out and single) else ((FINAL if final else STAGES) / f"{name}.bbmodel")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(p.skel.data, ensure_ascii=False, indent=1))
-            print(f"→ {out.relative_to(REPO)}  【{coat.label} · {P.label}】皮层件 {p.count} · 总 cube {len(p.skel.data['elements'])}")
-    return 0
+            msg = f"→ {out.relative_to(REPO)}  【{coat.label} · {P.label}】皮层件 {p.count} · 总 cube {len(p.skel.data['elements'])}"
+            if final:
+                bad = check_pelt(p)
+                if bad:
+                    rc = 1
+                    msg += "\n   ✗ " + "\n   ✗ ".join(bad)
+                else:
+                    msg += "  ✓ 贴地"
+            print(msg)
+    return rc
 
 
 if __name__ == "__main__":
