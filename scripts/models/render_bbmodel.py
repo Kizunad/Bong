@@ -93,7 +93,15 @@ def load_bbmodel(path, xform=None):
             M = xform.get(e.get("uuid")) if xform else None
             if M is not None:
                 cs = [M[:3, :3] @ c + M[:3, 3] for c in cs]
-                n = M[:3, :3] @ n
+                # 法线走**逆转置**，不是同一个矩阵。纯旋转时两者相同（历史上只喂过旋转，
+                # 所以一直没暴露），一旦 xform 带非均匀缩放就完全不同：法线被转歪、长度也
+                # 跟着缩放变，而下面的着色用的是未归一化的 n·ld —— 被压扁那一轴上的面会
+                # 亮成纯白。羽层的收展动画给羽做轴向缩放（9.5 / 1.6 / 0.17），第一次踩到。
+                A = M[:3, :3]
+                n = np.linalg.inv(A).T @ n if abs(np.linalg.det(A)) > 1e-9 else A @ n
+            ln = float(np.linalg.norm(n))
+            if ln > 1e-9:
+                n = n / ln
             # 四角 → 两三角 (0,1,2),(0,2,3)
             for a, b in ((1, 2), (2, 3)):
                 tris.append((np.array([cs[0], cs[a], cs[b]]),
