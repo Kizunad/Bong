@@ -177,7 +177,7 @@ cd agent && npm run build && (cd packages/tiandao && npm test) && (cd packages/s
 1. 在 `$WT_ABS/docs/plan-$PLAN.md` 末尾追加 `## Finish Evidence` 章节，至少包含：
    - **落地清单**：每个 P 对应的真实模块/文件路径
    - **关键 commit**：本 worktree 内的实施 commit hash + 日期 + 消息（取自 `implResults[].commits`）
-   - **测试结果**：跑过的命令 + 数量（如 `cargo test cultivation:: → 94 passed`）
+   - **测试结果**：跑过的命令 + 数量（如 `scripts/build-token.sh cargo test cultivation:: → 94 passed`）
    - **跨仓库核验**：server / agent / client 各命中的 symbol（plan 跨仓库时）
    - **遗留 / 后续**：未在本 plan 范围、依赖其他 plan 的待办（若有）
 

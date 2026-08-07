@@ -21,7 +21,7 @@ use valence::prelude::*;
 use valence::text::IntoText;
 
 /// 相对 server cwd（`server/` 目录）的默认装饰 JSON 路径。
-/// CI / 本地 `cargo run` 都从 `server/` 起跑，对应 repo 内 worldgen/preview/。
+/// CI / 本地经 `scripts/build-token.sh cargo run` 从 `server/` 起跑，对应 repo 内 worldgen/preview/。
 /// 想换路径用 `BONG_PREVIEW_DECORATIONS=/abs/path.json` env override。
 const DEFAULT_PATH: &str = "../worldgen/preview/decorations.json";
 const MAX_PILLAR_HEIGHT: u32 = 64;

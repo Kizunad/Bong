@@ -23,7 +23,8 @@ check "含 [profile.dev]" grep -q '^\[profile\.dev\]' "$CFG"
 check "含 debug = line-tables-only" grep -Eq 'debug\s*=\s*"line-tables-only"' "$CFG"
 
 echo "== 2. 最小 crate 复现：crate 本地 .cargo/config.toml 经构建令牌 wrapper 注入 rustc"
-PROBE=$(mktemp -d /tmp/cargo-profile-probe.XXXXXX)
+mkdir -p "$ROOT/tmp"
+PROBE=$(mktemp -d "$ROOT/tmp/cargo-profile-probe.XXXXXX")
 cleanup() { rm -rf "$PROBE"; }
 trap cleanup EXIT
 mkdir -p "$PROBE"

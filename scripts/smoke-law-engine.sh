@@ -134,7 +134,7 @@ echo "[run][server-start] timeout 20s 构建令牌 wrapper cargo run"
 timeout 20s bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo run" > "$SERVER_BOOT_LOG" 2>&1 || server_start_exit=$?
 echo "[server-start] exit=${server_start_exit}, log=${SERVER_BOOT_LOG}"
 if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
-  fail_stage "server-start" "cargo run failed before startup anchors"
+  fail_stage "server-start" "wrapper cargo run failed before startup anchors"
 fi
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[bridge\\] tokio runtime started" "bridge runtime started"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "creating overworld" "world creation"

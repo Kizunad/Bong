@@ -2,7 +2,7 @@
 # Bot e2e 编排：起 server（headless offline）→ 跑 scripts/bot/ 协议级黑盒场景 → 收尾。
 #
 # CI（.github/workflows/e2e.yml「Bot e2e stage」）在 release 二进制已构建、redis 已起的
-# job 里调用本脚本，cargo run --release 直接复用缓存。
+# job 里调用本脚本，经构建令牌 wrapper cargo run --release 复用缓存。
 #
 # 本地用法：
 #   bash scripts/bot-e2e.sh                          # 自动起 server（release）
