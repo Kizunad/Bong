@@ -149,6 +149,7 @@ launch_detached_job() {
 
     (
         trap '' HUP
+        trap - EXIT
         exec < /dev/null
         "$@"
     ) &

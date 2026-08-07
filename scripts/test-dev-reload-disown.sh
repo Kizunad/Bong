@@ -15,6 +15,7 @@ ACTIVE_LAUNCHER_PID=""
 SLEEP_EXECUTABLE="$(readlink -f -- "$(command -v sleep)")"
 
 cleanup() {
+    [ "${BASHPID:-$$}" = "$$" ] || return 0
     for pid in "$ACTIVE_CHILD_PID" "$ACTIVE_LAUNCHER_PID"; do
         if [[ "$pid" =~ ^[0-9]+$ ]]; then
             kill "$pid" 2>/dev/null || true
