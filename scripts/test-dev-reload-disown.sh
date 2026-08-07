@@ -603,6 +603,61 @@ grep -Fq "did not exec expected executable" "$FAST_EXEC_FAILURE_LOG" \
 [ -z "$DETACHED_PID" ] || fail "immediate exec failure left DETACHED_PID=$DETACHED_PID"
 unset FAST_MISSING_EXECUTABLE
 
+# Regression pin for the fail-closed tri-state contract (W9 preverify finding):
+# after a detach failure, an UNKNOWN inspection (kill -0 alive but ps check
+# failed) must fail closed - a still-live, never-detached process must never be
+# published as a managed server pid.
+DETACH_FAIL_STUB_SCRIPT="$TEST_ROOT/detach-fail-stub.sh"
+DETACH_FAIL_LOG="$TEST_ROOT/detach-fail.err"
+DETACH_FAIL_SERVER_LOG="$TEST_ROOT/detach-fail-server.log"
+DETACH_FAIL_PID_FILE="$TEST_ROOT/detach-fail.pid"
+cat > "$DETACH_FAIL_STUB_SCRIPT" <<'DETACH_FAIL_STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec /bin/sleep 30
+DETACH_FAIL_STUB
+chmod +x "$DETACH_FAIL_STUB_SCRIPT"
+
+original_detach_background_job="$(declare -f detach_background_job)"
+original_bong_server_process_is_running="$(declare -f bong_server_process_is_running)"
+_bong_server_process_is_running_impl() {
+    eval "$original_bong_server_process_is_running"
+    bong_server_process_is_running "$@"
+}
+detach_background_job() {
+    printf '%s\n' "${1:-}" > "$DETACH_FAIL_PID_FILE"
+    return 1
+}
+bong_server_process_is_running() {
+    if [ -z "${BONG_STUB_FIRST_INSPECTION_DONE:-}" ]; then
+        BONG_STUB_FIRST_INSPECTION_DONE=1
+        return 2
+    fi
+    _bong_server_process_is_running_impl "$@"
+}
+BONG_STUB_FIRST_INSPECTION_DONE=""
+ENV_ARGS=()
+BONG_SERVER_WORKDIR="$TEST_ROOT"
+BONG_SERVER_EXECUTABLE="$DETACH_FAIL_STUB_SCRIPT"
+BONG_SERVER_LOG="$DETACH_FAIL_SERVER_LOG"
+BONG_SERVER_STARTUP_GRACE_SECONDS=0
+if launch_bong_server "$SLEEP_EXECUTABLE" 2> "$DETACH_FAIL_LOG"; then
+    fail "detach failure with a live never-detached process did not fail closed"
+fi
+grep -Eq "could not inspect background job [0-9]+ after detach failure; failing closed" "$DETACH_FAIL_LOG" \
+    || fail "detach-failure launch did not report its UNKNOWN-inspection fail-closed diagnostic"
+[ -z "$SERVER_PID" ] || fail "detach-failure launch left SERVER_PID=$SERVER_PID"
+[ -z "$DETACHED_PID" ] || fail "detach-failure launch left DETACHED_PID=$DETACHED_PID"
+read -r DETACH_FAIL_PID < "$DETACH_FAIL_PID_FILE"
+[[ "$DETACH_FAIL_PID" =~ ^[0-9]+$ ]] \
+    || fail "detach-failure fixture did not record a numeric wrapper pid"
+wait_for_process_exit "$DETACH_FAIL_PID" \
+    || fail "detach-failure launch leaked live never-detached pid $DETACH_FAIL_PID"
+unset BONG_STUB_FIRST_INSPECTION_DONE
+eval "$original_detach_background_job"
+eval "$original_bong_server_process_is_running"
+unset -f _bong_server_process_is_running_impl
+
 FAIL_SLEEP_DIR="$TEST_ROOT/fail-sleep-bin"
 FAIL_SLEEP_SCRIPT="$FAIL_SLEEP_DIR/sleep"
 RUNTIME_SLEEP_LOG="$TEST_ROOT/runtime-sleep.err"
