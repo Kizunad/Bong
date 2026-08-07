@@ -2306,9 +2306,9 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
-if [ "${GITHUB_ACTIONS:-}" = true ] \
-    && [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ]; then
-    "$ROOT/scripts/test-tmux-shutdown-order.sh"
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST=1 \
+        "$ROOT/scripts/test-tmux-shutdown-order.sh"
 else
     printf 'SKIP: tmux shutdown-order signal test is quarantined to opted-in GitHub Actions e2e\n'
 fi
