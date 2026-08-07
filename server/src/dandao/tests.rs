@@ -1248,9 +1248,15 @@ mod boss_spawn_integration {
             .get::<Cultivation>(player)
             .expect("player Cultivation missing")
             .qi_current;
-        let zone_balance = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
         let player_decrease = initial_qi - player_qi_after;
-        let zone_increase = zone_balance;
+        let zone_increase = zone_spirit_qi_after * QI_ZONE_UNIT_CAPACITY;
+
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&zone_id),
+            0.0,
+            "端到端 BossDrain 不得创建 zone ledger mirror"
+        );
 
         assert!(
             player_decrease > 0.0,
