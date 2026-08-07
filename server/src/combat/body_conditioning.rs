@@ -1027,6 +1027,80 @@ mod tests {
             );
         }
 
+        /// configured cost 高于玩家余额时，affordability 必须使用 registry cost 而不是旧常量；
+        /// 拒绝路径不得扣玩家真元、创建熟练度、回灌 zone 或 emit transfer。
+        #[test]
+        fn overridden_cost_above_balance_rejects_without_charge_credit_or_audit() {
+            let configured_cost = 2.75_f64;
+            let initial_qi = 2.0_f64;
+            let mut app = App::new();
+            app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+                GUANGBO_TICAO_ID,
+                |definition| definition.qi_cost = configured_cost,
+            ));
+            app.add_event::<GuangboTicaoPracticeEvent>();
+            app.add_event::<QiTransfer>();
+            app.insert_resource(ZoneRegistry::fallback());
+            app.add_systems(Update, consume_guangbo_practice_events);
+            app.world_mut()
+                .resource_mut::<ZoneRegistry>()
+                .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi = 0.0;
+            let zone_before = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi;
+            let entity = app
+                .world_mut()
+                .spawn((
+                    KnownTechniques { entries: vec![] },
+                    cultivation_with_qi(initial_qi),
+                    Position::new([0.0, 64.0, 0.0]),
+                    CurrentDimension(DimensionKind::Overworld),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<Events<GuangboTicaoPracticeEvent>>()
+                .send(GuangboTicaoPracticeEvent { entity });
+
+            app.update();
+
+            let cultivation = app.world().get::<Cultivation>(entity).unwrap();
+            assert_eq!(
+                cultivation.qi_current, initial_qi,
+                "qi 小于 configured cost 时必须拒绝且不扣费：期望 {initial_qi}，实际 {}",
+                cultivation.qi_current
+            );
+            let known = app.world().get::<KnownTechniques>(entity).unwrap();
+            assert!(
+                known.entries.is_empty(),
+                "configured-cost 不足路径不得创建或增长 proficiency entry，实际 {known:?}"
+            );
+            let zone_after = app
+                .world()
+                .resource::<ZoneRegistry>()
+                .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+                .expect("spawn zone should exist")
+                .spirit_qi;
+            assert_eq!(
+                zone_after, zone_before,
+                "configured-cost 不足路径不得向 zone 入账：before={zone_before}，after={zone_after}"
+            );
+            let transfers: Vec<_> = app
+                .world()
+                .resource::<Events<QiTransfer>>()
+                .iter_current_update_events()
+                .collect();
+            assert!(
+                transfers.is_empty(),
+                "configured-cost 不足路径不得 emit QiTransfer，实际 {} 条",
+                transfers.len()
+            );
+        }
+
         /// 真元不足时练习被拒——zone 不应得到任何 credit，QiTransfer 不应被 emit。
         #[test]
         fn insufficient_qi_no_zone_credit() {
