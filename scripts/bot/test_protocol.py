@@ -900,18 +900,27 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "[bong][world] BOT_FALLBACK_FLAT_READY "
             "anchors=3 chunks=5002 view_distance_chunks=20"
         )
-        matched = subprocess.run(
-            ["grep", "-Eq", "--", pattern],
-            input=f"{production_line}\n",
-            capture_output=True,
-            text=True,
-            check=False,
+        production_lines = (
+            production_line,
+            "\x1b[2m2026-08-07T10:25:04.830194Z\x1b[0m "
+            "\x1b[32m INFO\x1b[0m "
+            "[bong][world] BOT_FALLBACK_FLAT_READY "
+            "anchors=3 chunks=5002 view_distance_chunks=20",
         )
-        self.assertEqual(
-            matched.returncode,
-            0,
-            "fallback readiness matcher 必须接受 production tracing 的 timestamp + INFO 前缀完整日志行",
-        )
+        for traced_line in production_lines:
+            with self.subTest(traced_line=traced_line):
+                matched = subprocess.run(
+                    ["grep", "-Eq", "--", pattern],
+                    input=f"{traced_line}\n",
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    matched.returncode,
+                    0,
+                    "fallback readiness matcher 必须接受 production tracing 的完整日志行（含默认 ANSI 或 NO_COLOR 形态）",
+                )
 
         for invalid_line in (
             "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 view_distance_chunks=20",
