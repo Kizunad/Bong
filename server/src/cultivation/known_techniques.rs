@@ -81,6 +81,20 @@ pub enum TechniqueDispatch {
     DirectGeneric,
 }
 
+/// `direct_generic` 招式 id 的严格白名单（M11 契约）。
+///
+/// `DirectGeneric` 只提供 skill-bar cast 生命周期、没有任何 gameplay handler——
+/// 任意新 id 会被呈现为"可施放"却没有实际消费者，等于把 data-only 占位符静默
+/// 变成玩家可见的假招式。白名单内三个 id 都有真实 gameplay 消费者：
+/// `movement.dash` → dash_proficiency/首战自学，`shield_block` → 格挡结算，
+/// `body.guangbo_ticao` → 广播体操 practice 事件。新增直通招式必须先有消费者，
+/// 再进白名单，不能只加 metadata。
+pub const DIRECT_GENERIC_ALLOWLIST: &[&str] = &[
+    "movement.dash",
+    "shield_block",
+    "body.guangbo_ticao",
+];
+
 /// 运行时 owned metadata。所有字符串与经脉列表均来自启动期 TOML，不能借用临时解析缓冲区。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TechniqueDefinition {
@@ -755,6 +769,14 @@ pub fn validate_startup_wiring(
                 }
             }
             TechniqueDispatch::DirectGeneric => {
+                if !DIRECT_GENERIC_ALLOWLIST.contains(&definition.id.as_str()) {
+                    return Err(TechniqueWiringError(format!(
+                        "direct_generic technique {:?} has no gameplay consumer; \
+                         direct_generic is restricted to the allowlist {}",
+                        definition.id,
+                        DIRECT_GENERIC_ALLOWLIST.join(", ")
+                    )));
+                }
                 if skills.lookup(&definition.id).is_some() {
                     return Err(TechniqueWiringError(format!(
                         "direct_generic technique {:?} unexpectedly has a SkillRegistry resolver",
@@ -1350,21 +1372,51 @@ dispatch = "metadata_backed"
     }
 
     #[test]
-    fn arbitrary_direct_generic_metadata_is_data_owned() {
+    fn arbitrary_direct_generic_metadata_is_rejected_at_startup_wiring() {
+        // M11：DirectGeneric 只有 cast 生命周期、没有 gameplay handler——任意新 id
+        // 若被启动期放行，会呈现为"可施放"却没有实际消费者。白名单契约要求拒绝
+        // 不在 `DIRECT_GENERIC_ALLOWLIST` 的 direct_generic，无论有没有依赖声明。
         let registry = load(&minimal_toml().replace(
             "dispatch = \"metadata_backed\"",
             "dispatch = \"direct_generic\"",
         ))
-        .expect("an arbitrary valid id may opt into the generic cast path");
+        .expect("an arbitrary valid id may parse as direct_generic metadata");
         let skills = SkillRegistry::default();
 
-        validate_startup_wiring(&registry, &skills, &SkillMeridianDependencies::default())
-            .expect("direct_generic does not require a dependency declaration");
+        let error = validate_startup_wiring(
+            &registry,
+            &skills,
+            &SkillMeridianDependencies::default(),
+        )
+        .expect_err("arbitrary direct_generic without a gameplay consumer must be rejected");
+        assert!(error.to_string().contains("test.skill"));
+        assert!(error.to_string().contains("no gameplay consumer"));
 
         let mut dependencies = SkillMeridianDependencies::default();
         dependencies.declare("test.skill", Vec::new());
-        validate_startup_wiring(&registry, &skills, &dependencies)
-            .expect("direct_generic may also have an explicit dependency declaration");
+        let error = validate_startup_wiring(&registry, &skills, &dependencies)
+            .expect_err("dependency declaration must not bypass the direct_generic allowlist");
+        assert!(error.to_string().contains("no gameplay consumer"));
+
+        // 白名单内的 id 不受影响：movement.dash 只有 resolver 冲突会被拒绝，
+        // 无 resolver 时通过。
+        let allowlisted = load(&minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+            .replace(
+                "dispatch = \"metadata_backed\"",
+                "dispatch = \"direct_generic\"",
+            ))
+            .expect("allowlisted id parses as direct_generic");
+        validate_startup_wiring(
+            &allowlisted,
+            &SkillRegistry::default(),
+            &SkillMeridianDependencies::default(),
+        )
+        .expect("allowlisted direct_generic without resolver must pass");
+        let mut skills = SkillRegistry::default();
+        skills.register("movement.dash", noop_skill);
+        validate_startup_wiring(&allowlisted, &skills, &SkillMeridianDependencies::default())
+            .expect_err("allowlisted direct_generic with a resolver must still fail");
     }
 
     #[test]
@@ -1408,18 +1460,24 @@ dispatch = "metadata_backed"
             .to_string()
             .contains("explicit meridian dependency declaration"));
 
-        let direct_generic = load(&minimal_toml().replace(
-            "dispatch = \"metadata_backed\"",
-            "dispatch = \"direct_generic\"",
-        ))
+        // resolver 冲突用白名单内 id（movement.dash），避免先撞 M11 的 no-consumer 拒绝。
+        let direct_generic = load(&minimal_toml()
+            .replace("id = \"test.skill\"", "id = \"movement.dash\"")
+            .replace(
+                "dispatch = \"metadata_backed\"",
+                "dispatch = \"direct_generic\"",
+            ))
         .expect("direct_generic metadata loads");
+        skills.register("movement.dash", noop_skill);
         let resolver_conflict = validate_startup_wiring(
             &direct_generic,
             &skills,
             &SkillMeridianDependencies::default(),
         )
         .expect_err("direct_generic with a resolver must fail");
-        assert!(resolver_conflict.to_string().contains("test.skill"));
+        assert!(resolver_conflict
+            .to_string()
+            .contains("movement.dash"));
         assert!(resolver_conflict
             .to_string()
             .contains("unexpectedly has a SkillRegistry resolver"));
