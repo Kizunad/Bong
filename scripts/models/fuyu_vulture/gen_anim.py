@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from dataclasses import dataclass
@@ -587,6 +588,16 @@ def build(size: str, morph: str, names: list[str]) -> list[tuple[str, Path, list
         model = f"FuyuVultureRig{tag}{suffix}"
         path = MODELS / f"{model}.bbmodel"
         write_animated_bbmodel(rig, anims, path, model)
+        # 落盘后回读断言：格式必须是 4.x 且骨骼内联在 outliner 里。5.0 把骨骼拆去
+        # groups[]，4.x 的读盘器重建不出骨树 —— 打开是空场景，不报任何错。这条不能只靠
+        # 写盘那一侧的兜底，兜底本身也会被改坏。
+        doc = json.loads(path.read_text())
+        fv = doc.get("meta", {}).get("format_version", "?")
+        inline = doc["outliner"] and isinstance(doc["outliner"][0], dict) and "name" in doc["outliner"][0]
+        if fv.startswith("5") or doc.get("groups") or not inline:
+            raise SystemExit(f"{model}: 落盘成了 format_version={fv} "
+                             f"groups={len(doc.get('groups', []))} 骨骼内联={inline}；"
+                             f"4.x 的 Blockbench 打开会是空场景")
         out.append((model, path, anims))
     return out
 

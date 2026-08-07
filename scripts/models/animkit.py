@@ -17,11 +17,15 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from to_fmt410 import ensure_410  # noqa: E402
 
 # ================================================================ 旋转 / 曲线
 
@@ -551,7 +555,10 @@ def write_animated_bbmodel(rig: PoseRig, anims: list[dict], out: Path, name: str
     doc["animations"] = entries
     doc["name"] = name
     doc["model_identifier"] = name
-    Path(out).write_text(json.dumps(doc, ensure_ascii=False))
+    # 强制 4.10 落盘：本函数是"读源模型 → 挂动画 → 写回"，格式版本跟着源文件走。源模型
+    # 一旦被 Blockbench 5 手工存过盘，产物就悄悄变成 5.0，而 5.0 在 4.x 里打开是一个
+    # cube 都看不见（见 to_fmt410 的说明）。不报错、不闪退，只是空场景。
+    Path(out).write_text(json.dumps(ensure_410(doc), ensure_ascii=False))
 
 
 def write_geckolib(anims: list[dict], out: Path, namespace: str, model_id: str) -> None:

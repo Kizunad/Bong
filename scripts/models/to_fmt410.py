@@ -62,6 +62,17 @@ def downgrade(doc: dict) -> tuple[dict, dict]:
     return new, stats
 
 
+def ensure_410(doc: dict) -> dict:
+    """写盘前的兜底：已经是 4.x 就原样返回，是 5.0 就就地降级。
+
+    生成器普遍是"读一份已有 bbmodel、加东西、写回去"，格式版本因此是**跟着源文件走**
+    的。源文件一旦被 Blockbench 5 手工存过盘（骨架/皮毛层都可能），产物就悄悄变成 5.0，
+    而 5.0 在 4.x 里打开是一个 cube 都看不见 —— 这种错不会报任何异常，只会在下次打开
+    模型时才发现。所以每个写盘口都过这一道，别指望源文件一直是对的。
+    """
+    return doc if doc.get("meta", {}).get("format_version") != "5.0" else downgrade(doc)[0]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="bbmodel 5.0 → 4.10 降级")
     ap.add_argument("src", type=Path)

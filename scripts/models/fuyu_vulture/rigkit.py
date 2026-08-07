@@ -492,11 +492,18 @@ class Skeleton:
 
     def write(self, out, name: str) -> None:
         import json
+        import sys
         from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from to_fmt410 import ensure_410
 
         self.data["name"] = name
         self.data["model_identifier"] = name
-        Path(out).write_text(json.dumps(self.data, ensure_ascii=False, indent=1))
+        # 强制 4.10 落盘：本类是"读一份 bbmodel → 挂新件 → 写回"，格式版本跟着源文件走。
+        # 骨架一旦被 Blockbench 5 手工存过盘，肌肉/皮毛层的产物就悄悄变成 5.0，而 5.0 在
+        # 4.x 里打开是一个 cube 都看不见（见 to_fmt410 的说明）——不报错，只是空场景。
+        Path(out).write_text(json.dumps(ensure_410(self.data), ensure_ascii=False, indent=1))
 
 
 class SoftTissue:
