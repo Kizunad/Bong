@@ -852,8 +852,10 @@ mod tests {
             dispatch: TechniqueDispatch::DirectGeneric,
         });
 
-        // 注入 registry 的请求：回包必须含 runtime.only。
-        let replies = completion_roundtrip_with_registry("/technique runtime", 7, registry.clone());
+        // 注入 registry 的请求：回包必须含 runtime.only（光标落在 `/technique add` 的
+        // 参数词上，arg_index=2，所以请求文本必须是三词）。
+        let replies =
+            completion_roundtrip_with_registry("/technique add runtime", 7, registry.clone());
         assert_eq!(
             replies.len(),
             1,
@@ -863,8 +865,8 @@ mod tests {
         assert_eq!(*id, 7, "回包必须回显请求的 transaction_id");
         assert_eq!(
             (*start, *length),
-            (11, 7),
-            "`/technique ` = 11 字符，partial = `runtime` 7 字符"
+            (15, 7),
+            "`/technique add ` = 15 字符，partial = `runtime` 7 字符"
         );
         assert!(
             matches.iter().any(|(v, _)| v == "runtime.only"),
@@ -878,7 +880,7 @@ mod tests {
         );
 
         // 默认 registry 的同一请求：runtime.only 不存在——差异必须来自注入实例。
-        let replies = completion_roundtrip("/technique runtime", 8);
+        let replies = completion_roundtrip("/technique add runtime", 8);
         assert_eq!(replies.len(), 1);
         let (id, _, _, matches) = &replies[0];
         assert_eq!(*id, 8);
