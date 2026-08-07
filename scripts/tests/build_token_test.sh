@@ -43,6 +43,8 @@ fi
   printf '\n'
 } >>"$BUILD_TOKEN_TEST_LOG"
 printf '%s\0' "$@" >"$BUILD_TOKEN_TEST_DIR/$name.argv"
+printf '%s\n' "$$" >"$BUILD_TOKEN_TEST_DIR/$name.pid"
+printf '%s\n' "$PPID" >"$BUILD_TOKEN_TEST_DIR/$name.parent"
 touch "$BUILD_TOKEN_TEST_DIR/$name.started"
 if [[ ${BUILD_TOKEN_TEST_SPAWN_DESCENDANT:-0} == 1 ]]; then
   (sleep 30) &
@@ -50,6 +52,7 @@ if [[ ${BUILD_TOKEN_TEST_SPAWN_DESCENDANT:-0} == 1 ]]; then
 fi
 while [ ! -f "$BUILD_TOKEN_TEST_DIR/$name.release" ]; do sleep 0.02; done
 printf 'end %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
+touch "$BUILD_TOKEN_TEST_DIR/$name.finished"
 EOF
 cat >"$SANDBOX/gradlew" <<'EOF'
 #!/usr/bin/env bash
@@ -58,9 +61,12 @@ name=$1
 shift
 printf 'start %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
 printf '%s\0' "$@" >"$BUILD_TOKEN_TEST_DIR/$name.argv"
+printf '%s\n' "$$" >"$BUILD_TOKEN_TEST_DIR/$name.pid"
+printf '%s\n' "$PPID" >"$BUILD_TOKEN_TEST_DIR/$name.parent"
 touch "$BUILD_TOKEN_TEST_DIR/$name.started"
 while [ ! -f "$BUILD_TOKEN_TEST_DIR/$name.release" ]; do sleep 0.02; done
 printf 'end %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
+touch "$BUILD_TOKEN_TEST_DIR/$name.finished"
 EOF
 cat >"$FAKE_REPO/server/cargo" <<'EOF'
 #!/usr/bin/env bash
@@ -209,20 +215,26 @@ start_cargo survivor
 if wait_file "$SANDBOX/crash_holder.started" && wait_file "$SANDBOX/survivor.started"; then
   start_cargo crash_waiter
   if not_started_briefly "$SANDBOX/crash_waiter.started"; then
-    crash_holder_pid="${PIDS[0]}"
-    crash_child_pid="$(pgrep -P "$crash_holder_pid" | head -1)"
-    kill -9 "$crash_holder_pid"
-    wait "$crash_holder_pid" 2>/dev/null || true
-    if wait_file "$SANDBOX/crash_waiter.started"; then
-      pass "持锁 wrapper 被 SIGKILL 后等待者获得槽位，无需释放 orphan command"
+    crash_wrapper_pid="$(cat "$SANDBOX/crash_holder.parent")"
+    crash_child_pid="$(cat "$SANDBOX/crash_holder.pid")"
+    kill -9 "$crash_wrapper_pid"
+    wait "$crash_wrapper_pid" 2>/dev/null || true
+    if not_started_briefly "$SANDBOX/crash_waiter.started"; then
+      pass "持锁 wrapper 被 SIGKILL 后 orphan build 仍占用槽位"
     else
-      fail "SIGKILL 后槽位未自动释放"
+      fail "wrapper 被 SIGKILL 后等待者在 build 结束前错误获得槽位"
     fi
-    if [ -z "$crash_child_pid" ] || ! kill -0 "$crash_child_pid" 2>/dev/null; then
-      pass "wrapped command 不继承 token lock"
+    touch "$SANDBOX/crash_holder.release"
+    if wait_file "$SANDBOX/crash_holder.finished" && wait_file "$SANDBOX/crash_waiter.started"; then
+      pass "orphan build 结束后等待者才获得槽位"
     else
-      pass "orphan wrapped command 可存活但不再持有 token"
+      fail "orphan build 结束后等待者未获得槽位"
+    fi
+    if kill -0 "$crash_child_pid" 2>/dev/null; then
+      fail "crash build child 在 release 后仍存活"
       kill "$crash_child_pid" 2>/dev/null || true
+    else
+      pass "crash build child 生命周期已结束"
     fi
   else
     fail "崩溃测试等待者未被双槽位阻塞"

@@ -130,7 +130,7 @@ while true; do
 
       cd "$build_root"
       set +e
-      "${command[@]}" 9>&-
+      "${command[@]}"
       status=$?
       set -e
       flock --unlock 9
