@@ -38,7 +38,8 @@ from pathlib import Path
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[3]
-OUT_DIR = REPO / "local_models" / "horse"
+# 骨架/肌肉是**中间产物**，放 stages/ 单独存；local_models/horse/ 只留最终 9 份皮层。
+OUT_DIR = REPO / "local_models" / "horse" / "stages"
 
 # 单位：MC 像素单位，16 = 1 格 = 1 m。地面 y=0，头朝 -Z（MC north）。
 

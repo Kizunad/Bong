@@ -41,7 +41,7 @@ from gen_skeleton import rib_surface_point as _rib_pt
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[3]
-MODELS = REPO / "local_models" / "horse"
+MODELS = REPO / "local_models" / "horse" / "stages"  # 中间产物（骨架 / 肌肉）
 
 # 肌肉材质追加在贴图第 2 行（第 1 行 6 个骨/软骨/牙/蹄色块保持原位，
 # 这样读进来的骨骼 element 的 UV 一个都不用改）。
@@ -961,6 +961,7 @@ def main() -> int:
         skel.data["name"] = name
         skel.data["model_identifier"] = name
         out = args.out if (args.out and len(keys) == 1) else (MODELS / f"{name}.bbmodel")
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(skel.data, ensure_ascii=False, indent=1))
 
         muscle_cubes = sum(1 for e in skel.data["elements"] if e.get("_muscle"))

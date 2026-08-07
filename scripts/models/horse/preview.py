@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""马骨架 —— 一键预览：重生成三档模型 + 渲染全部视图到本目录。
+"""马 —— 一键预览：重生成三层模型 + 渲染全部视图。
 
-产出（均落在 scripts/models/horse/）：
-  render_skeleton_small.png / _medium.png / _large.png   逐档骨架三视图
-  render_compare.png                                     三档并排**同尺**侧视（比例差别只有同尺才看得出来）
-  render_head.png                                        头部特写（正 / 侧 / 3-4）
-  render_limbs.png                                       前后肢特写（蹄行下肢是这活儿最容易做砸的地方）
-  parts_atlas.png                                        逐部件图集（常马）
-  render_muscle_*.png                                    逐档骨+肌三视图
-  render_muscle_bare.png                                 只肌肉（三档并排同尺）
-  render_explode.png                                     延展视图（部件沿径向散开）
-  muscle_atlas.png                                       逐肌群图集（每群单独显示在骨架上）
+目录分工与产物一致：**最终交付的皮层图留在本目录**，骨架/肌肉这类过程图落 stages/。
+
+本目录（交付物预览，对应 local_models/horse/ 的 9 份皮层）：
+  pelt_matrix.png            3 毛色 × 3 体型 同尺侧视矩阵 —— 一张看全 9 份
+  pelt_three_view_<coat>.png 每种毛色（常马）三视图
+  pelt_head.png              三种毛色头部特写
+
+stages/（过程图，对应 local_models/horse/stages/）：
+  render_skeleton_*.png · render_compare.png · render_head.png · render_limbs.png
+  parts_atlas.png · render_muscle_*.png · render_muscle_bare.png · render_explode.png
+  muscle_atlas.png
 
 用法:
-  python3 scripts/models/horse/preview.py              # 全部
-  python3 scripts/models/horse/preview.py --skip-gen    # 不重生成，只渲染现有 bbmodel
-  python3 scripts/models/horse/preview.py --only compare
+  python3 scripts/models/horse/preview.py               # 全部
+  python3 scripts/models/horse/preview.py --skip-gen     # 不重生成，只渲染
+  python3 scripts/models/horse/preview.py --only matrix
 """
 
 from __future__ import annotations
@@ -27,17 +28,23 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-MODELS = REPO / "local_models" / "horse"
+# 交付物（最终 9 份皮层）与中间产物（骨架 / 肌肉 / 各类预览）分开放，别混。
+FINAL = REPO / "local_models" / "horse"
+MODELS = FINAL / "stages"
+OUT = HERE
+STAGE_OUT = HERE / "stages"
 
 sys.path.insert(0, str(HERE.parent))  # 复用 scripts/models/render_bbmodel.py
 sys.path.insert(0, str(HERE))
 from render_bbmodel import load_bbmodel, render, render_three_view  # noqa: E402
 
+from gen_pelt import COATS  # noqa: E402
 from gen_skeleton import PROFILES  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
 BG = (14, 15, 17)
 ORDER = ("small", "medium", "large")
+COAT_ORDER = ("rust", "dun", "roan")
 PARTS = ("spine", "ribcage", "skull", "jaw", "pelvis", "foreleg", "hindleg", "tail")
 MGROUPS = (
     ("head", "Head: masseter / temporalis"),
@@ -67,38 +74,74 @@ def _grid(tiles: list[tuple[str, Image.Image]], cols: int, hdr: int = 20, gap: i
     return canvas
 
 
-def three_views() -> None:
-    for key in ORDER:
-        im, _ = render_three_view(MODELS / f"HorseSkeleton_{key}.bbmodel", size=470)
-        im.save(HERE / f"render_skeleton_{key}.png")
-        print(f"  → render_skeleton_{key}.png")
-
-
-def _same_scale_row(namer, out: str, size: int = 520) -> None:
-    """三档并排，**共用一套取景**——各自自动取景会把三匹马缩放到一样大，
-    体型差就全被抹平了，正是这张图要看的东西。"""
+def _shared_focus(paths: list[Path]) -> tuple[float, list[tuple[float, float, float]]]:
+    """一批模型共用一套取景：各自自动取景会把大小不同的马缩到一样大，
+    体型差就全被抹平了 —— 而那正是这些图要看的东西。"""
     spans = []
-    for key in ORDER:
-        tris, _, _, _ = load_bbmodel(MODELS / f"{namer(key)}.bbmodel")
+    for fp in paths:
+        tris, _, _, _ = load_bbmodel(fp)
         vs = [v for tri in tris for v in tri[0]]
         lo = [min(v[i] for v in vs) for i in range(3)]
         hi = [max(v[i] for v in vs) for i in range(3)]
         spans.append(([(a + b) / 2 for a, b in zip(lo, hi)], max(h - lo_ for h, lo_ in zip(hi, lo))))
-    span = max(s for _, s in spans) * 1.04  # 最大者定尺，三张同比例
+    span = max(s for _, s in spans) * 1.04
+    centers = [(c[0], span * 0.42, c[2]) for c, _ in spans]
+    return span, centers
 
+
+# ---------------------------------------------------------------- 交付物预览
+def pelt_matrix(size: int = 430) -> None:
+    """3 毛色 × 3 体型，全部同尺同角度 —— 交付物的总览图。"""
+    paths = [FINAL / f"HorsePelt_{c}_{k}.bbmodel" for c in COAT_ORDER for k in ORDER]
+    span, centers = _shared_focus(paths)
     tiles = []
-    for (center, _), key in zip(spans, ORDER):
+    for fp, center in zip(paths, centers):
+        ck, pk = fp.stem.split("_")[1], fp.stem.split("_")[2]
+        im, _ = render(fp, yaw=90.0, pitch=0.0, size=size, focus=(center, span))
+        tiles.append((f"{COATS[ck].label} · {PROFILES[pk].label}  {PROFILES[pk].wither / 16:.2f} m", im))
+    _grid(tiles, cols=3).save(OUT / "pelt_matrix.png")
+    print("  → pelt_matrix.png")
+
+
+def pelt_three_view(size: int = 460) -> None:
+    for ck in COAT_ORDER:
+        im, _ = render_three_view(FINAL / f"HorsePelt_{ck}_medium.bbmodel", size=size)
+        im.save(OUT / f"pelt_three_view_{ck}.png")
+        print(f"  → pelt_three_view_{ck}.png")
+
+
+def pelt_head(size: int = 460) -> None:
+    """头部特写：毛色差别（面罩 / 白章 / 深头）主要落在脸上。"""
+    tiles = []
+    P = PROFILES["medium"]
+    c = (0.0, P.y_occiput - P.H * 0.26, P.z_occiput - P.H * 0.42)
+    for ck in COAT_ORDER:
+        fp = FINAL / f"HorsePelt_{ck}_medium.bbmodel"
+        for tag, yaw, pitch in (("side", 90.0, 0.0), ("3/4", 142.0, 10.0)):
+            im, _ = render(fp, yaw=yaw, pitch=pitch, size=size, focus=(c, P.H * 1.75))
+            tiles.append((f"{COATS[ck].label} {tag}", im))
+    _grid(tiles, cols=2).save(OUT / "pelt_head.png")
+    print("  → pelt_head.png")
+
+
+# ---------------------------------------------------------------- 过程图
+def three_views() -> None:
+    for key in ORDER:
+        im, _ = render_three_view(MODELS / f"HorseSkeleton_{key}.bbmodel", size=470)
+        im.save(STAGE_OUT / f"render_skeleton_{key}.png")
+        print(f"  → stages/render_skeleton_{key}.png")
+
+
+def compare(size: int = 520) -> None:
+    paths = [MODELS / f"HorseSkeleton_{k}.bbmodel" for k in ORDER]
+    span, centers = _shared_focus(paths)
+    tiles = []
+    for fp, center, key in zip(paths, centers, ORDER):
         P = PROFILES[key]
-        # 取景中心统一压到地面上方半个 span，四蹄才不会被裁
-        focus = ((center[0], span * 0.42, center[2]), span)
-        im, _ = render(MODELS / f"{namer(key)}.bbmodel", yaw=90.0, pitch=0.0, size=size, focus=focus)
+        im, _ = render(fp, yaw=90.0, pitch=0.0, size=size, focus=(center, span))
         tiles.append((f"{P.label} ({key})  鬐甲 {P.wither / 16:.2f} m", im))
-    _grid(tiles, cols=3).save(HERE / out)
-    print(f"  → {out}")
-
-
-def compare() -> None:
-    _same_scale_row(lambda k: f"HorseSkeleton_{k}", "render_compare.png")
+    _grid(tiles, cols=3).save(STAGE_OUT / "render_compare.png")
+    print("  → stages/render_compare.png")
 
 
 def head(size: int = 460) -> None:
@@ -106,25 +149,18 @@ def head(size: int = 460) -> None:
     for key in ORDER:
         P = PROFILES[key]
         tris, _, _, _ = load_bbmodel(MODELS / f"HorseSkeleton_{key}.bbmodel")
-        # 取景锁在头上：吻端最靠前，往后取 1.3 个头长
         vs = [v for tri in tris for v in tri[0]]
         z_nose = min(v[2] for v in vs)
         c = (0.0, P.y_occiput - P.H * 0.30, z_nose + P.H * 0.55)
         for tag, yaw, pitch in (("side", 90.0, 0.0), ("3/4", 140.0, 12.0)):
-            im, _ = render(
-                MODELS / f"HorseSkeleton_{key}.bbmodel",
-                yaw=yaw,
-                pitch=pitch,
-                size=size,
-                focus=(c, P.H * 1.45),
-            )
+            im, _ = render(MODELS / f"HorseSkeleton_{key}.bbmodel", yaw=yaw, pitch=pitch, size=size, focus=(c, P.H * 1.45))
             tiles.append((f"{P.label} {tag}", im))
-    _grid(tiles, cols=2).save(HERE / "render_head.png")
-    print("  → render_head.png")
+    _grid(tiles, cols=2).save(STAGE_OUT / "render_head.png")
+    print("  → stages/render_head.png")
 
 
 def limbs(size: int = 460) -> None:
-    """蹄行下肢特写：腕/跗高悬、管骨独存、系冠 52° 前倾插进蹄匣——做砸就在这儿。"""
+    """蹄行下肢特写：腕/跗高悬、管骨独存、系冠 52° 前倾插进蹄匣。"""
     tiles = []
     P = PROFILES["medium"]
     for tag, c, span, yaw in (
@@ -133,12 +169,10 @@ def limbs(size: int = 460) -> None:
         ("后肢 侧", (0.0, P.y_hock * 0.72, P.z_hock - P.u(0.02)), P.y_stifle * 1.5, 90.0),
         ("后肢 后", (0.0, P.y_hock * 0.72, P.z_hock - P.u(0.02)), P.y_stifle * 1.5, 0.0),
     ):
-        im, _ = render(
-            MODELS / "HorseSkeleton_medium.bbmodel", yaw=yaw, pitch=6.0, size=size, focus=(c, span)
-        )
+        im, _ = render(MODELS / "HorseSkeleton_medium.bbmodel", yaw=yaw, pitch=6.0, size=size, focus=(c, span))
         tiles.append((f"常马 {tag}", im))
-    _grid(tiles, cols=2).save(HERE / "render_limbs.png")
-    print("  → render_limbs.png")
+    _grid(tiles, cols=2).save(STAGE_OUT / "render_limbs.png")
+    print("  → stages/render_limbs.png")
 
 
 def parts_atlas(size: int = 400) -> None:
@@ -147,57 +181,69 @@ def parts_atlas(size: int = 400) -> None:
         _run("gen_skeleton.py", "--profile", "medium", "--part", part)
         im, _ = render(MODELS / f"Horse_{part}_medium.bbmodel", yaw=138.0, pitch=14.0, size=size)
         tiles.append((part, im))
-    _grid(tiles, cols=4).save(HERE / "parts_atlas.png")
-    print("  → parts_atlas.png")
+    _grid(tiles, cols=4).save(STAGE_OUT / "parts_atlas.png")
+    print("  → stages/parts_atlas.png")
 
 
 def muscle_views() -> None:
     for key in ORDER:
         im, _ = render_three_view(MODELS / f"HorseMuscle_{key}.bbmodel", size=470)
-        im.save(HERE / f"render_muscle_{key}.png")
-        print(f"  → render_muscle_{key}.png")
+        im.save(STAGE_OUT / f"render_muscle_{key}.png")
+        print(f"  → stages/render_muscle_{key}.png")
 
 
-def muscle_bare() -> None:
-    _same_scale_row(lambda k: f"HorseMuscle_{k}_bare", "render_muscle_bare.png")
+def muscle_bare(size: int = 520) -> None:
+    paths = [MODELS / f"HorseMuscle_{k}_bare.bbmodel" for k in ORDER]
+    span, centers = _shared_focus(paths)
+    tiles = []
+    for fp, center, key in zip(paths, centers, ORDER):
+        P = PROFILES[key]
+        im, _ = render(fp, yaw=90.0, pitch=0.0, size=size, focus=(center, span))
+        tiles.append((f"{P.label} ({key})  鬐甲 {P.wither / 16:.2f} m", im))
+    _grid(tiles, cols=3).save(STAGE_OUT / "render_muscle_bare.png")
+    print("  → stages/render_muscle_bare.png")
 
 
 def muscle_explode(size: int = 520) -> None:
     im, _ = render_three_view(MODELS / "HorseMuscle_medium_explode.bbmodel", size=size)
-    im.save(HERE / "render_explode.png")
-    print("  → render_explode.png")
+    im.save(STAGE_OUT / "render_explode.png")
+    print("  → stages/render_explode.png")
 
 
 def muscle_atlas(size: int = 430) -> None:
-    """逐肌群图集：每群单独显示在完整骨架上，形状与附着点一眼可辨。"""
     tiles = []
     for key, label in MGROUPS:
         _run("gen_muscle.py", "--profile", "medium", "--group", key)
         im, _ = render(MODELS / f"HorseMuscle_{key}_medium.bbmodel", yaw=142.0, pitch=14.0, size=size)
         tiles.append((label, im))
-    _grid(tiles, cols=3).save(HERE / "muscle_atlas.png")
-    print("  → muscle_atlas.png")
+    _grid(tiles, cols=3).save(STAGE_OUT / "muscle_atlas.png")
+    print("  → stages/muscle_atlas.png")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="马骨架/肌肉预览渲染")
+    ap = argparse.ArgumentParser(description="马 三层预览渲染")
     ap.add_argument("--skip-gen", action="store_true", help="不重生成 bbmodel，只渲染现有的")
     ap.add_argument(
         "--only",
-        choices=("three", "compare", "head", "limbs", "atlas", "muscle", "bare", "explode", "matlas"),
+        choices=("matrix", "pelt3", "pelthead", "three", "compare", "head", "limbs", "atlas", "muscle", "bare", "explode", "matlas"),
         help="只出其中一张",
     )
     args = ap.parse_args()
 
+    STAGE_OUT.mkdir(parents=True, exist_ok=True)
     if not args.skip_gen:
         print("生成模型…")
         _run("gen_skeleton.py")
         _run("gen_muscle.py")
         _run("gen_muscle.py", "--only-muscle")
         _run("gen_muscle.py", "--profile", "medium", "--explode", "5")
+        _run("gen_pelt.py")
 
     print("渲染…")
     jobs = {
+        "matrix": pelt_matrix,
+        "pelt3": pelt_three_view,
+        "pelthead": pelt_head,
         "three": three_views,
         "compare": compare,
         "head": head,
