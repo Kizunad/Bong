@@ -547,7 +547,6 @@ pub(crate) fn settle_ephemeral_pseudo_vein_zone_to_target(
         returned_absolute,
         QiTransferReason::PseudoVeinSettle,
     )
-    .map(|transfer| transfer)
 }
 
 /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮借款归还：能还多少还多少
