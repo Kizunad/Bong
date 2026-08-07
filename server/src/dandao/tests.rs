@@ -1161,6 +1161,8 @@ mod boss_spawn_integration {
     use super::super::boss::{BaolongwangBoss, BossPhase};
     use super::super::boss_spawn::{BaolongwangMarker, BOSS_HOME_ZONE};
     use crate::cultivation::components::Cultivation;
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{QiAccountId, QiTransferReason, WorldQiAccount};
     use crate::world::dimension::DimensionKind;
@@ -1232,6 +1234,7 @@ mod boss_spawn_integration {
                     qi_max: initial_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-register-test-player")),
                 Position::new([0.0, 65.0, 0.0]), // 距离 1.0 < QI_DRAIN_AURA_RADIUS
             ))
             .id();
@@ -1322,6 +1325,7 @@ mod boss_spawn_integration {
                     qi_max: initial_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-register-test-player")),
                 Position::new([0.0, 65.0, 0.0]),
             ))
             .id();
