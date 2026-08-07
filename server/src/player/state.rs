@@ -2358,7 +2358,6 @@ fn persist_player_slices_in_sqlite(
     let [pos_x, pos_y, pos_z] = position;
     let inventory_json = serialize_inventory_json(inventory)?;
     let skill_set_json = serialize_skill_set_json(skill_set)?;
-    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())?;
     let last_updated_wall = current_unix_seconds();
     let prefs_json = default_ui_prefs_json()?;
     let craft_session_json = craft_session
@@ -2479,24 +2478,6 @@ fn persist_player_slices_in_sqlite(
             params![
                 username,
                 skill_set_json,
-                PLAYER_ROW_SCHEMA_VERSION,
-                last_updated_wall
-            ],
-        )
-        .map_err(io::Error::other)?;
-    transaction
-        .execute(
-            "
-            INSERT OR IGNORE INTO player_known_techniques (
-                username,
-                known_techniques_json,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ",
-            params![
-                username,
-                known_techniques_json,
                 PLAYER_ROW_SCHEMA_VERSION,
                 last_updated_wall
             ],
@@ -2654,8 +2635,6 @@ fn insert_default_player_slice_rows(
         crate::player::spawn_position_for_seed(username, SpawnPurpose::InitialLogin);
     let skill_set_json = serialize_skill_set_json(&SkillSet::default())
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    let known_techniques_json = serialize_known_techniques_json(&KnownTechniques::default())
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
     transaction.execute(
         "
@@ -2707,22 +2686,6 @@ fn insert_default_player_slice_rows(
         params![
             username,
             skill_set_json,
-            PLAYER_ROW_SCHEMA_VERSION,
-            last_updated_wall
-        ],
-    )?;
-    transaction.execute(
-        "
-        INSERT OR IGNORE INTO player_known_techniques (
-            username,
-            known_techniques_json,
-            schema_version,
-            last_updated_wall
-        ) VALUES (?1, ?2, ?3, ?4)
-        ",
-        params![
-            username,
-            known_techniques_json,
             PLAYER_ROW_SCHEMA_VERSION,
             last_updated_wall
         ],
@@ -2867,10 +2830,37 @@ mod player_state_tests {
     use crate::schema::server_data::{ServerDataPayloadV1, SERVER_DATA_VERSION};
     use rusqlite::{params, Connection};
     use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::sync::{Arc, Barrier};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Barrier, MutexGuard};
     use std::time::{SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
+
+    struct ScopedFreshPlayerAssetsDir {
+        _lock: MutexGuard<'static, ()>,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl ScopedFreshPlayerAssetsDir {
+        fn set(path: &Path) -> Self {
+            let lock = crate::body_plan::assets_root_env_lock();
+            let previous = std::env::var_os(crate::body_plan::BONG_ASSETS_DIR_ENV_VAR);
+            std::env::set_var(crate::body_plan::BONG_ASSETS_DIR_ENV_VAR, path);
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for ScopedFreshPlayerAssetsDir {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(crate::body_plan::BONG_ASSETS_DIR_ENV_VAR, previous);
+            } else {
+                std::env::remove_var(crate::body_plan::BONG_ASSETS_DIR_ENV_VAR);
+            }
+        }
+    }
 
     fn unique_temp_dir(test_name: &str) -> PathBuf {
         let unique_suffix = SystemTime::now()
@@ -4999,42 +4989,110 @@ mod player_state_tests {
         let _ = fs::remove_dir_all(&data_dir);
     }
 
-    /// M05：fresh-player dev 授予必须来自注入的权威 registry（部署资产根），而不是
-    /// 独立重读 CARGO_MANIFEST_DIR。注入一个含 runtime-only 条目的 registry，断言
-    /// fresh-player 的 KnownTechniques 包含该 runtime-only id。
+    /// M05：fresh-player dev 授予必须来自部署资产根加载的权威 registry，而不是
+    /// 独立重读 CARGO_MANIFEST_DIR。临时部署目录只新增一个源码 catalog 不存在的
+    /// runtime-only 条目；若 join 仍使用错误的 compile-time catalog，该条目就不会出现。
     #[test]
-    fn known_techniques_load_defaults_use_injected_registry_not_compile_time_catalog() {
-        let (persistence, data_dir) = sqlite_persistence("known-techniques-injected-registry");
+    fn known_techniques_load_defaults_use_deployed_registry_not_compile_time_catalog() {
+        let assets_root = unique_temp_dir("known-techniques-deployed-only");
+        let techniques_path =
+            assets_root.join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH);
+        fs::create_dir_all(
+            techniques_path
+                .parent()
+                .expect("technique catalog path must have a parent"),
+        )
+        .expect("deployment technique directory should be creatable");
+        let mut techniques = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(crate::cultivation::known_techniques::DEFAULT_TECHNIQUES_PATH),
+        )
+        .expect("checked-in technique catalog must be readable");
+        assert!(
+            !techniques.contains("test.deployed_only_fresh_player"),
+            "runtime-only fixture id must not already exist in the checked-in catalog"
+        );
+        techniques.push_str(
+            r#"
+
+[[techniques]]
+ id = "test.deployed_only_fresh_player"
+ display_name = "部署独有新玩家功法"
+ grade = "common"
+ description = "只存在于临时部署资产根，用于 fresh-player registry 回归。"
+ required_realm = "Awaken"
+ required_meridians = []
+ required_race = { kind = "any" }
+ qi_cost = 0.0
+ stamina_cost = 0.0
+ cast_ticks = 0
+ cooldown_ticks = 0
+ range = 0.0
+ icon_texture = "bong-client:textures/gui/items/skill_scroll_movement_dash.png"
+ category = "buff"
+ dispatch = "direct_generic"
+"#,
+        );
+        fs::write(&techniques_path, techniques)
+            .expect("deployment technique catalog should be writable");
+
+        let _env_guard = ScopedFreshPlayerAssetsDir::set(&assets_root);
+        let registry = crate::cultivation::known_techniques::TechniqueRegistry::load_default(
+            &crate::body_plan::RaceRegistry::default(),
+        )
+        .expect("deployment technique catalog must load through the production root resolver");
+        assert!(
+            registry.get("test.deployed_only_fresh_player").is_some(),
+            "production loader must see the runtime-only deployment technique"
+        );
+
+        let (persistence, data_dir) = sqlite_persistence("known-techniques-deployed-only");
         save_player_state(&persistence, "Azure", &PlayerState::default())
             .expect("baseline player state should persist");
-
-        let mut registry =
-            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests_with_override(
-                "movement.dash",
-                |definition| definition.display_name = "部署资产树覆写".to_string(),
-            );
-        let _ = &mut registry;
+        let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
+        let known_techniques_row: Option<String> = connection
+            .query_row(
+                "SELECT known_techniques_json FROM player_known_techniques WHERE username = ?1",
+                params!["Azure"],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("fresh-player technique row lookup should succeed");
+        assert!(
+            known_techniques_row.is_none(),
+            "default player slice initialization must preserve missing known-techniques row so fresh-player grants can be selected"
+        );
         let loaded = load_player_slices(&persistence, "Azure", Some(&registry));
         #[cfg(feature = "dev-techniques")]
         {
             let LoadedKnownTechniques::Loaded(known) = loaded.known_techniques else {
-                panic!("fresh player with injected registry must load dev grants");
+                panic!("fresh player with deployed registry must load dev grants");
             };
+            let entry = known
+                .entries
+                .iter()
+                .find(|entry| entry.id == "test.deployed_only_fresh_player")
+                .expect("fresh-player grants must include the deployment-only technique");
             assert!(
-                known.entries.iter().any(|e| e.id == "movement.dash"),
-                "fresh-player grants must include entries from the injected registry"
+                entry.active,
+                "deployment-only fresh-player grant must start active"
+            );
+            assert_eq!(
+                entry.proficiency, 0.5,
+                "deployment-only fresh-player grant must use the dev default proficiency"
             );
         }
         #[cfg(not(feature = "dev-techniques"))]
         {
-            // 非 dev-techniques 构建：fresh-player 无行 → 空 KnownTechniques。
             assert_eq!(
                 loaded.known_techniques,
-                LoadedKnownTechniques::Loaded(KnownTechniques::default())
+                LoadedKnownTechniques::Loaded(KnownTechniques::default()),
+                "non-dev builds must keep fresh-player grants disabled"
             );
         }
 
         let _ = fs::remove_dir_all(&data_dir);
+        let _ = fs::remove_dir_all(&assets_root);
     }
 
     #[test]
