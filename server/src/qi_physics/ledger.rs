@@ -1707,7 +1707,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            QiPhysicsError::UnrepresentableChange {
+            QiPhysicsError::InvalidAmount {
                 field: "destination_balance",
                 ..
             }
@@ -1743,7 +1743,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            QiPhysicsError::UnrepresentableChange {
+            QiPhysicsError::InvalidAmount {
                 field: "destination_balance",
                 ..
             }
