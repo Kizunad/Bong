@@ -251,15 +251,17 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             up = wing_up(hand_axis, (end[0] - root[0], end[1] - root[1], end[2] - root[2]))
             p.quill(f"manus_{side}", f"primary_{side}_{k + 1}", root, end, rx, rz,
                     mat="feather_flight", bone=f"q_primary_{side}_{k + 1}", up=up)
-            # 羽尖压深一档，翼梢那圈深色是猛禽最好认的记号。截面走同一条通道单独给，不从
-            # 主羽的 rx/rz 推 —— 推出来收翼姿会差出零点几个百分点，白白动了已过审的交付物。
-            tx, tz = plate(pri_roots, k, t, 0.09 * U, lambda tt: lerp(0.52, 0.34, tt) * U,
-                           shrink=0.94, cover=0.88)
-            # 羽尖单独一根骨（与主羽同根同向的兄弟）。共用一根骨看着更"物理"，但两个姿态
-            # 里羽尖与主羽的截面比例并不相等（收翼 0.90 / 展翼 0.94），一个缩放通道不可能
-            # 同时对两件都精确 —— 残下的 0.045 单位会被渲染成一条压在翼缘上的亮边。
+            # 羽尖压深一档，翼梢那圈深色是猛禽最好认的记号。它挂在**主羽自己那根骨**上：
+            # 同一根羽的一段，必须完全跟着主羽走。早先为了消掉一条 0.045 单位的静态亮边把
+            # 它拆成独立骨，端点是精确了，可两根骨各自插值 —— 展开到 0.2~0.5 之间羽尖整个
+            # 飘离主羽。拿一条看不见的亮边换一段看得见的分离，是笔亏本买卖。
+            #
+            # 亮边的根子是"羽尖与主羽的截面比例在两姿不相等"，那就把比例做**相等**：两边
+            # 都按同一组系数从主羽推。这样一个缩放通道对两件同时精确，亮边也不会回来。
+            tw, th = (0.09 / 0.10, lerp(0.52, 0.34, t) / lerp(0.62, 0.42, t))
+            tx, tz = (rx * tw, rz * th) if spread else (0.09 * U, lerp(0.52, 0.34, t) * U)
             p.quill(f"manus_{side}", f"primary_tip_{side}_{k + 1}", _mix(root, end, 0.78), end,
-                    tx, tz, mat="feather_dark", bone=f"q_primary_tip_{side}_{k + 1}", up=up)
+                    tx, tz, mat="feather_dark", bone=f"q_primary_{side}_{k + 1}", up=up)
 
         # --- 次级飞羽：长在尺骨上（骨架那排羽茎瘤就是它们的根），短而齐 ---
         n_sec = max(6, int(9 * U ** 0.3))
