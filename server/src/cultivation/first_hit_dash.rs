@@ -126,7 +126,9 @@ mod tests {
     use crate::combat::components::{BodyPart, WoundKind};
     use crate::combat::events::AttackSource;
     use crate::cultivation::components::Realm;
-    use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques};
+    use crate::cultivation::known_techniques::{
+        KnownTechnique, KnownTechniques, TechniqueRequiredMeridian,
+    };
     use valence::prelude::{App, Events, Update};
     use valence::testing::create_mock_client;
 
@@ -353,5 +355,145 @@ mod tests {
             0,
             "no TechniqueLearnedEvent when registry override blocks learning"
         );
+    }
+
+    #[test]
+    fn first_hit_honors_overridden_race_gate() {
+        // M06：first-hit 学习必须消费注入 registry 的 movement.dash 种族门——override
+        // 成 Species{whale} 后，humanoid 玩家被击中不得学会 dash，也不得发事件/旁白；
+        // 若系统改读默认 catalog（Any），就会错误放行并撞红。
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<TechniqueLearnedEvent>();
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "movement.dash",
+            |definition| {
+                definition.required_race = crate::body_plan::RaceGateOwned::Species {
+                    species: vec![crate::body_plan::RaceId::new("whale")],
+                };
+            },
+        ));
+        app.add_systems(Update, first_hit_dash_insight);
+
+        let attacker = app.world_mut().spawn_empty().id();
+        let player = spawn_player(&mut app, KnownTechniques::default());
+
+        app.world_mut().send_event(combat_event(attacker, player));
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(player).unwrap();
+        assert!(
+            !known.entries.iter().any(|e| e.id == "movement.dash"),
+            "race-ineligible player must not learn dash from override registry (M06); known: {:?}",
+            known.entries.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
+        let events = app.world().resource::<Events<TechniqueLearnedEvent>>();
+        assert_eq!(
+            events.len(),
+            0,
+            "no TechniqueLearnedEvent when race gate blocks learning"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            0,
+            "no narration when race gate blocks learning"
+        );
+    }
+
+    #[test]
+    fn first_hit_honors_overridden_meridian_gate_then_propagates_learned_effects() {
+        // M06：first-hit 学习必须消费注入 registry 的 movement.dash 经脉门——override
+        // 要求 GallBladder（默认未开）后，玩家被击中不得学会 dash、不得发 event/旁白；
+        // 随后打开 GallBladder 再被击中，同一 override registry 下学会并发出
+        // TechniqueLearnedEvent + narration，证明 event/narration 传播走的是注入
+        // registry 允许的路径而不是静态 catalog。
+        let mut app = App::new();
+        app.add_event::<CombatEvent>();
+        app.add_event::<RatBiteEvent>();
+        app.add_event::<TechniqueLearnedEvent>();
+        app.insert_resource(PendingGameplayNarrations::default());
+        app.insert_resource(TechniqueRegistry::load_for_tests_with_override(
+            "movement.dash",
+            |definition| {
+                definition.required_meridians = vec![TechniqueRequiredMeridian {
+                    channel: "GallBladder".to_string(),
+                    min_health: 0.5,
+                }];
+            },
+        ));
+        app.add_systems(Update, first_hit_dash_insight);
+
+        let attacker = app.world_mut().spawn_empty().id();
+        let player = spawn_player(&mut app, KnownTechniques::default());
+
+        app.world_mut().send_event(combat_event(attacker, player));
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(player).unwrap();
+        assert!(
+            !known.entries.iter().any(|e| e.id == "movement.dash"),
+            "meridian-ineligible player must not learn dash from override registry (M06); known: {:?}",
+            known.entries.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
+        let events = app.world().resource::<Events<TechniqueLearnedEvent>>();
+        assert_eq!(
+            events.len(),
+            0,
+            "no TechniqueLearnedEvent when meridian gate blocks learning"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            0,
+            "no narration when meridian gate blocks learning"
+        );
+
+        // 打开 GallBladder → 同一 override registry 下学会，event + narration 同时传播。
+        {
+            let mut meridians = app.world_mut().get_mut::<MeridianSystem>(player).unwrap();
+            let id = crate::cultivation::technique_scroll::parse_meridian_id("GallBladder")
+                .expect("GallBladder is a known meridian");
+            let channel = meridians.get_mut(id);
+            channel.opened = true;
+            channel.integrity = 1.0;
+        }
+        app.world_mut().send_event(combat_event(attacker, player));
+        app.update();
+
+        let known = app.world().get::<KnownTechniques>(player).unwrap();
+        assert!(
+            known.entries.iter().any(|e| e.id == "movement.dash"),
+            "player must learn dash once meridian gate is satisfied (M06)"
+        );
+        let events = app.world().resource::<Events<TechniqueLearnedEvent>>();
+        assert_eq!(
+            events.len(),
+            1,
+            "exactly one TechniqueLearnedEvent when learning succeeds under override registry"
+        );
+        assert_eq!(
+            events.iter().next().unwrap().technique_id,
+            "movement.dash",
+            "learned event must carry the injected-registry technique id"
+        );
+        let narrations = app
+            .world_mut()
+            .resource_mut::<PendingGameplayNarrations>()
+            .drain();
+        assert_eq!(
+            narrations.len(),
+            1,
+            "exactly one narration when learning succeeds under override registry"
+        );
+        assert_eq!(narrations[0].text, DASH_INSIGHT_NARRATION);
     }
 }
