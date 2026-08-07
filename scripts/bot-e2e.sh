@@ -71,7 +71,7 @@ SERVER_LOG=""
 SERVER_RUNTIME_DIR=""
 BOT_NOVICE_RASTER_DIR=""
 BOT_RASTER_READY_PAYLOAD=""
-BOT_FALLBACK_READY_PATTERN='^\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*$'
+BOT_FALLBACK_READY_PATTERN='^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[^[:space:]]+[[:space:]]+INFO[[:space:]]+\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*$'
 
 # ownership 只能由本轮 self-start server 的 exact ready marker 授予；拒绝继承调用方
 # 或上一轮 shell 留下的声明。REUSE 也没有修改外部 server 启动环境的权限。
