@@ -47,9 +47,11 @@ VIEWS = {
              ("斜下 3/4-low", 150.0, -25.0), ("底 below", 92.0, -74.0)),
     "saddle": (("侧 side", 90.0, 4.0), ("斜 3/4", 142.0, 16.0),
                ("后 rear", 4.0, 18.0), ("底（看肚带）", 96.0, -60.0)),
+    "rein": (("侧 side", 90.0, 2.0), ("斜前 3/4", 150.0, 10.0),
+             ("正面（看鼻革绕圈）", 178.0, 4.0), ("下（看咽革）", 120.0, -46.0)),
 }
 # 局部特写取哪一簇件（蹄铁四只分散在四角，按整体取景一样看不清）
-FOCUS_PREFIX = {"shoe": "shoe_f_l_", "saddle": "saddle_"}
+FOCUS_PREFIX = {"shoe": "shoe_f_l_", "saddle": "saddle_", "rein": "rein_"}
 
 
 def _els(path: Path, prefix: str | None = None) -> list[dict]:

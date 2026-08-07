@@ -368,9 +368,18 @@ class Pelt:
         return feature in self.coat.features
 
     def box(self, bone: str, name: str, frm: Vec, to: Vec, *, rot=None, org=None, mat: str = "coat",
-            loose: bool = False) -> None:
-        """loose=True：这件**本来就该和邻件分开**（耳、唇、额发——它们随各自的骨独立动，
-        静止姿蹭在一起只是巧合）。外壳连续性自检据此跳过，否则"张嘴"会被报成裂口。
+            loose: bool = False, hair: bool = False) -> None:
+        """两个声明，问的是**两件不同的事**，别拿一个顶另一个：
+
+        · `loose=True`：这件**本来就该和邻件分开**（耳、唇、额发——它们随各自的骨独立
+          动，静止姿蹭在一起只是巧合）。外壳连续性自检据此跳过，否则"张嘴"会被报成裂口。
+        · `hair=True`：这件是**毛，不是刚体表面**（鬃、额发、尾鬃）。马具层的贴合判定
+          据此跳过——缰绳压进鬃里、笼头低头时扫过鬃，都是真马就会发生的事。
+
+        两者独立：鬃是毛，但整条鬃带跨颈关节的接缝**必须**照样查（它有按 ROM 给的交叠），
+        所以鬃是 hair 而不是 loose。反过来耳是 loose 而不是 hair。上一轮把尾鬃梢标成
+        loose 来消掉马具那边的误报，是拿错了开关——那是 hair 该管的事。
+
         这层语义只有造型代码知道，所以在这里声明，不在自检里猜。"""
         if name in self._names:
             raise ValueError(f"重复皮层件名: {name}（uuid 由名字派生，名字必须唯一）")
@@ -392,6 +401,7 @@ class Pelt:
                 "uuid": uid("pelt", name),
                 "_pelt": True,
                 "_loose": loose,
+                "_hair": hair,
                 "from": f,
                 "to": t,
                 "autouv": 0,
@@ -686,6 +696,7 @@ def part_mane(p: Pelt, env: Envelope, P) -> None:
             (-Pr.u(0.034), y_lo + Pr.u(0.004), zb),
             (Pr.u(0.034), y_hi + Pr.u(0.080) * thick, za),
             mat="mane",
+            hair=True,
         )
         # 鬃披：向一侧垂下，越靠中段越长
         p.box(
@@ -696,6 +707,7 @@ def part_mane(p: Pelt, env: Envelope, P) -> None:
             rot=(0.0, 0.0, sx * -14.0),
             org=(0.0, y_hi, (a[2] + b[2]) / 2),
             mat="mane",
+            hair=True,
         )
         if i in (2, 4):  # 鬃梢：挑两段做出梢色分层，整条同色会读成一块板
             p.box(
@@ -706,6 +718,7 @@ def part_mane(p: Pelt, env: Envelope, P) -> None:
                 rot=(0.0, 0.0, sx * -14.0),
                 org=(0.0, y_hi, (a[2] + b[2]) / 2),
                 mat="mane_tip",
+                hair=True,
             )
 
     # 额发：自两耳之间垂到额前
@@ -729,6 +742,7 @@ def part_mane(p: Pelt, env: Envelope, P) -> None:
             org=wc,
             mat="mane" if k == 0 else "mane_tip",
             loose=True,  # 额发挂在头上、鬃挂在颈上，两者只在静止姿相接
+            hair=True,
         )
 
 
@@ -768,7 +782,7 @@ def part_tail(p: Pelt, env: Envelope, P) -> None:
         y1 = max(a[1], b[1]) + Pr.u(0.030) + (py if dy > 0 else 0.0)
         z0 = min(a[2], b[2]) - deep - (pz if dz < 0 else 0.0)
         z1 = max(a[2], b[2]) + deep + (pz if dz > 0 else 0.0)
-        p.box(bone, f"tailhair_{k}", (-wide, y0, z0), (wide, y1, z1), mat="mane", loose=True)
+        p.box(bone, f"tailhair_{k}", (-wide, y0, z0), (wide, y1, z1), mat="mane", loose=True, hair=True)
         if k % 2 == 0:
             p.box(
                 bone,
@@ -776,10 +790,12 @@ def part_tail(p: Pelt, env: Envelope, P) -> None:
                 (-wide * 0.76, min(a[1], b[1]) - drop, zc - deep * 0.8),
                 (wide * 0.76, min(a[1], b[1]) - drop + Pr.u(0.075), zc + deep * 0.8),
                 mat="mane_tip",
-                # 梢与它所属的那股是同一束毛，`loose` 必须跟着——漏了这个标记，
-                # 下游把它当刚性焊件：马具层的贴合自检报"蹄铁陷进尾梢 0.93"
-                # （倒毙侧躺时尾正好搭在后蹄上），那本来就该发生。
+                # 梢与它所属的那股是同一束毛：`loose`（各股本来就分开垂）与 `hair`
+                # （马具压过来不算缺陷）两条都得跟着。上一轮只补了 loose 来消掉
+                # "蹄铁陷进尾梢 0.93" 的误报——数是对的（倒毙侧躺时尾正好搭在后蹄上），
+                # 但用错了开关：那件事归 hair 管。
                 loose=True,
+                hair=True,
             )
 
 
