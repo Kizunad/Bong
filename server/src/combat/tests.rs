@@ -1,6 +1,6 @@
 use crate::combat::{
     attach_combat_bundle_to_joined_clients,
-    components::{Lifecycle, LifecycleState, RevivalDecision, TICKS_PER_SECOND},
+    components::{Lifecycle, LifecycleState, RevivalDecision},
     is_damageable,
 };
 use crate::persistence::bootstrap_sqlite;
