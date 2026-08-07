@@ -37,6 +37,7 @@ from pathlib import Path
 from gen_muscle import Skeleton
 from gen_skeleton import (
     HEAD_PITCH,
+    connected_components,
     NECK,
     NECK_JOINTS,
     PROFILES,
@@ -468,7 +469,9 @@ def part_torso(p: Pelt, env: Envelope, P) -> None:
         pads.append(seam_pad(r, max(rom(s[0]) for s in near)))
 
     for i, (bone, hw, lo, hi) in enumerate(seg):
-        za, zb = prof[i][0] + pads[i], prof[i + 1][0] - pads[i + 1]
+        # prof 的 z 随 i **递增**，所以外扩是前端减、后端加。写反就是每个跨骨段界
+        # 反被切掉 2×pad —— 躯干中段直接豁一个三单位宽的洞（静止姿就有）。
+        za, zb = prof[i][0] - pads[i], prof[i + 1][0] + pads[i + 1]
         span = hi - lo
         for tag, y0f, y1f, wf, mat in TIERS:
             p.box(bone, f"torso_{tag}_{i + 1}", (-hw * wf, lo + span * y0f, za), (hw * wf, lo + span * y1f, zb), mat=mat)
@@ -832,7 +835,11 @@ def _leg_column(p: Pelt, P, side: str, sx: int, tag: str) -> None:
     r = Pr.hoof_r * 1.12
     wall_top = Pr.u(0.070) if tag == "f" else Pr.u(0.065)
     p.box(hoof_bone, f"hoof_{tag}_{side}", (hoofj[0] - r, 0.0, hoofj[2] - r * 1.08), (hoofj[0] + r, wall_top * 0.58, hoofj[2] + r * 0.80), mat="hoof")
-    p.box(hoof_bone, f"hoof_top_{tag}_{side}", (hoofj[0] - r * 0.86, wall_top * 0.58, hoofj[2] - r * 1.02), (hoofj[0] + r * 0.86, wall_top, hoofj[2] + r * 0.12), mat="hoof")
+    # 蹄冠上缘要够到**系的下端**：系停在 hoofj+0.02W，蹄冠原来只到 wall_top，后蹄那两只
+    # 差 0.4 个单位没接上，静止姿就是悬空孤岛。往**上**补而不是把系往下伸——系挂在球节上
+    # 随腿摆动，伸下去会在支撑相扎进地里（实测穿地 0.30）；蹄只转 12°，向上补是安全的。
+    crown = max(wall_top, hoofj[1] + Pr.u(0.030))
+    p.box(hoof_bone, f"hoof_top_{tag}_{side}", (hoofj[0] - r * 0.86, wall_top * 0.58, hoofj[2] - r * 1.02), (hoofj[0] + r * 0.86, crown, hoofj[2] + r * 0.12), mat="hoof")
 
     # 距毛：球节后的毛簇。挽马厚、矮马中、常马薄 —— 三档最直观的外观差之一。
     # 下缘必须夹在 y≥0：挽马那档首版给到 0.098W，比球节离地高度还长，毛垂到 y=−0.37，
@@ -926,14 +933,31 @@ def build(P: Profile, coat: Coat, groups, muscle: Path, with_anatomy: bool) -> P
     return p
 
 
-def check_pelt(p: Pelt) -> list[str]:
-    """皮层自检：**贴地**（最低点是四只蹄底，且恰在 y=0）+ 蹄底件齐。
+class _Shim:
+    """给 connected_components 用的最小外壳（它只读 .elements）。"""
 
-    骨架层有这条断言、皮层层首版漏了 —— 结果挽马的距毛垂到地下 0.37 单位一直没人发现，
-    直到绑定层拿"最低点"当蹄底才暴露。凡是要被下游当基准面用的东西都得有断言。
+    def __init__(self, els):
+        self.elements = els
+
+
+def check_pelt(p: Pelt) -> list[str]:
+    """皮层自检：**贴地**（最低点是四只蹄底，且恰在 y=0）+ 蹄底件齐 + **静止姿单一连通体**。
+
+    骨架层有贴地与连通性两条断言、皮层首版两条都漏了：
+      · 贴地漏掉 → 挽马的距毛垂到地下 0.37 单位一直没人发现，直到绑定层拿"最低点"
+        当蹄底才暴露；
+      · 连通性漏掉 → 躯干段界的外扩符号写反（该减写成了加），每个跨骨段界反被切掉
+        2×pad，躯干中段豁了个三单位宽的洞。**动画层的 shell_check 看不见这种洞**——
+        它只查静止姿贴合的两件在动画里裂没裂，静止姿就不贴合的对根本不成对。
+        所以"静止姿是不是一整块"必须在这一层单独断言。
+    凡是要被下游当基准用的东西都得有断言。
     """
     els = [e for e in p.skel.data["elements"] if e.get("_pelt")]
     bad: list[str] = []
+    comps = connected_components(_Shim(els))
+    if len(comps) > 1:
+        detail = " / ".join(f"{len(c)} 件({c[0]}…)" for c in comps[:3])
+        bad.append(f"静止姿裂成 {len(comps)} 块，不是一整体：{detail}")
     lo = min(e["from"][1] for e in els)
     if lo < -0.02:
         who = sorted({e["name"] for e in els if e["from"][1] <= lo + 0.02})
