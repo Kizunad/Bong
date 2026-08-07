@@ -27,23 +27,23 @@ sdk install java 17.0.18-amzn
 
 # 不设为默认，保留 21 为系统默认
 # 编译 client 时临时切换：
-cd ~/Code/Bong/client
+cd ~/Code/Bong
 sdk use java 17.0.18-amzn
-./gradlew test build
+scripts/build-token.sh gradle test build
 ```
 
 ---
 
 ## 三��MC 1.20.1 开发客户端
 
-### 推荐：`./gradlew runClient`（零安装）
+### 推荐：`scripts/build-token.sh gradle runClient`（零安装）
 
 WSLg 已确认可用（DISPLAY=:0, Wayland + PulseAudio），Fabric Loom 内置开发客户端启动：
 
 ```bash
-cd ~/Code/Bong/client
+cd ~/Code/Bong
 sdk use java 17.0.18-amzn
-./gradlew runClient
+scripts/build-token.sh gradle runClient
 ```
 
 Loom 自动处理：MC 1.20.1 assets 下载、Fabric Loader、mod 注入、离线模式。
@@ -63,13 +63,13 @@ Loom 自动处理：MC 1.20.1 assets 下载、Fabric Loader、mod 注入、离�
 ## 四、Rust Server 本地编译 & 启动
 
 ```bash
-cd ~/Code/Bong/server
+cd ~/Code/Bong
 
 # 编译（首次约 1-2 分钟）
-cargo build
+scripts/build-token.sh cargo build
 
 # 启动服务端（监听 25565）
-cargo run
+scripts/build-token.sh cargo run
 
 # 预期日志输出：
 # [bong][bridge] tokio runtime started
@@ -83,16 +83,16 @@ cargo run
 ## 五、Fabric Client 本地编译
 
 ```bash
-cd ~/Code/Bong/client
+cd ~/Code/Bong
 
 # 切换 Java 17
 sdk use java 17.0.18-amzn
 
 # 编译 + 测试
-./gradlew test build
+scripts/build-token.sh gradle test build
 
 # 产物位置
-ls build/libs/*.jar
+ls client/build/libs/*.jar
 # → bong-client-0.1.0.jar (或类似名称)
 ```
 
@@ -100,9 +100,9 @@ ls build/libs/*.jar
 
 ```bash
 # 编译 + 直接启动带 mod 的 MC 客户端
-cd ~/Code/Bong/client
+cd ~/Code/Bong
 sdk use java 17.0.18-amzn
-./gradlew runClient
+scripts/build-token.sh gradle runClient
 # MC 窗口弹出后 → 多人游戏 → localhost:25565
 ```
 
@@ -112,10 +112,10 @@ sdk use java 17.0.18-amzn
 
 ```
 1. WSL 终端 A — 启动 Rust 服务端:
-   cd ~/Code/Bong/server && cargo run
+   cd ~/Code/Bong && scripts/build-token.sh cargo run
 
-2. WSL 终端 B �� 启动开发客户端:
-   cd ~/Code/Bong/client && sdk use java 17.0.18-amzn && ./gradlew runClient
+2. WSL 终端 B — 启动开发客户端:
+   cd ~/Code/Bong && sdk use java 17.0.18-amzn && scripts/build-token.sh gradle runClient
 
 3. MC 窗口 → 多人游戏 → 添加服务器 → 地址: localhost:25565
 
