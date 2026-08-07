@@ -8,13 +8,15 @@
     少了这一下走路就是在冰面上平移。所以 walk/run 里 `shift_over()` 是必需件不是润色。
   · 收腿姿的关节角由 rig.tuck_angles() 搜出来（三档腿比例不同），不写死。
 
-**两套绑定姿**（这是本层最重要的一条约束）：羽的几何是**按姿态烘焙**的 —— 收翼时飞
-羽顺体轴叠成一摞、展翼时才铺成扇面，两者不是同一批方块转个角度的关系（gen_pelt 是
-读着当前翼骨关节位置铺羽的）。所以：
-  · 地面动作（idle/walk/run/peck/threat/hurt/death）跑在**收翼**模型上；
-  · 飞行动作（flap/glide/takeoff/land/dive）跑在**展翼**模型上。
-一份绑定姿伺候两边的正解是给每根飞羽单独一根骨（收展变成逐羽旋转），那要动 gen_pelt
-并改掉已过审的 9 个交付物，不在本层范围内 —— 留给接引擎那一步定夺。
+**收翼 ↔ 展翼**：羽的几何是按姿态烘焙的（收翼时飞羽顺体轴叠成一摞、展翼才铺成扇面），
+所以两者不是同一批方块转个角度的关系。解法是**每根飞羽自带一根骨**（gen_pelt 的 quill：
+骨 pivot 落在羽根、绑定旋转烙住羽轴、元素换算进这根骨的坐标系），于是收→展退化成逐羽的
+旋转 + 沿羽轴缩放 —— `rig.unfold_pose()` 直接从两份模型解出这个姿态，`unfold`/`fold` 两
+条动作就是它的淡入淡出。世界几何逐件对拍过（残差 < 0.35px，见 check_anim 第 8 条）。
+
+仍然是两份绑定姿模型：地面动作跑在收翼模型上、飞行动作跑在展翼模型上。把飞行那五条也
+搬到收翼模型（先叠 unfold 再叠拍翼）技术上已经通了，但那要把五条动作全部重新表达一遍，
+留到接引擎时一起做。
 
 输出（local_models/fuyu_vulture/）：
   FuyuVultureRig<档>.bbmodel         收翼绑定姿 + 地面动作
@@ -42,7 +44,9 @@ sys.path.insert(0, str(HERE))
 from animkit import (  # noqa: E402
     Pose, build_tracks, keyed, pulse, smooth, write_animated_bbmodel, write_geckolib,
 )
-from rig import MODELS, BipedGait, VultureRig, default_rig  # noqa: E402
+from rig import (  # noqa: E402
+    MODELS, BipedGait, VultureRig, blend_pose, default_rig, unfold_pose,
+)
 
 NAMESPACE = "bong"
 MODEL_ID = "fuyu_vulture"
@@ -344,6 +348,60 @@ def anim_death(rig: VultureRig, t: float) -> Pose:
     return p
 
 
+_UNFOLD: dict[str, Pose] = {}
+
+
+def unfold_of(rig: VultureRig) -> Pose:
+    """这具收翼绑定姿摆成展翼外形所需的姿态（解一次缓存住，见 rig.unfold_pose）。"""
+    key = str(rig.path)
+    if key not in _UNFOLD:
+        spread = VultureRig(str(rig.path).replace(str(MODELS), str(MODELS / "layers"))
+                            .replace(".bbmodel", "_spread.bbmodel"))
+        _UNFOLD[key] = unfold_pose(rig, spread)
+    return _UNFOLD[key]
+
+
+def anim_unfold(rig: VultureRig, t: float) -> Pose:
+    """展翼：从收翼站姿把两翼张满。起飞前的那一下，也是威慑升级的第二段。
+
+    翼的全部通道（每根羽的朝向 / 羽根位置 / 长度与截面）都由 rig.unfold_pose 从两份模型
+    解出来，这里只负责**怎么张开**：身体先微沉蓄一下、翼过冲一点再落回，末帧正好停在展翼
+    外形上 —— 所以它可以直接接飞行动作，不会有跳变。
+    """
+    k = K(rig)
+    w = keyed(t, [(0.0, 0.0), (0.14, 0.05), (0.60, 1.0), (0.76, 1.05), (1.0, 1.0)])
+    p = blend_pose(unfold_of(rig), w)
+    sink = keyed(t, [(0.0, 0.0), (0.18, 1.0), (0.46, 0.0)])
+    p["root"].pos[1] += -k.H * 0.055 * sink + k.H * 0.020 * w
+    p["hips"].rot[0] += -5.0 * sink + 3.0 * w
+    p["trunk_front"].rot[0] += -4.0 * sink + 5.0 * w
+    rig.neck_curve(p, pitch=-8.0 * sink + 6.0 * w, bias=1.3)
+    p["skull"].rot[0] += 4.0 * sink + 5.0 * w
+    p["jaw"].rot[0] += 3.0 + 9.0 * sink
+    rig.tail_pose(p, pitch=-6.0 * w + 4.0 * sink)
+    rig.plant(p, k.rest)
+    return p
+
+
+def anim_fold(rig: VultureRig, t: float) -> Pose:
+    """收翼：从展翼收回体侧，末尾抖一下把羽理顺。落地站定之后接的就是它。"""
+    k = K(rig)
+    w = keyed(t, [(0.0, 1.0), (0.12, 1.04), (0.66, 0.0), (1.0, 0.0)])
+    p = blend_pose(unfold_of(rig), w)
+    settle = keyed(t, [(0.60, 0.0), (0.74, 1.0), (1.0, 0.0)])
+    shake = math.sin(2.0 * math.pi * 12.0 * t) * settle
+    p["root"].pos[1] += k.H * 0.018 * w - k.H * 0.020 * settle
+    p["hips"].rot[0] += 3.0 * w + 2.0 * shake
+    p["trunk_front"].rot[0] += 4.0 * w + 2.6 * shake
+    p["trunk_front"].rot[2] += 2.4 * shake
+    rig.neck_curve(p, pitch=5.0 * w - 6.0 * settle + 1.2 * shake, bias=1.4)
+    p["skull"].rot[0] += 4.0 * w + 5.0 * settle
+    p["jaw"].rot[0] += 2.0 + 4.0 * settle
+    rig.tail_pose(p, pitch=-5.0 * w + 5.0 * settle)
+    rig.plant(p, k.rest)
+    return p
+
+
 # ================================================================ 飞行动作
 
 def wing_beat(rig: VultureRig, p: Pose, phase: float, *, amp_up: float, amp_dn: float,
@@ -549,6 +607,8 @@ ANIMS: dict[str, Clip] = {
     "threat":  Clip(1.90, False, 72, anim_threat, "ground"),
     "hurt":    Clip(0.50, False, 64, anim_hurt, "ground"),
     "death":   Clip(2.60, False, 64, anim_death, "ground"),
+    "unfold":  Clip(0.55, False, 56, anim_unfold, "ground"),
+    "fold":    Clip(0.62, False, 80, anim_fold, "ground"),
     "flap":    Clip(0.92, True, 96, anim_flap, "flight", at=(0.45,)),
     "glide":   Clip(4.20, True, 28, anim_glide, "flight"),
     "takeoff": Clip(1.30, False, 56, anim_takeoff, "flight"),

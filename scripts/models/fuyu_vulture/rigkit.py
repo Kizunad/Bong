@@ -443,6 +443,35 @@ class Skeleton:
             raise KeyError(f"骨架里没有名字以 {prefix} 开头的骨块")
         return element_bounds(hit)
 
+    def add_bone(self, name: str, pivot: Vec, parent: str, rot: Vec = (0.0, 0.0, 0.0)) -> str:
+        """往已读进来的骨树里插一根新骨（羽自带骨用）。
+
+        带 rot 的骨是**绑定姿旋转**：Blockbench 把它和动画旋转**逐分量相加**后再解成矩阵。
+        所以把一根羽的轴向烙进它自己的骨里之后，"这根羽在展翼时该转到哪"就退化成两份模型
+        的绑定角相减 —— 不用解矩阵，也不会踩欧拉分解的多解。
+        """
+        if name in self.nodes:
+            raise ValueError(f"重复骨骼: {name}")
+        if parent not in self.nodes:
+            raise KeyError(f"骨架里没有骨骼 {parent}")
+        node = {
+            "name": name,
+            "origin": [round(v, 4) for v in pivot],
+            "rotation": [round(v, 4) for v in rot],
+            "uuid": str(uuid.uuid4()),
+            "export": True,
+            "mirror_uv": False,
+            "isOpen": False,
+            "locked": False,
+            "visibility": True,
+            "autouv": 0,
+            "children": [],
+        }
+        self.nodes[parent]["children"].append(node)
+        self.nodes[name] = node
+        self.pivots[name] = tuple(pivot)
+        return name
+
     def attach(self, bone: str, element: dict) -> None:
         if bone not in self.nodes:
             raise KeyError(f"骨架里没有骨骼 {bone}")
@@ -552,6 +581,36 @@ class SoftTissue:
         """等截面的一段（腱、膜条）。"""
         frm, to, rot, org = shaft_box(a, b, rx, rx if rz is None else rz)
         self.piece(bone, name, frm, to, rot=rot, org=org, mat=mat)
+
+    def quill(self, parent: str, name: str, a: Vec, b: Vec, rx: float, rz: float | None = None,
+              *, mat: str = "muscle", bone: str | None = None) -> str:
+        """一根**自带骨**的羽：骨的 pivot 落在羽根、绑定旋转烙住羽轴，元素换算进这根骨的
+        坐标系（于是它退化成一个从 pivot 沿局部 +Y 伸出去的正方盒，rotation 归零）。
+
+        为什么要这么摆：收翼↔展翼之间每根羽的朝向和长度都不同，只有把羽轴变成骨的局部
+        +Y，"绕羽根转"才是纯旋转、"变长"才是 scale=(1,k,1)。元素若仍带自己的 rotation，
+        scale 会沿世界轴拉，羽会被拉歪成一把斜刀。
+
+        世界几何与直接 strut 完全一致（骨的绑定旋转把它转了回去），所以已过审的静态外观
+        一个字节不动 —— 这一点由 check 里的世界坐标对拍守着。
+        """
+        rz = rx if rz is None else rz
+        frm, to, rot, org = shaft_box(a, b, rx, rz)
+        bone = bone or name
+        if bone in self.skel.nodes:
+            pivot = self.skel.pivots[bone]   # 复用同一根羽的骨（羽尖压色那一段）
+        else:
+            pivot = a
+            self.skel.add_bone(bone, a, parent, rot)
+        # δ = (pivot − 盒心) + R⁻¹(盒心 − pivot)；后者沿羽轴，所以只有 +Y 分量
+        d = (pivot[0] - org[0],
+             pivot[1] - org[1] + math.dist(org, pivot),
+             pivot[2] - org[2])
+        self.piece(bone, name,
+                   tuple(f + o for f, o in zip(frm, d)),
+                   tuple(t + o for t, o in zip(to, d)),
+                   org=pivot, mat=mat)
+        return bone
 
     def belly(self, bone: str, name: str, a: Vec, b: Vec, r_mid: float, *,
               r_end: float | None = None, mat: str = "muscle", flat: float = 1.0) -> None:

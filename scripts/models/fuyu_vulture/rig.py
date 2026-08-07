@@ -26,7 +26,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from animkit import Pose, PoseRig, clamp01, smooth  # noqa: E402
+from animkit import Pose, PoseRig, align, clamp01, euler, euler_of, smooth  # noqa: E402
 
 MODELS = HERE.parents[2] / "local_models" / "fuyu_vulture"
 LAYERS = MODELS / "layers"
@@ -373,6 +373,126 @@ class BipedGait:
         """当前支撑脚的横向位置（两脚都着地时取中点）—— 重心该压在这上面。"""
         xs = [self.rest[s][0] for s in SIDES if self.stance(s, t)]
         return sum(xs) / len(xs) if xs else 0.0
+
+
+ARM = ("coracoid_{s}", "humerus_{s}", "ulna_{s}", "carpus_{s}", "manus_{s}")
+
+
+def unfold_pose(folded: VultureRig, spread: VultureRig) -> Pose:
+    """解出把**收翼**绑定姿摆成**展翼**外形的那一个姿态。
+
+    不手调 —— 两份模型都在盘上，差值是可以算出来的，而且算完能逐件对拍验证。三层：
+
+    1. **臂骨**：两个姿态的骨段长度完全相同（实测差 < 0.0005），所以收→展是纯旋转。逐节
+       求"把当前世界朝向转到目标朝向"的最小旋转，再换算回该骨的局部角。取最小旋转会留下
+       一个自由的绕轴扭转，无所谓 —— 羽的朝向在第 2 步里是照**实际算出来的**父骨世界系
+       解的，父骨扭多少都会被吸收掉。
+    2. **羽的朝向**：每根羽自带骨、绑定旋转烙着羽轴，所以目标就是"让这根羽骨的世界朝向
+       等于展翼模型里的"。Blockbench 把绑定角与动画角**逐分量相加**，于是动画角 =
+       目标欧拉 − 绑定欧拉，精确、无多解。
+    3. **羽根位置与长度**：两个姿态里羽根沿骨的落点不同（收翼铺 0.12~0.98、展翼铺满整
+       根），长度也差着 0.62 —— 分别走 position 与 scale 通道。少了这两条，展开后翼在
+       关节处又会露出没羽的带、翼尖也短一截。
+    """
+    pose = Pose()
+    for s in SIDES:
+        chain = [n.format(s=s) for n in ARM]
+        # ---- 1. 臂骨：逐节最小旋转
+        for i, bone in enumerate(chain):
+            nxt = chain[i + 1] if i + 1 < len(chain) else None
+            R = _fit_rot(folded, spread, bone)
+            if R is None:                     # 该骨没有自己的几何：退回按下一节 pivot 定向
+                v, tgt = _aim(folded, bone, nxt), _aim(spread, bone, nxt)
+                if v is None or tgt is None:
+                    continue
+                R = align(v, tgt)
+            W = folded.world(pose)
+            pose[bone].rot = list(euler_of(np.linalg.inv(W[bone][:3, :3]) @ R))
+
+        # ---- 2/3. 每根羽：朝向 / 羽根位置 / 长度
+        W = folded.world(pose)
+        Ws = spread.world()
+        for name, b in folded.bones.items():
+            if not name.startswith("q_") or f"_{s}_" not in name or name not in spread.bones:
+                continue
+            sb = spread.bones[name]
+            parent = b.parent
+            # 朝向：目标是这根羽骨在展翼模型里的**世界**朝向；动画角 = 目标欧拉 − 绑定欧拉
+            want = Ws[parent][:3, :3] @ euler(sb.rest_rot)
+            pose[name].rot = list(euler_of(np.linalg.inv(W[parent][:3, :3]) @ want) - b.rest_rot)
+            # 羽根：位移通道是在**父骨已旋转**的坐标系里生效的，所以不能拿两份模型的
+            # "相对父 pivot 偏移"直接相减 —— 那个差值是在未旋转的模型系里量的，套到转过去
+            # 的父骨上会被再转一次（实测末端次级飞羽偏出 10.5 个单位）。正解是把目标世界
+            # 位置拉回父骨当前的局部系再减。
+            tgt = (Ws[parent] @ np.append(sb.origin, 1.0))[:3]
+            pose[name].pos = list((np.linalg.inv(W[parent]) @ np.append(tgt, 1.0))[:3] - b.origin)
+            # 三个轴都要缩：羽在两个姿态里不只长度不同，**截面**也是反着装的（收翼
+            # 0.21 宽 / 1.26 厚，展翼 2.0 宽 / 0.21 厚）。只缩长度的话展开之后翼又变回
+            # 一把梳子 —— 羽根位置对了，羽面还是没有宽度。
+            fb, sb_ = _quill_box(folded, name), _quill_box(spread, name)
+            pose[name].scale = [sb_[i] / max(fb[i], 1e-6) for i in range(3)]
+    return pose
+
+
+def _fit_rot(folded: VultureRig, spread: VultureRig, bone: str):
+    """把这根骨自己的几何从收翼姿最小二乘拟合到展翼姿（Kabsch）。
+
+    比"对齐一个方向"强的地方在**扭转**：单方向对齐只定住骨轴，绕轴转多少是自由的。翼羽
+    因为各自单独解朝向看不出来，但骑在骨上的零件会跑偏 —— 实测翼爪落在离正确位置 1.1 个
+    单位处（大档）。按整组顶点拟合把这个自由度也定死。
+    """
+    fe = {folded.elements[u]["name"]: folded.elements[u] for u in folded.bones[bone].elements}
+    se = {spread.elements[u]["name"]: spread.elements[u]
+          for u in spread.bones.get(bone, folded.bones[bone]).elements} if bone in spread.bones else {}
+    names = sorted(set(fe) & set(se))
+    if not names:
+        return None
+    P = np.vstack([folded.corners(fe[n]) for n in names]) - folded.bones[bone].origin
+    Q = np.vstack([spread.corners(se[n]) for n in names]) - spread.bones[bone].origin
+    U, _S, Vt = np.linalg.svd(P.T @ Q)
+    d = np.sign(np.linalg.det(Vt.T @ U.T))
+    return Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
+
+
+def _aim(rig: VultureRig, bone: str, nxt: str | None):
+    """这根骨的定向参考：优先指向下一节的 pivot；同点（腕/掌、肩带/肱骨）时退回自己
+    几何的形心方向。
+
+    没有这条退路，`carpus→manus` 这种零长骨段会被整段跳过 —— 手部保持收翼朝向不动，
+    实测翼爪落在离正确位置 20 个单位的地方（而翼羽因为是单独解的，看不出问题）。
+    """
+    if nxt is not None:
+        v = rig.bones[nxt].origin - rig.bones[bone].origin
+        if np.linalg.norm(v) > 1e-6:
+            return v
+    pts = rig.bone_points(bone)
+    if not len(pts):
+        return None
+    v = pts.mean(axis=0) - rig.bones[bone].origin
+    return v if np.linalg.norm(v) > 1e-6 else None
+
+
+def _quill_box(rig: VultureRig, bone: str) -> np.ndarray:
+    """羽骨局部系里这根羽的三轴尺寸（宽 / 长 / 厚）。元素是从 pivot 沿 +Y 伸出去的
+    正方盒，所以直接取包围盒即可；多段（羽尖压色）取并集。"""
+    lo = np.array([np.inf] * 3)
+    hi = np.array([-np.inf] * 3)
+    for u in rig.bones[bone].elements:
+        e = rig.elements.get(u)
+        if e:
+            lo = np.minimum(lo, e["from"])
+            hi = np.maximum(hi, e["to"])
+    return hi - lo
+
+
+def blend_pose(pose: Pose, w: float) -> Pose:
+    """把一个目标姿态按 w∈[0,1] 淡进来（缩放通道从 1 起插，别从 0）。"""
+    out = Pose()
+    for name, ch in pose.items():
+        out[name].rot = [v * w for v in ch.rot]
+        out[name].pos = [v * w for v in ch.pos]
+        out[name].scale = [1.0 + (v - 1.0) * w for v in ch.scale]
+    return out
 
 
 def default_rig(size: str = "mid", morph: str = "jin", spread: bool = False) -> VultureRig:

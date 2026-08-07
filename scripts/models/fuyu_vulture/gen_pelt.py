@@ -229,14 +229,17 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             end = _step(root, d, ln)
             rx, rz = plate(pri_roots, k, t, 0.10 * U, lambda tt: lerp(0.62, 0.42, tt) * U,
                            cover=0.88)
-            p.strut(f"manus_{side}", f"primary_{side}_{k + 1}", root, end, rx, rz,
-                    mat="feather_flight")
+            p.quill(f"manus_{side}", f"primary_{side}_{k + 1}", root, end, rx, rz,
+                    mat="feather_flight", bone=f"q_primary_{side}_{k + 1}")
             # 羽尖压深一档，翼梢那圈深色是猛禽最好认的记号。截面走同一条通道单独给，不从
             # 主羽的 rx/rz 推 —— 推出来收翼姿会差出零点几个百分点，白白动了已过审的交付物。
             tx, tz = plate(pri_roots, k, t, 0.09 * U, lambda tt: lerp(0.52, 0.34, tt) * U,
                            shrink=0.94, cover=0.88)
-            p.strut(f"manus_{side}", f"primary_tip_{side}_{k + 1}", _mix(root, end, 0.78), end,
-                    tx, tz, mat="feather_dark")
+            # 羽尖单独一根骨（与主羽同根同向的兄弟）。共用一根骨看着更"物理"，但两个姿态
+            # 里羽尖与主羽的截面比例并不相等（收翼 0.90 / 展翼 0.94），一个缩放通道不可能
+            # 同时对两件都精确 —— 残下的 0.045 单位会被渲染成一条压在翼缘上的亮边。
+            p.quill(f"manus_{side}", f"primary_tip_{side}_{k + 1}", _mix(root, end, 0.78), end,
+                    tx, tz, mat="feather_dark", bone=f"q_primary_tip_{side}_{k + 1}")
 
         # --- 次级飞羽：长在尺骨上（骨架那排羽茎瘤就是它们的根），短而齐 ---
         n_sec = max(6, int(9 * U ** 0.3))
@@ -255,8 +258,8 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             ln = hum_len * lerp(0.88, 1.05, t)
             end = _step(root, back_fore, ln)
             rx, rz = plate(sec_roots, k, t, 0.09 * U, 0.58 * U)
-            p.strut(f"ulna_{side}", f"secondary_{side}_{k + 1}", root, end, rx, rz,
-                    mat="feather_flight")
+            p.quill(f"ulna_{side}", f"secondary_{side}_{k + 1}", root, end, rx, rz,
+                    mat="feather_flight", bone=f"q_secondary_{side}_{k + 1}")
 
         # --- 覆羽：两层，盖住飞羽根部，把翼前半段铺平 ---
         for layer, (frac, mat) in enumerate(((0.46, "feather_covert"), (0.24, "feather_body")), start=1):
@@ -272,10 +275,14 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
                 ln = hum_len * frac
                 end = _step(root, back_fore, ln)
                 rx, rz = plate(cov_roots, k, t, 0.08 * U, lambda tt: lerp(0.44, 0.34, tt) * U)
-                p.strut(f"ulna_{side}" if t < 0.62 else f"manus_{side}",
-                        f"covert{layer}_{side}_{k + 1}", root, end, rx, rz, mat=mat)
+                p.quill(f"ulna_{side}" if t < 0.62 else f"manus_{side}",
+                        f"covert{layer}_{side}_{k + 1}", root, end, rx, rz, mat=mat,
+                        bone=f"q_covert{layer}_{side}_{k + 1}")
         # 肩羽：盖住肩关节与肱骨，把翼根接进体羽
-        n_sca = 7 if spread else 4
+        # 羽数两姿必须一致：收翼绑定姿是展翼动画的起点，起点少一根，展开后就少一根 ——
+        # 早先展翼给 7 根、收翼 4 根，展开之后内翼露出三条骨缝（A/B 对拍里那几道亮线）。
+        # 覆盖靠加宽补：plate 的半宽跟着实测羽根间距走，4 根摊满整根肱骨照样叠成一整面。
+        n_sca = 4
         a0, a1 = (0.02, 1.02) if spread else (0.05, 0.60)
         sca_roots = [_mix(sh, el, lerp(a0, a1, k / (n_sca - 1))) for k in range(n_sca)]
         for k in range(n_sca):
@@ -286,8 +293,8 @@ def tract_wing(p: SoftTissue, B: Body) -> None:
             chord = lerp(0.60, 0.90, t) if spread else lerp(0.62, 0.48, t)
             end = _step(root, back_fore, hum_len * chord)
             rx, rz = plate(sca_roots, k, t, 0.14 * U, 0.62 * U)
-            p.strut(f"humerus_{side}", f"scapular_{side}_{k + 1}", root, end, rx, rz,
-                    mat="feather_covert")
+            p.quill(f"humerus_{side}", f"scapular_{side}_{k + 1}", root, end, rx, rz,
+                    mat="feather_covert", bone=f"q_scapular_{side}_{k + 1}")
 
 
 # ================================================================ 羽区：领羽

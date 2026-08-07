@@ -37,7 +37,7 @@ sys.path.insert(0, str(HERE))
 
 import gen_anim as G  # noqa: E402
 from animkit import Pose, build_tracks  # noqa: E402
-from rig import SIDES, VultureRig  # noqa: E402
+from rig import SIDES, VultureRig, unfold_pose  # noqa: E402
 
 SKATE_TOL = 0.055     # 相对髋高；超过这个值肉眼就看得出脚在蹭地
 # 穿地容差取**绝对值**而不是体高比例：16 单位 = 1 格 = 16 纹理像素，所以 1 单位就是一个
@@ -52,6 +52,8 @@ BALANCE_MIN = 0.45    # 单支撑相里质心至少要压到支撑脚的这个�
 # 导出关键帧回放与原函数的最大世界位移，单位 = 纹理像素（16 单位 = 1 格 = 16 px）。
 # 半个像素以下看不见；给 0.8 留一点余量，同时仍远小于"少了一截"那种量级。
 FID_TOL = 0.8
+# 展开后与展翼模型的逐件世界偏差上限，同样按纹理像素算（1 单位 = 1 px）
+UNFOLD_TOL = 0.5
 
 
 def com(rig: VultureRig, pose: Pose) -> np.ndarray:
@@ -266,6 +268,38 @@ def seam(rig: VultureRig, name: str) -> float:
     return d
 
 
+def unfold_report(folded: VultureRig, spread: VultureRig) -> tuple[str, bool]:
+    """展翼姿态对拍：把 unfold_pose 施加到收翼绑定姿，逐件比世界角点。
+
+    这是"展翼动画到底对不对"的唯一硬判据 —— 姿态是从两份模型解出来的，解错了图上未必
+    看得出（羽根差半个单位、某一组羽数对不上，都只表现为一道细缝）。名字集合也一起查：
+    收翼绑定姿是展开动画的**起点**，起点少一根羽，展开后那儿就是个洞。
+    """
+    fn = {e["name"] for e in folded.elements.values()}
+    sn = {e["name"] for e in spread.elements.values()}
+    if fn != sn:
+        return (f"    展翼对拍: 两姿元素集合不同（收翼多 {len(fn - sn)}、展翼多 {len(sn - fn)}）"
+                f"   ← 展开后会缺件"), True
+    pose = unfold_pose(folded, spread)
+    Wf, Ws = folded.world(pose), spread.world()
+    sbone = {spread.elements[v]["name"]: b for b in spread.order for v in spread.bones[b].elements}
+    worst, who = 0.0, "-"
+    for name in folded.order:
+        for u in folded.bones[name].elements:
+            e = folded.elements[u]
+            sb = sbone[e["name"]]
+            se = next(spread.elements[v] for v in spread.bones[sb].elements
+                      if spread.elements[v]["name"] == e["name"])
+            a = folded.corners(e) @ Wf[name][:3, :3].T + Wf[name][:3, 3]
+            b = spread.corners(se) @ Ws[sb][:3, :3].T + Ws[sb][:3, 3]
+            d = float(np.abs(np.sort(a, axis=0) - np.sort(b, axis=0)).max())
+            if d > worst:
+                worst, who = d, e["name"]
+    bad = worst > UNFOLD_TOL
+    return (f"    展翼对拍: 动骨 {len(pose)}，逐件世界偏差 {worst:.3f}px [{who}]"
+            f"{'   ← 展开后与展翼模型对不上' if bad else ''}"), bad
+
+
 def run(size: str, only: list[str] | None) -> int:
     bad = 0
     rigs: dict[str, VultureRig] = {}
@@ -312,6 +346,10 @@ def run(size: str, only: list[str] | None) -> int:
             print(row)
             if "←" in row:
                 bad += 1
+    if "ground" in rigs and (only is None or "unfold" in names or "fold" in names):
+        row, flag = unfold_report(rigs["ground"], G.default_rig(size, "jin", spread=True))
+        print(row)
+        bad += 1 if flag else 0
     return bad
 
 

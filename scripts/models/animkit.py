@@ -47,6 +47,42 @@ def euler(rot) -> np.ndarray:
     return rotmat(rot[2], 2) @ rotmat(rot[1], 1) @ rotmat(rot[0], 0)
 
 
+def euler_of(R: np.ndarray) -> np.ndarray:
+    """R = Rz·Ry·Rx 的逆运算，返回 (x, y, z) 度。
+
+    万向锁附近（|sin y| → 1）把 z 固定为 0 再解 x —— 该处 x 与 z 本就简并，硬解出来的
+    那一对角度会在相邻帧之间乱跳。
+    """
+    sy = max(-1.0, min(1.0, -R[2, 0]))
+    if math.sqrt(max(0.0, 1.0 - sy * sy)) < 1e-6:
+        return np.array([math.degrees(math.atan2(-R[1, 2], R[1, 1])),
+                         math.degrees(math.asin(sy)), 0.0])
+    return np.array([math.degrees(math.atan2(R[2, 1], R[2, 2])),
+                     math.degrees(math.asin(sy)),
+                     math.degrees(math.atan2(R[1, 0], R[0, 0]))])
+
+
+def align(u, v) -> np.ndarray:
+    """把向量 u 转到 v 的**最小**旋转（罗德里格斯）。反向时挑一个垂直轴。"""
+    u = np.asarray(u, float)
+    v = np.asarray(v, float)
+    u = u / (np.linalg.norm(u) or 1.0)
+    v = v / (np.linalg.norm(v) or 1.0)
+    c = float(np.dot(u, v))
+    if c > 1.0 - 1e-12:
+        return np.eye(3)
+    if c < -1.0 + 1e-12:
+        axis = np.cross(u, [1.0, 0.0, 0.0])
+        if np.linalg.norm(axis) < 1e-6:
+            axis = np.cross(u, [0.0, 1.0, 0.0])
+        axis /= np.linalg.norm(axis)
+        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        return np.eye(3) + 2.0 * K @ K
+    w = np.cross(u, v)
+    K = np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]])
+    return np.eye(3) + K + K @ K / (1.0 + c)
+
+
 def affine(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     M = np.eye(4)
     M[:3, :3] = R
