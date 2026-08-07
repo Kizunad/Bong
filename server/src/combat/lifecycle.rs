@@ -1240,16 +1240,6 @@ pub struct RevivalEventWriters<'w> {
     coffin_state_events: EventWriter<'w, crate::coffin::CoffinStateChanged>,
 }
 
-/// 复活/新建角色的只读 registry 桶。M36：合并两个 `Option<Res<...>>` 为单一
-/// SystemParam，避免顶层参数撞 Bevy 0.14 的 16 元上限（与 `resolve.rs` 的
-/// `CombatResolveEventWriters` 同一模式）。
-#[derive(SystemParam)]
-pub struct RevivalRegistries<'w, 's> {
-    item_registry: Option<Res<'w, crate::inventory::ItemRegistry>>,
-    technique_registry: Option<Res<'w, crate::cultivation::known_techniques::TechniqueRegistry>>,
-    _marker: std::marker::PhantomData<&'s ()>,
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn handle_revival_action_intents(
     clock: Res<CombatClock>,
