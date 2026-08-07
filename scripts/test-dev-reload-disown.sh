@@ -317,6 +317,41 @@ grep -Fq "no background command provided" "$NO_COMMAND_LOG" \
     || fail "empty command rejection did not include its diagnostic"
 [ -z "$DETACHED_PID" ] || fail "failed launch left a detached pid behind"
 
+# The child must author its own fork-time identity. If it cannot read that
+# identity, or reports malformed data, the parent must reject the handoff and
+# leave neither a published PID nor a live background job.
+original_identity_starttime="$(declare -f bong_server_process_starttime)"
+eval "${original_identity_starttime/bong_server_process_starttime/_identity_bong_server_process_starttime}"
+bong_server_process_starttime() {
+    case "${IDENTITY_REPORT_MODE:-valid}" in
+        unavailable) return 1 ;;
+        malformed) printf 'not-a-starttime\n' ;;
+        *) _identity_bong_server_process_starttime "$@" ;;
+    esac
+}
+for IDENTITY_REPORT_MODE in unavailable malformed; do
+    IDENTITY_REPORT_LOG="$TEST_ROOT/identity-report-$IDENTITY_REPORT_MODE.err"
+    if launch_detached_job /bin/sleep 30 2> "$IDENTITY_REPORT_LOG"; then
+        fail "launch accepted $IDENTITY_REPORT_MODE child identity report"
+    fi
+    if [ "$IDENTITY_REPORT_MODE" = unavailable ]; then
+        grep -Fq "did not report its fork-time identity" "$IDENTITY_REPORT_LOG" \
+            || fail "missing child identity report lacked its diagnostic"
+    else
+        grep -Fq "reported an invalid fork-time identity" "$IDENTITY_REPORT_LOG" \
+            || fail "malformed child identity report lacked its diagnostic"
+    fi
+    [ -z "$DETACHED_PID" ] \
+        || fail "$IDENTITY_REPORT_MODE child identity failure left DETACHED_PID=$DETACHED_PID"
+    [ -z "$DETACHED_STARTTIME" ] \
+        || fail "$IDENTITY_REPORT_MODE child identity failure left DETACHED_STARTTIME=$DETACHED_STARTTIME"
+    [ -z "$(jobs -pr)" ] \
+        || fail "$IDENTITY_REPORT_MODE child identity failure leaked a background job"
+done
+unset IDENTITY_REPORT_MODE IDENTITY_REPORT_LOG
+unset -f _identity_bong_server_process_starttime
+eval "$original_identity_starttime"
+
 EMPTY_PID_LOG="$TEST_ROOT/empty-pid.err"
 if detach_background_job "" 2> "$EMPTY_PID_LOG"; then
     fail "detach accepted an empty pid"
