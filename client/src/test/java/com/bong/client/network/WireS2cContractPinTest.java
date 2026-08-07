@@ -118,6 +118,9 @@ final class WireS2cContractPinTest {
     private static final Map<NormalizationSite, Integer> BRIDGE_NORMALIZATIONS =
         bridgeNormalizations();
 
+    private static final Map<String, Integer> BRIDGE_PREFIX_LITERAL_COUNTS =
+        bridgePrefixLiteralCounts();
+
     private static final Map<String, Set<NormalizationSite>> BRIDGE_DISPATCH_NORMALIZATIONS =
         bridgeDispatchNormalizations();
 
