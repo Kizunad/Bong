@@ -31,6 +31,6 @@
 bash scripts/windows-client.sh --launch
 ```
 
-该命令会先 `./gradlew build` → 拷贝最新 jar 到 `mods/` → 调用
+该命令会先 `scripts/build-token.sh gradle build` → 拷贝最新 jar 到 `mods/` → 调用
 `cmd.exe /c start "" "D:\Minecraft\Open-Bong-HMCL.bat"` 把启动器拉起来。
 后续仍在 HMCL 里选 `Fabric_Bang_Test` 实例进游戏即可。

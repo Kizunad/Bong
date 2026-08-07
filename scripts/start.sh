@@ -70,7 +70,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 
 (
   cd "$ROOT/server"
-  cargo build --release
+  "$ROOT/scripts/build-token.sh" cargo build --release
 )
 server_executable="$(bong_server_resolve_executable "$ROOT/server" "$CARGO_TARGET_DIR/release/bong-server")"
 runtime_dir="$(bong_server_runtime_dir)"

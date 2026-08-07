@@ -32,4 +32,4 @@ else
   fi
 fi
 
-./gradlew test --tests com.bong.client.atmosphere.ZoneAtmosphereTest
+"$ROOT/scripts/build-token.sh" gradle test --tests com.bong.client.atmosphere.ZoneAtmosphereTest
