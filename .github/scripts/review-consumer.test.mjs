@@ -21,7 +21,7 @@ const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
 // stays literal on purpose: it is the anti-tamper control, so it must NOT be derived from
 // anything the pin can reach. Re-verify it deliberately whenever the central workflow itself
 // changes - which a pin bump does not always imply, but sometimes does.
-const centralWorkflowSha256 = '420c282b361595e59e21f22e525b97c783932cbf4a5e28536b346a446a9f873a';
+const centralWorkflowSha256 = 'bc22b5d4315e52025f0d938a14760788d04ac059d08f878e8b6a226055946219';
 
 async function readCentralPin() {
   const yaml = await readFile(workflowPath, 'utf8');
@@ -86,6 +86,11 @@ const expectedCentralInterface = `  workflow_call:
         description: Per-Claude-process stdout backstop in bytes
         required: false
         default: 268435456
+        type: number
+      max_diff_bytes:
+        description: Runaway guard on total diff size in bytes
+        required: false
+        default: 4194304
         type: number
       circuit_manual_retry:
         description: Allow a trusted workflow_dispatch retry to bypass an open infrastructure circuit
