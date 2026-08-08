@@ -64,9 +64,11 @@ pub fn register(app: &mut App) {
         .add_command::<TpdimCmd>()
         .add_systems(
             Update,
-            // fix-spec-1901-v2 §4.2 — handle_tpdim 直接写 Position；confirm 在
-            // DimensionTransferSet 之后确认。两者都纳入统一移动 commit set。
-            handle_tpdim.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+            // Producers must run before the DimensionTransferSet consumer in the same
+            // authoritative commit phase; set membership alone does not order them.
+            handle_tpdim
+                .before(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
         )
         .add_systems(
             Update,
