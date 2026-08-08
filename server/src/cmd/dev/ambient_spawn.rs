@@ -449,6 +449,7 @@ mod tests {
             tsy,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(spirit_qi, danger_level)],
         });
         (app, scenario.client, scenario.helper, scenario.layer)
@@ -592,7 +593,10 @@ mod tests {
         );
 
         let mut app = setup_app();
-        app.insert_resource(ZoneRegistry { zones: Vec::new() });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        });
         let (player, mut helper) = spawn_client(
             &mut app,
             [0.0, EXECUTOR_Y, 0.0],
@@ -615,6 +619,7 @@ mod tests {
 
         let mut app = setup_app();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(0.5, 1)],
         });
         let (player, mut helper) = spawn_client(
@@ -834,6 +839,7 @@ mod tests {
     fn stale_overworld_layer_is_rejected_before_either_pool() {
         let mut app = setup_app();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(0.5, 1)],
         });
         let non_chunk_layer = app.world_mut().spawn_empty().id();
@@ -969,6 +975,7 @@ mod tests {
             tsy,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(0.5, 1)],
         });
         app.insert_resource(TerrainProviders {

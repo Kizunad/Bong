@@ -2,7 +2,9 @@ use valence::command::graph::CommandGraphBuilder;
 use valence::command::handler::CommandResultEvent;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Position, Query, Update, Username};
+use valence::prelude::{
+    App, Client, EventReader, IntoSystemConfigs, Position, Query, Update, Username,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnCmd {
@@ -19,8 +21,11 @@ impl Command for SpawnCmd {
 }
 
 pub fn register(app: &mut App) {
-    app.add_command::<SpawnCmd>()
-        .add_systems(Update, handle_spawn);
+    app.add_command::<SpawnCmd>().add_systems(
+        Update,
+        // fix-spec-1901-v2 §4.2 — 直接写 `Position`，纳入统一移动 commit set。
+        handle_spawn.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+    );
 }
 
 pub fn handle_spawn(

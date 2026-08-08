@@ -1599,6 +1599,7 @@ mod tests {
 
     fn seed_rogue_population_realm_test_zones() -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 // background bucket: spirit_qi < 0.4 threshold.
                 mk_big_zone("background_big", 0.3, [0.0, 66.0, 0.0]),

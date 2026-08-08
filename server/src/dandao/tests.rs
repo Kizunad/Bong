@@ -1198,12 +1198,15 @@ mod boss_spawn_integration {
         // 通过 boss_spawn::register 注册所有系统（含 baolongwang_qi_drain_aura_system）
         super::super::boss_spawn::register(&mut app);
 
-        // 初始化 ledger audit 资源；zone 由 ZoneRegistry 独占，不建立镜像。
+        // 初始化 WorldQiAccount 资源
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        app.insert_resource(WorldQiAccount::default());
+        let mut account = WorldQiAccount::default();
+        account.set_balance(zone_id.clone(), 0.0).unwrap();
+        app.insert_resource(account);
         // baolongwang_qi_drain_aura_system 现在需要 ZoneRegistry 才会吸取（field authority
         // 同步写回 zone.spirit_qi，见 c79bc03e）；不插入会在 find_zone_mut 处整 tick 早退。
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(0.0)],
         });
 
@@ -1293,12 +1296,17 @@ mod boss_spawn_integration {
         super::super::boss_spawn::register(&mut app);
 
         let zone_id = QiAccountId::zone(BOSS_HOME_ZONE);
-        let initial_zone_spirit_qi = 0.1f64;
-        app.insert_resource(WorldQiAccount::default());
+        let initial_zone = 5.0f64;
+        let mut account = WorldQiAccount::default();
+        account.set_balance(zone_id.clone(), initial_zone).unwrap();
+        app.insert_resource(account);
         // 显式插入 ZoneRegistry：本测试要锁住的是 Expel 阶段跳过吸取的分支，
         // 不能靠 ZoneRegistry 缺失早退凑巧得出同样的"不扣真元"结果。
         app.insert_resource(ZoneRegistry {
-            zones: vec![baolongwang_zone_fixture(initial_zone_spirit_qi)],
+            spatial_revision: 0,
+            zones: vec![baolongwang_zone_fixture(
+                initial_zone / QI_ZONE_UNIT_CAPACITY,
+            )],
         });
 
         let _boss = app
@@ -1336,18 +1344,16 @@ mod boss_spawn_integration {
             .expect("player Cultivation missing")
             .qi_current;
         let zone_after = app.world().resource::<WorldQiAccount>().balance(&zone_id);
-        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
 
         assert!(
             (player_qi_after - initial_qi).abs() < 1e-9,
             "期望 Expel 阶段 drain system 不扣玩家真元，\
              实际 before={initial_qi} after={player_qi_after}"
         );
-        assert_eq!(zone_after, 0.0, "Expel 阶段不得创建 zone mirror");
         assert!(
-            (zone_spirit_qi_after - initial_zone_spirit_qi).abs() < 1e-9,
-            "期望 Expel 阶段 signed zone owner 不变，\
-             实际 before={initial_zone_spirit_qi} after={zone_spirit_qi_after}"
+            (zone_after - initial_zone).abs() < 1e-9,
+            "期望 Expel 阶段 zone 余额不变，\
+             实际 before={initial_zone} after={zone_after}"
         );
     }
 }

@@ -4558,6 +4558,7 @@ mod tests {
 
     fn install_zone_registry(app: &mut App, danger_level: u8) {
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "test_zone".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -4963,7 +4964,10 @@ mod tests {
 
         let mut app = make_app();
         install_layers(&mut app);
-        app.insert_resource(ZoneRegistry { zones: Vec::new() });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        });
         app.insert_resource(GameTick(0));
         app.world_mut()
             .spawn((ClientMarker, Position::new([10_000.0, 64.0, 10_000.0])));
@@ -5223,7 +5227,10 @@ mod tests {
     fn recycle_spider_without_zone_routes_cultivation_to_fixed_overflow() {
         let mut app = make_app();
         install_layers(&mut app);
-        app.insert_resource(ZoneRegistry { zones: Vec::new() });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        });
         app.insert_resource(GameTick(0));
         app.insert_resource(WorldQiAccount::default());
         app.world_mut()
@@ -5454,6 +5461,7 @@ mod tests {
         ));
         install_layers(&mut app);
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "test_zone".to_string(),

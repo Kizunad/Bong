@@ -128,6 +128,7 @@ mod tests {
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(BotanyEventSpawnRoll { chance_inverse: 1 }); // 100%
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -309,6 +310,7 @@ mod tests {
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(PlantLifecycleClock { tick: 99 }); // 下 tick 触发 interval
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "blood_valley".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
