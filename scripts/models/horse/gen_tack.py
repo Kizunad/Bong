@@ -172,6 +172,17 @@ TACK_MATS: dict[str, Mat] = {
     # 骨白包边 / 铆钉条：札片之间那圈亮。它替下了整板那一档的板缘棱——札片太小，
     # 一片一道棱只剩杂色，而**沿着整条边走一道白**远处才连得成线。
     "bard_rivet": Mat((188, 176, 150), "metal"),
+    # --- 锁子甲改按诺曼参考重做，追加（只准往后加：UV 索引由顺序派生）---
+    # 打磨过的亮钢：面甲与当胸。整副锁子甲的读法就是**哑光暗环帘 + 两块亮板**的反差，
+    # 所以这一色只做"亮"这一件事——离环帘 200 开外，远处一眼分得开。
+    "steel_polish": Mat((178, 184, 194), "metal"),
+    # 亮板的背光侧 / 眼窗框。原来给的 (120,126,138) 离碎雪身色只有 30.3 —— 它是**面甲
+    # 上唯一的暗部**，糊进青毛马的身色等于眼窗没了框；压深往冷里推之后离得开 50。
+    "steel_polish_dark": Mat((104, 112, 128), "metal"),
+    # 环帘压深压中性：原来的 (66,80,90) 偏蓝，和灵铁那一档同族；诺曼那身环帘是发乌的
+    # 铁色，靠**没有高光**跟旁边的亮板拉开，不靠色相。
+    "mail_iron": Mat((60, 63, 70), "mail"),
+    "mail_iron_dark": Mat((42, 44, 50), "mail"),
 }
 
 
@@ -1901,6 +1912,10 @@ BARD_BITE = 0.8  # 甲片内侧面埋进皮多深（× 板厚）：贴合判据�
 # 上缘被鞍压低之后，这一格还剩不到一排的几成就不做了。剩一条比板还薄的甲片没有意义，
 # 而且它上下都挨不着别人，正是"整副甲散成四片五片"那条判据要挡的东西。
 BARD_MIN_ROW = 0.45
+# 盾泡在当胸板上的高度（0 = 下缘，1 = 上缘）。**不是随手放中间**：低头吃草时颈会
+# 整段扫过胸前，扫到的正是当胸板的中下段——盾泡放在 0.5 那一版实测被颈多陷 1.52
+# （上限 1.36）。0.76 之上是颈根本身、几乎不动的那一小段，才留得住一颗鼓出来的东西。
+BOSS_Y = 0.76
 
 
 @dataclass(frozen=True)
@@ -1930,6 +1945,16 @@ class BardSpec:
     # 整条边走一道**远处才连得成线。
     edge: str = ""
     pad: str = ""  # 衬里的材质（"" = 用 mat_dark）：垂缘那一截是布不是铁，参考图里是绛红的绗缝
+    # 亮板的材质（"" = 跟着 mat / mat_dark）：面帘与当胸这两块**打磨过的整板**。
+    # 锁子甲那一档全靠它读得出来——一身哑光的暗环帘上扣两块亮钢，那个反差就是它的样子；
+    # 环帘和面甲要是同一种灰，整只马远看只剩一团灰。
+    mat_plate: str = ""
+    # 亮板的暗部（"" = 用 mat_dark）。**单独一个字段而不是在代码里推**：它是面甲上唯一
+    # 的暗色（眼窗框、颊板），是远处看得见的一片，而配色判据只查规格表里声明的角色
+    # ——在代码里现推出来的材质，判据一条都够不到（`mat_nail` 当年就是这么漏的）。
+    mat_plate_dark: str = ""
+    # 当胸中央那一颗圆盾泡（"" = 不做）。诺曼那一路的当胸正中总有一颗，是它最好认的记号
+    boss: str = ""
     # 逐排换明暗。首版靠它让"横排"读得出来（几何台阶太小，远处看不见）；札片纹理
     # 自己带上暗下亮的叠边之后就不必了，再叠一层反而读成斑马纹。
     banded: bool = True
@@ -1944,29 +1969,39 @@ BARDS: dict[str, BardSpec] = {
         th=0.013, hem=0.74, rows=3, cell=0.085, peytral=False, croup_plate=False,
         crinet=False, chamfron="", skirt=0.0, spine=False,
     ),
-    # 二档：布底上缀锁环，胸前多一块。锁环挡切不挡砸——这一档的形状来源。
-    # 环比札片还碎，切格跟着最短：远处读到的是一整片密麻的暗灰，不是一排排的片。
+    # 二档：**一整幅锁环帘罩下来，外头扣两块打磨过的亮钢**（面甲 + 当胸，当胸正中一颗
+    # 圆盾泡）。参考的是诺曼那一路：环帘垂感好、盖得大，可它挡切不挡砸，所以真正硬的
+    # 地方只有那两块板——护住脸和胸口这两处一砸就完的部位，别处认了。
+    #
+    # 这一档的读法**全在反差**：一身哑光的暗环帘上两块亮的。所以环帘压深压中性
+    # （原来的偏蓝，和灵铁那一档同族），亮板单独一色，两者离得越远越好。
+    # 也因此它不像别档那样"一排排"：`banded=False` + 排间几乎不错开，远处是一整幅
+    # 密麻的暗铁，不是横条。
     "mail": BardSpec(
-        key="mail", label="锁子甲", blurb="布底上缀满锁环，胸前一片当胸。挡得住切，挡不住砸。",
-        mat="mail", mat_dark="mail_dark", mat_trim="iron_crude",
-        th=0.017, hem=0.82, rows=4, cell=0.068, peytral=True, croup_plate=False,
-        crinet=False, chamfron="", skirt=0.0, spine=False,
+        key="mail", label="锁子甲", blurb="一整幅锁环帘罩下来，面上扣一副打磨过的钢面甲与当胸，胸口一颗盾泡。挡得住切，挡不住砸。",
+        mat="mail_iron", mat_dark="mail_iron_dark", mat_trim="leather",
+        mat_plate="steel_polish", mat_plate_dark="steel_polish_dark",
+        boss="steel_polish", banded=False,
+        th=0.017, hem=0.86, rows=5, cell=0.068, peytral=True, croup_plate=False,
+        crinet=True, chamfron="full", skirt=0.0, spine=False,
     ),
     # 三档：杂钢札片，胸前尻上各压一块整板。这是"挡得住砸"的分界线。
     # 杂钢是回炉料，锻不出大片——**短而密**是这一档的样子，也是它便宜的原因。
+    # 鸡颈与半面帘是被下一档**逼**上来的：锁子甲照诺曼那套配了钢面甲，而具装件数逐档
+    # 只增不减（`check_escalation`）——下面一档有的，上面一档不能没有。
     "light": BardSpec(
-        key="light", label="轻铁甲", blurb="杂钢回炉锻的短札片密密编成，当胸与尻上各压一块整板。轻，马跑得动。",
+        key="light", label="轻铁甲", blurb="杂钢回炉锻的短札片密密编成，当胸与尻上各压一块整板，鸡颈连半面帘。轻，马跑得动。",
         mat="plate", mat_dark="plate_dark", mat_trim="iron_crude",
-        th=0.021, hem=0.88, rows=5, cell=0.070, peytral=True, croup_plate=True,
-        crinet=False, chamfron="", skirt=0.0, spine=False,
+        th=0.021, hem=0.90, rows=5, cell=0.070, peytral=True, croup_plate=True,
+        crinet=True, chamfron="half", skirt=0.0, spine=False,
     ),
     # 四档：灵铁。轻，所以同样的重量能锻**长片**、能一路护到颈和额——具装配到第三件。
     # 半面帘：只压额与鼻梁，眼露在外。灵铁贵，护到眼眶就够，再往下是重甲的事。
     "lingtie": BardSpec(
         key="lingtie", label="灵铁甲", blurb="灵铁长札片连鸡颈半面帘，甲片行间一道细灵纹。轻而不折真元。",
         mat="lingtie", mat_dark="lingtie_dark", mat_trim="lingtie",
-        th=0.024, hem=0.92, rows=4, cell=0.112, peytral=True, croup_plate=True,
-        crinet=True, chamfron="half", skirt=0.0, spine=False, glow=True,
+        th=0.024, hem=0.95, rows=4, cell=0.112, peytral=True, croup_plate=True,
+        crinet=True, chamfron="half", skirt=0.045, spine=False, glow=True,
     ),
     # 五档：具装。**不是整板**——参考图（也是中原马铠本来的样子）是一排一排的札片：
     # 排数多、片薄、层层压叠，下摆吊一圈绛红的绗缝衬里，札片之间一道骨白的铆钉包边。
@@ -1980,7 +2015,7 @@ BARDS: dict[str, BardSpec] = {
         key="heavy", label="重铁甲", blurb="八排薄札片层层压叠，札片行间一道骨白铆钉，下摆吊一圈绛红绗缝衬里，面帘全罩只留眼窗。人马皆铠，马也最累。",
         mat="bard_lame", mat_dark="bard_lame_dark", mat_trim="bard_pad",
         edge="bard_rivet", pad="bard_pad", banded=False,
-        th=0.024, hem=0.88, rows=8, cell=0.092, peytral=True, croup_plate=True,
+        th=0.025, hem=0.92, rows=8, cell=0.092, peytral=True, croup_plate=True,
         crinet=True, chamfron="full", skirt=0.100, spine=True, rear=True,
     ),
 }
@@ -2362,9 +2397,31 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
           mat=spec.mat)
     if spec.peytral:
         # 当胸板：胸前再压一块整板，两侧包过肩前缘。二档起才有——布档只有一块布帘。
-        t.box("thorax_front", "bard_peytral", (-(hw_c + gap + th * 2.0), _lerpf(cy0, cy1, 0.18),
-                                               cz0 - th * 0.8),
-              (hw_c + gap + th * 2.0, _lerpf(cy0, cy1, 0.86), cz0 + th * 1.6), mat=spec.mat_dark)
+        # 横向分三阶，越靠外越往后收：胸是圆的，一块通宽的平板正视图里是块门板，
+        # 3/4 视角下更明显（同搭后那口箱子的道理）。中间那阶跨中线，把左右连起来。
+        py0, py1 = _lerpf(cy0, cy1, 0.18), _lerpf(cy0, cy1, 0.86)
+        pw = hw_c + gap + th * 2.0
+        prev_x = 0.0
+        for k, (f, back) in enumerate(((0.52, 0.0), (0.80, 0.9), (1.0, 2.1))):
+            x1 = pw * f
+            for sgn, side in ((-1.0, "l"), (1.0, "r")) if k else ((1.0, ""),):
+                t.box("thorax_front", f"bard_peytral_{k + 1}{side and '_' + side}",
+                      (sgn * (prev_x if k else -x1), py0, cz0 - th * 0.8 + th * back),
+                      (sgn * x1, py1, cz0 + th * 1.6), mat=spec.mat_plate or spec.mat_dark)
+            prev_x = x1 - th * 0.6
+        if spec.boss:
+            # 盾泡：当胸正中鼓出来的一颗。诺曼那一路最好认的记号，也是**整块板上唯一
+            # 的形状**——一块通宽的亮板正视图里就是个长方形，鼓一颗才有"这是件甲"的
+            # 意思。三层收出个圆头：一个体素 6.25 cm，再多层也读不出更圆。
+            bz, pc, prev = cz0 - th * 0.8, _lerpf(py0, py1, BOSS_Y), 0.0
+            for i, (w, d) in enumerate(((0.30, 0.6), (0.20, 1.0), (0.11, 1.25))):
+                hwb = hw_c * w
+                # 每一层都要压住**上一层**（第一层压住当胸板本身），不然一颗浮在胸前的
+                # 泡：连通性判据会把整副甲多报一片，静帧里却看不出来
+                t.box("thorax_front", f"bard_boss_{i + 1}",
+                      (-hwb, pc - hwb, bz - th * d), (hwb, pc + hwb, bz - th * (prev - 0.4)),
+                      mat=spec.boss, chain=("bard_boss", i))
+                prev = d
         if spec.glow:
             t.box("thorax_front", "bard_peytral_glow",
                   (-(hw_c + gap + th * 1.6), _lerpf(cy0, cy1, 0.46), cz0 - th * 1.05),
@@ -2627,7 +2684,10 @@ def part_bard_chamfron(t: Tack, fit: Fit, spec: BardSpec) -> None:
     stall, line = _rein_local(fit, HEADSTALL_RE), _rein_local(fit, REINLINE_RE)
     ey0, ey1 = eye[0][1] - gap, eye[1][1] + gap
     ez0, ez1 = eye[0][2] - gap, eye[1][2] + gap
-    mat, md = spec.mat, spec.mat_dark
+    # 面帘是**一块打磨过的整板**，不一定跟身上的甲面同料：锁子甲那一档全靠"哑光环帘
+    # 上扣两块亮钢"的反差被认出来，面甲跟着环帘走就把这一档最好认的地方抹掉了。
+    mat = spec.mat_plate or spec.mat
+    md = spec.mat_plate_dark or spec.mat_dark
 
     def crest(z: float) -> float:
         """脸在这个 z 处的"面帘该贴到哪"：颅壳顶与**跨中线**那几条络头带里更高的那个。
@@ -3354,7 +3414,8 @@ def check_contrast() -> list[str]:
             # 「露在外面的那一片」才是这条要管的东西，所以角色表跟着造型走：重铁甲的
             # 绛红衬里（`pad`）与骨白包边（`edge`）都是远处第一眼读到的颜色，漏了它们
             # 等于这条判据只看了甲的一半。
-            for role in ("mat", "mat_dark", "mat_trim", "mat_nail", "edge", "pad"):
+            for role in ("mat", "mat_dark", "mat_trim", "mat_nail", "edge", "pad",
+                         "mat_plate", "mat_plate_dark", "boss"):
                 m = getattr(spec, role, None)
                 if not m:
                     continue
@@ -3373,7 +3434,8 @@ def check_contrast() -> list[str]:
         tiers = list(K.table.values())
         for a, b in zip(tiers, tiers[1:]):
             best = max((_rgbd(mat_rgb(getattr(a, r)), mat_rgb(getattr(b, r)))
-                        for r in ("mat", "mat_dark", "mat_trim", "mat_nail", "edge", "pad")
+                        for r in ("mat", "mat_dark", "mat_trim", "mat_nail", "edge", "pad",
+                                  "mat_plate", "mat_plate_dark", "boss")
                         if getattr(a, r, None) and getattr(b, r, None)), default=0.0)
             if best < MIN_TIER:
                 bad.append(f"{kind} 的「{a.label}」与「{b.label}」哪个角色都只差 {best:.1f}"
