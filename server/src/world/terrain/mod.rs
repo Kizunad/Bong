@@ -107,6 +107,147 @@ pub struct RasterBootstrapConfig {
     pub raster_dir: PathBuf,
 }
 
+pub struct ValidatedRasterBootstrap {
+    pub decoration_registry: nbt_registry::DecorationNbtRegistry,
+    pub providers: TerrainProviders,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerrainBootstrapError {
+    diagnostics: Vec<String>,
+}
+
+impl TerrainBootstrapError {
+    fn new<I>(diagnostics: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut diagnostics = diagnostics.into_iter().collect::<Vec<_>>();
+        diagnostics.sort();
+        diagnostics.dedup();
+        Self { diagnostics }
+    }
+
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+}
+
+impl std::fmt::Display for TerrainBootstrapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "raster bootstrap failed startup preflight:\n- {}",
+            self.diagnostics.join("\n- ")
+        )
+    }
+}
+
+impl std::error::Error for TerrainBootstrapError {}
+
+pub(crate) fn configured_tsy_raster_bootstrap() -> Result<Option<RasterBootstrapConfig>, String> {
+    let Some(raw) = std::env::var_os(TSY_RASTER_PATH_ENV_VAR) else {
+        return Ok(None);
+    };
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let manifest_path = PathBuf::from(raw);
+    let raster_dir = raster_dir_from_manifest_path(&manifest_path).map_err(|error| {
+        format!(
+            "{TSY_RASTER_PATH_ENV_VAR}={} is invalid: {error}",
+            manifest_path.display()
+        )
+    })?;
+    Ok(Some(RasterBootstrapConfig {
+        manifest_path,
+        raster_dir,
+    }))
+}
+
+pub fn prepare_raster_bootstrap(
+    overworld: RasterBootstrapConfig,
+    tsy: Option<RasterBootstrapConfig>,
+    biomes: &BiomeRegistry,
+) -> Result<ValidatedRasterBootstrap, TerrainBootstrapError> {
+    prepare_raster_bootstrap_with_nbt_preflight(
+        overworld,
+        tsy,
+        biomes,
+        nbt_registry::DecorationNbtRegistry::prepare_default(),
+    )
+}
+
+fn prepare_raster_bootstrap_with_nbt_preflight(
+    overworld: RasterBootstrapConfig,
+    tsy: Option<RasterBootstrapConfig>,
+    biomes: &BiomeRegistry,
+    nbt_preflight: nbt_registry::DecorationNbtPreflight,
+) -> Result<ValidatedRasterBootstrap, TerrainBootstrapError> {
+    let mut diagnostics = nbt_preflight
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| format!("nbt: {diagnostic}"))
+        .collect::<Vec<_>>();
+
+    let overworld_provider = match TerrainProvider::load_preflighted(
+        &overworld.manifest_path,
+        &overworld.raster_dir,
+        biomes,
+        nbt_preflight.candidate(),
+    ) {
+        Ok(provider) => Some(provider),
+        Err(error) => {
+            diagnostics.extend(
+                error
+                    .diagnostics()
+                    .iter()
+                    .map(|diagnostic| format!("overworld: {diagnostic}")),
+            );
+            None
+        }
+    };
+    let tsy_provider = tsy.and_then(|config| {
+        match TerrainProvider::load_preflighted(
+            &config.manifest_path,
+            &config.raster_dir,
+            biomes,
+            nbt_preflight.candidate(),
+        ) {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                diagnostics.extend(
+                    error
+                        .diagnostics()
+                        .iter()
+                        .map(|diagnostic| format!("tsy: {diagnostic}")),
+                );
+                None
+            }
+        }
+    });
+
+    if !diagnostics.is_empty() {
+        return Err(TerrainBootstrapError::new(diagnostics));
+    }
+
+    Ok(ValidatedRasterBootstrap {
+        decoration_registry: nbt_preflight
+            .into_registry()
+            .expect("diagnostic-free NBT preflight must commit"),
+        providers: TerrainProviders {
+            overworld: overworld_provider.expect("validated overworld provider must be present"),
+            tsy: tsy_provider,
+        },
+    })
+}
+
+pub fn load_default_decoration_registry() -> nbt_registry::DecorationNbtRegistry {
+    nbt_registry::DecorationNbtRegistry::load_default().unwrap_or_else(|error| {
+        panic!("[bong][world] failed to initialize decoration NBT registry: {error}")
+    })
+}
+
 // F12 — 按维度分桶的已生成 chunk 记录。overworld / TSY 各自独立的 `ChunkLayer`
 // 实体，但 `ChunkPos` 坐标空间是共享的（都从 (0,0) 起算），若用单一
 // `HashSet<ChunkPos>` 会导致"overworld 已生成 (x,z)"错误地让 TSY 同坐标的
@@ -120,17 +261,13 @@ struct GeneratedChunks {
 impl Resource for GeneratedChunks {}
 
 pub fn register(app: &mut App) {
-    // worldgen-v4 P6 §8.1 #10 — decompress every decoration NBT template once at
-    // app-build time and hold it resident for the process lifetime, so chunk-gen
-    // stamps are memcpy-level (no runtime gzip). Bootstrap-path agnostic: inserted
-    // for raster / flat / anvil worlds alike. A missing `decorations/` dir (assets
-    // authored in a later P6 stage) loads an empty registry — never panics.
-    let deco_registry = nbt_registry::DecorationNbtRegistry::load_default();
-    tracing::info!(
-        "[bong][world] decoration NBT registry: {} templates resident",
-        deco_registry.len()
-    );
-    app.insert_resource(deco_registry);
+    blocks::initialize_default_block_catalog().unwrap_or_else(|error| {
+        panic!("[bong][world] failed to initialize terrain block catalog: {error}")
+    });
+
+    // The resident decoration registry is prepared and committed transactionally
+    // by world::setup_world. Raster worlds merge its diagnostics with overworld and
+    // TSY manifest/sidecar diagnostics before any runtime resource or layer exists.
     app.insert_resource(GeneratedChunks::default())
         .insert_resource(TickRateProbe::default())
         .add_systems(
@@ -633,9 +770,13 @@ pub fn spawn_raster_world(
     dimensions: &mut DimensionTypeRegistry,
     biomes: &BiomeRegistry,
     config: RasterBootstrapConfig,
+    bootstrap: ValidatedRasterBootstrap,
 ) -> Entity {
-    let provider = TerrainProvider::load(&config.manifest_path, &config.raster_dir, biomes)
-        .unwrap_or_else(|error| panic!("failed to bootstrap raster terrain: {error}"));
+    let ValidatedRasterBootstrap {
+        decoration_registry,
+        providers,
+    } = bootstrap;
+    let provider = &providers.overworld;
     tracing::info!(
         "[bong][world] loaded {} terrain tiles / {} POIs / {} decorations / {} placements from {}",
         provider.tile_count(),
@@ -644,10 +785,17 @@ pub fn spawn_raster_world(
         provider.placement_block_count(),
         config.manifest_path.display()
     );
-    if let Some(payload) = bot_raster_fixture_ready_payload(&config.manifest_path, &provider)
+    if let Some(payload) = bot_raster_fixture_ready_payload(&config.manifest_path, provider)
         .unwrap_or_else(|error| panic!("failed to bind Bot raster fixture readiness: {error}"))
     {
         tracing::info!("{payload}");
+    }
+    if let Some(tsy_provider) = &providers.tsy {
+        tracing::info!(
+            "[bong][world] loaded TSY {} terrain tiles / {} POIs",
+            tsy_provider.tile_count(),
+            tsy_provider.pois().len()
+        );
     }
 
     if let Some((_, _, dim)) = dimensions
@@ -660,55 +808,16 @@ pub fn spawn_raster_world(
 
     let layer = valence::prelude::LayerBundle::new(ident!("overworld"), dimensions, biomes, server);
     let entity = commands.spawn((layer, OverworldLayer)).id();
-
-    // plan-tsy-worldgen-v1 §6.1 — optional TSY raster manifest from
-    // BONG_TSY_RASTER_PATH; absent → tsy=None (legacy behaviour).
-    let tsy_provider = load_tsy_provider_from_env(biomes);
-
-    commands.insert_resource(TerrainProviders {
-        overworld: provider,
-        tsy: tsy_provider,
-    });
+    tracing::info!(
+        "[bong][world] decoration NBT registry: {} templates resident",
+        decoration_registry.len()
+    );
+    commands.insert_resource(decoration_registry);
+    commands.insert_resource(providers);
     entity
 }
 
 const TSY_RASTER_PATH_ENV_VAR: &str = "BONG_TSY_RASTER_PATH";
-
-fn load_tsy_provider_from_env(biomes: &BiomeRegistry) -> Option<TerrainProvider> {
-    let raw = std::env::var_os(TSY_RASTER_PATH_ENV_VAR)?;
-    if raw.is_empty() {
-        return None;
-    }
-    let manifest_path = PathBuf::from(raw);
-    let raster_dir = match raster_dir_from_manifest_path(&manifest_path) {
-        Ok(path) => path,
-        Err(error) => {
-            tracing::warn!(
-                "[bong][world] BONG_TSY_RASTER_PATH={} unreadable: {error}",
-                manifest_path.display()
-            );
-            return None;
-        }
-    };
-    match TerrainProvider::load(&manifest_path, &raster_dir, biomes) {
-        Ok(provider) => {
-            tracing::info!(
-                "[bong][world] loaded TSY {} terrain tiles / {} POIs from {}",
-                provider.tile_count(),
-                provider.pois().len(),
-                manifest_path.display()
-            );
-            Some(provider)
-        }
-        Err(error) => {
-            tracing::warn!(
-                "[bong][world] failed to load TSY raster {}: {error}",
-                manifest_path.display()
-            );
-            None
-        }
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 fn generate_chunks_around_players(
@@ -1038,7 +1147,226 @@ fn mineral_block_state(mineral_id: crate::mineral::MineralId) -> BlockState {
 mod tests {
     use super::*;
     use crate::mineral::MineralId;
-    use valence::prelude::BlockPos;
+    use std::fs;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use valence::prelude::{Biome, BlockPos, Ident};
+
+    static RASTER_BOOTSTRAP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn bootstrap_temp_dir(tag: &str) -> PathBuf {
+        let counter = RASTER_BOOTSTRAP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bong-raster-bootstrap-{tag}-{}-{nanos}-{counter}",
+            std::process::id()
+        ))
+    }
+
+    fn bootstrap_test_biomes() -> BiomeRegistry {
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(
+            Ident::new("plains").expect("valid test biome identifier"),
+            Biome::default(),
+        );
+        biomes
+    }
+
+    fn write_bootstrap_manifest(path: &Path, surface_name: &str) {
+        fs::write(
+            path,
+            format!(
+                r#"{{
+                    "version": 2,
+                    "tile_size": 1,
+                    "world_bounds": {{"min_x":0,"max_x":0,"min_z":0,"max_z":0}},
+                    "surface_palette": ["{surface_name}"],
+                    "biome_palette": ["plains"],
+                    "tiles": []
+                }}"#
+            ),
+        )
+        .expect("bootstrap manifest should be writable");
+    }
+
+    #[test]
+    fn raster_bootstrap_aggregates_nbt_overworld_and_tsy_diagnostics() {
+        let root = bootstrap_temp_dir("aggregate");
+        let overworld_dir = root.join("overworld");
+        let tsy_dir = root.join("tsy");
+        fs::create_dir_all(&overworld_dir).expect("overworld fixture dir should be creatable");
+        fs::create_dir_all(&tsy_dir).expect("TSY fixture dir should be creatable");
+        let overworld_manifest = overworld_dir.join("manifest.json");
+        let tsy_manifest = tsy_dir.join("manifest.json");
+        write_bootstrap_manifest(&overworld_manifest, "broken_overworld_surface");
+        write_bootstrap_manifest(&tsy_manifest, "broken_tsy_surface");
+
+        let nbt_preflight = nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+            nbt_registry::DecorationNbtRegistry::empty(),
+            vec!["broken NBT palette for aggregate test".to_string()],
+        );
+        let error = match prepare_raster_bootstrap_with_nbt_preflight(
+            RasterBootstrapConfig {
+                manifest_path: overworld_manifest,
+                raster_dir: overworld_dir,
+            },
+            Some(RasterBootstrapConfig {
+                manifest_path: tsy_manifest,
+                raster_dir: tsy_dir,
+            }),
+            &bootstrap_test_biomes(),
+            nbt_preflight,
+        ) {
+            Ok(_) => panic!("all invalid dimensions and NBT admission must reject bootstrap"),
+            Err(error) => error,
+        };
+        let diagnostics = error.diagnostics();
+        assert!(diagnostics.windows(2).all(|pair| pair[0] <= pair[1]));
+        for (prefix, authored_value) in [
+            ("nbt: ", "broken NBT palette"),
+            ("overworld: ", "broken_overworld_surface"),
+            ("tsy: ", "broken_tsy_surface"),
+        ] {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.starts_with(prefix)
+                        && diagnostic.contains(authored_value)),
+                "bootstrap must retain {prefix:?} diagnostic for {authored_value:?}: {error}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn raster_bootstrap_commits_one_registry_and_optional_tsy_provider_on_success() {
+        let root = bootstrap_temp_dir("success");
+        let overworld_dir = root.join("overworld");
+        let tsy_dir = root.join("tsy");
+        fs::create_dir_all(&overworld_dir).expect("overworld fixture dir should be creatable");
+        fs::create_dir_all(&tsy_dir).expect("TSY fixture dir should be creatable");
+        let overworld_manifest = overworld_dir.join("manifest.json");
+        let tsy_manifest = tsy_dir.join("manifest.json");
+        write_bootstrap_manifest(&overworld_manifest, "stone");
+        write_bootstrap_manifest(&tsy_manifest, "deepslate");
+
+        let bootstrap = prepare_raster_bootstrap_with_nbt_preflight(
+            RasterBootstrapConfig {
+                manifest_path: overworld_manifest,
+                raster_dir: overworld_dir,
+            },
+            Some(RasterBootstrapConfig {
+                manifest_path: tsy_manifest,
+                raster_dir: tsy_dir,
+            }),
+            &bootstrap_test_biomes(),
+            nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+                nbt_registry::DecorationNbtRegistry::empty(),
+                Vec::new(),
+            ),
+        )
+        .expect("diagnostic-free sources must commit one validated bootstrap bundle");
+        assert!(bootstrap.decoration_registry.is_empty());
+        assert!(bootstrap.providers.tsy.is_some());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn raster_bootstrap_keeps_absent_tsy_optional_but_configured_missing_tsy_is_fatal() {
+        let root = bootstrap_temp_dir("optional-tsy");
+        let overworld_dir = root.join("overworld");
+        fs::create_dir_all(&overworld_dir).expect("overworld fixture dir should be creatable");
+        let overworld_manifest = overworld_dir.join("manifest.json");
+        write_bootstrap_manifest(&overworld_manifest, "stone");
+        let overworld_config = RasterBootstrapConfig {
+            manifest_path: overworld_manifest,
+            raster_dir: overworld_dir,
+        };
+        let biomes = bootstrap_test_biomes();
+
+        let without_tsy = prepare_raster_bootstrap_with_nbt_preflight(
+            overworld_config.clone(),
+            None,
+            &biomes,
+            nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+                nbt_registry::DecorationNbtRegistry::empty(),
+                Vec::new(),
+            ),
+        )
+        .expect("absent TSY configuration remains backward-compatible");
+        assert!(without_tsy.providers.tsy.is_none());
+
+        let missing_tsy = root.join("missing-tsy/manifest.json");
+        let error = match prepare_raster_bootstrap_with_nbt_preflight(
+            overworld_config,
+            Some(RasterBootstrapConfig {
+                raster_dir: missing_tsy.parent().unwrap().to_path_buf(),
+                manifest_path: missing_tsy.clone(),
+            }),
+            &biomes,
+            nbt_registry::DecorationNbtPreflight::from_parts_for_tests(
+                nbt_registry::DecorationNbtRegistry::empty(),
+                Vec::new(),
+            ),
+        ) {
+            Ok(_) => panic!("configured missing TSY manifest must be fatal"),
+            Err(error) => error,
+        };
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.starts_with("tsy: manifest:")
+                && diagnostic.contains(missing_tsy.to_string_lossy().as_ref())
+        }));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn configured_tsy_manifest_path_is_optional_but_preserved_when_present() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        struct RestoreEnv(Option<std::ffi::OsString>);
+        impl Drop for RestoreEnv {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var(TSY_RASTER_PATH_ENV_VAR, value),
+                    None => std::env::remove_var(TSY_RASTER_PATH_ENV_VAR),
+                }
+            }
+        }
+
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os(TSY_RASTER_PATH_ENV_VAR);
+        let _restore = RestoreEnv(previous);
+
+        std::env::remove_var(TSY_RASTER_PATH_ENV_VAR);
+        assert!(configured_tsy_raster_bootstrap()
+            .expect("an unconfigured TSY raster remains backward-compatible")
+            .is_none());
+
+        std::env::set_var(TSY_RASTER_PATH_ENV_VAR, "");
+        assert!(configured_tsy_raster_bootstrap()
+            .expect("an empty TSY raster path remains disabled")
+            .is_none());
+
+        let missing = std::env::temp_dir().join(format!(
+            "bong-registry-datafication-missing-tsy-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&missing);
+        std::env::set_var(TSY_RASTER_PATH_ENV_VAR, &missing);
+        let config = configured_tsy_raster_bootstrap()
+            .expect("configured path parsing must not hide a later loader failure")
+            .expect("configured TSY path must produce a bootstrap config");
+        assert_eq!(config.manifest_path, missing);
+        assert_eq!(config.raster_dir, missing.parent().unwrap());
+    }
 
     #[test]
     fn set_mineral_block_writes_matching_vanilla_block() {
