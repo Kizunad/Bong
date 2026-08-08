@@ -50,7 +50,7 @@ bug-hunt round1 confirmed（fix_pr 类，7 条）。可逐个直接修，但归�
 | P3 TSY collapse route 重复注册 | `client/src/main/java/com/bong/client/network/ServerDataRouter.java:193` 当前只注册一次 | `already-fixed/invalid`（already-fixed） | commit `4478c6ff5` / PR #576 | 仅归档 |
 | P4 quota release 并发丢更新 | `server/src/persistence/mod.rs:3338-3358` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10703-10782` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `230b9b784` / PR #590 | 仅归档 |
 | P5 ascension completion 并发丢更新 | `server/src/persistence/mod.rs:3158-3181` 已使用 IMMEDIATE transaction，`server/src/persistence/mod.rs:10573-10664` 锁行为 | `already-fixed/invalid`（already-fixed） | commit `1f5d30580` / PR #585 | 仅归档 |
-| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:5246-5300` 先写 bundle；`open_connection`、`connection.transaction()`、index upsert 与 hot-row 删除均位于 `persisted` 补偿闭包内，任一失败均进入 `rollback_file`；`npc_archive_transaction_begin_failure_restores_previous_bundle` 等回归测试锁定失败原子性 | `already-fixed/invalid`（already-fixed） | R3 `docs/plan-refactor-persistence-slices-v1.md`；commit `57d6801b03b09a0c10b79a0cc0cca22c252642b4` / 2026-08-05 | 已由 R3 交付并闭环，仅归档，不再作为 live 吸收项 |
+| P6 NPC deceased archive DB-open rollback | `server/src/persistence/mod.rs:5931-5982`（`persist_npc_deceased_archive_with_hooks`）先写 bundle；`open_connection`、`connection.transaction()`、index upsert 与 hot-row 删除均位于 `persisted` 补偿闭包内，任一失败均进入 `rollback_file`；`npc_archive_transaction_begin_failure_restores_previous_bundle` 等回归测试锁定失败原子性 | `already-fixed/invalid`（already-fixed） | R3 `docs/plan-refactor-persistence-slices-v1.md`；commit `57d6801b03b09a0c10b79a0cc0cca22c252642b4` / 2026-08-05 | 已由 R3 交付并闭环，仅归档，不再作为 live 吸收项 |
 
 ## Finish Evidence
 
