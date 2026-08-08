@@ -3301,8 +3301,9 @@ mod tests {
             let mut z = zone();
             z.spirit_qi = zone_qi;
             let mut zones = ZoneRegistry {
-            spatial_revision: 0,
-            zones: vec![z] };
+                spatial_revision: 0,
+                zones: vec![z],
+            };
             let mut ledger = WorldQiAccount::default();
 
             assert!(
@@ -3334,7 +3335,8 @@ mod tests {
         z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.01;
         let mut zones = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
         let mut ledger = WorldQiAccount::default();
 
         let transfer = apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger)
@@ -3363,7 +3365,8 @@ mod tests {
         z.spirit_qi = 0.8;
         let mut zones = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
         let mut ledger = WorldQiAccount::default();
 
         for _ in 0..10_000 {
@@ -3398,7 +3401,8 @@ mod tests {
         z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.001;
         let mut zones = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
         let mut ledger = WorldQiAccount::default();
 
         // war_multiplier 拉到 10x，即便如此也不能把 zone 拉穿地板。
@@ -6412,7 +6416,8 @@ mod tests {
         z.spirit_qi = 0.1; // 低于 default threshold 0.4 -> background zone
         let registry = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
 
         let mut app = migration_test_app(registry, store);
         app.update();
@@ -6500,7 +6505,8 @@ mod tests {
         z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高凝脉/固元/通灵命中率
         let registry = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
 
         let mut app = migration_test_app(registry, store);
         app.update();
@@ -6567,7 +6573,8 @@ mod tests {
         z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高高境界命中率，确保有 realm 变化分支被覆盖
         let registry = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
 
         let mut app = migration_test_app(registry, store);
         app.update();
@@ -6750,7 +6757,8 @@ mod tests {
         z.spirit_qi = 0.1;
         let registry = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
         let mut app = migration_test_app(registry, store);
 
         // 直接调用底层写函数验证返回值语义（true=成功/false=失败），不靠系统副作用间接推断。
@@ -6838,7 +6846,8 @@ mod tests {
         z.spirit_qi = 0.1;
         let registry = ZoneRegistry {
             spatial_revision: 0,
-            zones: vec![z] };
+            zones: vec![z],
+        };
         let mut app = migration_test_app(registry, store);
         app.update();
 
