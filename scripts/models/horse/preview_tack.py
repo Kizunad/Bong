@@ -49,9 +49,11 @@ VIEWS = {
                ("后 rear", 4.0, 18.0), ("底（看肚带）", 96.0, -60.0)),
     "rein": (("侧 side", 90.0, 2.0), ("斜前 3/4", 150.0, 10.0),
              ("正面（看鼻革绕圈）", 178.0, 4.0), ("下（看咽革）", 120.0, -46.0)),
+    "bard": (("侧 side", 90.0, 6.0), ("斜前 3/4", 142.0, 14.0),
+             ("后（看搭后）", 6.0, 22.0), ("前（看当胸）", 178.0, 8.0)),
 }
 # 局部特写取哪一簇件（蹄铁四只分散在四角，按整体取景一样看不清）
-FOCUS_PREFIX = {"shoe": "shoe_f_l_", "saddle": "saddle_", "rein": "rein_"}
+FOCUS_PREFIX = {"shoe": "shoe_f_l_", "saddle": "saddle_", "rein": "rein_", "bard": "bard_"}
 
 
 def _els(path: Path, prefix: str | None = None) -> list[dict]:
@@ -111,6 +113,26 @@ def one_kind(kind: str, pk: str, cell: int = 300) -> None:
     rows += [(spec.label, [(v, render(on_horse(tk), yaw=y, pitch=p, size=cell, bg=BG)[0]) for v, y, p in far])
              for tk, spec in K.table.items()]
     grid(rows, cell, f"{K.label}三档 · {PROFILES[pk].label} · 整只（正常观看距离）").save(OUT / f"{kind}_on_horse.png")
+
+    # 整套穿戴：判据只回答"甲与鞍没撞上"。撞没撞上和**穿全了好不好看**是两件事，
+    # 后者只有把四种马具装在同一匹马上才看得见——甲让开鞍位留下的那条空档，究竟是
+    # "给鞍留的位置"还是"一个洞"，就看这张图。
+    if kind == "bard":
+        from gen_tack import SUITS
+
+        def suit(tk: str) -> Path:
+            return STAGES / f"HorseSuit_{tk}_{pk}_on_horse.bbmodel"
+
+        if suit(next(iter(SUITS))).is_file():
+            rows = [("未装备（对照）", [(v, render(FINAL / f"HorsePelt_rust_{pk}.bbmodel",
+                                                  yaw=y, pitch=p, size=cell, bg=BG)[0])
+                                        for v, y, p in far])]
+            rows += [(f"{K.table[tk].label} 全套", [(v, render(suit(tk), yaw=y, pitch=p,
+                                                              size=cell, bg=BG)[0])
+                                                    for v, y, p in far]) for tk in SUITS]
+            grid(rows, cell, f"整套穿戴 · {PROFILES[pk].label}（甲 + 鞍 + 缰 + 蹄铁）").save(
+                OUT / "bard_suit.png")
+            print(f"→ {(OUT / 'bard_suit.png').relative_to(REPO)}")
 
     # 动画连拍：静止姿贴合不代表跑起来还贴合。取用料最全的那一档，袭步 + 倒毙各一条。
     import render_anim as RA
