@@ -638,7 +638,7 @@ impl PersistenceSliceRegistry {
     }
 
     #[cfg(test)]
-    fn activate_test_subject<T, E>(
+    pub(in crate::persistence) fn activate_test_subject<T, E>(
         &self,
         load: SliceLoad<T, E>,
         slice_id: SliceId,
