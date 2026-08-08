@@ -6,7 +6,7 @@
 //! / `npc_skill::tests::world_with_events`），同样由 `P5_SKILL_VFX_WIRING` 表驱动。
 //!
 //! 清单**不可手改**——唯一重生成入口：
-//! `cd server && BONG_REGEN_VFX_MANIFEST=1 cargo test skill_vfx_wiring`。
+//! `BONG_REGEN_VFX_MANIFEST=1 scripts/build-token.sh cargo test skill_vfx_wiring`。
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use super::skill_vfx_wiring::{wiring_for, SkillVfxWiring, P5_SKILL_VFX_WIRING};
 use super::vfx_event_emit::{vfx_default_priority, VfxPriority};
 
 const REGEN_HINT: &str = "清单由 P5_SKILL_VFX_WIRING 单向生成、禁止手改；重生成：\
-    cd server && BONG_REGEN_VFX_MANIFEST=1 cargo test skill_vfx_wiring";
+    BONG_REGEN_VFX_MANIFEST=1 scripts/build-token.sh cargo test skill_vfx_wiring";
 
 fn manifest_path() -> PathBuf {
     PathBuf::from(concat!(

@@ -165,7 +165,7 @@ const fixes = await parallel(toFix.map((x, i) => () =>
     + '     b. The test caster/defender entity needs a CurrentDimension component (real players get it at spawn; test helpers often dont) — without it find_zone returns None and the credit routes to an Overflow account, not the zone.\n'
     + '     c. Credit the ACTUAL clamped deduction (before-after, or amount.min(qi_current.max(0))), NOT the requested amount — over-crediting creates qi (CodeRabbit flags this Critical).\n'
     + '     d. You CANNOT run the tests (rule 3 forbids the build) — so get these RIGHT BY CONSTRUCTION; a test that compiles can still fail at runtime, and the orchestrator will bounce it back. Avoid float equality at clamp boundaries (use the real computed value, not a hardcoded integer).\n'
-    + '3. Do NOT run cargo build / gradle build (full worktree compile blows up disk). At most `cargo check` one crate or read-review.\n'
+    + '3. Do NOT run full worktree builds (they blow up disk). At most run `scripts/build-token.sh cargo check` for one crate or read-review.\n'
     + '4. When done: git checkout -b bughunt-' + ROUND + '-' + i + '-' + x.finding.id + ' && git add <changes> && git commit && git push -u origin HEAD. Return the branch name.\n'
     + '5. Only touch files needed for THIS bug; no opportunistic refactor. `git add` ONLY your changed .rs/.java files by path (never `git add -A` — it sweeps untracked junk: wf-*.mjs/snapshots/zips).\n'
     + 'If it turns out not to be a real bug or the fix needs a design decision / spans many modules, set status=gave_up and explain (better unfixed than wrongly changed).',

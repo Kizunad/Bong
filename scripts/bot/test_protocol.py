@@ -1073,7 +1073,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
             'export BONG_ASSETS_DIR="$ROOT/server"',
             'export BONG_DEV_MODE=1',
-            'exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
+            'exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, launch)

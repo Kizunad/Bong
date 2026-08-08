@@ -812,6 +812,12 @@ mod tests {
 
     use valence::prelude::{App, Events, Position, Update};
 
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -895,7 +901,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -967,7 +973,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1058,7 +1064,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1118,7 +1124,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1201,7 +1207,7 @@ mod tests {
     fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 400 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1747,7 +1753,7 @@ mod tests {
 
     #[test]
     fn antidote_success_removes_poison_without_restoring_capacity() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 30 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1796,7 +1802,7 @@ mod tests {
 
     #[test]
     fn antidote_failure_severs_meridian_without_near_death() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 31 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1851,7 +1857,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 50 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1955,7 +1961,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 60 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -2024,7 +2030,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 70 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();

@@ -20185,9 +20185,10 @@ mod persistence_tests {
 
         let old_values = [
             (PENDING_INFLOW_ACCOUNT_ID, 11.0),
-            (QI_FLOW_OVERFLOW_ACCOUNT_ID, 17.0),
             (DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, 22.0),
             (DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, 33.0),
+            // 唯一的旧值：seed 循环后 SQLite 中 qi_flow_overflow 以最后一次写入为准（44.0），
+            // 若这里重复列出 17.0 会让回滚断言拿旧账对拍新账而误红。
             (QI_FLOW_OVERFLOW_ACCOUNT_ID, 44.0),
         ];
         let mut connection = open_persistence_connection(&settings).expect("db should open");

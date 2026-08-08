@@ -11163,7 +11163,7 @@ mod tests {
 
     /// 对比 proto (prost) 与 JSON (serde_json) 的编解码性能和体积。
     ///
-    /// 运行：`cargo test proto_vs_json_benchmark -- --ignored --nocapture`
+    /// 运行：`scripts/build-token.sh cargo test proto_vs_json_benchmark -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn proto_vs_json_benchmark() {

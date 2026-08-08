@@ -185,9 +185,10 @@ fn joined_client_hydrates_shrine_anchor_from_sqlite_with_optional_resource() {
 // inserted `Lifecycle::default()` unconditionally for every newly-joined client, wiping
 // any persisted death/revival state machine (state / fortune_remaining / awaiting_decision
 // / deadline ticks) on every reconnect. These tests lock the fixed behavior: a matching
-// persisted slice must be reused verbatim, a stale/foreign character_id must NOT be reused,
-// spawn_anchor must still come from the authoritative shrine table (not a stale JSON
-// snapshot), and the "never persisted" path must still fall back to a fresh default.
+// persisted slice must be reused without resetting state, a stale/foreign character_id must NOT be
+// reused, spawn_anchor must still come from the authoritative shrine table (not a stale JSON
+// snapshot), deadlines must retain their remaining window after wall-clock rebasing, and the
+// "never persisted" path must still fall back to a fresh default.
 
 /// Seeds `player_core` for `username` and returns the freshly-computed "current character"
 /// id exactly as `attach_combat_bundle_to_joined_clients` would compute it.
@@ -225,6 +226,10 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         weakened_until_tick: None,
         state: LifecycleState::AwaitingRevival,
     };
+    let before_save_wall = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs() as i64;
     save_player_lifecycle_slice(&persistence, "Alice", &persisted, 0)
         .expect("save lifecycle slice should succeed");
     let connection = Connection::open(persistence.db_path()).expect("sqlite db should open");
@@ -264,20 +269,27 @@ fn joined_client_hydrates_persisted_lifecycle_state_with_zero_fortune_and_pendin
         Some(RevivalDecision::Tribulation { chance: 0.15 }),
         "待决策的渡劫结果必须原样恢复，永久终结风险不能被绕过"
     );
-    let restored_deadline = lifecycle
-        .revival_decision_deadline_tick
-        .expect("persisted revival decision deadline should be restored");
     let after_load_wall = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock should be after unix epoch")
-        .as_secs();
-    let max_elapsed_ticks = after_load_wall
-        .saturating_sub(persisted_last_updated_wall as u64)
-        .saturating_mul(crate::combat::components::TICKS_PER_SECOND);
-    let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
+        .as_secs() as i64;
+    // 生产折算锚点是落盘行的 last_updated_wall（translate_lifecycle_deadline_tick_across_restart），
+    // 断言必须与生产同锚点；保存前采样仅作 fixture 顺序不变量。
     assert!(
-        (earliest_valid_deadline..=9_999).contains(&restored_deadline),
-        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {restored_deadline}，有效区间 {earliest_valid_deadline}..=9999"
+        before_save_wall <= persisted_last_updated_wall,
+        "fixture 前置：落盘时间戳不得早于保存前采样；before_save {before_save_wall}，persisted {persisted_last_updated_wall}"
+    );
+    let max_elapsed_ticks = after_load_wall
+        .saturating_sub(persisted_last_updated_wall)
+        .max(0) as u64
+        * crate::combat::components::TICKS_PER_SECOND;
+    let earliest_valid_deadline = 9_999_u64.saturating_sub(max_elapsed_ticks);
+    let loaded_deadline = lifecycle
+        .revival_decision_deadline_tick
+        .expect("awaiting revival deadline should survive hydration");
+    assert!(
+        (earliest_valid_deadline..=9_999).contains(&loaded_deadline),
+        "重连应保留决策窗口并只扣除持久化时间戳后的真实墙钟流逝；实际 {loaded_deadline}，有效区间 {earliest_valid_deadline}..=9999",
     );
     assert_eq!(lifecycle.death_count, 2);
 
