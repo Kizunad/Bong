@@ -305,15 +305,13 @@ fn begin_known_techniques_retry(
     frame: u64,
 ) -> bool {
     let entry = state.retries.entry(subject.to_string()).or_default();
-    if entry.terminal || frame < entry.next_attempt_frame {
+    if frame < entry.next_attempt_frame {
         return false;
     }
-    if entry.attempts >= KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS {
-        entry.terminal = true;
-        entry.next_attempt_frame = u64::MAX;
-        return false;
-    }
-    entry.attempts = entry.attempts.saturating_add(1);
+    entry.attempts = entry
+        .attempts
+        .saturating_add(1)
+        .min(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS);
     true
 }
 
@@ -323,16 +321,15 @@ fn record_known_techniques_retry_failure(
     frame: u64,
 ) -> bool {
     let entry = state.retries.entry(subject.to_string()).or_default();
-    if entry.attempts >= KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS {
-        entry.terminal = true;
-        entry.next_attempt_frame = u64::MAX;
-        return true;
+    let capped = entry.attempts >= KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS;
+    if capped {
+        entry.attempts = KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS;
     }
     let backoff_shift = entry.attempts.saturating_sub(1).min(6);
     let backoff = 1_u64 << backoff_shift;
     entry.next_attempt_frame =
         frame.saturating_add(backoff.min(KNOWN_TECHNIQUES_RETRY_MAX_BACKOFF_FRAMES));
-    false
+    capped
 }
 
 fn known_techniques_retry_log_allowed(
@@ -1375,18 +1372,18 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
                 );
             }
             Err(error) => {
-                let (terminal, should_log) = {
+                let (at_retry_cap, should_log) = {
                     let mut state = world.resource_mut::<KnownTechniquesReconnectState>();
-                    let terminal =
+                    let at_retry_cap =
                         record_known_techniques_retry_failure(&mut state, &subject, frame);
                     let should_log =
                         known_techniques_retry_log_allowed(&mut state, &subject, frame);
-                    (terminal, should_log)
+                    (at_retry_cap, should_log)
                 };
                 if should_log {
-                    if terminal {
+                    if at_retry_cap {
                         tracing::error!(
-                            "[bong][persistence] known techniques disconnect flush exhausted retries for `{subject}`: {error}"
+                            "[bong][persistence] known techniques disconnect flush remains unavailable at the retry cap for `{subject}`; retry scheduled: {error}"
                         );
                     } else {
                         tracing::warn!(
@@ -9797,7 +9794,7 @@ mod persistence_tests {
     }
 
     #[test]
-    fn known_techniques_retry_uses_bounded_backoff_terminal_state_and_log_coalescing() {
+    fn known_techniques_retry_uses_bounded_backoff_capped_attempts_and_log_coalescing() {
         let subject = "offline:retry-boundaries";
         let mut state = KnownTechniquesReconnectState::default();
 
@@ -9810,13 +9807,24 @@ mod persistence_tests {
             );
             assert_eq!(
                 state.retries.get(subject).map(|entry| entry.attempts),
-                Some((index + 1) as u8),
+                Some(((index + 1) as u8).min(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS)),
                 "retry attempts must count actual attempts, not skipped frames"
             );
-            if index < retry_frames.len() - 1 {
-                assert!(!record_known_techniques_retry_failure(
-                    &mut state, subject, frame
-                ));
+            let at_cap = index >= retry_frames.len() - 1;
+            assert_eq!(
+                record_known_techniques_retry_failure(&mut state, subject, frame),
+                at_cap,
+                "only the retry cap reports back to the caller"
+            );
+            assert!(
+                state
+                    .retries
+                    .get(subject)
+                    .map(|entry| entry.next_attempt_frame > frame)
+                    .unwrap_or(false),
+                "every failure must schedule a later retry frame, never a terminal one"
+            );
+            if !at_cap {
                 assert_eq!(
                     state
                         .retries
@@ -9825,16 +9833,37 @@ mod persistence_tests {
                     Some(retry_frames[index + 1]),
                     "failure must schedule the documented exponential backoff"
                 );
-            } else {
-                assert!(record_known_techniques_retry_failure(
-                    &mut state, subject, frame
-                ));
-                let entry = state.retries.get(subject).expect("terminal retry entry");
-                assert!(entry.terminal);
-                assert_eq!(entry.next_attempt_frame, u64::MAX);
-                assert!(!begin_known_techniques_retry(&mut state, subject, frame));
             }
         }
+
+        // 8 次瞬态失败后不得永久终止：attempts 停在 cap，backoff 继续按 64 帧上限调度。
+        let entry = state.retries.get(subject).expect("retry entry");
+        assert_eq!(entry.attempts, KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS);
+        let next_frame = entry.next_attempt_frame;
+        assert!(!begin_known_techniques_retry(
+            &mut state,
+            subject,
+            next_frame - 1
+        ));
+        assert!(begin_known_techniques_retry(
+            &mut state, subject, next_frame
+        ));
+        assert_eq!(
+            state.retries.get(subject).map(|entry| entry.attempts),
+            Some(KNOWN_TECHNIQUES_RETRY_MAX_ATTEMPTS),
+            "attempts must stay capped at the retry limit, not grow"
+        );
+        assert!(record_known_techniques_retry_failure(
+            &mut state, subject, next_frame
+        ));
+        assert!(
+            state
+                .retries
+                .get(subject)
+                .map(|entry| entry.next_attempt_frame > next_frame)
+                .unwrap_or(false),
+            "post-cap failures must keep scheduling retries"
+        );
 
         assert!(known_techniques_retry_log_allowed(&mut state, subject, 0));
         assert!(!known_techniques_retry_log_allowed(&mut state, subject, 1));
