@@ -56,9 +56,35 @@ class ProtoBreakingBaseRefContractTest(unittest.TestCase):
         return sha
 
     def _run(
-        self, *, proto_kind: str, base_ref: str = "base"
+        self,
+        *,
+        proto_kind: str,
+        base_ref: str = "base",
+        advance_remote_base: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], str, pathlib.Path]:
         sha = self._commit_base(proto_kind=proto_kind)
+        if advance_remote_base:
+            # 让远端 base 前进一个提交：checkout 里已有的 origin/base 追踪
+            # ref 随即落后，脚本 fetch 若不带 '+' 前缀会被 git 以
+            # non-fast-forward 拒绝（持久 runner / fetch-depth 0 场景）。
+            (self.seed / "README").write_text("advance\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(self.seed), "add", "README"], check=True)
+            subprocess.run(
+                ["git", "-C", str(self.seed), "commit", "-m", "advance"],
+                check=True,
+                capture_output=True,
+            )
+            sha = subprocess.run(
+                ["git", "-C", str(self.seed), "rev-parse", "HEAD"],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "-C", str(self.seed), "push", "origin", "HEAD:base"],
+                check=True,
+                capture_output=True,
+            )
         scripts = self.checkout / "scripts"
         scripts.mkdir()
         local_check = scripts / CHECK.name
@@ -114,6 +140,19 @@ class ProtoBreakingBaseRefContractTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("skipping breaking check (first PR)", result.stdout)
         self.assertFalse(buf_log.exists())
+
+    def test_stale_local_base_ref_is_force_updated(self) -> None:
+        # 持久 runner / fetch-depth 0 的 checkout 里 refs/remotes/origin/base
+        # 已存在但落后于远端。脚本的 fetch 必须能强制更新该 ref（'+' 前缀），
+        # 否则 git 拒绝 non-fast-forward 更新，set -euo pipefail 下整个 step 失败。
+        # buf 参数必须指向推进后的新 base commit —— 证明 fetch 真的刷新了陈旧 ref。
+        result, sha, buf_log = self._run(proto_kind="tree", advance_remote_base=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("non-fast-forward", result.stderr)
+        self.assertEqual(
+            buf_log.read_text(encoding="utf-8").strip(),
+            f"breaking --against ../.git#ref={sha},subdir=proto",
+        )
 
     def test_ci_invokes_the_executable_contract(self) -> None:
         workflow = (ROOT / ".github/workflows/e2e.yml").read_text(encoding="utf-8")
