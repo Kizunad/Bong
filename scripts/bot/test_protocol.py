@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import math
 import os
 import pathlib
 import re
@@ -74,6 +75,10 @@ from bot.scenarios.terrain_north_rift_scorch_zone_identity import (  # noqa: E40
     REQUIRED_ENV as NORTH_RIFT_REQUIRED_ENV,
     _assert_ambient as north_rift_assert_ambient,
     _position_matches as north_rift_position_matches,
+)
+from bot.scenarios.terrain_join_chunk_delivery import (  # noqa: E402
+    EXPECTED_CI_CLUSTERS,
+    _assert_expected_cluster,
 )
 from bot.run_scenarios import (  # noqa: E402
     ScenarioEnv,
@@ -1032,9 +1037,25 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 },
                 "ambient fixture mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
             ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "bogus"},
+                "BOT_E2E_FALLBACK_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "fallback mode 不接受 BONG_TERRAIN_RASTER_PATH",
+            ),
         )
         isolated = (
             "BOT_E2E_AMBIENT_FIXTURE_MODE",
+            "BOT_E2E_FALLBACK_MODE",
             "BOT_E2E_REUSE",
             "BOT_E2E_HOST",
             "BOT_E2E_PORT",
@@ -1058,6 +1079,16 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(expected, result.stderr)
+
+    def test_fallback_reuse_guard_precedes_reuse_normalization(self):
+        normalization = self.source.index("  REUSE=0")
+        guard = self.source.index("BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥")
+        self.assertLess(
+            guard,
+            normalization,
+            "fallback×reuse 互斥守卫必须先于 REUSE 归一化执行；"
+            "归一化在前会把 REUSE 就地改成 0，守卫校验的是已变异值而非调用方原始请求，排除被绕过",
+        )
 
     def test_generic_no_raster_generates_tokenized_fixture_before_tool_failure(self):
         root = pathlib.Path(__file__).parents[2]
@@ -1646,6 +1677,124 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     "runner-failed" if runner_exit else "runner-complete",
                 )
                 self.assertEqual(watcher_status.strip(), "complete")
+
+
+class FallbackScenarioPinTest(unittest.TestCase):
+    """finding 6：CI 场景钉必须由 zones.json 权威数据 + 生产选择数学复现。
+
+    EXPECTED_CI_CLUSTERS 是场景的验收定义，但钉本身必须能由权威配置独立推导：
+    任何一端漂移（改锚点坐标/半径/权重、改 FNV 种子串、改 cluster 语义）都撞红。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        root = pathlib.Path(__file__).parents[2]
+        with (root / "server/zones.json").open(encoding="utf-8") as fh:
+            zones = json.load(fh)
+        cls.spawn_zone = next(
+            zone for zone in zones["zones"] if zone["name"] == "spawn"
+        )
+        cls.anchors = cls.spawn_zone["spawn_distribution"]
+
+    def _config_anchor(self, x: float, z: float) -> dict:
+        for anchor in self.anchors:
+            if (
+                abs(anchor["anchor"][0] - x) < 1e-6
+                and abs(anchor["anchor"][2] - z) < 1e-6
+            ):
+                return anchor
+        raise AssertionError(f"zones.json 没有 spawn_distribution 锚点 ({x},{z})")
+
+    def test_pins_are_bijective_with_zones_json_anchors(self):
+        self.assertEqual(
+            len(EXPECTED_CI_CLUSTERS),
+            len(self.anchors),
+            "每个 CI pin 必须对应一个配置锚点，且数量必须一致",
+        )
+        pinned = set()
+        for tag, (anchor, radius, cluster) in EXPECTED_CI_CLUSTERS.items():
+            config = self._config_anchor(anchor[0], anchor[1])
+            self.assertAlmostEqual(
+                config["radius"],
+                radius,
+                places=6,
+                msg=f"tag={tag} 的 pin radius 必须等于 zones.json 权威半径",
+            )
+            pinned.add((config["anchor"][0], config["anchor"][2]))
+        for anchor in self.anchors:
+            self.assertIn(
+                (anchor["anchor"][0], anchor["anchor"][2]),
+                pinned,
+                "配置的每个出生锚点都必须被某个 CI pin 覆盖",
+            )
+
+    def _rust_fnv1a(self, seed: str) -> int:
+        hash_value = 0xCBF29CE484222325
+        for byte in f"InitialLogin:{seed}".encode("utf-8"):
+            hash_value ^= byte
+            hash_value = (hash_value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+        return hash_value
+
+    @staticmethod
+    def _rotl(value: int, shift: int) -> int:
+        return ((value << shift) | (value >> (64 - shift))) & 0xFFFFFFFFFFFFFFFF
+
+    def _mirror_select(self, username: str) -> tuple[float, float]:
+        """镜像 spawn_selector::select 的生产数学：FNV-1a → 加权随机 → 圆盘采样 → 钳制。"""
+        hash_value = self._rust_fnv1a(username)
+        total = sum(anchor["weight"] for anchor in self.anchors)
+        pick = hash_value % total
+        selected = None
+        for anchor in self.anchors:
+            if pick < anchor["weight"]:
+                selected = anchor
+                break
+            pick -= anchor["weight"]
+        assert selected is not None
+
+        radius_bits = self._rotl(hash_value, 17) & 0xFFFF
+        angle_bits = self._rotl(hash_value, 41) & 0xFFFF
+        radius = selected["radius"] * math.sqrt(radius_bits / 65535.0)
+        angle = (angle_bits / 65535.0) * 2.0 * math.pi
+        x = selected["anchor"][0] + radius * math.cos(angle)
+        z = selected["anchor"][2] + radius * math.sin(angle)
+
+        bounds_min, bounds_max = self.spawn_zone["aabb"]["min"], self.spawn_zone["aabb"]["max"]
+        x = min(max(x, bounds_min[0]), bounds_max[0])
+        z = min(max(z, bounds_min[2]), bounds_max[2])
+        blocked = [
+            (tile[0], tile[1])
+            for tile in self.spawn_zone.get("blocked_tiles", [])
+        ]
+        if (math.floor(x), math.floor(z)) in blocked:
+            x = min(max(selected["anchor"][0], bounds_min[0]), bounds_max[0])
+            z = min(max(selected["anchor"][2], bounds_min[2]), bounds_max[2])
+        return x, z
+
+    def test_ci_tags_mirror_production_selection_into_pinned_clusters(self):
+        expected_chunks = {}
+        for tag in ("J1", "J2", "FC"):
+            username = f"Bci{tag}"
+            x, z = self._mirror_select(username)
+            # 走场景自己的验收函数（raise BotAssertionError），钉/半径/簇映射全部由它判定
+            _assert_expected_cluster("ci", tag, (x, z))
+            chunk = (math.floor(x / 16), math.floor(z / 16))
+            self.assertNotIn(
+                chunk,
+                expected_chunks.values(),
+                f"B{username} 必须命中与既有 tag 不同的出生 chunk",
+            )
+            expected_chunks[tag] = chunk
+        self.assertEqual(len(expected_chunks), 3)
+
+        # 同名玩家重连契约（#846 原始触发面）：同 seed 复算必须逐位稳定。
+        for tag in ("J1", "J2", "FC"):
+            username = f"Bci{tag}"
+            self.assertEqual(
+                self._mirror_select(username),
+                self._mirror_select(username),
+                f"B{username} 重连复算必须稳定落在同一出生点",
+            )
 
 
 class NorthRiftPreviewHarnessContractTest(unittest.TestCase):
