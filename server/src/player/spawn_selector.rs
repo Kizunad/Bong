@@ -489,6 +489,7 @@ mod tests {
 
     fn synthetic_registry(bounds: (DVec3, DVec3), blocked_tiles: Vec<(i32, i32)>) -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -603,7 +604,10 @@ mod tests {
             .expect("fallback spawn zone should exist")
             .clone();
         empty.patrol_anchors.clear();
-        let registry = ZoneRegistry { zones: vec![empty] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![empty],
+        };
 
         let distribution = distribution_from_zone_patrol_anchors(&registry);
 
