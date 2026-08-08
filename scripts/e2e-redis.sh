@@ -18,6 +18,7 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -853,13 +854,28 @@ port_open() {
 }
 
 start_server_process_group() {
-  local log_file="$1" preview_mode="$2" actual_pgid="" cargo_target owner_pid=""
-  local owner_starttime="" owner_executable_identity="" supervisor="" ready_line="" committed_line=""
+  local log_file="$1" preview_mode="$2" test_override_mode="${3:-0}"
+  local actual_pgid="" cargo_target owner_pid=""
+  local owner_starttime="" owner_executable_identity="" supervisor="" build_token="" ready_line="" committed_line=""
   local owner_snapshot="" control_fd="" ready_fd="" cleanup_status=2
 
   cargo_target="${CARGO_TARGET_DIR:-/tmp/bong-target}"
-  supervisor="${BONG_E2E_SUPERVISOR:-$ROOT/scripts/lib/bong-process-group-supervisor.py}"
-  local server_directory="${BONG_E2E_SERVER_DIRECTORY:-$ROOT/server}"
+  supervisor="$ROOT/scripts/lib/bong-process-group-supervisor.py"
+  build_token="$ROOT/scripts/build-token.sh"
+  local server_directory="$ROOT/server"
+  # Only the in-repo supervisor protocol fixture may opt into replacement binaries.
+  if [ "${BONG_E2E_SUPERVISOR_TEST_MODE:-0}" = "1" ]; then
+    [ "$test_override_mode" = "1" ] || {
+      echo "FAIL: e2e supervisor test overrides require an explicit harness mode" >&2
+      return 2
+    }
+    supervisor="${BONG_E2E_SUPERVISOR:-$supervisor}"
+    build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"
+    server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"
+  elif [ -n "${BONG_E2E_SUPERVISOR:-}${BONG_E2E_BUILD_TOKEN:-}${BONG_E2E_SERVER_DIRECTORY:-}" ]; then
+    echo "FAIL: e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1" >&2
+    return 2
+  fi
   SERVER_PID=""
   SERVER_PGID=""
   SERVER_OWNER_STARTTIME=""
@@ -874,7 +890,7 @@ start_server_process_group() {
       BONG_ROGUE_SEED_COUNT="$([ "$preview_mode" -eq 1 ] && printf '0' || printf '%s' "${BONG_ROGUE_SEED_COUNT:-100}")" \
       BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}" \
       BONG_PREVIEW_MODE="$preview_mode" \
-      python3 "$supervisor" "$server_directory" \
+      python3 "$supervisor" "$server_directory" "$build_token" \
       2>"$log_file"
   }
   owner_pid=""
@@ -1103,7 +1119,7 @@ if ! start_server_process_group "$SERVER_LOG" 0; then
   finalize_failure "server" "failed to establish dedicated server process group; see $SERVER_LOG"
 fi
 
-if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+if wait_for_pattern "$SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
   pass "server world bootstrap"
 else
   finalize_failure "server" "missing world bootstrap anchor in $SERVER_LOG"
@@ -1236,24 +1252,18 @@ run_north_rift_preview() {
   fi
   PERSISTENCE_STASH_READY=1
 
-  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
-  NORTH_RIFT_OPERATOR="B${NORTH_RIFT_RUN_TAG}NRift"
-  export BONG_OPERATORS="$NORTH_RIFT_OPERATOR"
-  export BONG_OPERATORS_ALLOW_OFFLINE=1
   if ! start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1; then
-    unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
     finalize_failure \
       "north-rift-preview" \
       "failed to establish dedicated preview server process group; see $NORTH_RIFT_SERVER_LOG"
   fi
-  unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
 
   if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
     finalize_failure \
       "north-rift-preview" \
       "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
   fi
-  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
     finalize_failure \
       "north-rift-preview" \
       "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
@@ -1304,6 +1314,7 @@ run_north_rift_preview() {
       "$listener_failure; see $NORTH_RIFT_SERVER_LOG"
   fi
 
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
   if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
     python3 "$ROOT/scripts/bot/run_scenarios.py" \
       --host 127.0.0.1 \
