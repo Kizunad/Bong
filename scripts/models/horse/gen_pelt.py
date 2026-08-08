@@ -365,9 +365,12 @@ def finish_of(mat: str) -> Finish:
     return PELT_FINISH[MAT_FINISH[mat]]
 
 
-def _faces(mat: str) -> dict:
+def _faces(mat: str, dims: tuple[float, float, float]) -> dict:
+    """受光 / 背光带只给**窄边**（见 `material.band_faces`）：马背朝天马腹朝地那道明暗
+    是对着圆身子说的；平躺的薄片（花纹、耳廓）顶面就是它最大的一片，刷成受光色是白板。"""
     i = MAT_KEYS.index(mat)
-    return band_faces((i % 8) * SWATCH, (PELT_ROW + i // 8) * SWATCH)
+    return band_faces((i % 8) * SWATCH, (PELT_ROW + i // 8) * SWATCH,
+                      edge=min(dims[0], dims[2]) < dims[1])
 
 
 def extend_texture(data: dict, coat: Coat) -> None:
@@ -445,7 +448,7 @@ class Pelt:
                 "color": 2,
                 "origin": [round(v, 3) for v in (org or [(a + b) / 2 for a, b in zip(f, t)])],
                 "rotation": [round(v, 3) for v in (rot or (0.0, 0.0, 0.0))],
-                "faces": _faces(mat),
+                "faces": _faces(mat, (t[0] - f[0], t[1] - f[1], t[2] - f[2])),
             },
         )
         self.count += 1
