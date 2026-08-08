@@ -104,51 +104,31 @@ fn handle_preview_teleport(
 mod tests {
     use super::*;
     use valence::entity::{HeadYaw, Look};
-    use valence::prelude::{App, Bundle, Component};
+    use valence::prelude::App;
 
-    /// 没有真 valence Client 的最小 stub —— 测试 system 只验 Position/Look/HeadYaw
-    /// 是否被改写，不验 Client 派生的网络副作用。
-    #[derive(Component)]
-    struct MockClient;
-
-    #[derive(Bundle)]
-    struct MockClientBundle {
-        client: MockClient,
-        position: Position,
-        look: Look,
-        head_yaw: HeadYaw,
-    }
-
-    fn handle_preview_teleport_mock(
-        mut events: EventReader<PreviewTeleportRequested>,
-        mut clients: Query<(&mut Position, &mut Look, &mut HeadYaw), With<MockClient>>,
-    ) {
-        for ev in events.read() {
-            let Ok((mut position, mut look, mut head_yaw)) = clients.get_mut(ev.player) else {
-                continue;
-            };
-            position.set(ev.pos);
-            look.yaw = ev.yaw;
-            look.pitch = ev.pitch;
-            head_yaw.0 = ev.yaw;
-        }
+    fn register_real_handler(app: &mut App) {
+        // 与 preview::register 的 BONG_PREVIEW_MODE=1 分支一致：real handler 进统一
+        // 移动 commit set。测试不走 register() 以避免依赖 env（并行测试 race）。
+        app.add_systems(
+            Update,
+            handle_preview_teleport
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        );
     }
 
     #[test]
     fn preview_teleport_event_updates_components() {
         let mut app = App::new();
         app.add_event::<PreviewTeleportRequested>();
-        app.add_systems(Update, handle_preview_teleport_mock);
+        register_real_handler(&mut app);
 
-        let entity = app
-            .world_mut()
-            .spawn(MockClientBundle {
-                client: MockClient,
-                position: Position::new([0.0, 0.0, 0.0]),
-                look: Look::new(0.0, 0.0),
-                head_yaw: HeadYaw(0.0),
-            })
-            .id();
+        // real handler 的 query 带 `With<Client>`——必须 spawn 真 valence Client
+        // （create_mock_client），自定义 stub 会被 query 跳过。
+        let (mut client_bundle, _helper) = valence::testing::create_mock_client("PreviewTp");
+        client_bundle.player.position = Position::new([0.0, 0.0, 0.0]);
+        client_bundle.player.look = Look::new(0.0, 0.0);
+        client_bundle.player.head_yaw = HeadYaw(0.0);
+        let entity = app.world_mut().spawn(client_bundle).id();
 
         app.world_mut().send_event(PreviewTeleportRequested {
             player: entity,
@@ -190,19 +170,15 @@ mod tests {
     fn preview_teleport_event_unknown_player_no_op() {
         let mut app = App::new();
         app.add_event::<PreviewTeleportRequested>();
-        app.add_systems(Update, handle_preview_teleport_mock);
+        register_real_handler(&mut app);
 
-        let real = app
-            .world_mut()
-            .spawn(MockClientBundle {
-                client: MockClient,
-                position: Position::new([10.0, 20.0, 30.0]),
-                look: Look::new(11.0, 22.0),
-                head_yaw: HeadYaw(11.0),
-            })
-            .id();
+        let (mut client_bundle, _helper) = valence::testing::create_mock_client("PreviewTp");
+        client_bundle.player.position = Position::new([10.0, 20.0, 30.0]);
+        client_bundle.player.look = Look::new(11.0, 22.0);
+        client_bundle.player.head_yaw = HeadYaw(11.0);
+        let real = app.world_mut().spawn(client_bundle).id();
 
-        // 故意发给一个 spawn 但不带 MockClient 的 entity（query 查不到）
+        // 故意发给一个 spawn 但不带 Client 的 entity（query 查不到）
         let dangling = app.world_mut().spawn_empty().id();
         app.world_mut().send_event(PreviewTeleportRequested {
             player: dangling,
@@ -224,6 +200,83 @@ mod tests {
         assert!(
             (look.yaw - 11.0).abs() < f32::EPSILON,
             "未匹配的 event 不应改 Look.yaw"
+        );
+    }
+
+    #[test]
+    fn preview_teleport_commits_position_before_lingtian_post_transfer_validation() {
+        // fix-spec-1901-v2 #18：生产 `handle_preview_teleport` 在
+        // AuthoritativePositionCommitSet 内写 Position，灵田 post-transfer validator
+        // 排在 set 之后。本测试 validator 先注册、real handler 后注册（无 .after 边），
+        // 顺序只能由 set 会员提供——删 membership 后 handler 落后 validator → 拒绝 → 红。
+        use crate::lingtian::events::{
+            StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+            StartReplenishRequest, StartTillRequest,
+        };
+        use crate::lingtian::requests::{PendingLingtianRequest, PendingLingtianRequests};
+        use crate::lingtian::session::SessionMode;
+        use crate::lingtian::systems::validate_and_dispatch_lingtian_requests;
+        use crate::world::dimension::DimensionKind;
+        use crate::world::movement_commit::AuthoritativePositionCommitSet;
+        use valence::prelude::{BlockPos, Events};
+
+        let mut app = App::new();
+        app.init_resource::<PendingLingtianRequests>()
+            .add_event::<PreviewTeleportRequested>()
+            .add_event::<StartTillRequest>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<StartDrainQiRequest>()
+            .add_systems(
+                Update,
+                (
+                    validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
+                    handle_preview_teleport.in_set(AuthoritativePositionCommitSet),
+                ),
+            );
+
+        // Mock 客户端起点在远处（1000, 64.5, 1000）——若 handler 不在 commit set 内，
+        // validator 会读到这个远点并拒绝请求。CurrentDimension 是 bong 自定义组件，
+        // create_mock_client 不带，必须手动补（validator 的维度门禁要求）。
+        let (mut client_bundle, _helper) = valence::testing::create_mock_client("PreviewTp");
+        client_bundle.player.position = Position::new([1000.0, 64.5, 1000.0]);
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            crate::world::dimension::CurrentDimension(DimensionKind::Overworld),
+        ));
+
+        app.world_mut()
+            .resource_mut::<PendingLingtianRequests>()
+            .push(PendingLingtianRequest::Till {
+                actor: player,
+                pos: BlockPos::new(0, 64, 0),
+                hoe_instance_id: 7,
+                mode: SessionMode::Manual,
+            });
+
+        // teleport 到目标旁 (2.5, 64.5, 0.5)——距 (0,64,0) 中心 2.0 < 4.5，应放行。
+        app.world_mut().send_event(PreviewTeleportRequested {
+            player,
+            pos: [2.5, 64.5, 0.5],
+            yaw: 0.0,
+            pitch: 0.0,
+        });
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Position>(player).unwrap().get(),
+            valence::prelude::DVec3::new(2.5, 64.5, 0.5),
+            "preview teleport 必须先于 post-transfer 验证提交新位置"
+        );
+        let start_events = app.world().resource::<Events<StartTillRequest>>();
+        assert_eq!(
+            start_events.get_reader().read(start_events).count(),
+            1,
+            "teleport 提交的位置必须被本 tick validator 读到（期望 1 条 StartTillRequest）；\
+             handle_preview_teleport 若不在 AuthoritativePositionCommitSet 内即读到远处位置拒绝"
         );
     }
 
