@@ -279,11 +279,15 @@ struct PendingKnownTechniquesHandoffs(HashMap<String, Entity>);
 impl Resource for PendingKnownTechniquesHandoffs {}
 
 #[derive(Debug, Default)]
+struct PendingKnownTechniquesCandidates(HashMap<String, Vec<Entity>>);
+
+impl Resource for PendingKnownTechniquesCandidates {}
+
+#[derive(Debug, Default)]
 struct KnownTechniquesRetryEntry {
     attempts: u8,
     next_attempt_frame: u64,
     next_log_frame: u64,
-    terminal: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1077,16 +1081,7 @@ fn cleanup_stale_known_techniques_pending(world: &mut World) {
             else {
                 return true;
             };
-            let Some(target) = world.get_entity(entity) else {
-                return true;
-            };
-            let Some(username) = target.get::<Username>() else {
-                return true;
-            };
-            target.get::<Client>().is_none()
-                || target.get::<Despawned>().is_some()
-                || player_username_from_character_id(subject)
-                    .is_none_or(|expected| username.0 != expected)
+            !known_techniques_reconnect_candidate_is_live(world, subject, entity)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -1107,6 +1102,95 @@ fn cleanup_stale_known_techniques_pending(world: &mut World) {
             loads.remove(&subject);
         };
     }
+
+    let subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut stale_candidates = Vec::new();
+    for subject in subjects {
+        let candidates = world
+            .resource::<PendingKnownTechniquesCandidates>()
+            .0
+            .get(&subject)
+            .cloned()
+            .unwrap_or_default();
+        let live = candidates
+            .into_iter()
+            .filter(|entity| known_techniques_reconnect_candidate_is_live(world, &subject, *entity))
+            .collect::<Vec<_>>();
+        if live.is_empty() {
+            stale_candidates.push(subject);
+        } else {
+            world
+                .resource_mut::<PendingKnownTechniquesCandidates>()
+                .0
+                .insert(subject, live);
+        }
+    }
+    for subject in stale_candidates {
+        world
+            .resource_mut::<PendingKnownTechniquesCandidates>()
+            .0
+            .remove(&subject);
+    }
+}
+
+fn known_techniques_reconnect_candidate_is_live(
+    world: &World,
+    subject: &str,
+    entity: Entity,
+) -> bool {
+    let Some(target) = world.get_entity(entity) else {
+        return false;
+    };
+    let Some(username) = target.get::<Username>() else {
+        return false;
+    };
+    target.get::<Client>().is_some()
+        && target.get::<Despawned>().is_none()
+        && player_username_from_character_id(subject).is_some_and(|expected| username.0 == expected)
+}
+
+fn promote_known_techniques_candidate(world: &mut World, subject: &str) {
+    if world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .contains_key(subject)
+        || world
+            .resource::<KnownTechniquesActivations>()
+            .0
+            .contains_key(subject)
+    {
+        return;
+    }
+    let candidate = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .get(subject)
+        .and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .min_by_key(|entity| entity.index())
+        });
+    let Some(entity) = candidate else {
+        return;
+    };
+    world
+        .resource_mut::<PendingKnownTechniquesCandidates>()
+        .0
+        .entry(subject.to_string())
+        .and_modify(|candidates| candidates.retain(|candidate| *candidate != entity));
+    if let Some(mut target) = world.get_entity_mut(entity) {
+        target.remove::<KnownTechniquesReconnectBlocked>();
+    }
+    world
+        .resource_mut::<PendingKnownTechniquesHandoffs>()
+        .0
+        .insert(subject.to_string(), entity);
 }
 
 fn validate_known_techniques_reconnect_target(
@@ -1295,6 +1379,12 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
             world
                 .entity_mut(entity)
                 .insert(KnownTechniquesReconnectBlocked);
+            world
+                .resource_mut::<PendingKnownTechniquesCandidates>()
+                .0
+                .entry(subject.clone())
+                .or_default()
+                .push(entity);
             tracing::warn!(
                 "[bong][persistence] rejecting duplicate known techniques reconnect target for `{subject}`"
             );
@@ -1306,12 +1396,15 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
             .insert(subject, entity);
     }
 
-    let pending_subjects = world
-        .resource::<PendingKnownTechniquesHandoffs>()
+    let candidate_subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
         .0
         .keys()
         .cloned()
         .collect::<Vec<_>>();
+    for subject in candidate_subjects {
+        promote_known_techniques_candidate(world, &subject);
+    }
 
     let disconnected_subjects = world
         .resource::<KnownTechniquesActivations>()
@@ -1394,6 +1487,22 @@ pub(crate) fn dispatch_known_techniques_reconnects(world: &mut World) {
             }
         }
     }
+
+    let candidate_subjects = world
+        .resource::<PendingKnownTechniquesCandidates>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for subject in candidate_subjects {
+        promote_known_techniques_candidate(world, &subject);
+    }
+    let pending_subjects = world
+        .resource::<PendingKnownTechniquesHandoffs>()
+        .0
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
 
     // A subject that is still pending reconnect is saved by the handoff dispatcher below;
     // keeping its retry entry here would double-count attempts and alter the handoff gate.
@@ -1597,6 +1706,7 @@ pub fn register(app: &mut App) {
         .init_resource::<PersistenceShutdownReader>()
         .init_resource::<KnownTechniquesActivations>()
         .init_resource::<PendingKnownTechniquesHandoffs>()
+        .init_resource::<PendingKnownTechniquesCandidates>()
         .init_resource::<KnownTechniquesReconnectState>()
         .init_resource::<PersistenceSettings>()
         .init_resource::<NpcSnapshotTracker>()
