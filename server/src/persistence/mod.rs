@@ -10513,6 +10513,70 @@ mod persistence_tests {
     }
 
     #[test]
+    fn production_blocked_duplicate_promoted_and_hydrated_after_first_target_despawns() {
+        let (mut app, persistence, _settings, root) =
+            known_techniques_app("known-techniques-production-duplicate-promotion");
+        let initial = known_techniques_fixture("movement.dash", 0.2);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (first_bundle, _first_helper) = create_mock_client("Azure");
+        let first_target = app.world_mut().spawn(first_bundle).id();
+        let (second_bundle, _second_helper) = create_mock_client("Azure");
+        let second_target = app.world_mut().spawn(second_bundle).id();
+        app.update();
+
+        let subject = canonical_player_id("Azure");
+        assert_eq!(
+            app.world().get::<KnownTechniques>(first_target),
+            Some(&initial),
+            "the first target must hydrate before the duplicate arrives"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_some(),
+            "the duplicate must be blocked while the first target holds the activation"
+        );
+        assert!(
+            app.world().get::<KnownTechniques>(second_target).is_none(),
+            "the blocked duplicate must not hydrate while the first target is live"
+        );
+
+        app.world_mut().entity_mut(first_target).remove::<Client>();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<KnownTechniques>(second_target),
+            Some(&initial),
+            "after the first target disconnects, the blocked duplicate must be promoted and hydrated"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectReady>(second_target)
+                .is_some(),
+            "promotion must emit the Ready marker that drives hydration"
+        );
+        assert!(
+            app.world()
+                .get::<KnownTechniquesReconnectBlocked>(second_target)
+                .is_none(),
+            "promotion must clear the block on the promoted duplicate"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<KnownTechniquesActivations>()
+                .0
+                .get(&subject)
+                .map(|activation| activation.entity),
+            Some(second_target),
+            "the canonical activation must transfer to the promoted duplicate"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_known_techniques_shutdown_flushes_dirty_activation() {
         let (mut app, persistence, _settings, root) =
             known_techniques_app("known-techniques-production-shutdown");
