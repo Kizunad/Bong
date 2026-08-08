@@ -1252,11 +1252,17 @@ run_north_rift_preview() {
   fi
   PERSISTENCE_STASH_READY=1
 
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  NORTH_RIFT_OPERATOR="B${NORTH_RIFT_RUN_TAG}NRift"
+  export BONG_OPERATORS="$NORTH_RIFT_OPERATOR"
+  export BONG_OPERATORS_ALLOW_OFFLINE=1
   if ! start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1; then
+    unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
     finalize_failure \
       "north-rift-preview" \
       "failed to establish dedicated preview server process group; see $NORTH_RIFT_SERVER_LOG"
   fi
+  unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
 
   if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
     finalize_failure \
