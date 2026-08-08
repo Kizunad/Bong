@@ -5013,7 +5013,6 @@ mod tests {
                 eprintln!("[skip] {message}; run `cd agent && npm ci` for the full local chain");
                 return None;
             }
-            }
 
             let (response_channel, producer_json) =
                 redis_bridge::encode_agent_ui_response_wire_for_test(response)
