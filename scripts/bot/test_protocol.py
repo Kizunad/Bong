@@ -218,13 +218,17 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+            expected_tiles = (
+                make_novice_raster_fixture.spawn_fixture_tiles()
+                | make_novice_raster_fixture.SPIRITWOOD_TILES
+            )
             self.assertEqual(
                 {(tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]},
-                {(0, 0), (4, 5), (5, 5), (4, 6), (5, 6)},
+                expected_tiles,
             )
             self.assertEqual(
                 manifest["world_bounds"],
-                {"min_x": 0, "max_x": 1535, "min_z": 0, "max_z": 1791},
+                make_novice_raster_fixture._world_bounds(expected_tiles),
             )
             palette = manifest["biome_palette"]
             self.assertEqual(palette[4], "minecraft:meadow")
@@ -235,8 +239,12 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
                 self.assertLess(max(biome_ids), len(palette))
 
-            self.assertEqual(set((root / "tile_0_0" / "biome_id.bin").read_bytes()), {0})
-            for tile_x, tile_z in ((4, 5), (5, 5), (4, 6), (5, 6)):
+            for tile_x, tile_z in make_novice_raster_fixture.spawn_fixture_tiles():
+                self.assertEqual(
+                    set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
+                    {0},
+                )
+            for tile_x, tile_z in make_novice_raster_fixture.SPIRITWOOD_TILES:
                 self.assertEqual(
                     set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
                     {4},
@@ -245,7 +253,284 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             seed_index = (1519 - 5 * 256) * 256 + (1292 - 5 * 256)
             self.assertEqual(spirit_biomes[seed_index], 4)
 
-    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
+    def test_fixture_rejects_spawn_and_spiritwood_biome_overlap(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value={next(iter(make_novice_raster_fixture.SPIRITWOOD_TILES))},
+        ):
+            with self.assertRaisesRegex(ValueError, "biome ownership would be ambiguous"):
+                self._generate(pathlib.Path(temp_dir))
+
+    def test_spawn_fixture_tiles_rejects_oversized_cluster_before_expansion(self):
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": 1_000_000_000.0,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "above safety limit"):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_union_over_limit_during_construction(self):
+        clusters = []
+        for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES + 1):
+            clusters.append(
+                {
+                    "anchor": [
+                        float(index * make_novice_raster_fixture.TILE_SIZE * 10),
+                        70.0,
+                        0.0,
+                    ],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+            )
+        config = {
+            "zones": [{"name": "spawn", "spawn_distribution": clusters}]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "spawn_distribution union covers at least 65 fixture tiles"
+            ):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_fixture_rejects_total_tile_union_before_writing(self):
+        spawn_tiles = {
+            (index, 0)
+            for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES)
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value=spawn_tiles,
+        ):
+            root = pathlib.Path(temp_dir)
+            with self.assertRaisesRegex(ValueError, "total tiles, above safety limit"):
+                self._generate(root)
+            self.assertFalse(
+                any(root.iterdir()),
+                "总 tile union 越界必须在创建 tile 目录和大文件前 fail closed",
+            )
+
+    def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            generated_tiles = {
+                (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
+            }
+
+            zones = json.loads(
+                make_novice_raster_fixture.DEFAULT_ZONES_PATH.read_text(
+                    encoding="utf-8"
+                )
+            )
+            spawn_zone = next(
+                zone for zone in zones["zones"] if zone["name"] == "spawn"
+            )
+            for cluster in spawn_zone["spawn_distribution"]:
+                x, _, z = cluster["anchor"]
+                radius = cluster["radius"]
+                for point_x, point_z in (
+                    (x - radius, z),
+                    (x + radius, z),
+                    (x, z - radius),
+                    (x, z + radius),
+                ):
+                    tile = (
+                        math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
+                        math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
+                    )
+                    self.assertIn(
+                        tile,
+                        generated_tiles,
+                        f"production spawn cluster boundary {point_x, point_z} 缺 fixture tile",
+                    )
+                    self.assertEqual(
+                        set(
+                            (
+                                root
+                                / f"tile_{tile[0]}_{tile[1]}"
+                                / "surface_id.bin"
+                            ).read_bytes()
+                        ),
+                        {0},
+                        f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
+                    )
+
+            bounds = manifest["world_bounds"]
+            for tile_x, tile_z in generated_tiles:
+                self.assertLessEqual(bounds["min_x"], tile_x * 256)
+                self.assertGreaterEqual(bounds["max_x"], (tile_x + 1) * 256 - 1)
+                self.assertLessEqual(bounds["min_z"], tile_z * 256)
+                self.assertGreaterEqual(bounds["max_z"], (tile_z + 1) * 256 - 1)
+
+    def test_spawn_fixture_tiles_rejects_missing_empty_or_invalid_distribution(self):
+        cases = [
+            ({"zones": []}, "missing the spawn zone"),
+            ({"zones": [{"name": "spawn", "spawn_distribution": []}]}, "has no spawn_distribution"),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": -1.0,
+                                    "weight": 1,
+                                    "safe_y": 72.0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": make_novice_raster_fixture.SURFACE_Y + 1,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+        ]
+
+        for config, expected_error in cases:
+            with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_boolean_anchor_components(self):
+        for index in range(3):
+            anchor = [0.0, 70.0, 0.0]
+            anchor[index] = True
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": anchor,
+                                "radius": 1.0,
+                                "weight": 1,
+                                "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, re.escape("invalid spawn_distribution[0]")
+                ):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_boolean_radius(self):
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": True,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, re.escape("invalid spawn_distribution[0]")
+            ):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_matches_production_u32_weight_contract(self):
+        invalid_weights = (None, 0, -1, 1.0, True, 1 << 32)
+        for weight in invalid_weights:
+            cluster = {
+                "anchor": [0.0, 70.0, 0.0],
+                "radius": 1.0,
+                "safe_y": 72.0,
+            }
+            label = "missing"
+            if weight is not None:
+                cluster["weight"] = weight
+                label = repr(weight)
+            config = {
+                "zones": [
+                    {"name": "spawn", "spawn_distribution": [cluster]}
+                ]
+            }
+            with self.subTest(weight=label), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    ValueError, re.escape("invalid spawn_distribution[0]")
+                ):
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+        for weight in (1, (1 << 32) - 1):
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": [0.0, 70.0, 0.0],
+                                "radius": 1.0,
+                                "weight": weight,
+                                "safe_y": 72.0,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(weight=weight), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                self.assertEqual(
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path),
+                    {(-1, -1), (-1, 0), (0, -1), (0, 0)},
+                )
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
             manifest_path = self._generate(root)
@@ -954,8 +1239,14 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         guard_end = self.source.index('\nmkdir -p "$EVIDENCE_ROOT"')
         guard = self.source[:guard_end]
         self.assertIn('AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"', guard)
+        self.assertIn('FALLBACK_MODE="${BOT_E2E_FALLBACK_MODE:-0}"', guard)
         self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
+        self.assertIn('BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥', guard)
+        self.assertIn('BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_WORLD_PATH:-}" ]; then', guard)
+        self.assertIn('if [ "$FALLBACK_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertIn('if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', guard)
         self.assertNotIn('if [ "$REUSE" != "1" ] && [ -n "${BONG_SPIRITWOOD_HARVESTED_PATH:-}" ]; then', guard)
@@ -964,13 +1255,10 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         fixture_start = self.source.index('# Owned-fixture mode generates')
         fixture_end = self.source.index('\nSERVER_PID=', fixture_start)
         fixture = self.source[fixture_start:fixture_end]
-        self.assertIn(
-            'if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then',
-            fixture,
-        )
+        self.assertIn('if [ "$REUSE" != "1" ] && [ "$FALLBACK_MODE" != "1" ] && [ -z "${BONG_TERRAIN_RASTER_PATH:-}" ]; then', fixture)
         self.assertIn('BOT_FIXTURE_TOKEN="$(python3 -c', fixture)
         self.assertIn('--fixture-token "$BOT_FIXTURE_TOKEN"', fixture)
-        state_start = self.source.index('# Dedicated world evidence pins state')
+        state_start = self.source.index('# Dedicated world evidence pins state to its private runtime.')
         state_end = self.source.index('\nport_open() {', state_start)
         state = self.source[state_start:state_end]
         self.assertIn('if [ "$OWNED_WORLD_MODE" = "1" ]; then', state)
@@ -986,7 +1274,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn(redis_guard, redis)
         self.assertNotIn('export REDIS_URL=', redis[:redis.index(redis_guard)])
 
-    def test_owned_fixture_mode_keeps_private_runtime_and_exact_marker_gate(self):
+    def test_dedicated_world_modes_keep_private_runtime_and_exact_marker_gate(self):
         runtime_start = self.source.index('if [ "$OWNED_WORLD_MODE" = "1" ]; then', self.source.index('SERVER_LOG='))
         runtime_end = self.source.index('\n# Owned-fixture mode generates', runtime_start)
         runtime = self.source[runtime_start:runtime_end]
@@ -1018,6 +1306,42 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             (
                 {"BOT_E2E_AMBIENT_FIXTURE_MODE": "bogus"},
                 "BOT_E2E_AMBIENT_FIXTURE_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "bogus"},
+                "BOT_E2E_FALLBACK_MODE 仅接受空值、0 或 1",
+            ),
+            (
+                {
+                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                },
+                "BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥",
+            ),
+            (
+                {"BOT_E2E_FALLBACK_MODE": "1", "BOT_E2E_REUSE": "1"},
+                "BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_TERRAIN_RASTER_PATH": "/caller/terrain.json",
+                },
+                "fallback mode 不接受 BONG_TERRAIN_RASTER_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_WORLD_PATH": "/caller/world",
+                },
+                "fallback mode 不接受 BONG_WORLD_PATH",
+            ),
+            (
+                {
+                    "BOT_E2E_FALLBACK_MODE": "1",
+                    "BONG_SPIRITWOOD_HARVESTED_PATH": "/caller/harvested.json",
+                },
+                "fallback mode 不接受外部 BONG_SPIRITWOOD_HARVESTED_PATH",
             ),
             (
                 {"BOT_E2E_AMBIENT_FIXTURE_MODE": "1", "BOT_E2E_REUSE": "1"},
@@ -1060,6 +1384,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             "BOT_E2E_HOST",
             "BOT_E2E_PORT",
             "BONG_TERRAIN_RASTER_PATH",
+            "BONG_WORLD_PATH",
             "BONG_SPIRITWOOD_HARVESTED_PATH",
             "REDIS_URL",
         )
@@ -1118,6 +1443,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_AMBIENT_FIXTURE_MODE",
+                "BOT_E2E_FALLBACK_MODE",
                 "BOT_E2E_REUSE",
                 "BOT_E2E_HOST",
                 "BOT_E2E_PORT",
@@ -1127,6 +1453,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             ):
                 env.pop(name, None)
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            env["BONG_BUILD_TOKEN_DIR"] = str(pathlib.Path(temp_dir) / "build-token")
             result = subprocess.run(
                 ["bash", "scripts/bot-e2e.sh"],
                 cwd=root,
@@ -1182,7 +1510,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
         self.assertLess(
             self.source.index(ownership, readiness_start),
-            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py"', readiness_start),
+            self.source.index('python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"'),
             "场景只可在本轮 server fixture identity 与端口 ownership 同时成立后运行",
         )
 
@@ -1190,7 +1518,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
-        runner = '''python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
+        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
+  python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}" 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
             pipeline.count(runner),
@@ -1250,7 +1579,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
         scenario_start = self.source.index("# ---- 场景 ----")
         scenario = self.source[scenario_start:]
-        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py"'
+        runner = 'python3 "$ROOT/scripts/bot/run_scenarios.py" "${SCENARIO_ARGS[@]}"'
         self.assertIn('while true; do', scenario)
         self.assertIn('port_owned_by_tree "$SERVER_PID" "$PORT"', scenario)
         self.assertIn('echo lost >"$RUNTIME_WATCH_LOG"', scenario)
@@ -1294,20 +1623,31 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn(rejection, server)
         self.assertLess(server.index(rejection), server.index('cd "$SERVER_RUNTIME_DIR/server"'))
 
-    def test_owned_fixture_mode_uses_private_cwd_and_generic_uses_checkout_cwd(self):
+    def test_owned_world_modes_use_private_cwd_and_only_ambient_enables_dev_commands(self):
         launch_start = self.source.index('  (\n    if [ "$OWNED_WORLD_MODE" = "1" ]; then')
-        launch_end = self.source.index('  ) >"$SERVER_LOG"', launch_start)
+        launch_end = self.source.index('  ) >>"$SERVER_LOG"', launch_start)
         launch = self.source[launch_start:launch_end]
         for required in (
             'cd "$SERVER_RUNTIME_DIR/server"',
             'cd "$ROOT/server"',
             'export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"',
             'export BONG_ASSETS_DIR="$ROOT/server"',
+            'if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then',
             'export BONG_DEV_MODE=1',
-            'exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, launch)
+        self.assertIn(
+            '"$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"',
+            self.source,
+        )
+        self.assertIn('install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"', self.source)
+        self.assertIn('exec "$SERVER_BINARY"', launch)
+        self.assertNotIn(
+            'exec cargo run --locked',
+            launch,
+            "bot-e2e 自起 server 必须经过全机共享 cargo counting token",
+        )
 
     def test_each_run_owns_private_evidence_and_persistent_logs(self):
         evidence_setup = self.source[:self.source.index('# Owned-fixture mode generates')]
@@ -1373,6 +1713,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = f"{fake_bin}{os.pathsep}{base_env['PATH']}"
+            base_env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            base_env["BONG_BUILD_TOKEN_DIR"] = str(pathlib.Path(temp_dir) / "build-token")
 
             adopted = base_env | {"FAKE_DEFAULT_REDIS_OPEN": "0"}
             adopted_result = subprocess.run(
@@ -1535,7 +1877,8 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (fake_bin / "docker").chmod(0o755)
-            (fake_bin / "cargo").write_text(
+            fake_server = fake_bin / "fake-bong-server"
+            fake_server.write_text(
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
                 f"real_python={shlex.quote(real_python)}\n"
@@ -1557,6 +1900,17 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "while true; do sleep 1; done\n",
                 encoding="utf-8",
             )
+            fake_server.chmod(0o755)
+            (fake_bin / "cargo").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "test \"$1\" = build\n"
+                "profile=debug\n"
+                "for arg in \"$@\"; do test \"$arg\" != --release || profile=release; done\n"
+                "mkdir -p \"$CARGO_TARGET_DIR/$profile\"\n"
+                f"cp {shlex.quote(str(fake_server))} \"$CARGO_TARGET_DIR/$profile/bong-server\"\n",
+                encoding="utf-8",
+            )
             (fake_bin / "cargo").chmod(0o755)
             if tee_exit is not None:
                 (fake_bin / "tee").write_text(
@@ -1568,6 +1922,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             env = os.environ.copy()
             for name in (
                 "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
+                "BOT_E2E_FALLBACK_MODE",
                 "BONG_TERRAIN_RASTER_PATH", "BONG_SPIRITWOOD_HARVESTED_PATH",
                 "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
             ):
@@ -1587,6 +1942,9 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 }
             )
             env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["CARGO_TARGET_DIR"] = str(temp / "target")
+            env["BONG_BUILD_TOKEN_TEST_MODE"] = "1"
+            env["BONG_BUILD_TOKEN_DIR"] = str(temp / "build-token")
             evidence_before = set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
             runner_output = ""
             runner_result = ""
