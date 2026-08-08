@@ -2317,6 +2317,10 @@ fn remove_runtime_pseudo_vein_zone(zone_registry: &mut ZoneRegistry, zone_name: 
     }
     let before = zone_registry.zones.len();
     zone_registry.zones.retain(|zone| zone.name != zone_name);
+    if before != zone_registry.zones.len() {
+        // fix-spec-1901-v2 §7.1 — 空间变化（删除 zone）递增 revision。
+        zone_registry.spatial_revision = zone_registry.spatial_revision.wrapping_add(1);
+    }
     before != zone_registry.zones.len()
 }
 
@@ -2659,6 +2663,36 @@ mod tests {
     }
 
     #[test]
+    fn pseudo_vein_removal_updates_spatial_revision_only_for_real_geometry_change() {
+        let mut registry = ZoneRegistry {
+            zones: vec![zone("pseudo_vein_test", 0.0, 0.0, 1.0)],
+            spatial_revision: 41,
+        };
+
+        assert!(remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "pseudo_vein_test"
+        ));
+        assert_eq!(registry.spatial_revision, 42);
+        assert!(!remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "pseudo_vein_test"
+        ));
+        assert_eq!(
+            registry.spatial_revision, 42,
+            "missing removal must not advance revision"
+        );
+        assert!(!remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "ordinary_zone"
+        ));
+        assert_eq!(
+            registry.spatial_revision, 42,
+            "non-pseudo names must be ignored"
+        );
+    }
+
+    #[test]
     fn season_modifiers_pin_world_heartbeat_table() {
         let summer = season_event_modifiers(Season::Summer);
         assert_eq!(summer.pseudo_vein_frequency, 1.0);
@@ -2785,6 +2819,7 @@ mod tests {
     fn pseudo_vein_omen_borrows_from_pending_pool_without_creating_qi() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -2851,6 +2886,7 @@ mod tests {
     fn pseudo_vein_anchor_ignores_tsy_blueprint_zones() {
         let heartbeat = WorldHeartbeat::default();
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, -0.95),
                 zone("overworld_waste", 300.0, 0.0, 0.08),
@@ -2870,6 +2906,7 @@ mod tests {
     fn pseudo_vein_spawn_rejects_tsy_anchor_without_runtime_state() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_zone("tsy_daneng_01_shallow", 0.0, 0.0, -0.45)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -2912,6 +2949,7 @@ mod tests {
     fn restored_pseudo_vein_records_rebuild_zone_and_advance_next_index() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored = heartbeat.restore_pseudo_vein_records(
@@ -3017,6 +3055,7 @@ mod tests {
         for restart_tick in [0, 199, 200, 201] {
             let mut heartbeat = WorldHeartbeat::default();
             let mut zones = ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone("waste", 0.0, 0.0, 0.1)],
             };
             let restored = heartbeat.restore_pseudo_vein_records(
@@ -3071,6 +3110,7 @@ mod tests {
         record.snapshot_wall = 100;
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         assert_eq!(
@@ -3150,6 +3190,7 @@ mod tests {
     fn restored_pseudo_vein_preserves_warning_then_dissipation_boundaries() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let decay_per_tick = decay_rate_per_tick(0);
@@ -3199,6 +3240,7 @@ mod tests {
             ..Default::default()
         };
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -3290,6 +3332,7 @@ mod tests {
     fn post_update_sync_tracks_external_zone_change_without_rewriting_ledger() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut active_events = ActiveEventsResource::default();
@@ -3389,6 +3432,7 @@ mod tests {
             ..Default::default()
         };
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let mut record = heartbeat_pseudo_vein_record(decay_rate_per_tick(0) * 0.5, false);
@@ -3465,6 +3509,7 @@ mod tests {
     fn restored_pseudo_vein_can_persist_and_restore_again_without_losing_age() {
         let mut heartbeat = WorldHeartbeat::default();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored = heartbeat.restore_pseudo_vein_records(
@@ -3506,6 +3551,7 @@ mod tests {
 
         let mut second_heartbeat = WorldHeartbeat::default();
         let mut second_zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("waste", 0.0, 0.0, 0.1)],
         };
         let restored_again =
@@ -3570,6 +3616,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone("hungry", 300.0, 0.0, 0.1),
@@ -3598,6 +3645,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 tsy_zone("pseudo_vein_tsy_done", 0.0, 0.0, 0.0),
                 tsy_zone("tsy_hungry", 300.0, 0.0, -0.30),
@@ -3644,6 +3692,7 @@ mod tests {
         app.insert_resource(heartbeat);
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone("hungry", 300.0, 0.0, 0.1),
@@ -3689,6 +3738,7 @@ mod tests {
             0,
         );
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("hungry", 0.0, 0.0, 0.1)],
         };
         let npc_registry = NpcRegistry {
@@ -3733,6 +3783,7 @@ mod tests {
             .low_qi_ticks_by_zone
             .insert("scorch".to_string(), low_ticks);
         let zones_high_danger = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
         };
         maybe_queue_beast_tide(
@@ -3755,6 +3806,7 @@ mod tests {
             .low_qi_ticks_by_zone
             .insert("spawn".to_string(), low_ticks);
         let zones_low_danger = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_with_danger("spawn", 0.0, 0.0, 0.05, 1)],
         };
         maybe_queue_beast_tide(
@@ -3788,6 +3840,7 @@ mod tests {
         maybe_queue_beast_tide(
             &mut heartbeat_high,
             &ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
             },
             Some(&npc_registry),
@@ -3803,6 +3856,7 @@ mod tests {
         maybe_queue_beast_tide(
             &mut heartbeat_low,
             &ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone_with_danger("spawn", 0.0, 0.0, 0.05, 1)],
             },
             Some(&npc_registry),
@@ -3830,6 +3884,7 @@ mod tests {
             BEAST_TIDE_LOW_QI_REQUIRED_TICKS,
         );
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_zone("tsy_daneng_01_shallow", 0.0, 0.0, -0.45)],
         };
         let npc_registry = NpcRegistry {
@@ -3869,6 +3924,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone_with_danger("scorch_neighbor", 300.0, 0.0, 0.2, 7),
@@ -3903,6 +3959,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone_with_danger("calm_neighbor", 300.0, 0.0, 0.2, 1),
@@ -3945,6 +4002,7 @@ mod tests {
         maybe_queue_beast_tide(
             &mut heartbeat,
             &ZoneRegistry {
+                spatial_revision: 0,
                 zones: vec![zone_with_danger("scorch", 0.0, 0.0, 0.05, 7)],
             },
             Some(&npc_registry),
@@ -3961,6 +4019,7 @@ mod tests {
         app.insert_resource(WorldHeartbeat::default());
         app.insert_resource(ActiveEventsResource::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("pseudo_vein_done", 0.0, 0.0, 0.0),
                 zone_with_danger("healthy_neighbor", 300.0, 0.0, 0.5, 7),
@@ -3990,6 +4049,7 @@ mod tests {
     fn world_pressure_ignores_tsy_blueprint_zones() {
         let mut heartbeat = WorldHeartbeat::default();
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone("spawn", 0.0, 0.0, 0.8),
                 zone("waste", 300.0, 0.0, 0.2),
@@ -4037,6 +4097,7 @@ mod tests {
     #[test]
     fn heartbeat_loop_phase_uses_zone_risk_without_new_player_state() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 zone(DEFAULT_SPAWN_ZONE_NAME, 0.0, 0.0, 0.9),
                 zone("route_ash", 200.0, 0.0, 0.05),
@@ -4094,6 +4155,7 @@ mod tests {
         let mut tsy_deep = tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, -0.95);
         tsy_deep.danger_level = DEEP_GATHERING_DANGER_LEVEL;
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone(DEFAULT_SPAWN_ZONE_NAME, 200.0, 0.0, 0.5), tsy_deep],
         };
 
@@ -4256,6 +4318,7 @@ mod tests {
     #[test]
     fn realm_collapse_queues_only_when_collapsing_zone_is_empty() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("dead_zone", 0.0, 0.0, 0.0)],
         };
         let mut heartbeat = WorldHeartbeat::default();
@@ -4312,6 +4375,7 @@ mod tests {
     #[test]
     fn realm_collapse_heartbeat_ignores_tsy_blueprint_zones() {
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![tsy_zone("tsy_daneng_01_deep", 0.0, 0.0, 0.0)],
         };
         let mut heartbeat = WorldHeartbeat::default();
@@ -4360,6 +4424,7 @@ mod tests {
             intensity: 0.9,
         });
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("hungry", 0.0, 0.0, 0.1)],
         };
 
@@ -4439,7 +4504,10 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(ZoneQiInflowClock::default());
         app.insert_resource(CultivationClock { tick: start_tick });
-        app.insert_resource(ZoneRegistry { zones });
+        app.insert_resource(ZoneRegistry {
+            zones,
+            spatial_revision: 0,
+        });
         app.insert_resource(ActiveEventsResource::default());
         let mut ledger = WorldQiAccount::default();
         if pending_pool_balance > 0.0 {

@@ -519,6 +519,9 @@ mod tests {
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         // plan-agent-ui-data-v1 P0 — handle_client_request_payloads 需要 AgentUiResponseEvent。
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
+        // fix-spec-1901-v2 §4.1 — handle_client_request_payloads 的 lingtian
+        // 分支 enqueue 进 `PendingLingtianRequests`，测试 app 必须 init。
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
 
         // Run request handler, then broadcast dropped_loot_sync if the registry changed.
         app.add_systems(

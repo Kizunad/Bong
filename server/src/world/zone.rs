@@ -205,6 +205,14 @@ pub enum TsyDepth {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ZoneRegistry {
     pub zones: Vec<Zone>,
+    /// fix-spec-1901-v2 §7.1 — 空间版本号。
+    ///
+    /// 只在 zone membership、dimension、AABB bounds 或其它 `find_zone` 几何
+    /// 输入变化时递增；zone spirit qi、pressure、其它非几何字段更新不得
+    /// 递增。`auto_set_plot_zone` 以它作为 pending plot retry 触发器，替代
+    /// 粗粒度 `is_changed()`（后者被 heartbeat qi tick 的每 tick mutable
+    /// borrow 污染）。
+    pub spatial_revision: u64,
 }
 
 impl Resource for ZoneRegistry {}
@@ -219,6 +227,7 @@ impl ZoneRegistry {
     pub fn fallback() -> Self {
         Self {
             zones: vec![Zone::spawn()],
+            spatial_revision: 0,
         }
     }
 
@@ -395,6 +404,8 @@ impl ZoneRegistry {
             ));
         }
         self.zones.push(zone);
+        // fix-spec-1901-v2 §7.1 — membership 变化递增空间 revision。
+        self.spatial_revision = self.spatial_revision.wrapping_add(1);
         Ok(())
     }
 
@@ -450,6 +461,10 @@ impl ZoneRegistry {
         }
 
         self.zones.extend(supplemental.zones);
+        // fix-spec-1901-v2 §7.1 — TSY blueprint 批量并入是 membership 变化。
+        if loaded > 0 {
+            self.spatial_revision = self.spatial_revision.wrapping_add(1);
+        }
 
         Ok(loaded)
     }
@@ -678,7 +693,11 @@ impl ZoneRegistry {
             ));
         }
 
-        Ok(Self { zones })
+        Ok(Self {
+            zones,
+            // fix-spec-1901-v2 §7.1 — 从配置全新加载视为 revision 0（基线）。
+            spatial_revision: 0,
+        })
     }
 }
 
@@ -1866,6 +1885,7 @@ mod zone_tests {
         // `big` is registered first; without smallest-AABB selection, find_zone
         // would return it for points inside the nested `small` zone.
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![big, small],
         };
         assert_eq!(
@@ -2107,6 +2127,7 @@ mod zone_tests {
     fn zones_are_adjacent_touching_within_margin() {
         // zone A: x=[0,100], zone B: x=[200,300], margin=150 → gap=100 < margin → 相邻
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0),
                 make_zone_at("zone_b", 200.0, 0.0, 300.0, 100.0),
@@ -2122,6 +2143,7 @@ mod zone_tests {
     fn zones_are_adjacent_far_apart_not_adjacent() {
         // zone A: x=[0,100], zone B: x=[400,500], margin=100 → gap=300 > margin → 不相邻
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0),
                 make_zone_at("zone_c", 400.0, 0.0, 500.0, 100.0),
@@ -2137,6 +2159,7 @@ mod zone_tests {
     fn zones_are_adjacent_overlapping() {
         // 两个 zone AABB 直接重叠 → 相邻
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone_at("zone_a", 0.0, 0.0, 200.0, 200.0),
                 make_zone_at("zone_b", 100.0, 0.0, 300.0, 200.0),
@@ -2151,6 +2174,7 @@ mod zone_tests {
     #[test]
     fn zones_are_adjacent_same_name_returns_false() {
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![make_zone_at("spawn", 0.0, 0.0, 100.0, 100.0)],
         };
         assert!(
@@ -2162,6 +2186,7 @@ mod zone_tests {
     #[test]
     fn zones_are_adjacent_missing_zone_returns_false() {
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0)],
         };
         assert!(
@@ -2174,6 +2199,7 @@ mod zone_tests {
     fn adjacent_zone_names_returns_neighbors() {
         // A 与 B 相邻（gap=50 < margin=100），A 与 C 不相邻（gap=500 > margin=100）
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 make_zone_at("zone_a", 0.0, 0.0, 100.0, 100.0),
                 make_zone_at("zone_b", 150.0, 0.0, 250.0, 100.0), // gap=50

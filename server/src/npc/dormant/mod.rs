@@ -2803,6 +2803,7 @@ mod tests {
             max_initial_age_ratio: 0.0,
         });
         seed_app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         });
         seed_app.init_resource::<NpcDormantStore>();
@@ -2831,6 +2832,7 @@ mod tests {
         });
         age_app.insert_resource(GameTick(2400));
         age_app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         });
         age_app.insert_resource(WorldQiAccount::default());
@@ -2862,6 +2864,7 @@ mod tests {
         });
         death_app.insert_resource(GameTick(1));
         death_app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         });
         death_app.insert_resource(WorldQiAccount::default());
@@ -3202,6 +3205,7 @@ mod tests {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
         open_regular_meridians(&mut snapshot, 1);
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3243,6 +3247,7 @@ mod tests {
         open_regular_meridians(&mut snapshot, 1); // sum_rate>0，普通 NPC 在此会吸
         let qi_before = snapshot.cultivation.qi_current;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let zone_qi_before = zones
@@ -3273,6 +3278,7 @@ mod tests {
     fn dormant_regen_requires_open_meridian_flow() {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3294,7 +3300,10 @@ mod tests {
             open_regular_meridians(&mut snapshot, 1);
             let mut z = zone();
             z.spirit_qi = zone_qi;
-            let mut zones = ZoneRegistry { zones: vec![z] };
+            let mut zones = ZoneRegistry {
+                spatial_revision: 0,
+                zones: vec![z],
+            };
             let mut ledger = WorldQiAccount::default();
 
             assert!(
@@ -3324,7 +3333,10 @@ mod tests {
         open_regular_meridians(&mut snapshot, 1);
         let mut z = zone();
         z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.01;
-        let mut zones = ZoneRegistry { zones: vec![z] };
+        let mut zones = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
         let mut ledger = WorldQiAccount::default();
 
         let transfer = apply_dormant_regen(&mut snapshot, &mut zones, &mut ledger)
@@ -3351,7 +3363,10 @@ mod tests {
         snapshot.cultivation.qi_max = 1000.0;
         let mut z = zone();
         z.spirit_qi = 0.8;
-        let mut zones = ZoneRegistry { zones: vec![z] };
+        let mut zones = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
         let mut ledger = WorldQiAccount::default();
 
         for _ in 0..10_000 {
@@ -3384,7 +3399,10 @@ mod tests {
         open_regular_meridians(&mut snapshot, 1);
         let mut z = zone();
         z.spirit_qi = QI_NPC_ABSORB_FLOOR + 0.001;
-        let mut zones = ZoneRegistry { zones: vec![z] };
+        let mut zones = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
         let mut ledger = WorldQiAccount::default();
 
         // war_multiplier 拉到 10x，即便如此也不能把 zone 拉穿地板。
@@ -3413,6 +3431,7 @@ mod tests {
         let mut snapshot = snapshot("npc_a", DVec3::new(10.0, 64.0, 10.0));
         snapshot.cultivation.qi_current = 0.4;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3467,6 +3486,7 @@ mod tests {
             }),
         });
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3507,6 +3527,7 @@ mod tests {
         });
         let before = snapshot.clone();
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let zones_before = zones.clone();
@@ -3534,6 +3555,7 @@ mod tests {
         let mut full_zone = zone();
         full_zone.spirit_qi = 0.99;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![full_zone],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3592,6 +3614,7 @@ mod tests {
         let mut negative_zone = zone();
         negative_zone.spirit_qi = -1.2;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![negative_zone],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3614,6 +3637,7 @@ mod tests {
         let mut invalid_zone = zone();
         invalid_zone.spirit_qi = f64::NAN;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3636,6 +3660,7 @@ mod tests {
         let mut full_zone = zone();
         full_zone.spirit_qi = 1.0;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![full_zone],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3669,6 +3694,7 @@ mod tests {
         let mut full_zone = zone();
         full_zone.spirit_qi = 0.99;
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![full_zone],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -3748,6 +3774,7 @@ mod tests {
         let mut invalid_zone = zone();
         invalid_zone.spirit_qi = f64::NAN;
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -3827,6 +3854,7 @@ mod tests {
         });
         app.insert_resource(GameTick(1));
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -3869,6 +3897,7 @@ mod tests {
             qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone(), second_zone],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -3899,6 +3928,7 @@ mod tests {
         open_regular_meridians(&mut snapshot, 3);
         let mut roll = FixedRoll(0.0);
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut ledger = WorldQiAccount::default();
@@ -3971,6 +4001,7 @@ mod tests {
         let before_net = snapshot.qi_ledger_net;
         let mut roll = FixedRoll(0.0);
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         zones.zones[0].spirit_qi = 1.0;
@@ -5048,6 +5079,7 @@ mod tests {
         app.insert_resource(FactionStore::default());
         app.insert_resource(std::mem::take(store));
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: std::mem::take(&mut zones.zones),
         });
         app.insert_resource(std::mem::take(ledger));
@@ -5123,6 +5155,7 @@ mod tests {
     #[test]
     fn combat_terminal_events_wait_for_pending_hash_receipt() {
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let zone_before = zones.zones[0].spirit_qi;
@@ -5176,6 +5209,7 @@ mod tests {
     #[test]
     fn failed_pending_combat_hash_receipt_preserves_all_terminal_state_until_retry_succeeds() {
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let zone_before = zones.zones[0].spirit_qi;
@@ -5269,6 +5303,7 @@ mod tests {
     #[test]
     fn combat_terminal_settles_daozhan_cultivation_and_drain_owners_after_hash_receipt() {
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let owner_total_before = zones.zones[0].spirit_qi * QI_ZONE_UNIT_CAPACITY + 12.0;
@@ -5307,6 +5342,7 @@ mod tests {
     #[test]
     fn legacy_pending_combat_without_winner_still_settles_and_terminates() {
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut legacy = with_daozhan_owner(
@@ -5344,6 +5380,7 @@ mod tests {
         // 一对敌对 dormant 在同 zone：战死一方的真元应**守恒回灌**给 zone（zone.spirit_qi 上升），
         // 且回灌量 == ledger transfer amount == outcome.qi_released。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         }; // spirit_qi=0.8
         let zone_before = zones.zones[0].spirit_qi;
@@ -5404,6 +5441,7 @@ mod tests {
         // 战死 notice 必须 reason=Combat + from_dormant_combat=true + pos=Some(战场坐标)，
         // 让 agent / e2e 能把战死与自然老死区分开。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let loser_pos = DVec3::new(11.0, 64.0, 11.0);
@@ -5448,6 +5486,7 @@ mod tests {
     fn combat_death_removes_loser_from_store() {
         // 战死方真元全释放后必须从 store 移除（人口回写），胜者保留。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut store = NpcDormantStore::default();
@@ -5492,6 +5531,7 @@ mod tests {
     fn winner_qi_unchanged() {
         // dormant 简化：胜者真元不变（未流动即未失衡，§10.1 #5 ③）。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut store = NpcDormantStore::default();
@@ -5528,6 +5568,7 @@ mod tests {
         let mut full_zone = zone();
         full_zone.spirit_qi = 1.0;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![full_zone],
         };
         let mut store = NpcDormantStore::default();
@@ -5593,6 +5634,7 @@ mod tests {
         app.insert_resource(GameTick(RUN_TICK as u32));
         app.insert_resource(FactionStore::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -5631,6 +5673,7 @@ mod tests {
         // 同 zone 多败者：顺序 release（先 release 抬高 zone_qi，后者读更高基线），
         // 总回灌量受 zone 容量 clamp、不溢出。两对敌对 dormant → 两个败者同 zone 回灌。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         }; // spirit_qi=0.8
         let zone_before = zones.zones[0].spirit_qi;
@@ -5694,6 +5737,7 @@ mod tests {
         // R5 owner model: dormant Cultivation + signed Zone.spirit_qi + durable stable pools
         // are the physical owners. Player/NPC/Zone ledger mirrors must not be seeded or left behind.
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut store = NpcDormantStore::default();
@@ -5782,6 +5826,7 @@ mod tests {
         // 一对敌对 dormant，败者是 Disciple（必留遗物）。真元充足 zone（spirit_qi=0.8）→ 全额
         // 释放 → 败者本轮移除 → 遗物 event 必 emit。遗物字段（zone/pos/archetype/seed）正确。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut store = NpcDormantStore::default();
@@ -5882,6 +5927,7 @@ mod tests {
         // 直接喂进 store，combat phase 因无法配对而**根本不开战** ⇒ 0 死亡 0 遗物（绝不
         // 凭空给无派系者造遗物）。
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut store = NpcDormantStore::default();
@@ -5926,6 +5972,7 @@ mod tests {
         let mut invalid_zone = zone();
         invalid_zone.spirit_qi = f64::NAN;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         };
         let mut store = NpcDormantStore::default();
@@ -5987,6 +6034,7 @@ mod tests {
         let mut invalid_zone = zone();
         invalid_zone.spirit_qi = f64::NAN;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         };
         let mut store = NpcDormantStore::default();
@@ -6036,6 +6084,7 @@ mod tests {
         let mut invalid_zone = zone();
         invalid_zone.spirit_qi = f64::NAN;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         };
         let mut store = NpcDormantStore::default();
@@ -6127,6 +6176,7 @@ mod tests {
         let mut invalid_zone = zone();
         invalid_zone.spirit_qi = f64::NAN;
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![invalid_zone],
         };
         let mut store = NpcDormantStore::default();
@@ -6364,7 +6414,10 @@ mod tests {
 
         let mut z = zone();
         z.spirit_qi = 0.1; // 低于 default threshold 0.4 -> background zone
-        let registry = ZoneRegistry { zones: vec![z] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
 
         let mut app = migration_test_app(registry, store);
         app.update();
@@ -6450,7 +6503,10 @@ mod tests {
 
         let mut z = zone();
         z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高凝脉/固元/通灵命中率
-        let registry = ZoneRegistry { zones: vec![z] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
 
         let mut app = migration_test_app(registry, store);
         app.update();
@@ -6515,7 +6571,10 @@ mod tests {
 
         let mut z = zone();
         z.spirit_qi = 0.9; // 高于阈值 -> resource zone，拉高高境界命中率，确保有 realm 变化分支被覆盖
-        let registry = ZoneRegistry { zones: vec![z] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
 
         let mut app = migration_test_app(registry, store);
         app.update();
@@ -6574,6 +6633,7 @@ mod tests {
         assert!(!store.is_dirty());
 
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut app = migration_test_app(registry, store);
@@ -6639,6 +6699,7 @@ mod tests {
         store.rebuild_indexes();
 
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut app = migration_test_app(registry, store);
@@ -6694,7 +6755,10 @@ mod tests {
         // 保持一致，不依赖 `zone()` helper 默认值今后是否变动。
         let mut z = zone();
         z.spirit_qi = 0.1;
-        let registry = ZoneRegistry { zones: vec![z] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
         let mut app = migration_test_app(registry, store);
 
         // 直接调用底层写函数验证返回值语义（true=成功/false=失败），不靠系统副作用间接推断。
@@ -6734,6 +6798,7 @@ mod tests {
         let store = NpcDormantStore::default();
         assert!(store.is_empty());
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone()],
         };
         let mut app = migration_test_app(registry, store);
@@ -6779,7 +6844,10 @@ mod tests {
 
         let mut z = zone();
         z.spirit_qi = 0.1;
-        let registry = ZoneRegistry { zones: vec![z] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![z],
+        };
         let mut app = migration_test_app(registry, store);
         app.update();
 

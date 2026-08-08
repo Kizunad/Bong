@@ -402,6 +402,7 @@ mod tests {
         app.insert_resource(crate::combat::CombatClock { tick: 1 });
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "tsy_zone_sys_test".to_string(),
                 dimension: DimensionKind::Tsy,

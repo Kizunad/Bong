@@ -219,6 +219,7 @@ mod patrol_tests {
 
     fn test_zone_registry() -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![small_zone()],
         }
     }

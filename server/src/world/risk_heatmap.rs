@@ -626,6 +626,7 @@ mod tests {
         use crate::world::zone::Zone;
         use valence::prelude::DVec3;
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: name.to_string(),
                 dimension: DimensionKind::Overworld,
@@ -797,6 +798,7 @@ mod tests {
         app.add_systems(Update, update_risk_heatmap);
         // 外层先注册，内层后注册——首匹配 bug 会错归属到 outer_large
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![outer, inner],
         });
 

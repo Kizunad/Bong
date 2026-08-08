@@ -1457,6 +1457,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "test_cultivate_zone".to_string(),
                 dimension: DimensionKind::Overworld,

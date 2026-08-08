@@ -3,7 +3,7 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Position, Query, Res, Update};
+use valence::prelude::{App, Client, EventReader, IntoSystemConfigs, Position, Query, Res, Update};
 
 use crate::world::zone::ZoneRegistry;
 
@@ -26,8 +26,13 @@ impl Command for TpzoneCmd {
 }
 
 pub fn register(app: &mut App) {
-    app.add_command::<TpzoneCmd>()
-        .add_systems(Update, handle_tpzone);
+    app.add_command::<TpzoneCmd>().add_systems(
+        Update,
+        // fix-spec-1901-v2 §4.2 — 直接写 `Position` 的 dev teleport 必须进统一
+        // commit set：灵田 post-transfer validator / completion 复验排在它之后，
+        // 保证同 tick teleport 不会被旧位置通过。
+        handle_tpzone.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+    );
 }
 
 pub fn handle_tpzone(

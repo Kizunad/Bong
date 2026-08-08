@@ -1088,7 +1088,10 @@ mod tests {
             DVec3::new(-500.0, 0.0, -500.0),
             DVec3::new(500.0, 200.0, 500.0),
         );
-        crate::world::zone::ZoneRegistry { zones: vec![zone] }
+        crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        }
     }
 
     fn wither_test_app() -> valence::prelude::App {
@@ -1192,6 +1195,7 @@ mod tests {
 
         // zone qi 回升到正常区间——枯萎计时器应被移除（恢复语义）。
         app.insert_resource(crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone_with_qi("negative_zone", 0.5)],
         });
         app.update();

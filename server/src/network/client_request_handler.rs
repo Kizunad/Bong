@@ -13,8 +13,8 @@ use bevy_ecs::system::SystemParam;
 use valence::custom_payload::CustomPayloadEvent;
 use valence::message::SendMessage;
 use valence::prelude::{
-    bevy_ecs, ChunkLayer, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter,
-    Events, Query, Res, ResMut, Resource, UniqueId, Username, With,
+    bevy_ecs, Client, Commands, DVec3, Entity, EntityManager, EventReader, EventWriter, Events,
+    Query, Res, ResMut, Resource, UniqueId, Username, With,
 };
 
 use crate::alchemy::residue::{residue_alchemy_data, residue_kind_for_recyclable_outcome};
@@ -86,14 +86,8 @@ use crate::inventory::{
     DEFAULT_CAST_DURATION_MS as TEMPLATE_DEFAULT_CAST_MS,
     DEFAULT_COOLDOWN_MS as TEMPLATE_DEFAULT_COOLDOWN_MS,
 };
-use crate::lingtian::environment::read_environment_at;
-use crate::lingtian::events::{
-    StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
-    StartReplenishRequest, StartTillRequest,
-};
+use crate::lingtian::requests::PendingLingtianRequest;
 use crate::lingtian::session::{ReplenishSource, SessionMode};
-use crate::lingtian::terrain::{terrain_from_block_kind, TerrainKind};
-use crate::lingtian::PlotEnvironment;
 use crate::mineral::probe::is_probe_target_in_range;
 use crate::mineral::MineralProbeIntent;
 use crate::movement::{MovementAction, MovementActionIntent};
@@ -278,18 +272,16 @@ pub struct DroppedLootRequestParams<'w, 's> {
     pub remains_loot_tx: EventWriter<'w, crate::inventory::RemainsLootIntent>,
 }
 
-/// plan-lingtian-v1 §1.2-§1.7 — 6 类 intent 共享 EventWriter 包，避开
-/// SystemParam 16 上限。`layers` 用于 `StartTill` 时读 chunk 派生真实
-/// `TerrainKind` + `PlotEnvironment`，避免客户端伪造地形。
+/// plan-lingtian-v1 §1.2-§1.7 + fix-spec-1901-v2 §4.1 — 6 类 intent 的 ingress
+/// 队列写入包，避开 SystemParam 16 上限。
+///
+/// v2 起 producer 不再读取 `Position` / `CurrentDimension`，也不再直接写
+/// `Start*Request` event：只把已解析请求 push 进 `PendingLingtianRequests`，
+/// 由 `LingtianPostTransferValidationSet` 的唯一 validator 在权威移动写入后
+/// dispatch（terrain / environment 的 chunk 读取也移到那里）。
 #[derive(SystemParam)]
-pub struct LingtianRequestParams<'w, 's> {
-    pub till_tx: EventWriter<'w, StartTillRequest>,
-    pub renew_tx: EventWriter<'w, StartRenewRequest>,
-    pub planting_tx: EventWriter<'w, StartPlantingRequest>,
-    pub harvest_tx: EventWriter<'w, StartHarvestRequest>,
-    pub replenish_tx: EventWriter<'w, StartReplenishRequest>,
-    pub drain_qi_tx: EventWriter<'w, StartDrainQiRequest>,
-    pub layers: Query<'w, 's, &'static ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+pub struct LingtianRequestParams<'w> {
+    pub pending: ResMut<'w, crate::lingtian::requests::PendingLingtianRequests>,
 }
 
 /// 合并 alchemy 相关 Resource/Query，避开 `handle_client_request_payloads`
@@ -2543,37 +2535,19 @@ pub fn handle_client_request_payloads(
                 mode,
                 ..
             } => {
-                let pos = valence::prelude::BlockPos::new(x, y, z);
-                // plan §1.2.2 — terrain / environment 由 server 从 chunk_layer 派生，
-                // 避免客户端伪造；session 再按 `TerrainKind::is_tillable` 决定放行。
-                let (terrain, environment) = match lingtian_tx.layers.get_single() {
-                    Ok(layer) => {
-                        let terrain = layer
-                            .block(pos)
-                            .map(|b| terrain_from_block_kind(b.state.to_kind()))
-                            .unwrap_or(TerrainKind::Unknown);
-                        (terrain, read_environment_at(layer, pos))
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            "[bong][network] lingtian_start_till: chunk layer unavailable ({err:?}); \
-                             falling back to Unknown terrain — session will reject."
-                        );
-                        (TerrainKind::Unknown, PlotEnvironment::base())
-                    }
-                };
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_till entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} mode={mode} terrain={terrain:?}",
-                    ev.client
-                );
-                lingtian_tx.till_tx.send(StartTillRequest {
-                    player: ev.client,
-                    pos,
+                // fix-spec-1901-v2 §4.1 — producer 只入队：不读位置/维度，不读
+                // chunk/terrain，不写 Start*Request；gate + terrain 派生都在
+                // post-transfer validator（LingtianPostTransferValidationSet）做。
+                lingtian_tx.pending.push(PendingLingtianRequest::Till {
+                    actor: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
                     hoe_instance_id,
                     mode: parse_session_mode(&mode),
-                    terrain,
-                    environment,
                 });
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_till entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} mode={mode} queued",
+                    ev.client
+                );
             }
             ClientRequestV1::LingtianStartRenew {
                 x,
@@ -2582,68 +2556,68 @@ pub fn handle_client_request_payloads(
                 hoe_instance_id,
                 ..
             } => {
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id}",
-                    ev.client
-                );
-                lingtian_tx.renew_tx.send(StartRenewRequest {
-                    player: ev.client,
+                lingtian_tx.pending.push(PendingLingtianRequest::Renew {
+                    actor: ev.client,
                     pos: valence::prelude::BlockPos::new(x, y, z),
                     hoe_instance_id,
                 });
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_renew entity={:?} pos=[{x},{y},{z}] hoe_inst={hoe_instance_id} queued",
+                    ev.client
+                );
             }
             ClientRequestV1::LingtianStartPlanting {
                 x, y, z, plant_id, ..
             } => {
+                lingtian_tx.pending.push(PendingLingtianRequest::Planting {
+                    actor: ev.client,
+                    pos: valence::prelude::BlockPos::new(x, y, z),
+                    plant_id: plant_id.clone(),
+                });
                 tracing::info!(
-                    "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id}",
+                    "[bong][network] client_request lingtian_start_planting entity={:?} pos=[{x},{y},{z}] plant_id={plant_id} queued",
                     ev.client
                 );
-                lingtian_tx.planting_tx.send(StartPlantingRequest {
-                    player: ev.client,
-                    pos: valence::prelude::BlockPos::new(x, y, z),
-                    plant_id,
-                });
             }
             ClientRequestV1::LingtianStartHarvest { x, y, z, mode, .. } => {
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode}",
-                    ev.client
-                );
-                lingtian_tx.harvest_tx.send(StartHarvestRequest {
-                    player: ev.client,
+                lingtian_tx.pending.push(PendingLingtianRequest::Harvest {
+                    actor: ev.client,
                     pos: valence::prelude::BlockPos::new(x, y, z),
                     mode: parse_session_mode(&mode),
                 });
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_harvest entity={:?} pos=[{x},{y},{z}] mode={mode} queued",
+                    ev.client
+                );
             }
             ClientRequestV1::LingtianStartReplenish {
                 x, y, z, source, ..
             } => {
-                tracing::info!(
-                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source}",
-                    ev.client
-                );
                 let Some(parsed) = parse_replenish_source(&source) else {
                     tracing::warn!(
                         "[bong][network] lingtian_start_replenish ignored: unknown source `{source}`"
                     );
                     continue;
                 };
-                lingtian_tx.replenish_tx.send(StartReplenishRequest {
-                    player: ev.client,
+                lingtian_tx.pending.push(PendingLingtianRequest::Replenish {
+                    actor: ev.client,
                     pos: valence::prelude::BlockPos::new(x, y, z),
                     source: parsed,
                 });
-            }
-            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
                 tracing::info!(
-                    "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}]",
+                    "[bong][network] client_request lingtian_start_replenish entity={:?} pos=[{x},{y},{z}] source={source} queued",
                     ev.client
                 );
-                lingtian_tx.drain_qi_tx.send(StartDrainQiRequest {
-                    player: ev.client,
+            }
+            ClientRequestV1::LingtianStartDrainQi { x, y, z, .. } => {
+                lingtian_tx.pending.push(PendingLingtianRequest::DrainQi {
+                    actor: ev.client,
                     pos: valence::prelude::BlockPos::new(x, y, z),
                 });
+                tracing::info!(
+                    "[bong][network] client_request lingtian_start_drain_qi entity={:?} pos=[{x},{y},{z}] queued",
+                    ev.client
+                );
             }
             ClientRequestV1::ForgeStationPlace {
                 x,
@@ -3934,13 +3908,17 @@ mod tests {
         BlueprintScrollSpec, ContainerState, InscriptionScrollSpec, InventoryRevision,
         ItemCategory, ItemEffect, ItemInstance, ItemRarity, ItemTemplate, PlacedItemState,
     };
+    use crate::lingtian::events::{
+        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+        StartReplenishRequest, StartTillRequest,
+    };
     use crate::npc::faction::{FactionId, FactionRank, MissionQueue, NamedFactionId, Reputation};
     use crate::skill::components::SkillSet;
     use crate::zhenfa::trap_content::TrapTargetFace;
     use valence::entity::{EntityId, EntityPlugin};
     use valence::prelude::{
-        ident, App, DVec3, EntityKind, EventReader, IntoSystemConfigs, OldPosition, Position,
-        ResMut, Update,
+        ident, App, BlockPos, DVec3, Entity, EntityKind, EventReader, IntoSystemConfigs,
+        OldPosition, Position, ResMut, Update,
     };
     use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -4425,6 +4403,7 @@ mod tests {
         use crate::supply_coffin::{SupplyCoffinGrade, SupplyCoffinRegistry};
 
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
         app.add_event::<SupplyCoffinOpenRequest>();
@@ -4572,6 +4551,7 @@ mod tests {
         const COFFIN_POS: DVec3 = DVec3::new(0.0, 64.0, 0.0);
 
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5153,6 +5133,7 @@ mod tests {
     #[test]
     fn alchemy_open_furnace_repushes_authoritative_recipe_snapshot_over_wire() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5185,6 +5166,7 @@ mod tests {
     #[test]
     fn alchemy_ignite_repushes_authoritative_recipe_snapshot_over_wire() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5215,6 +5197,7 @@ mod tests {
     #[test]
     fn alchemy_intervention_repushes_authoritative_recipe_snapshot_over_wire() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5254,6 +5237,7 @@ mod tests {
     #[test]
     fn alchemy_feed_repushes_completed_stage_with_authoritative_recipe_snapshot_over_wire() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -5294,6 +5278,7 @@ mod tests {
     #[test]
     fn alchemy_take_back_repushes_finished_guidance_after_furnace_session_is_removed() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
@@ -5350,6 +5335,7 @@ mod tests {
     #[test]
     fn alchemy_take_back_missing_allocator_still_pushes_finished_session() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
@@ -5478,6 +5464,7 @@ mod tests {
     #[test]
     fn alchemy_take_back_grant_failure_still_pushes_finished_session() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(alchemy_snapshot_recipe_registry());
         // 编号器就绪，但 registry 故意缺少 failed-pill 模板，强制 grant 失败。
@@ -5723,7 +5710,417 @@ mod tests {
         app.insert_resource(sessions);
     }
 
-    fn register_request_app(app: &mut App) {
+    /// C2S lingtian 测试的完整 payload 捕获：不只是 kind/pos，还要锁住
+    /// actor 与 action 专属字段（hoe_instance_id / mode / plant_id / source），
+    /// 让 validator→queue→handler 契约的任何字段丢失都撞红（fix-spec §9.4）。
+    #[derive(Debug, PartialEq)]
+    struct LingtianDispatchCapture {
+        kind: &'static str,
+        pos: BlockPos,
+        player: Entity,
+        hoe_instance_id: Option<u64>,
+        mode: Option<SessionMode>,
+        plant_id: Option<String>,
+        source: Option<ReplenishSource>,
+    }
+
+    fn drain_lingtian_request_captures(app: &mut App) -> Vec<LingtianDispatchCapture> {
+        let world = app.world_mut();
+        let mut captured = Vec::new();
+        captured.extend(
+            world
+                .resource_mut::<Events<StartTillRequest>>()
+                .drain()
+                .map(|event| LingtianDispatchCapture {
+                    kind: "till",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: Some(event.hoe_instance_id),
+                    mode: Some(event.mode),
+                    plant_id: None,
+                    source: None,
+                }),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartRenewRequest>>()
+                .drain()
+                .map(|event| LingtianDispatchCapture {
+                    kind: "renew",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: Some(event.hoe_instance_id),
+                    mode: None,
+                    plant_id: None,
+                    source: None,
+                }),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartPlantingRequest>>()
+                .drain()
+                .map(|event| LingtianDispatchCapture {
+                    kind: "planting",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: None,
+                    plant_id: Some(event.plant_id),
+                    source: None,
+                }),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartHarvestRequest>>()
+                .drain()
+                .map(|event| LingtianDispatchCapture {
+                    kind: "harvest",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: Some(event.mode),
+                    plant_id: None,
+                    source: None,
+                }),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartReplenishRequest>>()
+                .drain()
+                .map(|event| LingtianDispatchCapture {
+                    kind: "replenish",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: None,
+                    plant_id: None,
+                    source: Some(event.source),
+                }),
+        );
+        captured.extend(
+            world
+                .resource_mut::<Events<StartDrainQiRequest>>()
+                .drain()
+                .map(|event| LingtianDispatchCapture {
+                    kind: "drain_qi",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: None,
+                    plant_id: None,
+                    source: None,
+                }),
+        );
+        captured
+    }
+
+    fn run_lingtian_dispatch_case(
+        payload: serde_json::Value,
+        position: Option<DVec3>,
+        dimension: Option<DimensionKind>,
+    ) -> (Entity, Vec<LingtianDispatchCapture>) {
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("LingtianDispatch");
+        let client = app.world_mut().spawn(client_bundle).id();
+        if let Some(position) = position {
+            app.world_mut()
+                .entity_mut(client)
+                .insert(Position::new(position));
+        }
+        if let Some(dimension) = dimension {
+            app.world_mut()
+                .entity_mut(client)
+                .insert(CurrentDimension(dimension));
+        }
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: payload.to_string().into_bytes().into_boxed_slice(),
+            });
+        app.update();
+        (client, drain_lingtian_request_captures(&mut app))
+    }
+
+    #[test]
+    fn lingtian_c2s_dispatch_applies_shared_position_and_dimension_gate_to_all_actions() {
+        let target = BlockPos::new(0, 64, 0);
+        let boundary = DVec3::new(5.0, 64.5, 0.5);
+        let just_beyond = DVec3::new(5.000_001, 64.5, 0.5);
+        let cases = [
+            (
+                "till",
+                serde_json::json!({
+                    "type": "lingtian_start_till", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "hoe_instance_id": 7, "mode": "manual"
+                }),
+            ),
+            (
+                "renew",
+                serde_json::json!({
+                    "type": "lingtian_start_renew", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "hoe_instance_id": 7
+                }),
+            ),
+            (
+                "planting",
+                serde_json::json!({
+                    "type": "lingtian_start_planting", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "plant_id": "ci_she_hao"
+                }),
+            ),
+            (
+                "harvest",
+                serde_json::json!({
+                    "type": "lingtian_start_harvest", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "mode": "manual"
+                }),
+            ),
+            (
+                "replenish",
+                serde_json::json!({
+                    "type": "lingtian_start_replenish", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "source": "bone_coin"
+                }),
+            ),
+            (
+                "drain_qi",
+                serde_json::json!({
+                    "type": "lingtian_start_drain_qi", "v": 1, "x": 0, "y": 64, "z": 0
+                }),
+            ),
+        ];
+
+        for (kind, payload) in cases {
+            let (client, captures) = run_lingtian_dispatch_case(
+                payload.clone(),
+                Some(boundary),
+                Some(DimensionKind::Overworld),
+            );
+            let expected = LingtianDispatchCapture {
+                kind,
+                pos: target,
+                player: client,
+                hoe_instance_id: (kind == "till" || kind == "renew").then_some(7),
+                mode: (kind == "till" || kind == "harvest").then_some(SessionMode::Manual),
+                plant_id: (kind == "planting").then(|| "ci_she_hao".to_string()),
+                source: (kind == "replenish").then_some(ReplenishSource::BoneCoin),
+            };
+            assert_eq!(
+                captures,
+                vec![expected],
+                "boundary Overworld {kind} request must preserve the full wire payload \
+                 (actor, BlockPos, and action-specific fields) and dispatch exactly once"
+            );
+            for (label, position, dimension) in [
+                (
+                    "just beyond boundary",
+                    Some(just_beyond),
+                    Some(DimensionKind::Overworld),
+                ),
+                ("wrong dimension", Some(boundary), Some(DimensionKind::Tsy)),
+                ("missing position", None, Some(DimensionKind::Overworld)),
+                ("missing dimension", Some(boundary), None),
+            ] {
+                assert!(
+                    run_lingtian_dispatch_case(payload.clone(), position, dimension)
+                        .1
+                        .is_empty(),
+                    "{label} {kind} request must be rejected before ECS dispatch"
+                );
+            }
+        }
+
+        assert!(
+            run_lingtian_dispatch_case(
+                serde_json::json!({
+                    "type": "lingtian_start_replenish", "v": 1,
+                    "x": 0, "y": 64, "z": 0, "source": "unknown_source"
+                }),
+                Some(boundary),
+                Some(DimensionKind::Overworld),
+            )
+            .1
+            .is_empty(),
+            "unknown replenish source must preserve its existing parse rejection"
+        );
+    }
+
+    /// #13 — network ingress 集成契约：真实 producer → 真实 queue → 真实
+    /// validator 的多请求 wire FIFO。同 actor 一批三请求只 dispatch 第一条，
+    /// 其余保序回到队列；逐 tick 推进后按 wire 顺序逐条 dispatch。
+    #[test]
+    fn lingtian_c2s_ingress_queue_preserves_wire_fifo_order() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("LingtianFifo");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(5.0, 64.5, 0.5)));
+        app.world_mut()
+            .entity_mut(client)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        let send = |app: &mut App, payload: serde_json::Value| {
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client,
+                    channel: ident!("bong:client_request").into(),
+                    data: payload.to_string().into_bytes().into_boxed_slice(),
+                });
+        };
+        send(
+            &mut app,
+            serde_json::json!({
+                "type": "lingtian_start_till", "v": 1, "x": 1, "y": 64, "z": 0,
+                "hoe_instance_id": 7, "mode": "manual"
+            }),
+        );
+        send(
+            &mut app,
+            serde_json::json!({
+                "type": "lingtian_start_harvest", "v": 1, "x": 2, "y": 64, "z": 0,
+                "mode": "manual"
+            }),
+        );
+        send(
+            &mut app,
+            serde_json::json!({
+                "type": "lingtian_start_planting", "v": 1, "x": 3, "y": 64, "z": 0,
+                "plant_id": "ci_she_hao"
+            }),
+        );
+
+        let remaining_positions = |app: &App| -> Vec<BlockPos> {
+            app.world()
+                .resource::<crate::lingtian::requests::PendingLingtianRequests>()
+                .inbox
+                .iter()
+                .map(|request| request.actor_and_pos().1)
+                .collect()
+        };
+
+        app.update();
+        assert_eq!(
+            remaining_positions(&app),
+            vec![BlockPos::new(2, 64, 0), BlockPos::new(3, 64, 0)],
+            "same-tick same-actor later requests must stay queued in wire order"
+        );
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app),
+            vec![LingtianDispatchCapture {
+                kind: "till",
+                pos: BlockPos::new(1, 64, 0),
+                player: client,
+                hoe_instance_id: Some(7),
+                mode: Some(SessionMode::Manual),
+                plant_id: None,
+                source: None,
+            }],
+            "first wire request dispatches first"
+        );
+
+        app.update();
+        assert_eq!(
+            remaining_positions(&app),
+            vec![BlockPos::new(3, 64, 0)],
+            "second update must advance to the second wire request only"
+        );
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app)
+                .iter()
+                .map(|capture| capture.kind)
+                .collect::<Vec<_>>(),
+            vec!["harvest"],
+            "second wire request dispatches second"
+        );
+
+        app.update();
+        assert!(
+            remaining_positions(&app).is_empty(),
+            "third update must drain the final wire request"
+        );
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app)
+                .iter()
+                .map(|capture| capture.kind)
+                .collect::<Vec<_>>(),
+            vec!["planting"],
+            "third wire request dispatches last"
+        );
+    }
+
+    /// #16 — 生产装配回归：`LingtianRequestIngressSet` 的排序边是 producer 先于
+    /// validator 的唯一机制。validator 先注册、producer 后注册（反插入序）时，
+    /// 删除 `network/mod.rs` 里 producer 的 `.in_set(...)` 会让本测试撞红
+    /// （请求停留在持久队列、本 tick 无 dispatch）。
+    #[test]
+    fn production_ingress_wiring_orders_producer_before_validator() {
+        let mut app = App::new();
+        register_request_resources(&mut app);
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.add_systems(
+            Update,
+            crate::lingtian::systems::validate_and_dispatch_lingtian_requests
+                .after(crate::lingtian::LingtianRequestIngressSet),
+        );
+        crate::network::register_lingtian_ingress_wiring(&mut app);
+        app.add_systems(
+            Update,
+            crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("IngressWiring");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
+        app.world_mut()
+            .entity_mut(client)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::json!({
+                    "type": "lingtian_start_till", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "hoe_instance_id": 7, "mode": "manual"
+                })
+                .to_string()
+                .into_bytes()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app),
+            vec![LingtianDispatchCapture {
+                kind: "till",
+                pos: BlockPos::new(0, 64, 0),
+                player: client,
+                hoe_instance_id: Some(7),
+                mode: Some(SessionMode::Manual),
+                plant_id: None,
+                source: None,
+            }],
+            "production ingress wiring must dispatch the wire request in the same tick"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::lingtian::requests::PendingLingtianRequests>()
+                .is_empty(),
+            "dispatched request must leave the persistent ingress queue"
+        );
+    }
+
+    fn register_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
         // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
@@ -5796,18 +6193,41 @@ mod tests {
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         // plan-worldgen-v4 P5 §8.1#5 — dev give-block intent（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::cmd::dev::block_picker::BlockPickerGiveIntent>();
+    }
+
+    /// 生产装配：producer 经 `LingtianRequestIngressSet`（与
+    /// `network::register_app_wiring` 同路径），validator 排在该 set 之后
+    /// （与 `lingtian::register` 的 chain 同合同）。测试删掉 set membership
+    /// 会直接破坏这里的排序边（见 `production_ingress_wiring_orders_*`）。
+    fn register_request_systems(app: &mut App) {
+        crate::network::register_lingtian_ingress_wiring(app);
         app.add_systems(
             Update,
-            (
-                handle_client_request_payloads,
-                crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
-            )
-                .chain(),
+            crate::network::inventory_event_emit::emit_durability_changed_inventory_events
+                // 原 test 装配对 producer 与 emitter 用了 `.chain()`：inventory move
+                // 的 durability payload 必须同帧发出（`inventory_move_applies_*` 单
+                // update + flush 断言）。拆生产装配后 chain 没了，改挂 set 后置边保
+                // 持同帧语义——生产路径不依赖此边（每帧全扫，晚一帧无害）。
+                .after(crate::lingtian::LingtianRequestIngressSet),
+        );
+        // fix-spec-1901-v2 §9.2 — exercise the real C2S ingress queue followed by
+        // the single post-transfer validator, rather than treating Start* events
+        // emitted by the producer as the security boundary.
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.add_systems(
+            Update,
+            crate::lingtian::systems::validate_and_dispatch_lingtian_requests
+                .after(crate::lingtian::LingtianRequestIngressSet),
         );
         app.add_systems(
             Update,
             crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
         );
+    }
+
+    fn register_request_app(app: &mut App) {
+        register_request_resources(app);
+        register_request_systems(app);
     }
 
     fn upsert_test_harvest_session(
@@ -6005,6 +6425,7 @@ mod tests {
         // 判定必须用 MorphState.form="human"（放行），而不是冒用本体 Cultivation.race
         // ="whale"（会误拒）。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
         app.insert_resource(make_armor_straw_chestplate_registry(
@@ -6042,6 +6463,7 @@ mod tests {
         // intrinsic race="whale"，被 Species([human]) 门拒绝——证明上一条测试确实
         // 是因为 MorphState 生效才放行，不是这件甲本来就对谁都放行。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
         app.insert_resource(make_armor_straw_chestplate_registry(
@@ -6117,6 +6539,7 @@ mod tests {
     #[test]
     fn npc_trade_request_rejects_wanted_player_through_engagement_wiring() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
         app.insert_resource(ZoneRegistry::load_from_path(
@@ -6238,6 +6661,7 @@ mod tests {
         npc_membership: Option<FactionMembership>,
     ) -> (App, Entity, MockClientHelper) {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.add_plugins(EntityPlugin);
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().unwrap());
@@ -6663,6 +7087,7 @@ mod tests {
     #[test]
     fn set_meridian_target_sends_generic_meridian_chat_echo() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -6710,6 +7135,7 @@ mod tests {
     #[test]
     fn set_meridian_target_with_unknown_channel_id_is_handled_safely_not_panicking() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -6746,6 +7172,7 @@ mod tests {
     #[test]
     fn set_meridian_target_with_legacy_pascal_case_lung_string_is_rejected_as_unknown() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -6777,6 +7204,7 @@ mod tests {
     #[test]
     fn qi_scatter_bead_use_dispatches_zhenfa_event() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut().resource_mut::<CombatClock>().tick = 33;
 
@@ -6820,6 +7248,7 @@ mod tests {
     #[test]
     fn qi_scatter_bead_use_with_coords_dispatches_burial_pos() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -6850,6 +7279,7 @@ mod tests {
     #[test]
     fn block_place_payload_dispatches_runtime_request_event() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -6893,6 +7323,7 @@ mod tests {
         Vec<crate::cmd::dev::block_picker::BlockPickerGiveIntent>,
     ) {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -6947,6 +7378,7 @@ mod tests {
         Vec<crate::inventory::RemainsLootIntent>,
     ) {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7061,6 +7493,7 @@ mod tests {
     #[test]
     fn workbench_open_payload_requires_entity_manager_before_dispatch() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -7090,6 +7523,7 @@ mod tests {
     #[test]
     fn container_open_payload_requires_entity_manager_before_dispatch() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -7118,6 +7552,7 @@ mod tests {
 
     fn assert_movement_action_yaw_forwarded(yaw_degrees: f32) {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<MovementActionIntent>();
 
@@ -7166,6 +7601,7 @@ mod tests {
     #[test]
     fn alchemy_inject_qi_ignored_for_furnace_in_collapsed_zone() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let mut zones = ZoneRegistry::fallback();
         zones
@@ -7203,6 +7639,7 @@ mod tests {
     #[test]
     fn alchemy_explode_take_back_applies_damage_and_meridian_crack() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
         app.insert_resource(crate::inventory::load_item_registry().unwrap());
@@ -7286,6 +7723,7 @@ mod tests {
     #[test]
     fn alchemy_flawed_take_back_grants_flawed_pill_residue() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
         app.insert_resource(crate::inventory::load_item_registry().unwrap());
@@ -7353,6 +7791,7 @@ mod tests {
     #[test]
     fn alchemy_feed_slot_rejects_wrong_mineral_instance_on_live_request_path() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
 
@@ -7448,10 +7887,12 @@ mod tests {
     #[test]
     fn alchemy_ignite_rejects_low_zone_qi_on_live_request_path() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
         app.insert_resource(crate::inventory::load_item_registry().unwrap());
         app.insert_resource(crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: "spawn".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -7493,6 +7934,7 @@ mod tests {
     #[test]
     fn brew_emits_vapor() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
 
@@ -7583,6 +8025,7 @@ mod tests {
     #[test]
     fn alchemy_intervention_emits_stir_animation_for_owner() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7618,6 +8061,7 @@ mod tests {
     #[test]
     fn each_alchemy_intervention_emits_its_own_stir() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7639,6 +8083,7 @@ mod tests {
     #[test]
     fn auto_profile_intervention_emits_no_stir_animation() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7661,6 +8106,7 @@ mod tests {
     #[test]
     fn alchemy_intervention_without_session_does_not_emit_stir() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7681,6 +8127,7 @@ mod tests {
     #[test]
     fn alchemy_intervention_on_foreign_furnace_does_not_emit_stir() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (client_bundle, _helper) = create_mock_client("Azure");
         let entity = app.world_mut().spawn(client_bundle).id();
@@ -7699,6 +8146,7 @@ mod tests {
     #[test]
     fn alchemy_inject_qi_in_collapsed_zone_does_not_emit_stir() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let mut zones = ZoneRegistry::fallback();
         zones
@@ -7734,6 +8182,7 @@ mod tests {
     #[test]
     fn alchemy_explode_backlash_without_components_does_not_crash() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
         app.insert_resource(crate::inventory::load_item_registry().unwrap());
@@ -7782,6 +8231,7 @@ mod tests {
 
         fn build_tui_gu_dan_app() -> (App, valence::prelude::Entity, valence::prelude::Entity) {
             let mut app = App::new();
+            app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
             register_request_app(&mut app);
             app.insert_resource(crate::alchemy::recipe::load_recipe_registry().unwrap());
             app.insert_resource(crate::inventory::load_item_registry().unwrap());
@@ -7968,6 +8418,7 @@ mod tests {
     #[test]
     fn unsupported_client_request_version_is_ignored_without_side_effects() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedBreakthroughRequests::default());
         app.insert_resource(CapturedForgeRequests::default());
         app.insert_resource(CapturedInsightChoices::default());
@@ -8055,6 +8506,7 @@ mod tests {
     #[test]
     fn botany_harvest_request_updates_existing_session_without_gather_enqueue() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(HarvestSessionStore::default());
 
@@ -8108,6 +8560,7 @@ mod tests {
     #[test]
     fn botany_harvest_request_rejects_missing_session_without_gather_enqueue() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(HarvestSessionStore::default());
 
@@ -8137,6 +8590,7 @@ mod tests {
     #[test]
     fn botany_harvest_request_rejects_different_client_session_without_mutation() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(HarvestSessionStore::default());
 
@@ -8182,6 +8636,7 @@ mod tests {
     #[test]
     fn botany_harvest_request_invalid_session_does_not_grant_gather_rewards() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(HarvestSessionStore::default());
         app.insert_resource(GameplayTick::default());
@@ -8271,6 +8726,7 @@ mod tests {
     #[test]
     fn abort_tribulation_request_is_ignored_after_start_confirmation() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(CapturedStartDuXuRequests::default());
         app.add_event::<StartDuXuRequest>();
@@ -8317,6 +8773,7 @@ mod tests {
     #[test]
     fn movement_action_request_emits_intent_when_event_resource_exists() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<MovementActionIntent>();
 
@@ -8374,6 +8831,7 @@ mod tests {
     #[test]
     fn movement_action_request_rejects_non_numeric_yaw_degrees() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<MovementActionIntent>();
 
@@ -8405,6 +8863,7 @@ mod tests {
     #[test]
     fn movement_action_request_without_event_resource_is_dropped() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -8430,6 +8889,7 @@ mod tests {
     #[test]
     fn use_quick_slot_reads_template_from_equipped_instance() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "bone_whistle".to_string(),
@@ -8501,6 +8961,7 @@ mod tests {
     #[test]
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
 
@@ -8546,6 +9007,7 @@ mod tests {
     #[test]
     fn quick_slot_bind_atomically_mirrors_block_item_into_skill_bar() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
 
@@ -8596,6 +9058,7 @@ mod tests {
     #[test]
     fn quick_slot_bind_rejects_unheld_item_without_mutating_or_persisting() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
         let mut quick = QuickSlotBindings::default();
@@ -8630,6 +9093,7 @@ mod tests {
     #[test]
     fn quick_slot_bind_missing_skillbar_rejects_before_quick_slot_mutation() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
         let inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
@@ -8663,6 +9127,7 @@ mod tests {
     #[test]
     fn quick_slot_bind_clears_only_the_old_auto_mirrored_item() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
         let mut inventory = inventory_with_item(inventory_test_item(88, "earth_crumb", 1));
@@ -8748,6 +9213,7 @@ mod tests {
     #[test]
     fn quick_slot_bind_persistence_failure_leaves_both_components_unchanged() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
         let invalid_db_path = std::env::temp_dir();
@@ -8802,6 +9268,7 @@ mod tests {
         crate::persistence::bootstrap_sqlite(&db_path, "quick-bind-test")
             .expect("test sqlite should bootstrap");
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(crate::inventory::load_item_registry().expect("item registry loads"));
         app.insert_resource(PlayerStatePersistence::with_db_path(&root, &db_path));
@@ -8907,6 +9374,7 @@ mod tests {
     #[test]
     fn inventory_move_applies_hidden_targeted_wear_to_spiritual_item() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "spiritual_ore".to_string(),
@@ -9011,6 +9479,7 @@ mod tests {
     #[test]
     fn inventory_move_intent_with_rotated_true_swaps_dims_end_to_end() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "long_rod".to_string(),
@@ -9115,6 +9584,7 @@ mod tests {
     #[test]
     fn inventory_move_intent_rotated_rejection_leaves_inventory_clean_end_to_end() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "long_rod".to_string(),
@@ -9216,6 +9686,7 @@ mod tests {
     #[test]
     fn apply_pill_during_tribulation_recovers_current_qi_only() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "huiyuan_pill".to_string(),
@@ -9313,6 +9784,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_emits_probe_intent() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -9380,6 +9852,7 @@ mod tests {
     #[test]
     fn spirit_niche_place_request_emits_place_intent() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedSpiritNichePlaces::default());
         app.insert_resource(CombatClock { tick: 88 });
         app.insert_resource(GameplayActionQueue::default());
@@ -9444,6 +9917,7 @@ mod tests {
     #[test]
     fn spirit_niche_repair_request_emits_repair_intent() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedSpiritNicheRepairs::default());
         register_request_app(&mut app);
         app.insert_resource(CombatClock { tick: 90 });
@@ -9477,6 +9951,7 @@ mod tests {
     #[test]
     fn coffin_open_request_emits_spawn_tutorial_intent() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedCoffinOpenRequests::default());
         register_request_app(&mut app);
         app.insert_resource(CombatClock { tick: 91 });
@@ -9512,6 +9987,7 @@ mod tests {
     #[test]
     fn coffin_break_request_emits_event_with_correct_player_and_pos() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedCoffinBreakRequests::default());
         register_request_app(&mut app);
         app.insert_resource(CombatClock { tick: 77 });
@@ -9562,6 +10038,7 @@ mod tests {
     #[test]
     fn coffin_menu_reclaim_request_emits_event_with_correct_player_and_pos() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedCoffinMenuReclaimRequests::default());
         register_request_app(&mut app);
         app.insert_resource(CombatClock { tick: 88 });
@@ -9612,6 +10089,7 @@ mod tests {
     #[test]
     fn spirit_niche_coordinate_requests_emit_reveal_intents() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedSpiritNicheCoordinateReveals::default());
         app.insert_resource(CombatClock { tick: 89 });
         app.insert_resource(GameplayActionQueue::default());
@@ -9697,6 +10175,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_out_of_range_is_rejected() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -9758,6 +10237,7 @@ mod tests {
     #[test]
     fn mineral_probe_request_uses_player_dimension() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedMineralProbes::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -9821,6 +10301,7 @@ mod tests {
     #[test]
     fn qi_color_inspect_rejects_entity_bits_target() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(CapturedQiColorInspectRequests::default());
         app.add_systems(
@@ -10244,6 +10725,7 @@ mod tests {
     #[test]
     fn learn_skill_scroll_consumes_first_time_and_marks_consumed() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -10333,6 +10815,7 @@ mod tests {
     #[test]
     fn learn_skill_scroll_duplicate_does_not_consume_item() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -10424,6 +10907,7 @@ mod tests {
     #[test]
     fn learn_blueprint_consumes_scroll_item() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
         app.insert_resource(AlchemyMockState::default());
@@ -10554,6 +11038,7 @@ mod tests {
     #[test]
     fn forge_start_session_dispatches_start_forge_request_for_owned_station() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<StartForgeRequest>();
 
@@ -10603,6 +11088,7 @@ mod tests {
     fn forge_start_session_dispatches_for_unclaimed_station_with_no_owner() {
         // owner=None 的砧（系统/公用砧）应放行任何玩家起炉。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<StartForgeRequest>();
 
@@ -10634,6 +11120,7 @@ mod tests {
     #[test]
     fn forge_start_session_rejects_missing_station_with_chat_error_and_no_dispatch() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<StartForgeRequest>();
 
@@ -10669,6 +11156,7 @@ mod tests {
     #[test]
     fn forge_start_session_rejects_station_owned_by_someone_else() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.add_event::<StartForgeRequest>();
 
@@ -10718,6 +11206,7 @@ mod tests {
     #[test]
     fn forge_blueprint_turn_page_positive_delta_advances_and_echoes_s2c() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10752,6 +11241,7 @@ mod tests {
     #[test]
     fn forge_blueprint_turn_page_negative_delta_wraps_to_last_page() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10786,6 +11276,7 @@ mod tests {
     #[test]
     fn forge_blueprint_turn_page_multi_step_delta_advances_that_many_pages() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10820,6 +11311,7 @@ mod tests {
         // 一个包冻结整个 ECS tick 数秒（DoS）。守卫后按 |delta| % len 步进：
         // 2_147_483_648 % 3 = 2，负方向 prev 2 页，0 → 2 → 1，落点必须与逐步等价。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10860,6 +11352,7 @@ mod tests {
         // 边界：|delta| 恰为 len 的整数倍 → %len 后 0 步，页码不动；但请求本身
         // 合法，仍回推 S2C（与 delta=0 的静默 noop 区分——那是无意义输入）。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10891,6 +11384,7 @@ mod tests {
     #[test]
     fn forge_blueprint_turn_page_delta_zero_is_noop_no_s2c() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10922,6 +11416,7 @@ mod tests {
     fn forge_blueprint_turn_page_noop_when_never_learned_any_blueprint() {
         // LearnedBlueprints 组件懒插入：从未学过图谱的玩家没有这个组件，无书可翻。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10942,6 +11437,7 @@ mod tests {
     #[test]
     fn forge_blueprint_turn_page_noop_when_learned_list_empty() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(forge_blueprint_registry_for_tests());
 
@@ -10969,6 +11465,7 @@ mod tests {
     #[test]
     fn forge_inscription_scroll_defers_consumption_and_emits_exact_item_event() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11049,6 +11546,7 @@ mod tests {
     #[test]
     fn forge_inscription_scroll_rejects_invalid_session_before_consuming_item() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedInscriptionScrolls::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11121,6 +11619,7 @@ mod tests {
     #[test]
     fn forge_tempering_hit_emits_event() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11184,6 +11683,7 @@ mod tests {
     #[test]
     fn forge_tempering_hit_rejects_unknown_beat() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11243,6 +11743,7 @@ mod tests {
     #[test]
     fn forge_consecration_inject_emits_event() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11306,6 +11807,7 @@ mod tests {
     #[test]
     fn forge_consecration_inject_rejects_negative_qi() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11365,6 +11867,7 @@ mod tests {
     #[test]
     fn forge_step_advance_emits_event() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedStepAdvances::default());
         app.insert_resource(CombatClock::default());
         app.insert_resource(GameplayActionQueue::default());
@@ -11427,6 +11930,7 @@ mod tests {
     #[test]
     fn forge_session_inputs_reject_wrong_caster() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedTemperingHits::default());
         app.insert_resource(CapturedConsecrationInjects::default());
         app.insert_resource(CapturedStepAdvances::default());
@@ -11528,6 +12032,7 @@ mod tests {
     #[test]
     fn skill_bar_bind_skill_then_cast_starts_skillbar_cast() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -11646,6 +12151,7 @@ mod tests {
     #[test]
     fn user_cancel_by_slot_switch_stops_looping_charge_anim() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -11721,6 +12227,7 @@ mod tests {
     #[test]
     fn user_cancel_of_non_looping_cast_emits_no_stop_anim() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -11777,6 +12284,7 @@ mod tests {
         // 无 required_meridians、无 SkillMeridianDependencies）→ 走通用施法路径，
         // 通用路径无条件插入 Casting 并把 SkillConfigStore 里的配置带入 Casting.skill_config。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillConfigStore>()
@@ -11840,6 +12348,7 @@ mod tests {
     #[test]
     fn skill_bar_cast_requires_config_for_schema_fixture() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -11971,6 +12480,7 @@ mod tests {
     #[test]
     fn valid_skill_config_intent_replies_with_authoritative_snapshot() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -12009,6 +12519,7 @@ mod tests {
     #[test]
     fn skill_bar_cast_rejects_when_skill_config_schemas_missing() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut().remove_resource::<SkillConfigSchemas>();
 
@@ -12135,6 +12646,7 @@ mod tests {
         // Condense / qi ≥ 35 / Stomach 可用）全补齐 → 经脉门放行后 resolver 真正施放 →
         // Casting 由 resolver 插入（cast 10 / cd 70，来自 known_techniques.tie_shan_kao）。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -12192,6 +12704,7 @@ mod tests {
         // burst_meridian.beng_quan 需要 LargeIntestine/SmallIntestine/TripleEnergizer integrity >= 0.01
         // 把 LargeIntestine 降到 0.0 → gate 应拒绝
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -12247,6 +12760,7 @@ mod tests {
     fn skill_bar_cast_meridian_gate_rejects_when_required_meridian_severed() {
         // burst_meridian.beng_quan 需要 LargeIntestine；SEVERED → gate 拒绝
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -12307,6 +12821,7 @@ mod tests {
         // 在 SkillMeridianDependencies 表中声明 "sword.cleave"（无内置 required_meridians）
         // 依赖 LargeIntestine，把它 SEVERED → gate 应拒绝
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         // 声明依赖
         app.world_mut()
@@ -12368,6 +12883,7 @@ mod tests {
         // sword.cleave 无内置 required_meridians，且 deps_table 未声明依赖 → gate 不拦
         // 有非依赖经脉 SEVERED（Gallbladder）—— 验证 gate 不误伤无关经脉
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         // 不声明任何 SkillMeridianDependencies
 
@@ -12425,6 +12941,7 @@ mod tests {
         // sword.cleave 有 resolver；在 deps_table 里声明 LargeIntestine 依赖，SEVERED → gate 拒绝
         // 验证 gate 在 resolver 路径也生效（gate 在 resolver 分支之前检查）
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillMeridianDependencies>()
@@ -12490,6 +13007,7 @@ mod tests {
         // integrity 恰好 = 0.5（off-by-one 边界）应放行（>= 成立）；resolver 其余前置补齐
         // → 经脉门放行后 resolver 真正插入 Casting。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -12539,6 +13057,7 @@ mod tests {
         // burst_meridian.tie_shan_kao 需要 Stomach integrity >= 0.5
         // 设置 integrity = 0.499（低于 min_health）→ 应拒绝
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -12589,6 +13108,7 @@ mod tests {
         // 设置 Stomach integrity=1.0（满足阈值）但 opened=false（未打通）→ gate 应拒绝
         // 这是核心正典约束：「经脉没通就放不出招」，opened 先于 integrity 决定能否施放
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillConfigStore>()
@@ -12651,6 +13171,7 @@ mod tests {
         // burst_meridian.beng_quan 需要 LargeIntestine + SmallIntestine + TripleEnergizer
         // 满足前两个，第三个 integrity=0.0 → 应拒绝
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -12705,6 +13226,7 @@ mod tests {
         // 用 body.guangbo_ticao（仍是 skeleton：无 resolver、无 required_meridians、无 deps）
         // 作载体：经脉门放行后走通用路径，无条件插入 Casting，纯粹锁住「无 MeridianSystem 放行」语义。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -12744,6 +13266,7 @@ mod tests {
         // 这是对 "skill_bar_cast_defined_skill_without_resolver_uses_generic_cast_path" 的回归验证：
         // 引入经脉门后，无依赖招的通用路径行为不变。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillConfigStore>()
@@ -12807,6 +13330,7 @@ mod tests {
         // < tie_shan_kao 要求的 Condense → resolver 在 check_realm_gate 处拒绝 RealmTooLow。
         // 期望：① 无 Casting（被 resolver 拒绝）② 推送 CastSyncV1{outcome=RejectRealmTooLow}。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -12998,6 +13522,7 @@ mod tests {
         // `combat::sword_basics::cast_sword_attack`）③ qi_current 分毫不动（守恒律：
         // race gate 拒绝不该扣任何真元）。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (entity, mut helper) = setup_sword_cleave_caster(&mut app, "Whale", Some("test_whale"));
 
@@ -13045,6 +13570,7 @@ mod tests {
         // （非零 AttackIntent，且不应出现 RejectRaceMismatch）。与上一测试对照，
         // 证明 race gate 只挡非人形、不误伤人形本体。
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         let (entity, mut helper) = setup_sword_cleave_caster(&mut app, "Human", None);
 
@@ -13252,6 +13778,7 @@ mod tests {
     #[test]
     fn skill_config_intent_resource_failures_reply_with_authoritative_snapshot() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut()
             .resource_mut::<SkillConfigStore>()
@@ -13298,6 +13825,7 @@ mod tests {
         );
 
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.world_mut().remove_resource::<SkillConfigStore>();
         let (client_bundle, mut helper) = create_mock_client("Azure");
@@ -13328,6 +13856,7 @@ mod tests {
     #[test]
     fn skill_bar_cast_protocol_entity_id_does_not_fallback_to_entity_bits() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -13383,6 +13912,7 @@ mod tests {
     #[test]
     fn skill_bar_cast_empty_item_or_cooldown_does_not_start_cast() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -13431,6 +13961,7 @@ mod tests {
     #[test]
     fn skill_bar_bind_rejects_unknown_skill() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -13502,6 +14033,7 @@ mod tests {
     #[test]
     fn skill_bar_bind_same_skill_does_not_reset_cooldown() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let mut skill_bar = SkillBarBindings::default();
@@ -13572,6 +14104,7 @@ mod tests {
     #[test]
     fn skill_bar_bind_same_skill_when_off_cooldown_produces_casting() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let mut skill_bar = SkillBarBindings::default();
@@ -13632,6 +14165,7 @@ mod tests {
     #[test]
     fn skill_bar_bind_different_skill_never_touches_either_skills_cooldown() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let mut skill_bar = SkillBarBindings::default();
@@ -13703,6 +14237,7 @@ mod tests {
     #[test]
     fn skill_bar_bind_clear_then_rebind_same_skill_does_not_reset_cooldown() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let mut skill_bar = SkillBarBindings::default();
@@ -13817,6 +14352,7 @@ mod tests {
         use crate::cultivation::components::{Cultivation, Realm};
 
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, mut helper) = create_mock_client("Kiz");
@@ -13996,6 +14532,7 @@ mod tests {
     #[test]
     fn scroll_read_request_inserts_marker_and_emits_play_anim() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "scroll_meridian_primer".to_string(),
@@ -14031,6 +14568,7 @@ mod tests {
     #[test]
     fn scroll_read_request_without_anim_id_does_not_insert_marker() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "scroll_no_anim".to_string(),
@@ -14067,6 +14605,7 @@ mod tests {
     #[test]
     fn scroll_read_request_emits_scroll_open_glow_particle() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "scroll_meridian_primer".to_string(),
@@ -14114,6 +14653,7 @@ mod tests {
     #[test]
     fn scroll_read_closed_emits_stop_anim_and_removes_marker() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "scroll_meridian_primer".to_string(),
@@ -14152,6 +14692,7 @@ mod tests {
     #[test]
     fn scroll_read_closed_without_active_reading_is_noop() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
 
         let (client_bundle, _helper) = create_mock_client("Azure");
@@ -14176,6 +14717,7 @@ mod tests {
     #[test]
     fn repeated_scroll_read_closed_only_stops_once() {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
         app.insert_resource(ItemRegistry::from_map(HashMap::from([(
             "scroll_meridian_primer".to_string(),
@@ -20071,6 +20613,10 @@ mod freshness_probe_handler_tests {
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
     };
+    use crate::lingtian::events::{
+        StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+        StartReplenishRequest, StartTillRequest,
+    };
     use valence::prelude::{ident, App, EventReader, IntoSystemConfigs, ResMut, Update};
     use valence::testing::create_mock_client;
 
@@ -20135,6 +20681,7 @@ mod freshness_probe_handler_tests {
     /// 镜像 mineral_probe_request_emits_probe_intent 的 app 构造模式。
     fn setup_freshness_probe_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedFreshnessProbes::default());
         app.insert_resource(CombatClock { tick: 42 });
         app.insert_resource(GameplayActionQueue::default());
@@ -20487,6 +21034,7 @@ mod freshness_probe_handler_tests {
 
     fn setup_shield_e2e_app() -> (App, valence::prelude::Entity) {
         let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         app.insert_resource(CapturedRaiseShieldIntents::default());
         app.insert_resource(CapturedLowerShieldIntents::default());
         app.insert_resource(CombatClock::default());
