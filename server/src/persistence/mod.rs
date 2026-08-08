@@ -497,9 +497,16 @@ impl StagedDeceasedExport {
         self.relative_snapshot_path.as_str()
     }
 
-    fn rollback(&self) {
-        rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
-        rollback_file(&self.index_path, self.previous_index.as_deref());
+    fn rollback(&self) -> io::Result<()> {
+        let snapshot_result = rollback_file(&self.snapshot_path, self.previous_snapshot.as_deref());
+        let index_result = rollback_file(&self.index_path, self.previous_index.as_deref());
+        match (snapshot_result, index_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(snapshot_error), Err(index_error)) => Err(io::Error::other(format!(
+                "deceased export rollback failed for snapshot and index: {snapshot_error}; {index_error}"
+            ))),
+        }
     }
 }
 
@@ -5637,13 +5644,19 @@ fn persist_termination_transition_inner(
         transaction.commit().map_err(io::Error::other)
     })();
 
-    if persisted.is_err() {
-        if let Some(export) = staged_export.as_ref() {
-            export.rollback();
+    match persisted {
+        Err(error) => {
+            if let Some(export) = staged_export.as_ref() {
+                if let Err(rollback_error) = export.rollback() {
+                    return Err(io::Error::other(format!(
+                        "deceased persistence failed: {error}; rollback failed: {rollback_error}"
+                    )));
+                }
+            }
+            Err(error)
         }
+        Ok(()) => Ok(()),
     }
-
-    persisted
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5802,12 +5815,16 @@ fn persist_npc_deceased_archive_with_hooks(
     );
     let relative_path =
         npc_deceased_archive_relative_path(archive.char_id.as_str(), archive.archived_at_wall);
-    let previous_archive = fs::read(&archive_path).ok();
+    let previous_archive = read_optional_file(&archive_path)?;
     let archive_json = serde_json::to_vec_pretty(archive)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     if let Err(error) = write_bundle(&archive_path, &archive_json) {
-        rollback_file(&archive_path, previous_archive.as_deref());
-        return Err(error);
+        return match rollback_file(&archive_path, previous_archive.as_deref()) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "npc archive replacement failed: {error}; rollback failed: {rollback_error}"
+            ))),
+        };
     }
 
     let persisted = (|| -> io::Result<()> {
@@ -5827,11 +5844,15 @@ fn persist_npc_deceased_archive_with_hooks(
         transaction.commit().map_err(io::Error::other)
     })();
 
-    if persisted.is_err() {
-        rollback_file(&archive_path, previous_archive.as_deref());
+    match persisted {
+        Ok(()) => Ok(()),
+        Err(error) => match rollback_file(&archive_path, previous_archive.as_deref()) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(io::Error::other(format!(
+                "npc archive persistence failed: {error}; rollback failed: {rollback_error}"
+            ))),
+        },
     }
-
-    persisted
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -5871,12 +5892,16 @@ pub fn sweep_stale_npc_digests(
     for digest in &stale_digests {
         let archive_path =
             npc_digest_archive_absolute_path(settings, digest.char_id.as_str(), now_wall);
-        let previous_archive = fs::read(&archive_path).ok();
+        let previous_archive = read_optional_file(&archive_path)?;
         let archive_json = serde_json::to_vec_pretty(digest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         if let Err(error) = write_zstd_bundle(&archive_path, &archive_json) {
-            rollback_file(&archive_path, previous_archive.as_deref());
-            return Err(error);
+            return match rollback_file(&archive_path, previous_archive.as_deref()) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(io::Error::other(format!(
+                    "npc digest archive replacement failed: {error}; rollback failed: {rollback_error}"
+                ))),
+            };
         }
     }
 
@@ -9184,8 +9209,8 @@ fn stage_public_deceased_export(
         .deceased_public_dir()
         .join(format!("{snapshot_stem}.json"));
     let index_path = settings.deceased_public_dir().join("_index.json");
-    let previous_snapshot = fs::read(&snapshot_path).ok();
-    let previous_index = fs::read(&index_path).ok();
+    let previous_snapshot = read_optional_file(&snapshot_path)?;
+    let previous_index = read_optional_file(&index_path)?;
     let relative_snapshot_path = format!("deceased/{snapshot_stem}.json");
     let staged = StagedDeceasedExport {
         snapshot_path,
@@ -9216,7 +9241,11 @@ fn stage_public_deceased_export(
         fs::write(&staged.index_path, index_json.as_bytes())
     })();
     if let Err(error) = write_result {
-        staged.rollback();
+        if let Err(rollback_error) = staged.rollback() {
+            return Err(io::Error::other(format!(
+                "deceased export write failed: {error}; rollback failed: {rollback_error}"
+            )));
+        }
         return Err(error);
     }
 
@@ -9232,14 +9261,22 @@ fn read_deceased_index(index_path: &Path) -> io::Result<Vec<DeceasedIndexEntry>>
     }
 }
 
-fn rollback_file(path: &Path, previous: Option<&[u8]>) {
+fn read_optional_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn rollback_file(path: &Path, previous: Option<&[u8]>) -> io::Result<()> {
     match previous {
-        Some(contents) => {
-            let _ = fs::write(path, contents);
-        }
-        None => {
-            let _ = fs::remove_file(path);
-        }
+        Some(contents) => fs::write(path, contents),
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
     }
 }
 
@@ -16484,6 +16521,109 @@ mod persistence_tests {
             "failure after writing a first archive must remove the unindexed bundle"
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_non_not_found_prior_read_aborts_before_write_or_db() {
+        let (settings, root) = persistence_settings("npc-archive-prior-read-error");
+        let capture = sample_npc_capture("npc_archive_prior_read_error");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 721,
+            archived_at_wall: 1_704_067_271,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        let archive_path = npc_deceased_archive_absolute_path(
+            &settings,
+            archive.char_id.as_str(),
+            archive.archived_at_wall,
+        );
+        fs::create_dir_all(&archive_path).expect("directory fixture should be creatable");
+        let open_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let open_called_for_hook = open_called.clone();
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            move |_| {
+                open_called_for_hook.store(true, std::sync::atomic::Ordering::SeqCst);
+                Err(io::Error::other("database hook must not run"))
+            },
+            |_, _| panic!("write hook must not run after a prior read error"),
+        )
+        .expect_err("a non-NotFound prior read error must abort before mutation");
+        assert_eq!(error.kind(), io::ErrorKind::IsADirectory);
+        assert!(
+            !open_called.load(std::sync::atomic::Ordering::SeqCst),
+            "prior-file read errors must not open the database or run hooks"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_file_treats_missing_cleanup_as_idempotent() {
+        let (settings, root) = persistence_settings("rollback-file-missing-cleanup");
+        let path = settings.deceased_public_dir().join("missing.json");
+        rollback_file(&path, None).expect("removing an already-missing file is idempotent");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_file_surfaces_write_and_remove_errors() {
+        let (settings, root) = persistence_settings("rollback-file-errors");
+        let write_path = settings.deceased_public_dir().join("write-error");
+        fs::create_dir_all(&write_path).expect("write-error directory should be creatable");
+        let write_error = rollback_file(&write_path, Some(b"previous"))
+            .expect_err("rollback writes must surface destination errors");
+        assert_eq!(write_error.kind(), io::ErrorKind::IsADirectory);
+
+        let remove_path = settings.deceased_public_dir().join("remove-error");
+        fs::create_dir_all(&remove_path).expect("remove-error directory should be creatable");
+        let remove_error = rollback_file(&remove_path, None)
+            .expect_err("rollback removes must surface non-NotFound errors");
+        assert_eq!(remove_error.kind(), io::ErrorKind::IsADirectory);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn npc_archive_reports_primary_and_rollback_failures_together() {
+        let (settings, root) = persistence_settings("npc-archive-composite-diagnostic");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("bootstrap should succeed");
+        let capture = sample_npc_capture("npc_archive_composite_diagnostic");
+        let archive = NpcDeceasedArchiveRecord {
+            char_id: capture.state.char_id.clone(),
+            archetype: capture.state.archetype.clone(),
+            died_at_tick: 722,
+            archived_at_wall: 1_704_067_272,
+            lifecycle_state: "terminated".to_string(),
+            death_count: 1,
+            state: Some(capture.state.clone()),
+            digest: Some(capture.digest.clone()),
+            life_record: Some(sample_npc_life_record(capture.state.char_id.as_str())),
+        };
+        persist_npc_deceased_archive(&settings, &archive)
+            .expect("baseline archive should establish previous bytes");
+        let error = persist_npc_deceased_archive_with_hooks(
+            &settings,
+            &archive,
+            |_| Err(io::Error::other("primary database failure")),
+            |path, _| {
+                fs::remove_file(path)?;
+                fs::create_dir(path)?;
+                Err(io::Error::other("primary write failure"))
+            },
+        )
+        .expect_err("primary failure with failed rollback must retain both diagnostics");
+        let message = error.to_string();
+        assert!(message.contains("primary write failure"));
+        assert!(message.contains("rollback failed"));
+        assert!(message.contains("Is a directory") || message.contains("directory"));
         let _ = fs::remove_dir_all(root);
     }
 
