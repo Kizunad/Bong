@@ -1922,6 +1922,9 @@ class BardSpec:
     chamfron: str  # 面帘："" 无 / "half" 半面帘（护额与鼻梁，眼露在外）/ "full" 全罩留眼窗
     skirt: float  # 垂缘再往下加一截（× 躯干高）；0 = 无
     spine: bool  # 背脊梁
+    # 后襟：搭后往下兜住尻的**后面**（尾从中间穿出去）。侧片是贴在肋上的平板，只到
+    # |x| 3.9 就没了，尻的后脸整片露在外面——正后方看就是一大片光屁股。
+    rear: bool = False
     # 包边条的材质（"" = 不做）：沿甲的下摆走一道亮线。整板那一档原本每块板缘各一道
     # 棱，改回札甲之后不成立了——札片才两三个单位长，一片一道棱只剩一片杂色；**沿着
     # 整条边走一道**远处才连得成线。
@@ -1978,7 +1981,7 @@ BARDS: dict[str, BardSpec] = {
         mat="bard_lame", mat_dark="bard_lame_dark", mat_trim="bard_pad",
         edge="bard_rivet", pad="bard_pad", banded=False,
         th=0.024, hem=0.88, rows=8, cell=0.092, peytral=True, croup_plate=True,
-        crinet=True, chamfron="full", skirt=0.100, spine=True,
+        crinet=True, chamfron="full", skirt=0.100, spine=True, rear=True,
     ),
 }
 
@@ -1991,6 +1994,7 @@ BARD_KIT: tuple[tuple[str, object], ...] = (
     ("面帘", lambda s: bool(s.chamfron)),
     ("垂缘", lambda s: s.skirt > 0),
     ("脊梁", lambda s: s.spine),
+    ("后襟", lambda s: s.rear),
 )
 
 
@@ -2098,6 +2102,38 @@ def neck_outer_x(fit: Fit, za: float, zb: float, y0: float, y1: float) -> float:
     return best
 
 
+# 四肢**上段**：肩 / 上臂 / 股 / 后腿上段。往下（膝、管、系、蹄）不管——那儿早已在甲
+# 的下摆之外，真马铠也不护。
+LIMB_UPPER_RE = re.compile(r"thigh_[lr]|upper_arm_[lr]|leg_upper2?_[fh]_[lr]|leg_joint_[fh]_[lr]")
+
+
+def limb_outer_x(fit: Fit, za: float, zb: float, y0: float, y1: float) -> float:
+    """四肢上段在这一小块（z ∈ [za,zb]，y ∈ [y0,y1]）里横向伸到多远。
+    **甲片的外侧面不许比它更靠内。**
+
+    与 `neck_outer_x` 是同一件事的另一头：那条管内侧面（甲不许埋进颈），这条管外侧面。
+
+    甲的横向是照**躯干**量的（`Torso.band`），可上肢比躯干还宽——股伸到 |x| 5.05、
+    后腿上段 5.29，而躯干最宽只有 4.51。照躯干给外侧面，大腿就直接从甲里长出来：
+    挽马重铁甲实测露 3.13 单位，常马 1.86，五档三体型**无一幸免**（最小的粗布甲也露
+    0.17）。这不是动画里蹭一下，是**静止姿就穿模**，而原有的判据一条都够不到它——
+    `limb` 那档量的是"动起来比静止姿多陷多少"，静止姿本身有多糟它不问；贴合那条查的
+    是甲有没有埋进**躯干**，大腿在不在甲外面它也不问。
+
+    甲鼓出去比切开好：真具装的侧片本来就是**罩在**股外面垂下来的一大片。
+    """
+    best = 0.0
+    for e in fit.pelt_els:
+        if not LIMB_UPPER_RE.fullmatch(e["name"]):
+            continue
+        c = np.array(_corners(e), float)
+        if (c[:, 2].max() < min(za, zb) or c[:, 2].min() > max(za, zb)
+                or c[:, 1].max() < y0 or c[:, 1].min() > y1):
+            continue
+        best = max(best, float(np.abs(c[:, 0]).max()))
+    return best
+
+
 def _cells(fit: Fit, segs, lap: float, cell_len: float) -> list[tuple[str, float, float]]:
     """骨段 → 更细的格。同骨内切格是为了**跟着桶身前后收**：一整块平板从肩铺到腰，
     两头必然翘起来离开马体。同骨的格之间留一个板厚的搭叠（不是严格对接）——严格
@@ -2180,6 +2216,9 @@ def _lame_row(t: Tack, fit: Fit, spec: BardSpec, *, tag: str, row: str, za: floa
         # 相同），相切时交体积恰好是 0，"甲贴在马身上"那条判据分不出相切与飘着。
         lo, hi = shell(a0, a1)
         lo = max(lo, neck_outer_x(fit, c0, c1, a0, a1) + gap)
+        # 外侧面要罩得住上肢：股与后腿上段比躯干还宽，照躯干给这一片就成了"大腿从甲里
+        # 长出来"（见 `limb_outer_x`）。
+        hi = max(hi, limb_outer_x(fit, c0, c1, a0, a1) + gap + th)
         # 逐格错开一线厚度：一排里相邻两片是搭着的，同宽同高时外侧面共面会闪。
         # 只要**打破共面**就够，给多了就是首版那种一格凸一格凹的锯齿（首版 0.16 个
         # 板厚、板厚又是现在的两倍，肋上肉眼可见地一格一格起伏）。
@@ -2379,6 +2418,34 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
                 t.box(bone, f"bard_croup_{i + 1}_{k + 1}{side and '_' + side}",
                       (sgn * (x0 if k else -x1), by0, c0), (sgn * x1, ytk, c1),
                       mat=spec.mat, chain=(f"bard_croup{k}{side}", i))
+    if spec.rear:
+        # 后襟：兜住尻的**后面**，尾从中间穿出去。
+        #
+        # 侧片是贴在肋上的平板，内侧面到 |x| 3.9 就没了；尻的后脸（croup_cap 那一块，
+        # 半宽 4.4、高十个单位）整片没人管——正后方看就是一大片光屁股，甲只在两侧
+        # 各挂了一条。真具装的搭后本来就是**一片兜下来**的，尾从留的洞里出来。
+        # 左右各一片、中间让给尾：尾根连尾毛在这一段伸到 |x| 3.2，中间那一条本来也
+        # 被尾遮着，做了也看不见，反倒要跟尾毛打架。
+        zr0, zr1 = T.z1 - th * 1.6, T.z1 + gap + th
+        tail = [e for e in fit.pelt_els if e["name"].startswith(("dock_", "tailhair_"))]
+        x_in = max((float(np.abs(np.array(_corners(e), float)[:, 0]).max()) for e in tail
+                    if np.array(_corners(e), float)[:, 2].max() > zr0), default=0.0) + gap
+        yr0 = max(T.at(T.z1 - th)[2], y_lo)
+        x_out = max(T.band(T.z1 - th, yr0, by0)[1],
+                    limb_outer_x(fit, zr0, zr1, yr0, by0)) + gap + th
+        if x_out - x_in > th * 2:
+            for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                t.box("hips", f"bard_croup_rear_{side}", (sgn * x_in, yr0, zr0),
+                      (sgn * x_out, by0 + th, zr1), mat=spec.mat)
+                t.box("hips", f"bard_croup_rear_edge_{side}",
+                      (sgn * x_in, yr0 - th * 0.15, zr1 - th * 0.5),
+                      (sgn * x_out, yr0 + th * 0.75, zr1 + th * 0.22),
+                      mat=spec.edge or spec.mat_dark)
+            # 尾洞的上沿：尾根顶到搭后下缘之间还剩一条，正后方看是尾巴上头一条光的。
+            # 尾从洞里出来，洞的上边总得有个边——真物那儿正是搭后包过来的那一道。
+            if by0 + th - (y_tail + gap) > th:
+                t.box("hips", "bard_croup_rear_top", (-x_in - th * 0.5, y_tail + gap, zr0),
+                      (x_in + th * 0.5, by0 + th, zr1), mat=spec.mat)
     if spec.croup_plate:
         t.box("hips", "bard_croup_plate", (-(hw_b * 0.86), ytb - th * 0.5, _lerpf(bz0, T.z1, 0.16)),
               (hw_b * 0.86, ytb + th * 1.9, _lerpf(bz0, T.z1, 0.74)), mat=spec.mat_dark)
@@ -2750,6 +2817,28 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
             continue
         if sum(_overlap_vol(e, pe) for pe in torso_els) < MIN_BITE:
             bad.append(f"{e['name']} 没贴在马身上（与躯干皮无实交）——会看着浮在体外")
+    # --- 大腿不许从甲里长出来 ---
+    # 静止姿就穿模，而**原有的判据一条都够不到它**：`limb` 那档量的是"动起来比静止姿
+    # 多陷多少"，静止姿本身有多糟它不问；上面那条实交查的是甲有没有埋进**躯干**，
+    # 大腿在不在甲外面它也不问。于是五档三体型全在漏（挽马重铁甲露 3.13 单位），
+    # 图上就是"屁股那儿穿模"。
+    limbs = [e for e in fit.pelt_els if LIMB_UPPER_RE.fullmatch(e["name"])]
+    out = []
+    for a in lames:
+        ca = np.array(_corners(a), float)
+        ax = float(np.abs(ca[:, 0]).max())
+        for b in limbs:
+            cb = np.array(_corners(b), float)
+            if (cb[:, 1].max() < ca[:, 1].min() or cb[:, 1].min() > ca[:, 1].max()
+                    or cb[:, 2].max() < ca[:, 2].min() or cb[:, 2].min() > ca[:, 2].max()):
+                continue
+            d = float(np.abs(cb[:, 0]).max()) - ax
+            if d > CROSS_TOL:
+                out.append((d, b["name"], a["name"]))
+    if out:
+        d, bn, an = max(out)
+        bad.append(f"{bn} 比甲还往外 {d:.2f} 单位（{an}，共 {len(out)} 处）——大腿从甲里长出来")
+
     body = [e for e in els if not e["name"].startswith("bard_crinet")]
     show = max(max(float(_aabb(e)[1][0]), -float(_aabb(e)[0][0])) for e in body)
     hw_max = max(max(t2[0], -f[0]) for f, t2 in T.boxes)
