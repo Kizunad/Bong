@@ -724,6 +724,7 @@ mod tests {
     fn load_manifest_rejects_more_specific_runtime_zone_capture() {
         let path = write_single_anchor_manifest("nested-zone", "outer", [50, 50, 50]);
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone(
                     "outer",
@@ -750,6 +751,7 @@ mod tests {
     fn load_manifest_rejects_non_overworld_declared_zone() {
         let path = write_single_anchor_manifest("tsy-zone", "tsy_test", [0, 64, 0]);
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "tsy_test",
                 DimensionKind::Tsy,
@@ -769,6 +771,7 @@ mod tests {
     fn final_candidates_accept_radius_exactly_on_declared_aabb_boundary() {
         let anchor = test_anchor("boundary", BlockPos::new(1, 64, 1), 1, 7);
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "boundary",
                 DimensionKind::Overworld,
@@ -801,6 +804,7 @@ mod tests {
     fn final_candidates_reject_radius_one_block_outside_declared_aabb() {
         let anchor = test_anchor("boundary", BlockPos::new(1, 64, 1), 1, 7);
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "boundary",
                 DimensionKind::Overworld,
@@ -829,6 +833,7 @@ mod tests {
         let anchor_y = surface_y + 10;
         let anchor = test_anchor("high_zone", BlockPos::new(0, anchor_y, 0), 1, 7);
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone(
                 "high_zone",
                 DimensionKind::Overworld,
@@ -855,6 +860,7 @@ mod tests {
     fn final_candidates_reject_more_specific_zone_capture_at_radius_edge() {
         let anchor = test_anchor("outer", BlockPos::new(5, 64, 5), 1, 7);
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone(
                     "outer",
@@ -1221,6 +1227,7 @@ mod tests {
             ],
         );
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone(
                     "outer",

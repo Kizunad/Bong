@@ -12,7 +12,7 @@
 use valence::prelude::{
     bevy_ecs, BlockPos, BlockState, ChunkLayer, ChunkPos, Client, Commands, Component, Entity,
     Event, EventReader, EventWriter, Events, Or, Position, Query, RemovedComponents, Res, ResMut,
-    Resource, Username, With,
+    Resource, Username, With, Without,
 };
 
 use std::collections::{HashSet, VecDeque};
@@ -29,8 +29,8 @@ use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::network::RedisBridgeResource;
 use crate::qi_physics::{
-    constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON, QI_ZONE_UNIT_CAPACITY},
-    EnvField, QiAccountId, QiTransfer, QiTransferReason, WorldQiBudget,
+    constants::{DEFAULT_SPIRIT_QI_TOTAL, QI_EPSILON},
+    EnvField, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount, WorldQiBudget,
 };
 use crate::schema::cultivation::{
     color_kind_to_string, realm_to_string, HeartDemonPregenRequestV1, QiColorStateV1,
@@ -47,7 +47,9 @@ use crate::world::karma::KarmaWeightStore;
 use crate::world::zone::ZoneRegistry;
 
 use super::breakthrough::skill_cap_for_realm;
-use super::components::{Cultivation, MeridianId, MeridianSystem, QiColor, Realm};
+use super::components::{
+    ActorQiIdentity, ActorQiKind, Cultivation, MeridianId, MeridianSystem, QiColor, Realm,
+};
 use super::death_hooks::release_qi_amount_to_zone;
 use super::meridian::severed::{MeridianSeveredEvent, SeveredSource};
 use super::qi_zero_decay::{close_meridian, pick_closures};
@@ -1385,6 +1387,7 @@ pub fn tribulation_aoe_system(
     mut failed: EventWriter<TribulationFailed>,
     mut deaths: EventWriter<DeathEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (tribulator_entity, state, heart_demon, tribulator_dimension, origin_dimension) in
@@ -1429,19 +1432,25 @@ pub fn tribulation_aoe_system(
                 failed.send(TribulationFailed { entity, wave });
                 continue;
             }
-            let qi_before = cultivation.qi_current;
-            cultivation.qi_current = (cultivation.qi_current - profile.qi_drain).max(0.0);
-            let actual_drain = qi_before - cultivation.qi_current;
-            release_qi_amount_to_zone(
-                entity,
+            let actual_drain = profile.qi_drain.min(cultivation.qi_current.max(0.0));
+            let release = release_qi_amount_to_zone(
+                &mut cultivation,
                 actual_drain,
                 Some(pos),
                 current_dimension,
                 life_record,
                 zones.as_deref_mut(),
+                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 "tribulation_wave_aoe",
             );
+            if let Err(error) = release {
+                tracing::warn!(
+                    ?error,
+                    "[bong][cultivation] tribulation wave qi drain failed closed"
+                );
+                continue;
+            }
             if profile.qi_max_freeze_ratio > 0.0 {
                 let frozen = cultivation.qi_max_frozen.unwrap_or(0.0);
                 cultivation.qi_max_frozen = Some(
@@ -1513,6 +1522,7 @@ pub fn juebi_phase_effect_system(
     >,
     mut deaths: EventWriter<DeathEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     null_fields.fields.clear();
@@ -1579,26 +1589,32 @@ pub fn juebi_phase_effect_system(
                     if factor <= 0.0 {
                         continue;
                     }
+                    let before = cultivation.qi_current;
+                    let actual_drain =
+                        before * JUEBI_PRESSURE_DRAIN_PER_TICK * intensity_scale * factor;
+                    let release = release_qi_amount_to_zone(
+                        &mut cultivation,
+                        actual_drain.min(before),
+                        Some(position),
+                        target_dimension,
+                        life_record,
+                        zones.as_deref_mut(),
+                        &mut ledger,
+                        qi_transfers.as_deref_mut(),
+                        "juebi_pressure_collapse",
+                    );
+                    if let Err(error) = release {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][cultivation] juebi pressure qi drain failed closed"
+                        );
+                        continue;
+                    }
                     commands.entity(entity).insert(JueBiPressureCollapse {
                         epicenter: epicenter_block,
                         phase_start_tick: state.phase_started_tick,
                         distance,
                     });
-                    let before = cultivation.qi_current;
-                    cultivation.qi_current = (cultivation.qi_current
-                        * (1.0 - JUEBI_PRESSURE_DRAIN_PER_TICK * intensity_scale * factor))
-                        .max(0.0);
-                    let actual_drain = before - cultivation.qi_current;
-                    release_qi_amount_to_zone(
-                        entity,
-                        actual_drain,
-                        Some(position),
-                        target_dimension,
-                        life_record,
-                        zones.as_deref_mut(),
-                        qi_transfers.as_deref_mut(),
-                        "juebi_pressure_collapse",
-                    );
                     if before > 0.0 && cultivation.qi_current <= f64::EPSILON {
                         deaths.send(DeathEvent {
                             target: entity,
@@ -1630,40 +1646,46 @@ pub fn juebi_phase_effect_system(
                     if distance > radius {
                         continue;
                     }
+                    let decay = juebi_null_decay_for_realm(cultivation.realm) * intensity_scale;
+                    if decay > 0.0 {
+                        let before = cultivation.qi_current;
+                        let actual_drain = (before * decay).min(before);
+                        let release = release_qi_amount_to_zone(
+                            &mut cultivation,
+                            actual_drain,
+                            Some(position),
+                            target_dimension,
+                            life_record,
+                            zones.as_deref_mut(),
+                            &mut ledger,
+                            qi_transfers.as_deref_mut(),
+                            "juebi_null_field",
+                        );
+                        if let Err(error) = release {
+                            tracing::warn!(
+                                ?error,
+                                "[bong][cultivation] juebi null qi drain failed closed"
+                            );
+                            continue;
+                        }
+                        if cultivation.realm == Realm::Void
+                            && before > 0.0
+                            && cultivation.qi_current <= f64::EPSILON
+                        {
+                            deaths.send(DeathEvent {
+                                target: entity,
+                                cause: "绝壁劫·凡躯崩解".to_string(),
+                                attacker: None,
+                                attacker_player_id: None,
+                                at_tick: clock.tick,
+                            });
+                        }
+                    }
                     commands.entity(entity).insert(JueBiNullified {
                         entered_tick: clock.tick,
                         accumulated_null_time: clock.tick.saturating_sub(state.phase_started_tick)
                             as f64,
                     });
-                    let decay = juebi_null_decay_for_realm(cultivation.realm) * intensity_scale;
-                    if decay <= 0.0 {
-                        continue;
-                    }
-                    let before = cultivation.qi_current;
-                    cultivation.qi_current = (cultivation.qi_current * (1.0 - decay)).max(0.0);
-                    let actual_drain = before - cultivation.qi_current;
-                    release_qi_amount_to_zone(
-                        entity,
-                        actual_drain,
-                        Some(position),
-                        target_dimension,
-                        life_record,
-                        zones.as_deref_mut(),
-                        qi_transfers.as_deref_mut(),
-                        "juebi_null_field",
-                    );
-                    if cultivation.realm == Realm::Void
-                        && before > 0.0
-                        && cultivation.qi_current <= f64::EPSILON
-                    {
-                        deaths.send(DeathEvent {
-                            target: entity,
-                            cause: "绝壁劫·凡躯崩解".to_string(),
-                            attacker: None,
-                            attacker_player_id: None,
-                            at_tick: clock.tick,
-                        });
-                    }
                 }
                 _ => {}
             }
@@ -2849,6 +2871,7 @@ pub fn heart_demon_choice_system(
         Option<&CurrentDimension>,
     )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for choice in choices.read() {
@@ -2880,6 +2903,7 @@ pub fn heart_demon_choice_system(
             position,
             current_dimension,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
         );
     }
@@ -2899,6 +2923,7 @@ pub fn heart_demon_timeout_system(
         Option<&CurrentDimension>,
     )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for (
@@ -2933,6 +2958,7 @@ pub fn heart_demon_timeout_system(
             position,
             current_dimension,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
         );
     }
@@ -2949,6 +2975,7 @@ fn resolve_heart_demon_choice(
     position: Option<&Position>,
     current_dimension: Option<&CurrentDimension>,
     zones: Option<&mut ZoneRegistry>,
+    ledger: &mut WorldQiAccount,
     qi_transfers: Option<&mut Events<QiTransfer>>,
 ) {
     if existing_resolution.is_some() {
@@ -2963,34 +2990,96 @@ fn resolve_heart_demon_choice(
         HeartDemonOutcome::Steadfast => {
             let effective_qi_max =
                 (cultivation.qi_max - cultivation.qi_max_frozen.unwrap_or(0.0)).max(0.0);
-            // Desired grant = 10% of effective_qi_max, capped by room to reach effective_qi_max.
             let desired_grant =
                 (effective_qi_max * 0.10).min((effective_qi_max - cultivation.qi_current).max(0.0));
-            // Debit exactly that amount from the player's zone so total world qi is conserved.
-            // If the zone cannot be located (no Position / CurrentDimension / ZoneRegistry, or
-            // zone depleted) the grant is suppressed to zero rather than creating qi from nothing.
-            let actual_grant = debit_zone_for_heart_demon_steadfast(
-                desired_grant,
-                position,
-                current_dimension,
-                zones,
-            );
-            cultivation.qi_current += actual_grant;
+            if desired_grant > QI_EPSILON {
+                let Some(life_record_ref) = life_record.as_deref() else {
+                    tracing::warn!(
+                        "[bong][cultivation] HeartDemon Steadfast missing canonical LifeRecord; qi grant failed closed"
+                    );
+                    return;
+                };
+                let actor = match ActorQiIdentity::from_life_record(
+                    life_record_ref,
+                    ActorQiKind::Player,
+                ) {
+                    Ok(actor) => actor,
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][cultivation] HeartDemon Steadfast invalid actor identity; qi grant failed closed"
+                        );
+                        return;
+                    }
+                };
+                let Some(position) = position else {
+                    tracing::warn!(
+                        "[bong][cultivation] HeartDemon Steadfast missing Position; qi grant failed closed"
+                    );
+                    return;
+                };
+                let Some(current_dimension) = current_dimension else {
+                    tracing::warn!(
+                        "[bong][cultivation] HeartDemon Steadfast missing CurrentDimension; qi grant failed closed"
+                    );
+                    return;
+                };
+                let Some(zones) = zones else {
+                    tracing::warn!(
+                        "[bong][cultivation] HeartDemon Steadfast missing ZoneRegistry; qi grant failed closed"
+                    );
+                    return;
+                };
+                let Some(zone) = zones.find_zone_mut_by_pos(current_dimension.0, position.0) else {
+                    tracing::warn!(
+                        "[bong][cultivation] HeartDemon Steadfast outside known zone; qi grant failed closed"
+                    );
+                    return;
+                };
+                let gain = cultivation.gain_from_zone(
+                    zone,
+                    ledger,
+                    &actor,
+                    desired_grant,
+                    QiTransferReason::CultivationRegen,
+                );
+                let outcome = match gain {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "[bong][cultivation] HeartDemon Steadfast qi gain failed closed"
+                        );
+                        return;
+                    }
+                };
+                if let Some(qi_transfers) = qi_transfers {
+                    for transfer in outcome.transfers {
+                        qi_transfers.send(transfer);
+                    }
+                }
+            }
         }
         HeartDemonOutcome::Obsession => {
-            let qi_before = cultivation.qi_current;
-            cultivation.qi_current *= 1.0 - DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO;
-            let actual_drain = qi_before - cultivation.qi_current;
-            release_qi_amount_to_zone(
-                decision.entity,
+            let actual_drain = cultivation.qi_current * DUXU_HEART_DEMON_OBSESSION_QI_PENALTY_RATIO;
+            let release = release_qi_amount_to_zone(
+                cultivation,
                 actual_drain,
                 position,
                 current_dimension,
                 life_record.as_deref(),
                 zones,
+                ledger,
                 qi_transfers,
                 "heart_demon_obsession",
             );
+            if let Err(error) = release {
+                tracing::warn!(
+                    ?error,
+                    "[bong][cultivation] heart demon qi drain failed closed"
+                );
+                return;
+            }
             next_wave_multiplier = DUXU_HEART_DEMON_OBSESSION_NEXT_WAVE_MULTIPLIER;
         }
         HeartDemonOutcome::NoSolution => {}
@@ -3010,59 +3099,6 @@ fn resolve_heart_demon_choice(
             tick: decision.tick,
             next_wave_multiplier,
         });
-}
-
-/// Debit `desired_grant` qi units from the player's zone and return the actual amount debited.
-///
-/// Zone stores qi as `spirit_qi` ∈ [-1.0, 1.0] where each unit = `QI_ZONE_UNIT_CAPACITY`.
-/// The zone floor is -1.0; we only take what is available above that floor so the debit
-/// never silently disappears while the player still gains qi (which would create qi).
-///
-/// Returns 0.0 if the zone cannot be resolved (no Position / CurrentDimension / ZoneRegistry,
-/// or player outside all zones, or zone fully depleted). In that case the caller must NOT
-/// apply any grant to `cultivation.qi_current`.
-fn debit_zone_for_heart_demon_steadfast(
-    desired_grant: f64,
-    position: Option<&Position>,
-    current_dimension: Option<&CurrentDimension>,
-    zones: Option<&mut ZoneRegistry>,
-) -> f64 {
-    if desired_grant <= QI_EPSILON {
-        return 0.0;
-    }
-    let Some(position) = position else {
-        tracing::warn!(
-            "[bong][tribulation] HeartDemon Steadfast: no Position; qi grant suppressed to preserve conservation"
-        );
-        return 0.0;
-    };
-    let Some(current_dimension) = current_dimension else {
-        tracing::warn!(
-            "[bong][tribulation] HeartDemon Steadfast: no CurrentDimension; qi grant suppressed to preserve conservation"
-        );
-        return 0.0;
-    };
-    let Some(zones) = zones else {
-        tracing::warn!(
-            "[bong][tribulation] HeartDemon Steadfast: no ZoneRegistry; qi grant suppressed to preserve conservation"
-        );
-        return 0.0;
-    };
-    let dim = current_dimension.0;
-    let Some(zone) = zones.find_zone_mut_by_pos(dim, position.0) else {
-        tracing::warn!(
-            "[bong][tribulation] HeartDemon Steadfast: player outside known zone; qi grant suppressed to preserve conservation"
-        );
-        return 0.0;
-    };
-    // Available headroom above the zone floor of -1.0 (in raw qi units).
-    let available = ((zone.spirit_qi + 1.0) * QI_ZONE_UNIT_CAPACITY).max(0.0);
-    let actual_grant = desired_grant.min(available);
-    if actual_grant <= QI_EPSILON {
-        return 0.0;
-    }
-    zone.spirit_qi -= actual_grant / QI_ZONE_UNIT_CAPACITY;
-    actual_grant
 }
 
 fn heart_demon_outcome_for_choice(choice_idx: Option<u32>) -> HeartDemonOutcome {
@@ -3348,6 +3384,7 @@ pub fn tribulation_failure_system(
     mut commands: Commands,
     mut settled: EventWriter<TribulationSettled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -3363,6 +3400,25 @@ pub fn tribulation_failure_system(
             life_record,
         )) = players.get_mut(ev.entity)
         {
+            let released_qi = cultivation.qi_current.max(0.0);
+            let release = release_qi_amount_to_zone(
+                &mut cultivation,
+                released_qi,
+                position,
+                current_dimension,
+                life_record,
+                zones.as_deref_mut(),
+                &mut ledger,
+                qi_transfers.as_deref_mut(),
+                "tribulation_failure",
+            );
+            if let Err(error) = release {
+                tracing::warn!(
+                    ?error,
+                    "[bong][cultivation] tribulation failure qi release failed closed"
+                );
+                continue;
+            }
             if let Some(mut state) = state {
                 state.failed = true;
                 state.phase = TribulationPhase::Settle;
@@ -3370,18 +3426,8 @@ pub fn tribulation_failure_system(
             // plan-meridian-severed-v1 §4 #5：渡劫失败爆脉降境 → emit
             // MeridianSeveredEvent { TribulationFail } 让永久 SEVERED component 落档。
             // severed_events 用 Option<ResMut<Events<...>>> 以便测试 app 未注册 event 也能跑通。
-            let (released_qi, severed_ids) =
+            let (_, severed_ids) =
                 apply_tribulation_failure_penalty(&mut cultivation, meridians, wounds);
-            release_qi_amount_to_zone(
-                ev.entity,
-                released_qi,
-                position,
-                current_dimension,
-                life_record,
-                zones.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
-                "tribulation_failure",
-            );
             if let Some(ref mut sink) = severed_events {
                 let now_tick = clock.as_deref().map(|c| c.tick).unwrap_or_default();
                 for id in severed_ids {
@@ -3448,6 +3494,7 @@ pub fn abort_du_xu_on_client_removed(
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -3485,6 +3532,7 @@ pub fn abort_du_xu_on_client_removed(
             &mut settled,
             &mut fled,
             severed_events.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
             zones.as_deref_mut(),
             position,
@@ -3514,6 +3562,7 @@ pub fn tribulation_escape_boundary_system(
     mut settled: EventWriter<TribulationSettled>,
     mut fled: EventWriter<TribulationFled>,
     mut severed_events: Option<ResMut<Events<MeridianSeveredEvent>>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
     mut zones: Option<ResMut<ZoneRegistry>>,
 ) {
@@ -3550,6 +3599,7 @@ pub fn tribulation_escape_boundary_system(
                 &mut settled,
                 &mut fled,
                 severed_events.as_deref_mut(),
+                &mut ledger,
                 qi_transfers.as_deref_mut(),
                 zones.as_deref_mut(),
                 Some(position),
@@ -3576,6 +3626,7 @@ pub fn tribulation_escape_boundary_system(
             &mut settled,
             &mut fled,
             severed_events.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
             zones.as_deref_mut(),
             Some(position),
@@ -3600,11 +3651,33 @@ fn settle_fled_tribulation(
     settled: &mut EventWriter<TribulationSettled>,
     fled: &mut EventWriter<TribulationFled>,
     severed_events: Option<&mut Events<MeridianSeveredEvent>>,
+    ledger: &mut WorldQiAccount,
     qi_transfers: Option<&mut Events<QiTransfer>>,
     zones: Option<&mut ZoneRegistry>,
     position: Option<&Position>,
     current_dimension: Option<&CurrentDimension>,
 ) {
+    // 先结算真元；失败时不提交降境、断脉、传记、事件或删除 active record。
+    let released_qi = cultivation.qi_current.max(0.0);
+    let release = release_qi_amount_to_zone(
+        cultivation,
+        released_qi,
+        position,
+        current_dimension,
+        life_record.as_deref(),
+        zones,
+        ledger,
+        qi_transfers,
+        "tribulation_fled",
+    );
+    if let Err(error) = release {
+        tracing::warn!(
+            ?error,
+            "[bong][cultivation] fled tribulation qi release failed closed"
+        );
+        return;
+    }
+
     state.failed = true;
     state.phase = TribulationPhase::Settle;
     let waves_survived = state.wave_current;
@@ -3615,18 +3688,7 @@ fn settle_fled_tribulation(
         });
     }
     // plan-meridian-severed-v1 §4 #5：渡劫逃跑也算失败，关闭的经脉同样写永久 SEVERED
-    let (released_qi, severed_ids) =
-        apply_tribulation_failure_penalty(cultivation, meridians, wounds);
-    release_qi_amount_to_zone(
-        entity,
-        released_qi,
-        position,
-        current_dimension,
-        life_record.as_deref(),
-        zones,
-        qi_transfers,
-        "tribulation_fled",
-    );
+    let (_, severed_ids) = apply_tribulation_failure_penalty(cultivation, meridians, wounds);
     if let Some(sink) = severed_events {
         for id in severed_ids {
             sink.send(MeridianSeveredEvent {
@@ -3675,7 +3737,7 @@ pub fn tribulation_intercept_death_system(
     mut commands: Commands,
     settings: Res<PersistenceSettings>,
     item_registry: Res<ItemRegistry>,
-    mut q: Query<(&TribulationState, &Lifecycle)>,
+    mut q: Query<(&TribulationState, &Lifecycle), Without<crate::npc::spawn::NpcMarker>>,
     mut inventories: Query<&mut PlayerInventory>,
     mut life_records: Query<&mut LifeRecord>,
     mut settled: EventWriter<TribulationSettled>,
@@ -4105,6 +4167,12 @@ fn apply_tribulation_failure_penalty(
 mod tests {
     use super::*;
 
+    fn qi_test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     use crate::combat::components::{CombatState, Lifecycle, LifecycleState, Stamina, Wounds};
     use crate::combat::events::{CombatEvent, DeathEvent, DeathInsightRequested};
     use crate::combat::lifecycle::death_arbiter_tick;
@@ -4123,7 +4191,7 @@ mod tests {
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
     use crate::persistence::{bootstrap_sqlite, load_active_tribulation};
-    use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+    use crate::qi_physics::{qi_flow_overflow_account, QiAccountId, QiTransfer, QiTransferReason};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use std::fs;
     use std::path::PathBuf;
@@ -4188,6 +4256,7 @@ mod tests {
     }
 
     fn spawn_tribulation_spectator(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
+        let character_id = format!("offline:{name}");
         app.world_mut()
             .spawn((
                 Position::new(pos),
@@ -4204,9 +4273,10 @@ mod tests {
                     entries: Vec::new(),
                 },
                 Lifecycle {
-                    character_id: format!("offline:{name}"),
+                    character_id: character_id.clone(),
                     ..Default::default()
                 },
+                LifeRecord::new(character_id),
             ))
             .id()
     }
@@ -4287,7 +4357,7 @@ mod tests {
 
     #[test]
     fn omen_to_lock_emits_lock_event() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: DUXU_OMEN_TICKS,
         });
@@ -4337,7 +4407,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_dedupes_same_tick_internal_events() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-dedupe");
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(100.0));
@@ -4403,7 +4473,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_reserves_void_quota_fcfs_within_tick() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-quota-fcfs");
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(50.0));
@@ -4499,7 +4569,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_counts_in_flight_void_tribulations_across_ticks() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-quota-cross-tick");
         app.insert_resource(settings);
         app.insert_resource(WorldQiBudget::from_total(50.0));
@@ -4584,7 +4654,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_fails_closed_when_quota_store_unreadable() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) =
             unbootstrapped_persistence_settings("start-tribulation-quota-read-failure");
         app.insert_resource(settings);
@@ -4647,7 +4717,7 @@ mod tests {
 
     #[test]
     fn start_tribulation_system_aborts_when_active_row_persist_fails() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("start-tribulation-active-row-persist-failure");
         {
             let connection =
@@ -4729,7 +4799,7 @@ mod tests {
 
     #[test]
     fn tribulation_wave_system_aborts_ascension_when_quota_write_fails() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) =
             unbootstrapped_persistence_settings("tribulation-ascension-quota-write-failure");
         app.insert_resource(settings);
@@ -4815,7 +4885,7 @@ mod tests {
 
     #[test]
     fn tribulation_announce_emits_boundary_vfx() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 0 });
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
@@ -4948,7 +5018,7 @@ mod tests {
 
     #[test]
     fn omen_midpoint_emits_soft_boundary_once() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: DUXU_OMEN_TICKS / 2,
         });
@@ -4987,7 +5057,7 @@ mod tests {
 
     #[test]
     fn lock_and_wave_events_emit_boundary_vfx() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<TribulationAnnounce>();
         app.add_event::<TribulationLocked>();
@@ -5035,7 +5105,7 @@ mod tests {
 
     #[test]
     fn long_full_progress_du_xu_request_adds_heart_demon_and_kaitian_waves() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5070,7 +5140,7 @@ mod tests {
 
     #[test]
     fn recent_full_progress_du_xu_request_keeps_default_three_waves() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5103,7 +5173,7 @@ mod tests {
 
     #[test]
     fn start_du_xu_request_rejects_non_spirit_or_incomplete_meridians() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5149,7 +5219,7 @@ mod tests {
 
     #[test]
     fn start_du_xu_request_rejects_already_active_tribulation() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5190,7 +5260,7 @@ mod tests {
 
     #[test]
     fn start_du_xu_request_dedupes_same_tick_duplicate_requests() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<StartDuXuRequest>();
         app.add_event::<InitiateXuhuaTribulation>();
         app.add_systems(Update, start_du_xu_request_system);
@@ -5224,7 +5294,7 @@ mod tests {
 
     #[test]
     fn fourth_wave_enters_heart_demon_without_aoe() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5294,7 +5364,7 @@ mod tests {
 
     #[test]
     fn pregen_offer_inserts_heart_demon_after_chain_lightning_without_consuming_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5357,7 +5427,7 @@ mod tests {
 
     #[test]
     fn heart_demon_still_falls_back_to_fourth_slot_when_pregen_is_absent() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5394,7 +5464,7 @@ mod tests {
 
     #[test]
     fn resolved_early_heart_demon_continues_next_combat_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1810 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5439,7 +5509,7 @@ mod tests {
 
     #[test]
     fn resolved_heart_demon_after_soul_devouring_skips_original_heart_demon_slot() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2110 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5484,7 +5554,7 @@ mod tests {
 
     #[test]
     fn unresolved_heart_demon_waits_without_advancing_to_kaitian_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2400 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -5531,7 +5601,7 @@ mod tests {
     fn heart_demon_steadfast_choice_records_and_restores_qi() {
         // Pitfall (a): empty zone first so there is room for the full 20 qi grant without
         // hitting the zone capacity limit and splitting the debit.
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let mut zones = ZoneRegistry::fallback();
@@ -5635,7 +5705,7 @@ mod tests {
     fn heart_demon_steadfast_no_grant_without_zone() {
         // When the entity has no CurrentDimension the zone lookup fails and the grant is
         // suppressed to zero — no qi from thin air.
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let mut zones = ZoneRegistry::fallback();
@@ -5707,7 +5777,7 @@ mod tests {
         // Zone is near-depleted (spirit_qi = -0.9 → only 5 qi available above -1.0 floor).
         // Player wants 10% of 300 = 30 qi but zone can only provide 5.
         // actual_grant must equal the zone debit (no qi created from thin air).
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let mut zones = ZoneRegistry::fallback();
@@ -5795,7 +5865,7 @@ mod tests {
 
     #[test]
     fn heart_demon_obsession_timeout_penalizes_qi_and_boosts_kaitian_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: 2100 + DUXU_HEART_DEMON_TIMEOUT_TICKS,
         });
@@ -5853,7 +5923,7 @@ mod tests {
     /// Pitfall (c): credit = qi_before - qi_after (actual), not ratio × qi_current.
     #[test]
     fn heart_demon_obsession_timeout_credits_penalty_to_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock {
             tick: 2100 + DUXU_HEART_DEMON_TIMEOUT_TICKS,
         });
@@ -5945,7 +6015,7 @@ mod tests {
     /// Obsession via choice index (non-timeout path) also conserves qi to the zone.
     #[test]
     fn heart_demon_obsession_choice_credits_penalty_to_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_event::<QiTransfer>();
 
@@ -6031,7 +6101,7 @@ mod tests {
 
     #[test]
     fn heart_demon_no_solution_choice_records_without_penalty_or_boost() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
         let entity = app
@@ -6095,7 +6165,7 @@ mod tests {
 
     #[test]
     fn heart_demon_resolution_advances_to_kaitian_without_republishing_fourth_wave() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2140 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -6140,7 +6210,7 @@ mod tests {
 
     #[test]
     fn obsession_resolution_increases_kaitian_damage() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2400 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6164,6 +6234,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
                 TribulationState {
                     kind: TribulationKind::DuXu,
                     phase: TribulationPhase::Wave(5),
@@ -6206,7 +6277,7 @@ mod tests {
     #[test]
     fn publish_lock_event_to_tribulation_channel() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6252,7 +6323,7 @@ mod tests {
     #[test]
     fn publish_wave_event_keeps_tribulator_identity() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6315,7 +6386,7 @@ mod tests {
     #[test]
     fn publish_settle_event_uses_actor_name() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6378,7 +6449,7 @@ mod tests {
     #[test]
     fn publish_ascension_quota_open_event_to_tribulation_channel() {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6424,7 +6495,7 @@ mod tests {
         use crate::network::audio_event_emit::PlaySoundRecipeRequest;
         use crate::network::halfstep_rechallenge_emit::HALFSTEP_QUOTA_RELEASE_BROADCAST_AUDIO_RECIPE;
 
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (tx_outbound, _rx_outbound) = crossbeam_channel::unbounded();
         let (_tx_inbound, rx_inbound) = crossbeam_channel::unbounded();
         app.insert_resource(RedisBridgeResource {
@@ -6551,7 +6622,7 @@ mod tests {
 
     #[test]
     fn lock_expiry_starts_first_wave_and_schedules_cooldown() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 900 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -6591,7 +6662,7 @@ mod tests {
 
     #[test]
     fn wave_cooldown_starts_next_wave_without_reusing_first_wave_phase() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationLocked>();
         app.add_event::<TribulationWaveCleared>();
@@ -6630,7 +6701,7 @@ mod tests {
 
     #[test]
     fn aoe_uses_current_wave_strength_only_on_wave_start_tick() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6667,6 +6738,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6704,7 +6776,7 @@ mod tests {
 
     #[test]
     fn spectator_aoe_is_not_reduced_by_distance_within_danger_radius() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6766,7 +6838,7 @@ mod tests {
 
     #[test]
     fn tribulation_aoe_ignores_targets_in_other_dimension() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6807,6 +6879,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6827,7 +6900,7 @@ mod tests {
 
     #[test]
     fn third_wave_freezes_qi_max_as_soul_devouring_lightning() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1500 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6865,6 +6938,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6891,7 +6965,7 @@ mod tests {
 
     #[test]
     fn kaitian_lightning_fails_tribulator_without_full_health() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -6948,7 +7022,7 @@ mod tests {
 
     #[test]
     fn kaitian_lightning_fails_tribulator_without_full_available_qi() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -7005,7 +7079,7 @@ mod tests {
 
     #[test]
     fn kaitian_lightning_hits_normally_when_tribulator_has_full_resources() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 2100 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -7031,6 +7105,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
                 TribulationState {
                     kind: TribulationKind::DuXu,
                     phase: TribulationPhase::Wave(5),
@@ -7064,7 +7139,7 @@ mod tests {
 
     #[test]
     fn void_quota_exceeded_start_marks_du_xu_for_juebi_instead_of_terminal_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("void-quota-exceeded-start");
         let char_id = "offline:Azure";
         let mut depleted_budget = WorldQiBudget::from_total(100.0);
@@ -7152,7 +7227,7 @@ mod tests {
 
     #[test]
     fn juebi_trigger_event_starts_juebi_state_after_delay() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-trigger-start");
         let char_id = "offline:Azure";
         app.insert_resource(settings.clone());
@@ -7214,7 +7289,7 @@ mod tests {
 
     #[test]
     fn juebi_pressure_collapse_drains_qi_and_marks_targets() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(JueBiNullFields::default());
         app.add_event::<DeathEvent>();
@@ -7249,6 +7324,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
         let _ = tribulator;
@@ -7262,7 +7338,7 @@ mod tests {
 
     #[test]
     fn juebi_phase_effect_clears_stale_phase_markers() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(JueBiNullFields::default());
         app.add_event::<DeathEvent>();
@@ -7310,7 +7386,7 @@ mod tests {
 
     #[test]
     fn juebi_settlement_treats_zero_health_as_killed_even_with_qi() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-zero-health-settle");
         let char_id = "offline:Azure";
         app.insert_resource(settings);
@@ -7381,7 +7457,7 @@ mod tests {
 
     #[test]
     fn juebi_settlement_clears_independent_active_row() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-settle-clears-active-row");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -7564,7 +7640,7 @@ mod tests {
 
     #[test]
     fn tribulation_failure_regresses_without_death_lifecycle_side_effects() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("failure-not-death");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -7613,7 +7689,7 @@ mod tests {
             .spawn((
                 Cultivation {
                     realm: Realm::Spirit,
-                    qi_current: 880.0,
+                    qi_current: 210.0,
                     qi_max: 210.0,
                     last_qi_zero_at: Some(77),
                     pending_material_bonus: 0.3,
@@ -7729,13 +7805,10 @@ mod tests {
             "tribulation failure should release cleared qi back to the current zone"
         );
         assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].to, qi_flow_overflow_account());
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
-        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert_eq!(
-            transfers[1].to,
-            QiAccountId::overflow(format!("tribulation_failure:{entity:?}"))
-        );
         assert_eq!(transfers[1].reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(transfers[1].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")
@@ -7748,7 +7821,7 @@ mod tests {
 
     #[test]
     fn intercepted_tribulation_transfers_all_inventory_to_killer() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("intercept-loot-transfer");
         app.insert_resource(settings.clone());
         app.insert_resource(ItemRegistry::default());
@@ -7844,8 +7917,98 @@ mod tests {
     }
 
     #[test]
+    fn npc_raw_death_does_not_settle_tribulation_before_terminal_commit() {
+        let mut app = qi_test_app();
+        let (settings, root) = persistence_settings("npc-intercept-waits-for-terminal-commit");
+        app.insert_resource(settings.clone());
+        app.insert_resource(ItemRegistry::default());
+        app.add_event::<DeathEvent>();
+        app.add_event::<TribulationSettled>();
+        app.add_systems(Update, tribulation_intercept_death_system);
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                crate::npc::spawn::NpcMarker,
+                Lifecycle {
+                    character_id: "npc:tribulation-victim".to_string(),
+                    ..Default::default()
+                },
+                TribulationState {
+                    kind: TribulationKind::DuXu,
+                    phase: TribulationPhase::Wave(2),
+                    epicenter: [0.0, 66.0, 0.0],
+                    wave_current: 2,
+                    waves_total: 3,
+                    started_tick: 0,
+                    phase_started_tick: 0,
+                    next_wave_tick: 0,
+                    participants: vec![
+                        "npc:tribulation-victim".to_string(),
+                        "offline:Killer".to_string(),
+                    ],
+                    failed: false,
+                },
+                test_inventory(vec![test_item(101)], 7),
+            ))
+            .id();
+        let killer = app
+            .world_mut()
+            .spawn((
+                test_inventory(vec![test_item(201)], 3),
+                LifeRecord::new("offline:Killer"),
+            ))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "pvp:offline:Killer".to_string(),
+            attacker: Some(killer),
+            attacker_player_id: Some("offline:Killer".to_string()),
+            at_tick: 120,
+        });
+        app.update();
+
+        assert!(
+            app.world().get::<TribulationState>(victim).is_some(),
+            "NPC raw lethal edge must retain tribulation state until terminal durability succeeds"
+        );
+        assert_eq!(
+            app.world()
+                .get::<PlayerInventory>(victim)
+                .expect("victim inventory should remain attached")
+                .bone_coins,
+            7,
+            "NPC raw lethal edge must not transfer victim inventory"
+        );
+        assert_eq!(
+            app.world()
+                .get::<PlayerInventory>(killer)
+                .expect("killer inventory should remain attached")
+                .bone_coins,
+            3,
+            "NPC raw lethal edge must not reward the killer"
+        );
+        assert!(
+            app.world()
+                .get::<LifeRecord>(killer)
+                .expect("killer life record should remain attached")
+                .biography
+                .is_empty(),
+            "NPC raw lethal edge must not append interception biography"
+        );
+        assert_eq!(
+            app.world().resource::<Events<TribulationSettled>>().len(),
+            0,
+            "NPC raw lethal edge must not publish settlement before terminal commit"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn unregistered_player_kill_does_not_claim_interception_settlement() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("intercept-killer-must-be-participant");
         app.insert_resource(settings);
         app.insert_resource(ItemRegistry::default());
@@ -7908,7 +8071,7 @@ mod tests {
 
     #[test]
     fn attacking_locked_tribulator_records_interceptor_participant() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -7978,7 +8141,7 @@ mod tests {
 
     #[test]
     fn attacking_during_heart_demon_records_interceptor_participant() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8046,7 +8209,7 @@ mod tests {
 
     #[test]
     fn attacking_tribulator_from_other_dimension_does_not_record_interceptor() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8113,7 +8276,7 @@ mod tests {
 
     #[test]
     fn attacking_restored_tribulator_preserves_primary_participant() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.add_event::<CombatEvent>();
         app.add_systems(Update, record_tribulation_interceptor_system);
 
@@ -8170,7 +8333,7 @@ mod tests {
 
     #[test]
     fn registered_interceptor_dies_to_aoe_without_failing_tribulation() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -8193,6 +8356,7 @@ mod tests {
                 character_id: "offline:Victim".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("offline:Victim"),
             TribulationState {
                 kind: TribulationKind::DuXu,
                 phase: TribulationPhase::Wave(1),
@@ -8225,6 +8389,7 @@ mod tests {
                     character_id: "offline:Killer".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Killer"),
             ))
             .id();
 
@@ -8241,7 +8406,7 @@ mod tests {
 
     #[test]
     fn spectator_death_by_tribulation_aoe_is_written_to_life_record() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("spectator-death-biography");
         app.insert_resource(settings);
         app.insert_resource(CombatClock { tick: 300 });
@@ -8341,7 +8506,7 @@ mod tests {
 
     #[test]
     fn disconnecting_during_tribulation_flees_and_regresses_without_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("disconnect-fled");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -8457,7 +8622,7 @@ mod tests {
     /// + TribulationSettled.kind == JueBi（不误报 DuXu）
     #[test]
     fn juebi_disconnect_is_settled_as_fled() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-disconnect-fled");
         let char_id = "offline:JueBiPlayer";
         persist_active_tribulation(
@@ -8612,7 +8777,7 @@ mod tests {
     /// 无 TribulationState 的普通玩家断线 → 不误结算（正常 despawn，无 Fled/Settled 事件）
     #[test]
     fn non_tribulation_disconnect_emits_no_fled_events() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("no-trib-disconnect");
         let char_id = "offline:NormalPlayer";
 
@@ -8675,7 +8840,7 @@ mod tests {
     /// —— 锁住 settle_fled_tribulation 使用 state.kind 而非硬编码 DuXu 的行为
     #[test]
     fn settle_fled_emits_correct_kind_for_juebi() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-settled-kind");
         let char_id = "offline:KindCheck";
         persist_active_tribulation(
@@ -8762,7 +8927,7 @@ mod tests {
     /// JueBi 劫刚开始（wave_current=0）断线 → 仍被结算为 fled（边界：劫刚触发）
     #[test]
     fn juebi_disconnect_at_wave_zero_is_fled() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-wave0-fled");
         let char_id = "offline:EarlyEscape";
         persist_active_tribulation(
@@ -8853,7 +9018,7 @@ mod tests {
     /// JueBi 接近完成（wave_current = waves_total - 1）断线 → 仍被结算为 fled（边界：接近通关）
     #[test]
     fn juebi_disconnect_near_completion_is_fled() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("juebi-near-complete-fled");
         let char_id = "offline:NearWinner";
         let waves_total = 5_u32;
@@ -8945,7 +9110,7 @@ mod tests {
 
     #[test]
     fn leaving_lock_radius_flees_and_regresses_without_death() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("boundary-fled");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -9045,7 +9210,7 @@ mod tests {
 
     #[test]
     fn changing_dimension_during_lock_flees_even_inside_radius() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         let (settings, root) = persistence_settings("dimension-fled");
         let char_id = "offline:Azure";
         persist_active_tribulation(
@@ -9175,7 +9340,7 @@ mod tests {
     }
 
     fn p0_metrics_test_app() -> App {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock::default());
         app.init_resource::<TribulationMetrics>();
         app.init_resource::<QuotaFullTracker>();
@@ -10272,7 +10437,7 @@ mod tests {
     /// Pitfall (b): target carries CurrentDimension so find_zone resolves the zone.
     #[test]
     fn tribulation_aoe_wave_drain_credits_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -10323,6 +10488,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10373,7 +10539,7 @@ mod tests {
     /// drain from the wave; zone must not receive any credit and no transfer is emitted.
     #[test]
     fn tribulation_aoe_wave_drain_zero_qi_no_credit() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         app.insert_resource(CombatClock { tick: 1200 });
         app.add_event::<TribulationFailed>();
         app.add_event::<DeathEvent>();
@@ -10452,7 +10618,7 @@ mod tests {
     ///               = 100.0 × 0.02 × 1.0 × 1.0 = 2.0
     #[test]
     fn juebi_pressure_collapse_wave1_drain_credits_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         // tick != phase_started_tick so per-tick phase damage is not triggered
         app.insert_resource(CombatClock { tick: 101 });
         app.insert_resource(JueBiNullFields::default());
@@ -10499,6 +10665,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10548,7 +10715,7 @@ mod tests {
     /// actual_drain = 100.0 × 0.03 = 3.0
     #[test]
     fn juebi_null_field_wave3_drain_credits_zone() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         // tick = phase_started_tick + 100 (elapsed=100 → null_radius = 50.0)
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(JueBiNullFields::default());
@@ -10596,6 +10763,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10641,7 +10809,7 @@ mod tests {
     /// current null radius is not drained and emits no QiTransfer.
     #[test]
     fn juebi_null_field_wave3_no_drain_outside_radius() {
-        let mut app = App::new();
+        let mut app = qi_test_app();
         // elapsed = 1 tick → null_radius = 150.0 × (1/300) ≈ 0.5 (essentially 0)
         app.insert_resource(CombatClock { tick: 1 });
         app.insert_resource(JueBiNullFields::default());

@@ -53,7 +53,12 @@ def _rotmat(deg, axis):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
-def load_bbmodel(path):
+def load_bbmodel(path, xform=None):
+    """xform: {element uuid: 4x4 刚体矩阵}，在元素自身 origin+rotation 之后再叠。
+
+    骨骼动画预览用——本模块只认元素级旋转，骨树是无视的；摆姿时由调用方（rig.py）
+    算好每个元素的世界矩阵传进来，省得把姿态烘回 from/to（轴对齐盒装不下任意旋转）。
+    """
     d = json.loads(Path(path).read_text())
     res = d.get("resolution", {"width": 64, "height": 64})
     rw, rh = res["width"], res["height"]
@@ -85,6 +90,18 @@ def load_bbmodel(path):
             if Rm is not None:
                 cs = [Rm @ (c - org) + org for c in cs]
                 n = Rm @ n
+            M = xform.get(e.get("uuid")) if xform else None
+            if M is not None:
+                cs = [M[:3, :3] @ c + M[:3, 3] for c in cs]
+                # 法线走**逆转置**，不是同一个矩阵。纯旋转时两者相同（历史上只喂过旋转，
+                # 所以一直没暴露），一旦 xform 带非均匀缩放就完全不同：法线被转歪、长度也
+                # 跟着缩放变，而下面的着色用的是未归一化的 n·ld —— 被压扁那一轴上的面会
+                # 亮成纯白。羽层的收展动画给羽做轴向缩放（9.5 / 1.6 / 0.17），第一次踩到。
+                A = M[:3, :3]
+                n = np.linalg.inv(A).T @ n if abs(np.linalg.det(A)) > 1e-9 else A @ n
+            ln = float(np.linalg.norm(n))
+            if ln > 1e-9:
+                n = n / ln
             # 四角 → 两三角 (0,1,2),(0,2,3)
             for a, b in ((1, 2), (2, 3)):
                 tris.append((np.array([cs[0], cs[a], cs[b]]),
@@ -92,23 +109,31 @@ def load_bbmodel(path):
     return tris, tex, (rw, rh), d.get("name", Path(path).stem)
 
 
-def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35, 0.6, 0.72)):
-    tris, tex, (rw, rh), name = load_bbmodel(path)
+def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35, 0.6, 0.72),
+           xform=None, focus=None):
+    """focus: (center3, span) 固定取景——逐帧自动取景会让动画整体抖动（每帧包围盒不同）。"""
+    tris, tex, (rw, rh), name = load_bbmodel(path, xform=xform)
     th, tw = tex.shape[:2]
     R = _rotmat(pitch, 0) @ _rotmat(yaw, 1)
     ld = np.array(light, float)
     ld /= np.linalg.norm(ld)
 
     # 视空间
-    allv = np.array([v for tri in tris for v in tri[0]])
-    center = (allv.min(0) + allv.max(0)) / 2
-    view = [( (R @ (vs - center).T).T, uvs, R @ n) for vs, uvs, n in tris]
+    if focus is not None:
+        center = np.asarray(focus[0], float)
+        view = [((R @ (vs - center).T).T, uvs, R @ n) for vs, uvs, n in tris]
+        scale = (size - 60) / float(focus[1])
+        off = np.array([size, size], float) / 2
+    else:
+        allv = np.array([v for tri in tris for v in tri[0]])
+        center = (allv.min(0) + allv.max(0)) / 2
+        view = [((R @ (vs - center).T).T, uvs, R @ n) for vs, uvs, n in tris]
 
-    vv = np.array([v for vs, _, _ in view for v in vs])
-    mn, mx = vv[:, :2].min(0), vv[:, :2].max(0)
-    span = (mx - mn).max()
-    scale = (size - 60) / span
-    off = (np.array([size, size]) - (mx + mn) * scale * np.array([1, -1])) / 2
+        vv = np.array([v for vs, _, _ in view for v in vs])
+        mn, mx = vv[:, :2].min(0), vv[:, :2].max(0)
+        span = (mx - mn).max()
+        scale = (size - 60) / span
+        off = (np.array([size, size]) - (mx + mn) * scale * np.array([1, -1])) / 2
 
     img = np.zeros((size, size, 3), float)
     img[:] = bg

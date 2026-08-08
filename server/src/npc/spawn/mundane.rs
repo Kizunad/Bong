@@ -401,6 +401,8 @@ mod tests {
         app.insert_resource(
             crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
         );
+        app.insert_resource(crate::qi_physics::WorldQiAccount::default());
+        app.add_event::<crate::qi_physics::QiTransfer>();
         crate::npc::lifecycle::register(&mut app);
         crate::npc::brain::register(&mut app);
         app.add_event::<crate::combat::events::AttackIntent>();

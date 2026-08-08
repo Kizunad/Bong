@@ -1,5 +1,7 @@
 package com.bong.client;
 
+import com.bong.client.lifecycle.JavaLifecycleSourceInspector;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -48,39 +50,64 @@ class AdjunctDisconnectOwnershipTest {
     }
 
     @Test
-    void centralizedDisconnectHelperOwnsEachAdjunctExactlyOnce() throws Exception {
+    void centralizedDisconnectHelperDelegatesToAdjunctOwnerExactlyOnce() throws Exception {
         String networkHandler = source("BongNetworkHandler.java");
-        int helperStart = networkHandler.indexOf("static void clearClientStateOnDisconnect()");
-        assertTrue(helperStart >= 0, "必须存在 token-gated 中央断线 helper");
-        int helperEnd = networkHandler.indexOf("\n    private static", helperStart + 1);
-        assertTrue(helperEnd > helperStart, "必须能圈定中央断线 helper");
-        String helper = networkHandler.substring(helperStart, helperEnd);
+        String centralHelper = methodBody(
+            networkHandler,
+            "static void clearClientStateOnDisconnect()"
+        );
+        String adjunctDelegation = "runAdjunctDisconnectTeardown()";
+        assertTrue(
+            centralHelper.contains(adjunctDelegation),
+            "token-gated 中央断线 helper 必须直接委托唯一 adjunct owner"
+        );
+        assertEquals(
+            centralHelper.indexOf(adjunctDelegation),
+            centralHelper.lastIndexOf(adjunctDelegation),
+            "token-gated 中央断线 helper 必须恰好委托一次 adjunct owner"
+        );
+    }
 
-        for (String call : new String[] {
-            "EnvironmentEffectController.clearOnDisconnect()",
-            "BongShaderState.clearOnDisconnect()",
-            "CastFovController.clearOnDisconnect()",
-            "CombatJuiceSystem.clearOnDisconnect()",
-            "CombatHudBootstrap.clearOnDisconnect()",
-            "MovementKeybindings.clearOnDisconnect()",
-            "BotanyHudBootstrap.clearOnDisconnect()",
-            "TechniquesListPanel.clearOnDisconnect()",
-            "WeaponTreasurePanel.clearOnDisconnect()",
-            "HomeSequence.clearOnDisconnect()",
-            "InventoryMoveRejectedHandler.clearOnDisconnect()",
-            "PillBuffHudPlanner.clearOnDisconnect()",
-            "MorphCastVignetteState.clearOnDisconnect()",
-            "SeasonVisualController.clearOnDisconnect()",
-            "ScreenTransitionController.clearOnDisconnect()",
-            "WorldVfxDemoBootstrap.clearOnDisconnect()",
-            "DeadDropBreakPlayer.clearOnDisconnect()",
-            "NpcFootstepAudioController.clearOnDisconnect()",
-            "BongAnimationRegistry.clearOnDisconnect()"
-        }) {
-            assertTrue(helper.contains(call), "中央断线 helper 必须接入 adjunct：" + call);
-            assertTrue(helper.indexOf(call) == helper.lastIndexOf(call),
-                "中央断线 helper 必须恰好调用一次 adjunct：" + call);
-        }
+    @Test
+    void centralizedDisconnectHelperPinsEveryReviewedAdjunctRegistrationInOrder() throws Exception {
+        assertEquals(
+            List.of(
+                "()->EnvironmentEffectController.clearOnDisconnect()",
+                "()->BongShaderState.clearOnDisconnect()",
+                "()->CastFovController.clearOnDisconnect()",
+                "()->CombatJuiceSystem.clearOnDisconnect()",
+                "()->CombatHudBootstrap.clearOnDisconnect()",
+                "()->MovementKeybindings.clearOnDisconnect()",
+                "()->BotanyHudBootstrap.clearOnDisconnect()",
+                "()->TechniquesListPanel.clearOnDisconnect()",
+                "()->WeaponTreasurePanel.clearOnDisconnect()",
+                "()->HomeSequence.clearOnDisconnect()",
+                "()->InventoryMoveRejectedHandler.clearOnDisconnect()",
+                "()->PillBuffHudPlanner.clearOnDisconnect()",
+                "()->MorphCastVignetteState.clearOnDisconnect()",
+                "()->SeasonVisualController.clearOnDisconnect()",
+                "()->ScreenTransitionController.clearOnDisconnect()",
+                "()->WorldVfxDemoBootstrap.clearOnDisconnect()",
+                "()->DeadDropBreakPlayer.clearOnDisconnect()",
+                "()->NpcFootstepAudioController.clearOnDisconnect()",
+                "()->BongAnimationRegistry.clearOnDisconnect()",
+                "()->NpcDialogueBubbleRenderer.clear()",
+                "()->com.bong.client.audio.MusicStateMachine.clearOnDisconnect()",
+                "()->SoundRecipePlayer.instance().clearOnDisconnect()",
+                "()->BongAnimationPlayer.clearOnDisconnect()",
+                "()->AnimationLayerManager.clearOnDisconnect()",
+                "()->LowerBodyGaitController.clearOnDisconnect()",
+                "()->BongPunchCombo.clearOnDisconnect()",
+                "()->MutationVisualState.reset()",
+                "()->SpiderDisguiseHandler.clearOnDisconnect()",
+                "()->RatQiTierHandler.clearOnDisconnect()",
+                "()->DaoZhanDisguiseHandler.clearOnDisconnect()",
+                "()->com.bong.client.era.EraAmbianceState.reset()",
+                "()->BongToast.clearOnDisconnect()"
+            ),
+            JavaLifecycleSourceInspector.disconnectCleanupRegistrations(source("BongNetworkHandler.java")),
+            "中央 adjunct 注册表必须与逐站点审阅清单完全一致；新增、删除、重排或改写都需显式更新合同"
+        );
     }
 
     @Test
@@ -135,6 +162,23 @@ class AdjunctDisconnectOwnershipTest {
         } catch (java.io.IOException exception) {
             throw new AssertionError("无法读取 production source：" + source.toAbsolutePath(), exception);
         }
+    }
+
+    private static String methodBody(String source, String declaration) {
+        int start = source.indexOf(declaration);
+        assertTrue(start >= 0, "必须存在 production lifecycle helper：" + declaration);
+        int bodyStart = source.indexOf('{', start);
+        assertTrue(bodyStart >= 0, "production lifecycle helper 必须有方法体：" + declaration);
+        int depth = 0;
+        for (int index = bodyStart; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}' && --depth == 0) {
+                return source.substring(start, index + 1);
+            }
+        }
+        throw new AssertionError("无法圈定 production lifecycle helper：" + declaration);
     }
 
     private static String productionHook(String source, String methodName) {

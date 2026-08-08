@@ -475,7 +475,10 @@ mod tests {
     fn riskmap_unknown_zone_reports_unknown_without_panic() {
         // 空 registry，玩家不在任何 zone → 消息含 zone=<unknown>
         let mut app = setup_app();
-        let registry = ZoneRegistry { zones: vec![] };
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![],
+        };
         app.insert_resource(registry);
         app.insert_resource(RiskHeatmap::default());
 

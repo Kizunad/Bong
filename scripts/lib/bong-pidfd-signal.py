@@ -33,11 +33,15 @@ def main() -> int:
         pid = int(sys.argv[1])
     except ValueError:
         return 2
+    if pid <= 1:
+        return 2
     expected_starttime = sys.argv[2]
     expected_executable_identity = sys.argv[3]
     signal_name = sys.argv[4]
     expected_pgrp = sys.argv[5] if len(sys.argv) == 6 else None
-    if expected_pgrp is not None and not expected_pgrp.isdecimal():
+    if expected_pgrp is not None and (
+        not expected_pgrp.isdecimal() or int(expected_pgrp) <= 1
+    ):
         return 2
     try:
         signal_number = int(signal_name)

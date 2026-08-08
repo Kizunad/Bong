@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use valence::prelude::{App, Events, Position};
 
 use crate::combat::components::{SkillBarBindings, Wounds};
@@ -19,15 +21,19 @@ use crate::combat::events::DeathEvent;
 use crate::combat::CombatClock;
 use crate::cultivation::components::{ColorKind, Cultivation, MeridianId, QiColor, Realm};
 use crate::cultivation::dugu::DuguRevealedEvent;
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::{
     MeridianSeveredPermanent, SeveredSource, SkillMeridianDependencies,
 };
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult, SkillRegistry};
 use crate::cultivation::tribulation::{JueBiTriggerEvent, JueBiTriggerSource};
+use crate::player::state::canonical_player_id;
 
 fn setup_app() -> App {
     let mut app = App::new();
     app.insert_resource(CombatClock { tick: 1 });
+    app.insert_resource(crate::qi_physics::ledger::WorldQiAccount::default());
+    app.add_event::<crate::qi_physics::QiTransfer>();
     app.add_event::<EclipseNeedleEvent>();
     app.add_event::<SelfCureProgressEvent>();
     app.add_event::<PenetrateChainEvent>();
@@ -47,6 +53,8 @@ fn actor(
     qi_max: f64,
     x: f64,
 ) -> valence::prelude::Entity {
+    static NEXT_ACTOR_ID: AtomicU64 = AtomicU64::new(1);
+    let actor_id = NEXT_ACTOR_ID.fetch_add(1, Ordering::Relaxed);
     app.world_mut()
         .spawn((
             Cultivation {
@@ -55,6 +63,7 @@ fn actor(
                 qi_max,
                 ..Default::default()
             },
+            LifeRecord::new(canonical_player_id(&format!("dugu-v2-test-{actor_id}"))),
             QiColor::default(),
             SkillBarBindings::default(),
             Wounds::default(),
@@ -841,7 +850,6 @@ fn dugu_chaotic_caster_cast_not_rejected_for_non_eclipse_skills() {
 
 /// 辅助：构建带 ZoneRegistry + WorldQiAccount 的最小 App（含所有 dugu v2 系统）。
 fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
-    use crate::qi_physics::ledger::WorldQiAccount;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, ZoneRegistry};
     use valence::prelude::DVec3;
@@ -865,8 +873,10 @@ fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
         qi_equilibrium: 0.0,
         qi_inflow_per_min: 0.0,
     };
-    app.insert_resource(ZoneRegistry { zones: vec![zone] });
-    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone],
+    });
     app
 }
 
@@ -1281,12 +1291,12 @@ fn eclipse_conservation_total_observed_invariant() {
     let zone_current_abs = zone_qi_before * QI_ZONE_UNIT_CAPACITY; // = -40.0（裸值，保留负缺口）
     let room = (QI_ZONE_UNIT_CAPACITY - zone_current_abs).max(0.0); // = 90.0
     let accepted = returned_abs.min(room); // = returned_abs (no overflow)
-                                           // Expected zone_after (normalized, clamped) = (zone_current_abs + accepted) / CAP
-    let expected_zone_after =
-        ((zone_current_abs + accepted) / QI_ZONE_UNIT_CAPACITY).clamp(-1.0, 1.0);
+                                           // `summarize_world_qi.zone_qi` 已统一为 absolute qi 单位，因此预期值也保持 absolute：
+                                           // zone_current_abs + accepted。不要再除一次 CAP，也不要 clamp signed 负灵压。
+    let expected_zone_after = zone_current_abs + accepted;
     assert!(
         (snap_after.zone_qi - expected_zone_after).abs() < 1e-9,
-        "守恒失败：zone.spirit_qi after({:.9}) 应精确等于 (zone_current({zone_current_abs})+accepted({accepted}))/CAP={expected_zone_after:.9}。\
+        "守恒失败：absolute zone qi after({:.9}) 应精确等于 zone_current({zone_current_abs})+accepted({accepted})={expected_zone_after:.9}。\
          zone_before={zone_qi_before}, returned={returned_abs:.6}, room={room:.1}。\
          若 snap_after.zone_qi > expected_zone_after 说明仍在裸加 returned（MF3 bug 未修复）；\
          若 snap_after.zone_qi << expected_zone_after 说明 CAP 换算出错",
@@ -1995,8 +2005,6 @@ fn reverse_zero_returned_zone_qi_no_audit() {
 /// - zone 初始为空（spirit_qi=0.0）→ room=50，所有 cost 均全额入账，无 split。
 /// - 注册 QiTransfer event，以便验证 release_cast_cost_to_zone 发出的审计事件。
 fn setup_cast_cost_zone_app() -> App {
-    use crate::qi_physics::ledger::QiTransfer;
-    use crate::qi_physics::ledger::WorldQiAccount;
     use crate::world::dimension::DimensionKind;
     use crate::world::zone::{Zone, ZoneRegistry};
     use valence::prelude::DVec3;
@@ -2005,7 +2013,6 @@ fn setup_cast_cost_zone_app() -> App {
     // NOTE: 不调 crate::combat::dugu_v2::register(&mut app)，
     //       避免 eclipse_zone_credit_tick 在 update() 时消费 EclipseNeedleEvent 干扰 zone delta。
     // 施法成本 zone credit 在 resolve_dugu_v2_skill() 内同步完成，不需要 tick 系统。
-    app.add_event::<QiTransfer>();
 
     // 空 zone（spirit_qi=0.0）覆盖玩家坐标 [0,64,0]，确保 room=50 >> 任何单次施法成本
     let zone = Zone {
@@ -2023,8 +2030,10 @@ fn setup_cast_cost_zone_app() -> App {
         qi_equilibrium: 0.0,
         qi_inflow_per_min: 0.0,
     };
-    app.insert_resource(ZoneRegistry { zones: vec![zone] });
-    app.insert_resource(WorldQiAccount::default());
+    app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone],
+    });
     app
 }
 

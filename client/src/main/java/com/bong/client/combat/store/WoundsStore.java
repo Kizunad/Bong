@@ -112,6 +112,10 @@ public final class WoundsStore {
         INSTANCE.snapshot = Collections.emptyMap();
     }
 
+    public static void clearOnDisconnect() {
+        clear();
+    }
+
     public static void resetForTests() {
         clear();
     }

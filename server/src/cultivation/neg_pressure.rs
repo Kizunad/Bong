@@ -9,7 +9,9 @@ use valence::prelude::{DVec3, Entity, EventWriter, Position, Query, Res, ResMut,
 
 use crate::network::vfx_event_emit::VfxEventRequest;
 use crate::npc::spawn::NpcMarker;
-use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount};
+use crate::qi_physics::{
+    rift_drain_account, QiAccountId, QiTransfer, QiTransferReason, WorldQiAccount,
+};
 use crate::schema::vfx_event::VfxEventPayloadV1;
 use crate::world::dimension::{CurrentDimension, DimensionKind};
 use crate::world::terrain::TerrainProviders;
@@ -72,41 +74,40 @@ pub fn frost_breath_payload(origin: DVec3, strength: f32) -> VfxEventPayloadV1 {
     }
 }
 
-/// rift-mouth 负压抽真元守恒记账（audit-only 模式，同 TSY drain）。
+/// Rift-mouth 负压抽真元守恒记账。
 ///
-/// 玩家/NPC 真元已在 ECS Cultivation.qi_current 扣减，此处仅：
-///   1. 确保 `QiAccountId::rift(zone_label)` 账户存在并增 `amount`；
-///   2. `push_transfer_audit` 留审计轨迹。
-///
-/// 不调 `WorldQiAccount::transfer`（后者会检查 from 余额并拒绝，因为活体 qi 在 ECS 不在 ledger）。
+/// 活体真元由 ECS `Cultivation.qi_current` 持有；本函数把外部物理来源的实际抽取量
+/// 原子转入可持久恢复的固定 `rift_drain` 池，并保留 canonical actor 审计来源。
+/// 调用者只有在本函数成功后才能提交 ECS debit。
 fn record_neg_pressure_drain_transfer(
-    account: Option<&mut WorldQiAccount>,
+    account: &mut WorldQiAccount,
     entity: Entity,
-    zone_label: &str,
     amount: f64,
-) {
-    let Some(account) = account else {
-        return;
-    };
-    if amount <= 0.0 {
-        return;
+) -> Result<(), crate::qi_physics::QiPhysicsError> {
+    let amount = crate::qi_physics::finite_non_negative(amount, "transfer.amount")?;
+    if amount == 0.0 {
+        return Ok(());
     }
+
     let from = QiAccountId::player(format!("entity:{entity:?}"));
-    let to = QiAccountId::rift(zone_label.to_string());
-    // 确保 rift 账户存在
-    if !account.has_account(&to) {
-        let _ = account.set_balance(to.clone(), 0.0);
-    }
-    // rift 账户增 amount（审计-only：不动 from 账户余额）
-    let rift_balance = account.balance(&to);
-    let _ = account.set_balance(to.clone(), rift_balance + amount);
-    // 追加审计轨迹
-    account.push_transfer_audit(QiTransfer {
+    let transfer = QiTransfer::new(
         from,
-        to,
+        rift_drain_account(),
         amount,
-        reason: QiTransferReason::NegPressureDrain,
-    });
+        QiTransferReason::NegPressureDrain,
+    )?;
+    let destination = account.balance(&transfer.to);
+    let destination_after = destination + amount;
+    if !destination_after.is_finite() || destination_after == destination {
+        return Err(crate::qi_physics::QiPhysicsError::InvalidAmount {
+            field: "destination_balance",
+            value: destination_after,
+        });
+    }
+
+    account.set_balance(transfer.to.clone(), destination_after)?;
+    account.push_transfer_audit(transfer);
+    Ok(())
 }
 
 pub fn tick_neg_pressure(
@@ -147,13 +148,22 @@ pub fn tick_neg_pressure(
 
         let before_qi = cultivation.qi_current.max(0.0);
         let actual_drain = drain.min(before_qi);
-        record_neg_pressure_drain_transfer(
-            qi_account.as_deref_mut(),
-            entity,
-            "rift_mouth",
-            actual_drain,
-        );
-        cultivation.qi_current = (cultivation.qi_current - drain).max(0.0);
+        let Some(account) = qi_account.as_deref_mut() else {
+            tracing::warn!(
+                "[bong][neg_pressure] WorldQiAccount missing for actor {:?}; keep qi unchanged",
+                entity,
+            );
+            continue;
+        };
+        if let Err(error) = record_neg_pressure_drain_transfer(account, entity, actual_drain) {
+            tracing::warn!(
+                "[bong][neg_pressure] rift ledger failed actor={:?} amount={} error={error}; keep qi unchanged",
+                entity,
+                actual_drain,
+            );
+            continue;
+        }
+        cultivation.qi_current = before_qi - actual_drain;
         let strength = (sample.neg_pressure / FULL_PULL_NEG_PRESSURE).clamp(0.15, 1.0);
         vfx_events.send(VfxEventRequest::new(
             pos.0,
@@ -220,18 +230,19 @@ mod tests {
 
     // ── QS-01 ledger accounting tests ───────────────────────────────────────
 
-    use crate::qi_physics::{QiAccountId, QiTransferReason, WorldQiAccount};
+    use crate::qi_physics::{rift_drain_account, QiAccountId, QiTransferReason, WorldQiAccount};
     use valence::prelude::Entity;
 
     /// happy path: drain > 0 → rift balance increases, audit trail recorded,
-    /// player account is NOT written to ledger (audit-only pattern).
+    /// player account is NOT persisted in ledger (external-owner transaction pattern).
     #[test]
     fn neg_pressure_drain_records_rift_ledger_not_player() {
         let mut account = WorldQiAccount::default();
         let entity = Entity::from_raw(3);
-        record_neg_pressure_drain_transfer(Some(&mut account), entity, "rift_mouth", 0.5);
+        record_neg_pressure_drain_transfer(&mut account, entity, 0.5)
+            .expect("valid drain should commit");
 
-        let rift_id = QiAccountId::rift("rift_mouth");
+        let rift_id = rift_drain_account();
         let player_id = QiAccountId::player(format!("entity:{entity:?}"));
 
         assert_eq!(
@@ -266,43 +277,50 @@ mod tests {
     #[test]
     fn neg_pressure_drain_zero_amount_is_noop() {
         let mut account = WorldQiAccount::default();
-        record_neg_pressure_drain_transfer(
-            Some(&mut account),
-            Entity::from_raw(5),
-            "rift_mouth",
-            0.0,
-        );
+        record_neg_pressure_drain_transfer(&mut account, Entity::from_raw(5), 0.0)
+            .expect("zero drain should be a valid no-op");
 
-        let rift_id = QiAccountId::rift("rift_mouth");
+        let rift_id = rift_drain_account();
         assert_eq!(account.balance(&rift_id), 0.0, "amount=0 不应写 rift 账户");
         assert_eq!(account.transfers().len(), 0, "amount=0 不应留审计记录");
     }
 
-    /// boundary: None account → no panic, silently returns.
+    /// error boundary: destination cannot advance beyond f64::MAX, so no balance or audit mutates.
     #[test]
-    fn neg_pressure_drain_none_account_is_noop() {
-        // must not panic
-        record_neg_pressure_drain_transfer(None, Entity::from_raw(7), "rift_mouth", 1.0);
+    fn neg_pressure_drain_destination_overflow_is_atomic() {
+        let mut account = WorldQiAccount::default();
+        account
+            .set_balance(rift_drain_account(), f64::MAX)
+            .expect("max finite fixture should be valid");
+        let before = account.clone();
+
+        let error = record_neg_pressure_drain_transfer(&mut account, Entity::from_raw(7), 1.0)
+            .expect_err("destination overflow must reject the drain");
+
+        assert!(matches!(
+            error,
+            crate::qi_physics::QiPhysicsError::InvalidAmount {
+                field: "destination_balance",
+                ..
+            }
+        ));
+        assert_eq!(
+            account.balance(&rift_drain_account()),
+            before.balance(&rift_drain_account())
+        );
+        assert_eq!(account.transfers(), before.transfers());
     }
 
     /// conservation: rift balance accumulates across multiple drain calls.
     #[test]
     fn neg_pressure_drain_rift_balance_accumulates() {
         let mut account = WorldQiAccount::default();
-        record_neg_pressure_drain_transfer(
-            Some(&mut account),
-            Entity::from_raw(1),
-            "rift_mouth",
-            1.5,
-        );
-        record_neg_pressure_drain_transfer(
-            Some(&mut account),
-            Entity::from_raw(2),
-            "rift_mouth",
-            2.5,
-        );
+        record_neg_pressure_drain_transfer(&mut account, Entity::from_raw(1), 1.5)
+            .expect("first drain should commit");
+        record_neg_pressure_drain_transfer(&mut account, Entity::from_raw(2), 2.5)
+            .expect("second drain should commit");
 
-        let rift_id = QiAccountId::rift("rift_mouth");
+        let rift_id = rift_drain_account();
         assert_eq!(
             account.balance(&rift_id),
             4.0,
@@ -326,14 +344,10 @@ mod tests {
         // actual_drain = min(0.5, 0.1) = 0.1.
         let actual_drain = 0.5_f64.min(0.1_f64);
         let mut account = WorldQiAccount::default();
-        record_neg_pressure_drain_transfer(
-            Some(&mut account),
-            Entity::from_raw(9),
-            "rift_mouth",
-            actual_drain,
-        );
+        record_neg_pressure_drain_transfer(&mut account, Entity::from_raw(9), actual_drain)
+            .expect("clamped drain should commit");
 
-        let rift_id = QiAccountId::rift("rift_mouth");
+        let rift_id = rift_drain_account();
         assert!(
             account.balance(&rift_id) <= 0.1 + 1e-12,
             "rift balance ({}) must not exceed before_qi (0.1) — \

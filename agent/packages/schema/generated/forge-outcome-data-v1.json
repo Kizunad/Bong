@@ -110,5 +110,6 @@
     "flawed_path": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "a81915813b6935ed3661be9256db49035d257f69f58ab0d264af7d5292307370"
 }

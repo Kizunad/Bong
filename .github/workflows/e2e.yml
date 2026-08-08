@@ -32,6 +32,7 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6379
       CARGO_TERM_COLOR: always
       CARGO_TARGET_DIR: /tmp/bong-target
+      BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
 
     steps:
       - name: Checkout
@@ -85,21 +86,23 @@ jobs:
 
       - name: Proto breaking change check (buf)
         if: github.event_name == 'pull_request'
-        working-directory: proto
-        run: |
-          if git ls-tree origin/${{ github.event.pull_request.base.ref }} proto/ | grep -q .; then
-            buf breaking --against '../.git#branch=origin/${{ github.event.pull_request.base.ref }},subdir=proto'
-          else
-            echo "proto/ not found on base branch — skipping breaking check (first PR)"
-          fi
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: bash scripts/check-proto-breaking.sh
+
+      - name: Proto breaking base-ref contract test
+        run: python3 scripts/tests/proto_breaking_base_ref_contract_test.py
 
       - name: Install agent workspace dependencies
         working-directory: agent
         run: npm ci
 
+      - name: Build-token contract
+        run: bash scripts/tests/build_token_test.sh
+
       - name: Client stage (gradlew test)
         working-directory: client
-        run: ./gradlew test
+        run: ../scripts/build-token.sh gradle test
 
       - name: Pre-pull Redis image with retry
         run: |
@@ -132,11 +135,11 @@ jobs:
 
       - name: Build server release binary
         working-directory: server
-        run: cargo build --release
+        run: ../scripts/build-token.sh cargo build --release
 
-      - name: Server stage (cargo test)
+      - name: Server stage (build-token cargo test)
         working-directory: server
-        run: cargo test
+        run: ../scripts/build-token.sh cargo test
 
       - name: Smoke/E2E stage (Task 13 harness)
         env:

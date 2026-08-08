@@ -30,6 +30,8 @@ pub mod plot;
 pub mod pressure;
 pub mod processing;
 pub mod qi_account;
+pub mod range_gate;
+pub mod requests;
 pub mod seed;
 pub mod session;
 pub mod systems;
@@ -79,6 +81,9 @@ pub use processing::{
     ProcessingKind, ProcessingRecipe, ProcessingRecipeRegistry, ProcessingSession,
     ProcessingSkillLevels,
 };
+// fix-spec-1901-v2 §4.1 — `PendingLingtianRequest` / `PendingLingtianRequests`
+// 是 crate-private（queue 只被 network producer 与 lingtian 内部消费），
+// 不做 pub re-export（E0365 私有泄漏）。
 #[allow(unused_imports)]
 pub use qi_account::{
     sync_zone_qi_account_to_world_qi_account, LingtianTickAccumulator, ZoneQiAccount,
@@ -99,13 +104,17 @@ pub use systems::{ActiveLingtianSessions, ActiveSession, LingtianClock, Lingtian
 #[allow(unused_imports)]
 pub use terrain::{classify_for_till, TerrainKind, TillRejectReason};
 
-use valence::prelude::{App, IntoSystemConfigs, Update};
+use valence::prelude::{bevy_ecs, App, IntoSystemConfigs, SystemSet, Update};
 
 use crate::botany::PlantKindRegistry;
+use crate::world::movement_commit::AuthoritativePositionCommitSet;
 
 pub fn register(app: &mut App) {
     tracing::info!("[bong][lingtian] registering lingtian subsystem (plan-lingtian-v1 P3)");
     app.insert_resource(ActiveLingtianSessions::new());
+    // fix-spec-1901-v2 §4.1 — 灵田 C2S 请求持久队列（跨 validation point 保留）。
+    app.init_resource::<requests::PendingLingtianRequests>();
+    app.init_resource::<systems::PendingPlotZones>();
     app.insert_resource(LingtianTickAccumulator::new());
     let mut zone_qi = ZoneQiAccount::new();
     zone_qi.set(DEFAULT_ZONE, 5.0);
@@ -166,20 +175,38 @@ pub fn register(app: &mut App) {
     app.add_event::<ZonePressureCrossed>();
     // plan-lingtian-weather-v1 §3 — 天气事件生命周期 (started / expired)
     app.add_event::<WeatherLifecycleEvent>();
-    // 11 systems — 用两段 .chain() 避开 Bevy IntoSystemConfigs 的 tuple 上限
+
+    // fix-spec-1901-v2 §4.5 — 单点 post-transfer 验证链：
+    //
+    //   LingtianRequestIngressSet（network producer，只入队）
+    //     → AuthoritativePositionCommitSet（所有权威移动/维度 writer）
+    //     → LingtianPostTransferValidationSet（唯一 validator，读最终状态 → Start*）
+    //     → LingtianStartSet（六个业务 handler）
+    //     → tick_lingtian_sessions
+    //     → apply_completed_sessions（长 session 结算再授权）
+    //
+    // 拆两段 .chain() 避开 Bevy IntoSystemConfigs 的 tuple 上限；第二段沿用
+    // `LingtianStartSet` 作为上一段结尾的锚（见下方定义）。
     app.add_systems(
         Update,
         (
-            systems::handle_start_till,
-            systems::handle_start_renew,
-            systems::handle_start_planting,
-            systems::handle_start_harvest,
-            systems::handle_start_replenish,
-            systems::handle_start_drain_qi,
+            systems::validate_and_dispatch_lingtian_requests
+                .in_set(LingtianPostTransferValidationSet),
+            (
+                systems::handle_start_till,
+                systems::handle_start_renew,
+                systems::handle_start_planting,
+                systems::handle_start_harvest,
+                systems::handle_start_replenish,
+                systems::handle_start_drain_qi,
+            )
+                .in_set(LingtianStartSet),
             systems::tick_lingtian_sessions,
             systems::apply_completed_sessions,
         )
-            .chain(),
+            .chain()
+            .after(crate::lingtian::LingtianRequestIngressSet)
+            .after(AuthoritativePositionCommitSet),
     );
     app.add_systems(
         Update,
@@ -202,9 +229,40 @@ pub fn register(app: &mut App) {
             .chain()
             .after(systems::apply_completed_sessions),
     );
-    app.add_systems(Update, systems::release_lingtian_plot_owner_on_npc_death);
+    app.add_event::<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>();
     app.add_systems(
         Update,
-        systems::auto_set_plot_zone.after(systems::apply_completed_sessions),
+        systems::release_lingtian_plot_owner_on_npc_death
+            .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+    );
+    // fix-spec-1901-v2 §6.2 — `auto_set_plot_zone` 在结算后读当前 plot 集，
+    // 正好可以顺带结算 Till reservation（deferred spawn 已应用或确认缺失）。
+    app.add_systems(
+        Update,
+        (
+            systems::auto_set_plot_zone,
+            systems::settle_lingtian_plot_reservations,
+        )
+            .chain()
+            .after(systems::apply_completed_sessions),
     );
 }
+
+/// fix-spec-1901-v2 §4.5 — lingtian C2S 请求的 ingress set。
+///
+/// `network::handle_client_request_payloads` 的六个 lingtian 分支挂在此 set：
+/// 只做 wire parse + 入队 `PendingLingtianRequests`，不读 `Position` /
+/// `CurrentDimension`，不直接写 `Start*Request` event。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LingtianRequestIngressSet;
+
+/// fix-spec-1901-v2 §4.5 — 唯一 post-transfer 验证点所在的 set。
+///
+/// 本 set 的系统在 `AuthoritativePositionCommitSet` 之后读取最终
+/// `Position` / `CurrentDimension`，gate 通过才转六类 `Start*Request`。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LingtianPostTransferValidationSet;
+
+/// fix-spec-1901-v2 §4.5 — 六个 start handler 的业务前置 set。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LingtianStartSet;

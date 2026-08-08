@@ -16,5 +16,6 @@
       "const": "legacy_assign",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "8a621447fc269ce1dcf9a188f7774bea3229f0b65a6db6ddad80c17c6d0f92dd"
 }

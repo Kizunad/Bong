@@ -1171,6 +1171,7 @@ mod tests {
         app.insert_resource(WeatherRng::new(1));
         app.insert_resource(profiles);
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![test_zone("zone_a", 0.0), test_zone("zone_b", 20.0)],
         });
         app.add_event::<WeatherLifecycleEvent>();
@@ -1230,7 +1231,10 @@ mod tests {
         app.insert_resource(LingtianClock::default());
         app.insert_resource(ActiveWeather::new());
         app.insert_resource(ZoneWeatherProfileRegistry::new());
-        app.insert_resource(ZoneRegistry { zones: Vec::new() });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        });
         app.add_event::<WeatherLifecycleEvent>();
         app.add_systems(Update, weather_generator_system_zone_aware);
 
@@ -1262,6 +1266,7 @@ mod tests {
             app.insert_resource(ActiveWeather::new());
             app.insert_resource(profiles);
             app.insert_resource(ZoneRegistry {
+                spatial_revision: 0,
                 zones: zone_names
                     .iter()
                     .enumerate()

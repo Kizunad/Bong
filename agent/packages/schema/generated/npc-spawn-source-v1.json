@@ -16,5 +16,6 @@
       "const": "agent_command",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "7aa66cab29a15e16760d5bdd99f6f9d8d5ba316dd93e1ade49eb3d5e2b815fd2"
 }

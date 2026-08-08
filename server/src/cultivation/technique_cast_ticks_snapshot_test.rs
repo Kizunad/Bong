@@ -10,7 +10,7 @@
 //!   对拍（精度标准 #2 三套断言）+ 现状不达标 allowlist 棘轮。
 //!
 //! 快照**不可手改**——唯一重生成入口：
-//! `cd server && BONG_REGEN_CAST_TICKS_SNAPSHOT=1 cargo test technique_cast_ticks_snapshot`。
+//! `BONG_REGEN_CAST_TICKS_SNAPSHOT=1 scripts/build-token.sh cargo test technique_cast_ticks_snapshot`。
 //! 机制照抄 `technique_icon_snapshot_test.rs`（plan §8.1 #4 决议：梯队一双先例复用）。
 
 use std::collections::BTreeMap;
@@ -20,7 +20,7 @@ use super::known_techniques::TechniqueRegistry;
 
 const REGEN_HINT: &str = "快照由 TechniqueRegistry + yidao_skill_spec 具名双表\
     有序并集单向生成（plan-skill-anim-fidelity-v1 §8.1 #4a）、禁止手改；重生成：\
-    cd server && BONG_REGEN_CAST_TICKS_SNAPSHOT=1 cargo test technique_cast_ticks_snapshot";
+    BONG_REGEN_CAST_TICKS_SNAPSHOT=1 scripts/build-token.sh cargo test technique_cast_ticks_snapshot";
 
 fn snapshot_path() -> PathBuf {
     PathBuf::from(concat!(

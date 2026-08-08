@@ -1492,3 +1492,26 @@ fn register_coffin_tiers(registry: &mut CraftRegistry) -> Result<(), RegistryErr
         station: WORKBENCH,
     })
 }
+
+/// 程序化重建迁移前完整 95 条 canonical 配方（5 legacy + workbench 全量含 coffin）。
+///
+/// 这是 parity 测试的独立 oracle：不读 TOML、不读 JSON fixture，直接由迁移前的
+/// Rust registrar 源码重建。测试用它锁住 TOML 数据资产与 baseline fixture 的
+/// 逐字段一致性（major #10 修复：baseline fixture 与 TOML 同批产生，不能自证，
+/// 必须由迁移前 registrar 独立充当 oracle）。
+pub fn legacy_p0_oracle_registry() -> CraftRegistry {
+    let mut registry = CraftRegistry::new();
+    register_examples(&mut registry).expect("oracle register_examples must succeed");
+    register_workbench_recipes(&mut registry).expect("oracle workbench registrar must succeed");
+    registry
+}
+
+/// oracle 的配方 id 全集（sorted），供 set-equality 断言使用。
+pub fn legacy_p0_oracle_ids() -> Vec<String> {
+    let mut ids: Vec<String> = legacy_p0_oracle_registry()
+        .iter()
+        .map(|recipe| recipe.id.as_str().to_owned())
+        .collect();
+    ids.sort();
+    ids
+}

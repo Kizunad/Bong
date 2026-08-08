@@ -32,15 +32,18 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421
+    uses: Kizunad/review/.github/workflows/review.yml@2d3c75cea0cf6b5d900036d1edd94193876dd2a3
     with:
       pr_number: ${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
       review_base_url: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
-      shadow: true
+      shadow: false
       max_diff_chars: 40000
       max_shard_chars: 12000
-      worker_timeout_ms: 120000
+      # 300s, not the 120s default: the relay's upstream routinely takes 60-135s
+      # per request under load, so 120s left no room for a single retry and the
+      # summary stage died to "timeout after 120000ms" while requests were live.
+      worker_timeout_ms: 300000
       circuit_manual_retry: ${{ github.event_name == 'workflow_dispatch' }}
     secrets:
       review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}

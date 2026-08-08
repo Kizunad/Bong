@@ -827,7 +827,7 @@ public final class CastFovController {
             animTokens.clear();
             terminals.clear();
         }
-        JuiceConfig.resetForTests();
+        JuiceConfig.resetToDefaults();
         clock = System::currentTimeMillis;
         localPlayerPredicate = CastFovController::isLocalPlayerFromClient;
         localPlayerEntityPredicate = entity -> entity instanceof ClientPlayerEntity;

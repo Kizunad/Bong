@@ -19,7 +19,7 @@ use crate::inventory::{
 };
 use crate::network::cast_emit::current_unix_millis;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
-use crate::qi_physics::{MediumKind, QiTransfer, StyleAttack};
+use crate::qi_physics::{MediumKind, QiTransfer, StyleAttack, WorldQiAccount};
 use crate::schema::dugu::{
     AntidoteResultEventV1, AntidoteResultV1, DuguObfuscationStateV1, DuguPoisonProgressEventV1,
     DuguPoisonStateV1,
@@ -194,6 +194,7 @@ pub fn resolve_infuse_dugu_poison_intents(
     )>,
     mut disrupted_events: EventWriter<DuguObfuscationDisruptedEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for intent in intents.read() {
@@ -207,17 +208,24 @@ pub fn resolve_infuse_dugu_poison_intents(
 
         let (position, current_dimension, life_record) =
             locations.get(intent.infuser).unwrap_or((None, None, None));
-        let accepted = release_qi_amount_to_zone(
-            intent.infuser,
+        let release = release_qi_amount_to_zone(
+            &mut cultivation,
             DUGU_INFUSE_COST,
             position,
             current_dimension,
             life_record,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
             "dugu_infuse_poison",
         );
-        cultivation.qi_current = (cultivation.qi_current - accepted).clamp(0.0, cultivation.qi_max);
+        if let Err(error) = release {
+            tracing::warn!(
+                ?error,
+                "[bong][dugu] poison infusion qi release failed closed"
+            );
+            continue;
+        }
         let expires_at_tick = clock.tick.saturating_add(DUGU_INFUSION_TTL_TICKS);
         let disrupted_until = clock.tick.saturating_add(DUGU_EXPOSURE_TICKS);
         commands.entity(intent.infuser).insert((
@@ -437,6 +445,7 @@ pub fn resolve_self_antidote_intent(
     mut inventories: Query<&mut PlayerInventory>,
     mut result_events: EventWriter<AntidoteResultEvent>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     for intent in intents.read() {
@@ -472,20 +481,29 @@ pub fn resolve_self_antidote_intent(
             continue;
         }
 
-        if consume_item_instance_once(&mut inventory, intent.antidote_instance_id).is_err() {
+        let mut staged_inventory = inventory.clone();
+        if consume_item_instance_once(&mut staged_inventory, intent.antidote_instance_id).is_err() {
             continue;
         }
-        let accepted = release_qi_amount_to_zone(
-            intent.target,
+        let release = release_qi_amount_to_zone(
+            &mut cultivation,
             SELF_ANTIDOTE_QI_COST,
             position,
             current_dimension,
             life_record,
             zones.as_deref_mut(),
+            &mut ledger,
             qi_transfers.as_deref_mut(),
             "dugu_self_antidote",
         );
-        cultivation.qi_current = (cultivation.qi_current - accepted).clamp(0.0, cultivation.qi_max);
+        if let Err(error) = release {
+            tracing::warn!(
+                ?error,
+                "[bong][dugu] self-antidote qi release failed closed"
+            );
+            continue;
+        }
+        *inventory = staged_inventory;
 
         let roll = intent
             .roll_override
@@ -794,6 +812,12 @@ mod tests {
 
     use valence::prelude::{App, Events, Position, Update};
 
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -877,7 +901,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -949,7 +973,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1040,7 +1064,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1100,7 +1124,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1183,7 +1207,7 @@ mod tests {
     fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 400 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1729,7 +1753,7 @@ mod tests {
 
     #[test]
     fn antidote_success_removes_poison_without_restoring_capacity() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 30 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1778,7 +1802,7 @@ mod tests {
 
     #[test]
     fn antidote_failure_severs_meridian_without_near_death() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 31 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1833,7 +1857,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 50 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1937,7 +1961,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 60 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -2006,7 +2030,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 70 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();

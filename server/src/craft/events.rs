@@ -135,6 +135,8 @@ pub struct CraftCancelIntent {
 #[derive(Debug, Clone, Event, PartialEq, Eq)]
 pub struct CraftUnlockIntent {
     pub caster: Entity,
+    /// Canonical player identity captured before the queued intent crosses an entity lifecycle boundary.
+    pub player_id: String,
     pub recipe_id: RecipeId,
     pub source: UnlockEventSource,
 }

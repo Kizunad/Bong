@@ -460,6 +460,7 @@ mod narration_tests {
             rx_inbound,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "qingyun_peaks".to_string(),
                 dimension: DimensionKind::Overworld,

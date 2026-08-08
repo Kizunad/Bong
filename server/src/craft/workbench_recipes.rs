@@ -17,31 +17,24 @@ mod tests {
         "workbench.weapon.stone_knife",
     ];
 
-    fn p0_baseline_recipes() -> Vec<serde_json::Value> {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "fixtures/registry_datafication_p0_baseline.json"
-        ))
-        .expect("P0 baseline fixture must stay valid JSON");
-        fixture["recipes"]
-            .as_array()
-            .expect("P0 baseline fixture must contain a recipes array")
-            .clone()
+    /// 迁移前 registrar oracle（fixtures/legacy_p0_registrar.rs 程序化重建的
+    /// 95 条 canonical 配方）中的 workbench 侧集合。计数断言全部由 oracle 驱动，
+    /// 不再读 JSON fixture —— fixture 与 TOML 同批误改时由 data.rs 的
+    /// oracle 逐字段对拍测试兜底（major #10）。
+    fn p0_workbench_asset_recipes() -> Vec<crate::craft::CraftRecipe> {
+        crate::craft::fixtures::legacy_p0_registrar::legacy_p0_oracle_registry()
+            .iter()
+            .filter(|recipe| !recipe.id.as_str().starts_with("craft.example."))
+            .cloned()
+            .collect()
     }
 
     fn p0_workbench_asset_recipe_count() -> usize {
-        p0_baseline_recipes()
-            .iter()
-            .filter(|recipe| {
-                !recipe["id"]
-                    .as_str()
-                    .expect("baseline recipe id must be a string")
-                    .starts_with("craft.example.")
-            })
-            .count()
+        p0_workbench_asset_recipes().len()
     }
 
-    fn p0_baseline_count_matching(predicate: impl Fn(&serde_json::Value) -> bool) -> usize {
-        p0_baseline_recipes()
+    fn p0_baseline_count_matching(predicate: impl Fn(&crate::craft::CraftRecipe) -> bool) -> usize {
+        p0_workbench_asset_recipes()
             .iter()
             .filter(|recipe| predicate(recipe))
             .count()
@@ -55,7 +48,7 @@ mod tests {
         assert_eq!(
             registry.len(),
             expected_count,
-            "workbench asset recipe count must derive from the old-registrar canonical fixture; got {}",
+            "workbench asset recipe count must derive from the old-registrar oracle; got {}",
             registry.len()
         );
     }
@@ -218,15 +211,11 @@ mod tests {
                 workbench_count += 1;
             }
         }
-        let expected_count = p0_baseline_count_matching(|recipe| {
-            recipe["id"]
-                .as_str()
-                .expect("baseline recipe id must be a string")
-                .starts_with("workbench.")
-        });
+        let expected_count =
+            p0_baseline_count_matching(|recipe| recipe.id.as_str().starts_with("workbench."));
         assert_eq!(
             workbench_count, expected_count,
-            "workbench.* recipe count must derive from the canonical fixture"
+            "workbench.* recipe count must derive from the oracle"
         );
     }
 
@@ -629,20 +618,18 @@ mod tests {
             }
         }
         let expected_handcraft_count = p0_baseline_count_matching(|recipe| {
-            let id = recipe["id"]
-                .as_str()
-                .expect("baseline recipe id must be a string");
-            HANDCRAFT_STONE_TOOLS.contains(&id)
+            HANDCRAFT_STONE_TOOLS.contains(&recipe.id.as_str())
         });
         assert_eq!(
             handcraft_stone_count as usize, expected_handcraft_count,
-            "手搓石器数量必须由 canonical fixture 推导"
+            "手搓石器数量必须由 oracle 推导"
         );
-        let expected_station_count =
-            p0_baseline_count_matching(|recipe| recipe["station"].as_str() == Some("workbench"));
+        let expected_station_count = p0_baseline_count_matching(|recipe| {
+            recipe.station == Some(CraftStationKind::Workbench)
+        });
         assert_eq!(
             workbench_count as usize, expected_station_count,
-            "制作台配方数量必须由 canonical fixture 推导"
+            "制作台配方数量必须由 oracle 推导"
         );
     }
 
@@ -828,18 +815,11 @@ mod tests {
             }
         }
         let expected_qi_recipe_count = p0_baseline_count_matching(|recipe| {
-            recipe["qi_cost"]
-                .as_f64()
-                .expect("baseline qi_cost must be numeric")
-                > 0.0
-                && !recipe["id"]
-                    .as_str()
-                    .expect("baseline recipe id must be a string")
-                    .starts_with("craft.example.")
+            recipe.qi_cost > 0.0 && !recipe.id.as_str().starts_with("craft.example.")
         });
         assert_eq!(
             qi_recipe_count as usize, expected_qi_recipe_count,
-            "positive-qi recipe count must derive from the canonical fixture"
+            "positive-qi recipe count must derive from the oracle"
         );
     }
 }

@@ -30,5 +30,6 @@
     "archetype_suggestion": {
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "1b4dad7d89f932fe65da9ffd1b908c2668f8a051260e0c2b2debacafaa94d269"
 }

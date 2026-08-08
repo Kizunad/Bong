@@ -20,5 +20,6 @@
       "const": "toxicity_tier_unlock",
       "type": "string"
     }
-  ]
+  ],
+  "x-bong-typebox-source-sha256": "1bf6de8b2b039403ce38c9836f92bd9841edc1ed40f1389cf5541a5aa6ac752e"
 }

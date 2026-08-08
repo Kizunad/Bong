@@ -65,5 +65,6 @@
     "hydration": {
       "type": "boolean"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "77e714cc458df268c93baef44096528353cc0accdcac9cd09267cfd7a8ae57b1"
 }

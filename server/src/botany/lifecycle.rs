@@ -692,6 +692,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -727,6 +728,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "pseudo_vein_heartbeat_0".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -804,6 +806,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "pseudo_vein_heartbeat_0".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -877,6 +880,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "pseudo_vein_heartbeat_0".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -927,6 +931,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -975,6 +980,7 @@ mod tests {
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(PlantLifecycleClock { tick: 5_199 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1050,6 +1056,7 @@ mod tests {
             tick: BOTANY_AURA_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1118,6 +1125,7 @@ mod tests {
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(PlantLifecycleClock { tick: 5_199 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1169,6 +1177,7 @@ mod tests {
         app.insert_resource(PlantStaticPointStore::default());
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 Zone {
                     name: "spawn".to_string(),
@@ -1231,6 +1240,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "lingquan_marsh".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1290,6 +1300,7 @@ mod tests {
             tick: LIFECYCLE_INTERVAL_TICKS - 1,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "lingquan_marsh".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -1443,6 +1454,7 @@ mod tests {
             qi_inflow_per_min: 0.0,
         };
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![marsh_zone],
         });
 
@@ -1545,6 +1557,7 @@ mod tests {
             tsy: None,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "tsy_shallow".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,

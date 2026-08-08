@@ -117,8 +117,12 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            init_clients,
-            attach_player_state_to_joined_clients.after(init_clients),
+            // fix-spec-1901-v2 §4.2 — 出生/重连位置提交进入统一移动 commit set；
+            // 灵田 post-transfer validator / completion 复验排在其后。
+            init_clients.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+            attach_player_state_to_joined_clients
+                .after(init_clients)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
             attach_inventory_to_joined_clients.after(attach_player_state_to_joined_clients),
             tick_player_persistence_timer,
             autosave_player_core_slices.after(tick_player_persistence_timer),
@@ -2251,6 +2255,90 @@ mod tests {
 
         let captured = app.world().resource::<CapturedLoginPosition>();
         assert_eq!(captured.0, Some([512.0, 96.0, -768.0]));
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn reconnecting_restored_position_commits_before_lingtian_post_transfer_validation() {
+        // fix-spec-1901-v2 #10：生产注册把 attach_player_state_to_joined_clients 放进
+        // AuthoritativePositionCommitSet，灵田 post-transfer validator 排在 set 之后。
+        // 本测试把 validator 先注册、attach 后注册且不写 .after(attach) —— 顺序只能由
+        // set 边提供；删除 .in_set(...) 会员资格后 validator 先读到远处位置 → 拒绝 → 红。
+        use crate::lingtian::events::{
+            StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
+            StartReplenishRequest, StartTillRequest,
+        };
+        use crate::lingtian::requests::{PendingLingtianRequest, PendingLingtianRequests};
+        use crate::lingtian::session::SessionMode;
+        use crate::lingtian::systems::validate_and_dispatch_lingtian_requests;
+        use crate::world::dimension::DimensionKind;
+        use crate::world::movement_commit::AuthoritativePositionCommitSet;
+        use valence::prelude::{BlockPos, Events};
+
+        let (persistence, data_dir, _db_path) = sqlite_persistence("reconnect-lingtian-gate");
+
+        // 存档玩家上次离线在灵田目标旁（Overworld，目标 (0,64,0) 中心 (0.5,64.5,0.5)，
+        // 玩家 (2.5,64.5,0.5) 距离 2.0 < LINGTIAN_INTERACT_MAX_DISTANCE + TOLERANCE）。
+        crate::player::state::save_player_slices(
+            &persistence,
+            "Azure",
+            &PlayerState::default(),
+            [2.5, 64.5, 0.5],
+            DimensionKind::Overworld,
+            None,
+            None,
+            &SkillSet::default(),
+        )
+        .expect("seeding nearby-resident player should persist");
+
+        let mut app = App::new();
+        app.insert_resource(persistence)
+            .init_resource::<PendingLingtianRequests>()
+            .add_event::<StartTillRequest>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<StartDrainQiRequest>()
+            .add_systems(
+                Update,
+                (
+                    validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
+                    attach_player_state_to_joined_clients.in_set(AuthoritativePositionCommitSet),
+                ),
+            );
+
+        // Mock 客户端起点在远处（1000, 64.5, 1000）——若 attach 不在 commit set 内，
+        // validator 会读到这个远点并拒绝请求。
+        let (mut client_bundle, _helper) = create_mock_client("Azure");
+        client_bundle.player.position = Position::new([1000.0, 64.5, 1000.0]);
+        let entity = app.world_mut().spawn(client_bundle).id();
+
+        app.world_mut()
+            .resource_mut::<PendingLingtianRequests>()
+            .push(PendingLingtianRequest::Till {
+                actor: entity,
+                pos: BlockPos::new(0, 64, 0),
+                hoe_instance_id: 7,
+                mode: SessionMode::Manual,
+            });
+
+        app.update();
+
+        let start_events = app.world().resource::<Events<StartTillRequest>>();
+        let mut reader = start_events.get_reader();
+        let dispatched: Vec<_> = reader.read(start_events).collect();
+        assert_eq!(
+            dispatched.len(),
+            1,
+            "重连恢复的存档位置必须在 post-transfer 验证前提交；期望 1 条 StartTillRequest \
+             （距目标 2.0 在 4.5 内），实际 {} 条——attach 若不在 \
+             AuthoritativePositionCommitSet 内就会读到远处位置拒绝",
+            dispatched.len()
+        );
+        assert_eq!(dispatched[0].player, entity);
+        assert_eq!(dispatched[0].pos, BlockPos::new(0, 64, 0));
 
         let _ = fs::remove_dir_all(&data_dir);
     }

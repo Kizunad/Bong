@@ -1271,6 +1271,9 @@ mod tests {
         app.add_event::<crate::combat::shield_block::RaiseShieldIntent>();
         app.add_event::<crate::combat::shield_block::LowerShieldIntent>();
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
+        // fix-spec-1901-v2 §4.1 — `handle_client_request_payloads` 的 lingtian
+        // 分支现在 enqueue 进 `PendingLingtianRequests`，测试 app 必须 init。
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
     }
 
     fn flush_all_client_packets(app: &mut App) {

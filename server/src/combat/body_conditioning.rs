@@ -12,7 +12,7 @@ use crate::cultivation::components::Cultivation;
 use crate::cultivation::death_hooks::release_qi_amount_to_zone;
 use crate::cultivation::known_techniques::{KnownTechnique, KnownTechniques, TechniqueRegistry};
 use crate::cultivation::life_record::LifeRecord;
-use crate::qi_physics::QiTransfer;
+use crate::qi_physics::{QiTransfer, WorldQiAccount};
 use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
@@ -110,9 +110,10 @@ fn ensure_entry(known: &mut KnownTechniques) -> &mut KnownTechnique {
 /// 消费 `GuangboTicaoPracticeEvent`：每次成功练习扣真元 + 递增 proficiency，
 /// 并将消耗的真元回灌至当前区域（守恒：player_qi 减少必须对应 zone_qi 增加）。
 ///
-/// 守恒：通过 [`try_record_guangbo_practice`] 走真元门——真元不足则本次练习无效
-/// （不扣费、不涨熟练度）。无 `Cultivation` 组件的实体（理论上玩家恒有）按"无真元
-/// 可付"处理，同样不涨 proficiency，避免凭空增益。
+/// 守恒：走 `release_qi_amount_to_zone` 的原子真元门——真元不足则本次练习无效
+/// （不扣费、不涨熟练度）；释放失败 fail-closed（不扣费、不涨 proficiency，记 warn）。
+/// 无 `Cultivation` 组件的实体（理论上玩家恒有）按"无真元可付"处理，同样不涨
+/// proficiency，避免凭空增益。
 #[allow(clippy::too_many_arguments)]
 pub fn consume_guangbo_practice_events(
     mut events: EventReader<GuangboTicaoPracticeEvent>,
@@ -124,6 +125,7 @@ pub fn consume_guangbo_practice_events(
         Option<&LifeRecord>,
     )>,
     mut zones: Option<ResMut<ZoneRegistry>>,
+    mut ledger: ResMut<WorldQiAccount>,
     mut qi_transfers: Option<ResMut<Events<QiTransfer>>>,
 ) {
     let qi_cost = f64::from(
@@ -137,24 +139,34 @@ pub fn consume_guangbo_practice_events(
             continue;
         };
         let Some(mut cultivation) = cultivation else {
-            // 无修为组件 → 无真元可付 → 守恒下不给 proficiency。
             continue;
         };
-        let outcome = try_record_guangbo_practice(&mut cultivation, &mut known, qi_cost);
-        if matches!(outcome, PracticeOutcome::Trained { .. }) {
-            // 守恒：扣除的真元必须回灌区域，否则 world qi ledger 产生永久漏洞。
-            let (position, current_dimension, life_record) =
-                locations.get(event.entity).unwrap_or((None, None, None));
-            release_qi_amount_to_zone(
-                event.entity,
-                qi_cost,
-                position,
-                current_dimension,
-                life_record,
-                zones.as_deref_mut(),
-                qi_transfers.as_deref_mut(),
-                "guangbo_ticao",
-            );
+        if cultivation.qi_current < qi_cost {
+            continue;
+        }
+        let (position, current_dimension, life_record) =
+            locations.get(event.entity).unwrap_or((None, None, None));
+        let release = release_qi_amount_to_zone(
+            &mut cultivation,
+            qi_cost,
+            position,
+            current_dimension,
+            life_record,
+            zones.as_deref_mut(),
+            &mut ledger,
+            qi_transfers.as_deref_mut(),
+            "guangbo_ticao",
+        );
+        match release {
+            Ok(_) => {
+                record_guangbo_practice(&mut known);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "[bong][combat] guangbo practice qi release failed closed"
+                );
+            }
         }
     }
 }
@@ -628,6 +640,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(TechniqueRegistry::load_for_tests());
             app.add_event::<GuangboTicaoPracticeEvent>();
+            app.insert_resource(WorldQiAccount::default());
             app.add_systems(Update, consume_guangbo_practice_events);
             app
         }
@@ -638,6 +651,7 @@ mod tests {
             app.add_event::<GuangboTicaoPracticeEvent>();
             app.add_event::<QiTransfer>();
             app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
             app.add_systems(Update, consume_guangbo_practice_events);
             app
         }
@@ -650,6 +664,7 @@ mod tests {
                 .spawn((
                     KnownTechniques { entries: vec![] },
                     cultivation_with_qi(5.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
                 ))
                 .id();
             app.world_mut()
@@ -685,6 +700,7 @@ mod tests {
                 .spawn((
                     KnownTechniques { entries: vec![] },
                     cultivation_with_qi(0.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
                 ))
                 .id();
             app.world_mut()
@@ -781,6 +797,7 @@ mod tests {
                 .spawn((
                     KnownTechniques { entries: vec![] },
                     cultivation_with_qi(5.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
                     Position::new([0.0, 64.0, 0.0]),
                     CurrentDimension(DimensionKind::Overworld),
                 ))
@@ -936,6 +953,7 @@ mod tests {
                 .spawn((
                     KnownTechniques { entries: vec![] },
                     cultivation_with_qi(0.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
                     Position::new([0.0, 64.0, 0.0]),
                     CurrentDimension(DimensionKind::Overworld),
                 ))
@@ -999,6 +1017,7 @@ mod tests {
                 .spawn((
                     KnownTechniques { entries: vec![] },
                     cultivation_with_qi(5.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
                     Position::new([0.0, 64.0, 0.0]),
                     // 故意不挂 CurrentDimension
                 ))

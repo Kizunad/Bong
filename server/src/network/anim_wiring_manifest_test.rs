@@ -9,7 +9,7 @@
 //!   `BongAnimationRegistry` 可注册解析 + `player_animation/<id>.json` 资产真实存在。
 //!
 //! 清单**不可手改**——唯一重生成入口：
-//! `cd server && BONG_REGEN_ANIM_MANIFEST=1 cargo test anim_wiring_manifest`。
+//! `BONG_REGEN_ANIM_MANIFEST=1 scripts/build-token.sh cargo test anim_wiring_manifest`。
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use super::vfx_animation_trigger::P1_WIRED_ANIM_IDS;
 
 const REGEN_HINT: &str = "清单由 P1_WIRED_ANIM_IDS 单向生成、禁止手改；重生成：\
-    cd server && BONG_REGEN_ANIM_MANIFEST=1 cargo test anim_wiring_manifest";
+    BONG_REGEN_ANIM_MANIFEST=1 scripts/build-token.sh cargo test anim_wiring_manifest";
 
 fn manifest_path() -> PathBuf {
     PathBuf::from(concat!(

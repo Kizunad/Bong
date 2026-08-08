@@ -70,7 +70,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 
 (
   cd "$ROOT/server"
-  cargo build --release
+  "$ROOT/scripts/build-token.sh" cargo build --release
 )
 server_executable="$(bong_server_resolve_executable "$ROOT/server" "$CARGO_TARGET_DIR/release/bong-server")"
 runtime_dir="$(bong_server_runtime_dir)"
@@ -116,8 +116,8 @@ cleanup_pinned_server_or_preserve_tmux() {
     echo "FAIL: $reason; server identity is not pinned, preserving tmux for diagnosis" >&2
     return 1
   fi
-  if bong_server_stop_pinned_process \
-    "$server_pid" "$server_starttime" "$server_executable_identity" 10 2; then
+  if bong_server_rollback_pinned_managed_process \
+    "$server_pid" "$server_starttime" "$server_executable" "$server_executable_identity" "$reason"; then
     cleanup_status=0
   else
     cleanup_status=$?

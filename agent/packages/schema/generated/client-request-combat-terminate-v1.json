@@ -14,5 +14,6 @@
       "const": "combat_terminate",
       "type": "string"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "68e55a2b2a0c0086999a7e605a90b958c35029770df319add990e582102c0fb7"
 }

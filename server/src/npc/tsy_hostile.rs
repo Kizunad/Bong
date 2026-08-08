@@ -466,8 +466,10 @@ pub fn register(app: &mut App) {
                     .after(crate::world::tsy_dev_command::apply_tsy_spawn_requests),
                 emit_fuya_aura_vfx,
                 emit_fuya_pressure_hum_audio_system,
-                stop_fuya_pressure_hum_audio_on_death_system,
-                handle_npc_death_drop,
+                stop_fuya_pressure_hum_audio_on_death_system
+                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
+                handle_npc_death_drop
+                    .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::PostCommit),
             ),
         );
 }
@@ -1142,17 +1144,20 @@ pub fn emit_fuya_pressure_hum_audio_system(
 }
 
 pub fn stop_fuya_pressure_hum_audio_on_death_system(
-    mut deaths: EventReader<crate::combat::events::DeathEvent>,
-    fuya_auras: Query<&Position, With<FuyaAura>>,
+    mut deaths: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
+    fuya_auras: Query<&Position, (With<FuyaAura>, With<NpcMarker>)>,
     mut audio_events: EventWriter<StopSoundRecipeRequest>,
 ) {
     for death in deaths.read() {
-        let Ok(position) = fuya_auras.get(death.target) else {
+        if !death.authorize_loot {
+            continue;
+        }
+        let Ok(position) = fuya_auras.get(death.entity) else {
             continue;
         };
         let pos = position.get();
         audio_events.send(StopSoundRecipeRequest {
-            instance_id: fuya_pressure_audio_instance_id(death.target),
+            instance_id: fuya_pressure_audio_instance_id(death.entity),
             fade_out_ticks: 20,
             recipient: AudioRecipient::Radius {
                 origin: pos,
@@ -1771,7 +1776,7 @@ fn fuya_enrage_action_system(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_npc_death_drop(
     mut commands: Commands,
-    mut events: EventReader<crate::combat::events::DeathEvent>,
+    mut events: EventReader<crate::npc::lifecycle::NpcTerminalSettlementSucceeded>,
     npcs: Query<
         (
             &NpcArchetype,
@@ -1814,8 +1819,11 @@ pub fn handle_npc_death_drop(
     };
 
     for event in events.read() {
+        if !event.authorize_loot {
+            continue;
+        }
         let Ok((archetype, pos, hostile, sentinel, daoxiang_origin, issued)) =
-            npcs.get(event.target)
+            npcs.get(event.entity)
         else {
             continue;
         };
@@ -1843,7 +1851,7 @@ pub fn handle_npc_death_drop(
             source_class: source_class_for_family(family_id),
             guarding_container_kind: guarding_kind,
         };
-        let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.target.index());
+        let seed = stable_seed_u64(family_id, drop_key, event.at_tick, event.entity.index());
         let items = roll_drop_entry(entry, &ctx, item_registry, relic_pool, allocator, seed);
         for (idx, item) in items.into_iter().enumerate() {
             let world_pos = jittered_drop_pos(pos.get(), seed, idx as u64);
@@ -1861,7 +1869,7 @@ pub fn handle_npc_death_drop(
                 },
             );
         }
-        commands.entity(event.target).insert(TsyNpcDropIssued);
+        commands.entity(event.entity).insert(TsyNpcDropIssued);
     }
 }
 
@@ -2190,7 +2198,9 @@ fn default_chance() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cultivation::components::{ActorQiIdentity, ActorQiKind};
     use crate::inventory::{ItemCategory, ItemRarity, ItemTemplate};
+    use crate::npc::lifecycle::{NpcDeathReason, NpcTerminalSettlementSucceeded};
 
     fn template(id: &str) -> ItemTemplate {
         ItemTemplate {
@@ -2430,7 +2440,7 @@ mod tests {
     #[test]
     fn fuya_pressure_hum_stop_ignores_deaths_without_fuya_aura() {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(
             valence::prelude::Update,
@@ -2438,16 +2448,27 @@ mod tests {
         );
         let commoner = app
             .world_mut()
-            .spawn((Position::new([0.0, 64.0, 0.0]), NpcArchetype::Commoner))
+            .spawn((
+                NpcMarker,
+                Position::new([0.0, 64.0, 0.0]),
+                NpcArchetype::Commoner,
+            ))
             .id();
-        app.world_mut()
-            .send_event(crate::combat::events::DeathEvent {
-                target: commoner,
-                cause: "test".to_string(),
-                attacker: None,
-                attacker_player_id: None,
-                at_tick: 1,
-            });
+        let identity = ActorQiIdentity::from_life_record(
+            &crate::cultivation::life_record::LifeRecord::new("npc:audio:no-aura"),
+            ActorQiKind::Npc,
+        )
+        .expect("terminal audio fixture must have canonical NPC identity");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: commoner,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 
@@ -2463,7 +2484,7 @@ mod tests {
     #[test]
     fn fuya_pressure_hum_stop_is_tied_to_fuya_aura_death_and_radius_recipient() {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(
             valence::prelude::Update,
@@ -2472,16 +2493,23 @@ mod tests {
         let fuya_pos = Position::new([2.0, 64.0, 3.0]);
         let fuya = app
             .world_mut()
-            .spawn((fuya_pos, NpcArchetype::Fuya, FuyaAura::default()))
+            .spawn((NpcMarker, fuya_pos, NpcArchetype::Fuya, FuyaAura::default()))
             .id();
-        app.world_mut()
-            .send_event(crate::combat::events::DeathEvent {
-                target: fuya,
-                cause: "test".to_string(),
-                attacker: None,
-                attacker_player_id: None,
-                at_tick: 1,
-            });
+        let identity = ActorQiIdentity::from_life_record(
+            &crate::cultivation::life_record::LifeRecord::new("npc:audio:fuya"),
+            ActorQiKind::Npc,
+        )
+        .expect("terminal audio fixture must have canonical NPC identity");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity: fuya,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 
@@ -2506,7 +2534,7 @@ mod tests {
     #[test]
     fn fuya_pressure_hum_stop_follows_aura_even_when_archetype_is_not_fuya() {
         let mut app = valence::prelude::App::new();
-        app.add_event::<crate::combat::events::DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<StopSoundRecipeRequest>();
         app.add_systems(
             valence::prelude::Update,
@@ -2515,16 +2543,28 @@ mod tests {
         let aura_pos = Position::new([4.0, 64.0, 5.0]);
         let entity = app
             .world_mut()
-            .spawn((aura_pos, NpcArchetype::SkullFiend, FuyaAura::default()))
+            .spawn((
+                NpcMarker,
+                aura_pos,
+                NpcArchetype::SkullFiend,
+                FuyaAura::default(),
+            ))
             .id();
-        app.world_mut()
-            .send_event(crate::combat::events::DeathEvent {
-                target: entity,
-                cause: "test".to_string(),
-                attacker: None,
-                attacker_player_id: None,
-                at_tick: 1,
-            });
+        let identity = ActorQiIdentity::from_life_record(
+            &crate::cultivation::life_record::LifeRecord::new("npc:audio:skull"),
+            ActorQiKind::Npc,
+        )
+        .expect("terminal audio fixture must have canonical NPC identity");
+        app.world_mut().send_event(NpcTerminalSettlementSucceeded {
+            entity,
+            at_tick: 1,
+            cause: "test".to_string(),
+            reason: NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: true,
+            actor_qi_identity: identity,
+        });
 
         app.update();
 

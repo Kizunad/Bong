@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::cultivation::components::{ColorKind, Realm};
-use crate::inventory::ItemRegistry;
+use crate::inventory::{ItemCategory, ItemRegistry};
 
 use super::events::InsightTrigger;
 use super::recipe::{
@@ -73,6 +73,7 @@ pub struct MissingItemReference {
     pub recipe_id: String,
     pub field: String,
     pub template_id: String,
+    pub detail: String,
 }
 
 impl fmt::Display for CraftDataError {
@@ -130,17 +131,17 @@ impl fmt::Display for CraftDataError {
             Self::MissingItemReferences { references } => {
                 write!(
                     formatter,
-                    "craft recipe data contains {} missing ItemRegistry reference(s)",
+                    "craft recipe data contains {} invalid ItemRegistry reference(s)",
                     references.len()
                 )?;
                 for reference in references {
                     write!(
                         formatter,
-                        "\n- {} recipe `{}` field `{}`: ItemRegistry has no template `{}`",
+                        "\n- {} recipe `{}` field `{}`: {}",
                         reference.path.display(),
                         reference.recipe_id,
                         reference.field,
-                        reference.template_id
+                        reference.detail
                     )?;
                 }
                 Ok(())
@@ -386,13 +387,14 @@ fn commit_staged_recipes(
     let mut first_paths: HashMap<String, PathBuf> = HashMap::new();
     for located in &staged {
         let id = located.recipe.id.as_str().to_owned();
-        if let Some(first_path) = first_paths.insert(id.clone(), located.path.clone()) {
+        if let Some(first_path) = first_paths.get(&id) {
             return Err(CraftDataError::DuplicateId {
                 path: located.path.clone(),
                 recipe_id: id,
-                first_path: Some(first_path),
+                first_path: Some(first_path.clone()),
             });
         }
+        first_paths.insert(id.clone(), located.path.clone());
         if registry.get(&located.recipe.id).is_some() {
             return Err(CraftDataError::DuplicateId {
                 path: located.path.clone(),
@@ -710,13 +712,25 @@ fn collect_missing_item_references(
     }
     for (index, source) in recipe.unlock_sources.iter().enumerate() {
         if let UnlockSource::Scroll { item_template } = source {
-            if item_registry.get(item_template).is_none() {
-                missing.push(missing_item_reference(
+            match item_registry.get(item_template) {
+                None => missing.push(missing_item_reference(
                     path,
                     recipe,
                     format!("unlock_sources[{index}].item_template"),
                     item_template,
-                ));
+                )),
+                Some(template) if template.category != ItemCategory::Scroll => {
+                    missing.push(item_reference_error(
+                        path,
+                        recipe,
+                        format!("unlock_sources[{index}].item_template"),
+                        item_template,
+                        format!(
+                            "ItemRegistry template `{item_template}` must have category Scroll"
+                        ),
+                    ));
+                }
+                Some(_) => {}
             }
         }
     }
@@ -728,11 +742,28 @@ fn missing_item_reference(
     field: String,
     template_id: &str,
 ) -> MissingItemReference {
+    item_reference_error(
+        path,
+        recipe,
+        field,
+        template_id,
+        format!("ItemRegistry has no template `{template_id}`"),
+    )
+}
+
+fn item_reference_error(
+    path: &Path,
+    recipe: &CraftRecipe,
+    field: String,
+    template_id: &str,
+    detail: String,
+) -> MissingItemReference {
     MissingItemReference {
         path: path.to_path_buf(),
         recipe_id: recipe.id.as_str().to_owned(),
         field,
         template_id: template_id.to_owned(),
+        detail,
     }
 }
 
@@ -752,14 +783,18 @@ fn validation_field(error: &RecipeValidationError) -> String {
         RecipeValidationError::EmptyMaterialTemplate { .. } => {
             "materials[].template_id".to_string()
         }
-        RecipeValidationError::ZeroCount { template, .. } => {
-            format!("materials[{template}].count")
+        RecipeValidationError::ZeroCount { index, .. } => {
+            format!("materials[{index}].count")
+        }
+        RecipeValidationError::DuplicateMaterialTemplate { template, .. } => {
+            format!("materials[].template_id ({template})")
         }
         RecipeValidationError::EmptyOutputTemplate { .. } => "output.template_id".to_string(),
         RecipeValidationError::ZeroOutputCount { .. } => "output.count".to_string(),
         RecipeValidationError::InvalidQiCost { .. } => "qi_cost".to_string(),
         RecipeValidationError::ZeroTimeTicks { .. } => "time_sec".to_string(),
         RecipeValidationError::NoUnlockSources { .. } => "unlock_sources".to_string(),
+        RecipeValidationError::SkillLevelTooHigh { .. } => "requirements.skill_lv_min".to_string(),
         RecipeValidationError::InvalidQiColorMinShare { .. } => {
             "requirements.qi_color_min.min_share".to_string()
         }
@@ -830,10 +865,6 @@ fn parse_insight_trigger(raw: &str) -> Option<InsightTrigger> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-#[path = "fixtures/legacy_p0_registrar.rs"]
-mod legacy_p0_registrar;
 
 #[cfg(test)]
 mod tests {
@@ -1053,14 +1084,40 @@ station = "none"
         );
     }
 
+    fn assert_conversion_error_field(
+        error: CraftDataError,
+        path: &Path,
+        recipe_id: &str,
+        field: &str,
+    ) {
+        match error {
+            CraftDataError::Conversion {
+                path: actual_path,
+                recipe_id: actual_recipe_id,
+                field: actual_field,
+                ..
+            } => {
+                assert_eq!(
+                    actual_path, path,
+                    "conversion error must retain its source file"
+                );
+                assert_eq!(
+                    actual_recipe_id, recipe_id,
+                    "conversion error must retain the parsed recipe id"
+                );
+                assert_eq!(
+                    actual_field, field,
+                    "conversion error must report the documented schema field path"
+                );
+            }
+            other => panic!("expected CraftDataError::Conversion for `{field}`, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn default_assets_match_pinned_legacy_registrars_field_for_field() {
-        let mut legacy_registry = CraftRegistry::new();
-        super::legacy_p0_registrar::register_examples(&mut legacy_registry)
-            .expect("pinned legacy example registrar must stay executable");
-        super::legacy_p0_registrar::register_workbench_recipes(&mut legacy_registry)
-            .expect("pinned legacy workbench registrar must stay executable");
-        let mut expected: Vec<_> = legacy_registry.iter().map(canonical).collect();
+    fn default_assets_match_committed_pre_migration_fixture_field_for_field() {
+        let baseline = fixture();
+        let mut expected = baseline.recipes;
         expected.sort_by(|left, right| left.id.cmp(&right.id));
 
         let mut registry = CraftRegistry::new();
@@ -1071,29 +1128,59 @@ station = "none"
 
         assert_eq!(
             actual, expected,
-            "P0 TOML loader output must equal the pinned pre-migration Rust registrars field-for-field"
-        );
-        assert_eq!(
-            registry.len(),
-            legacy_registry.len(),
-            "recipe count must derive from the pinned pre-migration registrars"
+            "P0 TOML loader output must equal the committed pre-migration fixture field-for-field"
         );
     }
 
     #[test]
-    fn checked_in_p0_baseline_was_generated_from_pinned_legacy_registrars() {
-        let baseline = fixture();
-        let mut legacy_registry = CraftRegistry::new();
-        super::legacy_p0_registrar::register_examples(&mut legacy_registry)
-            .expect("pinned legacy example registrar must stay executable");
-        super::legacy_p0_registrar::register_workbench_recipes(&mut legacy_registry)
-            .expect("pinned legacy workbench registrar must stay executable");
-        let mut generated: Vec<_> = legacy_registry.iter().map(canonical).collect();
-        generated.sort_by(|left, right| left.id.cmp(&right.id));
+    fn default_assets_match_pre_migration_registrar_oracle_field_for_field() {
+        // major #10 修复：baseline fixture 与 TOML 同批产生，不能充当独立迁移
+        // oracle。这里用迁移前真实 Rust registrar 的程序化副本（fixtures/
+        // legacy_p0_registrar.rs，来源 commit 6a6a262cecf9）独立重建 95 条
+        // canonical 配方，逐字段对拍 TOML loader 输出 —— fixture 与 TOML 一起
+        // 同批误改时也会撞红。
+        let oracle = crate::craft::fixtures::legacy_p0_registrar::legacy_p0_oracle_registry();
+        let mut expected: Vec<_> = oracle.iter().map(canonical).collect();
+        expected.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            expected.len(),
+            95,
+            "pre-migration registrar must rebuild exactly 95 canonical recipes"
+        );
+        // 文档化例外：verdict-1906-r2 major #9 —— coffin.stone_coffin 的展示名
+        // 已从旧 registrar 的 "玄石棺" 改为正典合规的 "乌石棺"（末法禁词"玄"）。
+        // oracle 保留迁移前真源值；对拍前把 expected 中该条 display_name 同步为
+        // 迁移后值，其余 94 条逐字段严格相等。
+        let stone_oracle = oracle
+            .get(&RecipeId::new("coffin.stone_coffin"))
+            .expect("oracle must contain stone coffin recipe");
+        assert_eq!(
+            stone_oracle.display_name, "玄石棺",
+            "oracle 保留迁移前真源名，用于对照"
+        );
+        for entry in &mut expected {
+            if entry.id == "coffin.stone_coffin" {
+                entry.display_name = "乌石棺".to_owned();
+            }
+        }
+
+        let mut registry = CraftRegistry::new();
+        load_default_craft_recipes_for_parity(&mut registry)
+            .expect("default P0 craft assets must parse for oracle parity");
+        let mut actual: Vec<_> = registry.iter().map(canonical).collect();
+        actual.sort_by(|left, right| left.id.cmp(&right.id));
 
         assert_eq!(
-            baseline.recipes, generated,
-            "checked-in P0 fixture must remain a one-way canonical dump of commit 6a6a262c's Rust registrars"
+            actual, expected,
+            "P0 TOML loader output must equal the pre-migration registrar oracle field-for-field \
+             (coffin.stone_coffin display_name 例外见上)"
+        );
+        let stone_actual = registry
+            .get(&RecipeId::new("coffin.stone_coffin"))
+            .expect("stone coffin recipe must load from TOML");
+        assert_eq!(
+            stone_actual.display_name, "乌石棺",
+            "stone coffin recipe display_name must use the canonical-compliant 乌石棺"
         );
     }
 
@@ -1128,23 +1215,33 @@ station = "none"
         );
         write_toml(&directory, "z/second.toml", &second);
         let first = replace_required_line(
-            minimal_recipe(),
-            "id = \"fixture.recipe\"",
-            "id = \"fixture.a\"",
+            replace_required_line(
+                minimal_recipe(),
+                "id = \"fixture.recipe\"",
+                "id = \"fixture.duplicate\"",
+            ),
+            "display_name = \"Fixture\"",
+            "display_name = \"first\"",
         );
-        write_toml(&directory, "a/first.toml", &first);
+        let second_duplicate =
+            replace_required_line(second, "id = \"fixture.z\"", "id = \"fixture.duplicate\"");
+        write_toml(&directory, "z/second.toml", &second_duplicate);
+        let first_path = write_toml(&directory, "a/first.toml", &first);
 
         let mut registry = CraftRegistry::new();
-        load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap();
-        assert_eq!(registry.len(), 2);
-        assert_eq!(
-            registry.get(&RecipeId::new("fixture.z")).unwrap().materials,
-            vec![
-                ("iron_ingot".to_string(), 1),
-                ("iron_needle".to_string(), 2)
-            ],
-            "material vector order is an observable craft consumption contract"
-        );
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("duplicate ids must expose deterministic sorted source paths");
+        match error {
+            CraftDataError::DuplicateId {
+                path: actual_second,
+                first_path: Some(actual_first),
+                ..
+            } => {
+                assert_eq!(actual_first, first_path);
+                assert_eq!(actual_second, directory.join("z/second.toml"));
+            }
+            other => panic!("expected duplicate-id error, got {other:?}"),
+        }
         clean(directory);
     }
 
@@ -1251,11 +1348,8 @@ station = "none"
         let fifo_directory = temp_dir("non-regular-toml");
         write_toml(&fifo_directory, "valid.toml", &minimal_recipe());
         let fifo_path = fifo_directory.join("named-pipe.toml");
-        let status = std::process::Command::new("mkfifo")
-            .arg(&fifo_path)
-            .status()
-            .expect("mkfifo must be available for the Unix loader regression test");
-        assert!(status.success(), "mkfifo fixture creation must succeed");
+        let listener = std::os::unix::net::UnixListener::bind(&fifo_path)
+            .expect("Unix socket fixture must be creatable without external tools");
 
         let mut registry = CraftRegistry::new();
         let error = load_craft_recipes_from_dir(&fifo_directory, &mut registry, &item_registry())
@@ -1265,9 +1359,31 @@ station = "none"
         assert!(error.to_string().contains(&fifo_path.display().to_string()));
         assert!(
             registry.is_empty(),
-            "a named-pipe *.toml entry must fail before any blocking read or registry commit"
+            "a non-regular *.toml entry must fail before any blocking read or registry commit"
         );
+        drop(listener);
         clean(fifo_directory);
+    }
+
+    #[test]
+    fn rejects_duplicate_material_rows_before_registry_commit() {
+        let directory = temp_dir("duplicate-materials");
+        let duplicate = replace_required_line(
+            minimal_recipe(),
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }, { template_id = \"iron_ingot\", count = 1 }]",
+        );
+        let path = write_toml(&directory, "duplicate.toml", &duplicate);
+        let mut registry = CraftRegistry::new();
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("duplicate material rows must be rejected during startup validation");
+        assert!(error.to_string().contains(&path.display().to_string()));
+        assert!(error.to_string().contains("duplicate material template"));
+        assert!(
+            registry.is_empty(),
+            "invalid duplicate-material recipe must not partially commit"
+        );
+        clean(directory);
     }
 
     #[test]
@@ -1291,11 +1407,29 @@ station = "none"
         assert!(matches!(error, CraftDataError::Parse { .. }));
         assert!(error.to_string().contains(&malformed.display().to_string()));
         assert!(error.to_string().contains("document"));
-        clean(directory);
-    }
+        fs::remove_file(&malformed).unwrap();
+        let zero_count = replace_required_line(
+            minimal_recipe(),
+            "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+            "materials = [{ template_id = \"iron_ingot\", count = 0 }]",
+        );
+        let zero_path = write_toml(&directory, "zero-count.toml", &zero_count);
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        assert_conversion_error_field(error, &zero_path, "fixture.recipe", "materials[0].count");
+        fs::remove_file(&zero_path).unwrap();
 
-    #[test]
-    fn rejects_unknown_fields_at_document_recipe_and_nested_levels() {
+        let empty = write_toml(&directory, "empty.toml", "recipes = []\n");
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .unwrap_err();
+        match error {
+            CraftDataError::Parse { field, .. } => assert_eq!(field, "recipes"),
+            other => panic!("expected empty recipes parse error, got {other:?}"),
+        }
+        fs::remove_file(&empty).unwrap();
+        clean(directory);
         let directory = temp_dir("unknown-fields");
         let top = write_toml(&directory, "top.toml", "unknown = true");
         let error =
@@ -1402,6 +1536,46 @@ skill_lv_min = 1
         let mut registry = CraftRegistry::new();
         load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap();
         assert_eq!(registry.len(), entry_count);
+        for index in 0..entry_count {
+            let recipe = registry
+                .get(&RecipeId::new(format!("fixture.enum.{index}")))
+                .expect("every generated recipe must be present");
+            assert_eq!(
+                recipe.category,
+                parse_category(categories[index % categories.len()]).unwrap()
+            );
+            assert_eq!(
+                recipe.station,
+                parse_station(stations[index % stations.len()]).unwrap()
+            );
+            assert_eq!(
+                recipe.requirements.realm_min,
+                parse_realm(realms[index % realms.len()])
+            );
+            assert_eq!(
+                recipe.requirements.qi_color_min,
+                Some((parse_color(colors[index % colors.len()]).unwrap(), 0.5))
+            );
+            let expected_unlock = match index % unlocks.len() {
+                0 => UnlockSource::Mentor {
+                    npc_archetype: "fixture_mentor".to_string(),
+                },
+                1 => UnlockSource::Insight {
+                    trigger: InsightTrigger::Breakthrough,
+                },
+                2 => UnlockSource::Insight {
+                    trigger: InsightTrigger::NearDeath,
+                },
+                3 => UnlockSource::Insight {
+                    trigger: InsightTrigger::DefeatStronger,
+                },
+                4 => UnlockSource::Scroll {
+                    item_template: "scroll_bronze_coffin".to_string(),
+                },
+                _ => unreachable!(),
+            };
+            assert_eq!(recipe.unlock_sources, vec![expected_unlock]);
+        }
         for category in CraftCategory::ALL {
             assert!(
                 registry.by_category(category).next().is_some(),
@@ -1491,6 +1665,53 @@ skill_lv_min = 1
     }
 
     #[test]
+    fn validation_conversion_errors_report_exact_empty_value_field_paths() {
+        let cases = [
+            (
+                "id = \"fixture.recipe\"",
+                "id = \"\"",
+                "",
+                "id",
+            ),
+            (
+                "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+                "materials = [{ template_id = \"\", count = 1 }]",
+                "fixture.recipe",
+                "materials[].template_id",
+            ),
+            (
+                "output = { template_id = \"iron_ingot\", count = 1 }",
+                "output = { template_id = \"\", count = 1 }",
+                "fixture.recipe",
+                "output.template_id",
+            ),
+            (
+                "station = \"none\"",
+                "unlock_sources = [{ kind = \"scroll\", item_template = \"\" }]\nstation = \"none\"",
+                "fixture.recipe",
+                "unlock_sources[].item_template",
+            ),
+        ];
+
+        for (index, (original, replacement, recipe_id, field)) in cases.into_iter().enumerate() {
+            let directory = temp_dir("empty-validation-field");
+            let path = write_toml(
+                &directory,
+                &format!("case-{index}.toml"),
+                &replace_required_line(minimal_recipe(), original, replacement),
+            );
+            let error = load_craft_recipes_from_dir(
+                &directory,
+                &mut CraftRegistry::new(),
+                &item_registry(),
+            )
+            .unwrap_err();
+            assert_conversion_error_field(error, &path, recipe_id, field);
+            clean(directory);
+        }
+    }
+
+    #[test]
     fn rejects_checked_time_overflow_and_validation_boundaries() {
         let cases = [
             ("time_sec = 922337203685477581", "time_sec", "time_sec = 1"),
@@ -1564,6 +1785,121 @@ skill_lv_min = 1
             baseline.recipes.len() + 1,
             "strict default load must atomically add every canonical recipe exactly once"
         );
+    }
+
+    #[test]
+    fn conversion_failure_does_not_commit_earlier_valid_files() {
+        let directory = temp_dir("conversion-atomicity");
+        let valid = write_toml(
+            &directory,
+            "a-valid.toml",
+            &minimal_recipe().replace("fixture.recipe", "fixture.valid"),
+        );
+        let invalid = write_toml(
+            &directory,
+            "b-invalid.toml",
+            &minimal_recipe()
+                .replace("fixture.recipe", "fixture.invalid")
+                .replace("category = \"misc\"", "category = \"unknown\""),
+        );
+        let existing = CraftRecipe {
+            id: RecipeId::new("existing"),
+            category: CraftCategory::Misc,
+            display_name: "Existing".to_string(),
+            materials: vec![("iron_ingot".to_string(), 1)],
+            qi_cost: 0.0,
+            time_ticks: 20,
+            output: ("iron_ingot".to_string(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
+            station: None,
+        };
+        let mut registry = CraftRegistry::new();
+        registry.register(existing.clone()).unwrap();
+
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("later conversion failure must abort the whole load");
+        assert_conversion_error_field(error, &invalid, "fixture.invalid", "category");
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(&RecipeId::new("existing")), Some(&existing));
+        assert!(registry.get(&RecipeId::new("fixture.valid")).is_none());
+        assert!(valid.exists());
+        clean(directory);
+    }
+
+    #[test]
+    fn aggregates_all_missing_references_before_mutating_registry() {
+        let directory = temp_dir("missing-reference-aggregate");
+        let content = minimal_recipe()
+            .replace(
+                "materials = [{ template_id = \"iron_ingot\", count = 1 }]",
+                "materials = [{ template_id = \"missing_material\", count = 1 }]",
+            )
+            .replace(
+                "output = { template_id = \"iron_ingot\", count = 1 }",
+                "output = { template_id = \"missing_output\", count = 1 }",
+            );
+        let content = format!(
+            "{content}unlock_sources = [{{ kind = \"scroll\", item_template = \"missing_scroll\" }}]\n"
+        );
+        let path = write_toml(&directory, "recipe.toml", &content);
+        let mut registry = CraftRegistry::new();
+        let existing = CraftRecipe {
+            id: RecipeId::new("existing"),
+            category: CraftCategory::Misc,
+            display_name: "Existing".to_string(),
+            materials: vec![("iron_ingot".to_string(), 1)],
+            qi_cost: 0.0,
+            time_ticks: 20,
+            output: ("iron_ingot".to_string(), 1),
+            requirements: CraftRequirements::default(),
+            unlock_sources: vec![],
+            station: None,
+        };
+        registry.register(existing.clone()).unwrap();
+
+        let error = load_craft_recipes_from_dir(&directory, &mut registry, &item_registry())
+            .expect_err("all missing references must be reported together");
+        let CraftDataError::MissingItemReferences { references } = error else {
+            panic!("expected aggregate missing-reference error");
+        };
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].path, path);
+        assert_eq!(references[0].recipe_id, "fixture.recipe");
+        assert_eq!(references[0].field, "materials[0].template_id");
+        assert_eq!(references[0].template_id, "missing_material");
+        assert_eq!(references[1].field, "output.template_id");
+        assert_eq!(references[1].template_id, "missing_output");
+        assert_eq!(references[2].field, "unlock_sources[0].item_template");
+        assert_eq!(references[2].template_id, "missing_scroll");
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(&RecipeId::new("existing")), Some(&existing));
+        clean(directory);
+    }
+
+    #[test]
+    fn rejects_non_scroll_unlock_reference_even_when_item_exists() {
+        let directory = temp_dir("non-scroll-unlock-reference");
+        let content = format!(
+            "{}unlock_sources = [{{ kind = \"scroll\", item_template = \"iron_ingot\" }}]\n",
+            minimal_recipe()
+        );
+        let path = write_toml(&directory, "recipe.toml", &content);
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut CraftRegistry::new(), &item_registry())
+                .expect_err("scroll unlock must reference a Scroll item");
+        let CraftDataError::MissingItemReferences { references } = error else {
+            panic!("expected semantic scroll-reference error");
+        };
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].path, path);
+        assert_eq!(references[0].field, "unlock_sources[0].item_template");
+        assert_eq!(references[0].template_id, "iron_ingot");
+        assert_eq!(
+            references[0].detail,
+            "ItemRegistry template `iron_ingot` must have category Scroll"
+        );
+        clean(directory);
     }
 
     #[test]
@@ -1644,6 +1980,56 @@ skill_lv_min = 1
     }
 
     #[test]
+    fn duplicate_id_reports_earliest_occurrence_across_three_files() {
+        // verdict-1906-r2 major #7（minor）回归：三文件同 id 时 first_path 必须
+        // 保留最早出现的 A，而不能被第三次覆盖成 C（first_paths.get 先查再 insert
+        // 修复前会把 first_path 覆盖为最后一次）。A/B/C 三文件 + 明确断言最早路径。
+        let directory = temp_dir("duplicate-abc");
+        let base_a = replace_required_line(
+            minimal_recipe(),
+            "display_name = \"Fixture\"",
+            "display_name = \"first\"",
+        );
+        let base_b = replace_required_line(
+            minimal_recipe(),
+            "display_name = \"Fixture\"",
+            "display_name = \"second\"",
+        );
+        let base_c = replace_required_line(
+            minimal_recipe(),
+            "display_name = \"Fixture\"",
+            "display_name = \"third\"",
+        );
+        let path_a = write_toml(&directory, "a/aaa.toml", &base_a);
+        write_toml(&directory, "b/bbb.toml", &base_b);
+        write_toml(&directory, "c/ccc.toml", &base_c);
+
+        let mut registry = CraftRegistry::new();
+        let error =
+            load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap_err();
+        match error {
+            CraftDataError::DuplicateId {
+                path: actual,
+                recipe_id,
+                first_path: Some(actual_first),
+            } => {
+                assert_eq!(recipe_id, "fixture.recipe");
+                assert_eq!(
+                    actual_first, path_a,
+                    "first_path must be the earliest file A, not the last duplicate C"
+                );
+                assert_eq!(actual, directory.join("b/bbb.toml"));
+            }
+            other => panic!("expected duplicate-id error with first_path, got {other:?}"),
+        }
+        assert!(
+            registry.is_empty(),
+            "duplicate preflight must not mutate registry"
+        );
+        clean(directory);
+    }
+
+    #[test]
     fn rejects_id_already_in_target_registry_without_mutating_existing_entries() {
         let directory = temp_dir("duplicate-existing");
         let path = write_toml(&directory, "recipe.toml", &minimal_recipe());
@@ -1665,7 +2051,7 @@ skill_lv_min = 1
         let error =
             load_craft_recipes_from_dir(&directory, &mut registry, &item_registry()).unwrap_err();
         assert!(matches!(
-            error,
+            &error,
             CraftDataError::DuplicateId {
                 first_path: None,
                 ..

@@ -19,6 +19,7 @@ pub mod heartbeat;
 pub mod karma;
 pub mod loot_pool;
 pub mod mob_spawn;
+pub mod movement_commit;
 pub mod poi_mutant_nest;
 pub mod poi_novice;
 #[cfg(test)]

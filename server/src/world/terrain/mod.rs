@@ -283,14 +283,20 @@ pub fn register(app: &mut App) {
         // 修复"非 spawn 位置穿地坠落"：会话中途 ViewDistance 变化让原版客户端重建
         // 区块存储、丢掉已加载 chunk，而 Valence 只补发视野差集 → 客户端缺脚下 chunk
         // 的碰撞 → 穿地。本系统检测并恢复（重发 chunk + 弹回地表，真虚空则回 spawn）。
-        .add_systems(Update, recover_fall_through)
         // 修复"join 后世界全虚空"：valence 在 join tick 永远不发
         // ChunkRenderDistanceCenterS2c（OldPosition 被拍成当前 Position，diff 恒空），
         // 原版客户端 chunk 缓存中心停留在默认 (0,0)，出生点 (11,6) 附近的 chunk
         // 全部在接收瞬间被静默丢弃。本系统在 join 的下一 tick 补发 center 包并重灌
         // 已被客户端丢弃的 chunk。无需 ordering 约束：Update 相写入的包总是先于本
         // tick PostUpdate 的 chunk LOAD 数据进入发送缓冲。
-        .add_systems(Update, resync_view_after_join);
+        .add_systems(Update, resync_view_after_join)
+        // fix-spec-1901-v2 §4.2 — recover_fall_through 会直接写玩家 `Position`
+        //（弹回地表 / 真虚空回 spawn），纳入统一移动 commit set。
+        .add_systems(
+            Update,
+            recover_fall_through
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        );
 }
 
 /// 玩家穿过自己脚下方块（即客户端丢失了服务端仍持有的 chunk 碰撞）时低于地板多少

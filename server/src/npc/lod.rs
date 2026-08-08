@@ -1179,6 +1179,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: DimensionKind::Overworld,

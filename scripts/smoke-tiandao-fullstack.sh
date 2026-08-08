@@ -233,7 +233,7 @@ if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  cargo fmt --check
+  "$ROOT/scripts/build-token.sh" cargo fmt --check
 ) >"$SERVER_FMT_LOG" 2>&1; then
   pass "server fmt"
 else
@@ -243,7 +243,7 @@ if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  cargo clippy --all-targets -- -D warnings
+  "$ROOT/scripts/build-token.sh" cargo clippy --all-targets -- -D warnings
 ) >"$SERVER_CLIPPY_LOG" 2>&1; then
   pass "server clippy"
 else
@@ -253,24 +253,24 @@ if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  cargo test
+  "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
-  pass "server cargo test"
+  pass "server wrapper cargo test"
 else
-  fail "server cargo test"
+  fail "server wrapper cargo test"
 fi
 
 if (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  cargo test save_and_load_roundtrip_by_uuid -- --nocapture
-  cargo test player::progression:: -- --nocapture
-  cargo test payload_builder_zone_info_happy_path -- --nocapture
-  cargo test payload_builder_event_alert_happy_path -- --nocapture
-  cargo test payload_builder_player_state_happy_path -- --nocapture
-  cargo test missing_target_route_player_state_does_not_broadcast_to_all_clients -- --nocapture
-  cargo test player_state_periodic_emission_happens_without_component_change -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test save_and_load_roundtrip_by_uuid -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test player::progression:: -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test payload_builder_zone_info_happy_path -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test payload_builder_event_alert_happy_path -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test payload_builder_player_state_happy_path -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test missing_target_route_player_state_does_not_broadcast_to_all_clients -- --nocapture
+  "$ROOT/scripts/build-token.sh" cargo test player_state_periodic_emission_happens_without_component_change -- --nocapture
 ) >"$SERVER_PROOF_LOG" 2>&1; then
   pass "server proof tests"
 else
@@ -306,12 +306,12 @@ fi
 echo ""
 CURRENT_STAGE="client"
 echo "=== [4/11] client -> test/build + typed payload anchors ==="
-if (cd "$ROOT/client" && ./gradlew --no-daemon test) >"$CLIENT_TEST_LOG" 2>&1; then
+if (cd "$ROOT/client" && "$ROOT/scripts/build-token.sh" gradle --no-daemon test) >"$CLIENT_TEST_LOG" 2>&1; then
   pass "client gradle test"
 else
   fail "client gradle test"
 fi
-if (cd "$ROOT/client" && ./gradlew --no-daemon build) >"$CLIENT_BUILD_LOG" 2>&1; then
+if (cd "$ROOT/client" && "$ROOT/scripts/build-token.sh" gradle --no-daemon build) >"$CLIENT_BUILD_LOG" 2>&1; then
   pass "client gradle build"
 else
   fail "client gradle build"
@@ -362,7 +362,7 @@ fi
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  cargo run >"$FULLSTACK_SERVER_LOG" 2>&1
+  "$ROOT/scripts/build-token.sh" cargo run >"$FULLSTACK_SERVER_LOG" 2>&1
 ) &
 SERVER_PID="$!"
 

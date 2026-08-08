@@ -1161,6 +1161,8 @@ mod boss_spawn_integration {
     use super::super::boss::{BaolongwangBoss, BossPhase};
     use super::super::boss_spawn::{BaolongwangMarker, BOSS_HOME_ZONE};
     use crate::cultivation::components::Cultivation;
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::ledger::{QiAccountId, QiTransferReason, WorldQiAccount};
     use crate::world::dimension::DimensionKind;
@@ -1204,6 +1206,7 @@ mod boss_spawn_integration {
         // baolongwang_qi_drain_aura_system 现在需要 ZoneRegistry 才会吸取（field authority
         // 同步写回 zone.spirit_qi，见 c79bc03e）；不插入会在 find_zone_mut 处整 tick 早退。
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(0.0)],
         });
 
@@ -1231,6 +1234,7 @@ mod boss_spawn_integration {
                     qi_max: initial_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-register-test-player")),
                 Position::new([0.0, 65.0, 0.0]), // 距离 1.0 < QI_DRAIN_AURA_RADIUS
             ))
             .id();
@@ -1244,9 +1248,15 @@ mod boss_spawn_integration {
             .get::<Cultivation>(player)
             .expect("player Cultivation missing")
             .qi_current;
-        let zone_balance = app.world().resource::<WorldQiAccount>().balance(&zone_id);
+        let zone_spirit_qi_after = app.world().resource::<ZoneRegistry>().zones[0].spirit_qi;
         let player_decrease = initial_qi - player_qi_after;
-        let zone_increase = zone_balance;
+        let zone_increase = zone_spirit_qi_after * QI_ZONE_UNIT_CAPACITY;
+
+        assert_eq!(
+            app.world().resource::<WorldQiAccount>().balance(&zone_id),
+            0.0,
+            "端到端 BossDrain 不得创建 zone ledger mirror"
+        );
 
         assert!(
             player_decrease > 0.0,
@@ -1293,6 +1303,7 @@ mod boss_spawn_integration {
         // 显式插入 ZoneRegistry：本测试要锁住的是 Expel 阶段跳过吸取的分支，
         // 不能靠 ZoneRegistry 缺失早退凑巧得出同样的"不扣真元"结果。
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![baolongwang_zone_fixture(
                 initial_zone / QI_ZONE_UNIT_CAPACITY,
             )],
@@ -1320,6 +1331,7 @@ mod boss_spawn_integration {
                     qi_max: initial_qi,
                     ..Cultivation::default()
                 },
+                LifeRecord::new(canonical_player_id("baolongwang-register-test-player")),
                 Position::new([0.0, 65.0, 0.0]),
             ))
             .id();

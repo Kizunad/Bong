@@ -51,6 +51,11 @@ public final class MusicStateMachine {
         return true;
     }
 
+    /** 断线时保留既有 clear() 的完整状态复位与活动音乐硬停语义。 */
+    public static void clearOnDisconnect() {
+        INSTANCE.clear();
+    }
+
     public void clear() {
         player.setMusicState(State.AMBIENT);
         stopActive(0);
@@ -71,13 +76,13 @@ public final class MusicStateMachine {
         );
     }
 
-    public SeasonModifier seasonModifierForTests() {
-        return seasonModifier;
-    }
-
-    /** Clears only the season-derived modifier; active music, player wiring, and instance sequence stay intact. */
+    /** Clears only this state machine's season-derived modifier. */
     public void clearSeasonModifierOnDisconnect() {
         seasonModifier = new SeasonModifier(SeasonState.Phase.SUMMER, 0.0);
+    }
+
+    public SeasonModifier seasonModifierForTests() {
+        return seasonModifier;
     }
 
     public void clearSeasonModifierForTests() {

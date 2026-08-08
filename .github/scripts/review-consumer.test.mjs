@@ -9,9 +9,28 @@ const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.ym
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const canaryContractPath = '.github/workflows/provider-canary.yml';
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
-const centralSha = '3683431a33465c4fd62fb5c1dfd4fb2b8cef9421';
+// Derived from review-next.yml rather than typed a second time. It used to be a literal,
+// which meant one pin bump had to be transcribed into four places across two files; the
+// first bump after that convention was introduced missed three of them and would have
+// failed CI. A copy of a value is not an independent check of it - what actually needs
+// asserting is that the pin IS an immutable full-length SHA and that the repository
+// checked out at it really is that commit, and both of those still hold below.
+const centralSha = await readCentralPin();
 const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
-const centralWorkflowSha256 = '66ef54e4ff879c1041d4697da74e3667115dfdab373693dfc9fab6089972eac3';
+// Content hash of Kizunad/review/.github/workflows/review.yml at the pinned commit. This one
+// stays literal on purpose: it is the anti-tamper control, so it must NOT be derived from
+// anything the pin can reach. Re-verify it deliberately whenever the central workflow itself
+// changes - which a pin bump does not always imply, but sometimes does.
+const centralWorkflowSha256 = 'bc22b5d4315e52025f0d938a14760788d04ac059d08f878e8b6a226055946219';
+
+async function readCentralPin() {
+  const yaml = await readFile(workflowPath, 'utf8');
+  const matches = [...yaml.matchAll(/uses: Kizunad\/review\/\.github\/workflows\/review\.yml@(\S+)/g)];
+  assert.equal(matches.length, 1, 'review-next.yml must reference the central workflow exactly once');
+  const ref = matches[0][1];
+  assert.match(ref, /^[0-9a-f]{40}$/, `central pin must be a full 40-hex commit SHA, got "${ref}"`);
+  return ref;
+}
 
 const expectedCanaryInterface = `  workflow_call:
     inputs:
@@ -62,6 +81,16 @@ const expectedCentralInterface = `  workflow_call:
         description: Per-Claude-process timeout
         required: false
         default: 120000
+        type: number
+      max_stdout_bytes:
+        description: Per-Claude-process stdout backstop in bytes
+        required: false
+        default: 268435456
+        type: number
+      max_diff_bytes:
+        description: Runaway guard on total diff size in bytes
+        required: false
+        default: 4194304
         type: number
       circuit_manual_retry:
         description: Allow a trusted workflow_dispatch retry to bypass an open infrastructure circuit
@@ -114,6 +143,7 @@ const expectedPolicyLevels = Object.freeze({
   'saturated-tests': 'major',
   'test-failure-honesty': 'major',
   'minimal-maintainable-change': 'major',
+  'p0-doc-scope': 'major',
   'quality-improvements': 'suggestion',
 });
 
@@ -129,15 +159,18 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421
+    uses: Kizunad/review/.github/workflows/review.yml@${centralSha}
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
       review_base_url: \${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
-      shadow: true
+      shadow: false
       max_diff_chars: 40000
       max_shard_chars: 12000
-      worker_timeout_ms: 120000
+      # 300s, not the 120s default: the relay's upstream routinely takes 60-135s
+      # per request under load, so 120s left no room for a single retry and the
+      # summary stage died to "timeout after 120000ms" while requests were live.
+      worker_timeout_ms: 300000
       circuit_manual_retry: \${{ github.event_name == 'workflow_dispatch' }}
     secrets:
       review_api_key: \${{ secrets.REVIEW_CLAUDE_API_KEY }}`;
@@ -253,12 +286,12 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@3683431a33465c4fd62fb5c1dfd4fb2b8cef9421/,
+    new RegExp(`uses: Kizunad/review/\\.github/workflows/review\\.yml@${centralSha}`),
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);
-  assert.match(yaml, /shadow: true/);
-  assert.match(yaml, /worker_timeout_ms: 120000/);
+  assert.match(yaml, /shadow: false/);
+  assert.match(yaml, /worker_timeout_ms: 300000/);
   assert.match(yaml, /circuit_manual_retry: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/);
   assert.match(yaml, /policy_path: \.github\/review-policy\/bong\.v2\.json/);
   assert.match(yaml, /review_base_url: \$\{\{ vars\.REVIEW_CLAUDE_BASE_URL \|\| 'https:\/\/api\.claudeopus\.world' \}\}/);
@@ -573,6 +606,11 @@ test('Bong policy is bounded declarative data with canonical project rules', asy
       `minimal-maintainable-change must preserve ${requiredRisk}`,
     );
   }
+  assert.equal(byId['p0-doc-scope'].level, 'major');
+  assert.equal(
+    byId['p0-doc-scope'].text,
+    "For pull requests whose changes are limited to docs/ plan documents (plan-* and plans-skeleton design-closure PRs), limit review scope to internal consistency, factual accuracy of code citations, alignment with plan-refactor-master-v1 scope and adjudications, cross-track dependencies, and satisfaction of the acceptance criteria stated in the PR description or the document itself. Findings addressed in a prior review round of the same branch, regardless of the pull-request number carrying that branch, must not be re-raised as major findings unless a later change newly contradicts or invalidates the resolution. Completeness expansions beyond the plan's stated acceptance criteria and evidence base - including demands for new scenarios, additional test rows, extra edge-case enumerations, protocol corners, or contract surfaces - are suggestions for the open-questions section, not major or blocker findings; an explicit open-questions entry with rationale is a valid resolution for a deferred design decision. Major findings in this scope are reserved for internal contradictions, conflicts with plan-refactor-master-v1 or binding adjudications, and specifications that a competent implementer could not execute as written.",
+  );
   assert.equal(byId['quality-improvements'].level, 'suggestion');
   assert.match(
     byId['quality-improvements'].text,

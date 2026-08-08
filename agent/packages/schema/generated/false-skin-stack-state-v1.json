@@ -78,5 +78,6 @@
       "minimum": 0,
       "type": "integer"
     }
-  }
+  },
+  "x-bong-typebox-source-sha256": "e231f1bd85a563e0e09d77b7e11d202a388e12d9ae700bb098799913194e66bc"
 }

@@ -146,6 +146,7 @@ fn open_all_meridians(app: &mut App, actor: Entity, capacity: f64) {
 fn two_zone_registry() -> ZoneRegistry {
     let (spawn_min, spawn_max) = default_spawn_bounds();
     ZoneRegistry {
+        spatial_revision: 0,
         zones: vec![
             Zone {
                 name: "spawn".to_string(),

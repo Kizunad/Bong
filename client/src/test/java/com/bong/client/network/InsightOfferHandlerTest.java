@@ -36,6 +36,7 @@ public class InsightOfferHandlerTest {
             {
               "v": 1,
               "type": "insight_offer",
+              "offer_id": "insight:1001:awaken_first",
               "trigger_id": "awaken_first",
               "choices": [
                 {
@@ -57,6 +58,8 @@ public class InsightOfferHandlerTest {
 
         InsightOfferViewModel offer = InsightOfferStore.snapshot();
         assertNotNull(offer, "handler 应将 offer 写入 InsightOfferStore，snapshot 不应为 null");
+        assertEquals("insight:1001:awaken_first", offer.offerId(),
+            "offer_id 必须从 wire 保留为实例唯一 identity（R7 P4 窄接缝），实际=" + offer.offerId());
         assertEquals("awaken_first", offer.triggerId(),
             "triggerId 应 round-trip 为 'awaken_first'，实际=" + offer.triggerId());
         assertEquals("顿悟临身", offer.triggerLabel(),

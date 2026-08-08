@@ -1,6 +1,8 @@
-use valence::prelude::{Commands, EventReader, Position, Query, Res, Resource};
+use valence::prelude::{Commands, EventReader, Position, Query, Res, Resource, With};
 
 use crate::combat::events::DeathEvent;
+use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
+use crate::npc::spawn::NpcMarker;
 use crate::world::zone::ZoneRegistry;
 
 use super::components::{BotanyVariantRoll, Plant, PlantLifecycleClock};
@@ -22,18 +24,23 @@ impl Default for BotanyEventSpawnRoll {
 
 impl Resource for BotanyEventSpawnRoll {}
 
-/// 订阅 `DeathEvent`：NPC / 玩家死亡时，按概率在所在 zone 生成一株 kong_shou_hen（空兽痕）。
+/// 玩家 raw death 或 NPC durable terminal commit 后，按概率在所在 zone 生成一株
+/// kong_shou_hen（空兽痕）。NPC 的 raw lethal edge 只代表可重试终结意图，不能在
+/// persistence commit 前物化植物。
+///
 /// plan §1.2.3 特殊路径：不扣 zone.spirit_qi（植物本就生于灵气极薄之地）。
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_event_triggered_plants_on_death(
     mut commands: Commands,
     mut death_events: EventReader<DeathEvent>,
+    mut npc_settlements: EventReader<NpcTerminalSettlementSucceeded>,
     zone_registry: Option<Res<ZoneRegistry>>,
     clock: Res<PlantLifecycleClock>,
     registry: Res<BotanyKindRegistry>,
     roll: Res<BotanyEventSpawnRoll>,
     variant_roll: Res<BotanyVariantRoll>,
     positions: Query<&Position>,
+    npc_markers: Query<(), With<NpcMarker>>,
 ) {
     let Some(zones) = zone_registry.as_deref() else {
         return;
@@ -45,14 +52,23 @@ pub fn spawn_event_triggered_plants_on_death(
         return;
     }
     if roll.chance_inverse == 0 {
-        // 吞事件避免二次触发
+        // 吞事件避免二次触发。
         death_events.read().for_each(drop);
+        npc_settlements.read().for_each(drop);
         return;
     }
 
     let now = clock.tick;
-    for ev in death_events.read() {
-        let Ok(position) = positions.get(ev.target) else {
+    let player_deaths = death_events
+        .read()
+        .filter(|event| npc_markers.get(event.target).is_err())
+        .map(|event| (event.target, event.at_tick));
+    let committed_npc_deaths = npc_settlements
+        .read()
+        .map(|settlement| (settlement.entity, settlement.at_tick));
+
+    for (target, death_tick) in player_deaths.chain(committed_npc_deaths) {
+        let Ok(position) = positions.get(target) else {
             continue;
         };
         let Some(zone) = zones.find_zone(
@@ -61,7 +77,7 @@ pub fn spawn_event_triggered_plants_on_death(
         ) else {
             continue;
         };
-        let seed = event_spawn_seed(now, ev.target.to_bits());
+        let seed = event_spawn_seed(death_tick, target.to_bits());
         if !event_should_spawn(seed, roll.chance_inverse) {
             continue;
         }
@@ -112,6 +128,7 @@ mod tests {
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(BotanyEventSpawnRoll { chance_inverse: 1 }); // 100%
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "spawn".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -129,8 +146,27 @@ mod tests {
             }],
         });
         app.add_event::<DeathEvent>();
+        app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_systems(Update, spawn_event_triggered_plants_on_death);
         app
+    }
+
+    fn npc_settlement(entity: valence::prelude::Entity) -> NpcTerminalSettlementSucceeded {
+        let life_record = crate::cultivation::life_record::LifeRecord::new("npc:botany:event");
+        NpcTerminalSettlementSucceeded {
+            entity,
+            at_tick: 1,
+            cause: "combat".to_string(),
+            reason: crate::npc::lifecycle::NpcDeathReason::Combat,
+            attacker: None,
+            attacker_player_id: None,
+            authorize_loot: false,
+            actor_qi_identity: crate::cultivation::components::ActorQiIdentity::from_life_record(
+                &life_record,
+                crate::cultivation::components::ActorQiKind::Npc,
+            )
+            .expect("botany terminal fixture must use canonical identity"),
+        }
     }
 
     #[test]
@@ -190,6 +226,56 @@ mod tests {
     }
 
     #[test]
+    fn npc_raw_death_waits_for_terminal_commit_before_spawning() {
+        let mut app = make_app();
+        let victim = app
+            .world_mut()
+            .spawn((Position::new([0.0, 64.0, 0.0]), NpcMarker))
+            .id();
+
+        app.world_mut().send_event(DeathEvent {
+            target: victim,
+            cause: "test".to_string(),
+            attacker: None,
+            attacker_player_id: None,
+            at_tick: 1,
+        });
+        app.update();
+
+        let mut plants = app.world_mut().query::<&Plant>();
+        assert_eq!(
+            plants.iter(app.world()).count(),
+            0,
+            "NPC raw lethal edge must not mutate botany before durable terminal commit"
+        );
+
+        app.world_mut().send_event(npc_settlement(victim));
+        app.update();
+
+        let mut plants = app.world_mut().query::<&Plant>();
+        assert_eq!(
+            plants.iter(app.world()).count(),
+            1,
+            "durable NPC terminal settlement should authorize the event-triggered plant"
+        );
+    }
+
+    #[test]
+    fn npc_terminal_settlement_outside_zones_does_not_spawn() {
+        let mut app = make_app();
+        let victim = app
+            .world_mut()
+            .spawn((Position::new([9999.0, 64.0, 9999.0]), NpcMarker))
+            .id();
+
+        app.world_mut().send_event(npc_settlement(victim));
+        app.update();
+
+        let mut plants = app.world_mut().query::<&Plant>();
+        assert_eq!(plants.iter(app.world()).count(), 0);
+    }
+
+    #[test]
     fn zero_chance_never_spawns() {
         let mut app = make_app();
         app.insert_resource(BotanyEventSpawnRoll { chance_inverse: 0 });
@@ -224,6 +310,7 @@ mod tests {
         app.insert_resource(BotanyVariantRoll::default());
         app.insert_resource(PlantLifecycleClock { tick: 99 }); // 下 tick 触发 interval
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "blood_valley".to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,

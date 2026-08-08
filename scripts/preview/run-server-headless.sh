@@ -5,7 +5,7 @@
 #   bash scripts/preview/run-server-headless.sh [--release|--debug] [--timeout 60]
 #
 # 行为:
-#   1. 后台启动 cargo run（默认 --release，速度更接近 CI）
+#   1. 后台经构建令牌 wrapper 启动 cargo run（默认 --release，速度更接近 CI）
 #   2. 把进程 PID 写到 /tmp/bong-preview-server.pid
 #   3. 轮询 TCP 127.0.0.1:25565，accept 即 ready
 #   4. 超时（默认 90s）→ 打印 server log + 杀进程 + exit 1
@@ -51,7 +51,7 @@ export BONG_RESOURCE_PACK_ENABLED="${BONG_RESOURCE_PACK_ENABLED:-false}"
 echo "[run-server-headless] 启动 server (cwd=$PWD profile=${PROFILE:-debug})..."
 # nohup + setsid 防 CI 上父进程退出后子进程被收割
 # stdout/stderr 都重定向到 LOG_FILE 方便失败时回看
-nohup cargo run $PROFILE >"$LOG_FILE" 2>&1 &
+nohup "$REPO_ROOT/scripts/build-token.sh" cargo run $PROFILE >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 echo "[run-server-headless] PID=$SERVER_PID log=$LOG_FILE"

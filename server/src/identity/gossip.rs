@@ -345,6 +345,7 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("same", 0.0, 50.0), zone("far", 100.0, 150.0)],
         });
         app.insert_resource(IdentityGossipConfig {
