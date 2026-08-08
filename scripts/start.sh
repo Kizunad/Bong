@@ -116,8 +116,8 @@ cleanup_pinned_server_or_preserve_tmux() {
     echo "FAIL: $reason; server identity is not pinned, preserving tmux for diagnosis" >&2
     return 1
   fi
-  if bong_server_rollback_pinned_managed_process \
-    "$server_pid" "$server_starttime" "$server_executable" "$server_executable_identity" "$reason"; then
+  if bong_server_stop_pinned_process \
+    "$server_pid" "$server_starttime" "$server_executable_identity" 10 2; then
     cleanup_status=0
   else
     cleanup_status=$?
