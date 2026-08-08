@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
-"""珂珂达（kekeda_goose）绒羽 / 外观层 —— 最终成品那一层。
+"""珂珂达（kekeda_goose）绒羽 / 外观层 —— 最终成品那一层。呆萌向。
 
-**核心做法：球是绒羽的包络，不是一个漂浮的球壳。**
+**造型原则：可爱靠干净的大形，不靠细碎的表面。**
 
-参考照片里那只"完美球体"的笑点是解剖学事实——鸭雁的身体本体只有球的一半出头，
-剩下全是绒羽（加一层鹅脂）。所以这层不是往身上套个球，而是：
+首版把绒羽做成上百簇朝各方向的旋转小方块（"羽簇从体表长到外壳"，解剖上讲得通），
+渲出来是个刺球：每簇的边角各自吃光，表面全是噪点，圆是圆了但很丑。这一版反过来 ——
+球用**等角分带的整片切片**堆，十几个轴对齐大块，台阶顺着曲率走，
+远看是光滑的团子，近看是干净的体素梯。
 
-  给绒羽定一个**目标外壳**（近似椭球），再从躯干实体表面朝外壳长羽簇。
-  羽簇长度 = 该方向上"外壳 − 体表"的距离，各处不同：
-  胸前和体侧的绒羽薄（底下有胸肌顶着），腰窝和颈肩交界的绒羽厚到 2.5 单位。
-  这样球是被撑出来的，凑近看每一簇的长短都对得上底下的解剖。
+等角分带（不是等高分带）是关键：按 y 均分的话两极那几片宽度突变、台阶很大，
+赤道那几片又几乎一样宽、白费块数。按极角 θ 均分，曲率大的地方自动切得薄。
 
-不长羽的地方要留白：喙、跗跖以下的腿脚（角质）、眼。留错了立刻穿帮——
-参考照片里最抓眼的三处橙色（喙 / 两只蹼）恰恰都是**没有羽毛**的部位。
+呆萌的几个杠杆，都做进来了：
+  · 头相对身体放大到球宽的 0.39 倍（真鸭约 0.30）—— 幼体比例
+  · 眼睛做大（近头宽的四分之一）、略朝前，且**带高光点**。高光是可爱度最省力的一招
+  · 喙短、宽、干净：不露栉板（那排"牙"是威吓姿态的读点，留在骨架层）
+  · 腿短粗，蹼足做成一整片扇形，不拆细趾
+  · 配色收干净：一档暖白 + 一档腹侧浅灰，去掉脏白；喙脚取偏亮的暖橙
+
+不长羽的地方仍严格留白：喙、跗跖以下、眼 —— 参考照片里最抓眼的三处橙
+（喙 + 两只蹼）恰好都是无羽部位。
 
 分部件（逐件可单独预览）：
-  body    躯干绒羽球        neck   颈羽套筒（把头和球连起来的那一段）
-  head    头羽 + 眼         bill   喙（从骨架层取形，角质不长羽）
-  wing    翼覆羽 + 初级飞羽  tail   尾羽扇 + 尾上覆羽
-  legs    跗跖 + 蹼足
+  body 躯干球 · neck 颈 · head 头 · bill 喙 + 眼 · wing 翼隆 · tail 尾墩 · legs 腿脚
 
 用法:
   python3 scripts/models/kekeda_goose/gen_plume.py                  # 成品
   python3 scripts/models/kekeda_goose/gen_plume.py --part body
-  python3 scripts/models/kekeda_goose/gen_plume.py --with-anatomy   # 叠在骨+肌上
+  python3 scripts/models/kekeda_goose/gen_plume.py --with-anatomy   # 半剖，看羽厚
   python3 scripts/models/kekeda_goose/gen_plume.py --list
 """
 
@@ -31,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import random
 import sys
 from pathlib import Path
 
@@ -41,333 +44,284 @@ sys.path.insert(0, str(HERE))
 
 import gen_muscle as MU  # noqa: E402
 import gen_skeleton as SK  # noqa: E402
-from voxel_rig import Palette, Rig, Vec, lerp, smoothstep  # noqa: E402
+from voxel_rig import Palette, Rig, Vec, lerp  # noqa: E402
 
 OUT_DIR = SK.OUT_DIR
-SEED = 0x9005E  # 固定种子：羽簇抖动必须可复现，两次生成的几何要逐字一致
 
 PLUME_MATS = {
-    # 纯白在末法残土里太干净。取暖白 + 一档灰白压腹侧 + 一档脏白给下腹和泄殖腔周围，
-    # 远看仍是"大白鹅"，凑近有旧毛的层次
-    # 三档之间的差值要小。首版 down/shade/grime 跨了 47 级灰，再按 rng 随机撒到
-    # 相邻羽簇上，整只读成迪斯科球——绒羽的真实观感是几乎均匀的一片白，
-    # 明暗来自朝向不是来自颜色。现在压到 16 级，且按高度平滑分层不随机撒
-    "down": (240, 236, 227),
-    "down_shade": (224, 219, 208),
-    "down_grime": (206, 199, 182),
-    "quill": (203, 197, 180),      # 飞羽 / 尾羽：比绒羽灰，带羽轴感
-    "quill_dark": (172, 166, 150),
-    "eye": (26, 24, 22),
-    "eye_ring": (236, 230, 214),
+    # 只留两档白。首版三档跨 47 级灰又随机撒，读成迪斯科球；即便压到 16 级，
+    # 多一档"脏白"仍然是在给干净的大形添噪 —— 呆萌不要旧毛层次
+    "down": (243, 240, 232),
+    "down_shade": (224, 219, 207),
+    "bill_h": (240, 158, 66),        # 暖橙偏亮：末法调色本偏暗，但这只要的是讨喜
+    "bill_dark": (203, 120, 44),
+    "eye_h": (26, 24, 22),
+    "eye_light": (252, 252, 250),    # 眼高光 —— 可爱度性价比最高的一块
 }
-# 调色板必须把**三层的材质全拼进来且顺序固定**：骨架 → 肌肉 → 绒羽。
-# element 的 uv 是按各自生成时的调色板下标算的，叠层预览时是直接搬 element 过来的。
-# 首版只拼了 SK+PLUME，肌肉那 7 种材质的下标位置被绒羽占掉 —— 半剖图里整片胸肌
-# 渲成了白色，而且"看着像羽毛"，不盯着找根本发现不了。
-PALETTE = Palette({**SK.MATS, **MU.MUSCLE_MATS, **PLUME_MATS})
+# noise 调到 2：默认 ±4 的抖动在喙这种大面积平色上会读成木纹
+PALETTE = Palette({**SK.MATS, **MU.MUSCLE_MATS, **PLUME_MATS}, noise=2)
 
-# ================================================================ 绒羽外壳
-# 目标外壳：略扁于正球（真鸟纵向稍长），中心比躯干几何中心靠后一点点 ——
-# 胸前有喙和颈挡着，视觉重心本来就偏后
-PUFF_C: Vec = (0.0, 7.85, -0.30)
-PUFF_R: Vec = (4.75, 4.72, 5.15)
-CLUMP_BANDS = 11
+# ================================================================ 形体常数
+BALL_C: Vec = (0.0, 7.70, -0.25)
+BALL_R: Vec = (4.80, 4.80, 5.10)
+BALL_BANDS = 19
 
+HEAD_C: Vec = (0.0, 14.25, -3.85)
+HEAD_R: Vec = (1.88, 1.78, 1.72)
+HEAD_BANDS = 13
 
-def puff_point(phi: float, theta: float) -> Vec:
-    """外壳上的点。phi 从顶(0)到底(π)，theta 绕 Y 轴（0 = 正后方 +Z）。"""
-    s = math.sin(phi)
-    d = (s * math.sin(theta), math.cos(phi), s * math.cos(theta))
-    return tuple(c + r * v for c, r, v in zip(PUFF_C, PUFF_R, d))
+# sin(θ) 的指数，<1 让两极更钝。正球两极收得尖，读作几何体；
+# 钝一点才像一团被绒毛撑起来的东西
+BLUNT = 0.84
 
 
-def inside_body(p: Vec) -> bool:
-    """点是否在带肉躯干内。截面按 (半宽, 腹缘~背缘) 当椭圆算。"""
-    x, y, z = p
-    if not (MU.BODY_Z0 <= z <= MU.BODY_Z1):
-        return False
-    half, ylo, yhi = MU.body_profile(z)
-    yc, yr = (ylo + yhi) / 2, (yhi - ylo) / 2
-    if half <= 1e-6 or yr <= 1e-6:
-        return False
-    return (x / half) ** 2 + ((y - yc) / yr) ** 2 <= 1.0
+POLE_BIAS = 0.55
 
 
-def clump_root(outer: Vec, *, max_len: float = 2.9, min_len: float = 0.85) -> Vec:
-    """从外壳点朝壳心走，找到体表交点 = 羽簇根部。
+def _theta(u: float) -> float:
+    """极角分布：两极加密、赤道放宽。
 
-    没打到实体（颈窝下方、腿间这些方向）就按 max_len 截断——否则羽簇会一路穿到
-    对侧去，腹侧整片绒羽会连成一坨实心块，凑近看没有任何层次。
+    等角均分已经比等高均分好（等高分的话两极宽度突变，球顶球底各出现一圈方台），
+    但球顶那几圈**朝上的台阶面**在 MC 口径里是最亮的 1.0，一圈圈亮环特别显眼。
+    往两极压一压，那些环就细了；赤道那边宽度本来就几乎不变，切厚不吃亏。
+    g'(u) = 1 - k·cos(2πu) 恒正，所以单调，不会翻带。
     """
-    d = tuple(c - o for c, o in zip(PUFF_C, outer))
-    total = math.sqrt(sum(v * v for v in d)) or 1.0
-    d = tuple(v / total for v in d)
-    steps = 26
-    for i in range(1, steps + 1):
-        t = total * i / steps
-        if t > max_len:
-            break
-        p = tuple(o + v * t for o, v in zip(outer, d))
-        if inside_body(p):
-            t = max(min_len, t)
-            return tuple(o + v * t for o, v in zip(outer, d))
-    return tuple(o + v * max_len for o, v in zip(outer, d))
+    return math.pi * (u - POLE_BIAS * math.sin(2 * math.pi * u) / (2 * math.pi))
 
 
-def down_mat(p: Vec, rng: random.Random) -> str:
-    """按高度**平滑分层**选羽色：背侧亮、腹侧压暗、下腹带脏。
+def bands(center: Vec, radii: Vec, n: int, *, blunt: float = BLUNT):
+    """椭球切片 → [(y0, y1, hx, hz)]。"""
+    _, cy, _ = center
+    rx, ry, rz = radii
+    out = []
+    for i in range(n):
+        th0, th1 = _theta(i / n), _theta((i + 1) / n)
+        y1, y0 = cy + ry * math.cos(th0), cy + ry * math.cos(th1)
+        s = math.sin((th0 + th1) / 2) ** blunt
+        out.append((y0, y1, rx * s, rz * s))
+    return out
 
-    只在分界线附近抖 ±0.04 让边缘不齐；不整体随机撒——随机撒会让相邻羽簇跳色，
-    远看就是一身斑点，而不是一只白鹅。
-    """
-    h = (p[1] - (PUFF_C[1] - PUFF_R[1])) / (2 * PUFF_R[1]) + rng.uniform(-0.04, 0.04)
-    if h < 0.11:
-        return "down_grime"
-    return "down_shade" if h < 0.32 else "down"
+
+# 每条切片拆成 N 块轴对齐盒子，并集近似**圆**截面（角点全落在同一外接圆上）。
+# 单块盒子的横截面是正方形，四个角在 3/4 视角下是四道硬棱 —— 正面侧面都圆、
+# 一转 45° 就露馅成方筒（实测像座金字塔）。
+#
+# 判这类"够不够圆滑"的问题时务必用 render(..., shading="mc")：本预览器默认的
+# lambert 光把 +x 面夹到 0.32、+z 面给到 0.80，相邻 facet 差 2.5 倍，阶梯面被照成
+# 一身竖条纹；MC 原版是 0.6 / 0.8，只差 1.33 倍，同一个模型看上去干净得多。
+# 我一度以为是截面不够密，加到 7 块条纹反而更细更多 —— 那是在修渲染器的锅。
+BODY_SECTION = 7
+HEAD_SECTION = 5
 
 
+def ring(n: int):
+    """n 块盒子的 (x, z) 半径系数，并集近似单位圆。"""
+    return [(math.cos(math.pi / 2 * (i + 0.5) / n), math.sin(math.pi / 2 * (i + 0.5) / n))
+            for i in range(n)]
+
+
+def ball_half_width(y: float) -> float:
+    """球在高度 y 处的半宽（供翼隆贴着球面摆）。"""
+    t = (y - BALL_C[1]) / BALL_R[1]
+    if abs(t) >= 1.0:
+        return 0.0
+    return BALL_R[0] * (math.sqrt(1 - t * t) ** BLUNT)
+
+
+# ================================================================ 躯干球
 def part_body(rig: Rig) -> None:
-    """躯干绒羽球：按纬度带铺羽簇，每簇从体表长到外壳。"""
-    rng = random.Random(SEED)
-    rig.bone("plume_body", (0.0, PUFF_C[1], PUFF_C[2]), parent="trunk_back")
-    for b in range(CLUMP_BANDS):
-        phi = math.pi * (b + 0.5) / CLUMP_BANDS
-        # 每带的簇数正比于该纬度的周长，密度才均匀；两极不能和赤道同数，
-        # 否则极点挤成一坨、赤道拉出缝
-        n = max(4, round(16 * math.sin(phi)))
-        arc = 2 * math.pi * PUFF_R[0] * math.sin(phi) / n     # 相邻簇的弧距
-        band_h = math.pi * PUFF_R[1] / CLUMP_BANDS
-        for k in range(n):
-            theta = 2 * math.pi * (k + 0.5 * (b % 2)) / n     # 隔带错半格 = 交错排列
-            outer = puff_point(phi, theta)
-            root = clump_root(outer)
-            # 簇尖略微越壳，长短抖动 —— 齐平的话球面像高尔夫球，不像毛
-            over = rng.uniform(0.05, 0.34)
-            d = tuple(o - r for o, r in zip(outer, root))
-            ln = math.sqrt(sum(v * v for v in d)) or 1.0
-            tip = tuple(o + v / ln * over for o, v in zip(outer, d))
-            # 半宽必须 > 间距的一半，相邻簇才互相压住。首版取 0.36~0.46 倍间距
-            # （即全宽只有间距的 0.72~0.92），簇与簇之间留出缝，球面成了网格。
-            w = min(arc, band_h) * rng.uniform(0.60, 0.70)
-            rig.shaft("plume_body", f"down_{b}_{k}", root, tip,
-                      max(0.30, w), max(0.30, w), mat=down_mat(outer, rng))
+    """绒羽球：一摞等角切片。腹侧压一档浅灰当底阴影，别再分更多档。"""
+    rig.bone("plume_body", (0.0, BALL_C[1], BALL_C[2]), parent="trunk_back")
+    for i, (y0, y1, hx, hz) in enumerate(bands(BALL_C, BALL_R, BALL_BANDS)):
+        mat = "down_shade" if i < 4 else "down"
+        for j, (ax, az) in enumerate(ring(BODY_SECTION)):
+            rig.cube("plume_body", f"down_band_{i}_{j}",
+                     (-hx * ax, y0, BALL_C[2] - hz * az), (hx * ax, y1, BALL_C[2] + hz * az), mat=mat)
 
 
-# ================================================================ 颈羽
 def part_neck(rig: Rig) -> None:
-    """颈羽套筒。这段是参考照片里"头直接坐在球上"的成因——颈其实很长，
-    只是折成 S 又裹了一圈厚绒羽，从外面看只剩球顶到头底那一小截。"""
-    rng = random.Random(SEED ^ 0x11)
-    # 不要"沿曲线串一串粗筒"：颈羽半径 1.3~2.3，而 t 切细之后每段弧长不到 0.4，
-    # 段比自己粗五六倍 —— 串出来是一摞垂直于曲线的**大圆盘**，侧看正是一把扇子。
-    # （和颈肌那次"竖鳍"是同一个病：截面尺寸必须小于段长。）
-    # 改成和躯干球同一种构造：沿曲线取若干站，每站在**曲线的法平面**内朝外长羽簇。
-    # 羽簇是细的径向短棒，跟段长无关，从根上避开这个坑。
-    STATIONS, SECTORS = 8, 9
-    for s in range(STATIONS):
-        t = 0.34 + 0.66 * (s + 0.5) / STATIONS
-        p = SK.neck_at(t)
-        bone = f"neck_{min(int(t * SK.NECK_VERTEBRAE), SK.NECK_VERTEBRAE - 1)}"
-        # 法平面标架：颈曲线整条在 x=0 的矢状面里，所以 u 恒取 x 轴，
-        # v = 切向 × u 一定落在矢状面内，不必做退化处理
-        q = SK.neck_at(min(1.0, t + 0.02))
-        ty, tz = q[1] - p[1], q[2] - p[2]
-        n = math.hypot(ty, tz) or 1.0
-        ty, tz = ty / n, tz / n
-        core = MU.neck_radius(t)
-        out_r = lerp(2.25, 1.34, smoothstep((t - 0.34) / 0.66))
-        for k in range(SECTORS):
-            a = 2 * math.pi * (k + 0.5 * (s % 2)) / SECTORS
-            ca, sa = math.cos(a), math.sin(a)
-            # u=(1,0,0)，v = T×u = (0, tz, -ty)
-            d = (ca, sa * tz, -sa * ty)
-            r_out = out_r * rng.uniform(0.94, 1.07)
-            root = tuple(pp + dd * core * 0.85 for pp, dd in zip(p, d))
-            tip = tuple(pp + dd * r_out for pp, dd in zip(p, d))
-            # 已经埋在躯干球里的那些别画：白填一层还会从球面上顶出疙瘩
-            if sum(((tt - cc) / rr) ** 2 for tt, cc, rr in zip(tip, PUFF_C, PUFF_R)) < 0.94:
-                continue
-            w = 2 * math.pi * out_r / SECTORS * 0.62
-            rig.shaft(bone, f"neck_down_{s}_{k}", root, tip, w, w,
-                      mat="down" if d[1] > -0.55 else "down_shade")
+    """颈：球顶到头底的一小截。真颈很长（17 节折成 S），整条埋在球里，露出来就这点。"""
+    steps = 6
+    for i in range(steps):
+        t0, t1 = i / steps, (i + 1) / steps
+        y0, y1 = lerp(10.60, 12.80, t0), lerp(10.60, 12.80, t1)
+        tm = (t0 + t1) / 2
+        zc = lerp(-2.20, HEAD_C[2] + 0.10, tm)
+        w = lerp(2.25, 1.74, tm)
+        for j, (ax, az) in enumerate(ring(HEAD_SECTION)):
+            rig.cube("neck_12", f"neck_band_{i}_{j}",
+                     (-w * ax, y0, zc - w * 0.92 * az), (w * ax, y1, zc + w * 0.92 * az), mat="down")
 
 
-# ================================================================ 头 / 喙 / 眼
 def part_head(rig: Rig) -> None:
-    """头羽：包住脑颅，**在喙根前干净收口**。眼是一颗小黑豆，位置高而靠前。"""
-    c, r = MU.head_profile()
-    rng = random.Random(SEED ^ 0x22)
-    # 眼所在的方向要**空出来**。首版羽簇铺满整个头壳，眼球在 x=±1.6，而羽簇能伸到
-    # ±2.1 —— 眼睛被自己的脸毛埋了，正面完全看不见。留一小片无羽区，眼才嵌得进去
-    eye_dir = (1.0, 0.18, -0.62)
-    en = math.sqrt(sum(v * v for v in eye_dir))
-    eye_dir = tuple(v / en for v in eye_dir)
-    for b in range(5):
-        phi = math.pi * (b + 0.5) / 5
-        # 头羽的 theta 必须**对称采样**（±θ 成对），不能像躯干那样绕一圈均分。
-        # 均分时左右两侧落点不一样，让眼的那片无羽区就只在一边开出来 ——
-        # 正面看成了独眼。躯干上这种不对称是有机感，脸上是缺陷。
-        half = max(2, round(4.5 * math.sin(phi)))
-        for k in range(2 * half):
-            j, sgn = divmod(k, 2)
-            theta = (1 if sgn == 0 else -1) * math.pi * (j + 0.5) / half
-            s = math.sin(phi)
-            d = (s * math.sin(theta), math.cos(phi), s * math.cos(theta))
-            outer = tuple(cc + (rr + 0.18) * v for cc, rr, v in zip(c, r, d))
-            # 喙根之前不铺羽：羽毛盖到喙上就成了毛脸怪
-            if outer[2] < SK.BILL_ROOT_Z + 0.35:
-                continue
-            if abs(d[0] * eye_dir[0]) + d[1] * eye_dir[1] + d[2] * eye_dir[2] > 0.86:
-                continue                      # 让位给眼（左右都让，故 x 取绝对值）
-            root = tuple(cc + rr * 0.55 * v for cc, rr, v in zip(c, r, d))
-            rig.shaft("skull", f"head_down_{b}_{k}", root, outer, 0.46, 0.46,
-                      mat="down" if d[1] > -0.45 else "down_shade")
-    # 额羽：喙根到头顶那道过渡，鸭雁这里有条明显的分界线
-    rig.cube("skull", "forehead", (-1.05, c[1] + 0.35, SK.BILL_ROOT_Z + 0.20),
-             (1.05, c[1] + 1.42, c[2] - 0.30), mat="down")
-    # 颊羽：把眼窝托起来
-    for sx, side in ((-1, "l"), (1, "r")):
-        rig.cube("skull", f"cheek_{side}",
-                 (sx * 0.95, c[1] - 1.20, c[2] - 1.35), (sx * 1.62, c[1] + 0.55, c[2] + 0.95), mat="down")
+    """头：同一套切片。相对球宽 0.39（真鸭约 0.30）—— 幼体比例，呆萌的第一杠杆。"""
+    for i, (y0, y1, hx, hz) in enumerate(bands(HEAD_C, HEAD_R, HEAD_BANDS)):
+        for j, (ax, az) in enumerate(ring(HEAD_SECTION)):
+            rig.cube("skull", f"head_band_{i}_{j}",
+                     (-hx * ax, y0, HEAD_C[2] - hz * az), (hx * ax, y1, HEAD_C[2] + hz * az), mat="down")
 
-    # 眼：小、黑、一颗豆子，长在头侧偏高偏前处。视野接近全周 —— 也是它总能
-    # 先发现你的原因。两件事要同时成立：① 凸出羽面（x 顶到 ±2.0 外）才在侧视看得见；
-    # ② 位置够靠前、且**朝前那面留够宽**，正视才有那颗小黑点。
-    # 只满足 ① 的话正面就是只白团子，谁在看谁完全读不出来
-    # 眼圈必须**退到眼珠后面**再从四周露边。首版眼圈前缘 z=-5.25、眼珠 -5.11，
-    # 轴对齐盒子没有"环"的概念——正视时那圈浅色把黑眼珠整个盖死，只剩两块白方片。
-    # 眼珠要在所有能看见的方向上都比眼圈突出：前（-z）、外（±x）各让 0.10 以上
-    for sx, side in ((-1, "l"), (1, "r")):
-        rig.cube("skull", f"eye_ring_{side}",
-                 (sx * 1.26, c[1] + 0.04, c[2] - 1.18), (sx * 1.92, c[1] + 0.92, c[2] - 0.14), mat="eye_ring")
-        rig.cube("skull", f"eye_{side}",
-                 (sx * 1.42, c[1] + 0.20, c[2] - 1.34), (sx * 2.04, c[1] + 0.76, c[2] - 0.30), mat="eye")
+
+# ================================================================ 喙 / 眼
+BILL_ROOT_Z = -5.45
+BILL_TIP_Z = -7.85
 
 
 def part_bill(rig: Rig) -> None:
-    """喙：直接复用骨架层的角质件（喙就是角质，本来就不长羽，不需要另做一套）。"""
-    src = Rig(SK.PALETTE)
-    SK.part_trunk(src)
-    SK.part_neck(src)
-    SK.part_skull(src)
-    SK.part_bill(src)
-    keep = {tuple(SK.PALETTE.uv(m)) for m in ("keratin", "keratin_dark", "lamella", "socket")}
-    want = {"bill_upper", "jaw"}
-    for name in ("bill_upper", "jaw"):
-        for eid in src.bones[name]["children"]:
-            e = next(x for x in src.elements if x["uuid"] == eid)
-            if tuple(e["faces"]["north"]["uv"]) not in keep:
-                continue
-            # uv 依赖调色板下标；本层前缀与骨架一致（见 gen_muscle 的同款断言）
-            rig.elements.append(e)
-            rig.bones[name if name in want else "skull"]["children"].append(eid)
+    """喙：短、宽、干净。不露栉板 —— 那排"牙"是威吓姿态的读点，留在骨架层。
+
+    每段的 (半宽, 腹缘, 背缘) 一起收，正面才是个圆头铲子，而不是贴在脸上的橙方片。
+    """
+    # 关键点定形，中间插值加密到 8 段。首版只切 4 段，每段之间上缘差 0.2、
+    # 侧看是四条横楞，整只喙读成个小木条箱
+    # 上缘（culmen）几乎拉平，锥度全放到下缘 —— 真鸭喙的背线本来就是直的，只在
+    # 尖端才下弯。而且 MC 口径里朝上的面最亮（1.0）、朝下的最暗（0.5）：上缘每一级
+    # 台阶都会亮成一道横楞，下缘的台阶则基本看不见。把落差挪到下缘，同样的锥度、
+    # 一半的楞
+    key = [
+        (0.00, 1.02, 13.54, 14.26),
+        (0.34, 1.24, 13.40, 14.16),
+        (0.68, 1.32, 13.26, 14.06),
+        (1.00, 0.98, 13.14, 13.84),
+    ]
+
+    def at(t: float):
+        for a, b in zip(key, key[1:]):
+            if a[0] <= t <= b[0]:
+                u = (t - a[0]) / (b[0] - a[0])
+                u = u * u * (3 - 2 * u)
+                return tuple(lerp(a[i], b[i], u) for i in (1, 2, 3))
+        return key[-1][1:]
+
+    z_root = HEAD_C[2] - 1.15
+    N = 8
+    for i in range(N):
+        t0, t1 = i / N, (i + 1) / N
+        w, y0, y1 = at((t0 + t1) / 2)
+        rig.cube("bill_upper", f"bill_{i}",
+                 (-w, y0, lerp(z_root, BILL_TIP_Z, t1)), (w, y1, lerp(z_root, BILL_TIP_Z, t0)),
+                 mat="bill_h")
+    # 喙甲：尖端一小片深色。只做一小片，做大了显凶
+    rig.cube("bill_upper", "bill_nail",
+             (-0.60, 13.14, BILL_TIP_Z), (0.60, 13.50, BILL_TIP_Z + 0.40), mat="bill_dark")
+    # 下喙：薄薄一条托在下面，侧面才看得出上下两片，而不是一根实棍
+    rig.cube("jaw", "bill_lower",
+             (-1.00, 12.96, BILL_TIP_Z + 0.30), (1.00, 13.30, BILL_ROOT_Z + 0.30), mat="bill_dark")
+
+
+def part_eyes(rig: Rig) -> None:
+    """眼：大、圆、略朝前，带高光点。
+
+    深度关系是这里唯一的坑：轴对齐盒子没有"环"或"贴面"的概念，谁在前谁把谁盖死。
+    三件必须逐件更靠前（-z 更小）：头 → 眼 → 高光。首版就是眼圈前缘比眼珠还靠前，
+    正视时整颗黑眼珠被白圈盖死，只剩两块白方片。
+    """
+    # 眼珠别做太大、高光更别做大：首版眼 1.00 高、高光占了里面一大块，
+    # 两只连起来读成一副护目镜。真正可爱的是"小黑豆 + 角上一粒白点"
+    ey0, ey1 = 14.12, 14.86
+    # 头的外缘要按眼**跨度内最宽**的那一带算 —— 也就是 [ey0,ey1] 里最靠近头中心的
+    # 高度。按眼中心算是错的：眼下缘那几带比中心处更宽，会把眼珠下半截埋进头里，
+    # 剩下的高光就跑到黑眼珠外侧，正面看像两面小白旗
+    y_widest = min(max(HEAD_C[1], ey0), ey1)
+    ct = max(-1.0, min(1.0, (y_widest - HEAD_C[1]) / HEAD_R[1]))
+    s = math.sin(math.acos(ct)) ** BLUNT
+    hx, hz = HEAD_R[0] * s, HEAD_R[2] * s
+    front = HEAD_C[2] - hz
+    for sx, side in ((-1, "l"), (1, "r")):
+        # 进深要浅。首版眼盒深 1.10，从 3/4 看是块包住半个头侧的黑板 —— 墨镜就是
+        # 这么来的。眼是一颗贴在脸上的豆子，三维尺寸得接近
+        rig.cube("skull", f"eye_{side}",
+                 (sx * 1.02, ey0, front - 0.18), (sx * (hx + 0.14), ey1, front + 0.50), mat="eye_h")
+        # 高光是眼珠里的一小粒白点：x 范围必须**落在眼珠以内**（否则成了外挂的白片），
+        # z 必须比眼珠更靠前（否则被眼珠盖住）
+        # 一"粒"白点，不是一"片"。占到眼珠一半宽时，正面看就成了黑白两色的斑纹，
+        # 而不是一只带反光的眼睛
+        rig.cube("skull", f"eye_light_{side}",
+                 (sx * 1.44, ey1 - 0.26, front - 0.32), (sx * (hx - 0.30), ey1 - 0.06, front - 0.06),
+                 mat="eye_light")
 
 
 # ================================================================ 翼 / 尾
 def part_wing(rig: Rig, sx: int, side: str) -> None:
-    """翼覆羽（贴体侧的一层）+ 初级飞羽（收起来搭过尾根，尖端露在球外）。"""
-    # 覆羽：沿体侧铺一片，压在绒羽球外层，读作"翅膀收在这儿"
-    for i in range(4):
-        z0, z1 = lerp(-2.6, 2.2, i / 4), lerp(-2.6, 2.2, (i + 1) / 4)
-        half, _, yhi = MU.body_profile((z0 + z1) / 2)
-        rig.cube(f"wing_{side}", f"covert_{side}_{i}",
-                 (sx * (half + 0.55), yhi - 3.30, z0), (sx * (half + 1.62), yhi - 0.55, z1),
-                 mat="quill" if i % 2 else "down_shade")
-    # 初级飞羽：收翼时是**互相叠合的一摞**贴在腰侧，不是张开的扇子。
-    # 首版按 x 拉开 0.8、z 拉到 6.6，3/4 视角下成了从屁股后伸出来的一把折扇；
-    # 参考照片那只球身上根本看不见翅膀。现在收紧到几乎共线，只让最外侧几根的
-    # 尖端探出球面一点点——这一点点是判断"它是只鸟"的最低限度
-    root = (sx * 2.90, 9.55, 0.90)
-    for i in range(6):
-        t = i / 5
-        # 尖端别越过球面太多：探出 1.7 单位时侧看是从球腰横伸出来的一片白板，
-        # 把"球"的轮廓戳破了。收到刚好蹭着球面，只在 3/4 视角露一线
-        tip = (sx * lerp(2.55, 2.90, t), lerp(9.05, 8.65, t), lerp(3.45, 4.05, t))
-        rig.shaft(f"hand_{side}", f"primary_{side}_{i}", root, tip,
-                  0.32 - 0.024 * i, 0.11, mat="quill" if i % 2 else "quill_dark")
-    # 三级飞羽：肘部那几根短的，压在体侧收口。要压进绒羽球以内，
-    # 探出去就是从球腰上横伸出来的一块白板
-    rig.cube(f"forearm_{side}", f"tertial_{side}",
-             (sx * 2.30, 9.15, 0.30), (sx * 3.55, 10.05, 2.70), mat="quill")
+    """翼隆：贴着球面的两块浅灰缓坡。
+
+    参考照片那只球身上根本看不见翅膀，所以这里只做到"侧面有一处柔和起伏"为止。
+    做成伸出去的飞羽会把干净的球形轮廓戳破 —— 那正是上一版丑的原因之一。
+    """
+    # 与球身**同色**：上一版给它涂了浅灰，侧看是一块贴在球上的灰补丁。
+    # 形状也不能是方板 —— 球身已经磨圆了，方板一贴就成了补丁。做成一枚贴在体侧的
+    # 透镜（沿 y 分几行、每行 z 长度按椭圆收），只在剪影上鼓出一点点。
+    # 收翼的鸟本来就看不太出翅膀，但这块得留着：威吓展翼要有东西可展
+    cy, cz, ry, rz, out = 8.30, 0.35, 1.75, 2.05, 0.26
+    for i in range(5):
+        t0, t1 = -1 + 2 * i / 5, -1 + 2 * (i + 1) / 5
+        y0, y1 = cy + ry * t0, cy + ry * t1
+        tm = (t0 + t1) / 2
+        zl = rz * math.sqrt(max(0.0, 1 - tm * tm)) ** 0.7
+        base = ball_half_width((y0 + y1) / 2)
+        rig.cube(f"wing_{side}", f"wing_lens_{side}_{i}",
+                 (sx * (base - 0.75), y0, cz - zl), (sx * (base + out), y1, cz + zl), mat="down")
 
 
 def part_tail(rig: Rig) -> None:
-    """尾羽扇：短、上翘。鸭雁的尾在鼓成球的身体后面只剩一小撮，是判断朝向的关键。"""
-    # 尾扇要小。首版尖端伸到 z=8.3、高到 11.35，从侧面看是根翘起的尖刺，
-    # 把"球"的轮廓戳破了。鸭雁鼓成球时尾巴只露一小撮，够判朝向就行
-    for i in range(9):
-        t = (i - 4) / 4                       # -1 .. 1，中间那根最长
-        rig.shaft("tail_base", f"rectrix_{i}",
-                  (t * 0.50, SK.trunk_y(5.6) + 0.25, 5.30),
-                  (t * 1.55, lerp(10.70, 10.10, abs(t)), lerp(7.15, 6.35, abs(t))),
-                  0.32, 0.15, mat="quill" if i % 2 else "quill_dark")
-    # 尾上覆羽 / 尾下覆羽：把扇根盖住，别让尾羽像插上去的
-    rig.cube("tail_base", "tail_covert_up", (-1.35, 10.05, 4.55), (1.35, 11.05, 6.30), mat="down")
-    rig.cube("tail_base", "tail_covert_down", (-1.25, 8.45, 4.40), (1.25, 9.50, 6.05), mat="down_grime")
+    """尾墩：屁股后一个上翘的小墩子。留着它是为了一眼看出朝向。"""
+    for i, (y0, y1, w, z0, z1) in enumerate((
+        (9.30, 10.65, 1.18, 4.05, 5.35),
+        (9.70, 10.90, 0.78, 5.25, 6.05),
+    )):
+        rig.cube("tail_base", f"tail_nub_{i}", (-w, y0, z0), (w, y1, z1),
+                 mat="down" if i == 0 else "down_shade")
 
 
 # ================================================================ 腿脚
+LEG_X = 1.78
+ANKLE_Y = 3.15
+
+
 def part_legs(rig: Rig) -> None:
-    """跗跖 + 蹼足：整段角质，一根羽毛都不长。橙色，是全身第二、第三个视觉焦点。"""
+    """腿短粗、蹼做成一整片扇形。
+
+    上一版按解剖拆了 4 趾 3 蹼 + 5 圈跗跖鳞，二十几块碎片挂在腿上 —— 这个尺度下
+    全是噪点。呆萌要的是两根干净的橙柱子加两片大脚板。
+    """
     for sx, side in ((-1, "l"), (1, "r")):
-        _hip, _knee, ankle, toe_base = SK.leg_joints(sx)
-        # 胫跗骨下段那一小截也露在绒羽外（球底 y≈3.1，踝在 3.3）
-        rig.shaft(f"tibia_{side}", f"shank_{side}",
-                  (ankle[0], ankle[1] + 0.85, ankle[2] - 0.10), ankle, 0.52, 0.54, mat="keratin")
-        rig.shaft(f"tarsus_{side}", f"tarsus_{side}", ankle, toe_base, 0.50, 0.52, mat="keratin")
-        for i in range(5):                    # 跗跖鳞：横向一圈圈，鸟腿的读点
-            t = (i + 0.5) / 5
-            p = [lerp(a, b, t) for a, b in zip(ankle, toe_base)]
-            rig.cube(f"tarsus_{side}", f"scute_{side}_{i}",
-                     (p[0] - 0.56, p[1] - 0.14, p[2] - 0.58), (p[0] + 0.56, p[1] + 0.14, p[2] + 0.56),
-                     mat="keratin_dark")
-        tips: dict[str, Vec] = {}
-        for name, dx, dz, r0 in SK.TOES:
-            end = (toe_base[0] + sx * dx, 0.34, dz)
-            tips[name] = end
-            for j in range(3):
-                p0 = tuple(lerp(u, v, j / 3) for u, v in zip(toe_base, end))
-                p1 = tuple(lerp(u, v, (j + 1) / 3) for u, v in zip(toe_base, end))
-                r = lerp(r0 + 0.14, (r0 + 0.14) * 0.6, (j + 1) / 3)
-                rig.shaft(f"foot_{side}", f"toe_{name}_{side}_{j}", p0, p1, r, r, mat="keratin")
-            rig.shaft(f"foot_{side}", f"nail_{name}_{side}", end,
-                      (end[0] + sx * dx * 0.10, 0.20, dz - 0.40), 0.14, 0.14, mat="keratin_dark")
-        rig.shaft(f"foot_{side}", f"hallux_{side}", toe_base,
-                  (toe_base[0] + sx * 0.10, 0.66, 1.05), 0.18, 0.18, mat="keratin")
-        for a_name, b_name in (("ii", "iii"), ("iii", "iv")):
-            pa, pb = tips[a_name], tips[b_name]
-            for k in range(5):
-                f0, f1 = k / 5, (k + 1) / 5
-                fm = (f0 + f1) / 2
-                reach = 0.88 + 0.12 * abs(2 * fm - 1)
-                zf = lerp(lerp(pa[2], pb[2], fm), toe_base[2], 1.0 - reach)
-                x0, x1 = lerp(pa[0], pb[0], f0), lerp(pa[0], pb[0], f1)
-                # 名字不能和骨架层的蹼件撞（那边也叫 web_*）：叠层预览时
-                # 自检按 name 建字典，同名会互相覆盖，报出来的是假违例
-                rig.cube(f"foot_{side}", f"webskin_{a_name}{b_name}_{side}_{k}",
-                         (min(x0, x1), 0.08, min(zf, toe_base[2])),
-                         (max(x0, x1), 0.40, max(zf, toe_base[2])), mat="keratin")
+        for i, (y0, y1, w, zc, d) in enumerate((
+            (1.95, ANKLE_Y + 0.25, 0.74, 0.30, 0.70),
+            (0.60, 2.05, 0.64, 0.10, 0.62),
+        )):
+            rig.cube(f"tarsus_{side}", f"shank_{side}_{i}",
+                     (sx * LEG_X - w, y0, zc - d), (sx * LEG_X + w, y1, zc + d), mat="bill_h")
+        # 脚板：三级递宽的扇形，前缘再切两道浅口示意三趾。切太深就又碎了
+        # 脚板要够厚够大。首版 0.46 厚，正面看是两片贴地的橙纸片
+        for i, (z0, z1, w) in enumerate(((0.86, -0.35, 1.02), (-0.35, -1.55, 1.52), (-1.55, -2.65, 1.92))):
+            rig.cube(f"foot_{side}", f"web_{side}_{i}",
+                     (sx * LEG_X - w, 0.0, z1), (sx * LEG_X + w, 0.62, z0), mat="bill_h")
+        for tag, k in (("a", -1), ("b", 1)):
+            # 偏移量要连 sx 一起乘：只乘 k 的话左脚的两道口子是"平移"过去的不是镜像的
+            rig.cube(f"foot_{side}", f"web_notch_{side}_{tag}",
+                     (sx * (LEG_X + k * 0.46), 0.03, -2.65), (sx * (LEG_X + k * 0.80), 0.60, -2.00),
+                     mat="bill_dark")
 
 
 # ================================================================ 装配
 PARTS = {
-    "body": ("躯干绒羽球", part_body),
-    "neck": ("颈羽套筒", part_neck),
-    "head": ("头羽 + 眼", part_head),
-    "bill": ("喙", part_bill),
-    "wing": ("翼覆羽 + 飞羽", lambda r: [part_wing(r, sx, s) for sx, s in ((-1, "l"), (1, "r"))]),
-    "tail": ("尾羽扇", part_tail),
-    "legs": ("跗跖 + 蹼足", part_legs),
+    "body": ("躯干球", part_body),
+    "neck": ("颈", part_neck),
+    "head": ("头", part_head),
+    "bill": ("喙 + 眼", lambda r: (part_bill(r), part_eyes(r))),
+    "wing": ("翼隆", lambda r: [part_wing(r, sx, s) for sx, s in ((-1, "l"), (1, "r"))]),
+    "tail": ("尾墩", part_tail),
+    "legs": ("腿脚", part_legs),
 }
 
 
 def build(only: str | None = None, with_anatomy: bool = False, cutaway: bool = False) -> Rig:
     rig = Rig(PALETTE)
-    # 前缀对拍要覆盖**所有会被搬进来的层**，不能只查骨架：漏查哪层，那层的
-    # element 就会静默地渲成别的颜色
+    # 前缀对拍要覆盖**所有会被搬进来的层**，不能只查骨架：漏查哪层，那层的 element
+    # 就会静默地渲成别的颜色（半剖图里整片胸肌曾被渲成白的，看着还挺像羽毛）
     for src_pal, who in ((SK.PALETTE, "骨架"), (MU.PALETTE, "肌肉")):
-        assert PALETTE.names[:len(src_pal.names)] == src_pal.names, \
+        assert PALETTE.names[: len(src_pal.names)] == src_pal.names, (
             f"调色板前缀与{who}层不一致，搬过来的 element uv 会指错色块"
+        )
     src = MU.build() if with_anatomy else SK.build_full()
     for name in src.bone_order:
         b = src.bones[name]
@@ -376,17 +330,26 @@ def build(only: str | None = None, with_anatomy: bool = False, cutaway: bool = F
         rig.elements.extend(src.elements)
         for name in src.bone_order:
             rig.bones[name]["children"] = list(src.bones[name]["children"])
+
     n_anat = len(rig.elements)
     for key, (_label, fn) in PARTS.items():
         if only is None or key == only:
             fn(rig)  # type: ignore[operator]
+
     if cutaway:
-        # 半剖：左半的绒羽整片拿掉，露出底下的骨与肌。
-        # 直接把羽层叠在解剖层上是白叠——羽把一切盖死，出来的图和成品图一模一样，
-        # 没有任何诊断价值。半剖才看得出各处绒羽有多厚、哪些方向其实是空的。
-        # 判"在左半"用 origin（旋转件的真实中心），不用 from/to 中点：
-        # 羽簇是旋转过的柱，from/to 是旋转**前**的盒，中点会落在别处
-        dropped = {e["uuid"] for e in rig.elements[n_anat:] if e["origin"][0] < -0.15}
+        # 半剖：外观层只留右半，露出底下的骨与肌。直接两层叠起来是白叠 —— 外观把
+        # 一切盖死，出来的图和成品图一模一样，没有诊断价值。
+        # 切片是轴对齐整片，所以**裁 x 范围**而不是整块丢；旋转件没法这么裁，
+        # 按 origin 落在哪半边整块处理
+        dropped = set()
+        for e in rig.elements[n_anat:]:
+            if any(e["rotation"]):
+                if e["origin"][0] < -0.15:
+                    dropped.add(e["uuid"])
+            elif e["to"][0] <= 0.0:
+                dropped.add(e["uuid"])
+            elif e["from"][0] < 0.0:
+                e["from"][0] = 0.0
         rig.elements = [e for e in rig.elements if e["uuid"] not in dropped]
         for b in rig.bones.values():
             b["children"] = [c for c in b["children"] if c not in dropped]
@@ -397,37 +360,43 @@ def report(rig: Rig, *, symmetric: bool = True) -> int:
     # 半剖模型左右本来就不对称，别拿镜像自检去量它
     problems = rig.mirror_problems() if symmetric else []
     lo, hi = rig.bounds()
-    width, height, length = hi[0] - lo[0], hi[1], hi[2] - lo[2]
+    height = hi[1]
 
-    # 参考照片的读点：球宽 ≈ 站高的 0.55~0.62，露腿 ≈ 站高的 0.15~0.22
-    ball_ratio = (2 * PUFF_R[0]) / height
-    shank = (PUFF_C[1] - PUFF_R[1]) / height
+    ball_w, head_w = 2 * BALL_R[0], 2 * HEAD_R[0]
+    ball_ratio = ball_w / height
+    shank = (BALL_C[1] - BALL_R[1]) / height
+    head_ratio = head_w / ball_w
     if not 0.55 <= ball_ratio <= 0.66:
         problems.append(f"球太{'小' if ball_ratio < 0.55 else '大'}：球宽/站高 = {ball_ratio:.2f}（应 0.55~0.66）")
     if not 0.13 <= shank <= 0.24:
         problems.append(f"露腿比例失衡：球底/站高 = {shank:.2f}（应 0.13~0.24）")
+    # 呆萌靠幼体比例：头相对球要明显大于真鸭的 0.30，但不能大到成了不倒翁
+    if not 0.34 <= head_ratio <= 0.46:
+        problems.append(f"头身比不在呆萌区间：头宽/球宽 = {head_ratio:.2f}（应 0.34~0.46）")
     if lo[1] < -0.05 or lo[1] > 0.30:
-        problems.append(f"贴地异常：最低点 y={lo[1]:.2f}；最低几件："
-                        f"{', '.join(f'{n}@{y:.2f}' for y, n in rig.lowest(4))}")
+        problems.append(
+            f"贴地异常：最低点 y={lo[1]:.2f}；最低几件："
+            f"{', '.join(f'{n}@{y:.2f}' for y, n in rig.lowest(4))}"
+        )
 
     print(f"cube {len(rig.elements)} 个 · 骨骼 {len(rig.bones)} 根")
-    print(f"站高 {height:.2f} = {height / 16:.2f} m · 球宽 {2 * PUFF_R[0]:.2f}"
-          f"（占站高 {ball_ratio:.0%}）· 全宽 {width:.2f} · 全长 {length:.2f} = {length / 16:.2f} m")
-    print(f"球心 {PUFF_C[1]:.2f} · 球底 {PUFF_C[1] - PUFF_R[1]:.2f}（露腿 {shank:.0%}）· 最低点 {lo[1]:.2f}")
+    print(f"站高 {height:.2f} = {height / 16:.2f} m · 球宽 {ball_w:.2f}（占站高 {ball_ratio:.0%}）"
+          f" · 全宽 {hi[0] - lo[0]:.2f} · 全长 {hi[2] - lo[2]:.2f} = {(hi[2] - lo[2]) / 16:.2f} m")
+    print(f"头宽 {head_w:.2f}（球宽的 {head_ratio:.0%}，真鸭约 30%）· "
+          f"球底 {BALL_C[1] - BALL_R[1]:.2f}（露腿 {shank:.0%}）· 最低点 {lo[1]:.2f}")
     if problems:
         print(f"\n✗ {len(problems)} 处违例：")
         for p in problems[:12]:
             print(f"   {p}")
     else:
-        print("\n✓ 镜像 / 球体比例 / 露腿比例 / 贴地 全部通过")
+        print("\n✓ 镜像 / 球体比例 / 头身比 / 露腿比例 / 贴地 全部通过")
     return len(problems)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="珂珂达绒羽 / 外观层")
     ap.add_argument("--part", choices=sorted(PARTS))
-    ap.add_argument("--with-anatomy", action="store_true",
-                help="半剖：左半留骨+肌，右半留绒羽，看各处羽厚")
+    ap.add_argument("--with-anatomy", action="store_true", help="半剖：左半留骨+肌，右半留外观")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--check", action="store_true", help="只报告，不写文件")
     ap.add_argument("--out", type=Path)
@@ -448,8 +417,8 @@ def main() -> int:
         name += "_anatomy"
     out = rig.save(args.out or (OUT_DIR / f"{name}.bbmodel"), name)
     print(f"→ {out}")
-    ok = report(rig, symmetric=not args.with_anatomy)
-    return 1 if ok and not args.part else 0
+    bad = report(rig, symmetric=not args.with_anatomy)
+    return 1 if bad and not args.part else 0
 
 
 if __name__ == "__main__":

@@ -67,9 +67,14 @@ def _run(script: str, *args: str) -> None:
     subprocess.run([sys.executable, str(HERE / script), *args], check=True, capture_output=True)
 
 
+# 一律用 MC 口径的面亮度渲外观层：本模块默认的 lambert 光相邻朝向差 2.5 倍，
+# 会把体素球的阶梯面照成一身条纹，看着比进游戏丑得多（判"圆不圆滑"时会误导）
+SHADE = "mc"
+
+
 def strip(shots, model: str, out: str, size: int = 300) -> None:
     """一排特写拼图。"""
-    tiles = [(lab, render(MODELS / model, yaw=y, pitch=p, size=size, focus=(c, s))[0])
+    tiles = [(lab, render(MODELS / model, yaw=y, pitch=p, size=size, focus=(c, s), shading=SHADE)[0])
              for lab, y, p, c, s in shots]
     gap, hdr = 8, 16
     canvas = Image.new("RGB", (len(tiles) * (size + gap) + gap, size + hdr + gap * 2), BG)
@@ -82,15 +87,16 @@ def strip(shots, model: str, out: str, size: int = 300) -> None:
     print(f"  → {out}")
 
 
-def three_view(model: str, out: str, size: int = 460) -> None:
-    im, _ = render_three_view(MODELS / model, size=size)
+def three_view(model: str, out: str, size: int = 460, shading: str = "lambert") -> None:
+    im, _ = render_three_view(MODELS / model, size=size, shading=shading)
     im.save(HERE / out)
     print(f"  → {out}")
 
 
 def layers(size: int = 340) -> None:
     """三层并排：一眼看清"球是绒羽撑的，不是身体大"。"""
-    tiles = [(lab, render(MODELS / m, yaw=132, pitch=12, size=size, focus=((0.0, 8.2, -1.0), 19.0))[0])
+    tiles = [(lab, render(MODELS / m, yaw=132, pitch=12, size=size,
+                          focus=((0.0, 8.2, -1.0), 19.0), shading=SHADE)[0])
              for lab, m in (("1. skeleton", "KekedaSkeleton.bbmodel"),
                             ("2. + muscle & fat", "KekedaMuscle.bbmodel"),
                             ("3. + down (final)", "KekedaPlume.bbmodel"))]
@@ -146,7 +152,7 @@ def main() -> int:
         three_view("KekedaMuscle.bbmodel", "render_muscle.png")
         three_view("KekedaMuscle_bare.bbmodel", "render_muscle_bare.png")
         three_view("KekedaMuscle_explode.bbmodel", "render_explode.png", size=500)
-        three_view("KekedaPlume.bbmodel", "render_plume.png")
+        three_view("KekedaPlume.bbmodel", "render_plume.png", shading=SHADE)
         three_view("KekedaPlume_anatomy.bbmodel", "render_plume_anatomy.png")
         strip(SKELETON_SHOTS, "KekedaSkeleton.bbmodel", "render_skeleton_detail.png", size=250)
         strip(FACE_SHOTS, "KekedaPlume.bbmodel", "render_face.png", size=330)
