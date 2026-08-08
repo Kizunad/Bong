@@ -2663,6 +2663,36 @@ mod tests {
     }
 
     #[test]
+    fn pseudo_vein_removal_updates_spatial_revision_only_for_real_geometry_change() {
+        let mut registry = ZoneRegistry {
+            zones: vec![zone("pseudo_vein_test", 0.0, 0.0, 1.0)],
+            spatial_revision: 41,
+        };
+
+        assert!(remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "pseudo_vein_test"
+        ));
+        assert_eq!(registry.spatial_revision, 42);
+        assert!(!remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "pseudo_vein_test"
+        ));
+        assert_eq!(
+            registry.spatial_revision, 42,
+            "missing removal must not advance revision"
+        );
+        assert!(!remove_runtime_pseudo_vein_zone(
+            &mut registry,
+            "ordinary_zone"
+        ));
+        assert_eq!(
+            registry.spatial_revision, 42,
+            "non-pseudo names must be ignored"
+        );
+    }
+
+    #[test]
     fn season_modifiers_pin_world_heartbeat_table() {
         let summer = season_event_modifiers(Season::Summer);
         assert_eq!(summer.pseudo_vein_frequency, 1.0);
