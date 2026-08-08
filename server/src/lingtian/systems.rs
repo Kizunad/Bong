@@ -168,8 +168,9 @@ pub struct LingtianClock {
 ///    由 Till business handler 拒绝；
 /// 4. gate 成功后才发对应的 `Start*Request` event。
 ///
-/// 同 actor 同批多个请求不做 HashMap 重排，不搞"最后一个覆盖"：按 ingress
-/// sequence FIFO dispatch，第一条业务成功后第二条由 `has_session` 拒绝。
+/// 同 actor 同批多个 gate-valid 请求严格按 ingress sequence 处理：本 tick 只 dispatch
+/// 第一条，其余保序放回下一批队首。这样六类 typed event handler 的内部调度顺序不会
+/// 反转跨 action FIFO；首条业务 handler 本 tick 失败时，下一条仍会在下 tick 获得机会。
 #[allow(clippy::too_many_arguments)]
 pub fn validate_and_dispatch_lingtian_requests(
     mut pending: ResMut<PendingLingtianRequests>,
@@ -180,6 +181,8 @@ pub fn validate_and_dispatch_lingtian_requests(
     mut writers: LingtianDispatchWriters,
 ) {
     let batch = pending.take_batch();
+    let mut dispatched_actors = HashSet::new();
+    let mut deferred = std::collections::VecDeque::new();
     for request in batch {
         let (actor, pos) = request.actor_and_pos();
         if clients.get(actor).is_err() {
@@ -193,6 +196,11 @@ pub fn validate_and_dispatch_lingtian_requests(
             log_lingtian_interaction_denial("post-transfer", actor, pos, reason);
             continue;
         }
+        if dispatched_actors.contains(&actor) {
+            deferred.push_back(request);
+            continue;
+        }
+        dispatched_actors.insert(actor);
         match request {
             PendingLingtianRequest::Till {
                 actor,
@@ -271,6 +279,7 @@ pub fn validate_and_dispatch_lingtian_requests(
             }
         }
     }
+    pending.prepend_batch(deferred);
 }
 
 /// session 完成事件写出 — 6 类合一以避开 Bevy 16 system-param 限制。
@@ -391,29 +400,53 @@ impl ActiveLingtianSessions {
         self.reserved_targets.len()
     }
 
-    /// 插入新 session。若该 actor 已有或（Till 时）该 target 已被保留，
-    /// 则返回 false，调用方丢弃请求。
-    ///
-    /// fix-spec-1901-v2 §6.2 — 原子操作："actor 未占用 + target 未保留"，
-    /// player 与 NPC 共用同一 reservation。
+    /// 插入非 Till session。Till 必须走 [`Self::try_insert_till`]，避免调用方
+    /// 绕过已有 plot 与 target reservation 的统一门禁。
     pub fn try_insert(&mut self, actor: Entity, session: ActiveSession) -> bool {
+        if matches!(session, ActiveSession::Till(_)) {
+            tracing::warn!(
+                "[bong][lingtian] try_insert rejected Till for actor={actor:?}; use try_insert_till"
+            );
+            return false;
+        }
         if self.by_actor.contains_key(&actor) {
             return false;
         }
-        if matches!(session, ActiveSession::Till(_)) {
-            let target = session.position();
-            if self.reserved_targets.contains_key(&target) {
-                tracing::debug!(
-                    "[bong][lingtian] try_insert rejected: target {target:?} already reserved"
-                );
-                return false;
-            }
-        }
-        let target = session.position();
-        if matches!(session, ActiveSession::Till(_)) {
-            self.reserved_targets.insert(target, actor);
-        }
         self.by_actor.insert(actor, session);
+        true
+    }
+
+    /// 原子插入 Till session：actor 空闲、目标尚无 plot 且未被其他 actor 保留
+    /// 时才同时写入 session 与 reservation。玩家和 NPC producer 共用此入口。
+    pub fn try_insert_till(
+        &mut self,
+        actor: Entity,
+        session: TillSession,
+        plot_exists: bool,
+    ) -> bool {
+        if self.by_actor.contains_key(&actor) {
+            tracing::debug!(
+                "[bong][lingtian] try_insert_till rejected: actor={actor:?} already active"
+            );
+            return false;
+        }
+        if plot_exists {
+            tracing::debug!(
+                "[bong][lingtian] try_insert_till rejected: plot already exists at {:?}",
+                session.pos
+            );
+            return false;
+        }
+        if self.reserved_targets.contains_key(&session.pos) {
+            tracing::debug!(
+                "[bong][lingtian] try_insert_till rejected: target {:?} already reserved",
+                session.pos
+            );
+            return false;
+        }
+
+        self.reserved_targets.insert(session.pos, actor);
+        self.by_actor.insert(actor, ActiveSession::Till(session));
         true
     }
 
@@ -497,13 +530,7 @@ pub fn handle_start_till(
             );
             continue;
         }
-        if plots.iter().any(|plot| plot.pos == req.pos) {
-            tracing::warn!(
-                "[bong][lingtian] StartTillRequest rejected: target plot already exists at {:?}",
-                req.pos
-            );
-            continue;
-        }
+        let plot_exists = plots.iter().any(|plot| plot.pos == req.pos);
         let Ok(inv) = inventories.get(req.player) else {
             tracing::warn!(
                 "[bong][lingtian] StartTillRequest rejected: player={:?} has no PlayerInventory",
@@ -536,7 +563,7 @@ pub fn handle_start_till(
             continue;
         }
         let session = TillSession::new(req.pos, kind, instance_id, req.mode, req.environment);
-        sessions.try_insert(req.player, ActiveSession::Till(session));
+        sessions.try_insert_till(req.player, session, plot_exists);
     }
 }
 
@@ -877,9 +904,20 @@ pub fn apply_completed_sessions(
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
     context: CompletionContext,
 ) {
-    let existing_plot_positions: HashSet<_> = plots.iter().map(|(_, plot)| plot.pos).collect();
+    let drained = sessions.drain_finished();
+    if drained.is_empty() {
+        return;
+    }
+    let needs_existing_plot_snapshot = drained
+        .iter()
+        .any(|(_, session)| matches!(session, ActiveSession::Till(_)));
+    let existing_plot_positions: HashSet<_> = if needs_existing_plot_snapshot {
+        plots.iter().map(|(_, plot)| plot.pos).collect()
+    } else {
+        HashSet::new()
+    };
     let mut completion_till_positions = HashSet::new();
-    for (player, finished) in sessions.drain_finished() {
+    for (player, finished) in drained {
         let target = finished.position();
         if context.actor_queries.clients.get(player).is_ok() {
             if let Err(reason) = validate_lingtian_interaction(
@@ -1175,15 +1213,9 @@ pub fn auto_set_plot_zone(
         if !plot.zone.is_empty() {
             continue;
         }
-        // fix-spec-1901-v2 §7.2 — zone backfill 使用方块中心
-        // `(x+0.5, y+0.5, z+0.5)`，与 `plot_zone_is_collapsed` / 灵田交互
-        // gate 的 block-center 合同一致（corner 与 center 的 AABB 边界判定
-        // 可能不同，必须统一）。
-        let pos = DVec3::new(
-            plot.pos.x as f64 + 0.5,
-            plot.pos.y as f64 + 0.5,
-            plot.pos.z as f64 + 0.5,
-        );
+        // fix-spec-1901-v2 §7.2 — zone backfill 与 collapse lookup 共用方块坐标合同：
+        // 水平取中心，Y 取方块整数底面，确保 inclusive upper-Y boundary 身份一致。
+        let pos = plot_zone_center(&plot);
         let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
         else {
             pending.entities.insert(entity);
@@ -2001,17 +2033,23 @@ fn advance_plot_one_lingtian_tick_in_zone(
     advance_one_lingtian_tick(plot, kind, zone_qi_ref);
 }
 
+fn plot_zone_center(plot: &LingtianPlot) -> DVec3 {
+    DVec3::new(
+        plot.pos.x as f64 + 0.5,
+        plot.pos.y as f64,
+        plot.pos.z as f64 + 0.5,
+    )
+}
+
 fn plot_zone_is_collapsed(plot: &LingtianPlot, zone_registry: Option<&ZoneRegistry>) -> bool {
     let Some(zone_registry) = zone_registry else {
         return false;
     };
-    let plot_pos = DVec3::new(
-        plot.pos.x as f64 + 0.5,
-        plot.pos.y as f64,
-        plot.pos.z as f64 + 0.5,
-    );
     zone_registry
-        .find_zone(crate::world::dimension::DimensionKind::Overworld, plot_pos)
+        .find_zone(
+            crate::world::dimension::DimensionKind::Overworld,
+            plot_zone_center(plot),
+        )
         .is_some_and(|zone| {
             zone.active_events
                 .iter()

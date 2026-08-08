@@ -392,6 +392,7 @@ fn home_zone_qi(patrol: &NpcPatrol, zone_registry: Option<&ZoneRegistry>) -> f32
 
 fn till_action_system(
     mut npcs: Query<(&Position, &mut ScatteredCultivator), With<NpcMarker>>,
+    plots: Query<&LingtianPlot>,
     mut sessions: Option<ResMut<ActiveLingtianSessions>>,
     mut actions: Query<(&Actor, &mut ActionState), With<TillAction>>,
 ) {
@@ -413,15 +414,17 @@ fn till_action_system(
                     continue;
                 };
                 let pos = plot_pos_from_world(position.get());
-                let inserted = sessions.try_insert(
+                let plot_exists = plots.iter().any(|plot| plot.pos == pos);
+                let inserted = sessions.try_insert_till(
                     *actor,
-                    ActiveSession::Till(TillSession::new(
+                    TillSession::new(
                         pos,
                         HoeKind::Iron,
                         0,
                         SessionMode::Auto,
                         PlotEnvironment::base(),
-                    )),
+                    ),
+                    plot_exists,
                 );
                 if inserted {
                     cultivator.home_plot = Some(pos);
@@ -966,6 +969,50 @@ mod tests {
             .world()
             .get::<Client>(replenish_actor)
             .is_none());
+    }
+
+    #[test]
+    fn npc_till_rejects_existing_plot_without_claiming_home_or_session() {
+        let pos = BlockPos::new(3, 63, 4);
+        let mut app = App::new();
+        app.insert_resource(ActiveLingtianSessions::new())
+            .add_systems(Update, till_action_system);
+        app.world_mut().spawn(LingtianPlot::new(pos, None));
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(3.2, 64.0, 4.8)),
+                ScatteredCultivator::new(FarmingTemperament::Patient),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), ActionState::Requested, TillAction))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<ActionState>(action),
+            Some(&ActionState::Failure),
+            "NPC Till on an existing plot must fail rather than create a duplicate session"
+        );
+        assert!(
+            app.world()
+                .resource::<ActiveLingtianSessions>()
+                .get(npc)
+                .is_none(),
+            "existing-plot rejection must not leave a Till session behind"
+        );
+        assert_eq!(
+            app.world()
+                .get::<ScatteredCultivator>(npc)
+                .unwrap()
+                .home_plot,
+            None,
+            "rejected Till must not claim the existing plot as the NPC home plot"
+        );
     }
 
     #[test]
