@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 核验 server/.cargo/config.toml 经仓库 canonical 入口 `cd server && cargo ...` 生效。
+# 核验 server/.cargo/config.toml 经仓库 canonical 构建令牌入口生效。
 # 不改依赖版本；只证明 profile.dev.debug = line-tables-only 被 cargo 读入。
 set -euo pipefail
 
@@ -22,8 +22,9 @@ check "config.toml 存在" test -f "$CFG"
 check "含 [profile.dev]" grep -q '^\[profile\.dev\]' "$CFG"
 check "含 debug = line-tables-only" grep -Eq 'debug\s*=\s*"line-tables-only"' "$CFG"
 
-echo "== 2. 最小 crate 复现：crate 本地 .cargo/config.toml 经 cargo build -v 注入 rustc"
-PROBE=$(mktemp -d /tmp/cargo-profile-probe.XXXXXX)
+echo "== 2. 最小 crate 复现：crate 本地 .cargo/config.toml 经构建令牌 wrapper 注入 rustc"
+mkdir -p "$ROOT/tmp"
+PROBE=$(mktemp -d "$ROOT/tmp/cargo-profile-probe.XXXXXX")
 cleanup() { rm -rf "$PROBE"; }
 trap cleanup EXIT
 mkdir -p "$PROBE"
@@ -51,7 +52,7 @@ check_not_false_debug() {
 }
 check "主 rustc 未使用 debuginfo=2" check_not_false_debug
 
-echo "== 3. 仓库 server 入口：cd server && cargo metadata 可运行（config 不破坏 canonical 入口）"
+echo "== 3. 仓库 server 入口：构建令牌 wrapper cargo metadata 可运行（config 不破坏 canonical 入口）"
 (
   cd "$SERVER"
   "$ROOT/scripts/build-token.sh" cargo metadata --no-deps --format-version 1 >"$PROBE/meta.json"

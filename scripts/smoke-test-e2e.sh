@@ -144,7 +144,7 @@ if (
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_LOG" 2>&1; then
-  pass "server cargo test"
+  pass "server wrapper cargo test"
 else
   finalize_failure "server" "server staged smoke failed; see $SERVER_LOG"
 fi

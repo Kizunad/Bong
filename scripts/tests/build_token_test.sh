@@ -4,6 +4,13 @@ set -euo pipefail
 
 TOKEN=$(realpath "$(dirname "$0")/../build-token.sh")
 SANDBOX=$(mktemp -d /tmp/build-token-test.XXXXXX)
+FAKE_REPO=$(mktemp -d /tmp/build-token-root-test.XXXXXX)
+FAKE_REPO_B=$(mktemp -d /tmp/build-token-root-test-b.XXXXXX)
+mkdir -p "$FAKE_REPO/scripts" "$FAKE_REPO/server" "$FAKE_REPO/client"
+mkdir -p "$FAKE_REPO_B/scripts" "$FAKE_REPO_B/server" "$FAKE_REPO_B/client"
+cp "$TOKEN" "$FAKE_REPO/scripts/build-token.sh"
+cp "$TOKEN" "$FAKE_REPO_B/scripts/build-token.sh"
+chmod +x "$FAKE_REPO/scripts/build-token.sh" "$FAKE_REPO_B/scripts/build-token.sh"
 PIDS=()
 cleanup() {
   trap - EXIT
@@ -12,7 +19,7 @@ cleanup() {
     kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
-  rm -rf "$SANDBOX"
+  rm -rf "$SANDBOX" "$FAKE_REPO" "$FAKE_REPO_B"
 }
 trap cleanup EXIT
 
@@ -39,6 +46,8 @@ fi
   printf '\n'
 } >>"$BUILD_TOKEN_TEST_LOG"
 printf '%s\0' "$@" >"$BUILD_TOKEN_TEST_DIR/$name.argv"
+printf '%s\n' "$$" >"$BUILD_TOKEN_TEST_DIR/$name.pid"
+printf '%s\n' "$PPID" >"$BUILD_TOKEN_TEST_DIR/$name.parent"
 touch "$BUILD_TOKEN_TEST_DIR/$name.started"
 if [[ ${BUILD_TOKEN_TEST_SPAWN_DESCENDANT:-0} == 1 ]]; then
   (sleep 30) &
@@ -46,6 +55,7 @@ if [[ ${BUILD_TOKEN_TEST_SPAWN_DESCENDANT:-0} == 1 ]]; then
 fi
 while [ ! -f "$BUILD_TOKEN_TEST_DIR/$name.release" ]; do sleep 0.02; done
 printf 'end %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
+touch "$BUILD_TOKEN_TEST_DIR/$name.finished"
 EOF
 cat >"$SANDBOX/gradlew" <<'EOF'
 #!/usr/bin/env bash
@@ -54,17 +64,49 @@ name=$1
 shift
 printf 'start %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
 printf '%s\0' "$@" >"$BUILD_TOKEN_TEST_DIR/$name.argv"
+printf '%s\n' "$$" >"$BUILD_TOKEN_TEST_DIR/$name.pid"
+printf '%s\n' "$PPID" >"$BUILD_TOKEN_TEST_DIR/$name.parent"
 touch "$BUILD_TOKEN_TEST_DIR/$name.started"
 while [ ! -f "$BUILD_TOKEN_TEST_DIR/$name.release" ]; do sleep 0.02; done
 printf 'end %s %s\n' "$name" "$(date +%s%N)" >>"$BUILD_TOKEN_TEST_LOG"
+touch "$BUILD_TOKEN_TEST_DIR/$name.finished"
 EOF
-chmod +x "$SANDBOX/bin/cargo" "$SANDBOX/gradlew"
-
-export PATH="$SANDBOX/bin:$PATH"
+cat >"$FAKE_REPO/server/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$PWD" >"$BUILD_TOKEN_TEST_DIR/root-cargo.cwd"
+if [[ ${1:-} == root_cargo ]]; then
+  exit 0
+fi
+exec "$BUILD_TOKEN_TEST_DIR/bin/cargo" "$@"
+EOF
+cat >"$FAKE_REPO/client/gradlew" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$PWD" >"$BUILD_TOKEN_TEST_DIR/root-gradle.cwd"
+if [[ ${1:-} == root_gradle ]]; then
+  exit 0
+fi
+exec "$BUILD_TOKEN_TEST_DIR/gradlew" "$@"
+EOF
+cp "$FAKE_REPO/client/gradlew" "$FAKE_REPO_B/client/gradlew"
+chmod +x "$SANDBOX/bin/cargo" "$SANDBOX/gradlew" "$FAKE_REPO/server/cargo" "$FAKE_REPO/client/gradlew" "$FAKE_REPO_B/client/gradlew"
 export BUILD_TOKEN_TEST_DIR="$SANDBOX"
 export BUILD_TOKEN_TEST_LOG="$SANDBOX/events.log"
 export BONG_BUILD_TOKEN_TEST_MODE=1
 export BONG_BUILD_TOKEN_DIR="$SANDBOX/locks"
+TEST_TOKEN="$FAKE_REPO/scripts/build-token.sh"
+ORIGINAL_PATH=$PATH
+if ! (cd "$FAKE_REPO" && PATH="$FAKE_REPO/server:$ORIGINAL_PATH" "$TEST_TOKEN" cargo root_cargo) >"$SANDBOX/root-cargo.out" 2>"$SANDBOX/root-cargo.err"; then
+  fail "根目录 cargo 调用未能到达 server 构建根目录"
+fi
+if ! (cd "$FAKE_REPO" && PATH="$ORIGINAL_PATH" "$TEST_TOKEN" gradle root_gradle) >"$SANDBOX/root-gradle.out" 2>"$SANDBOX/root-gradle.err"; then
+  fail "根目录 gradle 调用未能到达 client 构建根目录"
+fi
+export PATH="$FAKE_REPO/server:$ORIGINAL_PATH"
+[ "$(cat "$SANDBOX/root-cargo.cwd")" = "$FAKE_REPO/server" ] || fail "根目录 cargo 调用未切到 server"
+[ "$(cat "$SANDBOX/root-gradle.cwd")" = "$FAKE_REPO/client" ] || fail "根目录 gradle 调用未切到 client";
+TOKEN="$TEST_TOKEN"
 
 wait_file() {
   local file=$1
@@ -81,6 +123,11 @@ not_started_briefly() {
     sleep 0.02
   done
   return 0
+}
+process_is_running() {
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null || true)
+  [[ -n "$state" && "$state" != Z* ]]
 }
 start_cargo() {
   local name=$1
@@ -177,20 +224,26 @@ start_cargo survivor
 if wait_file "$SANDBOX/crash_holder.started" && wait_file "$SANDBOX/survivor.started"; then
   start_cargo crash_waiter
   if not_started_briefly "$SANDBOX/crash_waiter.started"; then
-    crash_holder_pid="${PIDS[0]}"
-    crash_child_pid="$(pgrep -P "$crash_holder_pid" | head -1)"
-    kill -9 "$crash_holder_pid"
-    wait "$crash_holder_pid" 2>/dev/null || true
-    if wait_file "$SANDBOX/crash_waiter.started"; then
-      pass "持锁 wrapper 被 SIGKILL 后等待者获得槽位，无需释放 orphan command"
+    crash_wrapper_pid="$(cat "$SANDBOX/crash_holder.parent")"
+    crash_child_pid="$(cat "$SANDBOX/crash_holder.pid")"
+    kill -9 "$crash_wrapper_pid"
+    wait "$crash_wrapper_pid" 2>/dev/null || true
+    if not_started_briefly "$SANDBOX/crash_waiter.started"; then
+      pass "持锁 wrapper 被 SIGKILL 后 orphan build 仍占用槽位"
     else
-      fail "SIGKILL 后槽位未自动释放"
+      fail "wrapper 被 SIGKILL 后等待者在 build 结束前错误获得槽位"
     fi
-    if [ -z "$crash_child_pid" ] || ! kill -0 "$crash_child_pid" 2>/dev/null; then
-      pass "wrapped command 不继承 token lock"
+    touch "$SANDBOX/crash_holder.release"
+    if wait_file "$SANDBOX/crash_holder.finished" && wait_file "$SANDBOX/crash_waiter.started"; then
+      pass "orphan build 结束后等待者才获得槽位"
     else
-      pass "orphan wrapped command 可存活但不再持有 token"
+      fail "orphan build 结束后等待者未获得槽位"
+    fi
+    if process_is_running "$crash_child_pid"; then
+      fail "crash build child 在 release 后仍存活"
       kill "$crash_child_pid" 2>/dev/null || true
+    else
+      pass "crash build child 生命周期已结束"
     fi
   else
     fail "崩溃测试等待者未被双槽位阻塞"
@@ -224,6 +277,45 @@ else
   fail "cwd 共享测试两个持锁进程未同时启动"
 fi
 for name in cwd_first cwd_occupant cwd_second; do touch "$SANDBOX/$name.release"; done
+for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
+PIDS=()
+
+rm -f "$SANDBOX/production_first.started" "$SANDBOX/production_first.release" \
+  "$SANDBOX/production_second.started" "$SANDBOX/production_second.release"
+(
+  cd "$FAKE_REPO"
+  env -u BONG_BUILD_TOKEN_DIR \
+    BONG_BUILD_TOKEN_TEST_MODE=0 \
+    BUILD_TOKEN_TEST_DIR="$SANDBOX" \
+    BUILD_TOKEN_TEST_LOG="$BUILD_TOKEN_TEST_LOG" \
+    "$FAKE_REPO/scripts/build-token.sh" gradle production_first
+) >"$SANDBOX/production_first.out" 2>"$SANDBOX/production_first.err" &
+PIDS+=("$!")
+if wait_file "$SANDBOX/production_first.started"; then
+  (
+    cd "$FAKE_REPO_B"
+    env -u BONG_BUILD_TOKEN_DIR \
+      BONG_BUILD_TOKEN_TEST_MODE=0 \
+      BUILD_TOKEN_TEST_DIR="$SANDBOX" \
+      BUILD_TOKEN_TEST_LOG="$BUILD_TOKEN_TEST_LOG" \
+      "$FAKE_REPO_B/scripts/build-token.sh" gradle production_second
+  ) >"$SANDBOX/production_second.out" 2>"$SANDBOX/production_second.err" &
+  PIDS+=("$!")
+  if not_started_briefly "$SANDBOX/production_second.started"; then
+    pass "不同 worktree 在 production lock domain 共享 gradle 槽位"
+  else
+    fail "production lock domain 被不同 worktree 错误分裂"
+  fi
+  touch "$SANDBOX/production_first.release"
+  if wait_file "$SANDBOX/production_second.started"; then
+    pass "production lock domain 槽位释放后允许第二个 worktree 进入"
+  else
+    fail "production lock domain 第二个 worktree 未在释放后进入"
+  fi
+  touch "$SANDBOX/production_second.release"
+else
+  fail "production lock domain 首个 worktree 未获得 gradle 槽位"
+fi
 for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
 PIDS=()
 

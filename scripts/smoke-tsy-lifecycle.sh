@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # plan-tsy-lifecycle-v1 §8 — TSY 生命周期自动化 smoke 脚本
 #
-# 跑：server cargo test (含 lifecycle 单测 + integration test) + schema vitest +
+# 跑：server 构建令牌 wrapper cargo test (含 lifecycle 单测 + integration test) + schema vitest +
 # grep 校验 lifecycle 模块的关键 system 都注册到 world::register。
 #
-# 与 smoke-tsy-loot.sh 同样不跑 cargo clippy / fmt-check —— main 上 dead-code
+# 与 smoke-tsy-loot.sh 同样不跑 wrapper cargo clippy / fmt-check —— main 上 dead-code
 # warning 已知红，由后续 plan 单独清理；本脚本只校验"lifecycle 路径全绿"。
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-echo "[smoke-tsy-lifecycle] running cargo fmt --check (server)..."
+echo "[smoke-tsy-lifecycle] running wrapper cargo fmt --check (server)..."
 (cd server && "$REPO_ROOT/scripts/build-token.sh" cargo fmt --check)
 
-echo "[smoke-tsy-lifecycle] running cargo test (server, full suite ~1300+ tests)..."
+echo "[smoke-tsy-lifecycle] running wrapper cargo test (server, full suite ~1300+ tests)..."
 (cd server && "$REPO_ROOT/scripts/build-token.sh" cargo test --bin bong-server)
 
 echo "[smoke-tsy-lifecycle] running schema vitest + check..."
