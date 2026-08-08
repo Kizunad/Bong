@@ -334,33 +334,45 @@ else
     echo "[bot-e2e] BOT_E2E_REUSE=1 但 $HOST:$PORT 没有可复用的 server，拒绝退化为未隔离自起" >&2
     exit 2
   fi
-  PROFILE_FLAG=""
+  PROFILE_FLAG=()
+  TARGET_PROFILE=debug
   if [ "$PROFILE" = "release" ]; then
-    PROFILE_FLAG="--release"
+    PROFILE_FLAG=(--release)
+    TARGET_PROFILE=release
   fi
-  echo "[bot-e2e] 启动 server（cargo run $PROFILE_FLAG，log: $SERVER_LOG）"
-  # Dedicated world evidence moves all relative persistent outputs into its evidence runtime.
-  # Generic mode retains the historical checkout/server CWD for callers that rely on that contract.
+  echo "[bot-e2e] 构建并启动本轮 immutable server（profile=$PROFILE，log: $SERVER_LOG）"
+  export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
+  export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
+  CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT/server/target}"
+  if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+    CARGO_TARGET_ROOT="$ROOT/server/$CARGO_TARGET_ROOT"
+  fi
+  if ! (
+    cd "$ROOT/server"
+    "$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"
+  ) >>"$SERVER_LOG" 2>&1; then
+    echo "[bot-e2e] server build failed" >&2
+    tail -n 40 "$SERVER_LOG" >&2
+    exit 1
+  fi
+  SERVER_BINARY="$EVIDENCE_DIR/bong-server-$TARGET_PROFILE"
+  install -m 700 "$CARGO_TARGET_ROOT/$TARGET_PROFILE/bong-server" "$SERVER_BINARY"
   (
     if [ "$OWNED_WORLD_MODE" = "1" ]; then
       cd "$SERVER_RUNTIME_DIR/server"
       export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"
       export BONG_ASSETS_DIR="$ROOT/server"
-      # private cwd does not discover checkout/server/.cargo/config.toml automatically.
-      export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"
     else
       cd "$ROOT/server"
     fi
-    export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
-    export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
     export BONG_OPERATORS="$BOT_E2E_OPERATORS"
     export BONG_OPERATORS_ALLOW_OFFLINE=1
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
       # The owned server is the harness capability boundary; REUSE never enters this branch.
       export BONG_DEV_MODE=1
     fi
-    exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
-  ) >"$SERVER_LOG" 2>&1 &
+    exec "$SERVER_BINARY"
+  ) >>"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
 
   # Owned-fixture mode needs an exact fixture marker. Generic mode keeps the prior common
