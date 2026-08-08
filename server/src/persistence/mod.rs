@@ -1324,23 +1324,43 @@ fn flush_known_techniques_shutdown_slice(
         .ok_or_else(|| SliceRunError::new("PlayerStatePersistence is unavailable"))?;
     world.resource_scope(
         |world, mut activations: valence::prelude::Mut<KnownTechniquesActivations>| {
+            let mut subjects = activations.0.keys().cloned().collect::<Vec<_>>();
+            subjects.sort();
             let mut flushed = false;
-            for (subject, activation) in &mut activations.0 {
+            let mut failures = Vec::new();
+            for subject in subjects {
+                let Some(activation) = activations.0.get_mut(&subject) else {
+                    continue;
+                };
                 if activation.guarded.load_status() == slice::SliceLoadStatus::Failed {
                     continue;
                 }
-                sync_known_techniques_activation(world, subject, activation)?;
-                flushed |= persist_known_techniques_activation(
-                    activation,
-                    &persistence,
-                    WriteOutlet::Shutdown,
-                )? == SliceRunOutcome::Flushed;
+                let result = (|| -> Result<SliceRunOutcome, SliceRunError> {
+                    sync_known_techniques_activation(world, &subject, activation)?;
+                    persist_known_techniques_activation(
+                        activation,
+                        &persistence,
+                        WriteOutlet::Shutdown,
+                    )
+                })();
+                match result {
+                    Ok(SliceRunOutcome::Flushed) => flushed = true,
+                    Ok(SliceRunOutcome::Clean | SliceRunOutcome::SkippedBlocked) => {}
+                    Err(error) => failures.push(format!("{subject}: {error}")),
+                }
             }
-            Ok(if flushed {
-                SliceRunOutcome::Flushed
+            if failures.is_empty() {
+                Ok(if flushed {
+                    SliceRunOutcome::Flushed
+                } else {
+                    SliceRunOutcome::Clean
+                })
             } else {
-                SliceRunOutcome::Clean
-            })
+                Err(SliceRunError::new(format!(
+                    "known techniques shutdown flush failed: {}",
+                    failures.join("; ")
+                )))
+            }
         },
     )
 }
@@ -9844,6 +9864,7 @@ mod persistence_tests {
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
+    use crate::persistence::slice::{dispatch_shutdown_flushes, ShutdownFlushReport};
     use crate::player::state::{
         save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
     };
@@ -14297,6 +14318,190 @@ mod persistence_tests {
             "production must install every wired production descriptor"
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn production_zone_runtime_registry() -> PersistenceSliceRegistry {
+        let mut registry = PersistenceSliceRegistry::empty();
+        registry
+            .register_slice::<ZoneRuntimePersistenceSlice>()
+            .and_then(|()| registry.register_slice::<KnownTechniquesPersistenceSlice>())
+            .expect("production slice descriptors must remain valid");
+        registry
+    }
+
+    fn dispatch_production_shutdown_flushes(world: &mut World) -> ShutdownFlushReport {
+        dispatch_shutdown_flushes(
+            world,
+            ShutdownFlushRequest::Requested,
+            &ProductionSliceClock {
+                runtime_tick: 0,
+                wall_unix_millis: 0,
+            },
+        )
+        .expect("production shutdown dispatch must not fail closed on a missing registry")
+    }
+
+    fn zone_runtime_failure_message(report: &ShutdownFlushReport) -> Option<&str> {
+        report
+            .failures
+            .iter()
+            .find(|failure| failure.slice_id.as_str() == "world.zone_runtime")
+            .map(|failure| failure.error.message())
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_registry_is_clean_noop() {
+        let (settings, root) = persistence_settings("zone-flush-no-registry");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.attempted, 2,
+            "both production descriptors must be attempted, actual {report:?}"
+        );
+        assert!(
+            report.failures.is_empty(),
+            "an absent ZoneRegistry must be a clean no-op, actual {report:?}"
+        );
+        assert_eq!(report.clean, 2, "both slices must report Clean");
+        assert!(
+            load_zone_runtime_snapshot(&settings)
+                .expect("zone snapshot load must work on a fixture database")
+                .is_empty(),
+            "an absent ZoneRegistry must not write any zone runtime rows"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_settings_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-settings");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("PersistenceSettings is unavailable"),
+            "the zone slice must fail closed without PersistenceSettings, actual {report:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_qi_account_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-qi-account");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the zone slice may fail without WorldQiAccount, actual {report:?}"
+        );
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("WorldQiAccount is unavailable"),
+            "the zone slice must fail closed without WorldQiAccount"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_zone_runtime_flush_without_clock_errors() {
+        let (settings, root) = persistence_settings("zone-flush-no-clock");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+        world.insert_resource(PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        ));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the zone slice may fail without CultivationClock, actual {report:?}"
+        );
+        assert_eq!(
+            zone_runtime_failure_message(&report),
+            Some("CultivationClock is unavailable"),
+            "the zone slice must fail closed without CultivationClock"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_known_techniques_resource_failure_keeps_later_zone_flush_running() {
+        let (settings, root) = persistence_settings("zone-flush-later-descriptor");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let mut world = World::new();
+        world.insert_resource(production_zone_runtime_registry());
+        world.insert_resource(settings.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations::default());
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the known-techniques slice may fail without PlayerStatePersistence, actual {report:?}"
+        );
+        assert_eq!(
+            report.failures[0].slice_id.as_str(),
+            "player.known_techniques"
+        );
+        assert!(
+            report.flushed >= 1,
+            "the zone slice must still flush, actual {report:?}"
+        );
+        let records = load_zone_runtime_snapshot(&settings)
+            .expect("the later zone descriptor must have persisted its snapshot");
+        assert!(
+            !records.is_empty(),
+            "the later zone descriptor must write rows after the earlier known-techniques failure"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
