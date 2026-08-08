@@ -1139,7 +1139,10 @@ fn validate_known_techniques_reconnect_target(
     Ok(())
 }
 
-fn preflight_known_techniques_slice(world: &World, context: &SliceRunContext) -> SliceRunResult {
+fn preflight_known_techniques_slice(
+    world: &mut World,
+    context: &SliceRunContext,
+) -> SliceRunResult {
     let subject = context
         .handoff_key
         .as_deref()

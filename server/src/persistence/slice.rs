@@ -217,7 +217,7 @@ impl std::error::Error for SliceRunError {}
 pub type SliceRunResult = Result<SliceRunOutcome, SliceRunError>;
 pub type SliceHook = fn(&mut World, &SliceRunContext) -> SliceRunResult;
 /// Read-only reconnect check run before any old activation is destroyed.
-pub type SlicePreflightHook = fn(&World, &SliceRunContext) -> SliceRunResult;
+pub type SlicePreflightHook = fn(&mut World, &SliceRunContext) -> SliceRunResult;
 /// Destructive reconnect cleanup with no blocked/error return channel.
 ///
 /// A panic is a descriptor contract violation and remains fail-fast.
@@ -2617,7 +2617,7 @@ mod tests {
         Ok(SliceRunOutcome::Clean)
     }
 
-    fn noop_preflight(_world: &World, context: &SliceRunContext) -> SliceRunResult {
+    fn noop_preflight(_world: &mut World, context: &SliceRunContext) -> SliceRunResult {
         assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
         Ok(SliceRunOutcome::Clean)
     }
@@ -3184,8 +3184,17 @@ mod tests {
         trace_handoff_load(world, context, SliceId::new("player.activation_second"))
     }
 
-    fn handoff_preflight(world: &World, context: &SliceRunContext) -> SliceRunResult {
+    fn handoff_preflight(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
         assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
+        {
+            let mut trace = world.resource_mut::<HandoffTrace>();
+            trace.events.push((
+                context.reason,
+                context.runtime_tick,
+                context.wall_unix_millis,
+                context.handoff_key.clone().unwrap(),
+            ));
+        }
         let trace = world.resource::<HandoffTrace>();
         if trace.fail_preflight {
             Err(SliceRunError::new("reconnect preflight failed"))
@@ -3419,6 +3428,8 @@ mod tests {
             vec![
                 SliceRunReason::DisconnectSave,
                 SliceRunReason::DisconnectSave,
+                SliceRunReason::ReconnectPreflight,
+                SliceRunReason::ReconnectPreflight,
                 SliceRunReason::ReconnectCleanup,
                 SliceRunReason::ReconnectCleanup,
                 SliceRunReason::ReconnectLoad,
@@ -3846,12 +3857,12 @@ mod tests {
         }
     }
 
-    fn atomic_preflight_first(_world: &World, context: &SliceRunContext) -> SliceRunResult {
+    fn atomic_preflight_first(_world: &mut World, context: &SliceRunContext) -> SliceRunResult {
         assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
         Ok(SliceRunOutcome::Clean)
     }
 
-    fn atomic_preflight_second(world: &World, context: &SliceRunContext) -> SliceRunResult {
+    fn atomic_preflight_second(world: &mut World, context: &SliceRunContext) -> SliceRunResult {
         assert_eq!(context.reason, SliceRunReason::ReconnectPreflight);
         match world.resource::<AtomicReconnectState>().second_preflight {
             InjectedHookResult::Clean => Ok(SliceRunOutcome::Clean),
