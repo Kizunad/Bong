@@ -1000,8 +1000,11 @@ impl TerrainProvider {
                 None
             }
         };
-        let tile_area = match usize::try_from(manifest.tile_size) {
-            Ok(tile_size) if tile_size > 0 => match tile_size.checked_mul(tile_size) {
+        let tile_area = match manifest.tile_size {
+            tile_size if tile_size > 0 => match tile_size
+                .checked_mul(tile_size)
+                .and_then(|area| usize::try_from(area).ok())
+            {
                 Some(tile_area) => Some(tile_area),
                 None => {
                     diagnostics.push(
@@ -1027,21 +1030,26 @@ impl TerrainProvider {
                     None
                 }
             };
-        let biome_palette = match manifest
-            .biome_palette
-            .iter()
-            .map(|name| biome_id_from_name(name, biomes))
-            .collect::<Result<Vec<_>, _>>()
-        {
-            Ok(palette) if !palette.is_empty() => Some(palette),
-            Ok(_) => {
-                diagnostics.push("manifest: biome palette cannot be empty".to_string());
-                None
+        let mut resolved_biomes = Vec::with_capacity(manifest.biome_palette.len());
+        let mut biome_errors = Vec::new();
+        for (index, name) in manifest.biome_palette.iter().enumerate() {
+            match biome_id_from_name(name, biomes) {
+                Ok(id) => resolved_biomes.push(id),
+                Err(error) => biome_errors.push(format!(
+                    "manifest: biome_palette #{} '{}': {error}",
+                    index + 1,
+                    name
+                )),
             }
-            Err(error) => {
-                diagnostics.push(format!("manifest: {error}"));
-                None
-            }
+        }
+        let biome_palette = if !biome_errors.is_empty() {
+            diagnostics.extend(biome_errors);
+            None
+        } else if resolved_biomes.is_empty() {
+            diagnostics.push("manifest: biome palette cannot be empty".to_string());
+            None
+        } else {
+            Some(resolved_biomes)
         };
 
         collect_decoration_template_diagnostics(
@@ -1069,19 +1077,67 @@ impl TerrainProvider {
             }
         };
 
+        let raster_root = match std::fs::canonicalize(raster_dir) {
+            Ok(root) => Some(root),
+            Err(error) => {
+                diagnostics.push(format!(
+                    "raster: failed to anchor raster directory {}: {error}",
+                    raster_dir.display()
+                ));
+                None
+            }
+        };
         let mut tiles = HashMap::with_capacity(manifest.tiles.len());
-        if let Some(tile_area) = tile_area {
+        if let (Some(tile_area), Some(raster_root)) = (tile_area, raster_root.as_deref()) {
             for tile in &manifest.tiles {
+                for layer_name in &tile.layers {
+                    if layer_schema(layer_name).is_none() {
+                        diagnostics.push(format!(
+                            "raster: tile ({},{}) '{}' declares unknown layer '{}', not present in the canonical layer registry",
+                            tile.tile_x, tile.tile_z, tile.dir, layer_name
+                        ));
+                    }
+                }
                 let tile_dir = raster_dir.join(&tile.dir);
-                match TileFields::load(&tile_dir, &tile.layers, tile_area) {
+                match TileFields::load(&tile_dir, raster_root, &tile.layers, tile_area) {
                     Ok(tile_fields) => {
-                        if !manifest.surface_palette.is_empty() {
-                            collect_surface_palette_id_diagnostics(
-                                tile,
-                                &tile_fields,
-                                manifest.surface_palette.len(),
-                                &mut diagnostics,
-                            );
+                        collect_palette_id_diagnostics(
+                            tile,
+                            "surface_id",
+                            &tile_fields.surface_id,
+                            "surface palette",
+                            manifest.surface_palette.len(),
+                            &mut diagnostics,
+                        );
+                        collect_palette_id_diagnostics(
+                            tile,
+                            "subsurface_id",
+                            &tile_fields.subsurface_id,
+                            "surface palette",
+                            manifest.surface_palette.len(),
+                            &mut diagnostics,
+                        );
+                        collect_palette_id_diagnostics(
+                            tile,
+                            "biome_id",
+                            &tile_fields.biome_id,
+                            "biome palette",
+                            manifest.biome_palette.len(),
+                            &mut diagnostics,
+                        );
+                        for (layer_name, bytes) in [
+                            ("flora_variant_id", tile_fields.flora_variant_id.as_ref()),
+                            ("ground_cover_id", tile_fields.ground_cover_id.as_ref()),
+                        ] {
+                            if let Some(bytes) = bytes {
+                                collect_decoration_palette_id_diagnostics(
+                                    tile,
+                                    layer_name,
+                                    bytes,
+                                    decoration_palette.as_deref().unwrap_or(&[]),
+                                    &mut diagnostics,
+                                );
+                            }
                         }
                         tiles.insert((tile.tile_x, tile.tile_z), tile_fields);
                     }
@@ -1464,102 +1520,270 @@ fn read_tile_layer_u8(tile: &TileFields, index: usize, layer_name: &str, fallbac
     }
 }
 
-fn collect_surface_palette_id_diagnostics(
+fn collect_palette_id_diagnostics(
     tile: &ManifestTile,
-    fields: &TileFields,
+    layer_name: &str,
+    bytes: &Mmap,
+    palette_name: &str,
     palette_len: usize,
     diagnostics: &mut Vec<String>,
 ) {
-    for (layer_name, bytes) in [
-        ("surface_id", &fields.surface_id),
-        ("subsurface_id", &fields.subsurface_id),
-    ] {
-        for (index, value) in bytes.iter().copied().enumerate() {
-            if usize::from(value) >= palette_len {
-                diagnostics.push(format!(
-                    "raster: tile ({},{}) '{}' layer {layer_name} index {index} has palette id {value}, but surface palette length is {palette_len}",
-                    tile.tile_x, tile.tile_z, tile.dir
+    const MAX_EXAMPLES: usize = 8;
+    let mut invalid_count = 0usize;
+    let mut examples = Vec::new();
+    for (index, value) in bytes.iter().copied().enumerate() {
+        if usize::from(value) >= palette_len {
+            invalid_count += 1;
+            if examples.len() < MAX_EXAMPLES {
+                examples.push(format!("index {index} has palette id {value}"));
+            }
+        }
+    }
+    if invalid_count > 0 {
+        diagnostics.push(format!(
+            "raster: tile ({},{}) '{}' layer {layer_name} has {invalid_count} ids outside {palette_name} length {palette_len}; first {}: {}",
+            tile.tile_x,
+            tile.tile_z,
+            tile.dir,
+            examples.len(),
+            examples.join(", ")
+        ));
+    }
+}
+
+fn collect_decoration_palette_id_diagnostics(
+    tile: &ManifestTile,
+    layer_name: &str,
+    bytes: &Mmap,
+    palette: &[Option<Decoration>],
+    diagnostics: &mut Vec<String>,
+) {
+    const MAX_EXAMPLES: usize = 8;
+    let mut invalid_count = 0usize;
+    let mut examples = Vec::new();
+    for (index, value) in bytes.iter().copied().enumerate() {
+        if value == 0 {
+            continue;
+        }
+        if !palette.get(usize::from(value)).is_some_and(Option::is_some) {
+            invalid_count += 1;
+            if examples.len() < MAX_EXAMPLES {
+                examples.push(format!(
+                    "index {index} has unoccupied decoration id {value}"
                 ));
             }
         }
     }
+    if invalid_count > 0 {
+        diagnostics.push(format!(
+            "raster: tile ({},{}) '{}' layer {layer_name} has {invalid_count} ids without resident decoration palette entries; first {}: {}",
+            tile.tile_x,
+            tile.tile_z,
+            tile.dir,
+            examples.len(),
+            examples.join(", ")
+        ));
+    }
 }
 
 impl TileFields {
-    fn load(tile_dir: &Path, layers: &[String], tile_area: usize) -> Result<Self, String> {
+    fn load(
+        tile_dir: &Path,
+        raster_root: &Path,
+        layers: &[String],
+        tile_area: usize,
+    ) -> Result<Self, String> {
         let area4 = tile_area * 4;
         Ok(Self {
             // worldgen-v4 P0 §8.1 #1: spans_count.bin is u8/col (tile_area bytes);
             // spans.bin is SPAN_STRIDE bytes/col. Both replace height.bin.
-            spans_count: map_required_layer(tile_dir, "spans_count.bin", tile_area)?,
-            spans: map_required_layer(tile_dir, "spans.bin", tile_area * SPAN_STRIDE)?,
-            surface_id: map_required_layer(tile_dir, "surface_id.bin", tile_area)?,
-            subsurface_id: map_required_layer(tile_dir, "subsurface_id.bin", tile_area)?,
-            biome_id: map_required_layer(tile_dir, "biome_id.bin", tile_area)?,
-            water_level: map_required_layer(tile_dir, "water_level.bin", area4)?,
-            feature_mask: map_required_layer(tile_dir, "feature_mask.bin", area4)?,
-            boundary_weight: map_required_layer(tile_dir, "boundary_weight.bin", area4)?,
-            rift_axis_sdf: map_optional_layer(tile_dir, layers, "rift_axis_sdf", area4)?,
-            portal_anchor_sdf: map_optional_layer(tile_dir, layers, "portal_anchor_sdf", area4)?,
-            rim_edge_mask: map_optional_layer(tile_dir, layers, "rim_edge_mask", area4)?,
-            fracture_mask: map_optional_layer(tile_dir, layers, "fracture_mask", area4)?,
-            neg_pressure: map_optional_layer(tile_dir, layers, "neg_pressure", area4)?,
-            ruin_density: map_optional_layer(tile_dir, layers, "ruin_density", area4)?,
-            qi_density: map_optional_layer(tile_dir, layers, "qi_density", area4)?,
-            mofa_decay: map_optional_layer(tile_dir, layers, "mofa_decay", area4)?,
-            qi_vein_flow: map_optional_layer(tile_dir, layers, "qi_vein_flow", area4)?,
+            spans_count: map_required_layer(tile_dir, raster_root, "spans_count.bin", tile_area)?,
+            spans: map_required_layer(tile_dir, raster_root, "spans.bin", tile_area * SPAN_STRIDE)?,
+            surface_id: map_required_layer(tile_dir, raster_root, "surface_id.bin", tile_area)?,
+            subsurface_id: map_required_layer(
+                tile_dir,
+                raster_root,
+                "subsurface_id.bin",
+                tile_area,
+            )?,
+            biome_id: map_required_layer(tile_dir, raster_root, "biome_id.bin", tile_area)?,
+            water_level: map_required_layer(tile_dir, raster_root, "water_level.bin", area4)?,
+            feature_mask: map_required_layer(tile_dir, raster_root, "feature_mask.bin", area4)?,
+            boundary_weight: map_required_layer(
+                tile_dir,
+                raster_root,
+                "boundary_weight.bin",
+                area4,
+            )?,
+            rift_axis_sdf: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "rift_axis_sdf",
+                area4,
+            )?,
+            portal_anchor_sdf: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "portal_anchor_sdf",
+                area4,
+            )?,
+            rim_edge_mask: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "rim_edge_mask",
+                area4,
+            )?,
+            fracture_mask: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "fracture_mask",
+                area4,
+            )?,
+            neg_pressure: map_optional_layer(tile_dir, raster_root, layers, "neg_pressure", area4)?,
+            ruin_density: map_optional_layer(tile_dir, raster_root, layers, "ruin_density", area4)?,
+            qi_density: map_optional_layer(tile_dir, raster_root, layers, "qi_density", area4)?,
+            mofa_decay: map_optional_layer(tile_dir, raster_root, layers, "mofa_decay", area4)?,
+            qi_vein_flow: map_optional_layer(tile_dir, raster_root, layers, "qi_vein_flow", area4)?,
             spirit_eye_candidates: map_optional_layer(
                 tile_dir,
+                raster_root,
                 layers,
                 "spirit_eye_candidates",
                 tile_area,
             )?,
             realm_collapse_mask: map_optional_layer(
                 tile_dir,
+                raster_root,
                 layers,
                 "realm_collapse_mask",
                 tile_area,
             )?,
-            sky_island_mask: map_optional_layer(tile_dir, layers, "sky_island_mask", area4)?,
-            underground_tier: map_optional_layer(tile_dir, layers, "underground_tier", tile_area)?,
-            flora_density: map_optional_layer(tile_dir, layers, "flora_density", area4)?,
-            flora_variant_id: map_optional_layer(tile_dir, layers, "flora_variant_id", tile_area)?,
+            sky_island_mask: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "sky_island_mask",
+                area4,
+            )?,
+            underground_tier: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "underground_tier",
+                tile_area,
+            )?,
+            flora_density: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "flora_density",
+                area4,
+            )?,
+            flora_variant_id: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "flora_variant_id",
+                tile_area,
+            )?,
             ground_cover_density: map_optional_layer(
                 tile_dir,
+                raster_root,
                 layers,
                 "ground_cover_density",
                 area4,
             )?,
-            ground_cover_id: map_optional_layer(tile_dir, layers, "ground_cover_id", tile_area)?,
+            ground_cover_id: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "ground_cover_id",
+                tile_area,
+            )?,
             zongmen_origin_id: map_optional_layer(
                 tile_dir,
+                raster_root,
                 layers,
                 "zongmen_origin_id",
                 tile_area,
             )?,
-            mineral_density: map_optional_layer(tile_dir, layers, "mineral_density", area4)?,
-            mineral_kind: map_optional_layer(tile_dir, layers, "mineral_kind", tile_area)?,
-            fossil_bbox: map_optional_layer(tile_dir, layers, "fossil_bbox", tile_area)?,
-            anomaly_intensity: map_optional_layer(tile_dir, layers, "anomaly_intensity", area4)?,
-            anomaly_kind: map_optional_layer(tile_dir, layers, "anomaly_kind", tile_area)?,
-            tsy_presence: map_optional_layer(tile_dir, layers, "tsy_presence", tile_area)?,
-            tsy_origin_id: map_optional_layer(tile_dir, layers, "tsy_origin_id", tile_area)?,
-            tsy_depth_tier: map_optional_layer(tile_dir, layers, "tsy_depth_tier", tile_area)?,
+            mineral_density: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "mineral_density",
+                area4,
+            )?,
+            mineral_kind: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "mineral_kind",
+                tile_area,
+            )?,
+            fossil_bbox: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "fossil_bbox",
+                tile_area,
+            )?,
+            anomaly_intensity: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "anomaly_intensity",
+                area4,
+            )?,
+            anomaly_kind: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "anomaly_kind",
+                tile_area,
+            )?,
+            tsy_presence: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "tsy_presence",
+                tile_area,
+            )?,
+            tsy_origin_id: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "tsy_origin_id",
+                tile_area,
+            )?,
+            tsy_depth_tier: map_optional_layer(
+                tile_dir,
+                raster_root,
+                layers,
+                "tsy_depth_tier",
+                tile_area,
+            )?,
         })
     }
 }
 
 fn map_required_layer(
     tile_dir: &Path,
+    raster_root: &Path,
     file_name: &str,
     expected_len: usize,
 ) -> Result<Mmap, String> {
     let path = tile_dir.join(file_name);
-    map_file(&path, expected_len)
+    map_file_under_root(&path, raster_root, expected_len)
 }
 
 fn map_optional_layer(
     tile_dir: &Path,
+    raster_root: &Path,
     layers: &[String],
     layer_name: &str,
     expected_len: usize,
@@ -1567,35 +1791,97 @@ fn map_optional_layer(
     if !layers.iter().any(|layer| layer == layer_name) {
         return Ok(None);
     }
-    map_file(&tile_dir.join(format!("{layer_name}.bin")), expected_len).map(Some)
+    map_file_under_root(
+        &tile_dir.join(format!("{layer_name}.bin")),
+        raster_root,
+        expected_len,
+    )
+    .map(Some)
 }
 
-fn map_file(path: &Path, expected_len: usize) -> Result<Mmap, String> {
-    let file = File::open(path)
+fn map_file_under_root(
+    path: &Path,
+    raster_root: &Path,
+    expected_len: usize,
+) -> Result<Mmap, String> {
+    let file = super::nbt_io::open_regular_file_under_root(path, raster_root)
         .map_err(|error| format!("failed to open raster layer {}: {error}", path.display()))?;
-    let metadata = file
+    map_open_file(path, file, expected_len)
+}
+
+#[cfg(test)]
+fn map_file(path: &Path, expected_len: usize) -> Result<Mmap, String> {
+    let file = super::nbt_io::open_regular_file_no_follow(path)
+        .map_err(|error| format!("failed to open raster layer {}: {error}", path.display()))?;
+    map_open_file(path, file, expected_len)
+}
+
+#[cfg(test)]
+type AfterMmapHook = Box<dyn FnOnce(&std::fs::File)>;
+
+#[cfg(test)]
+thread_local! {
+    static MAP_OPEN_FILE_AFTER_MMAP_TEST_HOOK: std::cell::RefCell<Option<AfterMmapHook>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn set_map_open_file_after_mmap_test_hook(hook: impl FnOnce(&std::fs::File) + 'static) {
+    MAP_OPEN_FILE_AFTER_MMAP_TEST_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+fn map_open_file(path: &Path, file: File, expected_len: usize) -> Result<Mmap, String> {
+    let metadata_before = file
         .metadata()
         .map_err(|error| format!("failed to stat raster layer {}: {error}", path.display()))?;
-    if metadata.len() as usize != expected_len {
+    if metadata_before.len() as usize != expected_len {
         return Err(format!(
             "raster layer {} has {} bytes, expected {}",
             path.display(),
-            metadata.len(),
+            metadata_before.len(),
             expected_len
         ));
     }
+    file.try_lock_shared().map_err(|error| {
+        format!(
+            "failed to acquire shared lock for raster layer {}: {error}",
+            path.display()
+        )
+    })?;
+    let mmap = unsafe { memmap2::MmapOptions::new().len(expected_len).map(&file) }
+        .map_err(|error| format!("failed to mmap raster layer {}: {error}", path.display()))?;
+    #[cfg(test)]
+    MAP_OPEN_FILE_AFTER_MMAP_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(&file);
+        }
+    });
+    let metadata_after = file
+        .metadata()
+        .map_err(|error| format!("failed to restat raster layer {}: {error}", path.display()))?;
+    if metadata_before.len() != metadata_after.len()
+        || metadata_before.modified().ok() != metadata_after.modified().ok()
+    {
+        return Err(format!(
+            "raster layer {} changed while being mapped",
+            path.display()
+        ));
+    }
+    Ok(mmap)
+}
 
-    unsafe { Mmap::map(&file) }
-        .map_err(|error| format!("failed to mmap raster layer {}: {error}", path.display()))
+#[cfg(test)]
+fn read_only_mmap(bytes: &[u8]) -> Result<Mmap, std::io::Error> {
+    let mut mmap = memmap2::MmapMut::map_anon(bytes.len())?;
+    mmap.copy_from_slice(bytes);
+    mmap.make_read_only()
 }
 
 #[cfg(test)]
 fn anonymous_mmap_for_tests(bytes: &[u8]) -> Mmap {
-    let mut mmap = memmap2::MmapMut::map_anon(bytes.len())
-        .expect("anonymous test raster mmap should allocate");
-    mmap.copy_from_slice(bytes);
-    mmap.make_read_only()
-        .expect("anonymous test raster mmap should become read-only")
+    read_only_mmap(bytes).expect("anonymous test raster mmap should allocate")
 }
 
 fn read_u8(bytes: &Mmap, index: usize) -> u8 {
@@ -1714,6 +2000,14 @@ fn resolve_decoration_palette(
             diagnostics.push(format!(
                 "decoration '{}' (global_id {}) must declare at least one procedural block",
                 raw.name, raw.global_id
+            ));
+        }
+        if !raw.anchor.is_empty()
+            && !matches!(raw.anchor.as_str(), "ground" | "embedded" | "hanging")
+        {
+            diagnostics.push(format!(
+                "decoration '{}' (global_id {}) has invalid anchor '{}' (expected ground, embedded, or hanging)",
+                raw.name, raw.global_id, raw.anchor
             ));
         }
         if palette[id].is_some() {
@@ -2040,7 +2334,7 @@ mod tests {
             .iter()
             .map(|schema| schema.name.to_string())
             .collect::<Vec<_>>();
-        let tile = TileFields::load(&tile_dir, &layers, tile_area)
+        let tile = TileFields::load(&tile_dir, &root, &layers, tile_area)
             .expect("test raster fields should load");
         let mut tiles = HashMap::new();
         tiles.insert((0, 0), tile);
@@ -2819,6 +3113,59 @@ mod tests {
     }
 
     #[test]
+    fn load_preflighted_rejects_empty_biome_palette_and_invalid_tile_sizes() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let manifest_path = root.join("manifest.json");
+        for (tile_size, expected) in [
+            ("0", "tile_size must be positive"),
+            ("-1", "tile_size must be positive"),
+            ("2147483647", "tile_size squared overflowed"),
+        ] {
+            fs::write(
+                &manifest_path,
+                format!(
+                    r#"{{
+                "version":2,"tile_size":{tile_size},
+                "world_bounds":{{"min_x":0,"max_x":0,"min_z":0,"max_z":0}},
+                "surface_palette":["stone"],"biome_palette":["plains"],"tiles":[]
+            }}"#
+                ),
+            )
+            .unwrap();
+            let error = TerrainProvider::load_preflighted(
+                &manifest_path,
+                &root,
+                &test_biomes(),
+                &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+            )
+            .expect_err("invalid tile_size must reject admission");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        fs::write(
+            &manifest_path,
+            r#"{
+            "version":2,"tile_size":1,
+            "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette":["stone"],"biome_palette":[],"tiles":[]
+        }"#,
+        )
+        .unwrap();
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("empty biome palette must reject admission");
+        assert!(
+            error.to_string().contains("biome palette cannot be empty"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn load_preflighted_rejects_empty_surface_palette() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("empty-palette fixture root should be creatable");
@@ -2861,29 +3208,335 @@ mod tests {
         let palette_diagnostics = error
             .diagnostics()
             .iter()
-            .filter(|diagnostic| diagnostic.contains("surface palette length is 2"))
+            .filter(|diagnostic| diagnostic.contains("surface palette length 2"))
             .collect::<Vec<_>>();
         assert_eq!(
             palette_diagnostics.len(),
-            4,
-            "two bad surface ids and two bad subsurface ids must all survive aggregation: {error}"
+            2,
+            "surface and subsurface failures must each produce one bounded summary: {error}"
         );
         for expected in [
-            "surface_id index 1 has palette id 2",
-            "surface_id index 2 has palette id 3",
-            "subsurface_id index 0 has palette id 4",
-            "subsurface_id index 2 has palette id 5",
+            "surface_id has 2 ids outside surface palette length 2; first 2: index 1 has palette id 2, index 2 has palette id 3",
+            "subsurface_id has 2 ids outside surface palette length 2; first 2: index 0 has palette id 4, index 2 has palette id 5",
         ] {
             assert!(
                 palette_diagnostics
                     .iter()
                     .any(|diagnostic| diagnostic.contains(expected)
                         && diagnostic.contains("tile (0,0) 'tile_0_0'")),
-                "palette-id diagnostic must identify tile, layer, index, value, and palette length for {expected:?}: {error}"
+                "bounded palette diagnostic must identify layer, count, examples, and tile for {expected:?}: {error}"
             );
         }
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_preflighted_aggregates_every_unknown_biome() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],
+                "biome_palette":["missing_one","missing_two"],
+                "tiles":[]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("every unknown biome must reject aggregate preflight");
+        assert!(error.to_string().contains("biome_palette #1 'missing_one'"));
+        assert!(error.to_string().contains("biome_palette #2 'missing_two'"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_preflighted_rejects_sparse_decoration_palette_references() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        fs::write(tile_dir.join("flora_variant_id.bin"), [2]).unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "global_decoration_palette":[
+                    {"global_id":1,"profile":"test","local_id":1,"name":"one","kind":"flower","blocks":["grass"],"size_range":[1,1],"rarity":1.0,"notes":"","nbt_templates":[],"anchor":"ground"},
+                    {"global_id":3,"profile":"test","local_id":3,"name":"three","kind":"flower","blocks":["poppy"],"size_range":[1,1],"rarity":1.0,"notes":"","nbt_templates":[],"anchor":"ground"}
+                ],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["flora_variant_id"]}]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("a raster id naming an empty sparse palette slot must fail");
+        assert!(error.to_string().contains("unoccupied decoration id 2"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_preflighted_rejects_biome_flora_and_ground_cover_palette_overflow() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0, 0, 0, 0], &[0, 0, 0, 0]);
+        fs::write(tile_dir.join("biome_id.bin"), [0, 1, 0, 0]).unwrap();
+        fs::write(tile_dir.join("flora_variant_id.bin"), [0, 0, 2, 0]).unwrap();
+        fs::write(tile_dir.join("ground_cover_id.bin"), [0, 0, 0, 3]).unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+            "version":2,"tile_size":2,
+            "world_bounds":{"min_x":0,"max_x":1,"min_z":0,"max_z":1},
+            "surface_palette":["stone"],"biome_palette":["plains"],
+            "global_decoration_palette":[{
+                "global_id":1,"profile":"test","local_id":1,"name":"grass",
+                "kind":"flower","blocks":["grass"],"size_range":[1,1],
+                "rarity":1.0,"notes":"","nbt_templates":[],"anchor":"ground"
+            }],
+            "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0",
+                      "layers":["flora_variant_id","ground_cover_id"]}]
+        }"#,
+        )
+        .unwrap();
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("all palette-indexed raster layers must reject invalid foreign keys");
+        for expected in ["biome_id", "flora_variant_id", "ground_cover_id"] {
+            assert!(
+                error.to_string().contains(expected),
+                "missing {expected}: {error}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn raster_layer_is_an_immutable_startup_snapshot() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("layer.bin");
+        fs::write(&path, [1_u8, 2, 3, 4]).unwrap();
+        let snapshot = map_file(&path, 4).expect("valid layer must snapshot");
+        let replacement = root.join("replacement.bin");
+        fs::write(&replacement, [9_u8, 9, 9, 9]).unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        assert_eq!(
+            &snapshot[..],
+            &[1, 2, 3, 4],
+            "post-preflight disk mutation must not change admitted bytes"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn raster_layer_rejects_short_file_at_preflight() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("layer.bin");
+        fs::write(&path, [1_u8, 2, 3]).unwrap();
+        let error =
+            map_file(&path, 4).expect_err("short raster layer must be rejected at preflight");
+        assert!(
+            error.contains("has 3 bytes, expected 4"),
+            "expected length-mismatch diagnostic, got: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn raster_layer_rejects_file_mutated_while_being_mapped() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("layer.bin");
+        fs::write(&path, [1_u8, 2, 3, 4]).unwrap();
+        let hook_path = path.clone();
+        set_map_open_file_after_mmap_test_hook(move |_file| {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut writer =
+                std::io::BufWriter::new(OpenOptions::new().write(true).open(&hook_path).unwrap());
+            writer.write_all(&[5_u8, 6, 7, 8, 9, 10, 11, 12]).unwrap();
+            writer.flush().unwrap();
+        });
+        let error = map_file(&path, 4).expect_err("in-place mutation during map must be rejected");
+        assert!(
+            error.contains("changed while being mapped"),
+            "expected stability diagnostic, got: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_preflighted_rejects_tile_paths_outside_raster_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_dir();
+        let outside = unique_temp_dir();
+        write_required_raster_tile(&outside, &[0], &[0]);
+        fs::create_dir_all(&root).unwrap();
+        symlink(&outside, root.join("escaped_tile")).unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"escaped_tile","layers":[]}]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("symlinked tile ancestor must not escape the raster root");
+        assert!(error.to_string().contains("outside trusted root"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_preflighted_rejects_optional_layer_file_outside_raster_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_dir();
+        let outside = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        fs::write(outside.join("rift_axis_sdf.bin"), [0_u8; 4]).unwrap();
+        symlink(
+            outside.join("rift_axis_sdf.bin"),
+            tile_dir.join("rift_axis_sdf.bin"),
+        )
+        .unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["rift_axis_sdf"]}]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("optional raster symlink outside the root must fail closed");
+        assert!(
+            error.to_string().contains("outside trusted root"),
+            "optional layer escape must preserve trusted-root diagnostics: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn load_preflighted_rejects_unknown_manifest_layer_names() {
+        let root = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["flroa_density"]}]
+            }"#,
+        )
+        .unwrap();
+
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("unknown manifest layer names must reject provider admission");
+        assert!(
+            error.to_string().contains("unknown layer 'flroa_density'"),
+            "unknown layer diagnostics must name the exact producer typo: {error}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn load_preflighted_rejects_optional_layer_reparse_escape() {
+        // Windows reparse-point coverage is exercised by the same loader path;
+        // the no-follow handle admission must reject an external target.
+        let root = unique_temp_dir();
+        let outside = unique_temp_dir();
+        let tile_dir = root.join("tile_0_0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        write_required_raster_tile(&tile_dir, &[0], &[0]);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("rift_axis_sdf.bin"), [0_u8; 4]).unwrap();
+        std::os::windows::fs::symlink_file(
+            outside.join("rift_axis_sdf.bin"),
+            tile_dir.join("rift_axis_sdf.bin"),
+        )
+        .unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version":2,"tile_size":1,
+                "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette":["stone"],"biome_palette":["plains"],
+                "tiles":[{"tile_x":0,"tile_z":0,"dir":"tile_0_0","layers":["rift_axis_sdf"]}]
+            }"#,
+        )
+        .unwrap();
+        let error = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &test_biomes(),
+            &super::super::nbt_registry::DecorationNbtRegistry::empty(),
+        )
+        .expect_err("Windows reparse-point layer escape must fail closed");
+        assert!(error.to_string().contains("outside trusted root"));
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]
@@ -3079,10 +3732,39 @@ mod tests {
             "the public Decoration must carry the manifest's template path list"
         );
         assert_eq!(
+            deco.resolved_blocks,
+            vec![
+                BlockState::DIRT,
+                BlockState::MOSSY_COBBLESTONE,
+                BlockState::OAK_SIGN
+            ],
+            "manifest block ordering must lower unchanged into the procedural consumer palette"
+        );
+        assert_eq!(
             deco.anchor,
             DecorationAnchor::Embedded,
             "manifest anchor 'embedded' must lower to DecorationAnchor::Embedded on the public Decoration"
         );
+    }
+
+    #[test]
+    fn decoration_palette_rejects_explicit_invalid_anchor() {
+        let raw = ManifestDecoration {
+            global_id: 1,
+            profile: "test".into(),
+            local_id: 1,
+            name: "bad_anchor".into(),
+            kind: "crystal".into(),
+            blocks: vec!["stone".into()],
+            size_range: [1, 1],
+            rarity: 1.0,
+            notes: String::new(),
+            nbt_templates: Vec::new(),
+            anchor: "hangng".into(),
+        };
+        let error = resolve_decoration_palette(vec![raw], Path::new("manifest.json"))
+            .expect_err("explicit invalid anchors must not become ground placements");
+        assert!(error.contains("invalid anchor 'hangng'"), "{error}");
     }
 
     #[test]
@@ -3753,7 +4435,7 @@ mod tests {
         write_f32_layer(&tile_dir.join("feature_mask.bin"), 0.0, area);
         write_f32_layer(&tile_dir.join("boundary_weight.bin"), 0.0, area);
 
-        let tile = TileFields::load(&tile_dir, &[], area).expect("spans tile should load");
+        let tile = TileFields::load(&tile_dir, &root, &[], area).expect("spans tile should load");
         let mut tiles = HashMap::new();
         tiles.insert((0, 0), tile);
         let provider = TerrainProvider {
@@ -3824,7 +4506,7 @@ mod tests {
             "underground_tier".to_string(),
             "qi_vein_flow".to_string(),
         ];
-        let tile = TileFields::load(&tile_dir, &optional, area).expect("botany tile loads");
+        let tile = TileFields::load(&tile_dir, &root, &optional, area).expect("botany tile loads");
         let mut tiles = HashMap::new();
         tiles.insert((0, 0), tile);
         let provider = TerrainProvider {

@@ -1350,6 +1350,11 @@ mod tests {
             .expect("an unconfigured TSY raster remains backward-compatible")
             .is_none());
 
+        std::env::set_var(TSY_RASTER_PATH_ENV_VAR, "");
+        assert!(configured_tsy_raster_bootstrap()
+            .expect("an empty TSY raster path remains disabled")
+            .is_none());
+
         let missing = std::env::temp_dir().join(format!(
             "bong-registry-datafication-missing-tsy-{}.json",
             std::process::id()

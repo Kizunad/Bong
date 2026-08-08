@@ -1403,6 +1403,61 @@ mod nbt_stamp_tests {
         chunk.block_state(local_x as u32, local_y, local_z as u32)
     }
 
+    #[test]
+    fn manifest_resolved_blocks_flow_into_procedural_placement() {
+        use valence::prelude::{Biome, BiomeRegistry, Ident};
+
+        crate::world::terrain::blocks::initialize_default_block_catalog().unwrap();
+        let root = temp_dir("manifest_resolved_blocks");
+        let manifest_path = root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+            "version":2,"tile_size":1,
+            "world_bounds":{"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+            "surface_palette":["stone"],"biome_palette":["plains"],"tiles":[],
+            "global_decoration_palette":[{
+                "global_id":1,"profile":"test","local_id":1,"name":"authored_flower",
+                "kind":"flower","blocks":["poppy","grass"],"size_range":[1,1],
+                "rarity":1.0,"notes":"","nbt_templates":[],"anchor":"ground"
+            }]
+        }"#,
+        )
+        .unwrap();
+        let mut biomes = BiomeRegistry::default();
+        biomes.insert(Ident::new("plains").unwrap(), Biome::default());
+        let provider = TerrainProvider::load_preflighted(
+            &manifest_path,
+            &root,
+            &biomes,
+            &DecorationNbtRegistry::empty(),
+        )
+        .expect("valid manifest decoration must lower");
+        let mut decoration = provider
+            .decoration(1)
+            .expect("global id 1 must resolve")
+            .clone();
+        decoration.resolved_blocks = vec![BlockState::GRASS];
+        let mut chunk = make_chunk();
+        place_decoration(
+            &mut chunk,
+            3,
+            70,
+            4,
+            TEST_MIN_Y,
+            &decoration,
+            3,
+            4,
+            &DecorationNbtRegistry::empty(),
+        );
+        assert_eq!(
+            block_at(&chunk, 3, 70, 4),
+            BlockState::GRASS,
+            "placement must consume the pre-resolved state rather than re-resolving authored names"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     /// A single-block template of `block_name` at template-local origin (so anchor
     /// landing is observable by one cell).
     fn single_block_template(block_name: &str) -> StructureNbt {

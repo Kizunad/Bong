@@ -203,7 +203,11 @@ pub fn setup_world(
     mut dimensions: ResMut<DimensionTypeRegistry>,
     biomes: Res<BiomeRegistry>,
 ) {
-    let overworld = match select_world_bootstrap() {
+    let bootstrap = select_world_bootstrap();
+    if bootstrap_uses_default_decoration_registry(&bootstrap) {
+        commands.insert_resource(terrain::load_default_decoration_registry());
+    }
+    let overworld = match bootstrap {
         WorldBootstrap::FallbackFlat(fallback) => {
             log_fallback_flat_selection(&fallback.reason);
             tracing::info!("[bong][world] starting fallback flat world bootstrap");
@@ -253,6 +257,10 @@ fn spawn_tsy_layer(
 ) -> Entity {
     let layer = LayerBundle::new(ident!("bong:tsy"), dimensions, biomes, server);
     commands.spawn((layer, TsyLayer)).id()
+}
+
+fn bootstrap_uses_default_decoration_registry(bootstrap: &WorldBootstrap) -> bool {
+    !matches!(bootstrap, WorldBootstrap::TerrainRaster(_))
 }
 
 fn select_world_bootstrap() -> WorldBootstrap {
@@ -668,8 +676,17 @@ mod tests {
         FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, GRASS_Y,
         TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
-    use valence::prelude::{BlockPos, BlockState, ChunkLayer, DVec3, UnloadedChunk};
+    use valence::prelude::{
+        App, BlockPos, BlockState, ChunkLayer, DVec3, DimensionTypeRegistry, UnloadedChunk, Update,
+    };
     use valence::testing::ScenarioSingleClient;
+
+    use super::terrain::nbt_registry::DecorationNbtRegistry;
+
+    fn register_test_tsy_dimension(app: &mut App) {
+        let mut dimensions = app.world_mut().resource_mut::<DimensionTypeRegistry>();
+        super::dimension::register_tsy_dimension(&mut dimensions);
+    }
 
     #[test]
     fn fallback_spawn_zone_exists() {
@@ -864,6 +881,123 @@ mod tests {
                 reason: FallbackFlatReason::NoWorldBootstrapConfigured,
             })
         );
+    }
+
+    #[test]
+    fn every_bootstrap_mode_has_one_decoration_registry_owner() {
+        let fallback = WorldBootstrap::FallbackFlat(FallbackFlatBootstrap {
+            reason: FallbackFlatReason::NoWorldBootstrapConfigured,
+        });
+        let anvil = WorldBootstrap::AnvilIfPresent(AnvilBootstrapConfig {
+            world_path: PathBuf::from("world"),
+            region_dir: PathBuf::from("world/region"),
+        });
+        let raster = WorldBootstrap::TerrainRaster(RasterBootstrapConfig {
+            manifest_path: PathBuf::from("raster/manifest.json"),
+            raster_dir: PathBuf::from("raster"),
+        });
+        assert!(super::bootstrap_uses_default_decoration_registry(&fallback));
+        assert!(super::bootstrap_uses_default_decoration_registry(&anvil));
+        assert!(
+            !super::bootstrap_uses_default_decoration_registry(&raster),
+            "raster bootstrap inserts its transactionally validated registry"
+        );
+    }
+
+    #[test]
+    fn setup_world_inserts_default_decoration_registry_for_fallback() {
+        let _lock = env_lock();
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, None);
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        register_test_tsy_dimension(&mut app);
+        app.add_systems(Update, super::setup_world);
+        app.update();
+
+        let registry = app
+            .world()
+            .get_resource::<DecorationNbtRegistry>()
+            .expect("fallback setup_world must flush the default registry command into World");
+        assert!(
+            !registry.is_empty(),
+            "fallback setup_world must insert the authored default registry, not an absent resource"
+        );
+    }
+
+    #[test]
+    fn setup_world_inserts_default_decoration_registry_for_anvil() {
+        let world_path = unique_temp_dir("bong-world-bootstrap-ecs-anvil");
+        let region_dir = world_path.join(ANVIL_REGION_DIR_NAME);
+        fs::create_dir_all(&region_dir).expect("anvil ECS fixture region should be creatable");
+        fs::write(region_dir.join("r.0.0.mca"), b"placeholder")
+            .expect("anvil ECS fixture marker should be writable");
+
+        let _lock = env_lock();
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, Some(world_path.clone()));
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        register_test_tsy_dimension(&mut app);
+        app.add_systems(Update, super::setup_world);
+        app.update();
+
+        let registry = app
+            .world()
+            .get_resource::<DecorationNbtRegistry>()
+            .expect("anvil setup_world must flush the default registry command into World");
+        assert!(
+            !registry.is_empty(),
+            "anvil setup_world must insert the authored default registry, not an absent resource"
+        );
+
+        let _ = fs::remove_dir_all(world_path);
+    }
+
+    #[test]
+    fn setup_world_inserts_validated_registry_for_raster() {
+        let raster_dir = unique_temp_dir("bong-world-bootstrap-ecs-raster");
+        fs::create_dir_all(&raster_dir).expect("raster ECS fixture directory should be creatable");
+        let manifest_path = raster_dir.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "version": 2,
+                "tile_size": 1,
+                "world_bounds": {"min_x":0,"max_x":0,"min_z":0,"max_z":0},
+                "surface_palette": ["stone"],
+                "biome_palette": ["plains"],
+                "tiles": []
+            }"#,
+        )
+        .expect("raster ECS fixture manifest should be writable");
+
+        let _lock = env_lock();
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, None);
+        let _raster_guard =
+            ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, Some(manifest_path.clone()));
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        register_test_tsy_dimension(&mut app);
+        app.add_systems(Update, super::setup_world);
+        app.update();
+
+        assert!(
+            app.world()
+                .get_resource::<super::terrain::TerrainProviders>()
+                .is_some(),
+            "raster setup_world must flush the validated terrain providers into World"
+        );
+        let registry = app
+            .world()
+            .get_resource::<DecorationNbtRegistry>()
+            .expect("raster setup_world must flush the validated decoration registry into World");
+        assert!(
+            !registry.is_empty(),
+            "raster setup_world must insert the validated authored registry, not the empty fallback"
+        );
+
+        let _ = fs::remove_dir_all(raster_dir);
     }
 
     #[test]

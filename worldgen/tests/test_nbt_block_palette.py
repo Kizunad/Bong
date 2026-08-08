@@ -230,11 +230,12 @@ class DecorationNbtPaletteTest(unittest.TestCase):
         cls.deco_blocks_by_file = _load_all_nbt_blocks(("decorations",))
 
     def _resolved_block_names(self) -> set[str]:
-        import tomllib
-
-        with self.BLOCK_CATALOG_TOML.open("rb") as stream:
-            document = tomllib.load(stream)
-        return {str(entry["name"]) for entry in document["block"]}
+        names = set()
+        for line in self.BLOCK_CATALOG_TOML.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "name":
+                names.add(value.strip().strip('"'))
+        return names
 
     def test_decoration_assets_present(self) -> None:
         self.assertTrue(

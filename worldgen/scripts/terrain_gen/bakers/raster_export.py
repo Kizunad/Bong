@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+
+_ATOMIC_TEMP_COUNTER = threading.Lock()
+_ATOMIC_TEMP_SEQUENCE = 0
+
+
+def _next_atomic_temp_sequence() -> int:
+    global _ATOMIC_TEMP_SEQUENCE
+    with _ATOMIC_TEMP_COUNTER:
+        sequence = _ATOMIC_TEMP_SEQUENCE
+        _ATOMIC_TEMP_SEQUENCE += 1
+    return sequence
 
 from ..blueprint import BlueprintZone, PoiSpec
 from ..fields import (
@@ -98,14 +112,66 @@ def _layer_file_name(layer_name: str) -> str:
     return f"{layer_name}.bin"
 
 
-def _write_float_layer(path: Path, values: np.ndarray) -> None:
+def _stage_atomic_bytes(path: Path, data: bytes) -> Path:
+    sequence = _next_atomic_temp_sequence()
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{sequence}.tmp")
+    try:
+        with temp_path.open("xb") as file:
+            file.write(data)
+            file.flush()
+        return temp_path
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _sync_staged_files(pending: list[tuple[Path, Path]]) -> None:
+    sync = getattr(os, "sync", None)
+    if sync is not None:
+        sync()
+        return
+    for temp_path, _target_path in pending:
+        with temp_path.open("rb") as file:
+            os.fsync(file.fileno())
+
+
+def _publish_atomic_files(pending: list[tuple[Path, Path]]) -> None:
+    if not pending:
+        return
+    try:
+        _sync_staged_files(pending)
+        for temp_path, target_path in pending:
+            temp_path.replace(target_path)
+    finally:
+        for temp_path, _target_path in pending:
+            temp_path.unlink(missing_ok=True)
+
+
+def _write_atomic_batch(files: list[tuple[Path, bytes]]) -> None:
+    pending: list[tuple[Path, Path]] = []
+    try:
+        for target_path, data in files:
+            pending.append((_stage_atomic_bytes(target_path, data), target_path))
+        _publish_atomic_files(pending)
+    except BaseException:
+        for temp_path, _target_path in pending:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    _write_atomic_batch([(path, data)])
+
+
+
+def _float_layer_file(path: Path, values: np.ndarray) -> tuple[Path, bytes]:
     arr = np.ascontiguousarray(values, dtype=np.float32)
-    path.write_bytes(arr.tobytes())
+    return path, arr.tobytes()
 
 
-def _write_u8_layer(path: Path, values: np.ndarray) -> None:
+def _u8_layer_file(path: Path, values: np.ndarray) -> tuple[Path, bytes]:
     arr = np.ascontiguousarray(values, dtype=np.uint8)
-    path.write_bytes(arr.tobytes())
+    return path, arr.tobytes()
 
 
 # worldgen-v4 P3 §8.1 #1 — fixed world-level carve seed. The worldgen pipeline
@@ -242,6 +308,15 @@ def _carved_spans_for_tile(
     return columns
 
 
+def _span_files(tile_dir: Path, buffer, zone_chains: Optional[dict[str, list[Carver]]] = None) -> list[tuple[Path, bytes]]:
+    columns = _carved_spans_for_tile(buffer, zone_chains or {})
+    count_arr, spans_arr = encode_spans_arrays(columns)
+    return [
+        (tile_dir / SPANS_COUNT_FILE, count_arr.tobytes()),
+        (tile_dir / SPANS_FILE, spans_arr.tobytes()),
+    ]
+
+
 def _write_spans(
     tile_dir: Path, buffer, zone_chains: Optional[dict[str, list[Carver]]] = None
 ) -> None:
@@ -256,10 +331,49 @@ def _write_spans(
     Carving mutates only spans — it never adds a raster layer — and is
     deterministic for a given world coordinate + ``CARVE_SEED``.
     """
-    columns = _carved_spans_for_tile(buffer, zone_chains or {})
-    count_arr, spans_arr = encode_spans_arrays(columns)
-    (tile_dir / SPANS_COUNT_FILE).write_bytes(count_arr.tobytes())
-    (tile_dir / SPANS_FILE).write_bytes(spans_arr.tobytes())
+    _write_atomic_batch(_span_files(tile_dir, buffer, zone_chains))
+
+
+def _write_tile_rasters(
+    tile_dir: Path,
+    tile,
+    fields: GeneratedFieldSet,
+    layer_whitelist: Optional[set[str]],
+    written_layer_names: set[str],
+    zone_chains: Optional[dict[str, list[Carver]]] = None,
+) -> list[str]:
+    """Stage and publish one tile's spans and layer rasters as one batch."""
+    tile_dir.mkdir(parents=True, exist_ok=True)
+    pending = _span_files(tile_dir, tile, zone_chains)
+    written_layers: list[str] = []
+    for layer_name in fields.layers:
+        if layer_name not in tile.layers:
+            continue
+        if layer_name in _SPAN_FOLDED_LAYERS:
+            continue
+        if layer_whitelist is not None and layer_name not in layer_whitelist:
+            continue
+        layer_path = tile_dir / _layer_file_name(layer_name)
+        values = tile.layers[layer_name]
+        if layer_name in FLOAT_LAYERS:
+            pending.append(_float_layer_file(layer_path, values))
+        elif layer_name in UINT8_LAYERS:
+            if layer_name == "biome_id":
+                max_biome_id = int(values.max()) if len(values) > 0 else 0
+                palette_len = len(BIOME_PALETTE)
+                if max_biome_id >= palette_len:
+                    raise ValueError(
+                        f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
+                        f"in tile {tile.tile.tile_id}; "
+                        "extend BIOME_PALETTE (append-only) to cover this id"
+                    )
+            pending.append(_u8_layer_file(layer_path, values))
+        else:
+            raise ValueError(f"unsupported raster layer '{layer_name}'")
+        written_layers.append(layer_name)
+        written_layer_names.add(layer_name)
+    _write_atomic_batch(pending)
+    return written_layers
 
 
 def export_rasters(
@@ -455,61 +569,6 @@ def export_rasters(
         "manifest": manifest_path,
         "raster_dir": output_dir,
     }
-
-
-def _write_tile_rasters(
-    tile_dir: Path,
-    tile,
-    fields: GeneratedFieldSet,
-    layer_whitelist: Optional[set[str]],
-    written_layer_names: set[str],
-    zone_chains: Optional[dict[str, list[Carver]]] = None,
-) -> list[str]:
-    """Write one tile's spans + standalone layer rasters; return layer names.
-
-    Shared by the full ``export_rasters`` loop and the incremental
-    ``regen_zone`` path so both produce byte-identical on-disk tiles.
-
-    ``zone_chains`` (worldgen-v4 P3 §8.1 #1) carries the per-zone carver chains
-    so the span fold can be sculpted into 3D geometry; None = un-carved fold.
-    """
-    tile_dir.mkdir(parents=True, exist_ok=True)
-    # worldgen-v4 P0: spans replace height + the deleted vertical layers.
-    # worldgen-v4 P3: carve the folded spans into 3D landscape geometry.
-    _write_spans(tile_dir, tile, zone_chains)
-
-    written_layers: list[str] = []
-    for layer_name in fields.layers:
-        if layer_name not in tile.layers:
-            continue
-        if layer_name in _SPAN_FOLDED_LAYERS:
-            continue
-        if layer_whitelist is not None and layer_name not in layer_whitelist:
-            continue
-        layer_path = tile_dir / _layer_file_name(layer_name)
-        values = tile.layers[layer_name]
-        if layer_name in FLOAT_LAYERS:
-            _write_float_layer(layer_path, values)
-        elif layer_name in UINT8_LAYERS:
-            if layer_name == "biome_id":
-                max_biome_id = int(values.max()) if len(values) > 0 else 0
-                palette_len = len(BIOME_PALETTE)
-                # raise (not assert): a palette overflow corrupts the on-disk
-                # biome_id -> name mapping the Rust reader trusts.  `assert` would
-                # be stripped under `python -O`, letting the bad raster ship
-                # silently — this is a data-integrity guard, not a debug check.
-                if max_biome_id >= palette_len:
-                    raise ValueError(
-                        f"biome_id max={max_biome_id} >= len(BIOME_PALETTE)={palette_len} "
-                        f"in tile {tile.tile.tile_id}; "
-                        f"extend BIOME_PALETTE (append-only) to cover this id"
-                    )
-            _write_u8_layer(layer_path, values)
-        else:
-            raise ValueError(f"unsupported raster layer '{layer_name}'")
-        written_layers.append(layer_name)
-        written_layer_names.add(layer_name)
-    return written_layers
 
 
 def regen_zone(
