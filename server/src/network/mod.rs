@@ -5001,15 +5001,16 @@ mod tests {
             let tsx = repo_root.join("agent/node_modules/.bin/tsx");
             let runner =
                 repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
-            // 跨栈 devDependency 由编译期 baked 的 repo_root 解析；在没跑过 `npm ci` 的
-            // worktree / CI 环境里 tsx 不存在，此时跳过真实进程阶段而不是把整条网络单测
-            // 打成失败——完整链路由 tsx 就绪的机器覆盖（#1962 曾用 assert 硬锁）。
             if !tsx.is_file() || !runner.is_file() {
-                eprintln!(
-                    "[skip] cross-stack Tiandao consumer unavailable (tsx={}, runner={}); skipping the real-process stage",
+                let message = format!(
+                    "cross-stack Tiandao consumer unavailable (tsx={}, runner={})",
                     tsx.display(),
                     runner.display()
                 );
+                if std::env::var_os("CI").is_some() {
+                    panic!("{message}; CI must install agent dependencies before cargo test");
+                }
+                eprintln!("[skip] {message}; run `cd agent && npm ci` for the full local chain");
                 return None;
             }
 
