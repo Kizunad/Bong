@@ -3917,8 +3917,8 @@ mod tests {
     use crate::zhenfa::trap_content::TrapTargetFace;
     use valence::entity::{EntityId, EntityPlugin};
     use valence::prelude::{
-        ident, App, BlockPos, DVec3, EntityKind, EventReader, IntoSystemConfigs, OldPosition,
-        Position, ResMut, Update,
+        ident, App, BlockPos, DVec3, Entity, EntityKind, EventReader, IntoSystemConfigs,
+        OldPosition, Position, ResMut, Update,
     };
     use valence::protocol::packets::play::{CustomPayloadS2c, GameMessageS2c};
     use valence::testing::{create_mock_client, MockClientHelper};
@@ -5710,44 +5710,106 @@ mod tests {
         app.insert_resource(sessions);
     }
 
-    fn drain_lingtian_request_kinds(app: &mut App) -> Vec<(&'static str, BlockPos)> {
+    /// C2S lingtian 测试的完整 payload 捕获：不只是 kind/pos，还要锁住
+    /// actor 与 action 专属字段（hoe_instance_id / mode / plant_id / source），
+    /// 让 validator→queue→handler 契约的任何字段丢失都撞红（fix-spec §9.4）。
+    #[derive(Debug, PartialEq)]
+    struct LingtianDispatchCapture {
+        kind: &'static str,
+        pos: BlockPos,
+        player: Entity,
+        hoe_instance_id: Option<u64>,
+        mode: Option<SessionMode>,
+        plant_id: Option<String>,
+        source: Option<ReplenishSource>,
+    }
+
+    fn drain_lingtian_request_captures(app: &mut App) -> Vec<LingtianDispatchCapture> {
         let world = app.world_mut();
         let mut captured = Vec::new();
         captured.extend(
             world
                 .resource_mut::<Events<StartTillRequest>>()
                 .drain()
-                .map(|event| ("till", event.pos)),
+                .map(|event| LingtianDispatchCapture {
+                    kind: "till",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: Some(event.hoe_instance_id),
+                    mode: Some(event.mode),
+                    plant_id: None,
+                    source: None,
+                }),
         );
         captured.extend(
             world
                 .resource_mut::<Events<StartRenewRequest>>()
                 .drain()
-                .map(|event| ("renew", event.pos)),
+                .map(|event| LingtianDispatchCapture {
+                    kind: "renew",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: Some(event.hoe_instance_id),
+                    mode: None,
+                    plant_id: None,
+                    source: None,
+                }),
         );
         captured.extend(
             world
                 .resource_mut::<Events<StartPlantingRequest>>()
                 .drain()
-                .map(|event| ("planting", event.pos)),
+                .map(|event| LingtianDispatchCapture {
+                    kind: "planting",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: None,
+                    plant_id: Some(event.plant_id),
+                    source: None,
+                }),
         );
         captured.extend(
             world
                 .resource_mut::<Events<StartHarvestRequest>>()
                 .drain()
-                .map(|event| ("harvest", event.pos)),
+                .map(|event| LingtianDispatchCapture {
+                    kind: "harvest",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: Some(event.mode),
+                    plant_id: None,
+                    source: None,
+                }),
         );
         captured.extend(
             world
                 .resource_mut::<Events<StartReplenishRequest>>()
                 .drain()
-                .map(|event| ("replenish", event.pos)),
+                .map(|event| LingtianDispatchCapture {
+                    kind: "replenish",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: None,
+                    plant_id: None,
+                    source: Some(event.source),
+                }),
         );
         captured.extend(
             world
                 .resource_mut::<Events<StartDrainQiRequest>>()
                 .drain()
-                .map(|event| ("drain_qi", event.pos)),
+                .map(|event| LingtianDispatchCapture {
+                    kind: "drain_qi",
+                    pos: event.pos,
+                    player: event.player,
+                    hoe_instance_id: None,
+                    mode: None,
+                    plant_id: None,
+                    source: None,
+                }),
         );
         captured
     }
@@ -5756,7 +5818,7 @@ mod tests {
         payload: serde_json::Value,
         position: Option<DVec3>,
         dimension: Option<DimensionKind>,
-    ) -> Vec<(&'static str, BlockPos)> {
+    ) -> (Entity, Vec<LingtianDispatchCapture>) {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
         register_request_app(&mut app);
@@ -5780,7 +5842,7 @@ mod tests {
                 data: payload.to_string().into_bytes().into_boxed_slice(),
             });
         app.update();
-        drain_lingtian_request_kinds(&mut app)
+        (client, drain_lingtian_request_captures(&mut app))
     }
 
     #[test]
@@ -5833,14 +5895,25 @@ mod tests {
         ];
 
         for (kind, payload) in cases {
+            let (client, captures) = run_lingtian_dispatch_case(
+                payload.clone(),
+                Some(boundary),
+                Some(DimensionKind::Overworld),
+            );
+            let expected = LingtianDispatchCapture {
+                kind,
+                pos: target,
+                player: client,
+                hoe_instance_id: (kind == "till" || kind == "renew").then_some(7),
+                mode: (kind == "till" || kind == "harvest").then_some(SessionMode::Manual),
+                plant_id: (kind == "planting").then(|| "ci_she_hao".to_string()),
+                source: (kind == "replenish").then_some(ReplenishSource::BoneCoin),
+            };
             assert_eq!(
-                run_lingtian_dispatch_case(
-                    payload.clone(),
-                    Some(boundary),
-                    Some(DimensionKind::Overworld),
-                ),
-                vec![(kind, target)],
-                "boundary Overworld {kind} request must preserve its wire BlockPos and dispatch exactly once"
+                captures,
+                vec![expected],
+                "boundary Overworld {kind} request must preserve the full wire payload \
+                 (actor, BlockPos, and action-specific fields) and dispatch exactly once"
             );
             for (label, position, dimension) in [
                 (
@@ -5853,7 +5926,9 @@ mod tests {
                 ("missing dimension", Some(boundary), None),
             ] {
                 assert!(
-                    run_lingtian_dispatch_case(payload.clone(), position, dimension).is_empty(),
+                    run_lingtian_dispatch_case(payload.clone(), position, dimension)
+                        .1
+                        .is_empty(),
                     "{label} {kind} request must be rejected before ECS dispatch"
                 );
             }
@@ -5868,12 +5943,184 @@ mod tests {
                 Some(boundary),
                 Some(DimensionKind::Overworld),
             )
+            .1
             .is_empty(),
             "unknown replenish source must preserve its existing parse rejection"
         );
     }
 
-    fn register_request_app(app: &mut App) {
+    /// #13 — network ingress 集成契约：真实 producer → 真实 queue → 真实
+    /// validator 的多请求 wire FIFO。同 actor 一批三请求只 dispatch 第一条，
+    /// 其余保序回到队列；逐 tick 推进后按 wire 顺序逐条 dispatch。
+    #[test]
+    fn lingtian_c2s_ingress_queue_preserves_wire_fifo_order() {
+        let mut app = App::new();
+        register_request_app(&mut app);
+        let (client_bundle, _helper) = create_mock_client("LingtianFifo");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(5.0, 64.5, 0.5)));
+        app.world_mut()
+            .entity_mut(client)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        let send = |app: &mut App, payload: serde_json::Value| {
+            app.world_mut()
+                .resource_mut::<Events<CustomPayloadEvent>>()
+                .send(CustomPayloadEvent {
+                    client,
+                    channel: ident!("bong:client_request").into(),
+                    data: payload.to_string().into_bytes().into_boxed_slice(),
+                });
+        };
+        send(
+            &mut app,
+            serde_json::json!({
+                "type": "lingtian_start_till", "v": 1, "x": 1, "y": 64, "z": 0,
+                "hoe_instance_id": 7, "mode": "manual"
+            }),
+        );
+        send(
+            &mut app,
+            serde_json::json!({
+                "type": "lingtian_start_harvest", "v": 1, "x": 2, "y": 64, "z": 0,
+                "mode": "manual"
+            }),
+        );
+        send(
+            &mut app,
+            serde_json::json!({
+                "type": "lingtian_start_planting", "v": 1, "x": 3, "y": 64, "z": 0,
+                "plant_id": "ci_she_hao"
+            }),
+        );
+
+        let remaining_positions = |app: &App| -> Vec<BlockPos> {
+            app.world()
+                .resource::<crate::lingtian::requests::PendingLingtianRequests>()
+                .inbox
+                .iter()
+                .map(|request| request.actor_and_pos().1)
+                .collect()
+        };
+
+        app.update();
+        assert_eq!(
+            remaining_positions(&app),
+            vec![BlockPos::new(2, 64, 0), BlockPos::new(3, 64, 0)],
+            "same-tick same-actor later requests must stay queued in wire order"
+        );
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app),
+            vec![LingtianDispatchCapture {
+                kind: "till",
+                pos: BlockPos::new(1, 64, 0),
+                player: client,
+                hoe_instance_id: Some(7),
+                mode: Some(SessionMode::Manual),
+                plant_id: None,
+                source: None,
+            }],
+            "first wire request dispatches first"
+        );
+
+        app.update();
+        assert_eq!(
+            remaining_positions(&app),
+            vec![BlockPos::new(3, 64, 0)],
+            "second update must advance to the second wire request only"
+        );
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app)
+                .iter()
+                .map(|capture| capture.kind)
+                .collect::<Vec<_>>(),
+            vec!["harvest"],
+            "second wire request dispatches second"
+        );
+
+        app.update();
+        assert!(
+            remaining_positions(&app).is_empty(),
+            "third update must drain the final wire request"
+        );
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app)
+                .iter()
+                .map(|capture| capture.kind)
+                .collect::<Vec<_>>(),
+            vec!["planting"],
+            "third wire request dispatches last"
+        );
+    }
+
+    /// #16 — 生产装配回归：`LingtianRequestIngressSet` 的排序边是 producer 先于
+    /// validator 的唯一机制。validator 先注册、producer 后注册（反插入序）时，
+    /// 删除 `network/mod.rs` 里 producer 的 `.in_set(...)` 会让本测试撞红
+    /// （请求停留在持久队列、本 tick 无 dispatch）。
+    #[test]
+    fn production_ingress_wiring_orders_producer_before_validator() {
+        let mut app = App::new();
+        register_request_resources(&mut app);
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        app.add_systems(
+            Update,
+            crate::lingtian::systems::validate_and_dispatch_lingtian_requests
+                .after(crate::lingtian::LingtianRequestIngressSet),
+        );
+        crate::network::register_lingtian_ingress_wiring(&mut app);
+        app.add_systems(
+            Update,
+            crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
+        );
+
+        let (client_bundle, _helper) = create_mock_client("IngressWiring");
+        let client = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(client)
+            .insert(Position::new(DVec3::new(0.5, 64.5, 0.5)));
+        app.world_mut()
+            .entity_mut(client)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+        app.world_mut()
+            .resource_mut::<Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client,
+                channel: ident!("bong:client_request").into(),
+                data: serde_json::json!({
+                    "type": "lingtian_start_till", "v": 1, "x": 0, "y": 64, "z": 0,
+                    "hoe_instance_id": 7, "mode": "manual"
+                })
+                .to_string()
+                .into_bytes()
+                .into_boxed_slice(),
+            });
+
+        app.update();
+
+        assert_eq!(
+            drain_lingtian_request_captures(&mut app),
+            vec![LingtianDispatchCapture {
+                kind: "till",
+                pos: BlockPos::new(0, 64, 0),
+                player: client,
+                hoe_instance_id: Some(7),
+                mode: Some(SessionMode::Manual),
+                plant_id: None,
+                source: None,
+            }],
+            "production ingress wiring must dispatch the wire request in the same tick"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::lingtian::requests::PendingLingtianRequests>()
+                .is_empty(),
+            "dispatched request must leave the persistent ingress queue"
+        );
+    }
+
+    fn register_request_resources(app: &mut App) {
         app.insert_resource(CombatClock::default());
         app.insert_resource(crate::cultivation::skill_registry::init_registry());
         // plan-bug-qc-p1 §skill-cast P0：经脉依赖表（测试场景 default 空，各测可再声明）
@@ -5946,13 +6193,22 @@ mod tests {
         app.add_event::<crate::network::agent_ui::AgentUiResponseEvent>();
         // plan-worldgen-v4 P5 §8.1#5 — dev give-block intent（ClientRequestDispatchParams 需要）。
         app.add_event::<crate::cmd::dev::block_picker::BlockPickerGiveIntent>();
+    }
+
+    /// 生产装配：producer 经 `LingtianRequestIngressSet`（与
+    /// `network::register_app_wiring` 同路径），validator 排在该 set 之后
+    /// （与 `lingtian::register` 的 chain 同合同）。测试删掉 set membership
+    /// 会直接破坏这里的排序边（见 `production_ingress_wiring_orders_*`）。
+    fn register_request_systems(app: &mut App) {
+        crate::network::register_lingtian_ingress_wiring(app);
         app.add_systems(
             Update,
-            (
-                handle_client_request_payloads,
-                crate::network::inventory_event_emit::emit_durability_changed_inventory_events,
-            )
-                .chain(),
+            crate::network::inventory_event_emit::emit_durability_changed_inventory_events
+                // 原 test 装配对 producer 与 emitter 用了 `.chain()`：inventory move
+                // 的 durability payload 必须同帧发出（`inventory_move_applies_*` 单
+                // update + flush 断言）。拆生产装配后 chain 没了，改挂 set 后置边保
+                // 持同帧语义——生产路径不依赖此边（每帧全扫，晚一帧无害）。
+                .after(crate::lingtian::LingtianRequestIngressSet),
         );
         // fix-spec-1901-v2 §9.2 — exercise the real C2S ingress queue followed by
         // the single post-transfer validator, rather than treating Start* events
@@ -5961,12 +6217,17 @@ mod tests {
         app.add_systems(
             Update,
             crate::lingtian::systems::validate_and_dispatch_lingtian_requests
-                .after(handle_client_request_payloads),
+                .after(crate::lingtian::LingtianRequestIngressSet),
         );
         app.add_systems(
             Update,
             crate::alchemy::apply_alchemy_explode_outcomes.after(handle_client_request_payloads),
         );
+    }
+
+    fn register_request_app(app: &mut App) {
+        register_request_resources(app);
+        register_request_systems(app);
     }
 
     fn upsert_test_harvest_session(

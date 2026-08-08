@@ -383,6 +383,14 @@ pub(crate) fn register_craft_start_runtime_system(app: &mut App) {
 /// 拆成两段是为了让接线门禁测试能跑**真正的生产装配路径**：`register_app_wiring` 只做
 /// `insert_resource` / `add_systems` / `add_event`，不起线程、不碰 IO，测试可直接调用；
 /// 起 Redis bridge 线程那段单独关在 `bootstrap_redis_bridge` 里（PR #1262 review 要求）。
+pub(crate) fn register_lingtian_ingress_wiring(app: &mut App) {
+    app.add_systems(
+        Update,
+        client_request_handler::handle_client_request_payloads
+            .in_set(crate::lingtian::LingtianRequestIngressSet),
+    );
+}
+
 pub fn register(app: &mut App) {
     bootstrap_redis_bridge(app);
     register_app_wiring(app);
@@ -897,11 +905,7 @@ pub(crate) fn register_app_wiring(app: &mut App) {
     // fix-spec-1901-v2 §4.5 — lingtian C2S 入口排进 `LingtianRequestIngressSet`：
     // 只入队，不读权威位置；post-transfer validator 排在其后（见 lingtian::register
     // 的 chain：ingress → AuthoritativePositionCommitSet → validator）。
-    app.add_systems(
-        Update,
-        client_request_handler::handle_client_request_payloads
-            .in_set(crate::lingtian::LingtianRequestIngressSet),
-    );
+    register_lingtian_ingress_wiring(app);
     // plan-scroll-reading-v1 P2 §8.1 #4 — 读卷循环动画死亡/断线兜底清理（模板：
     // combat::shield_block::cleanup_shield_on_{death,disconnect}）。死亡分支需在
     // death_arbiter_tick 之后（DeathEvent 已 emit）；断线分支需在
