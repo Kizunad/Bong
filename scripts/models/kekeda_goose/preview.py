@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """珂珂达 —— 一键预览：重生成三层模型 + 渲染全部视图到本目录。
 
-产出（均落在 scripts/models/kekeda_goose/）：
-  render_skeleton.png         骨架三视图
-  render_skeleton_detail.png  骨架特写：头喙栉板 / 蹼足 / 收翼俯视 / 龙骨
-  render_muscle.png           骨 + 肌三视图
-  render_muscle_bare.png      只软组织三视图
-  render_explode.png          延展视图（各件沿离轴方向散开）
-  render_plume.png            绒羽/外观层三视图 —— **最终成品**
-  render_plume_anatomy.png    绒羽叠在骨+肌上，看包裹关系与羽簇长短
-  render_face.png             脸部特写（正 / 3-4 / 侧）
-  render_layers.png           三层并排对照
-  muscle_atlas.png            逐肌群图集
+产出全部落在 scripts/models/kekeda_goose/renders/ 下，按**看的目的**分四个目录
+（编号前缀让它们按重要性排序，成品永远在最上面）：
+
+  1_final/     成品 —— 平时只需要看这个
+      three_view.png      正 / 侧 / 3-4
+      detail.png          脸部 · 收翼 · 尾 · 游戏观看距离
+  2_layers/    分层对照 —— 讲"球是外层撑的，不是身体大"
+      three_layers.png    骨架 → +肌肉脂肪 → +外观 并排
+      anatomy_cutaway.png 半剖：左半骨+肌，右半外观
+  3_skeleton/  骨架层
+      three_view.png · detail.png（头喙栉板 / 蹼足 / 收翼俯视 / 龙骨）
+  4_muscle/    肌肉层
+      three_view.png（骨+肌）· bare.png（纯软组织）
+      explode.png（各件散开）· atlas.png（逐肌群图集）
 
 图上标签一律用 ASCII —— PIL 默认位图字体没有 CJK 字形，中文会渲成一排方框。
 
@@ -31,6 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 MODELS = REPO / "local_models" / "kekeda_goose"
+OUT = HERE / "renders"
 
 sys.path.insert(0, str(HERE.parent))
 from render_bbmodel import render, render_three_view  # noqa: E402
@@ -56,10 +60,11 @@ SKELETON_SHOTS = [
     ("folded wing (top)", 20, 46, (0.0, 9.6, 0.0), 12.0),
     ("ribcage / keel", 96, 12, (0.0, 8.0, -1.0), 12.0),
 ]
-FACE_SHOTS = [
-    ("face front", 180, 3, (0.0, 14.2, -4.4), 8.0),
-    ("face 3/4", 140, 10, (0.0, 14.2, -4.2), 8.5),
-    ("face side", 96, 4, (0.0, 14.2, -4.6), 8.5),
+FINAL_SHOTS = [
+    ("face 3/4", 148, 10, (0.0, 14.1, -4.6), 9.0),
+    ("folded wing", 128, 16, (0.0, 8.4, 0.8), 15.0),
+    ("rear 3/4", 325, 14, (0.0, 8.2, -0.6), 16.0),
+    ("game distance", 145, 15, (0.0, 8.0, -0.6), 26.0),
 ]
 
 
@@ -83,14 +88,19 @@ def strip(shots, model: str, out: str, size: int = 300) -> None:
         x = gap + i * (size + gap)
         canvas.paste(im, (x, hdr + gap))
         d.text((x + 2, 4), lab, fill=INK)
-    canvas.save(HERE / out)
-    print(f"  → {out}")
+    save(canvas, out)
+
+
+def save(im, rel: str) -> None:
+    path = OUT / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im.save(path)
+    print(f"  → renders/{rel}")
 
 
 def three_view(model: str, out: str, size: int = 460, shading: str = "lambert") -> None:
     im, _ = render_three_view(MODELS / model, size=size, shading=shading)
-    im.save(HERE / out)
-    print(f"  → {out}")
+    save(im, out)
 
 
 def layers(size: int = 340) -> None:
@@ -107,8 +117,7 @@ def layers(size: int = 340) -> None:
         x = gap + i * (size + gap)
         canvas.paste(im, (x, hdr + gap))
         d.text((x + 2, 4), lab, fill=INK)
-    canvas.save(HERE / "render_layers.png")
-    print("  → render_layers.png")
+    save(canvas, "2_layers/three_layers.png")
 
 
 def atlas(size: int = 400) -> None:
@@ -127,8 +136,7 @@ def atlas(size: int = 400) -> None:
         x, y = gap + c * (size + gap), gap + r * (size + hdr + gap)
         d.text((x + 2, y + 3), label, fill=INK)
         canvas.paste(im, (x, y + hdr))
-    canvas.save(HERE / "muscle_atlas.png")
-    print("  → muscle_atlas.png")
+    save(canvas, "4_muscle/atlas.png")
 
 
 def main() -> int:
@@ -148,15 +156,15 @@ def main() -> int:
 
     print("渲染…")
     if not args.atlas:
-        three_view("KekedaSkeleton.bbmodel", "render_skeleton.png")
-        three_view("KekedaMuscle.bbmodel", "render_muscle.png")
-        three_view("KekedaMuscle_bare.bbmodel", "render_muscle_bare.png")
-        three_view("KekedaMuscle_explode.bbmodel", "render_explode.png", size=500)
-        three_view("KekedaPlume.bbmodel", "render_plume.png", shading=SHADE)
-        three_view("KekedaPlume_anatomy.bbmodel", "render_plume_anatomy.png")
-        strip(SKELETON_SHOTS, "KekedaSkeleton.bbmodel", "render_skeleton_detail.png", size=250)
-        strip(FACE_SHOTS, "KekedaPlume.bbmodel", "render_face.png", size=330)
+        three_view("KekedaPlume.bbmodel", "1_final/three_view.png", shading=SHADE)
+        strip(FINAL_SHOTS, "KekedaPlume.bbmodel", "1_final/detail.png", size=300)
+        three_view("KekedaPlume_anatomy.bbmodel", "2_layers/anatomy_cutaway.png")
         layers()
+        three_view("KekedaSkeleton.bbmodel", "3_skeleton/three_view.png")
+        strip(SKELETON_SHOTS, "KekedaSkeleton.bbmodel", "3_skeleton/detail.png", size=250)
+        three_view("KekedaMuscle.bbmodel", "4_muscle/three_view.png")
+        three_view("KekedaMuscle_bare.bbmodel", "4_muscle/bare.png")
+        three_view("KekedaMuscle_explode.bbmodel", "4_muscle/explode.png", size=500)
     atlas()
     return 0
 
