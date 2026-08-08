@@ -44,6 +44,11 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_revision_after_matching,
     wait_inventory_snapshot_after,
 )
+from bot.scenarios._rejection_helpers import (  # noqa: E402
+    assert_valid_request_still_works,
+    fire_probes_and_keep_connection,
+    wait_keepalive_after,
+)
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
     NON_CLAMP_EXPECTED_QI,
     PILL_ID,
@@ -1838,6 +1843,122 @@ class _CommandFakeBot(_FakeBot):
             if not self.pending:
                 raise AssertionError(f"未找到 {description}; events={self.events}")
             self.events.append(self.pending.pop(0))
+
+
+class _ReaderAlive:
+    def __init__(self, alive: bool):
+        self._alive = alive
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+
+class _RejectionFakeBot(_FakeBot):
+    """干净拒绝断言所需的最小 Bot 接口替身（无 socket）。
+
+    - ``assert_alive`` 按 disconnect_reason / reader 存活判连接状态；
+    - ``wait_for`` 在 events 里找不到时按顺序补充 ``pending`` 事件（模拟 server
+      后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测。
+    """
+
+    def __init__(
+        self,
+        events: list[_FakeEvent],
+        *,
+        pending: list[_FakeEvent] | None = None,
+        disconnected: bool = False,
+        reader_alive: bool = True,
+    ):
+        super().__init__(events)
+        self.pending = list(pending or [])
+        self.disconnect_reason = "服务器主动断开" if disconnected else None
+        self._reader_thread = _ReaderAlive(reader_alive)
+        self.intents: list[dict] = []
+
+    def intent(self, request: dict) -> None:
+        self.intents.append(request)
+
+    def expect_chat(self, substring: str, timeout: float = 5.0) -> _FakeEvent:
+        return self.wait_for(
+            lambda e: e.kind == "chat" and substring in e.data["text"],
+            timeout,
+            f"包含「{substring}」的聊天消息",
+        )
+
+    def assert_alive(self, context: str) -> None:
+        if self.disconnect_reason is not None:
+            raise BotAssertionError(
+                f"期望连接保持（{context}），实际被服务器断开：{self.disconnect_reason!r}"
+            )
+        if not self._reader_thread.is_alive():
+            raise BotAssertionError(f"期望连接保持（{context}），实际底层 socket 已断")
+
+    def wait_for(self, predicate, timeout: float, description: str) -> _FakeEvent:
+        while True:
+            for event in self.events:
+                if predicate(event):
+                    return event
+            if not self.pending:
+                raise BotAssertionError(
+                    f"未找到 {description}; events={self.events}"
+                )
+            self.events.append(self.pending.pop(0))
+
+
+class RejectionHelperTest(unittest.TestCase):
+    def test_wait_keepalive_after_finds_later_keepalive(self):
+        bot = _RejectionFakeBot([_FakeEvent(2.0, "keepalive", {"id": 7})])
+        event = wait_keepalive_after(bot, after=1.0, timeout=1.0)
+        self.assertEqual(event.data["id"], 7)
+
+    def test_wait_keepalive_after_rejects_older_only_heartbeat(self):
+        bot = _RejectionFakeBot([_FakeEvent(1.0, "keepalive", {"id": 7})])
+        with self.assertRaises(BotAssertionError):
+            wait_keepalive_after(bot, after=2.0, timeout=0.1)
+
+    def test_fire_probes_keeps_connection_when_heartbeat_continues(self):
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[_FakeEvent(3.0, "keepalive", {"id": 8})],
+        )
+        fired: list[str] = []
+        fire_probes_and_keep_connection(
+            bot, "测试", [("p1", lambda: fired.append("p1"))], settle_s=0.0
+        )
+        self.assertEqual(fired, ["p1"])
+        self.assertEqual(bot.events[-1].kind, "keepalive")
+
+    def test_fire_probes_fails_when_kicked(self):
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})], disconnected=True
+        )
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
+    def test_fire_probes_fails_when_connection_forgotten(self):
+        # 探针后无新 keepalive（server 单方面遗忘连接）→ 断言必须失败。
+        bot = _RejectionFakeBot([_FakeEvent(2.0, "game_join", {})])
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
+    def test_valid_request_sends_expected_intent_and_accepts_chat(self):
+        bot = _RejectionFakeBot(
+            [_FakeEvent(4.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})]
+        )
+        assert_valid_request_still_works(bot)
+        self.assertEqual(
+            bot.intents,
+            [{"v": 1, "type": "set_meridian_target", "meridian": "lung"}],
+        )
+
+    def test_valid_request_fails_when_chat_never_comes(self):
+        bot = _RejectionFakeBot([])
+        with self.assertRaises(BotAssertionError):
+            assert_valid_request_still_works(bot)
 
 
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
