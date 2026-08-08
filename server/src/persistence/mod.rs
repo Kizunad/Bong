@@ -9864,7 +9864,10 @@ mod persistence_tests {
     use crate::npc::movement::{MovementController, MovementCooldowns, MovementMode, SprintState};
     use crate::npc::patrol::NpcPatrol;
     use crate::npc::spawn::{NpcBlackboard, NpcCombatLoadout, NpcMarker, NpcMeleeArchetype};
-    use crate::persistence::slice::{dispatch_shutdown_flushes, ShutdownFlushReport};
+    use crate::persistence::slice::{
+        dispatch_shutdown_flushes, DirtyRevision, PersistenceSubjectKey, ShutdownFlushReport,
+        SliceLoad,
+    };
     use crate::player::state::{
         save_player_core_slice, save_player_state, PlayerState, PlayerStatePersistence,
     };
@@ -14566,6 +14569,113 @@ mod persistence_tests {
             !records.is_empty(),
             "the later zone descriptor must write rows after the earlier known-techniques failure"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_shutdown_flush_failing_subject_does_not_abort_later_subject() {
+        let (settings, root) = persistence_settings("zone-flush-per-subject-isolation");
+        bootstrap_sqlite(settings.db_path(), settings.server_run_id())
+            .expect("fixture database should bootstrap");
+        let player_persistence = PlayerStatePersistence::with_db_path(
+            root.join("data").join("players"),
+            settings.db_path(),
+        );
+        let registry = production_zone_runtime_registry();
+        let mut world = World::new();
+
+        let failing = known_techniques_fixture("movement.dash", 0.2);
+        let mut failing_guard = registry
+            .activate_test_subject(
+                SliceLoad::<KnownTechniques, String>::loaded(failing),
+                KNOWN_TECHNIQUES_SLICE_ID,
+                PersistenceSubjectKey::new("npc:hermit"),
+                DirtyRevision::default(),
+                KnownTechniques::default,
+                |_| KnownTechniques::default(),
+            )
+            .expect("failing subject activation should succeed");
+        let (failing_tracker, failing_fence) = failing_guard
+            .restore_persistence_state()
+            .expect("failing subject tracker should issue once");
+        let failing_entity = world
+            .spawn(known_techniques_fixture("movement.dash", 0.9))
+            .id();
+
+        let later = known_techniques_fixture("movement.dash", 0.3);
+        let mut later_guard = registry
+            .activate_test_subject(
+                SliceLoad::<KnownTechniques, String>::loaded(later),
+                KNOWN_TECHNIQUES_SLICE_ID,
+                PersistenceSubjectKey::new("offline:Beta"),
+                DirtyRevision::default(),
+                KnownTechniques::default,
+                |_| KnownTechniques::default(),
+            )
+            .expect("later subject activation should succeed");
+        let (later_tracker, later_fence) = later_guard
+            .restore_persistence_state()
+            .expect("later subject tracker should issue once");
+        let later_entity = world
+            .spawn(known_techniques_fixture("movement.dash", 0.8))
+            .id();
+
+        world.insert_resource(registry);
+        world.insert_resource(settings.clone());
+        world.insert_resource(player_persistence.clone());
+        world.insert_resource(crate::world::zone::ZoneRegistry::fallback());
+        world.insert_resource(CultivationClock { tick: 3 });
+        world.insert_resource(WorldQiAccount::default());
+        world.insert_resource(KnownTechniquesActivations(HashMap::from([
+            (
+                "npc:hermit".to_string(),
+                KnownTechniquesActivation {
+                    entity: failing_entity,
+                    guarded: failing_guard,
+                    tracker: failing_tracker,
+                    fence: failing_fence,
+                },
+            ),
+            (
+                canonical_player_id("Beta"),
+                KnownTechniquesActivation {
+                    entity: later_entity,
+                    guarded: later_guard,
+                    tracker: later_tracker,
+                    fence: later_fence,
+                },
+            ),
+        ])));
+
+        let report = dispatch_production_shutdown_flushes(&mut world);
+
+        assert_eq!(
+            report.failures.len(),
+            1,
+            "only the failing subject may report, actual {report:?}"
+        );
+        assert_eq!(
+            report.failures[0].slice_id.as_str(),
+            "player.known_techniques"
+        );
+        assert!(
+            report.failures[0].error.message().contains("npc:hermit"),
+            "the failure must identify the failing subject, actual {:?}",
+            report.failures[0].error.message()
+        );
+        assert_eq!(
+            load_player_known_techniques_slice(&player_persistence, "Beta")
+                .expect("later subject row should decode"),
+            Some(known_techniques_fixture("movement.dash", 0.8)),
+            "the later subject must still flush after the earlier subject failed"
+        );
+        assert!(
+            load_player_known_techniques_slice(&player_persistence, "hermit")
+                .expect("failing subject lookup should decode")
+                .is_none(),
+            "the failing subject must not write any row"
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 
