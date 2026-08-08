@@ -243,9 +243,11 @@ mod tests {
         let (mut client_bundle, _helper) = valence::testing::create_mock_client("PreviewTp");
         client_bundle.player.position = Position::new([1000.0, 64.5, 1000.0]);
         let player = app.world_mut().spawn(client_bundle).id();
-        app.world_mut().entity_mut(player).insert((
-            crate::world::dimension::CurrentDimension(DimensionKind::Overworld),
-        ));
+        app.world_mut()
+            .entity_mut(player)
+            .insert((crate::world::dimension::CurrentDimension(
+                DimensionKind::Overworld,
+            ),));
 
         app.world_mut()
             .resource_mut::<PendingLingtianRequests>()
