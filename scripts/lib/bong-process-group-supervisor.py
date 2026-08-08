@@ -4,15 +4,30 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 
 def ignore_signal(_signal_number: int, _frame: object) -> None:
     """Keep the supervisor alive while its process-group members are stopped."""
+
+
+def private_process_group() -> int:
+    """Return this supervisor's dedicated session/group or fail closed."""
+
+    pid = os.getpid()
+    pgid = os.getpgrp()
+    sid = os.getsid(0)
+    if pid <= 1 or pgid <= 1 or sid <= 1 or pgid != pid or sid != pid:
+        raise RuntimeError(
+            f"refusing rollback outside a private session: pid={pid} pgid={pgid} sid={sid}"
+        )
+    return pgid
 
 
 def process_group_has_other_members(pgid: int) -> bool:
@@ -60,7 +75,11 @@ def wait_for_process_group_peers(pgid: int, timeout: float) -> bool:
 def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
     """Stop every peer in the uncommitted private session and reap the child."""
 
-    pgid = os.getpgrp()
+    try:
+        pgid = private_process_group()
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        return False
     try:
         os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
@@ -70,14 +89,22 @@ def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
         group_gone = wait_for_process_group_peers(pgid, 10.0)
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
-        # This is the supervisor's own freshly-created private group. If its
-        # membership cannot be inspected, killing that entire group is safer
-        # than relinquishing authority while an uncommitted server may survive.
+        # The private-session invariant was proven immediately before TERM.
+        # Revalidate it before escalation so an unexpected process context can
+        # never turn rollback into a caller-group signal.
+        try:
+            private_process_group()
+        except RuntimeError as boundary_error:
+            print(str(boundary_error), file=sys.stderr)
+            return False
         os.killpg(pgid, signal.SIGKILL)
         return False
     if not group_gone:
         try:
+            private_process_group()
             os.killpg(pgid, signal.SIGKILL)
+        except RuntimeError as error:
+            print(str(error), file=sys.stderr)
         except ProcessLookupError:
             pass
         # SIGKILL includes this supervisor, so this branch cannot claim success.
@@ -92,14 +119,55 @@ def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
     return True
 
 
+def build_server_binary(server_directory: Path, build_token: Path) -> Path:
+    environment = os.environ.copy()
+    target_root = Path(
+        environment.get("CARGO_TARGET_DIR", str(server_directory / "target"))
+    )
+    if not target_root.is_absolute():
+        target_root = server_directory / target_root
+    subprocess.run(
+        [str(build_token), "cargo", "build", "--release"],
+        cwd=server_directory,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+        check=True,
+        close_fds=True,
+    )
+    built_binary = target_root / "release" / "bong-server"
+    if not built_binary.is_file():
+        raise RuntimeError(f"successful cargo build did not produce {built_binary}")
+    artifact_dir = Path(tempfile.mkdtemp(prefix="bong-e2e-server-"))
+    artifact = artifact_dir / "bong-server"
+    shutil.copy2(built_binary, artifact)
+    artifact.chmod(0o700)
+    return artifact
+
+
+def remove_artifact(artifact: Path | None) -> None:
+    if artifact is None:
+        return
+    try:
+        artifact.unlink(missing_ok=True)
+        artifact.parent.rmdir()
+    except OSError as error:
+        print(f"failed to remove immutable server artifact: {error}", file=sys.stderr)
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: bong-process-group-supervisor.py SERVER_DIRECTORY", file=sys.stderr)
+    if len(sys.argv) != 3:
+        print(
+            "usage: bong-process-group-supervisor.py SERVER_DIRECTORY BUILD_TOKEN",
+            file=sys.stderr,
+        )
         return 2
 
     try:
         os.setsid()
-    except OSError as error:
+        private_process_group()
+    except (OSError, RuntimeError) as error:
         print(f"failed to establish dedicated server session: {error}", file=sys.stderr)
         return 2
 
@@ -109,11 +177,14 @@ def main() -> int:
         signal.signal(signal_number, ignore_signal)
 
     server: subprocess.Popen[bytes] | None = None
+    artifact: Path | None = None
     try:
-        token_wrapper = Path(__file__).resolve().parents[1] / "build-token.sh"
+        server_directory = Path(sys.argv[1]).resolve(strict=True)
+        build_token = Path(sys.argv[2]).resolve(strict=True)
+        artifact = build_server_binary(server_directory, build_token)
         server = subprocess.Popen(
-            [str(token_wrapper), "cargo", "run", "--release"],
-            cwd=sys.argv[1],
+            [str(artifact)],
+            cwd=server_directory,
             close_fds=True,
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
@@ -121,9 +192,11 @@ def main() -> int:
         )
         sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
         sys.stdout.buffer.flush()
-    except (OSError, BrokenPipeError) as error:
-        print(f"failed to launch or publish release server readiness: {error}", file=sys.stderr)
-        return 2 if rollback_server(server) else 3
+    except (OSError, RuntimeError, subprocess.CalledProcessError, BrokenPipeError) as error:
+        print(f"failed to build, launch, or publish release server readiness: {error}", file=sys.stderr)
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     # Authority is not committed until the parent has pinned this PID, starttime,
     # executable identity, and PGID. EOF, read failure, or any byte other than C
@@ -132,9 +205,13 @@ def main() -> int:
         command = sys.stdin.buffer.read(1)
     except OSError as error:
         print(f"failed to read startup commit command: {error}", file=sys.stderr)
-        return 2 if rollback_server(server) else 3
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
     if command != b"C":
-        return 2 if rollback_server(server) else 3
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     # Publishing authority requires a second, post-consumption boundary: the
     # parent only trusts this exact flushed acknowledgement.
@@ -143,9 +220,12 @@ def main() -> int:
         sys.stdout.buffer.flush()
     except (OSError, BrokenPipeError) as error:
         print(f"failed to publish startup commit acknowledgement: {error}", file=sys.stderr)
-        return 2 if rollback_server(server) else 3
+        rolled_back = rollback_server(server)
+        remove_artifact(artifact)
+        return 2 if rolled_back else 3
 
     server.wait()
+    remove_artifact(artifact)
 
     # Do not relinquish the session/process-group identity when the direct child
     # exits. The E2E owner pins this PID/starttime/executable and removes us only
