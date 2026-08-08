@@ -79,6 +79,8 @@ FINISHES: dict[str, Finish] = {
     # 札甲：上暗下亮的叠边 + 两颗铆钉。跨度和金属同量级，但**只有三条结构线**，
     # 中间两行是干净的——甲面几个单位见方，撒噪就是一片棋盘
     "lamella": Finish(lit=1.30, occ=0.60, fres=0.42, grain="lamellar", amp=0.30),
+    # 鱼鳞：比札片更碎更密的小圆片。行更密、每行更平——靠"行多"读出密，不靠每行反差大
+    "scale": Finish(lit=1.28, occ=0.58, fres=0.46, grain="scale", amp=0.30),
     # 绗缝的衬里：棉行一道一道横着。布的跨度本来就小，靠结构不靠强度
     "quilt": Finish(lit=1.22, occ=0.66, fres=0.10, grain="quilt", amp=0.085),
     # 锁环：环挨环，亮的是环顶、暗的是环之间的洞。密排高频，远处并成一片发暗的冷灰
@@ -147,8 +149,9 @@ TACK_MATS: dict[str, Mat] = {
     "plate_dark": Mat((94, 106, 130), "metal"),
     # 重甲压到近黑（原 56,58,64）：黑得越透，板缘那圈冷亮的棱越抢眼——参考图里
     # 那身甲的读法就是"近黑的面 + 一圈亮边"，面自己亮起来反而把边吃掉了。
-    "iron_black": Mat((44, 46, 54), "metal"),
-    "iron_black_dark": Mat((28, 29, 35), "metal"),
+    # 淬黑：整板那一档撤掉之后闲下来，现在给铁浮屠的鳞甲用（做工改走鳞纹）
+    "iron_black": Mat((44, 46, 54), "scale"),
+    "iron_black_dark": Mat((30, 31, 37), "scale"),
     # 板缘磨亮的那道棱：现实里是卷边与刃口露出的白铁。它是整板那一档**唯一**的细节，
     # 所以要亮得离淬黑面足够远（黑面 44 / 棱 150，四倍多），远处才连成一条线。
     "plate_rim": Mat((150, 156, 166), "metal"),
@@ -1955,6 +1958,10 @@ class BardSpec:
     mat_plate_dark: str = ""
     # 当胸中央那一颗圆盾泡（"" = 不做）。诺曼那一路的当胸正中总有一颗，是它最好认的记号
     boss: str = ""
+    # 面帘顶上竖起的一对缨（"" = 不做）。铁浮屠那张图里马额上就这么一对——整副甲
+    # 一身近黑，**剪影上唯一能认出来的东西**就是它（同当年寄生要干的事，但这回长在
+    # 头上、不改躯干轮廓，也就不会读成"屁股上插了根烟囱"）
+    plume: str = ""
     # 逐排换明暗。首版靠它让"横排"读得出来（几何台阶太小，远处看不见）；札片纹理
     # 自己带上暗下亮的叠边之后就不必了，再叠一层反而读成斑马纹。
     banded: bool = True
@@ -1985,38 +1992,38 @@ BARDS: dict[str, BardSpec] = {
         th=0.017, hem=0.86, rows=5, cell=0.068, peytral=True, croup_plate=False,
         crinet=True, chamfron="full", skirt=0.0, spine=False,
     ),
-    # 三档：杂钢札片，胸前尻上各压一块整板。这是"挡得住砸"的分界线。
-    # 杂钢是回炉料，锻不出大片——**短而密**是这一档的样子，也是它便宜的原因。
-    # 鸡颈与半面帘是被下一档**逼**上来的：锁子甲照诺曼那套配了钢面甲，而具装件数逐档
-    # 只增不减（`check_escalation`）——下面一档有的，上面一档不能没有。
+    # 三档：**中原札甲具装**——八排薄札片层层压叠、札行之间一道骨白铆钉、下摆吊一圈
+    # 绛红绗缝衬里，具装配到脊梁。这一套原本是顶档的造型，整套挪下来给它。
+    # 挪档不是降级：札甲本来就是这条路上最"够用"的一档——杂钢锻不出大片，短而密正是
+    # 它的样子；顶档往上走的是**鳞**（更碎更密、也更贵），不是"同样的札片更厚"。
     "light": BardSpec(
-        key="light", label="轻铁甲", blurb="杂钢回炉锻的短札片密密编成，当胸与尻上各压一块整板，鸡颈连半面帘。轻，马跑得动。",
-        mat="plate", mat_dark="plate_dark", mat_trim="iron_crude",
-        th=0.021, hem=0.90, rows=5, cell=0.070, peytral=True, croup_plate=True,
-        crinet=True, chamfron="half", skirt=0.0, spine=False,
+        key="light", label="轻铁甲", blurb="八排薄札片层层压叠，札行之间一道骨白铆钉，下摆吊一圈绛红绗缝衬里，鸡颈连半面帘。轻，马跑得动。",
+        mat="bard_lame", mat_dark="bard_lame_dark", mat_trim="bard_pad",
+        edge="bard_rivet", pad="bard_pad", banded=False,
+        th=0.021, hem=0.86, rows=8, cell=0.092, peytral=True, croup_plate=True,
+        crinet=True, chamfron="half", skirt=0.075, spine=True,
     ),
     # 四档：灵铁。轻，所以同样的重量能锻**长片**、能一路护到颈和额——具装配到第三件。
     # 半面帘：只压额与鼻梁，眼露在外。灵铁贵，护到眼眶就够，再往下是重甲的事。
     "lingtie": BardSpec(
         key="lingtie", label="灵铁甲", blurb="灵铁长札片连鸡颈半面帘，甲片行间一道细灵纹。轻而不折真元。",
         mat="lingtie", mat_dark="lingtie_dark", mat_trim="lingtie",
-        th=0.024, hem=0.95, rows=4, cell=0.112, peytral=True, croup_plate=True,
-        crinet=True, chamfron="half", skirt=0.045, spine=False, glow=True,
+        th=0.024, hem=0.90, rows=6, cell=0.112, peytral=True, croup_plate=True,
+        crinet=True, chamfron="half", skirt=0.060, spine=True, rear=True, glow=True,
     ),
-    # 五档：具装。**不是整板**——参考图（也是中原马铠本来的样子）是一排一排的札片：
-    # 排数多、片薄、层层压叠，下摆吊一圈绛红的绗缝衬里，札片之间一道骨白的铆钉包边。
-    #
-    # 上一版把顶档做成"整板 + 板缘亮棱"，想的是"换形制才叫换了一档"。形制该换这句话
-    # 没错，换错了方向：整板在马身上是一片几个单位见方、什么细节都没有的黑，一道棱救
-    # 不回来——排数少（三排）反倒让每一排厚得像块牌子，越看越是"疙疙瘩瘩的黑方块"。
-    # 顶档与次档的分别改回它本来的地方：**排数、件数、衬里**——札片更薄更密（八排）、
-    # 具装配齐、外加一层布衬，而不是把甲片做大。
+    # 五档：**铁浮屠**。参考图那一路的读法是三件事：
+    #   · **鳞**不是札——片更碎更密（十排），远处是一整只发乌的、有颗粒的黑；
+    #   · **淬黑到底**——一身近黑，只有脸上那块白钢面甲跳出来；
+    #   · **额上一对缨**——整副甲一身黑，剪影上唯一认得出的东西就是它。
+    # 它比轻铁甲多的不是"更厚的札片"，是**换了形制**（鳞）、**淬黑**、**多两件**
+    # （后襟、面缨）。轻铁甲那身绛红衬里在这儿撤掉：铁浮屠不留彩色，白面甲才是它的脸。
     "heavy": BardSpec(
-        key="heavy", label="重铁甲", blurb="八排薄札片层层压叠，札片行间一道骨白铆钉，下摆吊一圈绛红绗缝衬里，面帘全罩只留眼窗。人马皆铠，马也最累。",
-        mat="bard_lame", mat_dark="bard_lame_dark", mat_trim="bard_pad",
-        edge="bard_rivet", pad="bard_pad", banded=False,
-        th=0.025, hem=0.92, rows=8, cell=0.092, peytral=True, croup_plate=True,
-        crinet=True, chamfron="full", skirt=0.100, spine=True, rear=True,
+        key="heavy", label="重铁甲", blurb="十排淬黑鱼鳞层层压叠，白钢面甲全罩只留眼窗，额上一对铁缨。人马皆铠，马也最累。",
+        mat="iron_black", mat_dark="iron_black_dark", mat_trim="iron_crude",
+        mat_plate="steel_polish", mat_plate_dark="steel_polish_dark",
+        plume="iron_black", banded=False,
+        th=0.024, hem=0.95, rows=10, cell=0.078, peytral=True, croup_plate=True,
+        crinet=True, chamfron="full", skirt=0.105, spine=True, rear=True,
     ),
 }
 
@@ -2030,6 +2037,7 @@ BARD_KIT: tuple[tuple[str, object], ...] = (
     ("垂缘", lambda s: s.skirt > 0),
     ("脊梁", lambda s: s.spine),
     ("后襟", lambda s: s.rear),
+    ("面缨", lambda s: bool(s.plume)),
 )
 
 
@@ -2766,6 +2774,24 @@ def part_bard_chamfron(t: Tack, fit: Fit, spec: BardSpec) -> None:
                      (ya + th * 0.55, za), (yb + th * 0.55, zb), th * 0.5,
                      mat="glow", glow=True, ext=(-gap, -gap))
 
+    if spec.plume:
+        # 面缨：额上竖起的一对。整副甲一身近黑，剪影上唯一认得出的东西就是它。
+        #
+        # 长在**最靠枕的那一节**（额顶），不是吻端：吻端那一节又窄又低，缨插上去像两根
+        # 长在鼻子上的天线；额顶正是参考图里那对缨的位置，也是耳的前面一点点——所以
+        # 后缘卡在 `CHAM_Z_BACK` 之内，不去顶耳（顶了马会甩头，同项带的道理）。
+        za, zb = segs[-1]
+        ya, yb = band(za, zb)
+        top = max(ya, yb) + th / 2
+        zc = _lerpf(max(za, CHAM_Z_BACK - 0.10), min(zb, CHAM_Z_BACK), 0.5)
+        for sgn, side in ((-1.0, "l"), (1.0, "r")):
+            x0 = sgn * th * 1.2
+            # 两截收出个尖：一个体素 6.25 cm，再多截也读不出更尖
+            for i, (w, y0, y1) in enumerate(((1.5, 0.0, 0.085), (0.9, 0.075, 0.150))):
+                Hd.put(t, f"bard_cham_plume_{i + 1}_{side}",
+                       (x0, top + y0, zc - th * w), (x0 + sgn * th * w * 1.1, top + y1, zc + th * w),
+                       mat=spec.plume, chain=(f"bard_plume_{side}", i))
+
 
 def build_bard(t: Tack, fit: Fit, spec: BardSpec) -> None:
     part_bard_body(t, fit, spec)
@@ -2927,6 +2953,9 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
     # 跨装备判据只查"别的马具"，同一副甲里的两件互相穿插它一条都不响：面帘挂 skull、
     # 鸡颈挂 neck_7，两根骨紧挨着，各按各的基准往外鼓，撞上是常态。
     cham = [e for e in els if e["name"].startswith("bard_cham")]
+    # 缨**本来就该离脸远**（它是竖在额上的两根，不是贴脸的板）。下面"面帘不许飘"那条
+    # 量的是"离脸多远"，把缨算进去必然误报——两者是相反的要求，只能按件分开。
+    face_plate = [e for e in cham if "_plume_" not in e["name"]]
     crin = [e for e in els if e["name"].startswith("bard_crinet")]
     if cham and crin:
         v = max(_pen(a, b) for a in cham for b in crin)
@@ -2938,8 +2967,8 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
     # 那套实交口径查不到它——查得到的只有"离脸多远"。飘起来的面帘在正视图里和戴好的
     # 长得几乎一样（正面看它就该盖住脸），只有侧视才看得出来悬空。
     face = [e for e in fit.pelt_els if fit.head.SHELL.fullmatch(e["name"])]
-    if cham and face:
-        d, who = max((min(-_pen(c, f) for f in face), c["name"]) for c in cham)
+    if face_plate and face:
+        d, who = max((min(-_pen(c, f) for f in face), c["name"]) for c in face_plate)
         lim = P.u(CHAM_PLATE) * CHAM_FLOAT
         if d > lim:
             bad.append(f"面帘飘在脸外 {d:.2f} 单位（{who}，上限 {lim:.2f}）——没扣在脸上")
@@ -3368,6 +3397,7 @@ MIN_EDGE = 1.75  # 受光带 / 背光带的最小亮度**比值**（叠边那条
 FINISH_SPAN: dict[str, tuple[float, float]] = {
     "pit": (2.3, 6.0),  # 金属
     "lamellar": (2.3, 6.0),  # 札片：跨度与金属同量级，但只由三条结构线担
+    "scale": (2.0, 5.0),  # 鱼鳞：行更密、每行更平，跨度比札片略小
     "ring": (1.7, 3.4),  # 锁环
     "weave": (1.15, 1.55),  # 布
     "quilt": (1.15, 1.60),  # 绗缝的衬里

@@ -120,6 +120,17 @@ def grain(kind: str, amp: float, seed: int) -> list[list[float]]:
         for x in (1, SIDE_W - 2):
             g[1][x] += amp * 1.05  # 铆钉
         g[2][(SIDE_W - 1) // 2] -= amp * 0.55  # 编绳穿过的那个孔
+    elif kind == "scale":
+        # 鱼鳞甲：比札片更碎更密的小圆片，一片压一片。和 `lamellar` 是同一个思路，
+        # 只是**行更密、每行更平**——札片一排能有两三个单位高，鳞片只有半个，所以
+        # 逐行的明暗要细、幅度要小，靠"行多"而不是"每行反差大"读出密。
+        # 仍旧不撒噪：两颗鳞尖的高光是全部的点缀（撒匀了就是一片棋盘，见上）。
+        for y in range(SIDE_H):
+            for x in range(SIDE_W):
+                g[y][x] = 1.0 + amp * (0.62 if y % 2 == 0 else -0.62)
+        for x in (1, SIDE_W - 3):
+            g[0][x] += amp * 1.15  # 鳞尖迎光的一点
+        g[SIDE_H - 1][SIDE_W // 2] -= amp * 1.05  # 一片锈死的
     elif kind == "quilt":
         # 绗缝的衬里：一道一道横着的棉行，行与行之间是缝线压出的沟。布的跨度本来就小，
         # 这里靠**结构**而不是靠强度被认出来（同 `lamellar` 的道理，只是幅度小一档）。
