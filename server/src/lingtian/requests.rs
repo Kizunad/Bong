@@ -117,6 +117,17 @@ impl PendingLingtianRequests {
         self.inbox.push_back(request);
     }
 
+    /// 把本批暂缓的旧请求放回队首。旧请求必须排在 validator 取走快照后才到达的
+    /// 新请求之前；若合并后触顶，仍按 drop-new 保留更早的请求。
+    pub(crate) fn prepend_batch(
+        &mut self,
+        mut requests: std::collections::VecDeque<PendingLingtianRequest>,
+    ) {
+        requests.append(&mut self.inbox);
+        requests.truncate(QUEUE_CAP);
+        self.inbox = requests;
+    }
+
     /// 取走当前批次快照；本 tick 后续 push 留到下一批。
     pub(crate) fn take_batch(&mut self) -> std::collections::VecDeque<PendingLingtianRequest> {
         std::mem::take(&mut self.inbox)
@@ -133,4 +144,80 @@ pub(crate) struct LingtianDispatchWriters<'w> {
     pub(crate) harvest: bevy_ecs::event::EventWriter<'w, super::events::StartHarvestRequest>,
     pub(crate) replenish: bevy_ecs::event::EventWriter<'w, super::events::StartReplenishRequest>,
     pub(crate) drain_qi: bevy_ecs::event::EventWriter<'w, super::events::StartDrainQiRequest>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(actor: Entity, x: i32) -> PendingLingtianRequest {
+        PendingLingtianRequest::DrainQi {
+            actor,
+            pos: BlockPos::new(x, 64, 0),
+        }
+    }
+
+    fn positions(queue: &PendingLingtianRequests) -> Vec<i32> {
+        queue
+            .inbox
+            .iter()
+            .map(|request| request.actor_and_pos().1.x)
+            .collect()
+    }
+
+    #[test]
+    fn empty_queue_has_snapshot_and_length_zero() {
+        let mut queue = PendingLingtianRequests::default();
+        assert!(queue.is_empty());
+        assert_eq!(queue.len(), 0);
+        assert!(queue.take_batch().is_empty());
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn queue_is_fifo_and_drops_only_new_request_at_capacity() {
+        let actor = Entity::from_raw(1);
+        let mut queue = PendingLingtianRequests::default();
+        for x in 0..QUEUE_CAP as i32 {
+            queue.push(request(actor, x));
+        }
+        queue.push(request(actor, QUEUE_CAP as i32));
+
+        assert_eq!(queue.len(), QUEUE_CAP);
+        assert_eq!(positions(&queue).first(), Some(&0));
+        assert_eq!(positions(&queue).last(), Some(&((QUEUE_CAP - 1) as i32)));
+    }
+
+    #[test]
+    fn take_batch_is_snapshot_and_deferred_batch_precedes_new_arrivals() {
+        let actor = Entity::from_raw(1);
+        let mut queue = PendingLingtianRequests::default();
+        queue.push(request(actor, 1));
+        queue.push(request(actor, 2));
+
+        let batch = queue.take_batch();
+        queue.push(request(actor, 3));
+        queue.prepend_batch(batch);
+
+        assert_eq!(positions(&queue), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn prepend_batch_preserves_old_requests_when_capacity_is_reached() {
+        let actor = Entity::from_raw(1);
+        let mut queue = PendingLingtianRequests::default();
+        for x in 100..(100 + QUEUE_CAP as i32) {
+            queue.push(request(actor, x));
+        }
+        let deferred = std::collections::VecDeque::from([request(actor, 1), request(actor, 2)]);
+        queue.prepend_batch(deferred);
+
+        assert_eq!(queue.len(), QUEUE_CAP);
+        assert_eq!(positions(&queue).first(), Some(&1));
+        assert_eq!(positions(&queue)[1], 2);
+        assert_eq!(
+            positions(&queue).last(),
+            Some(&((100 + QUEUE_CAP - 3) as i32))
+        );
+    }
 }

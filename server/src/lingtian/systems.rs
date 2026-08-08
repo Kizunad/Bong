@@ -2208,7 +2208,7 @@ mod tests {
                     record_dye_contamination_warning_recent_events,
                 )
                     .chain()
-                    .after(DimensionTransferSet),
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
     }
@@ -2899,7 +2899,7 @@ mod tests {
                     apply_completed_sessions,
                 )
                     .chain()
-                    .after(DimensionTransferSet),
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
     }
@@ -3168,7 +3168,7 @@ mod tests {
                     apply_completed_sessions,
                 )
                     .chain()
-                    .after(DimensionTransferSet),
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
     }
@@ -3644,7 +3644,7 @@ mod tests {
                     apply_completed_sessions,
                 )
                     .chain()
-                    .after(DimensionTransferSet),
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
 
         let pos = BlockPos::new(0, 64, 0);
@@ -5102,6 +5102,58 @@ mod tests {
     }
 
     #[test]
+    fn validator_preserves_cross_action_fifo_per_actor() {
+        let mut app = App::new();
+        app.init_resource::<PendingLingtianRequests>()
+            .add_event::<StartTillRequest>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<StartDrainQiRequest>();
+        app.add_systems(Update, validate_and_dispatch_lingtian_requests);
+        // spawn bundle 与 Position 分开插入：bundle 自带 Position，同 tuple spawn 会
+        // 撞重复组件 panic（insert 语义是替换所以分开插安全）
+        let actor = spawn_test_player(&mut app, ());
+        let pos = BlockPos::new(0, 64, 0);
+        queue_test_request(&mut app, "till", actor, pos);
+        queue_test_request(&mut app, "renew", actor, pos);
+        queue_test_request(&mut app, "planting", actor, pos);
+        queue_test_request(&mut app, "harvest", actor, pos);
+        queue_test_request(&mut app, "replenish", actor, pos);
+        queue_test_request(&mut app, "drain_qi", actor, pos);
+
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<StartTillRequest>>()
+                .drain()
+                .count(),
+            1,
+            "first ingress action must be Till"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<StartRenewRequest>>()
+                .drain()
+                .count(),
+            0,
+            "later same-actor action must remain deferred"
+        );
+        assert_eq!(app.world().resource::<PendingLingtianRequests>().len(), 5);
+
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<StartRenewRequest>>()
+                .drain()
+                .count(),
+            1,
+            "second ingress action must be Renew after Till gets its turn"
+        );
+        assert_eq!(app.world().resource::<PendingLingtianRequests>().len(), 4);
+    }
+    #[test]
     fn every_start_handler_fails_closed_for_wrong_or_missing_authority_components() {
         for (action_index, action) in [
             "till",
@@ -5716,7 +5768,9 @@ mod tests {
         app.add_event::<DimensionTransferRequest>();
         app.add_systems(
             Update,
-            apply_dimension_transfers.in_set(DimensionTransferSet),
+            apply_dimension_transfers
+                .in_set(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
         );
 
         let pos = BlockPos::new(0, 64, 0);
@@ -5735,14 +5789,14 @@ mod tests {
             target: DimensionKind::Overworld,
             target_pos: DVec3::new(0.5, 64.5, 0.5),
         });
-        app.world_mut().send_event(StartTillRequest {
-            player,
-            pos,
-            hoe_instance_id: 1,
-            mode: SessionMode::Manual,
-            terrain: TerrainKind::Grass,
-            environment: PlotEnvironment::base(),
-        });
+        app.world_mut()
+            .resource_mut::<crate::lingtian::requests::PendingLingtianRequests>()
+            .push(PendingLingtianRequest::Till {
+                actor: player,
+                pos,
+                hoe_instance_id: 1,
+                mode: SessionMode::Manual,
+            });
 
         app.update();
 
@@ -5751,10 +5805,17 @@ mod tests {
             Some(&CurrentDimension(DimensionKind::Overworld)),
             "same-tick transfer must be applied before start authority is read"
         );
+        let start_events = app.world().resource::<Events<StartTillRequest>>();
         assert_eq!(
-            app.world().resource::<ActiveLingtianSessions>().len(),
+            start_events.get_reader().read(start_events).count(),
             1,
-            "start validation must accept the post-transfer Overworld position"
+            "post-transfer gate must dispatch the real pending request on the first update"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::lingtian::requests::PendingLingtianRequests>()
+                .is_empty(),
+            "accepted request must leave the persistent ingress queue"
         );
     }
 
@@ -5767,7 +5828,9 @@ mod tests {
         app.add_event::<DimensionTransferRequest>();
         app.add_systems(
             Update,
-            apply_dimension_transfers.in_set(DimensionTransferSet),
+            apply_dimension_transfers
+                .in_set(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
         );
 
         let pos = BlockPos::new(0, 64, 0);
@@ -5839,24 +5902,60 @@ mod tests {
     }
 
     #[test]
+    fn till_reservation_is_shared_exclusive_and_released_on_cancel_and_settlement() {
+        let actor_a = Entity::from_raw(1);
+        let actor_b = Entity::from_raw(2);
+        let pos = BlockPos::new(5, 64, 5);
+        let session = TillSession::new(
+            pos,
+            HoeKind::Iron,
+            11,
+            SessionMode::Manual,
+            PlotEnvironment::base(),
+        );
+        let mut sessions = ActiveLingtianSessions::new();
+
+        assert!(sessions.try_insert_till(actor_a, session.clone(), false));
+        assert!(!sessions.try_insert_till(actor_b, session.clone(), false));
+        assert!(!sessions.try_insert_till(actor_b, session.clone(), true));
+        assert_eq!(sessions.pending_reservations(), 1);
+
+        sessions.clear(actor_a);
+        assert_eq!(sessions.pending_reservations(), 0);
+        let finished = finished_session(ActiveSession::Till(session));
+        let ActiveSession::Till(finished) = finished else {
+            unreachable!();
+        };
+        assert!(sessions.try_insert_till(actor_b, finished, false));
+
+        let drained = sessions.drain_finished();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(sessions.pending_reservations(), 1);
+        sessions.settle_reservations();
+        assert_eq!(sessions.pending_reservations(), 0);
+    }
+
+    #[test]
     fn npc_finished_sessions_settle_all_direct_farming_variants() {
         let pos = BlockPos::new(0, 64, 0);
 
         let mut till_app = build_app();
         let till_npc = till_app.world_mut().spawn(NpcMarker).id();
+        let ActiveSession::Till(finished_till) =
+            finished_session(ActiveSession::Till(TillSession::new(
+                pos,
+                HoeKind::Iron,
+                1,
+                SessionMode::Manual,
+                PlotEnvironment::base(),
+            )))
+        else {
+            unreachable!();
+        };
         till_app
             .world_mut()
             .resource_mut::<ActiveLingtianSessions>()
-            .try_insert(
-                till_npc,
-                finished_session(ActiveSession::Till(TillSession::new(
-                    pos,
-                    HoeKind::Iron,
-                    1,
-                    SessionMode::Manual,
-                    PlotEnvironment::base(),
-                ))),
-            );
+            .try_insert_till(till_npc, finished_till, false);
         till_app.update();
         assert_eq!(
             till_app
@@ -5976,18 +6075,20 @@ mod tests {
         let mut app = build_app();
         let pos = BlockPos::new(0, 64, 0);
         let npc = app.world_mut().spawn((NpcMarker, Despawned)).id();
+        let ActiveSession::Till(finished_till) =
+            finished_session(ActiveSession::Till(TillSession::new(
+                pos,
+                HoeKind::Iron,
+                1,
+                SessionMode::Manual,
+                PlotEnvironment::base(),
+            )))
+        else {
+            unreachable!();
+        };
         app.world_mut()
             .resource_mut::<ActiveLingtianSessions>()
-            .try_insert(
-                npc,
-                finished_session(ActiveSession::Till(TillSession::new(
-                    pos,
-                    HoeKind::Iron,
-                    1,
-                    SessionMode::Manual,
-                    PlotEnvironment::base(),
-                ))),
-            );
+            .try_insert_till(npc, finished_till, false);
 
         app.update();
 
