@@ -62,6 +62,10 @@ class Bot:
         # 实体位置表（entity_spawn 建、rel-move/teleport 更、destroy 删）——
         # 近战场景要追活体 NPC，不能拿 spawn 坐标当靶（NPC 会走）。
         self.entities: dict[int, tuple[float, float, float]] = {}
+        # PlayerList 先发布 UUID→用户名，PlayerSpawn 再发布 entity_id→UUID/坐标；
+        # 两张表共同提供 P2/P5 多 Bot 身份的权威协议证据。
+        self.player_names: dict[str, str] = {}
+        self.player_entity_uuids: dict[int, str] = {}
         # RLock：wait_for 的 predicate 在持锁状态下执行，场景里 predicate 常会
         # 回调 events_of()/chunk_count 等同样要锁的方法——非重入锁在这里会死锁。
         self._lock = threading.RLock()
@@ -193,15 +197,102 @@ class Bot:
             self.health = reader.f32()
             food = reader.varint()
             self._emit("health", {"health": self.health, "food": food})
+        elif packet_id == mc.S2C_PLAYER_LIST:
+            actions = reader.u8()
+            count = reader.varint()
+            if count < 0:
+                raise ValueError(f"player-list entry count {count} must be non-negative")
+            entries = []
+            pending_player_names: dict[str, str] = {}
+            for _ in range(count):
+                player_uuid = reader.uuid()
+                entry = {"uuid": player_uuid}
+                if actions & 0x01:  # add_player
+                    username = reader.string()
+                    entry["username"] = username
+                    properties = reader.varint()
+                    if properties < 0:
+                        raise ValueError(
+                            f"player-list property count {properties} must be non-negative"
+                        )
+                    for _ in range(properties):
+                        reader.string()  # property name
+                        reader.string()  # property value
+                        if reader.boolean():
+                            reader.string()  # property signature
+                    pending_player_names[player_uuid] = username
+                if actions & 0x02:  # initialize_chat
+                    if reader.boolean():
+                        reader.uuid()
+                        reader.i64()
+                        key_length = reader.varint()
+                        if key_length < 0 or key_length > len(reader.data) - reader.pos:
+                            raise ValueError(
+                                f"player-list chat key length {key_length} exceeds remaining bytes"
+                            )
+                        reader.pos += key_length
+                        signature_length = reader.varint()
+                        if signature_length < 0 or signature_length > len(reader.data) - reader.pos:
+                            raise ValueError(
+                                f"player-list chat signature length {signature_length} exceeds remaining bytes"
+                            )
+                        reader.pos += signature_length
+                if actions & 0x04:  # update_game_mode
+                    reader.varint()
+                if actions & 0x08:  # update_listed
+                    reader.boolean()
+                if actions & 0x10:  # update_latency
+                    reader.varint()
+                if actions & 0x20:  # update_display_name
+                    if reader.boolean():
+                        reader.string()
+                entries.append(entry)
+            self.player_names.update(pending_player_names)
+            self._emit("player_list", {"actions": actions, "entries": entries})
+        elif packet_id == mc.S2C_PLAYER_REMOVE:
+            count = reader.varint()
+            if count < 0:
+                raise ValueError(f"negative player remove count {count}")
+            removed = [reader.uuid() for _ in range(count)]
+            for player_uuid in removed:
+                self.player_names.pop(player_uuid, None)
+            self._emit("player_remove", {"uuids": removed})
+        elif packet_id == mc.S2C_PLAYER_SPAWN:
+            entity_id = reader.varint()
+            player_uuid = reader.uuid()
+            x, y, z = reader.f64(), reader.f64(), reader.f64()
+            yaw, pitch = reader.u8(), reader.u8()
+            self.entities[entity_id] = (x, y, z)
+            self.player_entity_uuids[entity_id] = player_uuid
+            self._emit(
+                "player_spawn",
+                {
+                    "entity_id": entity_id,
+                    "uuid": player_uuid,
+                    "username": self.player_names.get(player_uuid),
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "yaw": yaw,
+                    "pitch": pitch,
+                },
+            )
         elif packet_id == mc.S2C_ENTITY_SPAWN:
             entity_id = reader.varint()
-            reader.pos += 16  # uuid
+            entity_uuid = reader.uuid()
             entity_type = reader.varint()
             x, y, z = reader.f64(), reader.f64(), reader.f64()
             self.entities[entity_id] = (x, y, z)
             self._emit(
                 "entity_spawn",
-                {"entity_id": entity_id, "type": entity_type, "x": x, "y": y, "z": z},
+                {
+                    "entity_id": entity_id,
+                    "uuid": entity_uuid,
+                    "type": entity_type,
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                },
             )
         elif packet_id in (mc.S2C_ENTITY_POSITION, mc.S2C_ENTITY_POSITION_ROTATION):
             entity_id = reader.varint()
@@ -210,16 +301,23 @@ class Bot:
             dz = reader.i16() / 4096.0
             prev = self.entities.get(entity_id)
             if prev is not None:
-                self.entities[entity_id] = (prev[0] + dx, prev[1] + dy, prev[2] + dz)
+                current = (prev[0] + dx, prev[1] + dy, prev[2] + dz)
+                self.entities[entity_id] = current
+                self._emit(
+                    "entity_move",
+                    {"entity_id": entity_id, "x": current[0], "y": current[1], "z": current[2]},
+                )
         elif packet_id == mc.S2C_ENTITY_TELEPORT:
             entity_id = reader.varint()
             x, y, z = reader.f64(), reader.f64(), reader.f64()
             self.entities[entity_id] = (x, y, z)
+            self._emit("entity_move", {"entity_id": entity_id, "x": x, "y": y, "z": z})
         elif packet_id == mc.S2C_ENTITIES_DESTROY:
             count = reader.varint()
             ids = [reader.varint() for _ in range(count)]
             for eid in ids:
                 self.entities.pop(eid, None)
+                self.player_entity_uuids.pop(eid, None)
             self._emit("entities_destroy", {"entity_ids": ids})
         elif packet_id == mc.S2C_BLOCK_UPDATE:
             packed = struct.unpack_from(">Q", reader.data, reader.pos)[0]

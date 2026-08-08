@@ -15,12 +15,14 @@ from __future__ import annotations
 import json
 import socket
 import struct
+import uuid
 import zlib
 
 PROTOCOL_VERSION = 763
 
 # ---- S2C play 包 ID（观察面）----
 S2C_ENTITY_SPAWN = 0x01
+S2C_PLAYER_SPAWN = 0x03
 S2C_PLAYER_ACTION_RESPONSE = 0x06
 S2C_BLOCK_UPDATE = 0x0A
 S2C_INVENTORY = 0x12
@@ -35,6 +37,8 @@ S2C_ENTITY_POSITION = 0x2B
 S2C_ENTITY_POSITION_ROTATION = 0x2C
 S2C_PLAYER_CHAT = 0x35
 S2C_DEATH_MESSAGE = 0x38
+S2C_PLAYER_REMOVE = 0x39
+S2C_PLAYER_LIST = 0x3A
 S2C_POS_LOOK = 0x3C
 S2C_ENTITIES_DESTROY = 0x3E
 S2C_ENTITY_TELEPORT = 0x68
@@ -142,9 +146,23 @@ class Reader:
 
     def string(self) -> str:
         length = self.varint()
+        if length < 0:
+            raise ValueError(f"string length {length} must be non-negative")
+        remaining = len(self.data) - self.pos
+        if length > remaining:
+            raise ValueError(
+                f"string length {length} exceeds remaining bytes {remaining}"
+            )
         raw = self.data[self.pos : self.pos + length]
         self.pos += length
         return raw.decode("utf-8", "replace")
+
+    def uuid(self) -> str:
+        raw = self.data[self.pos : self.pos + 16]
+        if len(raw) != 16:
+            raise ValueError("UUID 需要 16 字节，packet 已截断")
+        self.pos += 16
+        return str(uuid.UUID(bytes=raw))
 
     def rest(self) -> bytes:
         return self.data[self.pos :]

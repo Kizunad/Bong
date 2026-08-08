@@ -2844,6 +2844,8 @@ def _bare_bot() -> Bot:
     bot.t0 = 0.0
     bot.events = []
     bot.entities = {}
+    bot.player_names = {}
+    bot.player_entity_uuids = {}
     bot._lock = _threading.RLock()
     bot._new_event = _threading.Condition(bot._lock)
     bot._send_lock = _threading.Lock()
