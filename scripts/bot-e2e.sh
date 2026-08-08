@@ -35,6 +35,21 @@ for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
   [ -z "$BOT_E2E_OPERATORS" ] || BOT_E2E_OPERATORS+=,
   BOT_E2E_OPERATORS+="B${BOT_E2E_RUN_TAG}${bot_tag}"
 done
+# 互斥守卫必须先于任何 REUSE 归一化执行，否则归一化把 REUSE 改成 0 后，
+# 守卫校验的是已变异值而不是调用方原始请求，排除逻辑被绕过（finding 2）。
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "$REUSE" = "1" ]; then
+  echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥；fixture ownership 仅限本轮自起 server" >&2
+  exit 2
+fi
+if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "$FALLBACK_MODE" = "1" ]; then
+  echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥" >&2
+  exit 2
+fi
+if [ "$FALLBACK_MODE" = "1" ] && [ "$REUSE" = "1" ]; then
+  echo "[bot-e2e] BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥；fallback ownership 仅限本轮自起 server" >&2
+  exit 2
+fi
+
 # Reuse is safe only when the caller proves that the running offline server has this exact
 # run-tag roster and the explicit username-trust opt-in. Otherwise force the fresh-launch path.
 if [ "$REUSE" = "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && {
@@ -82,21 +97,6 @@ unset BOT_E2E_FALLBACK_OWNED
 # 必须显式 REUSE，避免 ownership 校验命中 IPv4 子进程、Bot 却连到另一地址族旧服。
 if [ "$REUSE" != "1" ] && [ "$HOST" != "127.0.0.1" ]; then
   echo "[bot-e2e] 自起模式仅支持 BOT_E2E_HOST=127.0.0.1；远端/IPv6 请同时设置 BOT_E2E_REUSE=1" >&2
-  exit 2
-fi
-
-# Ambient fixture is an explicit ownership mode, not a generic harness property. It must
-# self-start the server so the marker can prove the exact fixture/startup process pairing.
-if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "$REUSE" = "1" ]; then
-  echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_REUSE=1 互斥；fixture ownership 仅限本轮自起 server" >&2
-  exit 2
-fi
-if [ "$AMBIENT_FIXTURE_MODE" = "1" ] && [ "$FALLBACK_MODE" = "1" ]; then
-  echo "[bot-e2e] BOT_E2E_AMBIENT_FIXTURE_MODE=1 与 BOT_E2E_FALLBACK_MODE=1 互斥" >&2
-  exit 2
-fi
-if [ "$FALLBACK_MODE" = "1" ] && [ "$REUSE" = "1" ]; then
-  echo "[bot-e2e] BOT_E2E_FALLBACK_MODE=1 与 BOT_E2E_REUSE=1 互斥；fallback ownership 仅限本轮自起 server" >&2
   exit 2
 fi
 

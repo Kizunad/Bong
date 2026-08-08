@@ -544,9 +544,10 @@ fn spawn_fallback_flat_world(
     dimensions: &DimensionTypeRegistry,
     biomes: &BiomeRegistry,
 ) -> Entity {
-    let registry = zone::ZoneRegistry::load();
-    let anchors = crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-    let chunks = match fallback_spawn_chunk_union(&registry, &anchors) {
+    let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+    let registry = &snapshot.registry;
+    let anchors = &snapshot.distribution;
+    let chunks = match fallback_spawn_chunk_union(registry, anchors) {
         Ok(chunks) => chunks,
         Err(chunk_count) => {
             tracing::error!(
@@ -580,7 +581,7 @@ fn spawn_fallback_flat_world(
         }
     }
 
-    scatter_spawn_resources(&mut layer.chunk, &anchors);
+    scatter_spawn_resources(&mut layer.chunk, anchors);
 
     let layer_entity = commands.spawn((layer, OverworldLayer)).id();
     tracing::info!(
@@ -895,14 +896,14 @@ mod tests {
 
     #[test]
     fn fallback_chunk_union_covers_each_real_spawn_view_without_global_bridge() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let registry = &snapshot.registry;
+        let anchors = &snapshot.distribution;
+        let chunks = fallback_spawn_chunk_union(registry, anchors)
             .expect("configured fallback union should fit");
 
         assert!(anchors.len() >= 3, "zones.json 应提供多个出生分布簇");
-        for anchor in &anchors {
+        for anchor in anchors {
             let (center, radius) = anchor.cluster();
             let spawn_min_x = block_coord_to_chunk(center.x - radius);
             let spawn_max_x = block_coord_to_chunk(center.x + radius);
@@ -998,10 +999,8 @@ mod tests {
 
     #[test]
     fn fallback_flat_chunk_count_guard_accepts_configured_union_and_rejects_excess() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let configured = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let configured = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
             .expect("当前 zones.json fallback union 必须留在显式 eager-allocation 上限内");
         assert!(
             configured.len() <= FALLBACK_FLAT_MAX_CHUNKS,
@@ -1067,17 +1066,17 @@ mod tests {
 
     #[test]
     fn clamped_spawn_disk_and_emergency_position_remain_covered() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let registry = &snapshot.registry;
+        let anchors = &snapshot.distribution;
+        let chunks = fallback_spawn_chunk_union(registry, anchors)
             .expect("configured fallback union should fit");
         let spawn_zone = registry
             .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
             .expect("spawn zone should load");
         let (zone_min, zone_max) = spawn_zone.bounds;
 
-        for anchor in &anchors {
+        for anchor in anchors {
             let (center, radius) = anchor.cluster();
             for pos in [
                 DVec3::new(center.x - radius, center.y, center.z - radius),
@@ -1099,10 +1098,8 @@ mod tests {
 
     #[test]
     fn selected_spawn_chunks_and_views_are_inside_fallback_union() {
-        let registry = ZoneRegistry::load();
-        let anchors =
-            crate::player::spawn_selector::effective_default_spawn_distribution(&registry);
-        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let chunks = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
             .expect("configured fallback union should fit");
 
         for purpose in [
@@ -1120,6 +1117,64 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn ci_bot_tags_cover_all_three_clusters_in_distinct_chunks() {
+        // 与 scripts/bot/scenarios/terrain_join_chunk_delivery.py 的 EXPECTED_CI_CLUSTERS
+        // 保持同步：BciJ1→east (180,140) r=112，BciJ2→west (-240,-160) r=96，
+        // BciFC→central (24,-24) r=80。两端各自独立断言同一契约，任何一端漂移都撞红。
+        let pinned = [
+            ("BciJ1", 180.0, 140.0, 112.0, "east"),
+            ("BciJ2", -240.0, -160.0, 96.0, "west"),
+            ("BciFC", 24.0, -24.0, 80.0, "central"),
+        ];
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let chunks = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+            .expect("configured fallback union should fit");
+
+        let mut spawn_chunks = Vec::new();
+        for (username, anchor_x, anchor_z, radius, cluster) in pinned {
+            let pos = crate::player::spawn_selector::fallback_spawn(
+                username,
+                crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+            );
+            let distance = ((pos[0] - anchor_x).powi(2) + (pos[2] - anchor_z).powi(2)).sqrt();
+            assert!(
+                distance <= radius + 1e-9,
+                "B{username} 必须落在 {cluster} 簇 anchor=({anchor_x},{anchor_z}) radius={radius} 内，实际=({pos_x},{pos_z}) distance={distance:.3}",
+                pos_x = pos[0],
+                pos_z = pos[2],
+            );
+            let spawn_chunk = ChunkPos::from(DVec3::from(pos));
+            let view = ChunkView::new(spawn_chunk, FALLBACK_VIEW_DISTANCE_CHUNKS);
+            assert!(
+                view.iter().all(|chunk| chunks.contains(&chunk)),
+                "B{username} 出生点 {pos:?} 的最大视域必须在 fallback union 内"
+            );
+            spawn_chunks.push(spawn_chunk);
+        }
+
+        spawn_chunks.sort_unstable();
+        spawn_chunks.dedup();
+        assert_eq!(
+            spawn_chunks.len(),
+            3,
+            "三个稳定 Bot tag 必须命中三个不同出生 chunk：{spawn_chunks:?}"
+        );
+
+        let rejoin = crate::player::spawn_selector::fallback_spawn(
+            "BciJ1",
+            crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+        );
+        let first = crate::player::spawn_selector::fallback_spawn(
+            "BciJ1",
+            crate::player::spawn_selector::SpawnPurpose::InitialLogin,
+        );
+        assert_eq!(
+            rejoin, first,
+            "同名玩家重连必须稳定落回同一出生点（#846 rejoin 契约）"
+        );
     }
 
     fn synthetic_spawn_registry(bounds: (DVec3, DVec3)) -> ZoneRegistry {
@@ -1230,11 +1285,60 @@ mod tests {
                 Some(BlockState::IRON_ORE)
             );
             assert_eq!(
+                block_state(&layer, x + 20, GRASS_Y + 1, z + 14),
+                Some(BlockState::OAK_LOG)
+            );
+            assert_eq!(
+                block_state(&layer, x + 20, GRASS_Y + 5, z + 14),
+                Some(BlockState::OAK_LOG),
+                "第二棵橡木 trunk 应铺满 5 格"
+            );
+            assert_eq!(
+                block_state(&layer, x + 20, GRASS_Y + 6, z + 14),
+                Some(BlockState::OAK_LEAVES)
+            );
+            assert_eq!(
+                block_state(&layer, x + 35, GRASS_Y, z + 18),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 36, GRASS_Y, z + 18),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 28, GRASS_Y, z + 26),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 29, GRASS_Y, z + 26),
+                Some(BlockState::IRON_ORE)
+            );
+            assert_eq!(
                 block_state(&layer, x + 18, GRASS_Y, z + 30),
                 Some(BlockState::STONE)
             );
             assert_eq!(
+                block_state(&layer, x + 19, GRASS_Y, z + 30),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 18, GRASS_Y, z + 31),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
                 block_state(&layer, x + 19, GRASS_Y, z + 31),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 40, GRASS_Y, z + 6),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 41, GRASS_Y, z + 6),
+                Some(BlockState::STONE)
+            );
+            assert_eq!(
+                block_state(&layer, x + 40, GRASS_Y, z + 7),
                 Some(BlockState::STONE)
             );
         }
