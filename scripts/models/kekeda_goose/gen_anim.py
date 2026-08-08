@@ -345,16 +345,21 @@ def anim_death(g: Goose, t: float) -> Pose:
 
 
 # name → (时长秒, 是否循环, 采样数, 生成函数)
+#
+# 采样数是**反向搜出来的**：对每条动画二分找「插值与解析姿态的几何偏差仍不超过 0.26
+# 单位」的最小值，再加约 15% 余量（那个判据不是严格单调的，别贴着最小值用）。
+# 别凭感觉给 —— 给少了动作峰值被线性插值削平，给多了纯是文件体积。改完动作要重跑
+# check_anim，采样保真那一项会告诉你够不够。
 ANIMS = {
     "idle":    (4.00, True, 48, anim_idle),
-    "walk":    (0.90, True, 40, anim_walk),
-    "run":     (0.68, True, 56, anim_run),
+    "walk":    (0.90, True, 28, anim_walk),
+    "run":     (0.68, True, 36, anim_run),
     "honk":    (1.30, False, 48, anim_honk),
     "threat":  (1.80, False, 40, anim_threat),
-    "poop":    (1.50, False, 68, anim_poop),
-    "lay_egg": (4.20, False, 72, anim_lay_egg),
-    "hurt":    (0.45, False, 48, anim_hurt),
-    "death":   (2.20, False, 72, anim_death),
+    "poop":    (1.50, False, 52, anim_poop),
+    "lay_egg": (4.20, False, 66, anim_lay_egg),
+    "hurt":    (0.45, False, 36, anim_hurt),
+    "death":   (2.20, False, 28, anim_death),
 }
 
 
