@@ -3804,6 +3804,61 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_blocked_client_is_excluded_from_social_bundle() {
+        let mut app = qi_test_app();
+        app.add_systems(Update, attach_social_bundle_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked);
+
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        assert!(
+            !entity_ref.contains::<Anonymity>(),
+            "blocked reconnect targets must not receive the social bundle on the Added<Client> edge"
+        );
+        assert!(!entity_ref.contains::<Renown>());
+        assert!(!entity_ref.contains::<FactionReputation>());
+        assert!(!entity_ref.contains::<Relationships>());
+        assert!(!entity_ref.contains::<ExposureLog>());
+    }
+
+    #[test]
+    fn reconnect_ready_client_gets_default_social_bundle() {
+        let mut app = qi_test_app();
+        app.add_systems(Update, attach_social_bundle_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked);
+        app.update();
+        assert!(
+            !app.world().entity(entity).contains::<Anonymity>(),
+            "the blocked frame must not attach the social bundle"
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>()
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectReady);
+        app.update();
+
+        let entity_ref = app.world().entity(entity);
+        assert!(
+            entity_ref.contains::<Anonymity>(),
+            "the ReconnectReady edge alone must attach the social bundle after the Added<Client> edge is consumed"
+        );
+        assert!(entity_ref.contains::<Renown>());
+        assert!(entity_ref.contains::<FactionReputation>());
+        assert!(entity_ref.contains::<Relationships>());
+        assert!(entity_ref.contains::<ExposureLog>());
+    }
+
+    #[test]
     fn joined_client_hydrates_persisted_faction_reputation() {
         let (persistence, data_dir) = social_persistence("faction-reputation-hydrate");
         let mut persisted = FactionReputation::default();

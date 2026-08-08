@@ -802,6 +802,55 @@ mod integration_tests {
     }
 
     #[test]
+    fn reconnect_blocked_client_is_skipped_by_learned_recipes_attach() {
+        let mut app = App::new();
+        app.add_systems(Update, attach_alchemy_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked);
+
+        app.update();
+
+        assert!(
+            app.world().get::<LearnedRecipes>(entity).is_none(),
+            "blocked reconnect targets must not receive LearnedRecipes on the Added<Username> edge"
+        );
+    }
+
+    #[test]
+    fn reconnect_ready_client_gets_learned_recipes() {
+        let mut app = App::new();
+        app.add_systems(Update, attach_alchemy_to_joined_clients);
+        let (client_bundle, _helper) = create_mock_client("Azure");
+        let entity = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked);
+        app.update();
+        assert!(
+            app.world().get::<LearnedRecipes>(entity).is_none(),
+            "the blocked frame must not attach LearnedRecipes"
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .remove::<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>()
+            .insert(crate::cultivation::known_techniques::KnownTechniquesReconnectReady);
+        app.update();
+
+        let learned = app
+            .world()
+            .get::<LearnedRecipes>(entity)
+            .expect("the ReconnectReady edge must attach LearnedRecipes");
+        assert!(
+            learned.ids.contains(&"kai_mai_pill_v0".to_string()),
+            "the ready reconnect target must start with the default kai_mai_pill_v0 recipe"
+        );
+    }
+
+    #[test]
     fn explode_applies_damage_to_caster() {
         let mut app = App::new();
         app.insert_resource(CombatClock { tick: 42 });

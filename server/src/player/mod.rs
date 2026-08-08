@@ -61,7 +61,10 @@ type ClientInitQueryItem<'a> = (
 );
 
 type ClientInitQueryFilter = (
-    Added<Client>,
+    Or<(
+        Added<Client>,
+        Added<crate::cultivation::known_techniques::KnownTechniquesReconnectReady>,
+    )>,
     Without<crate::cultivation::known_techniques::KnownTechniquesReconnectBlocked>,
 );
 
