@@ -13,14 +13,19 @@ End-to-end export of a real profile, asserting the on-disk contract:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.terrain_gen.bakers.raster_export import (
     SPANS_COUNT_FILE,
     SPANS_FILE,
+    _atomic_write_bytes,
+    _write_atomic_batch,
     _carved_spans_for_tile,
     _tile_carver_assignments,
     _zone_carver_chains,
@@ -115,8 +120,153 @@ def _export(profile: str, temp_dir: str):
     return manifest, artifacts["raster_dir"], fields, plan
 
 
+class AtomicRasterPublicationTest(unittest.TestCase):
+    def test_concurrent_writes_to_one_target_publish_complete_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "layer.bin"
+            payloads = [bytes([index]) * 4096 for index in range(8)]
+            barrier = threading.Barrier(len(payloads))
+
+            def publish(payload: bytes) -> None:
+                barrier.wait()
+                _atomic_write_bytes(path, payload)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(payloads)) as pool:
+                list(pool.map(publish, payloads))
+
+            self.assertIn(
+                path.read_bytes(),
+                payloads,
+                "concurrent publication must leave one complete writer payload, never a mixed or truncated file",
+            )
+            self.assertEqual(
+                list(Path(td).glob(".*.tmp")),
+                [],
+                "unique temporary files must be cleaned after concurrent publication",
+            )
+
+    def test_failed_publication_preserves_previous_target(self) -> None:
+        for failure_name, inject_failure in (
+            ("write", self._fail_write),
+            ("flush", self._fail_flush),
+            ("sync", self._fail_sync),
+            ("replace", self._fail_replace),
+        ):
+            with self.subTest(failure_name=failure_name):
+                with tempfile.TemporaryDirectory() as td:
+                    paths = [Path(td) / "spans_count.bin", Path(td) / "spans.bin"]
+                    for path in paths:
+                        path.write_bytes(b"previous-complete-layer")
+
+                    with inject_failure():
+                        with self.assertRaisesRegex(OSError, f"{failure_name} failed"):
+                            _write_atomic_batch(
+                                [(paths[0], b"new-count"), (paths[1], b"new-spans")]
+                            )
+
+                    self.assertEqual(
+                        [path.read_bytes() for path in paths],
+                        [b"previous-complete-layer"] * len(paths),
+                        f"{failure_name} failure must not corrupt the previously published raster batch",
+                    )
+                    self.assertEqual(
+                        list(Path(td).glob(".*.tmp")),
+                        [],
+                        f"{failure_name} failure must clean every staged temporary file",
+                    )
+
+    @staticmethod
+    def _fail_write():
+        original_open = Path.open
+
+        def fail_write(path: Path, mode: str = "r", *args, **kwargs):
+            file = original_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return file
+
+            original_write = file.write
+
+            def write(_data):
+                original_write(b"partial")
+                raise OSError("write failed")
+
+            file.write = write
+            return file
+
+        return patch.object(Path, "open", fail_write)
+
+    @staticmethod
+    def _fail_flush():
+        original_open = Path.open
+
+        def fail_flush(path: Path, mode: str = "r", *args, **kwargs):
+            file = original_open(path, mode, *args, **kwargs)
+            if "w" not in mode and "x" not in mode:
+                return file
+            file.flush = lambda: (_ for _ in ()).throw(OSError("flush failed"))
+            return file
+
+        return patch.object(Path, "open", fail_flush)
+
+    @staticmethod
+    def _fail_sync():
+        return patch(
+            "scripts.terrain_gen.bakers.raster_export.os.sync",
+            side_effect=OSError("sync failed"),
+        )
+
+    @staticmethod
+    def _fail_replace():
+        return patch.object(Path, "replace", side_effect=OSError("replace failed"))
+
+    def test_batch_syncs_once_for_multiple_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            paths = [Path(td) / "first.bin", Path(td) / "second.bin"]
+            with patch("scripts.terrain_gen.bakers.raster_export.os.sync") as sync:
+                _write_atomic_batch([(paths[0], b"first"), (paths[1], b"second")])
+
+            sync.assert_called_once_with()
+            self.assertEqual(paths[0].read_bytes(), b"first")
+            self.assertEqual(paths[1].read_bytes(), b"second")
+            self.assertEqual(list(Path(td).glob(".*.tmp")), [])
+
+    def test_publish_failure_after_first_replace_cleans_remaining_staged_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            first = Path(td) / "first.bin"
+            second = Path(td) / "second.bin"
+            first.write_bytes(b"old-first")
+            second.write_bytes(b"old-second")
+            original_replace = Path.replace
+            calls = 0
+
+            def fail_second_replace(path: Path, target: Path):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("replace failed")
+                return original_replace(path, target)
+
+            with patch.object(Path, "replace", fail_second_replace):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    _write_atomic_batch([(first, b"new-first"), (second, b"new-second")])
+
+            self.assertEqual(first.read_bytes(), b"new-first")
+            self.assertEqual(second.read_bytes(), b"old-second")
+            self.assertEqual(list(Path(td).glob(".*.tmp")), [])
+
+    def test_single_file_wrapper_uses_batch_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "layer.bin"
+            with patch(
+                "scripts.terrain_gen.bakers.raster_export._write_atomic_batch"
+            ) as batch:
+                _atomic_write_bytes(path, b"payload")
+            batch.assert_called_once_with([(path, b"payload")])
+
+
 class SpansExportLayoutTest(unittest.TestCase):
     def test_manifest_is_version_2_with_spans_encoding(self) -> None:
+
         with tempfile.TemporaryDirectory() as td:
             manifest, _raster_dir, _fields, _plan = _export("sky_isle", td)
         self.assertEqual(manifest["version"], 2)

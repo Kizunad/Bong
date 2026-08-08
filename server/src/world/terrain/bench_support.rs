@@ -125,8 +125,6 @@ pub fn single_tile_fixture() -> BenchTerrain {
     write_f32_each(&tile_dir, "sky_island_mask.bin", &sky_mask);
 
     let layers = vec![
-        "spans_count".to_string(),
-        "spans".to_string(),
         "surface_id".to_string(),
         "subsurface_id".to_string(),
         "biome_id".to_string(),

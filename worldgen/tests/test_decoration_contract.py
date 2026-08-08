@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -15,7 +14,7 @@ from scripts.terrain_gen.profiles.base import (  # noqa: E402
     decoration_payload,
 )
 
-BLOCKS_RS = REPO_ROOT / "server" / "src" / "world" / "terrain" / "blocks.rs"
+BLOCK_CATALOG_TOML = REPO_ROOT / "server" / "assets" / "worldgen" / "block_catalog.toml"
 
 # worldgen-v4 P6 §8.1 — the anchor literal must stay in lockstep with the Rust
 # `DecorationAnchor` variants in nbt_registry.rs (from_manifest parses these
@@ -110,8 +109,12 @@ MANUAL_LARGE_DECORATION_ALLOWLIST = {
 
 
 def _resolved_block_names() -> set[str]:
-    source = BLOCKS_RS.read_text(encoding="utf-8")
-    return set(re.findall(r'"([a-z0-9_]+)"\s*=>\s*BlockState::', source))
+    names = set()
+    for line in BLOCK_CATALOG_TOML.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "name":
+            names.add(value.strip().strip('"'))
+    return names
 
 
 class DecorationContractTests(unittest.TestCase):
