@@ -1179,6 +1179,7 @@ mod tests {
 
     fn synthetic_spawn_registry(bounds: (DVec3, DVec3)) -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
