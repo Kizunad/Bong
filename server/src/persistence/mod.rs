@@ -9877,7 +9877,8 @@ mod persistence_tests {
     use serde_json::Value;
     use std::sync::{Arc, Barrier};
     use std::time::Instant;
-    use valence::prelude::{App, AppExit, DVec3, EntityKind, Events, Position, Update};
+    use valence::prelude::{App, AppExit, DVec3, EntityKind, Events, Position, PostUpdate, Update};
+    use valence::protocol::packets::play::GameMessageS2c;
     use valence::testing::create_mock_client;
 
     fn known_techniques_fixture(id: &str, proficiency: f32) -> KnownTechniques {
@@ -9887,6 +9888,12 @@ mod persistence_tests {
                 proficiency,
                 active: true,
             }],
+        }
+    }
+
+    fn flush_mock_client_packets(mut clients: Query<&mut Client>) {
+        for mut client in &mut clients {
+            let _ = client.flush_packets();
         }
     }
 
@@ -9905,6 +9912,12 @@ mod persistence_tests {
         app.add_event::<crate::npc::dormant::PendingDormantRelicCreated>();
         app.insert_resource(CultivationClock::default());
         app.insert_resource(WorldQiAccount::default());
+        let overworld_layer = app.world_mut().spawn_empty().id();
+        let tsy_layer = app.world_mut().spawn_empty().id();
+        app.insert_resource(crate::world::dimension::DimensionLayers {
+            overworld: overworld_layer,
+            tsy: tsy_layer,
+        });
         register(&mut app);
         app.insert_resource(settings.clone());
         app.insert_resource(player_persistence.clone());
@@ -9916,6 +9929,7 @@ mod persistence_tests {
                     .after(crate::player::init_clients),
             ),
         );
+        app.add_systems(PostUpdate, flush_mock_client_packets);
         (app, player_persistence, settings, root)
     }
 
@@ -10328,6 +10342,66 @@ mod persistence_tests {
                 .map(|activation| activation.entity),
             Some(new_player),
             "successful retry must replace the old activation exactly once"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reconnect_ready_client_reruns_init_clients_welcome() {
+        let (mut app, persistence, settings, root) =
+            known_techniques_app("known-techniques-reconnect-ready-init");
+        let initial = known_techniques_fixture("movement.dash", 0.85);
+        crate::player::state::save_player_known_techniques_slice(&persistence, "Azure", &initial)
+            .expect("initial known techniques should persist");
+
+        let (old_bundle, _old_helper) = create_mock_client("Azure");
+        let old_player = app.world_mut().spawn(old_bundle).id();
+        app.update();
+
+        let unsaved = known_techniques_fixture("movement.dash", 0.9);
+        app.world_mut()
+            .entity_mut(old_player)
+            .insert(unsaved.clone());
+        app.world_mut().entity_mut(old_player).remove::<Client>();
+        let (new_bundle, mut new_helper) = create_mock_client("Azure");
+        let new_player = app.world_mut().spawn(new_bundle).id();
+        let backup_path = root.join("reconnect-ready-backup.db");
+        fs::rename(settings.db_path(), &backup_path)
+            .expect("fixture database should move out of the production path");
+        fs::create_dir(settings.db_path())
+            .expect("directory placeholder should force the disconnect save to fail");
+
+        app.update();
+        new_helper.clear_received();
+
+        fs::remove_dir(settings.db_path()).expect("directory placeholder should be removable");
+        fs::rename(&backup_path, settings.db_path())
+            .expect("fixture database should return to the production path");
+        app.update();
+
+        let messages: Vec<String> = new_helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|message| message.chat.to_legacy_lossy())
+            })
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains(crate::player::welcome_message())),
+            "the Ready edge must rerun init_clients and deliver the welcome message; \
+             actual messages={messages:?}"
+        );
+        assert_eq!(
+            app.world().get::<KnownTechniques>(new_player),
+            Some(&unsaved),
+            "the delayed reconnect must still hydrate the known techniques slice"
         );
 
         let _ = fs::remove_dir_all(root);
