@@ -82,7 +82,7 @@ mod tests {
     }
 
     #[test]
-    fn production_command_registry_does_not_expose_ambient_spawn() {
+    fn production_command_registry_does_not_expose_dev_only_spawn_fixtures() {
         let app = test_command_app_for_dev_mode(ConnectionMode::Offline, false);
         let registry = app.world().resource::<CommandRegistry>();
         let roots = registry
@@ -95,10 +95,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert!(
-            !roots.contains(&"ambient_spawn"),
-            "production command tree must not expose /ambient_spawn when BONG_DEV_MODE is disabled; roots={roots:?}"
-        );
+        for dev_only in ["ambient_spawn", "botany_spawn"] {
+            assert!(
+                !roots.contains(&dev_only),
+                "production command tree must not expose /{dev_only} when BONG_DEV_MODE is disabled; roots={roots:?}"
+            );
+        }
     }
 
     #[test]
