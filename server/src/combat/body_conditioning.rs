@@ -876,6 +876,7 @@ mod tests {
             app.add_event::<GuangboTicaoPracticeEvent>();
             app.add_event::<QiTransfer>();
             app.insert_resource(ZoneRegistry::fallback());
+            app.insert_resource(WorldQiAccount::default());
             app.add_systems(Update, consume_guangbo_practice_events);
             app.world_mut()
                 .resource_mut::<ZoneRegistry>()
@@ -887,6 +888,7 @@ mod tests {
                 .spawn((
                     KnownTechniques { entries: vec![] },
                     cultivation_with_qi(5.0),
+                    LifeRecord::new(crate::player::state::canonical_player_id("Guangbo")),
                     Position::new([0.0, 64.0, 0.0]),
                     CurrentDimension(DimensionKind::Overworld),
                 ))

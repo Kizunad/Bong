@@ -3807,6 +3807,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NpcDormantStore::default());
         app.insert_resource(NpcVirtualizationConfig {
             transition_interval_ticks: 1,
@@ -3966,6 +3969,9 @@ mod tests {
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
+        app.insert_resource(
+            crate::cultivation::known_techniques::TechniqueRegistry::load_for_tests(),
+        );
         app.insert_resource(NpcDormantStore::default());
         app.insert_resource(NpcVirtualizationConfig {
             transition_interval_ticks: 1,
