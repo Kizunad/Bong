@@ -14452,6 +14452,7 @@ mod persistence_tests {
                 qi_equilibrium: 0.0,
                 qi_inflow_per_min: 0.0,
             }],
+            spatial_revision: 0,
         });
         register(&mut app);
         app.world_mut()
