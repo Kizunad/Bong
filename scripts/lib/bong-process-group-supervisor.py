@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 
 def ignore_signal(_signal_number: int, _frame: object) -> None:
@@ -109,8 +110,9 @@ def main() -> int:
 
     server: subprocess.Popen[bytes] | None = None
     try:
+        token_wrapper = Path(__file__).resolve().parents[1] / "build-token.sh"
         server = subprocess.Popen(
-            ["cargo", "run", "--release"],
+            [str(token_wrapper), "cargo", "run", "--release"],
             cwd=sys.argv[1],
             close_fds=True,
             stdin=subprocess.DEVNULL,

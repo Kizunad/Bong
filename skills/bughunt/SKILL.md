@@ -59,7 +59,7 @@ workflow 返回 `{ round, found, confirmed, fixes:[{id,branch,verify,...}], skip
 ### 3. 落地铁律（opus verify 会漏，这几关不能省）
 
 1. **fix-now 必主循环亲自读码复核全链路**——workflow synthesis 读不够深会误判方向（藏设计抉择/Bevy 16 参数上限/孤岛）。守恒/scorer 类尤其。
-2. **本地必跑 `cargo test --lib`（全量）+ 连跑 3× 验 flaky**——绝不只信 opus verdict。`cargo test -- A B C`（多 filter 要 `--`，否则 "unexpected argument"）。
+2. **本地必跑 `scripts/build-token.sh cargo test --lib`（全量）+ 连跑 3× 验 flaky**——绝不只信 opus verdict。`scripts/build-token.sh cargo test -- A B C`（多 filter 要 `--`，否则 "unexpected argument"）。
 3. **守恒类 fix 必查 `mod.rs` 注册**——多次发现整 fix 是生产 no-op 死代码（system 没注册，单测 add_systems 掩盖孤岛）。
 4. **合并前必查 CodeRabbit actionable**——它多次抓出 opus 全漏的 Critical（`.max(0.0)` 负灵域守恒、over-credit qi_current<damage）。每 PR 评论 `/review` 触发 Pi，等 CodeRabbit + Pi 都无阻塞再合（CodeRabbit summary-only "fail"=无 actionable，非阻塞）。
 5. 自己开的 PR 自己盯到 merge，别甩回用户。

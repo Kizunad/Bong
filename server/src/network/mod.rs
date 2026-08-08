@@ -5000,7 +5000,7 @@ mod tests {
 
         fn consume_agent_ui_response_through_tiandao(
             response: &crate::schema::agent_ui::AgentUiResponsePayloadV1,
-        ) -> NarrationV1 {
+        ) -> Option<NarrationV1> {
             use std::io::Write as _;
             use std::process::{Command, Stdio};
 
@@ -5010,16 +5010,18 @@ mod tests {
             let tsx = repo_root.join("agent/node_modules/.bin/tsx");
             let runner =
                 repo_root.join("agent/packages/tiandao/tests/ui-response-consumer-runner.ts");
-            assert!(
-                tsx.is_file(),
-                "cross-stack test requires the locked @bong/tiandao devDependency `tsx` at {}; run `cd agent && npm ci` from the repository root first",
-                tsx.display()
-            );
-            assert!(
-                runner.is_file(),
-                "Tiandao test runner is missing at {}",
-                runner.display()
-            );
+            if !tsx.is_file() || !runner.is_file() {
+                let message = format!(
+                    "cross-stack Tiandao consumer unavailable (tsx={}, runner={})",
+                    tsx.display(),
+                    runner.display()
+                );
+                if std::env::var_os("CI").is_some() {
+                    panic!("{message}; CI must install agent dependencies before cargo test");
+                }
+                eprintln!("[skip] {message}; run `cd agent && npm ci` for the full local chain");
+                return None;
+            }
 
             let (response_channel, producer_json) =
                 redis_bridge::encode_agent_ui_response_wire_for_test(response)
@@ -5070,12 +5072,14 @@ mod tests {
                     output.stdout
                 )
             });
-            redis_bridge::parse_agent_narration_wire_for_test(consumer_wire).unwrap_or_else(
-                |error| {
-                    panic!(
-                        "UiResponseConsumer stdout must pass the production narration decoder: {error}; stdout={consumer_wire}"
-                    )
-                },
+            Some(
+                redis_bridge::parse_agent_narration_wire_for_test(consumer_wire).unwrap_or_else(
+                    |error| {
+                        panic!(
+                            "UiResponseConsumer stdout must pass the production narration decoder: {error}; stdout={consumer_wire}"
+                        )
+                    },
+                ),
             )
         }
 
@@ -5149,7 +5153,11 @@ mod tests {
             );
 
             // Stage 2: execute the production TypeScript UiResponseConsumer in a real process.
-            let narration_envelope = consume_agent_ui_response_through_tiandao(&response);
+            let Some(narration_envelope) = consume_agent_ui_response_through_tiandao(&response)
+            else {
+                // 环境缺 tsx devDependency：跨栈阶段跳过（Stage 1 的 producer gate 已验）。
+                return;
+            };
             assert_eq!(
                 narration_envelope.narrations.len(),
                 1,

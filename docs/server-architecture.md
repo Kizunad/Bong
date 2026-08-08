@@ -188,7 +188,7 @@ server/src/
 ### M1 验证标准
 
 ```
-启动流程: redis-server → cargo run → npm start → ./gradlew runClient
+启动流程: redis-server → scripts/build-token.sh cargo run → npm start → scripts/build-token.sh gradle runClient
 
 30秒内应该看到:
   ✓ redis-cli SUBSCRIBE bong:world_state → 包含真实玩家名、位置、zone

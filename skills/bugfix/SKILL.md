@@ -220,8 +220,8 @@ FAIL 后返工、提交、重跑针对性测试，并对**新 HEAD**启动另一
 
 当前 HEAD 获得 PASS 后，实施 subagent 必须先申请并收到主干的 `compile_token` 明确授权，才能按所有受影响栈在正确目录运行完整门禁：
 
-- server：`cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-- client：`cd client && ./gradlew test build`，严格使用 JDK 17
+- server：`scripts/build-token.sh cargo fmt --check && scripts/build-token.sh cargo clippy --all-targets -- -D warnings && scripts/build-token.sh cargo test`
+- client：`scripts/build-token.sh gradle test build`，严格使用 JDK 17
 - agent/schema：运行对应包 `npm test`；schema src 改动先 `cd agent && npm run build -w @bong/schema`
 - worldgen：从仓库根运行 `bash scripts/dev-reload.sh`
 - 跨栈修复：运行所有受影响栈门禁；需要完整联调时运行 e2e，不用 snapshot/smoke 冒充

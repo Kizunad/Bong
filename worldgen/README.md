@@ -60,8 +60,8 @@ python3 -m scripts.terrain_gen \
 ### 让 server 直接消费 raster
 
 ```bash
-cd ../server
-BONG_TERRAIN_RASTER_PATH=/abs/path/worldgen/generated/terrain-gen-smoke/rasters/manifest.json cargo run
+cd ..
+BONG_TERRAIN_RASTER_PATH=/abs/path/worldgen/generated/terrain-gen-smoke/rasters/manifest.json scripts/build-token.sh cargo run
 ```
 
 server 读到该 env → `TerrainProvider::load` 解析 manifest → `mmap` 各 `.bin` → 按需生成 chunk。

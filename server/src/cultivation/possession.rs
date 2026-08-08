@@ -531,6 +531,12 @@ mod tests {
     use super::*;
     use valence::prelude::{App, Events, Update};
 
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
     #[test]
     fn eligibility_allows_mortal_and_awaken_only() {
         let mortal = PlayerState::default();
@@ -551,7 +557,7 @@ mod tests {
 
     #[test]
     fn process_duo_she_marks_host_and_terminates_target() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CultivationClock { tick: 123 });
         app.insert_resource(DuoSheCooldowns::default());
         app.add_event::<DuoSheRequestEvent>();
@@ -613,7 +619,7 @@ mod tests {
 
     #[test]
     fn process_duo_she_inherits_target_position_and_dimension() {
-        let mut app = App::new();
+        let mut app = test_app();
         let overworld = app.world_mut().spawn_empty().id();
         let tsy = app.world_mut().spawn_empty().id();
         app.insert_resource(DimensionLayers { overworld, tsy });
@@ -696,7 +702,7 @@ mod tests {
         use crate::qi_physics::ledger::QiTransferReason;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CultivationClock { tick: 1 });
         app.insert_resource(DuoSheCooldowns::default());
         // Set up zone registry. Zero out spawn zone spirit_qi so the entire excess
@@ -805,7 +811,7 @@ mod tests {
     fn duo_she_qi_max_clip_no_excess_no_transfer() {
         use crate::world::zone::ZoneRegistry;
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CultivationClock { tick: 2 });
         app.insert_resource(DuoSheCooldowns::default());
         app.insert_resource(ZoneRegistry::fallback());
