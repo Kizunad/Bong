@@ -48,6 +48,7 @@ from gen_skeleton import (
     shaft_box,
     uid,
 )
+from material import Finish, band_faces, check_finishes, paint
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[3]
@@ -328,32 +329,68 @@ class Envelope:
 
 
 # ---------------------------------------------------------------- 贴图 / 造型
+# 每种毛层材质的**做工**（机器在 `material.py`）。颜色由 `Coat` 提供、三种毛色共用
+# 这一份——做工是"这东西是什么材料"，和它是什么颜色无关：锈骝的蹄和碎雪的蹄都是角质。
+#
+# 首版一格里平涂一个颜色 + ±10 的噪，整只马读成一块塑料；给马具做完材质之后更难看了
+# ——甲上有坑有棱，马身上什么都没有，反倒是马看着像块布。毛的跨度要**小**（毛一旦
+# 有金属那种跨度就成了塑料马），但不能是零；鬃尾要大得多，远处才认得出"这是鬃"。
+PELT_FINISH: dict[str, Finish] = {
+    # 毛：细、密、顺毛。跨度压到刚好看得出不是平涂
+    "fur": Finish(lit=1.15, occ=0.74, fres=0.06, grain="fur", amp=0.075),
+    # 鬃尾：一绺一绺的粗丝
+    "hair": Finish(lit=1.22, occ=0.62, fres=0.10, grain="hair", amp=0.175),
+    # 角质（蹄 / 附蝉）：横向生长纹 + 一点油光
+    "horn": Finish(lit=1.24, occ=0.60, fres=0.20, grain="horn", amp=0.13),
+    # 湿的 / 反光的小面（眼、鼻孔、眼高光）：不上纹理，几个像素撒噪只会读成脏
+    "wet": Finish(lit=1.30, occ=0.66, fres=0.30, grain="flat", amp=0.0),
+}
+MAT_FINISH: dict[str, str] = {
+    "coat": "fur", "coat_dark": "fur", "coat_light": "fur", "belly": "fur",
+    "points": "fur", "primitive": "fur", "muzzle": "fur", "marking": "fur",
+    "mane": "hair", "mane_tip": "hair",
+    "hoof": "horn", "chestnut": "horn",
+    "nostril": "wet", "eye": "wet", "eye_gloss": "wet",
+}
+# 每种纹理的侧面最亮 / 最暗比值（见 `material.check_finishes`）
+FINISH_SPAN: dict[str, tuple[float, float]] = {
+    "fur": (1.15, 1.60), "hair": (1.45, 2.60), "horn": (1.30, 2.30), "flat": (1.0, 1.01),
+}
+MIN_EDGE = 1.60  # 朝天面 / 朝地面的最小亮度比：马背受光、马腹背光，这条线撑住体积感。
+# 比马具那条（1.75）低：甲是硬板，板缘该有一道硬边；毛是漫反射的圆身子，背与腹之间
+# 本来就是一道软过渡。照硬板的口径卡，逼出来的是一匹塑料马。
+
+
+def finish_of(mat: str) -> Finish:
+    return PELT_FINISH[MAT_FINISH[mat]]
+
+
 def _faces(mat: str) -> dict:
     i = MAT_KEYS.index(mat)
-    ox, oy = (i % 8) * SWATCH, (PELT_ROW + i // 8) * SWATCH
-    uv = [ox + 1.0, oy + 1.0, ox + SWATCH - 1.0, oy + SWATCH - 1.0]
-    return {d: {"uv": list(uv), "texture": 0} for d in ("north", "south", "east", "west", "up", "down")}
+    return band_faces((i % 8) * SWATCH, (PELT_ROW + i // 8) * SWATCH)
 
 
 def extend_texture(data: dict, coat: Coat) -> None:
+    px = None
     src = data["textures"][0]["source"].split(",", 1)[1]
     img = Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA")
     px = img.load()
     for i, key in enumerate(MAT_KEYS):
-        r, g, b = coat.mats[key]
-        ox, oy = (i % 8) * SWATCH, (PELT_ROW + i // 8) * SWATCH
-        for y in range(SWATCH):
-            for x in range(SWATCH):
-                n = ((x * 7 + y * 13 + i * 5) % 5) - 2  # 轻噪：毛面不是平涂塑料
-                px[ox + x, oy + y] = (
-                    max(0, min(255, r + n * 4)),
-                    max(0, min(255, g + n * 4)),
-                    max(0, min(255, b + n * 3)),
-                    255,
-                )
+        paint(px, (i % 8) * SWATCH, (PELT_ROW + i // 8) * SWATCH,
+              coat.mats[key], finish_of(key), i + 1)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     data["textures"][0]["source"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def check_finish() -> list[str]:
+    """毛该有多少跨度 —— 说明见 `material.check_finishes`。三种毛色各查一遍：同一种
+    做工套在深毛色上跨度会被压扁（乘法），套在白袜上又可能顶到上界。"""
+    bad = []
+    for coat in COATS.values():
+        bad += [f"「{coat.label}」{m}" for m in
+                check_finishes(coat.mats, finish_of, FINISH_SPAN, MIN_EDGE, list(MAT_KEYS))]
+    return bad
 
 
 class Pelt:
@@ -1017,6 +1054,10 @@ def main() -> int:
     todo = [GROUPS[args.group]] if args.group else list(GROUPS.values())
     single = len(pkeys) == 1 and len(ckeys) == 1
     rc = 0
+
+    for msg in check_finish():
+        print(f"  ✗ {msg}")
+        rc = 1
 
     for ck in ckeys:
         for pk in pkeys:

@@ -56,6 +56,7 @@ from gen_skeleton import (
     rom,
     uid,
 )
+from material import Finish, band_faces, check_finishes, paint, side_mean
 from PIL import Image
 
 TACK_DIR = FINAL / "tack"
@@ -68,6 +69,30 @@ Vec = tuple[float, float, float]
 def _lerpf(a: float, b: float, s: float) -> float:
     return a + (b - a) * s
 
+# ================================================================ 材质与做工
+# 机器在 `material.py`（骨 / 肌 / 皮 / 马具共用一份，那里有完整说明）。这里只定马具
+# 自己的那几种做工与色号。一句话：**材质不是一个 RGB，是「主色 + 做工」**——色相归
+# 主色，"同一块面上有多少层次"归做工。金属和羊毛的全部区别就在后者。
+FINISHES: dict[str, Finish] = {
+    # 金属：跨度最大的一档。坑与划痕是它和"一块灰"的全部区别
+    "metal": Finish(lit=1.34, occ=0.58, fres=0.44, grain="pit", amp=0.26),
+    # 锁环：环挨环，亮的是环顶、暗的是环之间的洞。密排高频，远处并成一片发暗的冷灰
+    "mail": Finish(lit=1.20, occ=0.62, fres=0.28, grain="ring", amp=0.24),
+    # 布：跨度最小的一档。布要是也闪，就成了锡箔——这一条和"金属要有跨度"一样重要
+    "cloth": Finish(lit=1.20, occ=0.68, fres=0.08, grain="weave", amp=0.075),
+    "rope": Finish(lit=1.16, occ=0.72, fres=0.10, grain="twist", amp=0.115),
+    "leather": Finish(lit=1.15, occ=0.68, fres=0.14, grain="mottle", amp=0.10),
+    # 灵纹：自发光条要的是**均匀**亮度，撒任何纹理都会读成脏
+    "glow": Finish(lit=1.0, occ=1.0, fres=0.0, grain="flat", amp=0.0),
+}
+
+
+@dataclass(frozen=True)
+class Mat:
+    rgb: tuple[int, int, int]
+    finish: str
+
+
 # 材质表**只准追加不准插入**：UV 索引由这里的顺序派生，插一行会把已出的马具整体错位。
 #
 # 表里若干色是被 `check_contrast` **推**到现在这个位置的，不是重新挑的：判据只报"离某
@@ -76,70 +101,76 @@ def _lerpf(a: float, b: float, s: float) -> float:
 # 补上之后一次撞出五处：毡的暗部离碎雪身色 12.4（破毡鞍最大的一块面，在青毛马上整片
 # 消失）、粗铁离枯原身色 22.4（粗革鞍的镫与扣）、麻绳离枯原身色 16.2（破毡鞍的肚带）、
 # 粗铁暗部与杂钢暗部离碎雪的蹄 34.8 / 23.3（蹄铁的趾带与夹）。
-TACK_MATS: dict[str, tuple[int, int, int]] = {
+#
+# 这一轮**只动了几处明度**，色相基本没碰：三种毛色几乎铺满中等明度的暖色带，现有色相
+# 是被这个事实逼出来的，重挑一遍只会绕回原处。"看着像羊毛"不是色相的错，是做工的错。
+TACK_MATS: dict[str, Mat] = {
     # 粗铁走**锈色**而不是灰：灰的粗铁 (96,88,80) 和碎雪的蹄 (92,86,80) 只差 4.5，
     # 整只马渲出来和赤脚一模一样（见 check_contrast）。锈也更合"捡来的铁料"这档。
-    "iron_crude": (166, 92, 52),
-    "iron_crude_dark": (118, 74, 40),
-    "iron_rust": (116, 74, 44),  # 锈斑 / 锈钉
-    "steel": (132, 134, 138),  # 杂钢：冷灰，比粗铁亮两档
-    "steel_dark": (94, 106, 125),
+    "iron_crude": Mat((166, 92, 52), "metal"),
+    "iron_crude_dark": Mat((118, 74, 40), "metal"),
+    "iron_rust": Mat((110, 64, 34), "metal"),  # 锈斑 / 锈钉
+    "steel": Mat((134, 142, 152), "metal"),  # 杂钢：冷灰，比粗铁亮两档
+    "steel_dark": Mat((94, 106, 125), "metal"),
     # 灵铁压深、往蓝里推：青灰 (78,88,102) 离碎雪的蹄只有 26，同样糊在一起。
-    "lingtie": (48, 70, 122),
-    "lingtie_dark": (34, 48, 88),
-    "glow": (152, 216, 240),  # 灵纹：淡蓝
-    "nail": (156, 152, 144),  # 钉头：磨亮的白铁
+    "lingtie": Mat((48, 70, 122), "metal"),
+    "lingtie_dark": Mat((34, 48, 88), "metal"),
+    "glow": Mat((152, 216, 240), "glow"),  # 灵纹：淡蓝
+    "nail": Mat((172, 170, 164), "metal"),  # 钉头：磨亮的白铁
     # --- 马鞍起追加（只准往后加：UV 索引由顺序派生）---
     # 毡往**浅**里推、革往**深**里推：三种毛色（锈骝 128,72,43 / 枯原 148,126,82 /
     # 碎雪 146,140,131）都落在中等明度的暖色带上，马具挤进这条带里就整片糊掉。
     # 一浅一深各自绕开——首版毡 (122,114,100) 离碎雪暗部只有 24.8、革 (118,82,52)
     # 离锈骝身色只有 16.8，正是"棕鞍配栗马"这个经典读不出来的组合。
-    "felt": (186, 180, 168),  # 旧毡：洗到发灰的白
-    "felt_dark": (122, 126, 108),
-    "leather": (46, 30, 24),  # 粗革：鞣得不匀、油到发乌的深棕
-    "leather_dark": (26, 17, 14),
-    "rope": (180, 164, 116),  # 麻绳：新打的草黄
+    "felt": Mat((186, 180, 168), "cloth"),  # 旧毡：洗到发灰的白
+    "felt_dark": Mat((122, 126, 108), "cloth"),
+    "leather": Mat((46, 30, 24), "leather"),  # 粗革：鞣得不匀、油到发乌的深棕
+    "leather_dark": Mat((26, 17, 14), "leather"),
+    "rope": Mat((180, 164, 116), "rope"),  # 麻绳：新打的草黄
     # --- 缰绳起追加（只准往后加：UV 索引由顺序派生）---
-    "rope_tar": (52, 46, 36),  # 上过桐油的绳结 / 磨损段：麻绳唯一能和三种毛色都拉开的暗部
+    "rope_tar": Mat((52, 46, 36), "rope"),  # 上过桐油的绳结 / 磨损段：麻绳唯一能和三种毛色都拉开的暗部
     # --- 马甲起追加（只准往后加：UV 索引由顺序派生）---
     # 甲盖住整只马最大的一片面，配色比别的马具更难：三种毛色（连同暗部）几乎铺满了
     # **中等明度的暖色带**，而金属天然就落在中等明度的灰带上。碎雪的暗部 (104,99,92)
     # 正是一块中灰——任何"看着像铁"的中灰都会撞上它。所以五档一律往两头躲：
     # 布往蓝里、锁环往深冷里、板甲往亮里、重甲往黑里，中灰那一段整个让开。
-    "cloth": (92, 106, 132),  # 粗布：褪掉大半的蓝草染（末法唯一还染得起的颜色）
-    "cloth_dark": (58, 68, 90),
-    "mail": (70, 82, 88),  # 锁环：环挨环，整片读成一块发暗的冷灰
-    "mail_dark": (46, 56, 62),
-    "plate": (158, 168, 184),  # 杂钢板：磨得发亮的那一档，靠**亮**从毛色里跳出来
-    "plate_dark": (104, 116, 136),
-    "iron_black": (56, 58, 64),  # 重甲：淬黑的粗铁，靠**黑**跳出来（剪影即分档）
-    "iron_black_dark": (36, 38, 44),
+    "cloth": Mat((92, 106, 132), "cloth"),  # 粗布：褪掉大半的蓝草染（末法唯一还染得起的颜色）
+    "cloth_dark": Mat((58, 68, 90), "cloth"),
+    "mail": Mat((66, 80, 90), "mail"),  # 锁环：环挨环，整片读成一块发暗的冷灰
+    "mail_dark": Mat((46, 56, 62), "mail"),
+    "plate": Mat((146, 158, 180), "metal"),  # 杂钢板：磨得发亮的那一档，靠**亮**从毛色里跳出来
+    "plate_dark": Mat((94, 106, 130), "metal"),
+    # 重甲压到近黑（原 56,58,64）：黑得越透，板缘那圈冷亮的棱越抢眼——参考图里
+    # 那身甲的读法就是"近黑的面 + 一圈亮边"，面自己亮起来反而把边吃掉了。
+    "iron_black": Mat((44, 46, 54), "metal"),
+    "iron_black_dark": Mat((28, 29, 35), "metal"),
+    # 板缘磨亮的那道棱：现实里是卷边与刃口露出的白铁。它是整板那一档**唯一**的细节，
+    # 所以要亮得离淬黑面足够远（黑面 44 / 棱 150，四倍多），远处才连成一条线。
+    "plate_rim": Mat((150, 156, 166), "metal"),
 }
 
 
+def _seed(key: str) -> int:
+    return list(TACK_MATS).index(key) + 1
+
+
+def mat_rgb(key: str) -> tuple[int, int, int]:
+    m = TACK_MATS[key]
+    return side_mean(m.rgb, FINISHES[m.finish], _seed(key))
+
+
 def _faces(mat: str) -> dict:
-    i = list(TACK_MATS).index(mat)
-    ox, oy = (i % 8) * SWATCH, (TACK_ROW + i // 8) * SWATCH
-    uv = [ox + 1.0, oy + 1.0, ox + SWATCH - 1.0, oy + SWATCH - 1.0]
-    return {d: {"uv": list(uv), "texture": 0} for d in ("north", "south", "east", "west", "up", "down")}
+    i = _seed(mat) - 1
+    return band_faces((i % 8) * SWATCH, (TACK_ROW + i // 8) * SWATCH)
 
 
 def extend_texture(data: dict) -> None:
-    """追加马具色块。灵纹那格不加噪：发光条要的是均匀亮度，撒噪点会读成脏。"""
+    """追加马具色块。每格三条带 + 上下防渗行，见 `material.py`。"""
     src = data["textures"][0]["source"].split(",", 1)[1]
     img = Image.open(io.BytesIO(base64.b64decode(src))).convert("RGBA")
     px = img.load()
-    for i, (key, (r, g, b)) in enumerate(TACK_MATS.items()):
-        ox, oy = (i % 8) * SWATCH, (TACK_ROW + i // 8) * SWATCH
-        for y in range(SWATCH):
-            for x in range(SWATCH):
-                n = 0 if key == "glow" else ((x * 7 + y * 13 + i * 5) % 5) - 2
-                px[ox + x, oy + y] = (
-                    max(0, min(255, r + n * 5)),
-                    max(0, min(255, g + n * 5)),
-                    max(0, min(255, b + n * 4)),
-                    255,
-                )
+    for i, (key, m) in enumerate(TACK_MATS.items()):
+        paint(px, (i % 8) * SWATCH, (TACK_ROW + i // 8) * SWATCH, m.rgb, FINISHES[m.finish], i + 1)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     data["textures"][0]["source"] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -211,6 +242,7 @@ READ_RE = re.compile("|".join((
     r"head_shell_\d+|jaw_line_[lr]|jowl_[lr]|chin|lip_upper|lip_lower",  # 笼头
     r"neck_\d+|neck_throat_\d+|mane_(root|fall|tip)_\d+",  # 缰绳沿颈走（鬃也得让开）
     r"dock_\d+",  # 搭后要给尾根让出洞
+    r"eye_[lr]|eye_socket_[lr]|ear_[lr]",  # 面帘的眼窗与耳孔按实件开，不按"脸长的几成"猜
 )))
 
 
@@ -1013,10 +1045,39 @@ class Head:
                 max(hi[1] for lo, hi in got),
                 min(lo[1] for lo, hi in got))
 
+    def shell_or_none(self, z: float):
+        """同 `shell`，越界返回 None。量**别的马具**占了脸上哪儿时会问到颅壳之外
+        （衔铁在嘴角、缰垂到胸前），那不是错，跳过就是。"""
+        got = list(self._cover(self.SHELL, z))
+        if not got:
+            return None
+        return (max(max(hi[0], -lo[0]) for lo, hi in got),
+                max(hi[1] for lo, hi in got), min(lo[1] for lo, hi in got))
+
     def under(self, z: float) -> float:
         """局部 z 处**含下颌件**的最低 y。鼻革与咽革要从下颌底下绕过去，只问颅壳会短半截。"""
         got = list(self._cover(self.UNDER, z))
         return min(lo[1] for lo, hi in got) if got else self.shell(z)[2]
+
+    def point_local(self, p: Vec) -> Vec:
+        """世界点 → 头局部（头长比例）。
+
+        `local_of` 只对"没额外转过"的盒成立；量别的马具占了脸上哪儿时，件多半是转过的
+        （颊带带 dp），整盒换算不了，只能逐个角点换算——点的变换与盒自己怎么转无关。
+        """
+        a = math.radians(HEAD_PITCH)
+        c, s = math.cos(a), math.sin(a)
+        H = self.P.H
+        d = (p[0], p[1] - self.P.y_occiput, p[2] - self.P.z_occiput)
+        return (d[0] / H, (c * d[1] + s * d[2]) / H, (-s * d[1] + c * d[2]) / H)
+
+    def part_local(self, pat: re.Pattern) -> tuple[Vec, Vec] | None:
+        """匹配到的皮件在头局部的合并 AABB（眼窗 / 耳孔照它开）。"""
+        got = [b for n, b in self.local.items() if pat.fullmatch(n)]
+        if not got:
+            return None
+        return (tuple(min(b[0][i] for b in got) for i in range(3)),
+                tuple(max(b[1][i] for b in got) for i in range(3)))
 
     def to_world(self, p: Vec) -> Vec:
         """头局部（**头长比例**）→ 世界（绝对）。"""
@@ -1785,11 +1846,29 @@ def check_shoe(t: Tack, fit: Fit, spec: ShoeSpec) -> list[str]:
 #   · **鸡颈的下缘由缰反推**。缰沿颈侧走的那条线是既成事实（已交付），鸡颈要是照
 #     "颈深的几成"随手给一个数，正好把缰埋掉——而缰在另一份文件里，甲这边的判据一条
 #     都不会响。所以下缘 = 三档缰在颈上的最高点再让开一线（`crinet_floor`）。
-BARD_TOP = 0.86  # 甲面上缘（× 该处躯干高）：再往上桶身收成背棱，平板贴不住，也会撞上颈
-BARD_CELL = 0.085  # 同骨内再切格的最大长度（× 体长）：一整块平板贴不住前后弯的桶身
+#   · **递增的是"具装的件数"，不是同一件越做越大**。中原的马铠（具装）本就是一套
+#     定数：面帘、鸡颈、当胸、马身甲、搭后 —— 铁浮屠那一路的"人马皆铠"说的就是这
+#     五件配齐。所以分档不是"甲越来越长"，是**一件一件把这套配齐**（`BARD_KIT`），
+#     顶档再加寄生。哪件先有哪件后有也不是随便排的：护胸先于护头，护头先于装饰。
+#   · **顶档换形制，不只是换厚度**。前四档是札甲（小片编缀），顶档是**整板**：片大、
+#     排少、板缘一道磨亮的棱。"为了覆盖而覆盖"就是只把甲片加厚加密——那样五档摆
+#     在一起是同一件东西的五种大小，不是五种甲。
+# 甲面上缘（× 该处躯干高）：再往上桶身收成背棱，平板贴不住，也会撞上颈。
+# **不逐档抬高**——试过，量下来一点用没有：真正压住上缘的是**搭在鬐甲上的缰**
+# （`tack_low_y`），它把上缘钉死在躯干高的 84.5%，比这里给到 0.95 还低。逐档给一个
+# 抬不动的数，是在规格表上写一条假的分档。
+BARD_TOP = 0.86
 BARD_LAP = 0.45  # 札片竖向搭叠（× 一排的高）
+# 一段甲短过这个就不做（× 体长）。**不跟着 `spec.cell` 走**：这条挡的是「上下左右都挨不着
+# 别人的一小块甲」——矮马的镫按骑手腿长给绝对落差，几乎垂到地上，在肚带与镫之间挤出一小
+# 段空隙——和甲片切多长没关系。跟着 cell 走的话片一做短那几块碎甲就又冒出来（锁子甲把
+# cell 收到 0.068 之后，矮马实测整副甲散成四片）。
+BARD_MIN_RUN = 0.085
 BARD_CLEAR = 0.010  # 甲与缰之间留的空（× 鬐甲高）
 BARD_BITE = 0.8  # 甲片内侧面埋进皮多深（× 板厚）：贴合判据要的是**实交**，不是相切
+# 板缘亮棱的高（× **板厚**）。按"一排的高"给会随排数变：顶档只有三排，一排就有五六个
+# 单位高，三成下去是一条比板还宽的亮带，读成"上半黑下半白"而不是"一块黑板磨了个边"。
+BARD_RIM = 1.6
 
 
 @dataclass(frozen=True)
@@ -1803,11 +1882,16 @@ class BardSpec:
     th: float  # 甲面厚（× 鬐甲高）
     hem: float  # 下摆到哪（0 = 只盖上半，1 = 到腹底）
     rows: int  # 侧面札片排数
+    cell: float  # 一片多长（× 体长）。**形制在这里分家**：小 = 小片密缀的札甲，
+    #              大 = 整板。同样的覆盖面，片大片小是两种甲
     peytral: bool  # 当胸板（布档只有一块布帘，没有硬板）
     croup_plate: bool  # 尻板
     crinet: bool  # 鸡颈
+    chamfron: str  # 面帘："" 无 / "half" 半面帘（护额与鼻梁，眼露在外）/ "full" 全罩留眼窗
     skirt: float  # 垂缘再往下加一截（× 躯干高）；0 = 无
     spine: bool  # 背脊梁
+    jisheng: float  # 寄生（尻上竖起的那面扇）高，× 鬐甲高；0 = 无
+    rim: str = ""  # 板缘亮棱的材质；"" = 不做（札甲不做棱，片太小，做了只剩一道杂色）
     glow: bool = False
 
 
@@ -1816,38 +1900,55 @@ BARDS: dict[str, BardSpec] = {
     "cloth": BardSpec(
         key="cloth", label="粗布甲", blurb="蓝草染褪的粗布障泥，麻绳捆在身上。挡枝刺挡夜寒，不挡刃。",
         mat="cloth", mat_dark="cloth_dark", mat_trim="rope",
-        th=0.013, hem=0.74, rows=3, peytral=False, croup_plate=False,
-        crinet=False, skirt=0.0, spine=False,
+        th=0.013, hem=0.74, rows=3, cell=0.085, peytral=False, croup_plate=False,
+        crinet=False, chamfron="", skirt=0.0, spine=False, jisheng=0.0,
     ),
     # 二档：布底上缀锁环，胸前多一块。锁环挡切不挡砸——这一档的形状来源。
+    # 环比札片还碎，切格跟着最短：远处读到的是一整片密麻的暗灰，不是一排排的片。
     "mail": BardSpec(
         key="mail", label="锁子甲", blurb="布底上缀满锁环，胸前一片当胸。挡得住切，挡不住砸。",
         mat="mail", mat_dark="mail_dark", mat_trim="iron_crude",
-        th=0.017, hem=0.82, rows=4, peytral=True, croup_plate=False,
-        crinet=False, skirt=0.0, spine=False,
+        th=0.017, hem=0.82, rows=4, cell=0.068, peytral=True, croup_plate=False,
+        crinet=False, chamfron="", skirt=0.0, spine=False, jisheng=0.0,
     ),
     # 三档：杂钢札片，胸前尻上各压一块整板。这是"挡得住砸"的分界线。
+    # 杂钢是回炉料，锻不出大片——**短而密**是这一档的样子，也是它便宜的原因。
     "light": BardSpec(
-        key="light", label="轻铁甲", blurb="杂钢札片编成，当胸与尻上各压一块整板。轻，马跑得动。",
+        key="light", label="轻铁甲", blurb="杂钢回炉锻的短札片密密编成，当胸与尻上各压一块整板。轻，马跑得动。",
         mat="plate", mat_dark="plate_dark", mat_trim="iron_crude",
-        th=0.021, hem=0.88, rows=5, peytral=True, croup_plate=True,
-        crinet=False, skirt=0.0, spine=False,
+        th=0.021, hem=0.88, rows=5, cell=0.070, peytral=True, croup_plate=True,
+        crinet=False, chamfron="", skirt=0.0, spine=False, jisheng=0.0,
     ),
-    # 四档：灵铁札片 + 鸡颈。灵铁轻，同样的护面不压马；甲片行间一道灵纹。
+    # 四档：灵铁。轻，所以同样的重量能锻**长片**、能一路护到颈和额——具装配到第三件。
+    # 半面帘：只压额与鼻梁，眼露在外。灵铁贵，护到眼眶就够，再往下是重甲的事。
     "lingtie": BardSpec(
-        key="lingtie", label="灵铁甲", blurb="灵铁札片连鸡颈，甲片行间一道细灵纹。轻而不折真元。",
+        key="lingtie", label="灵铁甲", blurb="灵铁长札片连鸡颈半面帘，甲片行间一道细灵纹。轻而不折真元。",
         mat="lingtie", mat_dark="lingtie_dark", mat_trim="lingtie",
-        th=0.024, hem=0.92, rows=5, peytral=True, croup_plate=True,
-        crinet=True, skirt=0.0, spine=False, glow=True,
+        th=0.024, hem=0.92, rows=4, cell=0.112, peytral=True, croup_plate=True,
+        crinet=True, chamfron="half", skirt=0.0, spine=False, jisheng=0.0, glow=True,
     ),
-    # 五档：淬黑的厚板，垂缘落到腹下，背上一道脊梁。护得最全，也最沉。
+    # 五档：不是"更厚的札甲"，是**换了形制**——整板。片大、排少、每块板缘一道磨亮的棱，
+    # 淬黑的面配亮棱，远处一眼就是"一整只黑的"。具装五件配齐（面帘全罩留眼窗），
+    # 尻上再竖一面寄生。护得最全，也最沉。
     "heavy": BardSpec(
-        key="heavy", label="重铁甲", blurb="淬黑厚板，垂缘落到腹下，背上一道脊梁。护得最全，马也最累。",
-        mat="iron_black", mat_dark="iron_black_dark", mat_trim="iron_crude",
-        th=0.030, hem=0.96, rows=6, peytral=True, croup_plate=True,
-        crinet=True, skirt=0.055, spine=True,
+        key="heavy", label="重铁甲", blurb="淬黑整板，面帘全罩只留眼窗，垂缘落到腹下，尻上一面寄生。人马皆铠，马也最累。",
+        mat="iron_black", mat_dark="iron_black_dark", mat_trim="iron_crude", rim="plate_rim",
+        th=0.030, hem=0.96, rows=3, cell=0.145, peytral=True, croup_plate=True,
+        crinet=True, chamfron="full", skirt=0.055, spine=True, jisheng=0.34,
     ),
 }
+
+# 具装的件数：分档核验拿它比"这一档是不是真多配了一件"，而不是比甲有多厚。
+# 顺序是马铠本来的顺序（当胸 → 搭后 → 鸡颈 → 面帘），寄生殿后（它是仪仗不是甲）。
+BARD_KIT: tuple[tuple[str, object], ...] = (
+    ("当胸", lambda s: s.peytral),
+    ("尻板", lambda s: s.croup_plate),
+    ("鸡颈", lambda s: s.crinet),
+    ("面帘", lambda s: bool(s.chamfron)),
+    ("垂缘", lambda s: s.skirt > 0),
+    ("脊梁", lambda s: s.spine),
+    ("寄生", lambda s: s.jisheng > 0),
+)
 
 
 def crinet_floor(fit: Fit) -> float:
@@ -1947,12 +2048,12 @@ def neck_outer_x(fit: Fit, za: float, zb: float, y0: float, y1: float) -> float:
     return best
 
 
-def _cells(fit: Fit, segs, lap: float) -> list[tuple[str, float, float]]:
+def _cells(fit: Fit, segs, lap: float, cell_len: float) -> list[tuple[str, float, float]]:
     """骨段 → 更细的格。同骨内切格是为了**跟着桶身前后收**：一整块平板从肩铺到腰，
     两头必然翘起来离开马体。同骨的格之间留一个板厚的搭叠（不是严格对接）——严格
     对接时 `check_anim_chain` 量到的重叠恰好是 0，那条判据分不出"刚好接着"和"刚好裂开"。
     """
-    cell = fit.P.L * BARD_CELL
+    cell = fit.P.L * cell_len
     za, zb = segs[0][1], segs[-1][2]
     out = []
     for bone, z0, z1, p0, p1 in segs:
@@ -1988,7 +2089,7 @@ def _lame_row(t: Tack, fit: Fit, spec: BardSpec, *, tag: str, row: str, za: floa
     # 同骨的格之间搭两个板厚：这一段是刚体，搭多少静止姿就是多少，不花代价；留窄了，
     # `check_anim_chain` 报出来的最小值全是这些静态缝，跨关节那几道真正会张开的反而
     # 被埋在数字底下看不见。
-    cells = _cells(fit, segs, th * 2.0)
+    cells = _cells(fit, segs, th * 2.0, spec.cell)
     zcs = [_zs(max(c0, T.z0), min(c1, T.z1), 3) for _b, c0, c1 in cells]
     # 每一格自己的体下缘。腹线自胸围向后上抬（收腹），一整排照同一个高度铺过去，到尻
     # 那儿整排都落在体外（实测：重铁甲的垂缘有十件飘着）。逐格托起来，甲的下摆自己就
@@ -2016,6 +2117,18 @@ def _lame_row(t: Tack, fit: Fit, spec: BardSpec, *, tag: str, row: str, za: floa
         for sgn, side in ((-1.0, "l"), (1.0, "r")):
             t.box(bone, f"{tag}_lame_{row}{i + 1}_{side}", (sgn * lo, a0, c0), (sgn * hi, a1, c1),
                   mat=mat, chain=(f"{tag}_row{row}_{side}", i))
+        if spec.rim:
+            # 板缘：整板那一档，每块板的下缘磨出一道亮棱。
+            #
+            # 这不是装饰，是**整板唯一能被认出来的地方**。一个体素 6.25 cm，一块整板
+            # 在马身上是一片什么细节都没有的黑；参考里那身黑甲之所以一眼是甲不是黑布，
+            # 全靠板缘那圈亮线（现实里是卷边、是刃口磨出来的白）。札甲不做这道棱：
+            # 片才两三个单位长，一道棱下去整片只剩杂色。
+            rim_h = th * BARD_RIM
+            for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                t.box(bone, f"{tag}_rim_{row}{i + 1}_{side}",
+                      (sgn * (hi - th * 0.25), a0, c0 + th * 0.4),
+                      (sgn * (hi + th * 0.30), a0 + rim_h, c1 - th * 0.4), mat=spec.rim)
         if glow:
             # 灵纹：贴着这一排的上棱走一道细条（甲片行间那道缝）。不支鳍，只鼓出一线。
             for sgn, side in ((-1.0, "l"), (1.0, "r")):
@@ -2060,7 +2173,7 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
             # 落差（`STIRRUP_DROP`）几乎垂到地上，于是最低那几排在肚带与镫之间挤出
             # 一小段空隙——照做出来，那两片上下左右都挨不着别人，成了浮在肋上的一小块
             # 甲（连通性判据报的"实为 4 片"就是它）。
-            if b - a < BARD_CELL * L:
+            if b - a < BARD_MIN_RUN * L:
                 continue
             _lame_row(t, fit, spec, tag=tag, row=f"{r + 1}{u + 1}", za=a, zb=b, y0=y0, y1=y1,
                       mat=mat, glow=glow, step=th * 0.34 * r, sag=h * 0.30)
@@ -2105,7 +2218,7 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
     by0 = max(y_hi - P.u(0.02), y_tail + gap)
     hw_b = max(T.band(z, by0, ytb)[1] for z in _zs(bz0, T.z1, 4))
     segs = fit.trunk.split(bz0, T.z1, by0, ytb, hw_b + gap + th)
-    for i, (bone, c0, c1) in enumerate(_cells(fit, segs, th * 2.0)):
+    for i, (bone, c0, c1) in enumerate(_cells(fit, segs, th * 2.0, spec.cell)):
         zc = _zs(max(c0, T.z0), min(c1, T.z1), 3)
         top = max(T.at(z)[1] for z in zc)
         # 横宽按**背顶那一薄层**量，不按整条带里最宽的地方量。按最宽的算出来是一个从
@@ -2124,7 +2237,7 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
         # 背脊梁：沿尻顶中线一道棱。只在鞍位之后——鞍位那一段归鞍。
         # z 上**不许内缩**：首版为了藏端面把两头各收进一个板厚，正好把搭叠吃干净
         # （同骨的搭叠本来就是一个板厚），一屈伸就从中间断开（rear 实测裂 0.74）。
-        for i, (bone, c0, c1) in enumerate(_cells(fit, segs, th * 2.0)):
+        for i, (bone, c0, c1) in enumerate(_cells(fit, segs, th * 2.0, spec.cell)):
             zc = _zs(max(c0, T.z0), min(c1, T.z1), 3)
             top = max(T.at(z)[1] for z in zc) + gap + th
             t.box(bone, f"bard_spine_{i + 1}", (-th * 1.1, top - th * 0.4, c0),
@@ -2132,7 +2245,7 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
 
     # 系带：把甲捆在马身上的那几道，横在札片外面。位置也从鞍的缝隙里挑——挑最靠前与
     # 最靠后那两段，两条带正落在肚带前后，与真甲的系法一致。
-    free = [(a, b) for a, b in saddle_free(fit, y_lo, y_hi, zb0, zb1, m) if b - a > BARD_CELL * L]
+    free = [(a, b) for a, b in saddle_free(fit, y_lo, y_hi, zb0, zb1, m) if b - a > BARD_MIN_RUN * L]
     for tag2, (a, b) in zip(("fore", "rear"), (free[0], free[-1]) if free else ()):
         zt = _lerpf(a, b, 0.62 if tag2 == "fore" else 0.30)
         hw_t = T.band(zt, y_lo, y_hi)[1] + gap + th * 2.4
@@ -2182,10 +2295,287 @@ def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
                          mat="glow", glow=True, ext=(ext[0] - d, ext[1] - d))
 
 
+# 面帘（头局部系，× 头长；与 `gen_pelt.part_head` / 笼头同一套坐标）
+CHAM_Z_BACK = -0.245  # 后缘：耳在 z[-0.215,-0.055]，压在耳上马会甩头（同项带的道理）
+CHAM_Z_HALF = -0.660  # 半面帘前缘：鼻梁中段停住
+CHAM_Z_FULL = -0.930  # 全面帘前缘：鼻孔（z[-1.045,-0.955]）之后停住，嘴还能张
+CHAM_TOP_W = 0.66  # 顶板占颅壳半宽的几成（两侧归颊板）
+# 面帘离脸最远几个**面帘板厚**（再远就是飘着）。不写成绝对单位：面帘是一节一节的，
+# 后一节比前一节宽，同一条颊板骑在两节上只能按宽的那节给，差出来的量级就是一个板厚；
+# 这个量随体型、随分档一起变，绝对数在矮马上松、在挽马上紧。
+CHAM_FLOAT = 3.0
+CHAM_TH = 0.5  # 面帘的板厚 / 空隙相对身甲打几折（见 `part_bard_chamfron`）
+EYE_RE = re.compile(r"eye_[lr]|eye_socket_[lr]")
+# 头上那套东西要分成两类，面帘对它们的态度正好相反：
+#   · **络头**（项 / 额 / 鼻 / 颊 / 咽革）是戴在头上的，面帘**罩在它外面**——真甲也这么
+#     戴：先络头，再扣面帘。所以它决定面帘往外抬多少。
+#   · **缰绳本身**（缰线 / 环 / 衔铁）是牵在骑手手里的。骑手没提缰时它从嘴角搭到耳后、
+#     顺着颈垂下去，正好压在腮上。面帘要是把这一段罩进去，缰就从甲里长出来了，而且
+#     是**牵不动的那种**。所以它决定面帘的下缘停在哪。
+# 首版没分这两类，一律"罩在外面"：颊板照缰线的 |x|=0.272 让开，比脸宽出一整个单位，
+# 整只面帘鼓成个头盔。
+HEADSTALL_RE = re.compile(r"rein_(crown|brow|nose|cheek|throat|knot)\w*")
+REINLINE_RE = re.compile(r"rein_(line|ring|bit)\w*")
+
+
+def _rein_local(fit: Fit, pat: re.Pattern) -> list[tuple[Vec, Vec]]:
+    """三档缰里匹配 pat 的件，换算到头局部系的 AABB（头长比例）。
+
+    两处讲究：
+      · 逐**角点**换算再取包围盒，不整盒换：颊带带着自己的俯角转过，整盒换不进局部系。
+      · 判"在不在这一段"按**区间相交**，不按"有没有角点落在区间里"。缰线从嘴角一路
+        拉到耳后，一根就横跨好几节颅壳，两个端点都在段外——按角点判，中间那几节
+        一个都量不到，下缘凭空塌下去。
+    """
+    Hd = fit.head
+    out = []
+    for tk in REINS:
+        for e in other_tack(fit, "rein", tk):
+            n = e["name"]
+            # 名字没归类 = 静默漏判。分类是按**名字**做的（络头罩得住、缰绳罩不得，
+            # 这个区别几何上看不出来），所以新加一件缰具而忘了归类时，它会既不抬高
+            # 面帘也不顶住下缘——面帘正好从它身上压过去，两边判据都不响。
+            # 一档绳笼头的 `rein_knot_*` 就是这么漏的（矮马重铁甲实测穿进 0.04）。
+            if not HEADSTALL_RE.fullmatch(n) and not REINLINE_RE.fullmatch(n):
+                raise SystemExit(f"缰件 {n} 既不算络头也不算缰绳 —— 面帘不知道该罩它还是让它")
+            if not pat.fullmatch(n):
+                continue
+            cs = [Hd.point_local(c) for c in _corners(e)]
+            out.append((tuple(min(c[i] for c in cs) for i in range(3)),
+                        tuple(max(c[i] for c in cs) for i in range(3))))
+    return out
+
+
+def _span(boxes, za: float, zb: float):
+    return [b for b in boxes if b[1][2] > za + 1e-9 and b[0][2] < zb - 1e-9]
+
+
+def _shell_segs(fit: Fit, z0: float, z1: float, ov: float) -> list[tuple[float, float]]:
+    """颅壳分节的 z 区间，裁到 [z0,z1]，相邻两节各外扩 ov 好搭上。
+
+    面帘必须**跟着颅壳分节走**：颅壳一节一节变宽（吻端半宽 0.080，眼那一节 0.152），
+    一整块板从额铺到吻，中段必然架空一大截——和身甲要切格是同一件事。外扩是为了让
+    相邻两节**真的重叠**：恰好对接时连通性判据分不出"接着"和"裂开"，整面面帘会被
+    报成四片。
+    """
+    # 取**分界线**再连成相邻区间，不是拿每节颅壳各自裁一段：颅壳的 z 段两头都会被裁到
+    # [z0,z1] 上，裁完好几节挤成同一段，出来的是几块重合的板（同处几何、互相闪）。
+    zs = sorted({z for n, b in fit.head.local.items() if fit.head.SHELL.fullmatch(n)
+                 for z in (b[0][2], b[1][2]) if z0 - 1e-9 <= z <= z1 + 1e-9} | {z0, z1})
+    # 碎段并进邻段，不是各自成段：颅壳两节之间常常只差几个千分位（吻端 -0.905 与
+    # -0.900），单独成段的话外扩之后整段套在邻段里，出来两块同处的板互相闪。**第一段
+    # 也要并**——它前面没有邻段可并，首版就漏了它，最前那块板整块套在第二块里。
+    segs: list[list[float]] = []
+    for a, b in zip(zs, zs[1:]):
+        if segs and b - a < 0.06:
+            segs[-1][1] = b
+        else:
+            segs.append([a, b])
+    while len(segs) > 1 and segs[0][1] - segs[0][0] < 0.06:
+        segs[1][0] = segs[0][0]
+        segs.pop(0)
+    return [(max(a - ov, z0), min(b + ov, z1)) for a, b in segs if b - a > 1e-4]
+
+
+def part_bard_chamfron(t: Tack, fit: Fit, spec: BardSpec) -> None:
+    """面帘：罩在络头外的脸甲。半面帘只压额与鼻梁（眼整个露在外），全面帘罩到吻端、
+    在眼上开窗。
+
+    眼窗**按皮层的眼件开**，不按"脸长的几成"猜：眼球鼓出颅壳外（|x| 到 0.194，颅壳
+    只有 0.152），拿比例估出来的窗必然要么糊住眼要么大得像没戴。
+    """
+    P, Hd = fit.P, fit.head
+    H = P.H
+    # 板厚 / 空隙换成**头长比例**，并且**减半**：`spec.th` 是照桶身定的（0.030 × 鬐甲高
+    # = 0.74 个单位），扣在一张只有一个半单位半宽的脸上，光板厚就把面帘撑到脸的两倍宽。
+    # 真甲的板厚在头上和身上是同一个数，但那个数在这个尺度下本来就是夸张过的——
+    # 身上夸张得看不出来，头上夸张得像扣了个箱子。
+    th, gap = P.u(spec.th) * CHAM_TH / H, P.u(0.006) * CHAM_TH / H
+    full = spec.chamfron == "full"
+    z_front = CHAM_Z_FULL if full else CHAM_Z_HALF
+    eye = Hd.part_local(EYE_RE)
+    if eye is None:
+        raise SystemExit("皮层里找不到眼件 —— 面帘的眼窗无处可开")
+    stall, line = _rein_local(fit, HEADSTALL_RE), _rein_local(fit, REINLINE_RE)
+    ey0, ey1 = eye[0][1] - gap, eye[1][1] + gap
+    ez0, ez1 = eye[0][2] - gap, eye[1][2] + gap
+    mat, md = spec.mat, spec.mat_dark
+
+    def crest(z: float) -> float:
+        """脸在这个 z 处的"面帘该贴到哪"：颅壳顶与**跨中线**那几条络头带里更高的那个。
+
+        只算跨中线的带：颊带顺着腮一直爬到耳后（局部 y 到 0.249，比颅壳顶还高 0.7 个
+        单位），可它在脸侧面，顶板压根不盖它——盖它的是颊板，而颊板的内侧面在它外头。
+        不分中线不中线一律取最大，顶板会被一条侧面的带整段顶起来。
+        """
+        sh = Hd.shell_or_none(z) or Hd.shell(min(max(z, z_lo0), z_hi0))
+        hw_, top_, _ = sh
+        mid = [b[1][1] for b in stall if b[1][2] > z and b[0][2] < z
+               and b[0][0] < hw_ * 0.7 and b[1][0] > -hw_ * 0.7]
+        return max([top_] + mid) + gap
+
+    zs_shell = [b[i][2] for n, b in Hd.local.items() if Hd.SHELL.fullmatch(n) for i in (0, 1)]
+    z_lo0, z_hi0 = min(zs_shell), max(zs_shell)
+    pad = th * 0.9  # 带两端各外延这么多好和邻节搭上
+
+    def band(za: float, zb: float) -> tuple[float, float]:
+        """一段沿脸坡的带的两端高度：抬到**整段**（连同两端外延）都压不到脸与络头。
+
+        只按两端定这条线不行：脸不是直的，鼻革又恰好落在一节的中段——线从两端看好好地
+        架在脸上，中间那一截正好陷进鼻革里（实测 0.49 单位）。所以逐点采样，按最深的
+        那一处把整条线整体抬起来。
+        """
+        ya, yb = crest(za), crest(zb)
+        zs = [_lerpf(za - pad, zb + pad, i / 8) for i in range(9)]
+        d = max(crest(z) + th / 2 - _lerpf(ya, yb, (z - za) / max(zb - za, 1e-9)) for z in zs)
+        return ya + d, yb + d
+
+    segs = _shell_segs(fit, z_front, CHAM_Z_BACK, th * 0.7)
+    xo_run = 0.0
+    for k, (za, zb) in enumerate(segs):
+        hw, top, bot = Hd.shell(max(min((za + zb) / 2, z_hi0), z_lo0))
+        near = _span(stall, za, zb)
+        ya, yb = band(za, zb)
+        # 颊板的下缘由**缰线**顶住（见 REINLINE_RE 注释）；全面帘还要至少下到眼下缘，
+        # 不然眼窗没有下框。半面帘直接停在眼上缘——它本来就不护眼。
+        y_lo = max([bot + (top - bot) * 0.18] + [b[1][1] + gap for b in _span(line, za, zb)]) \
+            if full else ey1
+        y_out = max(ya, yb) + th / 2
+        # 外侧面按**这一节罩着的那段脸**量，整节共用一个：脸不是颅壳，颊、颌线、眼眶都
+        # 鼓在颅壳外（眼到 0.194，颅壳只有 0.152），照颅壳给，眼从板里穿出来。逐块各量
+        # 各的会让眼窗前后两块比窗框那两条更靠外，窗口凹进去一台阶。
+        # 取**一路往后不减**的跑动最大值：脸自吻向后越来越宽，相邻两节的板才搭得上；
+        # 各节各算各的，中间某节窄一点就断成两截。
+        xo = max([hw] + [max(h[0], -lo2[0]) for lo2, h in list(Hd.local.values()) + near
+                         if h[2] > za and lo2[2] < zb and h[1] > y_lo and lo2[1] < y_out]) + gap + th
+        xo = xo_run = max(xo, xo_run)
+        # 顶板**通宽、而且顺着脸的坡斜过去**。脸自吻向枕升起将近一个头长的 0.12，一节
+        # 一节地拿水平板去铺，相邻两块在 y 上差得比板还厚，正视看过去是三层错开的架子
+        # （而且连通性判据会把整面面帘报成三片）。改成沿坡的斜带，两端各外延一点搭上。
+        Hd.strap(t, f"bard_cham_top_{k + 1}", -xo, xo, (ya, za), (yb, zb), th,
+                 mat=mat, ext=(pad, pad))
+        for sgn, side in ((-1.0, "l"), (1.0, "r")):
+            def cheek(nm: str, a: float, b: float, c0: float, c1: float,
+                      m: str = mat, s=sgn, sd=side, xr=xo) -> None:
+                if b - a < th * 0.5:  # 缰线顶得太高时窗下那条会被压成零高，不做
+                    return
+                Hd.put(t, f"bard_cham_{nm}_{k + 1}_{sd}",
+                       (s * (xr - th), a, c0), (s * xr, b, c1), mat=m)
+
+            if full and zb > ez0 and za < ez1:
+                # 这一节撞上眼：窗上一条、窗下一条，窗前后各补一段满高的
+                cheek("brow", ey1, y_out, max(za, ez0), min(zb, ez1), md)
+                cheek("cheek", y_lo, ey0, max(za, ez0), min(zb, ez1))
+                if zb > ez1:
+                    cheek("side", y_lo, y_out, ez1, zb)
+                if za < ez0:
+                    cheek("side2", y_lo, y_out, za, ez0)
+            else:
+                cheek("side", y_lo, y_out, za, zb)
+        if spec.glow:
+            # 灵纹：沿鼻梁中线一道，压在顶板外面。半面帘就这一处发光，与鸡颈那道连成一线
+            Hd.strap(t, f"bard_cham_glow_{k + 1}", -xo * 0.22, xo * 0.22,
+                     (ya + th * 0.55, za), (yb + th * 0.55, zb), th * 0.5,
+                     mat="glow", glow=True, ext=(-gap, -gap))
+
+
+def part_bard_jisheng(t: Tack, fit: Fit, spec: BardSpec) -> None:
+    """寄生：尻上竖起来的那面扇。中原具装最认得出的一件——它不挡刃，是**认旗**。
+
+    整副甲做到顶档，剪影上还是"一匹裹着黑板的马"；寄生是唯一一件把剪影改写掉的东西，
+    远远看见就知道来的是具装骑。放在**矢状面**里（侧看是一面扇、后看只是一条竖线）：
+    横着放的话侧躺那一帧整面扇拍进地里。
+    """
+    P, T = fit.P, fit.torso
+    th = P.u(spec.th)
+    z1 = T.z1
+    z0 = _lerpf(saddle_span(fit)[1], z1, 0.05)  # 自鞍后缘让开一线起，一直到尻端
+    top = max(T.at(z)[1] for z in _zs(z0, z1, 5))
+    h = P.u(spec.jisheng)
+    # 座：先在尻顶铺一块托，扇插在托上（真物也是插在搭后的铜座里）
+    t.box("hips", "bard_jisheng_seat", (-th * 2.2, top - th, _lerpf(z0, z1, 0.22)),
+          (th * 2.2, top + th * 1.2, _lerpf(z0, z1, 0.82)), mat=spec.mat_dark)
+    # 扇：三片摞起来，**自下而上越来越宽**——扇是开上去的。首版做成越往上越窄，出来是
+    # 一根竖在尻上的烟囱：比长还高，剪影上读成"马背上插了根柱子"。真物比它宽得多，
+    # 宽过高才像扇。每片之间在 y 上留搭叠（`check_anim_chain` 要的是重叠不是对接）。
+    for i, (w0, w1) in enumerate(((0.42, 0.58), (0.21, 0.79), (0.02, 1.00))):
+        ya = top + h * (0.30 * i)
+        t.box("hips", f"bard_jisheng_fan_{i + 1}",
+              (-th * 1.15, ya, _lerpf(z0, z1, w0)), (th * 1.15, ya + h * 0.38, _lerpf(z0, z1, w1)),
+              mat=spec.mat if i % 2 == 0 else spec.mat_dark, chain=("bard_jisheng_fan", i))
+    if spec.rim:
+        # 扇的上缘一道亮棱：扇是逆着天光看的，边缘那道亮是它唯一的细节。**只做一线**，
+        # 给厚了整面扇读成"一个带盖的箱子"而不是一面扇。
+        t.box("hips", "bard_jisheng_rim", (-th * 1.2, top + h * 0.98 - th * 0.2, _lerpf(z0, z1, 0.02)),
+              (th * 1.2, top + h * 0.98 + th * 0.7, _lerpf(z0, z1, 1.00)), mat=spec.rim)
+
+
 def build_bard(t: Tack, fit: Fit, spec: BardSpec) -> None:
     part_bard_body(t, fit, spec)
     if spec.crinet:
         part_bard_crinet(t, fit, spec)
+    if spec.chamfron:
+        part_bard_chamfron(t, fit, spec)
+    if spec.jisheng:
+        part_bard_jisheng(t, fit, spec)
+
+
+# 计入覆盖率的皮件：躯干 / 颈 / 头。**腿与尾不计**——真马铠本来就不护腿（`FIT_TOL` 的
+# limb 那一档说的正是腿会扫进甲里），把腿算进分母，五档的覆盖率会一起被同一个常数压低，
+# 分档之间的差反而看不出来。
+COVER_RE = re.compile(r"|".join((SHAPE_RE.pattern, r"neck_\d+|neck_throat_\d+",
+                                 r"head_shell_\d+|jaw_line_[lr]|jowl_[lr]|chin|lip_(upper|lower)")))
+COVER_NEAR = 0.55  # 甲离皮多近算"盖住了"（单位）
+# 逐档至少要多盖住这么多（比例）。**门槛低不是宽容，是量出来的天花板低**：马身侧面有
+# 三片地方任何一档都盖不到，而且各有各的主人——
+#   · 鞍位那一条（甲整段让开，`saddle_free`）；
+#   · 上缘之上（搭在鬐甲上的**缰**压着，`tack_low_y`；躯干高的 84.5% 封顶）；
+#   · 颈侧与肩（缰垂在腮与颈侧、前肢在肩上扫，`crinet_floor` / limb 容许量）。
+# 三条都是**跨装备**约束、都已经各有判据。灵铁甲已经把这三片之外的地方基本盖满了
+# （61.6%），重铁甲再往上只剩 0.8pp——它比灵铁甲多的是**形制**（整板）、厚度与具装件数
+# （垂缘 / 脊梁 / 寄生），不是面积。所以这条只负责挡住"新一档其实没多盖"，
+# "新一档必须多配一件具装"由 `check_escalation` 挡，两条各管一头。
+MIN_COVER_STEP = 0.004
+MIN_COVER_TOP = 0.60  # 顶档的下限（腿与尾不在分母里，见 COVER_RE）
+
+
+COVER_N = 6  # 每块皮的侧面各取 N×N 个采样点
+
+
+def coverage(t: Tack, fit: Fit) -> float:
+    """甲盖住了马身**侧面**的百分之几（0-1）。
+
+    "从轻到重覆盖范围递增"必须是个**量得出来的数**，不能只看图。看图看得出"有没有多
+    一件"，看不出"多盖住了多少"：把当胸做大一圈、下摆放长两寸，部件表一点不动而覆盖
+    率立刻动；反过来加一面寄生，部件多了一件、覆盖率几乎不变（它本来就不是护具）。
+
+    量的是**皮面上的采样点**，不是"这块皮件有没有被碰到"。按件算的那一版，一块从肩铺
+    到腰的肋侧皮只要被任何一片甲蹭到就整块算覆盖——重铁甲照那个口径报 90%，而渲染图
+    上肩与腹明明大片露着。判据比图还乐观的时候，它就不再是判据了。
+    """
+    pelt = [e for e in fit.pelt_els if COVER_RE.fullmatch(e["name"])]
+    tack = tack_els(t)
+    if not pelt or not tack:
+        return 0.0
+    # 采样点：每块皮的左右两个侧面各 N×N。侧面是玩家看得见的那一面，也是甲该盖的那一面
+    pts, wts = [], []
+    g = (np.arange(COVER_N) + 0.5) / COVER_N * 2 - 1
+    for e in pelt:
+        c, h, R = _obb(e)
+        area = float(h[1] * h[2]) * 4 / (COVER_N * COVER_N)
+        for sx in (-1.0, 1.0):
+            for a in g:
+                for b in g:
+                    pts.append(c + R @ np.array([sx * h[0], a * h[1], b * h[2]]))
+                    wts.append(area)
+    P = np.array(pts)
+    W = np.array(wts)
+    cov = np.zeros(len(P), bool)
+    for e in tack:
+        c, h, R = _obb(e)
+        d = np.abs((P - c) @ R)  # R 正交：R^T(p-c) == (p-c)@R
+        cov |= (d <= h + COVER_NEAR).all(axis=1)
+    return float(W[cov].sum() / W.sum()) if W.sum() else 0.0
 
 
 def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
@@ -2203,7 +2593,7 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
     """
     P, T = fit.P, fit.torso
     els = tack_els(t)
-    ok = {*BARD_TRUNK, *NECK}
+    ok = {*BARD_TRUNK, *NECK, *((BRIDLE_BONE,) if spec.chamfron else ())}
     bad = check_common(t, fit, lambda b: b in ok)
     if not els:
         return bad
@@ -2223,7 +2613,10 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
 
     # --- 裹住了没有 ---
     torso_els = [e for e in fit.pelt_els if is_shape(e["name"])]
-    lames = [e for e in els if "_lame_" in e["name"] or e["name"].startswith("bard_skirt")]
+    # 只挑甲片本身。板缘的亮棱（`bard_*_rim_*`）挂在自己那块板上、不挂在马身上——
+    # 首版的条件是"名字里有 _lame_ **或**以 bard_skirt 开头"，垂缘的亮棱正好两条都撞上，
+    # 于是十六道棱一起报"没贴在马身上"。
+    lames = [e for e in els if "_lame_" in e["name"]]
     if not lames:
         bad.append("没有甲片")
     for e in lames:
@@ -2245,12 +2638,44 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
         if v > CROSS_TOL:
             bad.append(f"搭后压在尾根上（陷进 {v:.2f} 单位）——尾会从甲里长出来")
 
-    want = 3 if spec.crinet else 2
+    # --- 马还得看得见 ---
+    # 面帘盖住眼睛不是"细节没做好"，是这匹马瞎了。而渲染图上它长得和"戴好了"一模一样：
+    # 一块板压在眼上，看图只会觉得脸挺整齐。眼窗按皮层的眼件开，这条按同一批眼件查。
+    eyes = [e for e in fit.pelt_els if EYE_RE.fullmatch(e["name"])]
+    if spec.chamfron and eyes:
+        hit = [(e["name"], v) for e in els for o in eyes if (v := _pen(e, o)) > CROSS_TOL]
+        if hit:
+            nm, v = max(hit, key=lambda h: h[1])
+            bad.append(f"面帘压住眼睛（{nm} 陷进 {v:.2f} 单位，共 {len(hit)} 处）——马看不见了")
+
+    # --- 面帘与鸡颈是两件甲，也得互相让 ---
+    # 跨装备判据只查"别的马具"，同一副甲里的两件互相穿插它一条都不响：面帘挂 skull、
+    # 鸡颈挂 neck_7，两根骨紧挨着，各按各的基准往外鼓，撞上是常态。
+    cham = [e for e in els if e["name"].startswith("bard_cham")]
+    crin = [e for e in els if e["name"].startswith("bard_crinet")]
+    if cham and crin:
+        v = max(_pen(a, b) for a in cham for b in crin)
+        if v > CROSS_TOL:
+            bad.append(f"面帘与鸡颈自己撞了 {v:.2f} 单位——同一副甲里两件穿插")
+
+    # --- 面帘不许飘 ---
+    # 面帘是**架在络头上**的，不咬进脸里（络头夹在中间），所以"贴住了没有"那条按躯干
+    # 那套实交口径查不到它——查得到的只有"离脸多远"。飘起来的面帘在正视图里和戴好的
+    # 长得几乎一样（正面看它就该盖住脸），只有侧视才看得出来悬空。
+    face = [e for e in fit.pelt_els if fit.head.SHELL.fullmatch(e["name"])]
+    if cham and face:
+        d, who = max((min(-_pen(c, f) for f in face), c["name"]) for c in cham)
+        lim = P.u(spec.th) * CHAM_TH * CHAM_FLOAT
+        if d > lim:
+            bad.append(f"面帘飘在脸外 {d:.2f} 单位（{who}，上限 {lim:.2f}）——没扣在脸上")
+
+    want = 2 + bool(spec.crinet) + bool(spec.chamfron)
     comps = connected_components(_Shim(els))
     if len(comps) != want:
         detail = " / ".join(f"{len(c)} 件({c[0]}…)" for c in comps[:4])
-        bad.append(f"整副甲应是 {want} 片（肚带前一片 / 肚带后一片"
-                   f"{' / 鸡颈' if spec.crinet else ''}），实为 {len(comps)} 片：{detail}")
+        parts = ["肚带前一片", "肚带后一片"] + (["鸡颈"] if spec.crinet else []) \
+            + (["面帘"] if spec.chamfron else [])
+        bad.append(f"整副甲应是 {want} 片（{' / '.join(parts)}），实为 {len(comps)} 片：{detail}")
     bad += check_mirror(els)
     return bad
 
@@ -2464,8 +2889,11 @@ STRAP_WORDS = ("girth", "billet", "buckle", "rein_line", "rein_cheek",
 #   · 甲片刻意把内侧面埋进马体里（见 `_lame_row`），所以它可以卡到**实交**（0）——
 #     甲飘起来离开马身是这一层最难看的翻车（一层壳浮在马外面跟着马跑），而它在静帧上
 #     和"贴着"长得一模一样。既然造型上做得到实交，判据就不该松。
+# 首版这里写的是 `bard_fore_lame` / `bard_rear_lame` —— 甲的件从来不叫这个名（身甲是
+# `bard_lame_*`、垂缘是 `bard_skirt_lame_*`），两个键一次都没命中过。**判据挂着死键
+# 比没有判据更坏**：看着在查身甲有没有飘开，其实只查了鸡颈。
 MUST_HUG = {"saddle_pad": 0.0, "rein_line_neck": 0.9,
-            "bard_fore_lame": 0.0, "bard_rear_lame": 0.0, "bard_crinet_lame": 0.0}
+            "bard_lame": 0.0, "bard_skirt_lame": 0.0, "bard_crinet_lame": 0.0}
 
 
 def check_anim_fit(t: Tack, pkey: str) -> dict[str, tuple[float, str]]:
@@ -2655,6 +3083,17 @@ def drop_pelt(t: Tack) -> None:
 
 
 MIN_SHADE = 20.0  # 同一档内主色与暗部的最小距离
+MIN_TIER = 40.0  # 相邻两档至少有一个角色要拉开这么远：五档摆在一起要认得出是五档
+MIN_EDGE = 1.75  # 受光带 / 背光带的最小亮度**比值**（叠边那条线）
+# 每种纹理的侧面最亮 / 最暗**比值**。上界和下界一样是判据：布要是也闪就成了锡箔。
+FINISH_SPAN: dict[str, tuple[float, float]] = {
+    "pit": (2.3, 6.0),  # 金属
+    "ring": (1.7, 3.4),  # 锁环
+    "weave": (1.15, 1.55),  # 布
+    "twist": (1.25, 1.90),  # 麻绳
+    "mottle": (1.20, 2.10),  # 革
+    "flat": (1.0, 1.01),  # 灵纹
+}
 
 
 def _rgbd(a, b) -> float:
@@ -2676,6 +3115,11 @@ def check_contrast() -> list[str]:
     灵纹（`glow`）不在此列：它是自发光的点缀，本来就不靠与毛色的反差被看见。
 
     另外查同一档内主色与暗部的距离：明暗层次要是也糊在一起，分档做的那点造型全白搭。
+    再查**相邻两档的主色**：五档甲摆在一起要认得出是五档，不是五块差不多的灰。
+
+    量的是**实际刷出来的侧面均色**（`mat_rgb`）不是表里的名义值：名义值是"打算刷成
+    什么"，刷出来才是"远处看见什么"。现在两者只差一两个数（纹理归一过），但判据盯着
+    名义值的话，往后谁把纹理改偏了它就成了睁眼瞎。
 
     RGB 欧氏距离只是个粗糙代理，够用：这里要挡的是"几乎同色"，不是排颜色的名次。
     """
@@ -2684,20 +3128,56 @@ def check_contrast() -> list[str]:
     bad = []
     for kind, K in KINDS.items():
         for tk, spec in K.table.items():
-            for role in ("mat", "mat_dark", "mat_trim"):
+            # `mat_nail` 是蹄铁的钉头 —— 首版角色表漏了它，而钉头是蹄铁上除铁条外
+            # 唯一露在外面的东西，钉头糊进蹄色等于整排钉子消失。
+            for role in ("mat", "mat_dark", "mat_trim", "mat_nail"):
                 m = getattr(spec, role, None)
                 if not m:
                     continue
                 for coat in COATS.values():
                     for key in K.against:
-                        d = _rgbd(TACK_MATS[m], coat.mats[key])
+                        d = _rgbd(mat_rgb(m), coat.mats[key])
                         if d < K.min_contrast:
                             bad.append(f"{kind}/{tk} 的 {role}={m} 与「{coat.label}」的 {key} 只差 "
                                        f"{d:.1f}（下限 {K.min_contrast:.0f}），远处看不出穿没穿")
-            d = _rgbd(TACK_MATS[spec.mat], TACK_MATS[spec.mat_dark])
+            d = _rgbd(mat_rgb(spec.mat), mat_rgb(spec.mat_dark))
             if 0.0 < d < MIN_SHADE:
                 bad.append(f"{kind}/{tk} 的主色与暗部只差 {d:.1f}（下限 {MIN_SHADE:.0f}），明暗层次白做")
+        # 相邻两档要在**某一个角色**上拉开，不是每个角色都拉开：灵铁鞍与粗革鞍同样是
+        # 一副革鞍，差的是配件（`mat_trim` 革扣 → 灵铁），座面本来就该是同一块革。
+        # 卡"主色必须不同"会逼出一副蓝座面的鞍——那是判据在替美术拍板。
+        tiers = list(K.table.values())
+        for a, b in zip(tiers, tiers[1:]):
+            best = max((_rgbd(mat_rgb(getattr(a, r)), mat_rgb(getattr(b, r)))
+                        for r in ("mat", "mat_dark", "mat_trim", "mat_nail")
+                        if getattr(a, r, None) and getattr(b, r, None)), default=0.0)
+            if best < MIN_TIER:
+                bad.append(f"{kind} 的「{a.label}」与「{b.label}」哪个角色都只差 {best:.1f}"
+                           f"（下限 {MIN_TIER:.0f}），相邻两档在远处分不开")
     return bad
+
+
+def check_escalation() -> list[str]:
+    """具装是**一件一件配齐**的：`BARD_KIT` 逐档只增不减，而且每一档都得真多配一件。
+
+    表里改一个 bool 就可能让顶档比次档少一件——两档的图差得远，看图看不出来少了哪件。
+    这条查的是**声明**（规格表），逐档覆盖率查的是**做出来的东西**，两条各管一头。
+    """
+    bad = []
+    tiers = list(BARDS.values())
+    for a, b in zip(tiers, tiers[1:]):
+        lost = [n for n, f in BARD_KIT if f(a) and not f(b)]
+        if lost:
+            bad.append(f"马甲「{b.label}」比「{a.label}」少了 {'、'.join(lost)}——具装只该越配越全")
+        if not any(f(b) and not f(a) for _n, f in BARD_KIT):
+            bad.append(f"马甲「{b.label}」相对「{a.label}」没多配任何一件具装")
+    return bad
+
+
+def check_finish() -> list[str]:
+    """金属要有跨度、布不许有跨度（说明见 `material.check_finishes`）。"""
+    return check_finishes({k: m.rgb for k, m in TACK_MATS.items()},
+                          lambda k: FINISHES[TACK_MATS[k].finish], FINISH_SPAN, MIN_EDGE)
 
 
 def check_geom_same_across_coats(pkey: str) -> list[str]:
@@ -2766,7 +3246,7 @@ def main() -> int:
                 print(f"· {out.relative_to(FINAL.parents[1])}  件 {t.count}")
         return 0
 
-    for msg in check_contrast():
+    for msg in check_finish() + check_contrast() + check_escalation():
         print(f"  ✗ {msg}")
         rc = 1
     for pk in pkeys:
@@ -2788,6 +3268,7 @@ def main() -> int:
                 vols.setdefault(tier, []).append((
                     sum(float(np.prod(np.array(e["to"]) - np.array(e["from"]))) for e in tack_els(t)),
                     {comp_type(e["name"]) for e in tack_els(t)},
+                    coverage(t, fit) if kind == "bard" else 0.0,
                 ))
                 bad = K.check(t, fit, spec)
                 # 贴合类核验必须在**裁掉皮层之前**做——裁完就没有可比对的皮了
@@ -2847,12 +3328,26 @@ def main() -> int:
             order = list(K.table)
             for i in range(len(order) - 1):
                 a, b = vols.get(order[i], []), vols.get(order[i + 1], [])
-                for (va, ca), (vb, cb) in zip(a, b):
+                for (va, ca, ka), (vb, cb, kb) in zip(a, b):
                     if not cb - ca:
                         print(f"    ✗ {order[i + 1]} 相对 {order[i]} 没有任何新部件类型，分档看不出来")
                         rc = 1
                     if vb <= va:
                         print(f"    ✗ {order[i + 1]} 的用料没比 {order[i]} 多（{va:.1f} → {vb:.1f}）")
+                        rc = 1
+                    # 覆盖范围要**逐档真的变大**。"多一件部件"和"多盖住一片"是两回事：
+                    # 把当胸做大一圈、下摆放长两寸，部件表一点不动，覆盖率立刻动；反过来
+                    # 加一面寄生，部件多了一件而覆盖率几乎不变（它本来就不是护具）。
+                    # 两条都要，只留一条就漏掉另一半。
+                    if kind == "bard" and kb - ka < MIN_COVER_STEP:
+                        print(f"    ✗ {order[i + 1]} 盖住的马身没比 {order[i]} 多多少"
+                              f"（{ka * 100:.1f}% → {kb * 100:.1f}%，至少 +{MIN_COVER_STEP * 100:.1f}pp）")
+                        rc = 1
+                if kind == "bard" and i + 2 == len(order) and b:
+                    worst = min(k for *_r, k in b)
+                    if worst < MIN_COVER_TOP:
+                        print(f"    ✗ 顶档只盖住马身侧面的 {worst * 100:.1f}%"
+                              f"（下限 {MIN_COVER_TOP * 100:.0f}%）")
                         rc = 1
     return rc
 
