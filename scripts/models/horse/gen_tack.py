@@ -1958,6 +1958,9 @@ class BardSpec:
     mat_plate_dark: str = ""
     # 当胸中央那一颗圆盾泡（"" = 不做）。诺曼那一路的当胸正中总有一颗，是它最好认的记号
     boss: str = ""
+    # 颈与头兜不兜到底。只盖颈脊的鸡颈把颈的一多半留在外面、只盖脸上半的面帘把腮与
+    # 颌整片留在外面——顶档 36% 的缺口里，颈占四成、头下半占一成半
+    full_wrap: bool = False
     # 面帘顶上竖起的一对缨（"" = 不做）。铁浮屠那张图里马额上就这么一对——整副甲
     # 一身近黑，**剪影上唯一能认出来的东西**就是它（同当年寄生要干的事，但这回长在
     # 头上、不改躯干轮廓，也就不会读成"屁股上插了根烟囱"）
@@ -2021,7 +2024,7 @@ BARDS: dict[str, BardSpec] = {
         key="heavy", label="重铁甲", blurb="十排淬黑鱼鳞层层压叠，白钢面甲全罩只留眼窗，额上一对铁缨。人马皆铠，马也最累。",
         mat="iron_black", mat_dark="iron_black_dark", mat_trim="iron_crude",
         mat_plate="steel_polish", mat_plate_dark="steel_polish_dark",
-        plume="iron_black", banded=False,
+        plume="iron_black", full_wrap=True, banded=False,
         th=0.024, hem=0.95, rows=10, cell=0.078, peytral=True, croup_plate=True,
         crinet=True, chamfron="full", skirt=0.105, spine=True, rear=True,
     ),
@@ -2544,14 +2547,105 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
                   mat=spec.mat_trim)
 
 
+def _clip_z(corners, z0: float, z1: float) -> list[Vec]:
+    """盒（可带旋转）被 z ∈ [z0,z1] 切下来那一块的**顶点**。
+
+    只数落在区间里的角点是不够的：颊带自耳后一路斜下到腮，整根盒横跨好几节颈——按角点
+    问，靠头那两节量出来的深度（11.4）比颈本身还深（6.8，那个角其实在颈之外的腮上），
+    下片整个被压没；而反过来只要盒的角点一个都没落进来，又会量成 0。切完之后的顶点
+    只有两类：**区间内的角点** + **棱与两个切面的交点**——线性函数在凸多面体上的极值
+    必在顶点，所以这是精确解，不是采样。
+
+    **诚实标注**：上面两种坏法是查询范围还没连 `ext` 外延一起算、清空量也还只有一份
+    `BARD_CLEAR` 时实测到的。那两处改掉之后，退回"只数角点"在现在这套头颈几何上
+    **量出来一模一样**（三个体型下片都是 10 件、判据全干净）——所以这个函数眼下是
+    冗余的一道保险，不是撑着某条判据的支点。留着是因为它是这类查询的正确写法，换一副
+    笼头就未必还等价；但别把它当成"有测试护着"的东西。
+    """
+    c = list(corners)
+    out = [p for p in c if z0 - 1e-9 <= p[2] <= z1 + 1e-9]
+    idx = ((0, 1), (0, 2), (0, 4), (1, 3), (1, 5), (2, 3), (2, 6), (3, 7),
+           (4, 5), (4, 6), (5, 7), (6, 7))
+    for i, j in idx:
+        a, b = c[i], c[j]
+        if abs(b[2] - a[2]) < 1e-12:
+            continue
+        for zc in (z0, z1):
+            s = (zc - a[2]) / (b[2] - a[2])
+            if -1e-9 <= s <= 1 + 1e-9:
+                out.append(tuple(a[k] + s * (b[k] - a[k]) for k in range(3)))
+    return out
+
+
+def rein_band_bottom(fit: Fit, za: float, zb: float) -> float:
+    """三档缰在 [za,zb] 这一段里最深到颈脊之下多远（单位）—— 全颈鸡颈的下片自它之下起。
+
+    与 `crinet_floor`（量缰的**上**缘）是同一把尺的两头：上片停在缰之上，下片从缰之下
+    接着往下走，缰从两片之间的缝里穿出去。真具装的鸡颈本来就是这么留缰口的。
+
+    **逐段问、而且不只问沿颈那条带**：靠头那两节上还压着颊带，它比缰线更深；只按
+    `rein_line_neck` 给一个全颈通用的数，最靠头那一节的下片正好切进颊带里（实测 0.03）。
+    """
+    P = fit.P
+    z0, z1 = min(za, zb), max(za, zb)
+    worst = 0.0
+    for tk in REINS:
+        for e in other_tack(fit, "rein", tk):
+            for c in _clip_z(_corners(e), z0, z1):
+                worst = max(worst, crest_y(P, c[2]) - c[1])
+    if worst <= 0.0:
+        raise SystemExit("量不到缰在这一段的位置 —— 全颈鸡颈的下片没有依据")
+    return worst + P.u(BARD_CLEAR) * 2.0
+
+
+def neck_floor(fit: Fit, za: float, zb: float) -> float:
+    """颈皮在这一段里到颈脊之下多远还有皮（单位）。全颈鸡颈下片的下缘由它定。
+
+    逐 z **二分**问 `NeckLine.outer_at`（"这个高度上还有没有颈皮"），不去数角点：
+    颈皮是一节节带交叠的斜盒，角点落不落在区间里全看运气——最靠头那一节一个角点都
+    没落进来，量出来是 0，下片直接不做了。
+
+    取一段里**最浅**的那个值：下片是一条直带，按最深的给，浅的那一头就垂到颈外面去了。
+    """
+    P, NL = fit.P, fit.neck
+    best = 1e9
+    for z in _zs(za, zb, 5):
+        lo, hi = 0.0, P.u(0.70)
+        for _ in range(16):
+            m = (lo + hi) / 2
+            if NL.outer_at(z, crest_y(P, z) - m, hair=False) is not None:
+                lo = m
+            else:
+                hi = m
+        best = min(best, lo)
+    return best
+
+
 def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
-    """鸡颈：逐颈骨一段，盖住颈脊与上侧。下缘由 `crinet_floor` 从缰反推。"""
+    """鸡颈：逐颈骨一段，盖住颈脊与上侧。下缘由 `crinet_floor` 从缰反推。
+
+    顶档还要**兜到喉**（`full_wrap`）：缰之下再接一片，一直做到颈皮的最深处。
+    铁浮屠是"人马皆铠"，颈是整只马上第二大的一片（占计入覆盖那些皮件的三成），
+    只盖颈脊的话它有一多半露在外面——量下来顶档的缺口有四成在颈上。
+    """
     P, NL = fit.P, fit.neck
     th, gap = P.u(spec.th), P.u(0.006)
     floor = crinet_floor(fit)
     if floor <= th * 1.6:
         raise SystemExit(f"缰把颈脊之下 {floor + P.u(BARD_CLEAR):.2f} 个单位全占了，鸡颈无处可放")
     seams = NL.seams
+    # 下片的**下缘先整条算好再限速**。逐节各按自己那一段的颈皮最深处给，相邻两节能差
+    # 出两三个单位（颈自鬐甲向头由粗变细再变粗），而喉板只有一个板厚多高——两节的喉板
+    # 在 y 上就此错开，同一条链上直接断掉（挽马实测裂 0.99）。限速之后一节该多深会顺着
+    # 邻节摊出去，摊成一条斜下去的线；取 `min` 而不是 `max`，保证没有一节垂到颈外面。
+    dep: list[float] = []
+    if spec.full_wrap:
+        raw = []
+        for k in range(len(NECK)):
+            z0, z1 = sorted((seams[k][2], seams[k + 1][2]))
+            raw.append(neck_floor(fit, z0, z1) - th)
+        cap = th * 2.4
+        dep = [min(v + cap * abs(k - j) for j, v in enumerate(raw)) for k in range(len(raw))]
     for k in range(len(NECK)):
         bone = NECK[k]
         za, zb = seams[k][2], seams[k + 1][2]  # za 靠鬐甲（大），zb 靠头（小）
@@ -2578,6 +2672,50 @@ def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
                          sgn * (x_out - d * 1.2), sgn * (x_out + d),
                          (ym_a, za), (ym_b, zb), floor,
                          mat=spec.mat, chain=(f"bard_crinet_{side}", k), ext=ext)
+        if spec.full_wrap:
+            # 缰之下再接一片，一直兜到颈皮最深处（喉侧）。缰从上下两片之间穿出去——
+            # 真具装的鸡颈也正是这么留缰口的。
+            # **不跟着上片一起量横向**：颈自脊向下越来越宽（喉那一带比脊宽出小半个
+            # 单位），照脊那一带的半宽做，下片会整条陷进颈里。
+            # 查询范围要**连外延一起算**：这一片按 `ext` 向两头各探出一截去和邻节
+            # 搭上，探到的那一截落在邻节的 z 上——只按 [za,zb] 问，最靠头那一节探出去
+            # 的部分正好切进颊带（实测 0.03）。
+            low0 = rein_band_bottom(fit, min(za, zb) - pad, max(za, zb) + pad)
+            lo_a = ya - low0
+            lo_b = yb - low0
+            # 收一个板厚（已并进 `dep`）：下片正好垂到颈皮最深处的话，低头吃草时颈折
+            # 下来，它比颈皮先撞上肩（挽马实测比静止姿多陷 2.03 > 1.87）。
+            h_low = max(dep[k] - low0, 0.0)
+            if h_low > th * 1.5:
+                lm_a, lm_b = lo_a - h_low * 0.5, lo_b - h_low * 0.5
+                x_low = NL.outer_span(za, lm_a, zb, lm_b, hair=False) + gap
+                for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                    _strap_world(t, bone, f"bard_crinet_low_{k + 1}_{side}",
+                                 sgn * (x_low - d * 1.2), sgn * (x_low + d),
+                                 (lm_a, za), (lm_b, zb), h_low,
+                                 mat=spec.mat, chain=(f"bard_crinet_low_{side}", k), ext=ext)
+                # 喉板：把颈底封上。
+                #
+                # **这一件是看图定的，不是量出来的**——拆掉它重量了一遍：连通性照样是
+                # 4 片（下片自己经鬐甲接到当胸上），覆盖率只掉 0.2pp。原因是覆盖率那条
+                # 只在皮件的**左右两个侧面**取样，朝下的那一片它根本没在采（同当初补
+                # 后襟时那个 0.2pp）。可正面看过去，没有它颈底就是一道敞着的槽——
+                # 两条下片挂在颈两侧，中间通到底。判据量不到的东西，只能靠图。
+                # 喉板的交叠**另算**：它挂在颈底，离转心比脊上的盖远得多（脊那道交叠
+                # 是照盖自己的半径给的），照抄过来在挽马身上一屈伸就裂 0.99。
+                # 喉板给厚一点、下缘钉在颈底：厚度是它容忍相邻两节深浅差的全部本钱。
+                # 薄板 + 紧限速那一版链上只剩 0.06 的余量，而限速一松覆盖就掉——把厚度
+                # 加上去，限速才放得开（0.75 → 0.79 常马）。
+                h_t = d * 3.4
+                yt_a, yt_b = ya - dep[k] + h_t / 2 - d * 0.1, yb - dep[k] + h_t / 2 - d * 0.1
+                rt = max(math.hypot(x_low * 0.72, y - sm[1])
+                         for y, sm in ((yt_a, seams[k]), (yt_b, seams[k + 1])))
+                pt = seam_pad(rt, NECK_ROM)
+                et = (0.0 if k == 0 else pt, 0.0 if k == len(NECK) - 1 else pt)
+                _strap_world(t, bone, f"bard_crinet_throat_{k + 1}",
+                             -(x_low * 0.72), x_low * 0.72,
+                             (yt_a, za), (yt_b, zb), h_t,
+                             mat=spec.mat, chain=("bard_crinet_throat", k), ext=et)
         if spec.glow:
             _strap_world(t, bone, f"bard_crinet_glow_{k + 1}", -(x_out * 0.42), x_out * 0.42,
                          (ya + d * 1.15, za), (yb + d * 1.15, zb), d * 0.4,
@@ -2585,6 +2723,9 @@ def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
 
 
 # 面帘（头局部系，× 头长；与 `gen_pelt.part_head` / 笼头同一套坐标）
+# 腮 / 颌那一带的皮件：全罩面帘的下片按它们量（腮比颅壳宽，照颅壳做会整条陷进去）
+JAW_RE = re.compile(r"jaw_line_[lr]|jowl_[lr]|chin")
+CHAM_JAW_BACK = 0.12  # 全罩面帘的颌板后缘比面帘本体再往前收这么多（× 头长），给鸡颈让位
 CHAM_Z_BACK = -0.245  # 后缘：耳在 z[-0.215,-0.055]，压在耳上马会甩头（同项带的道理）
 CHAM_Z_HALF = -0.660  # 半面帘前缘：鼻梁中段停住
 CHAM_Z_FULL = -0.930  # 全面帘前缘：鼻孔（z[-1.045,-0.955]）之后停住，嘴还能张
@@ -2768,6 +2909,11 @@ def part_bard_chamfron(t: Tack, fit: Fit, spec: BardSpec) -> None:
                     cheek("side2", y_lo, y_out, za, ez0)
             else:
                 cheek("side", y_lo, y_out, za, zb)
+            # 试过再往下接一片颌板（罩住腮与颌）：**没留**。
+            # 它上头是**缰线**（骑手要拉的那条，面帘一压就拉不动了），下头是鸡颈的下片
+            # ——两边都不许碰，于是它既连不上面帘也连不上鸡颈，成了两块浮在腮上、什么
+            # 都不挂着的板（连通性判据当场报"实为 6 片"）。量下来它只多盖 0.6pp，
+            # 换两块浮板不值。头的下半就此留白，缺口写在 `MIN_COVER_TOP` 那儿。
         if spec.glow:
             # 灵纹：沿鼻梁中线一道，压在顶板外面。半面帘就这一处发光，与鸡颈那道连成一线
             Hd.strap(t, f"bard_cham_glow_{k + 1}", -xo * 0.22, xo * 0.22,
@@ -2815,7 +2961,15 @@ COVER_NEAR = 0.55  # 甲离皮多近算"盖住了"（单位）
 # 三条都是**跨装备**约束、都已经各有判据。所以这条只负责挡住"新一档其实没多盖"，
 # "新一档必须多配一件具装"由 `check_escalation` 挡，两条各管一头。
 MIN_COVER_STEP = 0.004
-MIN_COVER_TOP = 0.60  # 顶档的下限（腿与尾不在分母里，见 COVER_RE）
+# 顶档的下限（腿与尾不在分母里，见 COVER_RE）。铁浮屠是"人马皆铠"，这个数是它的
+# 核心指标，不是随手一个及格线：全颈鸡颈 + 喉板落地后实测 77.4 / 80.0 / 81.1%，
+# 下限跟着抬到 75%。
+#
+# **剩下那两成不是没做，是位置被别人占着**：量下来缺口的一大半是**鞍位那一带**
+# （鞍垫压在背上、鞍翼与镫革挂在肋侧，甲一进去跨装备判据当场就红）；再就是头的下半，
+# 那儿夹在缰线与鸡颈之间，做出来是两块什么都不挂着的浮板（见 `part_bard_chamfron`）。
+# 换句话说：**穿着鞍的马身上，77% 之外基本就是鞍自己占的位置。**
+MIN_COVER_TOP = 0.75
 
 
 COVER_N = 6  # 每块皮的侧面各取 N×N 个采样点
