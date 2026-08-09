@@ -2585,6 +2585,17 @@ def _pb_varint_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + mc.write_varint(value)
 
 
+def _pb_u64_varint_field(number: int, value: int) -> bytes:
+    """protobuf uint64 字段（mc.write_varint 是 32 位 MC varint，装不下 u64）。"""
+    body = bytearray()
+    remaining = value
+    while remaining >= 0x80:
+        body.append((remaining & 0x7F) | 0x80)
+        remaining >>= 7
+    body.append(remaining)
+    return mc.write_varint(number << 3) + bytes(body)
+
+
 def _pb_len_field(number: int, value: bytes) -> bytes:
     return mc.write_varint((number << 3) | 2) + mc.write_varint(len(value)) + value
 
@@ -2626,6 +2637,49 @@ class ProtoMinTest(unittest.TestCase):
 
         refs = proto_min.inventory_item_refs(envelope)
         self.assertEqual(refs[0].location, {"kind": "equip", "slot": "main_hand", "state": "held"})
+
+    def test_trade_offer_decodes_offer_and_item_summaries(self):
+        offered = (
+            _pb_u64_varint_field(1, 1001)
+            + _pb_len_field(2, b"starter_talisman")
+            + _pb_len_field(3, b"talisman")
+            + _pb_varint_field(4, 1)
+        )
+        requested = (
+            _pb_u64_varint_field(1, 2002)
+            + _pb_len_field(2, b"huiyuan_pill")
+            + _pb_len_field(3, b"pill")
+            + _pb_varint_field(4, 3)
+        )
+        trade_offer = (
+            _pb_len_field(1, b"trade:00000000-0000-7000-8000-000000000000")
+            + _pb_len_field(2, b"char:alice")
+            + _pb_len_field(3, b"char:bob")
+            + _pb_len_field(4, offered)
+            + _pb_len_field(5, requested)
+            + _pb_u64_varint_field(6, 9876543210)
+        )
+        envelope = _pb_len_field(65, trade_offer)
+
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "trade_offer")
+        payload = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(payload["type"], "trade_offer")
+        self.assertEqual(payload["offer_id"], "trade:00000000-0000-7000-8000-000000000000")
+        self.assertEqual(payload["initiator"], "char:alice")
+        self.assertEqual(payload["target"], "char:bob")
+        self.assertEqual(
+            payload["offered_item"],
+            {"instance_id": 1001, "item_id": "starter_talisman", "display_name": "talisman", "stack_count": 1},
+        )
+        self.assertEqual(
+            payload["requested_items"],
+            [{"instance_id": 2002, "item_id": "huiyuan_pill", "display_name": "pill", "stack_count": 3}],
+        )
+        self.assertEqual(payload["expires_at_ms"], 9876543210)
+
+    def test_sparring_invite_payload_name_registered(self):
+        envelope = _pb_len_field(64, _pb_len_field(1, b"sparring:1"))
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "sparring_invite")
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:

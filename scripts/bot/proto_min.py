@@ -38,6 +38,9 @@ PLAYER_STATE_REALM_NAMES = {
 }
 
 SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
+# proto/bong/envelope.proto ServerDataPayload oneof（与 server/src/schema/server_data.rs 对应）
+SERVER_DATA_SPARRING_INVITE_FIELD = 64
+SERVER_DATA_TRADE_OFFER_FIELD = 65
 
 
 class ProtoDecodeError(ValueError):
@@ -73,6 +76,8 @@ SERVER_DATA_PAYLOAD_NAMES = {
     34: "cast_sync",
     36: "skillbar_config",
     51: "combat_event",
+    64: "sparring_invite",
+    65: "trade_offer",
     66: "tribulation_state",
     71: "breakthrough_cinematic",
     72: "death_screen",
@@ -1108,6 +1113,29 @@ def _forge_outcome(data: bytes) -> dict[str, Any]:
     }
 
 
+def _trade_item_summary(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "instance_id": _varint(fields, 1),
+        "item_id": _string(fields, 2),
+        "display_name": _string(fields, 3),
+        "stack_count": _varint(fields, 4),
+    }
+
+
+def _trade_offer(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "trade_offer",
+        "offer_id": _string(fields, 1),
+        "initiator": _string(fields, 2),
+        "target": _string(fields, 3),
+        "offered_item": _trade_item_summary(_message(fields, 4)),
+        "requested_items": [_trade_item_summary(_fields(raw)) for raw in _messages(fields, 5)],
+        "expires_at_ms": _varint(fields, 6),
+    }
+
+
 def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     entries = []
@@ -1191,6 +1219,8 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     34: _cast_sync,
     36: _skill_bar_config,
     51: _combat_event_floater,
+    SERVER_DATA_SPARRING_INVITE_FIELD: _sparring_invite,
+    SERVER_DATA_TRADE_OFFER_FIELD: _trade_offer,
     66: _tribulation_state,
     SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
     72: _death_screen,
