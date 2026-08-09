@@ -597,10 +597,16 @@ fn fallback_spawn_chunk_union(
     registry: &zone::ZoneRegistry,
     anchors: &[crate::player::spawn_selector::SpawnDistributionAnchor],
 ) -> Result<BTreeSet<ChunkPos>, usize> {
-    let Some(spawn_zone) = registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) else {
-        return Ok(BTreeSet::new());
+    let (zone_min, zone_max) = match registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) {
+        Some(spawn_zone) => spawn_zone.bounds,
+        None => {
+            tracing::warn!(
+                "[bong][world] `{}` zone missing from registry; clamping fallback spawn union to bounded emergency bounds instead of allocating an empty world",
+                zone::DEFAULT_SPAWN_ZONE_NAME,
+            );
+            zone::default_spawn_bounds()
+        }
     };
-    let (zone_min, zone_max) = spawn_zone.bounds;
     let mut chunks = BTreeSet::new();
 
     for anchor in anchors {
@@ -1061,6 +1067,33 @@ mod tests {
             Err(FALLBACK_FLAT_MAX_CHUNKS + 1),
             "多个小矩形的 union 累积越界也必须在第 {} 个唯一 chunk 处 fail closed",
             FALLBACK_FLAT_MAX_CHUNKS + 1
+        );
+    }
+
+    #[test]
+    fn missing_spawn_zone_yields_bounded_emergency_union_not_empty() {
+        // review finding：spawn zone 缺失时不得返回成功的空 union（会产生
+        // 无地形块的半初始化 fallback 世界）。退化路径应退回有界的 emergency
+        // 默认 bounds，仍为 emergency 出生位置分配可用的地形块。
+        let registry = ZoneRegistry {
+            spatial_revision: 0,
+            zones: Vec::new(),
+        };
+        let anchors = [crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+            DVec3::new(8.0, 150.0, 8.0),
+            0.0,
+        )];
+        let chunks = fallback_spawn_chunk_union(&registry, &anchors)
+            .expect("spawn zone 缺失时必须仍产出有界的 emergency union，而非空 union");
+        assert!(
+            !chunks.is_empty(),
+            "spawn zone 缺失时不得产生空的成功 union（会建成无地形的半初始化世界）"
+        );
+
+        let emergency = DVec3::from(crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION);
+        assert!(
+            chunks.contains(&ChunkPos::from(emergency)),
+            "emergency 出生位置必须仍在分配的地形块内"
         );
     }
 
