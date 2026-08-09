@@ -2725,6 +2725,9 @@ def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
 # 面帘（头局部系，× 头长；与 `gen_pelt.part_head` / 笼头同一套坐标）
 # 腮 / 颌那一带的皮件：全罩面帘的下片按它们量（腮比颅壳宽，照颅壳做会整条陷进去）
 JAW_RE = re.compile(r"jaw_line_[lr]|jowl_[lr]|chin")
+# 颊板逐小段做的段长（× 头长）。缝要跟着缰的斜度走：缰自嘴角一路斜上到耳后，一整节
+# 之内它自己就升了 0.27 个头长——按整节取最大，缝张得比脸的一半还高，眼周整片开成洞。
+CHAM_SUB = 0.095
 CHAM_JAW_BACK = 0.12  # 全罩面帘的颌板后缘比面帘本体再往前收这么多（× 头长），给鸡颈让位
 CHAM_Z_BACK = -0.245  # 后缘：耳在 z[-0.215,-0.055]，压在耳上马会甩头（同项带的道理）
 CHAM_Z_HALF = -0.660  # 半面帘前缘：鼻梁中段停住
@@ -2868,14 +2871,34 @@ def part_bard_chamfron(t: Tack, fit: Fit, spec: BardSpec) -> None:
         return ya + d, yb + d
 
     segs = _shell_segs(fit, z_front, CHAM_Z_BACK, th * 0.7)
+    # 缝的上下缘**只准往上走**。缰自嘴角一路斜上到耳后，本来就是单调的；可三档缰各有
+    # 各的走法，逐小段各算各的会前后跳，颊板的边缘就成了一圈毛碴（渲出来像块碎掉的
+    # 镜子）。锁成单调之后，缝是一道顺着缰爬上去的斜口，边缘干净。
+    slot_run = [-9.0, -9.0]
+    # 缰缝**之下**那几片共用一个横向：腮与颌线是脸上最宽的一段，而颊板是薄壳——逐节
+    # 各按自己那节量的话，相邻两节的下片落在不同的 |x| 上，前后根本挨不着（实测最靠吻
+    # 那一节自己单独成一片）。上片不这么做是另一回事：上片靠顶板连成一体，而且它一路
+    # 跟着脸自吻向后变宽，通宽了就成了钉在脸上的木板。
+    xj_run = [0.0]
     for k, (za, zb) in enumerate(segs):
         hw, top, bot = Hd.shell(max(min((za + zb) / 2, z_hi0), z_lo0))
         near = _span(stall, za, zb)
         ya, yb = band(za, zb)
-        # 颊板的下缘由**缰线**顶住（见 REINLINE_RE 注释）；全面帘还要至少下到眼下缘，
-        # 不然眼窗没有下框。半面帘直接停在眼上缘——它本来就不护眼。
-        y_lo = max([bot + (top - bot) * 0.18] + [b[1][1] + gap for b in _span(line, za, zb)]) \
-            if full else ey1
+        # 颊板的下缘。半面帘停在眼上缘（它本来就不护眼）；全面帘要下到眼下缘，不然眼窗
+        # 没有下框。**全包（`full_wrap`）再往下兜到颌**——"只漏眼睛"要的是把腮和颌线
+        # 一起罩住，那是脸上除了眼之外最大的两片。
+        # 缰线（骑手要拉的那条）横在腮上，`slot` 会在它经过的地方开一道横缝，板从缝的
+        # 上下两侧接着走；不开全包时下缘直接停在缰之上。
+        ln = _span(line, za, zb)
+        if not full:
+            y_lo = ey1
+        elif spec.full_wrap:
+            jaw = [b for n, b in Hd.local.items() if JAW_RE.fullmatch(n)
+                   and b[1][2] > za and b[0][2] < zb]
+            y_lo = min([bot] + [b[0][1] for b in jaw]) - gap
+        else:
+            y_lo = max([bot + (top - bot) * 0.18] + [b[1][1] + gap for b in ln])
+
         y_out = max(ya, yb) + th / 2
         # 外侧面按**这一节罩着的那段脸**量，整节共用一个：脸不是颅壳，颊、颌线、眼眶都
         # 鼓在颅壳外（眼到 0.194，颅壳只有 0.152），照颅壳给，眼从板里穿出来。逐块各量
@@ -2886,34 +2909,104 @@ def part_bard_chamfron(t: Tack, fit: Fit, spec: BardSpec) -> None:
         # 那一节整个套在宽的里面，两节在 z 上又是重叠的，连通性照样成立。
         xo = max([hw] + [max(h[0], -lo2[0]) for lo2, h in list(Hd.local.values()) + near
                          if h[2] > za and lo2[2] < zb and h[1] > y_lo and lo2[1] < y_out]) + gap + th
+        # 缝**之下**那几片的横向：按这一节量，但**一路往后不减**。
+        #   · 拿全脸的最大值（腮最宽）通吃：吻那一节的下片离脸差出小半个头长，判据当场
+        #     报"面帘飘在脸外 0.94 > 0.86"（矮马）；
+        #   · 逐节各算各的：相邻两节的下片落在不同的 |x| 上，薄壳前后挨不着，最靠吻那一
+        #     节自己单独成一片。
+        # 脸自吻向腮变宽，跟着走的最大值两头都满足。
+        # 络头也要罩在里头（`near`）：下片贴着腮走，而鼻革正横在腮前——不算它，
+        # 下片直接切进鼻革（矮马实测 0.28）。同上片 `xo` 的道理。
+        # 下片往里加厚一截好和前一节搭上（加的那截埋在脸里，看不见）：薄壳的横向一节
+        # 一节往外让（吻窄腮宽），前后就挨不着了。加厚之后**内缘也不许戳进络头**，
+        # 所以络头那一项按加厚量让开（挽马实测只让一个板厚时切进鼻革 0.04）。
+        tk_low = th * 1.6
+        xj_run[0] = max(xj_run[0],
+                        max([hw] + [b[1][0] for n, b in Hd.local.items() if JAW_RE.fullmatch(n)
+                                    and b[1][2] > za and b[0][2] < zb]) + gap + th,
+                        max([max(h[0], -lo2[0]) for lo2, h in near], default=0.0)
+                        + gap + tk_low * 1.1)
+        xj = xj_run[0]
         # 顶板**通宽、而且顺着脸的坡斜过去**。脸自吻向枕升起将近一个头长的 0.12，一节
         # 一节地拿水平板去铺，相邻两块在 y 上差得比板还厚，正视看过去是三层错开的架子
         # （而且连通性判据会把整面面帘报成三片）。改成沿坡的斜带，两端各外延一点搭上。
         Hd.strap(t, f"bard_cham_top_{k + 1}", -xo, xo, (ya, za), (yb, zb), th,
                  mat=mat, ext=(pad, pad))
-        for sgn, side in ((-1.0, "l"), (1.0, "r")):
-            def cheek(nm: str, a: float, b: float, c0: float, c1: float,
-                      m: str = mat, s=sgn, sd=side, xr=xo) -> None:
-                if b - a < th * 0.5:  # 缰线顶得太高时窗下那条会被压成零高，不做
-                    return
-                Hd.put(t, f"bard_cham_{nm}_{k + 1}_{sd}",
-                       (s * (xr - th), a, c0), (s * xr, b, c1), mat=m)
 
-            if full and zb > ez0 and za < ez1:
-                # 这一节撞上眼：窗上一条、窗下一条，窗前后各补一段满高的
-                cheek("brow", ey1, y_out, max(za, ez0), min(zb, ez1), md)
-                cheek("cheek", y_lo, ey0, max(za, ez0), min(zb, ez1))
-                if zb > ez1:
-                    cheek("side", y_lo, y_out, ez1, zb)
-                if za < ez0:
-                    cheek("side2", y_lo, y_out, za, ez0)
-            else:
-                cheek("side", y_lo, y_out, za, zb)
-            # 试过再往下接一片颌板（罩住腮与颌）：**没留**。
-            # 它上头是**缰线**（骑手要拉的那条，面帘一压就拉不动了），下头是鸡颈的下片
-            # ——两边都不许碰，于是它既连不上面帘也连不上鸡颈，成了两块浮在腮上、什么
-            # 都不挂着的板（连通性判据当场报"实为 6 片"）。量下来它只多盖 0.6pp，
-            # 换两块浮板不值。头的下半就此留白，缺口写在 `MIN_COVER_TOP` 那儿。
+        def rein_slot(c0: float, c1: float, xr: float, tk: float = th):
+            """缰线在 [c0,c1] 这一小段上占住的那段高度（够不到颊板那一层的不算）。
+
+            **逐小段问，不按整节问**：缰自嘴角一路斜上到耳后，一节之内它自己就升了
+            0.27 个头长——按整节取最大，缝张得比脸的一半还高，眼周整片开成了洞。
+            衔铁与衔环挤在嘴角、|x| 只到 0.196，而颊板在 0.21 开外：照它们开缝，最靠吻
+            那一节（本来一条缰线都没有）也被拦腰截断。
+            """
+            hit = [b for b in _span(line, c0, c1)
+                   if max(abs(b[0][0]), abs(b[1][0])) > xr - tk
+                   and (min(abs(b[0][0]), abs(b[1][0])) if b[0][0] * b[1][0] > 0 else 0.0) < xr]
+            if not hit:
+                return None
+            # 锁**只能往"缝变宽"的方向用**。缝的上沿锁成单调（缰一路往上爬，上沿跟着
+            # 爬，边缘才不毛碴）；下沿**不能锁**——嘴角那只衔环比后面的缰线低一截，
+            # 往上锁一下就把它锁到缝外面，板直接切进环里（矮马实测 0.19）。
+            # 判据要的是"缝必须罩住这一小段里的每一件"，任何**收窄**都可能漏。
+            lo_s = min(b[0][1] for b in hit) - gap
+            hi_s = max(max(b[1][1] for b in hit) + gap, slot_run[1])
+            slot_run[1] = hi_s
+            return (lo_s, hi_s)
+
+        # 颊板逐**小段**做：缝要跟着缰的斜度走，段给粗了缝就跟着张大
+        n_sub = max(1, int(math.ceil((zb - za) / CHAM_SUB)))
+        for u in range(n_sub):
+            sa = _lerpf(za, zb, u / n_sub) - (0.0 if u == 0 else th * 0.5)
+            sb = _lerpf(za, zb, (u + 1) / n_sub) + (0.0 if u == n_sub - 1 else th * 0.5)
+            # 不全包时不开缝：`y_lo` 本来就顶在缰之上（见上），板整块停在那儿
+            # 上下两片各按**自己那块板的宽**问缝：下片比上片更靠外（腮宽），一件够不到
+            # 上片的衔环照样够得到下片（矮马实测下片切进衔环 0.17）。
+            slot = rein_slot(sa, sb, xo) if full and spec.full_wrap else None
+            # 下片往里加厚了一截（见 `low`），问缝时得按**加厚后的内缘**问，
+            # 否则一件够不到薄壳的衔环照样够得到加厚后的下片（矮马实测 0.19）
+            slot_j = rein_slot(sa, sb, xj, tk_low) if full and spec.full_wrap else None
+            for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                def cheek(nm: str, a: float, b: float, c0: float, c1: float,
+                          m: str = mat, s=sgn, sd=side, xr=xo, uu=u, tk=th) -> None:
+                    if b - a < th * 0.5:  # 缝顶得太高时窗下那条会被压成零高，不做
+                        return
+                    Hd.put(t, f"bard_cham_{nm}_{k + 1}{uu + 1}_{sd}",
+                           (s * (xr - tk), a, c0), (s * xr, b, c1), mat=m)
+
+                def low(nm: str, a: float, b: float, c0: float, c1: float) -> None:
+                    # 后缘再往前收一截：下片与鸡颈的下片都想占喉与腮之间那一小块，两件
+                    # 挂在不同的骨上，一转头就穿插（矮马实测 0.30）。让面帘先停。
+                    c1 = min(c1, CHAM_Z_BACK - CHAM_JAW_BACK)
+                    if c1 - c0 > th * 0.3:
+                        # 加厚见 `tk_low`：薄壳的横向一节一节往外让（吻窄腮宽），
+                        # 前后就挨不着了——常马实测吻那一节的下片自己单独成一片。
+                        cheek(nm, a, b, c0, c1, mat, sgn, side, xj, u, tk_low)
+
+                def bands(a: float, b: float):
+                    """[a,b] 去掉缰占住的那一段之后剩下的几截。上片按 `slot`、下片按
+                    `slot_j` —— 缝的上沿归上片管，下沿归下片管，各按各的宽问出来的。"""
+                    sl = slot if slot_j is None else (slot_j[0], (slot or slot_j)[1])
+                    if sl is None or sl[1] <= a or sl[0] >= b:
+                        return [(a, b)]
+                    return [x for x in ((a, min(b, sl[0])), (max(a, sl[1]), b)) if x[1] > x[0]]
+
+                if full and sb > ez0 and sa < ez1:
+                    # 这一小段撞上眼：窗上一条、窗下一条，窗前后各补一段满高的
+                    cheek("brow", ey1, y_out, max(sa, ez0), min(sb, ez1), md)
+                    for i, (a, b) in enumerate(bands(y_lo, ey0)):
+                        (low if i == 0 and slot else cheek)(
+                            f"cheek{i}", a, b, max(sa, ez0), min(sb, ez1))
+                    if sb > ez1:
+                        for i, (a, b) in enumerate(bands(y_lo, y_out)):
+                            (low if i == 0 and slot else cheek)(f"side{i}", a, b, ez1, sb)
+                    if sa < ez0:
+                        for i, (a, b) in enumerate(bands(y_lo, y_out)):
+                            (low if i == 0 and slot else cheek)(f"side2{i}", a, b, sa, ez0)
+                else:
+                    for i, (a, b) in enumerate(bands(y_lo, y_out)):
+                        (low if i == 0 and slot else cheek)(f"side{i}", a, b, sa, sb)
         if spec.glow:
             # 灵纹：沿鼻梁中线一道，压在顶板外面。半面帘就这一处发光，与鸡颈那道连成一线
             Hd.strap(t, f"bard_cham_glow_{k + 1}", -xo * 0.22, xo * 0.22,
@@ -3120,7 +3213,17 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
     # 面帘是**架在络头上**的，不咬进脸里（络头夹在中间），所以"贴住了没有"那条按躯干
     # 那套实交口径查不到它——查得到的只有"离脸多远"。飘起来的面帘在正视图里和戴好的
     # 长得几乎一样（正面看它就该盖住脸），只有侧视才看得出来悬空。
-    face = [e for e in fit.pelt_els if fit.head.SHELL.fullmatch(e["name"])]
+    # "脸"要连**腮与颌线**一起算：全罩面帘的下片本来就是贴着腮走的，而腮比颅壳宽出
+    # 小半个头长——只拿颅壳当尺，贴得好好的颊板会被报成"飘在脸外 0.94"（矮马）。
+    #
+    # **络头也算**。面帘是**架在络头上**的（本层从一开始就这么定的），而颊带顺着腮一路
+    # 下到吻——吻那一段颅壳只有 0.092 宽、颌线 0.104，颊带却在 0.156：面帘只能罩在颊带
+    # 外面，于是离"脸"必然差出半个多单位。只拿皮当尺，等于要求面帘穿过颊带去贴脸。
+    face = [e for e in fit.pelt_els
+            if fit.head.SHELL.fullmatch(e["name"]) or JAW_RE.fullmatch(e["name"])]
+    if spec.chamfron:
+        face = face + [e for tk in REINS for e in other_tack(fit, "rein", tk)
+                       if HEADSTALL_RE.fullmatch(e["name"])]
     if face_plate and face:
         d, who = max((min(-_pen(c, f) for f in face), c["name"]) for c in face_plate)
         lim = P.u(CHAM_PLATE) * CHAM_FLOAT
@@ -3131,12 +3234,23 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
     # 再加鸡颈与面帘各一件。**不写死 2**——矮马的镫垂得比肚带还长，切法本来就不同；
     # 写死的话它要么误报、要么逼着造型去迁就一个数。这条挡的是"多出来的片"：某处该
     # 搭上的没搭上，而那道缝多半被别的甲片挡着，静帧看不出来。
-    want = len(bard_runs(fit, spec)) + bool(spec.crinet) + bool(spec.chamfron)
+    # 全罩 + 全包时面帘是**三片**：主体（顶板 + 缰缝之上的颊板 + 眉框 + 缨）加左右两片
+    # 缰缝之下的颊板。它们连不上不是做漏了，是**没有能连的地方**：
+    #   · 往上——缰线（骑手要拉的那条）正横在腮上、就在颊板那一层的 |x| 里，罩过去缰就
+    #     牵不动了；
+    #   · 往下——鸡颈的下片挂在**颈骨**上，面帘挂在颅骨上，一转头就穿插（那条判据在下面）。
+    # 真甲的颊片本来也是单独铆在络头上的一块。所以这一条把它算进期望，而不是逼造型去
+    # 迁就一个数——但也不放任：多出第三片以外的任何一片，仍旧当场撞红。
+    want = (len(bard_runs(fit, spec)) + bool(spec.crinet) + bool(spec.chamfron)
+            + (2 if spec.chamfron == "full" and spec.full_wrap else 0))
     comps = connected_components(_Shim(els))
-    if len(comps) != want:
+    # 判**上界**不判相等：这条要挡的是"某处该搭上的没搭上"，也就是**多**出来的片；
+    # 少于期望说明该连的都连上了，那是好事不是缺陷（矮马的颊片就恰好和主体接上了）。
+    if len(comps) > want:
         detail = " / ".join(f"{len(c)} 件({c[0]}…)" for c in comps[:4])
         parts = [f"身甲 {len(bard_runs(fit, spec))} 片"] + (["鸡颈"] if spec.crinet else []) \
-            + (["面帘"] if spec.chamfron else [])
+            + (["面帘主体", "左右颊片"] if spec.chamfron == "full" and spec.full_wrap
+               else ["面帘"] if spec.chamfron else [])
         bad.append(f"整副甲应是 {want} 片（{' / '.join(parts)}），实为 {len(comps)} 片：{detail}")
     bad += check_mirror(els)
     return bad
