@@ -175,7 +175,7 @@ stage "9/10" "Cross-layer closure proof"
 echo "[closure] world_state publication -> server world_state_tests::uses_real_player_names_and_positions"
 echo "[closure] tiandao startup entrypoint -> npm run start:mock with tick anchors"
 echo "[closure] agent command/narration path -> tiandao runtime + redis-ipc + main-loop tests"
-echo "[closure] server startup entrypoint -> timeout cargo run with bridge/world/player/redis anchors"
+echo "[closure] server startup entrypoint -> cargo build + timeout 20s on built bong-server with bridge/world/player/redis anchors"
 echo "[closure] server execution path -> command_executor_tests::applies_modify_zone + narration_tests::player_scope_matches_username_and_offline_id"
 echo "[closure] client payload parsing -> BongNetworkHandlerTest + NarrationPayloadParserTest"
 

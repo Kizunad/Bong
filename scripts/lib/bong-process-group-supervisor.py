@@ -141,8 +141,15 @@ def build_server_binary(server_directory: Path, build_token: Path) -> Path:
         raise RuntimeError(f"successful cargo build did not produce {built_binary}")
     artifact_dir = Path(tempfile.mkdtemp(prefix="bong-e2e-server-"))
     artifact = artifact_dir / "bong-server"
-    shutil.copy2(built_binary, artifact)
-    artifact.chmod(0o700)
+    try:
+        shutil.copy2(built_binary, artifact)
+        artifact.chmod(0o700)
+    except Exception:
+        # Ownership of the temporary directory transfers to the caller only after
+        # all fallible artifact setup has completed; a copy/chmod failure must not
+        # leak a bong-e2e-server-* directory in the system temporary area.
+        shutil.rmtree(artifact_dir, ignore_errors=True)
+        raise
     return artifact
 
 

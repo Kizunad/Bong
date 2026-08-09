@@ -28,6 +28,17 @@ EXPECTED_CI_CLUSTERS = {
     "FC": ((24.0, -24.0), 80.0, "central"),
 }
 
+# 同一生产 FNV 种子的精确产出（x, z），由 Rust 测试
+# ci_bot_tags_cover_all_three_clusters_in_distinct_chunks 用真实
+# spawn_selector::select 逐位复核；test_protocol.py 的
+# _mirror_select 必须复现这些值。若 Rust 选择数学漂移，Rust 测试撞红；
+# 若 Python 镜像漂移，test_protocol.py 撞红——镜像不再自证。
+EXPECTED_CI_SPAWN_POSITIONS = {
+    "J1": (95.61722776093924, 209.19172692675917),
+    "J2": (-312.3280904906235, -100.69280549134928),
+    "FC": (-36.23367324735134, 25.390079995465705),
+}
+
 
 def _assert_expected_cluster(
     run_tag: str,

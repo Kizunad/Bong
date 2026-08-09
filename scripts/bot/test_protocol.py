@@ -78,6 +78,7 @@ from bot.scenarios.terrain_north_rift_scorch_zone_identity import (  # noqa: E40
 )
 from bot.scenarios.terrain_join_chunk_delivery import (  # noqa: E402
     EXPECTED_CI_CLUSTERS,
+    EXPECTED_CI_SPAWN_POSITIONS,
     _assert_expected_cluster,
 )
 from bot.run_scenarios import (  # noqa: E402
@@ -2131,9 +2132,24 @@ class FallbackScenarioPinTest(unittest.TestCase):
 
     def test_ci_tags_mirror_production_selection_into_pinned_clusters(self):
         expected_chunks = {}
-        for tag in ("J1", "J2", "FC"):
+        for tag, (golden_x, golden_z) in EXPECTED_CI_SPAWN_POSITIONS.items():
             username = f"Bci{tag}"
             x, z = self._mirror_select(username)
+            # 镜像数学必须复现生产 spawn_selector::select 的精确产出：
+            # EXPECTED_CI_SPAWN_POSITIONS 由 Rust 测试对真实 fallback_spawn
+            # 输出逐位断言，这里再让镜像对同一 golden 复核。镜像不再自证。
+            self.assertAlmostEqual(
+                x,
+                golden_x,
+                delta=1e-6,
+                msg=f"B{username} 镜像选择 x={x} 必须等于生产产出 {golden_x}",
+            )
+            self.assertAlmostEqual(
+                z,
+                golden_z,
+                delta=1e-6,
+                msg=f"B{username} 镜像选择 z={z} 必须等于生产产出 {golden_z}",
+            )
             # 走场景自己的验收函数（raise BotAssertionError），钉/半径/簇映射全部由它判定
             _assert_expected_cluster("ci", tag, (x, z))
             chunk = (math.floor(x / 16), math.floor(z / 16))
@@ -2145,13 +2161,22 @@ class FallbackScenarioPinTest(unittest.TestCase):
             expected_chunks[tag] = chunk
         self.assertEqual(len(expected_chunks), 3)
 
-        # 同名玩家重连契约（#846 原始触发面）：同 seed 复算必须逐位稳定。
-        for tag in ("J1", "J2", "FC"):
+        # 同名玩家重连契约（#846 原始触发面）：重连产出必须再次等于生产 golden，
+        # 而不是「镜像与自己相等」的同义反复（finding 3）。
+        for tag, (golden_x, golden_z) in EXPECTED_CI_SPAWN_POSITIONS.items():
             username = f"Bci{tag}"
-            self.assertEqual(
-                self._mirror_select(username),
-                self._mirror_select(username),
-                f"B{username} 重连复算必须稳定落在同一出生点",
+            x, z = self._mirror_select(username)
+            self.assertAlmostEqual(
+                x,
+                golden_x,
+                delta=1e-6,
+                msg=f"B{username} 重连镜像选择 x={x} 必须等于生产产出 {golden_x}",
+            )
+            self.assertAlmostEqual(
+                z,
+                golden_z,
+                delta=1e-6,
+                msg=f"B{username} 重连镜像选择 z={z} 必须等于生产产出 {golden_z}",
             )
 
 

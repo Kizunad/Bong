@@ -764,10 +764,12 @@ mod tests {
         TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
     };
     use valence::prelude::{
-        App, BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3, DimensionTypeRegistry,
-        UnloadedChunk, Update,
+        App, BlockKind, BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3,
+        DimensionTypeRegistry, UnloadedChunk, Update,
     };
     use valence::testing::ScenarioSingleClient;
+
+    use super::dimension::DimensionLayers;
 
     use super::terrain::nbt_registry::DecorationNbtRegistry;
 
@@ -1124,17 +1126,23 @@ mod tests {
         // 与 scripts/bot/scenarios/terrain_join_chunk_delivery.py 的 EXPECTED_CI_CLUSTERS
         // 保持同步：BciJ1→east (180,140) r=112，BciJ2→west (-240,-160) r=96，
         // BciFC→central (24,-24) r=80。两端各自独立断言同一契约，任何一端漂移都撞红。
+        //
+        // 元组第六、七位是 spawn_selector::select 对同一 tag 的精确生产产出
+        // （golden），由本测试用真实 fallback_spawn 复核；Python 端
+        // _mirror_select 必须逐位复现这些值，否则 test_protocol.py 的
+        // test_ci_tags_mirror_production_selection_into_pinned_clusters 撞红。
+        // 这样 Python 镜像不再自证：生产产出由 Rust 权威化，镜像只能对同一 golden。
         let pinned = [
-            ("BciJ1", 180.0, 140.0, 112.0, "east"),
-            ("BciJ2", -240.0, -160.0, 96.0, "west"),
-            ("BciFC", 24.0, -24.0, 80.0, "central"),
+            ("BciJ1", 180.0, 140.0, 112.0, "east", 95.61722776093924, 209.19172692675917),
+            ("BciJ2", -240.0, -160.0, 96.0, "west", -312.3280904906235, -100.69280549134928),
+            ("BciFC", 24.0, -24.0, 80.0, "central", -36.23367324735134, 25.390079995465705),
         ];
         let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
         let chunks = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
             .expect("configured fallback union should fit");
 
         let mut spawn_chunks = Vec::new();
-        for (username, anchor_x, anchor_z, radius, cluster) in pinned {
+        for (username, anchor_x, anchor_z, radius, cluster, golden_x, golden_z) in pinned {
             let pos = crate::player::spawn_selector::fallback_spawn(
                 username,
                 crate::player::spawn_selector::SpawnPurpose::InitialLogin,
@@ -1143,6 +1151,12 @@ mod tests {
             assert!(
                 distance <= radius + 1e-9,
                 "B{username} 必须落在 {cluster} 簇 anchor=({anchor_x},{anchor_z}) radius={radius} 内，实际=({pos_x},{pos_z}) distance={distance:.3}",
+                pos_x = pos[0],
+                pos_z = pos[2],
+            );
+            assert!(
+                (pos[0] - golden_x).abs() < 1e-6 && (pos[2] - golden_z).abs() < 1e-6,
+                "B{username} 精确出生位置必须等于生产 golden ({golden_x},{golden_z})，实际=({pos_x},{pos_z})；Python _mirror_select 与生产必须逐位一致",
                 pos_x = pos[0],
                 pos_z = pos[2],
             );
@@ -1424,6 +1438,80 @@ mod tests {
             !registry.is_empty(),
             "fallback setup_world must insert the authored default registry, not an absent resource"
         );
+    }
+
+    #[test]
+    fn setup_world_fallback_populates_chunk_layer_blocks_and_chunk_count() {
+        // review finding：生产路径契约测试。spawn_fallback_flat_world 必须把
+        // fallback_spawn_chunk_union 的每个 chunk 插入 ChunkLayer，并逐个写入
+        // bedrock/grass 地形；只测 helper 会让「插入 chunk 但漏写方块」或
+        // 「就绪日志乱报 chunks 数」的错误实现照样绿灯。
+        let _lock = env_lock();
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, None);
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        register_test_tsy_dimension(&mut app);
+        app.add_systems(Update, super::setup_world);
+        app.update();
+
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected = fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+            .expect("configured fallback union should fit");
+
+        let layers = app
+            .world()
+            .get_resource::<DimensionLayers>()
+            .expect("setup_world must insert DimensionLayers for the spawned layers");
+        let layer = app
+            .world()
+            .get::<ChunkLayer>(layers.overworld)
+            .expect("overworld LayerBundle must carry a ChunkLayer");
+        let actual: std::collections::BTreeSet<ChunkPos> =
+            layer.chunks().map(|(pos, _)| pos).collect();
+        assert_eq!(
+            actual,
+            expected,
+            "fallback 世界必须恰好 eager 分配 union 的 chunk 集合（就绪日志 chunks 数应与层实际一致）"
+        );
+
+        let spawn_zone = snapshot
+            .registry
+            .find_zone_by_name(crate::world::zone::DEFAULT_SPAWN_ZONE_NAME)
+            .expect("snapshot spawn zone should load");
+        let (zone_min, zone_max) = spawn_zone.bounds;
+        for anchor in &snapshot.distribution {
+            let (center, radius) = anchor.cluster();
+            let x = center.x.clamp(zone_min.x, zone_max.x);
+            let z = center.z.clamp(zone_min.z, zone_max.z);
+            let sample_chunk = ChunkPos::from(DVec3::new(x, center.y, z));
+            assert!(
+                actual.contains(&sample_chunk),
+                "anchor 簇中心 {sample_chunk:?} 必须在 eager 分配内"
+            );
+            let x_i = x.floor() as i32;
+            let z_i = z.floor() as i32;
+            let bedrock = layer
+                .block([x_i, super::BEDROCK_Y, z_i])
+                .expect("每个选中的 chunk 必须写入 bedrock")
+                .state
+                .to_kind();
+            assert_eq!(
+                bedrock,
+                BlockKind::Bedrock,
+                "chunk {sample_chunk:?} 底部应为 bedrock"
+            );
+            let grass = layer
+                .block([x_i, GRASS_Y, z_i])
+                .expect("每个选中的 chunk 必须写入 grass block")
+                .state
+                .to_kind();
+            assert_eq!(
+                grass,
+                BlockKind::GrassBlock,
+                "chunk {sample_chunk:?} 顶部应为 grass block"
+            );
+        }
     }
 
     #[test]

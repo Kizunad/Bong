@@ -172,11 +172,11 @@ FIXTURE
 chmod +x "$build_token"
 
 start_direct_supervisor() {
-    local ready_line=""
+    local ready_line="" target_dir="${1:-$fixture_target}"
     rm -f -- "$cargo_pid_file" "$descendant_pid_file" "$build_token_args_file"
     coproc DIRECT_SUPERVISOR {
         exec env \
-            CARGO_TARGET_DIR="$fixture_target" \
+            CARGO_TARGET_DIR="$target_dir" \
             PATH="$fixture_bin:$PATH" \
             SUPERVISOR_FIXTURE_CARGO_PID="$cargo_pid_file" \
             SUPERVISOR_FIXTURE_DESCENDANT_PID="$descendant_pid_file" \
@@ -224,6 +224,18 @@ assert_direct_rollback
 
 start_direct_supervisor
 printf X >&"$DIRECT_CONTROL_FD" || fail "could not send invalid control byte"
+assert_direct_rollback
+
+# Relative CARGO_TARGET_DIR must resolve against the server directory (finding 4):
+# build_server_binary resolves it as "$fixture_server/<relative>", and the fixture
+# cargo (cwd=server_directory) places the binary at that same path. A supervisor
+# that resolved a relative target against its own invocation directory would fail
+# to find the built binary and never publish READY.
+fixture_rel_target="custom-target"
+rm -rf -- "$fixture_server/$fixture_rel_target"
+start_direct_supervisor "$fixture_rel_target"
+[ -f "$fixture_server/$fixture_rel_target/release/bong-server" ] \
+    || fail "relative CARGO_TARGET_DIR must place the built binary under the server directory"
 assert_direct_rollback
 
 # The exact C -> COMMITTED boundary keeps the supervisor as the persistent owner.

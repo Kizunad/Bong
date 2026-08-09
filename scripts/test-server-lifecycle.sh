@@ -2306,8 +2306,11 @@ rm -f "$readiness_path"
 # stopped/no-ACK, malformed/EOF ACK, and post-ACK identity loss.
 "$ROOT/scripts/test-listener-owner.sh"
 "$ROOT/scripts/test-supervisor-protocol.sh"
-if [ "${GITHUB_ACTIONS:-}" = true ] \
-    && [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ]; then
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    # CI 必须显式启用真实的 tmux 关停顺序契约：默认 CI 运行不得静默跳过它。
+    # 若 workflow 忘记设置 opt-in，这里直接 fail 而不是打印 SKIP，保住覆盖。
+    [ "${BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST:-0}" = 1 ] \
+        || fail "GitHub Actions CI must enable BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST=1 for the real tmux shutdown-order contract"
     "$ROOT/scripts/test-tmux-shutdown-order.sh"
 else
     printf 'SKIP: tmux shutdown-order signal test is quarantined to opted-in GitHub Actions e2e\n'

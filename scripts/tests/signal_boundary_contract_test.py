@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -163,6 +166,14 @@ trap 'rm -rf -- "$runtime"' EXIT
 chmod 700 "$runtime"
 export BONG_SERVER_PID_FILE="$runtime/server.pid"
 
+# 落盘一条与旧启动身份不同的 replacement 权威记录（#846 原触发面）。
+# rollback 只能信号旧身份；记录必须原样保留，绝不能被直接删除或覆盖
+# （finding 6：此前空 PID 文件路径无法保护这条持久状态契约）。
+replacement='pid=401\\nstarttime=40\\nexecutable=/new/server\\nexecutable_identity=401:40\\n'
+printf '%b' "$replacement" > "$BONG_SERVER_PID_FILE"
+chmod 600 "$BONG_SERVER_PID_FILE"
+before="$(cat "$BONG_SERVER_PID_FILE")"
+
 signaled=""
 bong_server_stop_pinned_process() {{
     signaled="$1:$2:$3"
@@ -182,6 +193,14 @@ bong_server_rollback_pinned_managed_process \
     printf 'rollback signaled unexpected identity: %s\\n' "$signaled" >&2
     exit 1
 }}
+[ -f "$BONG_SERVER_PID_FILE" ] || {{
+    printf 'rollback removed the replacement authority record\\n' >&2
+    exit 1
+}}
+[ "$(cat "$BONG_SERVER_PID_FILE")" = "$before" ] || {{
+    printf 'rollback overwrote the replacement authority record\\n' >&2
+    exit 1
+}}
 """
         subprocess.run(["bash", "-c", script], check=True)
 
@@ -193,6 +212,13 @@ runtime="$(mktemp -d)"
 trap 'rm -rf -- "$runtime"' EXIT
 chmod 700 "$runtime"
 export BONG_SERVER_PID_FILE="$runtime/server.pid"
+
+# 落盘与本次回滚身份一致的权威记录；进程存活时 rollback 必须原样保留它
+# （finding 6：不再用空 PID 文件路径，直接验证持久记录未被删除或覆盖）。
+matching='pid=200\\nstarttime=20\\nexecutable=/old/server\\nexecutable_identity=2:20\\n'
+printf '%b' "$matching" > "$BONG_SERVER_PID_FILE"
+chmod 600 "$BONG_SERVER_PID_FILE"
+before="$(cat "$BONG_SERVER_PID_FILE")"
 
 cleared=0
 bong_server_stop_pinned_process() {{ return 1; }}
@@ -208,8 +234,86 @@ fi
     printf 'rollback cleared authority for a process that remained alive\n' >&2
     exit 1
 }}
+[ -f "$BONG_SERVER_PID_FILE" ] || {{
+    printf 'rollback removed the surviving process authority record\\n' >&2
+    exit 1
+}}
+[ "$(cat "$BONG_SERVER_PID_FILE")" = "$before" ] || {{
+    printf 'rollback overwrote the surviving process authority record\\n' >&2
+    exit 1
+}}
 """
         subprocess.run(["bash", "-c", script], check=True)
+
+
+class SupervisorBuildArtifactContractTest(unittest.TestCase):
+    """build_server_binary 路径解析与失败清理的聚焦契约（finding 4/7）。"""
+
+    def _fake_built_binary(self, server_directory, relative_target):
+        release = server_directory / relative_target / "release"
+        release.mkdir(parents=True, exist_ok=True)
+        built = release / "bong-server"
+        built.write_text("#!/bin/sh\nexit 0\n")
+        return built
+
+    def test_build_server_binary_resolves_relative_cargo_target_dir(self):
+        supervisor = load_supervisor_module()
+        server_directory = pathlib.Path(
+            tempfile.mkdtemp(prefix="bong-supervisor-unit-")
+        )
+        self.addCleanup(shutil.rmtree, server_directory, ignore_errors=True)
+        artifact_parent = pathlib.Path(
+            tempfile.mkdtemp(prefix="bong-e2e-server-unit-")
+        )
+        self.addCleanup(shutil.rmtree, artifact_parent, ignore_errors=True)
+        self._fake_built_binary(server_directory, "custom-target")
+
+        environment = os.environ.copy()
+        environment["CARGO_TARGET_DIR"] = "custom-target"
+        with (
+            mock.patch.object(supervisor.os, "environ", environment),
+            mock.patch.object(supervisor.subprocess, "run"),
+            mock.patch.object(
+                supervisor.tempfile, "mkdtemp", return_value=str(artifact_parent)
+            ),
+        ):
+            artifact = supervisor.build_server_binary(
+                server_directory, pathlib.Path("/unused/build-token")
+            )
+
+        # 相对 CARGO_TARGET_DIR 必须按 server 目录解析；若按 supervisor 调用目录
+        # 解析，built_binary 找不到会先抛 RuntimeError，此断言根本走不到。
+        self.assertTrue(artifact.is_file(), "相对 CARGO_TARGET_DIR 必须解析到 server 目录")
+
+    def test_failed_artifact_copy_removes_artifact_directory(self):
+        supervisor = load_supervisor_module()
+        server_directory = pathlib.Path(
+            tempfile.mkdtemp(prefix="bong-supervisor-unit-")
+        )
+        self.addCleanup(shutil.rmtree, server_directory, ignore_errors=True)
+        self._fake_built_binary(server_directory, "target")
+        artifact_parent = pathlib.Path(
+            tempfile.mkdtemp(prefix="bong-e2e-server-unit-")
+        )
+
+        with (
+            mock.patch.object(supervisor.subprocess, "run"),
+            mock.patch.object(
+                supervisor.tempfile, "mkdtemp", return_value=str(artifact_parent)
+            ),
+            mock.patch.object(
+                supervisor.shutil, "copy2", side_effect=OSError("disk full")
+            ),
+        ):
+            with self.assertRaises(OSError):
+                supervisor.build_server_binary(
+                    server_directory, pathlib.Path("/unused/build-token")
+                )
+
+        self.assertFalse(
+            artifact_parent.exists(),
+            "copy 失败后 mkdtemp 目录必须被就地清理，不得泄漏 bong-e2e-server-*",
+        )
 
 
 if __name__ == "__main__":
