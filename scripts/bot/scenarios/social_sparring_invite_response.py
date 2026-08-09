@@ -37,6 +37,14 @@ def _sparring_chat_count(bot) -> int:
     )
 
 
+def _sparring_invite_count(bot) -> int:
+    return sum(
+        1
+        for event in bot.events_of("server_data")
+        if event.data.get("payload_type") == "sparring_invite"
+    )
+
+
 def _expect_chat_after(bot, substring: str, anchor_t: float, timeout: float = 10.0):
     bot.wait_for(
         lambda e: (
@@ -107,6 +115,31 @@ def run(env) -> None:
             "实际收到了新「切磋」聊天"
         )
 
+        # ── 分支⑥：无效 target → dev 命令护栏拒绝，不发 SparringInviteRequest ──
+        # server/src/cmd/dev/sparring.rs::handle_sparring_invite 对不存在的玩家名
+        # 只回执行者「no player named」聊天并 continue。若该护栏被删、或错误地仍发邀请，
+        # 本条分支（失败聊天出现 + 无 sparring_invite payload）必须红。
+        invite_count_before = _sparring_invite_count(bot)
+        no_such_anchor = last_event_time(bot)
+        bot.cmd("sparring invite bot_e2e_no_such_player")
+        _expect_chat_after(bot, "[dev] sparring invite failed: no player named", no_such_anchor)
+        time.sleep(2.0)
+        assert _sparring_invite_count(bot) == invite_count_before, (
+            "无效 target 应被 /sparring invite 护栏拒绝且不产生任何 SparringInviteRequest："
+            "执行者侧不应出现 sparring_invite payload"
+        )
+
+        # ── 分支⑦：self target → dev 命令护栏拒绝，不发 SparringInviteRequest ──
+        # 同上文件 self-target 分支：只回「cannot invite self」聊天并 continue。
+        self_anchor = last_event_time(bot)
+        bot.cmd(f"sparring invite {bot.username}")
+        _expect_chat_after(bot, "[dev] sparring invite failed: cannot invite self", self_anchor)
+        time.sleep(2.0)
+        assert _sparring_invite_count(bot) == invite_count_before, (
+            "指向自身的邀请应被 /sparring invite 护栏拒绝且不产生 SparringInviteRequest："
+            "执行者（即目标）不应收到 sparring_invite payload"
+        )
+
         # ── 分支④：真实邀请 producer→consume→decline ──
         # SA 经 dev 命令生产邀请，SB 必须解码服务器真实下发的 SparringInvite
         # （field 64）拿到 invite_id 等字段再回执——不是伪造的 unknown id。
@@ -114,8 +147,9 @@ def run(env) -> None:
             wait_for_ready(target)
 
             anchor = last_event_time(target)
+            cmd_anchor = last_event_time(bot)
             bot.cmd(f"sparring invite {target.username}")
-            _expect_chat_after(bot, "[dev] sparring invite", last_event_time(bot))
+            _expect_chat_after(bot, "[dev] sparring invite", cmd_anchor)
             invite = _wait_invite(target, anchor)
             assert invite["invite_id"].startswith("sparring:"), (
                 f"服务器下发的 sparring_invite.invite_id 应以 sparring: 开头，实际 {invite['invite_id']!r}"
@@ -153,8 +187,9 @@ def run(env) -> None:
 
             # ── 分支⑤：真实邀请 accept → 双端 SparringState ──
             anchor2 = last_event_time(target)
+            cmd_anchor2 = last_event_time(bot)
             bot.cmd(f"sparring invite {target.username}")
-            _expect_chat_after(bot, "[dev] sparring invite", last_event_time(bot))
+            _expect_chat_after(bot, "[dev] sparring invite", cmd_anchor2)
             invite2 = _wait_invite(target, anchor2)
             assert invite2["invite_id"] != invite["invite_id"], (
                 "第二次邀请应下发新的 invite_id（pending 互不串扰），实际复用了上一次"
