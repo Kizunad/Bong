@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn qi_max_clears_frozen_envelope() {
         let mut app = setup_app();
-        let player = spawn_test_client(app, "Alice", [0.0, 0.0, 0.0]);
+        let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
         app.world_mut().entity_mut(player).insert(Cultivation {
             qi_current: 300.0,
             qi_max: 500.0,
