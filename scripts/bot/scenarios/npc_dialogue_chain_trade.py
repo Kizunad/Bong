@@ -4,7 +4,7 @@
 NpcTradeRequest 分支，判定顺序：offered_items → catalog → can_trade →
 库存命中 → 定价(rep) → 骨币余额 → 入包）：
 
-Phase 1（无环境依赖，任意 fixture server 可跑）：`/npc_scenario fight` zombie
+Phase 1（无环境依赖，任意 fixture server 可跑）：`/npc_scenario chase` zombie
 （display_name="游尸·醒灵"，can_trade=false）驱动四条确定性拒绝分支：
 - 非空 offered_items → "§c[NPC] 当前交易只支持骨币结算。"
 - 目录外 requested_item_id → "§c[NPC] {display} 没有这件货。"
@@ -31,7 +31,7 @@ from ._npc_dialogue_helpers import (
     approach_entity,
     last_event_time,
     nearest_villager_id,
-    queue_fight_zombie,
+    queue_scenario_zombie,
     request_and_assert,
     request_and_assert_rogue,
     rogue_village_pos_from_tppoi,
@@ -58,7 +58,7 @@ def _request_trade(npc_id, requested_item_id, offered_items):
 
 
 def run_phase_1(bot) -> None:
-    spawn = queue_fight_zombie(bot)
+    spawn = queue_scenario_zombie(bot)
     zombie_id = spawn.data["entity_id"]
 
     request_and_assert(

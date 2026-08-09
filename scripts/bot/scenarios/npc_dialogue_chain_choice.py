@@ -6,7 +6,7 @@
 - 未知 option → "§c[NPC] {display_name} 不愿回应这个选择。"（含 "trade" 对非商贩）。
 - option "leave" → 无任何 [NPC] chat 回显（用锚点窗口内 chat 缺席断言）。
 
-zombie（display_name="游尸·醒灵"）由 `/npc_scenario fight` 确定性生成，
+zombie（display_name="游尸·醒灵"）由 `/npc_scenario chase` 确定性生成，
 不依赖随机播种；商贩分支（"摊开了随身货物"）由 npc_dialogue_chain_trade 的
 BOT_E2E_ROGUE_TRADE 阶段承接。
 """
@@ -18,7 +18,7 @@ from ._npc_dialogue_helpers import (
     OUT_OF_RANGE_CHOICE,
     expect_no_npc_chat_after,
     last_event_time,
-    queue_fight_zombie,
+    queue_scenario_zombie,
     request_and_assert,
 )
 
@@ -32,7 +32,7 @@ def run(env) -> None:
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)
 
-        spawn = queue_fight_zombie(bot)
+        spawn = queue_scenario_zombie(bot)
         zombie_id = spawn.data["entity_id"]
         base = {"type": "npc_dialogue_choice", "v": 1, "npc_entity_id": zombie_id}
 

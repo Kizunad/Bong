@@ -7,8 +7,9 @@
   同维度、≤6.0m（NPC_INTERACTION_MAX_DISTANCE）、未 Terminated。
   任一不满足 → 无 § 前缀的 "[NPC] 目标已不在附近，无法…。" 兜底。
 - 反馈一律走 chat（§ 码原样保留），无 server_data 通道。
-- /npc_scenario 生成 zombie（EntityKind::ZOMBIE=118，Archetype=Zombie、Realm=Awaken）
-  → display_name "游尸·醒灵"，inspect greeting "游尸没有回应。"，can_trade=false。
+- /npc_scenario chase 生成 zombie（EntityKind::ZOMBIE=118，Archetype=Zombie、Realm=Awaken）
+  → display_name "游尸·醒灵"，inspect greeting "游尸没有回应。"，can_trade=false；
+  chase thinker 只追不咬（无 MeleeRangeScorer/MeleeAttackAction），对话场景零战斗风险。
 - BONG_ROGUE_SEED_COUNT>0 播种的散修走 villager fallback（EntityKind::VILLAGER=108），
   display_name "散修·{醒灵|引气|凝脉|固元|通灵|化虚}"，greeting "道友，可有灵草出让？"，
   can_trade=true（fresh 玩家 rep=0 ≥ -30、FactionReputationTier::Normal）。
@@ -50,12 +51,12 @@ def _distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> f
     return math.dist(a, b)
 
 
-def queue_fight_zombie(bot: Bot) -> Event:
-    """`/npc_scenario fight` 生成 zombie 并等 entity_spawn（12m 圆周，随 fight thinker 接近玩家）。"""
+def queue_scenario_zombie(bot: Bot) -> Event:
+    """`/npc_scenario chase` 生成 zombie 并等 entity_spawn（12m 圆周，chase thinker 只追不咬）。"""
     if bot.position is None:
-        raise BotAssertionError("期望已有 bot.position 后再生成战斗 NPC，实际 position=None")
+        raise BotAssertionError("期望已有 bot.position 后再生成场景 NPC，实际 position=None")
     anchor = last_event_time(bot)
-    bot.cmd("npc_scenario fight")
+    bot.cmd("npc_scenario chase")
     bot.expect_chat("Scenario queued.", timeout=10.0)
     return bot.wait_for(
         lambda e: e.kind == "entity_spawn"
@@ -64,7 +65,7 @@ def queue_fight_zombie(bot: Bot) -> Event:
         and e.data.get("type") == ZOMBIE_ENTITY_TYPE
         and _distance(bot.position, (e.data["x"], e.data["y"], e.data["z"])) <= 40.0,
         timeout=15.0,
-        description="/npc_scenario fight 后 40 格内出现 zombie(118) entity_spawn",
+        description="/npc_scenario chase 后 40 格内出现 zombie(118) entity_spawn",
     )
 
 

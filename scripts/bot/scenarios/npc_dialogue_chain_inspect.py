@@ -3,7 +3,7 @@
 黑盒锚点（server/src/network/client_request_handler.rs）：
 - 目标不可解析（不存在 / 超 6.0m / 跨维度 / Terminated）→ 无 § 前缀
   "[NPC] 目标已不在附近，无法查看。"，三个请求类型各自独立字符串。
-- 命中目标 → "§7[NPC] {display_name}：{greeting}"。zombie 由 `/npc_scenario fight`
+- 命中目标 → "§7[NPC] {display_name}：{greeting}"。zombie 由 `/npc_scenario chase`
   确定性生成（display_name="游尸·醒灵"，greeting="游尸没有回应。"），
   玩家无需依赖随机播种；先负向后正向，锚定 entity_spawn 后的 entity_id。
 
@@ -19,7 +19,7 @@ from bot.bot import BotAssertionError
 from ._npc_dialogue_helpers import (
     OUT_OF_RANGE_INSPECT,
     last_event_time,
-    queue_fight_zombie,
+    queue_scenario_zombie,
     request_and_assert,
 )
 
@@ -53,7 +53,7 @@ def run(env) -> None:
                 f"期望逐字 {OUT_OF_RANGE_INSPECT!r}，实际 {event.data['text']!r}"
             )
 
-        spawn = queue_fight_zombie(bot)
+        spawn = queue_scenario_zombie(bot)
         zombie_id = spawn.data["entity_id"]
 
         request_and_assert(
