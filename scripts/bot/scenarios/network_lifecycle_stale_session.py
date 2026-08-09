@@ -77,21 +77,21 @@ def _expect_restored_session_frozen(
 
 
 def _expect_restored_session_idempotent(
-    bot, elapsed_before: int, completed_before: int, context: str
+    bot, elapsed_floor: int, completed_before: int, context: str
 ) -> dict:
     """第二次重连：会话不得被复制/重置/回退。
 
     注意：连接期间 active session 会正常推进 elapsed（20 tick 推一次进度），
     所以这里不断言严格冻结，只锁住「没有重建/回退」这一幂等不变量——elapsed 不会
-    低于首次断连值、recipe/qty/completed 保持一致。session 若被复制或重置，取消时
-    退款计数会露馅（见后段 refund 恰好一次断言）。
+    低于上一次重连观察到的冻结值、recipe/qty/completed 保持一致。session 若被复制
+    或重置，取消时退款计数会露馅（见后段 refund 恰好一次断言）。
     """
     restored = _wait_active_session(bot)
     _assert_session_identity(restored, context)
     elapsed = restored.get("elapsed_ticks", -1)
-    assert elapsed >= elapsed_before, (
+    assert elapsed >= elapsed_floor, (
         f"{context}：陈旧 session 不得被重置回退（多次重连仍应是同一份进度）；"
-        f"首次断连 elapsed={elapsed_before}，恢复={restored!r}"
+        f"上一次重连冻结 elapsed={elapsed_floor}，恢复={restored!r}"
     )
     assert restored.get("completed_count") == completed_before, (
         f"{context}：陈旧 session 跨重连 completed_count 不得推进或回退；"
@@ -146,14 +146,21 @@ def run(env) -> None:
     # ---- 第二段连接：验证 session 恢复且冻结，不取消再断线 ----
     with env.new_bot("Stale") as bot:
         wait_join_and_inventory(bot)
-        _expect_restored_session_frozen(bot, elapsed, completed, "第一次重连")
+        first_restored = _expect_restored_session_frozen(
+            bot, elapsed, completed, "第一次重连"
+        )
 
     time.sleep(1.5)
 
     # ---- 第三段连接：验证陈旧 session 第二次重连后仍幂等（不复制/不重置/不回退）----
+    # 以第一次重连观察到的冻结值为下界（而非原始断连值）：第二次重连不得把它回退。
+    # 这比只用断连值更严——否则「首连恢复 elapsed+5、二连回退到 elapsed」的伪持久化
+    # 路径仍能通过 elapsed >= elapsed_before，掩盖跨重连回退。
     with env.new_bot("Stale") as bot:
         restored_inventory = wait_join_and_inventory(bot)
-        _expect_restored_session_idempotent(bot, elapsed, completed, "第二次重连")
+        _expect_restored_session_idempotent(
+            bot, first_restored.get("elapsed_ticks"), completed, "第二次重连"
+        )
 
         anchor = last_event_time(bot)
         bot.intent({"type": "craft_cancel", "v": 1})

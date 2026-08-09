@@ -15,6 +15,7 @@ server 必须：
 import math
 import time
 
+from bot.bot import BotAssertionError
 from bot.scenarios._inventory_helpers import (
     find_item,
     wait_inventory_contains,
