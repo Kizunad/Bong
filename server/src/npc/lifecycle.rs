@@ -1650,6 +1650,7 @@ mod tests {
         app.add_event::<crate::inventory::InventoryDurabilityChangedEvent>();
         app.add_event::<crate::network::vfx_event_emit::VfxEventRequest>();
         app.add_event::<CultivationDeathTrigger>();
+        app.add_event::<PlayerTerminated>();
         app.add_event::<NpcDeathNotice>();
         app.add_event::<NpcTerminalSettlementSucceeded>();
         app.add_event::<NpcReproductionRequest>();
