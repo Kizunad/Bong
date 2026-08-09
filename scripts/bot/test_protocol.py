@@ -4306,22 +4306,96 @@ class PlayerPacketContractTest(unittest.TestCase):
     def test_player_list_full_action_mask_parses_all_action_payloads(self):
         bot = _bare_bot()
         alice = uuid.UUID(int=1)
-        entry = (
+        bob = uuid.UUID(int=2)
+        entry_alice = (
             alice.bytes
             + mc.mc_string("Alice") + mc.write_varint(1)  # add_player + 1 property
             + mc.mc_string("textures") + mc.mc_string("http://skin") + b"\x01" + mc.mc_string("sig")
             + b"\x01" + alice.bytes + struct.pack(">q", 1234)  # initialize_chat signed session
-            + mc.write_varint(0) + mc.write_varint(0)  # key_length / signature_length = 0
+            + mc.write_varint(2) + b"\xab\xcd" + mc.write_varint(1) + b"\xef"  # chat key/signature
             + mc.write_varint(4)  # update_game_mode
             + b"\x01"  # update_listed
             + mc.write_varint(15)  # update_latency
             + b"\x01" + mc.mc_string("§aAlice")  # update_display_name
         )
-        self._player_list(bot, 0x3F, [entry])
-        self.assertEqual(bot.player_names, {str(alice): "Alice"})
+        # 第二条 entry 用不同的值，任何一条变长 payload 错位都会让本条的
+        # 字段对不上号，从而暴露第一条 entry 的解析越界。
+        entry_bob = (
+            bob.bytes
+            + mc.mc_string("Bob") + mc.write_varint(0)  # add_player + 0 properties
+            + b"\x00"  # initialize_chat: no chat session
+            + mc.write_varint(3)  # update_game_mode
+            + b"\x00"  # update_listed: false
+            + mc.write_varint(7)  # update_latency
+            + b"\x00"  # update_display_name: absent
+        )
+        self._player_list(bot, 0x3F, [entry_alice, entry_bob])
+        self.assertEqual(
+            bot.player_names,
+            {str(alice): "Alice", str(bob): "Bob"},
+            "两条 entry 都要登记 username",
+        )
         event = bot.events_of("player_list")[-1]
         self.assertEqual(event.data["actions"], 0x3F)
-        self.assertEqual(event.data["entries"][0]["username"], "Alice")
+        parsed = event.data["entries"][0]
+        # 六个 action 的 payload 全部要解码出来并被断言，跳过任意一个都会让
+        # 后面的字段读错（尤其变长 payload：properties / chat key/sig / display_name）
+        self.assertEqual(parsed["uuid"], str(alice))
+        self.assertEqual(
+            parsed["username"],
+            "Alice",
+            "0x01 add_player 必须解出 username",
+        )
+        self.assertEqual(
+            parsed["properties"],
+            [{"name": "textures", "value": "http://skin", "signature": "sig"}],
+            "0x01 add_player 的 property 三元组（name/value/可选 signature）必须逐项解出",
+        )
+        self.assertEqual(
+            parsed["initialize_chat"],
+            {
+                "has_chat_session": True,
+                "session_id": str(alice),
+                "public_key_expiry": 1234,
+                "public_key": b"\xab\xcd",
+                "signature": b"\xef",
+            },
+            "0x02 initialize_chat 的 signed session（has/会话 id/过期时间/公钥/signature）必须逐项解出",
+        )
+        self.assertEqual(
+            parsed["game_mode"],
+            4,
+            "0x04 update_game_mode 必须解出 varint 值",
+        )
+        self.assertEqual(
+            parsed["listed"],
+            True,
+            "0x08 update_listed 必须解出 boolean 值",
+        )
+        self.assertEqual(
+            parsed["latency"],
+            15,
+            "0x10 update_latency 必须解出 varint 值",
+        )
+        self.assertEqual(
+            parsed["display_name"],
+            "§aAlice",
+            "0x20 update_display_name 必须解出变长 string",
+        )
+        bob_entry = event.data["entries"][1]
+        self.assertEqual(
+            bob_entry,
+            {
+                "uuid": str(bob),
+                "username": "Bob",
+                "properties": [],
+                "initialize_chat": {"has_chat_session": False},
+                "game_mode": 3,
+                "listed": False,
+                "latency": 7,
+            },
+            "第二条 entry 六字段齐全且各为独立值——第一条的任何变长 payload 错位都会在此暴露",
+        )
 
     def test_player_remove_pops_names(self):
         bot = _bare_bot()
