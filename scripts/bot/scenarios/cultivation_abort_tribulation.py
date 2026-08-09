@@ -15,6 +15,7 @@
 from bot.bot import BotAssertionError  # noqa: F401
 
 from ._cultivation_gap_helpers import (
+    assert_no_server_data_after,
     assert_valid_request_still_works,
     du_xu_setup,
     wait_keepalive_after,
@@ -59,19 +60,19 @@ def run(env) -> None:
         bot.assert_alive("劫中 abort_tribulation 后连接保持")
 
         # 4. 无效化证据：渡虚劫未被取消 —— 再次 start_du_xu 仍被「已在劫中」拒绝，
-        #    且不产生新的 tribulation_state 宣告。
+        #    且不产生新的 tribulation_state 宣告。absence 断言必须覆盖一个有界的
+        #    post-request 观察窗：若实现坏到真取消了劫，第二次 start 放行的宣告要到
+        #    后续 server/ECS tick 才 emit，瞬时历史扫描看不到，keepalive 也证明不了
+        #    dispatch 已完成。
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent(START_DU_XU)
+        assert_no_server_data_after(
+            bot,
+            "tribulation_state",
+            after=sent_at,
+            window=4.0,
+            description="abort 后渡虚劫未被取消：再次 start_du_xu 不再宣告新劫",
+        )
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("abort 后再次 start_du_xu 被拒、连接保持")
-        if any(
-            e.kind == "server_data"
-            and e.data["payload_type"] == "tribulation_state"
-            and e.t > sent_at
-            for e in bot.events
-        ):
-            raise BotAssertionError(
-                f"[{bot.username}] 期望 abort 后渡虚劫未被取消（start_du_xu 不再宣告新劫），"
-                "实际收到了新的 tribulation_state payload"
-            )
         assert_valid_request_still_works(bot)
