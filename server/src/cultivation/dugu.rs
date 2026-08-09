@@ -818,6 +818,8 @@ mod tests {
         app
     }
 
+    use crate::player::state::canonical_player_id;
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -1828,6 +1830,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 在断脉前被中止。
+                LifeRecord::new(canonical_player_id("dugu-failure-sever")),
                 inventory,
             ))
             .id();
