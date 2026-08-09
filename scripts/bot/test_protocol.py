@@ -636,6 +636,29 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
+    def test_proto_carrier_state_decodes_wire_id(self):
+        # field 49 CarrierState —— carrier 是本 bot 的线缆 wire id（player:{uuid}）。
+        # 场景靠它把 bong:anqi/container_swap 事件归属到本 bot（findings 修复）。
+        decoded = decode_server_data_payload(
+            _server_data_carrier_state_bytes(
+                carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                phase=2,
+                progress=0.5,
+                sealed_qi=30.0,
+                sealed_qi_initial=60.0,
+                half_life_remaining_ticks=120,
+                item_instance_id=9,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "carrier_state")
+        self.assertEqual(decoded["carrier"], "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f")
+        self.assertEqual(decoded["phase"], "charged")
+        self.assertAlmostEqual(decoded["progress"], 0.5)
+        self.assertAlmostEqual(decoded["sealed_qi"], 30.0)
+        self.assertAlmostEqual(decoded["sealed_qi_initial"], 60.0)
+        self.assertEqual(decoded["half_life_remaining_ticks"], 120)
+        self.assertEqual(decoded["item_instance_id"], 9)
 
 
 class InventoryHelperTest(unittest.TestCase):
@@ -2540,6 +2563,30 @@ def _server_data_morph_state_bytes(
     )
     state = _pb_varint(1, 1) + _pb_string(2, mode) + _pb_message(3, entry)
     return _pb_message(142, state)
+
+
+def _server_data_carrier_state_bytes(
+    *,
+    carrier: str,
+    phase: int,
+    progress: float,
+    sealed_qi: float,
+    sealed_qi_initial: float,
+    half_life_remaining_ticks: int,
+    item_instance_id: int | None,
+) -> bytes:
+    """field 49 `carrier_state`（见 proto/bong/envelope.proto:1896 `CarrierState`）。"""
+    state = (
+        _pb_string(1, carrier)
+        + _pb_varint(2, phase)
+        + _pb_fixed32(3, progress)
+        + _pb_fixed32(4, sealed_qi)
+        + _pb_fixed32(5, sealed_qi_initial)
+        + _pb_varint(6, half_life_remaining_ticks)
+    )
+    if item_instance_id is not None:
+        state += _pb_varint(7, item_instance_id)
+    return _pb_message(49, state)
 
 
 def _pb_key(field: int, wire: int) -> bytes:
@@ -4681,6 +4728,38 @@ class RedisPubSubTest(unittest.TestCase):
             pubsub.subscribe("my_chan")
             with self.assertRaises(AssertionError):
                 pubsub.wait_event("my_chan", lambda e: False, timeout=0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_survives_idle_timeout_and_still_delivers_later_message(self):
+        # 回归：review finding [2]——ack 循环临时装的超时若残留在长连接上，
+        # _pump 会把 socket.timeout 当 OSError 永久退出，之后发布的订阅消息
+        # 永远收不到。修复后：(a) subscribe() 把连接恢复为阻塞（无超时残留）；
+        # (b) 即便仍有有限超时，_pump 也把 timeout 当非终止信号继续等。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            self.assertIsNone(
+                client.gettimeout(),
+                "subscribe 确认后长连接不应残留 ack 用有限超时（空闲 5s 会杀线程）",
+            )
+
+            # 人为模拟超时仍残留：旧代码 _pump 在首个空闲超时即退出。
+            client.settimeout(0.1)
+            time.sleep(0.35)
+
+            payload = json.dumps({"tick": 42}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            evt = pubsub.wait_event("my_chan", lambda e: e.get("tick") == 42, timeout=5.0)
+            self.assertEqual(evt["tick"], 42)
         finally:
             pubsub.stop()
             server.close()

@@ -37,19 +37,40 @@ def _switch(bot, to) -> None:
     bot.intent(intent)
 
 
-def _wait_swap(pubsub, from_kind: str, to_kind: str, after_tick: int, context: str) -> dict:
+def _self_carrier(bot) -> str:
+    """从 server 周期下发的 CarrierState 取本 bot 的线缆 wire id。
+
+    bong:anqi/container_swap 是全局频道，共享服务器上所有玩家的切换都会
+    发布到这里；只靠 from/to/tick 匹配会让别的玩家恰好做的同型切换满足
+    断言。server 每 tick 周期向每个客户端推送自身 CarrierState（field 49，
+    carrier=`player:{uuid}`），用它把事件归属钉到本 bot，才能证明事件由
+    本 bot 的意图驱动。
+    """
+    evt = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data.get("payload_type") == "carrier_state"
+        and e.data.get("payload", {}).get("carrier", "").startswith("player:"),
+        timeout=15.0,
+        description="server 下发本 bot 的 CarrierState（carrier=player: 线缆 id）",
+    )
+    return evt.data["payload"]["carrier"]
+
+
+def _wait_swap(
+    pubsub, carrier: str, from_kind: str, to_kind: str, after_tick: int, context: str
+) -> dict:
     evt = pubsub.wait_event(
         CH_SWAP,
-        lambda e: e.get("from") == from_kind
+        lambda e: e.get("carrier") == carrier
+        and e.get("from") == from_kind
         and e.get("to") == to_kind
         and int(e.get("tick", 0)) > after_tick,
         timeout=20.0,
-        description=f"{context}：{from_kind} -> {to_kind}",
+        description=f"{context}（carrier={carrier}）：{from_kind} -> {to_kind}",
     )
     assert int(evt.get("switching_until_tick", 0)) == int(evt["tick"]) + 10, (
         f"{context}：暴露窗口应为 tick+10，实际 {evt!r}"
     )
-    assert str(evt.get("carrier", "")).startswith("player:"), f"carrier 应为玩家线缆 id，实际 {evt!r}"
     return evt
 
 
@@ -68,10 +89,11 @@ def run(env) -> None:
         with env.new_bot("Switch") as bot:
             wait_join_and_inventory(bot)
             bot.assert_alive("连接后")
+            carrier = _self_carrier(bot)
 
             # 1) 显式切 quiver：hand_slot -> quiver
             _switch(bot, "quiver")
-            first = _wait_swap(pubsub, "hand_slot", "quiver", 0, "首次切换")
+            first = _wait_swap(pubsub, carrier, "hand_slot", "quiver", 0, "首次切换")
             first_tick = int(first["tick"])
 
             # 2) 同目标重复：静默（不发事件）
@@ -80,7 +102,7 @@ def run(env) -> None:
 
             # 3) to=None 轮换：quiver -> pocket_pouch
             _switch(bot, None)
-            _wait_swap(pubsub, "quiver", "pocket_pouch", first_tick, "轮换切换")
+            _wait_swap(pubsub, carrier, "quiver", "pocket_pouch", first_tick, "轮换切换")
 
             # 4) fenglinghe：拒收，静默
             _switch(bot, "fenglinghe")
@@ -88,7 +110,7 @@ def run(env) -> None:
 
             # 5) 切回 hand_slot：pocket_pouch -> hand_slot
             _switch(bot, "hand_slot")
-            _wait_swap(pubsub, "pocket_pouch", "hand_slot", first_tick, "切回手部")
+            _wait_swap(pubsub, carrier, "pocket_pouch", "hand_slot", first_tick, "切回手部")
 
             # 6) 同目标 hand_slot：静默
             _switch(bot, "hand_slot")

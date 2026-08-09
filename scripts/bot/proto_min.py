@@ -72,6 +72,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     31: "lingtian_session",
     34: "cast_sync",
     36: "skillbar_config",
+    49: "carrier_state",
     51: "combat_event",
     66: "tribulation_state",
     71: "breakthrough_cinematic",
@@ -355,6 +356,34 @@ def _container_state(data: bytes) -> dict[str, Any]:
         "type": "container_state",
         "entity_id": _varint(fields, 1),
         "visual_entity_id": _optional_varint(fields, 10),
+    }
+
+
+CARRIER_CHARGE_PHASE_NAMES = {
+    0: "idle",
+    1: "charging",
+    2: "charged",
+}
+
+
+def _carrier_state(data: bytes) -> dict[str, Any]:
+    """CarrierStateV1（server_data oneof field 49，envelope.proto:1896）。
+
+    carrier 是持有者的线缆 wire id（`player:{uuid}`），server 每 tick 周期向
+    各客户端推送自身快照；bot 场景用它与 redis 事件流上的 carrier 字段互证，
+    把 bong:anqi/container_swap 事件归属到本 bot。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "carrier_state",
+        "carrier": _string(fields, 1),
+        "phase": CARRIER_CHARGE_PHASE_NAMES.get(_varint(fields, 2), "unspecified"),
+        "progress": _float32(fields, 3),
+        "sealed_qi": _float32(fields, 4),
+        "sealed_qi_initial": _float32(fields, 5),
+        "half_life_remaining_ticks": _varint(fields, 6),
+        "item_instance_id": _optional_varint(fields, 7),
     }
 
 
@@ -1190,6 +1219,7 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     31: _lingtian_session,
     34: _cast_sync,
     36: _skill_bar_config,
+    49: _carrier_state,
     51: _combat_event_floater,
     66: _tribulation_state,
     SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,

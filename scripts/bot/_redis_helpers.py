@@ -148,6 +148,9 @@ class RedisPubSub:
                 remaining.discard(frame[1].decode("utf-8", "replace"))
         if remaining:
             raise RuntimeError(f"redis SUBSCRIBE 未确认: {sorted(remaining)}")
+        # ack 循环里临时装的 0.5s 超时只用于确认读取；确认完毕必须恢复阻塞，
+        # 否则 5.0s 空闲超时会触发 _pump 的 socket.timeout 路径。
+        self._sock.settimeout(None)
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
@@ -155,6 +158,9 @@ class RedisPubSub:
         while not self._closed:
             try:
                 data = self._sock.recv(4096)
+            except socket.timeout:
+                # 空闲超时不是连接终止：继续等待下一条订阅消息。
+                continue
             except OSError:
                 break
             if not data:
