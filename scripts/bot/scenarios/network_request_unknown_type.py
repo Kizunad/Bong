@@ -6,7 +6,9 @@
 不进 handler、连接保持。
 
 本场景锁的是：每种未知/畸形 type 都被**干净**拒绝 —— 不崩、不踢、连接状态
-完好，之后合法请求仍被正常处理。
+完好；探针窗口内无任何玩法副作用（server_data / chat / vfx 均未出现，且探针后
+背包快照指纹不变）—— 证明坏请求在产生任何玩法副作用之前就被拦截；之后合法请求
+仍被正常处理。
 """
 
 from bot.bot import BotAssertionError  # noqa: F401
@@ -25,18 +27,29 @@ UNKNOWN_TYPE_PROBES = [
 
 
 def run(env) -> None:
+    from ._inventory_helpers import latest_inventory_snapshot, wait_join_and_inventory
     from ._rejection_helpers import (
         assert_valid_request_still_works,
         fire_probes_and_keep_connection,
+        inventory_fingerprint,
     )
 
     with env.new_bot("Typ") as bot:
-        bot.expect_event("game_join", timeout=15.0)
-        bot.expect_event("pos_look", timeout=15.0)
+        snapshot = wait_join_and_inventory(bot)
+        pre_fingerprint = inventory_fingerprint(snapshot)
 
         probes = [
             (label, lambda req=req: bot.intent(req))
             for label, req in UNKNOWN_TYPE_PROBES
         ]
         fire_probes_and_keep_connection(bot, "未知 type", probes)
+
+        post = latest_inventory_snapshot(bot)
+        post_fingerprint = inventory_fingerprint(post)
+        if post_fingerprint != pre_fingerprint:
+            raise BotAssertionError(
+                "未知 type 探针后背包快照指纹变化：某个坏请求被部分处理了，"
+                f"探针前={pre_fingerprint} 探针后={post_fingerprint}"
+            )
+
         assert_valid_request_still_works(bot)

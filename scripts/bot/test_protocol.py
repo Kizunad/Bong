@@ -45,8 +45,10 @@ from bot.scenarios._inventory_helpers import (  # noqa: E402
     wait_inventory_snapshot_after,
 )
 from bot.scenarios._rejection_helpers import (  # noqa: E402
+    assert_no_gameplay_side_effect_since,
     assert_valid_request_still_works,
     fire_probes_and_keep_connection,
+    inventory_fingerprint,
     wait_keepalive_after,
 )
 from bot.scenarios.cultivation_pill_consume import (  # noqa: E402
@@ -1945,20 +1947,89 @@ class RejectionHelperTest(unittest.TestCase):
                 bot, "测试", [("p1", lambda: None)], settle_s=0.0
             )
 
-    def test_valid_request_sends_expected_intent_and_accepts_chat(self):
+    def test_fire_probes_fails_when_probe_produces_gameplay_side_effect(self):
+        # 探针触发了玩法反馈（server 在探针后回推 inventory_snapshot）→ 断言必须失败：
+        # 说明坏请求被成功/部分处理了，而不是在副作用产生前被拒绝。
         bot = _RejectionFakeBot(
-            [_FakeEvent(4.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})]
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[_FakeEvent(4.0, "keepalive", {"id": 9})],
+        )
+
+        def bad_probe():
+            # 模拟 reader 在探针发出后收到玩法反馈（t > 窗口起点 sent_at=2.0）。
+            bot.events.append(
+                _FakeEvent(
+                    3.0, "server_data", {"payload_type": "inventory_snapshot"}
+                )
+            )
+
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("探针副作用", bad_probe)], settle_s=0.0
+            )
+
+    def test_no_gameplay_side_effect_since_ignores_idle_traffic_but_flags_feedback(self):
+        # 基础维护流量（keepalive/pos_look）不算副作用，只有玩法反馈通道才算。
+        idle = _RejectionFakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(2.5, "pos_look", {"x": 0, "y": 0, "z": 0}),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(idle, since_t=1.0, label="测试")
+        feedback = _RejectionFakeBot(
+            [
+                _FakeEvent(2.0, "keepalive", {"id": 1}),
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": {"revision": 1}},
+                ),
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(feedback, since_t=1.0, label="测试")
+
+    def test_valid_request_ignores_earlier_chat_and_accepts_response_after_send(self):
+        # 更早的同文广播（坏请求探针被错误接受时留下的副作用）已在 events 里，
+        # 真实响应在 pending：时序锚定必须跳过诱饵，只接受发送时刻之后的响应。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})],
+            pending=[_FakeEvent(4.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})],
         )
         assert_valid_request_still_works(bot)
         self.assertEqual(
             bot.intents,
             [{"v": 1, "type": "set_meridian_target", "meridian": "lung"}],
         )
+        self.assertEqual(bot.events[-1].t, 4.0)  # 返回的是发送后的响应，不是诱饵
+
+    def test_valid_request_fails_when_only_earlier_chat_exists(self):
+        # 只有一个更早的同文广播、发送后没有新响应 → 必须失败（旧广播不能冒充成功）。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "chat", {"text": "§a[修炼] 已收到经脉目标：肺经。"})]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_valid_request_still_works(bot)
 
     def test_valid_request_fails_when_chat_never_comes(self):
         bot = _RejectionFakeBot([])
         with self.assertRaises(BotAssertionError):
             assert_valid_request_still_works(bot)
+
+    def test_inventory_fingerprint_equal_when_zero_mutation_and_differs_on_revision(self):
+        base = {
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        self.assertEqual(inventory_fingerprint(base), inventory_fingerprint(dict(base)))
+        self.assertNotEqual(
+            inventory_fingerprint(base), inventory_fingerprint(dict(base, revision=8))
+        )
 
 
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:

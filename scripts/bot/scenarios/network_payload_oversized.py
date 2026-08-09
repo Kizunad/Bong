@@ -6,8 +6,10 @@ payload 在**解码层整包丢弃**（warn log），根本不会进 `handle_cli
 （`client_request_handler.rs` 入口）。32767 字节恰好放行、32768 即拒，边界在
 协议层，不在 serde。
 
-本场景锁的是：超长包被**干净**拒绝 —— server 不崩、不踢、连接状态完好，
-之后一个合法请求仍被正常处理（拒绝没有毒化连接）。
+本场景锁的是：超长包被**干净**拒绝 —— server 不崩、不踢、连接状态完好；
+探针窗口内无任何玩法副作用（server_data / chat / vfx 均未出现，且探针后背包
+快照指纹不变）—— 超长包在解码层被丢弃，未产生任何玩法副作用；之后一个合法
+请求仍被正常处理（拒绝没有毒化连接）。
 """
 
 import json
@@ -27,14 +29,16 @@ PROBES = [
 
 
 def run(env) -> None:
+    from ._inventory_helpers import latest_inventory_snapshot, wait_join_and_inventory
     from ._rejection_helpers import (
         assert_valid_request_still_works,
         fire_probes_and_keep_connection,
+        inventory_fingerprint,
     )
 
     with env.new_bot("Big") as bot:
-        bot.expect_event("game_join", timeout=15.0)
-        bot.expect_event("pos_look", timeout=15.0)
+        snapshot = wait_join_and_inventory(bot)
+        pre_fingerprint = inventory_fingerprint(snapshot)
 
         def make_raw_send(size: int):
             def send() -> None:
@@ -60,4 +64,13 @@ def run(env) -> None:
             )
         )
         fire_probes_and_keep_connection(bot, "超长 payload", probes)
+
+        post = latest_inventory_snapshot(bot)
+        post_fingerprint = inventory_fingerprint(post)
+        if post_fingerprint != pre_fingerprint:
+            raise BotAssertionError(
+                "超长 payload 探针后背包快照指纹变化：某个超长包被部分处理了，"
+                f"探针前={pre_fingerprint} 探针后={post_fingerprint}"
+            )
+
         assert_valid_request_still_works(bot)

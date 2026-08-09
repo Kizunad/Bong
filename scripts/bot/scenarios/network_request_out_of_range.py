@@ -7,8 +7,10 @@
 - **version 门禁**（`client_request_handler.rs` SUPPORTED_VERSION=1）：v≠1 ——
   handler 入口拒绝。
 
-本场景锁的是：每个越界值都被**干净**拒绝 —— 不崩、不踢、连接状态完好，
-之后合法请求仍被正常处理。
+本场景锁的是：每个越界值都被**干净**拒绝 —— 不崩、不踢、连接状态完好；
+探针窗口内**无任何玩法副作用**（server_data / chat / vfx 均未出现），且探针前后
+背包快照指纹（revision + 内容）完全一致 —— 证明越界请求在产生任何玩法副作用
+之前就被拦截，没有被 clamp 后继续执行；之后合法请求仍被正常处理。
 """
 
 from bot.bot import BotAssertionError  # noqa: F401
@@ -38,18 +40,31 @@ OUT_OF_RANGE_PROBES = [
 
 
 def run(env) -> None:
+    from ._inventory_helpers import latest_inventory_snapshot, wait_join_and_inventory
     from ._rejection_helpers import (
         assert_valid_request_still_works,
         fire_probes_and_keep_connection,
+        inventory_fingerprint,
     )
 
     with env.new_bot("Rng") as bot:
-        bot.expect_event("game_join", timeout=15.0)
-        bot.expect_event("pos_look", timeout=15.0)
+        snapshot = wait_join_and_inventory(bot)
+        pre_fingerprint = inventory_fingerprint(snapshot)
 
         probes = [
             (label, lambda req=req: bot.intent(req))
             for label, req in OUT_OF_RANGE_PROBES
         ]
         fire_probes_and_keep_connection(bot, "越界字段值", probes)
+
+        # 背包状态零变化：探针后最新快照指纹（revision + 内容）必须与探针前一致。
+        # 任何 slot/count 被 clamp 后继续执行（哪怕只改动一处状态）都会 bump revision。
+        post = latest_inventory_snapshot(bot)
+        post_fingerprint = inventory_fingerprint(post)
+        if post_fingerprint != pre_fingerprint:
+            raise BotAssertionError(
+                "越界字段值探针后背包快照指纹变化：某个越界请求被 clamp/部分处理了，"
+                f"探针前={pre_fingerprint} 探针后={post_fingerprint}"
+            )
+
         assert_valid_request_still_works(bot)
