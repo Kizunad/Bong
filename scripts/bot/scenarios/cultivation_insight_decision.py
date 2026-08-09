@@ -13,17 +13,46 @@
   trigger 与当前挂着的 offer 不符 → warn「insight decision mismatch ... ignoring」（offer 保留）；
   idx 越界 → warn「chose invalid idx」并移除 offer；null → info「rejected insight offer」并移除 offer；
   无 pending offer 的闲散决策 → 静默丢弃
-- 有效抉择 → `apply_choice` 应用 + `quota.apply_accumulation` + 移除 offer（无拒绝 warn）
+- 有效抉择 → `apply_choice` 应用 + `quota.apply_accumulation` + 移除 offer，
+  且只在此分支发 `bong:enlightenment_pose` VFX（`bong:vfx_event`）——**这是判定应用与否的
+  可观察状态转换**，本次任务把「只看连接健康」升级为「必须拦截正反两头姿态信号」：
+  - 有效 → 姿态**必须出现**；
+  - 错配 / 越界 / null / 已移除后闲散 → 姿态**绝不出现**。
 """
 
 from ._cultivation_gap_helpers import (
+    assert_no_payload_after,
     assert_valid_request_still_works,
     breakthrough_setup,
     wait_keepalive_after,
+    wait_payload_containing,
 )
 
-DESCRIPTION = "insight_decision：顿悟邀约下发、错配/越界/拒绝/闲散决策全链路，连接保持"
+DESCRIPTION = "insight_decision：顿悟邀约下发、错配/越界(null 拒绝)/闲散决策——姿态 VFX 正反两头可观察"
 MODULES = ["cultivation", "network"]
+
+VFX_CHANNEL = "bong:vfx_event"
+ENLIGHTENMENT_POSE = b"bong:enlightenment_pose"
+
+
+def _vfx_pose(bot, after: float, description: str):
+    """等 after 之后出现顿悟姿态 VFX —— 有效抉择应用的可观察状态转换。"""
+    return wait_payload_containing(
+        bot,
+        VFX_CHANNEL,
+        ENLIGHTENMENT_POSE,
+        after=after,
+        timeout=12.0,
+        description=description,
+    )
+
+
+def _no_vfx_pose(bot, after: float, description: str) -> None:
+    """断言 after 之后无顿悟姿态 VFX（offer 未应用）：负路径不得发权威信号。"""
+    assert_no_payload_after(
+        bot, VFX_CHANNEL, after=after, window=3.0, description=description
+    )
+
 
 TRIGGER_INDUCE = "first_breakthrough_to_Induce"
 TRIGGER_OTHER = "first_breakthrough_to_Condense"
@@ -51,8 +80,14 @@ def _await_offer(bot, sent_at: float, timeout: float = 15.0):
     return offer
 
 
+def _decision(bot, trigger_id, choice_idx):
+    bot.intent(
+        {"type": "insight_decision", "v": 1, "trigger_id": trigger_id, "choice_idx": choice_idx}
+    )
+
+
 def run(env) -> None:
-    # ── Bot Ins：错配拒绝（offer 保留）→ 有效抉择（应用）→ 应用后闲散决策静默 ──
+    # ── Bot A：错配拒绝(offer 保留) → 有效抉择（应用 → 姿态可观察）→ 应用后闲散不复发 ──
     with env.new_bot("Ins") as bot:
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)
@@ -60,33 +95,51 @@ def run(env) -> None:
         sent_at = breakthrough_setup(bot)
         _await_offer(bot, sent_at)
 
-        # 1. trigger 错配 → 干净拒绝（warn log：decision mismatch；offer 保留）。
+        # 1. trigger 错配 → 干净拒绝（offer 保留）：不得发姿态，连接不踢。
         sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {"type": "insight_decision", "v": 1, "trigger_id": TRIGGER_OTHER, "choice_idx": 1}
-        )
+        _decision(bot, TRIGGER_OTHER, 1)
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("insight_decision trigger 错配被拒后连接保持")
+        _no_vfx_pose(bot, sent_at, "错配拒绝不得发出顿悟姿态 VFX")
 
-        # 2. 有效抉择（正确 trigger + 合法 idx）→ 应用 + offer 移除（无拒绝 warn）。
+        # 2. 有效抉择（正确 trigger + 合法 idx）→ 应用：必须发出顿悟姿态 VFX。
         sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {"type": "insight_decision", "v": 1, "trigger_id": TRIGGER_INDUCE, "choice_idx": 1}
-        )
-        wait_keepalive_after(bot, sent_at)
-        bot.assert_alive("insight_decision 有效抉择应用后连接保持")
+        _decision(bot, TRIGGER_INDUCE, 1)
+        _vfx_pose(bot, sent_at, "有效 insight_decision 应用触发 bong:enlightenment_pose VFX")
+        bot.assert_alive("insight_decision 有效应用后连接保持")
 
-        # 3. 应用后同 trigger 再发（idx 越界）→ 无 pending offer，静默丢弃，
-        #    不出现「chose invalid idx」warn（log 证据）；连接仍完好。
+        # 3. 应用后 offer 已移除 → 再造闲散（越界 idx）不再姿态。
         sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {"type": "insight_decision", "v": 1, "trigger_id": TRIGGER_INDUCE, "choice_idx": 7}
-        )
+        _decision(bot, TRIGGER_INDUCE, 7)
+        _no_vfx_pose(bot, sent_at, "应用后闲散决策不得再发顿悟姿态")
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("offer 应用后闲散 insight_decision 静默丢弃、连接保持")
         assert_valid_request_still_works(bot)
 
-    # ── Bot Rej：null 回执 = 拒绝/超时（offer 移除）→ 闲散决策静默 ──
+    # ── Bot B：offer PENDING 时发越界 idx → 不发姿态 + 该 idx 移除 offer ──
+    with env.new_bot("Ins2") as bot:
+        bot.expect_event("game_join", timeout=15.0)
+        bot.expect_event("pos_look", timeout=15.0)
+
+        sent_at = breakthrough_setup(bot)
+        _await_offer(bot, sent_at)
+
+        # 4. offer 挂起时下发越界 idx（trigger 正确）→ 不发顿悟姿态。
+        sent_at = bot.events[-1].t if bot.events else 0.0
+        _decision(bot, TRIGGER_INDUCE, 7)
+        _no_vfx_pose(bot, sent_at, "越界 idx（offer 挂起）不得触发顿悟姿态 VFX")
+        wait_keepalive_after(bot, sent_at)
+        bot.assert_alive("越界 idx 拒绝后连接保持")
+
+        # 5. 越界 idx 已把 offer 移除 → 随后「触发正确 + idx 合法」的决策也绝不发姿态。
+        sent_at = bot.events[-1].t if bot.events else 0.0
+        _decision(bot, TRIGGER_INDUCE, 1)
+        _no_vfx_pose(bot, sent_at, "越界已移除 offer，随后合法触发也不得再发姿态")
+        wait_keepalive_after(bot, sent_at)
+        bot.assert_alive("offer 移除后闲散 insight_decision 静默丢弃、连接保持")
+        assert_valid_request_still_works(bot)
+
+    # ── Bot Rej：null 回执 = 拒绝/超时（移除 offer，不发姿态）→ 闲散决策亦静默 ──
     with env.new_bot("Rej") as bot:
         bot.expect_event("game_join", timeout=15.0)
         bot.expect_event("pos_look", timeout=15.0)
@@ -94,19 +147,16 @@ def run(env) -> None:
         sent_at = breakthrough_setup(bot)
         _await_offer(bot, sent_at)
 
-        # 4. choice_idx=null（拒绝/超时等价）→ info「rejected insight offer」+ offer 移除。
+        # 6. choice_idx=null（拒绝/超时等价）→ 不触发顿悟姿态（拒绝不是应用）。
         sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {"type": "insight_decision", "v": 1, "trigger_id": TRIGGER_INDUCE, "choice_idx": None}
-        )
+        _decision(bot, TRIGGER_INDUCE, None)
+        _no_vfx_pose(bot, sent_at, "null 回执（拒绝）不得触发顿悟姿态 VFX")
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("insight_decision null 回执（拒绝）后连接保持")
 
-        # 5. offer 已移除后闲散决策 → 静默丢弃（无 warn）；连接完好、合法请求仍可用。
+        # 7. offer 已移除后闲散决策 → 静默丢弃（无姿态）；连接完好、合法请求仍可用。
         sent_at = bot.events[-1].t if bot.events else 0.0
-        bot.intent(
-            {"type": "insight_decision", "v": 1, "trigger_id": TRIGGER_OTHER, "choice_idx": 0}
-        )
+        _decision(bot, TRIGGER_OTHER, 0)
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("offer 移除后闲散 insight_decision 静默丢弃、连接保持")
         assert_valid_request_still_works(bot)

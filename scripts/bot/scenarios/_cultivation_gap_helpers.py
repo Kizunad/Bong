@@ -12,6 +12,47 @@
 
 from __future__ import annotations
 
+from bot.bot import BotAssertionError
+
+
+def assert_no_payload_after(
+    bot, channel: str, window: float, after: float, description: str
+) -> None:
+    """断言 after 之后 window 秒内，该 channel 的原始 payload 不再出现（absence 契约）。
+
+    用于「负路径不得再制造权威信号」：如劫中重复请求不重发、无效抉择不发顿悟姿态。
+    负断言靠时间窗——window 内出现的匹配 payload 一律判失败。
+    """
+    import time
+
+    time.sleep(window)
+    for e in bot.events:
+        if (
+            e.kind == "payload"
+            and e.data.get("channel") == channel
+            and e.t > after
+            and channel in ("bong:vfx_event",)
+        ):
+            raise BotAssertionError(f"{description}：with {after} 之后出现 {channel} payload {e!r}")
+
+
+def assert_no_server_data_after(
+    bot, payload_type: str, after: float, window: float, description: str
+) -> None:
+    """断言 `after` 之后 window 秒内无 `bong:server_data` 的 `payload_type` 事件（absence）。"""
+    import time
+
+    time.sleep(window)
+    for e in bot.events:
+        if (
+            e.kind == "server_data"
+            and e.data.get("payload_type") == payload_type
+            and e.t > after
+        ):
+            raise BotAssertionError(
+                f"{description}：{after:.2f} 之后又出现 server_data/{payload_type} 事件 {e!r}"
+            )
+
 
 def wait_keepalive_after(bot, after: float, timeout: float = 25.0):
     """等 t > after 的新 keepalive（server 在拒绝/忽略坏请求后仍主动维持连接）。"""

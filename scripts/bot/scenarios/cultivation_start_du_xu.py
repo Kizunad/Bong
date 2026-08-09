@@ -16,6 +16,7 @@
 from bot.bot import BotAssertionError  # noqa: F401
 
 from ._cultivation_gap_helpers import (
+    assert_no_server_data_after,
     assert_valid_request_still_works,
     du_xu_setup,
     wait_keepalive_after,
@@ -73,9 +74,17 @@ def run(env) -> None:
         )
         bot.assert_alive("渡虚劫启动后连接保持")
 
-        # 4. 劫中重复 start → 仍被门禁拒绝（warn log 证据）；连接保持、合法请求仍可用。
+        # 4. 劫中重复 start → 仍被门禁拒绝：不得再广播第二个 tribulation_state
+        #    （身份/状态不变——劫还是同一场），连接保持、合法请求仍可用。
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent(START_DU_XU)
+        assert_no_server_data_after(
+            bot,
+            "tribulation_state",
+            after=sent_at,
+            window=4.0,
+            description="劫中重复 start_du_xu 不得再次广播 tribulation_state（同一场劫，身份不变）",
+        )
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("劫中重复 start_du_xu 拒绝后连接保持")
         assert_valid_request_still_works(bot)
