@@ -93,7 +93,7 @@ def run(env) -> None:
             f"未知 skill 拒绝后 snapshot 不应含 no_such_skill_xyz，实际 {sorted(configs)}"
         )
 
-        # ── 3. 非法字段值 → 拒绝：原配置保持（backfire_kind 仍在白名单值上）──
+        # ── 3. 非法 backfire_kind（enum 白名单外，meridian_id 有效）→ 拒绝：原配置保持 ──
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -110,10 +110,30 @@ def run(env) -> None:
         )
         parsed = json.loads(configs[SKILL])
         assert parsed.get("backfire_kind") == "tainted_yuan", (
-            f"非法字段拒绝后 backfire_kind 应保持 tainted_yuan，实际 {parsed!r}"
+            f"非法 backfire_kind 拒绝后 backfire_kind 应保持 tainted_yuan，实际 {parsed!r}"
         )
 
-        # ── 4. 空 config → 清配置：回推快照不含该 skill ──
+        # ── 4. 非法 meridian_id（MeridianId::ALL 之外，backfire_kind 有效）→ 拒绝：原配置保持 ──
+        anchor = last_event_time(bot)
+        bot.intent(
+            {
+                "type": "skill_config_intent",
+                "v": 1,
+                "skill_id": SKILL,
+                "config": {"meridian_id": "bogus_meridian", "backfire_kind": "tainted_yuan"},
+            }
+        )
+        kept = _expect_config_snapshot(bot, anchor)
+        configs = _configs_of(kept)
+        assert SKILL in configs, (
+            f"非法 meridian_id 拒绝后 {SKILL} 配置应保持，实际 {sorted(configs)}"
+        )
+        parsed = json.loads(configs[SKILL])
+        assert parsed.get("meridian_id") == "Pericardium", (
+            f"非法 meridian_id 拒绝后 meridian_id 应保持 Pericardium，实际 {parsed!r}"
+        )
+
+        # ── 5. 空 config → 清配置：回推快照不含该 skill ──
         anchor = last_event_time(bot)
         bot.intent(
             {

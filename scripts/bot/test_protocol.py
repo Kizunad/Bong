@@ -2637,6 +2637,13 @@ class ProtoMinTest(unittest.TestCase):
         envelope = _pb_len_field(31, b"\x08\x01")
         self.assertEqual(proto_min.server_data_payload_name(envelope), "lingtian_session")
 
+    def test_server_data_payload_name_reads_skill_xp_gain_oneof_field(self):
+        # central-review 2012 #1：field 7 必须在 SERVER_DATA_PAYLOAD_NAMES 中登记，
+        # 否则 expect_server_data_payload("skill_xp_gain") 会把该 oneof 分类为未知。
+        envelope = _server_data_skill_xp_gain_bytes()
+        self.assertEqual(proto_min.server_data_payload_field(envelope), 7)
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "skill_xp_gain")
+
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
             _pb_varint_field(1, 4242)

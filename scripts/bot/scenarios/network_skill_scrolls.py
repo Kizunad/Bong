@@ -169,9 +169,10 @@ def run(env) -> None:
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "skill_xp_gain"
                 and e.data["payload"].get("skill") == "herbalism"
+                and e.t > skill_anchor
             ),
             timeout=10.0,
-            description="skill_xp_gain skill=herbalism",
+            description="skill_xp_gain skill=herbalism（intent 之后）",
         ).data["payload"]
         assert int(gain.get("amount", 0)) == SCROLL_XP, (
             f"skill_xp_gain.amount 应为 {SCROLL_XP}，实际 {gain.get('amount')!r}"
