@@ -5774,7 +5774,7 @@ mod tests {
 
     #[test]
     fn heart_demon_steadfast_capped_by_zone_headroom() {
-        // Zone is near-depleted (spirit_qi = -0.9 → only 5 qi available above -1.0 floor).
+        // Zone is near-depleted (spirit_qi = 0.1 → only 5 qi available above the 0.0 floor).
         // Player wants 10% of 300 = 30 qi but zone can only provide 5.
         // actual_grant must equal the zone debit (no qi created from thin air).
         let mut app = qi_test_app();
@@ -5784,7 +5784,7 @@ mod tests {
         zones
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone should exist")
-            .spirit_qi = -0.9; // only (−0.9 + 1.0) × 50 = 5 qi available
+            .spirit_qi = 0.1; // only max(0.1, 0.0) × 50 = 5 qi available
         app.insert_resource(zones);
 
         let entity = app
@@ -5821,11 +5821,11 @@ mod tests {
         });
         app.update();
 
-        // Zone had spirit_qi = -0.9; available = (-0.9 + 1.0) * 50.0 = 5.0 qi.
+        // Zone had spirit_qi = 0.1; available = max(0.1, 0.0) * 50.0 = 5.0 qi.
         // desired_grant = (300.0 * 0.10).min((300.0 - 0.0).max(0.0)) = 30.0.
         // actual_grant  = 30.0.min(5.0) = 5.0 (capped by zone headroom).
-        let zone_spirit_qi_before = -0.9_f64;
-        let zone_available = (zone_spirit_qi_before + 1.0) * 50.0; // 5.0
+        let zone_spirit_qi_before = 0.1_f64;
+        let zone_available = zone_spirit_qi_before.max(0.0) * 50.0; // 5.0
         let desired_grant = (300.0_f64 * 0.10).min((300.0_f64 - 0.0_f64).max(0.0));
         let expected_grant = desired_grant.min(zone_available);
         let expected_qi_current = 0.0 + expected_grant;

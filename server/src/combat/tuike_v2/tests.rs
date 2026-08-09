@@ -8,11 +8,13 @@ use crate::cultivation::color::PracticeLog;
 use crate::cultivation::components::{
     ColorKind, ContamSource, Contamination, Cultivation, QiColor, Realm,
 };
+use crate::cultivation::life_record::LifeRecord;
 use crate::cultivation::meridian::severed::SkillMeridianDependencies;
 use crate::cultivation::skill_registry::{CastRejectReason, CastResult};
 use crate::inventory::{
     InventoryRevision, ItemInstance, ItemRarity, PlayerInventory, SlotContents, EQUIP_SLOT_CHEST,
 };
+use crate::player::state::canonical_player_id;
 
 use super::events::{
     ContamTransferredEvent, DonFalseSkinEvent, FalseSkinDecayedToAshEvent, FalseSkinSheddedEvent,
@@ -1570,8 +1572,13 @@ fn maintenance_qi_per_sec_no_discount_when_chaotic() {
 ///   但 total == cost 的断言会失败。因此将 spirit_qi 清零（满满 50 units 容量）。
 ///
 /// 注意（pitfall b）：实体需要 CurrentDimension 才能 find_zone 成功；否则路由到 overflow。
+///
+/// 注意（pitfall c）：#1931 qi_flow 迁移后扣减在事务内完成，release_qi_amount_to_zone
+///   要求 canonical LifeRecord（玩家/NPC 生产必然携带）；缺它 fail-closed，qi 分文不扣。
 #[test]
 fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
+    use crate::cultivation::life_record::LifeRecord;
+    use crate::player::state::canonical_player_id;
     use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
     use crate::qi_physics::QiTransferReason;
     use crate::world::dimension::{CurrentDimension, DimensionKind};
@@ -1592,6 +1599,8 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
     app.add_systems(Update, false_skin_maintenance_tick);
 
     // pitfall (b): 必须插入 CurrentDimension；Position 在 spawn zone bounds 内（-128~128, 64~80, -128~128）
+    // pitfall (c): #1931 qi_flow 迁移后 release_qi_amount_to_zone 要求 canonical LifeRecord
+    // （扣减在事务内完成，缺 LifeRecord 直接 fail-closed，不扣不减）；生产玩家/NPC 均携带。
     let entity = app
         .world_mut()
         .spawn((
@@ -1607,6 +1616,7 @@ fn maintenance_tick_emits_qi_transfer_to_zone_for_conservation() {
             Position::new([0.0_f64, 66.0, 0.0]),
             CurrentDimension(DimensionKind::Overworld),
             PracticeLog::default(),
+            LifeRecord::new(canonical_player_id("tuike-maintenance")),
         ))
         .id();
 
@@ -1683,6 +1693,8 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
     app.add_systems(Update, false_skin_maintenance_tick);
 
     // 实体有 Position 但无 CurrentDimension → release_qi_amount_to_zone 走 overflow 分支
+    // LifeRecord 是 R5 P0b qi_flow 契约的身份前提（#1931/#1941）：无 canonical 身份的
+    // release 会被 fail-closed 拒绝（InvalidActorIdentity），与 overflow 路由无关。
     let entity = app
         .world_mut()
         .spawn((
@@ -1698,6 +1710,7 @@ fn maintenance_tick_no_dimension_routes_to_overflow_not_silent_drop() {
             Position::new([0.0_f64, 66.0, 0.0]),
             // 故意不插入 CurrentDimension
             PracticeLog::default(),
+            LifeRecord::new(canonical_player_id("tuike-overflow-fixture")),
         ))
         .id();
 
