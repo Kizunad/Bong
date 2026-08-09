@@ -162,6 +162,7 @@ def run(env) -> None:
         # 7. offer 已移除后闲散决策 → 静默丢弃（无姿态）；连接完好、合法请求仍可用。
         sent_at = bot.events[-1].t if bot.events else 0.0
         _decision(bot, TRIGGER_OTHER, 0)
+        _no_vfx_pose(bot, sent_at, "null 移除 offer 后闲散决策不得再发顿悟姿态")
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("offer 移除后闲散 insight_decision 静默丢弃、连接保持")
         assert_valid_request_still_works(bot)
