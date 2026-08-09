@@ -5,9 +5,11 @@
 1. 坏请求被 server 拒绝后连接**不被踢**、**不被单方面遗忘**（无 disconnect /
    connection_lost 事件）；
 2. server 在拒绝之后**继续心跳**（新的 keepalive 到达）；
-3. **拒绝发生在本请求产生任何玩法副作用之前** —— 探针窗口内没有
+3. **拒绝发生在本请求产生任何玩法副作用之前** —— 探针窗口内没有响应式
    server_data / chat / vfx 反馈（server 要么根本没进 handler，要么在入口被拦）。
-   这是区分「拒绝」与「成功/部分处理」的黑盒证据；
+   窗口起点在 `drain_event_stream` 把 join 突发排干之后取锚，连接同步流量（join
+   突发 / Changed 驱动的 status_snapshot）不算副作用。这是区分「拒绝」与
+   「成功/部分处理」的黑盒证据；
 4. 拒绝之后一个**合法**请求仍能产生它的预期响应 —— 证明连接不是"没崩但已坏"，
    而是完整可用。这是"连接状态定义良好"的最强黑盒证据。
 
@@ -22,17 +24,25 @@ import time
 
 from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场景抛出
 
-# 玩法副作用 = server 在「处理了一个请求」时才会产生的反馈通道。基础连接维护
-# 流量（keepalive / pos_look / chunk_data / health 等）不属于副作用。
-_SIDE_EFFECT_CHANNELS = ("bong:server_data", "bong:vfx_event")
+# 连接同步类 server_data payload type：server 无论 client 发什么都会推送（join 突发 /
+# Changed 驱动的 HUD 同步），不是「处理了一个请求」的证据，探针窗口内出现不算副作用。
+# 其余 server_data / chat / vfx_event 均为响应式反馈。
+_AMBIENT_SERVER_DATA_TYPES = frozenset({"status_snapshot"})
 
 
 def is_gameplay_side_effect(event) -> bool:
-    """判断事件是否属于玩法副作用（拒绝路径必须保证探针窗口内不出现）。"""
-    if event.kind in ("server_data", "vfx_event", "chat"):
+    """判断事件是否属于玩法副作用（拒绝路径必须保证探针窗口内不出现）。
+
+    只把「响应式反馈」算副作用：chat / vfx_event 恒算；server_data 按 payload_type
+    判定（排除连接同步类型）。裸 ``payload`` 事件不算副作用：它要么是已解码
+    server_data 事件的字节重复（同一次推送同时发 raw payload + 解码后 server_data
+    两个事件），要么是 join 突发里解码器读不动的字节（如玩家 spawn），都不独立构成
+    玩法反馈。join 突发本身再由 ``drain_event_stream`` 在窗口取锚前排干。
+    """
+    if event.kind in ("chat", "vfx_event"):
         return True
-    if event.kind == "payload":
-        return event.data.get("channel") in _SIDE_EFFECT_CHANNELS
+    if event.kind == "server_data":
+        return event.data.get("payload_type") not in _AMBIENT_SERVER_DATA_TYPES
     return False
 
 
@@ -101,6 +111,28 @@ def wait_keepalive_after(bot, after: float, timeout: float = 25.0):
     )
 
 
+def drain_event_stream(bot, *, quiet_s: float = 1.5, max_s: float = 6.0) -> None:
+    """等事件流安静下来（连续 ``quiet_s`` 秒无新事件），最多 ``max_s`` 秒兜底。
+
+    join 会一次性突发放出大量连接同步 payload（welcome / remains_sync /
+    dropped_loot_sync / spawn / inventory_snapshot / status_snapshot 等），且部分
+    滞后于 inventory_snapshot 到达。探针窗口必须在这波突发放完后再取锚，否则连接
+    同步流量会被误判成探针的玩法副作用。若事件流一直有周期流量（如心跳）到不了
+    安静，``max_s`` 兜底 —— 此时 sent_at 也已落在突发之后，窗口仍然正确。
+    """
+    start = time.monotonic()
+    last_change_at = start
+    last_len = len(bot.events)
+    while time.monotonic() - last_change_at < quiet_s:
+        if time.monotonic() - start >= max_s:
+            break
+        time.sleep(0.25)
+        n = len(bot.events)
+        if n != last_len:
+            last_len = n
+            last_change_at = time.monotonic()
+
+
 def fire_probes_and_keep_connection(
     bot,
     label: str,
@@ -111,14 +143,18 @@ def fire_probes_and_keep_connection(
     """连发一组坏请求探针，断言整体干净拒绝：无副作用 + 无断连 + 心跳继续。
 
     ``probes`` 是 ``(探针名, 发送函数)`` 列表 —— 发送函数执行一次坏请求（直接
-    socket 写帧或 bot.send_payload / bot.intent）。先全部发出，再统一断言：
-    - **探针窗口内无玩法副作用**（server_data / chat / vfx 均未出现 —— 坏请求在
-      产生任何玩法副作用之前被拦截，这是「拒绝」区别于「成功/部分处理」的证据）；
+    socket 写帧或 bot.send_payload / bot.intent）。先等 join 突发排干再取窗口锚，
+    然后统一断言：
+    - **探针窗口内无玩法副作用**（响应式 server_data / chat / vfx 均未出现 ——
+      坏请求在产生任何玩法副作用之前被拦截，这是「拒绝」区别于「成功/部分处理」
+      的证据；连接同步流量由 ``drain_event_stream`` 排干、由 ``is_gameplay_side_effect``
+      排除，不误判）；
     - settle 窗口内 ``assert_alive``（"踢人/panic/断流"这类坏响应在此窗口显形）；
     - 探针之后的新 keepalive 到达（server 仍主动维护这条连接）。
 
     分模块的"合法请求仍可用"强断言由各场景在调用本函数后自己做（需要不同请求）。
     """
+    drain_event_stream(bot)
     sent_at = bot.events[-1].t if bot.events else 0.0
     for probe_name, send in probes:
         send()

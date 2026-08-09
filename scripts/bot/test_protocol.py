@@ -1990,6 +1990,38 @@ class RejectionHelperTest(unittest.TestCase):
         with self.assertRaises(BotAssertionError):
             assert_no_gameplay_side_effect_since(feedback, since_t=1.0, label="测试")
 
+    def test_ambient_connection_sync_not_gameplay_side_effect(self):
+        # 连接同步流量不算玩法副作用：解码的 status_snapshot（Changed<StatusEffects>
+        # 驱动，探针场景的铺垫动作也会触发）与解码器读不动的 spawn 裸 payload（join
+        # 突发）都不应触发窗口断言失败；只有响应式反馈（chat）才必须触发。
+        ambient = _RejectionFakeBot(
+            [
+                _FakeEvent(1.5, "payload", {"channel": "bong:server_data", "data": b"spawn-bytes"}),
+                _FakeEvent(3.8, "server_data", {"payload_type": "status_snapshot"}),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(ambient, since_t=1.0, label="测试")
+        chat = _RejectionFakeBot([_FakeEvent(2.0, "chat", {"text": "已收到经脉目标"})])
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(chat, since_t=1.0, label="测试")
+
+    def test_fire_probes_ignores_join_burst_ambient_traffic(self):
+        # join 突发里既有无法解码的 spawn（裸 payload）也有解码的 status_snapshot，
+        # 它们都落在探针窗口起点之前：drain 排干 + 类型排除后不误判成副作用。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(1.5, "payload", {"channel": "bong:server_data", "data": b"spawn-bytes"}),
+                _FakeEvent(2.0, "game_join", {}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "status_snapshot"}),
+            ],
+            pending=[_FakeEvent(4.0, "keepalive", {"id": 9})],
+        )
+        fired: list[str] = []
+        fire_probes_and_keep_connection(
+            bot, "测试", [("p1", lambda: fired.append("p1"))], settle_s=0.0
+        )
+        self.assertEqual(fired, ["p1"])
+
     def test_valid_request_ignores_earlier_chat_and_accepts_response_after_send(self):
         # 更早的同文广播（坏请求探针被错误接受时留下的副作用）已在 events 里，
         # 真实响应在 pending：时序锚定必须跳过诱饵，只接受发送时刻之后的响应。
