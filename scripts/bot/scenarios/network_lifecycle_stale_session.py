@@ -184,10 +184,10 @@ def run(env) -> None:
         assert find_item(final_inventory, "wood_handle") is not None, (
             f"最终应持有 wood_handle，实际 {final_inventory!r}"
         )
-        assert find_item(final_inventory, "stone_chunk")["item"]["stack_count"] == 1, (
-            f"stone_chunk 退款必须恰好一次（stack_count=1），实际 {final_inventory!r}"
+        assert find_item(final_inventory, "stone_chunk")["item"]["stack_count"] == 2, (
+            f"stone_chunk 退款必须恰好一次（quantity=2 退还 2 份，stack_count=2），实际 {final_inventory!r}"
         )
-        assert find_item(final_inventory, "wood_handle")["item"]["stack_count"] == 1, (
-            f"wood_handle 退款必须恰好一次（stack_count=1），实际 {final_inventory!r}"
+        assert find_item(final_inventory, "wood_handle")["item"]["stack_count"] == 2, (
+            f"wood_handle 退款必须恰好一次（quantity=2 退还 2 份，stack_count=2），实际 {final_inventory!r}"
         )
         bot.assert_alive("陈旧 session 退款后再次重连")
