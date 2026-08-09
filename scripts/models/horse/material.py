@@ -139,6 +139,16 @@ def grain(kind: str, amp: float, seed: int) -> list[list[float]]:
                 g[y][x] = 1.0 + amp * (0.9 if y % 2 == 0 else -0.9)
         for x in range(0, SIDE_W, 3):
             g[1][x] -= amp * 0.8  # 缝线的针脚
+    elif kind == "drape":
+        # 一幅**挂着**的布：竖折。全表唯一一个结构线走 x 的做工，理由是它描述的东西
+        # 本来就是竖的——横排是札片一排压一排压出来的，布身上没有那种东西；布挂在
+        # 马身上只会起一道道顺着重力的折。
+        # 折**不等距**：等距的竖条拉过整幅障泥是灯芯绒（同 `fur` 那一条的教训，只是
+        # 换了个方向）。两道深折 + 三档不同的受光面，读起来才像布自己垂出来的。
+        val = (0.45, -1.20, 0.80, 0.30, -1.05, 0.60)
+        for y in range(SIDE_H):
+            for x in range(SIDE_W):
+                g[y][x] = 1.0 + amp * val[x]
     elif kind == "weave":  # 织纹：横着的纬线。棋盘那一版在毡垫上拉成了大格子
         for y in range(SIDE_H):
             for x in range(SIDE_W):

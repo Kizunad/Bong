@@ -87,6 +87,8 @@ FINISHES: dict[str, Finish] = {
     "mail": Finish(lit=1.20, occ=0.62, fres=0.28, grain="ring", amp=0.24),
     # 布：跨度最小的一档。布要是也闪，就成了锡箔——这一条和"金属要有跨度"一样重要
     "cloth": Finish(lit=1.20, occ=0.68, fres=0.08, grain="weave", amp=0.075),
+    # 挂着的布：同样是布的跨度，结构线**转了九十度**（竖折，见 `material.drape`）
+    "drape": Finish(lit=1.20, occ=0.68, fres=0.08, grain="drape", amp=0.085),
     "rope": Finish(lit=1.16, occ=0.72, fres=0.10, grain="twist", amp=0.115),
     "leather": Finish(lit=1.15, occ=0.68, fres=0.14, grain="mottle", amp=0.10),
     # 灵纹：自发光条要的是**均匀**亮度，撒任何纹理都会读成脏
@@ -141,12 +143,31 @@ TACK_MATS: dict[str, Mat] = {
     # **中等明度的暖色带**，而金属天然就落在中等明度的灰带上。碎雪的暗部 (104,99,92)
     # 正是一块中灰——任何"看着像铁"的中灰都会撞上它。所以五档一律往两头躲：
     # 布往蓝里、锁环往深冷里、板甲往亮里、重甲往黑里，中灰那一段整个让开。
-    "cloth": Mat((92, 106, 132), "cloth"),  # 粗布：褪掉大半的蓝草染（末法唯一还染得起的颜色）
-    "cloth_dark": Mat((58, 68, 90), "cloth"),
-    "mail": Mat((66, 80, 90), "mail"),  # 锁环：环挨环，整片读成一块发暗的冷灰
-    "mail_dark": Mat((46, 56, 62), "mail"),
-    "plate": Mat((146, 158, 180), "metal"),  # 杂钢板：磨得发亮的那一档，靠**亮**从毛色里跳出来
-    "plate_dark": Mat((94, 106, 130), "metal"),
+    # 粗布：褪掉大半的蓝草染（末法唯一还染得起的颜色）。做工从 `weave`（横纬线）改成
+    # `drape`（竖折）——它现在是一整幅**挂着**的障泥，不是绷在垫上的一块布：横排是札片
+    # 压叠出来的东西，布身上没有。
+    "cloth": Mat((92, 106, 132), "drape"),
+    "cloth_dark": Mat((58, 68, 90), "drape"),  # 包边 / 齿边：染得最透的那一道
+    # 下面五格（`mail` / `mail_dark` / `cloth_hemp` 原 `plate` / `plate_dark` / `plate_rim`）
+    # 是历次改形制**空出来的格**：锁子甲改按诺曼参考重做之后环帘走 `mail_iron`，
+    # 顶档的"整板"形制整个撤掉（改鳞甲）之后板与板缘也没人用了。
+    # 贴图只有 32 格（第 4-7 行 × 8，`TACK_ROW` 之下就没地方了），所以空出来的格**就地
+    # 改用途**，不往后追加——追加的第一格就会画到图外，而 PIL 报的是一句 IndexError，
+    # 看不出是材质表满了（下面那条 assert 就是替它说话的）。就地改不动顺序，UV 不错位。
+    "mail": Mat((66, 80, 90), "mail"),  # 【空格】原锁环色，锁子甲改走 mail_iron 后闲置
+    "mail_dark": Mat((46, 56, 62), "mail"),  # 【空格】
+    # 麻的本色：粗布甲那幅障泥的第二块布。往**冷**里推——暖白 (196,188,166) 离破毡鞍的
+    # 毡 (186,180,168) 只有 12.8，而这两件正是配套穿的（`SUITS` 里粗布甲配破毡鞍），
+    # 同一匹马上两大片同色的布等于障泥白做。推冷之后离得开 56。
+    # 也不能走红：`cloth` 那条注释里写着的"末法唯一还染得起的颜色"是蓝草；何况锈骝的
+    # 身色 (128,72,43) 本来就是一块暖红棕，正红在栗色马身上要么撞色要么消失。
+    "cloth_hemp": Mat((200, 206, 216), "drape"),
+    # 灵铁甲的甲面：**刻纹白钢**。参考图那一路的读法是"极浅的钢面 + 深色的刻线"，
+    # 所以主色往亮里推到头，暗部借原来那块深蓝灵铁（`lingtie`）——反差全在明度上，
+    # 刻线才读得出是刻进去的，不是另刷了一种铁。
+    # 不与 `steel_polish` (178,184,194) 混：那是杂钢，中性灰；这块往蓝里偏，和灵纹
+    # (152,216,240) 同族。两者本来也不会同时出现在一匹马上（分属二 / 五档与四档）。
+    "lingtie_pale": Mat((186, 204, 226), "metal"),
     # 重甲压到近黑（原 56,58,64）：黑得越透，板缘那圈冷亮的棱越抢眼——参考图里
     # 那身甲的读法就是"近黑的面 + 一圈亮边"，面自己亮起来反而把边吃掉了。
     # 淬黑：整板那一档撤掉之后闲下来，现在给铁浮屠的鳞甲用（做工改走鳞纹）
@@ -154,7 +175,9 @@ TACK_MATS: dict[str, Mat] = {
     "iron_black_dark": Mat((30, 31, 37), "scale"),
     # 板缘磨亮的那道棱：现实里是卷边与刃口露出的白铁。它是整板那一档**唯一**的细节，
     # 所以要亮得离淬黑面足够远（黑面 44 / 棱 150，四倍多），远处才连成一条线。
-    "plate_rim": Mat((150, 156, 166), "metal"),
+    # 灵铁甲下摆那圈**鳞**：比甲面深一档的青钢。顶档的鳞是淬黑的（`iron_black`），
+    # 这一档的鳞要留在蓝里——两档都用鳞，靠明度与色相分家，不靠"谁有鳞"。
+    "lingtie_scale": Mat((112, 140, 184), "scale"),
     # --- 重铁甲改按具装参考重做，追加（只准往后加：UV 索引由顺序派生）---
     # 参考图那身甲的配色是三样东西：**暖的深铁札片 + 绛红绗缝衬里 + 骨白的铆钉包边**。
     # 冷蓝那一版之所以读成"石头方块"，是因为整副甲只有一种冷灰——甲本来就不是一种
@@ -187,6 +210,13 @@ TACK_MATS: dict[str, Mat] = {
     "mail_iron": Mat((60, 63, 70), "mail"),
     "mail_iron_dark": Mat((42, 44, 50), "mail"),
 }
+
+# 贴图第 4-7 行 × 每行 8 格 = 32 格，`TACK_ROW` 之下没有别的行了。满了之后 PIL 抛的是
+# 一句 IndexError，看不出是材质表满了——这条替它说话，也提醒下一个人：**表满了要就地
+# 改用途**（上面标了【空格】的几格），不要往后追加。
+assert len(TACK_MATS) <= (8 - TACK_ROW) * 8, (
+    f"马具材质 {len(TACK_MATS)} 种，贴图只放得下 {(8 - TACK_ROW) * 8} 格——"
+    f"改用途标了【空格】的那几格，别往后追加")
 
 
 def _seed(key: str) -> int:
@@ -1968,15 +1998,40 @@ class BardSpec:
     # 逐排换明暗。首版靠它让"横排"读得出来（几何台阶太小，远处看不见）；札片纹理
     # 自己带上暗下亮的叠边之后就不必了，再叠一层反而读成斑马纹。
     banded: bool = True
+    # 每一排的下缘都走一道 `edge` 的细线（默认只有最下面那一排走）。**只给浅色的甲面**：
+    # 一道深线压在白钢上是"刻进去的"，压在深铁上是"另镶了一条"——轻铁甲那圈骨白铆钉
+    # 每排都来一道就读成条纹衫，那是它自己那条注释里写着的教训，与这条不冲突（那是亮线
+    # 压在暗面上，这是暗线压在亮面上）。
+    edge_rows: bool = False
     glow: bool = False
+    # 身甲改走**一整幅垂下来的布**（`_drape_body`），不排札片。只有布档用。
+    drape: bool = False
+    # 垂缘做几层。一层只是一条边，两层才读得出是**裙**：上层在外、短，下层在内、长，
+    # 从外面看得见上层的下缘压在下层上，远处那道锯齿就是"层"。
+    skirt_rows: int = 1
+    # 垂缘下缘吊的杏叶（"" = 不吊）。中原那一路的甲最好认的一件装饰，也是**剪影**上
+    # 的东西——同一档若只换材质与刻纹，远处和邻档还是一个轮廓。
+    pendant: str = ""
+    # 第二块布的颜色（"" = 整幅一色）。纹章障泥是**两块布拼起来**的：肚带之前一色、
+    # 之后一色，接缝正落在肚带那道空档里。它是障泥远处第一眼读到的东西，所以和别的
+    # 露在外面的角色一样要进配色判据（漏一个角色等于那条判据只看了甲的一半）。
+    mat_field: str = ""
 
 
 BARDS: dict[str, BardSpec] = {
-    # 一档：一块粗布障泥，绳子一捆。挡得住枝刺与夜寒，挡不住刃。
+    # 一档：**一整幅纹章障泥**罩下来，麻绳一捆。参考图那一路的读法是三件事：
+    #   · **它是挂着的，不是贴着的**——下摆是一条水平线（重力定的），横向从桶身最宽处
+    #     直垂下去，腹那儿是空的。别的四档全都反过来：逐段收着贴，下摆跟着腹线走。
+    #   · **两块布拼起来**——肚带之前一块本色麻、之后一块褪蓝，接缝正落在肚带那道空档里。
+    #   · **下摆剪成齿边**——隔一格垂一片，这是这类障泥远处唯一认得出的轮廓。
+    # 它盖得比铁甲还长（垂到腹线），却仍旧是最低一档：一幅布挡枝刺挡夜寒，挡不住刃，
+    # 而且具装一件都没有（当胸 / 搭后 / 鸡颈 / 面帘全无）。
     "cloth": BardSpec(
-        key="cloth", label="粗布甲", blurb="蓝草染褪的粗布障泥，麻绳捆在身上。挡枝刺挡夜寒，不挡刃。",
+        key="cloth", label="粗布甲",
+        blurb="一整幅麻布障泥罩下来，肚带前后拼本色与褪蓝两块，下摆剪成齿边。挡枝刺挡夜寒，不挡刃。",
         mat="cloth", mat_dark="cloth_dark", mat_trim="rope",
-        th=0.013, hem=0.74, rows=3, cell=0.085, peytral=False, croup_plate=False,
+        mat_field="cloth_hemp", edge="cloth_dark", drape=True,
+        th=0.011, hem=0.97, rows=6, cell=0.072, peytral=False, croup_plate=False,
         crinet=False, chamfron="", skirt=0.0, spine=False,
     ),
     # 二档：**一整幅锁环帘罩下来，外头扣两块打磨过的亮钢**（面甲 + 当胸，当胸正中一颗
@@ -2008,11 +2063,24 @@ BARDS: dict[str, BardSpec] = {
     ),
     # 四档：灵铁。轻，所以同样的重量能锻**长片**、能一路护到颈和额——具装配到第三件。
     # 半面帘：只压额与鼻梁，眼露在外。灵铁贵，护到眼眶就够，再往下是重甲的事。
+    #
+    # 参考图那一路的读法是三件事，和顶档的"淬黑 + 白面甲"正好相反：
+    #   · **刻纹白钢**——甲面浅到发白，刻线与暗部走深蓝，反差全在明度上，刻纹才读得出
+    #     是刻进去的而不是另刷了一种铁；
+    #   · **鳞裙**——下摆不是一条边，是两层压叠的青鳞（`skirt_rows=2`）；
+    #   · **一排杏叶**——吊在裙的下缘，是它在**剪影**上唯一不同于轻铁甲的东西。
+    # 原来这一档整片是饱和的深蓝，远看是一块塑料；蓝留给暗部与灵纹，面让给白钢。
     "lingtie": BardSpec(
-        key="lingtie", label="灵铁甲", blurb="灵铁长札片连鸡颈半面帘，甲片行间一道细灵纹。轻而不折真元。",
-        mat="lingtie", mat_dark="lingtie_dark", mat_trim="lingtie",
+        key="lingtie", label="灵铁甲",
+        blurb="刻纹白钢长札片连鸡颈半面帘，下摆两层青鳞裙吊一排杏叶，甲片行间一道细灵纹。轻而不折真元。",
+        mat="lingtie_pale", mat_dark="lingtie", mat_trim="lingtie_dark",
+        mat_plate="lingtie_pale", mat_plate_dark="lingtie",
+        pad="lingtie_scale", edge="lingtie_dark", pendant="lingtie_pale", skirt_rows=2,
+        # 不逐排换明暗：白钢与深蓝差着一百五十个明度，一排一换就是**斑马纹**（实测六排
+        # 三白三蓝）。横排交给每排下缘那道刻线（`edge_rows`）——这才是白钢板该有的样子。
+        banded=False, edge_rows=True,
         th=0.024, hem=0.90, rows=6, cell=0.112, peytral=True, croup_plate=True,
-        crinet=True, chamfron="half", skirt=0.060, spine=True, rear=True, glow=True,
+        crinet=True, chamfron="half", skirt=0.070, spine=True, rear=True, glow=True,
     ),
     # 五档：**铁浮屠**。参考图那一路的读法是三件事：
     #   · **鳞**不是札——片更碎更密（十排），远处是一整只发乌的、有颗粒的黑；
@@ -2206,7 +2274,7 @@ def _cells(fit: Fit, segs, lap: float, cell_len: float) -> list[tuple[str, float
 
 def _lame_row(t: Tack, fit: Fit, spec: BardSpec, *, tag: str, row: str, za: float, zb: float,
               y0: float, y1: float, mat: str, glow: bool = False, edge: bool = False,
-              step: float = 0.0, sag: float = 0.0) -> None:
+              step: float = 0.0, sag: float = 0.0, pend: str = "") -> None:
     """一排札片：沿 z 切格，每格的横向按**这一格自己**的桶身量。
 
     每片的内侧面取该格桶身的**最窄**半宽（埋进马体里），外侧面取**最宽**再加一个板厚。
@@ -2281,6 +2349,19 @@ def _lame_row(t: Tack, fit: Fit, spec: BardSpec, *, tag: str, row: str, za: floa
                 t.box(bone, f"{tag}_edge_{row}{i + 1}_{side}",
                       (sgn * (hi - th * 0.30), a0 - th * 0.15, c0 + th * 0.3),
                       (sgn * (hi + th * 0.22), a0 + th * 0.75, c1 - th * 0.3), mat=spec.edge)
+        if pend and i % 2 == 0:
+            # 杏叶：隔一格吊一片。垂多长是**侧躺那一帧**定的，不是好看定的：马倒下去
+            # 时整幅裙横过来朝地，裙外的每一分都直接变成铲地深度（矮马实测吊 2.4 个板厚
+            # 时铲地 0.82，容许 0.77）。1.5 个板厚差不多是一个体素，认得出是一片叶子，
+            # 也还躺得下。
+            # **在这儿做而不是另起一趟**——叶片必须搭上这一排的
+            # 下缘才连得住（连通性判据按"整副甲几片"查，一排吊在半空的叶片会让它当场
+            # 撞红），而这一排的下缘 `a0` 与外侧面 `hi` 只有这里手上有：另起一趟就得把
+            # 同一套让鞍 / 让腿 / 逐格托腹线的算法再算一遍，两份算法迟早对不上。
+            for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                t.box(bone, f"{tag}_pend_{row}{i + 1}_{side}",
+                      (sgn * (hi - th * 1.5), a0 - th * 1.5, _lerpf(c0, c1, 0.34)),
+                      (sgn * (hi + th * 0.3), a0 + th * 0.9, _lerpf(c0, c1, 0.66)), mat=pend)
         if glow:
             # 灵纹：贴着这一排的上棱走一道细条（甲片行间那道缝）。不支鳍，只鼓出一线。
             for sgn, side in ((-1.0, "l"), (1.0, "r")):
@@ -2354,6 +2435,165 @@ def bard_runs(fit: Fit, spec: BardSpec) -> list[tuple[float, float]]:
     return keep
 
 
+# 布甲：下摆之外再垂一截齿边（× 鬐甲高）。隔一格一片。
+DRAPE_DAG = 0.058
+# 齿片在 z 上比一格窄这么多（比例，两侧各让一半）。齿之间要真的看得见缝——让得太少
+# 就不是齿边，只是把下摆放长了一截。
+DRAPE_DAG_INSET = 0.34
+# 下摆那道包边多高（× 鬐甲高）
+DRAPE_BAND = 0.030
+# 上缘的限速：允许它用**几格**爬完整段的落差。鞍件是逐件压下来的，逐格照各自的天花板
+# 取，上缘就是一串台阶——侧视里像被撕过一道口子。限速只往下压、不顶破天花板，所以该让
+# 的位置一格没少，只是让成一道斜坡。
+#
+# 为什么按"几格"而不按一个绝对斜率：**这条限速有个必须够到的地方**。搭后是布档仅有的
+# 横跨中线的件（没有当胸板、没有脊梁、没有鸡颈），布的后半够不着它，左右两幅当场断成
+# 两件——判据报"整副甲应是 2 片，实为 4 片"。而"够不够得着"逐体型不同：矮马的镫按骑手
+# 腿长给绝对落差，压得最深，桶身却最短（后段只有五六格）——绝对斜率 0.030×体长 在常马
+# 上刚好爬得回来（差 0.02 单位），到矮马就差了两个单位。按格数写，三个体型自动同一口径。
+DRAPE_TOP_CELLS = 4.0
+# 布往下每降一个单位，最多收窄这么多。桶身过了最宽的那一圈往下是收的，布收不了那么快
+# ——**这个数就是"挂着"和"贴着"的全部区别**：给 0 是一幅从最宽处直筒垂下去的桶，
+# 给到 1 以上就退回成一层贴着腹的壳。0.42 大约是布离腹一到两个单位。
+DRAPE_LAG = 0.42
+
+
+def _drape_body(t: Tack, fit: Fit, spec: BardSpec, slots, y_lo: float, y_hi: float,
+                h: float) -> list[tuple[float, float, float]]:
+    """身甲走**一整幅垂下来的布**（布档专用）。返回逐格的 (z起, z止, 上缘)。
+
+    上缘要返回给搭后用：布的上缘是限速摊出来的一道斜坡，不是一条固定高度，搭后照名义
+    高度起手就接不上（见 `part_bard_body` 里那一段）。
+
+    和 `_lame_row` 是相反的两件东西，差别不在材质在**受力**：
+
+      · 札片是**贴**上去的——逐格收着量桶身、下摆跟着腹线走（腹线自胸围向后上抬），
+        一排一排横着压叠。
+      · 布是**挂**着的——只在桶身最宽的那一圈搭住，往下一路垂空；下摆是重力定的一条
+        水平线，折是竖的。
+
+    所以这儿不复用 `_lame_row`：它逐排横切、逐排错开、下摆逐格托着腹线走，那三件事
+    正是要去掉的。"挂着"和"贴着"在剪影上是两种东西。
+
+    **竖切归竖切，横切照旧**：一幅布仍旧按高度分几层做（同一色、不错开、不留缝，远处
+    读成一整幅）。首版真做成"一格一个通高的盒"，出来两头都不对：内侧面一路埋到桶身最窄
+    处，一档布的用料 (2812.9) 反而超过整幅锁环帘 (2797.0)；改薄成一层皮之后它只在最宽的
+    那一圈碰得着马，整幅布判成"浮在体外"，覆盖率从 43.4% 掉到 30.7%。分层之后每层各按
+    **自己那一段**的桶身埋一层进去，两头都对。
+    """
+    P, T = fit.P, fit.torso
+    th, gap = P.u(spec.th), P.u(0.006)
+    boxes = over_boxes(fit)
+    dag, band = P.u(DRAPE_DAG), P.u(DRAPE_BAND)
+    n = max(2, spec.rows)
+    out: list[tuple[float, float, float]] = []
+    # 两块布的分界。**不按 `bard_runs` 切出来的那道空档分**：肚带在体长三成的地方，
+    # 照它分出来是"一小块本色 + 一大片褪蓝"，两块布的分量差着三倍。按体长中点分，
+    # 接缝落在后面那一幅里的某道格缝上——布本来就是一幅一幅拼的，格缝正是拼的地方。
+    z_split = (T.z_barrel0 + T.z1) / 2
+
+    def band_of(zc: list[float], ya: float, yb: float) -> tuple[float, float]:
+        b = [T.band(z, ya, yb) for z in zc]
+        return min(v[0] for v in b), max(v[1] for v in b)
+
+    for _u, (za, zb) in enumerate(slots):
+        hw_out = max(T.band(z, y_lo, y_hi)[1] for z in _zs(za, zb))
+        segs = fit.trunk.split(za, zb, y_lo, y_hi, hw_out + gap + th)
+        cells = _cells(fit, segs, th * 2.0, spec.cell)
+        zcs = [_zs(max(c0, T.z0), min(c1, T.z1), 3) for _b, c0, c1 in cells]
+        # 上缘先逐格照各自的天花板取，再限速摊成斜坡（`DRAPE_TOP_SLOPE`）。
+        raw = []
+        for (_b, c0, c1), zc in zip(cells, zcs):
+            inn0, out0 = band_of(zc, y_lo, y_hi)
+            raw.append(over_ceiling(boxes, c0, c1, inn0 - th * BARD_BITE, out0 + gap + th,
+                                    y_hi, gap))
+        slope = (max(raw) - min(raw)) / DRAPE_TOP_CELLS
+        tops = [min(v + slope * abs(i - j) for j, v in enumerate(raw)) for i in range(len(raw))]
+        # 层的上下界是**整段公用的一把梯子**，不逐格照自己的上缘等分。逐格等分那一版，
+        # 上缘一格比一格高（那正是斜坡要的），层界也就跟着一格比一格高——相邻两格的
+        # 同一层落在**互不相交**的两段高度上，判据在倒毙那一帧报"跨骨的带裂开 0.91"。
+        # 公用梯子之后，两格的同一层必然在 y 上重叠；上缘的斜坡改由**顶上那一层被自己
+        # 那一格的上缘削掉一截**来表达。
+        ys = [_lerpf(y_lo, max(tops), k / n) for k in range(n + 1)]
+        segk, idxk = [0] * n, [0] * n
+        for i, (bone, c0, c1) in enumerate(cells):
+            zc = zcs[i]
+            a1 = tops[i]
+            if a1 - y_lo < h * BARD_MIN_ROW:
+                for k in range(n):
+                    if idxk[k]:
+                        segk[k], idxk[k] = segk[k] + 1, 0
+                continue
+            out.append((c0, c1, a1))
+            mat = (spec.mat_field or spec.mat) if (c0 + c1) / 2 < z_split else spec.mat
+
+            def band_at(ya: float, yb: float, _zc: list[float] = zc) -> tuple[float, float]:
+                return band_of(_zc, ya, yb)
+
+            # 这一格的**体下缘最低点**。下摆是一条水平线，而腹线自胸围向后上抬——尻前
+            # 那一段，下摆整段落在马体之下，布在那儿是真的**吊着的**（这正是"挂着"的
+            # 意思）。落在这条线之下的层一块皮都咬不着，得另起个名（见下）。
+            floor = min(T.at(z)[2] for z in zc)
+            # 逐层的外侧面：跟着桶身走，但**往下只许慢慢收**。桶身过了最宽的那一圈往下
+            # 是收的，布收不了那么快——于是腹那儿布离着体垂下去，正是布挂在马身上的样子。
+            # 自上而下递推，所以要倒着算。
+            outs: list[float] = [0.0] * n
+            for k in range(n - 1, -1, -1):
+                w = band_at(ys[k], min(ys[k + 1], a1))[1]
+                outs[k] = w if k == n - 1 else max(w, outs[k + 1] - DRAPE_LAG * (ys[k + 1] - ys[k]))
+            hem_x = 0.0
+            for k in range(n):
+                # 层与层之间往上探一截：同色同宽、不错开，接缝在渲染里看不出来，但连通性
+                # 判据要的是真交叠（贴着面不算）。探多少是**用料**定的：整幅布的高度是
+                # 铁甲的一倍半，探 0.35 那一版六层叠出来的余料让一档布的用料 (6300.4)
+                # 越过了整幅锁环帘 (6282.7)。
+                y0 = ys[k] - (ys[k + 1] - ys[k]) * (0.20 if k else 0.0)
+                y1 = min(ys[k + 1], a1)  # 顶上那一层被这一格自己的上缘削掉一截
+                if y1 - ys[k] < (ys[k + 1] - ys[k]) * 0.15:
+                    if idxk[k]:
+                        segk[k], idxk[k] = segk[k] + 1, 0
+                    continue
+                hi = max(outs[k] + gap + th, limb_outer_x(fit, c0, c1, y0, y1) + gap + th)
+                # 竖折：隔一格往外鼓一线。几何上只有零点几个单位（远处看不见），真正读出
+                # 折的是 `drape` 那份**竖着的**纹理；这一线只负责打破共面，不然相邻两幅
+                # 的外侧面共面会闪。折要**整幅通着**，所以按格错、不按层错。
+                hi += th * (0.55 if i % 2 else 0.0)
+                # 内侧面埋进这一层自己那一段的桶身；肩那一段的马体里还塞着颈根，埋进去
+                # 的那一截会被颈皮推着走（见 `neck_outer_x`），所以还要让到颈之外——但
+                # **至少留一层布的厚**，让过头就是一个退化盒。
+                lo = min(max(band_at(y0, y1)[0] - th * BARD_BITE,
+                             neck_outer_x(fit, c0, c1, y0, y1) + gap), hi - th * 1.2)
+                # 够不着体下缘（或只擦着一线）的那几层叫 `bard_hem`，不叫 `bard_fold`：
+                # **它本来就够不着马**，是吊在上一层下面的一截下摆。"甲片必须与躯干实交"
+                # 那条判据（连同动画期的 `MUST_HUG`）对它是问错了问题——按名字分开，
+                # 别的层照旧受查。只擦一线的也算：那点咬合体积够不上门槛，判据照样报。
+                # 它并非无人管：连通性判据要求它与上一层真交叠（`0.20` 那道搭叠），飞不掉。
+                nm = "bard_hem" if y1 <= floor + (ys[k + 1] - ys[k]) * 0.30 else "bard_fold"
+                for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                    t.box(bone, f"{nm}_{_u + 1}{i + 1}_{k + 1}_{side}",
+                          (sgn * lo, y0, c0), (sgn * hi, y1, c1),
+                          mat=mat, chain=(f"bard_drape{_u}{segk[k]}c{k}_{side}", idxk[k]))
+                idxk[k] += 1
+                hem_x = hi if k == 0 else hem_x
+            for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                # 包边：下摆滚一道深色的边。真物是为了不让毛边散开；在这儿它还担着另一
+                # 件事——两块拼布的下摆由同一道边兜住，整幅才读成一件而不是两块。
+                t.box(bone, f"bard_drape_band_{_u + 1}{i + 1}_{side}",
+                      (sgn * (hem_x - th * 1.6), y_lo, c0),
+                      (sgn * (hem_x + th * 0.2), y_lo + band, c1), mat=spec.edge or spec.mat_dark)
+            if i % 2 == 0:
+                # 齿边：隔一格垂一片。下摆一条平直的横线在剪影上就是"一块板"，剪成齿
+                # 才读得出是布——这也是这一档在**远处**唯一认得出的轮廓（它没有具装，
+                # 剪影上没有别的东西可认）。
+                ins = (c1 - c0) * DRAPE_DAG_INSET * 0.5
+                for sgn, side in ((-1.0, "l"), (1.0, "r")):
+                    t.box(bone, f"bard_dag_{_u + 1}{i + 1}_{side}",
+                          (sgn * (hem_x - th * 1.6), y_lo - dag, c0 + ins),
+                          (sgn * (hem_x + th * 0.2), y_lo + band * 0.6, c1 - ins),
+                          mat=spec.edge or spec.mat_dark)
+    return out
+
+
 def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
     """身甲（逐排绕开鞍）+ 当胸 + 搭后 + 系带。"""
     P, T = fit.P, fit.torso
@@ -2364,7 +2604,7 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
     slots = bard_runs(fit, spec)
 
     def rows(tag: str, r: int, y0: float, y1: float, mat: str,
-             glow: bool = False, edge: bool = False) -> None:
+             glow: bool = False, edge: bool = False, pend: str = "") -> None:
         """一排札片。整条通着走，只在**肚带**那儿断开；上缘随鞍起伏（`_lame_row`）。
 
         两件事让它在远处读得出是"甲"而不是"一块板"：
@@ -2378,22 +2618,32 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
         """
         for u, (a, b) in enumerate(slots):
             _lame_row(t, fit, spec, tag=tag, row=f"{r + 1}{u + 1}", za=a, zb=b, y0=y0, y1=y1,
-                      mat=mat, glow=glow, edge=edge, step=th * 0.18 * r, sag=h * 0.30)
+                      mat=mat, glow=glow, edge=edge, pend=pend, step=th * 0.18 * r, sag=h * 0.30)
 
-    for r in range(spec.rows):
+    drape_tops = _drape_body(t, fit, spec, slots, y_lo, y_hi, h) if spec.drape else []
+    for r in range(spec.rows) if not spec.drape else ():
         yb = y_lo + h * r
         rows("bard", r, yb - (h * BARD_LAP if r else 0.0), yb + h,
              (spec.mat if r % 2 else spec.mat_dark) if spec.banded else spec.mat,
              glow=spec.glow and r == spec.rows - 1,
-             edge=r == 0 and not spec.skirt)
+             edge=spec.edge_rows or (r == 0 and not spec.skirt))
     if spec.skirt:
         # 垂缘：身甲之下再垂一截。单独一个部件名——它是**多出来的一档**，不是把身甲
         # 拉长（分档核验按部件类型看"真的多了东西"，改高度它看不见）。
         # 顶档的垂缘是**布**不是铁（`spec.pad`）：参考图里札片下面吊着的是一圈绛红的
         # 绗缝衬里。整副甲全是铁的时候，剪影上就是一整块黑；下摆换成布，甲的重量感与
         # 布的垂感各归各的，远处也才有一处彩色能认。
-        rows("bard_skirt", 0, y_lo - P.u(spec.skirt), y_lo + h * BARD_LAP,
-             spec.pad or spec.mat_dark, edge=True)
+        #
+        # `skirt_rows > 1` 做**层层压叠**的裙：上层短、在外，下层长、在内，从外面看得见
+        # 上层的下缘压在下层上。一层只是一条边，两层才有"裙"。层号倒着传给 `rows`——
+        # 它按层号往外挪（`step`），上层要在外面，所以上层的号大。
+        nsk = max(1, spec.skirt_rows)
+        drop = P.u(spec.skirt)
+        for k in range(nsk):
+            rows("bard_skirt" if nsk == 1 else f"bard_skirt{k + 1}", nsk - 1 - k,
+                 y_lo - drop * (k + 1) / nsk, y_lo + h * BARD_LAP - drop * (k / nsk) * 0.55,
+                 spec.pad or spec.mat_dark, edge=(k == nsk - 1),
+                 pend=spec.pendant if k == nsk - 1 else "")
 
     # ---------------- 当胸 ----------------
     # 当胸：横过胸前把两侧连起来。纵向压薄——厚了就把整对前肢兜在盒子里。
@@ -2404,8 +2654,10 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
     # 当胸也得让缰：胸前正是笼头那几条带落下来的地方（上缘不再有全局天花板之后，
     # 这一块是唯一还按 `y_hi` 一路顶到顶的件）。
     cy1 = min(cy1, over_ceiling(over_boxes(fit), cz0, cz1, 0.0, hw_c + gap + th * 2.0, cy1, gap))
+    # 当胸的布跟着**前**那一块走（分两色的档才有分别）：它和肚带前那一幅是同一块布
+    # 绕过胸前接上的，两者不同色的话正视图里胸前平白多一道横断。
     t.box("thorax_front", "bard_chest", (-(hw_c + gap + th), cy0, cz0), (hw_c + gap + th, cy1, cz1),
-          mat=spec.mat)
+          mat=spec.mat_field or spec.mat)
     if spec.peytral:
         # 当胸板：胸前再压一块整板，两侧包过肩前缘。二档起才有——布档只有一块布帘。
         # 横向分三阶，越靠外越往后收：胸是圆的，一块通宽的平板正视图里是块门板，
@@ -2448,6 +2700,15 @@ def part_bard_body(t: Tack, fit: Fit, spec: BardSpec) -> None:
     bz0 = saddle_span(fit)[1] + m
     _hwb, ytb, _ybb = T.at((bz0 + T.z1) / 2)
     by0 = max(y_hi - P.u(0.02), y_tail + gap)
+    near = [a for c0, c1, a in drape_tops if c1 > bz0 and c0 < T.z1]
+    if near:
+        # 布档的身甲上缘是限速摊出来的一道斜坡（`DRAPE_TOP_SLOPE`），尻那一段不一定
+        # 爬得回 `y_hi`：矮马的镫垂得最低、桶身又最短，实测只爬到 16.50，而搭后照名义
+        # 高度起手在 18.60——中间空着两个单位，左右两幅身甲就此失去唯一的联络（搭后是
+        # 布档**仅有的**横跨中线的件），判据报"整副甲应是 2 片，实为 4 片"。
+        # 所以布档的搭后**下缘跟着身甲的上缘走**：接到最高的那一格上（`max`，接住一格
+        # 就够；照 `min` 会被鞍后第一格拖到很低，白白多出一大块）。
+        by0 = max(min(by0, max(near) - th * 1.5), y_tail + gap)
     hw_b = max(T.band(z, by0, ytb)[1] for z in _zs(bz0, T.z1, 4))
     segs = fit.trunk.split(bz0, T.z1, by0, ytb, hw_b + gap + th)
     def back_top(z: float, x: float) -> float:
@@ -3142,7 +3403,10 @@ def check_bard(t: Tack, fit: Fit, spec: BardSpec) -> list[str]:
     # 只挑甲片本身。板缘的亮棱（`bard_*_rim_*`）挂在自己那块板上、不挂在马身上——
     # 首版的条件是"名字里有 _lame_ **或**以 bard_skirt 开头"，垂缘的亮棱正好两条都撞上，
     # 于是十六道棱一起报"没贴在马身上"。
-    lames = [e for e in els if "_lame_" in e["name"]]
+    # 布档的身甲叫 `bard_fold_*`（一整幅垂下来的布，不排札片）。**两个词元都要认**：
+    # 只认 `_lame_` 的话，布档整幅身甲一件都不在这条判据的视野里——而"甲飘在体外"
+    # 这种翻车恰恰在布档最容易发生（它是唯一一档故意不贴着腹走的）。
+    lames = [e for e in els if "_lame_" in e["name"] or "_fold_" in e["name"]]
     if not lames:
         bad.append("没有甲片")
     for e in lames:
@@ -3469,7 +3733,10 @@ STRAP_WORDS = ("girth", "billet", "buckle", "rein_line", "rein_cheek",
 # `bard_lame_*`、垂缘是 `bard_skirt_lame_*`），两个键一次都没命中过。**判据挂着死键
 # 比没有判据更坏**：看着在查身甲有没有飘开，其实只查了鸡颈。
 MUST_HUG = {"saddle_pad": 0.0, "rein_line_neck": 0.9,
-            "bard_lame": 0.0, "bard_skirt_lame": 0.0, "bard_crinet_lame": 0.0}
+            "bard_lame": 0.0, "bard_skirt_lame": 0.0, "bard_crinet_lame": 0.0,
+            # 布档的身甲不是札片是一整幅（`bard_fold_*`，见 `_drape_body`）。它同样把
+            # 内侧面埋进马体，所以同样卡到实交——布飘起来离开马身和铁一样难看。
+            "bard_fold": 0.0}
 
 
 def check_anim_fit(t: Tack, pkey: str) -> dict[str, tuple[float, str]]:
@@ -3668,6 +3935,7 @@ FINISH_SPAN: dict[str, tuple[float, float]] = {
     "scale": (2.0, 5.0),  # 鱼鳞：行更密、每行更平，跨度比札片略小
     "ring": (1.7, 3.4),  # 锁环
     "weave": (1.15, 1.55),  # 布
+    "drape": (1.15, 1.60),  # 挂着的布：竖折。跨度仍是布的量级，只是结构线转了九十度
     "quilt": (1.15, 1.60),  # 绗缝的衬里
     "twist": (1.25, 1.90),  # 麻绳
     "mottle": (1.20, 2.10),  # 革
@@ -3713,7 +3981,7 @@ def check_contrast() -> list[str]:
             # 绛红衬里（`pad`）与骨白包边（`edge`）都是远处第一眼读到的颜色，漏了它们
             # 等于这条判据只看了甲的一半。
             for role in ("mat", "mat_dark", "mat_trim", "mat_nail", "edge", "pad",
-                         "mat_plate", "mat_plate_dark", "boss"):
+                         "mat_plate", "mat_plate_dark", "boss", "mat_field", "pendant"):
                 m = getattr(spec, role, None)
                 if not m:
                     continue
@@ -3733,7 +4001,7 @@ def check_contrast() -> list[str]:
         for a, b in zip(tiers, tiers[1:]):
             best = max((_rgbd(mat_rgb(getattr(a, r)), mat_rgb(getattr(b, r)))
                         for r in ("mat", "mat_dark", "mat_trim", "mat_nail", "edge", "pad",
-                                  "mat_plate", "mat_plate_dark", "boss")
+                                  "mat_plate", "mat_plate_dark", "boss", "mat_field", "pendant")
                         if getattr(a, r, None) and getattr(b, r, None)), default=0.0)
             if best < MIN_TIER:
                 bad.append(f"{kind} 的「{a.label}」与「{b.label}」哪个角色都只差 {best:.1f}"
