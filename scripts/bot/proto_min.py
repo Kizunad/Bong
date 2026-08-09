@@ -74,6 +74,7 @@ SERVER_DATA_PAYLOAD_NAMES = {
     36: "skillbar_config",
     51: "combat_event",
     66: "tribulation_state",
+    69: "heart_demon_offer",
     71: "breakthrough_cinematic",
     72: "death_screen",
     73: "terminate_screen",
@@ -1130,15 +1131,13 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
 
 
 def _tribulation_state(data: bytes) -> dict[str, Any]:
-    """DONE-W6-HEADLESSAUDIT §5 P0-4：渡虚劫状态（envelope.proto:66）。
+    """渡虚劫/绝壁劫状态（server_data oneof field 66）。
 
     kind/phase 在 wire 上是 **string** 字段，不是 varint enum（envelope.proto:2374-2375：
     `string kind = 4; // du_xu / zone_collapse / targeted / jue_bi / ascension_quota_open`、
     `string phase = 5; // omen / lock / wave / heart_demon / settle`），用 `_string` 解。
-    场景断言字面值（cultivation_start_du_xu.py 校验 kind=du_xu phase=omen）。
-
-    只解场景要断言的字段（active/char/kind/phase/waves）；started_tick 等遥测字段
-    留待需要时再扩。
+    heart_demon_decision e2e 必须解出 phase/wave_current/wave_total/result，才能黑盒
+    断言「waves_total=5（30 分钟满进度门槛生效）→ 心魔相 → 结算」全链路。
     """
     fields = _fields(data)
     return {
@@ -1151,6 +1150,18 @@ def _tribulation_state(data: bytes) -> dict[str, Any]:
         "phase": _string(fields, 5),
         "wave_current": _varint(fields, 8),
         "wave_total": _varint(fields, 9),
+        "world_x": _double(fields, 6),
+        "world_z": _double(fields, 7),
+        "started_tick": _varint(fields, 10),
+        "phase_started_tick": _varint(fields, 11),
+        "next_wave_tick": _varint(fields, 12),
+        "failed": bool(_varint(fields, 13)),
+        "half_step_on_success": bool(_varint(fields, 14)),
+        "participants": [
+            value.decode("utf-8", errors="replace")
+            for value in _messages(fields, 15)
+        ],
+        "result": _optional_string(fields, 16),
     }
 
 
@@ -1192,6 +1203,7 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     36: _skill_bar_config,
     51: _combat_event_floater,
     66: _tribulation_state,
+    69: _heart_demon_offer,
     SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
     72: _death_screen,
     73: _terminate_screen,
@@ -1219,6 +1231,41 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
         if decoder is not None:
             return decoder(value)
     return None
+
+
+def _heart_demon_offer(data: bytes) -> dict[str, Any]:
+    """生产 ``HeartDemonOffer``（server_data oneof field 69，心魔劫抉择面板）。
+
+    heart_demon_decision e2e 断言 offer 形状（choice_id/category/title 三元组），
+    并据 choice 面板给出对应的 decision 输入。
+    """
+    fields = _fields(data)
+    choices = []
+    for raw in _messages(fields, 9):
+        entry = _fields(raw)
+        choices.append(
+            {
+                "choice_id": _string(entry, 1),
+                "category": _string(entry, 2),
+                "title": _string(entry, 3),
+                "effect_summary": _string(entry, 4),
+                "flavor": _string(entry, 5),
+                "style_hint": _string(entry, 6),
+            }
+        )
+    return {
+        "v": 1,
+        "type": "heart_demon_offer",
+        "offer_id": _string(fields, 1),
+        "trigger_id": _string(fields, 2),
+        "trigger_label": _string(fields, 3),
+        "realm_label": _string(fields, 4),
+        "composure": _double(fields, 5),
+        "quota_remaining": _varint(fields, 6),
+        "quota_total": _varint(fields, 7),
+        "expires_at_ms": _varint(fields, 8),
+        "choices": choices,
+    }
 
 
 def _equip_slot(value: int) -> str:

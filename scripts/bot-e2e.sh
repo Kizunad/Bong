@@ -26,7 +26,7 @@ export BOT_E2E_RUN_TAG
 BOT_E2E_OPERATOR_TAGS=(
   RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
-  Zlb Zre Alc Bob
+  Zlb Zre Alc Bob Ascend HdJue
   Rein Term NewCh
 )
 BOT_E2E_OPERATORS=""

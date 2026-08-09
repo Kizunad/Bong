@@ -635,6 +635,83 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
+    def test_proto_tribulation_state_payload_decodes(self):
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="wave",
+                wave_current=3,
+                wave_total=5,
+                result=None,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertEqual(decoded["phase"], "wave")
+        self.assertEqual(decoded["wave_current"], 3)
+        self.assertEqual(decoded["wave_total"], 5)
+        self.assertEqual(decoded["kind"], "du_xu")
+        self.assertEqual(decoded["actor_name"], "BHDE6Cult")
+        self.assertIn("du_xu:char-1", decoded["participants"])
+        self.assertFalse(decoded["failed"])
+        self.assertIsNone(decoded["result"])
+
+    def test_proto_tribulation_state_settle_payload_decodes(self):
+        # 结算 payload：active=false + result=outcome label（ascended/failed/killed）
+        decoded = decode_server_data_payload(
+            _server_data_tribulation_state_bytes(
+                phase="settle",
+                wave_current=5,
+                wave_total=5,
+                result="ascended",
+                active=False,
+            )
+        )
+
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertFalse(decoded["active"])
+        self.assertEqual(decoded["result"], "ascended")
+        self.assertEqual(decoded["wave_current"], 5)
+
+    def test_proto_heart_demon_offer_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_heart_demon_offer_bytes())
+
+        self.assertEqual(decoded["type"], "heart_demon_offer")
+        self.assertEqual(decoded["trigger_label"], "心魔劫临身")
+        self.assertEqual(decoded["realm_label"], "渡虚劫 · 心魔")
+        self.assertTrue(decoded["offer_id"].startswith("heart_demon:"))
+        self.assertEqual(decoded["expires_at_ms"] > 0, True)
+        self.assertEqual(
+            [(c["choice_id"], c["category"]) for c in decoded["choices"]],
+            [
+                ("heart_demon_choice_0", "Composure"),
+                ("heart_demon_choice_1", "Breakthrough"),
+                ("heart_demon_choice_2", "Perception"),
+            ],
+        )
+        self.assertEqual(
+            [c["title"] for c in decoded["choices"]],
+            ["守本心", "斩执念", "无解"],
+        )
+
+    def test_bot_dispatch_emits_decoded_tribulation_state_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_tribulation_state_bytes(
+                phase="heart_demon",
+                wave_current=4,
+                wave_total=5,
+                result=None,
+            )
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "tribulation_state")
+        self.assertEqual(decoded_events[0].data["payload"]["phase"], "heart_demon")
 
 
 class InventoryHelperTest(unittest.TestCase):
@@ -2517,6 +2594,62 @@ def _server_data_loot_container_update_bytes() -> bytes:
 
 def _server_data_loot_container_close_bytes() -> bytes:
     return _pb_message(121, _pb_varint(1, 7) + _pb_string(2, "distance"))
+
+
+def _server_data_tribulation_state_bytes(
+    *,
+    phase: str,
+    wave_current: int,
+    wave_total: int,
+    result: str | None,
+    active: bool = True,
+) -> bytes:
+    """field 66 `tribulation_state`（见 proto/bong/envelope.proto `TribulationState`）。"""
+    body = (
+        _pb_varint(1, 1 if active else 0)
+        + _pb_string(2, "du_xu:char-1")
+        + _pb_string(3, "BHDE6Cult")
+        + _pb_string(4, "du_xu")
+        + _pb_string(5, phase)
+        + _pb_fixed64(6, 12.5)
+        + _pb_fixed64(7, -34.25)
+        + _pb_varint(8, wave_current)
+        + _pb_varint(9, wave_total)
+        + _pb_varint(10, 1000)
+        + _pb_varint(11, 5000)
+        + _pb_varint(12, 5300)
+        + _pb_varint(13, 0)
+        + _pb_string(15, "du_xu:char-1")
+    )
+    if result is not None:
+        body += _pb_string(16, result)
+    return _pb_message(66, body)
+
+
+def _server_data_heart_demon_offer_bytes() -> bytes:
+    """field 69 `heart_demon_offer`（见 proto/bong/envelope.proto `HeartDemonOffer`）。"""
+    choice = lambda choice_id, category, title: (  # noqa: E731
+        _pb_string(1, choice_id)
+        + _pb_string(2, category)
+        + _pb_string(3, title)
+        + _pb_string(4, "effect")
+        + _pb_string(5, "flavor")
+        + _pb_string(6, "style")
+    )
+    body = (
+        _pb_string(1, "heart_demon:7:1000")
+        + _pb_string(2, "heart_demon:7:1000")
+        + _pb_string(3, "心魔劫临身")
+        + _pb_string(4, "渡虚劫 · 心魔")
+        + _pb_fixed64(5, 0.5)
+        + _pb_varint(6, 1)
+        + _pb_varint(7, 1)
+        + _pb_varint(8, 1234567890123)
+        + _pb_message(9, choice("heart_demon_choice_0", "Composure", "守本心"))
+        + _pb_message(9, choice("heart_demon_choice_1", "Breakthrough", "斩执念"))
+        + _pb_message(9, choice("heart_demon_choice_2", "Perception", "无解"))
+    )
+    return _pb_message(69, body)
 
 
 def _server_data_morph_state_bytes(
