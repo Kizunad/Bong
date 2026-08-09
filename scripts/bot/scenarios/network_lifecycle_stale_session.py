@@ -120,13 +120,16 @@ def _start_craft(bot) -> tuple[int, int]:
             "quantity": 2,
         }
     )
+    # 进度推送按 20 tick 一拍（craft_emit::SESSION_STATE_PUSH_INTERVAL_TICKS），
+    # 首个 elapsed>=20 的 push 最坏要等 39 tick；宿主负载高 TPS 掉到 ~3 时
+    # 这是 ~13s 的墙钟时间，10s 超时不够。20s 只放宽环境容忍度，断言不变。
     session = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "craft_session_state"
         and e.t > anchor
         and e.data["payload"].get("active") is True
         and e.data["payload"].get("elapsed_ticks", 0) >= 20,
-        timeout=10.0,
+        timeout=20.0,
         description="断线前已推进至少 20 tick 的 craft session",
     ).data["payload"]
     return session["elapsed_ticks"], session["completed_count"]
