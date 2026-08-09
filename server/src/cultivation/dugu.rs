@@ -818,6 +818,8 @@ mod tests {
         app
     }
 
+    use crate::player::state::canonical_player_id;
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -1091,6 +1093,9 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，infusion 在扣除 qi 前被中止。
+                LifeRecord::new(canonical_player_id("dugu-infuse-exact")),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
