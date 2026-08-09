@@ -500,6 +500,39 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "morph_state")
         self.assertEqual(decoded["entries"], [])
 
+    def test_proto_tribulation_state_payload_name_decodes(self):
+        # DONE-W6-HEADLESSAUDIT §5 P0-4 gap：渡虚劫状态 payload（envelope.proto:66）。
+        # bot 场景只浅扫描 kind/phase 字段，无需完整解码。
+        payload = _pb_message(
+            66,
+            _pb_varint(1, 1)
+            + _pb_string(2, "offline:Alice")
+            + _pb_string(4, "du_xu")
+            + _pb_string(5, "omen")
+            + _pb_varint(9, 3),
+        )
+        self.assertEqual(proto_min.server_data_payload_name(payload), "tribulation_state")
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "tribulation_state")
+
+    def test_proto_insight_offer_payload_name_decodes(self):
+        # DONE-W6-HEADLESSAUDIT §5 P0-4 gap：顿悟邀约 payload（envelope.proto:131）。
+        # bot 场景浅扫描 trigger_id 字节即可断言邀约真实下发。
+        choice = _pb_string(2, "qi_regen_factor") + _pb_string(6, "converge")
+        payload = _pb_message(
+            131,
+            _pb_string(1, "insight:5:first_breakthrough_to_Induce")
+            + _pb_string(2, "first_breakthrough_to_Induce")
+            + _pb_string(3, "offline:Alice")
+            + _pb_message(4, choice)
+            + _pb_message(4, choice)
+            + _pb_message(4, choice),
+        )
+        self.assertEqual(proto_min.server_data_payload_name(payload), "insight_offer")
+        self.assertIn(b"first_breakthrough_to_Induce", payload)
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "insight_offer")
+
 
 class InventoryHelperTest(unittest.TestCase):
     def test_latest_inventory_snapshot_uses_newest_history(self):
