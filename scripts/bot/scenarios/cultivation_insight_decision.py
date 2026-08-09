@@ -50,7 +50,12 @@ def _vfx_pose(bot, after: float, description: str):
 def _no_vfx_pose(bot, after: float, description: str) -> None:
     """断言 after 之后无顿悟姿态 VFX（offer 未应用）：负路径不得发权威信号。"""
     assert_no_payload_after(
-        bot, VFX_CHANNEL, after=after, window=3.0, description=description
+        bot,
+        VFX_CHANNEL,
+        needle=ENLIGHTENMENT_POSE,
+        after=after,
+        window=3.0,
+        description=description,
     )
 
 

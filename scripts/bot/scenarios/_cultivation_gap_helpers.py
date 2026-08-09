@@ -16,24 +16,30 @@ from bot.bot import BotAssertionError
 
 
 def assert_no_payload_after(
-    bot, channel: str, window: float, after: float, description: str
+    bot,
+    channel: str,
+    needle: bytes | None,
+    window: float,
+    after: float,
+    description: str,
 ) -> None:
-    """断言 after 之后 window 秒内，该 channel 的原始 payload 不再出现（absence 契约）。
+    """断言 after 之后 window 秒内，该 channel 不再出现含 needle 的 payload（absence 契约）。
 
-    用于「负路径不得再制造权威信号」：如劫中重复请求不重发、无效抉择不发顿悟姿态。
+    与 wait_payload_containing 正反对偶：positive 等「t>after 且原始字节含 needle」，
+    本负断言拒绝同构情形。needle=None 时退化为「该 channel 不出现任何 payload」。
+    用于「负路径不得再制造权威信号」：如无效抉择不发顿悟姿态 VFX。
     负断言靠时间窗——window 内出现的匹配 payload 一律判失败。
     """
     import time
 
     time.sleep(window)
     for e in bot.events:
-        if (
-            e.kind == "payload"
-            and e.data.get("channel") == channel
-            and e.t > after
-            and channel in ("bong:vfx_event",)
-        ):
-            raise BotAssertionError(f"{description}：with {after} 之后出现 {channel} payload {e!r}")
+        if e.kind == "payload" and e.data.get("channel") == channel and e.t > after:
+            data = e.data.get("data", b"")
+            if needle is None or needle in data:
+                raise BotAssertionError(
+                    f"{description}：{after:.2f} 之后出现含目标 identity 的 {channel} payload {e!r}"
+                )
 
 
 def assert_no_server_data_after(

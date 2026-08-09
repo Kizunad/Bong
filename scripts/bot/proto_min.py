@@ -855,7 +855,12 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
 def _tribulation_state(data: bytes) -> dict[str, Any]:
     """DONE-W6-HEADLESSAUDIT §5 P0-4：渡虚劫状态（envelope.proto:66）。
 
-    只解场景要断言的字段（active/kind/phase/waves）；started_tick 等遥测字段
+    kind/phase 在 wire 上是 **string** 字段，不是 varint enum（envelope.proto:2374-2375：
+    `string kind = 4; // du_xu / zone_collapse / targeted / jue_bi / ascension_quota_open`、
+    `string phase = 5; // omen / lock / wave / heart_demon / settle`），用 `_string` 解。
+    场景断言字面值（cultivation_start_du_xu.py 校验 kind=du_xu phase=omen）。
+
+    只解场景要断言的字段（active/char/kind/phase/waves）；started_tick 等遥测字段
     留待需要时再扩。
     """
     fields = _fields(data)
