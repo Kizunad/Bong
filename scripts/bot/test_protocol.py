@@ -2022,6 +2022,23 @@ class RejectionHelperTest(unittest.TestCase):
         )
         self.assertEqual(fired, ["p1"])
 
+    def test_payload_type_seen_before_window_is_ambient(self):
+        # 自校准基线：探针窗口起点前已出现过某 payload type → 它是连接同步（探针还没
+        # 发出，不可能是探针导致的），窗口内再次出现不算副作用；从未出现过的类型
+        # 才算响应式反馈，必须被标记。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(0.5, "server_data", {"payload_type": "derived_attrs_sync"}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "derived_attrs_sync"}),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+        fresh = _RejectionFakeBot(
+            [_FakeEvent(3.0, "server_data", {"payload_type": "derived_attrs_sync"})]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(fresh, since_t=1.0, label="测试")
+
     def test_valid_request_ignores_earlier_chat_and_accepts_response_after_send(self):
         # 更早的同文广播（坏请求探针被错误接受时留下的副作用）已在 events 里，
         # 真实响应在 pending：时序锚定必须跳过诱饵，只接受发送时刻之后的响应。

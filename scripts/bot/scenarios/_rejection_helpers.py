@@ -24,26 +24,50 @@ import time
 
 from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场景抛出
 
-# 连接同步类 server_data payload type：server 无论 client 发什么都会推送（join 突发 /
-# Changed 驱动的 HUD 同步），不是「处理了一个请求」的证据，探针窗口内出现不算副作用。
-# 其余 server_data / chat / vfx_event 均为响应式反馈。
-_AMBIENT_SERVER_DATA_TYPES = frozenset({"status_snapshot"})
+# 连接同步类 server_data payload type 的显式兜底集合：这些类型由 Changed/周期驱动
+# 的同步系统推送（无论 client 发什么都会出现），且首次出现可能晚于窗口起点之前、
+# 落在探针窗口内（实跑观察到 zone_info 在 join 后 6-10s 才因 spirit_qi 波动触发）。
+# 其余 server_data / chat / vfx_event 均视为响应式反馈。完整的连接同步集合由
+# ``_ambient_types_in_window`` 从窗口起点前的已有事件里自校准得出。
+_AMBIENT_SERVER_DATA_TYPES = frozenset(
+    {
+        "status_snapshot",  # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
+        "zone_info",        # 区域内 spirit_qi 等状态波动时重发（连接同步，非请求响应）
+        "player_state",     # 玩家灵气等状态变化时重发（连接同步，非请求响应）
+    }
+)
 
 
-def is_gameplay_side_effect(event) -> bool:
+def is_gameplay_side_effect(event, ambient_types: frozenset = frozenset()) -> bool:
     """判断事件是否属于玩法副作用（拒绝路径必须保证探针窗口内不出现）。
 
     只把「响应式反馈」算副作用：chat / vfx_event 恒算；server_data 按 payload_type
-    判定（排除连接同步类型）。裸 ``payload`` 事件不算副作用：它要么是已解码
-    server_data 事件的字节重复（同一次推送同时发 raw payload + 解码后 server_data
-    两个事件），要么是 join 突发里解码器读不动的字节（如玩家 spawn），都不独立构成
-    玩法反馈。join 突发本身再由 ``drain_event_stream`` 在窗口取锚前排干。
+    判定 —— 不在 ``ambient_types``（连接同步类型集合）里的才算。裸 ``payload`` 事件
+    不算副作用：它要么是已解码 server_data 事件的字节重复（同一次推送同时发 raw
+    payload + 解码后 server_data 两个事件），要么是 join 突发里解码器读不动的字节
+    （如玩家 spawn），都不独立构成玩法反馈。
     """
     if event.kind in ("chat", "vfx_event"):
         return True
     if event.kind == "server_data":
-        return event.data.get("payload_type") not in _AMBIENT_SERVER_DATA_TYPES
+        return event.data.get("payload_type") not in ambient_types
     return False
+
+
+def _ambient_types_in_window(bot, since_t: float) -> frozenset:
+    """探针窗口的连接同步类型集合：``t <= since_t`` 已出现过的 payload type，并上
+    显式兜底集合。
+
+    窗口起点之前的事件与探针无关（探针还没发出），其 payload type 属于连接同步 ——
+    这是自校准基线：任何在探针发出前就出现过的类型，之后再次出现都不算探针副作用。
+    显式兜底覆盖 Changed/周期驱动、可能首次出现晚于窗口起点、落在窗口内的类型。
+    """
+    observed = {
+        event.data.get("payload_type")
+        for event in bot.events
+        if event.kind == "server_data" and event.t <= since_t
+    }
+    return frozenset(observed | _AMBIENT_SERVER_DATA_TYPES)
 
 
 def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> None:
@@ -52,10 +76,14 @@ def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> Non
     干净拒绝契约第 3 条：坏请求在产生任何玩法副作用**之前**被拦截。若探针窗口内
     出现了任意副作用事件，说明某个坏请求被成功/部分处理了，直接抛带修复线索的
     BotAssertionError。调用时机是探针全部发出并 settle 之后 —— 该窗口内的副作用
-    此时必然已在 events 里，扫存量即可，不需要再等。
+    此时必然已在 events 里，扫存量即可，不需要再等。连接同步流量由
+    ``_ambient_types_in_window`` 排除（窗口起点前已出现的类型 + 显式兜底集合）。
     """
+    ambient_types = _ambient_types_in_window(bot, since_t)
     offenders = [
-        event for event in bot.events if event.t > since_t and is_gameplay_side_effect(event)
+        event
+        for event in bot.events
+        if event.t > since_t and is_gameplay_side_effect(event, ambient_types)
     ]
     if offenders:
         raise BotAssertionError(
