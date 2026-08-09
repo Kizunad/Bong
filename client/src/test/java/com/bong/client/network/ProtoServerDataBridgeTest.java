@@ -2824,6 +2824,35 @@ class ProtoServerDataBridgeTest {
     }
 
     @Test
+    void bridgeAlchemyOutcomeResolvedPinsEveryValidColorKindVariantToPascalCase() {
+        record ColorKindWire(Common.ColorKind wire, String pascalCase) {}
+        List<ColorKindWire> variants = List.of(
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_SHARP, "Sharp"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_HEAVY, "Heavy"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_MELLOW, "Mellow"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_SOLID, "Solid"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_LIGHT, "Light"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_INTRICATE, "Intricate"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_GENTLE, "Gentle"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_INSIDIOUS, "Insidious"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_VIOLENT, "Violent"),
+                new ColorKindWire(Common.ColorKind.COLOR_KIND_TURBID, "Turbid"));
+
+        for (ColorKindWire variant : variants) {
+            Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
+                    .setAlchemyOutcomeResolved(Envelope.AlchemyOutcomeResolved.newBuilder()
+                            .setBucket(Envelope.AlchemyOutcomeBucket.ALCHEMY_OUTCOME_BUCKET_PERFECT)
+                            .setToxinColor(variant.wire))
+                    .build();
+            JsonObject json = bridgeAndParse(envelope);
+            assertEquals(variant.pascalCase, json.get("toxin_color").getAsString(),
+                    () -> variant.wire + " 必须剥成 TypeBox ColorKind PascalCase '" + variant.pascalCase
+                            + "'；每个有效变体都要命中规范化，不能只有 TURBID 单变体特判而其余返回 "
+                            + "原始 proto 字面量/错误拼写");
+        }
+    }
+
+    @Test
     void bridgeForgeSessionStripsTopLevelCurrentStepEnumPrefix() {
         Envelope.ServerDataEnvelope envelope = Envelope.ServerDataEnvelope.newBuilder()
                 .setForgeSession(Envelope.ForgeSessionData.newBuilder()
