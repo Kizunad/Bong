@@ -17,6 +17,19 @@ MODULES = ["network", "social"]
 ECHO_TIMEOUT = 10.0
 # 断线与重连之间的间隔：给 server 完成旧连接清理，避免与残留会话竞态。
 REJOIN_GRACE_SECONDS = 2.0
+# 「无重复」的观测窗长度：断线重连/二次广播后的异步重放可能迟到于瞬时观测点，
+# 单一快照无法证伪「之后不再来」——需在基线计数后再等一段有界静默窗，窗内
+# 再出现同一条匹配广播即失败（乐观服务端若在某一刻重放旧消息仍会被抓）。
+QUIET_SECONDS = 4.0
+
+
+def _matching(listener, raw: str, t0: float) -> list:
+    """listener 在事件时标 >= t0 且文本含 raw 的聊天广播，按到达序。"""
+    return [
+        e
+        for e in listener.events_of("chat")
+        if raw in e.data["text"] and e.t >= t0
+    ]
 
 
 def run(env) -> None:
@@ -54,16 +67,8 @@ def run(env) -> None:
             speaker.assert_alive("第二段聊天广播后")
 
         # ── 无重复 + 顺序断言：listener 恰各见一次，且第二条晚于第一条 ──
-        first_events = [
-            e
-            for e in listener.events_of("chat")
-            if first_raw in e.data["text"] and e.t >= listener_t0_first
-        ]
-        second_events = [
-            e
-            for e in listener.events_of("chat")
-            if second_raw in e.data["text"] and e.t >= listener_t0_second
-        ]
+        first_events = _matching(listener, first_raw, listener_t0_first)
+        second_events = _matching(listener, second_raw, listener_t0_second)
         if len(first_events) != 1:
             raise BotAssertionError(
                 f"期望 listener 恰好收到第一条一次（断线重连不得重放旧广播），"
@@ -77,5 +82,21 @@ def run(env) -> None:
             raise BotAssertionError(
                 "期望第二条广播晚于第一条（两段同窗、先一后二），"
                 f"实际 first_t={first_events[0].t:.3f} second_t={second_events[0].t:.3f}"
+            )
+
+        # 有界静默窗勘察「无重复」：上面只是基线立刻快照，改在基线后继续等
+        # QUIET_SECONDS——窗内再出现同一条匹配广播即为异步重放/重复投递，失败。
+        time.sleep(QUIET_SECONDS)
+        first_replay = _matching(listener, first_raw, listener_t0_first)
+        second_replay = _matching(listener, second_raw, listener_t0_second)
+        if len(first_replay) != 1:
+            raise BotAssertionError(
+                f"重连/广播后 {QUIET_SECONDS:.0f}s 静默窗内第一条重复出现（断线重连"
+                f"不得重放旧消息），期望 1 次实际 {len(first_replay)} 次"
+            )
+        if len(second_replay) != 1:
+            raise BotAssertionError(
+                f"重连/广播后 {QUIET_SECONDS:.0f}s 静默窗内第二条重复出现（不得重复投递），"
+                f"期望 1 次实际 {len(second_replay)} 次"
             )
         listener.assert_alive("重连见证全程")
