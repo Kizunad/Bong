@@ -501,6 +501,185 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["entries"], [])
 
 
+def _server_data_skill_xp_gain_bytes() -> bytes:
+    scroll = _pb_string(1, "skill_scroll_herbalism_baicao_can") + _pb_varint(2, 500)
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_varint(2, 1)  # SkillId HERBALISM
+        + _pb_varint(3, 500)
+        + _pb_message(5, scroll)  # XpGainSourceScroll
+    )
+    return _pb_message(7, payload)
+
+
+def _server_data_quickslot_config_bytes() -> bytes:
+    entry = (
+        _pb_string(1, "guyuan_pill")
+        + _pb_string(2, "固元丹")
+        + _pb_varint(3, 1500)
+        + _pb_varint(4, 3000)
+        + _pb_string(5, "bong-client:textures/gui/items/pill.png")
+    )
+    bound_slot = _pb_message(1, entry)
+    empty_slot = b""
+    payload = (
+        _pb_message(1, bound_slot)
+        + _pb_message(1, empty_slot) * 8
+        + _pb_varint(2, 0) * 9
+        + _pb_string(3, "gap10-bind-1")
+        + _pb_varint(4, 1)
+    )
+    return _pb_message(35, payload)
+
+
+def _server_data_techniques_snapshot_bytes() -> bytes:
+    meridian = _pb_string(1, "Lung") + _pb_fixed32(2, 0.5)
+    entry = (
+        _pb_string(1, "sword.cleave")
+        + _pb_string(2, "劈")
+        + _pb_string(3, "common")
+        + _pb_fixed32(4, 0.0)
+        + _pb_string(5, "生疏")
+        + _pb_varint(6, 1)
+        + _pb_string(7, "基础劈砍。举剑过顶，顺势劈下。")
+        + _pb_string(8, "Awaken")
+        + _pb_message(9, meridian)
+        + _pb_fixed32(10, 0.0)
+        + _pb_fixed32(11, 8.0)
+        + _pb_varint(12, 16)
+        + _pb_varint(13, 30)
+        + _pb_fixed32(14, 3.0)
+    )
+    return _pb_message(37, _pb_message(1, entry))
+
+
+def _server_data_skill_config_snapshot_bytes() -> bytes:
+    entry = _pb_string(1, "zhenmai.sever_chain") + _pb_string(
+        2, '{"backfire_kind":"tainted_yuan","meridian_id":"Pericardium"}'
+    )
+    return _pb_message(54, _pb_message(1, entry))
+
+
+def _server_data_skill_scroll_used_bytes() -> bytes:
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_string(2, "skill_scroll_herbalism_baicao_can")
+        + _pb_varint(3, 1)  # SkillId HERBALISM
+        + _pb_varint(4, 500)
+        + _pb_varint(5, 0)
+    )
+    return _pb_message(97, payload)
+
+
+def _server_data_skill_snapshot_bytes() -> bytes:
+    entry_snap = (
+        _pb_varint(1, 1)
+        + _pb_varint(2, 500)
+        + _pb_varint(3, 1500)
+        + _pb_varint(4, 500)
+        + _pb_varint(5, 30)
+        + _pb_varint(6, 500)
+    )
+    snap_entry = _pb_string(1, "herbalism") + _pb_message(2, entry_snap)
+    payload = (
+        _pb_varint(1, 42)
+        + _pb_message(2, snap_entry)
+        + _pb_string(3, "skill_scroll_herbalism_baicao_can")
+    )
+    return _pb_message(98, payload)
+
+
+class ServerDataSkillScrollDecodeTest(unittest.TestCase):
+    def test_proto_skill_xp_gain_scroll_source_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_xp_gain_bytes())
+
+        self.assertEqual(decoded["type"], "skill_xp_gain")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(decoded["skill"], "herbalism")
+        self.assertEqual(decoded["amount"], 500)
+        self.assertEqual(
+            decoded["source"],
+            {"kind": "scroll", "scroll_id": "skill_scroll_herbalism_baicao_can", "xp_grant": 500},
+            "learn_skill_scroll 的 XP 来源必须是 scroll 且带 scroll_id，场景才可断言来源",
+        )
+
+    def test_proto_quick_slot_config_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_quickslot_config_bytes())
+
+        self.assertEqual(decoded["type"], "quickslot_config")
+        self.assertEqual(len(decoded["slots"]), 9, "固定 9 槽")
+        bound = decoded["slots"][0]
+        self.assertEqual(bound["item_id"], "guyuan_pill")
+        self.assertEqual(bound["cast_duration_ms"], 1500)
+        self.assertIsNone(decoded["slots"][1], "未绑定槽应为 None")
+        self.assertEqual(decoded["cooldown_until_ms"], [0] * 9)
+        self.assertEqual(decoded["ack_request_id"], "gap10-bind-1")
+        self.assertIs(decoded["bind_accepted"], True)
+
+    def test_proto_techniques_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_techniques_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "techniques_snapshot")
+        self.assertEqual(len(decoded["entries"]), 1)
+        entry = decoded["entries"][0]
+        self.assertEqual(entry["id"], "sword.cleave")
+        self.assertEqual(entry["display_name"], "劈")
+        self.assertEqual(entry["required_realm"], "Awaken")
+        self.assertEqual(entry["required_meridians"], [{"channel": "Lung", "min_health": 0.5}])
+        self.assertEqual(entry["cast_ticks"], 16)
+        self.assertEqual(entry["cooldown_ticks"], 30)
+
+    def test_proto_skill_config_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_config_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "skill_config_snapshot")
+        self.assertEqual(len(decoded["configs"]), 1)
+        entry = decoded["configs"][0]
+        self.assertEqual(entry["skill_id"], "zhenmai.sever_chain")
+        self.assertIn('"meridian_id":"Pericardium"', entry["json_config"])
+
+    def test_proto_skill_scroll_used_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_scroll_used_bytes())
+
+        self.assertEqual(decoded["type"], "skill_scroll_used")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(decoded["scroll_id"], "skill_scroll_herbalism_baicao_can")
+        self.assertEqual(decoded["skill"], "herbalism")
+        self.assertEqual(decoded["xp_granted"], 500)
+        self.assertIs(decoded["was_duplicate"], False)
+
+    def test_proto_skill_snapshot_payload_decodes(self):
+        decoded = decode_server_data_payload(_server_data_skill_snapshot_bytes())
+
+        self.assertEqual(decoded["type"], "skill_snapshot")
+        self.assertEqual(decoded["char_id"], 42)
+        self.assertEqual(len(decoded["skills"]), 1)
+        entry = decoded["skills"][0]
+        self.assertEqual(entry["skill_name"], "herbalism")
+        self.assertEqual(entry["entry"]["xp"], 500)
+        self.assertEqual(entry["entry"]["recent_gain_xp"], 500)
+        self.assertEqual(decoded["consumed_scrolls"], ["skill_scroll_herbalism_baicao_can"])
+
+    def test_bot_dispatch_emits_quickslot_config_event(self):
+        bot = _bare_bot()
+        body = (
+            mc.write_varint(mc.S2C_CUSTOM_PAYLOAD)
+            + mc.mc_string("bong:server_data")
+            + _server_data_quickslot_config_bytes()
+        )
+
+        bot._dispatch(body)
+
+        decoded_events = bot.events_of("server_data")
+        self.assertEqual(len(decoded_events), 1)
+        self.assertEqual(decoded_events[0].data["payload_type"], "quickslot_config")
+        self.assertEqual(
+            decoded_events[0].data["payload"]["ack_request_id"],
+            "gap10-bind-1",
+            "真实 Bot reader 必须把 production protobuf quickslot_config 暴露为可断言事件",
+        )
+
+
 class InventoryHelperTest(unittest.TestCase):
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(

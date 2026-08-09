@@ -64,8 +64,20 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _craft_outcome(value)
         if field == 29:
             return _lumber_progress(value)
+        if field == 7:
+            return _skill_xp_gain(value)
         if field == 34:
             return _cast_sync(value)
+        if field == 35:
+            return _quick_slot_config(value)
+        if field == 37:
+            return _techniques_snapshot(value)
+        if field == 54:
+            return _skill_config_snapshot(value)
+        if field == 97:
+            return _skill_scroll_used(value)
+        if field == 98:
+            return _skill_snapshot(value)
         if field == 137:
             return _inventory_move_rejected(value)
         if field == 51:
@@ -561,6 +573,175 @@ CAST_OUTCOME_NAMES = {
 
 CAST_PHASE_NAMES = {0: "unspecified", 1: "idle", 2: "casting", 3: "complete", 4: "interrupt"}
 
+SKILL_ID_NAMES = {
+    0: "unspecified",
+    1: "herbalism",
+    2: "alchemy",
+    3: "forging",
+    4: "combat",
+    5: "mineral",
+    6: "cultivation",
+}
+
+
+def _skill_id_name(value: int) -> str:
+    return SKILL_ID_NAMES.get(value, "unspecified")
+
+
+def _skill_xp_gain(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    if _has(fields, 5):
+        scroll = _message(fields, 5)
+        source = {
+            "kind": "scroll",
+            "scroll_id": _string(scroll, 1),
+            "xp_grant": _varint(scroll, 2),
+        }
+    elif _has(fields, 7):
+        mentor = _message(fields, 7)
+        source = {"kind": "mentor", "mentor_char": _varint(mentor, 1)}
+    elif _has(fields, 4):
+        action = _message(fields, 4)
+        source = {"kind": "action", "plan_id": _string(action, 1), "action": _string(action, 2)}
+    elif _has(fields, 6):
+        source = {"kind": "realm_breakthrough"}
+    else:
+        source = None
+    return {
+        "v": 1,
+        "type": "skill_xp_gain",
+        "char_id": _varint(fields, 1),
+        "skill": _skill_id_name(_varint(fields, 2)),
+        "amount": _varint(fields, 3),
+        "source": source,
+    }
+
+
+def _quick_slot_entry(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "item_id": _string(fields, 1),
+        "display_name": _string(fields, 2),
+        "cast_duration_ms": _varint(fields, 3),
+        "cooldown_ms": _varint(fields, 4),
+        "icon_texture": _string(fields, 5),
+    }
+
+
+def _optional_quick_slot_entry(data: bytes) -> dict[str, Any] | None:
+    if not data:
+        return None
+    fields = _fields(data)
+    if not _has(fields, 1):
+        return None
+    return _quick_slot_entry(_message(fields, 1))
+
+
+def _quick_slot_config(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "quickslot_config",
+        "slots": [_optional_quick_slot_entry(raw) for raw in _messages(fields, 1)],
+        "cooldown_until_ms": [int(v) for f, w, v in fields if f == 2 and w == 0],
+        "ack_request_id": _optional_string(fields, 3),
+        "bind_accepted": (
+            bool(_varint(fields, 4)) if _has(fields, 4) else None
+        ),
+    }
+
+
+def _technique_required_meridian(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {"channel": _string(fields, 1), "min_health": _float32(fields, 2)}
+
+
+def _technique_entry(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "id": _string(fields, 1),
+        "display_name": _string(fields, 2),
+        "grade": _string(fields, 3),
+        "proficiency": _float32(fields, 4),
+        "proficiency_label": _string(fields, 5),
+        "active": bool(_varint(fields, 6)),
+        "description": _string(fields, 7),
+        "required_realm": _string(fields, 8),
+        "required_meridians": [
+            _technique_required_meridian(raw) for raw in _messages(fields, 9)
+        ],
+        "qi_cost": _float32(fields, 10),
+        "stamina_cost": _float32(fields, 11),
+        "cast_ticks": _varint(fields, 12),
+        "cooldown_ticks": _varint(fields, 13),
+        "range": _float32(fields, 14),
+    }
+
+
+def _techniques_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "techniques_snapshot",
+        "entries": [_technique_entry(raw) for raw in _messages(fields, 1)],
+    }
+
+
+def _skill_config_entry(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {"skill_id": _string(fields, 1), "json_config": _string(fields, 2)}
+
+
+def _skill_config_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skill_config_snapshot",
+        "configs": [_skill_config_entry(raw) for raw in _messages(fields, 1)],
+    }
+
+
+def _skill_scroll_used(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skill_scroll_used",
+        "char_id": _varint(fields, 1),
+        "scroll_id": _string(fields, 2),
+        "skill": _skill_id_name(_varint(fields, 3)),
+        "xp_granted": _varint(fields, 4),
+        "was_duplicate": bool(_varint(fields, 5)),
+    }
+
+
+def _skill_entry_snapshot(fields: list[tuple[int, int, Any]]) -> dict[str, Any]:
+    return {
+        "lv": _varint(fields, 1),
+        "xp": _varint(fields, 2),
+        "xp_to_next": _varint(fields, 3),
+        "total_xp": _varint(fields, 4),
+        "cap": _varint(fields, 5),
+        "recent_gain_xp": _varint(fields, 6),
+    }
+
+
+def _skill_snapshot_entry(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "skill_name": _string(fields, 1),
+        "entry": _skill_entry_snapshot(_message(fields, 2)),
+    }
+
+
+def _skill_snapshot(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skill_snapshot",
+        "char_id": _varint(fields, 1),
+        "skills": [_skill_snapshot_entry(raw) for raw in _messages(fields, 2)],
+        "consumed_scrolls": _strings(fields, 3),
+    }
+
 
 def _craft_session_state(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
@@ -892,7 +1073,12 @@ SERVER_DATA_PAYLOAD_NAMES = {
     29: "lumber_progress",
     30: "gathering_session",
     31: "lingtian_session",
+    35: "quickslot_config",
+    37: "techniques_snapshot",
+    54: "skill_config_snapshot",
     81: "dropped_loot_sync",
+    97: "skill_scroll_used",
+    98: "skill_snapshot",
     119: "loot_container_open",
     120: "loot_container_update",
     121: "loot_container_close",
