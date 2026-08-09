@@ -3322,6 +3322,28 @@ fn handle_learn_technique_scroll(
         });
     }
 
+    // central-review 2012 #3：拒绝原因必须在 wire 上可观察——只下发不变快照时，
+    // client 无法区分「RealmTooLow 拒绝」与「静默忽略/错误原因拒绝」。非习得拒绝
+    // 走既有 `InventoryMoveRejectedV1` 契约（reason=realm_too_low / race_mismatch，
+    // RealmTooLow 带 required_realm），bot 场景据 reason 断言具体原因。
+    if let Some(reject_reason) = match &outcome {
+        ScrollReadOutcome::RealmTooLow { required, .. } => {
+            Some(InventoryMoveRejectReason::RealmTooLow {
+                required_realm: crate::schema::cultivation::realm_to_string(*required)
+                    .to_string(),
+            })
+        }
+        ScrollReadOutcome::RaceMismatch => Some(InventoryMoveRejectReason::RaceMismatch),
+        ScrollReadOutcome::Learned
+        | ScrollReadOutcome::AlreadyKnown
+        | ScrollReadOutcome::MeridianSevered { .. }
+        | ScrollReadOutcome::MeridianMissing { .. }
+        | ScrollReadOutcome::FormAnchorClosed
+        | ScrollReadOutcome::InvalidScroll => None,
+    } {
+        emit_inventory_move_rejected(entity, &reject_reason, clients);
+    }
+
     resync_technique_scroll_use(
         entity,
         inventories,
@@ -10463,6 +10485,53 @@ mod tests {
                 .next()
                 .is_none(),
             "a technique-only scroll must not unlock a craft recipe"
+        );
+    }
+
+    #[test]
+    fn technique_scroll_realm_too_low_emits_structured_rejection() {
+        // central-review 2012 #3 回归：fresh Awaken 用 sword.infuse（required
+        // realm=Induce）→ RealmTooLow 拒绝，必须下发 InventoryMoveRejectedV1
+        // {reason:"realm_too_low", required_realm:"Induce"}——只回推不变快照时
+        // client 无法区分「境界拒绝」与「静默忽略/错误原因拒绝」。
+        let mut app = production_scroll_request_app();
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(
+                    42,
+                    "scroll_technique_sword_infuse",
+                )),
+                KnownTechniques {
+                    entries: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Awaken,
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let rejected = collect_inventory_move_rejected(&mut helper);
+        assert_eq!(
+            rejected,
+            vec![crate::schema::server_data::InventoryMoveRejectedV1 {
+                reason: "realm_too_low".to_string(),
+                required_realm: Some("Induce".to_string()),
+                slot: None,
+                cap: None,
+            }],
+            "Awaken 用 sword.infuse 应下发恰好一条 realm_too_low 拒绝回执"
         );
     }
 

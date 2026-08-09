@@ -11,7 +11,9 @@
   放在 skill_xp_gain / skill_scroll_used 上；重复习得路径的 resync 快照才是落地后的
   xp（≥500）——本条即断言「快照最终追上 xp」。
 - `technique_scroll_use` → handle_learn_technique_scroll：Learned → 消耗 + `techniques_snapshot`
-  含新招式；RealmTooLow 等拒绝 → **不消耗** + 回推（revision 不变）。
+  含新招式；RealmTooLow/RaceMismatch 等拒绝 → 先下发 `inventory_move_rejected`
+  （reason=realm_too_low / race_mismatch，RealmTooLow 带 required_realm），再回推
+  inventory_snapshot + techniques_snapshot，**不消耗**卷轴（revision 不变）。
   sword.cleave required_realm=Awaken（可学）；sword.infuse required_realm=Induce
   （fresh Awaken 玩家 → RealmTooLow，卷轴保留）。
 
@@ -101,18 +103,26 @@ def _wait_skill_snapshot_skill(
     return event.data["payload"]
 
 
-def _wait_technique_in_snapshot(bot, technique_id: str, timeout: float = 10.0) -> dict:
+def _wait_technique_in_snapshot(
+    bot, technique_id: str, anchor_t: float, timeout: float = 10.0
+) -> dict:
+    """锚定到 intent 之后的 techniques_snapshot 且含该招式。
+
+    不锚会把 join 时恢复的持久化旧快照（上轮 run 已学 sword.cleave）当作本次
+    intent 的习得证据——`reset` 只清账本、不清历史事件，无锚即静默误报
+    （central-review 2012 #2）。"""
     event = bot.wait_for(
         lambda e: (
             e.kind == "server_data"
             and e.data.get("payload_type") == "techniques_snapshot"
+            and e.t > anchor_t
             and any(
                 entry.get("id") == technique_id
                 for entry in e.data["payload"].get("entries", [])
             )
         ),
         timeout=timeout,
-        description=f"techniques_snapshot 含 {technique_id}",
+        description=f"techniques_snapshot 含 {technique_id}（t>{anchor_t:.2f}）",
     )
     return event.data["payload"]
 
@@ -188,10 +198,11 @@ def run(env) -> None:
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_snapshot"
+                and e.t > skill_anchor
                 and find_item(e.data["payload"], HERBALISM_SCROLL) is None
             ),
             timeout=10.0,
-            description=f"卷轴 {HERBALISM_SCROLL} 消耗离包",
+            description=f"卷轴 {HERBALISM_SCROLL} 消耗离包（intent 之后）",
         )
 
         # ── 2. 重复习得：was_duplicate=true + 卷轴保留（revision 不变）──
@@ -235,10 +246,11 @@ def run(env) -> None:
         snapshot = _give_and_wait(bot, CLEAVE_SCROLL)
         cleave = require_item(snapshot, CLEAVE_SCROLL)
         cleave_instance = int(cleave["item"]["instance_id"])
+        cleave_anchor = last_event_time(bot)  # 锚必须在 intent 前（见 _wait_technique_in_snapshot）
         bot.intent(
             {"type": "technique_scroll_use", "v": 1, "instance_id": cleave_instance}
         )
-        tech_snap = _wait_technique_in_snapshot(bot, "sword.cleave")
+        tech_snap = _wait_technique_in_snapshot(bot, "sword.cleave", cleave_anchor)
         cleave_entry = next(
             entry for entry in tech_snap["entries"] if entry["id"] == "sword.cleave"
         )
@@ -249,13 +261,14 @@ def run(env) -> None:
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_snapshot"
+                and e.t > cleave_anchor
                 and find_item(e.data["payload"], CLEAVE_SCROLL) is None
             ),
             timeout=10.0,
-            description=f"卷轴 {CLEAVE_SCROLL} 消耗离包",
+            description=f"卷轴 {CLEAVE_SCROLL} 消耗离包（intent 之后）",
         )
 
-        # ── 4. technique_scroll_use 境界拒绝：RealmTooLow → 卷轴保留（revision 不变）──
+        # ── 4. technique_scroll_use 境界拒绝：RealmTooLow → 拒绝回执 + 卷轴保留 ──
         snapshot = _give_and_wait(bot, INFUSE_SCROLL)
         infuse = require_item(snapshot, INFUSE_SCROLL)
         infuse_instance = int(infuse["item"]["instance_id"])
@@ -263,6 +276,24 @@ def run(env) -> None:
         anchor = last_event_time(bot)
         bot.intent(
             {"type": "technique_scroll_use", "v": 1, "instance_id": infuse_instance}
+        )
+        # 拒绝原因必须在 wire 上可观察：只断 revision/保留无法区分「RealmTooLow 拒绝」
+        # 与「静默忽略/错误原因拒绝」（central-review 2012 #3）。服务端在非习得拒绝时
+        # 下发 inventory_move_rejected（reason=realm_too_low + required_realm）。
+        rejected = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "inventory_move_rejected"
+                and e.t > anchor
+            ),
+            timeout=10.0,
+            description="technique_scroll_use 拒绝回执（inventory_move_rejected）",
+        ).data["payload"]
+        assert rejected.get("reason") == "realm_too_low", (
+            f"拒绝 reason 应为 realm_too_low，实际 {rejected.get('reason')!r}"
+        )
+        assert rejected.get("required_realm") == "Induce", (
+            f"拒绝 required_realm 应为 Induce，实际 {rejected.get('required_realm')!r}"
         )
         kept = bot.wait_for(
             lambda e: (

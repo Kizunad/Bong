@@ -26,17 +26,20 @@ VALID_CONFIG = {
 }
 
 
-def _expect_config_snapshot(bot, timeout: float = 10.0) -> dict:
-    """锚定到本次 intent 之后的 skill_config_snapshot，避开 join 时的空快照。"""
-    anchor = last_event_time(bot)
+def _expect_config_snapshot(bot, anchor_t: float, timeout: float = 10.0) -> dict:
+    """锚定到本次 intent 之后的 skill_config_snapshot，避开 join 时的空快照。
+
+    `anchor_t` 必须在 `bot.intent(...)` 之前取：锚后取会把快服务器已发出并记录
+    的权威快照排除掉，导致 intent 成功后场景仍超时（central-review 2012 #1）。
+    """
     event = bot.wait_for(
         lambda e: (
             e.kind == "server_data"
             and e.data.get("payload_type") == "skill_config_snapshot"
-            and e.t > anchor
+            and e.t > anchor_t
         ),
         timeout=timeout,
-        description="skill_config_snapshot（当前 intent 响应）",
+        description=f"skill_config_snapshot（t>{anchor_t:.2f}，当前 intent 响应）",
     )
     return event.data["payload"]
 
@@ -54,6 +57,7 @@ def run(env) -> None:
         wait_for_ready(bot)
 
         # ── 1. 合法配置写入 → snapshot 含该 skill，json_config 字段齐全 ──
+        anchor = last_event_time(bot)  # 锚必须在 intent 前（见 _expect_config_snapshot）
         bot.intent(
             {
                 "type": "skill_config_intent",
@@ -62,7 +66,7 @@ def run(env) -> None:
                 "config": VALID_CONFIG,
             }
         )
-        written = _expect_config_snapshot(bot)
+        written = _expect_config_snapshot(bot, anchor)
         configs = _configs_of(written)
         assert SKILL in configs, f"写入后 snapshot 应含 {SKILL}，实际 {sorted(configs)}"
         parsed = json.loads(configs[SKILL])
@@ -74,6 +78,7 @@ def run(env) -> None:
         )
 
         # ── 2. 未知 skill → 拒绝：回推快照不含该 skill ──
+        anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "skill_config_intent",
@@ -82,13 +87,14 @@ def run(env) -> None:
                 "config": {"whatever": "value"},
             }
         )
-        rejected = _expect_config_snapshot(bot)
+        rejected = _expect_config_snapshot(bot, anchor)
         configs = _configs_of(rejected)
         assert "no_such_skill_xyz" not in configs, (
             f"未知 skill 拒绝后 snapshot 不应含 no_such_skill_xyz，实际 {sorted(configs)}"
         )
 
         # ── 3. 非法字段值 → 拒绝：原配置保持（backfire_kind 仍在白名单值上）──
+        anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "skill_config_intent",
@@ -97,7 +103,7 @@ def run(env) -> None:
                 "config": {"meridian_id": "Pericardium", "backfire_kind": "bogus_kind"},
             }
         )
-        kept = _expect_config_snapshot(bot)
+        kept = _expect_config_snapshot(bot, anchor)
         configs = _configs_of(kept)
         assert SKILL in configs, (
             f"非法字段拒绝后 {SKILL} 配置应保持，实际 {sorted(configs)}"
@@ -108,6 +114,7 @@ def run(env) -> None:
         )
 
         # ── 4. 空 config → 清配置：回推快照不含该 skill ──
+        anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "skill_config_intent",
@@ -116,7 +123,7 @@ def run(env) -> None:
                 "config": {},
             }
         )
-        cleared = _expect_config_snapshot(bot)
+        cleared = _expect_config_snapshot(bot, anchor)
         configs = _configs_of(cleared)
         assert SKILL not in configs, (
             f"空 config 清空后 snapshot 不应含 {SKILL}，实际 {sorted(configs)}"
