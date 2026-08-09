@@ -84,6 +84,10 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
             return _loot_container_close(value)
         if field == 142:
             return _morph_state(value)
+        if field == 66:
+            return _tribulation_state(value)
+        if field == 131:
+            return _insight_offer(value)
     return None
 
 
@@ -848,6 +852,47 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     }
 
 
+def _tribulation_state(data: bytes) -> dict[str, Any]:
+    """DONE-W6-HEADLESSAUDIT §5 P0-4：渡虚劫状态（envelope.proto:66）。
+
+    kind/phase 在 wire 上是 **string** 字段，不是 varint enum（envelope.proto:2374-2375：
+    `string kind = 4; // du_xu / zone_collapse / targeted / jue_bi / ascension_quota_open`、
+    `string phase = 5; // omen / lock / wave / heart_demon / settle`），用 `_string` 解。
+    场景断言字面值（cultivation_start_du_xu.py 校验 kind=du_xu phase=omen）。
+
+    只解场景要断言的字段（active/char/kind/phase/waves）；started_tick 等遥测字段
+    留待需要时再扩。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "tribulation_state",
+        "active": bool(_varint(fields, 1)),
+        "char_id": _string(fields, 2),
+        "actor_name": _string(fields, 3),
+        "kind": _string(fields, 4),
+        "phase": _string(fields, 5),
+        "wave_current": _varint(fields, 8),
+        "wave_total": _varint(fields, 9),
+    }
+
+
+def _insight_offer(data: bytes) -> dict[str, Any]:
+    """DONE-W6-HEADLESSAUDIT §5 P0-4：顿悟邀约（envelope.proto:131）。
+
+    只解 offer 标识字段；choices 保持原始 message 字节（场景按需浅扫描）。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "insight_offer",
+        "offer_id": _string(fields, 1),
+        "trigger_id": _string(fields, 2),
+        "character_id": _string(fields, 3),
+        "choices": _messages(fields, 4),
+    }
+
+
 def _equip_slot(value: int) -> str:
     return {
         1: "head",
@@ -897,6 +942,8 @@ SERVER_DATA_PAYLOAD_NAMES = {
     120: "loot_container_update",
     121: "loot_container_close",
     137: "inventory_move_rejected",
+    66: "tribulation_state",
+    131: "insight_offer",
 }
 
 EQUIPPED_ITEM_FIELDS = {
