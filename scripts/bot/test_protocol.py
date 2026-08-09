@@ -32,6 +32,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from bot import _redis_helpers  # noqa: E402
 from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
@@ -4611,6 +4612,79 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
+class RedisPubSubTest(unittest.TestCase):
+    """_redis_helpers：RESP2 帧编解码 + SUBSCRIBE ack 等待 + 消息泵（纯 stdlib，无需 redis 服务）。"""
+
+    def _pubsub_with_pair(self):
+        server, client = socket.socketpair()
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        return pubsub, server, client
+
+    def test_resp_frames_simple_string_integer_null(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"+PONG\r\n:42\r\n$-1\r\n")
+        self.assertEqual(frames.next_frame(), "PONG")
+        self.assertEqual(frames.next_frame(), 42)
+        self.assertIsNone(frames.next_frame())
+
+    def test_resp_frames_array_of_bulk(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
+        self.assertIsNone(frames.next_frame())
+
+    def test_resp_frames_partial_feeds(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$9\r\nsub")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"scribe\r\n$7\r\nmy_ch")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"an\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"subscribe", b"my_chan", 1])
+
+    def test_resp_frames_bulk_payload_split(self):
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$5\r\nhel")
+        self.assertIsNone(frames.next_frame())
+        frames.feed(b"lo\r\n")
+        self.assertEqual(frames.next_frame(), b"hello")
+
+    def test_subscribe_ack_wait_and_message_pump(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"full_charge": False, "tick": 7}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            evt = pubsub.wait_event(
+                "my_chan", lambda e: e.get("full_charge") is False, timeout=5.0
+            )
+            self.assertEqual(evt["tick"], 7)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+            self.assertEqual(pubsub.events_for("other"), [])
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_timeout_raises(self):
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event("my_chan", lambda e: False, timeout=0.5)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
 
 
 if __name__ == "__main__":
