@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: Kizunad/review
-          ref: 2d3c75cea0cf6b5d900036d1edd94193876dd2a3
+          ref: 3a27f2649e79438657c9bf68522982be72369df9
           path: _central-contract
           persist-credentials: false
           fetch-depth: 1
@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(git -C _central-contract rev-parse HEAD)" == '2d3c75cea0cf6b5d900036d1edd94193876dd2a3' ]]
+          [[ "$(git -C _central-contract rev-parse HEAD)" == '3a27f2649e79438657c9bf68522982be72369df9' ]]
           [[ "$(git -C 9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784 rev-parse HEAD)" == '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784' ]]
           node --check .github/scripts/review-consumer.test.mjs
           CENTRAL_REVIEW_CONTRACT_DIR=_central-contract \
