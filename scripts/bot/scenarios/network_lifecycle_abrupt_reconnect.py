@@ -27,7 +27,11 @@ MODULES = ["network", "persistence", "inventory"]
 
 TARGET_ITEM = "stone_chunk"
 GIVE_COUNT = 2
-# move_to 走 5 格后重连位置应贴近断连前最后坐标；4m 偏差容纳 server 运动确认差异
+# move_to 走 MOVE_DISTANCE 格后重连位置应贴近断连前最后坐标；POSITION_TOLERANCE 偏差
+# 容纳 server 运动确认差异。MOVE_VERIFY_TOLERANCE 钉死「动作前置」：记录断连前坐标前
+# 必须确认位移确实发生，否则原地不动也会被误记为断连前坐标、重连回出生点照样过 4m 断言。
+MOVE_DISTANCE = 5.0
+MOVE_VERIFY_TOLERANCE = 1.0
 POSITION_TOLERANCE = 4.0
 # 掐断 socket 后给 server 1~2 tick 检测断连并落盘，避免重连抢在清理前读到旧切片
 DISCONNECT_PERSIST_GRACE = 1.5
@@ -36,12 +40,21 @@ DISCONNECT_PERSIST_GRACE = 1.5
 def _move_and_record(bot):
     if bot.position is None:
         raise BotAssertionError("move_to 前需要已知 bot.position，实际 None")
-    x, y, z = bot.position
-    bot.move_to(x + 5.0, y, z, speed=4.0)
+    start = tuple(bot.position)
+    x, y, z = start
+    bot.move_to(x + MOVE_DISTANCE, y, z, speed=4.0)
     time.sleep(0.3)
     if bot.position is None:
         raise BotAssertionError("move_to 后 bot.position 仍为 None")
-    return tuple(bot.position)
+    moved = tuple(bot.position)
+    moved_distance = math.dist(start, moved)
+    # 动作前置：位移必须实际发生（≈MOVE_DISTANCE）。若 move_to 被忽略/原地不动，
+    # 记录下的「断连前坐标」实为出生点，重连回出生点也能通过 4m 断言，测不出位置持久化。
+    assert abs(moved_distance - MOVE_DISTANCE) <= MOVE_VERIFY_TOLERANCE, (
+        f"move_to 应产生 {MOVE_DISTANCE}m 位移以确立动作前置，"
+        f"实际位移 {moved_distance:.2f}m（start={start}，moved={moved}）"
+    )
+    return moved
 
 
 def run(env) -> None:
