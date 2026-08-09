@@ -76,6 +76,10 @@ pub fn handle_qi(
                 let before_max = cultivation.qi_max;
                 cultivation.qi_max = value;
                 cultivation.qi_current = cultivation.qi_current.min(value);
+                // dev 铺底语义：设新上限即重置真元冻结，避免跨铺底残留冻结在渡劫第 3 波
+                // 叠加后超出 valid_snapshot 上限（0.5×qi_max），令心魔相 Obsession 抉择的
+                // 真元扣减失败并软锁（无结算、无登仙、无失败）。
+                cultivation.qi_max_frozen = None;
                 tracing::warn!(
                     "[dev-cmd] bypass ledger: qi_max {:.3} -> {:.3}",
                     before_max,
@@ -177,6 +181,30 @@ mod tests {
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
         assert_eq!(cultivation.qi_max, 50.0);
         assert_eq!(cultivation.qi_current, 50.0);
+    }
+
+    #[test]
+    fn qi_max_clears_frozen_envelope() {
+        let mut app = setup_app();
+        let player = spawn_test_client(app, "Alice", [0.0, 0.0, 0.0]);
+        app.world_mut().entity_mut(player).insert(Cultivation {
+            qi_current: 300.0,
+            qi_max: 500.0,
+            qi_max_frozen: Some(200.0),
+            ..Default::default()
+        });
+
+        send(&mut app, player, QiCmd::Max { value: 500.0 });
+        run_update(&mut app);
+
+        let cultivation = app.world().get::<Cultivation>(player).unwrap();
+        assert_eq!(cultivation.qi_max, 500.0);
+        assert_eq!(cultivation.qi_current, 300.0);
+        assert_eq!(
+            cultivation.qi_max_frozen,
+            None,
+            "dev qi max 应重置真元冻结量（跨铺底残留冻结会令渡劫 Obsession 抉择软锁）"
+        );
     }
 
     #[test]
