@@ -2232,4 +2232,102 @@ mod zone_tests {
             .expect_err("duplicate name should be rejected");
         assert!(err.contains("already registered"), "got: {err}");
     }
+
+    #[test]
+    fn spatial_revision_mutates_only_on_successful_membership_change() {
+        // fix-spec-1901-v2 §7.1 — spatial_revision 契约：成功注册 +1、非空 TSY 并入 +1；
+        // 空并入与一切被拒绝的变化都必须保持 revision 不变（否则 lingtian 的 pending
+        // plot retry 门会误判，见 auto_set_plot_zone 的 last_seen_spatial_revision）。
+        let mut registry = ZoneRegistry::fallback();
+        assert_eq!(
+            registry.spatial_revision, 0,
+            "fallback registry starts at revision 0"
+        );
+
+        // 成功 register_runtime_zone → +1。
+        registry
+            .register_runtime_zone(make_zone(
+                "tsy_lingxu_01_shallow",
+                crate::world::dimension::DimensionKind::Tsy,
+            ))
+            .expect("first add ok");
+        assert_eq!(
+            registry.spatial_revision, 1,
+            "successful runtime add must bump spatial_revision"
+        );
+
+        // 重名 register 被拒绝 → 不变。
+        registry
+            .register_runtime_zone(make_zone(
+                "tsy_lingxu_01_shallow",
+                crate::world::dimension::DimensionKind::Tsy,
+            ))
+            .expect_err("duplicate name should be rejected");
+        assert_eq!(
+            registry.spatial_revision, 1,
+            "rejected duplicate add must leave spatial_revision unchanged"
+        );
+
+        // 非空 TSY blueprint 并入 → +1。
+        let path = unique_temp_path("bong-zones-tsy-revision", ".json");
+        fs::write(
+            &path,
+            r#"{
+  "zones": [
+    {
+      "name": "tsy_revision_01_shallow",
+      "dimension": "tsy",
+      "aabb": { "min": [0.0, 20.0, 0.0], "max": [16.0, 40.0, 16.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 2
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        let loaded = registry
+            .merge_tsy_blueprint_from_path(&path)
+            .expect("non-conflicting TSY merge ok");
+        assert_eq!(loaded, 1, "one supplemental zone should be merged");
+        assert_eq!(
+            registry.spatial_revision, 2,
+            "non-empty supplemental merge must bump spatial_revision"
+        );
+
+        // 空并入（文件缺失 → Ok(0)）→ 不变。
+        let missing = unique_temp_path("bong-zones-tsy-revision-missing", ".json");
+        let loaded_missing = registry
+            .merge_tsy_blueprint_from_path(&missing)
+            .expect("missing TSY blueprint path is Ok(0)");
+        assert_eq!(loaded_missing, 0);
+        assert_eq!(
+            registry.spatial_revision, 2,
+            "empty merge must leave spatial_revision unchanged"
+        );
+
+        // 被拒绝的并入（与已有 spawn 冲突）→ Err 且不变。
+        let conflict = unique_temp_path("bong-zones-tsy-revision-conflict", ".json");
+        fs::write(
+            &conflict,
+            r#"{
+  "zones": [
+    {
+      "name": "spawn",
+      "dimension": "tsy",
+      "aabb": { "min": [32.0, 20.0, 32.0], "max": [48.0, 40.0, 48.0] },
+      "spirit_qi": -0.5,
+      "danger_level": 2
+    }
+  ]
+}"#,
+        )
+        .expect("fixture should be writable");
+        registry
+            .merge_tsy_blueprint_from_path(&conflict)
+            .expect_err("name conflict must be rejected");
+        assert_eq!(
+            registry.spatial_revision, 2,
+            "rejected merge must leave spatial_revision unchanged"
+        );
+    }
 }

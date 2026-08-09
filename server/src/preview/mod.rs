@@ -38,16 +38,24 @@ pub fn preview_mode_enabled() -> bool {
     std::env::var("BONG_PREVIEW_MODE").as_deref() == Ok("1")
 }
 
+/// fix-spec-1901-v2 §4.2 — preview teleport 直接写 `Position`，纳入统一移动
+/// commit set。生产 `register()` 与回归测试共用此注册路径：测试不得在本地重建
+/// set 会员，否则生产注册丢失 membership 时测试仍会绿，无法发现调度契约退化。
+pub(crate) fn register_preview_teleport_commit_system(app: &mut App) {
+    app.add_systems(
+        Update,
+        handle_preview_teleport
+            .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+    );
+}
+
 pub fn register(app: &mut App) {
     app.add_event::<PreviewTeleportRequested>();
     if preview_mode_enabled() {
+        register_preview_teleport_commit_system(app);
         app.add_systems(
             Update,
             (
-                // fix-spec-1901-v2 §4.2 — preview teleport 直接写 `Position`，
-                // 纳入统一移动 commit set。
-                handle_preview_teleport
-                    .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
                 boost_view_distance_for_preview,
                 decorations::spawn_decorations_once_system,
             ),
@@ -107,13 +115,10 @@ mod tests {
     use valence::prelude::App;
 
     fn register_real_handler(app: &mut App) {
-        // 与 preview::register 的 BONG_PREVIEW_MODE=1 分支一致：real handler 进统一
-        // 移动 commit set。测试不走 register() 以避免依赖 env（并行测试 race）。
-        app.add_systems(
-            Update,
-            handle_preview_teleport
-                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
-        );
+        // 走生产注册路径 register_preview_teleport_commit_system（= preview::register 的
+        // BONG_PREVIEW_MODE=1 分支里的 handler 注册）；测试不走 register() 以避免依赖
+        // env（并行测试 race）。set 会员不在本地重建，生产注册丢失 membership 即红。
+        register_preview_teleport_commit_system(app);
     }
 
     #[test]
@@ -208,7 +213,8 @@ mod tests {
         // fix-spec-1901-v2 #18：生产 `handle_preview_teleport` 在
         // AuthoritativePositionCommitSet 内写 Position，灵田 post-transfer validator
         // 排在 set 之后。本测试 validator 先注册、real handler 后注册（无 .after 边），
-        // 顺序只能由 set 会员提供——删 membership 后 handler 落后 validator → 拒绝 → 红。
+        // handler 的 set 会员由生产注册路径 register_preview_teleport_commit_system
+        // 提供，不在本地重建——删 membership 后 handler 落后 validator → 拒绝 → 红。
         use crate::lingtian::events::{
             StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
             StartReplenishRequest, StartTillRequest,
@@ -228,14 +234,12 @@ mod tests {
             .add_event::<StartPlantingRequest>()
             .add_event::<StartHarvestRequest>()
             .add_event::<StartReplenishRequest>()
-            .add_event::<StartDrainQiRequest>()
-            .add_systems(
-                Update,
-                (
-                    validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
-                    handle_preview_teleport.in_set(AuthoritativePositionCommitSet),
-                ),
-            );
+            .add_event::<StartDrainQiRequest>();
+        register_preview_teleport_commit_system(&mut app);
+        app.add_systems(
+            Update,
+            validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
+        );
 
         // Mock 客户端起点在远处（1000, 64.5, 1000）——若 handler 不在 commit set 内，
         // validator 会读到这个远点并拒绝请求。CurrentDimension 是 bong 自定义组件，

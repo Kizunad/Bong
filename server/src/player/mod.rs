@@ -108,21 +108,32 @@ type CultivationBundleQueryItem<'a> = (
     Option<&'a DigestionLoad>,
 );
 
+/// fix-spec-1901-v2 §4.2 — 出生/重连位置提交进入统一移动 commit set；灵田
+/// post-transfer validator / completion 复验排在其后。生产 `register()` 与回归测试
+/// 共用此注册路径：测试不得在本地重建 set 会员，否则生产注册丢失 membership
+/// 时测试仍会绿，无法发现调度契约退化。
+pub(crate) fn register_authoritative_position_commit_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            init_clients.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+            attach_player_state_to_joined_clients
+                .after(init_clients)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        ),
+    );
+}
+
 pub fn register(app: &mut App) {
     tracing::info!("[bong][player] registering player init/cleanup systems");
     app.insert_resource(PlayerStatePersistence::default());
     app.insert_resource(PlayerStateAutosaveTimer::default());
     gameplay::register(app);
     home_return::register(app);
+    register_authoritative_position_commit_systems(app);
     app.add_systems(
         Update,
         (
-            // fix-spec-1901-v2 §4.2 — 出生/重连位置提交进入统一移动 commit set；
-            // 灵田 post-transfer validator / completion 复验排在其后。
-            init_clients.in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
-            attach_player_state_to_joined_clients
-                .after(init_clients)
-                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
             attach_inventory_to_joined_clients.after(attach_player_state_to_joined_clients),
             tick_player_persistence_timer,
             autosave_player_core_slices.after(tick_player_persistence_timer),
@@ -2263,8 +2274,10 @@ mod tests {
     fn reconnecting_restored_position_commits_before_lingtian_post_transfer_validation() {
         // fix-spec-1901-v2 #10：生产注册把 attach_player_state_to_joined_clients 放进
         // AuthoritativePositionCommitSet，灵田 post-transfer validator 排在 set 之后。
-        // 本测试把 validator 先注册、attach 后注册且不写 .after(attach) —— 顺序只能由
-        // set 边提供；删除 .in_set(...) 会员资格后 validator 先读到远处位置 → 拒绝 → 红。
+        // 本测试通过生产注册路径 register_authoritative_position_commit_systems 获得
+        // attach 的 set 会员，不在此地重建；validator 先注册、attach 后注册且不写
+        // .after(attach) —— 顺序只能由 set 边提供。生产注册一旦丢失 membership，
+        // validator 先读到远处位置 → 拒绝 → 本测试即红。
         use crate::lingtian::events::{
             StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
             StartReplenishRequest, StartTillRequest,
@@ -2300,14 +2313,14 @@ mod tests {
             .add_event::<StartPlantingRequest>()
             .add_event::<StartHarvestRequest>()
             .add_event::<StartReplenishRequest>()
-            .add_event::<StartDrainQiRequest>()
-            .add_systems(
-                Update,
-                (
-                    validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
-                    attach_player_state_to_joined_clients.in_set(AuthoritativePositionCommitSet),
-                ),
-            );
+            .add_event::<StartDrainQiRequest>();
+        // 走生产注册路径：attach 的 AuthoritativePositionCommitSet 会员由
+        // register_authoritative_position_commit_systems 提供，测试不在本地重建。
+        register_authoritative_position_commit_systems(&mut app);
+        app.add_systems(
+            Update,
+            validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
+        );
 
         // Mock 客户端起点在远处（1000, 64.5, 1000）——若 attach 不在 commit set 内，
         // validator 会读到这个远点并拒绝请求。
