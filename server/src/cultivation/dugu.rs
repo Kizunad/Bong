@@ -818,6 +818,8 @@ mod tests {
         app
     }
 
+    use crate::player::state::canonical_player_id;
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -997,6 +999,8 @@ mod tests {
             .spirit_qi;
 
         // Pitfall-b: entity must have CurrentDimension so find_zone succeeds.
+        // LifeRecord 是 R5 P0b qi_flow 契约的身份前提（#1931/#1941）：无 canonical 身份的
+        // release 会被 fail-closed 拒绝（InvalidActorIdentity），与 zone credit 无关。
         let infuser = app
             .world_mut()
             .spawn((
@@ -1012,6 +1016,7 @@ mod tests {
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("dugu-infuse-zone-credit")),
             ))
             .id();
 
