@@ -936,6 +936,9 @@ mod tests {
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，毒蛊 qi 扣减在 release 中止后才执行。
+                LifeRecord::new(canonical_player_id("dugu-infuse-exposure")),
             ))
             .id();
 
