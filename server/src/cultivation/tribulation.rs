@@ -5599,8 +5599,10 @@ mod tests {
 
     #[test]
     fn heart_demon_steadfast_choice_records_and_restores_qi() {
-        // Pitfall (a): empty zone first so there is room for the full 20 qi grant without
-        // hitting the zone capacity limit and splitting the debit.
+        // Pitfall (a): give the zone positive headroom under the qi_flow 0.0-floor model
+        // (gain_from_zone available = max(spirit_qi, 0.0) × QI_ZONE_UNIT_CAPACITY, #1911/#1931
+        // 契约：负/零灵域不产出）。spirit_qi = 0.5 → 25 qi 可用 ≥ 20 qi 全额授予，
+        // 不触发容量封顶、不拆账。
         let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
@@ -5608,7 +5610,7 @@ mod tests {
         zones
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone should exist")
-            .spirit_qi = 0.0;
+            .spirit_qi = 0.5;
         app.insert_resource(zones);
 
         // Pitfall (b): entity needs CurrentDimension for zone lookup to succeed.
@@ -5649,13 +5651,14 @@ mod tests {
 
         // effective_qi_max = (210.0 - 10.0).max(0.0) = 200.0
         // desired_grant    = (200.0 * 0.10).min((200.0 - 120.0).max(0.0)) = 20.0
-        // available        = (0.0 + 1.0) * 50.0 = 50.0 >= 20.0 → actual_grant = 20.0
+        // available        = max(0.5, 0.0) * 50.0 = 25.0 >= 20.0 → actual_grant = 20.0
         // Pitfall (c): use computed grant, not a hardcoded integer.
         let effective_qi_max = 200.0_f64;
         let expected_grant = (effective_qi_max * 0.10).min((effective_qi_max - 120.0).max(0.0));
         let expected_qi_current = 120.0 + expected_grant;
-        // Zone spirit_qi starts at 0.0; debit = 20.0 / 50.0 = 0.4 → zone goes to -0.4.
-        let expected_zone_spirit_qi = 0.0 - expected_grant / 50.0;
+        // Zone spirit_qi starts at 0.5; debit = 20.0 / 50.0 = 0.4 → zone ends at 0.1.
+        // (qi_flow 0.0-floor model：授予永不把 zone 拉进负灵域，与 #1911/#1931 契约一致。)
+        let expected_zone_spirit_qi = 0.5 - expected_grant / 50.0;
 
         let cultivation = app
             .world()
