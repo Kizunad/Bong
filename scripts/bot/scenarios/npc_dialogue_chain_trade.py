@@ -5,10 +5,13 @@ NpcTradeRequest 分支，判定顺序：offered_items → catalog → can_trade 
 库存命中 → 定价(rep) → 骨币余额 → 入包）：
 
 Phase 1（无环境依赖，任意 fixture server 可跑）：`/npc_scenario chase` zombie
-（display_name="游尸·醒灵"，can_trade=false）驱动四条确定性拒绝分支：
+（display_name="游尸·醒灵"，can_trade=false）驱动两条确定性拒绝分支 + 目录键控锚点：
 - 非空 offered_items → "§c[NPC] 当前交易只支持骨币结算。"
-- 目录外 requested_item_id → "§c[NPC] {display} 没有这件货。"
-- 目录内但非商贩 → "§c[NPC] {display} 不做买卖。"
+- 任意 requested_item_id → "§c[NPC] {display} 没有这件货。"——目录按 archetype
+  键控（npc_trade_catalog_entry 仅 Commoner|Rogue 有条目），zombie 无目录条目，
+  且目录查找先于 can_trade 检查，"不做买卖"（can_trade=false）分支经 zombie
+  不可达；该分支需 Rogue/Commoner 且 rep < -30（或 Wanted）——fixture 玩家
+  rep=0 → Normal → can_trade=true，不可构造，留待后续 dev 命令覆盖。
 
 Phase 2（BOT_E2E_ROGUE_TRADE=1 才执行）：BONG_ROGUE_SEED_COUNT>0 播种的散修
 （villager fallback=108，can_trade=true；fresh 玩家 rep=0 → RepTier::Mid 1.0x 定价）。
@@ -18,7 +21,7 @@ bot 从 spawn 走向 rogue_village POI（/tppoi novice 读坐标），追最近 
 命中必报骨币不足），且三件至少一次骨币不足（库存非空必然命中一件）。
 """
 
-DESCRIPTION = "npc_trade_request：四条拒绝分支 + 散修商贩库存/定价/余额链路"
+DESCRIPTION = "npc_trade_request：zombie 拒绝分支（骨币结算/目录键控）+ 散修商贩库存/定价/余额链路"
 MODULES = ["npc", "dialogue", "trade"]
 
 import os
@@ -40,7 +43,6 @@ from ._npc_dialogue_helpers import (
 ZOMBIE_DISPLAY = "游尸·醒灵"
 TRADE_ONLY_BONE_COINS = "§c[NPC] 当前交易只支持骨币结算。"
 ZOMBIE_NO_STOCK = f"§c[NPC] {ZOMBIE_DISPLAY} 没有这件货。"
-ZOMBIE_NO_TRADE = f"§c[NPC] {ZOMBIE_DISPLAY} 不做买卖。"
 ROGUE_TRADE_OPEN = "摊开了随身货物。"
 ROGUE_GREETING_SUFFIX = "：道友，可有灵草出让？"
 NOT_IN_STOCK = "当前没有这件货"
@@ -81,8 +83,8 @@ def run_phase_1(bot) -> None:
         bot,
         _request_trade(zombie_id, "spirit_grass", []),
         zombie_id,
-        ZOMBIE_NO_TRADE,
-        "非商贩 zombie 对目录内商品的逐字拒绝（不做买卖）",
+        ZOMBIE_NO_STOCK,
+        "目录内商品从 zombie 购买也落「没有这件货」（目录按 archetype 键控）",
         OUT_OF_RANGE_TRADE,
     )
 

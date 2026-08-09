@@ -13,6 +13,10 @@
 - BONG_ROGUE_SEED_COUNT>0 播种的散修走 villager fallback（EntityKind::VILLAGER=108），
   display_name "散修·{醒灵|引气|凝脉|固元|通灵|化虚}"，greeting "道友，可有灵草出让？"，
   can_trade=true（fresh 玩家 rep=0 ≥ -30、FactionReputationTier::Normal）。
+- 交易判定顺序：offered_items → 目录查找（npc_trade_catalog_entry 按 archetype
+  键控，仅 Commoner|Rogue 有条目）→ can_trade → 库存命中 → 定价(rep) → 骨币余额
+  → 入包。zombie 无目录条目，"不做买卖"（can_trade=false）分支经 zombie 不可达
+  （目录查找先于 can_trade），需 Rogue/Commoner 且 rep < -30——fixture 不可构造。
 - 交易定价：fresh 玩家 rep_f32=0.5 → RepTier::Mid → 1.0x，base 价
   spirit_grass=10 / ling_xi_wan_flawed=8 / ju_ling_dan_flawed=15。
 - 散修交易库存随机 1-3/3（entity.index() 播种）：请求任意目录条目，
