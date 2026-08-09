@@ -88,13 +88,22 @@ def run_phase_1(bot) -> None:
 
 
 def run_phase_2(bot) -> None:
+    import time
+
     village = rogue_village_pos_from_tppoi(bot)
     bot.move_to(village[0], village[1], village[2], speed=5.5)
 
     npc_id = nearest_villager_id(bot)
     if npc_id is None:
+        # 路上没撞见 villager：在村庄站 30s——玩家 80m 内激活的散修会按日程
+        # Trade/Patrol/Socialize 聚向 RogueVillage POI，视野内迟早出现。
+        deadline = time.monotonic() + 30.0
+        while npc_id is None and time.monotonic() < deadline:
+            time.sleep(1.0)
+            npc_id = nearest_villager_id(bot)
+    if npc_id is None:
         raise BotAssertionError(
-            "走向 rogue_village 途中未捕获任何 villager(108) entity_spawn；"
+            "走向 rogue_village 途中及村庄等待 30s 均未捕获 villager(108) entity_spawn；"
             "BOT_E2E_ROGUE_TRADE=1 契约要求 BONG_ROGUE_SEED_COUNT>0 启动 server"
         )
     if not approach_entity(bot, npc_id, range_m=3.0):
