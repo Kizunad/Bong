@@ -24,11 +24,11 @@ import time
 
 from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场景抛出
 
-# 连接同步类 server_data payload type 的显式兜底集合：这些类型由 Changed/周期驱动
-# 的同步系统推送（无论 client 发什么都会出现），且首次出现可能晚于窗口起点之前、
-# 落在探针窗口内（实跑观察到 zone_info 在 join 后 6-10s 才因 spirit_qi 波动触发）。
-# 其余 server_data / chat / vfx_event 均视为响应式反馈。完整的连接同步集合由
-# ``_ambient_types_in_window`` 从窗口起点前的已有事件里自校准得出。
+# 连接同步类 server_data payload type 与 vfx event_id 的显式兜底集合：这些签名由
+# Changed/周期驱动的系统推送（无论 client 发什么都会出现），首次出现可能晚于窗口
+# 起点、落在探针窗口内（实跑观察到 zone_info / cultivation_absorb vfx 在 join 后
+# 6-10s 才触发）。完整的连接同步集合由 ``_ambient_signatures_in_window`` 从窗口
+# 起点前的已有事件里自校准得出；其余 server_data / vfx / chat 均视为响应式反馈。
 _AMBIENT_SERVER_DATA_TYPES = frozenset(
     {
         "status_snapshot",  # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
@@ -36,38 +36,57 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
         "player_state",     # 玩家灵气等状态变化时重发（连接同步，非请求响应）
     }
 )
+# 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
+# qi_regen 系统）。其余 vfx（combat/forge/alchemy/breakthrough 等）均为请求驱动。
+_AMBIENT_VFX_EVENT_IDS = frozenset({"bong:cultivation_absorb"})
 
 
-def is_gameplay_side_effect(event, ambient_types: frozenset = frozenset()) -> bool:
+def is_gameplay_side_effect(
+    event,
+    ambient_data: frozenset = frozenset(),
+    ambient_vfx: frozenset = frozenset(),
+) -> bool:
     """判断事件是否属于玩法副作用（拒绝路径必须保证探针窗口内不出现）。
 
-    只把「响应式反馈」算副作用：chat / vfx_event 恒算；server_data 按 payload_type
-    判定 —— 不在 ``ambient_types``（连接同步类型集合）里的才算。裸 ``payload`` 事件
-    不算副作用：它要么是已解码 server_data 事件的字节重复（同一次推送同时发 raw
-    payload + 解码后 server_data 两个事件），要么是 join 突发里解码器读不动的字节
-    （如玩家 spawn），都不独立构成玩法反馈。
+    只把「响应式反馈」算副作用：chat 恒算；server_data 按 payload_type 判定 —— 不在
+    ``ambient_data``（连接同步 payload 类型集合）里的才算；vfx_event 按 event_id 判定
+    —— 不在 ``ambient_vfx``（被动/周期 vfx 集合）里的才算。裸 ``payload`` 事件不算
+    副作用：它要么是已解码 server_data 事件的字节重复（同一次推送同时发 raw payload
+    + 解码后 server_data 两个事件），要么是 join 突发里解码器读不动的字节（如玩家
+    spawn），都不独立构成玩法反馈。
     """
-    if event.kind in ("chat", "vfx_event"):
+    if event.kind == "chat":
         return True
     if event.kind == "server_data":
-        return event.data.get("payload_type") not in ambient_types
+        return event.data.get("payload_type") not in ambient_data
+    if event.kind == "vfx_event":
+        event_id = event.data.get("event_id")
+        return not (event_id and event_id in ambient_vfx)
     return False
 
 
-def _ambient_types_in_window(bot, since_t: float) -> frozenset:
-    """探针窗口的连接同步类型集合：``t <= since_t`` 已出现过的 payload type，并上
-    显式兜底集合。
+def _ambient_signatures_in_window(bot, since_t: float) -> tuple[frozenset, frozenset]:
+    """探针窗口的连接同步签名集合：``t <= since_t`` 已出现过的 server_data payload
+    type 与 vfx event_id，并上显式兜底集合。
 
-    窗口起点之前的事件与探针无关（探针还没发出），其 payload type 属于连接同步 ——
-    这是自校准基线：任何在探针发出前就出现过的类型，之后再次出现都不算探针副作用。
-    显式兜底覆盖 Changed/周期驱动、可能首次出现晚于窗口起点、落在窗口内的类型。
+    窗口起点之前的事件与探针无关（探针还没发出），其签名属于连接同步 —— 这是自校准
+    基线：任何在探针发出前就出现过的签名，之后再次出现都不算探针副作用。显式兜底
+    覆盖 Changed/周期驱动、可能首次出现晚于窗口起点、落在窗口内的签名。
     """
-    observed = {
+    observed_data = {
         event.data.get("payload_type")
         for event in bot.events
         if event.kind == "server_data" and event.t <= since_t
     }
-    return frozenset(observed | _AMBIENT_SERVER_DATA_TYPES)
+    observed_vfx = {
+        event.data.get("event_id")
+        for event in bot.events
+        if event.kind == "vfx_event" and event.t <= since_t and event.data.get("event_id")
+    }
+    return (
+        frozenset(observed_data | _AMBIENT_SERVER_DATA_TYPES),
+        frozenset(observed_vfx | _AMBIENT_VFX_EVENT_IDS),
+    )
 
 
 def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> None:
@@ -77,13 +96,13 @@ def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> Non
     出现了任意副作用事件，说明某个坏请求被成功/部分处理了，直接抛带修复线索的
     BotAssertionError。调用时机是探针全部发出并 settle 之后 —— 该窗口内的副作用
     此时必然已在 events 里，扫存量即可，不需要再等。连接同步流量由
-    ``_ambient_types_in_window`` 排除（窗口起点前已出现的类型 + 显式兜底集合）。
+    ``_ambient_signatures_in_window`` 排除（窗口起点前已出现的签名 + 显式兜底集合）。
     """
-    ambient_types = _ambient_types_in_window(bot, since_t)
+    ambient_data, ambient_vfx = _ambient_signatures_in_window(bot, since_t)
     offenders = [
         event
         for event in bot.events
-        if event.t > since_t and is_gameplay_side_effect(event, ambient_types)
+        if event.t > since_t and is_gameplay_side_effect(event, ambient_data, ambient_vfx)
     ]
     if offenders:
         raise BotAssertionError(
@@ -139,7 +158,7 @@ def wait_keepalive_after(bot, after: float, timeout: float = 25.0):
     )
 
 
-def drain_event_stream(bot, *, quiet_s: float = 1.5, max_s: float = 6.0) -> None:
+def drain_event_stream(bot, *, quiet_s: float = 2.0, max_s: float = 6.0) -> None:
     """等事件流安静下来（连续 ``quiet_s`` 秒无新事件），最多 ``max_s`` 秒兜底。
 
     join 会一次性突发放出大量连接同步 payload（welcome / remains_sync /

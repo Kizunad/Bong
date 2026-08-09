@@ -2022,6 +2022,23 @@ class RejectionHelperTest(unittest.TestCase):
         )
         self.assertEqual(fired, ["p1"])
 
+    def test_passive_vfx_and_seen_vfx_are_not_side_effect(self):
+        # 被动/周期 vfx（灵气回充粒子 bong:cultivation_absorb）不算副作用；探针窗口
+        # 起点前已出现过的 vfx event_id（自校准基线）也不算。未出现过的响应式 vfx
+        #（如 combat_hit）必须被标记。
+        ambient = _RejectionFakeBot([_FakeEvent(6.5, "vfx_event", {"event_id": "bong:cultivation_absorb"})])
+        assert_no_gameplay_side_effect_since(ambient, since_t=1.0, label="测试")
+        seen = _RejectionFakeBot(
+            [
+                _FakeEvent(0.5, "vfx_event", {"event_id": "bong:combat_hit"}),
+                _FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"}),
+            ]
+        )
+        assert_no_gameplay_side_effect_since(seen, since_t=1.0, label="测试")
+        fresh = _RejectionFakeBot([_FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"})])
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(fresh, since_t=1.0, label="测试")
+
     def test_payload_type_seen_before_window_is_ambient(self):
         # 自校准基线：探针窗口起点前已出现过某 payload type → 它是连接同步（探针还没
         # 发出，不可能是探针导致的），窗口内再次出现不算副作用；从未出现过的类型
