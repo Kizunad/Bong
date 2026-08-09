@@ -74,11 +74,14 @@ def _wait_swap(
     return evt
 
 
-def _expect_silent(pubsub, anchor_count: int, window_s: float, context: str) -> None:
+def _expect_silent(pubsub, carrier: str, anchor_count: int, window_s: float, context: str) -> None:
+    # 只统计本 bot（carrier 归属）的事件：CH_SWAP 是全局频道，别的玩家切换也会
+    # 发布到这里，计数全量会让外来切换把静默窗口误判为"本 bot 发事件"。
     time.sleep(window_s)
-    assert len(pubsub.events_for(CH_SWAP)) == anchor_count, (
-        f"{context}：不应发布 container_swap 事件，"
-        f"期望 {anchor_count} 条，实际 {len(pubsub.events_for(CH_SWAP))}"
+    ours = [e for e in pubsub.events_for(CH_SWAP) if e.get("carrier") == carrier]
+    assert len(ours) == anchor_count, (
+        f"{context}：本 bot（carrier={carrier}）不应发布 container_swap 事件，"
+        f"期望 {anchor_count} 条，实际 {len(ours)}"
     )
 
 
@@ -98,7 +101,7 @@ def run(env) -> None:
 
             # 2) 同目标重复：静默（不发事件）
             _switch(bot, "quiver")
-            _expect_silent(pubsub, 1, 3.0, "同目标重复切换")
+            _expect_silent(pubsub, carrier, 1, 3.0, "同目标重复切换")
 
             # 3) to=None 轮换：quiver -> pocket_pouch
             _switch(bot, None)
@@ -106,7 +109,7 @@ def run(env) -> None:
 
             # 4) fenglinghe：拒收，静默
             _switch(bot, "fenglinghe")
-            _expect_silent(pubsub, 2, 3.0, "fenglinghe 拒收")
+            _expect_silent(pubsub, carrier, 2, 3.0, "fenglinghe 拒收")
 
             # 5) 切回 hand_slot：pocket_pouch -> hand_slot
             _switch(bot, "hand_slot")
@@ -114,7 +117,7 @@ def run(env) -> None:
 
             # 6) 同目标 hand_slot：静默
             _switch(bot, "hand_slot")
-            _expect_silent(pubsub, 3, 3.0, "同目标 hand_slot")
+            _expect_silent(pubsub, carrier, 3, 3.0, "同目标 hand_slot")
 
             bot.assert_alive("容器切换全链后")
     finally:

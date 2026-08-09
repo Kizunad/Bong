@@ -660,6 +660,27 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["half_life_remaining_ticks"], 120)
         self.assertEqual(decoded["item_instance_id"], 9)
 
+    def test_proto_carrier_state_decodes_every_charge_phase(self):
+        # CARRIER_CHARGE_PHASE_NAMES 是本次引入的完整 wire→domain 契约：每个 phase
+        # 值都必须解出正确名称，未知值回退 unspecified（findings：原测试只覆盖 phase=2，
+        # idle/charging 映射错或未知值不回退都测不出来）。
+        cases = {0: "idle", 1: "charging", 2: "charged", 9: "unspecified"}
+        for phase, expected in cases.items():
+            with self.subTest(phase=phase):
+                decoded = decode_server_data_payload(
+                    _server_data_carrier_state_bytes(
+                        carrier="player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f",
+                        phase=phase,
+                        progress=0.5,
+                        sealed_qi=30.0,
+                        sealed_qi_initial=60.0,
+                        half_life_remaining_ticks=120,
+                        item_instance_id=None,
+                    )
+                )
+                self.assertEqual(decoded["type"], "carrier_state")
+                self.assertEqual(decoded["phase"], expected)
+
 
 class InventoryHelperTest(unittest.TestCase):
     def test_latest_inventory_snapshot_uses_newest_history(self):
