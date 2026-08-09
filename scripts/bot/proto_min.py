@@ -1136,6 +1136,21 @@ def _trade_offer(data: bytes) -> dict[str, Any]:
     }
 
 
+def _sparring_invite(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "sparring_invite",
+        "invite_id": _string(fields, 1),
+        "initiator": _string(fields, 2),
+        "target": _string(fields, 3),
+        "realm_band": _string(fields, 4),
+        "breath_hint": _string(fields, 5),
+        "terms": _string(fields, 6),
+        "expires_at_ms": _varint(fields, 7),
+    }
+
+
 def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     entries = []

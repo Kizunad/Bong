@@ -2677,9 +2677,28 @@ class ProtoMinTest(unittest.TestCase):
         )
         self.assertEqual(payload["expires_at_ms"], 9876543210)
 
-    def test_sparring_invite_payload_name_registered(self):
-        envelope = _pb_len_field(64, _pb_len_field(1, b"sparring:1"))
+    def test_sparring_invite_decodes_all_fields(self):
+        sparring_invite = (
+            _pb_len_field(1, b"sparring:00000000-0000-7000-8000-000000000000")
+            + _pb_len_field(2, b"char:alice")
+            + _pb_len_field(3, b"char:bob")
+            + _pb_len_field(4, b"condense_solidify")
+            + _pb_len_field(5, "气息相试".encode())
+            + _pb_len_field(6, "点到为止".encode())
+            + _pb_u64_varint_field(7, 9876543210)
+        )
+        envelope = _pb_len_field(64, sparring_invite)
+
         self.assertEqual(proto_min.server_data_payload_name(envelope), "sparring_invite")
+        payload = proto_min.decode_server_data_envelope(envelope)
+        self.assertEqual(payload["type"], "sparring_invite")
+        self.assertEqual(payload["invite_id"], "sparring:00000000-0000-7000-8000-000000000000")
+        self.assertEqual(payload["initiator"], "char:alice")
+        self.assertEqual(payload["target"], "char:bob")
+        self.assertEqual(payload["realm_band"], "condense_solidify")
+        self.assertEqual(payload["breath_hint"], "气息相试")
+        self.assertEqual(payload["terms"], "点到为止")
+        self.assertEqual(payload["expires_at_ms"], 9876543210)
 
 
 def _bare_connection(threshold: int = -1) -> mc.Connection:

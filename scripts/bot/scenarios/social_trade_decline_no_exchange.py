@@ -62,7 +62,10 @@ def run(env) -> None:
 
             alice_snapshot = wait_inventory_contains(alice, OFFER_ITEM_ID, timeout=10.0)
             talisman = require_item(alice_snapshot, OFFER_ITEM_ID)
-            wait_inventory_contains(bob, REQUEST_ITEM_ID, timeout=10.0)
+            bob_pill = require_item(
+                wait_inventory_contains(bob, REQUEST_ITEM_ID, timeout=10.0),
+                REQUEST_ITEM_ID,
+            )
 
             # ── 分支①：真实 offer 被目标拒绝 → pending 移除，背包分毫不动 ──
             # game_join 的 entity_id 恒为 0（valence 保留给客户端自身），不能当
@@ -108,6 +111,40 @@ def run(env) -> None:
                 "实际背包里出现了"
             )
 
+            # 拒绝的 pending 移除证明：同一 offer_id 重放 accepted=true 必须被拒。
+            # 服务端若在拒绝时没把 pending 从 registry 移除（review 点名的违规实现），
+            # 这次带完整 requested_instance_id 的 accept 就会触发换包——下面的
+            # 「无新快照 + 双端背包不变」立即抓住。
+            alice_accept_before = _inventory_snapshot_count(alice)
+            bob_accept_before = _inventory_snapshot_count(bob)
+            bob.intent(
+                {
+                    "type": "trade_offer_response",
+                    "v": 1,
+                    "offer_id": offer["offer_id"],
+                    "accepted": True,
+                    "requested_instance_id": int(bob_pill["item"]["instance_id"]),
+                }
+            )
+            time.sleep(2.0)
+            assert _inventory_snapshot_count(alice) == alice_accept_before, (
+                "已拒绝 offer 重放 accept 后 alice 不应收到新 inventory_snapshot"
+                "（pending 应已随拒绝移除，重放必须被静默丢弃）"
+            )
+            assert _inventory_snapshot_count(bob) == bob_accept_before, (
+                "已拒绝 offer 重放 accept 后 bob 不应收到新 inventory_snapshot"
+                "（pending 应已随拒绝移除，重放必须被静默丢弃）"
+            )
+            assert find_item(latest_inventory_snapshot(alice), OFFER_ITEM_ID) is not None, (
+                f"已拒绝 offer 重放 accept 后 alice 仍应持有 {OFFER_ITEM_ID}（不得换包）"
+            )
+            assert find_item(latest_inventory_snapshot(bob), REQUEST_ITEM_ID) is not None, (
+                f"已拒绝 offer 重放 accept 后 bob 仍应持有 {REQUEST_ITEM_ID}（不得换包）"
+            )
+            assert find_item(latest_inventory_snapshot(bob), OFFER_ITEM_ID) is None, (
+                f"已拒绝 offer 重放 accept 后 bob 不应得到 {OFFER_ITEM_ID}（不得换包）"
+            )
+
             # ── 分支②：target 解析失败（entity: 不存在）→ 静默丢弃 ──
             bob_offers_before = _server_data_count(bob, "trade_offer")
             alice.intent(
@@ -127,9 +164,12 @@ def run(env) -> None:
             # ── 分支③：self-target（initiator == target）→ 静默丢弃 ──
             # 用 alice 的**真实** protocol id（经 bob 视野发现）自指，命中
             # dispatch_trade_offers 的 initiator == target 门禁，而非解析失败。
+            # 断言盯 alice（发起者 == 目标）：若实现去掉该门禁，错误投递会落到
+            # alice 自己头上——盯无关的 bob 完全测不到这条契约（review 点名）。
             alice_protocol_id = wait_player_protocol_id(
                 bob, username=alice.username, timeout=15.0
             )
+            alice_offers_before = _server_data_count(alice, "trade_offer")
             alice.intent(
                 {
                     "type": "trade_offer_request",
@@ -139,8 +179,12 @@ def run(env) -> None:
                 }
             )
             time.sleep(2.0)
+            assert _server_data_count(alice, "trade_offer") == alice_offers_before, (
+                "self-target 交易请求应被静默丢弃（initiator == target 门禁），"
+                "alice（发起者==目标）不应收到自己的 trade_offer payload"
+            )
             assert _server_data_count(bob, "trade_offer") == bob_offers_before, (
-                "self-target 交易请求应被静默丢弃（不能给自己发 offer），bob 不应收到 payload"
+                "self-target 交易请求同样不应把 payload 发给无关玩家 bob"
             )
 
             alice.assert_alive("拒绝/坏 target 分支执行后")
