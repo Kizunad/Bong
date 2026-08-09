@@ -36,6 +36,14 @@ from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
+from bot._agent_ui_helpers import (  # noqa: E402
+    assert_request_shape,
+    build_cmd,
+    expect_agent_ui_close,
+    expect_agent_ui_request,
+    response_matches,
+)
+from bot._redis_helpers import RedisPubSub, RespFrames, _encode_command  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
@@ -4611,6 +4619,339 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
+
+
+# ── agent_ui 场景底座（_redis_helpers / _agent_ui_helpers）单测 ──────────────
+
+
+class RespFramesTest(unittest.TestCase):
+    """RESP2 编解码器：feed 字节流 → 按帧取回值（纯 stdlib，无需 redis）。"""
+
+    def test_integer_reply(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertIsNone(parser.next_frame(), "帧取完后应返回 None")
+
+    def test_simple_string(self):
+        parser = RespFrames()
+        parser.feed(b"+OK\r\n")
+        self.assertEqual(parser.next_frame(), "OK")
+
+    def test_error_string(self):
+        parser = RespFrames()
+        parser.feed(b"-ERR bad\r\n")
+        self.assertEqual(parser.next_frame(), "ERR bad")
+
+    def test_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), b"hello")
+
+    def test_empty_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), b"")
+
+    def test_nil_bulk_string(self):
+        parser = RespFrames()
+        parser.feed(b"$-1\r\n")
+        self.assertIsNone(parser.next_frame())
+
+    def test_array_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$9\r\nsubscribe\r\n$6\r\nbong:x\r\n:1\r\n")
+        self.assertEqual(parser.next_frame(), [b"subscribe", b"bong:x", 1])
+
+    def test_message_frame(self):
+        parser = RespFrames()
+        parser.feed(b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n")
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_partial_feeds(self):
+        parser = RespFrames()
+        raw = b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n"
+        for i in range(0, len(raw), 3):
+            self.assertIsNone(parser.next_frame(), "字节未喂全时不应出帧")
+            parser.feed(raw[i : i + 3])
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
+
+    def test_concatenated_frames(self):
+        parser = RespFrames()
+        parser.feed(b":1\r\n*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$0\r\n\r\n")
+        self.assertEqual(parser.next_frame(), 1)
+        self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b""])
+
+    def test_unknown_marker_rejected(self):
+        parser = RespFrames()
+        parser.feed(b"?nonsense\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_json_payload_in_message_frame(self):
+        raw = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            b'$58\r\n{"request_id":"req_1","action":"button_click","params":{}}\r\n'
+        )
+        parser = RespFrames()
+        parser.feed(raw)
+        frame = parser.next_frame()
+        self.assertEqual(frame[0], b"message")
+        self.assertEqual(json.loads(frame[2].decode("utf-8"))["request_id"], "req_1")
+
+
+class RedisCommandEncodeTest(unittest.TestCase):
+    """PUBLISH / SUBSCRIBE 命令编码（与 RESP2 协议字节精确对拍）。"""
+
+    def test_publish_encoding(self):
+        self.assertEqual(
+            _encode_command("PUBLISH", "bong:agent_ui_cmd", '{"a":1}'),
+            b'*3\r\n$7\r\nPUBLISH\r\n$17\r\nbong:agent_ui_cmd\r\n$7\r\n{"a":1}\r\n',
+        )
+
+    def test_subscribe_encoding(self):
+        self.assertEqual(
+            _encode_command("SUBSCRIBE", "bong:agent_ui_response"),
+            b"*2\r\n$9\r\nSUBSCRIBE\r\n$22\r\nbong:agent_ui_response\r\n",
+        )
+
+
+class _FakeTimeoutSocket:
+    """recv 恒抛 TimeoutError 的假 socket：模拟空窗口内无数据到达。"""
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def recv(self, _size: int) -> bytes:
+        raise TimeoutError("timed out")
+
+
+class RedisPubSubWaitDeadlineTest(unittest.TestCase):
+    """wait_message 的 recv 窗口必须受调用方 deadline 约束。
+
+    回归：io_timeout(10s) 大于负向断言窗口(2s)时，固定 10s 阻塞 recv 会直接抛
+    TimeoutError 崩掉场景，而不是按 deadline 返回 None / 抛 AssertionError。
+    """
+
+    def _redis_with_timeout_socket(self, timeout: float = 2.0) -> RedisPubSub:
+        redis = RedisPubSub(io_timeout=timeout)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        return redis
+
+    def test_negative_window_returns_none_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "负向窗口超时应返回 None，而不是抛 TimeoutError")
+        self.assertLess(
+            elapsed, 1.5, "负向窗口应约在 deadline 处返回，不拖满 io_timeout"
+        )
+
+    def test_positive_window_raises_assertion_after_deadline(self):
+        redis = self._redis_with_timeout_socket(timeout=2.0)
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+
+
+class _AgentUiFakeBot(_FakeBot):
+    """_FakeBot 的 wait_for 抛 BotAssertionError（与真实 Bot 一致），供负向断言测。"""
+
+    def wait_for(self, predicate, timeout: float, description: str):
+        for event in self.events:
+            if predicate(event):
+                return event
+        raise BotAssertionError(f"未找到 {description}; events={self.events}")
+
+
+def _req_event(t: float, request_id: str) -> _FakeEvent:
+    payload = json.dumps(
+        {
+            "request_id": request_id,
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+    ).encode("utf-8")
+    return _FakeEvent(
+        t, "payload", {"channel": "bong:agent_ui_request", "data": payload}
+    )
+
+
+class AgentUiHelperTest(unittest.TestCase):
+    """_agent_ui_helpers 纯逻辑：cmd 构造 / S2C 形状断言 / 回执匹配 / 负向等待。"""
+
+    def test_build_cmd_exact_six_fields(self):
+        cmd = build_cmd("req_1", "offline:Fake")
+        self.assertEqual(
+            set(cmd),
+            {
+                "request_id",
+                "target_player",
+                "xml",
+                "timeout_ticks",
+                "realm_gate",
+                "allowed_button_ids",
+            },
+            "AgentUiRequestCommandV1 六个字段全必填（server serde deny_unknown_fields）",
+        )
+        self.assertEqual(cmd["request_id"], "req_1")
+        self.assertEqual(cmd["allowed_button_ids"], ["enter_realm", "cancel"])
+        self.assertEqual(cmd["realm_gate"], 0)
+
+    def test_build_cmd_overrides(self):
+        cmd = build_cmd(
+            "req_2",
+            "offline:Fake",
+            timeout_ticks=20,
+            realm_gate=6,
+            allowed_button_ids=("ok",),
+            xml="<x/>",
+        )
+        self.assertEqual(cmd["timeout_ticks"], 20)
+        self.assertEqual(cmd["realm_gate"], 6)
+        self.assertEqual(cmd["allowed_button_ids"], ["ok"])
+        self.assertEqual(cmd["xml"], "<x/>")
+
+    def test_build_cmd_json_roundtrip(self):
+        cmd = build_cmd("req_3", "offline:Fake")
+        self.assertEqual(json.loads(json.dumps(cmd)), cmd)
+
+    def test_assert_request_shape_accepts_valid_payload(self):
+        payload = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_security_field_leak(self):
+        payload = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+            "realm_gate": 3,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(payload, "req_1")
+        payload["allowed_button_ids"] = ["enter_realm"]
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(payload, "req_1")
+
+    def test_assert_request_shape_rejects_wrong_request_id(self):
+        payload = {
+            "request_id": "other",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape(payload, "req_1")
+
+    def test_response_matches_action_and_params(self):
+        self.assertTrue(
+            response_matches(
+                {
+                    "request_id": "r",
+                    "action": "button_click",
+                    "params": {"button_id": "ok"},
+                },
+                action="button_click",
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": "x", "extra": "y"}},
+                params_subset={"reason": "x"},
+            ),
+            "params 子集匹配",
+        )
+        self.assertFalse(
+            response_matches({"action": "dismissed"}, action="button_click")
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "y"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": "not-a-dict"},
+                params_subset={"reason": "x"},
+            )
+        )
+        self.assertTrue(
+            response_matches({"action": "timeout", "params": {}}, params_subset={}),
+            "空子集恒匹配",
+        )
+
+    def test_expect_agent_ui_request_positive(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        payload = expect_agent_ui_request(bot, "req_1", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_1")
+        self.assertEqual(payload["target_player"], "offline:Fake")
+
+    def test_expect_agent_ui_request_negative_when_absent(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_other")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False),
+            "期望不应出现的 request_id 超时应返回 None",
+        )
+
+    def test_expect_agent_ui_request_negative_fails_when_present(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_1", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_after_mark(self):
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_1"), _req_event(5.0, "req_2")])
+        payload = expect_agent_ui_request(bot, "req_2", after=2.0, timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_2")
+
+    def test_expect_agent_ui_close_reason_assert(self):
+        close = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"invalid_button_id"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close])
+        expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_reason_null(self):
+        close = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":null}',
+            },
+        )
+        bot = _AgentUiFakeBot([close])
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
 
 
 if __name__ == "__main__":
