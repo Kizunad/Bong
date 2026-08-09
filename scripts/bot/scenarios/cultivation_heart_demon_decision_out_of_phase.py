@@ -19,6 +19,7 @@
 from bot.bot import BotAssertionError  # noqa: F401
 
 from ._cultivation_gap_helpers import (
+    assert_no_server_data_after,
     assert_valid_request_still_works,
     du_xu_setup,
     wait_keepalive_after,
@@ -59,19 +60,19 @@ def run(env) -> None:
         bot.assert_alive("渡虚劫启动后连接保持")
 
         # 3. Omen 阶段抉择 → 仍被门禁忽略（非 HeartDemon phase）；渡虚劫照常进行。
+        #    absence 断言必须覆盖有界 post-request 观察窗：若实现坏到真处理了抉择、
+        #    渡虚劫状态因此变化，新的 tribulation_state 宣告要到后续 server/ECS tick
+        #    才 emit，瞬时历史扫描看不到，keepalive 也证明不了 dispatch 已完成。
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent(HEART_DEMON_IDX)
         bot.intent(HEART_DEMON_NULL)
+        assert_no_server_data_after(
+            bot,
+            "tribulation_state",
+            after=sent_at,
+            window=4.0,
+            description="Omen 阶段 heart_demon_decision 不得产生新的 tribulation_state 宣告（渡虚劫照常）",
+        )
         wait_keepalive_after(bot, sent_at)
         bot.assert_alive("Omen 阶段 heart_demon_decision 后连接保持")
-        if any(
-            e.kind == "server_data"
-            and e.data["payload_type"] == "tribulation_state"
-            and e.t > sent_at
-            for e in bot.events
-        ):
-            raise BotAssertionError(
-                f"[{bot.username}] 期望心魔抉择未影响渡虚劫（不产生新的 tribulation_state 宣告），"
-                "实际收到了新的 tribulation_state payload"
-            )
         assert_valid_request_still_works(bot)

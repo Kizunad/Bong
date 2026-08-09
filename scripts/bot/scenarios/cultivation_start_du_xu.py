@@ -35,8 +35,17 @@ def run(env) -> None:
         bot.expect_event("pos_look", timeout=15.0)
 
         # 1. 前置未满足（醒灵新手、零经脉）→ 干净拒绝：不踢、继续心跳、合法请求仍可用。
+        #    拒绝契约的负半面必须可观察：若实现绕过门禁真开了劫，会 emit tribulation_state
+        #    宣告——有界窗口内出现即红，否则只测连接活性测不出「状态没变」。
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent(START_DU_XU)
+        assert_no_server_data_after(
+            bot,
+            "tribulation_state",
+            after=sent_at,
+            window=4.0,
+            description="前置未满足的 start_du_xu 不得开启渡虚劫（无 tribulation_state 宣告）",
+        )
         bot.wait_for(
             lambda e: e.t > sent_at and e.kind == "keepalive",
             timeout=25.0,
