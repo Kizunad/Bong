@@ -32,7 +32,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@0014bee2d7ac77ea439d70e6bb7675a1e14e3c45
+    uses: Kizunad/review/.github/workflows/review.yml@3374d2251ff816aa7d022b8bdd9188d5531e7d6d
     with:
       pr_number: ${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
