@@ -19,9 +19,14 @@ bot 从 spawn 走向 rogue_village POI（/tppoi novice 读坐标），追最近 
 ≤3m 后：inspect greeting、"trade" 摊开货物、三件目录品逐件请求——库存随机 1-3/3，
 每件反馈 ∈ {"当前没有这件货", "骨币不足，需要 N 枚。"}（fresh 玩家 7 骨币 < 最低价 8，
 命中必报骨币不足），且三件至少一次骨币不足（库存非空必然命中一件）。
+
+fixture 模式（BOT_E2E_AMBIENT_FIXTURE_MODE=1 或 CI 通用自起）不设 BOT_E2E_ROGUE_TRADE：
+播种受 NpcRegistry 预算封顶（实测 300 → 50，"seeded 50 rogue NPCs"），散落 zone
+bounds ±750 且 80m 激活半径，RogueVillage POI 重生成需 ~24h server ticks——
+fixture 世界无法确定性构造散修相遇，故该阶段是真实世界契约而非 CI 场景。
 """
 
-DESCRIPTION = "npc_trade_request：zombie 拒绝分支（骨币结算/目录键控）+ 散修商贩库存/定价/余额链路"
+DESCRIPTION = "npc_trade_request：zombie 拒绝分支（骨币结算/目录键控）+ 散修商贩链路（BOT_E2E_ROGUE_TRADE=1 可选）"
 MODULES = ["npc", "dialogue", "trade"]
 
 import os
@@ -209,5 +214,9 @@ def run(env) -> None:
         if os.environ.get("BOT_E2E_ROGUE_TRADE") == "1":
             run_phase_2(bot)
         else:
-            print("    [npc_dialogue_chain_trade] BOT_E2E_ROGUE_TRADE 未置 1，跳过散修商贩阶段")
+            print(
+                "    [npc_dialogue_chain_trade] BOT_E2E_ROGUE_TRADE 未置 1，跳过散修商贩阶段"
+                "（fixture/CI 模式播种预算封顶 50 且散落 ±750，无法确定性相遇；"
+                "该阶段面向真实世界 BONG_ROGUE_SEED_COUNT>0 server）"
+            )
         bot.assert_alive("trade 对话链路检查后")

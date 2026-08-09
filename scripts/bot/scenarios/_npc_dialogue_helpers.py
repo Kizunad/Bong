@@ -11,6 +11,7 @@
   → display_name "游尸·醒灵"，inspect greeting "游尸没有回应。"，can_trade=false；
   chase thinker 只追不咬（无 MeleeRangeScorer/MeleeAttackAction），对话场景零战斗风险。
 - BONG_ROGUE_SEED_COUNT>0 播种的散修走 villager fallback（EntityKind::VILLAGER=108），
+  但 NpcRegistry 预算封顶实际播种数（实测 300→50），fixture 世界内相遇不可确定性构造；
   display_name "散修·{醒灵|引气|凝脉|固元|通灵|化虚}"，greeting "道友，可有灵草出让？"，
   can_trade=true（fresh 玩家 rep=0 ≥ -30、FactionReputationTier::Normal）。
 - 交易判定顺序：offered_items → 目录查找（npc_trade_catalog_entry 按 archetype
