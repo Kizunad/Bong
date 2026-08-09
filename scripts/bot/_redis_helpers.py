@@ -107,7 +107,10 @@ def _parse_redis_url(url: str) -> tuple[str, int]:
     rest = url[len("redis://") :]
     if "@" in rest:
         rest = rest.rsplit("@", 1)[1]
-    host, _, port = rest.partition(":")
+    # redis://host:port/db 的 db 路径/query 只对数据命令选库有效，SUBSCRIBE 不
+    # 需要；转端口前必须先剥离，否则 port='6379/0' 会 int() ValueError。
+    authority, _, _ = rest.partition("/")
+    host, _, port = authority.partition(":")
     port = int(port or "6379")
     return host, port
 
@@ -115,10 +118,20 @@ def _parse_redis_url(url: str) -> tuple[str, int]:
 class RedisPubSub:
     """SUBSCRIBE 常驻连接 + 后台线程泵帧，收 message 帧的 JSON 内容。"""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 6379, timeout: float = 5.0):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 6379,
+        timeout: float = 5.0,
+        max_events: int = 5000,
+    ):
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._frames = RespFrames()
-        self._events: list[tuple[str, dict[str, Any]]] = []
+        # (seq, channel, payload)：seq 单调递增，供 wait_event 只扫本次等待期间
+        # 新增的事件；max_events 兜底裁剪最旧条目，防止共享频道累积撑爆内存。
+        self._events: list[tuple[int, str, dict[str, Any]]] = []
+        self._event_seq = 0
+        self._max_events = max_events
         self._lock = threading.Lock()
         self._closed = False
         self._thread: Optional[threading.Thread] = None
@@ -179,11 +192,14 @@ class RedisPubSub:
                 except (ValueError, TypeError):
                     continue
                 with self._lock:
-                    self._events.append((channel, decoded))
+                    self._events.append((self._event_seq, channel, decoded))
+                    self._event_seq += 1
+                    if len(self._events) > self._max_events:
+                        del self._events[: len(self._events) - self._max_events]
 
     def events_for(self, channel: str) -> list[dict[str, Any]]:
         with self._lock:
-            return [e for c, e in self._events if c == channel]
+            return [e for _, c, e in self._events if c == channel]
 
     def wait_event(
         self,
@@ -193,8 +209,16 @@ class RedisPubSub:
         description: str = "redis 事件",
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
+        # 记录等待起点的 event_seq：只扫本等待期间新增的事件，不重复扫全频道历史
+        # （全局频道的历史在长跑场景里会无限累积，反复全扫越来越贵）。
+        with self._lock:
+            start_seq = self._event_seq
         while True:
-            for evt in self.events_for(channel):
+            with self._lock:
+                fresh = [
+                    e for seq, c, e in self._events if seq >= start_seq and c == channel
+                ]
+            for evt in fresh:
                 if predicate(evt):
                     return evt
             if time.monotonic() >= deadline:

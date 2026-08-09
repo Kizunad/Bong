@@ -32,18 +32,36 @@ RUN_IN_ALL_WHEN_ENV = REQUIRED_ENV
 DESPAWN_CH = "bong:combat/projectile_despawned"
 
 
+def _self_carrier(bot) -> str:
+    """从 server 周期下发的 CarrierState 取本 bot 的线缆 wire id。
+
+    bong:combat/projectile_despawned 是全局频道，其他玩家的抛射也会发布到这里；
+    server 每 tick 周期向每个客户端推送自身 CarrierState（field 49，
+    carrier=`player:{uuid}`），用它把 despawn 事件归属钉到本 bot。
+    """
+    evt = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data.get("payload_type") == "carrier_state"
+        and e.data.get("payload", {}).get("carrier", "").startswith("player:"),
+        timeout=15.0,
+        description="server 下发本 bot 的 CarrierState（carrier=player: 线缆 id）",
+    )
+    return evt.data["payload"]["carrier"]
+
+
 def run(env) -> None:
     pubsub = RedisPubSub.from_env()
     try:
         pubsub.subscribe(DESPAWN_CH)
         with env.new_bot("Throw") as bot:
             wait_join_and_inventory(bot)
+            carrier = _self_carrier(bot)
             before = latest_inventory_snapshot(bot)
             prev_rev = int(before["revision"])
             initial_held = (before.get("equipped", {}).get("main_hand_held") or {}).get(
                 "item_id"
             )
-            assert not initial_held.startswith("anqi_"), (
+            assert initial_held is None or not initial_held.startswith("anqi_"), (
                 f"前置：默认手槽应是非暗器武器（新手村 fixture 通常给 iron_sword），"
                 f"实际 {initial_held!r}——若服务器默认就发暗器，本护栏前置失效需重选"
             )
@@ -55,10 +73,14 @@ def run(env) -> None:
                 {"type": "throw_carrier", "v": 1, "dir": [0.0, 0.0, 1.0], "power": 0.5}
             )
 
-            # 无事件：窗口内不应冒出任何 projectile_despawned。
+            # 无本 bot 事件：窗口内不应冒出归属本 bot 的 projectile_despawned。
+            # 该频道全局共享，订阅又先于 bot 建立，其他玩家的抛射也会发布进来；
+            # 必须按 owner 过滤到本 bot，才证明空手抛射被静默忽略。
             time.sleep(3.0)
-            fired = pubsub.events_for(DESPAWN_CH)
-            assert not fired, f"空手抛射不应产生 despawn 事件，实际 {fired!r}"
+            fired = [
+                e for e in pubsub.events_for(DESPAWN_CH) if e.get("owner") == carrier
+            ]
+            assert not fired, f"空手抛射不应产生本 bot 的 despawn 事件，实际 {fired!r}"
 
             # 无库存改动：revision 不变，且手持项仍为同一非暗器武器（未被清空/替换）。
             after = latest_inventory_snapshot(bot)

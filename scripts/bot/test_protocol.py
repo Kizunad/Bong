@@ -4683,11 +4683,25 @@ class PlayerPacketContractTest(unittest.TestCase):
 class RedisPubSubTest(unittest.TestCase):
     """_redis_helpers：RESP2 帧编解码 + SUBSCRIBE ack 等待 + 消息泵（纯 stdlib，无需 redis 服务）。"""
 
-    def _pubsub_with_pair(self):
+    def _pubsub_with_pair(self, max_events: int = 5000):
         server, client = socket.socketpair()
         with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
-            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379, max_events=max_events)
         return pubsub, server, client
+
+    def _wait_for(self, pubsub, channel, predicate, timeout=5.0):
+        """轮询 events_for 直到谓词命中（全历史匹配，无等待窗口语义）。
+
+        泵线程是独立线程，send 后事件何时入队不确定；这里确定性等它入队，
+        用于验证“投递”本身，与 wait_event 的窗口语义无关。
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for evt in pubsub.events_for(channel):
+                if predicate(evt):
+                    return evt
+            time.sleep(0.05)
+        raise AssertionError(f"事件未在 {timeout:.0f}s 内入队: channel={channel}")
 
     def test_resp_frames_simple_string_integer_null(self):
         frames = _redis_helpers.RespFrames()
@@ -4730,10 +4744,7 @@ class RedisPubSubTest(unittest.TestCase):
                 payload,
             )
             server.sendall(msg)
-            evt = pubsub.wait_event(
-                "my_chan", lambda e: e.get("full_charge") is False, timeout=5.0
-            )
-            self.assertEqual(evt["tick"], 7)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
             self.assertEqual(len(pubsub.events_for("my_chan")), 1)
             self.assertEqual(pubsub.events_for("other"), [])
         finally:
@@ -4779,8 +4790,100 @@ class RedisPubSubTest(unittest.TestCase):
                 payload,
             )
             server.sendall(msg)
-            evt = pubsub.wait_event("my_chan", lambda e: e.get("tick") == 42, timeout=5.0)
-            self.assertEqual(evt["tick"], 42)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 42)
+            self.assertEqual(pubsub.events_for("my_chan")[0]["tick"], 42)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_parse_redis_url_with_database_path(self):
+        # 回归：review finding [3]——REDIS_URL 带 db 路径/query 时转端口会
+        # int('6379/0') ValueError；SUBSCRIBE 不需要选库，应剥离 path 再解析。
+        cases = {
+            "redis://127.0.0.1:6379/0": ("127.0.0.1", 6379),
+            "redis://127.0.0.1:6379/0?x=1&y=2": ("127.0.0.1", 6379),
+            "redis://127.0.0.1": ("127.0.0.1", 6379),
+            "redis://user:pass@127.0.0.1:6380/3": ("127.0.0.1", 6380),
+            "": ("127.0.0.1", 6379),
+        }
+        for url, expected in cases.items():
+            self.assertEqual(_redis_helpers._parse_redis_url(url), expected)
+
+    def test_events_buffer_is_bounded(self):
+        # 回归：review finding [2]——_events 无上限会随全局频道累积撑爆内存；
+        # max_events 裁剪应丢弃最旧条目。
+        pubsub, server, client = self._pubsub_with_pair(max_events=2)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            for i in range(3):
+                payload = json.dumps({"seq": i}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+            # 等三条全部入队（seq 2 可见即裁剪已发生——裁剪与追加同锁），再断言。
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 2)
+            got = [e["seq"] for e in pubsub.events_for("my_chan")]
+            self.assertEqual(len(got), 2)
+            self.assertNotIn(0, got, "max_events 裁剪应丢弃最旧条目")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_returns_event_received_during_wait(self):
+        # wait_event 的等待窗口从调用时起算：事件须在窗口内到达才被命中。
+        # 用生产者线程在 wait 开始后再投递，避免“先 send 后 wait”时泵线程抢先
+        # 入队、事件落出窗口（那正是 review finding [2] 要消除的重扫行为）。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def _produce():
+                time.sleep(0.2)
+                payload = json.dumps({"tick": 7}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+
+            producer = threading.Thread(target=_produce)
+            producer.start()
+            evt = pubsub.wait_event(
+                "my_chan", lambda e: e.get("tick") == 7, timeout=5.0
+            )
+            producer.join()
+            self.assertEqual(evt["tick"], 7)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_wait_event_scans_only_events_since_wait_start(self):
+        # 回归：review finding [2]——wait_event 若重扫全频道历史，等待开始前的
+        # 旧事件也会被谓词命中；应只匹配本次等待期间新增的事件。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            payload = json.dumps({"seq": 0}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("seq") == 0)
+            # 旧事件已入队但不在本次等待窗口内，不应再被命中。
+            with self.assertRaises(AssertionError):
+                pubsub.wait_event("my_chan", lambda e: e.get("seq") == 0, timeout=0.5)
         finally:
             pubsub.stop()
             server.close()
