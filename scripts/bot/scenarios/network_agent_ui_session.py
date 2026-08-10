@@ -8,10 +8,11 @@ bong:client_request `agent_ui_response` → server 校验 request_id/allowed_but
 锁定的行为：
 - button_click（白名单内）→ 转发 button_click + params.button_id 原样回执
 - dismissed → 转发 dismissed
-- parse_error（client 上报）→ 原样转发（非 button_click 不查白名单）
+- parse_error（client 上报）→ 原样转发整个 params（非 button_click 不查白名单）
 - 无响应 → server ticker 权威超时 → Timeout 终态回执
 - 新 cmd 替换旧 session → 旧 session Replaced 回执 + S2C 静默 close(reason=null)
 - 断线 → Dismissed 终态回执
+- 终态回执 exactly-once：timeout / replaced / 断线 dismissed 每个 request_id 只发一次
 - S2C 下发的 payload 绝不含安全字段 realm_gate / allowed_button_ids
 
 每个探针用唯一 request_id（含 run_tag），Redis 订阅只按 request_id 过滤，防串扰。
@@ -24,6 +25,7 @@ from bot._agent_ui_helpers import (
     RedisClient,
     expect_agent_ui_close,
     expect_agent_ui_request,
+    expect_no_redis_response,
     expect_redis_response,
     publish_cmd,
 )
@@ -104,12 +106,13 @@ def _parse_error(bot, redis, target_player, run_tag) -> None:
             "params": {"reason": "owo_parse_failed"},
         }
     )
-    # 非 button_click 动作原样转发（含 params），不查 allowed_button_ids
+    # 非 button_click 动作原样转发（含 params），不查 allowed_button_ids——
+    # 原样契约必须精确匹配整个 params，额外字段（如注入 button_id）即违约。
     expect_redis_response(
         redis,
         request_id,
         action="parse_error",
-        params_subset={"reason": "owo_parse_failed"},
+        params_exact={"reason": "owo_parse_failed"},
     )
 
 
@@ -121,6 +124,8 @@ def _timeout(bot, redis, target_player, run_tag) -> None:
     got = expect_redis_response(redis, request_id, timeout=15.0, action="timeout")
     if got["params"] not in ({}, None):
         raise AssertionError(f"timeout 回执应无 params，实际 {got!r}")
+    # 终态契约 exactly-once：同一 request_id 不得再出现第二条回执
+    expect_no_redis_response(redis, request_id, timeout=2.0)
 
 
 def _replaced(bot, redis, target_player, run_tag) -> None:
@@ -131,6 +136,8 @@ def _replaced(bot, redis, target_player, run_tag) -> None:
     expect_redis_response(
         redis, old_id, timeout=15.0, action="replaced", params_subset={}
     )
+    # 终态契约 exactly-once：同一 request_id 不得再出现第二条回执
+    expect_no_redis_response(redis, old_id, timeout=2.0)
     expect_agent_ui_close(bot, old_id, reason=None, after=mark, timeout=15.0)
     # 新 session 仍可正常点击（替换不影响新 session 生命周期）
     _click(bot, new_id, new_cmd["allowed_button_ids"][0])
@@ -146,6 +153,8 @@ def _disconnect_dismissed(bot, redis, target_player, run_tag) -> None:
     request_id, _ = _new_session(bot, redis, target_player, run_tag, "disconn")
     bot.close()
     expect_redis_response(redis, request_id, timeout=15.0, action="dismissed")
+    # 终态契约 exactly-once：同一 request_id 不得再出现第二条回执
+    expect_no_redis_response(redis, request_id, timeout=2.0)
 
 
 def run(env) -> None:

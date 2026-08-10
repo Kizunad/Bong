@@ -87,14 +87,26 @@ def assert_request_shape(payload: dict, request_id: str) -> None:
 
 
 def response_matches(
-    payload: dict, action: str | None = None, params_subset: dict | None = None
+    payload: dict,
+    action: str | None = None,
+    params_subset: dict | None = None,
+    params_exact: dict | None = None,
 ) -> bool:
-    """bong:agent_ui_response 消息匹配：action 精确 + params 子集。
+    """bong:agent_ui_response 消息匹配：action 精确 + params 子集/精确。
 
     子集匹配要求 key 存在且值相等——缺失的 key 不等于显式 null，不能放行。
+    精确匹配要求 params 与声明逐键相等（原样转发契约用）：额外字段即违约。
+    ``params_exact`` 与 ``params_subset`` 互斥，同时给出是调用方错误。
     """
     if action is not None and payload.get("action") != action:
         return False
+    if params_exact is not None and params_subset is not None:
+        raise ValueError("params_exact 与 params_subset 互斥，不能同时给出")
+    if params_exact is not None:
+        got = payload.get("params")
+        if not isinstance(got, dict):
+            return False
+        return got == params_exact
     if params_subset is not None:
         got = payload.get("params")
         if not isinstance(got, dict):
@@ -219,7 +231,7 @@ def expect_redis_response(
     expect: bool = True,
     **want,
 ) -> dict | None:
-    """等 bong:agent_ui_response 上 request_id 匹配的消息；断言 action/params 子集。"""
+    """等 bong:agent_ui_response 上 request_id 匹配的消息；断言 action/params（子集或精确）。"""
 
     def matches(payload: dict) -> bool:
         return payload.get("request_id") == request_id and response_matches(

@@ -4813,12 +4813,28 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
 
 
 class _AgentUiFakeBot(_FakeBot):
-    """_FakeBot 的 wait_for 抛 BotAssertionError（与真实 Bot 一致），供负向断言测。"""
+    """wait_for 模拟真实 Bot 的 temporal wait 契约，供负向/时序断言测。
+
+    真实 ``Bot.wait_for``（bot.py:389）以调用时刻为起点等到 deadline，窗口内
+    到达即命中、窗口关闭后才到达不得命中。本 fake 用事件时间戳 ``t`` 建模同一条：
+    ``t <= start`` 的事件视为观测前已送达（顺序消费，不得二次命中），``t > deadline``
+    的事件视为窗口关闭后才到。这样负向断言能区分「窗口内迟到事件」（必须失败）
+    与「窗口外事件」（返回 None），而不是对固定事件列表做一次扫描——后者会让
+    「helper 立即返回 / 零超时 / 只快照当前事件」的错实现照样绿。
+    """
+
+    def __init__(self, events: list[_FakeEvent]) -> None:
+        super().__init__(events)
+        self._now = 0.0
 
     def wait_for(self, predicate, timeout: float, description: str):
+        start = self._now
+        deadline = start + timeout
         for event in self.events:
-            if predicate(event):
+            if start < event.t <= deadline and predicate(event):
+                self._now = event.t
                 return event
+        self._now = deadline
         raise BotAssertionError(f"未找到 {description}; events={self.events}")
 
 
@@ -5020,6 +5036,50 @@ class AgentUiHelperTest(unittest.TestCase):
             "显式 null 的 reason 应匹配（key 存在且值为 None）",
         )
 
+    def test_response_matches_params_exact(self):
+        # 原样转发契约：params 必须逐键精确相等，额外字段即违约（subset 会放行）。
+        self.assertTrue(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "owo_parse_failed"}},
+                action="parse_error",
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {
+                    "action": "parse_error",
+                    "params": {"reason": "owo_parse_failed", "button_id": "injected"},
+                },
+                params_exact={"reason": "owo_parse_failed"},
+            ),
+            "精确匹配拒绝额外字段：注入 button_id 不得满足原样转发契约",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": {"reason": "other"}},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error"}, params_exact={"reason": "owo_parse_failed"}
+            ),
+            "精确匹配要求 params 字段存在",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "parse_error", "params": "not-a-dict"},
+                params_exact={"reason": "owo_parse_failed"},
+            )
+        )
+        with self.assertRaises(ValueError):
+            response_matches(
+                {"action": "error", "params": {"reason": "x"}},
+                params_subset={"reason": "x"},
+                params_exact={"reason": "x"},
+            )
+
     def test_expect_agent_ui_request_positive(self):
         bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
         payload = expect_agent_ui_request(bot, "req_1", timeout=5.0)
@@ -5058,6 +5118,30 @@ class AgentUiHelperTest(unittest.TestCase):
             expect_agent_ui_request(bot, "req_predates", after=2.0, timeout=5.0, expect=False),
             "marker 之前唯一匹配应被 after 拒绝",
         )
+
+    def test_expect_agent_ui_request_negative_fails_for_late_match_in_window(self):
+        # 匹配事件在观测窗口内（t=3.0 ∈ (0, 5.0]）才送达：负向断言必须失败。
+        # 若 fake 只做一次扫描、或 helper 立即返回 None / 零超时，这条会漏过——
+        # 正是「迟到、安全敏感的下发在断言窗口内到达仍产生 false passing audit」的点。
+        bot = _AgentUiFakeBot([_req_event(3.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_ok_when_match_after_window(self):
+        # 匹配事件在窗口关闭后（t=6.0 > deadline 5.0）才送达：负向断言返回 None，
+        # 证明观察窗口真的以 timeout 为界，而不是把任何时刻的事件都算作命中。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_late", timeout=5.0, expect=False),
+            "窗口外事件不得使负向断言失败",
+        )
+
+    def test_expect_agent_ui_request_positive_rejects_match_after_window(self):
+        # 匹配事件在窗口外到达：正向 wait 必须超时抛错，而不是错拿窗口外事件。
+        # 钉死 timeout 参数确实约束了观察边界（finding：无断言记录传给 wait_for 的 timeout）。
+        bot = _AgentUiFakeBot([_req_event(6.0, "req_late")])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_request(bot, "req_late", timeout=5.0)
 
     def test_expect_agent_ui_close_reason_assert(self):
         close = _FakeEvent(
