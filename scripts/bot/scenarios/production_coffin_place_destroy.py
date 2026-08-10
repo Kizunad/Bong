@@ -65,6 +65,11 @@ DISTANCE_REJECT_Z_OFFSET = 10  # > 6.0 的过远目标（coffin_target_is_close 
 DIMENSION_REJECT_TEXT = "§c[棺] 你不在主世界，无法操作延寿棺。"
 
 _STEP_TIMEOUT = 45.0
+# 拒绝路径世界侧断言的有界观察窗（秒，事件时间）：inventory_snapshot 与实体
+# spawn/destroy 走不同时序路径（reader 线程后台 append），「先发快照、后排队实体
+# 事件」的实现会让晚到事件在持锁扫完当前前缀后漏检（review finding [major]）。
+# 等待必须**有界**——负向断言不无限等，deadline = after_t + window 是确定性终点。
+_REJECT_OBS_WINDOW = 2.0
 
 
 def _stack_count(item) -> int:
@@ -158,7 +163,7 @@ def _coffin_locations(snapshot) -> str:
     return ", ".join(parts) or "∅"
 
 
-def _give_barrier(bot, after_t, expected_count, timeout=_STEP_TIMEOUT, description=None):
+def _give_barrier(bot, expected_count, timeout=_STEP_TIMEOUT, description=None):
     """give 一棺并以该 give 的 inventory_snapshot 作 server 权威水位线 + 断言载体。
 
     不用 give 的 chat ack 当水位线：实测（run4 证据）ack 在 client_request 处理**之前**
@@ -166,7 +171,14 @@ def _give_barrier(bot, after_t, expected_count, timeout=_STEP_TIMEOUT, descripti
     （revision=14/16 收到、barrier 的 r17 未到）；而 give 的 inventory_snapshot 落在同 tick
     的 client_request 处理**之后**——收到 count==expected 的新快照，既证明此前每个 C2S
     （含静默拒绝）已处理完毕，又以该计数作「拒绝未扣料」的断言。give 同时推进实例载体。
-    匹配用 e.t > after_t 时间锚定，防止复读先前 give 的同类快照。
+
+    **时间锚定在 give 之前瞬间、不用调用方锚点**（review finding [major]）：调用方传入
+    的 after_t 在「操作 + 1.0s sleep」**之前**截取。若前一 C2S 被错误实现额外 grant，
+    其 inventory_snapshot（count 恰为期望值）在 sleep 期间就到——e.t > after_t 会让
+    wait_for 扫历史事件时把它误认作 barrier 的 give 快照，barrier 提前返回、真 give 的
+    更高计数快照未被观察 → 假绿（重复 break 侧的 _total_items 断言同款被绕过）。因此
+    sleep 之后、cmd(give) **之前**取 give_anchor = last_event_time(bot)，排除 give 之前
+    一切快照（含错误 grant），wait_for 只能命中 give 自己的快照。
 
     静默拒绝路径无回执、无「处理完成」信号：若 give 与前一 C2S intent
     （coffin_place / coffin_break）落入同一 tick 窗口，执行/快照可能与前一个请求的
@@ -175,18 +187,19 @@ def _give_barrier(bot, after_t, expected_count, timeout=_STEP_TIMEOUT, descripti
     可观测。该 sleep 是防御性措辞，不放松任何计数断言。
     """
     time.sleep(1.0)
+    give_anchor = last_event_time(bot)
     bot.cmd(f"give {COFFIN_ID} 1")
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.t > after_t
+        and e.t > give_anchor
         and _coffin_count(e.data["payload"]) == expected_count,
         timeout=timeout,
         description=(
             description
             or f"give {COFFIN_ID} 后 count=={expected_count} 的水位线快照"
         )
-        + _snapshot_debug(bot, after_t),
+        + _snapshot_debug(bot, give_anchor),
     )
     return event.data["payload"]
 
@@ -329,29 +342,47 @@ def _wait_coffin_marker_destroy(bot, entity_id, after_t, timeout=_STEP_TIMEOUT) 
 
 
 def _assert_no_coffin_marker_spawn(
-    bot, place_positions, after_t, description, until_t=None
+    bot,
+    place_positions,
+    after_t,
+    description,
+    until_t=None,
+    window=_REJECT_OBS_WINDOW,
 ) -> None:
     """拒绝路径不变量：窗口内不得出现 kind=160 marker spawn（指定放置位附近）。
 
     review finding [major]：拒绝路径只断库存不变，从不钉「拒绝即不得 spawn/注册
     世界 marker」的世界侧不变量。正向放行的 spawn 之外出现第二个 kind=160 实体即红。
     until_t 用于异维窗口上界：返回主世界后实体重流会重新 spawn 既有 marker，必须
-    把窗口限制在异维侧才不误报。reader 线程后台 append，扫描须持 bot._lock
-    （last_event_time 同款约定）。
+    把窗口限制在异维侧才不误报。
+
+    review finding [major]（观察窗）：旧实现持锁扫完**当前**事件前缀就返回——reader
+    线程后台 append，inventory_snapshot 与实体 spawn 走不同时序路径，拒绝实现先发
+    快照、后排队 marker spawn 时晚到的 spawn 从未被检查。因此必须等满一个有界窗口
+    （deadline = after_t + window，事件时间单调可比较）再下结论：窗口内逐帧重扫，
+    出现匹配即红，窗口结束仍无才通过。扫描持 bot._lock（last_event_time 同款约定）。
     """
-    with bot._lock:
-        spawned = [
-            e
-            for e in bot.events
-            if e.kind == "entity_spawn"
-            and e.t > after_t
-            and (until_t is None or e.t < until_t)
-            and e.data["type"] == COFFIN_MARKER_ENTITY_KIND
-            and any(
-                _near((e.data["x"], e.data["y"], e.data["z"]), *_coffin_marker_pos(p))
-                for p in place_positions
-            )
-        ]
+    deadline = after_t + window
+    spawned = []
+    while True:
+        with bot._lock:
+            spawned = [
+                e
+                for e in bot.events
+                if e.kind == "entity_spawn"
+                and e.t > after_t
+                and (until_t is None or e.t < until_t)
+                and e.data["type"] == COFFIN_MARKER_ENTITY_KIND
+                and any(
+                    _near((e.data["x"], e.data["y"], e.data["z"]), *_coffin_marker_pos(p))
+                    for p in place_positions
+                )
+            ]
+        if spawned:
+            break
+        if time.monotonic() - bot.t0 >= deadline:
+            break
+        time.sleep(0.1)
     assert not spawned, (
         f"{description}：拒绝路径不得 spawn mundane_coffin marker 实体，"
         f"实际 {len(spawned)} 个 @ "
@@ -363,21 +394,35 @@ def _assert_no_coffin_marker_spawn(
     )
 
 
-def _assert_no_coffin_marker_destroy(bot, entity_id, after_t, description) -> None:
+def _assert_no_coffin_marker_destroy(
+    bot, entity_id, after_t, description, window=_REJECT_OBS_WINDOW
+) -> None:
     """空→空重复破坏不变量：窗口内不得再次 despawn 指定 marker 实体。
 
     review finding [major]：单发声称的 empty→empty 转移从未被演练。首破坏的
     despawn 在 after_t 之前；第二次 coffin_break 若再发 entities_destroy 含同一
     entity_id，即实现把「已清场」状态又错误清了一遍（removes unrelated state）。
+
+    review finding [major]（观察窗）：同 spawn 侧——entities_destroy 与
+    inventory_snapshot 走不同时序路径，重复 despawn 可能晚于 give 水位线快照到达。
+    先等满有界窗口（deadline = after_t + window）再断言，晚到的重复 despawn 不漏检。
     """
-    with bot._lock:
-        redestroyed = [
-            e
-            for e in bot.events
-            if e.kind == "entities_destroy"
-            and e.t > after_t
-            and entity_id in e.data["entity_ids"]
-        ]
+    deadline = after_t + window
+    redestroyed = []
+    while True:
+        with bot._lock:
+            redestroyed = [
+                e
+                for e in bot.events
+                if e.kind == "entities_destroy"
+                and e.t > after_t
+                and entity_id in e.data["entity_ids"]
+            ]
+        if redestroyed:
+            break
+        if time.monotonic() - bot.t0 >= deadline:
+            break
+        time.sleep(0.1)
     assert not redestroyed, (
         f"{description}：窗口内发现 {len(redestroyed)} 次对实体 #{entity_id} 的重复 despawn"
     )
@@ -419,7 +464,6 @@ def run(env) -> None:
         _send_coffin_place(bot, place_pos, second_instance)
         _give_barrier(
             bot,
-            anchor,
             2,
             description=(
                 "双放被拒后 +1 give 应恰好 count==2（原保留 1 + 新增 1）——"
@@ -447,7 +491,6 @@ def run(env) -> None:
         )
         _give_barrier(
             bot,
-            anchor,
             3,
             description="非空气+过远双拒后 +1 give 应恰好 count==3，实例分文未扣",
         )
@@ -471,7 +514,6 @@ def run(env) -> None:
         _send_coffin_place(bot, stale_pos, first_instance)
         _give_barrier(
             bot,
-            stale_anchor,
             4,
             description=(
                 "stale（已消费）instance id 拒绝后 +1 give 应恰好 count==4——"
@@ -545,7 +587,6 @@ def run(env) -> None:
         )
         _give_barrier(
             bot,
-            ret_anchor,
             5,
             description="异维拒后 +1 give 应恰好 count==5，实例未被异维请求偷扣",
         )
@@ -572,7 +613,6 @@ def run(env) -> None:
         # 先以 +1 give 快照（count==6）作全量库存基线——含首次破坏的回收料。
         pre_second = _give_barrier(
             bot,
-            break_anchor,
             6,
             description="首次破坏后 +1 give 应恰好 count==6（破坏只清世界实体，不碰背包实例）",
         )
@@ -591,7 +631,6 @@ def run(env) -> None:
         # 若重复破坏再 grant 回收料，_total_items 会超过基线+1（double-grant 红）。
         post_second = _give_barrier(
             bot,
-            noop_anchor,
             7,
             description=(
                 "重复破坏（空→空）后 +1 give 应恰好 count==7——"
