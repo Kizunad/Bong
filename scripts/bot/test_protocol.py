@@ -4616,6 +4616,8 @@ class ProbePayloadDecodeTest(unittest.TestCase):
                 f"field3={raw} 应解码为 {expected}",
             )
             self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
             self.assertEqual(decoded["realm_diff"], 2)
 
     def test_qi_color_observed_field_74_decodes_present_secondary(self):
@@ -4638,7 +4640,47 @@ class ProbePayloadDecodeTest(unittest.TestCase):
             "Violent",
             "携带 secondary(field4=9) 时应解码为 Violent",
         )
+        self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+        self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
         self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_boolean_flags(self):
+        # central-review 2029 #4：此前 fixtures 一律 field5/field6=0 且不断言，
+        # 恒硬编码两字段为 false / 掉字段 / 交换编号的实现全都会通过。逐档 pin：
+        # field5=1→is_chaotic=true、field6=1→is_hunyuan=true；单真 + 双真全解形，
+        # 并断言完整解码形状（main/secondary/realm_diff/两 canonical id）。
+        cases = [
+            (True, False),
+            (False, True),
+            (True, True),
+        ]
+        for exp_chaotic, exp_hunyuan in cases:
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, 3)  # main=MELLOW
+                + _pb_varint_field(4, 9)  # secondary=VIOLENT
+                + _pb_varint_field(5, 1 if exp_chaotic else 0)
+                + _pb_varint_field(6, 1 if exp_hunyuan else 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(decoded["main"], "Mellow")
+            self.assertEqual(decoded["secondary"], "Violent")
+            self.assertEqual(
+                decoded["is_chaotic"],
+                exp_chaotic,
+                "field5 布尔值应解码为 is_chaotic（map 到字段号 5）",
+            )
+            self.assertEqual(
+                decoded["is_hunyuan"],
+                exp_hunyuan,
+                "field6 布尔值应解码为 is_hunyuan（map 到字段号 6）",
+            )
+            self.assertEqual(decoded["realm_diff"], 2)
+            self.assertEqual(decoded["observer"], "offline:BGD9QiH")
+            self.assertEqual(decoded["observed"], "offline:BGD9QiV")
 
     def test_event_alert_field_77_decodes_message(self):
         inner = (

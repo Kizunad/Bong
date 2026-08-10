@@ -75,11 +75,14 @@ def run(env) -> None:
         bot.assert_alive("mineral_probe 拒绝面全程")
 
 
-def _drain_probe_results(bot, quiet: float = 1.0, max_wait: float = 4.0) -> None:
-    """批次间屏障：静置到窗口内无新 mineral_probe_result 再放行。
+def _drain_probe_results(bot, quiet: float = 2.0, max_wait: float = 20.0) -> None:
+    """批次间屏障：排空在途 mineral_probe_result，直到静默窗口内无新结果。
 
     探针结果异步到达，批间必须排空在途响应——否则上一扫的迟到响应会落入下一批次
-    sent_at 之后的窗口，被当成当前批次结果（central-review 2029 #3）。
+    sent_at 之后的窗口，被当成当前批次结果（central-review 2029 #3）。静默窗口
+    必须显著长于服务端实际响应延迟（同 tick 处理，亚秒~1s）；**到上限时若仍有响应
+    在途就报错**——静默放行一个还在来响应的批次，会把污染交给下一批/下一 realm
+    阶段，等于没有屏障（central-review 2029 #6）。
     """
     deadline = time.monotonic() + max_wait
     while True:
@@ -93,7 +96,10 @@ def _drain_probe_results(bot, quiet: float = 1.0, max_wait: float = 4.0) -> None
         if not stray:
             return
         if time.monotonic() > deadline:
-            return  # 仍有迟到响应但已到上限：放行，由调用方按结果断言兜底
+            raise BotAssertionError(
+                f"[{bot.username}] mineral_probe_result 在 {max_wait:.0f}s 内持续到达，"
+                f"批次屏障无法收敛——拒绝静默放行可能污染下一批"
+            )
 
 
 def _column_probe_and_expect(bot, reason: str, label: str) -> None:
@@ -117,12 +123,17 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
         for y in range(base_y + Y_LO, base_y + Y_HI + 1, Y_STEP):
             bot.intent({**PROBE_REQUEST, "x": x, "y": y, "z": z})
         try:
+            # 结果必须**同时**满足期望的 denial_reason，而非只按到达时间归属批次：
+            # 若上一 realm 阶段的迟到响应（realm_too_low）跨屏障落入本批窗口，它会被
+            # 谓词跳过，本批的权威结果（not_mineral_ore）仍会被等到——按到达时间认领
+            # 会把这个迟到响应误判成本批结果而误报（central-review 2029 #6）。
             result = bot.wait_for(
                 lambda e: e.kind == "server_data"
                 and e.data["payload_type"] == "mineral_probe_result"
-                and e.t > sent_at,
+                and e.t > sent_at
+                and e.data["payload"].get("denial_reason") == reason,
                 timeout=COLUMN_TIMEOUT,
-                description=f"{label}: 竖直列 mineral_probe_result (t>{sent_at:.3f})",
+                description=f"{label}: 竖直列 mineral_probe_result/{reason} (t>{sent_at:.3f})",
             )
         except BotAssertionError:
             # 整列都落在权威位置 6m 外（y 带已移动）：排空本批可能迟到的结果后

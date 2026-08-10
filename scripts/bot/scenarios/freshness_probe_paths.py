@@ -37,6 +37,10 @@ MEAT_ITEM = "food.mundane.cooked_meat"
 MEAT_PROFILE = "food_spoil_mundane_meat_v1"
 PLAIN_ITEM = "trade_crate"
 SILENT_WINDOW = 4.0
+# food_spoil_mundane_meat_v1：Linear 衰减 decay_per_tick = 1/(GAME_DAY_TICKS×3)，
+# GAME_DAY_TICKS=24000、TICKS_PER_SECOND=20 → 2.78e-4/s（server/src/shelflife/registry.rs）。
+MEAT_DECAY_PER_SECOND = 1.0 / (24000 * 3) * 20.0
+FRESHNESS_MARGIN = 0.005
 
 
 def run(env) -> None:
@@ -46,6 +50,7 @@ def run(env) -> None:
 
         bot.cmd(f"give {MEAT_ITEM} 1")
         bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
+        give_anchor = time.monotonic()
         snapshot = wait_inventory_contains(bot, MEAT_ITEM, timeout=10.0)
         meat = require_item(snapshot, MEAT_ITEM)
         meat_instance = meat["item"]["instance_id"]
@@ -77,11 +82,17 @@ def run(env) -> None:
                 f"实际 {payload.get('profile_name')}"
             )
         freshness = payload.get("freshness")
-        # 保鲜是实时衰减（spoil_tick 逐 tick 扣减），刚 give 的物品 freshness
-        # 可能已略低于 1.0（实测 0.995）——只断言"接近新"而非精确 1.0。
-        if freshness is None or not (0.5 <= float(freshness) <= 1.001):
+        # 保鲜是线性衰减（decay_per_tick=1/(24000×3)/tick，20 ticks/s → 2.78e-4/s）。
+        # give→probe 窗口由墙钟实测，下限 = 1 - 窗口×衰减率 - 浮点余量。原断言
+        # 放宽到 0.5 会把硬编码 0.5 / 立即 50% 衰减的坏实现放过去——下限必须由
+        # canonical 衰减计算界定。
+        elapsed = time.monotonic() - give_anchor
+        max_decay = MEAT_DECAY_PER_SECOND * elapsed
+        lower = 1.0 - max_decay - FRESHNESS_MARGIN
+        if freshness is None or not (lower <= float(freshness) <= 1.001):
             raise BotAssertionError(
-                f"[{bot.username}] 期望新物品 freshness≈1.0，实际 {freshness}"
+                f"[{bot.username}] 期望新物品 freshness≈1.0（give→probe "
+                f"{elapsed:.1f}s，canonical 衰减下限 {lower:.4f}），实际 {freshness}"
             )
         bot.assert_alive("凝脉保鲜探针后")
 

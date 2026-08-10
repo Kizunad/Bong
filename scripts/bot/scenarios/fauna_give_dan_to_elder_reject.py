@@ -11,6 +11,10 @@ SPAWN_INTERVAL_TICKS = 30 * 24000 ≈ 10h 实墙钟），fixture 运行不可达
 命令层也无 elder/大能 spawn 命令。故本场景按拒收链逐条断言聊天反馈，并验证
 请求失败不中断连接（大能未收丹、玩家无损失）。
 
+拒收无损契约：每条拒收后，被拒物品的**同实例**必须仍在背包（拒绝分支只回 chat、
+不消费物品）。第一拒（非回元丹）断在下一张快照；第二拒（找不到目标大能）用一次
+无害 give 触发新快照后验证——防「先吞物品再回拒收文案」的单边损耗实现。
+
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。
 """
 
@@ -57,8 +61,27 @@ def run(env) -> None:
         bot.expect_chat("[dev] gave huiyuan_pill x1", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
         pill = require_item(snapshot, "huiyuan_pill")
+        # 拒收契约：拒绝分支只回 chat、绝不消费被拒物品。上一拒（非回元丹）后，
+        # cooked_meat 的**同实例**必须仍在背包——断在下一张快照（give 回元丹触发）；
+        # 若实现「先吞物品再回拒收文案」，这里实例 id 会消失或被替换。
+        if require_item(snapshot, MEAT_ITEM)["item"]["instance_id"] != meat["item"]["instance_id"]:
+            raise BotAssertionError(
+                f"[{bot.username}] 拒收「只接受回元丹」后 cooked_meat 应保留原实例 "
+                f"{meat['item']['instance_id']}，实际丢失或替换"
+            )
         bot.intent(
             {**DAN_REQUEST, "pill_instance_id": pill["item"]["instance_id"], "elder_entity_id": NO_SUCH_ELDER_ID}
         )
         bot.expect_chat("找不到目标大能。", timeout=10.0)
+        # 拒收分支不推新快照；用一次无害 give 触发 revision，验证上一拒（找不到
+        # 目标大能）后 huiyuan_pill 的**同实例**仍在背包（未被吞掉再补发/替换）。
+        revision = snapshot["revision"]
+        bot.cmd(f"give {MEAT_ITEM} 1")
+        bot.expect_chat(f"[dev] gave {MEAT_ITEM} x1", timeout=10.0)
+        snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
+        if require_item(snapshot, "huiyuan_pill")["item"]["instance_id"] != pill["item"]["instance_id"]:
+            raise BotAssertionError(
+                f"[{bot.username}] 拒收「找不到目标大能」后 huiyuan_pill 应保留原实例 "
+                f"{pill['item']['instance_id']}，实际丢失或替换"
+            )
         bot.assert_alive("give_dan_to_elder 拒收链全程")
