@@ -1932,23 +1932,29 @@ mod tests {
             // 种子客户端从 bundle 起 old_visible_chunk_layer 就是 PLACEHOLDER → 它的
             // join layer-change 会把任何已存在的 view chunk 全量 inc。直接移出舞台，
             // 保证 tick 1 的消息丢弃阶段没有任何客户端把 layer 当 old layer。
-            // DIAGNOSTIC: bevy catches system panics and resume_unwind's an opaque
-            // payload (hook never fires for the inner panic), so surface the real
-            // message/location here. Removed before the PR.
-            let hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                let payload = info.payload();
-                let msg = payload
-                    .downcast_ref::<&str>()
-                    .map(|s| s.to_string())
-                    .or_else(|| payload.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| format!("{payload:?}"));
-                eprintln!(
-                    "[PANIC-HOOK] loc={:?} msg={msg}",
-                    info.location()
-                );
-                hook(info);
-            }));
+            // DIAGNOSTIC: bevy swallows system panics through the multithreaded
+            // executor (resume_unwind, hook never fires). Catch at the test level
+            // so the real payload survives, print it, and re-raise at the end.
+            // Removed before the PR.
+            let mut report_tick = |label: &str, result: Result<(), Box<dyn std::any::Any + Send>>| {
+                match result {
+                    Ok(()) => {
+                        eprintln!("[chk] after {label}");
+                        None
+                    }
+                    Err(payload) => {
+                        let msg = payload
+                            .downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| {
+                                format!("opaque (type={})", std::any::type_name_of_val(&*payload))
+                            });
+                        eprintln!("[chk] {label} PANICKED: {msg}");
+                        Some(payload)
+                    }
+                }
+            };
 
             eprintln!("[chk] despawn scenario client");
             app.world_mut().despawn(scenario.client);
@@ -1962,9 +1968,17 @@ mod tests {
                 .insert_chunk(ChunkPos::new(0, 0), UnloadedChunk::new());
 
             // tick 1：LOAD 消息被 readied 后无人投递、被 unready 清空。
+            let mut first_panic: Option<Box<dyn std::any::Any + Send>> = None;
             eprintln!("[chk] before tick 1");
-            app.update();
-            eprintln!("[chk] after tick 1");
+            if let Some(p) = report_tick(
+                "tick 1",
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update())),
+            ) {
+                first_panic = Some(p);
+            }
+            if app.world().get::<ChunkLayer>(layer).is_none() {
+                eprintln!("[chk] layer vanished after tick 1");
+            }
             assert_eq!(
                 app.world()
                     .get::<ChunkLayer>(layer)
@@ -1999,8 +2013,12 @@ mod tests {
 
             // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过（不 panic、不改变计数）。
             eprintln!("[chk] before tick 2");
-            app.update();
-            eprintln!("[chk] after tick 2");
+            if let Some(p) = report_tick(
+                "tick 2",
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update())),
+            ) {
+                first_panic = Some(p);
+            }
             let count_after = app
                 .world()
                 .get::<ChunkLayer>(layer)
@@ -2014,6 +2032,13 @@ mod tests {
                  不 panic、不回绕）；实际变为 {count_after}。未修复代码在本行之前\
                  必然已 panic（debug_assert viewer count underflow）"
             );
+
+            // DIAGNOSTIC：tick 2 捕获到的 panic 在此 re-raise，让测试保持红并在
+            // harness 处显示真实 payload（否则会被 bevy 的 resume_unwind 吞掉）。
+            // 修复验证通过后删除。
+            if let Some(p) = first_panic {
+                std::panic::resume_unwind(p);
+            }
         }
     }
 
