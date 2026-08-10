@@ -1,0 +1,91 @@
+name: Review v2 (crew engine, additive)
+
+# 第二个中央审查入口，**不动现役 `review-next.yml`**。
+#
+# 为什么是新文件而不是改那一行:v2 至今没有产出过一次真判词,所以「v2 审得和 v1 一样好」
+# 是零证据。把现役门槛切过去等于拿合并门槛做实验。这个入口让两个引擎能在**同一个 PR**上
+# 各判一次,A/B 才有得比;比出来之前,现役那条路一个字都不用改。
+#
+# 触发:可信成员在 PR 评论精确 `/review-v2`,或 workflow_dispatch。
+# 与 `/review-next` 互不干扰,两者可以对同一个 PR 各跑一次。
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 要审核的 PR 号
+        required: true
+        type: number
+      probe:
+        description: 构建服务端并允许 probe 模式(慢约 15 分钟)
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: review-v2-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # v2 的 workflow_call 要 head_oid,而 v1 只要 pr_number。这不是接口啰嗦:
+  # 引擎用它断言 build-server 检出的确实是被审的那个 commit,并在 head 在派发之后
+  # 移动过时拒绝评审。解析归调用方,断言归引擎。
+  resolve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       github.event.comment.body == '/review-v2' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      head_oid: ${{ steps.pr.outputs.head_oid }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+    steps:
+      - name: Fetch the PR head from the API
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid PR number' >&2; exit 1; }
+          response="$(curl --fail-with-body --silent --show-error \
+            -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          head_oid="$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' <<<"$response")"
+          printf 'head_oid=%s\n' "$head_oid" >> "$GITHUB_OUTPUT"
+          printf 'pr_number=%s\n' "$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "review-v2: PR #$PR_NUMBER at $head_oid"
+
+  review:
+    needs: resolve
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      issues: write
+    # 钉死 SHA,和 review-next.yml 一样。引擎自己也从 referenced_workflows 里读回这个
+    # SHA 来确定「我是哪个 commit」——可复用 workflow 里 github.sha 是**调用方**的 commit,
+    # 不是引擎的,所以这一行既是版本钉,也是引擎唯一能认出自己的依据。
+    uses: Kizunad/review/.github/workflows/review-v2-p1.yml@5601f70935e71f4ce3f850940da8ebd14e4d07c4
+    with:
+      repository: ${{ github.repository }}
+      pull_number: ${{ needs.resolve.outputs.pr_number }}
+      head_oid: ${{ needs.resolve.outputs.head_oid }}
+      # 与 v1 同名同义:从 **base** 取,不从 head —— 否则 PR 能在同一个 commit 里
+      # 改松自己被判的标准。引擎要求 trunk 真的读它,manifest 绑它的 SHA-256。
+      policy_path: .github/review-policy/bong.v2.json
+      review_base_url: ${{ vars.REVIEW_CLAUDE_BASE_URL || 'https://api.claudeopus.world' }}
+      # probe 模式默认**关**。构建命令一给,引擎就会在它自己拥有的 job 里从被审 head 建二进制
+      # (出处铁律:probe 下的二进制只能是本管线对本 commit 的构建),代价是多约 15 分钟。
+      # 评论触发时不建,是因为评论触发多半是要一个快判词。
+      build_command: ${{ (github.event_name == 'workflow_dispatch' && inputs.probe) && 'sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler && cd server && cargo build --locked --release' || '' }}
+      build_artifact_path: ${{ (github.event_name == 'workflow_dispatch' && inputs.probe) && 'server/target/release/bong-server' || '' }}
+    secrets:
+      review_api_key: ${{ secrets.REVIEW_CLAUDE_API_KEY }}
