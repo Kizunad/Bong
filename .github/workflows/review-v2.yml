@@ -73,7 +73,7 @@ jobs:
     # 钉死 SHA,和 review-next.yml 一样。引擎自己也从 referenced_workflows 里读回这个
     # SHA 来确定「我是哪个 commit」——可复用 workflow 里 github.sha 是**调用方**的 commit,
     # 不是引擎的,所以这一行既是版本钉,也是引擎唯一能认出自己的依据。
-    uses: Kizunad/review/.github/workflows/review-v2-p1.yml@5601f70935e71f4ce3f850940da8ebd14e4d07c4
+    uses: Kizunad/review/.github/workflows/review-v2-p1.yml@fb9cc399c8f6c003eb1c32be80881d895ac09ea2
     with:
       repository: ${{ github.repository }}
       pull_number: ${{ needs.resolve.outputs.pr_number }}
