@@ -1983,6 +1983,7 @@ mod tests {
     /// QS-003 boundary: antidote with qi_current exactly at cost (boundary, should succeed).
     #[test]
     fn antidote_qi_exactly_at_cost_deducts_correctly_with_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
@@ -2020,6 +2021,9 @@ mod tests {
                     loss_per_tick: 0.5,
                 },
                 Lifecycle::default(),
+                // R5 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，缺省会
+                // fail closed 于 InvalidActorIdentity，antidote 永远不会扣费生效。
+                LifeRecord::new(canonical_player_id("dugu-qi-exact-cost-boundary")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
