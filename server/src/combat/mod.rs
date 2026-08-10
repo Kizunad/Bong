@@ -329,7 +329,13 @@ pub fn register(app: &mut App) {
             lifecycle::death_arbiter_tick
                 .in_set(CombatSystemSet::Resolve)
                 .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage)
-                .after(resolve::resolve_attack_intents),
+                .after(resolve::resolve_attack_intents)
+                // kill.rs 测试里必须显式 .after(handle_kill) 才能跑通——生产注册缺这一条，
+                // handle_kill 无序时与仲裁器同 tick 交错，DeathEvent 写在读之后、
+                // 随 buffer swap 被吞（实测：/kill self 队列了 DeathEvent 却永远不处理，
+                // 无 NearDeath、无死亡屏）。Bevy 0.13+ 事件只在写入当 tick 对"写之后的
+                // 读者"可见，跨 tick 由双缓冲交换丢弃。
+                .after(crate::cmd::dev::kill::handle_kill),
             lifecycle::near_death_tick
                 .in_set(CombatSystemSet::Resolve)
                 .in_set(crate::npc::lifecycle::NpcTerminalSystemSet::Stage)
