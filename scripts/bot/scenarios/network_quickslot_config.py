@@ -105,6 +105,17 @@ def _authoritative_slots(bot, probe_request_id: str) -> list:
     return _expect_bind_response(bot, probe_request_id, True, BIND_SLOT)["slots"]
 
 
+def _slot_entries(slots: list) -> list:
+    """9 槽快照的逐槽投影：None 或 (item_id, count)，用于全槽逐槽对比。
+
+    review finding [3]：静默拒绝后的权威状态断言必须比较**全部 9 槽**，抽样会放过
+    把越界槽 clamp 到邻近槽（尤其 slot 8）的错误实现。"""
+    return [
+        None if entry is None else (entry.get("item_id"), entry.get("count", 1))
+        for entry in slots
+    ]
+
+
 def run(env) -> None:
     with env.new_bot("Quickslot") as bot:
         wait_for_ready(bot)
@@ -139,6 +150,11 @@ def run(env) -> None:
 
         # ── 3. bind 静默：slot>=9 越界 → schema 层拒绝（"slot must be between
         #    0 and 8"），无回执（实测 server.log，不满足 0..=8 直接 drop）──
+        #    先取权威基线：逐槽投影**全部 9 槽**（review finding [3]）——旧断言只抽查
+        #    slot 1/2/3，放过了「把 slot 9 clamp 到 8、绑上药丸、再抑制回执」的
+        #    off-by-one 实现（slot 8 是最可能的越界落点，且后续 slot-8 正路径会掩盖
+        #    那次变异）。基线必须取在请求之前。
+        baseline_slots = _authoritative_slots(bot, "gap10-probe-3-base")
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -158,15 +174,11 @@ def run(env) -> None:
         assert not stray, (
             f"[{bot.username}] slot=9 bind 应在 schema 层静默拒绝，实际收到 {len(stray)} 条 quickslot_config"
         )
-        # ── 3b. slot=9 静默后权威状态不变（review finding [1]）──
+        # ── 3b. slot=9 静默后权威 9 槽状态逐槽不变（review finding [1]/[3]）──
         slots = _authoritative_slots(bot, "gap10-probe-3")
-        assert slots[BIND_SLOT] is not None and slots[BIND_SLOT]["item_id"] == PILL, (
-            f"slot=9 请求后已绑定槽 {BIND_SLOT} 应保持 {PILL}，实际 {slots[BIND_SLOT]!r}"
+        assert _slot_entries(slots) == _slot_entries(baseline_slots), (
+            f"slot=9 请求后权威 9 槽必须逐槽不变，实际 {_slot_entries(slots)}"
         )
-        for empty_slot in (2, 3):
-            assert slots[empty_slot] is None, (
-                f"slot=9 请求不得污染其他槽，实际 slots[{empty_slot}]={slots[empty_slot]!r}"
-            )
 
         # ── 4. bind 静默：非法 request_id（空串 + 超长>128）→ 无回执 ──
         #    review finding [6]：旧场景只测空串，放过了「接受任意超长非空 id 且

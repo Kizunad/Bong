@@ -132,25 +132,29 @@ def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
         )
 
 
-def _assert_qi_unchanged_after_rejection(bot, intent_anchor: float, expected_qi: float) -> None:
+def _assert_qi_unchanged_after_rejection(bot, expected_qi: float, realm_id: str) -> None:
     """拒绝路径 qi 守恒：warn-only 拒绝不改 Cultivation，player_state 不会自动重发。
 
-    `qi set <expected_qi>` 做只读探针强制重发：同值写仍触发 Changed<Cultivation> 的
-    player_state 发射（qi_current = min(value, qi_max) 不变），从而读回权威
-    spirit_qi。请求锚定：e.t > intent_anchor 排除探针前一切历史 player_state
-    （包括 intent 前 qi set 的旧态）。错误实现若在拒绝时扣了 qi，探针读回的值
-    与 expected_qi 不符，wait_for 超时即红。"""
-    bot.cmd(f"qi set {expected_qi}")
-    bot.expect_chat("[dev] qi set", timeout=10.0)
+    `qi set <expected_qi>` 会无条件重写 qi_current（cmd/dev/qi.rs 只有 Set/Max 变体），
+    把错误拒绝路径已扣掉的真元修回去、再自证清白——探针读回的就是它自己写的值
+    （review finding [1] 的根因）。改用 `realm set <当前境界>` 做 qi 无关的重发探针：
+    handle_realm 恒赋值 cultivation.realm（realm.rs，同值写仍触发 Changed<Cultivation>
+    的 player_state 发射，与 `qi set` 同值写同款机制），且**从不碰 qi**——重发读回的
+    spirit_qi 就是权威当前值。错误实现若在拒绝时扣了 qi，重发值必然 != expected_qi，
+    wait_for 超时即红；探针无法再修复扣减。请求锚定：e.t > probe_anchor 排除探针前
+    一切历史 player_state（含 setup 的 realm/qi 写旧态）。"""
+    probe_anchor = last_event_time(bot)
+    bot.cmd(f"realm set {realm_id}")
+    bot.expect_chat("[dev] realm set", timeout=10.0)
     bot.wait_for(
         lambda e: (
             e.kind == "server_data"
             and e.data.get("payload_type") == "player_state"
-            and e.t > intent_anchor
+            and e.t > probe_anchor
             and abs(float(e.data["payload"].get("spirit_qi", -1.0)) - expected_qi) < 1e-6
         ),
         timeout=10.0,
-        description=f"拒绝后（intent 之后）spirit_qi 保持 {expected_qi}",
+        description=f"拒绝后（realm-set 重发探针）spirit_qi 保持 {expected_qi}",
     )
 
 
@@ -196,17 +200,19 @@ def run(env) -> None:
         baseline = latest_inventory_snapshot(bot)
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
-        _assert_qi_unchanged_after_rejection(bot, anchor, 1.0)
+        # reset 归零 realm=Awaken（见上方 reset 注释）；realm-set 探针同值写不改变境界。
+        _assert_qi_unchanged_after_rejection(bot, 1.0, "awaken")
 
         # ── 2. forge 拒绝-灵气：境界够但 qi=1（< qi_cost 5）→ NotEnoughQi，无回推 ──
         bot.cmd("realm set induce")
         bot.expect_chat("[dev] realm set", timeout=10.0)
-        # qi 仍是 1（上步探针为同值写，未改 qi_current）；拒绝路径同样断言 qi 守恒。
+        # qi 仍是 1（上步 realm-set 探针为同值写，未改 qi_current）；拒绝路径同样断言 qi 守恒。
         anchor = last_event_time(bot)
         baseline = latest_inventory_snapshot(bot)
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
         _expect_no_inventory_change(bot, anchor, baseline)
-        _assert_qi_unchanged_after_rejection(bot, anchor, 1.0)
+        # 当前境界为 Induce（本步开头 realm set induce）；探针同值写不改变境界。
+        _assert_qi_unchanged_after_rejection(bot, 1.0, "induce")
 
         # ── 3. forge 正路径：补灵气后产出 + 扣材料 + revision bump ──
         bot.cmd("qi set 5")
@@ -245,11 +251,15 @@ def run(env) -> None:
         false_skin = require_item(forged, FALSE_SKIN)
         false_skin_instance = int(false_skin["item"]["instance_id"])
         equip_revision = int(forged["revision"])
+        # central-review 2012 #2：请求 slot 用非规范值 "legs"——若服务端错误地
+        # honor 请求字段，伪皮会落 legs 而非 chest，下方 location 断言即红。旧场景
+        # 两个 equip 请求都发规范槽 "chest"，无法区分「恒落 Chest/Worn」与「按请求
+        # slot 转换」两种实现。
         bot.intent(
             {
                 "type": "equip_false_skin",
                 "v": 1,
-                "slot": "chest",
+                "slot": "legs",
                 "item_instance_id": false_skin_instance,
             }
         )
@@ -257,10 +267,10 @@ def run(env) -> None:
         worn = find_item(equipped, FALSE_SKIN)
         # central-review 2012 #6：equip_false_skin 必须忽略请求里的 slot、恒落
         # Equip{Chest, Worn}——只断言 kind=="equip" 会让错误实现把伪皮塞进手/饰品等
-        # 别的装备层也通过。精确 pin 槽位 chest + 状态 worn。
+        # 别的装备层也通过。精确 pin 槽位 chest + 状态 worn（请求发的是 legs）。
         assert worn is not None and worn["location"] == equip_location("chest", "worn"), (
-            f"equip 后 {FALSE_SKIN} 应落 equipped.chest_worn（Chest/Worn），"
-            f"实际 {worn!r}"
+            f"equip（请求 slot=legs）后 {FALSE_SKIN} 应落 equipped.chest_worn"
+            f"（Chest/Worn），实际 {worn!r}"
         )
 
         # ── 5. equip 拒绝-境界：降回 Awaken 再穿 → RealmTooLow + 回推 revision 不变 ──
@@ -275,11 +285,15 @@ def run(env) -> None:
         drain_inventory_quiet(bot, quiet=2.0)
         reject_anchor = last_event_time(bot)
         reject_revision = int(latest_inventory_snapshot(bot)["revision"])
+        # central-review 2012 #2：请求 slot 同样用非规范值 "off_hand"——境界拒绝
+        # 与 slot 无关（realm 门控先于槽位解析），但错误实现若 honor 请求字段并落
+        # off_hand，realm 门控下同样拒绝——此处验证拒绝仍按 Chest/Worn 契约发生
+        # （reason=realm_too_low + 被拒实例原位不动）。
         bot.intent(
             {
                 "type": "equip_false_skin",
                 "v": 1,
-                "slot": "chest",
+                "slot": "off_hand",
                 "item_instance_id": spare_instance,
             }
         )
