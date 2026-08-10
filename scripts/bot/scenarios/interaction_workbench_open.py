@@ -10,11 +10,20 @@
    - 走离制作台超过 `WORKBENCH_INTERACT_RANGE=3.0` 后的 open → 静默丢弃
      （workbench.rs handle_workbench_interact 出界 continue，无 S2C 无聊天）。
 
-若当前出生点无稳定可放置 chunk（与 container_open 场景同一环境判断），显式跳过
-放置/open leg，避免把环境缺口误判成 workbench_open 协议回归。
+fixture 放置目标的关键前置（实测推翻初版假设）：join 的 PlayerPositionAndLook
+**不**等于权威 Position（movement_commit.rs AuthoritativePositionCommitSet 只收
+服务器系统写，C2S 移动不更新）；fixture 出生点落在光栅外实心石墙上，join 坐标
+附近的竖直列全是石方，block_place 一律被拒（`target block stone is not
+replaceable`），初版在出生点 ±3 扫描必然跳过 happy path。修法：`/top` 把权威
+坐标搬到该列地表（surface 扫描顶 +3，确认 chat `Teleported to top at Y=...`，
+命令系统 position.set 与确认 chat 同 tick），落地位置是空气，可放置目标成立。
+workbench_open 的 interact 范围（Chebyshev ≤3.0）读该权威坐标，在 /top 落点
+立即放置+打开即可（权威坐标另有周期性 +10 上移，~8s 一档，放置后立刻 open
+的窗口远小于该周期；happy path 失败则按实体重试一次，避免把竞态当回归）。
 """
 
 import math
+import re
 import time
 
 from bot.bot import BotAssertionError
@@ -32,6 +41,8 @@ MODULES = ["craft", "interaction", "network"]
 WORKBENCH_ITEM = "workbench_item"
 OPEN_REQUEST = {"type": "workbench_open", "v": 1}
 SILENT_WINDOW = 5.0
+TOP_CHAT_RE = re.compile(r"Teleported to top at Y=(\d+)\.")
+TOP_TIMEOUT = 10.0
 
 
 def run(env) -> None:
@@ -39,11 +50,17 @@ def run(env) -> None:
         snapshot = wait_join_and_inventory(bot)
         if bot.position is None:
             raise BotAssertionError("workbench 场景需要 pos_look 后的位置，实际 position=None")
-        # 出生点 [8,150,8] 在 fixture 光栅上方（空中、有 ChunkData），join 的
-        # PlayerPositionAndLook 就是权威 Position（movement_commit.rs
-        # AuthoritativePositionCommitSet 只收服务器系统写）；workbench_open 的
-        # interact 范围（WORKBENCH_INTERACT_RANGE=3.0 Chebyshev）读该权威坐标。
-        # 直接在出生坐标放置+打开，bot.position 与权威坐标天然一致，无需传送。
+
+        # 权威坐标搬到该列地表（/top：surface 扫描顶 +3）。确认 chat 与 position.set
+        # 同 tick，收到即权威坐标已到目标 y；不依赖 pos_look 回包。
+        bot.cmd("top")
+        top_ev = bot.wait_for(
+            lambda e: e.kind == "chat" and TOP_CHAT_RE.search(e.data["text"]),
+            timeout=TOP_TIMEOUT,
+            description="`/top` 确认聊天 Teleported to top at Y=...",
+        )
+        y0 = int(TOP_CHAT_RE.search(top_ev.data["text"]).group(1))
+
         if not _has_any_chunk(bot):
             print("    [warn] 出生点仍无 ChunkData，跳过制作台放置/open leg")
             bot.assert_alive("workbench 场景因无 chunk 跳过前")
@@ -53,10 +70,10 @@ def run(env) -> None:
         bot.expect_chat("[dev] clearinv PackAndHotbar revision=", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, snapshot["revision"], timeout=10.0)
 
-        placed = _place_until_marker(bot)
+        placed = _place_until_marker(bot, y0, snapshot["revision"])
         if placed is None:
             print(
-                "    [warn] 未观察到 workbench Marker；当前出生点可能无稳定可放置目标，"
+                "    [warn] 未观察到 workbench Marker；/top 落点无可放置目标，"
                 "跳过 workbench_open leg"
             )
             bot.assert_alive("workbench 放置未观察到 marker 后")
@@ -64,9 +81,22 @@ def run(env) -> None:
         x, y, z, spawn = placed
 
         # happy path：打开制作台，断言 S2C WorkbenchOpen 回推放置坐标。
-        bot.intent({**OPEN_REQUEST, "entity_id": spawn.data["entity_id"]})
-        opened = bot.expect_server_data("workbench_open", timeout=10.0)
-        payload = opened.data["payload"]
+        # 权威坐标周期性 +10 上移（~8s 一档），/top 落点后立即 open 的窗口远小于
+        # 该周期；若 open 恰逢移档被静默丢弃，对同一实体重试一次。
+        payload = None
+        for _ in range(2):
+            bot.intent({**OPEN_REQUEST, "entity_id": spawn.data["entity_id"]})
+            try:
+                opened = bot.expect_server_data("workbench_open", timeout=3.0)
+                payload = opened.data["payload"]
+                break
+            except BotAssertionError:
+                continue
+        if payload is None:
+            raise BotAssertionError(
+                f"[{bot.username}] 期望 workbench_open 回推 WorkbenchOpen payload，"
+                "实际两次尝试均超时（权威坐标可能已移出 3m）"
+            )
         if list(payload.get("position", [])) != [x, y, z]:
             raise BotAssertionError(
                 f"[{bot.username}] 期望 WorkbenchOpen.position={[x, y, z]}，"
@@ -135,26 +165,26 @@ def _has_any_chunk(bot) -> bool:
         return False
 
 
-def _place_until_marker(bot):
-    """竖直逐格扫描可放置目标：block_place 无 S2C 反馈，只能凭实体 Marker 判成败。
+def _place_until_marker(bot, y0: int, start_revision: int):
+    """在 /top 落点附近竖直扫描可放置目标：block_place 无 S2C 反馈，只能凭实体
+    Marker 判成败。
 
-    场景前置已把权威坐标搬进 spawn zone 中心（空中），但 block_place 不做范围
-    预检只做方块校验，若目标格恰为不可替换方块（服务器 WARN `target block ...
-    is not replaceable`）则静默失败——保留竖直扫描兜底。每次尝试前重新 give，
-    避免前一格已成功放置消耗物品后，后续格拿空背包误判失败。give 后必须按
-    revision 过滤拿最新快照：wait_inventory_contains 每次从 0 重扫历史事件，
-    会把上一格的旧 instance 当成当次 give 的产物（block_place 判 not held）。
+    /top 把权威坐标搬到该列地表顶（y0），落点是空气，block_place 以
+    (floor(x)+2, y0, floor(z)) 为目标成立；保留 ±3 竖直扫描兜底不可替换方块。
+    每次尝试前重新 give：block_place 会消耗 workbench_item，上一格成功放置后
+    后续格不能拿空背包。give 后必须按 revision 过滤拿最新快照：wait_inventory
+    _contains 每次从 0 重扫历史事件，会把上一格的旧 instance 当成当次 give 的
+    产物（block_place 判 not held）。
     """
     if bot.position is None:
         raise BotAssertionError("workbench 场景需要 pos_look 后的位置，实际 position=None")
     base_x = math.floor(bot.position[0]) + 2
     base_z = math.floor(bot.position[2])
-    base_y = math.floor(bot.position[1])
+    revision = start_revision
     # WORKBENCH_INTERACT_RANGE=3.0 用 Chebyshev 距离（max(|dx|,|dy|,|dz|)），
     # 放置位在东侧 2 格，故 |dy| 必须 ≤3 否则 open 出界静默。
-    revision = latest_inventory_snapshot(bot).get("revision", 0)
-    for dy in (0, 1, 2, 3, -1, -2, -3):
-        x, y, z = base_x, base_y + dy, base_z
+    for dy in (0, 1, 2, -1, 3, -2):
+        x, y, z = base_x, y0 + dy, base_z
         bot.cmd(f"give {WORKBENCH_ITEM} 1")
         bot.expect_chat(f"[dev] gave {WORKBENCH_ITEM} x1", timeout=10.0)
         snapshot = wait_inventory_revision_after(bot, revision, timeout=10.0)
