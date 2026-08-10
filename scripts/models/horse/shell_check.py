@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from itertools import combinations
 from pathlib import Path
@@ -40,7 +41,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
-from rig import Rig, euler  # noqa: E402
+from gen_skeleton import rom  # noqa: E402
+from rig import Pose, Rig, euler  # noqa: E402
 
 # 判"贴合"时给的余量。**必须含"恰好贴面"这一档**——颈皮是一段接一段拼上去的，相邻
 # 两段共用一个面、交叠为零，而这正是最容易裂开的地方。
@@ -172,18 +174,25 @@ class Shell:
         # 凭空多出 2 个单位的假裂口。
         return (np.abs(loc) <= self.Hh[None] + SNUG).all(axis=2).any(axis=1)
 
-    def gaps(self, pose) -> list[tuple[float, str, str]]:
-        """本帧所有**可见**裂口，(宽度, 件 A, 件 B)。"""
+    def gaps(self, pose, sel: np.ndarray | None = None) -> list[tuple[float, str, str]]:
+        """本帧所有**可见**裂口，(宽度, 件 A, 件 B)。
+
+        sel：只查这几对缝。**只转一根骨**时用得上——那种姿态下唯一会变的就是这根骨
+        自己那道缝（别的缝两侧同进同出，相对变换没动），一对一对地查比整副查快十几倍。
+        """
         if not len(self.seed_a):
             return []
+        ai, aj = (self.ai, self.aj) if sel is None else (self.ai[sel], self.aj[sel])
+        sa, sb = (self.seed_a, self.seed_b) if sel is None else (self.seed_a[sel], self.seed_b[sel])
+        names = list(zip(self.pi, self.pj)) if sel is None else [(self.pi[k], self.pj[k]) for k in sel]
         W = self.rig.world(pose)
         M = np.array([W[b] for b in self.bone])
         Rw = M[:, :3, :3]
         C = np.einsum("nij,nj->ni", Rw, self.C) + M[:, :3, 3]
         RR = Rw @ self.RR
 
-        pa = np.einsum("pij,pkj->pki", Rw[self.ai], self.seed_a) + M[self.ai][:, None, :3, 3]
-        pb = np.einsum("pij,pkj->pki", Rw[self.aj], self.seed_b) + M[self.aj][:, None, :3, 3]
+        pa = np.einsum("pij,pkj->pki", Rw[ai], sa) + M[ai][:, None, :3, 3]
+        pb = np.einsum("pij,pkj->pki", Rw[aj], sb) + M[aj][:, None, :3, 3]
         d = np.linalg.norm(pa - pb, axis=2)  # (对, 采样点)
         hit = np.argwhere(d > GAP_TOL)
         if not len(hit):
@@ -203,11 +212,60 @@ class Shell:
         for (pidx, _k), gap in zip(hit, span):
             if gap <= GAP_TOL:
                 continue
-            key = (self.pi[pidx], self.pj[pidx])
+            key = names[pidx]
             best[key] = max(best.get(key, 0.0), float(gap))
         out = [(v, self.name[i], self.name[j]) for (i, j), v in best.items()]
         out.sort(reverse=True)
         return out
+
+
+def rom_sweep(rig: Rig, span: dict[str, list[list[float]]] | None = None,
+              step: float = 3.0) -> list[tuple[str, float, str, float]]:
+    """**逐关节连续扫过一段角度**，量壳裂口。span 缺省 = 登记的整个 `JOINT_ROM`。
+
+    为什么要有这一条，而逐帧采样不够：**裂口未必在角度的两端最糟**。后球节屈到
+    35–60° 时管骨与球节之间张开 0.41 个单位（挽马 0.82），屈过 65° 反而合上——蹄与系
+    摆回来把视线挡住了。**中间开、两头合**。动画扫过那一段只用几帧，24 帧的采样格子
+    正好从峰值两边跨过去，报出来是 0.00；那道缝就这么在交付物里躺了整整一轮。
+    加密采样治不了本：峰有多窄取决于动作，不取决于采样率。**连续扫过那根骨自己的角度**
+    才是对的问法。
+
+    调用方给 span（各动画实际用到的角度，**逐轴的 [下界, 上界] 而不是绝对值**）时，
+    这条就是"凡是动画会走到的姿势，壳都不许看穿"。区间必须带符号：颈只往下弯不往上
+    仰，按 ±max|θ| 对称扫就会去查一个这套动画根本不会摆出来的姿势（实测那一头张 0.65，
+    而真正用到的那一头是 0）。不给 span 则按登记的整个活动范围扫——那是壳与骨的完整
+    契约（`JOINT_ROM` 的注释就是这么写的），比动画用到的范围严得多。
+    """
+    sh = Shell(rig)
+    # 转某一根骨时，会变的只有**它自己那道缝**：别的缝两侧同属一棵被整体带走的子树，
+    # 相对变换分毫未动。所以逐骨只查它名下的那几对，比每次整副查快十几倍。
+    own: dict[str, list[int]] = {}
+    for k, (i, j) in enumerate(zip(sh.pi, sh.pj)):
+        bi, bj = sh.bone[i], sh.bone[j]
+        child = bj if rig.bones[bj].parent == bi else bi
+        own.setdefault(child, []).append(k)
+    worst: dict[tuple[str, str], tuple[float, str, float]] = {}
+    for bone, ks in own.items():
+        r = rom(bone)
+        lims = [[-r, r]] * 3 if span is None else span.get(bone, [[0.0, 0.0]] * 3)
+        sel = np.array(ks, int)
+        for ax in range(3):
+            # 动画超 ROM 由 sanity 单独管，这儿夹一下不重复报
+            lo, hi = max(lims[ax][0], -r), min(lims[ax][1], r)
+            if hi - lo < step:
+                continue
+            for i in range(int(math.floor(lo / step)), int(math.ceil(hi / step)) + 1):
+                a = min(hi, max(lo, i * step))
+                if a == 0.0:
+                    continue
+                p = Pose()
+                p[bone].rot[ax] = a
+                for gap, na, nb in sh.gaps(p, sel):
+                    key = (na, nb)
+                    if gap > worst.get(key, (0.0,))[0]:
+                        worst[key] = (gap, f"{bone}.{'xyz'[ax]}", a)
+    return [(f"{a} ↮ {b}", g, who, ang) for (a, b), (g, who, ang) in
+            sorted(worst.items(), key=lambda kv: -kv[1][0])]
 
 
 def check(rig: Rig, sampler, names, samples: int = 24) -> list[tuple[str, float, str, float]]:
@@ -235,9 +293,24 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="外壳连续性自检")
     ap.add_argument("--profile", default=None)
     ap.add_argument("--coat", default="rust")
+    ap.add_argument("--rom", action="store_true",
+                    help="改扫**登记的整个活动范围**（`JOINT_ROM`）而不是十条动画。"
+                         "这是壳与骨的完整契约，比动画用到的范围严得多——现在还过不了，"
+                         "剩下的都是颈的偏航、尻盖对大腿这类老缝，见下面列出的清单")
     args = ap.parse_args()
 
     rc = 0
+    if args.rom:
+        for k in [args.profile] if args.profile else ["small", "medium", "large"]:
+            rig = Rig(FINAL / f"HorsePelt_{args.coat}_{k}.bbmodel")
+            bad = [r for r in rom_sweep(rig) if r[1] > GAP_TOL]
+            rc += len(bad)
+            print(f"[{k}] 超限 {len(bad)} 对")
+            for pair, gap, who, ang in bad:
+                print(f"  ✗ {gap:5.2f}  {pair:38s} {who}={ang:+.0f}°")
+        print("\n" + ("✓ 全活动范围内壳都闭合" if rc == 0 else f"✗ {rc} 对缝在活动范围内张开"))
+        return 1 if rc else 0
+
     for k in [args.profile] if args.profile else ["small", "medium", "large"]:
         rig = Rig(FINAL / f"HorsePelt_{args.coat}_{k}.bbmodel")
         P = PROFILES[k]

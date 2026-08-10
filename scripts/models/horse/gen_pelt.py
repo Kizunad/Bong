@@ -190,6 +190,9 @@ def _lerp(a: float, b: float, t: float) -> float:
 # 关节又是俯仰+偏航复合，所以照 δ=r·tan(θ/2) 给总差一口气。这一档余量是量出来的：
 # 1.0 时三档十条动画还剩 0.4-1.3 单位的缝，1.35 才全部收进 0.30 以内（shell_check 逐帧核过）。
 SEAM_MARGIN = 1.35
+# 以关节为心的方块（腕 / 跗 / 球节）比"它要罩住的那节筒的截面角点"再大百分之几。
+# 恰好相切等于把封缝的责任交给浮点数，留一点余量，别贴着边过。
+JOINT_BALL_MARGIN = 1.04
 
 
 def seam_pad(r: float, rom_deg: float) -> float:
@@ -867,25 +870,66 @@ def _leg_column(p: Pelt, P, side: str, sx: int, tag: str) -> None:
     # 上段（前臂 / 小腿）：上粗下细
     up_pad = seam_pad(math.hypot(r_top * gauge, r_top * gauge), rom(upper_bone))
     p.limb(upper_bone, f"leg_upper_{tag}_{side}", _beyond(elbow, knee, up_pad), _lerp3(elbow, knee, 0.55), r_top * gauge, mat="coat")
-    p.limb(upper_bone, f"leg_upper2_{tag}_{side}", _lerp3(elbow, knee, 0.50), knee, r_knee * 1.24 * gauge, mat="coat",
+    up2_r = r_knee * 1.24 * gauge
+    p.limb(upper_bone, f"leg_upper2_{tag}_{side}", _lerp3(elbow, knee, 0.50), knee, up2_r, mat="coat",
            joint_rom=rom(low_bone))
     # 腕 / 跗：一个明确的关节鼓。**做成以关节中心为心的方块，不是沿骨的筒**——
     # 腕/跗的活动范围到 96°，而"接缝两侧各外扩 δ"这条路在 θ→90° 时 δ=r·tan(θ/2) 发散，
     # 轴向交叠根本堵不住。以 pivot 为心的方块则不然：绕心转多少度，它罩住的那个半径
     # h 的球都原样还在，裂口只可能出现在 h 之外，所以把 h 取到该处壳的外表面就够了。
-    joint_r = r_knee * 1.75 * gauge
+    #
+    # **配套的另一半是：搭上来的那节筒不许越过 pivot**（所以上面那行不带 joint_rom）。
+    # 筒的外扩是给"两段筒对接"用的；这道缝由球来封，筒再往下探一截，探出去的是一段
+    # **不随关节转**的材料，球转开之后正好从那儿看穿。它还是**中间角度**最糟——转过
+    # 六十几度，蹄与系摆回来把视线挡上了，反而看不见（实测跗 35–60° 张 0.41、膝 0.78，
+    # 两头却都是 0，所以逐帧采样常年抽不到；`shell_check.rom_sweep` 才是它的克星）。
+    joint_r = max(r_knee * 1.75 * gauge, math.hypot(up2_r, up2_r) * JOINT_BALL_MARGIN)
     p.box(low_bone, f"leg_joint_{tag}_{side}",
           (knee[0] - joint_r, knee[1] - joint_r, knee[2] - joint_r),
           (knee[0] + joint_r, knee[1] + joint_r, knee[2] + joint_r), mat="coat")
+    # 关节**上方**那一圈套，挂在上一节骨上（不随关节转）。
+    # 把球做大不行——球一大，两件的交集跟着大，种子跟着往外跑，缝换个角度照样张
+    # （实测球放到 2.20r：跗合上了，腕从 0.22 张到 0.91，股又冒出 0.79）。**能收敛的
+    # 只有"往不转的那一侧补料"**：交集不变，视线却被堵上了。同 `flexor_*` 那一块。
+    # 位置是量出来的：空洞中心在跗关节正上方 2.4 个单位、腕关节的上后方 3.1 个单位
+    # ——都在球外、都属于上一节骨该罩的地方。真马这儿本来也是实的（跟骨结节与副腕骨
+    # 后面那一坨腱），只是原来没做。
+    # 套的下缘**必须停在 pivot 以上**：罩住 pivot 的两件才算一道接缝（`Shell.__init__`
+    # 就是这么挑对的），压到 pivot 上就等于给自己新添一道要封的缝——试过压到 −0.30r，
+    # 跗关节当场从 0 张到 1.60。补料要补在"不构成接缝的地方"，同 `flexor_*`。
+    # 往**后**多探一截：腕 / 跗的背面本来就凸（前肢是副腕骨、后肢是跟骨结节，那一坨
+    # 连着屈腱），而空洞量下来正落在关节的上后方（挽马腕关节 z+2.56，比筒宽还远）。
+    cuff_x = max(up2_r * 0.94, joint_r * 1.20)  # 侧摆（绕 z）那一路的洞在关节外侧
+    p.box(upper_bone, f"leg_cuff_{tag}_{side}",
+          (knee[0] - cuff_x, knee[1] + joint_r * 0.40, knee[2] - up2_r * 0.94),
+          (knee[0] + cuff_x, knee[1] + joint_r * 1.45, knee[2] + joint_r * 1.30), mat="coat")
     # 管骨段：细而扁（前后略宽），下肢深色
     mat_low = "points" if dark_lower else "coat"
-    p.limb(low_bone, f"cannon_{tag}_{side}", _off(knee, 0, -Pr.u(0.014)), fet, Pr.u(0.034) * gauge, mat=mat_low, flat=0.80,
-           joint_rom=rom(fet_bone))
-    # 球节：鼓出来的那个球。同腕/跗，96° 的活动范围只能靠"以关节为心的块"堵。
-    fet_r = Pr.u(0.040) * 1.35 * gauge
+    cannon_r = Pr.u(0.034) * gauge
+    p.limb(low_bone, f"cannon_{tag}_{side}", _off(knee, 0, -Pr.u(0.014)), fet, cannon_r, mat=mat_low, flat=0.80)
+    # 球节：鼓出来的那个球。同腕/跗，96° 的活动范围只能靠"以关节为心的块"堵，
+    # 半径同样取"罩得住搭上来那节筒的截面角点"——角点不是边心，flat=0.8 的截面差 27%。
+    fet_r = max(Pr.u(0.040) * 1.35 * gauge, math.hypot(cannon_r * 0.80, cannon_r) * JOINT_BALL_MARGIN)
     p.box(fet_bone, f"fetlock_{tag}_{side}",
           (fet[0] - fet_r, fet[1] - fet_r, fet[2] - fet_r),
           (fet[0] + fet_r, fet[1] + fet_r, fet[2] + fet_r), mat=mat_low)
+    # 屈腱 / 籽骨：球节**后**那一坨，挂在管骨这一节上（`low_bone`），**不随球节转**。
+    # 真马这儿本来就厚——后侧比前侧深得多，蹄一抬就看得见那道绷起来的腱。
+    # 它同时是那道缝唯一堵得住的办法：球节一屈，系与蹄摆到前下方，球节后侧整个空出来，
+    # 而空出来的那块**属于管骨这一侧**，靠随关节转走的那半边补不上（挽马实测张 0.82，
+    # 而且是**中间角度**最糟：屈过 65° 蹄又摆回来把视线挡住，两头都读作 0）。
+    # 它不含关节 pivot，所以不构成新的接缝义务，只是把视线堵上——正是需要的。
+    ten_x = cannon_r * 0.92
+    p.box(low_bone, f"flexor_{tag}_{side}",
+          (fet[0] - ten_x, max(0.0, fet[1] - fet_r * 0.50), fet[2] + cannon_r * 0.15),
+          (fet[0] + ten_x, fet[1] + fet_r * 1.20, fet[2] + fet_r * 1.00), mat=mat_low)
+    # 球节**上方**那一圈套，同腕 / 跗（`leg_cuff_*`）：球节侧摆（绕 z）时洞落在关节
+    # 外上方（挽马实测 x−1.24 / y+1.82），屈腱那一坨在后面，够不着。下缘同样停在
+    # pivot 以上，免得自己变成一道要封的缝。
+    fcuff_x = max(cannon_r * 0.92, fet_r * 1.15)
+    p.box(low_bone, f"fet_cuff_{tag}_{side}",
+          (fet[0] - fcuff_x, fet[1] + fet_r * 0.40, fet[2] - cannon_r * 0.95),
+          (fet[0] + fcuff_x, fet[1] + fet_r * 1.60, fet[2] + cannon_r * 0.95), mat=mat_low)
     # 系：52° 前倾插进蹄冠
     pa_r = Pr.u(0.031) * gauge
     p.limb(fet_bone, f"pastern_{tag}_{side}",
@@ -956,8 +1000,14 @@ def part_legs(p: Pelt, env: Envelope, P) -> None:
         p.limb(f"humerus_{side}", f"upper_arm_{side}", _off(sh, 0, Pr.u(0.020)), P(f"radius_{side}"), Pr.u(0.086) * Pr.bone_gauge, mat="coat", flat=0.80,
                 joint_rom=rom(f"radius_{side}"))
         st = P(f"tibia_{side}")
-        p.limb(f"femur_{side}", f"thigh_{side}", _off(P(f"femur_{side}"), 0, -Pr.u(0.020)), _off(st, 0, Pr.u(0.030)), Pr.u(0.108) * Pr.bone_gauge, mat="coat", flat=0.76,
+        qr = Pr.u(0.108) * Pr.bone_gauge
+        p.limb(f"femur_{side}", f"thigh_{side}", _off(P(f"femur_{side}"), 0, -Pr.u(0.020)), _off(st, 0, Pr.u(0.030)), qr, mat="coat", flat=0.76,
                 joint_rom=rom(f"tibia_{side}"), slack=Pr.u(0.030))
+        # 尻盖与大腿之间那道缝（髋屈过 30° 就张开，挽马 0.86）**本轮没修**：试过照腿上
+        # 那几块的办法在 hips 上补臀肌，量下来只把侧摆那一路从 0.64 收到 0.41，屈伸那一路
+        # 纹丝不动——半开的缝不值得多挂两件几何。要真封住得动尻与股那一段的造型（露在
+        # 外面的"大腿"上半本来就该是躯干的一部分），那是另一件事。同类还有颈的偏航。
+        # 清单跑 `python3 scripts/models/horse/shell_check.py --rom` 看。
 
 
 GROUPS = {
