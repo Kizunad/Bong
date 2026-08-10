@@ -14,9 +14,13 @@ belongs_to_player 检查）。本场景用 `[dev] give` 构造合法背包 item�
 
 1. Awaken 探煮熟肉（food.mundane.cooked_meat，shelflife_profile=
    food_spoil_mundane_meat_v1）→ event_alert 神识未及；
-2. 凝脉后再探 → freshness_update（item_uuid=instance_id、freshness=当前
-   current_qi/initial_qi——give→probe 已过 Awaken 拒绝的 4s 静默窗 + realm set，
-   canonical 线性衰减下恒 **< 1.0**，profile_name=food_spoil_mundane_meat_v1）；
+2. 凝脉后**两次探针自校准** → freshness_update（item_uuid=instance_id、
+   profile_name=food_spoil_mundane_meat_v1；freshness=current_qi/initial_qi，
+   give→probe1 已过 Awaken 拒绝的 4s 静默窗 + realm set，任意正常 tick 率下恒
+   **< 1.0**）。两次探针的 (1-f2)/(1-f1) 必须等于墙钟比例 r=(t2-give)/(t1-give)
+   ——(1-f)∝已过 tick 数，decay_per_tick/storage/season/initial_qi 全部消掉，对
+   任意**稳定** tick 率成立，不依赖固定 20 TPS（review finding 2：慢 tick/加速
+   tick 都会让旧固定 TPS 墙钟换算误判正确实现）；
 3. 凝脉探无保鲜 item（trade_crate）→ NoFreshness 静默（无 S2C、无聊天）；
 4. 凝脉探不存在的 instance_id（不在背包）→ dispatch belongs_to_player 前置
    静默丢弃（无 S2C、无聊天）。
@@ -48,16 +52,39 @@ SILENT_WINDOW = 4.0
 # （central-review 2029 #2）。carrier_state 不在 proto_min 白名单，通常不
 # 解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的周期流。
 AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
-# food_spoil_mundane_meat_v1：Linear 衰减 decay_per_tick = 1/(GAME_DAY_TICKS×3)，
-# GAME_DAY_TICKS=24000、TICKS_PER_SECOND=20 → 2.78e-4/s（server/src/shelflife/registry.rs）。
-MEAT_DECAY_PER_SECOND = 1.0 / (24000 * 3) * 20.0
-# 探针路径 multiplier = container_storage_multiplier(Normal) × season_decay_modifier
-# （shelflife/probe.rs）。fixture 恒为 Summer（×1.3，YEAR_TICKS 前 40%），但服务器慢
-# tick / 季节变更时取宽括号 [0.7, 1.3]（Winter=0.7，过渡期 0.8..1.2）避免误报——
-# 只要 elapsed 足够大，最小倍率下界也能把 1.0 压出上界之外。
-SEASON_DECAY_MIN = 0.7
-SEASON_DECAY_MAX = 1.3
+# 探针路径 freshness = current_qi/initial_qi（shelflife/probe.rs，Linear：
+# current = initial - decay_per_tick × storage×season × (now_tick-created_at_tick)）。
+# 服务器主循环是 `app.update() + 5ms sleep`（main.rs:186），tick 率无上限也低于
+# 20/s——client 拿不到 game tick，无法用固定 20 TPS 的墙钟换算去套绝对衰减量
+# （review finding 2）。修法：两次探针自校准——(1-f) ∝ 已过 tick 数，两次探针的
+# (1-f2)/(1-f1) = tick 数之比 = 墙钟比（tick 率稳定时），decay_per_tick / storage /
+# season / initial_qi 全部在比值里消掉，对任意**稳定** tick 率（含慢于/快于 20）都成立。
+PROBE_INTERVAL_S = 2.5
+# 两次测量窗之间的 tick 率漂移容差：墙体比例 r 用 give→probe1 的墙钟算出，期望
+# (1-f2) = (1-f1)×r 的前提是两次窗内 tick 率一致；真实 fixture 同场景内 tick 率稳定，
+# 慢 tick / 启动 catch-up 只造成 ±50% 内的窗间漂移。统一倍率错（2× per-tick 衰减）
+# 与 2× tick 率在 client 侧不可区分，比值法不锁它——这是无 game tick 观测下的
+# 最大可区分度。
+TICK_RATE_DRIFT = 0.5
+# 比值法的绝对容差：有效 dt 的 round()（compute.rs:249）、give 处理延迟对 r 的偏移、
+# freshness 的 f32 序列化噪声。留 0.0005 与旧断言同量级。
 FRESHNESS_TOLERANCE = 0.0005
+
+
+def _probe_payload_freshness(bot, update, meat_instance: int) -> float:
+    """校验 freshness_update 的 item_uuid/profile_name 并返回 freshness 值。"""
+    payload = update.data["payload"]
+    if str(payload.get("item_uuid")) != str(meat_instance):
+        raise BotAssertionError(
+            f"[{bot.username}] 期望 FreshnessUpdate.item_uuid={meat_instance}，"
+            f"实际 {payload.get('item_uuid')}"
+        )
+    if payload.get("profile_name") != MEAT_PROFILE:
+        raise BotAssertionError(
+            f"[{bot.username}] 期望 FreshnessUpdate.profile_name={MEAT_PROFILE}，"
+            f"实际 {payload.get('profile_name')}"
+        )
+    return payload.get("freshness")
 
 
 def run(env) -> None:
@@ -114,47 +141,71 @@ def run(env) -> None:
         )
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
-        update = bot.expect_server_data("freshness_update", timeout=10.0)
-        payload = update.data["payload"]
-        if str(payload.get("item_uuid")) != str(meat_instance):
+        update1 = bot.expect_server_data("freshness_update", timeout=10.0)
+        f1 = _probe_payload_freshness(bot, update1, meat_instance)
+        probe1_wall = time.monotonic()
+        # 两次探针自校准（review finding 2）：等 PROBE_INTERVAL_S 让 decay 有足够 tick
+        # 推进，第二次探针验证衰减**延续**在 (1-f1) 与墙钟比例定的衰减线上——对任意
+        # 稳定 tick 率成立（见 TICK_RATE_DRIFT 注释）。第二次探针须按水位锚定：update1
+        # 已在历史中，expect_server_data 只匹配第一条会拿错 payload。
+        time.sleep(PROBE_INTERVAL_S)
+        bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
+        update2 = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data["payload_type"] == "freshness_update"
+                and e.t > update1.t
+            ),
+            timeout=10.0,
+            description="等第二次 freshness_update（时间隔离后的衰减样本）",
+        )
+        f2 = _probe_payload_freshness(bot, update2, meat_instance)
+        probe2_wall = time.monotonic()
+        # f1 必须严格 <1.0：give→probe1 已过 ≥ ~4s（Awaken 静默窗 + realm set），任意
+        # 正常 tick 率都推进了 ≥1 tick，恒发 freshness=1.0（永不应用衰减）的坏实现在此
+        # 必红（central-review 2029 #7 的判别面原样保留）。
+        if f1 is None or not (0.0 < float(f1) < 1.0):
             raise BotAssertionError(
-                f"[{bot.username}] 期望 FreshnessUpdate.item_uuid={meat_instance}，"
-                f"实际 {payload.get('item_uuid')}"
+                f"[{bot.username}] 期望首次 freshness 严格 <1.0（已衰减，非恒发 1.0）"
+                f"且 >0，实际 {f1}"
             )
-        if payload.get("profile_name") != MEAT_PROFILE:
+        if f2 is None or not (0.0 < float(f2) < 1.0):
             raise BotAssertionError(
-                f"[{bot.username}] 期望 FreshnessUpdate.profile_name={MEAT_PROFILE}，"
-                f"实际 {payload.get('profile_name')}"
+                f"[{bot.username}] 期望第二次 freshness 严格 <1.0 且 >0，实际 {f2}"
             )
-        freshness = payload.get("freshness")
-        # 保鲜是线性衰减（decay_per_tick=1/(24000×3)/tick，20 ticks/s → 2.78e-4/s），
-        # 且必须随正 elapsed 真的下降——原断言上限 1.001 + 余量 0.005 覆盖了 ~18s 的
-        # canonical 衰减，恒发 freshness=1.0（永不应用衰减）的坏实现任何窗口都通过
-        # （central-review 2029 #7）。give→probe 窗口必然 ≥ ~4s：give 后先走 Awaken
-        # RealmTooLow 的 4s 静默窗（SILENT_WINDOW）再 realm set 凝脉才探，故
-        # elapsed≥SILENT_WINDOW 时上界 = 1 - 最小倍率×衰减×elapsed + tol 严格 < 1.0，
-        # 1.0 必被拒；下限 = 1 - 最大倍率×衰减×elapsed - tol 同时防过度衰减/双倍扣减。
-        elapsed = time.monotonic() - give_anchor
-        max_decay = MEAT_DECAY_PER_SECOND * SEASON_DECAY_MAX * elapsed
-        min_decay = MEAT_DECAY_PER_SECOND * SEASON_DECAY_MIN * elapsed
-        lower = 1.0 - max_decay - FRESHNESS_TOLERANCE
-        upper = 1.0 - min_decay + FRESHNESS_TOLERANCE
-        if freshness is None or not (lower <= float(freshness) <= upper):
+        # 衰减必须继续：第二次探针 freshness 严格低于第一次（期间必推进 ≥1 tick）。
+        if not (float(f2) < float(f1)):
             raise BotAssertionError(
-                f"[{bot.username}] 期望新物品 freshness 随正 elapsed 按 canonical 衰减"
-                f"（give→probe {elapsed:.1f}s，季节×[{SEASON_DECAY_MIN},"
-                f"{SEASON_DECAY_MAX}] → [{lower:.4f}, {upper:.4f}]），实际 {freshness}"
+                f"[{bot.username}] 期望 freshness 随时间递减（decay 延续），"
+                f"实际 {float(f1)} → {float(f2)}"
+            )
+        # 比值校准：(1-f) ∝ 已过 tick 数（Linear、storage×season 乘子在两次探针间不变），
+        # 稳定 tick 率下 (1-f2)/(1-f1) = (t2-created)/(t1-created) = 墙钟比例 r。
+        # decay_per_tick/storage/season/initial_qi 全部消掉，不依赖任何固定 TPS。
+        r = (probe2_wall - give_anchor) / (probe1_wall - give_anchor)
+        expected_remaining2 = (1.0 - float(f1)) * r
+        remaining2 = 1.0 - float(f2)
+        lo = expected_remaining2 * (1.0 - TICK_RATE_DRIFT) - FRESHNESS_TOLERANCE
+        hi = expected_remaining2 * (1.0 + TICK_RATE_DRIFT) + FRESHNESS_TOLERANCE
+        if not (lo <= remaining2 <= hi):
+            raise BotAssertionError(
+                f"[{bot.username}] 期望第二次探针衰减量落在按墙钟比例自校准的衰减线上"
+                f"（give→probe1 {probe1_wall - give_anchor:.1f}s，r={r:.3f}，"
+                f"期望 (1-f2)∈[{lo:.5f}, {hi:.5f}]，按漂移±{TICK_RATE_DRIFT:.0%}），"
+                f"实际 (1-f1)={(1.0 - float(f1)):.5f} → (1-f2)={remaining2:.5f}，"
+                f"f1={float(f1)} f2={float(f2)}"
             )
         bot.assert_alive("凝脉保鲜探针后")
         # central-review 31437496353 #5：成功路径也必须断言响应基数——拒绝路径都有
-        # 静默窗口，唯独成功路径只等一条 freshness_update，放走「正确结果之外再发
+        # 静默窗口，唯独成功路径只等 freshness_update，放走「正确结果之外再发
         # event_alert / 库存更新 / 重复 freshness_update / 聊天」的坏实现。水位在
-        # intent 前，已消费的 update 按 t 豁免，窗口内其余 server_data/聊天一律判红。
+        # 首个 intent 前，两条已消费的 update 按 t 豁免，窗口内其余 server_data/聊天
+        # 一律判红。
         _assert_no_freshness_update(
             bot,
             sent_at,
             "凝脉保鲜探针成功后，同请求不得再产出额外 server_data 或聊天",
-            allowed_payload_ts=(update.t,),
+            allowed_payload_ts=(update1.t, update2.t),
         )
 
         # 3. 凝脉探无保鲜 item（trade_crate）→ NoFreshness 静默

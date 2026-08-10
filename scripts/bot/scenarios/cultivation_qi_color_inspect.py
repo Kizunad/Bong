@@ -13,8 +13,9 @@ S2C PlayerSpawn 包（game_join 的 entity_id 恒为 0，只能经 player_spawn 
   （secondary **省略**（field 4 缺失，非显式 null）、is_chaotic=false、
   is_hunyuan=false——**main 保留**）。
 
-断言面（两 bot 同出生点，相距 <6m）：
-1. host 固元（solidify，rank 4）+ victim 引气（induce，rank 2）→ diff=2 全量 payload。
+断言面（两 bot 同出生点，相距 <6m；realm_rank: Awaken=0/Induce=1/Condense=2/
+Solidify=3/Spirit=4/Void=5，technique_scroll.rs:211）：
+1. host 固元（rank 3）+ victim 引气（rank 1）→ diff=2 全量 payload。
    victim 以真实功法施放积累修行
    （崩拳空挥×4 → Heavy，吸灵口空挥×2 → Intricate），QiColor 演化为非默认
    main=Heavy、secondary=Intricate。全量断言校验**非默认敏感状态**：
@@ -22,13 +23,20 @@ S2C PlayerSpawn 包（game_join 的 entity_id 恒为 0，只能经 player_spawn 
    main 保留，只断言 main 会放走「对一切正境界差都套脱敏」的坏实现；另含
    is_chaotic/is_hunyuan=false、realm_diff=2、observer/observed 为
    offline:<username> canonical id（observer **全等**，不是前缀）；
-2. host 降回引气（同境界）→ 静默（realm_diff=0 continue，无 S2C）；
-3. 不存在协议 id 的 observed → dispatch 静默丢弃（无 S2C、无聊天）；
-4. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 固元再探真实 victim
+2. host 通灵（rank 4）→ diff=3 全量——realm_diff>=2 契约的更大差值边界：只测
+   diff=2 会放走「diff==2 才全量、diff>2 仍脱敏/静默」的 off-by-one 坏实现
+   （review finding 1）；
+3. host 凝脉（rank 2）→ diff=1 脱敏 payload（main 保留、secondary **键省略**、
+   is_chaotic/is_hunyuan=false）——全量披露与静默之间唯一可见的脱敏边界；
+4. host 降回引气（同境界）→ 静默（realm_diff=0 continue，无 S2C）；
+5. host 引气、victim 升凝脉 → diff=-1 **负境界差**静默——用共位真实实体隔离，
+   同维 <6m 下静默只能来自 realm_diff<=0 continue（review finding 1）；
+6. 不存在协议 id 的 observed → dispatch 静默丢弃（无 S2C、无聊天）；
+7. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 再探真实 victim
    → 静默（same_dimension 失败，唯一失败的空间前提是维度）；
-5. victim 回 overworld 后 tpzone 到远端 zone（同维、距 host >6m）→ host 固元
-   再探真实 victim → 静默（distance 失败，唯一失败的空间前提是距离）。
-   4/5 都以**真实可见实体**（victim 的 protocol entity id）放在空间门另一侧——
+8. victim 回 overworld 后 tpzone 到远端 zone（同维、距 host >6m）→ host 再探
+   真实 victim → 静默（distance 失败，唯一失败的空间前提是距离）。
+   7/8 都以**真实可见实体**（victim 的 protocol entity id）放在空间门另一侧——
    只发不存在 id 会放走「resolve 正常但漏掉距离/维度检查」的坏实现
    （central-review 2029 #5）。
 """
@@ -159,7 +167,7 @@ def _cast_empty_and_confirm(bot, slot: int, confirm, description: str) -> None:
 def run(env) -> None:
     with env.new_bot("QiH") as host:
         wait_join_and_inventory(host)
-        # host 固元（rank 4）+ victim 引气（rank 2）→ diff=2 全量分支。
+        # host 固元（rank 3）+ victim 引气（rank 1）→ diff=2 全量分支。
         host.cmd("realm set solidify")
         host.expect_chat("[dev] realm set ", timeout=10.0)
 
@@ -197,10 +205,28 @@ def run(env) -> None:
             host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
             observed = host.expect_server_data("qi_color_observed", timeout=10.0)
             payload = observed.data["payload"]
-            _assert_full_payload(host, payload, victim.username)
+            _assert_full_payload(host, payload, victim.username, expected_diff=2)
             host.assert_alive("跨境界 qi_color_inspect 后")
 
-            # 2. host 降为凝脉（rank 3）、victim 仍引气（rank 2）→ diff=1 脱敏 payload：
+            # 1b. host 升通灵（rank 4）、victim 仍引气（rank 1）→ diff=3 全量 payload。
+            #    realm_diff>=2 契约的**更大差值**边界：只测 diff=2 会放走「diff==2 才全量、
+            #    diff>2 仍脱敏/静默」的 off-by-one 坏实现（review finding 1）。qi color
+            #    仍是 Heavy/Intricate（等速绝对衰减 0.001/tick 不破主色 60%），全量断言
+            #    必须带非默认副色。注意 qi_color_observed 已在历史中，不能复用
+            #    expect_server_data（只匹配第一条会拿错 payload），按水位锚定。
+            sent_at = _realm_set_and_settle(host, "spirit")
+            host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
+            observed3 = host.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "qi_color_observed"
+                and e.t > sent_at,
+                timeout=10.0,
+                description="spirit host 探引气 victim 的 qi_color_observed（diff=3 全量）",
+            )
+            _assert_full_payload(host, observed3.data["payload"], victim.username, expected_diff=3)
+            host.assert_alive("三重境界差 qi_color_inspect 后")
+
+            # 2. host 降为凝脉（rank 2）、victim 仍引气（rank 1）→ diff=1 脱敏 payload：
             #    main 保留、secondary/is_chaotic/is_hunyuan 一律隐藏（qi_color_observed_
             #    emit.rs:52-60）。这是「全量披露 ↔ 静默」之间唯一可见的脱敏边界，必须
             #    演练——只测 diff 2/0 会放走「对一切正境界差都套脱敏」或「diff=1 全量
@@ -228,12 +254,27 @@ def run(env) -> None:
             host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
             _assert_silent(host, sent_at, "同境界 qi_color_inspect 应静默（realm_diff=0 continue）")
 
+            # 3b. host 仍引气（rank 1）、victim 升凝脉（rank 2）→ diff=-1 负境界差静默。
+            #    realm_diff<=0 分支在空间门**之后**执行——用共位真实实体隔离：同维、
+            #    <6m，静默只能来自负境界差 continue（review finding 1）。victim realm
+            #    set 只推自己的 player_state（per-client Changed<Cultivation> 查询），
+            #    不向 host 发任何 server_data/聊天；锚点取 host 自己的事件水位即可。
+            victim.cmd("realm set condense")
+            victim.expect_chat("[dev] realm set ", timeout=10.0)
+            sent_at = host.events[-1].t if host.events else 0.0
+            host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
+            _assert_silent(host, sent_at, "负境界差 qi_color_inspect 应静默（realm_diff<=0 continue）")
+            # 恢复 victim 引气：后续空间门步骤的静默必须由 dimension/distance 门产生，
+            # 不能退化为负境界差静默（保持空间门可隔离性）。
+            victim.cmd("realm set induce")
+            victim.expect_chat("[dev] realm set ", timeout=10.0)
+
             # 4. 不存在的协议 id → dispatch 静默丢弃
             sent_at = host.events[-1].t if host.events else 0.0
             host.intent({**INSPECT_REQUEST, "observed": "entity:999999999"})
             _assert_silent(host, sent_at, "坏 observed 协议 id 应被 dispatch 静默丢弃")
 
-            # 5. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 固元再探真实
+            # 5. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 凝脉再探真实
             #    victim → 静默（same_dimension 失败，唯一失败的空间前提是维度）。
             #    空间门必须**可隔离**：把双 bot 精确共位到同一 zone 中心（tpzone 定点
             #    落位，distance=0）再 tpdim 只移 victim（X+0.25）→ distance=0.25 ≤ 6m。
@@ -254,7 +295,7 @@ def run(env) -> None:
             _assert_silent(host, sent_at, "跨维度 qi_color_inspect 应静默（same_dimension 失败）")
 
             # 6. victim 回 overworld 后 tpzone 到远端 zone（同维、距 host >6m）→ host
-            #    固元再探真实 victim → 静默（distance 失败，唯一失败的空间前提是距离）。
+            #    凝脉再探真实 victim → 静默（distance 失败，唯一失败的空间前提是距离）。
             #    tpdim overworld 把 victim 的 X+0.25 精确还原，与 host 再次同坐标共位；
             #    tpzone wangyintai 再到 (4000,144,-1650)——同 overworld 维、距 host
             #    （jiuzong 中心 (0,109,-10000)）~9257m。若距离前提不满足（victim 仍近），
@@ -270,15 +311,16 @@ def run(env) -> None:
             host.assert_alive("qi_color_inspect 拒绝面全程")
 
 
-def _assert_full_payload(host, payload: dict, victim_username: str) -> None:
+def _assert_full_payload(host, payload: dict, victim_username: str, expected_diff: int) -> None:
     if payload.get("main") != "Heavy":
         raise BotAssertionError(
             f"[{host.username}] 期望 QiColor.main=Heavy（victim 崩拳修行演化），"
             f"实际 {payload.get('main')}"
         )
-    if payload.get("realm_diff") != 2:
+    if payload.get("realm_diff") != expected_diff:
         raise BotAssertionError(
-            f"[{host.username}] 期望 realm_diff=2（固元-引气），实际 {payload.get('realm_diff')}"
+            f"[{host.username}] 期望 realm_diff={expected_diff}（全量分支），"
+            f"实际 {payload.get('realm_diff')}"
         )
     if payload.get("is_chaotic") is not False or payload.get("is_hunyuan") is not False:
         raise BotAssertionError(

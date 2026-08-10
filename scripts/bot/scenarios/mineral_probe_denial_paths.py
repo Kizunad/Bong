@@ -51,6 +51,15 @@ Y_HI = 30
 Y_STEP = 4
 COLUMN_TIMEOUT = 8.0
 COLUMN_MAX_ATTEMPTS = 5
+# 事件驱动的轮询间隔：等首个响应时不睡满 quiet 才去看，结果通常亚秒~1s 内到达，
+# 0.1s 轮询让 happy path 从「盲睡 quiet」降到「快发现 + 单次结算窗」（review
+# finding 3：每 phase ≥16s 的串行固定等待）。
+RESULT_POLL_INTERVAL_S = 0.1
+# 等 pos_look 刷新权威位置的短超时：稳定玩家契约上不再收 pos_look（docstring 载），
+# 旧 8s 满超时被当正常控制流白白吃掉；1s 内若权威步进必有 pos_look 到达（wait_for
+# 从 cursor 0 重扫含历史，上一 attempt 的处理窗口给过它落地时间），错过则由基数校验
+# + 换列重试收敛（review finding 3）。
+POS_LOOK_REFRESH_WAIT_S = 1.0
 
 
 def run(env) -> None:
@@ -144,20 +153,42 @@ def _collect_probe_results(
     调用方据此重读位置换列重试。first_result_timeout 约束「等首个结果」的耗时；
     convergence_cap 内始终有新结果（无法出现完整静默窗）则报错——静默放行一个还在
     来响应的批次，会把污染交给下一批/下一 realm 阶段（central-review 2029 #6）。
+
+    等首个结果用**事件驱动短轮询**（RESULT_POLL_INTERVAL_S）而非先盲睡一个 quiet
+    窗，首个结果到达后以**单个**结算窗（quiet，随新结果重置）收尾——旧实现发现 +
+    确认两段串行固定 sleep（~4s），happy path 也被迫吃满（review finding 3）。
     """
-    first_deadline = time.monotonic() + first_result_timeout
-    converge_deadline = time.monotonic() + convergence_cap
-    collected: list = []
-    last_seen = after_t
-    while True:
-        time.sleep(quiet)
-        fresh = [
+    def fresh_after(last_seen: float) -> list:
+        return [
             e
             for e in bot.events_of("server_data")
             if e.data["payload_type"] == "mineral_probe_result"
             and e.t > after_t
             and e.t > last_seen
         ]
+
+    first_deadline = time.monotonic() + first_result_timeout
+    converge_deadline = time.monotonic() + convergence_cap
+    collected: list = []
+    last_seen = after_t
+    # 事件驱动等首个结果：结果通常亚秒~1s 内到达，短轮询**发现**而不是先盲睡一个
+    # quiet 窗（review finding 3——旧实现 happy path 也要睡满 quiet 才发现结果）。
+    # 空返回 = 整批无响应（全部被前置范围过滤），调用方据此重读位置换列重试。
+    while not collected:
+        fresh = fresh_after(last_seen)
+        if fresh:
+            collected.extend(fresh)
+            last_seen = max(e.t for e in fresh)
+            break
+        if time.monotonic() >= first_deadline:
+            return collected
+        time.sleep(RESULT_POLL_INTERVAL_S)
+    # 单次结算窗口：quiet 内无新结果即批完成；新结果到达则重置窗口——不能把「正确
+    # 结果之外还在陆续来响应」当静默放行，convergence_cap 内持续到响应即报错
+    # （central-review 2029 #6 语义原样保留）。
+    settle_deadline = time.monotonic() + quiet
+    while True:
+        fresh = fresh_after(last_seen)
         if fresh:
             collected.extend(fresh)
             last_seen = max(e.t for e in fresh)
@@ -166,11 +197,11 @@ def _collect_probe_results(
                     f"[{bot.username}] mineral_probe_result 在 {convergence_cap:.0f}s 内持续到达，"
                     f"批次收集无法收敛——拒绝静默放行可能污染下一批"
                 )
+            settle_deadline = time.monotonic() + quiet
             continue
-        if collected:
+        if time.monotonic() >= settle_deadline:
             return collected
-        if time.monotonic() >= first_deadline:
-            return collected
+        time.sleep(RESULT_POLL_INTERVAL_S)
 
 
 def _wait_fresh_pos_look(bot, timeout: float = 8.0) -> None:
@@ -224,16 +255,28 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
     实现。修法：先等全新 pos_look 拿到权威位置最近一档，按同一几何判定算本列期望
     在范围内目标数，收集后断言 len(results)==expected；基数不符（权威位置批间移档
     或实现丢响应）重读位置换列复核，不能把非空子集当完整批放行。
+
+    review finding 3：批次屏障与 pos_look 等待不再无条件吃满固定时延——
+    - 批次屏障只在「上一扫可能仍有在途响应」时才排空（`settled`：空收集 = 可能仍在
+      途 → 下 attempt 全量排空；非空收集 = 已过结算窗 = 已排空 → 下 attempt 直接跳过，
+      首批前无任何请求也跳过）。跳过屏障后本批 sent_at 取当前水位，上一批响应若迟到
+      其 t < 本批 sent_at，仍被 _collect_probe_results 的 t>after_t 过滤排除，屏障语义
+      不因跳过而弱化；
+    - pos_look 等短超时（POS_LOOK_REFRESH_WAIT_S）：稳定玩家契约上不再收 pos_look，
+      旧 8s 满超时被当正常控制流吃掉；错过则由本函数的重试循环收敛。
     """
+    settled = True
     for attempt in range(1, COLUMN_MAX_ATTEMPTS + 1):
-        # 批次屏障：先排空上一扫在途响应，本批 sent_at 之后只可能是本批结果——
-        # 迟到响应不得跨 realm 阶段被误认成另一批（central-review 2029 #3）。
-        _drain_probe_results(bot)
+        # 批次屏障（review finding 3）：只在上扫可能仍在途时排空，避免首批/已结算
+        # 批也吃满两次静默样本。settled 在收集后更新——非空收集以结算窗收尾即已排空。
+        if not settled:
+            _drain_probe_results(bot)
         # 期望基数必须对权威位置计算：bot.position 可能仍是陈旧档（join 值只是缓冲位，
         # 权威 Position 周期性 +10），用陈旧位置算期望基数会与实际不符，基数断言形同
         # 虚设（central-review 2029 #8）。先尽力等一个全新 pos_look 刷新到最近档
-        # （best-effort：移档期间必有 pos_look，稳定档则 bot.position 已是权威值）。
-        _wait_fresh_pos_look(bot)
+        # （best-effort：移档期间必有 pos_look，稳定档则 bot.position 已是权威值；
+        # 短超时错过的，wait_for 从 cursor 0 重扫含历史，重试收敛）。
+        _wait_fresh_pos_look(bot, timeout=POS_LOOK_REFRESH_WAIT_S)
         c = bot.position
         if c is None:
             raise BotAssertionError("mineral_probe 场景需要 pos_look 后的位置，实际 position=None")
@@ -251,6 +294,7 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
         # denial_reason 匹配、其余结果静默丢弃，会放走批内额外发出的 denied/其他理由
         # 或 found 响应——realm 优先边界契约就没锁住。
         results = _collect_probe_results(bot, sent_at)
+        settled = bool(results)
         if len(results) != expected:
             # 基数不符（central-review 2029 #8）：既可能是权威位置在批间 +10 移档
             # （y 带整体平移，期望数随之改变），也可能是实现在范围内请求被静默丢弃。
