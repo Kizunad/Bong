@@ -11,6 +11,14 @@ payload 在**解码层整包丢弃**（warn log），根本不会进 `handle_cli
 快照指纹不变）—— 超长包在解码层被丢弃，未产生任何玩法副作用；之后一个合法
 请求仍被正常处理（拒绝没有毒化连接）。
 
+**超长探针是「结构合法的请求 + 越限尺寸」**（review finding：坏探针只用不可解析的
+字节串/非法 meridian 值，会假通过）。32768/200000 字节的探针都填成合法
+`set_meridian_target`（meridian="lung"，JSON 空白填充到越限尺寸）—— 若协议层
+`Bounded<RawBytes, 32767>` 上限被移除/放宽，这些请求会进入 JSON/serde 层并被
+**接受**，handler 回推「已收到经脉目标」聊天 → 探针窗口标记副作用；若协议层拒绝
+仍在，则和坏字节串一样在解码层整包丢弃、零副作用。由此协议层拒绝与下游 serde 拒绝
+可被区分。
+
 反向锁定**正向边界**：恰好 `MAX_PAYLOAD_SIZE`（32767）字节的结构合法请求必须被
 **接受** —— 用 JSON 空白（词法允许 token 间任意空白，serde_json 忽略）把合法
 `set_meridian_target`（meridian="lung"）填充到恰好 32767 字节，照常解出并被
@@ -57,33 +65,24 @@ def run(env) -> None:
     )
 
     with env.new_bot("Big") as bot:
-        snapshot = wait_join_and_inventory(bot)
-        pre_fingerprint = inventory_fingerprint(snapshot)
+        pre = wait_join_and_inventory(bot)
+        pre_fingerprint = inventory_fingerprint(pre)
 
-        def make_raw_send(size: int):
+        def make_oversized_send(size: int):
             def send() -> None:
-                # 帧层 varint 长度前缀能承载任意大小；故意给足字节让解码层撞 Bounded 上限。
-                bot.send_payload("bong:client_request", b"A" * size)
+                # 帧层 varint 长度前缀能承载任意大小；payload 是**结构合法**的
+                # set_meridian_target（JSON 空白填充到 size 字节，meridian="lung"）。
+                # 上限若被移除/放宽，请求进入 serde/handler → 回推「已收到经脉目标」
+                # → 探针窗口标记副作用；协议层拒绝仍在则整包丢弃、零副作用。
+                # 用语义合法请求作超长探针，才能把协议层拒绝与下游 serde 拒绝区分开。
+                bot.send_payload("bong:client_request", _valid_payload_padded_to(size))
 
             return send
 
-        probes = [(label, make_raw_send(size)) for label, size in PROBES]
-        probes.append(
-            (
-                "超长但结构合法的 JSON（meridian 巨型字符串，同样 >32767B）",
-                lambda: bot.send_payload(
-                    "bong:client_request",
-                    json.dumps(
-                        {
-                            "v": 1,
-                            "type": "set_meridian_target",
-                            "meridian": "x" * 50_000,
-                        }
-                    ).encode("utf-8"),
-                ),
-            )
+        probes = [(label, make_oversized_send(size)) for label, size in PROBES]
+        fire_probes_and_keep_connection(
+            bot, "超长 payload", probes, baseline_snapshot=pre
         )
-        fire_probes_and_keep_connection(bot, "超长 payload", probes)
 
         post = latest_inventory_snapshot(bot)
         post_fingerprint = inventory_fingerprint(post)

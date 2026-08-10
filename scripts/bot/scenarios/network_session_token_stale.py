@@ -16,12 +16,12 @@
    close 事件）。这锁定的是"曾有效、现已关闭"的 token 不再被接受 —— 若 close
    未正确使 session 失效，重放 move 会成功并产生 loot_container_update / 指纹
    变化，断言立即失败。
-2. **forged token（从未发放）**：高位全 1 的 session_id 不可能被分配过 —— 用一个
-   **pack→ext 真实 move**（真实背包源物品、ext_{forged} 目标位置）只换 token 重放，
-   同样干净拒绝：move resync + 零 mutation + 无 loot_container_update，close no-op。
-   反向沿用真实 session 的 ext→pack 模板会把 forged token 与真实容器配对，源容器
-   /token 不匹配成为第二个无效前提，探针就测不到 session 权威门禁了（review
-   finding 5）。
+2. **forged token（从未发放）**：高位全 1 的 session_id 不可能被分配过 —— 复用
+   real move 模板（from=ext_{real_session}@(0,0)、to=真实空闲背包格）只换 token
+   重放：**容器位置真实有效**、物品真实在其中，唯一无效前提是 token 从未发放。
+   若沿用 pack→ext_{forged} 方向，目标容器从不存在，目标容器校验成为第二个无效
+   前提，探针就测不到 session 权威门禁了（review finding 5/7）。同样干净拒绝：
+   move resync + 零 mutation + 无 loot_container_update，close no-op。
 
 拒绝响应的可观测契约：resync 快照的指纹（revision + 内容）与请求前**完全一致**
 （server 只在背包内容突变时 bump revision，单纯重发快照不改 revision；故指纹
@@ -254,39 +254,39 @@ def _open_real_session(bot) -> dict:
 def _assert_stale_move_rejected_zero_mutation(
     bot, session_id: int, label: str, real_move: dict
 ) -> None:
-    """stale / 重放 external_container_move 必须被干净拒绝：resync + 零 mutation
-    + 无成功路径响应。
+    """stale / 重放 external_container_move 必须被干净拒绝：零 mutation + 无成功路径响应。
 
     ``real_move`` 是 move 模板（instance_id / from / to）—— 探针只换 session token，
-    使 token 成为**唯一无效前提**（review finding 2 / 5）：
+    使 token 成为**唯一无效前提**（review finding 2 / 5 / 7）：
     - **closed token（重放）**：模板 from=ext_{real_session}@(0,0)（物品真实在其中）、
       to=真实空闲背包格。token 已关闭，from 与 token 同属一个真实 session、源物品
       真实存在 —— 唯一无效前提是「token 已关闭」。
-    - **forged token（从未发放）**：模板 from=真实背包物品、to=ext_{FORGED}@(0,0)。
-      ext_{FORGED} 从不曾存在，背包源物品真实（与任何 session 无关）—— 唯一无效
-      前提是「token 从未发放」。若沿用 closed 的 ext→pack 模板（from=ext_{real}），
-      forged token 会与真实 session 的容器配对，源容器/token 不匹配成为第二个无效
-      前提：漏做 session 权威门禁、只校验「from 容器须对应本请求 session」的回归
-      实现也会干净拒绝，探针未触及授权检查（review finding 5）。
+    - **forged token（从未发放）**：复用同一模板，只换 session_id=FORGED ——
+      from=ext_{real_session}@(0,0) 的**容器位置真实有效**、物品真实在其中。
+      「容器位置有效 + 只换 token」才能区分 session 权威门禁与普通的目标容器校验：
+      旧设计 pack→ext_{FORGED} 的 to 目标容器从不存在，漏做 token 校验、只校验
+      「目标容器存在/可写」的回归实现也会干净拒绝（review finding 7）。复用真实
+      容器后，任何跳过 token 校验的实现都会继续执行 move（fiber 真实在 from、背包
+      to 格空闲）→ loot_container_update + revision bump → 断言立即失败。
 
-    若 server 错误接受坏 token 并走到物品校验：closed 路径源物品真实在 ext_{real}、
-    forged 路径源物品真实在背包，move 会成功回推 loot_container_update + bump
-    revision —— 本断言的零 mutation 指纹与
-    ``assert_no_server_data_payload_since(loot_container_update)`` 立即失败，
-    暴露授权缺陷。
+    若 server 错误接受坏 token 并走到物品校验：源物品真实在 ext_{real}（closed 与
+    forged 同模板），move 会成功回推 loot_container_update + bump revision —— 本断言的
+    零 mutation 指纹与 ``assert_no_server_data_payload_since(loot_container_update)``
+    立即失败，暴露授权缺陷。
 
-    pre 指纹先读（发请求**之前**）；锚点在读 pre **之后**、发请求**之前**从与
-    ``event.t`` 同一相对时钟（``time.monotonic() - bot.t0``）取发送时刻。resync
-    必须严格晚于锚点 → 必然是本次请求触发的新快照；读 pre 期间入队的请求前快照
-    （t ≤ 锚点）被排除（review finding 2）。指纹（revision + 内容）与 pre 一致即
-    证明请求没有造成任何背包 mutation。
+    **同步点（review finding 1/3）**：不靠「等一个 resync 快照」判定拒绝 —— 周期
+    shelflife / Changed 驱动的无变更重发与拒绝 resync 同类型同时钟，会提前满足等待，
+    把「请求尚未处理」误判成「已干净拒绝」。server 按连接**串行**处理请求，故本函数
+    发完 move 后调 ``assert_valid_request_still_works``（发一个合法请求并等它的聊天
+    确认）：确认到达即证明本 move 已处理完毕，任何迟到的成功响应 / 副作用已全部入队
+    —— 之后的 ``assert_no_server_data_payload_since`` 扫描与前后指纹比对都覆盖完整
+    观察期。pre 指纹在发请求**之前**读取；锚点同样在发请求前取发送时刻（与 ``event.t``
+    同一相对时钟，见 ``_relative_now``）。
     """
-    from ._inventory_helpers import (
-        latest_inventory_snapshot,
-        wait_inventory_snapshot_after,
-    )
+    from ._inventory_helpers import latest_inventory_snapshot
     from ._rejection_helpers import (
         assert_no_server_data_payload_since,
+        assert_valid_request_still_works,
         inventory_fingerprint,
     )
 
@@ -300,25 +300,58 @@ def _assert_stale_move_rejected_zero_mutation(
             real_move["to"],
         )
     )
-    resync = wait_inventory_snapshot_after(bot, before, timeout=10.0)
-    if inventory_fingerprint(resync) != inventory_fingerprint(pre):
-        raise BotAssertionError(
-            f"{label}：期望 resync 回推背包与请求前完全一致（零 mutation），"
-            f"实际 pre={inventory_fingerprint(pre)} resync={inventory_fingerprint(resync)}"
-        )
+    # review finding 1/3：同步点证明本 move 已处理完毕（server 串行处理请求，之后合法
+    # 请求的聊天确认到达 ⇒ 本 move 的全部响应已入队），迟到的 loot_container_update
+    # 必然落入扫描窗口；零 mutation 用同步点后的最新快照指纹 vs 请求前指纹判定。
+    assert_valid_request_still_works(bot)
     assert_no_server_data_payload_since(bot, before, "loot_container_update", label)
+    post = latest_inventory_snapshot(bot)
+    if inventory_fingerprint(post) != inventory_fingerprint(pre):
+        raise BotAssertionError(
+            f"{label}：期望拒绝后背包与请求前完全一致（零 mutation），"
+            f"实际 pre={inventory_fingerprint(pre)} post={inventory_fingerprint(post)}"
+        )
+
+
+def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
+    """stale / 重放 external_container_close 必须被干净拒绝：无 close 响应 + 零 mutation。
+
+    review finding 3/6：旧实现 `time.sleep(1.0)` 后只扫一次存量事件 —— server 若在
+    扫描之后（调度/网络延迟下，如 1.1s）才处理非法 close，迟到的 `loot_container_close`
+    不会被捕获；且 close 断言从不比对前后背包指纹，接受未知/已关闭 token 后只发
+    inventory_snapshot（无 loot_container_close 响应）的 mutation 也会通过。与
+    ``_assert_stale_move_rejected_zero_mutation`` 同一套**同步点**：server 串行处理
+    请求，之后的合法请求确认到达即证明本 close 已处理完毕，任何响应 / 副作用已全部
+    入队 —— 再扫 `loot_container_close` 缺失 + 同步点后最新快照指纹 vs 请求前指纹
+    相等（零 mutation）。
+    """
+    from ._inventory_helpers import latest_inventory_snapshot
+    from ._rejection_helpers import (
+        assert_no_server_data_payload_since,
+        assert_valid_request_still_works,
+        inventory_fingerprint,
+    )
+
+    pre = latest_inventory_snapshot(bot)
+    before = time.monotonic() - bot.t0
+    bot.intent(_close_request(session_id))
+    assert_valid_request_still_works(bot)
+    assert_no_server_data_payload_since(bot, before, "loot_container_close", label)
+    post = latest_inventory_snapshot(bot)
+    if inventory_fingerprint(post) != inventory_fingerprint(pre):
+        raise BotAssertionError(
+            f"{label}：期望 close 干净 no-op 且背包零 mutation，"
+            f"实际 pre={inventory_fingerprint(pre)} post={inventory_fingerprint(post)}"
+        )
+    bot.assert_alive(f"{label} 后")
 
 
 def run(env) -> None:
     from ._inventory_helpers import (
-        container_location,
-        find_item,
         latest_inventory_snapshot,
-        wait_inventory_revision_after_matching,
         wait_inventory_snapshot_after,
     )
     from ._rejection_helpers import (
-        assert_no_server_data_payload_since,
         assert_valid_request_still_works,
         fire_probes_and_keep_connection,
         inventory_fingerprint,
@@ -356,73 +389,37 @@ def run(env) -> None:
         )
         bot.assert_alive("replay 已关闭 session 的 move 拒绝后")
 
-        # replay 已关闭 session 的 close —— 干净 no-op：不再回推 close 事件。
-        replay_close_before = time.monotonic() - bot.t0
-        bot.intent(_close_request(session_id))
-        time.sleep(1.0)
-        assert_no_server_data_payload_since(
-            bot,
-            replay_close_before,
-            "loot_container_close",
-            "replay 已关闭 session 的 close",
-        )
-        bot.assert_alive("replay 已关闭 session 的 close 后")
+        # replay 已关闭 session 的 close —— 干净 no-op：不再回推 close 事件，且背包
+        # 零 mutation（review finding 3/6：同步点 + 指纹，见 _assert_stale_close_rejected）。
+        _assert_stale_close_rejected(bot, session_id, "replay 已关闭 session 的 close")
 
-        # ---- 2. forged（从未发放的 token）—— pack→ext 方向，只换 token。forged
-        # session 从未存在，ext_{forged} 容器不可能装有真实物品；若沿用真实 session
-        # 的 ext→pack 模板（from=ext_{real}），请求会把 forged token 与真实 session
-        # 的容器配对，源容器与 token 不匹配成为第二个无效前提 —— 一个漏做 session
-        # 权威门禁、但校验「from 容器须对应本请求 session」的回归实现也会干净拒绝，
-        # 探针未触及授权检查（review finding 5）。改用 pack→ext：真实背包物品（与
-        # 任何 session 无关的真实源位置）移到 ext_{forged}，唯一无效前提只剩 token。
-        # give 新 fiber 后必须用 **revision 门槛**等它落进新快照：wait_for 从
-        # cursor=0 扫全部历史事件，wait_inventory_contains 会命中真实阶段遗留的旧
-        # fiber 快照 —— 实跑实证：give 的 Changed emit 延迟 ~300ms 才发，bot 拿着
-        # 旧 fiber 快照抢跑发 move，pre 读到 fiber 尚未反映的 rev7，move 的 resync
-        # 已含新 fiber，指纹因 give 而不同、误报零 mutation 违约。revision 门槛
-        # 排除真实阶段（rev ≤ give_before_rev）的旧 fiber 快照，锁定 give 后含新
-        # fiber 的快照，from 指向新实例的真实位置。
-        give_before_rev = latest_inventory_snapshot(bot)["revision"]
-        bot.cmd("give grass_fiber 1")
-        bot.expect_chat("[dev] gave grass_fiber x1", timeout=10.0)
-        forged_snapshot = wait_inventory_revision_after_matching(
-            bot,
-            give_before_rev,
-            lambda payload: find_item(payload, "grass_fiber") is not None,
-            "give 后包含 grass_fiber 的新快照（revision 门槛排除旧 fiber 快照）",
-            timeout=10.0,
-        )
-        forged_fiber = find_item(forged_snapshot, "grass_fiber")
-        assert forged_fiber is not None
-        forged_move = {
-            "instance_id": forged_fiber["item"]["instance_id"],
-            "from": forged_fiber["location"],
-            "to": container_location(f"ext_{FORGED_SESSION_ID}", 0, 0),
-        }
-
+        # ---- 2. forged（从未发放的 token）—— 复用真实 session 的 move 模板，只换
+        # token（review finding 5/7）。模板 from=ext_{real_session}@(0,0)（fiber 真实
+        # 在其中）、to=真实空闲背包格 —— **容器位置真实有效**，唯一无效前提是 token
+        # 从未发放。旧设计 pack→ext_{FORGED} 的 to 目标容器从不存在：漏做 session
+        # 权威门禁、只校验「目标容器存在/可写」的回归实现也会干净拒绝，探针未触及
+        # 授权检查（finding 7）。复用真实容器后，任何跳过 token 校验的实现都会继续
+        # 执行 move（fiber 真实在 from、背包 to 格空闲）→ loot_container_update +
+        # 指纹变化 → 断言失败。
         _assert_stale_move_rejected_zero_mutation(
-            bot, FORGED_SESSION_ID, "stale move #1（forged token）", forged_move
+            bot, FORGED_SESSION_ID, "stale move #1（forged token）", real_move
         )
         bot.assert_alive("stale move #1 拒绝响应后")
 
         # stale move #2（重放同一 forged token）—— 同样干净拒绝，连接不坏。
         _assert_stale_move_rejected_zero_mutation(
-            bot, FORGED_SESSION_ID, "stale move #2（重放 forged token）", forged_move
+            bot, FORGED_SESSION_ID, "stale move #2（重放 forged token）", real_move
         )
         bot.assert_alive("stale move #2 重放拒绝后")
 
-        # stale close（forged token）—— 未知 token 干净 no-op，不再回推 close 事件。
-        stale_close_before = time.monotonic() - bot.t0
-        bot.intent(_close_request(FORGED_SESSION_ID))
-        time.sleep(1.0)
-        assert_no_server_data_payload_since(
-            bot, stale_close_before, "loot_container_close", "stale close（forged token）"
-        )
-        bot.assert_alive("stale close 后")
+        # stale close（forged token）—— 未知 token 干净 no-op，不再回推 close 事件
+        # 且背包零 mutation（review finding 3/6）。
+        _assert_stale_close_rejected(bot, FORGED_SESSION_ID, "stale close（forged token）")
 
         fire_probes_and_keep_connection(
             bot,
             "stale session",
             [("重放 close", lambda: bot.intent(_close_request(FORGED_SESSION_ID)))],
+            baseline_snapshot=latest_inventory_snapshot(bot),
         )
         assert_valid_request_still_works(bot)

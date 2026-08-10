@@ -35,14 +35,14 @@ def run(env) -> None:
     )
 
     with env.new_bot("Typ") as bot:
-        snapshot = wait_join_and_inventory(bot)
-        pre_fingerprint = inventory_fingerprint(snapshot)
+        pre = wait_join_and_inventory(bot)
+        pre_fingerprint = inventory_fingerprint(pre)
 
         probes = [
             (label, lambda req=req: bot.intent(req))
             for label, req in UNKNOWN_TYPE_PROBES
         ]
-        fire_probes_and_keep_connection(bot, "未知 type", probes)
+        fire_probes_and_keep_connection(bot, "未知 type", probes, baseline_snapshot=pre)
 
         post = latest_inventory_snapshot(bot)
         post_fingerprint = inventory_fingerprint(post)

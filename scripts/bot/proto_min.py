@@ -40,6 +40,21 @@ PLAYER_STATE_REALM_NAMES = {
 SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
 SERVER_DATA_QUICKSLOT_CONFIG_FIELD = 35
 
+# QuickSlotConfigV1 内部字段（proto/bong/envelope.proto QuickSlotConfig）——
+# 命名常量供 decoder 与 wire 契约测试共同引用，避免两端各写一遍魔法数字漂移。
+QUICKSLOT_CONFIG_SLOTS_FIELD = 1
+QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD = 2
+QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD = 3
+QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD = 4
+
+# QuickSlotEntryV1 / OptionalQuickSlotEntry 内部字段。
+QUICKSLOT_ENTRY_ITEM_ID_FIELD = 1
+QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD = 2
+QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD = 3
+QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD = 4
+QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD = 5
+OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD = 1
+
 
 class ProtoDecodeError(ValueError):
     pass
@@ -956,24 +971,30 @@ def _quick_slot_config(data: bytes) -> dict[str, Any]:
     return {
         "v": 1,
         "type": "quickslot_config",
-        "slots": [_quick_slot_entry(raw) for raw in _messages(fields, 1)],
-        "cooldown_until_ms": _repeated_varints(fields, 2),
-        "ack_request_id": _optional_string(fields, 3),
-        "bind_accepted": bool(_varint(fields, 4)) if _has(fields, 4) else None,
+        "slots": [
+            _quick_slot_entry(raw) for raw in _messages(fields, QUICKSLOT_CONFIG_SLOTS_FIELD)
+        ],
+        "cooldown_until_ms": _repeated_varints(fields, QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD),
+        "ack_request_id": _optional_string(fields, QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD),
+        "bind_accepted": (
+            bool(_varint(fields, QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD))
+            if _has(fields, QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD)
+            else None
+        ),
     }
 
 
 def _quick_slot_entry(data: bytes) -> dict[str, Any] | None:
     fields = _fields(data)
-    if not _has(fields, 1):
+    if not _has(fields, OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD):
         return None
-    entry = _message(fields, 1)
+    entry = _message(fields, OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD)
     return {
-        "item_id": _string(entry, 1),
-        "display_name": _string(entry, 2),
-        "cast_duration_ms": _varint(entry, 3),
-        "cooldown_ms": _varint(entry, 4),
-        "icon_texture": _string(entry, 5),
+        "item_id": _string(entry, QUICKSLOT_ENTRY_ITEM_ID_FIELD),
+        "display_name": _string(entry, QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD),
+        "cast_duration_ms": _varint(entry, QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
+        "cooldown_ms": _varint(entry, QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
+        "icon_texture": _string(entry, QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
     }
 
 

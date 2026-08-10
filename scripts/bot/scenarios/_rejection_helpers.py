@@ -39,17 +39,15 @@ from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场�
 # 请求（拒绝发生在副作用之前），窗口内出现它们只能是周期连接同步，绝非请求响应；
 # 正向断言（合法请求仍可用 / 边界接受）各自用显式 wait 认自己的响应，不受影响。
 #
-# inventory_snapshot 也在其列：shelflife sweep（shelflife/sweep.rs，每 200 tick）
-# 等周期系统会变更 PlayerInventory → Changed 驱动 emit_changed_inventory_snapshots
-# 重发快照，与 client 请求无关（实跑实证在 join 后 1.6-9s 落在探针窗口内，内容与
-# 前序快照逐字段一致、revision 不变）。把它列为 ambient 不会削弱零 mutation oracle：
-# 所有需要证明「探针零 mutation」的场景（out_of_range / unknown_type / oversized
-# 的探针前后指纹、stale-move 的请求前/resync 指纹）都用 **inventory_fingerprint
-# （revision + 全部内容字段）** 断言 —— 真被坏请求改动的 mutation 必然 bump
-# revision、改变内容，指纹检查仍失败；成功路径响应（loot_container_update /
-# loot_container_close / quickslot_config ack）是独立 payload 类型，仍非 ambient，
-# 且各场景用 assert_no_server_data_payload_since 单独锁「无成功响应」。这里只消掉
-# 内容不变的重发误报，不放过任何真实的玩法副作用。
+# inventory_snapshot **不在** 这份集合里：它既是 join 同步 / 周期重发（shelflife
+# sweep 每 200 tick 等 Changed 驱动，内容与 revision 不变），也是容器请求的 resync
+# 响应 —— 按 payload type 一刀切 ambient 会把请求引发的响应也豁免掉（review
+# finding）。窗口扫描对 inventory_snapshot 改用**内容基线**判别（见
+# ``is_gameplay_side_effect``）：与探针前基线指纹一致 ⇒ 周期无变更重发，豁免；
+# 指纹变化 ⇒ 请求引发的 mutation resync，标记为副作用。零 mutation 的最终证据仍是
+# 各场景探针前后指纹相等断言（inventory_fingerprint = revision + 全部内容字段），
+# 成功路径响应（loot_container_update / loot_container_close / quickslot_config ack）
+# 是独立 payload 类型，仍非 ambient，由 assert_no_server_data_payload_since 单独锁。
 _AMBIENT_SERVER_DATA_TYPES = frozenset(
     {
         "status_snapshot",    # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
@@ -59,8 +57,6 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
         # （derived_attrs_emit.rs，含 join 首次 attach）
         "morph_state",        # join 首帧 + 每 20 tick 周期全量重发 + 易形增删 delta
         "cultivation_detail",  # 每 20 tick 周期全量重发（cultivation_detail_emit.rs）
-        "inventory_snapshot",  # shelflife sweep 等周期变更 PlayerInventory 驱动的重发，
-        # 内容与 revision 不变；零 mutation 由各场景 fingerprint 相等断言守护
     }
 )
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
@@ -72,6 +68,7 @@ def is_gameplay_side_effect(
     event,
     ambient_data: frozenset = frozenset(),
     ambient_vfx: frozenset = frozenset(),
+    baseline_snapshot: dict | None = None,
 ) -> bool:
     """判断事件是否属于玩法副作用（拒绝路径必须保证探针窗口内不出现）。
 
@@ -81,18 +78,34 @@ def is_gameplay_side_effect(
     副作用：它要么是已解码 server_data 事件的字节重复（同一次推送同时发 raw payload
     + 解码后 server_data 两个事件），要么是 join 突发里解码器读不动的字节（如玩家
     spawn），都不独立构成玩法反馈。
+
+    ``inventory_snapshot`` 特殊处理：它既由周期系统（shelflife sweep 等 Changed 驱动）
+    无条件重发，也是容器请求的 resync 响应 —— 不能按 payload type 豁免。有
+    ``baseline_snapshot``（探针前最新快照）时用内容判别：指纹与基线一致 ⇒ 周期无变更
+    重发，豁免；指纹变化 ⇒ 请求引发的 mutation resync，标记副作用。无基线（或事件没
+    带可比较内容）时无从证明它是周期重发 ⇒ 一律标记，宁严勿松。
     """
     if event.kind == "chat":
         return True
     if event.kind == "server_data":
-        return event.data.get("payload_type") not in ambient_data
+        payload_type = event.data.get("payload_type")
+        if payload_type == "inventory_snapshot":
+            if baseline_snapshot is None:
+                return True
+            payload = event.data.get("payload")
+            if not isinstance(payload, dict):
+                return True
+            return inventory_fingerprint(payload) != inventory_fingerprint(baseline_snapshot)
+        return payload_type not in ambient_data
     if event.kind == "vfx_event":
         event_id = event.data.get("event_id")
         return not (event_id and event_id in ambient_vfx)
     return False
 
 
-def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> None:
+def assert_no_gameplay_side_effect_since(
+    bot, since_t: float, label: str, baseline_snapshot: dict | None = None
+) -> None:
     """断言 t > since_t 的已有事件中没有玩法副作用（server_data / chat / vfx）。
 
     干净拒绝契约第 3 条：坏请求在产生任何玩法副作用**之前**被拦截。若探针窗口内
@@ -102,13 +115,20 @@ def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> Non
     ``_AMBIENT_SERVER_DATA_TYPES`` / ``_AMBIENT_VFX_EVENT_IDS`` 排除 —— 类型是否
     ambient 由"该系统是否独立于请求周期/Changed 驱动"判定，而不是由"窗口前是否
     见过该类型"自校准（那会把请求触发的同类型响应误判成连接同步）。
+
+    ``baseline_snapshot`` 传探针前最新背包快照：inventory_snapshot 用内容与基线
+    比较来区分周期重发（一致，豁免）与请求引发的 resync（变化，标记）—— 见
+    ``is_gameplay_side_effect``。不传则任何 inventory_snapshot 都算副作用。
     """
     offenders = [
         event
         for event in bot.events
         if event.t > since_t
         and is_gameplay_side_effect(
-            event, _AMBIENT_SERVER_DATA_TYPES, _AMBIENT_VFX_EVENT_IDS
+            event,
+            _AMBIENT_SERVER_DATA_TYPES,
+            _AMBIENT_VFX_EVENT_IDS,
+            baseline_snapshot,
         )
     ]
     if offenders:
@@ -165,6 +185,18 @@ def wait_keepalive_after(bot, after: float, timeout: float = 25.0):
     )
 
 
+def _relative_now(bot) -> float:
+    """读取与 ``event.t`` 同一帧的相对时钟（``time.monotonic() - bot.t0``）。
+
+    先取 ``t0`` 再取 ``monotonic``：测试 fake 的 ``t0`` 是 property，按求值顺序
+    （``time.monotonic() - bot.t0`` 先算左边）会引入 ~µs 抖动，把锚点推到比当前
+    ``_now`` 略小、吞掉同一时刻的事件。固定顺序后锚点严格为「当前事件时刻 + 抖动」，
+    "t > 锚"的时序语义对真实 bot（t0 是创建时定死的 float，无抖动）与 fake 一致。
+    """
+    t0 = bot.t0
+    return time.monotonic() - t0
+
+
 def drain_event_stream(bot, *, quiet_s: float = 2.0, max_s: float = 6.0) -> None:
     """等事件流安静下来（连续 ``quiet_s`` 秒无新事件），最多 ``max_s`` 秒兜底。
 
@@ -193,6 +225,7 @@ def fire_probes_and_keep_connection(
     probes: list[tuple[str, callable]],
     *,
     settle_s: float = 2.0,
+    baseline_snapshot: dict | None = None,
 ) -> None:
     """连发一组坏请求探针，断言整体干净拒绝：无副作用 + 无断连 + 心跳继续。
 
@@ -209,23 +242,28 @@ def fire_probes_and_keep_connection(
       响应式 server_data / chat / vfx 也属探针窗口，必须覆盖进拒绝判定（否则
       keepalive 等待期内的迟到副作用会假通过）。
 
+    ``baseline_snapshot`` 传探针前最新背包快照（见 ``is_gameplay_side_effect``）：
+    inventory_snapshot 借此区分周期重发与请求引发的 resync。
+
     分模块的"合法请求仍可用"强断言由各场景在调用本函数后自己做（需要不同请求）。
     """
     drain_event_stream(bot)
     # 探针窗口锚点取自与 event.t 同一时钟（time.monotonic() - bot.t0）的**发送时刻**，
     # 而不是 events[-1].t：事件流安静时最后一条事件的 t 会停留在旧值，把窗口起点推到
     # 早于探针发送的时刻，连接同步/旧事件会被误划进探针窗口。
-    sent_at = time.monotonic() - bot.t0
+    sent_at = _relative_now(bot)
     for probe_name, send in probes:
         send()
     # 心跳断言锚定在**全部探针发出之后**的发送时刻：事件流安静时 events[-1].t 会停留
     # 在探针前的旧值，把 probe 处理前就已生成/在途的 keepalive 放进「拒绝后心跳」窗口
-    # （review finding 3）。time.monotonic() - bot.t0 与 event.t 同一相对时钟，严格在
-    # 全部发送完成后读取，排除所有在探针发送时刻前已到达的事件。
-    probe_done_at = time.monotonic() - bot.t0
+    # （review finding 3）。_relative_now 与 event.t 同一相对时钟，严格在全部发送完成后
+    # 读取，排除所有在探针发送时刻前已到达的事件。
+    probe_done_at = _relative_now(bot)
     time.sleep(settle_s)
     bot.assert_alive(f"{label} 探针发出后 {settle_s:.1f}s 窗口内无断连")
-    assert_no_gameplay_side_effect_since(bot, sent_at, f"{label} 探针窗口")
+    assert_no_gameplay_side_effect_since(
+        bot, sent_at, f"{label} 探针窗口", baseline_snapshot
+    )
     wait_keepalive_after(bot, probe_done_at)
     # 心跳观察期（wait_keepalive_after 最多再消费 ~25s 事件）内到达的玩法副作用也
     # 必须计入拒绝判定：settle 窗口后、keepalive 等待期间产生的响应式 server_data /
@@ -233,7 +271,7 @@ def fire_probes_and_keep_connection(
     # 必须再扫一次，否则拒绝判定假通过（review finding：side-effect oracle 要覆盖
     # 完整异步观察期）。
     assert_no_gameplay_side_effect_since(
-        bot, sent_at, f"{label} 探针窗口(心跳观察期后)"
+        bot, sent_at, f"{label} 探针窗口(心跳观察期后)", baseline_snapshot
     )
     bot.assert_alive(f"{label} 心跳往返后仍存活")
 
@@ -250,7 +288,7 @@ def assert_valid_request_still_works(bot, *, meridian: str = "lung") -> None:
     一个更早的匹配广播（例如来自之前被错误接受的坏请求探针）在发送时刻前已到达、
     ``t ≤ sent_at``，不能冒充本请求的响应 —— 成功断言与所发的合法请求严格对应。
     """
-    sent_at = time.monotonic() - bot.t0
+    sent_at = _relative_now(bot)
     bot.intent({"v": 1, "type": "set_meridian_target", "meridian": meridian})
     bot.wait_for(
         lambda e: e.kind == "chat" and "已收到经脉目标" in e.data["text"] and e.t > sent_at,

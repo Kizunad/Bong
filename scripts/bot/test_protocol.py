@@ -1855,12 +1855,36 @@ class _ReaderAlive:
         return self._alive
 
 
+class _ClockAdvancingList(list):
+    """append 时把 bot 的模拟相对时钟推进到该事件时刻（max）。
+
+    场景断言用 ``time.monotonic() - bot.t0`` 作相对时钟锚（与 ``event.t`` 同一帧）。
+    fake 的 ``_now`` 是模拟相对时刻：初始 0，随事件 append 推进 —— 于是"发送后
+    t>锚"的时序语义对 fake 可测（发送前锚 = 发送前最后事件时刻，发送中 append 的
+    事件时刻会推进 probe_done_at，自然形成"探针期间 vs 探针完成后"的边界）。
+    """
+
+    def __init__(self, bot: "_RejectionFakeBot"):
+        super().__init__()
+        self._bot = bot
+
+    def append(self, item: _FakeEvent) -> None:
+        super().append(item)
+        self._bot._advance_clock_to(getattr(item, "t", 0.0))
+
+    def extend(self, items: list[_FakeEvent]) -> None:
+        for item in items:
+            self.append(item)
+
+
 class _RejectionFakeBot(_FakeBot):
     """干净拒绝断言所需的最小 Bot 接口替身（无 socket）。
 
     - ``assert_alive`` 按 disconnect_reason / reader 存活判连接状态；
     - ``wait_for`` 在 events 里找不到时按顺序补充 ``pending`` 事件（模拟 server
-      后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测。
+      后续心跳 / 聊天响应），让"探针后新 keepalive 到达"这类时序可测；
+    - ``t0`` 是模拟相对时钟（``time.monotonic() - t0 == self._now``），随事件
+      append 推进 —— 让 ``time.monotonic() - bot.t0`` 锚与 ``event.t`` 同帧可测。
     """
 
     def __init__(
@@ -1871,11 +1895,23 @@ class _RejectionFakeBot(_FakeBot):
         disconnected: bool = False,
         reader_alive: bool = True,
     ):
-        super().__init__(events)
+        super().__init__([])
+        self._now = 0.0
+        self.events = _ClockAdvancingList(self)
+        self.events.extend(events)
         self.pending = list(pending or [])
         self.disconnect_reason = "服务器主动断开" if disconnected else None
         self._reader_thread = _ReaderAlive(reader_alive)
         self.intents: list[dict] = []
+
+    @property
+    def t0(self) -> float:
+        """模拟相对时钟基座：让 ``time.monotonic() - t0 == self._now``。"""
+        return time.monotonic() - self._now
+
+    def _advance_clock_to(self, t: float) -> None:
+        if t > self._now:
+            self._now = t
 
     def intent(self, request: dict) -> None:
         self.intents.append(request)
@@ -2086,6 +2122,74 @@ class RejectionHelperTest(unittest.TestCase):
         )
         with self.assertRaises(BotAssertionError):
             assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_inventory_snapshot_without_baseline_always_flagged(self):
+        # 无 baseline 时无从证明它是周期重发 ⇒ 一律标记（宁严勿松）。这锁定
+        # inventory_snapshot **不在** ambient 集合（review finding 8）：payload type
+        # 不能作为豁免依据 —— 它既是 join 同步/周期重发，也是容器请求的 resync 响应。
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": {"revision": 7}},
+                )
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_inventory_snapshot_fingerprint_equal_to_baseline_is_exempted(self):
+        # 内容判别：带 baseline 时，指纹（revision + 全部内容字段）与基线一致的快照
+        # 是周期 shelflife/Changed 驱动的无变更重发 —— 连接同步，豁免。若对一致快照
+        # 也标记，周期重发会把真实场景全部误报成副作用。
+        baseline = {
+            "type": "inventory_snapshot",
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": dict(baseline)},
+                )
+            ]
+        )
+        assert_no_gameplay_side_effect_since(
+            bot, since_t=1.0, label="测试", baseline_snapshot=baseline
+        )
+
+    def test_inventory_snapshot_fingerprint_changed_vs_baseline_is_flagged(self):
+        # 内容判别：指纹与基线不同 ⇒ 请求引发的 mutation resync，必须标记副作用。
+        baseline = {
+            "type": "inventory_snapshot",
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        mutated = dict(baseline, revision=8)
+        bot = _RejectionFakeBot(
+            [
+                _FakeEvent(
+                    3.0,
+                    "server_data",
+                    {"payload_type": "inventory_snapshot", "payload": mutated},
+                )
+            ]
+        )
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(
+                bot, since_t=1.0, label="测试", baseline_snapshot=baseline
+            )
 
     def test_explicit_ambient_payload_type_in_window_is_not_side_effect(self):
         # 显式集合里的连接同步类型（derived_attrs_sync 为 Changed 驱动，见
@@ -3807,6 +3911,169 @@ class ZoneInfoProtoDecodeTest(unittest.TestCase):
         self.assertIsNone(
             decode_server_data_payload(malformed),
             "Bot 公共观察面遇到截断 zone_info 应返回 None，而不是拖垮 reader thread",
+        )
+
+
+class QuickSlotConfigProtoDecodeTest(unittest.TestCase):
+    """quickslot_config（envelope field 35）的 wire 契约饱和 pin。
+
+    review finding：out_of_range 场景消费方只查 ack_request_id / bind_accepted 两个
+    确认字段，QuickSlotConfig 其余 decoder 契约（5 个 QuickSlotEntry 字段、空槽 →
+    None、cooldown_until_ms packed/unpacked、optional 缺省）全未 pin —— 一个永远返回
+    ``slots=[]`` / ``cooldown_until_ms=[]``、或搞错 packed varint / 空槽序列化的坏
+    decoder 也会通过所有场景断言。这里把完整 wire 契约逐字段钉住。
+    """
+
+    def _decode(self, message: bytes) -> dict:
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(proto_min.SERVER_DATA_QUICKSLOT_CONFIG_FIELD, message)
+        )
+        self.assertIsNotNone(decoded, "envelope field 35 必须分发到 quickslot_config decoder")
+        return decoded
+
+    @staticmethod
+    def _entry() -> bytes:
+        """QuickSlotEntry 全 5 字段（item_id/display_name/cast_duration_ms/cooldown_ms/
+        icon_texture）。"""
+        return (
+            _pb_string(proto_min.QUICKSLOT_ENTRY_ITEM_ID_FIELD, "huiyuan_pill")
+            + _pb_string(proto_min.QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD, "回元丹")
+            + _pb_varint(proto_min.QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD, 1500)
+            + _pb_varint(proto_min.QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD, 6000)
+            + _pb_string(proto_min.QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD, "pills/huiyuan")
+        )
+
+    def test_decoder_constants_match_authoritative_proto(self):
+        proto_path = pathlib.Path(__file__).parents[2] / "proto/bong/envelope.proto"
+        source = proto_path.read_text(encoding="utf-8")
+        envelope = _proto_message_body(source, "ServerDataEnvelope")
+        config = _proto_message_body(source, "QuickSlotConfig")
+        entry = _proto_message_body(source, "QuickSlotEntry")
+        wrapper = _proto_message_body(source, "OptionalQuickSlotEntry")
+
+        self.assertEqual(
+            _proto_field_signature(envelope, "quick_slot_config"),
+            ("QuickSlotConfig", proto_min.SERVER_DATA_QUICKSLOT_CONFIG_FIELD),
+            "Bot envelope field 35 常量必须与权威 ServerDataEnvelope.quick_slot_config 对齐",
+        )
+        expected_config_fields = {
+            "slots": ("OptionalQuickSlotEntry", proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD),
+            "cooldown_until_ms": ("uint64", proto_min.QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD),
+            "ack_request_id": ("string", proto_min.QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD),
+            "bind_accepted": ("bool", proto_min.QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD),
+        }
+        for field_name, expected in expected_config_fields.items():
+            with self.subTest(message="QuickSlotConfig", field=field_name):
+                self.assertEqual(
+                    _proto_field_signature(config, field_name),
+                    expected,
+                    f"Bot QuickSlotConfig.{field_name} 常量必须与权威 proto 对齐",
+                )
+        expected_entry_fields = {
+            "item_id": ("string", proto_min.QUICKSLOT_ENTRY_ITEM_ID_FIELD),
+            "display_name": ("string", proto_min.QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD),
+            "cast_duration_ms": ("uint32", proto_min.QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
+            "cooldown_ms": ("uint32", proto_min.QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
+            "icon_texture": ("string", proto_min.QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
+        }
+        for field_name, expected in expected_entry_fields.items():
+            with self.subTest(message="QuickSlotEntry", field=field_name):
+                self.assertEqual(
+                    _proto_field_signature(entry, field_name),
+                    expected,
+                    f"Bot QuickSlotEntry.{field_name} 常量必须与权威 proto 对齐",
+                )
+        self.assertEqual(
+            _proto_field_signature(wrapper, "entry"),
+            ("QuickSlotEntry", proto_min.OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD),
+            "Bot OptionalQuickSlotEntry.entry 常量必须与权威 proto 对齐",
+        )
+
+    def test_decodes_filled_and_empty_slots_with_all_entry_fields(self):
+        # 槽 0 填满 5 字段；槽 1 是空 OptionalQuickSlotEntry（空 message）→ None；
+        # cooldown_until_ms 走 packed（wire 2 内嵌连串 varint）；ack + bind 确认字段。
+        filled_slot = _pb_message(
+            proto_min.OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD, self._entry()
+        )
+        message = (
+            _pb_message(proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD, filled_slot)
+            + _pb_message(proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD, b"")
+            + _pb_bytes(
+                proto_min.QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD,
+                _pb_raw_varint(1000) + _pb_raw_varint(2000),
+            )
+            + _pb_string(proto_min.QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD, "rng-slot0")
+            + _pb_varint(proto_min.QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD, 1)
+        )
+        self.assertEqual(
+            self._decode(message),
+            {
+                "v": 1,
+                "type": "quickslot_config",
+                "slots": [
+                    {
+                        "item_id": "huiyuan_pill",
+                        "display_name": "回元丹",
+                        "cast_duration_ms": 1500,
+                        "cooldown_ms": 6000,
+                        "icon_texture": "pills/huiyuan",
+                    },
+                    None,  # 空 OptionalQuickSlotEntry → None（空槽）
+                ],
+                "cooldown_until_ms": [1000, 2000],
+                "ack_request_id": "rng-slot0",
+                "bind_accepted": True,
+            },
+        )
+
+    def test_cooldown_until_ms_also_decodes_unpacked_wire(self):
+        # prost 默认 packed（wire 2），但兼容 unpacked（每值一条 wire 0）—— 两种编码
+        # 都必须解出相同列表，否则只认 packed 的 decoder 遇上游切换编码即崩。
+        unpacked = (
+            _pb_varint(proto_min.QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD, 1000)
+            + _pb_varint(proto_min.QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD, 2000)
+        )
+        self.assertEqual(
+            self._decode(unpacked)["cooldown_until_ms"], [1000, 2000]
+        )
+
+    def test_missing_optional_fields_use_none_defaults(self):
+        # optional ack_request_id / bind_accepted 缺省 None，与 JSON schema 的
+        # skip_serializing_if=Option::is_none 对齐；空 slots / cooldown → 空列表。
+        self.assertEqual(
+            self._decode(b""),
+            {
+                "v": 1,
+                "type": "quickslot_config",
+                "slots": [],
+                "cooldown_until_ms": [],
+                "ack_request_id": None,
+                "bind_accepted": None,
+            },
+        )
+
+    def test_slot_with_missing_entry_field_serialized_as_none(self):
+        # OptionalQuickSlotEntry 只有 wrapper、内部无 entry 字段（空 message）⇒ None；
+        # 有 entry 但 entry 里缺字段 ⇒ 默认值（item_id=""/0），不是 None。
+        wrapper_empty = _pb_message(proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD, b"")
+        wrapper_partial = _pb_message(
+            proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD,
+            _pb_message(
+                proto_min.OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD,
+                _pb_string(proto_min.QUICKSLOT_ENTRY_ITEM_ID_FIELD, "huiyuan_pill"),
+            ),
+        )
+        decoded = self._decode(wrapper_empty + wrapper_partial)
+        self.assertIsNone(decoded["slots"][0])
+        self.assertEqual(
+            decoded["slots"][1],
+            {
+                "item_id": "huiyuan_pill",
+                "display_name": "",
+                "cast_duration_ms": 0,
+                "cooldown_ms": 0,
+                "icon_texture": "",
+            },
         )
 
 
