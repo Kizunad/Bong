@@ -35,27 +35,45 @@ class ServerLogScanner:
         self._path = path
         self._guard_re = guard_re
         self._offset = 0
+        # 上次打开文件的 (st_dev, st_ino)：文件身份不能只靠偏移/大小判定，否则
+        # 轮转后的替换文件在扫描推进到偏移 N 之后已长到 >= N 字节时，seek(N)
+        # 会跳过新文件 N 之前的全部行——包括 guard 标记（review finding
+        # [minor]：log rotation skips guard evidence）。
+        self._file_id: Optional[tuple[int, int]] = None
         self._guards: list[tuple[str, str]] = []  # (carrier, reason)
         self._deserialize_failed_users: list[str] = []
 
     def _read_new(self) -> list[str]:
+        try:
+            st = os.stat(self._path)
+        except OSError:
+            return []
         if not os.path.isfile(self._path):
             return []
-        size = os.path.getsize(self._path)
-        if self._offset > size:
-            # 日志轮转/截断：偏移失效，从新文件头重读。
+        size = st.st_size
+        file_id = (st.st_dev, st.st_ino)
+        if file_id != self._file_id or self._offset > size:
+            # 文件被替换（dev/inode 变化）或截断（偏移越过新大小）：偏移失效，
+            # 从新文件头重读。只比大小不够：替换文件已长到 >= 旧偏移时条件为假，
+            # 直接 seek 旧偏移会跳过新文件头部的证据行。
             self._offset = 0
-        with open(self._path, "r", encoding="utf-8", errors="replace") as fh:
+            self._file_id = file_id
+        with open(self._path, "rb") as fh:
             fh.seek(self._offset)
             data = fh.read()
-            self._offset = fh.tell()
-        if not data.endswith("\n"):
-            # 末尾行可能只写了一半：把偏移回退到该行起点，等补全后再处理，
-            # 否则行尾续写会被永久跳过。
-            nl = data.rfind("\n")
+            self._offset = fh.tell()  # 字节偏移
+        if not data.endswith(b"\n"):
+            # 末尾行可能只写了一半：把偏移回退到该行起点（最后一个 \n 之后），
+            # 等补全后再处理，否则行尾续写会被永久跳过。偏移与长度都必须按
+            # 字节算——文本模式的 fh.tell() 返回字节流 cookie，而 len(data) 是
+            # 字符数，多字节 UTF-8 行会把偏移回退到行中间，续写后 seek 从半行
+            # 开始（review finding [minor]：partial UTF-8 log lines rewind）。
+            nl = data.rfind(b"\n")
             self._offset -= len(data) - (nl + 1)
             data = data[: nl + 1]
-        return data.splitlines()
+        # 按 \n 切分（与回退逻辑的换行判定一致），并剥掉 CRLF 的 \r；data 以
+        # \n 结尾，末位空串由 [:-1] 丢弃。
+        return [ln.rstrip("\r") for ln in data.decode("utf-8", "replace").split("\n")[:-1]]
 
     def scan(self) -> None:
         """消费上次偏移以来的追加段，更新累计的 guard 标记与归属计数。"""

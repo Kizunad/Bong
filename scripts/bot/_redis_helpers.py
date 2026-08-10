@@ -40,6 +40,11 @@ MAX_BULK_LEN = 1 << 20  # 1 MiB
 # 接收缓冲区总量上限：整帧到齐前所有分片都会留在 _buf；即使单 bulk 未超
 # MAX_BULK_LEN，海量小帧同样能撑爆进程，这里做第二道兜底。
 MAX_BUF_LEN = 16 << 20  # 16 MiB
+# 保留事件列表的累积载荷字节预算：max_events 只按条数裁剪，而单事件可接近
+# MAX_BULK_LEN（1 MiB），5000 条 × 近 1 MiB = 数 GiB 保留会耗尽 bot runner
+# 内存（review finding [major]：event-count cap 不约束字节）。字节预算与条数
+# 上限双保险，超预算裁剪最旧条目。
+MAX_EVENT_BYTES = 8 << 20  # 8 MiB
 # RESP 数组结构性上限：订阅消息帧是长度 3 的浅数组，正常载荷远达不到这些界。
 # 对端自报的 count/嵌套不可信——深嵌套（*1 链）会触发 Python 递归爆栈、海量
 # 小元素会在 _buf 封顶内膨胀出大得多的 Python list、不完整数组每次 recv 还会
@@ -206,6 +211,7 @@ class RedisPubSub:
         max_events: int = 5000,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        max_event_bytes: int = MAX_EVENT_BYTES,
     ):
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._frames = RespFrames()
@@ -218,14 +224,22 @@ class RedisPubSub:
                 except OSError:
                     pass
                 raise
-        # (seq, channel, payload, enqueued_at)：seq 单调递增，供 wait_event 只扫
-        # 本次等待期间新增的事件；enqueued_at（time.monotonic）让 wait_event 能
-        # 区分「截止前到达」与「截止后入队」（review finding [minor]）；max_events
-        # 兜底裁剪最旧条目，防止共享频道累积撑爆内存。
-        self._events: list[tuple[int, str, dict[str, Any], float]] = []
+        # (seq, channel, payload, enqueued_at, wire_bytes)：seq 单调递增，供
+        # wait_event 只扫本次等待期间新增的事件；enqueued_at（time.monotonic）
+        # 让 wait_event 能区分「截止前到达」与「截止后入队」（review finding
+        # [minor]）；wire_bytes 是原始 bulk 长度，配合 _max_event_bytes 按累积
+        # 载荷字节裁剪最旧条目——max_events 只按条数兜底，单事件可接近 1 MiB，
+        # 数千条 × 1 MiB 的保留会耗尽进程内存（review finding [major]）。
+        self._events: list[tuple[int, str, dict[str, Any], float, int]] = []
         self._event_seq = 0
         self._max_events = max_events
+        self._max_event_bytes = max_event_bytes
+        self._event_bytes = 0
         self._lock = threading.Lock()
+        # _frames（_buf/_parse_items）由 pump 线程与 settle() 的投递屏障共同
+        # 消费：next_frame/feed/_drain_frames 必须互斥，否则两线程并发切片 _buf
+        # 会破坏帧流（review finding [major]：最终扫描缺投递屏障时用 settle 补）。
+        self._frame_lock = threading.Lock()
         self._closed = False
         self._fatal_error: Optional[BaseException] = None
         self._thread: Optional[threading.Thread] = None
@@ -288,8 +302,16 @@ class RedisPubSub:
                     raise RuntimeError("redis 连接被对端关闭（SUBSCRIBE 阶段 EOF）")
                 self._frames.feed(data)
                 continue
-            if isinstance(frame, list) and len(frame) == 3 and frame[0] == b"subscribe":
-                remaining.discard(frame[1].decode("utf-8", "replace"))
+            if isinstance(frame, list) and len(frame) == 3:
+                if frame[0] == b"subscribe":
+                    remaining.discard(frame[1].decode("utf-8", "replace"))
+                elif frame[0] == b"message":
+                    # 多频道依次 SUBSCRIBE 时，发布者可在首个 ack 之后、末个 ack
+                    # 之前发布消息。ack 循环若只认 subscribe 帧、把穿插的 message
+                    # 帧当噪声丢弃，wait_event 会在这条真实消息上超时（review
+                    # finding [minor]）。此时泵线程尚未启动，直接在调用线程消费
+                    # 入队，subscribe 返回后事件已可见。
+                    self._handle_frame(frame)
         if remaining:
             raise RuntimeError(f"redis SUBSCRIBE 未确认: {sorted(remaining)}")
         # ack 循环里临时装的 0.5s 超时只用于确认读取；确认完毕必须恢复阻塞，
@@ -309,7 +331,8 @@ class RedisPubSub:
     def _pump(self) -> None:
         while not self._closed:
             try:
-                self._drain_frames()
+                with self._frame_lock:
+                    self._drain_frames()
                 data = self._sock.recv(4096)
             except ValueError as exc:
                 # 恶意/异常发布者的超大或畸形 RESP 帧：内存上限已封顶，但连接
@@ -345,7 +368,8 @@ class RedisPubSub:
                     self._set_fatal(RuntimeError("redis 连接被对端关闭（EOF）"))
                 break
             try:
-                self._frames.feed(data)
+                with self._frame_lock:
+                    self._frames.feed(data)
             except ValueError as exc:
                 self._set_fatal(exc)
                 break
@@ -385,13 +409,28 @@ class RedisPubSub:
         # （review finding [minor]：valid non-object JSON crashes predicates）。
         if not isinstance(decoded, dict):
             return
+        wire_bytes = len(payload)
         with self._lock:
             # 记录入队时刻（time.monotonic，与 wait_event 的 deadline 同钟）：
             # wait_event 的最终扫描按 ts <= deadline 排除截止后入队的事件。
-            self._events.append((self._event_seq, channel, decoded, time.monotonic()))
+            self._events.append(
+                (self._event_seq, channel, decoded, time.monotonic(), wire_bytes)
+            )
             self._event_seq += 1
-            if len(self._events) > self._max_events:
-                del self._events[: len(self._events) - self._max_events]
+            self._event_bytes += wire_bytes
+            # 条数 + 累积字节双上限裁剪最旧条目：max_events 只按条数兜底，单事件
+            # 可接近 MAX_BULK_LEN（1 MiB），数千条 × 1 MiB = 数 GiB 保留会耗尽
+            # 进程内存（review finding [major]）。单事件本身超过字节预算时会被
+            # 立即弹出（既最新又最旧），保内存优先于保事件。
+            while (
+                len(self._events) > self._max_events
+                or self._event_bytes > self._max_event_bytes
+            ):
+                if not self._events:
+                    self._event_bytes = 0
+                    break
+                _, _, _, _, b = self._events.pop(0)
+                self._event_bytes -= b
 
     def events_for(self, channel: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -399,32 +438,56 @@ class RedisPubSub:
                 raise AssertionError(
                     f"redis 连接已因协议异常终止，事件流不可信: {self._fatal_error}"
                 )
-            return [e for _, c, e, _ in self._events if c == channel]
+            return [e for _, c, e, _, _ in self._events if c == channel]
 
-    def _fresh_events(
+    def window_events(
         self,
-        start_seq: int,
         channel: str,
+        after: Optional[int] = None,
         max_ts: Optional[float] = None,
     ) -> list[dict[str, Any]]:
-        """加锁扫描 [start_seq, +∞) 且（可选）入队时刻 <= max_ts 的事件。
+        """加锁扫描 [after, +∞) 且（可选）入队时刻 <= max_ts 的事件快照。
 
-        max_ts 用于把「截止后入队」的事件排除出 wait_event 窗口——序列号边界
-        无法区分「截止前到达」与「截止后入队」，必须靠入队时间戳（review
-        finding [minor]：wait_event 接受截止后事件）。
+        after=None 时从当前最新事件序号起扫（仅本次调用后新增的事件）；传
+        anchor() 返回值可把窗口起点前移到触发动作之前。max_ts 把「截止后入队」
+        的事件排除出窗口——序列号边界无法区分「截止前到达」与「截止后入队」，
+        必须靠入队时间戳（review finding [minor]）。wait_event 的窗口扫描与
+        场景负向断言的最终窗口化扫描共用本方法（review finding [major]：最终
+        despawn 检查缺投递屏障/窗口化扫描）。
         """
         with self._lock:
             if self._fatal_error is not None:
                 raise AssertionError(
                     f"redis 连接已因协议异常终止: {self._fatal_error}"
                 )
+            start = self._event_seq if after is None else after
             return [
                 e
-                for seq, c, e, ts in self._events
-                if seq >= start_seq
+                for seq, c, e, ts, _ in self._events
+                if seq >= start
                 and c == channel
                 and (max_ts is None or ts <= max_ts)
             ]
+
+    def settle(self, grace: float = 0.5) -> None:
+        """投递屏障：观察窗截止后，等待 pump 把已发布事件全部消费入队。
+
+        pump 线程的 recv/入队与调用方（场景）的截止判定异步：server 在截止前
+        发布的 despawn 可能仍滞留在 socket 接收缓冲或 _frames 缓冲里，截止判定
+        通过后 pump 才把它入队——若在截止后直接做最终扫描，负向断言会 miss 窗口
+        内事件（review finding [major]）。宽限期内反复消费已缓冲帧并让 pump 完成
+        收尾 recv；屏障返回后调用方做最终窗口化扫描（window_events + max_ts），
+        截止前已发布的事件已全部可见。本方法不直接读 socket——与 pump 并发 recv
+        同一流会把先后到达的块错序拼进 _buf（帧损坏），故只靠 pump 收尾 + 自身
+        加锁 drain。
+        """
+        end = time.monotonic() + grace
+        while time.monotonic() < end:
+            with self._frame_lock:
+                self._drain_frames()
+            time.sleep(0.05)
+        with self._frame_lock:
+            self._drain_frames()
 
     def anchor(self) -> int:
         """捕获当前事件序列锚点，供「先锚定、再触发、后等待」使用。
@@ -460,7 +523,7 @@ class RedisPubSub:
             # 两次扫描都按 max_ts=deadline 过滤：序列号边界无法区分「截止前
             # 到达」与「截止后入队」，必须用入队时间戳把后者排除（review
             # finding [minor]：wait_event 接受截止后事件）。
-            fresh = self._fresh_events(start_seq, channel, max_ts=deadline)
+            fresh = self.window_events(channel, after=start_seq, max_ts=deadline)
             for evt in fresh:
                 if predicate(evt):
                     return evt
@@ -469,7 +532,7 @@ class RedisPubSub:
                 # 截止之前到达时，上面的循环已不再扫它。抛超时前必须做一次加锁
                 # 的最终扫描，把窗口内最后入队的事件捞回（review finding
                 # [minor]：wait_event 在匹配事件已到达的情况下仍可能超时）。
-                fresh = self._fresh_events(start_seq, channel, max_ts=deadline)
+                fresh = self.window_events(channel, after=start_seq, max_ts=deadline)
                 for evt in fresh:
                     if predicate(evt):
                         return evt

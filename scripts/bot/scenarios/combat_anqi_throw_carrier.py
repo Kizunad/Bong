@@ -47,6 +47,10 @@ DESPAWN_CH = "bong:combat/projectile_despawned"
 # 消费者 guard 标记轮询上限：意图经线上→反序列化→派发→系统执行，tick 内完成，
 # 8s 远超所需，同时给 despawn 观察留足窗口。
 GUARD_TIMEOUT = 8.0
+# 观察窗截止后的投递宽限：pump 的 recv/入队与场景的截止判定异步，server 在截止
+# 前发布的 despawn 可能晚几 tick 才入队。settle 留出这段宽限做投递屏障，最终
+# 扫描按「截止 + 宽限」的入队时刻边界捞回窗口内事件（review finding [major]）。
+DELIVERY_GRACE = 0.5
 
 
 def _self_carrier(bot) -> str:
@@ -120,6 +124,11 @@ def run(env) -> None:
             before_guard = scanner.guard_markers(carrier)
             before_failed = scanner.deserialize_failed(bot.username)
 
+            # despawn 观察窗起点锚定在 intent **之前**：错误生成的弹道会在 intent
+            # 后几个 tick 内发布 despawn，若锚点取在 guard 轮询之后，intent 后早
+            # 到的事件已入队、被 seq >= 锚点排除——那正是本场景要抓的泄漏。
+            despawn_anchor = pubsub.anchor()
+
             # 手持非暗器（默认武器）发出投掷 intent —— 无载体投掷应被静默忽略。
             bot.intent(request)
 
@@ -172,11 +181,12 @@ def run(env) -> None:
             # deadline 自 intent 发出起算，轮询到该截止为止，窗口内任何时刻到达
             # 的本 bot despawn 都算数。该频道全局共享，订阅又先于 bot 建立，
             # 其他玩家的抛射也会发布进来；必须按 owner 过滤到本 bot，才证明
-            # 空手抛射被静默忽略。
+            # 空手抛射被静默忽略。window_events 加锁按 seq >= 锚点（intent 前）只扫
+            # 本窗口新增事件，其他玩家的抛射也落在窗口内，由 owner 过滤到本 bot。
             while True:
                 fired = [
                     e
-                    for e in pubsub.events_for(DESPAWN_CH)
+                    for e in pubsub.window_events(DESPAWN_CH, after=despawn_anchor)
                     if e.get("owner") == carrier
                 ]
                 assert not fired, (
@@ -185,6 +195,26 @@ def run(env) -> None:
                 if time.monotonic() >= guard_deadline:
                     break
                 time.sleep(0.2)
+
+            # 观察窗截止后的投递屏障 + 最终窗口化扫描：截止判定与 pump 的
+            # recv/入队异步，server 在截止前发布的 despawn 可能仍滞留在 socket/
+            # 缓冲里、截止判定通过后 pump 才把它入队——上面的循环在快照与截止
+            # 判定之间退出时，直接 done 会漏掉窗口内事件（review finding
+            # [major]）。settle 留出投递宽限让 pump 收尾，最终扫描按 seq >= 锚点
+            # 且 入队时刻 <= 截止 + 宽限 的边界，把窗口内最后入队的事件捞回。
+            pubsub.settle(DELIVERY_GRACE)
+            fired = [
+                e
+                for e in pubsub.window_events(
+                    DESPAWN_CH,
+                    after=despawn_anchor,
+                    max_ts=guard_deadline + DELIVERY_GRACE,
+                )
+                if e.get("owner") == carrier
+            ]
+            assert not fired, (
+                f"空手抛射不应产生本 bot 的 despawn 事件，实际 {fired!r}"
+            )
 
             # 无库存改动：revision 不变，且手持项仍为同一非暗器武器（未被清空/替换）。
             after = latest_inventory_snapshot(bot)

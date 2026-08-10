@@ -4459,6 +4459,30 @@ class RedisPubSubTest(unittest.TestCase):
             server.close()
             client.close()
 
+    def test_message_published_between_subscribe_acks_is_not_discarded(self):
+        # 回归：review finding [minor]——依次 SUBSCRIBE 多频道时，发布者可在首个
+        # ack 之后、末个 ack 之前发布消息。ack 循环若只认 subscribe 帧、把穿插的
+        # message 帧当噪声丢弃，wait_event 会在这条真实消息上超时。订阅确认与
+        # 穿插消息同批到达，subscribe 返回后消息必须已在事件流中。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack_a = b"*3\r\n$9\r\nsubscribe\r\n$4\r\nch_a\r\n:1\r\n"
+            ack_b = b"*3\r\n$9\r\nsubscribe\r\n$4\r\nch_b\r\n:2\r\n"
+            payload = json.dumps({"tick": 11}).encode()
+            msg_a = b"*3\r\n$7\r\nmessage\r\n$4\r\nch_a\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            # 先 ack ch_a，穿插 ch_a 上的消息，再 ack ch_b——一次 recv 全到。
+            server.sendall(ack_a + msg_a + ack_b)
+            pubsub.subscribe("ch_a", "ch_b")
+            self._wait_for(pubsub, "ch_a", lambda e: e.get("tick") == 11, timeout=2.0)
+            self.assertEqual(len(pubsub.events_for("ch_a")), 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
     def test_parse_redis_url_strips_components_and_keeps_credentials(self):
         # 回归：review finding [2]/[3]——(a) REDIS_URL 带 db 路径/query 时转端口
         # 会 int('6379/0') ValueError；query-only（无路径）URL 的 '?x=1' 会残留
@@ -4590,6 +4614,34 @@ class RedisPubSubTest(unittest.TestCase):
             got = [e["seq"] for e in pubsub.events_for("my_chan")]
             self.assertEqual(len(got), 2)
             self.assertNotIn(0, got, "max_events 裁剪应丢弃最旧条目")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_events_byte_budget_trims_oldest_by_bytes(self):
+        # 回归：review finding [major]——max_events 只按条数裁剪，单事件可接近
+        # MAX_BULK_LEN（1 MiB），5000 条 × 近 1 MiB = 数 GiB 保留会耗尽 bot
+        # runner 内存。累积字节预算把保留内存压到可控量级；超预算裁剪最旧条目。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("ch")
+            # 手工压低字节预算：3 条各 ~51 字节 wire 的载荷总和超预算即裁剪最旧。
+            pubsub._max_event_bytes = 60
+            for i in range(3):
+                payload = json.dumps({"seq": i, "pad": "x" * 30}).encode()
+                msg = b"*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$%d\r\n%s\r\n" % (
+                    len(payload),
+                    payload,
+                )
+                server.sendall(msg)
+            self._wait_for(pubsub, "ch", lambda e: e.get("seq") == 2, timeout=2.0)
+            got = [e["seq"] for e in pubsub.events_for("ch")]
+            self.assertNotIn(0, got, "字节预算应裁剪最旧条目")
+            self.assertLessEqual(len(got), 2)
+            self.assertLessEqual(pubsub._event_bytes, 60)
         finally:
             pubsub.stop()
             server.close()
@@ -4734,8 +4786,12 @@ class RedisPubSubTest(unittest.TestCase):
         pubsub._fatal_error = None
         pubsub._event_seq = 0
         pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
         # 匹配事件在 deadline（≈now+0.01s）之后才入队：ts 在未来，必须被排除。
-        pubsub._events = [(0, "my_chan", {"ok": True}, time.monotonic() + 1000.0)]
+        pubsub._events = [
+            (0, "my_chan", {"ok": True}, time.monotonic() + 1000.0, 4)
+        ]
         with self.assertRaises(AssertionError):
             pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=0.01)
 
@@ -4747,9 +4803,60 @@ class RedisPubSubTest(unittest.TestCase):
         pubsub._fatal_error = None
         pubsub._event_seq = 0
         pubsub._max_events = 5000
-        pubsub._events = [(0, "my_chan", {"ok": True}, time.monotonic() - 1.0)]
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        pubsub._events = [
+            (0, "my_chan", {"ok": True}, time.monotonic() - 1.0, 4)
+        ]
         evt = pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=5.0)
         self.assertEqual(evt["ok"], True)
+
+    def test_window_events_bounds_by_anchor_and_enqueue_ts(self):
+        # 负向断言的最终窗口化扫描基础：after 锚点之前的事件与 max_ts 之后入队的
+        # 事件都被排除——最终扫描不得把窗口外事件误判为窗口内（review finding
+        # [major]：最终 despawn 检查缺窗口化扫描）。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 3
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        now = time.monotonic()
+        pubsub._events = [
+            (0, "ch", {"seq": "pre"}, now, 4),
+            (1, "ch", {"seq": "in"}, now, 4),
+            (2, "ch", {"seq": "late"}, now + 1000.0, 4),
+        ]
+        got = [
+            e["seq"]
+            for e in pubsub.window_events("ch", after=1, max_ts=now + 500.0)
+        ]
+        self.assertEqual(got, ["in"])
+
+    def test_settle_drains_buffered_frames_as_delivery_barrier(self):
+        # 回归：review finding [major]——负向断言的最终扫描若缺投递屏障，截止判定
+        # 与 pump 入队之间的帧会被漏掉。settle 应在宽限期内把已缓冲的帧消费入队，
+        # 随后 window_events 的最终扫描能看到全部已发布事件。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._frame_lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._closed = True  # 无 pump 线程，settle 是唯一消费者
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
+        pubsub._event_bytes = 0
+        pubsub._events = []
+        frames = _redis_helpers.RespFrames()
+        payload = json.dumps({"owner": "player:x", "tick": 1}).encode()
+        frames.feed(
+            b"*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$%d\r\n%s\r\n" % (len(payload), payload)
+        )
+        pubsub._frames = frames
+        pubsub.settle(0.05)
+        self.assertEqual(len(pubsub.events_for("ch")), 1)
+        self.assertEqual(pubsub.events_for("ch")[0]["tick"], 1)
 
     def test_pump_deep_json_recursion_error_is_fatal(self):
         # 回归：review finding [major]——json.loads 对超深嵌套列表抛 RecursionError，
@@ -4946,6 +5053,81 @@ class ServerLogScannerTest(unittest.TestCase):
             "Throw 不得被 Throw2 的 user= 字段子串命中",
         )
         self.assertEqual(scanner.deserialize_failed("Throw2"), 1)
+
+    def test_rotation_to_larger_replacement_resets_to_new_head(self):
+        # 回归：review finding [minor]——日志被替换成更大的新文件（轮转）时，旧
+        # 实现只按 offset <= size 判定文件身份，会 seek 到旧偏移 N 并跳过新文件
+        # N 之前的全部行。把 guard 关键字横跨旧偏移 N 摆放：seek(N) 后 re.search
+        # 只看到被截断的后缀，guard 证据永久丢失。修复后按 dev/inode 判定文件
+        # 身份，替换后从头重读。
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("old line A\nold line B\n")  # 22 字节 → 旧偏移 N=22
+        self.addCleanup(os.remove, path)
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        # 轮转：旧文件改名移走，同路径新建（新 inode）。新文件更大，guard 关键字
+        # 横跨字节 22（"HEADERZZZZ\n" 占 11 字节，throw_carrier 起于 11）——
+        # seek(22) 只能读到 "er guard carrier=..." 后缀，re.search 找不到完整关键字。
+        os.rename(path, path + ".rotated")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(
+                "HEADERZZZZ\n"
+                "throw_carrier guard carrier=player:new slot=MainHand "
+                "reason=no_carrier_item\n"
+                "line C\nline D\nline E\n"
+            )
+        self.addCleanup(os.remove, path + ".rotated")
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("player:new"),
+            ["no_carrier_item"],
+            "轮转成更大的替换文件后必须从头重读，guard 不得被旧偏移跳过",
+        )
+
+    def test_partial_multibyte_line_rewinds_to_line_start(self):
+        # 回归：review finding [minor]——文本模式的 fh.tell() 记录字节流 cookie，
+        # 而旧 rewind 按 len(data)（字符数）回退：未写完的多字节 UTF-8 行会把偏移
+        # 算到行中间，续写后 seek 从半行开始，guard 标记被跳过或只解出后缀。修复
+        # 后按字节扫描，未完成行回退到字节级行起点（最后一个 \n 之后）。
+        fd, path = tempfile.mkstemp(suffix=".log")
+        self.addCleanup(os.remove, path)
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        head = "line one\n"
+        # 未完成行：2 个多字节字符（玩家 = 6 字节）且无结尾换行。
+        partial = "throw_carrier guard carrier=玩家"
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(head + partial)
+        scanner.scan()
+        # 行起点 = head 的字节长（9）；修复后 _offset 必须精确落在行起点。
+        self.assertEqual(
+            scanner._offset,
+            len(head.encode("utf-8")),
+            "未完成多字节行回退后偏移必须落在字节级行起点",
+        )
+        self.assertEqual(scanner.guard_markers("玩家"), [])
+        # 续写完整行 + 换行：从行起点重读，guard 完整解析。
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(" reason=no_carrier_item\n")
+        scanner.scan()
+        self.assertEqual(
+            scanner.guard_markers("玩家"),
+            ["no_carrier_item"],
+            "未完成多字节行续写后必须从行起点重读，guard 不得被跳过",
+        )
+
 class NewServerDataDecoderContractTest(unittest.TestCase):
     """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
 
