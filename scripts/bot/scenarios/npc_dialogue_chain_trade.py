@@ -37,6 +37,8 @@ from ._npc_dialogue_helpers import (
     CATALOG_ITEMS,
     OUT_OF_RANGE_TRADE,
     approach_entity,
+    assert_rogue_stock_miss,
+    is_rogue_stock_miss,
     last_event_time,
     nearest_villager_id,
     queue_scenario_zombie,
@@ -48,9 +50,9 @@ from ._npc_dialogue_helpers import (
 ZOMBIE_DISPLAY = "游尸·醒灵"
 TRADE_ONLY_BONE_COINS = "§c[NPC] 当前交易只支持骨币结算。"
 ZOMBIE_NO_STOCK = f"§c[NPC] {ZOMBIE_DISPLAY} 没有这件货。"
-ROGUE_TRADE_OPEN = "摊开了随身货物。"
+# 服务端形态 `§7[NPC] {display} 摊开了随身货物。`——display 以境界段结尾，后缀含前导空格。
+ROGUE_TRADE_OPEN = " 摊开了随身货物。"
 ROGUE_GREETING_SUFFIX = "：道友，可有灵草出让？"
-NOT_IN_STOCK = "当前没有这件货"
 COINS_SHORT = "骨币不足，需要 "
 
 
@@ -162,10 +164,16 @@ def _run_rogue_chain(bot, npc_id) -> None:
             anchor = last_event_time(bot)
             bot.intent(_request_trade(npc_id, item_id, []))
             try:
+                # 谓词只接受三类逐字形态：余额不足全文、库存未命中逐字形态、越距拒绝。
+                # 越距即时回显不消耗 8s 成功超时；成功后仍按逐字契约断言，不放过畸形响应。
                 event = bot.wait_for(
                     lambda e: e.kind == "chat"
                     and e.t > anchor
-                    and (NOT_IN_STOCK in e.data["text"] or expected_short in e.data["text"]),
+                    and (
+                        e.data["text"] == expected_short
+                        or e.data["text"] == OUT_OF_RANGE_TRADE
+                        or is_rogue_stock_miss(e.data["text"])
+                    ),
                     timeout=8.0,
                     description=f"目录品 {item_id} 的库存/余额二分回显",
                 )
@@ -177,25 +185,29 @@ def _run_rogue_chain(bot, npc_id) -> None:
                         for e in bot.events
                         if e.kind == "chat"
                         and e.t > anchor
-                        and OUT_OF_RANGE_TRADE in e.data["text"]
+                        and e.data["text"] == OUT_OF_RANGE_TRADE
                     ]
                 if not out_of_range:
                     raise
-                if not approach_entity(bot, npc_id, range_m=3.0):
-                    raise BotAssertionError(
-                        f"目录品 {item_id} 重试期间 villager {npc_id} 丢失"
-                    )
+                event = out_of_range[-1]
+                break
         if event is None:
             raise BotAssertionError(f"目录品 {item_id} 五次重试仍未命中二分回显")
         text = event.data["text"]
-        if expected_short in text:
+        if text == OUT_OF_RANGE_TRADE:
+            if not approach_entity(bot, npc_id, range_m=3.0):
+                raise BotAssertionError(
+                    f"目录品 {item_id} 重试期间 villager {npc_id} 丢失"
+                )
+            continue
+        if text == expected_short:
             coins_short_hits += 1
-        elif NOT_IN_STOCK in text and text.startswith("§c[NPC] 散修·"):
-            pass
+        elif is_rogue_stock_miss(text):
+            assert_rogue_stock_miss(event, f"目录品 {item_id} 的库存未命中回显")
         else:
             raise BotAssertionError(
-                f"期望 {item_id} 反馈为「散修·… 当前没有这件货」或「骨币不足，需要 "
-                f"{price} 枚。」，实际 {text!r}"
+                f"期望 {item_id} 反馈为「散修·<境界> 当前没有这件货。」或「骨币不足，需要 "
+                f"{price} 枚。」逐字契约，实际 {text!r}"
             )
     if coins_short_hits == 0:
         raise BotAssertionError(

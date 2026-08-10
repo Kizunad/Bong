@@ -46,6 +46,13 @@ OUT_OF_RANGE_INSPECT = "[NPC] 目标已不在附近，无法查看。"
 OUT_OF_RANGE_CHOICE = "[NPC] 目标已不在附近，无法交谈。"
 OUT_OF_RANGE_TRADE = "[NPC] 目标已不在附近，无法交易。"
 
+# 散修 display_name 的正典境界段（server/src/network/npc_metadata.rs realm_label，
+# Realm::Awaken..Void 六个枚举值；display_name = "{archetype}·{realm}"）。
+ROGUE_REALMS = ("醒灵", "引气", "凝脉", "固元", "通灵", "化虚")
+
+ROGUE_TRADE_PREFIX = "§c[NPC] 散修·"
+ROGUE_TRADE_STOCK_MISS_SUFFIX = " 当前没有这件货。"
+
 
 def last_event_time(bot: Bot) -> float:
     with bot._lock:
@@ -105,31 +112,42 @@ def request_and_assert(
     out_of_range: str,
     retries: int = 5,
 ) -> None:
-    """发请求并断言逐字反馈；目标走远（"不在附近"）时重新逼近后重试。"""
+    """发请求并断言逐字反馈；目标走远（"不在附近"）时立即识别拒绝并重新逼近后重试。
+
+    wait 谓词同时接收成功与越距两类反馈，越距在 server 端是即时回显（NPC 超出 6m
+    判定），不必等满 8s 成功超时才从事件历史里翻出——恢复延迟从每次 ~8s 降到响应即回。
+    """
     for attempt in range(retries):
         anchor = last_event_time(bot)
         bot.intent(request)
         try:
             event = bot.wait_for(
-                lambda e: e.kind == "chat" and e.t > anchor and expected in e.data["text"],
+                lambda e: (
+                    e.kind == "chat"
+                    and e.t > anchor
+                    and (e.data["text"] == expected or e.data["text"] == out_of_range)
+                ),
                 timeout=8.0,
                 description=description,
             )
-            _assert_feedback_exact(event, expected, description)
-            return
         except BotAssertionError:
             with bot._lock:
                 stray = [
                     e
                     for e in bot.events
-                    if e.kind == "chat" and e.t > anchor and out_of_range in e.data["text"]
+                    if e.kind == "chat" and e.t > anchor and e.data["text"] == out_of_range
                 ]
             if not stray:
                 raise
-        if not approach_entity(bot, entity_id, range_m=3.0):
-            raise BotAssertionError(
-                f"{description}：实体 {entity_id} 丢失（destroy/despawn），无法重试逼近"
-            )
+            event = stray[-1]
+        if event.data["text"] == out_of_range:
+            if not approach_entity(bot, entity_id, range_m=3.0):
+                raise BotAssertionError(
+                    f"{description}：实体 {entity_id} 丢失（destroy/despawn），无法重试逼近"
+                )
+            continue
+        _assert_feedback_exact(event, expected, description)
+        return
     raise BotAssertionError(
         f"{description} 重试 {retries} 次（每次重新逼近）仍未命中期望反馈 {expected!r}"
     )
@@ -173,13 +191,51 @@ def rogue_display_prefix() -> str:
     return "§7[NPC] 散修·"
 
 
+def _canonical_realm_between(text: str, prefix: str, suffix: str) -> str | None:
+    """文本若为 prefix + 正典境界 + suffix 的逐字形态，返回该境界段，否则 None。"""
+    if not (text.startswith(prefix) and text.endswith(suffix)):
+        return None
+    realm = text[len(prefix) : len(text) - len(suffix)]
+    return realm if realm in ROGUE_REALMS else None
+
+
 def assert_rogue_display_chat(event: Event, suffix: str, description: str) -> None:
+    """散修反馈逐字契约：§7[NPC] 散修·{六正典境界}{suffix}。
+
+    display_name 由 server 的 `format!("{}·{}", archetype_label, realm_label)` 生成，
+    境界段必须是 npc_metadata.rs 六正典 realm_label 之一；前缀/后缀锚定 + 境界段
+    枚举校验 = 全串逐字等价，legacy 或 misdecoded 的 realm 值都会在这里显式失败。
+    """
     text = event.data["text"]
-    if not (text.startswith(rogue_display_prefix()) and text.endswith(suffix)):
+    realm = _canonical_realm_between(text, rogue_display_prefix(), suffix)
+    if realm is None:
         raise BotAssertionError(
-            f"期望 {description} 反馈为「散修·<境界>…{suffix}」（境界随 realm 分布不定），"
-            f"实际 {text!r}"
+            f"期望 {description} 反馈为「散修·<境界>{suffix}」逐字契约（境界 ∈ "
+            f"{'/'.join(ROGUE_REALMS)}），实际 {text!r}"
         )
+
+
+def is_rogue_stock_miss(text: str) -> bool:
+    """散修目录品库存未命中反馈的逐字形态：§c[NPC] 散修·<境界> 当前没有这件货。"""
+    return _canonical_realm_between(
+        text, ROGUE_TRADE_PREFIX, ROGUE_TRADE_STOCK_MISS_SUFFIX
+    ) is not None
+
+
+def assert_rogue_stock_miss(event: Event, description: str) -> None:
+    """目录品库存未命中反馈逐字契约：§c[NPC] 散修·{六正典境界} 当前没有这件货。"""
+    realm = _canonical_realm_between(
+        event.data["text"], ROGUE_TRADE_PREFIX, ROGUE_TRADE_STOCK_MISS_SUFFIX
+    )
+    if realm is None:
+        raise BotAssertionError(
+            f"期望 {description} 反馈为「散修·<境界> 当前没有这件货。」逐字契约（境界 ∈ "
+            f"{'/'.join(ROGUE_REALMS)}），实际 {event.data['text']!r}"
+        )
+
+
+def _is_rogue_out_of_range(text: str) -> bool:
+    return text in (OUT_OF_RANGE_INSPECT, OUT_OF_RANGE_CHOICE, OUT_OF_RANGE_TRADE)
 
 
 def request_and_assert_rogue(
@@ -190,21 +246,30 @@ def request_and_assert_rogue(
     description: str,
     retries: int = 5,
 ) -> None:
-    """发请求并断言「散修·<境界>…suffix」形反馈（display_name 带 realm，前缀断言）。"""
+    """发请求并断言「散修·<境界>…suffix」逐字反馈（display_name 境界段为正典枚举）。
+
+    与 request_and_assert 相同：wait 谓词同时接收成功（逐字形态）与三类越距拒绝，
+    越距即时回显不消耗 8s 成功超时；断言走 assert_rogue_display_chat 的境界段校验。
+    """
     for attempt in range(retries):
         anchor = last_event_time(bot)
         bot.intent(request)
         try:
             event = bot.wait_for(
-                lambda e: e.kind == "chat"
-                and e.t > anchor
-                and e.data["text"].startswith(rogue_display_prefix())
-                and suffix in e.data["text"],
+                lambda e: (
+                    e.kind == "chat"
+                    and e.t > anchor
+                    and (
+                        _canonical_realm_between(
+                            e.data["text"], rogue_display_prefix(), suffix
+                        )
+                        is not None
+                        or _is_rogue_out_of_range(e.data["text"])
+                    )
+                ),
                 timeout=8.0,
                 description=description,
             )
-            assert_rogue_display_chat(event, suffix, description)
-            return
         except BotAssertionError:
             with bot._lock:
                 stray = [
@@ -212,18 +277,19 @@ def request_and_assert_rogue(
                     for e in bot.events
                     if e.kind == "chat"
                     and e.t > anchor
-                    and (
-                        OUT_OF_RANGE_INSPECT in e.data["text"]
-                        or OUT_OF_RANGE_CHOICE in e.data["text"]
-                        or OUT_OF_RANGE_TRADE in e.data["text"]
-                    )
+                    and _is_rogue_out_of_range(e.data["text"])
                 ]
             if not stray:
                 raise
-        if not approach_entity(bot, entity_id, range_m=3.0):
-            raise BotAssertionError(
-                f"{description}：实体 {entity_id} 丢失（destroy/despawn），无法重试逼近"
-            )
+            event = stray[-1]
+        if _is_rogue_out_of_range(event.data["text"]):
+            if not approach_entity(bot, entity_id, range_m=3.0):
+                raise BotAssertionError(
+                    f"{description}：实体 {entity_id} 丢失（destroy/despawn），无法重试逼近"
+                )
+            continue
+        assert_rogue_display_chat(event, suffix, description)
+        return
     raise BotAssertionError(
         f"{description} 重试 {retries} 次（每次重新逼近）仍未命中「散修·…{suffix}」反馈"
     )
