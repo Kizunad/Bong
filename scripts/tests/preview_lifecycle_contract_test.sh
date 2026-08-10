@@ -237,4 +237,54 @@ then
   exit 1
 fi
 
+# review finding [major]：identity-safe 停服的 security-critical 分支从未被测试——
+# stale / mismatched 记录。旧实现若只按记录 PID 发信号、不校验钉扎的
+# starttime/executable_identity，会把无关进程杀掉而不红。此处直接手写记录（格式同
+# bong_server_write_record：pid/starttime/executable/executable_identity 四行，mode 600）：
+#
+# (a) mismatched：记录指向**存活但身份不匹配**的无关进程（同 pid、错 starttime/
+#     identity）→ stop 必须拒绝（refuse），进程与记录都保留，不得按 PID 直接杀。
+sleep 5 &
+unrelated_pid=$!
+cat >"$BONG_PREVIEW_PID_FILE" <<EOF
+pid=$unrelated_pid
+starttime=1
+executable=$TMP_ROOT/target/release/bong-server
+executable_identity=0:1
+EOF
+chmod 600 "$BONG_PREVIEW_PID_FILE"
+if bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" >"$TMP_ROOT/mismatch.log" 2>&1; then
+  echo "stop on mismatched-record unexpectedly succeeded" >&2
+  kill "$unrelated_pid" 2>/dev/null || true
+  exit 1
+fi
+kill -0 "$unrelated_pid" 2>/dev/null || {
+  echo "stop on mismatched-record killed the unrelated process (identity-safe refusal missed)" >&2
+  kill "$unrelated_pid" 2>/dev/null || true
+  exit 1
+}
+kill "$unrelated_pid" 2>/dev/null || true
+[ -f "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "stop on mismatched-record cleared the record despite refusing" >&2
+  exit 1
+}
+rm -f "$BONG_PREVIEW_PID_FILE"
+
+# (b) stale：记录指向已死 pid → stop 走清理路径，清记录并成功，不 panic、不误杀。
+cat >"$BONG_PREVIEW_PID_FILE" <<EOF
+pid=99999999
+starttime=1
+executable=$TMP_ROOT/target/release/bong-server
+executable_identity=0:1
+EOF
+chmod 600 "$BONG_PREVIEW_PID_FILE"
+if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" >"$TMP_ROOT/stale.log" 2>&1; then
+  echo "stop on stale-record failed" >&2
+  exit 1
+fi
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "stale-record stop did not clear the dead record" >&2
+  exit 1
+}
+
 echo "preview lifecycle harness: PASS"
