@@ -3707,16 +3707,23 @@ def _proto_message_body(source: str, message_name: str) -> str:
     raise AssertionError(f"authoritative proto message {message_name} has no closing brace")
 
 
-def _proto_field_signature(message_body: str, field_name: str) -> tuple[str, int]:
+def _proto_field_signature(message_body: str, field_name: str) -> tuple[str, str, int]:
+    """从权威 proto 提取字段的 (标签, 类型, 字段号)。
+
+    返回 protobuf **三要素**：label（"optional"/"repeated"/""）、wire 类型、字段号。
+    只 pin (type, number) 会放走 schema 漂移：把 ``repeated`` 改成 singular 丢重复值、
+    把 ``optional`` 改成非 presence 使缺省 bool 与显式 false 不可区分 —— 而
+    quickslot 解码恰好依赖 cardinality 与 presence 语义（central-review 1993 #4）。
+    """
     match = re.search(
-        rf"^\s*(?:optional\s+|repeated\s+)?([A-Za-z_][\w.]*)\s+"
+        rf"^\s*(?:(optional|repeated)\s+)?([A-Za-z_][\w.]*)\s+"
         rf"{re.escape(field_name)}\s*=\s*(\d+)\s*;",
         message_body,
         flags=re.MULTILINE,
     )
     if match is None:
         raise AssertionError(f"authoritative proto missing field {field_name}")
-    return match.group(1), int(match.group(2))
+    return (match.group(1) or ""), match.group(2), int(match.group(3))
 
 
 class ZoneInfoProtoDecodeTest(unittest.TestCase):
@@ -3737,16 +3744,16 @@ class ZoneInfoProtoDecodeTest(unittest.TestCase):
 
         self.assertEqual(
             _proto_field_signature(envelope, "zone_info"),
-            ("ZoneInfo", proto_min.SERVER_DATA_ZONE_INFO_FIELD),
+            ("", "ZoneInfo", proto_min.SERVER_DATA_ZONE_INFO_FIELD),
             "Bot envelope field 4 常量必须与权威 ServerDataEnvelope.zone_info 对齐",
         )
         expected_fields = {
-            "zone": ("string", proto_min.ZONE_INFO_ZONE_FIELD),
-            "spirit_qi": ("double", proto_min.ZONE_INFO_SPIRIT_QI_FIELD),
-            "danger_level": ("uint32", proto_min.ZONE_INFO_DANGER_LEVEL_FIELD),
-            "status": ("string", proto_min.ZONE_INFO_STATUS_FIELD),
-            "active_events": ("string", proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD),
-            "perception_text": ("string", proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD),
+            "zone": ("", "string", proto_min.ZONE_INFO_ZONE_FIELD),
+            "spirit_qi": ("", "double", proto_min.ZONE_INFO_SPIRIT_QI_FIELD),
+            "danger_level": ("", "uint32", proto_min.ZONE_INFO_DANGER_LEVEL_FIELD),
+            "status": ("", "string", proto_min.ZONE_INFO_STATUS_FIELD),
+            "active_events": ("repeated", "string", proto_min.ZONE_INFO_ACTIVE_EVENTS_FIELD),
+            "perception_text": ("optional", "string", proto_min.ZONE_INFO_PERCEPTION_TEXT_FIELD),
         }
         for field_name, expected in expected_fields.items():
             with self.subTest(field=field_name):
@@ -3996,14 +4003,33 @@ class QuickSlotConfigProtoDecodeTest(unittest.TestCase):
 
         self.assertEqual(
             _proto_field_signature(envelope, "quick_slot_config"),
-            ("QuickSlotConfig", proto_min.SERVER_DATA_QUICKSLOT_CONFIG_FIELD),
+            ("", "QuickSlotConfig", proto_min.SERVER_DATA_QUICKSLOT_CONFIG_FIELD),
             "Bot envelope field 35 常量必须与权威 ServerDataEnvelope.quick_slot_config 对齐",
         )
+        # central-review 1993 #4：signature 含 cardinality/presence 标签 ——
+        # slots/cooldown_until_ms 是 repeated（丢一个改 singular 即红）、
+        # ack_request_id/bind_accepted 是 optional（presence 语义，改非 presence 即红）。
         expected_config_fields = {
-            "slots": ("OptionalQuickSlotEntry", proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD),
-            "cooldown_until_ms": ("uint64", proto_min.QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD),
-            "ack_request_id": ("string", proto_min.QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD),
-            "bind_accepted": ("bool", proto_min.QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD),
+            "slots": (
+                "repeated",
+                "OptionalQuickSlotEntry",
+                proto_min.QUICKSLOT_CONFIG_SLOTS_FIELD,
+            ),
+            "cooldown_until_ms": (
+                "repeated",
+                "uint64",
+                proto_min.QUICKSLOT_CONFIG_COOLDOWN_UNTIL_MS_FIELD,
+            ),
+            "ack_request_id": (
+                "optional",
+                "string",
+                proto_min.QUICKSLOT_CONFIG_ACK_REQUEST_ID_FIELD,
+            ),
+            "bind_accepted": (
+                "optional",
+                "bool",
+                proto_min.QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD,
+            ),
         }
         for field_name, expected in expected_config_fields.items():
             with self.subTest(message="QuickSlotConfig", field=field_name):
@@ -4013,11 +4039,11 @@ class QuickSlotConfigProtoDecodeTest(unittest.TestCase):
                     f"Bot QuickSlotConfig.{field_name} 常量必须与权威 proto 对齐",
                 )
         expected_entry_fields = {
-            "item_id": ("string", proto_min.QUICKSLOT_ENTRY_ITEM_ID_FIELD),
-            "display_name": ("string", proto_min.QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD),
-            "cast_duration_ms": ("uint32", proto_min.QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
-            "cooldown_ms": ("uint32", proto_min.QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
-            "icon_texture": ("string", proto_min.QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
+            "item_id": ("", "string", proto_min.QUICKSLOT_ENTRY_ITEM_ID_FIELD),
+            "display_name": ("", "string", proto_min.QUICKSLOT_ENTRY_DISPLAY_NAME_FIELD),
+            "cast_duration_ms": ("", "uint32", proto_min.QUICKSLOT_ENTRY_CAST_DURATION_MS_FIELD),
+            "cooldown_ms": ("", "uint32", proto_min.QUICKSLOT_ENTRY_COOLDOWN_MS_FIELD),
+            "icon_texture": ("", "string", proto_min.QUICKSLOT_ENTRY_ICON_TEXTURE_FIELD),
         }
         for field_name, expected in expected_entry_fields.items():
             with self.subTest(message="QuickSlotEntry", field=field_name):
@@ -4028,7 +4054,7 @@ class QuickSlotConfigProtoDecodeTest(unittest.TestCase):
                 )
         self.assertEqual(
             _proto_field_signature(wrapper, "entry"),
-            ("QuickSlotEntry", proto_min.OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD),
+            ("optional", "QuickSlotEntry", proto_min.OPTIONAL_QUICKSLOT_ENTRY_ENTRY_FIELD),
             "Bot OptionalQuickSlotEntry.entry 常量必须与权威 proto 对齐",
         )
 
@@ -4135,17 +4161,17 @@ class ProdConsumeDecodeTest(unittest.TestCase):
 
         self.assertEqual(
             _proto_field_signature(envelope, "player_state"),
-            ("PlayerState", proto_min.SERVER_DATA_PLAYER_STATE_FIELD),
+            ("", "PlayerState", proto_min.SERVER_DATA_PLAYER_STATE_FIELD),
             "Bot envelope 分发常量必须与权威 ServerDataEnvelope.player_state 对齐",
         )
         self.assertEqual(
             _proto_field_signature(player_state, "spirit_qi"),
-            ("double", proto_min.PLAYER_STATE_SPIRIT_QI_FIELD),
+            ("", "double", proto_min.PLAYER_STATE_SPIRIT_QI_FIELD),
             "Bot spirit_qi 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
         )
         self.assertEqual(
             _proto_field_signature(player_state, "spirit_qi_max"),
-            ("double", proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
+            ("", "double", proto_min.PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
             "Bot spirit_qi_max 常量及 fixed64 wire type 必须与权威 PlayerState 对齐",
         )
 
@@ -4388,6 +4414,10 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         decoded = proto_min.decode_server_data_envelope(_pb_message(25, progress))
         self.assertEqual(decoded["type"], "botany_harvest_progress")
         self.assertEqual(decoded["session_id"], "Rng")
+        # central-review 1993 #5：target_id 是 field 2，标识权威收割目标 —— 只 pin
+        # 其他字段会放走「读错字段 / 恒 0 / 丢弃 target_id」的解码器。值与 target_name
+        # 刻意不同（"plant-1" vs "开脉草"），从 field 3 误读 target_id 的实现必红。
+        self.assertEqual(decoded["target_id"], "plant-1")
         self.assertEqual(decoded["target_name"], "开脉草")
         self.assertEqual(decoded["plant_kind"], "ning_mai_cao")
         self.assertEqual(decoded["mode"], "auto")

@@ -2,9 +2,40 @@
 
 from __future__ import annotations
 
+import time
+
 from typing import Any
 
 from bot.bot import BotAssertionError
+
+
+def drain_inventory_snapshots(bot, quiet: float = 0.8, max_wait: float = 5.0) -> None:
+    """排空在途 inventory_snapshot：发送请求前保证没有未解码的快照留在 socket。
+
+    event.t 是**客户端解码时刻**（bot.py ``_emit`` 用 ``time.monotonic() - t0``）：
+    一张在请求发送前就已入队、之后才解码的快照会以 ``t > 锚点`` 冒充「拒绝 resync」——
+    请求尚未处理，快照已满足断言（central-review 1993 #2）。inventory_snapshot 无
+    周期发射（只随 join / Changed / resync），等一个「无新快照」的短窗口即可排干在途
+    快照；用快照级静默而非全事件流静默，避免被 carrier_state 每 1s 周期流量拖到上限。
+    到上限仍持续到达则报错（fail-closed，不留「无法排空仍继续」的静默路径）。
+    """
+    deadline = time.monotonic() + max_wait
+    while True:
+        anchor = bot.events[-1].t if bot.events else 0.0
+        time.sleep(quiet)
+        fresh = [
+            e
+            for e in bot.events
+            if e.kind == "server_data"
+            and e.data.get("payload_type") == "inventory_snapshot"
+            and e.t > anchor
+        ]
+        if not fresh:
+            return
+        if time.monotonic() > deadline:
+            raise BotAssertionError(
+                "inventory_snapshot 在排空窗口内持续到达，无法建立请求前快照静默"
+            )
 
 
 def wait_join_and_inventory(bot, timeout: float = 15.0) -> dict[str, Any]:

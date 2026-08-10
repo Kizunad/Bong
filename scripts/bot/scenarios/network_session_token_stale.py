@@ -319,6 +319,7 @@ def _assert_stale_move_rejected_zero_mutation(
     **之前**读取；锚点同样在发请求前取发送时刻（与 ``event.t`` 同一相对时钟）。
     """
     from ._inventory_helpers import (
+        drain_inventory_snapshots,
         latest_inventory_snapshot,
         wait_inventory_snapshot_after,
     )
@@ -328,6 +329,10 @@ def _assert_stale_move_rejected_zero_mutation(
         inventory_fingerprint,
     )
 
+    # central-review 1993 #2：发请求前排干在途快照 —— event.t 是客户端解码时刻，一张
+    # 之前已入队、之后才解码的快照会以 t > before 冒充本 move 的拒绝 resync（请求未
+    # 处理就满足断言）。排干后窗口内唯一的快照来源就是本 move 自己的 resync。
+    drain_inventory_snapshots(bot)
     pre = latest_inventory_snapshot(bot)
     before = time.monotonic() - bot.t0
     bot.intent(
@@ -393,6 +398,7 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
 
 def run(env) -> None:
     from ._inventory_helpers import (
+        drain_inventory_snapshots,
         latest_inventory_snapshot,
         wait_inventory_snapshot_after,
     )
@@ -414,6 +420,10 @@ def run(env) -> None:
 
         # 证明 token 曾有效：close 被接受，server 回推 loot_container_close。
         # 同时断言 close 后的 resync 快照零 mutation（指纹与 close 前一致）。
+        # central-review 1993 #2：close 前排干在途快照 —— 之后 close resync 断言的
+        # 因果链成立（窗口内唯一快照来源就是本 close 的 resync，不再有「之前已入队、
+        # 之后才解码」的快照冒充）。
+        drain_inventory_snapshots(bot)
         pre_close = latest_inventory_snapshot(bot)
         close_before = time.monotonic() - bot.t0
         bot.intent(_close_request(session_id))

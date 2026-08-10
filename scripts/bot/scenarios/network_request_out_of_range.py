@@ -74,6 +74,14 @@ _VALID_SLOTS = (0, 8)
 _PILL_TEMPLATE = "huiyuan_pill"
 _PILL_GIVE_COUNT = 2
 _BOUND_SLOTS = (0, 8)
+# botany 进度基线下限：auto 收割时长 AUTO_DURATION_TICKS=120（6s@20t/s），sync 节拍
+# 10 tick（0.5s）→ 每拍进度 +0.083。基线必须 ≥0.25（上次 mode 翻转重置后已积累
+# ≥1.5s 进度），否则「默认成 resting_mode 并重置」的实现（progress 回落到 ~0 再
+# 续增）在首个后置样本就反超基线，单调比较失灵（central-review 1993 #3）。
+_PROGRESS_BASELINE_FLOOR = 0.25
+# 处理屏障的 sentinel 槽位：不在 _BOUND_SLOTS/_VALID_SLOTS 用到的 0/8 上，避免与
+# 背包绑定 / 边界探针的 quick_slot_bind 互踩。
+_BARRIER_SLOT = 1
 
 
 def _bind_slot_with_item(bot, slot: int, label: str) -> None:
@@ -221,6 +229,40 @@ def _assert_harvest_mode_flip(bot, session_id: str, mode: str, label: str) -> No
     )
 
 
+def _harvest_processing_barrier(bot, label: str) -> float:
+    """同连接处理屏障：quick_slot_bind sentinel 的 ack 证明此前请求已被处理。
+
+    mode="garbage" 的包被 schema 拒绝时**没有任何响应** —— 只靠固定 sleep 等周期
+    progress，会放走「请求仍在排队、尚未处理」的窗口：周期事件照常发射满足断言，
+    请求随后才被接受并突变 session（central-review 1993 #1）。quick_slot_bind 在
+    handler 执行时回推 quickslot_config ack（ack_request_id 回显 + bind_accepted）；
+    server 按连接串行处理请求，sentinel 的 ack 到达 ⇒ 排在它前面的包（含 garbage）
+    已处理完毕。绑定 item_id=None（清空 slot 1；QuickSlotBindings 是独立组件，不改
+    背包指纹）。返回 ack 事件时刻作为 post-processing 水位。
+    """
+    request_id = f"rng-barrier-{label}"
+    sent_at = time.monotonic() - bot.t0
+    bot.intent(
+        {
+            "v": 1,
+            "type": "quick_slot_bind",
+            "slot": _BARRIER_SLOT,
+            "item_id": None,
+            "request_id": request_id,
+        }
+    )
+    ack = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data.get("payload_type") == "quickslot_config"
+        and e.t > sent_at
+        and e.data["payload"].get("ack_request_id") == request_id
+        and e.data["payload"].get("bind_accepted") is True,
+        timeout=10.0,
+        description=f"{label}：quick_slot_bind sentinel ack（同连接处理屏障）",
+    )
+    return ack.t
+
+
 def _assert_invalid_harvest_mode_rejected(bot, session_id: str, resting_mode: str) -> None:
     """坏 mode 探针：打在真实 session 上，且不翻转 mode / 不重置进度。
 
@@ -230,13 +272,28 @@ def _assert_invalid_harvest_mode_rejected(bot, session_id: str, resting_mode: st
     progress 回落到 ~0 再续增。正确 serde 在反序列化期整包丢弃该请求，session 状态
     不变 → progress 仍显示 resting_mode、进度单调续增。两种可观测差异任一出现即判定
     serde 接受了 garbage，坏实现不再被「session 不存在」掩盖（本轮 review finding 4）。
+
+    基线必须满足三个前提才可信（central-review 1993 #3）：绑定当前 session 的
+    session_id、取最新观察之后的新鲜样本（watermark 后首次）、progress ≥
+    _PROGRESS_BASELINE_FLOOR（上次 mode 翻转重置后已积累 ≥1.5s 进度）。基线近零时，
+    「默认成 resting_mode 并重置」的实现（progress 回落到 ~0 再以 1/6s 速率续增）在
+    首个后置样本就反超基线，单调比较失灵。
     """
+    watermark = bot.events[-1].t if bot.events else 0.0
     pre = bot.wait_for(
-        lambda e: e.kind == "server_data"
-        and e.data["payload_type"] == "botany_harvest_progress"
-        and e.data["payload"].get("mode") == resting_mode,
+        lambda e: (
+            e.kind == "server_data"
+            and e.data["payload_type"] == "botany_harvest_progress"
+            and e.data["payload"].get("session_id") == session_id
+            and e.data["payload"].get("mode") == resting_mode
+            and e.data["payload"].get("progress", 0.0) >= _PROGRESS_BASELINE_FLOOR
+            and e.t > watermark
+        ),
         timeout=10.0,
-        description=f"garbage 前 resting_mode={resting_mode} 的进度基线",
+        description=(
+            f"garbage 前 session={session_id} resting_mode={resting_mode} 的新鲜进度基线"
+            f"（watermark 后 progress≥{_PROGRESS_BASELINE_FLOOR}）"
+        ),
     )
     pre_progress = pre.data["payload"].get("progress", 0.0)
     sent_at = time.monotonic() - bot.t0
@@ -248,19 +305,24 @@ def _assert_invalid_harvest_mode_rejected(bot, session_id: str, resting_mode: st
             "mode": "garbage",
         }
     )
-    # 给 server ≥2 个 sync 节拍（PROGRESS_SYNC_INTERVAL_TICKS=10 ≈ 0.5s/拍）处理并回推，
-    # 再一次性扫垃圾请求后到达的全部 progress —— 迟到的成功响应也计入拒绝判定。
-    time.sleep(1.5)
+    # central-review 1993 #1：固定 sleep 不是处理屏障 —— 周期 progress 在请求仍排队时
+    # 也照常发射，未处理前的样本会满足旧断言、随后被接受的请求在无扫描处突变 session。
+    # sentinel 的 ack 证明 garbage 包已被处理；ack 之后的 progress 采样才是处理后状态。
+    barrier_t = _harvest_processing_barrier(bot, "garbage 后的处理屏障")
+    # barrier 后给 server ≥1 个 sync 节拍（PROGRESS_SYNC_INTERVAL_TICKS=10 ≈ 0.5s/拍）
+    # 回推处理后的 progress，再一次性扫处理屏障后的全部 progress —— 迟到的成功响应
+    # 也计入拒绝判定。
+    time.sleep(0.6)
     offenders = [
         e
         for e in bot.events
         if e.kind == "server_data"
         and e.data["payload_type"] == "botany_harvest_progress"
-        and e.t > sent_at
+        and e.t > barrier_t
     ]
     if not offenders:
         raise BotAssertionError(
-            "garbage 探针后没有 botany_harvest_progress 回推，"
+            "garbage 探针后（处理屏障之后）没有 botany_harvest_progress 回推，"
             "无法判定 session 状态（progress 应每 ~0.5s 回推一次）"
         )
     for e in offenders:
