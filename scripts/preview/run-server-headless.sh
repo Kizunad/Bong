@@ -84,6 +84,32 @@ rollback_preview_server() {
   return "$status"
 }
 
+# 有界回收：身份-safe 停服未确认时绝不无限 wait（进程可能仍存活，wait 会挂死）。
+# 进程若仍存活，只有在确认为「本轮直接 spawn 的子进程」（/proc/<pid>/status 的
+# PPid == 本启动器 PID）时才按自有进程树做有界停止 + 端口释放；否则拒绝信号
+# （防 PID 复用打到无关进程），有界返回不等待。这是 identity 无法确认时唯一的
+# 有界 cleanup 路径（review finding [1]/[4]：原实现把未记录进程裸留 25565
+# 无限存活，或对存活进程无限 wait）。
+bounded_cleanup_unconfirmed_launch() {
+  local operation="$1" ppid
+
+  if ! bong_server_process_is_running "$SERVER_PID"; then
+    wait "$SERVER_PID" 2>/dev/null || true
+    return 0
+  fi
+  ppid="$(awk '/^PPid:/{print $2; exit}' "/proc/$SERVER_PID/status" 2>/dev/null || true)"
+  if [ "$ppid" != "$$" ]; then
+    echo "❌ $operation：进程仍存活但非本启动器直接子进程（PPid=$ppid）；拒绝信号，有界返回" >&2
+    return 1
+  fi
+  if bong_server_stop_process_tree_and_release_port "$SERVER_PID" "$PORT"; then
+    wait "$SERVER_PID" 2>/dev/null || true
+    return 0
+  fi
+  echo "❌ $operation：有界回收失败，进程可能仍存活（无权限记录）" >&2
+  return 1
+}
+
 bong_server_launch_preview_locked() {
   local status
 
@@ -117,11 +143,10 @@ bong_server_launch_preview_locked() {
   if [[ ! "$SERVER_STARTTIME" =~ ^[0-9]+$ ]] \
       || [[ ! "$SERVER_EXECUTABLE_IDENTITY" =~ ^[0-9]+:[0-9]+$ ]]; then
     echo "❌ 无法确认直接启动的 server identity；拒绝把数字 PID 当作权限" >&2
-    if ! bong_server_process_is_running "$SERVER_PID"; then
-      wait "$SERVER_PID" 2>/dev/null || true
-    else
-      echo "❌ 未记录的 server 仍存活但身份不可确认；拒绝发送信号，交由 CI runner 隔离回收" >&2
-    fi
+    # 身份在 500 次重试内始终不可确认时，进程若仍存活不能裸留 25565——本启动器
+    # 已直接 spawn 它（PID 来自 $!），做有界回收而非交给 CI runner 无限隔离
+    # （review finding [4]：原实现把未记录的 server 留作孤儿）。
+    bounded_cleanup_unconfirmed_launch "preview identity-pinning"
     return 1
   fi
 
@@ -129,14 +154,22 @@ bong_server_launch_preview_locked() {
     echo "❌ 无法发布 server identity 权限记录" >&2
     if bong_server_stop_pinned_process \
         "$SERVER_PID" "$SERVER_STARTTIME" "$SERVER_EXECUTABLE_IDENTITY" 10 2; then
-      :
+      status=0
     else
       status=$?
-      if [ "$status" -ne 1 ] && [ "$status" -ne "$BONG_SERVER_STOP_FORCED" ]; then
-        echo "❌ Server identity-safe rollback 未确认 (status=$status)" >&2
-      fi
     fi
-    wait "$SERVER_PID" 2>/dev/null || true
+    case "$status" in
+      0|1|"$BONG_SERVER_STOP_FORCED")
+        # 已确认停止/消失：wait 立即返回，reap 子进程。
+        wait "$SERVER_PID" 2>/dev/null || true
+        ;;
+      *)
+        # 未确认（status 2）：进程可能仍存活。绝不无限 wait——有界重查，仍存活
+        # 则按直接子进程回收（review finding [1]：原实现对存活进程无限 wait）。
+        echo "❌ Server identity-safe rollback 未确认 (status=$status)" >&2
+        bounded_cleanup_unconfirmed_launch "preview record-publish rollback"
+        ;;
+    esac
     return 1
   fi
   if ! disown "$SERVER_PID" 2>/dev/null; then
@@ -191,6 +224,13 @@ while [ "$elapsed" -lt "$TIMEOUT_SECONDS" ]; do
     if [ "$status" -eq 1 ]; then
       echo "❌ Server 在权限记录发布后提前退出；安全清理匹配记录" >&2
       rollback_preview_server "preview failed-start cleanup" || true
+    elif [ "$status" -eq 2 ]; then
+      # 身份无法确认（非「已消失」）：进程可能仍存活。同样必须走 identity-safe
+      # 回滚——它重查 pinned identity，能确认则停服并清记录，不能则保留记录供
+      # stop-server-headless.sh 事后清理，不能带着存活进程 + 记录直接退出
+      # （review finding [2]：原实现跳过回滚，把进程和 PID 记录都留下）。
+      echo "❌ Server identity 无法确认（status 2）；尝试 identity-safe 回滚" >&2
+      rollback_preview_server "preview identity-unconfirmed cleanup" || true
     fi
     exit 1
   fi
