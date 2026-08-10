@@ -4710,6 +4710,31 @@ class RespFramesTest(unittest.TestCase):
         self.assertEqual(frame[0], b"message")
         self.assertEqual(json.loads(frame[2].decode("utf-8"))["request_id"], "req_1")
 
+    def test_fragmented_large_bulk(self):
+        # 大 bulk 分 4096 块喂入：多次 partial feed 后仍须正确拼回。feed 走
+        # bytearray.extend（摊还线性）；若退回 ``bytes += `` 就会逐块整拷积压缓冲，
+        # 大消息退化为二次拷贝。
+        payload = b"x" * (64 * 1024)
+        raw = b"$" + str(len(payload)).encode("ascii") + b"\r\n" + payload + b"\r\n"
+        parser = RespFrames()
+        for i in range(0, len(raw), 4096):
+            parser.feed(raw[i : i + 4096])
+        self.assertEqual(parser.next_frame(), payload)
+
+    def test_bulk_declared_oversize_rejected(self):
+        # 单条 bulk 声明长度超上限：帧未收全也必须立刻拒绝（防超限帧占用合法化）。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$9\r\n123456789\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_buffer_oversize_rejected(self):
+        # 永不收尾的帧反复 feed，积压缓冲越过上限必须抛错（防外部消息撑爆进程内存）。
+        parser = RespFrames(max_buffer_size=16)
+        parser.feed(b"$100\r\n0123456789")  # 15 bytes，帧未完整
+        with self.assertRaises(ValueError):
+            parser.feed(b"0123456789")  # 累计 25 > 16
+
 
 class RedisCommandEncodeTest(unittest.TestCase):
     """PUBLISH / SUBSCRIBE 命令编码（与 RESP2 协议字节精确对拍）。"""
@@ -5144,7 +5169,10 @@ class AgentUiHelperTest(unittest.TestCase):
             expect_agent_ui_request(bot, "req_late", timeout=5.0)
 
     def test_expect_agent_ui_close_reason_assert(self):
-        close = _FakeEvent(
+        # 负向断言必须因 reason 失配而红。旧版只有一条事件：正向断言消费它之后，
+        # 第二条断言只是"事件耗尽超时"，忽略 reason 的实现照样绿。改喂两条事件，
+        # 第二条 reason 明确不符（非 null），让第二条断言真正在 reason 值上失配。
+        close_ok = _FakeEvent(
             1.0,
             "payload",
             {
@@ -5152,7 +5180,15 @@ class AgentUiHelperTest(unittest.TestCase):
                 "data": b'{"request_id":"req_1","reason":"invalid_button_id"}',
             },
         )
-        bot = _AgentUiFakeBot([close])
+        close_wrong = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1","reason":"other_button_id"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_ok, close_wrong])
         expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
         with self.assertRaises(BotAssertionError):
             expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)

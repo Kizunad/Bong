@@ -24,23 +24,41 @@ import time
 
 
 class RespFrames:
-    """RESP2 帧解析器：``feed()`` 喂字节，``next_frame()`` 取帧；数据不足返回 None。"""
+    """RESP2 帧解析器：``feed()`` 喂字节，``next_frame()`` 取帧；数据不足返回 None。
 
-    def __init__(self) -> None:
-        self._buf = b""
+    防滥用：缓冲用 ``bytearray.extend``（摊还 O(1)/块，避免 ``bytes += `` 每次把整个
+    已积压缓冲再拷一遍的二次拷贝），并设协议级上限——单条 bulk 帧声明长度超
+    ``max_bulk_size``、或缓冲累计超 ``max_buffer_size`` 直接抛 ValueError。客户端跑在
+    agent_ui 命令/响应通道上，payload 是外部发布的 Redis 消息，不能让它用一条超大或
+    永不收尾的帧把进程内存撑爆。
+    """
+
+    def __init__(
+        self,
+        max_bulk_size: int = 16 * 1024 * 1024,
+        max_buffer_size: int = 32 * 1024 * 1024,
+    ) -> None:
+        self._buf = bytearray()
+        self._max_bulk_size = max_bulk_size
+        self._max_buffer_size = max_buffer_size
 
     def feed(self, data: bytes) -> None:
-        if data:
-            self._buf += data
+        if not data:
+            return
+        if len(self._buf) + len(data) > self._max_buffer_size:
+            raise ValueError(
+                f"RESP 缓冲累计超过上限 {self._max_buffer_size} bytes"
+            )
+        self._buf.extend(data)
 
     def next_frame(self):
         frame, consumed = self._parse_frame(0)
         if consumed == 0:
             return None
-        self._buf = self._buf[consumed:]
+        del self._buf[:consumed]
         return frame
 
-    def _line(self, pos: int) -> tuple[bytes | None, int]:
+    def _line(self, pos: int) -> tuple[bytearray | None, int]:
         idx = self._buf.find(b"\r\n", pos)
         if idx == -1:
             return None, 0
@@ -68,10 +86,17 @@ class RespFrames:
             length = int(line)
             if length == -1:
                 return None, idx + 2
+            if length > self._max_bulk_size:
+                raise ValueError(
+                    f"RESP bulk 帧声明长度 {length} 超过上限 {self._max_bulk_size}"
+                )
             body_start = idx + 2
             if len(self._buf) < body_start + length + 2:
                 return None, 0
-            return self._buf[body_start : body_start + length], body_start + length + 2
+            return (
+                bytes(self._buf[body_start : body_start + length]),
+                body_start + length + 2,
+            )
         if marker == b"*":
             line, idx = self._line(pos + 1)
             if line is None:
