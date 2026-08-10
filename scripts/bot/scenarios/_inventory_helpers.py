@@ -251,27 +251,34 @@ def send_move(bot, instance_id: int, from_location: dict[str, Any], to_location:
 
 
 def drain_inventory_quiet(bot, quiet: float = 2.0, max_wait: float = 12.0) -> None:
-    """请求前排干：静置到连续 quiet 秒无新 inventory_snapshot 再放行。
+    """请求前排干：把「距下一次周期 flush 的剩余时间」建为 ≥ quiet 秒再放行。
 
     服务端每 100 tick 会周期 flush 一次「revision 不变的当前状态快照」（实测 ~5s
-    一条），与拒绝回推（同 tick 同步下发、revision 也不变）观测上不可分
-    （review finding [2]）。排干结束即保证：下一次周期 flush 至少 quiet 秒后才
-    可能到达。配合把拒绝回推的接受窗口设成 < quiet，周期 flush 便无法落进窗口
-    冒充权威回推；「省略回推」的错误实现窗口内拿不到任何快照，确定性红。
+    一条，100 tick @ 20tps 严格 5.0s），与拒绝回推（同 tick 同步下发、revision 也
+    不变）观测上不可分（review finding [2]）。要建立的是**剩余时间**而非「观测到
+    连续 quiet 秒无快照」——连续静默只能证明上一快照的年龄 ≥ quiet，无法排除下一
+    flush 已在 quiet 秒内逼近（review finding [1]：旧实现从 helper 起跑时刻计静默，
+    可在上一 flush 后 2.5s 起跑、静默 2s、4.5s 处返回，下一 flush 0.5s 后就到）。
+    本实现锚在**最近一次已观测快照**上，且返回点必须落在
+        quiet ≤ (now − last_snap) ≤ PERIOD − quiet
+    的窗口内：太早（距上一快照 < quiet）说明残余回推可能仍在滴入；太晚（距下一
+    周期 flush 不足 quiet 秒）则 flush 可能落进接受窗口。窗口外则等到下一 flush
+    重新锚定后再判。排干结束即保证下一次周期 flush 至少 quiet 秒后才可能到达；
+    配合把拒绝回推的接受窗口设成 < quiet，周期 flush 便无法落进窗口冒充权威回推；
+    「省略回推」的错误实现窗口内拿不到任何快照，确定性红。
     """
+    period = 5.0  # 周期 flush 严格 100 tick @ 20tps
     deadline = time.monotonic() + max_wait
     while True:
-        anchor = last_event_time(bot)
-        time.sleep(quiet)
-        stray = [
-            e
-            for e in bot.events_of("server_data")
-            if e.data.get("payload_type") == "inventory_snapshot" and e.t > anchor
-        ]
-        if not stray:
-            return
-        if time.monotonic() > deadline:
+        now = time.monotonic()
+        snapshots = _inventory_snapshot_events(bot)
+        if snapshots:
+            age = now - (bot.t0 + snapshots[-1].t)
+            if quiet <= age <= period - quiet:
+                return
+        if now >= deadline:
             raise BotAssertionError(
-                f"背包快照过于密集，{max_wait:.0f}s 内未排干到 {quiet:.0f}s 静默"
-                f"（周期 flush 无法满足测试前提）"
+                f"背包快照过于密集，{max_wait:.0f}s 内未排干到距下一周期 flush "
+                f"≥ {quiet:.0f}s（周期 flush 无法满足测试前提）"
             )
+        time.sleep(0.25)

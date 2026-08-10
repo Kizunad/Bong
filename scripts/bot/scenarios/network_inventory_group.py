@@ -13,9 +13,10 @@
 
 任一变体都要求拒绝路径不踢线不 panic；负断言用「revision 相同的回推快照」区分于
 「revision 变化的成功快照」。周期 flush（~5s 一条，revision 不变）与拒绝回推观测
-不可分，每条拒绝路径锚定前先 drain_inventory_quiet 排干到 quiet 秒静默，并把回推
-快照的接受限定在请求后 window 秒内（window < quiet）——周期 flush 无法落进窗口冒充，
-「省略回推」的错误实现窗口内无快照确定性红。
+不可分，每条拒绝路径锚定前先 drain_inventory_quiet 把下一次周期 flush 推离到
+quiet 秒之后（锚定最近一次快照、按 5s 周期算剩余时间），并把回推快照的接受限定在
+请求后 window 秒内（window < quiet）——周期 flush 无法落进窗口冒充，「省略回推」的
+错误实现窗口内无快照确定性红。
 """
 
 import time
@@ -72,11 +73,13 @@ def _wait_snapshot_same_revision(
 ) -> dict:
     """拒绝路径的权威回推：revision 不变 + 请求后 window 秒内到达。
 
-    调用方必须先 drain_inventory_quiet（连续 quiet 秒无快照）再发意图——排干后
-    下一次周期 flush 至少 quiet 秒后才可能到，而拒绝回推与请求同 tick 同步下发
-    （毫秒级）。把接受限定在 (anchor_t, anchor_t+window]，周期 flush（实测 ~5s
-    一条）无法落进窗口冒充；「省略回推」的错误实现窗口内无快照，确定性红
-    （review finding [2]：旧实现只查 revision 不变，任何周期 flush 都能冒充）。"""
+    调用方必须先 drain_inventory_quiet 把下一次周期 flush 推离到 quiet 秒之后
+    （锚定最近一次快照、按 5s 周期算剩余时间，review finding [1]：只静默 quiet
+    秒不锚快照会放跑 0.5s 后的 flush），再发意图——排干后下一次周期 flush 至少
+    quiet 秒后才可能到，而拒绝回推与请求同 tick 同步下发（毫秒级）。把接受限定在
+    (anchor_t, anchor_t+window]，周期 flush（实测 ~5s 一条）无法落进窗口冒充；
+    「省略回推」的错误实现窗口内无快照，确定性红（review finding [2]：旧实现只查
+    revision 不变，任何周期 flush 都能冒充）。"""
     event = bot.wait_for(
         lambda e: (
             e.kind == "server_data"

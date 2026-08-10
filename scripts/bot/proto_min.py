@@ -636,13 +636,35 @@ def _optional_quick_slot_entry(data: bytes) -> dict[str, Any] | None:
     return _quick_slot_entry(_message(fields, 1))
 
 
+def _packed_varints(data: bytes) -> list[int]:
+    """解码 proto3 packed repeated 标量：length-delimited blob 内连续 varint。"""
+    pos = 0
+    values = []
+    while pos < len(data):
+        value, pos = _read_varint(data, pos)
+        values.append(int(value))
+    return values
+
+
 def _quick_slot_config(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
+    # review finding [5]：`repeated uint64 cooldown_until_ms` 在 proto3 里默认
+    # **packed**（wire type 2：length-delimited blob 内连续 varint）。旧实现只读
+    # 独立 wire-0 varint（w==0），真实服务器生产的 packed 载荷被解码成空列表。
+    # 两种编码都收：packed 逐 blob 展开，unpacked 逐 varint 追加。
+    cooldowns: list[int] = []
+    for f, w, v in fields:
+        if f != 2:
+            continue
+        if w == 0:
+            cooldowns.append(int(v))
+        elif w == 2:
+            cooldowns.extend(_packed_varints(v))
     return {
         "v": 1,
         "type": "quickslot_config",
         "slots": [_optional_quick_slot_entry(raw) for raw in _messages(fields, 1)],
-        "cooldown_until_ms": [int(v) for f, w, v in fields if f == 2 and w == 0],
+        "cooldown_until_ms": cooldowns,
         "ack_request_id": _optional_string(fields, 3),
         "bind_accepted": (
             bool(_varint(fields, 4)) if _has(fields, 4) else None

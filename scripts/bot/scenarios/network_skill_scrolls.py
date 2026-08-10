@@ -34,6 +34,11 @@ HERBALISM_SCROLL = "skill_scroll_herbalism_baicao_can"
 CLEAVE_SCROLL = "scroll_technique_sword_cleave"
 INFUSE_SCROLL = "scroll_technique_sword_infuse"
 SCROLL_XP = 500
+# 拒绝回执/习得回执之后的因果窗口：处理在同一 tick 同步回推 resync 快照（毫秒级），
+# 而 revision 不变的周期 flush ~5s 一条。把保留断言锚在回执事件**之后**并加窗口上限，
+# 排除「回执前已到达的周期 flush」与「回执后较晚的无关 flush」冒充回推（review
+# finding [10]）。
+ROLLBACK_WINDOW = 1.0
 
 
 def _give_and_wait(bot, item_id: str) -> dict:
@@ -63,7 +68,7 @@ def _wait_scroll_used(
     was_duplicate: bool,
     anchor_t: float,
     timeout: float = 10.0,
-) -> dict:
+) -> tuple[dict, float]:
     event = bot.wait_for(
         lambda e: (
             e.kind == "server_data"
@@ -78,7 +83,7 @@ def _wait_scroll_used(
     assert payload.get("was_duplicate") is was_duplicate, (
         f"skill_scroll_used.was_duplicate 应为 {was_duplicate}，实际 {payload.get('was_duplicate')!r}"
     )
-    return payload
+    return payload, event.t
 
 
 def _wait_skill_snapshot_skill(
@@ -155,7 +160,7 @@ def run(env) -> None:
         bot.intent(
             {"type": "learn_skill_scroll", "v": 1, "instance_id": scroll_instance}
         )
-        used = _wait_scroll_used(
+        used, _used_t = _wait_scroll_used(
             bot, HERBALISM_SCROLL, was_duplicate=False, anchor_t=skill_anchor
         )
         assert used.get("skill") == "herbalism", (
@@ -215,17 +220,25 @@ def run(env) -> None:
         bot.intent(
             {"type": "learn_skill_scroll", "v": 1, "instance_id": scroll2_instance}
         )
-        _wait_scroll_used(
+        _, dup_t = _wait_scroll_used(
             bot, HERBALISM_SCROLL, was_duplicate=True, anchor_t=anchor
         )
+        # review finding [10]：保留断言必须锚在 skill_scroll_used 回执**之后**（dup_t）
+        # 并加窗口上限——旧实现锚 intent 前水位，回执前任意周期 flush 的「revision
+        # 不变 + 卷轴仍在」快照都能冒充回推；错误实现「回了 was_duplicate 却仍消耗
+        # 卷轴」也能过。回执同一 tick 同步回推 resync，dup_t 之后窗口内必有真实回推。
         kept = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_snapshot"
-                and e.t > anchor
+                and e.t > dup_t
+                and e.t < dup_t + ROLLBACK_WINDOW
             ),
             timeout=10.0,
-            description="重复习得后的回推 inventory_snapshot",
+            description=(
+                f"重复习得回执之后 {ROLLBACK_WINDOW}s 内（t∈({dup_t:.2f}, "
+                f"{dup_t + ROLLBACK_WINDOW:.2f})）的回推 inventory_snapshot"
+            ),
         ).data["payload"]
         assert int(kept["revision"]) == before_revision, (
             f"重复习得不消耗卷轴：revision 应保持 {before_revision}，实际 {kept['revision']}"
@@ -281,7 +294,7 @@ def run(env) -> None:
         # 拒绝原因必须在 wire 上可观察：只断 revision/保留无法区分「RealmTooLow 拒绝」
         # 与「静默忽略/错误原因拒绝」（central-review 2012 #3）。服务端在非习得拒绝时
         # 下发 inventory_move_rejected（reason=realm_too_low + required_realm）。
-        rejected = bot.wait_for(
+        rejected_event = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_move_rejected"
@@ -289,21 +302,32 @@ def run(env) -> None:
             ),
             timeout=10.0,
             description="technique_scroll_use 拒绝回执（inventory_move_rejected）",
-        ).data["payload"]
+        )
+        rejected = rejected_event.data["payload"]
+        rejected_t = rejected_event.t
         assert rejected.get("reason") == "realm_too_low", (
             f"拒绝 reason 应为 realm_too_low，实际 {rejected.get('reason')!r}"
         )
         assert rejected.get("required_realm") == "Induce", (
             f"拒绝 required_realm 应为 Induce，实际 {rejected.get('required_realm')!r}"
         )
+        # review finding [10]：保留断言必须锚在拒绝回执**之后**（rejected_t）并加
+        # 窗口上限——旧实现锚 intent 前水位，回执前任意周期 flush 的「revision 不变
+        # + 卷轴仍在」快照都能冒充回推；错误实现「回 RealmTooLow 却仍消耗卷轴/漏发
+        # 回推」也能过。服务端 emit 拒绝回执先于 resync 回推，rejected_t 之后窗口内
+        # 必有真实回推。
         kept = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "inventory_snapshot"
-                and e.t > anchor
+                and e.t > rejected_t
+                and e.t < rejected_t + ROLLBACK_WINDOW
             ),
             timeout=10.0,
-            description="境界拒绝后的回推 inventory_snapshot",
+            description=(
+                f"境界拒绝回执之后 {ROLLBACK_WINDOW}s 内（t∈({rejected_t:.2f}, "
+                f"{rejected_t + ROLLBACK_WINDOW:.2f})）的回推 inventory_snapshot"
+            ),
         ).data["payload"]
         assert int(kept["revision"]) == before_revision, (
             f"RealmTooLow 拒绝不得消耗卷轴：revision 应保持 {before_revision}，实际 {kept['revision']}"

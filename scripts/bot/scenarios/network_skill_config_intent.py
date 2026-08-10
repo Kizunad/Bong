@@ -21,7 +21,12 @@ MODULES = ["skill"]
 
 SKILL = "zhenmai.sever_chain"
 BACKFIRE_KINDS = ["real_yuan", "physical_carrier", "tainted_yuan", "array"]
-# MeridianId::ALL（server/src/cultivation/components.rs，serde camelCase 序列化）。
+# MeridianId::ALL（server/src/cultivation/components.rs：默认 serde derive，**无
+# rename_all**——枚举变体名 PascalCase 序列化，如 "Lung"/"LargeIntestine"/"YinQiao"；
+# components.rs 明确文档「PascalCase 枚举变体名字符串（如 "Lung"）」。下面这 20 个
+# PascalCase 值就是 wire 格式本身，不能改成 camelCase——validate_field_value 用
+# serde_json::from_value::<MeridianId> 只认 PascalCase 变体名。review finding [2]
+# 声称的 camelCase 契约与服务器源码不符（见 DONE 报告对拍证据）。）
 MERIDIANS = [
     "Lung",
     "LargeIntestine",
@@ -187,6 +192,33 @@ def run(env) -> None:
             f"非法 meridian_id 拒绝后完整配置应保持 {baseline}，实际 {parsed!r}"
         )
 
+        # ── 4b. 部分缺失必填字段 → 拒绝：完整配置保持（review finding [9]）──
+        #     schema 两字段均必填（MissingRequiredField，server/src/skill/config.rs），
+        #     非空 config 缺任一个都必须拒绝；空 config {} 是第 5 步的合法清空操作，
+        #     与此不同。错误实现「只校验提供的枚举值、缺字段照存」会在此红。
+        for partial in (
+            {"meridian_id": "Pericardium"},  # 缺 backfire_kind
+            {"backfire_kind": "tainted_yuan"},  # 缺 meridian_id
+        ):
+            anchor = last_event_time(bot)
+            bot.intent(
+                {
+                    "type": "skill_config_intent",
+                    "v": 1,
+                    "skill_id": SKILL,
+                    "config": partial,
+                }
+            )
+            kept = _expect_config_snapshot(bot, anchor)
+            configs = _configs_of(kept)
+            assert SKILL in configs, (
+                f"缺字段配置拒绝后 {SKILL} 配置应保持，实际 {sorted(configs)}"
+            )
+            parsed = json.loads(configs[SKILL])
+            assert parsed == baseline, (
+                f"缺字段配置 {partial} 拒绝后完整配置应保持 {baseline}，实际 {parsed!r}"
+            )
+
         # ── 5. 空 config → 清配置：回推快照不含该 skill ──
         anchor = last_event_time(bot)
         bot.intent(
@@ -203,4 +235,4 @@ def run(env) -> None:
             f"空 config 清空后 snapshot 不应含 {SKILL}，实际 {sorted(configs)}"
         )
 
-        bot.assert_alive("技能配置穷举 + 4 步正负路径后")
+        bot.assert_alive("技能配置穷举 + 正负路径后")

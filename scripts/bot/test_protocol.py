@@ -522,10 +522,26 @@ def _server_data_quickslot_config_bytes() -> bytes:
     )
     bound_slot = _pb_message(1, entry)
     empty_slot = b""
+    # review finding [5]：proto3 `repeated uint64` 默认 **packed**（wire type 2，
+    # length-delimited blob 内连续 varint）。旧 builder 用 9 个独立 wire-0 varint
+    # 构造、解码器只读 w==0，真实服务器生产的 packed 载荷被解成空列表——用 packed
+    # 编码 + 非零时间戳钉死解码器必须走 packed 路径且逐值还原。
+    packed_cooldowns = _pb_bytes(
+        2,
+        _pb_raw_varint(1)
+        + _pb_raw_varint(2)
+        + _pb_raw_varint(3)
+        + _pb_raw_varint(4)
+        + _pb_raw_varint(5)
+        + _pb_raw_varint(6)
+        + _pb_raw_varint(7)
+        + _pb_raw_varint(8)
+        + _pb_raw_varint(9),
+    )
     payload = (
         _pb_message(1, bound_slot)
         + _pb_message(1, empty_slot) * 8
-        + _pb_varint(2, 0) * 9
+        + packed_cooldowns
         + _pb_string(3, "gap10-bind-1")
         + _pb_varint(4, 1)
     )
@@ -612,7 +628,12 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         self.assertEqual(bound["item_id"], "guyuan_pill")
         self.assertEqual(bound["cast_duration_ms"], 1500)
         self.assertIsNone(decoded["slots"][1], "未绑定槽应为 None")
-        self.assertEqual(decoded["cooldown_until_ms"], [0] * 9)
+        self.assertEqual(
+            decoded["cooldown_until_ms"],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            "packed repeated uint64 必须逐值还原（review finding [5]：旧解码器把 "
+            "wire-2 packed 载荷解成空列表）",
+        )
         self.assertEqual(decoded["ack_request_id"], "gap10-bind-1")
         self.assertIs(decoded["bind_accepted"], True)
 

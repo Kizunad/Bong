@@ -21,6 +21,7 @@ import time
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
+    drain_inventory_quiet,
     equip_location,
     find_instance,
     find_item,
@@ -67,32 +68,49 @@ def _give_and_wait(bot, item_id: str) -> dict:
     return event.data["payload"]
 
 
-def _drain_inventory_snapshots(bot, quiet: float = 1.2, max_wait: float = 8.0) -> None:
-    """静置到窗口内无新 inventory_snapshot 再放行。
-
-    清包等命令的 Changed<PlayerInventory> 回推是分 tick 滴入的（实测 clearinv
-    三连 ~1.1s），若在残余回推到达前取锚，它们会落进负断言窗口造成假失败。"""
-    deadline = time.monotonic() + max_wait
-    while True:
-        anchor = last_event_time(bot)
-        time.sleep(quiet)
-        stray = [
-            e
-            for e in bot.events_of("server_data")
-            if e.data.get("payload_type") == "inventory_snapshot" and e.t > anchor
+def _inventory_signature(snapshot: dict) -> tuple:
+    """背包占用字段的规范投影：placed/equipped/hotbar/resource 等会随 forge 消耗
+    而变的字段。排除推导字段（weight/body_level/qi_*/realm/revision）——周期 flush
+    与拒绝回推共享同一份当前状态，推导字段可能被无关系统漂移，占用字段则不会
+    在没有 mutation 的情况下变化。"""
+    placed = sorted(
+        (
+            p["container_id"],
+            p["row"],
+            p["col"],
+            p["item"]["instance_id"],
+            p["item"].get("count", 1),
+            p["item"]["item_id"],
+        )
+        for p in snapshot.get("placed_items", [])
+    )
+    equipped = {
+        slot: [
+            (i["instance_id"], i.get("count", 1), i["item_id"])
+            for i in (items if isinstance(items, list) else ([items] if items else []))
         ]
-        if not stray:
-            return
-        if time.monotonic() > deadline:
-            return
+        for slot, items in snapshot.get("equipped", {}).items()
+    }
+    hotbar = [
+        None
+        if slot is None
+        else (slot["instance_id"], slot.get("count", 1), slot["item_id"])
+        for slot in snapshot.get("hotbar", [])
+    ]
+    return (placed, equipped, hotbar, snapshot.get("bone_coins"))
 
 
-def _expect_no_inventory_change(bot, anchor_t: float, baseline_revision: int) -> None:
-    """失败路径负断言：窗口内不得出现 revision 更高的 inventory_snapshot。
+def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
+    """失败路径负断言：窗口内不得出现 inventory 变更（revision bump **或**占用字段漂移）。
 
-    服务端每 100 tick 会周期 flush 一次「revision 不变的当前状态快照」（实测
-    ~5s 一条），负判据必须容忍它；拒绝路径（RealmTooLow/NotEnoughQi/instance
-    不存在）从不 bump revision，所以「窗口内无更高 revision」等价于「无变更」。"""
+    服务端每 100 tick 会周期 flush 一次「revision 不变的当前状态快照」（实测 ~5s
+    一条），负判据必须容忍它；拒绝路径（RealmTooLow/NotEnoughQi/instance 不存在）
+    从不 bump revision，所以「窗口内无更高 revision」通常等价于「无变更」。
+    但 review finding [8]：revision 不动不代表内容不动——错误实现可直接改容器/装备
+    字段而不走 bump_revision API（绕过 revision 感知的写路径），仍产生一条 revision
+    不变的快照。故在 revision 检查之外再对**最近一次权威快照**做占用字段签名比对：
+    基线捕获在 intent 前、期间无任何 inventory 命令，签名任何漂移都是拒绝路径违规。"""
+    baseline_revision = int(baseline["revision"])
     time.sleep(NEGATIVE_WINDOW)
     stray = [
         e
@@ -106,6 +124,34 @@ def _expect_no_inventory_change(bot, anchor_t: float, baseline_revision: int) ->
             f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无 revision 变更"
             f"（>{baseline_revision}），实际收到 {len(stray)} 条"
         )
+    latest = latest_inventory_snapshot(bot)
+    if _inventory_signature(latest) != _inventory_signature(baseline):
+        raise BotAssertionError(
+            f"[{bot.username}] 拒绝后背包占用字段应保持不变（基线 revision="
+            f"{baseline_revision}），实际内容漂移"
+        )
+
+
+def _assert_qi_unchanged_after_rejection(bot, intent_anchor: float, expected_qi: float) -> None:
+    """拒绝路径 qi 守恒：warn-only 拒绝不改 Cultivation，player_state 不会自动重发。
+
+    `qi set <expected_qi>` 做只读探针强制重发：同值写仍触发 Changed<Cultivation> 的
+    player_state 发射（qi_current = min(value, qi_max) 不变），从而读回权威
+    spirit_qi。请求锚定：e.t > intent_anchor 排除探针前一切历史 player_state
+    （包括 intent 前 qi set 的旧态）。错误实现若在拒绝时扣了 qi，探针读回的值
+    与 expected_qi 不符，wait_for 超时即红。"""
+    bot.cmd(f"qi set {expected_qi}")
+    bot.expect_chat("[dev] qi set", timeout=10.0)
+    bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.data.get("payload_type") == "player_state"
+            and e.t > intent_anchor
+            and abs(float(e.data["payload"].get("spirit_qi", -1.0)) - expected_qi) < 1e-6
+        ),
+        timeout=10.0,
+        description=f"拒绝后（intent 之后）spirit_qi 保持 {expected_qi}",
+    )
 
 
 def _wait_move_rejected(bot, anchor_t: float, timeout: float = 10.0) -> tuple[dict, float]:
@@ -139,21 +185,28 @@ def run(env) -> None:
         bot.cmd("reset")
         bot.expect_chat("[dev] reset self", timeout=10.0)
         time.sleep(1.0)  # 命令通道冷却：reset 后 0.6s 内 give 仍会被静默丢弃（实测坑，1.0s 稳）
-        _drain_inventory_snapshots(bot)
+        drain_inventory_quiet(bot, quiet=1.2, max_wait=8.0)
 
         # ── 1. forge 拒绝-境界：fresh Awaken → RealmTooLow，无回推 ──
+        # central-review 2012 #3：qi=0 时扣 qi 不可观测（0−5 被 clamp 回 0），先抬到
+        # 1 让「拒绝时误扣真元」的错误实现可被探针读到差异。
+        bot.cmd("qi set 1")
+        bot.expect_chat("[dev] qi set", timeout=10.0)
         anchor = last_event_time(bot)
-        baseline_revision = int(latest_inventory_snapshot(bot)["revision"])
+        baseline = latest_inventory_snapshot(bot)
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
-        _expect_no_inventory_change(bot, anchor, baseline_revision)
+        _expect_no_inventory_change(bot, anchor, baseline)
+        _assert_qi_unchanged_after_rejection(bot, anchor, 1.0)
 
-        # ── 2. forge 拒绝-灵气：境界够但 qi=0 → NotEnoughQi，无回推 ──
+        # ── 2. forge 拒绝-灵气：境界够但 qi=1（< qi_cost 5）→ NotEnoughQi，无回推 ──
         bot.cmd("realm set induce")
         bot.expect_chat("[dev] realm set", timeout=10.0)
+        # qi 仍是 1（上步探针为同值写，未改 qi_current）；拒绝路径同样断言 qi 守恒。
         anchor = last_event_time(bot)
-        baseline_revision = int(latest_inventory_snapshot(bot)["revision"])
+        baseline = latest_inventory_snapshot(bot)
         bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
-        _expect_no_inventory_change(bot, anchor, baseline_revision)
+        _expect_no_inventory_change(bot, anchor, baseline)
+        _assert_qi_unchanged_after_rejection(bot, anchor, 1.0)
 
         # ── 3. forge 正路径：补灵气后产出 + 扣材料 + revision bump ──
         bot.cmd("qi set 5")
@@ -217,9 +270,9 @@ def run(env) -> None:
         spare = require_item(spare_snapshot, FALSE_SKIN)
         spare_instance = int(spare["item"]["instance_id"])
         # review finding [2]：周期 flush（~5s 一条，revision 不变）可落进
-        # ROLLBACK_WINDOW 冒充拒绝回推。锚定前排干到 quiet=2.0s 静默——下一次
+        # ROLLBACK_WINDOW 冒充拒绝回推。锚定前排干到 quiet=2.0s——下一次
         # flush 至少 2.0s 后才可能到，而回推窗口只有 1.0s（window < quiet）。
-        _drain_inventory_snapshots(bot, quiet=2.0)
+        drain_inventory_quiet(bot, quiet=2.0)
         reject_anchor = last_event_time(bot)
         reject_revision = int(latest_inventory_snapshot(bot)["revision"])
         bot.intent(
@@ -277,7 +330,7 @@ def run(env) -> None:
 
         # ── 6. equip 静默：instance 不存在 → warn + revision 无变更 ──
         anchor = last_event_time(bot)
-        baseline_revision = int(latest_inventory_snapshot(bot)["revision"])
+        baseline = latest_inventory_snapshot(bot)
         bot.intent(
             {
                 "type": "equip_false_skin",
@@ -286,6 +339,6 @@ def run(env) -> None:
                 "item_instance_id": 999999,
             }
         )
-        _expect_no_inventory_change(bot, anchor, baseline_revision)
+        _expect_no_inventory_change(bot, anchor, baseline)
 
         bot.assert_alive("伪皮肤 6 步正负路径后")

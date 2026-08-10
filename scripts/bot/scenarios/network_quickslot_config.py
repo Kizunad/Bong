@@ -25,7 +25,7 @@ from bot.scenarios._inventory_helpers import (
 
 DESCRIPTION = (
     "技能栏：bind 回执/槽快照、非法 request_id 静默后权威状态守恒、use 推 cast_sync、"
-    "冷却静默、最大合法槽 8 绑定+使用、非法槽静默"
+    "冷却静默、合法槽 0/8 两端边界绑定+使用、128 合法 request_id、非法槽静默"
 )
 MODULES = ["inventory", "combat"]
 
@@ -208,6 +208,22 @@ def run(env) -> None:
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 3})
         _assert_no_cast_sync(bot, anchor)
 
+        # ── 4d. 最大合法 request_id 长度 128 必须接受（review finding [6]）──
+        #     schema maxLength=128、handler len()>128 双拒；旧场景只测空串与 129
+        #     超长，一个把 len>=128 当非法的实现会拒绝恰好 128 的合法 id——等价
+        #     边界缺失。合法 128 必须绑定成功（accepted + 槽含物品）。
+        rid128 = "r" * 128
+        bot.intent(
+            {
+                "type": "quick_slot_bind",
+                "v": 1,
+                "slot": 4,
+                "item_id": PILL,
+                "request_id": rid128,
+            }
+        )
+        _expect_bind_response(bot, rid128, True, 4)
+
         # ── 5. bind 解绑：item_id=null → accepted=true + 槽清空 ──
         bot.intent(
             {
@@ -306,6 +322,35 @@ def run(env) -> None:
         ).data["payload"]
         assert int(cast8.get("duration_ms", 0)) == 1500, (
             f"guyuan_pill cast_duration_ms 应为 1500，实际 {cast8.get('duration_ms')!r}"
+        )
+
+        # ── 7b. 最小合法槽 0 的绑定 + 使用（review finding [4]）──
+        #    契约定义 0..=8 合法；旧场景只 bind slot 1、slot 8、拒 slot 9，下边界 0
+        #    从未触达——把 0 当非法的 `1..=8` 实现（或把 0 静默丢弃）会通过全部现有
+        #    断言。必须 bind 且 use slot 0（use 推 cast_sync{phase=casting, slot=0}）。
+        bot.intent(
+            {
+                "type": "quick_slot_bind",
+                "v": 1,
+                "slot": 0,
+                "item_id": PILL,
+                "request_id": "gap10-bind-0",
+            }
+        )
+        _expect_bind_response(bot, "gap10-bind-0", True, 0)
+        bot.intent({"type": "use_quick_slot", "v": 1, "slot": 0})
+        cast0 = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "cast_sync"
+                and e.data["payload"].get("phase") == "casting"
+                and e.data["payload"].get("slot") == 0
+            ),
+            timeout=10.0,
+            description="use_quick_slot slot=0 的 cast_sync(casting)",
+        ).data["payload"]
+        assert int(cast0.get("duration_ms", 0)) == 1500, (
+            f"guyuan_pill cast_duration_ms 应为 1500，实际 {cast0.get('duration_ms')!r}"
         )
 
         # ── 8. use_quick_slot 静默：未绑定槽 → 无新 cast_sync ──
