@@ -25,9 +25,8 @@ import time
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
-    find_item,
+    find_instance,
     inventory_item_instances,
-    require_item,
     wait_inventory_contains_new_instance,
 )
 
@@ -142,18 +141,28 @@ def _wait_settled(bot, timeout=20.0, tol=0.02):
     )
 
 
-def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
-    """结算上一候选的最终结果后，才允许发下一候选（review finding [1]）。
+def _settle_previous_candidate(
+    bot, candidate, instance_id, candidate_anchor, settle_timeout=6.0, quiet=1.0
+):
+    """结算上一候选的最终结果后，才允许发下一候选（review finding [1]/[2]）。
 
     上一候选的 3s wait 超时只说明「没等到消耗快照」，不代表它被拒——服务端对成功放置
     是**同 tick 同步发**消耗快照（coffin/mod.rs send_inventory_snapshot_to_client
     reason=coffin_place_consumed），慢处理下快照可迟到。若上一候选结果未定就发下一候选，
     上一候选的迟到快照会被下一候选的 wait 误认（它只判 e.t > anchor 且棺已不在包），
     返回的坐标在 registry 无记录，后续 enter/leave 全超时。本函数把上一候选**原子结算**：
-    等新快照，任一快照显示棺已消耗 → 上一候选实际放置成功（返回其坐标，绝不把它的成功
-    记到下一候选）；连续 quiet 秒无新快照且棺仍在 → 上一候选确定被拒（返回 None），
-    此时才放行下一候选。返回放置坐标或 None。"""
-    settle_anchor = last_event_time(bot)
+    等新快照，任一快照显示 **该实例** 已消耗 → 上一候选实际放置成功（返回其坐标，绝不
+    把它的成功记到下一候选）；连续 quiet 秒无新快照且该实例仍在 → 上一候选确定被拒
+    （返回 None），此时才放行下一候选。返回放置坐标或 None。
+
+    review finding [2]：下界初值必须是候选自身的原始锚（candidate_anchor，即该候选
+    intent 前取的 last_event_time），不是函数入口现取的 last_event_time——候选 3s 等待
+    超时与结算初始化之间没有事件屏障，若成功消耗快照在这段间隔落到事件流，入口现取锚
+    会把 ≤ 锚的快照永久排除（结算只扫 e.t > 新锚），返回 None 让下一候选带着已消耗的
+    实例 id 继续发，后续 enter 快照被归到错误候选，或场景误报全拒。保留原锚覆盖整个
+    无覆盖区间；锚只在对某快照**做过消耗判定后**才推进。review finding [3]：消耗判定按
+    **具体实例 id**（find_instance），同模板旧实例残留不会让首匹配掩盖新实例已消费。"""
+    settle_anchor = candidate_anchor
     deadline = time.monotonic() + settle_timeout
     while time.monotonic() < deadline:
         try:
@@ -162,7 +171,7 @@ def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
                 and e.data["payload_type"] == "inventory_snapshot"
                 and e.t > a,
                 timeout=quiet,
-                description="结算上一候选的 inventory_snapshot（t>上次锚）",
+                description=f"结算上一候选的 inventory_snapshot（t>{settle_anchor:.3f}）",
             )
         except BotAssertionError:
             # review finding [3]：quiet 秒内无新快照只说明「这 1s 没等到」，不证明
@@ -171,13 +180,13 @@ def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
             # 上一候选的迟到成功记到错误坐标（后续 enter/leave 全超时）。wait_for 每次
             # 全量重扫事件列表，迟到快照在下一次 wait 立即命中，continue 保持完整结算窗口。
             continue
-        if find_item(event.data["payload"], MUNDANE_COFFIN) is None:
+        if find_instance(event.data["payload"], MUNDANE_COFFIN, instance_id) is None:
             return candidate  # 上一候选实际放置成功：快照迟到但消耗真实
-        settle_anchor = event.t  # 棺仍在，继续等更新的快照确认稳定性
+        settle_anchor = event.t  # 该实例仍在，推进观察点等更新的快照确认稳定性
     return None
 
 
-def _place_coffin(bot, coffin, px, py, pz):
+def _place_coffin(bot, instance_id, px, py, pz):
     """放棺到附近空位：服务器对非空气坐标静默拒绝（不消费物品），逐个候选位置重试直到
     mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
     leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。
@@ -185,7 +194,11 @@ def _place_coffin(bot, coffin, px, py, pz):
     成功判定必须绑定到本次请求：每次候选超时后先**原子结算**上一候选
     （_settle_previous_candidate）——若上一候选实际放置成功（消耗快照迟到于 3s 等待），
     返回上一候选坐标，绝不让上一候选的成功被误记到当前候选（否则 enter/leave 会指向
-    registry 中不存在的坐标）。"""
+    registry 中不存在的坐标）。
+
+    review finding [3]：消耗判定全部按**具体实例 id**（instance_id），不用 find_item
+    首匹配——同模板旧实例（恢复的旧存档残留）会让首匹配到已消费的旧实例，掩盖新实例
+    已被消费，场景把「已放置」误判为「候选全拒」。"""
     candidates = [
         (px - PLACE_OFFSET, py, pz),
         (px + PLACE_OFFSET, py, pz),
@@ -197,13 +210,14 @@ def _place_coffin(bot, coffin, px, py, pz):
         (px, py + 1, pz + PLACE_OFFSET),
     ]
     last_tried = None
+    last_anchor = None
     for x, y, z in candidates:
         if last_tried is not None:
-            settled = _settle_previous_candidate(bot, last_tried)
+            settled = _settle_previous_candidate(bot, last_tried, instance_id, last_anchor)
             if settled is not None:
                 return settled
         last_tried = (x, y, z)
-        anchor = last_event_time(bot)
+        last_anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "coffin_place",
@@ -211,15 +225,15 @@ def _place_coffin(bot, coffin, px, py, pz):
                 "x": x,
                 "y": y,
                 "z": z,
-                "item_instance_id": int(coffin["item"]["instance_id"]),
+                "item_instance_id": instance_id,
             }
         )
         try:
             bot.wait_for(
-                lambda e, anchor=anchor: e.kind == "server_data"
+                lambda e, anchor=last_anchor, iid=instance_id: e.kind == "server_data"
                 and e.data["payload_type"] == "inventory_snapshot"
                 and e.t > anchor
-                and find_item(e.data["payload"], MUNDANE_COFFIN) is None,
+                and find_instance(e.data["payload"], MUNDANE_COFFIN, iid) is None,
                 timeout=3.0,
                 description=f"候选放棺位 ({x},{y},{z}) 消耗 mundane_coffin",
             )
@@ -230,7 +244,7 @@ def _place_coffin(bot, coffin, px, py, pz):
     # 消耗快照可能在完整 settle 窗口内到达。旧实现直接 raise，把末候选实际放置成功
     # 误判为全部候选被拒（且 raise 前连结算都没有，迟到的快照无归属）。
     if last_tried is not None:
-        settled = _settle_previous_candidate(bot, last_tried)
+        settled = _settle_previous_candidate(bot, last_tried, instance_id, last_anchor)
         if settled is not None:
             return settled
     raise AssertionError(
@@ -246,13 +260,16 @@ def run(env) -> None:
         bot.expect_chat("[dev] clearinv", timeout=30.0)
         pre_instances = inventory_item_instances(bot, MUNDANE_COFFIN)
         bot.cmd(f"give {MUNDANE_COFFIN} 1")
-        snapshot = wait_inventory_contains_new_instance(bot, MUNDANE_COFFIN, pre_instances)
-        coffin = require_item(snapshot, MUNDANE_COFFIN)
+        # wait_inventory_contains_new_instance 直接返回匹配的**实例**（{"location","item"}），
+        # 保证排除 pre_instances 里恢复的旧存档实例、命中新 give 的实例 id——而不是返回
+        # 整个快照再 require_item 首匹配（首匹配可能选中同模板旧实例，instance_id 已 stale，
+        # 放置被拒，场景进不了 leave 断言，review finding [3]）。
+        coffin = wait_inventory_contains_new_instance(bot, MUNDANE_COFFIN, pre_instances)
 
         _wait_settled(bot)
         assert bot.position is not None, "需要 pos_look 后的 bot.position 定放棺位"
         px, py, pz = (int(v) for v in bot.position)
-        lower = _place_coffin(bot, coffin, px, py, pz)
+        lower = _place_coffin(bot, int(coffin["item"]["instance_id"]), px, py, pz)
         in_coffin_pos = (lower[0] + 0.5, lower[1] + 0.05, lower[2] + 0.5)
         exit_pos = (lower[0] - 0.5, lower[1] + 0.05, lower[2] + 0.5)
 

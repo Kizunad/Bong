@@ -142,6 +142,18 @@ def find_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any] | None:
     return found[0] if found else None
 
 
+def find_instance(
+    snapshot: dict[str, Any], item_id: str, instance_id: int
+) -> dict[str, Any] | None:
+    """按实例 id 精确查找 item（find_item 首匹配无法区分同模板多实例——恢复的旧存档实例
+    与新 give 实例共存时可能选中已消费的旧实例）。用于「具体实例是否仍在包内」的消耗/结算
+    判定（review finding [major] round 5：同模板旧实例残留会掩盖新实例已被消费）。"""
+    for found in find_items(snapshot, item_id):
+        if found["item"]["instance_id"] == instance_id:
+            return found
+    return None
+
+
 def require_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     found = find_item(snapshot, item_id)
     if found is None:
@@ -181,10 +193,15 @@ def wait_inventory_contains_new_instance(
     exclude_instances: set[int],
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """等待一个含 item_id 且其实例 id ∉ exclude_instances 的 inventory_snapshot。
+    """等一个含 item_id 且其实例 id ∉ exclude_instances 的 inventory_snapshot，返回匹配的
+    **item 实例**（find_items 风格 {"location","item"}），而非整个快照。
 
     wait_inventory_contains 无时间锚点，give 后可能命中恢复/存档的陈旧快照而返回旧实例
-    id；本函数保证拿到的实例是新 give 产生的（实例 id 全局不复用）。
+    id；本函数保证拿到的实例是新 give 产生的（实例 id 全局不复用）。**返回具体实例而非
+    快照**（review finding [major] round 5）：调用方若用 require_item 首匹配，快照同时
+    含恢复的旧实例与新 give 实例时会选中旧实例——其 instance_id 已 stale，放置被拒；
+    消耗判定按「包内无 mundane_coffin」首匹配也会被旧同模板实例残留掩盖。调用方必须用
+    本函数返回的实例 id 发送放置、并按该 id 判定消耗。
     """
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
@@ -198,7 +215,12 @@ def wait_inventory_contains_new_instance(
             f"含 item_id={item_id} 新实例（∉ {sorted(exclude_instances)}）的 inventory_snapshot"
         ),
     )
-    return event.data["payload"]
+    for found in find_items(event.data["payload"], item_id):
+        if found["item"]["instance_id"] not in exclude_instances:
+            return found
+    raise BotAssertionError(
+        f"wait_for 命中后仍找不到 item_id={item_id} 的新实例（∉ {sorted(exclude_instances)}）"
+    )
 
 
 def require_pack_container(snapshot: dict[str, Any], owner_instance_id: int) -> dict[str, Any]:
