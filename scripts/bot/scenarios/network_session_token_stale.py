@@ -34,6 +34,7 @@ revision + 内容指纹来断言。
 连接状态：整个场景连接保持，心跳连续，最后合法请求仍被正常处理。
 """
 
+import copy
 import math
 import time
 
@@ -61,6 +62,66 @@ def _move_request(
 
 def _close_request(session_id: int) -> dict:
     return {"v": 1, "type": "external_container_close", "session_id": session_id}
+
+
+# central-review 1993 #2：close 拒绝断言需要**强制**一笔请求后的背包观察 —— 未知/已关闭
+# token 的 close 在服务端是干净 no-op（handle_external_container_close 对 session 缺失的
+# 提前 return，不回推任何 resync）。give 一个本场景从未 give 过的探针物品（fan_tie），其
+# 因果快照（revision 递增 + 探针总数超锚点）就是请求后的权威背包状态：把探针物品剥掉、
+# revision 复位到请求前，再与请求前快照比对 —— close 自身若产生任何 mutation（如把容器
+# 物品移回背包）必然指纹不同。
+PROBE_ITEM_ID = "fan_tie"
+
+# central-review 1993 #3：放置搜索整体有界（批量发出后单次等待），不再逐候选各等 0.8s。
+PLACEMENT_SEARCH_DEADLINE_S = 5.0
+
+
+def _total_stack_count(snapshot: dict, item_id: str) -> int:
+    """inventory_snapshot 中 item_id 的全部 stack_count 之和（placed/equipped/hotbar）。"""
+    total = 0
+    for placed in snapshot.get("placed_items", []):
+        item = placed.get("item") or {}
+        if item.get("item_id") == item_id:
+            total += item.get("stack_count", 0)
+    for slot, values in snapshot.get("equipped", {}).items():
+        if slot.endswith("_worn"):
+            for item in values:
+                if item.get("item_id") == item_id:
+                    total += item.get("stack_count", 0)
+        elif slot.endswith("_held"):
+            item = values
+            if item and item.get("item_id") == item_id:
+                total += item.get("stack_count", 0)
+    for item in snapshot.get("hotbar", []):
+        if item and item.get("item_id") == item_id:
+            total += item.get("stack_count", 0)
+    return total
+
+
+def _without_probe_item(snapshot: dict, item_id: str) -> dict:
+    """深拷贝快照并剥掉全部 item_id 条目（placed/equipped/hotbar），供指纹两侧同化。"""
+    cleaned = copy.deepcopy(snapshot)
+    cleaned["placed_items"] = [
+        placed
+        for placed in cleaned.get("placed_items", [])
+        if placed["item"]["item_id"] != item_id
+    ]
+    for slot in list(cleaned.get("equipped", {})):
+        values = cleaned["equipped"][slot]
+        if slot.endswith("_worn"):
+            cleaned["equipped"][slot] = [
+                item for item in values if item["item_id"] != item_id
+            ]
+        elif slot.endswith("_held"):
+            item = values
+            if item and item["item_id"] == item_id:
+                cleaned["equipped"][slot] = None
+    cleaned["hotbar"] = [
+        item
+        for item in cleaned.get("hotbar", [])
+        if item is None or item["item_id"] != item_id
+    ]
+    return cleaned
 
 
 def _placement_candidates(bot) -> list[tuple[int, int, int]]:
@@ -152,17 +213,18 @@ def _open_real_session(bot) -> dict:
     # 才抛错（fail-closed，issued-to-closed 重放是核心覆盖，环境缺口不得静默跳过，
     # review finding 3）。
     #
-    # **迟到 spawn 调和（review finding 1）**：等待超时只证明「0.8s 内该候选格没出现
-    # marker」，不证明放置失败 —— server 正常吞掉 crate、但 entity_spawn 事件因调度/
-    # 网络延迟晚于 0.8s 到达，且后序候选复用了已被消费的 instance_id 被拒，旧实现把
-    # 已成功的放置判成整体失败。predicate 改为匹配**任意已尝试候选格**（attempted 快照
-    # 每轮追加）：每轮 wait_for 都从事件历史头部重扫（cursor=0），前一候选格迟到的
-    # spawn 在后一轮扫描里命中，成功放置不再被丢弃。候选格间距 ≥1，±0.25 的紧 box
-    # 只命中本格 marker，attempted 的 any() 不会把邻近格的既有实体误收。
+    # **批量发出 + 单次有界等待（central-review 1993 #3）**：server 按连接**串行**处理
+    # block_place —— 被拒候选在 can_place_block 处 continue（不消耗实例、不发事件），
+    # 第一个能放置的候选消耗 crate 实例并 spawn marker，其后候选因实例已消耗在
+    # consume_item_instance_once 被拒（no-op）。故全部候选一次性发出后**只等一次**
+    # marker spawn：predicate 匹配任意候选格（±0.25 紧 box 只命中本格 marker，候选格
+    # 间距 ≥1，不误收邻近既有实体）且 wait_for 从事件历史头部重扫 —— 迟到 spawn 不丢
+    # （旧 review finding 1 语义保留）。总时延有界于 PLACEMENT_SEARCH_DEADLINE_S，不再
+    # 逐候选各等 0.8s、按候选数线性放大（旧 86 候选全 stone 拒绝 ≈ 69s）。
     spawn = None
     sent_at = time.monotonic() - bot.t0
-    attempted: list[tuple[int, int, int]] = []
-    for cx, cy, cz in _placement_candidates(bot):
+    candidates = _placement_candidates(bot)
+    for cx, cy, cz in candidates:
         bot.intent(
             {
                 "type": "block_place",
@@ -174,27 +236,25 @@ def _open_real_session(bot) -> dict:
                 "target_face": "north",
             }
         )
-        attempted.append((cx, cy, cz))
 
-        def _spawn_at_attempted(e, attempted=tuple(attempted)) -> bool:
-            if e.kind != "entity_spawn" or e.t <= sent_at:
-                return False
-            return any(
-                abs(e.data["x"] - (p[0] + 0.5)) <= 0.25
-                and abs(e.data["y"] - p[1]) <= 0.25
-                and abs(e.data["z"] - (p[2] + 0.5)) <= 0.25
-                for p in attempted
-            )
+    def _spawn_at_attempted(e) -> bool:
+        if e.kind != "entity_spawn" or e.t <= sent_at:
+            return False
+        return any(
+            abs(e.data["x"] - (p[0] + 0.5)) <= 0.25
+            and abs(e.data["y"] - p[1]) <= 0.25
+            and abs(e.data["z"] - (p[2] + 0.5)) <= 0.25
+            for p in candidates
+        )
 
-        try:
-            spawn = bot.wait_for(
-                _spawn_at_attempted,
-                timeout=0.8,
-                description="trade_crate 放置后在该候选格出现容器 Marker entity_spawn",
-            )
-            break
-        except BotAssertionError:
-            continue
+    try:
+        spawn = bot.wait_for(
+            _spawn_at_attempted,
+            timeout=PLACEMENT_SEARCH_DEADLINE_S,
+            description="trade_crate 放置后任意候选格出现容器 Marker entity_spawn",
+        )
+    except BotAssertionError:
+        spawn = None
     if spawn is None:
         raise BotAssertionError(
             "stale-session 场景在玩家射程内所有候选格都无法放置 trade_crate Marker："
@@ -266,12 +326,61 @@ def _open_real_session(bot) -> dict:
         timeout=10.0,
     )
 
+    # placed_pos = 实际放置成功的候选格（marker 精确落在 (cx+0.5, cy, cz+0.5)）：
+    # 供 run() 的 finally 回收该容器及其物品（central-review 1993 #6）。
+    placed_pos = (
+        int(round(spawn.data["x"] - 0.5)),
+        int(round(spawn.data["y"])),
+        int(round(spawn.data["z"] - 0.5)),
+    )
     return {
         "session_id": session_id,
         "instance_id": fiber["item"]["instance_id"],
         "from": container_location(f"ext_{session_id}", 0, 0),
         "to": fiber["location"],
+        "placed_pos": placed_pos,
     }
+
+
+def _teardown_placed_crate(bot, placed_pos: tuple[int, int, int]) -> None:
+    """best-effort 回收 run 放置的 trade_crate 及其容器物品（central-review 1993 #6）。
+
+    场景每次 run 都在共享世界放置一个 trade_crate 并把 grass_fiber 移入其 ext 容器，
+    旧实现从不清理 —— 反复 run 留下无界的世界实体/物品增长，最终干扰后续场景的放置与
+    实体选择。这里挖掉容器（gm c 后 start_digging：Creative 下 DiggingState::Start 即触发
+    block break，见 block_break.rs should_apply_default_break）—— 容器 despawn、
+    `drain_container_items_to_drops` 把 fiber 按原 instance_id 落在容器世界坐标（
+    container_block.rs），另有模板掉落；再把 (px+0.5, py, pz+0.5) 附近全部掉落拾回
+    （pickup_dropped_item 距离 ≤2.5）。整段放 run() 的 finally 且 any 失败只留日志，
+    不得掩盖场景判负。
+    """
+    try:
+        px, py, pz = placed_pos
+        bot.cmd("gm c")
+        bot.expect_chat("Gamemode set to Creative.", timeout=10.0)
+        bot.start_digging(px, py, pz)
+        loot = bot.expect_server_data("dropped_loot_sync", timeout=10.0)
+        drops = loot.data["payload"]["drops"]
+        center = (px + 0.5, py, pz + 0.5)
+        near = [
+            drop
+            for drop in drops
+            if math.dist(tuple(drop["world_pos"]), center) <= 3.0
+        ]
+        if near:
+            bot.move_to(px + 0.5, py, pz + 0.5)
+            for drop in near:
+                bot.intent(
+                    {
+                        "type": "pickup_dropped_item",
+                        "v": 1,
+                        "instance_id": drop["instance_id"],
+                    }
+                )
+    except BotAssertionError as error:
+        print(
+            f"[stale-session][teardown] 容器/物品回收失败（best-effort，不影响判负）：{error}"
+        )
 
 
 def _assert_stale_move_rejected_zero_mutation(
@@ -372,10 +481,21 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
     inventory_snapshot（无 loot_container_close 响应）的 mutation 也会通过。与
     ``_assert_stale_move_rejected_zero_mutation`` 同一套**同步点**：server 串行处理
     请求，之后的合法请求确认到达即证明本 close 已处理完毕，任何响应 / 副作用已全部
-    入队 —— 再扫 `loot_container_close` 缺失 + 同步点后最新快照指纹 vs 请求前指纹
-    相等（零 mutation）。
+    入队。
+
+    **强制请求后观察（central-review 1993 #2）**：未知/已关闭 token 的 close 在服务端
+    是干净 no-op（handle_external_container_close 对 session 缺失提前 return，**不回推
+    任何 resync**）—— 直接读 `latest_inventory_snapshot` 只会拿到请求前的缓存快照，
+    零 mutation 会假通过。故同步点之后 give 一个本场景从未 give 过的探针物品
+    （fan_tie），其**因果快照**（revision 递增 + 探针总数 > give 前锚点，
+    `wait_inventory_revision_after_matching` 唯一命中）就是请求后的权威背包状态：把
+    探针物品从两侧（请求前 / 请求后）同等剥掉、revision 复位到请求前，再比指纹 ——
+    close 自身若产生任何 mutation（如把容器物品移回背包）必然不同。
     """
-    from ._inventory_helpers import latest_inventory_snapshot
+    from ._inventory_helpers import (
+        latest_inventory_snapshot,
+        wait_inventory_revision_after_matching,
+    )
     from ._rejection_helpers import (
         assert_no_server_data_payload_since,
         assert_valid_request_still_works,
@@ -387,11 +507,29 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
     bot.intent(_close_request(session_id))
     assert_valid_request_still_works(bot)
     assert_no_server_data_payload_since(bot, before, "loot_container_close", label)
-    post = latest_inventory_snapshot(bot)
-    if inventory_fingerprint(post) != inventory_fingerprint(pre):
+
+    # 请求后观察：give 探针 → 因果快照（revision > 请求前 + 探针总数超锚点）。
+    pre_fan = _total_stack_count(pre, PROBE_ITEM_ID)
+    bot.cmd(f"give {PROBE_ITEM_ID} 1")
+    bot.expect_chat(f"[dev] gave {PROBE_ITEM_ID} x1", timeout=10.0)
+    probe = wait_inventory_revision_after_matching(
+        bot,
+        pre["revision"],
+        lambda payload: _total_stack_count(payload, PROBE_ITEM_ID) > pre_fan,
+        f"{label}：give {PROBE_ITEM_ID} 后包含探针物品的新快照（请求后权威背包状态）",
+        timeout=10.0,
+    )
+
+    # 两侧同化：剥掉探针物品 + revision 复位到请求前 —— 指纹差异只归属 close 处理本身。
+    pre_clean = _without_probe_item(pre, PROBE_ITEM_ID)
+    probe_clean = _without_probe_item(probe, PROBE_ITEM_ID)
+    pre_clean["revision"] = pre["revision"]
+    probe_clean["revision"] = pre["revision"]
+    if inventory_fingerprint(probe_clean) != inventory_fingerprint(pre_clean):
         raise BotAssertionError(
             f"{label}：期望 close 干净 no-op 且背包零 mutation，"
-            f"实际 pre={inventory_fingerprint(pre)} post={inventory_fingerprint(post)}"
+            f"实际 pre={inventory_fingerprint(pre_clean)} "
+            f"probe={inventory_fingerprint(probe_clean)}"
         )
     bot.assert_alive(f"{label} 后")
 
@@ -409,72 +547,82 @@ def run(env) -> None:
     )
 
     with env.new_bot("Stl") as bot:
-        bot.expect_event("game_join", timeout=15.0)
-        bot.expect_event("pos_look", timeout=15.0)
-        # 等 join 时的初始快照突发放完，避免把 join snapshot 误判成拒绝响应。
-        time.sleep(1.0)
+        # central-review 1993 #6：run 放置的 trade_crate + 容器物品必须在收尾回收
+        # （_teardown_placed_crate，best-effort）—— 否则每次 run 都在共享世界留下一个
+        # 容器实体 + 物品，无界增长、干扰后续场景。teardown 放 finally，场景断言抛错也
+        # 回收；teardown 自身失败只留日志不掩盖判负。
+        placed_pos = None
+        try:
+            bot.expect_event("game_join", timeout=15.0)
+            bot.expect_event("pos_look", timeout=15.0)
+            # 等 join 时的初始快照突发放完，避免把 join snapshot 误判成拒绝响应。
+            time.sleep(1.0)
 
-        # ---- 1. 真实 session 生命周期：open → 移入真实物品 → close → replay
-        real_move = _open_real_session(bot)
-        session_id = real_move["session_id"]
+            # ---- 1. 真实 session 生命周期：open → 移入真实物品 → close → replay
+            real_move = _open_real_session(bot)
+            session_id = real_move["session_id"]
+            placed_pos = real_move["placed_pos"]
 
-        # 证明 token 曾有效：close 被接受，server 回推 loot_container_close。
-        # 同时断言 close 后的 resync 快照零 mutation（指纹与 close 前一致）。
-        # central-review 1993 #2：close 前排干在途快照 —— 之后 close resync 断言的
-        # 因果链成立（窗口内唯一快照来源就是本 close 的 resync，不再有「之前已入队、
-        # 之后才解码」的快照冒充）。
-        drain_inventory_snapshots(bot)
-        pre_close = latest_inventory_snapshot(bot)
-        close_before = time.monotonic() - bot.t0
-        bot.intent(_close_request(session_id))
-        bot.expect_server_data("loot_container_close", timeout=10.0)
-        resync = wait_inventory_snapshot_after(bot, close_before, timeout=10.0)
-        if inventory_fingerprint(resync) != inventory_fingerprint(pre_close):
-            raise BotAssertionError(
-                "真实 session close：期望 close 后 resync 背包零 mutation，"
-                f"实际 pre={inventory_fingerprint(pre_close)} "
-                f"resync={inventory_fingerprint(resync)}"
+            # 证明 token 曾有效：close 被接受，server 回推 loot_container_close。
+            # 同时断言 close 后的 resync 快照零 mutation（指纹与 close 前一致）。
+            # central-review 1993 #2：close 前排干在途快照 —— 之后 close resync 断言的
+            # 因果链成立（窗口内唯一快照来源就是本 close 的 resync，不再有「之前已入队、
+            # 之后才解码」的快照冒充）。
+            drain_inventory_snapshots(bot)
+            pre_close = latest_inventory_snapshot(bot)
+            close_before = time.monotonic() - bot.t0
+            bot.intent(_close_request(session_id))
+            bot.expect_server_data("loot_container_close", timeout=10.0)
+            resync = wait_inventory_snapshot_after(bot, close_before, timeout=10.0)
+            if inventory_fingerprint(resync) != inventory_fingerprint(pre_close):
+                raise BotAssertionError(
+                    "真实 session close：期望 close 后 resync 背包零 mutation，"
+                    f"实际 pre={inventory_fingerprint(pre_close)} "
+                    f"resync={inventory_fingerprint(resync)}"
+                )
+            bot.assert_alive("真实 session close 后")
+
+            # replay 已关闭 session 的 move —— move 本身合法（真实物品/位置），唯一
+            # 无效前提是 token 已关闭：干净拒绝 = resync + 零 mutation + 无成功响应。
+            _assert_stale_move_rejected_zero_mutation(
+                bot, session_id, "replay 已关闭 session 的 move", real_move
             )
-        bot.assert_alive("真实 session close 后")
+            bot.assert_alive("replay 已关闭 session 的 move 拒绝后")
 
-        # replay 已关闭 session 的 move —— move 本身合法（真实物品/位置），唯一
-        # 无效前提是 token 已关闭：干净拒绝 = resync + 零 mutation + 无成功响应。
-        _assert_stale_move_rejected_zero_mutation(
-            bot, session_id, "replay 已关闭 session 的 move", real_move
-        )
-        bot.assert_alive("replay 已关闭 session 的 move 拒绝后")
+            # replay 已关闭 session 的 close —— 干净 no-op：不再回推 close 事件，且背包
+            # 零 mutation（review finding 3/6：同步点 + 指纹，见 _assert_stale_close_rejected）。
+            _assert_stale_close_rejected(bot, session_id, "replay 已关闭 session 的 close")
 
-        # replay 已关闭 session 的 close —— 干净 no-op：不再回推 close 事件，且背包
-        # 零 mutation（review finding 3/6：同步点 + 指纹，见 _assert_stale_close_rejected）。
-        _assert_stale_close_rejected(bot, session_id, "replay 已关闭 session 的 close")
+            # ---- 2. forged（从未发放的 token）—— 复用真实 session 的 move 模板，只换
+            # token（本轮 review finding 2）。helper 复用 real_move 的 from
+            # （ext_{real}@(0,0)，物品真实在其中）、to=真实空闲背包格 —— 请求形状完全
+            # 合法，唯一无效前提是 token 从未发放。server 只能在权威 session 注册表门禁
+            # 上拒绝它：跳过注册表查询的实现只有两条出路 —— 继续执行 move 成功（
+            # loot_container_update + mutation → 断言失败），或在 is_from_ext 端点一致性
+            # 检查上拒绝（该分支回推 resync_ext_and_inventory，同样发 loot_container_update
+            # → 断言失败），均不会被「声称容器不含物品」/「位置与 token 矛盾」掩盖。
+            _assert_stale_move_rejected_zero_mutation(
+                bot, FORGED_SESSION_ID, "stale move #1（forged token）", real_move
+            )
+            bot.assert_alive("stale move #1 拒绝响应后")
 
-        # ---- 2. forged（从未发放的 token）—— 复用真实 session 的 move 模板，只换
-        # token（本轮 review finding 2）。helper 复用 real_move 的 from
-        # （ext_{real}@(0,0)，物品真实在其中）、to=真实空闲背包格 —— 请求形状完全
-        # 合法，唯一无效前提是 token 从未发放。server 只能在权威 session 注册表门禁
-        # 上拒绝它：跳过注册表查询的实现只有两条出路 —— 继续执行 move 成功（
-        # loot_container_update + mutation → 断言失败），或在 is_from_ext 端点一致性
-        # 检查上拒绝（该分支回推 resync_ext_and_inventory，同样发 loot_container_update
-        # → 断言失败），均不会被「声称容器不含物品」/「位置与 token 矛盾」掩盖。
-        _assert_stale_move_rejected_zero_mutation(
-            bot, FORGED_SESSION_ID, "stale move #1（forged token）", real_move
-        )
-        bot.assert_alive("stale move #1 拒绝响应后")
+            # stale move #2（重放同一 forged token）—— 同样干净拒绝，连接不坏。
+            _assert_stale_move_rejected_zero_mutation(
+                bot, FORGED_SESSION_ID, "stale move #2（重放 forged token）", real_move
+            )
+            bot.assert_alive("stale move #2 重放拒绝后")
 
-        # stale move #2（重放同一 forged token）—— 同样干净拒绝，连接不坏。
-        _assert_stale_move_rejected_zero_mutation(
-            bot, FORGED_SESSION_ID, "stale move #2（重放 forged token）", real_move
-        )
-        bot.assert_alive("stale move #2 重放拒绝后")
+            # stale close（forged token）—— 未知 token 干净 no-op，不再回推 close 事件
+            # 且背包零 mutation（review finding 3/6）。
+            _assert_stale_close_rejected(bot, FORGED_SESSION_ID, "stale close（forged token）")
 
-        # stale close（forged token）—— 未知 token 干净 no-op，不再回推 close 事件
-        # 且背包零 mutation（review finding 3/6）。
-        _assert_stale_close_rejected(bot, FORGED_SESSION_ID, "stale close（forged token）")
-
-        fire_probes_and_keep_connection(
-            bot,
-            "stale session",
-            [("重放 close", lambda: bot.intent(_close_request(FORGED_SESSION_ID)))],
-            baseline_snapshot=latest_inventory_snapshot(bot),
-        )
-        assert_valid_request_still_works(bot)
+            fire_probes_and_keep_connection(
+                bot,
+                "stale session",
+                [("重放 close", lambda: bot.intent(_close_request(FORGED_SESSION_ID)))],
+                baseline_snapshot=latest_inventory_snapshot(bot),
+            )
+            assert_valid_request_still_works(bot)
+        finally:
+            if placed_pos is not None:
+                _teardown_placed_crate(bot, placed_pos)

@@ -2284,6 +2284,49 @@ class RejectionHelperTest(unittest.TestCase):
             f"各字段变异产生的指纹必须互异：{fingerprints}",
         )
 
+    def test_inventory_snapshot_same_revision_content_mutation_is_flagged(self):
+        # 完整内容指纹必须连到分类器（central-review 1993 #1）：仅当指纹（revision +
+        # 全部内容字段）与基线一致才是周期重发、应豁免；内容变了但 revision 未 bump 的
+        # 实现（如坏分类器只比 `snapshot["revision"] == baseline["revision"]`）会放过
+        # 本快照，让「容器/放置物/装备/快捷栏/bone_coins 变了但没 bump revision」的
+        # 拒绝场景报零副作用。上一测只把内容变异直接喂给 `inventory_fingerprint`，
+        # 从未经 `assert_no_gameplay_side_effect_since` 走分类器 —— 逐字段独立变异并
+        # 走分类器，把指纹契约钉到拒绝 oracle 的判定路径上。
+        baseline = {
+            "type": "inventory_snapshot",
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        one_item = {"instance_id": 1, "template_id": "trade_crate", "count": 1}
+        mutations = {
+            "containers": [{"container_id": "pack", "slots": [one_item]}],
+            "placed_items": [{"entity_id": 5, "item": one_item}],
+            "equipped": {"chest": one_item},
+            "hotbar": [one_item],
+            "bone_coins": 1,
+        }
+        for key, value in mutations.items():
+            with self.subTest(mutation_field=key):
+                mutated = dict(baseline)  # revision 保持 7 不变，仅该内容字段变异
+                mutated[key] = value
+                bot = _RejectionFakeBot(
+                    [
+                        _FakeEvent(
+                            3.0,
+                            "server_data",
+                            {"payload_type": "inventory_snapshot", "payload": mutated},
+                        )
+                    ]
+                )
+                with self.assertRaises(BotAssertionError):
+                    assert_no_gameplay_side_effect_since(
+                        bot, since_t=1.0, label="测试", baseline_snapshot=baseline
+                    )
+
 
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
     return _FakeEvent(
@@ -4121,6 +4164,24 @@ class QuickSlotConfigProtoDecodeTest(unittest.TestCase):
             },
         )
 
+    def test_present_false_bind_accepted_decodes_false_not_none(self):
+        # central-review 1993 #4：optional bool 的三态（presence+值）——present true /
+        # absent / present false 都要区分。若 decoder 用 truthiness 判 presence（把 false
+        # 值当缺省），真实被拒绑定会让消费者看到 None 而非权威 bind_accepted: false，
+        # 拒绝场景超时或误分类。上一测只钉 present true 与 absent；补 present false。
+        message = _pb_varint(proto_min.QUICKSLOT_CONFIG_BIND_ACCEPTED_FIELD, 0)
+        self.assertEqual(
+            self._decode(message),
+            {
+                "v": 1,
+                "type": "quickslot_config",
+                "slots": [],
+                "cooldown_until_ms": [],
+                "ack_request_id": None,
+                "bind_accepted": False,
+            },
+        )
+
     def test_slot_with_missing_entry_field_serialized_as_none(self):
         # OptionalQuickSlotEntry 只有 wrapper、内部无 entry 字段（空 message）⇒ None；
         # 有 entry 但 entry 里缺字段 ⇒ 默认值（item_id=""/0），不是 None。
@@ -4424,6 +4485,44 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertAlmostEqual(decoded["progress"], 0.42)
         self.assertFalse(decoded["interrupted"])
         self.assertFalse(decoded["completed"])
+
+    def test_botany_harvest_progress_tag25_distinguishes_terminal_flags(self):
+        # central-review 1993 #5：interrupted / completed 是两个独立的 lifecycle 布尔
+        # （decoder 读 field 9 / 10）。上一测两个都编码 0，交换字段号 / 两字段同读 / 恒
+        # 返回 false 的坏 decoder 都通过。这里各状态只置其一，把「哪个 wire 字段控制哪个
+        # 属性」钉死 —— 服务端发「被打断但未完成 / 完成但未被打断」时 bot 必须报对。
+        def message(interrupted_bit: int, completed_bit: int) -> bytes:
+            return (
+                _pb_string(1, "Rng")
+                + _pb_string(2, "plant-1")
+                + _pb_string(3, "开脉草")
+                + _pb_string(4, "ning_mai_cao")
+                + _pb_string(5, "auto")
+                + _pb_fixed64(6, 0.42)
+                + _pb_varint(7, 1)
+                + _pb_varint(8, 0)
+                + _pb_varint(9, interrupted_bit)
+                + _pb_varint(10, completed_bit)
+                + _pb_string(11, "晨露未散")
+            )
+
+        interrupted_only = proto_min.decode_server_data_envelope(
+            _pb_message(25, message(1, 0))
+        )
+        self.assertTrue(
+            interrupted_only["interrupted"],
+            "field 9=1 必须解出 interrupted=True（被打断但未完成）",
+        )
+        self.assertFalse(interrupted_only["completed"])
+
+        completed_only = proto_min.decode_server_data_envelope(
+            _pb_message(25, message(0, 1))
+        )
+        self.assertFalse(completed_only["interrupted"])
+        self.assertTrue(
+            completed_only["completed"],
+            "field 10=1 必须解出 completed=True（完成但未被打断）",
+        )
 
     def test_craft_outcome_unknown_fallback(self):
         # 空 CraftOutcome（无 oneof 分支）→ 解码器兜底 unknown，不 crash

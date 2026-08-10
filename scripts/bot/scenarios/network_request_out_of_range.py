@@ -56,6 +56,17 @@ OUT_OF_RANGE_PROBES = [
     ("版本 v=0 低于支持版本", {"type": "breakthrough_request", "v": 0}),
     ("版本 v=255 高于支持版本", {"type": "breakthrough_request", "v": 255}),
     ("v 超出 u8 范围", {"type": "breakthrough_request", "v": 999999999}),
+    # central-review 1993 #7：v=2 恰在 SUPPORTED_VERSION=1 边界外。只探 0/255/极大值，
+    # 一个「v <= 2 也放行」的 off-by-one 门禁会拒掉全部旧探针、仍通过全部断言。
+    ("版本 v=2 恰在边界外", {"type": "breakthrough_request", "v": 2}),
+    # 门禁必须是**全变体共用**的（handler 入口 v != SUPPORTED_VERSION 全局检查）——
+    # 只在 breakthrough_request 上做版本检查的实现会放行其它变体的 v=2。打在同连接
+    # 已绑定回元丹的槽 0：若版本门禁被绕过，use_quick_slot v=2 会命中物品施法 →
+    # cast_sync + 背包突变，被探针窗口 / 指纹断言标记。
+    (
+        "版本 v=2 经第二请求变体（use_quick_slot 命中已绑定物品）",
+        {"type": "use_quick_slot", "v": 2, "slot": 0},
+    ),
     # botany_harvest mode 非法变体探针**不**在批量里：它需要真实活跃 botany session
     # 才不被「无匹配 session」的 handler 拒绝掩盖（见 _assert_invalid_harvest_mode_rejected），
     # 单独在 run() 里建 session 后探。
