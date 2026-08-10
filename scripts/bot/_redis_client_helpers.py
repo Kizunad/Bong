@@ -44,9 +44,10 @@ class RespFrames:
 
     防滥用：缓冲用 ``bytearray.extend``（摊还 O(1)/块，避免 ``bytes += `` 每次把整个
     已积压缓冲再拷一遍的二次拷贝），并设协议级上限——单条 bulk 帧声明长度超
-    ``max_bulk_size``、或缓冲累计超 ``max_buffer_size`` 直接抛 ValueError。客户端跑在
-    agent_ui 命令/响应通道上，payload 是外部发布的 Redis 消息，不能让它用一条超大或
-    永不收尾的帧把进程内存撑爆。
+    ``max_bulk_size``、或缓冲累计超 ``max_buffer_size`` 直接抛 ValueError。RESP2 的
+    bulk/array 长度只允许 ``-1``（nil）或非负值，长度 < -1 的非法负数同样拒绝。
+    客户端跑在 agent_ui 命令/响应通道上，payload 是外部发布的 Redis 消息，不能让它用
+    一条超大或永不收尾的帧把进程内存撑爆。
     """
 
     def __init__(
@@ -102,6 +103,10 @@ class RespFrames:
             length = int(line)
             if length == -1:
                 return None, idx + 2
+            if length < -1:
+                raise ValueError(
+                    f"RESP bulk 帧声明长度 {length} 非法（RESP2 仅 -1 表示 nil，其余必须 ≥ 0）"
+                )
             if length > self._max_bulk_size:
                 raise ValueError(
                     f"RESP bulk 帧声明长度 {length} 超过上限 {self._max_bulk_size}"
@@ -122,6 +127,10 @@ class RespFrames:
             count = int(line)
             if count == -1:
                 return None, idx + 2
+            if count < -1:
+                raise ValueError(
+                    f"RESP array 帧声明长度 {count} 非法（RESP2 仅 -1 表示 nil，其余必须 ≥ 0）"
+                )
             items: list = []
             offset = idx + 2
             for _ in range(count):
@@ -248,6 +257,12 @@ class RedisClient:
                 try:
                     payload = json.loads(frame[2].decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    # 对象形状守卫：bong:agent_ui_response 契约是 JSON 对象。合法的
+                    # 非对象 JSON（null/数组/字符串/数字）是无关发布者消息，跳过
+                    # （与频道不符、无效 JSON 同款处理）；直接放行会让 predicate
+                    # 调 .get() 抛 AttributeError 崩掉整个场景。
                     continue
                 if predicate(payload):
                     return payload

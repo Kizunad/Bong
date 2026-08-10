@@ -4717,6 +4717,22 @@ class RespFramesTest(unittest.TestCase):
         parser.feed(b"*3\r\n$9\r\nsubscribe\r\n$6\r\nbong:x\r\n:1\r\n")
         self.assertEqual(parser.next_frame(), [b"subscribe", b"bong:x", 1])
 
+    def test_bulk_negative_length_below_nil_rejected(self):
+        # finding：RESP2 长度只允许 -1（nil）或非负。$-2 会被误当成 body 长度 0
+        # 把头部 CRLF 认作终止符返回 b''；必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"$-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_array_negative_count_below_nil_rejected(self):
+        # finding：*-2 的 range(-2) 不迭代，被误解析为空数组 []；RESP2 不允许，
+        # 必须拒绝而不是静默接受畸形线值。
+        parser = RespFrames()
+        parser.feed(b"*-2\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
     def test_message_frame(self):
         parser = RespFrames()
         parser.feed(b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n")
@@ -4779,6 +4795,13 @@ class RespFramesTest(unittest.TestCase):
         parser.feed(b"$9\r\n123456789\r\n")
         with self.assertRaises(ValueError):
             parser.next_frame()
+
+    def test_bulk_declared_at_max_accepted(self):
+        # 上界合法等值边界：声明长度恰好 == max_bulk_size 必须完整接受（> 上限才拒绝）。
+        # 缺此断言时，把 >= 当 > 的 off-by-one 实现能通过全套却拒绝恰好到顶的合法载荷。
+        parser = RespFrames(max_bulk_size=8)
+        parser.feed(b"$8\r\n12345678\r\n")
+        self.assertEqual(parser.next_frame(), b"12345678")
 
     def test_buffer_oversize_rejected(self):
         # 永不收尾的帧反复 feed，积压缓冲越过上限必须抛错（防外部消息撑爆进程内存）。
@@ -4887,6 +4910,37 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
             elapsed, 0.2, "正窗口断言必须等满 deadline 才抛，不能提前抛"
         )
         self._assert_timeouts_bounded(sock, 0.2)
+
+    def test_non_dict_json_payload_skipped_not_crashed(self):
+        # finding：bong:agent_ui_response 上合法的非对象 JSON（null/数组/字符串/数字）
+        # 会让 expect_redis_response.matches 对 payload 调 .get() 抛 AttributeError
+        # 崩掉整个场景。必须当作无关发布者消息跳过（与频道不符/无效 JSON 同款），
+        # 而不是传给 predicate。喂一帧 payload 为 JSON 数组的 message 帧，随后窗口
+        # 走满：无崩溃 + 负向返回 None，即证明非 dict 被跳过。
+        redis = RedisClient(io_timeout=2.0)
+        redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
+        json_bytes = b'["not","a","dict"]'
+        frame = (
+            b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
+            + b"$"
+            + str(len(json_bytes)).encode("ascii")
+            + b"\r\n"
+            + json_bytes
+            + b"\r\n"
+        )
+        redis._frames.feed(frame)
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response",
+            lambda payload: True,
+            timeout=0.2,
+            expect=False,
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(
+            got, "非 dict JSON 消息应被跳过（继续等满窗口），而不是抛 AttributeError"
+        )
+        self.assertGreaterEqual(elapsed, 0.2, "跳过非 dict 后仍须等满负向窗口")
 
 
 class _AgentUiFakeBot(_FakeBot):
