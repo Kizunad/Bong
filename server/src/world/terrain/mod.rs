@@ -2012,13 +2012,23 @@ mod tests {
             eprintln!("[chk] late-joiner ready");
 
             // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过（不 panic、不改变计数）。
+            // DIAGNOSTIC: install a chained hook right before the update so the
+            // overflow's Location survives (catch_unwind strips it; bevy's executor
+            // installs its own hook at App build, clobbering any set earlier).
             eprintln!("[chk] before tick 2");
+            let prev_hook = std::panic::take_hook();
+            let chained = prev_hook.clone();
+            std::panic::set_hook(Box::new(move |info| {
+                eprintln!("[HOOK] {info}");
+                chained(info);
+            }));
             if let Some(p) = report_tick(
                 "tick 2",
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update())),
             ) {
                 first_panic = Some(p);
             }
+            std::panic::set_hook(prev_hook);
             let count_after = app
                 .world()
                 .get::<ChunkLayer>(layer)
