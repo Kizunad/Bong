@@ -61,7 +61,7 @@ def screen_row(pt, view: str, size: int, focus) -> float:
     return size / 2 - v[1] * ((size - 60) / span)
 
 
-def anim_top(rig: Rig, P, name: str, n: int = 10) -> float:
+def anim_top(rig: Rig, P, name: str, n: int = 10, L: G.Load = G.BARE) -> float:
     """整段动画里模型的最高世界 y。
 
     裁切上沿不能按静止姿定：人立那条把头抬到静止高度的 1.7 倍，按静止姿裁会把头切掉，
@@ -69,7 +69,7 @@ def anim_top(rig: Rig, P, name: str, n: int = 10) -> float:
     """
     top = 0.0
     for i in range(n):
-        pose = G.sample(rig, P, name, i / n)
+        pose = G.sample(rig, P, name, i / n, L)
         W = rig.world(pose)
         for bn in rig.order:
             pts = rig.bone_points(bn)
@@ -79,8 +79,8 @@ def anim_top(rig: Rig, P, name: str, n: int = 10) -> float:
 
 
 def frame(rig: Rig, P, src: Path, name: str, t: float, view: str, size: int, focus, pad: int = 26,
-          top_y: float | None = None) -> Image.Image:
-    pose = G.sample(rig, P, name, t)
+          top_y: float | None = None, L: G.Load = G.BARE) -> Image.Image:
+    pose = G.sample(rig, P, name, t, L)
     # 背景刻意提亮：马的"黑点"（下肢/鬃/尾）在暗背景上直接隐形，而下肢正是这套
     # 预览唯一要看的东西——蹄有没有贴地、有没有滑步，全在那四条腿上。
     im, _ = render(src, yaw=VIEWS[view][0], pitch=VIEWS[view][1], size=size,
@@ -94,21 +94,39 @@ def frame(rig: Rig, P, src: Path, name: str, t: float, view: str, size: int, foc
     return im.crop((0, top, size, bot))
 
 
-def contact_sheet(rig: Rig, P, src: Path, name: str, view: str, cols: int, size: int, focus) -> Image.Image:
-    length, loop, _n, _fn = G.ANIMS[name]
-    ty = anim_top(rig, P, name)
-    tiles = [(i / cols, frame(rig, P, src, name, i / cols, view, size, focus, top_y=ty)) for i in range(cols)]
-    gap, hdr = 6, 16
+def _row(rig: Rig, P, src: Path, name: str, view: str, cols: int, size: int, focus, L: G.Load):
+    ty = anim_top(rig, P, name, L=L)
+    return [(i / cols, frame(rig, P, src, name, i / cols, view, size, focus, top_y=ty, L=L))
+            for i in range(cols)]
+
+
+def _canvas(rows: list[tuple[str, list]], cols: int, size: int, title: str) -> Image.Image:
+    gap, hdr, lab = 6, 16, 13
     W = cols * size + gap * (cols + 1)
-    th = tiles[0][1].height
-    canvas = Image.new("RGB", (W, th + hdr + gap * 2), (13, 14, 16))
+    th = rows[0][1][0][1].height
+    rh = th + lab + gap
+    canvas = Image.new("RGB", (W, hdr + gap + rh * len(rows)), (13, 14, 16))
     d = ImageDraw.Draw(canvas)
-    d.text((gap, 3), f"{name}  {length:.2f}s  {'loop' if loop else 'once'}  [{view}]  {P.label}", fill=(226, 208, 182))
-    for i, (t, im) in enumerate(tiles):
-        x = gap + i * (size + gap)
-        canvas.paste(im, (x, hdr + gap))
-        d.text((x + 3, hdr + gap + 2), f"{t * length:.2f}s", fill=(150, 143, 132))
+    d.text((gap, 3), title, fill=(226, 208, 182))
+    for r, (tag, tiles) in enumerate(rows):
+        y0 = hdr + gap + r * rh
+        d.text((gap, y0), tag, fill=(196, 176, 130))
+        for i, (t, im) in enumerate(tiles):
+            canvas.paste(im, (gap + i * (size + gap), y0 + lab))
+            if r == 0:
+                d.text((gap + i * (size + gap) + 3, y0 + lab + 2), f"{t:.2f}", fill=(150, 143, 132))
     return canvas
+
+
+def contact_sheet(rig: Rig, P, src: Path, name: str, view: str, cols: int, size: int, focus,
+                  loads: list[G.Load]) -> Image.Image:
+    """连拍。给多个负载档时**逐档一行叠起来**——负载改的是幅度不是姿势，只有同一
+    时刻上下并排才看得出差别；分成三张图各看各的，人眼记不住那点差。"""
+    length, loop, _n, _fn = G.ANIMS[name]
+    rows = [(f"{L.label}（{L.ratio[P.key] * 100:.1f}% 自重）" if L.key else "空载",
+             _row(rig, P, src, name, view, cols, size, focus, L)) for L in loads]
+    return _canvas(rows, cols, size,
+                   f"{name}  {length:.2f}s  {'loop' if loop else 'once'}  [{view}]  {P.label}")
 
 
 def main() -> int:
@@ -121,6 +139,8 @@ def main() -> int:
     ap.add_argument("--size", type=int, default=300)
     ap.add_argument("--gif", action="store_true", help="同时出 GIF")
     ap.add_argument("--gif-frames", type=int, default=24)
+    ap.add_argument("--load", nargs="*", choices=list(G.LOADS),
+                    help="负载档（缺省只出空载；给多档则逐档一行叠在同一张里）")
     args = ap.parse_args()
 
     P = PROFILES[args.profile]
@@ -129,17 +149,22 @@ def main() -> int:
     focus = focus_box(rig)
     OUT.mkdir(parents=True, exist_ok=True)
     names = args.only or list(G.ANIMS)
+    loads = [G.LOADS[k] for k in (args.load if args.load is not None else [""])]
+    sfx = "_loads" if len(loads) > 1 else ("" if not loads[0].key else f"_{loads[0].key}")
     for name in names:
-        sheet = contact_sheet(rig, P, src, name, args.view, args.cols, args.size, focus)
-        out = OUT / f"anim_{name}_{args.view}.png"
+        use = [L for L in loads if not L.key or name not in G.NO_LOAD] or [G.BARE]
+        sheet = contact_sheet(rig, P, src, name, args.view, args.cols, args.size, focus, use)
+        out = OUT / f"anim_{name}_{args.view}{sfx if len(use) > 1 or use[0].key else ''}.png"
         sheet.save(out)
         print(f"  → anim/{out.name}")
         if args.gif:
             length = G.ANIMS[name][0]
             n = args.gif_frames
-            ty = anim_top(rig, P, name)
-            frames = [frame(rig, P, src, name, i / n, args.view, args.size, focus, top_y=ty) for i in range(n)]
-            gp = OUT / f"anim_{name}_{args.view}.gif"
+            L = use[-1]
+            ty = anim_top(rig, P, name, L=L)
+            frames = [frame(rig, P, src, name, i / n, args.view, args.size, focus, top_y=ty, L=L)
+                      for i in range(n)]
+            gp = OUT / f"anim_{name}_{args.view}{'' if not L.key else '_' + L.key}.gif"
             frames[0].save(gp, save_all=True, append_images=frames[1:], duration=int(length * 1000 / n), loop=0)
             print(f"  → anim/{gp.name}  ({n} 帧 / {length:.2f}s)")
     return 0

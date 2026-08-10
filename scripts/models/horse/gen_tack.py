@@ -281,6 +281,10 @@ class Tack:
                 "type": "cube",
                 "uuid": uid("tack", name),
                 "_tack": True,
+                # 材质名。下游按它查面密度算这件马具多重（`shell_kg`）——从 uv 反查
+                # 材质表的序号也能算出来，但那是把"贴图排版"当"材料清单"用，改一次
+                # 贴图布局就静默算错。造型层知道自己用了什么料，就在这儿说出来。
+                "_mat": mat,
                 # 发光标记：bbmodel 本身没有逐面自发光，引擎侧（GeckoLib emissive 层）
                 # 按这个标记挑件。造型层是唯一知道"哪条是灵纹"的人，所以在这里声明。
                 "_glow": glow,
@@ -3326,6 +3330,116 @@ MIN_COVER_STEP = 0.004
 MIN_COVER_TOP = 0.75
 
 
+# ================================================================ 负载（供动画层）
+# 马驮着多重，决定它怎么走。动画层要的是一个数：**负载 ÷ 自重**。这一节负责量它，
+# `gen_anim.LOADS` 记的是量出来的代表值，`check_loads` 逐档对拍。
+#
+# 两条都不能想当然：
+#
+# **甲的重量按面密度算**（每平方米多少公斤），不是体积乘密度。札片真厚一两毫米，
+# 这里最薄的盒子也有半个体素（3 cm）——盒厚是体素分辨率定的，不是甲片定的。照体积
+# 算，常马那副铁浮屠有四吨八。面密度是甲这类东西本来的口径：一层铁片就是那么些
+# 公斤每平米，摊多大面积就多重。
+#
+# **面积要体素化之后数外表面**，不能把每个盒子的最大面加起来：札片一片压一片，
+# 叠着的边会被数两遍（同样那副甲加出来是 13 m²，比整只马的体表还大）。体素化之后
+# 内部的面自动消失，外表面 ÷2 就是"摊平了一层皮"的面积——量出来常马的体表是
+# 6.17 m²，Meeh 式给 550 kg 的马算出来 6.7 m²，对得上。
+#
+# **马的自重不量模型**：盒子做的马，腿是斜盒的外接盒、桶身是方的，体素体积比真马
+# 大出两倍多。按鬐甲高走真实的等比关系反而准——三档算出来 255 / 550 / 861 kg，
+# 分别是矮马、常马、挽马该有的分量。
+AREAL_KG_M2 = {  # 做工 → 面密度（kg/m²）
+    "drape": 0.6, "cloth": 0.6, "quilt": 1.5,  # 布：麻障泥 / 绗缝衬里
+    "rope": 2.5, "leather": 3.0,  # 绳与革
+    "mail": 9.5,  # 锁环：环加空气，比整片铁轻
+    "scale": 11.0, "lamella": 12.0,  # 鳞 / 札：小片叠缀，连皮绳算进去
+    "metal": 15.0,  # 整片铁（约 2 mm）
+    "glow": 0.0,  # 灵纹是刻痕不是材料
+}
+LING_LIGHT = 0.55  # 灵铁比凡铁轻（造型层的定语就是"轻而不折真元"）
+BODY_KG_REF, WITHER_REF_CM = 550.0, 155.0  # 1.55 m 鬐甲的马 ≈ 550 kg
+VOX_STEP = 0.5  # 体素化步长（单位）；0.5 = 半个体素，面积误差在 2% 以内
+U_M = 0.0625  # 1 单位 = 6.25 cm
+
+# 马甲档 → 负载档。粗布甲那一套只有 1.4–2.3% 自重，**不单开一档**：真马披条障泥
+# 量不出步态差别，多一份轨道只是多几千个关键帧。
+LOAD_OF = {"cloth": "", "mail": "laden", "light": "laden", "lingtie": "laden", "heavy": "heavy"}
+LOAD_BAND = 0.02  # 量出来的负载与 gen_anim 记的代表值允许差几个百分点
+LOAD_IGNORE = 0.05  # 低于这个比例算"驮了等于没驮"，走空载档
+
+
+def areal(mat: str) -> float:
+    a = AREAL_KG_M2[TACK_MATS[mat].finish]
+    return a * LING_LIGHT if mat.startswith("lingtie") else a
+
+
+def shell_kg(els: list[dict]) -> tuple[float, float]:
+    """体素化一堆件 → (外表面积 m², 重量 kg)。
+
+    面数 ÷2 = 一层皮的面积：一块板的两面都被数到，而甲本来就是一层。实心件（镫环、
+    嚼子）按这个算会略偏轻，那几件的总量在整副甲里可以忽略。
+    """
+    if not els:
+        return 0.0, 0.0
+    lo = np.min([e["from"] for e in els], axis=0) - VOX_STEP
+    hi = np.max([e["to"] for e in els], axis=0) + VOX_STEP
+    n = np.ceil((hi - lo) / VOX_STEP).astype(int) + 2
+    g = np.zeros(n, dtype=np.int32)  # 0 = 空，否则件序号 + 1
+    for k, e in enumerate(els):
+        a = np.maximum(np.floor((np.array(e["from"]) - lo) / VOX_STEP).astype(int), 0)
+        b = np.minimum(np.ceil((np.array(e["to"]) - lo) / VOX_STEP).astype(int), n)
+        blk = g[tuple(slice(a[i], b[i]) for i in range(3))]
+        blk[blk == 0] = k + 1  # 重叠归先到的那件（面密度只差一档，归谁都不影响量级）
+    dens = np.array([0.0] + [areal(e.get("_mat", "iron_crude")) for e in els])
+    occ = g > 0
+    cell = VOX_STEP ** 2
+    area = kg = 0.0
+    for ax in range(3):
+        for sgn in (-1, 1):
+            sh = np.roll(occ, sgn, axis=ax)
+            idx = [slice(None)] * 3
+            idx[ax] = 0 if sgn == 1 else -1
+            sh[tuple(idx)] = False  # roll 是环形的，两端那一层不算邻居
+            face = occ & ~sh
+            area += face.sum() * cell
+            kg += dens[g[face]].sum() * cell
+    return area / 2 * U_M ** 2, kg / 2 * U_M ** 2
+
+
+def body_kg(P: Profile) -> float:
+    return BODY_KG_REF * (P.wither * U_M * 100.0 / WITHER_REF_CM) ** 3
+
+
+def check_loads(kg: dict[tuple[str, str, str], float]) -> list[str]:
+    """量出来的整套负载，必须和 `gen_anim.LOADS` 记的代表值对得上。
+
+    那张表记在动画层是因为**推导方向不能反**：马具读动画（把轨道烘进马具文件），
+    动画不读马具。代价是同一个数落在两处，所以这条对拍不是可选的自检——它是那张表
+    唯一的出处证明。漂了当场报，别等到有人照着一个过期的数去调步态。
+    """
+    import gen_anim as G
+
+    bad = []
+    for pk, P in PROFILES.items():
+        bw = body_kg(P)
+        for tier, mates in SUITS.items():
+            total = kg[("bard", tier, pk)] + sum(kg[(k, v, pk)] for k, v in mates.items())
+            r = total / bw
+            lk = LOAD_OF[tier]
+            if not lk:
+                if r >= LOAD_IGNORE:
+                    bad.append(f"[{pk}] {tier} 整套 {total:.1f}kg = {r * 100:.1f}% 自重，"
+                               f"已超过「驮了等于没驮」的 {LOAD_IGNORE * 100:.0f}%——该单开一档负载了")
+                continue
+            want = G.LOADS[lk].ratio[pk]
+            if abs(r - want) > LOAD_BAND:
+                bad.append(f"[{pk}] {tier} 整套 {total:.1f}kg = {r * 100:.1f}% 自重，"
+                           f"与 gen_anim.LOADS[{lk!r}] 记的 {want * 100:.1f}% 差 "
+                           f"{abs(r - want) * 100:.1f}pp（容许 {LOAD_BAND * 100:.0f}pp）")
+    return bad
+
+
 COVER_N = 6  # 每块皮的侧面各取 N×N 个采样点
 
 
@@ -3555,7 +3669,8 @@ class Kind:
 #     糊掉了整只马就读成"换了个毛色"而不是"披了甲"。所以门槛比鞍高一档（36）：不是
 #     要它抢眼，是要它不冒充毛色。
 KINDS: dict[str, Kind] = {
-    "shoe": Kind("蹄铁", SHOES, build_shoes, check_shoe, ("hoof",), 45.0),
+    "shoe": Kind("蹄铁", SHOES, build_shoes, check_shoe, ("hoof",), 45.0,
+                 extra=lambda s, P: {"sink": P.hoof_r * s.over * SHOE_ROLL}),
     "saddle": Kind("马鞍", SADDLES, build_saddle, check_saddle, ("coat", "coat_dark"), 32.0),
     "rein": Kind("缰", REINS, build_rein, check_rein, ("coat", "coat_dark"), 38.0),
     # 三档放宽全是**同一个量**推出来的：壳离皮多远（空隙 + 板厚）。
@@ -3614,6 +3729,10 @@ def bone_frames(pkey: str, n: int = 32) -> list[tuple[str, float, dict]]:
 
     马具刚性挂在骨上，所以"动画里会不会铲地 / 会不会陷进皮里"只取决于骨的世界变换
     加上马具自己的角点——与分档无关。算一次三档共用，省掉两轮逆解。
+
+    **负载档也要逐帧过一遍**：披甲的马背下沉、步子变短，同一件马具在负载档的姿势里
+    可能铲地、可能被皮吃掉。而且负载档跟马具档不是一一对应——蹄铁既可能空载穿也
+    可能压在铁浮屠底下，所以每件马具都要按**所有**负载档验，不能只验"自己那一档"。
     """
     if pkey not in _FRAMES:
         import gen_anim as G
@@ -3622,9 +3741,9 @@ def bone_frames(pkey: str, n: int = 32) -> list[tuple[str, float, dict]]:
         P = PROFILES[pkey]
         rig = Rig(FINAL / f"HorsePelt_{GEOM_COAT}_{pkey}.bbmodel")
         out = []
-        for name in G.ANIMS:
+        for name, L in G.clips(list(G.ANIMS), list(G.LOADS.values())):
             for i in range(n):
-                out.append((name, i / n, rig.world(G.sample(rig, P, name, i / n))))
+                out.append((L.clip(name), i / n, rig.world(G.sample(rig, P, name, i / n, L))))
         rig.residuals.clear()
         _FRAMES[pkey] = out
     return _FRAMES[pkey]
@@ -3647,7 +3766,7 @@ def anim_block(pkey: str) -> list[dict]:
         from rig import Rig
 
         rig = Rig(FINAL / f"HorsePelt_{GEOM_COAT}_{pkey}.bbmodel")
-        _ANIMS[pkey] = G.animations_block(rig, PROFILES[pkey], list(G.ANIMS))
+        _ANIMS[pkey] = G.animations_block(rig, PROFILES[pkey], list(G.ANIMS), list(G.LOADS.values()))
         rig.residuals.clear()
     return _ANIMS[pkey]
 
@@ -3709,7 +3828,20 @@ def check_anim_ground(t: Tack, pkey: str) -> tuple[float, str]:
 # **量出来的**代价（背在鞍下屈伸，鞍不跟着弯）。0.40 单位 = 2.5 cm，且方向是**陷进去**
 # ——那一侧被马体挡着看不见；真正难看的是反方向（鞍浮起来离背），那条另有 `CONTACT`
 # 断言专管，不靠这个数兜。
-FIT_TOL = {"body": 0.45, "strap": 0.85, "limb": 2.40}
+# limb 这一档本轮从 2.40 抬到 2.90：腕 / 跗的关节鼓为了封住那几道只在中间角度张开的
+# 缝长大了一圈（`gen_pelt.leg_cuff_*` 往后探出副腕骨 / 跟骨结节），扫过肚带的深度跟着
+# 从 2.24 涨到 2.82。抬的是**同一个量在新几何下的实测值**，不是把判据放松——腿扫过
+# 贴在肚子上的软带本来就是这条容许量存在的理由，腿粗了一圈，扫得就深一点。
+FIT_TOL = {"body": 0.45, "strap": 0.85, "limb": 2.90}
+
+# 蹄铁在倒毙那一帧翻到最狠时，外缘能低过蹄底多少。
+# 蹄铁是**包在蹄外面**的（实测它的最低点比蹄底还高 0.10–0.28），但它比蹄宽出
+# `over × 蹄半宽`；蹄一翻，这一圈外扩的力臂就把铁缘甩到蹄底以下。而倒地那一帧整只马
+# 是照**皮**贴到地面上的（`gen_anim._death_pose` 末尾的贴地夹持），皮不认识铁，多出来
+# 的这一截就被记成"铲地"。
+# 真马正好相反：着地的本来就是铁不是蹄底。所以这不是穿地，是蹄铁在干它的活。
+# 46° 是倒毙那一帧蹄翻到的角度（`gen_anim._death_pose` 的 foot_pitch）。
+SHOE_ROLL = math.sin(math.radians(46.0))
 LIMB_BONES = ("scapula", "humerus", "radius", "carpus", "femur", "tibia", "tarsus", "fetlock", "hoof")
 # 归到 strap 那一档的部件：**带子**。判据不看名字看性质——一条皮带在真马身上是被
 # 顶开、被压扁、随着屈伸滑动的，刚体盒做不到，所以它对躯干的容许量本就比刚性主体松
@@ -3859,6 +3991,30 @@ def _sat_gap(a: tuple, b: tuple) -> float:
     return worst
 
 
+def _sat_gap_many(ca, Ra, ha, cb, Rb, hb):
+    """`_sat_gap` 的逐帧批量版：一次算 N 帧，返回 (N,) 的最小重叠量。
+
+    数学和上面那个逐字一样（同一套 3+3+9 条分离轴），只是把帧那一维交给 numpy。
+    为什么值得单独写一份：链的核验要对**每一对相邻段 × 每一帧**做一次 SAT，一副重甲
+    是二十万次量级——逐次调用光 Python 的函数与标量转换开销就占掉整份马具跑时的八成
+    （实测 55.9s / 71s）。批量之后同一份活是秒级，全量门禁才跑得动。
+    """
+    n = ca.shape[0]
+    d = cb - ca
+    ax_a = Ra.transpose(0, 2, 1)  # [n,i,:] = Ra 的第 i 列（该盒的第 i 根局部轴）
+    ax_b = Rb.transpose(0, 2, 1)
+    cr = np.cross(ax_a[:, :, None, :], ax_b[:, None, :, :]).reshape(n, 9, 3)
+    norm = np.linalg.norm(cr, axis=2, keepdims=True)
+    ok = norm[:, :, 0] > 1e-8  # 两轴平行时叉积退化，那条轴不算
+    cr = np.divide(cr, np.maximum(norm, 1e-12), out=np.zeros_like(cr), where=norm > 1e-8)
+    axes = np.concatenate([ax_a, ax_b, cr], axis=1)  # (n, 15, 3)
+    ra = np.abs(np.einsum("nkj,nji->nki", axes, Ra)) @ ha
+    rb = np.abs(np.einsum("nkj,nji->nki", axes, Rb)) @ hb
+    gap = ra + rb - np.abs(np.einsum("nkj,nj->nk", axes, d))
+    valid = np.concatenate([np.ones((n, 6), bool), ok], axis=1)
+    return np.where(valid, gap, np.inf).min(axis=1)
+
+
 def check_anim_chain(t: Tack, pkey: str) -> tuple[float, str]:
     """逐帧核验：声明成同一条链的相邻两段必须**始终**相交。
 
@@ -3876,19 +4032,25 @@ def check_anim_chain(t: Tack, pkey: str) -> tuple[float, str]:
         chains.setdefault(ch[0], {})[ch[1]] = (_bone_of(t.skel.data, e["uuid"]), _obb(e))
     if not chains:
         return float("inf"), ""
+    frames = bone_frames(pkey)
+    tags = ["静止"] + [f"{a}t={b:.2f}" for a, b, _w in frames]
+    # 每根用到的骨，把静止姿 + 全部帧的世界矩阵堆成一个数组，逐对做批量 SAT。
+    used = {b for segs in chains.values() for b, _ in segs.values()}
+    stack = {b: np.stack([np.eye(4)] + [w[b] for _a, _b, w in frames]) for b in used}
     worst, who = 1e9, ""
     for name, segs in chains.items():
         idx = sorted(segs)
         if idx != list(range(len(idx))):
             return -9.99, f"{name} 的分段序号不连续：{idx}"
-        for tag, W in [("静止", {b: np.eye(4) for b, _ in segs.values()})] + \
-                      [(f"{a}t={b:.2f}", w) for a, b, w in bone_frames(pkey)]:
-            for k in range(len(idx) - 1):
-                (b0, (c0, h0, R0)), (b1, (c1, h1, R1)) = segs[idx[k]], segs[idx[k + 1]]
-                g = _sat_gap((W[b0][:3, :3] @ c0 + W[b0][:3, 3], h0, W[b0][:3, :3] @ R0),
-                             (W[b1][:3, :3] @ c1 + W[b1][:3, 3], h1, W[b1][:3, :3] @ R1))
-                if g < worst:
-                    worst, who = g, f"{name} 第 {k + 1}↔{k + 2} 段 @{tag}"
+        for k in range(len(idx) - 1):
+            (b0, (c0, h0, R0)), (b1, (c1, h1, R1)) = segs[idx[k]], segs[idx[k + 1]]
+            W0, W1 = stack[b0], stack[b1]
+            g = _sat_gap_many(
+                np.einsum("nij,j->ni", W0[:, :3, :3], c0) + W0[:, :3, 3], W0[:, :3, :3] @ R0, h0,
+                np.einsum("nij,j->ni", W1[:, :3, :3], c1) + W1[:, :3, 3], W1[:, :3, :3] @ R1, h1)
+            i = int(g.argmin())
+            if g[i] < worst:
+                worst, who = float(g[i]), f"{name} 第 {k + 1}↔{k + 2} 段 @{tags[i]}"
     return worst, who
 
 
@@ -4106,6 +4268,7 @@ def main() -> int:
             print(f"  ✗ [{pk}] {msg}")
             rc = 1
 
+    kgs: dict[tuple[str, str, str], float] = {}
     for kind in kinds:
         K = KINDS[kind]
         tiers = [args.tier] if args.tier else list(K.table)
@@ -4117,6 +4280,7 @@ def main() -> int:
                     return 2
                 spec = K.table[tier]
                 t, fit = build(pk, kind, tier)
+                kgs[(kind, tier, pk)] = shell_kg(tack_els(t))[1]
                 vols.setdefault(tier, []).append((
                     sum(float(np.prod(np.array(e["to"]) - np.array(e["from"]))) for e in tack_els(t)),
                     {comp_type(e["name"]) for e in tack_els(t)},
@@ -4167,7 +4331,7 @@ def main() -> int:
                     f" 贴地 {sink:.2f} " + " ".join(f"{k}{fits[k][0]:+.2f}" for k in FIT_TOL)
                     + ("" if link == float("inf") else f" 链余 {link:.2f}"))
                 print(f"{mark} {out.relative_to(FINAL.parents[1])}  【{spec.label} · {PROFILES[pk].label}】"
-                      f"件 {t.count}{extra}")
+                      f"件 {t.count} {kgs[(kind, tier, pk)]:.1f}kg{extra}")
                 for m in bad:
                     print(f"    ✗ {m}")
                     rc = 1
@@ -4201,6 +4365,20 @@ def main() -> int:
                         print(f"    ✗ 顶档只盖住马身侧面的 {worst * 100:.1f}%"
                               f"（下限 {MIN_COVER_TOP * 100:.0f}%）")
                         rc = 1
+
+    # 整套负载对拍。只有四种马具三档体型全出齐了才问得出"一整套多重"，所以挂在
+    # 全量跑上；筛过 --kind / --tier / --profile 的跑跳过（缺件算出来的负载是错的）。
+    if len(kinds) == len(KINDS) and not args.tier and len(pkeys) == len(PROFILES):
+        for pk in pkeys:
+            P = PROFILES[pk]
+            line = []
+            for tier, mates in SUITS.items():
+                total = kgs[("bard", tier, pk)] + sum(kgs[(k, v, pk)] for k, v in mates.items())
+                line.append(f"{tier} {total:.0f}kg/{total / body_kg(P) * 100:.1f}%")
+            print(f"  【{P.label}】自重 {body_kg(P):.0f}kg · 整套负载 " + "  ".join(line))
+        for msg in check_loads(kgs):
+            print(f"  ✗ {msg}")
+            rc = 1
     return rc
 
 

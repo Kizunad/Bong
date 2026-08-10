@@ -143,13 +143,16 @@ def compare(path: Path, profile_key: str, samples: int = 24) -> list[str]:
     P = PROFILES[profile_key]
     pb = Playback(path)
     bad = []
-    for name in G.ANIMS:
-        length = pb.anims[name]["length"]
+    for name, L in G.clips(list(G.ANIMS), list(G.LOADS.values())):
+        clip = L.clip(name)
+        if clip not in pb.anims:  # 只出了部分负载档（--load）时照跑文件里有的
+            continue
+        length = pb.anims[clip]["length"]
         worst, worst_bone, worst_t = 0.0, "", 0.0
         for i in range(samples):
             t01 = i / samples
-            Wa = rig.world(G.sample(rig, P, name, t01))
-            Wb = pb.world(name, t01 * length)
+            Wa = rig.world(G.sample(rig, P, name, t01, L))
+            Wb = pb.world(clip, t01 * length)
             for bone in rig.order:
                 pts = rig.bone_points(bone)
                 if not len(pts):
@@ -160,7 +163,7 @@ def compare(path: Path, profile_key: str, samples: int = 24) -> list[str]:
                 if d > worst:
                     worst, worst_bone, worst_t = d, bone, t01
         flag = "✓" if worst <= 0.35 else "✗"
-        line = f"  {flag} {name:7s} 最大回读偏差 {worst:5.2f} 单位 @ {worst_bone} t={worst_t:.2f}"
+        line = f"  {flag} {clip:14s} 最大回读偏差 {worst:5.2f} 单位 @ {worst_bone} t={worst_t:.2f}"
         print(line)
         if worst > 0.35:
             bad.append(line)
