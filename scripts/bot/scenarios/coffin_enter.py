@@ -46,6 +46,7 @@ DIMENSION_REJECTION = "§c[棺] 你不在主世界，无法操作延寿棺。"
 # server: COFFIN_INTERACT_MAX_DISTANCE_SQ = 36.0（6m）
 PLACE_OFFSET = 2
 FAR_OFFSET = 8
+ENTER_RANGE = 5.0
 
 
 def _approx(a: float, b: float, tol: float = 0.01) -> bool:
@@ -265,6 +266,15 @@ def run(env) -> None:
         # ── occupied 拒绝：第二 bot 进同一棺静默 ───────────────────────────
         with env.new_bot("CoEnB") as bystander:
             wait_for_ready(bystander)
+            # 距离必须对**实际放棺坐标**（_place_coffin 返回的 lower）判定：spawn 位可能
+            # 落在 server 6m 交互半径之外，enter 会被**距离**门静默拒绝，occupied 测试就
+            # 空过了（与距离路径同义）。先到原站位 (px,py,pz)——距棺中心 ~2-3m，保证命中
+            # 的是 occupied_by 分支而非距离分支。move_to 后睡眠等 pos_look 落定。
+            bpos = bystander.position
+            coffin_center = (lower[0] + 0.5, lower[1] + 0.5, lower[2] + 0.5)
+            if bpos is not None and math.dist(bpos, coffin_center) > ENTER_RANGE:
+                bystander.move_to(px, py, pz, speed=5.5)
+                time.sleep(1.5)
             before_pos = bystander.position
             b_anchor = last_event_time(bystander)
             bystander.intent(
