@@ -55,6 +55,11 @@ set -euo pipefail
 # 下 build 命令必须随之变化」——旧 harness 的 cargo stub 无条件 exit 0，跳过
 # build / 用错 profile 的实现照常绿。
 printf '%s\n' "\$*" >>"$TMP_ROOT/cargo-invocations.log"
+# review finding 31436388638 [major]：FAKE_SLOW_BUILD_SECONDS 让 stub 睡 N 秒模拟
+# 慢构建——并发 stop 竞速用例需要在「start 持锁构建、记录未发布」的窗口内调 stop。
+if [ -n "\${FAKE_SLOW_BUILD_SECONDS:-}" ]; then
+  sleep "\$FAKE_SLOW_BUILD_SECONDS"
+fi
 exit 0
 EOF
 chmod 700 "$TMP_ROOT/bin/cargo"
@@ -148,10 +153,26 @@ bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
 export FAKE_SERVER_MODE=early
+early_start=$SECONDS
 if run_preview 2 >"$TMP_ROOT/early.log" 2>&1; then
   echo "early-exit preview unexpectedly succeeded" >&2
   exit 1
 fi
+early_elapsed=$((SECONDS - early_start))
+# review finding 31436388638 [minor]：旧实现的身份钉扎循环对已死进程不 break，把
+# 500 次迭代 × sleep 0.01（≈5s）全跑完才报失败。启动即退出的场景（配置失败 / 早期
+# 崩溃）应尽早失败，不得按固定迭代预算白耗。窗口上限 3s：修复后首次迭代即检测到
+# 进程死亡并 break，耗时 ≪ 1s；错误实现固定 ~5s，两者区分度足够。
+[ "$early_elapsed" -lt 3 ] || {
+  echo "early-exit failure took ${early_elapsed}s — identity-pinning loop did not break on a dead process" >&2
+  exit 1
+}
+# 失败路径必须是「已提前退出」分支（区别于「身份无法确认」分支）——启动器要明确
+# 报告 server 已死的原因，而不是含糊地拒绝钉扎。
+grep -q "已提前退出" "$TMP_ROOT/early.log" || {
+  echo "early-exit failure did not report the dead-server cause" >&2
+  exit 1
+}
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 unset FAKE_SERVER_MODE
 
@@ -254,12 +275,16 @@ then
   exit 1
 fi
 
-# 扫描 /proc 找所有 exe 指向 release fake binary 的存活进程（取消用例断言泄漏用）。
+# 找所有 exe 指向 release fake binary 的存活进程（取消用例断言泄漏用）。
+# 用 pgrep 先缩小候选再逐一 readlink 校验 exe 路径，避免对 /proc 全量 readlink——
+# 满载时全量扫描可达数秒，超过 FAKE_STAT_SLOW_EXE_SLEEP 注入的「spawn → 记录发布」
+# 窗口，取消用例的轮询会把「记录已发布」误判为窗口错过（实测：load ~9 下 5 连败，
+# 改为 pgrep 后窗口内 0.05s 级命中）。语义不变：仍按 exe 绝对路径精确匹配。
 fake_server_pids() {
   local pd exe
-  for pd in /proc/[0-9]*; do
-    exe="$(readlink -f -- "$pd/exe" 2>/dev/null || true)"
-    [ "$exe" = "$TMP_ROOT/target/release/bong-server" ] && printf '%s\n' "${pd#/proc/}"
+  for pd in $(pgrep -x bong-server 2>/dev/null || true); do
+    exe="$(readlink -f -- "/proc/$pd/exe" 2>/dev/null || true)"
+    [ "$exe" = "$TMP_ROOT/target/release/bong-server" ] && printf '%s\n' "$pd"
   done
   return 0  # 无匹配时循环末命令 [ ] 返回非零；set -euo pipefail 下独立赋值
            # `x="$(fake_server_pids | head -1)"` 会继承该非零直接 abort（实测坑）。
@@ -582,5 +607,71 @@ if listener_on_25565; then
   exit 1
 fi
 rm -f "$BONG_PREVIEW_PID_FILE"
+
+# review finding 31436388638 [major]：stop 在 start 的构建窗口内运行——旧实现 start 的
+# refuse 与 launch 各自独立取锁，refuse 释放锁后到 launch 重新取锁之间是裸露的构建
+# 区间；stop 在锁外先看 PID 文件，构建期间记录尚未发布 → 看到无文件 → exit 0 静默
+# 成功，随后 start 完成构建照常启动出 server：stop 报了成功但 server 事后出现并持续
+# 运行。修复：整个 start（refuse→build→launch）在单一生命周期锁内原子执行；stop 的
+# 「无记录 → 无事可做」判定也在锁内做。
+#
+# 测试：FAKE_SLOW_BUILD_SECONDS 拉宽构建窗口，后台启动 start，等 cargo stub 记下
+# build 调用（= 进入构建窗口：锁被 start 持有、记录未发布）后调 stop。契约：stop
+# 返回 0 时 server 必须真实停止（无 fake server 进程 / 无记录 / 25565 无监听）——
+# 若 stop 在构建窗口返回 0 而后 start 又启动出 server，即本 finding 的回归。
+: >"$TMP_ROOT/cargo-invocations.log"
+FAKE_SLOW_BUILD_SECONDS=2 \
+  bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 30 \
+  >"$TMP_ROOT/race-start.log" 2>&1 &
+race_start_pid=$!
+race_in_build=0
+for _ in $(seq 1 200); do
+  if [ -s "$TMP_ROOT/cargo-invocations.log" ]; then
+    race_in_build=1
+    break
+  fi
+  sleep 0.05
+done
+[ "$race_in_build" -eq 1 ] || {
+  echo "concurrent-stop race: start did not enter the build window" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+# 窗口前提：此刻记录必须尚未发布（start 仍在持锁构建）。
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "concurrent-stop race: record already published before stop (build window missed)" >&2
+  kill "$race_start_pid" 2>/dev/null || true
+  exit 1
+}
+race_stop_rc=0
+if bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" >"$TMP_ROOT/race-stop.log" 2>&1; then
+  race_stop_rc=0
+else
+  race_stop_rc=$?
+fi
+# 等 start 结束（无论 stop 是否打断了它的 readiness）再核对终态。
+wait "$race_start_pid" 2>/dev/null || true
+if [ "$race_stop_rc" -eq 0 ]; then
+  # stop 声称成功停服——必须证明 server 真的没了（进程 / 记录 / 25565 三路）。
+  # 若 stop 返回 0 但 server 事后仍启动，正是本 finding 的回归。
+  race_remaining="$(fake_server_pids)"
+  [ -z "$race_remaining" ] || {
+    echo "concurrent-stop race: stop succeeded but server(s) still alive: $race_remaining" >&2
+    kill -KILL $race_remaining 2>/dev/null || true
+    exit 1
+  }
+  [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+    echo "concurrent-stop race: stop succeeded but an authority record remains" >&2
+    exit 1
+  }
+  if listener_on_25565; then
+    echo "concurrent-stop race: stop succeeded but 25565 still has a listener" >&2
+    exit 1
+  fi
+else
+  # stop 锁超时（start 构建 > 锁超时）是诚实的失败：stop 明确报错而非虚假成功。
+  # 此刻 start 可能仍在持锁构建或已启动 server——留待 start 自行收尾，不在此判定。
+  echo "concurrent-stop race: stop failed (rc=$race_stop_rc) during build — honest lock timeout, not spurious success" >&2
+fi
 
 echo "preview lifecycle harness: PASS"

@@ -154,9 +154,16 @@ bong_server_launch_preview_locked() {
 
   SERVER_STARTTIME=""
   SERVER_EXECUTABLE_IDENTITY=""
+  server_exited_early=0
   for _ in $(seq 1 500); do
-    if bong_server_process_is_running "$SERVER_PID" \
-        && [ "$(bong_server_process_executable "$SERVER_PID" 2>/dev/null || true)" = "$SERVER_BINARY" ]; then
+    # 进程已死 → 立即 break，不再把剩余 500 次迭代的 sleep 0.01 全跑完（review
+    # finding 31436388638 [minor]：FAKE_SERVER_MODE=early 这类启动即退出的场景
+    # 白耗 ~5s 才报失败）。真正的启动配置失败应尽早暴露，而非按固定迭代预算拖完。
+    if ! bong_server_process_is_running "$SERVER_PID"; then
+      server_exited_early=1
+      break
+    fi
+    if [ "$(bong_server_process_executable "$SERVER_PID" 2>/dev/null || true)" = "$SERVER_BINARY" ]; then
       SERVER_STARTTIME="$(bong_server_process_starttime "$SERVER_PID")" || SERVER_STARTTIME=""
       SERVER_EXECUTABLE_IDENTITY="$(bong_server_process_executable_identity "$SERVER_PID")" \
         || SERVER_EXECUTABLE_IDENTITY=""
@@ -170,10 +177,15 @@ bong_server_launch_preview_locked() {
 
   if [[ ! "$SERVER_STARTTIME" =~ ^[0-9]+$ ]] \
       || [[ ! "$SERVER_EXECUTABLE_IDENTITY" =~ ^[0-9]+:[0-9]+$ ]]; then
-    echo "❌ 无法确认直接启动的 server identity；拒绝把数字 PID 当作权限" >&2
-    # 身份在 500 次重试内始终不可确认时，进程若仍存活不能裸留 25565——本启动器
-    # 已直接 spawn 它（PID 来自 $!），做有界回收而非交给 CI runner 无限隔离
-    # （review finding [4]：原实现把未记录的 server 留作孤儿）。
+    if [ "$server_exited_early" -eq 1 ]; then
+      echo "❌ 启动的 server 已提前退出（PID $SERVER_PID），最后 30 行 log:" >&2
+      tail -n 30 "$LOG_FILE" >&2
+    else
+      echo "❌ 无法确认直接启动的 server identity；拒绝把数字 PID 当作权限" >&2
+      # 身份在 500 次重试内始终不可确认时，进程若仍存活不能裸留 25565——本启动器
+      # 已直接 spawn 它（PID 来自 $!），做有界回收而非交给 CI runner 无限隔离
+      # （review finding [4]：原实现把未记录的 server 留作孤儿）。
+    fi
     bounded_cleanup_unconfirmed_launch "preview identity-pinning"
     return 1
   fi
@@ -209,8 +221,6 @@ bong_server_launch_preview_locked() {
   trap - EXIT INT TERM HUP
 }
 
-bong_server_refuse_existing_preview_record_locked || exit 1
-
 # CI / preview 无 MINESKIN_API_KEY，跳过皮肤预取（NPC 回退 villager 实体），
 # 否则 skin::pool::maintain_skin_pool 会因缺 key 直接 panic（对齐 e2e-redis.sh:892）。
 export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
@@ -219,26 +229,37 @@ export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
 # 资源包，仅 preview wrapper 默认跳过；显式设 BONG_RESOURCE_PACK_ENABLED=true 可覆盖。
 export BONG_RESOURCE_PACK_ENABLED="${BONG_RESOURCE_PACK_ENABLED:-false}"
 
-BUILD_ARGS=(build --locked)
-if [ -n "$PROFILE_FLAG" ]; then
-  BUILD_ARGS+=("$PROFILE_FLAG")
-fi
-echo "[run-server-headless] 构建 server (profile=$TARGET_PROFILE)..."
-(
-  cd "$REPO_ROOT/server"
-  "$REPO_ROOT/scripts/build-token.sh" cargo "${BUILD_ARGS[@]}"
-)
+# 整个 start（拒绝已有记录 → 构建 → 启动）在同一生命周期锁内原子执行（review finding
+# 31436388638 [major]：旧实现 refuse 与 launch 各自独立取锁，中间释放锁的构建窗口里
+# stop 观察到无记录 → 静默成功退出，随后 start 完成构建又启动出 server——stop 报了成功
+# 但 server 事后出现并持续运行）。持锁期间并发 stop 要么阻塞到本 start 结束再停（构建
+# < 锁超时），要么锁超时诚实失败，绝无「stop 成功 + 后续 server 出现」。
+bong_server_preview_start_locked() {
+  bong_server_refuse_existing_preview_record || return 1
 
-TARGET_ROOT="${CARGO_TARGET_DIR:-$REPO_ROOT/server/target}"
-if [[ "$TARGET_ROOT" != /* ]]; then
-  TARGET_ROOT="$REPO_ROOT/server/$TARGET_ROOT"
-fi
-SERVER_BINARY="$(readlink -f -- "$TARGET_ROOT/$TARGET_PROFILE/bong-server")" \
-  || { echo "❌ 找不到构建后的 server binary" >&2; exit 1; }
-[ -x "$SERVER_BINARY" ] \
-  || { echo "❌ Server binary 不可执行: $SERVER_BINARY" >&2; exit 1; }
+  BUILD_ARGS=(build --locked)
+  if [ -n "$PROFILE_FLAG" ]; then
+    BUILD_ARGS+=("$PROFILE_FLAG")
+  fi
+  echo "[run-server-headless] 构建 server (profile=$TARGET_PROFILE)..."
+  (
+    cd "$REPO_ROOT/server"
+    "$REPO_ROOT/scripts/build-token.sh" cargo "${BUILD_ARGS[@]}"
+  ) || return 1
 
-bong_server_with_lock bong_server_launch_preview_locked || exit 1
+  TARGET_ROOT="${CARGO_TARGET_DIR:-$REPO_ROOT/server/target}"
+  if [[ "$TARGET_ROOT" != /* ]]; then
+    TARGET_ROOT="$REPO_ROOT/server/$TARGET_ROOT"
+  fi
+  SERVER_BINARY="$(readlink -f -- "$TARGET_ROOT/$TARGET_PROFILE/bong-server")" \
+    || { echo "❌ 找不到构建后的 server binary" >&2; return 1; }
+  [ -x "$SERVER_BINARY" ] \
+    || { echo "❌ Server binary 不可执行: $SERVER_BINARY" >&2; return 1; }
+
+  bong_server_launch_preview_locked
+}
+
+bong_server_with_lock bong_server_preview_start_locked || exit 1
 
 echo "[run-server-headless] PID=$SERVER_PID authority=$PID_FILE log=$LOG_FILE"
 
