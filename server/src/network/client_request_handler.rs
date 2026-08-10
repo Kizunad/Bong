@@ -8981,6 +8981,103 @@ mod tests {
     }
 
     #[test]
+    fn use_quick_slot_unbound_slot_preserves_active_cross_slot_cast() {
+        // central-review 2012 #1 回归：未绑定槽 use 必须静默忽略且**不得打断**
+        // 进行中的异槽 cast。旧实现先走 cast 闸门（异槽 → cancel_previous_cast 发
+        // cast_sync{Interrupt, UserCancel} 并 remove Casting），再发现槽 5 无绑定
+        // 才返回——活动 cast 被无谓取消。契约（network_quickslot_config.py docstring：
+        // 无绑定 → 静默忽略）下无绑定请求是无副作用的 no-op。
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "guyuan_pill".to_string(),
+            ItemTemplate {
+                id: "guyuan_pill".to_string(),
+                display_name: "guyuan_pill".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 64,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+            },
+        )])));
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+
+        // 请求 1：启动 slot 0 cast。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "前置：slot 0 应处于 casting 状态"
+        );
+
+        // 请求 2：slot 0 仍在 cast 时使用未绑定槽 5。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        // 活动 cast 必须原样保留（未被打断）。
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("未绑定槽 use 不得取消进行中的 slot 0 cast");
+        assert_eq!(casting.slot, 0);
+        // 且不得下发 slot 0 的 Interrupt（UserCancel）cast_sync。
+        let syncs = collect_cast_syncs(&mut helper);
+        assert!(
+            !syncs.iter().any(|s| s.phase == CastPhaseV1::Interrupt),
+            "未绑定槽 use 不得产生任何 interrupt cast_sync，实际 {syncs:?}"
+        );
+    }
+
+    #[test]
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
@@ -14941,27 +15038,11 @@ fn handle_use_quick_slot(
         );
         return;
     }
-    // plan §4.2: 已 cast 时——同来源同 slot 静默忽略；否则 UserCancel + 启新 cast。
-    if let Ok(prev) = combat_params.casting_q.get(entity) {
-        if prev.source == CastSource::QuickSlot && prev.slot == slot {
-            tracing::debug!(
-                "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: same-slot during cast"
-            );
-            return;
-        }
-        let prev = CastCancelSnapshot::from(prev);
-        cancel_previous_cast(
-            entity,
-            prev,
-            clock,
-            commands,
-            clients,
-            combat_params,
-            vfx_events,
-            slot,
-        );
-        // 继续到下面启动新 cast。
-    }
+    // 契约顺序（network_quickslot_config.py docstring：slot>=9 / 无绑定 / 冷却 /
+    // 同槽 cast 中 → 静默忽略）：与「异槽 cast 中 UserCancel + 启新」互斥的忽略
+    // 条件必须**先行**判定。旧顺序先做 cast 闸门——未绑定/冷却中的请求会先打断
+    // 进行中的异槽 cast 再被忽略（central-review 2012 #1 根因：use_quick_slot
+    // 未绑定槽不得取消活动 cast，无绑定/冷却/实例缺失都不得扰动异槽 cast）。
     let (bound_instance_id, on_cooldown) = combat_params
         .bindings_q
         .get(entity)
@@ -14988,6 +15069,27 @@ fn handle_use_quick_slot(
             );
             return;
         }
+    }
+    // plan §4.2 cast 状态闸门：同槽 cast 中静默忽略；异槽 cast 中 UserCancel + 启新。
+    if let Ok(prev) = combat_params.casting_q.get(entity) {
+        if prev.source == CastSource::QuickSlot && prev.slot == slot {
+            tracing::debug!(
+                "[bong][network] use_quick_slot entity={entity:?} slot={slot} ignored: same-slot during cast"
+            );
+            return;
+        }
+        let prev = CastCancelSnapshot::from(prev);
+        cancel_previous_cast(
+            entity,
+            prev,
+            clock,
+            commands,
+            clients,
+            combat_params,
+            vfx_events,
+            slot,
+        );
+        // 继续到下面启动新 cast。
     }
     // 取真实 cast_duration_ms / cooldown_ms：从背包找到 instance → template_id → registry。
     let (duration_ms, cooldown_ms) = inventories

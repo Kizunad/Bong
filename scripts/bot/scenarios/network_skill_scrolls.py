@@ -39,6 +39,9 @@ SCROLL_XP = 500
 # 排除「回执前已到达的周期 flush」与「回执后较晚的无关 flush」冒充回推（review
 # finding [10]）。
 ROLLBACK_WINDOW = 1.0
+# 重复习得的负向 XP 观察窗：skill_xp_gain 与 intent 同 tick 同步下发（毫秒级），
+# 2s 足够覆盖；首次习得的 gain 远在此前（e.t <= anchor 被排除）。
+DUP_NEGATIVE_WINDOW = 2.0
 
 
 def _give_and_wait(bot, item_id: str) -> dict:
@@ -220,8 +223,27 @@ def run(env) -> None:
         bot.intent(
             {"type": "learn_skill_scroll", "v": 1, "instance_id": scroll2_instance}
         )
-        _, dup_t = _wait_scroll_used(
+        used_dup, dup_t = _wait_scroll_used(
             bot, HERBALISM_SCROLL, was_duplicate=True, anchor_t=anchor
+        )
+        # review finding [3]（round 10）：重复路径必须**零授 XP**——只断
+        # was_duplicate 放过了「标记重复却仍发 xp_granted/skill_xp_gain、把 total_xp
+        # 抬到 1000」的错误实现（旧 >=500 断言会被它满足）。三处封死：
+        #   (a) 回执 xp_granted 必须为 0（schema 契约：was_duplicate=true → xp_granted=0）；
+        #   (b) 重复 intent 之后不得出现新的 skill_xp_gain（XP 授予通道，首次习得的
+        #       gain 远在此前、e.t <= anchor 被排除）；
+        #   (c) resync 快照 total_xp 必须**恰好**保持首次习得的 500，而非 >=。
+        assert int(used_dup.get("xp_granted", -1)) == 0, (
+            f"重复习得 xp_granted 应为 0，实际 {used_dup.get('xp_granted')!r}"
+        )
+        time.sleep(DUP_NEGATIVE_WINDOW)
+        dup_gains = [
+            e
+            for e in bot.events_of("server_data")
+            if e.data.get("payload_type") == "skill_xp_gain" and e.t > anchor
+        ]
+        assert not dup_gains, (
+            f"重复习得不应产生新的 skill_xp_gain（重复不授 XP），实际 {len(dup_gains)} 条"
         )
         # review finding [10]：保留断言必须锚在 skill_scroll_used 回执**之后**（dup_t）
         # 并加窗口上限——旧实现锚 intent 前水位，回执前任意周期 flush 的「revision
@@ -244,16 +266,19 @@ def run(env) -> None:
             f"重复习得不消耗卷轴：revision 应保持 {before_revision}，实际 {kept['revision']}"
         )
         require_item(kept, HERBALISM_SCROLL)
-        # 重复路径的 resync 快照反映的是 xp 异步落地后的状态：herbalism.total_xp 应 ≥500。
-        # （首次习得的快照是落地前；注意 xp 是级内余量、total_xp 才是累计证据。）
+        # 重复路径的 resync 快照反映的是 xp 异步落地后的状态：herbalism.total_xp 应
+        # **恰好**等于首次习得的 500（review finding [3] (c)：旧 >= 断言让「重复又授
+        # 500、total_xp=1000」的错误实现通过；首次习得恰授 SCROLL_XP、场景内无其他
+        # XP 来源，故 ==SCROLL_XP 才是守恒证据）。
         dup_snap = _wait_skill_snapshot_skill(bot, "herbalism", anchor, SCROLL_XP)
         dup_entry = next(
             entry["entry"]
             for entry in dup_snap["skills"]
             if entry["skill_name"] == "herbalism"
         )
-        assert int(dup_entry.get("total_xp", 0)) >= SCROLL_XP, (
-            f"重复习得 resync 快照 herbalism.total_xp 应 >= {SCROLL_XP}（xp 已落地），实际 {dup_entry!r}"
+        assert int(dup_entry.get("total_xp", 0)) == SCROLL_XP, (
+            f"重复习得 resync 快照 herbalism.total_xp 应恰好保持 {SCROLL_XP}"
+            f"（首次习得累计，重复不授 XP），实际 {dup_entry!r}"
         )
 
         # ── 3. technique_scroll_use 正路径：消耗 + techniques_snapshot 含招式 ──

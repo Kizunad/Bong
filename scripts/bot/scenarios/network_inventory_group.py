@@ -383,6 +383,13 @@ def run(env) -> None:
         anchor = last_event_time(bot)
         stale_revision = int(after_drop["revision"])
         # stone 在第 7 步后仍在背包容器（非装备位），用 main_hand_held 作 from 恒不匹配。
+        # review finding [4]：拒绝契约必须连**内容**一起守恒——只查 revision 不变会让
+        # 「删掉 stone 实例却留下 revision 不 bump」的错误实现通过（回推快照携带删除
+        # 后状态）。先取该实例请求前的权威位置，回推后 pin 实例仍在**原位**。
+        stone_spot = find_instance(after_drop, stone_instance)
+        assert stone_spot is not None, (
+            f"前置：drop 拒绝前 stone 实例 {stone_instance} 应在包中，实际未找到"
+        )
         bot.intent(
             {
                 "type": "drop_weapon_intent",
@@ -391,6 +398,14 @@ def run(env) -> None:
                 "from": equip_location("main_hand", "held"),
             }
         )
-        _wait_snapshot_same_revision(bot, anchor, stale_revision)
+        rejected = _wait_snapshot_same_revision(bot, anchor, stale_revision)
+        kept_stone = find_instance(rejected, stone_instance)
+        assert kept_stone is not None, (
+            f"from 不匹配拒绝不得移除 stone 实例 {stone_instance}，实际快照中未找到"
+        )
+        assert kept_stone["location"] == stone_spot["location"], (
+            f"from 不匹配拒绝不得移动 stone 实例：位置应保持 {stone_spot['location']!r}，"
+            f"实际 {kept_stone['location']!r}"
+        )
 
         bot.assert_alive("背包组 9 步正负路径后")

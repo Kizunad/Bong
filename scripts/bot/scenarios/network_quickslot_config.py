@@ -183,6 +183,11 @@ def run(env) -> None:
         # ── 4. bind 静默：非法 request_id（空串 + 超长>128）→ 无回执 ──
         #    review finding [6]：旧场景只测空串，放过了「接受任意超长非空 id 且
         #    变异绑定」的错误实现。schema maxLength=128、handler len()>128 双拒。
+        #    review finding [6]（round 10）：旧 4b 断言只在请求后抽查 slot 1/2/3/6，
+        #    放过了「非法 id 被写入未抽查槽（如 slot 8）再静默」的错误实现（后续
+        #    slot-8 正路径会掩盖那次变异）。基线必须捕获在请求**之前**，请求后逐槽
+        #    对比**全部 9 槽**（与 3b 的 slot=9 静默同法）。
+        baseline_slots = _authoritative_slots(bot, "gap10-probe-4-base")
         for slot, bad_request_id in ((3, ""), (6, "x" * 129)):
             anchor = last_event_time(bot)
             bot.intent(
@@ -205,15 +210,11 @@ def run(env) -> None:
                 f"实际收到 {len(stray)} 条 quickslot_config"
             )
 
-        # ── 4b. 静默拒绝后权威状态不变（review finding [1]/[6]）──
+        # ── 4b. 静默拒绝后权威 9 槽状态逐槽不变（review finding [1]/[6]）──
         slots = _authoritative_slots(bot, "gap10-probe-4")
-        assert slots[BIND_SLOT] is not None and slots[BIND_SLOT]["item_id"] == PILL, (
-            f"非法 request_id 请求后已绑定槽 {BIND_SLOT} 应保持 {PILL}，实际 {slots[BIND_SLOT]!r}"
+        assert _slot_entries(slots) == _slot_entries(baseline_slots), (
+            f"非法 request_id 请求后权威 9 槽必须逐槽不变，实际 {_slot_entries(slots)}"
         )
-        for empty_slot in (2, 3, 6):
-            assert slots[empty_slot] is None, (
-                f"非法 request_id 请求不得把槽 {empty_slot} 绑定上，实际 {slots[empty_slot]!r}"
-            )
         # ── 4c. 功能后置：空 request_id 请求带 slot=3，若被错误写入绑定，use slot 3
         #     会错误启动 cast（review finding [1] 举的具体例子）——直接钉死。──
         anchor = last_event_time(bot)
@@ -288,25 +289,72 @@ def run(env) -> None:
         assert int(cast.get("duration_ms", 0)) == 1500, (
             f"guyuan_pill cast_duration_ms 应为 1500，实际 {cast.get('duration_ms')!r}"
         )
-        # ── 6b. use 冷却分支（review finding [5]）：cast 完成后槽 1 进入 1500ms
-        #     冷却（DEFAULT_COOLDOWN_MS，cast 完成 tick 起算），期间再次 use 必须
-        #     静默。旧场景只在解绑槽 5 / 越界槽 9 上测静默，从未在冷却中的已绑定
-        #     槽上测——忽略冷却、命中即再开 cast 的错误实现会通过。收到 complete
-        #     时冷却已随同 tick 写入（cast_emit set_cast_cooldown 先于 push_cast_
-        #     sync(Complete)），立刻重按必落在冷却窗口内。──
+        # ── 6a. use 活动 cast 分支（review finding [2]）：cast 进行中（casting 已推、
+        #     complete 未到）再按**同槽**，必须静默忽略。旧场景只在完成后的冷却
+        #     分支测静默，从未在活动 cast 中按同槽——「cast 中重启同槽 cast」的
+        #     错误实现会通过（重启会再推一条 casting）。──
+        active_anchor = last_event_time(bot)
+        bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
+        _assert_no_cast_sync(bot, active_anchor)
+        # 等本条 cast 走完 complete：6a 的 2s 负窗口已覆盖 1500ms cast 全程，
+        # complete 已缓冲，wait_for 立即返回；同步 Casting→Idle 让 6b 的冷却拒绝
+        # 落在干净起点。
         bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "cast_sync"
                 and e.data["payload"].get("phase") == "complete"
                 and e.data["payload"].get("slot") == BIND_SLOT
+                and e.t > active_anchor
             ),
             timeout=10.0,
             description=f"slot={BIND_SLOT} 第一次 cast 的 cast_sync(complete)",
         )
+
+        # ── 6b. use 冷却分支（review finding [5]）：cast 完成后槽 1 进入 1500ms
+        #     冷却（DEFAULT_COOLDOWN_MS，cast 完成 tick 起算），期间再次 use 必须
+        #     静默。旧场景只在解绑槽 5 / 越界槽 9 上测静默，从未在冷却中的已绑定
+        #     槽上测——忽略冷却、命中即再开 cast 的错误实现会通过。收到 complete
+        #     时冷却已随同 tick 写入（cast_emit set_cast_cooldown 先于 push_cast_
+        #     sync(Complete)），立刻重按必落在冷却窗口内。──
         cooldown_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
         _assert_no_cast_sync(bot, cooldown_anchor)
+
+        # ── 6c. 冷却恢复（review finding [2]）：冷却窗口结束后同槽必须可再次施放。
+        #     6b 的 2s 负窗口自 cooldown_anchor（>= complete 时刻）起算，覆盖了
+        #     1500ms 冷却全程——返回时冷却必已过期，此时再按同槽必须启动一条**新**
+        #     cast。错误实现「槽一用即永久不可用 / 冷却永不结束」在此红（wait_for
+        #     超时）。──
+        bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
+        recovered = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "cast_sync"
+                and e.data["payload"].get("phase") == "casting"
+                and e.data["payload"].get("slot") == BIND_SLOT
+                and e.t > cooldown_anchor
+            ),
+            timeout=10.0,
+            description=f"冷却恢复后 slot={BIND_SLOT} 重新施放的 cast_sync(casting)",
+        ).data["payload"]
+        assert int(recovered.get("duration_ms", 0)) == 1500, (
+            f"冷却恢复 cast 的 duration_ms 应为 1500，实际 {recovered.get('duration_ms')!r}"
+        )
+        # 恢复 cast 同样要等 complete 收尾：后续 step 7 在异槽 use，玩家 Casting 态
+        # 未清会触发 UserCancel+重启而非干净新 cast（见 7a 注释），必须同步回 Idle。
+        recover_anchor = last_event_time(bot)
+        bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "cast_sync"
+                and e.data["payload"].get("phase") == "complete"
+                and e.data["payload"].get("slot") == BIND_SLOT
+                and e.t > recover_anchor
+            ),
+            timeout=10.0,
+            description=f"冷却恢复 cast 的 cast_sync(complete)",
+        )
 
         # ── 7. 最大合法槽 8 的绑定 + 使用（review finding [4]）──
         #    契约定义 0..=8 合法；旧场景只 bind slot 1、拒 slot 9，从未触达最大
@@ -389,6 +437,37 @@ def run(env) -> None:
         anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 5})
         _assert_no_cast_sync(bot, anchor)
+
+        # ── 8b. 未绑定槽请求不得打断进行中的 slot 0 cast（review finding [1]）──
+        #    7b 刚启动 slot 0 的 1500ms cast，8 的未绑定槽请求此时到达。只断言
+        #    「无新 casting」放过了「先走 cast 闸门取消 slot 0、再发现槽 5 未绑定」
+        #    的错误实现——cancel 不发新 casting 事件（发 cast_sync{phase=interrupt,
+        #    outcome=user_cancel}），却中断 slot 0 的效果。双向封死：(a) 窗口内
+        #    不得出现 slot 0 的 interrupt 事件；(b) slot 0 的 cast 必须仍走完
+        #    complete。8 的 2s 负窗口已覆盖 interrupt/complete 的到达窗口。
+        interrupted = [
+            e
+            for e in bot.events_of("server_data")
+            if e.data.get("payload_type") == "cast_sync"
+            and e.data["payload"].get("slot") == 0
+            and e.data["payload"].get("phase") == "interrupt"
+            and e.t > anchor
+        ]
+        assert not interrupted, (
+            f"[{bot.username}] 未绑定槽请求不得打断 slot 0 的进行中 cast，"
+            f"实际收到 {len(interrupted)} 条 cast_sync(interrupt, slot=0)"
+        )
+        bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "cast_sync"
+                and e.data["payload"].get("phase") == "complete"
+                and e.data["payload"].get("slot") == 0
+                and e.t > anchor
+            ),
+            timeout=10.0,
+            description="未绑定槽请求后 slot 0 的 cast 仍应走完 complete",
+        )
 
         # ── 9. use_quick_slot 静默：slot>=9 越界 → 无新 cast_sync ──
         anchor = last_event_time(bot)

@@ -108,8 +108,13 @@ def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
     从不 bump revision，所以「窗口内无更高 revision」通常等价于「无变更」。
     但 review finding [8]：revision 不动不代表内容不动——错误实现可直接改容器/装备
     字段而不走 bump_revision API（绕过 revision 感知的写路径），仍产生一条 revision
-    不变的快照。故在 revision 检查之外再对**最近一次权威快照**做占用字段签名比对：
-    基线捕获在 intent 前、期间无任何 inventory 命令，签名任何漂移都是拒绝路径违规。"""
+    不变的快照。故在 revision 检查之外再对权威快照做占用字段签名比对：基线捕获在
+    intent 前、期间无任何 inventory 命令，签名任何漂移都是拒绝路径违规。
+    review finding [5]（round 10）：签名比对必须拿 **e.t > anchor_t** 的权威快照——
+    错误实现不 bump revision 也不立即发快照时，NEGATIVE_WINDOW 内可能没有新快照，
+    `latest_inventory_snapshot` 仍指向 intent 前的基线，签名比对落空。本实现 wait_for
+    下一条 > anchor_t 的快照（拒绝路径无回推，唯一来源是周期 flush ~5s 一条），
+    其携带的才是请求后的权威状态。"""
     baseline_revision = int(baseline["revision"])
     time.sleep(NEGATIVE_WINDOW)
     stray = [
@@ -124,8 +129,20 @@ def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
             f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无 revision 变更"
             f"（>{baseline_revision}），实际收到 {len(stray)} 条"
         )
-    latest = latest_inventory_snapshot(bot)
-    if _inventory_signature(latest) != _inventory_signature(baseline):
+    # review finding [5]：签名比对必须拿 **e.t > anchor_t** 的权威快照。拒绝路径
+    # （RealmTooLow/NotEnoughQi/MissingMaterial/instance 不存在）从不主动回推，唯一
+    # > anchor_t 的快照来源是周期 flush（~5s 一条，revision 不变）——等到下一条
+    # （若窗口内已到达则立即返回），其携带的才是请求后的权威状态。
+    post = bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.data.get("payload_type") == "inventory_snapshot"
+            and e.t > anchor_t
+        ),
+        timeout=10.0,
+        description=f"请求后（t>{anchor_t:.2f}）的权威 inventory_snapshot（周期 flush）",
+    ).data["payload"]
+    if _inventory_signature(post) != _inventory_signature(baseline):
         raise BotAssertionError(
             f"[{bot.username}] 拒绝后背包占用字段应保持不变（基线 revision="
             f"{baseline_revision}），实际内容漂移"
