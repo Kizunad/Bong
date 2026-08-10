@@ -130,6 +130,24 @@ def _payload_of(event) -> dict:
         ) from error
 
 
+def _decode_payload_request_id(event) -> tuple[object | None, str | None]:
+    """解码 payload 的 request_id；返回 ``(request_id, 描述)``。
+
+    合法 JSON 对象返回 ``(request_id 或 None, None)``；非对象 JSON（数组/字符串/
+    数字/null）与非法 JSON 返回 ``(None, 描述)``。匹配器据此不崩（不得对非 dict
+    调 ``.get`` 抛 AttributeError），负向断言据此把「形状错误但确实送达的 payload」
+    判为违约并报告收到的形状。
+    """
+    raw = event.data["data"]
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return None, f"payload 不是合法 JSON：{error!r}（bytes={raw[:80]!r}）"
+    if not isinstance(data, dict):
+        return None, f"payload 是 {type(data).__name__} 而非 JSON 对象：{data!r}"
+    return data.get("request_id"), None
+
+
 def expect_agent_ui_request(
     bot,
     request_id: str,
@@ -139,31 +157,39 @@ def expect_agent_ui_request(
 ) -> dict | None:
     """等 request_id 匹配的 bong:agent_ui_request payload 并断言形状。
 
-    ``expect=False`` 时超时返回 None（负向断言：不应下发）。
+    ``expect=False`` 时超时返回 None（负向断言：不应下发）。负向断言观测的是
+    **任何** bong:agent_ui_request payload 是否在窗口内到达目标 bot——拒绝路径的
+    契约是「面板不下发」，不是「不下发指定 request_id 的面板」：实现若漏做门禁却
+    仍发出形状错误（request_id 缺失/损坏/非对象 JSON）的 payload，必须失败并报告
+    收到的形状，而不是靠 request_id 过滤把错误下发当干净拒绝。bong:agent_ui_request
+    是 per-client custom payload（server 端 ``send_custom_payload``），本 bot 只会
+    收到发给自己的 payload，无跨 bot 串扰。
     """
 
+    def _on_channel_after(event) -> bool:
+        return (
+            event.kind == "payload"
+            and event.data["channel"] == REQ_CHANNEL
+            and (after is None or event.t > after)
+        )
+
     def matches(event) -> bool:
-        if event.kind != "payload" or event.data["channel"] != REQ_CHANNEL:
+        if not _on_channel_after(event):
             return False
-        if after is not None and event.t <= after:
-            return False
-        try:
-            return (
-                json.loads(event.data["data"].decode("utf-8")).get("request_id")
-                == request_id
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return False
+        got_id, _ = _decode_payload_request_id(event)
+        return got_id == request_id
 
     if not expect:
         try:
-            bot.wait_for(
-                matches, timeout, f"request_id={request_id} 的 {REQ_CHANNEL} payload"
+            event = bot.wait_for(
+                _on_channel_after, timeout, f"任何 {REQ_CHANNEL} payload（负向窗口）"
             )
         except BotAssertionError:
             return None
+        got_id, note = _decode_payload_request_id(event)
+        detail = note if note is not None else f"request_id={got_id!r}"
         raise BotAssertionError(
-            f"不应出现 request_id={request_id} 的 {REQ_CHANNEL} payload（拒绝路径漏下发）"
+            f"不应出现任何 {REQ_CHANNEL} payload（拒绝路径漏下发），实际收到：{detail}"
         )
     event = bot.wait_for(
         matches, timeout, f"request_id={request_id} 的 {REQ_CHANNEL} payload"
@@ -188,13 +214,8 @@ def expect_agent_ui_close(
             return False
         if after is not None and event.t <= after:
             return False
-        try:
-            return (
-                json.loads(event.data["data"].decode("utf-8")).get("request_id")
-                == request_id
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return False
+        got_id, _ = _decode_payload_request_id(event)
+        return got_id == request_id
 
     if not expect:
         try:

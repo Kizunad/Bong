@@ -4853,6 +4853,41 @@ class _FakeTimeoutSocket:
         raise TimeoutError("timed out")
 
 
+class _FakeDripPartialSocket:
+    """recv 每次成功返回一小块「永不收尾」的部分 RESP 帧字节的假 socket。
+
+    帧重组路径：分片持续到达（每次 recv 都有数据、从不抛 TimeoutError），socket
+    超时永远触发不了，只有 ``_next_frame`` 内部逐次核对绝对 deadline 才能让
+    ``wait_message`` 按时返回——靠外层循环 deadline 检查兜底的实现会无限 recv 下去。
+    首块喂声明 2MB bulk 的长度头，之后每块只给 512B body，单帧永远重组不完。
+    记录每次 settimeout 值供测试校验其受剩余 deadline 约束；recv 设上限兜底，防
+    回归实现让测试无限挂起。
+    """
+
+    def __init__(self) -> None:
+        self.timeout: float | None = None
+        self._settimeouts: list[float] = []
+        self._recvs = 0
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        self._settimeouts.append(timeout)
+
+    def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError("recv 被调用但未先 settimeout")
+        self._recvs += 1
+        if self._recvs > 2000:
+            raise AssertionError(
+                "部分帧被持续喂入但绝对 deadline 未被强制：wait_message 应按时返回"
+            )
+        # 每块在 socket 超时内到达（睡极短时间），触发不了 socket 级 TimeoutError。
+        time.sleep(min(self.timeout, 0.001))
+        if self._recvs == 1:
+            return b"$2000000\r\n"
+        return b"z" * 512
+
+
 class RedisClientWaitDeadlineTest(unittest.TestCase):
     """wait_message 的 recv 窗口必须受调用方 deadline 约束。
 
@@ -4941,6 +4976,56 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
             got, "非 dict JSON 消息应被跳过（继续等满窗口），而不是抛 AttributeError"
         )
         self.assertGreaterEqual(elapsed, 0.2, "跳过非 dict 后仍须等满负向窗口")
+
+    def test_partial_frame_respects_absolute_deadline_negative(self):
+        # finding：deadline 测试只覆盖完全空闲的 socket（recv 即抛 TimeoutError），
+        # 帧重组路径（一次 _next_frame 内多次成功 recv）没测到——分片持续喂入、
+        # socket 超时永不触发，只有绝对 deadline 被强制才按 0.2s 返回 None；
+        # io_timeout=10s 明显大于窗口，若按 io_timeout 兜底会拖满 10s。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        got = redis.wait_message(
+            "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
+        )
+        elapsed = time.monotonic() - started
+        self.assertIsNone(got, "部分帧持续喂入时负向窗口仍须按时返回 None")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
+        self.assertLess(
+            elapsed, 3.0, "部分帧不得拖过调用方 deadline（io_timeout=10s 更大）"
+        )
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            0.2 + 0.05,
+            "帧重组期间的每次 socket 超时都必须受剩余 deadline 约束",
+        )
+
+    def test_partial_frame_respects_absolute_deadline_positive(self):
+        # 正向路径同款：部分帧持续喂入时，断言必须在 deadline 处抛 AssertionError，
+        # 而不是被无限重组拖住。
+        redis = RedisClient(io_timeout=10.0)
+        sock = _FakeDripPartialSocket()
+        redis._sub_sock = sock  # type: ignore[assignment]
+        started = time.monotonic()
+        with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
+            redis.wait_message(
+                "bong:agent_ui_response",
+                lambda payload: False,
+                timeout=0.2,
+                expect=True,
+            )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.2, "正窗口断言必须等满 deadline 才抛")
+        self.assertLess(elapsed, 3.0, "部分帧不得拖过调用方 deadline（正向断言）")
+        self.assertGreater(
+            len(sock._settimeouts), 1, "帧重组应多次 recv/settimeout，而非单次阻塞"
+        )
 
 
 class _AgentUiFakeBot(_FakeBot):
@@ -5217,17 +5302,109 @@ class AgentUiHelperTest(unittest.TestCase):
         self.assertEqual(payload["request_id"], "req_1")
         self.assertEqual(payload["target_player"], "offline:Fake")
 
-    def test_expect_agent_ui_request_negative_when_absent(self):
-        bot = _AgentUiFakeBot([_req_event(1.0, "req_other")])
+    def test_expect_agent_ui_request_negative_when_truly_absent(self):
+        # 窗口内完全没有 payload 事件：负向断言超时返回 None（干净）。
+        bot = _AgentUiFakeBot([])
         self.assertIsNone(
             expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False),
-            "期望不应出现的 request_id 超时应返回 None",
+            "窗口内无任何 payload 时负向断言应返回 None",
         )
 
     def test_expect_agent_ui_request_negative_fails_when_present(self):
         bot = _AgentUiFakeBot([_req_event(1.0, "req_1")])
         with self.assertRaises(BotAssertionError):
             expect_agent_ui_request(bot, "req_1", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_other_request_id(self):
+        # finding：拒绝路径契约是「面板不下发」，不是「不下发指定 request_id 的面板」。
+        # request_id 与期望不符的 payload 在窗口内到达仍是错误下发，负向断言必须失败
+        # —— 不能靠 request_id 过滤把它当干净拒绝（唯一 request_id 防跨 run 碰撞，
+        # 但不能豁免同 bot 收到的其它下发）。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_other")])
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_missing", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_missing_request_id(self):
+        # 漏掉 request_id 字段的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"target_player":"offline:Fake","xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_corrupted_request_id(self):
+        # request_id 被损坏（非字符串）的 payload 仍是错误下发，必须失败并报告形状。
+        raw = (
+            b'{"request_id":42,"target_player":"offline:Fake",'
+            b'"xml":"<owo-ui/>","timeout_ticks":600}'
+        )
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不应出现任何"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_non_object_json(self):
+        # 合法非对象 JSON（数组）到达：既不能崩（对非 dict 调 .get 抛 AttributeError），
+        # 也不能被 request_id 过滤当干净——它是错误下发的 payload，必须失败并报告形状。
+        raw = b'["not","a","dict"]'
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "而非 JSON 对象"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_negative_fails_for_invalid_json(self):
+        raw = b"not json at all"
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": raw},
+                )
+            ]
+        )
+        with self.assertRaisesRegex(BotAssertionError, "不是合法 JSON"):
+            expect_agent_ui_request(bot, "req_expected", timeout=5.0, expect=False)
+
+    def test_expect_agent_ui_request_positive_skips_non_dict_payloads(self):
+        # 正向匹配器对非对象 JSON 不得崩（.get 抛 AttributeError）：跳过噪音，
+        # 继续等真正匹配的 payload。
+        bot = _AgentUiFakeBot(
+            [
+                _FakeEvent(
+                    1.0,
+                    "payload",
+                    {"channel": "bong:agent_ui_request", "data": b'["noise"]'},
+                ),
+                _req_event(2.0, "req_real"),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_real", timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_real")
+        self.assertEqual(bot._now, 2.0, "正向匹配必须消费到真正的匹配事件")
 
     def test_expect_agent_ui_request_after_mark(self):
         # 同一 request_id 在 marker 前后各一：request-id 过滤无法区分二者，

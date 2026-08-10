@@ -211,11 +211,24 @@ class RedisClient:
         # 吞掉 subscribe ack（*3 [subscribe, channel, count]）
         self._next_frame()
 
-    def _next_frame(self):
+    def _next_frame(self, deadline: float | None = None):
+        """取下一帧；``deadline``（``time.monotonic()`` 绝对时刻）给定时，跨多次
+        recv 的帧重组也受该绝对时限约束：每次 recv 前按剩余时间缩 socket 超时，
+        剩余耗尽即抛 TimeoutError——绝不因分片持续到达把单帧重组拖过调用方 deadline
+        （socket 超时在这里永远触发不了，靠外层循环 deadline 检查兜底没用）。无
+        deadline（subscribe ack 等非等待路径）保持 io_timeout 行为。
+        """
         while True:
             frame = self._frames.next_frame()
             if frame is not _INCOMPLETE_FRAME:
                 return frame
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("RESP 帧重组超过调用方 deadline，未收完整帧")
+                self._sub_sock.settimeout(min(self.io_timeout, remaining))
+            else:
+                self._sub_sock.settimeout(self.io_timeout)
             data = self._sub_sock.recv(4096)
             if not data:
                 raise OSError(f"redis {self.host}:{self.port} 订阅连接被对端关闭")
@@ -242,12 +255,13 @@ class RedisClient:
                         f"期望 {timeout}s 内收到 channel={channel} 的匹配消息，实际超时"
                     )
                 return None
-            # recv 窗口不能超过剩余 deadline：负向断言（expect=False）的窗口
-            # 可能短于 io_timeout，固定 10s 阻塞会直接抛 TimeoutError 而非按
-            # 调用方 deadline 返回 None。
-            self._sub_sock.settimeout(min(self.io_timeout, remaining))
+            # deadline 是端到端绝对时限：不仅 socket 超时受剩余时间约束，帧重组期间
+            # 多次成功的 recv（部分帧分片持续到达、socket 超时永不触发）也逐次按剩余
+            # 时间缩超时、耗尽即抛 TimeoutError。负向断言（expect=False）的窗口可能
+            # 短于 io_timeout，固定 10s 阻塞会直接抛 TimeoutError 而非按调用方
+            # deadline 返回 None。
             try:
-                frame = self._next_frame()
+                frame = self._next_frame(deadline)
             except TimeoutError:
                 continue
             if isinstance(frame, list) and len(frame) >= 3 and frame[0] == b"message":
