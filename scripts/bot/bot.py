@@ -304,22 +304,6 @@ class Bot:
                     "z": z,
                 },
             )
-        elif packet_id == mc.S2C_PLAYER_SPAWN:
-            entity_id = reader.varint()
-            raw_uuid = reader.data[reader.pos : reader.pos + 16]
-            reader.pos += 16
-            x, y, z = reader.f64(), reader.f64(), reader.f64()
-            self.entities[entity_id] = (x, y, z)
-            self._emit(
-                "player_spawn",
-                {
-                    "entity_id": entity_id,
-                    "uuid": raw_uuid.hex(),
-                    "x": x,
-                    "y": y,
-                    "z": z,
-                },
-            )
         elif packet_id in (mc.S2C_ENTITY_POSITION, mc.S2C_ENTITY_POSITION_ROTATION):
             entity_id = reader.varint()
             dx = reader.i16() / 4096.0

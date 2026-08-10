@@ -75,36 +75,72 @@ def run(env) -> None:
         bot.assert_alive("mineral_probe 拒绝面全程")
 
 
-def _column_probe_and_expect(bot, reason: str, label: str) -> None:
-    """列盲扫一次，命中（in-range → realm/矿脉门触发）即校验 denial_reason。
+def _drain_probe_results(bot, quiet: float = 1.0, max_wait: float = 4.0) -> None:
+    """批次间屏障：静置到窗口内无新 mineral_probe_result 再放行。
 
-    返回首个 mineral_probe_result。若整列都落在权威位置 6m 外（位置已移动）则抛
-    BotAssertionError，由调用处重读位置换列。注意 wait_for 每次 cursor=0 从 0 重扫
-    （含历史事件），同 payload_type 连续断言必须按 e.t > sent_at 过滤，避免把上一条
-    response 当成本次结果。
+    探针结果异步到达，批间必须排空在途响应——否则上一扫的迟到响应会落入下一批次
+    sent_at 之后的窗口，被当成当前批次结果（central-review 2029 #3）。
     """
-    c = bot.position
-    if c is None:
-        raise BotAssertionError("mineral_probe 场景需要 pos_look 后的位置，实际 position=None")
-    x = math.floor(c[0]) + 1
-    z = math.floor(c[2])
-    base_y = math.floor(c[1])
-    sent_at = bot.events[-1].t if bot.events else 0.0
-    for y in range(base_y + Y_LO, base_y + Y_HI + 1, Y_STEP):
-        bot.intent({**PROBE_REQUEST, "x": x, "y": y, "z": z})
-    result = bot.wait_for(
-        lambda e: e.kind == "server_data"
-        and e.data["payload_type"] == "mineral_probe_result"
-        and e.t > sent_at,
-        timeout=COLUMN_TIMEOUT,
-        description=f"{label}: 竖直列 mineral_probe_result (t>{sent_at:.3f})",
+    deadline = time.monotonic() + max_wait
+    while True:
+        anchor = bot.events[-1].t if bot.events else 0.0
+        time.sleep(quiet)
+        stray = [
+            e
+            for e in bot.events_of("server_data")
+            if e.data["payload_type"] == "mineral_probe_result" and e.t > anchor
+        ]
+        if not stray:
+            return
+        if time.monotonic() > deadline:
+            return  # 仍有迟到响应但已到上限：放行，由调用方按结果断言兜底
+
+
+def _column_probe_and_expect(bot, reason: str, label: str) -> None:
+    """竖直列盲扫并校验 denial_reason；超时则重读位置换列，最多重试多次。
+
+    docstring 记载的修法（central-review 2029 #2）：权威 y 周期性 +10 会让单点探针
+    必超 6m 被 dispatch 前置过滤静默丢弃，因此以 bot.position 为中心的列盲扫 + 超时
+    后重读位置换列重试，`COLUMN_MAX_ATTEMPTS` 真正被使用；全部超时才报错。
+    """
+    for attempt in range(1, COLUMN_MAX_ATTEMPTS + 1):
+        # 批次屏障：先排空上一扫在途响应，本批 sent_at 之后只可能是本批结果——
+        # 迟到响应不得跨 realm 阶段被误认成另一批（central-review 2029 #3）。
+        _drain_probe_results(bot)
+        c = bot.position
+        if c is None:
+            raise BotAssertionError("mineral_probe 场景需要 pos_look 后的位置，实际 position=None")
+        x = math.floor(c[0]) + 1
+        z = math.floor(c[2])
+        base_y = math.floor(c[1])
+        sent_at = bot.events[-1].t if bot.events else 0.0
+        for y in range(base_y + Y_LO, base_y + Y_HI + 1, Y_STEP):
+            bot.intent({**PROBE_REQUEST, "x": x, "y": y, "z": z})
+        try:
+            result = bot.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "mineral_probe_result"
+                and e.t > sent_at,
+                timeout=COLUMN_TIMEOUT,
+                description=f"{label}: 竖直列 mineral_probe_result (t>{sent_at:.3f})",
+            )
+        except BotAssertionError:
+            # 整列都落在权威位置 6m 外（y 带已移动）：排空本批可能迟到的结果后
+            # 重读位置换一列重试。
+            _drain_probe_results(bot)
+            continue
+        payload = result.data["payload"]
+        if payload.get("kind") != "denied" or payload.get("denial_reason") != reason:
+            raise BotAssertionError(
+                f"[{bot.username}] {label}：期望 denied/{reason}，实际 {payload}"
+            )
+        _drain_probe_results(bot)  # 本批其余候选的迟到响应排空，防落入下一批次窗口
+        bot.assert_alive(f"{label} 后")
+        return
+    raise BotAssertionError(
+        f"[{bot.username}] {label}：{COLUMN_MAX_ATTEMPTS} 次列盲扫均超时"
+        f"（权威位置持续移出 y 带，需人工确认 fixture 行为）"
     )
-    payload = result.data["payload"]
-    if payload.get("kind") != "denied" or payload.get("denial_reason") != reason:
-        raise BotAssertionError(
-            f"[{bot.username}] {label}：期望 denied/{reason}，实际 {payload}"
-        )
-    bot.assert_alive(f"{label} 后")
 
 
 def _assert_no_probe_result(bot, sent_at: float, description: str) -> None:

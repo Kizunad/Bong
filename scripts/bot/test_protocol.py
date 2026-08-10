@@ -4451,6 +4451,38 @@ class PlayerPacketContractTest(unittest.TestCase):
         self.assertEqual(event.data["yaw"], 0)
         self.assertEqual(event.data["pitch"], 0)
 
+    def test_player_spawn_exact_event_and_entities(self):
+        # central-review 2029 #1：packet 级 pin 完整解码契约——已知 uuid + 正负坐标，
+        # 逐字段精确还原 emitted event 与 self.entities 位置登记；坐标读取提前跳
+        # 15/17 字节等错误布局会在此撞红（不只是 entity_id 为正）。
+        bot = _bare_bot()
+        alice = uuid.UUID(int=424242)
+        spawn = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(900)
+            + alice.bytes
+            + struct.pack(">ddd", 12.5, 64.0, -33.25)
+            + b"\x2a\x4b"  # yaw=42, pitch=75
+        )
+        bot._dispatch(spawn)
+        self.assertEqual(bot.entity_pos(900), (12.5, 64.0, -33.25))
+        self.assertEqual(bot.player_entity_uuids[900], str(alice))
+        event = bot.events_of("player_spawn")[-1]
+        self.assertEqual(
+            event.data,
+            {
+                "entity_id": 900,
+                "uuid": str(alice),
+                "username": None,
+                "x": 12.5,
+                "y": 64.0,
+                "z": -33.25,
+                "yaw": 42,
+                "pitch": 75,
+            },
+            "player_spawn 必须逐字段精确还原（含正负坐标、UUID 与实体位置登记）",
+        )
+
     def test_destroy_removes_entity_to_player_mapping(self):
         bot = _bare_bot()
         alice = uuid.UUID(int=1)
@@ -4552,11 +4584,48 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["entity_id"], 999)
         self.assertEqual(decoded["position"], [-3, 71, -8], "sint32 负坐标应 zigzag 还原")
 
-    def test_qi_color_observed_field_74_decodes_color_kind_names(self):
+    def test_qi_color_observed_field_74_decodes_all_color_kinds(self):
+        # central-review 2029 #4：只 pin (field3=3→Mellow) 会让「其余 9 个 ColorKind
+        # 映射错误」的实现也通过——穷举全部 10 个枚举成员逐一 pin 名字映射。
+        kinds = {
+            1: "Sharp",
+            2: "Heavy",
+            3: "Mellow",
+            4: "Solid",
+            5: "Light",
+            6: "Intricate",
+            7: "Gentle",
+            8: "Insidious",
+            9: "Violent",
+            10: "Turbid",
+        }
+        for raw, expected in kinds.items():
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + _pb_varint_field(3, raw)
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                expected,
+                f"field3={raw} 应解码为 {expected}",
+            )
+            self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+            self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_qi_color_observed_field_74_decodes_present_secondary(self):
+        # central-review 2029 #4：secondary 是可选字段，缺省路径之上还须 pin 携带
+        # 路径——恒返回 None 的错误实现（present 也丢）会在此撞红。
         inner = (
             _pb_string(1, "offline:BGD9QiH")
             + _pb_string(2, "offline:BGD9QiV")
-            + _pb_varint_field(3, 3)  # COLOR_KIND_MELLOW
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 9)  # secondary=VIOLENT
             + _pb_varint_field(5, 0)
             + _pb_varint_field(6, 0)
             + _pb_varint_field(7, 2)
@@ -4564,7 +4633,11 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
         self.assertEqual(decoded["type"], "qi_color_observed")
         self.assertEqual(decoded["main"], "Mellow")
-        self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+        self.assertEqual(
+            decoded["secondary"],
+            "Violent",
+            "携带 secondary(field4=9) 时应解码为 Violent",
+        )
         self.assertEqual(decoded["realm_diff"], 2)
 
     def test_event_alert_field_77_decodes_message(self):
