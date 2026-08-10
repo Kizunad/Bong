@@ -87,19 +87,31 @@ def _pos_look_after(bot, anchor, xyz, timeout, description):
     )
 
 
-def _assert_silent_window(bot, anchor, label, what="coffin_state"):
-    """静默窗口：anchor 后 2s 内不得出现 new 的 what 事件（拒绝路径无回执契约）。"""
+def _assert_silent_window(bot, anchor, label, check_chat=False):
+    """静默窗口：anchor 后 2s 内不得出现 coffin_state（**任何值**，含 in_coffin:false）、
+    bot 自身实体带 flags 的 metadata 更新、或（check_chat）§c[棺] 前缀 chat 回执。
+
+    拒绝路径的无回执契约是「什么都不该来」，不是「没收到成功回执」——只滤
+    in_coffin:true 会把「拒发 in_coffin:false / 错误 chat / 状态更新」的坏实现放过去。"""
     time.sleep(2.0)
     with bot._lock:
         hits = [
             e
             for e in bot.events
             if e.t > anchor
-            and (e.kind == "server_data" and e.data["payload_type"] == what)
+            and (
+                (e.kind == "server_data" and e.data["payload_type"] == "coffin_state")
+                or (
+                    e.kind == "entity_metadata"
+                    and e.data["entity_id"] == bot.entity_id
+                    and e.data["flags"] is not None
+                )
+                or (check_chat and e.kind == "chat" and "§c[棺]" in e.data.get("text", ""))
+            )
         ]
     if hits:
         raise AssertionError(
-            f"[{bot.username}] {label} 应静默拒绝（无 {what} 回执），"
+            f"[{bot.username}] {label} 应静默拒绝（无 coffin_state/metadata/回执），"
             f"实际窗口内出现 {len(hits)} 条: {hits[:3]}"
         )
 
@@ -253,24 +265,23 @@ def run(env) -> None:
         # ── occupied 拒绝：第二 bot 进同一棺静默 ───────────────────────────
         with env.new_bot("CoEnB") as bystander:
             wait_for_ready(bystander)
+            before_pos = bystander.position
             b_anchor = last_event_time(bystander)
             bystander.intent(
                 {"type": "coffin_enter", "v": 1, "x": lower[0], "y": lower[1], "z": lower[2]}
             )
-            time.sleep(2.0)
-            with bystander._lock:
-                b_states = [
-                    e
-                    for e in bystander.events
-                    if e.kind == "server_data"
-                    and e.data["payload_type"] == "coffin_state"
-                    and e.t > b_anchor
-                    and e.data["payload"]["in_coffin"] is True
-                ]
-            if b_states:
+            # occupied 拒绝契约是**全静默**（server occupied_by 分支直接 continue）：
+            # 无 coffin_state（任何值）、无 metadata、无 §c[棺] 回执、位置不变——与距离
+            # 路径同用综合静默窗口，而不是只滤 in_coffin:true。
+            _assert_silent_window(
+                bystander, b_anchor, "occupied CoffinEnter", check_chat=True
+            )
+            if before_pos is not None and not all(
+                _approx(a, b) for a, b in zip(before_pos, bystander.position)
+            ):
                 raise AssertionError(
-                    f"occupied 拒绝契约：{bystander.username} 不得收到 in_coffin:true，"
-                    f"实际 {len(b_states)} 条"
+                    f"occupied 拒绝后 {bystander.username} 位置不应变化，"
+                    f"期望 {before_pos}，实际 {bystander.position}"
                 )
 
         # ── leave 腾棺：清 occupied_by + current_coffin，为维度门测试铺路 ──

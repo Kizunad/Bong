@@ -230,9 +230,13 @@ def run(env) -> None:
             _assert_silent_window(bot, anchor, "二次 CoffinLeave（幂等）")
 
             # ── occupied_by 清的行为级读回：B 随即进同一棺必须成功 ─────────
+            # 距离必须对**实际放棺坐标**（_place_coffin 返回的 lower）判定，而不是对
+            # bot 的原站位 (px,py,pz)：放棺位可偏移 PLACE_OFFSET 格，站在 (px,py,pz)
+            # 对面 5m 的旁观者可能在服务器 6m 交互半径之外，被静默拒绝后场景超时。
+            # server 按 coffin 中心（lower+0.5）算 3D 平方距离 ≤ 36.0。
             bx, by, bz = bystander.position
-            distance = math.dist((bx, by, bz), (px, py, pz))
-            if distance > ENTER_RANGE:
+            coffin_center = (lower[0] + 0.5, lower[1] + 0.5, lower[2] + 0.5)
+            if math.dist((bx, by, bz), coffin_center) > ENTER_RANGE:
                 bystander.move_to(px, py, pz, speed=5.5)
                 import time
 

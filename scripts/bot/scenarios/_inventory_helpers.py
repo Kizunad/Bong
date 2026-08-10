@@ -84,42 +84,62 @@ def wait_inventory_contains(bot, item_id: str, timeout: float = 10.0) -> dict[st
     return event.data["payload"]
 
 
-def find_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any] | None:
+def find_items(snapshot: dict[str, Any], item_id: str) -> list[dict[str, Any]]:
+    """snapshot 中 item_id 的**全部**匹配（placed/equipped/hotbar 全遍历）。
+
+    find_item 只返回首个匹配；同一模板可同时存在多实例（恢复的旧存档实例 + 新 give 的
+    同 id 实例），单查会漏掉其余实例，导致计数/排除失真。"""
+    matches: list[dict[str, Any]] = []
     for placed in snapshot.get("placed_items", []):
         if placed["item"]["item_id"] == item_id:
-            return {
-                "location": {
-                    "kind": "container",
-                    "container_id": placed["container_id"],
-                    "row": placed["row"],
-                    "col": placed["col"],
-                },
-                "item": placed["item"],
-            }
+            matches.append(
+                {
+                    "location": {
+                        "kind": "container",
+                        "container_id": placed["container_id"],
+                        "row": placed["row"],
+                        "col": placed["col"],
+                    },
+                    "item": placed["item"],
+                }
+            )
     for slot, values in snapshot.get("equipped", {}).items():
         if slot.endswith("_worn"):
             equip_slot = slot[: -len("_worn")]
             for item in values:
                 if item["item_id"] == item_id:
-                    return {
-                        "location": {"kind": "equip", "slot": equip_slot, "state": "worn"},
-                        "item": item,
-                    }
+                    matches.append(
+                        {
+                            "location": {
+                                "kind": "equip",
+                                "slot": equip_slot,
+                                "state": "worn",
+                            },
+                            "item": item,
+                        }
+                    )
         elif slot.endswith("_held"):
             item = values
             if item and item["item_id"] == item_id:
-                return {
-                    "location": {
-                        "kind": "equip",
-                        "slot": slot[: -len("_held")],
-                        "state": "held",
-                    },
-                    "item": item,
-                }
+                matches.append(
+                    {
+                        "location": {
+                            "kind": "equip",
+                            "slot": slot[: -len("_held")],
+                            "state": "held",
+                        },
+                        "item": item,
+                    }
+                )
     for index, item in enumerate(snapshot.get("hotbar", [])):
         if item and item["item_id"] == item_id:
-            return {"location": {"kind": "hotbar", "index": index}, "item": item}
-    return None
+            matches.append({"location": {"kind": "hotbar", "index": index}, "item": item})
+    return matches
+
+
+def find_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any] | None:
+    found = find_items(snapshot, item_id)
+    return found[0] if found else None
 
 
 def require_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
@@ -142,15 +162,15 @@ def require_container(snapshot: dict[str, Any], container_id: str) -> dict[str, 
 
 
 def inventory_item_instances(bot, item_id: str) -> set[int]:
-    """当前已知快照流中 item_id 的全部实例 id（含恢复/存档物品）。
+    """当前已知快照流中 item_id 的**全部**实例 id（含恢复/存档物品）。
 
     give 前调用：恢复的旧存档物品（如上次运行遗留）会在 clearinv 处理前仍出现在快照
-    流里，其 instance_id 对 place/consume 已失效，必须从「新实例」候选中排除。
+    流里，其 instance_id 对 place/consume 已失效，必须从「新实例」候选中排除。同一
+    快照可能同时含多个同 id 实例，必须逐个收集而非取首个匹配。
     """
     instances: set[int] = set()
     for event in _inventory_snapshot_events(bot):
-        found = find_item(event.data["payload"], item_id)
-        if found is not None:
+        for found in find_items(event.data["payload"], item_id):
             instances.add(found["item"]["instance_id"])
     return instances
 
@@ -169,8 +189,10 @@ def wait_inventory_contains_new_instance(
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and (found := find_item(e.data["payload"], item_id)) is not None
-        and found["item"]["instance_id"] not in exclude_instances,
+        and any(
+            found["item"]["instance_id"] not in exclude_instances
+            for found in find_items(e.data["payload"], item_id)
+        ),
         timeout=timeout,
         description=(
             f"含 item_id={item_id} 新实例（∉ {sorted(exclude_instances)}）的 inventory_snapshot"
