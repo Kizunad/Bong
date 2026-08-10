@@ -69,8 +69,19 @@ def run(env) -> None:
             # 手持非暗器（默认武器）发出投掷 intent —— 无载体投掷应被静默忽略。
             # 选非零方向声明确会走的投放分支：若服务器真解析到载体，会产生 despawn
             # 事件或库存变化。
+            # payload 须命中 server 端 ClientRequestV1::ThrowCarrier 实际 schema
+            # （slot/dir_unit/power；字段名写错会被 deny_unknown_fields 整包拒收，
+            # throw_carrier_intents 根本不会执行——静默不再是"空手护栏"而是反序列化
+            # 拒绝，场景就空了）。main_hand 持默认武器（无 anqi imprint），走
+            # throw_carrier_intents 的 imprint 查找 miss 分支静默 no-op。
             bot.intent(
-                {"type": "throw_carrier", "v": 1, "dir": [0.0, 0.0, 1.0], "power": 0.5}
+                {
+                    "type": "throw_carrier",
+                    "v": 1,
+                    "slot": "main_hand",
+                    "dir_unit": [0.0, 0.0, 1.0],
+                    "power": 0.5,
+                }
             )
 
             # 无本 bot 事件：窗口内不应冒出归属本 bot 的 projectile_despawned。

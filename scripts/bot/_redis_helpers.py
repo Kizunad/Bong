@@ -28,8 +28,23 @@ import socket
 import threading
 import time
 from typing import Any, Callable, Optional
+from urllib.parse import unquote, urlsplit
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379"
+
+
+def _frame_command(args: list[str]) -> bytes:
+    """把命令参数编码为 RESP2 数组 + 批量字符串（redis 客户端标准参数框架）。
+
+    每个参数都以字节长度前缀包裹，空格 / CRLF / 引号 / 二进制字节都不参与
+    inline 解析，天然免疫命令注入与参数分裂——绝不手拼 `AUTH user pass`
+    这样的命令文本（review finding [major]: AUTH 参数框架）。
+    """
+    out = bytearray(f"*{len(args)}\r\n".encode())
+    for arg in args:
+        raw = arg.encode("utf-8")
+        out += b"$" + str(len(raw)).encode() + b"\r\n" + raw + b"\r\n"
+    return bytes(out)
 
 
 class RespFrames:
@@ -102,33 +117,19 @@ class RespFrames:
 def _parse_redis_url(url: str) -> tuple[str, int, Optional[str], Optional[str]]:
     """解析 redis:// URL 为 (host, port, username, password)。
 
-    SUBSCRIBE 不需要选库，db 路径 / query / fragment 在转端口前全部剥离
-    （否则 port='6379/0' 或 '6379?x=1' 会 int() ValueError）；userinfo
-    （user:pass@）保留返回，供 RedisPubSub 连接后 AUTH，不再静默丢弃
-    （review finding [2]/[3]）。
+    authority 边界（/ ? # 取最早分隔符）、bracketed IPv6 主机、userinfo 分离
+    全部交给 urlsplit 的 RFC 3986 语义；userinfo 的百分号编码再由 unquote 解码。
+    SUBSCRIBE 不需要选库，db 路径 / query / fragment 被 urlsplit 天然剥离，
+    不再影响 host/port（review finding [major]: URL 解析）。
     """
     if not url:
         return "127.0.0.1", 6379, None, None
-    if not url.startswith("redis://"):
+    parts = urlsplit(url)
+    if parts.scheme != "redis":
         raise ValueError(f"unsupported redis url: {url!r}")
-    rest = url[len("redis://") :]
-    username: Optional[str] = None
-    password: Optional[str] = None
-    if "@" in rest:
-        userinfo, rest = rest.rsplit("@", 1)
-        if ":" in userinfo:
-            username, password = userinfo.split(":", 1)
-        else:
-            username = userinfo
-    # authority 在第一个 '/' / '?' / '#' 处结束（RFC 3986）。
-    for sep in ("/", "?", "#"):
-        idx = rest.find(sep)
-        if idx != -1:
-            rest = rest[:idx]
-            break
-    host, _, port = rest.partition(":")
-    port = int(port or "6379")
-    return host, port, username, password
+    username = unquote(parts.username) if parts.username is not None else None
+    password = unquote(parts.password) if parts.password is not None else None
+    return parts.hostname or "127.0.0.1", parts.port or 6379, username, password
 
 
 class RedisPubSub:
@@ -174,11 +175,13 @@ class RedisPubSub:
         """连接后先 AUTH 再 SUBSCRIBE，凭据不得静默丢弃（review finding [3]）。
 
         Redis 6+ 支持 ``AUTH <user> <pass>``；无用户名退化为 ``AUTH <pass>``
-        （默认用户）。+OK 即通过；-NOAUTH/-WRONGPASS 等错误帧立即抛错，让
-        配错凭据在连接阶段暴露，而不是场景跑起来才莫名失败。
+        （默认用户）。参数走 _frame_command 的 RESP 批量字符串框架发送，密码含
+        空格 / CRLF 也不会被拆成多参数或注入新命令（review finding [major]）。
+        +OK 即通过；-NOAUTH/-WRONGPASS 等错误帧立即抛错，让配错凭据在连接
+        阶段暴露，而不是场景跑起来才莫名失败。
         """
-        cmd = f"AUTH {username} {password}" if username else f"AUTH {password}"
-        self._sock.sendall(cmd.encode() + b"\r\n")
+        args = ["AUTH"] + ([username] if username else []) + [password]
+        self._sock.sendall(_frame_command(args))
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             frame = self._frames.next_frame()
