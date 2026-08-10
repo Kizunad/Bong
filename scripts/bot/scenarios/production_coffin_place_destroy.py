@@ -11,12 +11,14 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   overlap 放置并吞掉实例）在第二探针处红（review finding [major]）。
 - 非空气目标（not empty）、距离 > 6.0（coffin_target_is_close 36.0 平方）均**静默拒绝**
   （warn 无回执）——只能靠实例计数不变断言。距离边界用 `_distance_boundary_pair` 的
-  (pass, fail) 目标对夹紧：pass=空气层中 d2≤36.0 的**最大**值（正确实现必须接受，
-  距离半径过小 / 比较方向写反在此红），fail=d2>36.0 的**最小**值（正确实现必须拒绝，
-  半径过大在此红）——exact-36.0 因 y 分量（bot 脚面 vs 目标块中心恒差 ≈1.2-1.5m）
-  无法用整块目标构造，pass/fail 是网格可构造的最窄边界带
-  （review finding [major] round 6：旧场景只测固定 offset=10 的过远拒绝，比较方向无
-  「恰内侧 + 恰外侧」配对保护）。
+  (pass, fail) 目标对夹紧：pass=空气层中 d2≤35.0 的**最大**值、fail=d2>36.0 的**最小**
+  值——(35.0, 36.0] 区间整块 target 无法命中（bot 脚面 y 与目标块中心 y 恒非整差），
+  `<= 36.0` 与 `< 36.0` 的排他区分需要**精确 d2==36.0**：exact 探针把 bot 精确
+  set_position 到 (tx+6.5, ty+0.5, tz+0.5)（整数减半整数，IEEE 精确），server 算得
+  dx=6.0/dy=0/dz=0 → d2==36.0，正确实现（含边界）必须接受并 spawn marker，排他实现
+  在此误拒而红（review finding [major] round 6：旧场景只测固定 offset=10 的过远拒绝，
+  比较方向无「恰内侧 + 恰外侧」配对保护；round 8：pass/fail 把比较方向夹在
+  [≤35, >36] 仍放走排他实现，exact 探针补上 36.0 本身）。
 - 异维（coffin_requires_overworld fail-closed，先于近距/实例校验）拒绝并逐字 chat：
   `§c[棺] 你不在主世界，无法操作延寿棺。`——对**完整文本**（含 §c 色码、[棺] 前缀、
   句末句号）整体相等断言，不接受任意前缀/后缀（review finding [major]：子串匹配
@@ -56,6 +58,14 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   是唯一清场信号；只移 registry 条目而留 stale 实体在此红。
 - 破坏后同一坐标重放必须再次 spawn 新 marker 实体——旧实体已 despawn + registry 清空的
   完整闭环。
+- 异维拒绝的 world 侧在 tsy 内观察（跨维时主世界实体不可见），返回主世界后**必须再扫**：
+  既有原 marker 以同 entity_id 重流（合法），任何新建且 entity_id != 原 marker 的
+  kind=160 spawn 即孤儿——错误实现绕过/独立于维度守卫、在主世界实体层创建 marker，
+  tsy 侧观察窗看不见、返回才流给 client，旧实现返回后直接进 break 断言（只等原 marker
+  destroy），孤儿以不同 entity_id 存活至场景结束（review finding [major] round 8）。
+- 场景收尾（全部 teardown break 之后）从事件流重建 live kind=160 实体集并断言为空——
+  任何 spawn 未配对 destroy 的 marker（异维孤儿、重复放置孤儿、漏破的 teardown marker）
+  在此红，锁定「destroy path 与拒绝路径不留任何世界 marker 残留」（round 8 收口）。
 
 **场景零残留（review finding [major] round 6）**：本场景自建的一切 coffin（stale 复查、
 距离边界复查、最终重放）都以 `coffin_break` 收尾——旧场景把两个注册棺（stale_pos 复查
@@ -392,6 +402,42 @@ def _distance_boundary_pair(bot, air_y, exclude=()):
     return pass_t, fail_t
 
 
+def _exact_boundary_target(bot, air_y, exclude=()):
+    """找一个可放置的空气 target T：bot set_position 到 (T.x+6.5, T.y+0.5, T.z+0.5) 后
+    server 侧 d2 恰为 36.0 —— `<= 36.0`（含边界）与 `< 36.0`（排他）的唯一区分点。
+
+    `_distance_boundary_pair` 只产出 d2≤35.0 与 d2>36.0 的样本：(35.0, 36.0] 区间整块
+    target 无法命中（bot 脚面 y 与目标块中心 y 恒非整差，dy² 总把 d2 拉偏）。但 player
+    坐标连续——把 bot 精确 set_position 到 target 正 x 侧 6.5 格、y/z 对齐 target 中心
+    （整数减半整数，全部 IEEE 精确），server 计算 dx=6.0/dy=0.0/dz=0.0 → d2==36.0 精确，
+    `<=` 接受、`<` 拒绝，是排他边界唯一可观测的区分点。server 对 client 位置无移动
+    校验（combat anticheat 只管 reach/cooldown，非位移），set_position 的位置即权威值。
+
+    返回 T：T 与 T+1x（棺横跨两格）均不得在 exclude（首放棺占两格、其双键已注册，
+    probe 不能撞键）。在 ±DISTANCE_SEARCH_RANGE 里取距 bot 最近的可放置格。
+    """
+    bx, by, bz = bot.position
+    ix, iz = int(bx), int(bz)
+    best = None
+    best_d2 = None
+    for kx in range(-DISTANCE_SEARCH_RANGE, DISTANCE_SEARCH_RANGE + 1):
+        for kz in range(-DISTANCE_SEARCH_RANGE, DISTANCE_SEARCH_RANGE + 1):
+            cell = (ix + kx, air_y, iz + kz)
+            if cell in exclude:
+                continue
+            if (cell[0] + 1, cell[1], cell[2]) in exclude:
+                continue
+            d2 = kx * kx + kz * kz
+            if best_d2 is None or d2 < best_d2:
+                best_d2 = d2
+                best = cell
+    assert best is not None, (
+        f"exact-36.0 边界探针找不到可放置 target：bot={bx:.2f},{by:.2f},{bz:.2f} "
+        f"air_y={air_y} exclude={sorted(exclude)}"
+    )
+    return best
+
+
 # server 侧 mundane coffin marker 实体的 entity kind（entity_model.rs COFFIN_MUNDANE_ENTITY_KIND）
 # 与放置位置映射（coffin/mod.rs coffin_marker_position）：marker = (lower.x+1, lower.y, lower.z+0.5)。
 COFFIN_MARKER_ENTITY_KIND = 160
@@ -511,6 +557,79 @@ def _assert_no_coffin_marker_spawn(
             f" t={s.t:.2f}"
             for s in spawned
         )
+    )
+
+
+def _assert_no_orphan_coffin_marker_spawn(
+    bot,
+    after_t,
+    allowed_entity_ids,
+    description,
+    window=_REJECT_OBS_WINDOW,
+) -> None:
+    """返回主世界后的孤儿 marker 不变量：窗口内新建 kind=160 spawn 只能是原 marker 重流。
+
+    异维拒绝段的 world 侧在 tsy 内观察——跨维时主世界实体不可见（server 按维度过滤
+    实体包）。返回主世界后，既有的原 marker 以**同 entity_id** 重流（实体在
+    OverworldLayer 持续存在，dimension switch 只是 client 重新收 spawn 包），这是唯一
+    合法的返回后 spawn。错误实现若绕过/独立于维度守卫、在主世界实体层创建 marker，其
+    entity_id 是新分配的（!= 原 marker）——tsy 侧观察窗看不见它（请求在 tsy 处理时
+    spawn 就被按维度过滤），返回主世界才流给 client。旧实现返回后直接进 break 断言
+    （只等原 marker destroy），孤儿以不同 entity_id 存活至场景结束（review finding
+    [major] round 8）。此处以 **entity_id 区分**而非位置（孤儿可能在任意坐标，位置
+    过滤会漏）：窗口内出现 entity_id 不在 allowed 里的 kind=160 spawn 即红。
+
+    观察窗约定同 _assert_no_coffin_marker_spawn：deadline 锚在 helper 入口，事件过滤
+    用 e.t > after_t（after_t 取 tpdim overworld **之前**的 ret_anchor，返回全程的重流
+    与孤儿——含晚到的排队 spawn——都落入窗口）。
+    """
+    deadline = time.monotonic() - bot.t0 + window
+    orphans = []
+    while True:
+        with bot._lock:
+            orphans = [
+                e
+                for e in bot.events
+                if e.kind == "entity_spawn"
+                and e.t > after_t
+                and e.data["type"] == COFFIN_MARKER_ENTITY_KIND
+                and e.data["entity_id"] not in allowed_entity_ids
+            ]
+        if orphans:
+            break
+        if time.monotonic() - bot.t0 >= deadline:
+            break
+        time.sleep(0.1)
+    assert not orphans, (
+        f"{description}：返回主世界后窗口内出现 {len(orphans)} 个孤儿 coffin marker spawn"
+        f"（只允许原 marker 重流 #{sorted(allowed_entity_ids)}）: "
+        + "; ".join(
+            f"#{s.data['entity_id']} ({s.data['x']:.1f},{s.data['y']:.1f},{s.data['z']:.1f})"
+            f" t={s.t:.2f}"
+            for s in orphans[:3]
+        )
+    )
+
+
+def _assert_no_live_coffin_marker_after_teardown(bot, description) -> None:
+    """场景收尾不变量：事件流重建的 live kind=160 实体集必须为空。
+
+    全部 teardown break（含最终重放的清场）之后，场景声称零世界 marker 残留。从事件流
+    重建 live 集（entity_spawn 增、entities_destroy 删）——任何 spawn 未配对 destroy 的
+    marker（异维孤儿、重复放置孤儿、teardown 漏破的 marker）都留下 live 条目而红
+    （review finding [major] round 8 收口：返回后只扫新建 spawn 不足以证明「破坏后无
+    额外 marker 存活」，须验证整个生命周期结束时实体层零残留）。
+    """
+    with bot._lock:
+        live = set()
+        for e in bot.events:
+            if e.kind == "entity_spawn" and e.data["type"] == COFFIN_MARKER_ENTITY_KIND:
+                live.add(e.data["entity_id"])
+            elif e.kind == "entities_destroy":
+                live.difference_update(e.data["entity_ids"])
+    assert not live, (
+        f"{description}：场景收尾后仍有 {len(live)} 个存活 coffin marker 实体"
+        f" #{sorted(live)}（spawn 未配对 destroy 的孤儿/漏破 marker）"
     )
 
 
@@ -696,6 +815,35 @@ def run(env) -> None:
             upper_anchor,
             description="upper-key 重叠拒绝路径不得 spawn coffin marker",
         )
+        # review finding [major] round 8：upper-key 拒绝段只查「库存保留 + 无 spawn」——
+        # 一个先写新棺 secondary 键（upper_pos+1x）再在 primary 键 upper_pos 处发现碰撞、
+        # 不消费不 spawn 就返回的错误插入路径全过。该泄漏键 (px,py+1,pz) 永不被后续
+        # break/re-place 覆盖（只碰原 place_pos 双键），残留使碰撞其格的无关放置被误拒。
+        # 对**新尝试棺的另一个 registry 坐标**（upper_pos+(1,0,0)，即 place_pos+2x）做
+        # state-applying 复查：正确实现从未写该键 → 合法放置成功 + spawn marker +
+        # teardown break；泄漏实现的 already-registered 拒绝 → 超时红。
+        uk_leak_pos = (place_pos[0] + 2, place_pos[1], place_pos[2])
+        uk_leak_give = _give_barrier(
+            bot,
+            5,
+            description="upper-key 拒绝段（net 4）后再 give 应恰好 count==5",
+        )
+        uk_leak_instance = _first_coffin_instance_id(uk_leak_give)
+        uk_leak_anchor = last_event_time(bot)
+        _send_coffin_place(bot, uk_leak_pos, uk_leak_instance)
+        uk_leak_marker = _wait_coffin_marker_spawn(
+            bot,
+            uk_leak_pos,
+            uk_leak_anchor,
+            description=(
+                "upper-key 拒绝段后在被拒新棺的另一个 registry 坐标 upper_pos+(1,0,0)"
+                " 成功放置并 spawn marker——若拒绝时泄漏写入了该 secondary 键，此处"
+                " already-registered 超时红"
+            ),
+        )
+        uk_leak_teardown_anchor = last_event_time(bot)
+        _send_coffin_break(bot, uk_leak_pos)
+        _wait_coffin_marker_destroy(bot, uk_leak_marker, uk_leak_teardown_anchor)
 
         # ── 负向：非空气目标（脚下方块）+ 过远目标，各静默拒绝 ──────────
         anchor = last_event_time(bot)
@@ -807,6 +955,45 @@ def run(env) -> None:
         bot.move_to(tf_origin[0], tf_origin[1], tf_origin[2], speed=5.5)
         time.sleep(1.0)
 
+        # ── 正向：d2==36.0 精确边界探针（review finding [major] round 8）──
+        # pass/fail 配对把比较方向夹在 [d2≤35.0, d2>36.0]，(35.0, 36.0] 区间无样本——
+        # `< 36.0` 排他实现能全绿。exact d2==36.0 无法用整块 target 构造，但 player
+        # 坐标连续：set_position 把 bot 精确放到 target 正 x 侧 6.5 格、y/z 对齐 target
+        # 中心（半整数差，IEEE 精确），server 算得 dx=6.0/dy=0/dz=0 → d2==36.0。正确
+        # 实现（<= 36.0 含边界）必须接受并 spawn marker；排他实现在此误拒 → 无 spawn →
+        # 超时红。放置后立即 break teardown，bot 复位回 fail_t 复查原点（stale 段按原
+        # 站位几何判定）。
+        exact_target = _exact_boundary_target(bot, air_y, exclude=coffin_cells)
+        exact_bot_pos = (
+            exact_target[0] + 6.5,
+            exact_target[1] + 0.5,
+            exact_target[2] + 0.5,
+        )
+        exact_give = _give_barrier(
+            bot,
+            6,
+            description="fail_t 复查段（net 5）后再 give 应恰好 count==6，exact-36 探针前置",
+        )
+        exact_instance = _first_coffin_instance_id(exact_give)
+        exact_anchor = last_event_time(bot)
+        bot.set_position(*exact_bot_pos)
+        time.sleep(1.0)
+        _send_coffin_place(bot, exact_target, exact_instance)
+        exact_marker = _wait_coffin_marker_spawn(
+            bot,
+            exact_target,
+            exact_anchor,
+            description=(
+                "d2==36.0 精确边界放置必须成功并 spawn marker——`< 36.0` 排他实现在此"
+                "误拒（`<=` 与 `<` 唯一区分点）而红"
+            ),
+        )
+        exact_break_anchor = last_event_time(bot)
+        _send_coffin_break(bot, exact_target)
+        _wait_coffin_marker_destroy(bot, exact_marker, exact_break_anchor)
+        bot.set_position(*tf_origin)
+        time.sleep(1.0)
+
         # ── 负向（review finding [major]）：无效（已消费 stale）item_instance_id ──
         # first_instance 已被首放消费（consume_item_instance_once 移除实例行，
         # inventory/mod.rs:4171），inventory_item_by_instance 找不到 → 拒绝。位置选
@@ -912,6 +1099,21 @@ def run(env) -> None:
             lambda e: e.kind == "respawn" and e.t > ret_anchor,
             timeout=_STEP_TIMEOUT,
             description="返回主世界 Respawn",
+        )
+        # review finding [major] round 8：异维拒绝的 world 侧在 tsy 内观察（跨维时主
+        # 世界实体不可见、server 按维度过滤实体包），返回主世界后**必须再扫**：既有原
+        # marker 以同 entity_id 重流（合法，allowed），任何新建且 entity_id !=
+        # marker_entity_id 的 kind=160 spawn 都是异维拒绝路径绕过/独立于维度守卫、在
+        # 主世界实体层错误创建的孤儿——tsy 侧观察窗看不见它（请求在 tsy 处理时 spawn
+        # 就被维度过滤），返回才流给 client，旧实现返回后直接进 break 断言（只等原
+        # marker destroy），孤儿以不同 entity_id 存活至场景结束。锚点取 ret_anchor
+        # （tpdim overworld 之前）：返回全程的重流与孤儿（含晚到的排队 spawn）都落入
+        # e.t > ret_anchor 窗口。
+        _assert_no_orphan_coffin_marker_spawn(
+            bot,
+            ret_anchor,
+            allowed_entity_ids={marker_entity_id},
+            description="返回主世界后不得出现非原 marker 的孤儿 coffin marker spawn",
         )
         pre_break_snapshot = _give_barrier(
             bot,
@@ -1019,5 +1221,13 @@ def run(env) -> None:
         replace_teardown_anchor = last_event_time(bot)
         _send_coffin_break(bot, place_pos)
         _wait_coffin_marker_destroy(bot, replace_marker, replace_teardown_anchor)
+
+        # review finding [major] round 8 收口：全部 teardown 之后从事件流重建 live
+        # kind=160 实体集并断言为空——任何 spawn 未配对 destroy 的 marker（异维孤儿、
+        # 重复放置孤儿、漏破的 teardown marker）在此红（场景声称零世界 marker 残留）。
+        _assert_no_live_coffin_marker_after_teardown(
+            bot,
+            description="CoffinPlace 全生命周期场景收尾后",
+        )
 
         bot.assert_alive("CoffinPlace 全生命周期场景完成后")
