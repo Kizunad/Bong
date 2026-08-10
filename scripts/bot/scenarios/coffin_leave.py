@@ -19,16 +19,15 @@
 """
 
 import math
+import time
 
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
     inventory_item_instances,
-    latest_inventory_snapshot,
     require_item,
     wait_inventory_contains_new_instance,
-    wait_inventory_snapshot_after,
 )
 
 DESCRIPTION = (
@@ -62,8 +61,6 @@ def _assert_silent_window(bot, anchor, label):
     """anchor 后 2s 内不得出现新 CoffinState 或 bot 自身实体带 flags 的 metadata 更新。
 
     entity_id=0 是周期性世界实体心跳（flags=None），与棺状态无关，不得计入命中。"""
-    import time
-
     time.sleep(2.0)
     with bot._lock:
         hits = [
@@ -103,8 +100,6 @@ def _enter_coffin(bot, lower, anchor=None, expect_success=True):
 def _wait_settled(bot, timeout=20.0, tol=0.02):
     """等 pos_look 连续两次采样位置不变（传送/坠落结束），避免在瞬移过程中采样 py，
     导致放棺位落在实心方块（服务器 `not empty` 静默拒绝，物品不消费）。"""
-    import time
-
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         prev = bot.position
@@ -119,15 +114,34 @@ def _wait_settled(bot, timeout=20.0, tol=0.02):
     )
 
 
-def _coffin_still_in_inventory(bot) -> bool:
-    """mundane_coffin 是否仍在背包。等一张**新**快照判定（latest_inventory_snapshot
-    可能仍是放置前的旧事件流，会把「已消耗」误读成「未消耗」）；新快照超时 = 服务器静默
-    （放置被拒，物品未消耗，无消费快照可收），读 latest 兜底。"""
-    try:
-        snapshot = wait_inventory_snapshot_after(bot, last_event_time(bot), timeout=2.0)
-    except BotAssertionError:
-        snapshot = latest_inventory_snapshot(bot, timeout=1.0)
-    return find_item(snapshot, MUNDANE_COFFIN) is not None
+def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
+    """结算上一候选的最终结果后，才允许发下一候选（review finding [1]）。
+
+    上一候选的 3s wait 超时只说明「没等到消耗快照」，不代表它被拒——服务端对成功放置
+    是**同 tick 同步发**消耗快照（coffin/mod.rs send_inventory_snapshot_to_client
+    reason=coffin_place_consumed），慢处理下快照可迟到。若上一候选结果未定就发下一候选，
+    上一候选的迟到快照会被下一候选的 wait 误认（它只判 e.t > anchor 且棺已不在包），
+    返回的坐标在 registry 无记录，后续 enter/leave 全超时。本函数把上一候选**原子结算**：
+    等新快照，任一快照显示棺已消耗 → 上一候选实际放置成功（返回其坐标，绝不把它的成功
+    记到下一候选）；连续 quiet 秒无新快照且棺仍在 → 上一候选确定被拒（返回 None），
+    此时才放行下一候选。返回放置坐标或 None。"""
+    settle_anchor = last_event_time(bot)
+    deadline = time.monotonic() + settle_timeout
+    while time.monotonic() < deadline:
+        try:
+            event = bot.wait_for(
+                lambda e, a=settle_anchor: e.kind == "server_data"
+                and e.data["payload_type"] == "inventory_snapshot"
+                and e.t > a,
+                timeout=quiet,
+                description="结算上一候选的 inventory_snapshot（t>上次锚）",
+            )
+        except BotAssertionError:
+            return None  # quiet 秒无新快照 → 上一候选被静默拒绝，可放行下一候选
+        if find_item(event.data["payload"], MUNDANE_COFFIN) is None:
+            return candidate  # 上一候选实际放置成功：快照迟到但消耗真实
+        settle_anchor = event.t  # 棺仍在，继续等更新的快照确认稳定性
+    return None
 
 
 def _place_coffin(bot, coffin, px, py, pz):
@@ -135,11 +149,10 @@ def _place_coffin(bot, coffin, px, py, pz):
     mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
     leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。
 
-    成功判定必须绑定到本次请求：每次候选超时后先**结算**上一候选——若 mundane_coffin 已
-    不在背包（上一候选实际放置成功、消费快照迟到于 3s 等待），返回上一候选坐标，绝不让
-    上一候选的成功被误记到当前候选（否则 enter/leave 会指向 registry 中不存在的坐标）。"""
-    import time
-
+    成功判定必须绑定到本次请求：每次候选超时后先**原子结算**上一候选
+    （_settle_previous_candidate）——若上一候选实际放置成功（消耗快照迟到于 3s 等待），
+    返回上一候选坐标，绝不让上一候选的成功被误记到当前候选（否则 enter/leave 会指向
+    registry 中不存在的坐标）。"""
     candidates = [
         (px - PLACE_OFFSET, py, pz),
         (px + PLACE_OFFSET, py, pz),
@@ -152,8 +165,10 @@ def _place_coffin(bot, coffin, px, py, pz):
     ]
     last_tried = None
     for x, y, z in candidates:
-        if last_tried is not None and not _coffin_still_in_inventory(bot):
-            return last_tried
+        if last_tried is not None:
+            settled = _settle_previous_candidate(bot, last_tried)
+            if settled is not None:
+                return settled
         last_tried = (x, y, z)
         anchor = last_event_time(bot)
         bot.intent(
@@ -259,8 +274,6 @@ def run(env) -> None:
             coffin_center = (lower[0] + 0.5, lower[1] + 0.5, lower[2] + 0.5)
             if math.dist((bx, by, bz), coffin_center) > ENTER_RANGE:
                 bystander.move_to(px, py, pz, speed=5.5)
-                import time
-
                 time.sleep(1.5)
             b_anchor = last_event_time(bystander)
             bystander.intent(

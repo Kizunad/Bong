@@ -30,10 +30,8 @@ from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
     inventory_item_instances,
-    latest_inventory_snapshot,
     require_item,
     wait_inventory_contains_new_instance,
-    wait_inventory_snapshot_after,
 )
 
 DESCRIPTION = (
@@ -119,6 +117,48 @@ def _assert_silent_window(bot, anchor, label, check_chat=False):
         )
 
 
+def _assert_no_entry_transition_after(bot, anchor, in_coffin_pos, label, window=2.0):
+    """异维拒绝回执窗口：anchor 后 window 秒内不得出现构成「成功进棺」的三路状态转变。
+
+    - CoffinState{in_coffin:true} 载荷；
+    - bot 自身实体 invisible 位（bit 5）置位的 metadata；
+    - 位置瞬移到棺内坐标（pos_look 落 in_coffin_pos）。
+
+    review finding [2]：只等精确 chat 回执并不断言「之后无转变」，会让「维度门发了
+    chat 却继续走进棺流程」的错误实现通过——它照发 in_coffin:true + invisible + 瞬移，
+    场景随后所有 respawn 检查仍过，拒绝契约实际已破。本窗口把这三路转变全部钉死为
+    负判据；anchor 取 intent 前，覆盖「chat 后 continue 漏掉」与「先转变后 chat」两种
+    顺序（chat 事件本身 kind==chat 不落这三路，不误伤）。"""
+    time.sleep(window)
+    with bot._lock:
+        hits = []
+        for e in bot.events:
+            if e.t <= anchor:
+                continue
+            if e.kind == "server_data" and e.data["payload_type"] == "coffin_state":
+                if e.data["payload"].get("in_coffin") is True:
+                    hits.append((f"coffin_state(in_coffin:true)@{e.t:.2f}",))
+            elif (
+                e.kind == "entity_metadata"
+                and e.data["entity_id"] == bot.entity_id
+                and e.data["flags"] is not None
+                and e.data["flags"] & 0x20
+            ):
+                hits.append((f"metadata invisible 置位@{e.t:.2f}",))
+            elif (
+                e.kind == "pos_look"
+                and _approx(e.data["x"], in_coffin_pos[0])
+                and _approx(e.data["y"], in_coffin_pos[1])
+                and _approx(e.data["z"], in_coffin_pos[2])
+            ):
+                hits.append((f"pos_look 瞬移到棺内@{e.t:.2f}",))
+    if hits:
+        raise AssertionError(
+            f"[{bot.username}] {label} 异维拒绝后 {window}s 内不得出现进棺状态转变，"
+            f"实际 {len(hits)} 条: {hits[:3]}"
+        )
+
+
 def _wait_settled(bot, timeout=20.0, tol=0.02):
     """等 pos_look 连续两次采样位置不变（传送/坠落结束），避免在瞬移过程中采样 py，
     导致放棺位落在实心方块（服务器 `not empty` 静默拒绝，物品不消费）。"""
@@ -136,15 +176,34 @@ def _wait_settled(bot, timeout=20.0, tol=0.02):
     )
 
 
-def _coffin_still_in_inventory(bot) -> bool:
-    """mundane_coffin 是否仍在背包。等一张**新**快照判定（latest_inventory_snapshot
-    可能仍是放置前的旧事件流，会把「已消耗」误读成「未消耗」）；新快照超时 = 服务器静默
-    （放置被拒，物品未消耗，无消费快照可收），读 latest 兜底。"""
-    try:
-        snapshot = wait_inventory_snapshot_after(bot, last_event_time(bot), timeout=2.0)
-    except BotAssertionError:
-        snapshot = latest_inventory_snapshot(bot, timeout=1.0)
-    return find_item(snapshot, MUNDANE_COFFIN) is not None
+def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
+    """结算上一候选的最终结果后，才允许发下一候选（review finding [1]）。
+
+    上一候选的 3s wait 超时只说明「没等到消耗快照」，不代表它被拒——服务端对成功放置
+    是**同 tick 同步发**消耗快照（coffin/mod.rs send_inventory_snapshot_to_client
+    reason=coffin_place_consumed），慢处理下快照可迟到。若上一候选结果未定就发下一候选，
+    上一候选的迟到快照会被下一候选的 wait 误认（它只判 e.t > anchor 且棺已不在包），
+    返回的坐标在 registry 无记录，后续 enter/leave 全超时。本函数把上一候选**原子结算**：
+    等新快照，任一快照显示棺已消耗 → 上一候选实际放置成功（返回其坐标，绝不把它的成功
+    记到下一候选）；连续 quiet 秒无新快照且棺仍在 → 上一候选确定被拒（返回 None），
+    此时才放行下一候选。返回放置坐标或 None。"""
+    settle_anchor = last_event_time(bot)
+    deadline = time.monotonic() + settle_timeout
+    while time.monotonic() < deadline:
+        try:
+            event = bot.wait_for(
+                lambda e, a=settle_anchor: e.kind == "server_data"
+                and e.data["payload_type"] == "inventory_snapshot"
+                and e.t > a,
+                timeout=quiet,
+                description="结算上一候选的 inventory_snapshot（t>上次锚）",
+            )
+        except BotAssertionError:
+            return None  # quiet 秒无新快照 → 上一候选被静默拒绝，可放行下一候选
+        if find_item(event.data["payload"], MUNDANE_COFFIN) is None:
+            return candidate  # 上一候选实际放置成功：快照迟到但消耗真实
+        settle_anchor = event.t  # 棺仍在，继续等更新的快照确认稳定性
+    return None
 
 
 def _place_coffin(bot, coffin, px, py, pz):
@@ -152,9 +211,10 @@ def _place_coffin(bot, coffin, px, py, pz):
     mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
     leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。
 
-    成功判定必须绑定到本次请求：每次候选超时后先**结算**上一候选——若 mundane_coffin 已
-    不在背包（上一候选实际放置成功、消费快照迟到于 3s 等待），返回上一候选坐标，绝不让
-    上一候选的成功被误记到当前候选（否则 enter/leave 会指向 registry 中不存在的坐标）。"""
+    成功判定必须绑定到本次请求：每次候选超时后先**原子结算**上一候选
+    （_settle_previous_candidate）——若上一候选实际放置成功（消耗快照迟到于 3s 等待），
+    返回上一候选坐标，绝不让上一候选的成功被误记到当前候选（否则 enter/leave 会指向
+    registry 中不存在的坐标）。"""
     candidates = [
         (px - PLACE_OFFSET, py, pz),
         (px + PLACE_OFFSET, py, pz),
@@ -167,8 +227,10 @@ def _place_coffin(bot, coffin, px, py, pz):
     ]
     last_tried = None
     for x, y, z in candidates:
-        if last_tried is not None and not _coffin_still_in_inventory(bot):
-            return last_tried
+        if last_tried is not None:
+            settled = _settle_previous_candidate(bot, last_tried)
+            if settled is not None:
+                return settled
         last_tried = (x, y, z)
         anchor = last_event_time(bot)
         bot.intent(
@@ -359,6 +421,12 @@ def run(env) -> None:
             lambda e: e.kind == "chat" and e.t > anchor and DIMENSION_REJECTION in e.data["text"],
             timeout=10.0,
             description=f"异维进棺应逐字回执「{DIMENSION_REJECTION}」",
+        )
+        # review finding [2]：chat 回执必须与「无进棺状态转变」同时成立。维度门（coffin/
+        # mod.rs:641）send_chat_message 后 continue，不该有任何 in_coffin:true / invisible
+        # 置位 / 瞬移；只等 chat 会让「发了 chat 却继续走进棺流程」的错误实现通过。
+        _assert_no_entry_transition_after(
+            bot, anchor, in_coffin_pos, "异维 CoffinEnter（tsy）"
         )
 
         anchor = last_event_time(bot)
