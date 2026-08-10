@@ -3,6 +3,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bong-preview-harness.XXXXXX")"
+# 在 PATH 被 $TMP_ROOT/bin 遮蔽之前捕获真 python3 绝对路径——shim 的 fallback
+# 必须回落到真实解释器，不能再用 command -v 动态解析（review finding：
+# PATH 遮蔽后 command -v python3 解析回 shim 自身 → 无限递归 exec 挂死）。
+REAL_PYTHON="$(command -v python3)"
 cleanup() {
   BONG_PREVIEW_PID_FILE="$TMP_ROOT/runtime/server.pid" \
     bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" >/dev/null 2>&1 || true
@@ -157,7 +161,7 @@ if [ "\${FAKE_PIDFD_SIGNAL_FAIL:-0}" = "1" ] && [[ "\$*" == *"bong-pidfd-signal.
   exit 2
 fi
 if [[ "\$*" == *"bong-listener-owner.py"* ]]; then exit 2; fi
-exec "$(command -v python3)" "\$@"
+exec "$REAL_PYTHON" "\$@"
 EOF
 chmod 700 "$TMP_ROOT/bin/python3"
 if run_preview 2 >"$TMP_ROOT/owner.log" 2>&1; then
