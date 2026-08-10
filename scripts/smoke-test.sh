@@ -11,7 +11,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/server/target}"
 if [[ "$CARGO_TARGET_DIR" != /* ]]; then
     CARGO_TARGET_DIR="$ROOT/server/$CARGO_TARGET_DIR"
 fi
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
 
 pass() { echo "  ✓ $1"; ((PASS+=1)); }
 fail() { echo "  ✗ $1"; ((FAIL+=1)); }

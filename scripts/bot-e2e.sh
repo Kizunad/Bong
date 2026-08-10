@@ -283,6 +283,11 @@ cleanup() {
   if [ -n "$BOT_NOVICE_RASTER_DIR" ] && [ -d "$BOT_NOVICE_RASTER_DIR" ]; then
     rm -rf "$BOT_NOVICE_RASTER_DIR"
   fi
+  # 每次自起都会向 evidence 目录 install 一份完整 server 可执行文件；server 已终止后
+  # 在这里移除，避免每个本地 run 都永久保留一份整二进制（evidence 目录只留 log/场景证据）。
+  if [ -n "${SERVER_BINARY:-}" ] && [ -f "$SERVER_BINARY" ]; then
+    rm -f "$SERVER_BINARY"
+  fi
   if [ "$OWNED_WORLD_MODE" != "1" ] && [ -n "$SPIRITWOOD_STATE_DIR" ]; then
     rm -f "$SPIRITWOOD_STATE_DIR/harvested.json" "$SPIRITWOOD_STATE_DIR/harvested.tmp"
     rmdir "$SPIRITWOOD_STATE_DIR" 2>/dev/null || true

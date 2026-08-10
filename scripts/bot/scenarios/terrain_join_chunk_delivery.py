@@ -77,13 +77,18 @@ def _one_session(env, tag: str) -> tuple[tuple[int, int], str]:
 
         bot.wait_for(
             lambda _event: len(
-                [chunk for chunk in bot.events_of("chunk_data") if chunk.t >= center.t]
+                {
+                    (chunk.data["x"], chunk.data["z"])
+                    for chunk in bot.events_of("chunk_data")
+                    if chunk.t >= center.t
+                }
             )
             >= MIN_CHUNKS_AFTER_CENTER,
             timeout=CHUNK_BUDGET,
             description=(
-                f"center 之后 ≥{MIN_CHUNKS_AFTER_CENTER} 个 ChunkData"
-                "（fallback 平台必须覆盖真实 spawn_distribution + 醒灵视域）"
+                f"center 之后 ≥{MIN_CHUNKS_AFTER_CENTER} 个不同 (x,z) 的 ChunkData"
+                "（fallback 平台必须覆盖真实 spawn_distribution + 醒灵视域；"
+                "重复投递同一 chunk 坐标不计入视野覆盖）"
             ),
         )
 

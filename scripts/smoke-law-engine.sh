@@ -143,7 +143,7 @@ if [[ "$server_start_exit" -ne 0 && "$server_start_exit" -ne 124 ]]; then
   fail_stage "server-start" "built bong-server failed before startup anchors"
 fi
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[bridge\\] tokio runtime started" "bridge runtime started"
-require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[world\\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+" "fallback world readiness"
+require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[world\\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*" "fallback world readiness"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[player\\] registering player init/cleanup systems" "player systems registered"
 require_anchor "server-start" "$SERVER_BOOT_LOG" "\\[bong\\]\\[redis\\] connecting to" "redis bridge connection"
 

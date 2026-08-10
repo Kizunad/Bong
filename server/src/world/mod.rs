@@ -78,6 +78,14 @@ const CHUNK_WIDTH: i32 = 16;
 const FALLBACK_VIEW_DISTANCE_CHUNKS: u8 =
     crate::cultivation::realm_vision::planner::MAX_REALM_VIEW_DISTANCE_CHUNKS;
 const FALLBACK_FLAT_MAX_CHUNKS: usize = 8_192;
+/// fallback 启动期间对所有锚点 view 矩形的累计访问预算（单位：chunk 单元）。
+/// 语义与 FALLBACK_FLAT_MAX_CHUNKS 不同：后者约束去重后实际 eager-allocate 的唯一
+/// chunk 内存上限；这里约束遍历插入操作的候选单元总量。重叠/重复锚点不会推进唯一
+/// 计数（BTreeSet 去重），但每次迭代仍访问整个矩形，因此累计候选工作量必须独立设限，
+/// 否则大量重叠锚点可绕开唯一 chunk 上限做无界插入尝试（review finding）。当前
+/// zones.json 分布为 3 锚点、视距展开后约 9,755 单元，此预算为其留出约 1.7 倍余量，
+/// 同时把病态重叠配置封顶为有限启动工作量。
+const FALLBACK_FLAT_MAX_ANCHOR_WORK: usize = FALLBACK_FLAT_MAX_CHUNKS * 2;
 const BEDROCK_Y: i32 = 64;
 const GRASS_Y: i32 = BEDROCK_Y + 1;
 pub(crate) const TEST_AREA_BLOCK_EXTENT: i32 = TEST_AREA_CHUNKS * CHUNK_WIDTH;
@@ -608,6 +616,11 @@ fn fallback_spawn_chunk_union(
         }
     };
     let mut chunks = BTreeSet::new();
+    // 候选矩形工作量独立于去重后的唯一 chunk 计数累积：重叠/重复锚点不会推进
+    // chunks.len()（BTreeSet 去重），但每次迭代仍访问整个 view 矩形。累计越界即
+    // fail closed，防止大量重叠锚点绕开唯一 chunk 上限造成无界启动工作量。
+    // 预算取 FALLBACK_FLAT_MAX_ANCHOR_WORK（独立常量，非唯一 chunk 上限）。
+    let mut candidate_work: i128 = 0;
 
     for anchor in anchors {
         let (anchor_pos, radius) = anchor.cluster();
@@ -632,9 +645,9 @@ fn fallback_spawn_chunk_union(
 
         let rectangle_width = i128::from(max_chunk.x) - i128::from(min_chunk.x) + 1;
         let rectangle_height = i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1;
-        let rectangle_chunks = rectangle_width * rectangle_height;
-        if rectangle_chunks > FALLBACK_FLAT_MAX_CHUNKS as i128 {
-            return Err(usize::try_from(rectangle_chunks).unwrap_or(usize::MAX));
+        candidate_work += rectangle_width * rectangle_height;
+        if candidate_work > FALLBACK_FLAT_MAX_ANCHOR_WORK as i128 {
+            return Err(usize::try_from(candidate_work).unwrap_or(usize::MAX));
         }
 
         for chunk_z in min_chunk.z..=max_chunk.z {
@@ -755,6 +768,7 @@ fn scatter_spawn_resources(
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::event_rhythm::{
@@ -765,10 +779,13 @@ mod tests {
     use super::{
         block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
         select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
-        AnvilBootstrapConfig, FallbackFlatBootstrap, FallbackFlatReason, WorldBootstrap,
-        ANVIL_REGION_DIR_NAME, FALLBACK_FLAT_MAX_CHUNKS, FALLBACK_VIEW_DISTANCE_CHUNKS, GRASS_Y,
-        TERRAIN_RASTER_PATH_ENV_VAR, WORLD_PATH_ENV_VAR,
+        AnvilBootstrapConfig, DimensionLayers, FallbackFlatBootstrap, FallbackFlatReason,
+        WorldBootstrap, ANVIL_REGION_DIR_NAME, BEDROCK_Y,
+        FALLBACK_FLAT_MAX_ANCHOR_WORK, FALLBACK_FLAT_MAX_CHUNKS,
+        FALLBACK_VIEW_DISTANCE_CHUNKS, GRASS_Y, TERRAIN_RASTER_PATH_ENV_VAR,
+        WORLD_PATH_ENV_VAR,
     };
+    use valence::prelude::bevy_ecs::system::RunSystemOnce;
     use valence::prelude::{
         App, BlockPos, BlockState, ChunkLayer, ChunkPos, ChunkView, DVec3, DimensionTypeRegistry,
         UnloadedChunk, Update,
@@ -1062,11 +1079,68 @@ mod tests {
             DVec3::new(-1.0, 0.0, -1.0),
             DVec3::new(FALLBACK_FLAT_MAX_CHUNKS as f64 * 16_000.0 + 1.0, 100.0, 1.0),
         ));
-        assert_eq!(
-            fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
-            Err(FALLBACK_FLAT_MAX_CHUNKS + 1),
-            "多个小矩形的 union 累积越界也必须在第 {} 个唯一 chunk 处 fail closed",
-            FALLBACK_FLAT_MAX_CHUNKS + 1
+        // 大量锚点无论先撞上唯一 chunk 上限（FALLBACK_FLAT_MAX_CHUNKS）还是累计
+        // 候选工作量预算（FALLBACK_FLAT_MAX_ANCHOR_WORK），都必须 fail closed 并
+        // 报告超过上限的工作量；完全重叠场景的候选工作量守卫由
+        // overlapping_spawn_anchors_cannot_bypass_candidate_work_limit 单独覆盖。
+        assert!(
+            matches!(
+                fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
+                Err(work) if work > FALLBACK_FLAT_MAX_CHUNKS
+            ),
+            "大量锚点的累积工作量/唯一 chunk 越界必须 fail closed，不得无限插入"
+        );
+    }
+
+    #[test]
+    fn overlapping_spawn_anchors_cannot_bypass_candidate_work_limit() {
+        // review finding：重复/重叠零半径锚点各自命中同一 view 矩形时，去重后的
+        // 唯一 chunk 计数永不增长（BTreeSet 去重），但候选矩形工作量持续累积；
+        // 必须独立于唯一计数对候选工作量设上限，否则大量重复锚点做无界插入尝试。
+        let registry = synthetic_spawn_registry((
+            DVec3::new(-1.0, 0.0, -1.0),
+            DVec3::new(1.0, 100.0, 1.0),
+        ));
+        let duplicate_anchor =
+            crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+                DVec3::new(0.5, 65.0, 0.5),
+                0.0,
+            );
+        let (center, radius) = duplicate_anchor.cluster();
+        let view_min = ChunkView::new(
+            ChunkPos::new(
+                block_coord_to_chunk(center.x - radius),
+                block_coord_to_chunk(center.z - radius),
+            ),
+            FALLBACK_VIEW_DISTANCE_CHUNKS,
+        );
+        let view_max = ChunkView::new(
+            ChunkPos::new(
+                block_coord_to_chunk(center.x + radius),
+                block_coord_to_chunk(center.z + radius),
+            ),
+            FALLBACK_VIEW_DISTANCE_CHUNKS,
+        );
+        let (view_min_chunk, _) = view_min.bounding_box();
+        let (_, view_max_chunk) = view_max.bounding_box();
+        let per_anchor_work = usize::try_from(
+            (i128::from(view_max_chunk.x) - i128::from(view_min_chunk.x) + 1)
+                * (i128::from(view_max_chunk.z) - i128::from(view_min_chunk.z) + 1),
+        )
+        .expect("single view rectangle should fit usize");
+        assert!(
+            per_anchor_work < FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            "单个重复锚点的 view 矩形必须低于候选工作量预算，问题只在累积"
+        );
+
+        let duplicates_needed = FALLBACK_FLAT_MAX_ANCHOR_WORK / per_anchor_work + 2;
+        let anchors = vec![duplicate_anchor; duplicates_needed];
+        let result = fallback_spawn_chunk_union(&registry, &anchors);
+        assert!(
+            matches!(result, Err(work) if work > FALLBACK_FLAT_MAX_ANCHOR_WORK),
+            "{} 个完全重复零半径锚点的候选工作量（{} × {per_anchor_work}）必须 fail closed，而不是无限插入",
+            duplicates_needed,
+            duplicates_needed,
         );
     }
 
@@ -1456,6 +1530,134 @@ mod tests {
         assert!(
             !registry.is_empty(),
             "fallback setup_world must insert the authored default registry, not an absent resource"
+        );
+    }
+
+    #[derive(Clone)]
+    struct TestBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for TestBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TestBuf {
+        type Writer = TestBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// 运行 fallback `setup_world`（无 raster / 无 Anvil），捕获本轮 tracing 输出。
+    fn run_fallback_setup_world_capture() -> (App, String) {
+        let _lock = env_lock();
+        let _raster_guard = ScopedEnvVar::set(TERRAIN_RASTER_PATH_ENV_VAR, None);
+        let _world_guard = ScopedEnvVar::set(WORLD_PATH_ENV_VAR, None);
+        let scenario = ScenarioSingleClient::new();
+        let mut app = scenario.app;
+        register_test_tsy_dimension(&mut app);
+
+        let buf = TestBuf(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_target(false)
+            .with_ansi(false)
+            .with_writer(buf.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            // 用 run_system_once 在当前线程同步执行 setup_world：bevy 默认的
+            // MultiThreaded executor 会把 Update 系统调度到工作线程，线程本地的
+            // with_default subscriber 捕获不到那里发出的 tracing 事件。
+            app.world_mut().run_system_once(super::setup_world);
+        });
+        let captured = String::from_utf8_lossy(&buf.0.lock().unwrap()).to_string();
+        (app, captured)
+    }
+
+    fn parse_readiness_count(marker: &str, key: &str) -> usize {
+        let token = format!("{key}=");
+        let value = marker
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix(&token))
+            .unwrap_or_else(|| panic!("readiness marker 缺少 {key}= 字段：{marker}"));
+        value
+            .parse()
+            .unwrap_or_else(|_| panic!("{key}={value} 不是非负整数：{marker}"))
+    }
+
+    #[test]
+    fn fallback_flat_bootstrap_materializes_terrain_and_emits_readiness() {
+        let (mut app, captured) = run_fallback_setup_world_capture();
+
+        assert!(
+            captured.contains("BOT_FALLBACK_FLAT_READY"),
+            "fallback bootstrap 必须发出 readiness 标记，实际日志：\n{captured}"
+        );
+
+        let overworld = app
+            .world()
+            .get_resource::<DimensionLayers>()
+            .expect("setup_world must insert DimensionLayers")
+            .overworld;
+        let layer = app
+            .world_mut()
+            .get_mut::<ChunkLayer>(overworld)
+            .expect("overworld layer entity must carry ChunkLayer");
+
+        // 每个 union chunk 都必须真实写入 bedrock + grass：抽检 emergency 出生点所在 chunk。
+        let emergency = crate::player::spawn_selector::EMERGENCY_SPAWN_POSITION;
+        assert_eq!(
+            block_state(&layer, emergency[0] as i32, BEDROCK_Y, emergency[2] as i32),
+            Some(BlockState::BEDROCK)
+        );
+        assert_eq!(
+            block_state(&layer, emergency[0] as i32, GRASS_Y, emergency[2] as i32),
+            Some(BlockState::GRASS_BLOCK)
+        );
+
+        // 资源散布必须随真实出生簇落位，而不是只建空 chunk。
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        for anchor in &snapshot.distribution {
+            let base = anchor.anchor();
+            let x = base.x.floor() as i32;
+            let z = base.z.floor() as i32;
+            assert_eq!(
+                block_state(&layer, x + 12, GRASS_Y + 1, z + 8),
+                Some(BlockState::OAK_LOG),
+                "fallback 世界必须真实散布资源（anchor=({x},{z})）"
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_ready_marker_reports_exact_configured_counts() {
+        let (_app, captured) = run_fallback_setup_world_capture();
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected_chunks =
+            fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+                .expect("configured fallback union should fit within eager-allocation limit");
+
+        let marker = captured
+            .lines()
+            .find(|line| line.contains("BOT_FALLBACK_FLAT_READY"))
+            .unwrap_or_else(|| {
+                panic!("fallback bootstrap 必须发出 readiness 标记，实际日志：\n{captured}")
+            });
+
+        let anchors = parse_readiness_count(marker, "anchors");
+        let chunks = parse_readiness_count(marker, "chunks");
+        let view_distance_chunks = parse_readiness_count(marker, "view_distance_chunks");
+
+        assert_eq!(anchors, snapshot.distribution.len());
+        assert_eq!(chunks, expected_chunks.len());
+        assert_eq!(view_distance_chunks, FALLBACK_VIEW_DISTANCE_CHUNKS as usize);
+        assert!(
+            anchors > 0 && chunks > 0 && view_distance_chunks > 0,
+            "readiness 计数必须全部为正：anchors={anchors} chunks={chunks} view_distance_chunks={view_distance_chunks}"
         );
     }
 

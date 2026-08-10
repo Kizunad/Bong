@@ -424,6 +424,55 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             ),
         ]
 
+        # 非有限数值边界：json.loads 默认接受 NaN/Infinity，必须同样以
+        # invalid spawn_distribution[0] 拒绝，而不是让 tile 计算炸成 ValueError/OverflowError。
+        for index, non_finite in enumerate(
+            (float("nan"), float("inf"), float("-inf"))
+        ):
+            anchor = [0.0, 70.0, 0.0]
+            anchor[index % 3] = non_finite
+            cases.append(
+                (
+                    {
+                        "zones": [
+                            {
+                                "name": "spawn",
+                                "spawn_distribution": [
+                                    {
+                                        "anchor": anchor,
+                                        "radius": 1.0,
+                                        "weight": 1,
+                                        "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "invalid spawn_distribution[0]",
+                )
+            )
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            cases.append(
+                (
+                    {
+                        "zones": [
+                            {
+                                "name": "spawn",
+                                "spawn_distribution": [
+                                    {
+                                        "anchor": [0.0, 70.0, 0.0],
+                                        "radius": non_finite,
+                                        "weight": 1,
+                                        "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "invalid spawn_distribution[0]",
+                )
+            )
+
         for config, expected_error in cases:
             with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temp_dir:
                 zones_path = pathlib.Path(temp_dir) / "zones.json"

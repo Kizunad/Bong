@@ -25,7 +25,7 @@ FULLSTACK_REDIS_LOG="$RUN_DIR/fullstack-redis.log"
 FULLSTACK_SERVER_LOG="$RUN_DIR/fullstack-server.log"
 FULLSTACK_REDIS_SUB_LOG="$RUN_DIR/fullstack-redis-sub.log"
 FULLSTACK_TIANDAO_LOG="$RUN_DIR/fullstack-tiandao.log"
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
+FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*'
 
 PASS=0
 FAIL=0
