@@ -17,6 +17,7 @@ trap cleanup EXIT
 mkdir -p "$TMP_ROOT/runtime" "$TMP_ROOT/target/release" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
 chmod 700 "$TMP_ROOT/runtime" "$TMP_ROOT/bin" "$TMP_ROOT/fake-src"
 cat >"$TMP_ROOT/fake-src/server.c" <<'EOF'
+#define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -32,6 +33,10 @@ int main(void) {
     if (fd < 0) return 18;
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    /* SO_REUSEPORT：同一 addr:port 允许第二个实例并存 bind，让「省略 pre-launch
+       拒绝门禁、二次启动并覆盖记录」的错误实现能真正走到 write_record，否则第二
+       个实例因端口被占 bind 失败提前死亡、碰巧不改记录，启动门禁回归测不出来。 */
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(25565);
@@ -61,8 +66,48 @@ run_preview() {
   bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout "$1"
 }
 
+# 0 = 25565 上有 listener；1 = 无。供启动门禁用例断言「拒绝后不得拉新 server」。
+listener_on_25565() {
+  python3 - <<'PY'
+import socket
+import sys
+
+try:
+    socket.create_connection(("127.0.0.1", 25565), timeout=1.0).close()
+except OSError:
+    sys.exit(1)
+sys.exit(0)
+PY
+}
+
 run_preview 5 >/dev/null
 [ -f "$BONG_PREVIEW_PID_FILE" ]
+# review finding [major]：run-server-headless.sh 从未在「任何既有权限记录」存在时被
+# 调用（合法运行中 / stale / malformed / mismatched / unconfirmable 五形态的启动门禁
+# 都没测过）——省略 bong_server_refuse_existing_preview_record_locked、覆盖既有记录
+# 再拉新进程的实现能通过全部用例。此处首启的合法运行中记录还在，直接发起第二次启动：
+# 必须拒绝（非零退出）、记录逐字节不变、原 server 进程与 25565 listener 均原样保留。
+#
+# fake server 开 SO_REUSEPORT：两个实例可同时 bind 25565。省略门禁的错误实现此时能
+# 成功二次启动并覆盖记录（而非 bind 失败提前死亡、碰巧没改记录），本组断言必红。
+refuse_valid_before="$(cat "$BONG_PREVIEW_PID_FILE")"
+refuse_valid_pid="$(sed -n 's/^pid=//p' "$BONG_PREVIEW_PID_FILE")"
+if run_preview 1 >"$TMP_ROOT/refuse-valid.log" 2>&1; then
+  echo "second launch while a valid running server's record exists unexpectedly succeeded" >&2
+  exit 1
+fi
+[ "$(cat "$BONG_PREVIEW_PID_FILE")" = "$refuse_valid_before" ] || {
+  echo "second launch overwrote the running server's authority record" >&2
+  exit 1
+}
+kill -0 "$refuse_valid_pid" 2>/dev/null || {
+  echo "second-launch refusal left the running server's process gone" >&2
+  exit 1
+}
+listener_on_25565 || {
+  echo "second-launch refusal left the running server's 25565 listener gone" >&2
+  exit 1
+}
 bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
@@ -286,5 +331,126 @@ fi
   echo "stale-record stop did not clear the dead record" >&2
   exit 1
 }
+
+# review finding [major]（launch-time 门禁的其余记录形态）：stale / malformed /
+# mismatched / unconfirmable 记录存在时，run-server-headless.sh 同样必须拒绝——不覆盖、
+# 不清除、不重拉。stop-time 的 mismatched/stale 用例只测 stop，启动门禁从未被调用过。
+# 各段手写记录（格式同 bong_server_write_record：四行、mode 600），断言「非零退出 +
+# 记录逐字节不变 + 25565 无新监听」。pid-only / 无门禁实现必红。
+
+# (a) stale：记录指向已死 pid → 启动必须拒绝（stale 记录在 READY/覆盖前就要挡下）。
+cat >"$BONG_PREVIEW_PID_FILE" <<EOF
+pid=99999999
+starttime=1
+executable=$TMP_ROOT/target/release/bong-server
+executable_identity=0:1
+EOF
+chmod 600 "$BONG_PREVIEW_PID_FILE"
+launch_stale_before="$(cat "$BONG_PREVIEW_PID_FILE")"
+if run_preview 1 >"$TMP_ROOT/refuse-stale.log" 2>&1; then
+  echo "launch while a stale authority record exists unexpectedly succeeded" >&2
+  exit 1
+fi
+[ "$(cat "$BONG_PREVIEW_PID_FILE")" = "$launch_stale_before" ] || {
+  echo "launch while a stale authority record exists overwrote or cleared it" >&2
+  exit 1
+}
+if listener_on_25565; then
+  echo "refused launch while a stale record exists left a new server on 25565" >&2
+  exit 1
+fi
+rm -f "$BONG_PREVIEW_PID_FILE"
+
+# (b) malformed：记录无法解析 → 启动必须拒绝（read_record 失败即拒，绝不覆盖坏记录）。
+printf 'pid=1\nnot-a-valid-record\n' >"$BONG_PREVIEW_PID_FILE"
+chmod 600 "$BONG_PREVIEW_PID_FILE"
+launch_malformed_before="$(cat "$BONG_PREVIEW_PID_FILE")"
+if run_preview 1 >"$TMP_ROOT/refuse-malformed.log" 2>&1; then
+  echo "launch while a malformed authority record exists unexpectedly succeeded" >&2
+  exit 1
+fi
+[ "$(cat "$BONG_PREVIEW_PID_FILE")" = "$launch_malformed_before" ] || {
+  echo "launch while a malformed authority record exists overwrote or cleared it" >&2
+  exit 1
+}
+if listener_on_25565; then
+  echo "refused launch while a malformed record exists left a new server on 25565" >&2
+  exit 1
+fi
+rm -f "$BONG_PREVIEW_PID_FILE"
+
+# (c) mismatched：记录指向**存活但身份不匹配**的无关进程 → 启动必须拒绝，无关进程保留
+#     （不得按记录 PID 清理或信号化）。
+sleep 5 &
+launch_unrelated_pid=$!
+cat >"$BONG_PREVIEW_PID_FILE" <<EOF
+pid=$launch_unrelated_pid
+starttime=1
+executable=$TMP_ROOT/target/release/bong-server
+executable_identity=0:1
+EOF
+chmod 600 "$BONG_PREVIEW_PID_FILE"
+launch_mismatch_before="$(cat "$BONG_PREVIEW_PID_FILE")"
+if run_preview 1 >"$TMP_ROOT/refuse-mismatch.log" 2>&1; then
+  echo "launch while a mismatched authority record exists unexpectedly succeeded" >&2
+  kill "$launch_unrelated_pid" 2>/dev/null || true
+  exit 1
+fi
+[ "$(cat "$BONG_PREVIEW_PID_FILE")" = "$launch_mismatch_before" ] || {
+  echo "launch while a mismatched authority record exists overwrote or cleared it" >&2
+  kill "$launch_unrelated_pid" 2>/dev/null || true
+  exit 1
+}
+kill -0 "$launch_unrelated_pid" 2>/dev/null || {
+  echo "launch-refusal on a mismatched record killed the unrelated process" >&2
+  exit 1
+}
+kill "$launch_unrelated_pid" 2>/dev/null || true
+if listener_on_25565; then
+  echo "refused launch while a mismatched record exists left a new server on 25565" >&2
+  exit 1
+fi
+rm -f "$BONG_PREVIEW_PID_FILE"
+
+# (d) unconfirmable：记录格式合法、指向存活进程，但身份检查无法确认 → 启动必须拒绝
+#     （status 2 → 「记录无法确认」，拒绝覆盖，绝不把该进程按 PID 信号化）。
+#     注入：先用真 stat 取存活进程的真实 starttime/executable_identity 写记录（记录
+#     看起来完全合法），再开 FAKE_STAT_IDENTITY_FAILURE 使 record_matches_process 的
+#     executable_identity 读取（stat /proc/*/exe）持续失败 → status 2。
+sleep 5 &
+launch_unconfirmable_pid=$!
+launch_unconfirmable_starttime="$(awk '{print $22}' "/proc/$launch_unconfirmable_pid/stat")"
+launch_unconfirmable_identity="$("$REAL_STAT" -Lc '%d:%i' -- "/proc/$launch_unconfirmable_pid/exe")"
+cat >"$BONG_PREVIEW_PID_FILE" <<EOF
+pid=$launch_unconfirmable_pid
+starttime=$launch_unconfirmable_starttime
+executable=$TMP_ROOT/target/release/bong-server
+executable_identity=$launch_unconfirmable_identity
+EOF
+chmod 600 "$BONG_PREVIEW_PID_FILE"
+launch_unconfirmable_before="$(cat "$BONG_PREVIEW_PID_FILE")"
+export FAKE_STAT_IDENTITY_FAILURE=1
+if run_preview 1 >"$TMP_ROOT/refuse-unconfirmable.log" 2>&1; then
+  unset FAKE_STAT_IDENTITY_FAILURE
+  echo "launch while an unconfirmable authority record exists unexpectedly succeeded" >&2
+  kill "$launch_unconfirmable_pid" 2>/dev/null || true
+  exit 1
+fi
+unset FAKE_STAT_IDENTITY_FAILURE
+[ "$(cat "$BONG_PREVIEW_PID_FILE")" = "$launch_unconfirmable_before" ] || {
+  echo "launch while an unconfirmable authority record exists overwrote or cleared it" >&2
+  kill "$launch_unconfirmable_pid" 2>/dev/null || true
+  exit 1
+}
+kill -0 "$launch_unconfirmable_pid" 2>/dev/null || {
+  echo "launch-refusal on an unconfirmable record killed the live process" >&2
+  exit 1
+}
+kill "$launch_unconfirmable_pid" 2>/dev/null || true
+if listener_on_25565; then
+  echo "refused launch while an unconfirmable record exists left a new server on 25565" >&2
+  exit 1
+fi
+rm -f "$BONG_PREVIEW_PID_FILE"
 
 echo "preview lifecycle harness: PASS"
