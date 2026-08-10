@@ -1,6 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::path::Path;
 
 use serde::Deserialize;
 use valence::prelude::DVec3;
@@ -24,34 +23,11 @@ pub struct PlayerSpawnSelector<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SpawnDistributionAnchor {
+struct SpawnDistributionAnchor {
     anchor: DVec3,
     radius: f64,
     weight: u32,
     safe_y: f64,
-}
-
-impl SpawnDistributionAnchor {
-    pub(crate) fn cluster(&self) -> (DVec3, f64) {
-        (self.anchor, self.radius)
-    }
-
-    pub(crate) fn anchor(&self) -> DVec3 {
-        self.anchor
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn spawn_distribution_anchor_for_test(
-    anchor: DVec3,
-    radius: f64,
-) -> SpawnDistributionAnchor {
-    SpawnDistributionAnchor {
-        anchor,
-        radius,
-        weight: 1,
-        safe_y: anchor.y,
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,12 +141,7 @@ impl<'a> PlayerSpawnSelector<'a> {
             .iter()
             .any(|(x, z)| *x == clamped.x.floor() as i32 && *z == clamped.z.floor() as i32)
         {
-            let fallback = zone.clamp_position(DVec3::new(
-                selected.anchor.x,
-                selected.safe_y,
-                selected.anchor.z,
-            ));
-            return [fallback.x, fallback.y, fallback.z];
+            return [selected.anchor.x, selected.safe_y, selected.anchor.z];
         }
 
         [clamped.x, clamped.y, clamped.z]
@@ -186,116 +157,28 @@ fn stable_hash(seed: &str, purpose: SpawnPurpose) -> u64 {
     hash
 }
 
-/// 启动时一次性加载的不可变快照：zone 注册表 + 钳制后的出生分布。
-/// 世界构建（chunk union）与出生选择（fallback_spawn）都从这一个权威来源读取，
-/// 避免两条路径各自读 zones.json 导致 chunk 分配与 spawn 选择不一致（finding 3/4/5）。
-pub(crate) struct FallbackSpawnSnapshot {
-    pub(crate) registry: ZoneRegistry,
-    pub(crate) distribution: Vec<SpawnDistributionAnchor>,
-}
-
-static FALLBACK_SPAWN_SNAPSHOT: OnceLock<FallbackSpawnSnapshot> = OnceLock::new();
-
-pub(crate) fn fallback_spawn_snapshot() -> &'static FallbackSpawnSnapshot {
-    FALLBACK_SPAWN_SNAPSHOT.get_or_init(FallbackSpawnSnapshot::load)
-}
-
-impl FallbackSpawnSnapshot {
-    fn load() -> Self {
-        let registry = ZoneRegistry::load();
-        let distribution = clamp_distribution_to_spawn_zone(
-            &registry,
-            effective_default_spawn_distribution(&registry),
-        );
-        Self {
-            registry,
-            distribution,
-        }
-    }
-}
-
-/// 把分布锚点钳制进出生 zone 的 AABB，保证任何锚点派生出的 spawn 都落在
-/// `fallback_spawn_chunk_union` 已分配的 chunk 内。当前 zones.json 全部在界内
-/// （钳制是 no-op），这是对未来配置错误的防御。
-fn clamp_distribution_to_spawn_zone(
-    registry: &ZoneRegistry,
-    distribution: Vec<SpawnDistributionAnchor>,
-) -> Vec<SpawnDistributionAnchor> {
-    let Some(spawn_zone) = registry.find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME) else {
-        return distribution;
-    };
-    let (zone_min, zone_max) = spawn_zone.bounds;
-    let mut clamped_changes = 0;
-    let clamped = distribution
-        .into_iter()
-        .map(|anchor| {
-            let clamped_anchor = spawn_zone.clamp_position(anchor.anchor);
-            let clamped_safe_y = anchor.safe_y.clamp(zone_min.y, zone_max.y);
-            if clamped_anchor != anchor.anchor || clamped_safe_y != anchor.safe_y {
-                clamped_changes += 1;
-            }
-            SpawnDistributionAnchor {
-                anchor: clamped_anchor,
-                radius: anchor.radius,
-                weight: anchor.weight,
-                safe_y: clamped_safe_y,
-            }
-        })
-        .collect::<Vec<_>>();
-    if clamped_changes > 0 {
-        tracing::warn!(
-            clamped = clamped_changes,
-            total = clamped.len(),
-            "[bong][player] spawn_distribution 有 {clamped_changes} 个锚点在出生 zone AABB 之外，已钳制进界"
-        );
-    }
-    clamped
-}
-
 pub fn fallback_spawn(seed: &str, purpose: SpawnPurpose) -> [f64; 3] {
-    let snapshot = fallback_spawn_snapshot();
-    PlayerSpawnSelector::with_distribution(&snapshot.registry, snapshot.distribution.clone())
-        .select(seed, purpose)
+    let registry = ZoneRegistry::load();
+    let distribution = load_default_spawn_distribution().unwrap_or_else(|error| {
+        tracing::warn!(
+            "[bong][player] failed to load spawn_distribution from zones.json: {error}; using patrol anchor fallback"
+        );
+        Vec::new()
+    });
+    if distribution.is_empty() {
+        PlayerSpawnSelector::new(&registry).select(seed, purpose)
+    } else {
+        PlayerSpawnSelector::with_distribution(&registry, distribution).select(seed, purpose)
+    }
 }
 
 pub fn emergency_spawn_position() -> [f64; 3] {
     EMERGENCY_SPAWN_POSITION
 }
 
-fn default_spawn_distribution_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::world::zone::DEFAULT_ZONES_PATH)
-}
-
-#[cfg(test)]
 fn load_default_spawn_distribution() -> Result<Vec<SpawnDistributionAnchor>, String> {
-    load_spawn_distribution_from_path(default_spawn_distribution_path())
-}
-
-pub(crate) fn effective_default_spawn_distribution(
-    registry: &ZoneRegistry,
-) -> Vec<SpawnDistributionAnchor> {
-    effective_spawn_distribution_from_path(registry, default_spawn_distribution_path())
-}
-
-fn effective_spawn_distribution_from_path(
-    registry: &ZoneRegistry,
-    path: impl AsRef<Path>,
-) -> Vec<SpawnDistributionAnchor> {
-    match load_spawn_distribution_from_path(path) {
-        Ok(distribution) if !distribution.is_empty() => distribution,
-        Ok(_) => {
-            tracing::warn!(
-                "[bong][player] spawn_distribution in zones.json is empty; using patrol anchor fallback"
-            );
-            distribution_from_zone_patrol_anchors(registry)
-        }
-        Err(error) => {
-            tracing::warn!(
-                "[bong][player] failed to load spawn_distribution from zones.json: {error}; using patrol anchor fallback"
-            );
-            distribution_from_zone_patrol_anchors(registry)
-        }
-    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::world::zone::DEFAULT_ZONES_PATH);
+    load_spawn_distribution_from_path(path)
 }
 
 fn load_spawn_distribution_from_path(
@@ -338,18 +221,8 @@ fn load_spawn_distribution_from_path(
     Ok(distribution)
 }
 
-fn emergency_spawn_distribution() -> Vec<SpawnDistributionAnchor> {
-    let anchor = DVec3::from_array(EMERGENCY_SPAWN_POSITION);
-    vec![SpawnDistributionAnchor {
-        anchor,
-        radius: 0.0,
-        weight: 1,
-        safe_y: anchor.y,
-    }]
-}
-
 fn distribution_from_zone_patrol_anchors(registry: &ZoneRegistry) -> Vec<SpawnDistributionAnchor> {
-    let distribution: Vec<SpawnDistributionAnchor> = registry
+    registry
         .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
         .map(|zone| {
             zone.patrol_anchors
@@ -362,18 +235,13 @@ fn distribution_from_zone_patrol_anchors(registry: &ZoneRegistry) -> Vec<SpawnDi
                 })
                 .collect()
         })
-        .unwrap_or_default();
-    if distribution.is_empty() {
-        emergency_spawn_distribution()
-    } else {
-        distribution
-    }
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::zone::{Zone, ZoneRegistry};
+    use crate::world::zone::ZoneRegistry;
 
     #[test]
     fn same_seed_and_purpose_are_stable() {
@@ -437,183 +305,5 @@ mod tests {
 
         assert!(distribution.len() >= 3);
         assert!(distribution.iter().all(|anchor| anchor.weight > 0));
-    }
-
-    #[test]
-    fn effective_distribution_falls_back_to_patrol_anchors_on_load_error() {
-        let registry = ZoneRegistry::fallback();
-        let missing_path = std::env::temp_dir().join(format!(
-            "bong-missing-spawn-distribution-{}-{}.json",
-            std::process::id(),
-            stable_hash("missing", SpawnPurpose::DevSpawnCommand),
-        ));
-
-        let distribution = effective_spawn_distribution_from_path(&registry, missing_path);
-        let patrol_anchor = registry
-            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-            .and_then(|zone| zone.patrol_anchors.first())
-            .expect("fallback spawn zone should declare a patrol anchor");
-
-        assert_eq!(distribution.len(), 1);
-        assert_eq!(distribution[0].anchor, *patrol_anchor);
-        assert_eq!(distribution[0].radius, 64.0);
-        assert_eq!(distribution[0].weight, 1);
-        assert_eq!(distribution[0].safe_y, patrol_anchor.y + 2.0);
-    }
-
-    #[test]
-    fn effective_distribution_falls_back_to_patrol_anchors_for_valid_empty_file() {
-        let registry = ZoneRegistry::fallback();
-        let path = std::env::temp_dir().join(format!(
-            "bong-empty-spawn-distribution-{}-{}.json",
-            std::process::id(),
-            stable_hash("empty", SpawnPurpose::DevSpawnCommand),
-        ));
-        fs::write(
-            &path,
-            r#"{"zones":[{"name":"spawn","spawn_distribution":[]}]}"#,
-        )
-        .expect("empty spawn distribution fixture should be written");
-
-        let distribution = effective_spawn_distribution_from_path(&registry, &path);
-        fs::remove_file(path).expect("empty spawn distribution fixture should be removed");
-        let patrol_anchor = registry
-            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-            .and_then(|zone| zone.patrol_anchors.first())
-            .expect("fallback spawn zone should declare a patrol anchor");
-
-        assert_eq!(distribution.len(), 1);
-        assert_eq!(distribution[0].anchor, *patrol_anchor);
-        assert_eq!(distribution[0].radius, 64.0);
-    }
-
-    fn synthetic_registry(bounds: (DVec3, DVec3), blocked_tiles: Vec<(i32, i32)>) -> ZoneRegistry {
-        ZoneRegistry {
-            spatial_revision: 0,
-            zones: vec![Zone {
-                name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
-                dimension: crate::world::dimension::DimensionKind::Overworld,
-                bounds,
-                spirit_qi: 0.9,
-                danger_level: 0,
-                active_events: Vec::new(),
-                patrol_anchors: Vec::new(),
-                blocked_tiles,
-                qi_equilibrium: 0.0,
-                qi_inflow_per_min: 0.0,
-            }],
-        }
-    }
-
-    #[test]
-    fn blocked_tile_fallback_returns_clamped_cluster_center() {
-        let registry = synthetic_registry(
-            (
-                DVec3::new(-750.0, -64.0, -750.0),
-                DVec3::new(750.0, 320.0, 750.0),
-            ),
-            vec![(750, 0)],
-        );
-        let selector = PlayerSpawnSelector::with_distribution(
-            &registry,
-            vec![SpawnDistributionAnchor {
-                anchor: DVec3::new(10_000.0, 72.0, 0.0),
-                radius: 0.0,
-                weight: 1,
-                safe_y: 72.0,
-            }],
-        );
-
-        let pos = selector.select("blocked-edge", SpawnPurpose::InitialLogin);
-
-        assert_eq!(
-            pos,
-            [750.0, 72.0, 0.0],
-            "候选点 (10000,72,0) 钳制到 (750,72,0) 后撞上 blocked tile (750,0)，回退必须返回再钳制的簇中心"
-        );
-        assert!(
-            registry.zones[0].contains(DVec3::new(pos[0], pos[1], pos[2])),
-            "blocked-tile 回退必须落在出生 zone 内，绝不返回界外原始锚点"
-        );
-    }
-
-    #[test]
-    fn snapshot_clamps_out_of_bounds_anchors_into_spawn_zone() {
-        let registry = synthetic_registry(
-            (
-                DVec3::new(-750.0, -64.0, -750.0),
-                DVec3::new(750.0, 320.0, 750.0),
-            ),
-            Vec::new(),
-        );
-        let distribution = vec![
-            SpawnDistributionAnchor {
-                anchor: DVec3::new(10_000.0, 72.0, 0.0),
-                radius: 0.0,
-                weight: 1,
-                safe_y: 72.0,
-            },
-            SpawnDistributionAnchor {
-                anchor: DVec3::new(-100.0, 5.0, 200.0),
-                radius: 30.0,
-                weight: 1,
-                safe_y: -999.0,
-            },
-        ];
-
-        let clamped = clamp_distribution_to_spawn_zone(&registry, distribution);
-
-        assert_eq!(clamped[0].anchor, DVec3::new(750.0, 72.0, 0.0));
-        assert_eq!(clamped[0].safe_y, 72.0);
-        assert_eq!(clamped[1].anchor, DVec3::new(-100.0, 5.0, 200.0));
-        assert_eq!(clamped[1].safe_y, -64.0);
-        assert_eq!(clamped[1].radius, 30.0);
-        assert_eq!(clamped[1].weight, 1);
-    }
-
-    #[test]
-    fn fallback_spawn_snapshot_is_shared_immutable_single_authority() {
-        let first = fallback_spawn_snapshot();
-        let second = fallback_spawn_snapshot();
-        assert!(
-            std::ptr::eq(first, second),
-            "启动快照必须全局唯一（OnceLock），chunk 分配与出生选择才能读同一份权威数据"
-        );
-        let spawn_zone = first
-            .registry
-            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-            .expect("spawn zone should load");
-        assert!(!first.distribution.is_empty());
-        for anchor in &first.distribution {
-            assert!(
-                spawn_zone.contains(anchor.anchor),
-                "快照分布锚点必须全部落在出生 zone 内"
-            );
-            assert!(
-                spawn_zone.contains(DVec3::new(anchor.anchor.x, anchor.safe_y, anchor.anchor.z)),
-                "快照分布 safe_y 必须落在出生 zone 内"
-            );
-        }
-    }
-
-    #[test]
-    fn empty_patrol_anchors_produce_nonempty_emergency_distribution() {
-        let registry = ZoneRegistry::fallback();
-        let mut empty = registry
-            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
-            .expect("fallback spawn zone should exist")
-            .clone();
-        empty.patrol_anchors.clear();
-        let registry = ZoneRegistry {
-            spatial_revision: 0,
-            zones: vec![empty],
-        };
-
-        let distribution = distribution_from_zone_patrol_anchors(&registry);
-
-        assert_eq!(distribution.len(), 1);
-        assert_eq!(distribution[0].anchor.to_array(), EMERGENCY_SPAWN_POSITION);
-        assert_eq!(distribution[0].radius, 0.0);
-        assert_eq!(distribution[0].weight, 1);
     }
 }

@@ -25,7 +25,6 @@ FULLSTACK_REDIS_LOG="$RUN_DIR/fullstack-redis.log"
 FULLSTACK_SERVER_LOG="$RUN_DIR/fullstack-server.log"
 FULLSTACK_REDIS_SUB_LOG="$RUN_DIR/fullstack-redis-sub.log"
 FULLSTACK_TIANDAO_LOG="$RUN_DIR/fullstack-tiandao.log"
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 PASS=0
 FAIL=0
@@ -256,9 +255,9 @@ if (
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo test
 ) >"$SERVER_TEST_LOG" 2>&1; then
-  pass "server cargo test"
+  pass "server wrapper cargo test"
 else
-  fail "server cargo test"
+  fail "server wrapper cargo test"
 fi
 
 if (
@@ -359,26 +358,15 @@ else
   fail "redis ping"
 fi
 
-FULLSTACK_SERVER_BINARY="$RUN_DIR/bong-server"
-if (
+(
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
   cd "$ROOT/server"
-  "$ROOT/scripts/build-token.sh" cargo build
-  install -m 700 "$CARGO_TARGET_DIR/debug/bong-server" "$FULLSTACK_SERVER_BINARY"
-) >>"$FULLSTACK_SERVER_LOG" 2>&1; then
-  pass "server build"
-  (
-    cd "$ROOT/server"
-    exec "$FULLSTACK_SERVER_BINARY" >>"$FULLSTACK_SERVER_LOG" 2>&1
-  ) &
-  SERVER_PID="$!"
-else
-  fail "server build"
-  SERVER_PID=""
-fi
+  "$ROOT/scripts/build-token.sh" cargo run >"$FULLSTACK_SERVER_LOG" 2>&1
+) &
+SERVER_PID="$!"
 
-if wait_for_pattern "$FULLSTACK_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 120; then
+if wait_for_pattern "$FULLSTACK_SERVER_LOG" "\[bong\]\[world\] creating overworld test area" 120; then
   pass "server world bootstrap"
 else
   fail "server world bootstrap"

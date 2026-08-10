@@ -144,10 +144,6 @@ jobs:
       - name: Smoke/E2E stage (Task 13 harness)
         env:
           RUN_LABEL: ci-smoke
-          # 该 step 会执行 test-server-lifecycle.sh，它内含真实的 tmux 关停顺序
-          # 回归；此处显式开启 opt-in，否则 lifecycle 测试在 GHA 下直接 fail，
-          # 确保默认 CI 永不静默丢失该覆盖（finding 5）。
-          BONG_RUN_TMUX_SHUTDOWN_ORDER_TEST: "1"
         run: bash scripts/smoke-test-e2e.sh
 
       # AGENTS.md §15 —— 协议级黑盒玩家场景（复用上面已构建的 release 二进制和 redis）
@@ -155,12 +151,6 @@ jobs:
         env:
           BOT_E2E_RUN_TAG: ci
           BOT_E2E_AMBIENT_FIXTURE_MODE: "1"
-        run: bash scripts/bot-e2e.sh
-
-      - name: Bot fallback-flat e2e stage (spawn distribution coverage)
-        env:
-          BOT_E2E_RUN_TAG: ci
-          BOT_E2E_FALLBACK_MODE: "1"
         run: bash scripts/bot-e2e.sh
 
       - name: Bot chat timestamp → Tiandao window e2e

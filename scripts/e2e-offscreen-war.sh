@@ -59,7 +59,7 @@ set -euo pipefail
 #
 # 确定性：BONG_SIM_SEED 固定 + BONG_DORMANT_TICK_INTERVAL 小值（免 sleep 60s）。
 #
-# fork 自 scripts/e2e-redis.sh：同款 redis 三级 fallback + cargo run 起服 +
+# fork 自 scripts/e2e-redis.sh：同款 redis 三级 fallback + 构建令牌 wrapper 起服 +
 # ioredis subscriber + wait_for_pattern + cleanup trap。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -78,7 +78,6 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -1591,7 +1590,7 @@ start_server() {
   ) >"$server_log" 2>&1 &
   SERVER_PID="$!"
 
-  if wait_for_pattern "$server_log" "$FALLBACK_WORLD_READY_PATTERN" 300; then
+  if wait_for_pattern "$server_log" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
     pass "server world bootstrap"
   else
     finalize_failure "server" "missing world bootstrap anchor in $server_log"
@@ -1945,7 +1944,7 @@ echo "=== [11/12] P7 TPS 门禁：1000 Dormant ≥18 TPS（headless server 自�
 #   此测试的目的是：验证 1000 Dormant 规模下 tick budget 健康（≥18 TPS），
 #   不是 Near/Mid 分档渲染（那条路需要 client，转人工 runClient 验收）。
 #
-# Near(100)+Mid(500) 分档 TPS：人工验收（需 ./gradlew runClient，§10.1 #6）。
+# Near(100)+Mid(500) 分档 TPS：人工验收（需 scripts/build-token.sh gradle runClient，§10.1 #6）。
 
 # 停掉 P6 server（现有 SERVER_PID）
 stop_server
@@ -1969,7 +1968,7 @@ fi
 P7_SERVER_PID="$!"
 
 # 等 world bootstrap anchor
-if wait_for_pattern "$P7_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
+if wait_for_pattern "$P7_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
   pass "P7 server world bootstrap (1000 Dormant)"
 else
   finalize_failure "p7_tps" "P7 server: world bootstrap anchor missing; see $P7_SERVER_LOG"

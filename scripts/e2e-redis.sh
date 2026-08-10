@@ -18,7 +18,6 @@ REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
 DEFAULT_REDIS_URL="redis://127.0.0.1:6379"
 NODE_BIN="$ROOT/agent/node_modules/.bin"
 RUST_PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-FALLBACK_WORLD_READY_PATTERN='\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[0-9]+ chunks=[0-9]+ view_distance_chunks=[0-9]+'
 
 REDIS_LOG="$RUN_DIR/redis.log"
 SERVER_LOG="$RUN_DIR/server.log"
@@ -1119,7 +1118,7 @@ if ! start_server_process_group "$SERVER_LOG" 0; then
   finalize_failure "server" "failed to establish dedicated server process group; see $SERVER_LOG"
 fi
 
-if wait_for_pattern "$SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
+if wait_for_pattern "$SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
   pass "server world bootstrap"
 else
   finalize_failure "server" "missing world bootstrap anchor in $SERVER_LOG"
@@ -1252,18 +1251,24 @@ run_north_rift_preview() {
   fi
   PERSISTENCE_STASH_READY=1
 
+  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  NORTH_RIFT_OPERATOR="B${NORTH_RIFT_RUN_TAG}NRift"
+  export BONG_OPERATORS="$NORTH_RIFT_OPERATOR"
+  export BONG_OPERATORS_ALLOW_OFFLINE=1
   if ! start_server_process_group "$NORTH_RIFT_SERVER_LOG" 1; then
+    unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
     finalize_failure \
       "north-rift-preview" \
       "failed to establish dedicated preview server process group; see $NORTH_RIFT_SERVER_LOG"
   fi
+  unset BONG_OPERATORS BONG_OPERATORS_ALLOW_OFFLINE
 
   if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[preview\\] BONG_PREVIEW_MODE=1" 300; then
     finalize_failure \
       "north-rift-preview" \
       "dedicated server did not activate preview mode; see $NORTH_RIFT_SERVER_LOG"
   fi
-  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "$FALLBACK_WORLD_READY_PATTERN" 300; then
+  if ! wait_for_pattern "$NORTH_RIFT_SERVER_LOG" "\\[bong\\]\\[world\\] creating overworld test area" 300; then
     finalize_failure \
       "north-rift-preview" \
       "dedicated preview server missed world bootstrap; see $NORTH_RIFT_SERVER_LOG"
@@ -1314,7 +1319,6 @@ run_north_rift_preview() {
       "$listener_failure; see $NORTH_RIFT_SERVER_LOG"
   fi
 
-  NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
   if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
     python3 "$ROOT/scripts/bot/run_scenarios.py" \
       --host 127.0.0.1 \
