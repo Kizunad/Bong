@@ -218,10 +218,11 @@ impl<'a> PlayerSpawnSelector<'a> {
 }
 
 /// 在 zone AABB 的 floor-tile 范围内从 `start` 螺旋向外扫描，返回最近未被
-/// `blocked` 排除的 tile。圈半径超过 [`MAX_EMERGENCY_SCAN_RADIUS`] 仍无空闲 tile
-/// 时返回 `None`，由调用方 fail-closed。扫描结果严格限制在 zone 内，绝不越界。
-const MAX_EMERGENCY_SCAN_RADIUS: i32 = 128;
-
+/// `blocked` 排除的 tile。扫描半径从 zone AABB 推导（`start` 到最远角落的 Chebyshev
+/// 距离），保证覆盖 zone 内全部候选 tile —— 固定半径会把「AABB 更大、空闲 tile 在
+/// 固定圈之外」的 zone 误判成全 blocked 而 panic（review finding）。zone 内全部 tile
+/// 均被 `blocked` 排除时返回 `None`，由调用方 fail-closed。扫描结果严格限制在 zone
+/// 内，绝不越界。
 fn nearest_unblocked_tile(
     zone: &Zone,
     start: (i32, i32),
@@ -230,23 +231,54 @@ fn nearest_unblocked_tile(
     let (min, max) = zone.bounds;
     let (min_tx, max_tx) = (min.x.floor() as i32, max.x.floor() as i32);
     let (min_tz, max_tz) = (min.z.floor() as i32, max.z.floor() as i32);
-    let in_zone_tile = |tx: i32, tz: i32| {
-        tx >= min_tx && tx <= max_tx && tz >= min_tz && tz <= max_tz
+    let start_x = i64::from(start.0);
+    let start_z = i64::from(start.1);
+    let min_tx_i = i64::from(min_tx);
+    let max_tx_i = i64::from(max_tx);
+    let min_tz_i = i64::from(min_tz);
+    let max_tz_i = i64::from(max_tz);
+    // `start` 来自 clamp_position 后的 emergency tile，必在 zone 内。最远圈半径 =
+    // start 到 zone AABB 四角的 Chebyshev 距离最大值，扫到该圈即扫完整个 zone。
+    // i64 计算防 i32 减法/加法溢出（zone 边界可跨 >2^31 格）。
+    let max_radius = (start_x - min_tx_i)
+        .abs()
+        .max((start_x - max_tx_i).abs())
+        .max((start_z - min_tz_i).abs())
+        .max((start_z - max_tz_i).abs());
+    let visit = |tx: i64, tz: i64| -> Option<(i32, i32)> {
+        if tx < min_tx_i || tx > max_tx_i || tz < min_tz_i || tz > max_tz_i {
+            return None;
+        }
+        let pos = DVec3::new(tx as f64 + 0.5, 0.0, tz as f64 + 0.5);
+        if !blocked(pos) {
+            return Some((tx as i32, tz as i32));
+        }
+        None
     };
-    for radius in 0..=MAX_EMERGENCY_SCAN_RADIUS {
-        for dz in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx.abs() != radius && dz.abs() != radius {
-                    continue;
-                }
-                let (tx, tz) = (start.0 + dx, start.1 + dz);
-                if !in_zone_tile(tx, tz) {
-                    continue;
-                }
-                let pos = DVec3::new(tx as f64 + 0.5, 0.0, tz as f64 + 0.5);
-                if !blocked(pos) {
-                    return Some((tx, tz));
-                }
+    for radius in 0..=max_radius {
+        // Chebyshev 环边界 = max(|dx|,|dz|) == radius。半径 0 的圆盘只有起点本身；
+        // radius>0 由四条边组成。逐边枚举 O(8R) 个边界 tile，避免对 (2R+1)² 全盘
+        // 逐个跳过（O(R³)，大 zone 的 emergency 回退会退化到秒级）。
+        if radius == 0 {
+            if let Some(found) = visit(start_x, start_z) {
+                return Some(found);
+            }
+            continue;
+        }
+        for dx in -radius..=radius {
+            if let Some(found) = visit(start_x + dx, start_z - radius) {
+                return Some(found);
+            }
+            if let Some(found) = visit(start_x + dx, start_z + radius) {
+                return Some(found);
+            }
+        }
+        for dz in -radius..radius {
+            if let Some(found) = visit(start_x - radius, start_z + dz) {
+                return Some(found);
+            }
+            if let Some(found) = visit(start_x + radius, start_z + dz) {
+                return Some(found);
             }
         }
     }
@@ -663,6 +695,80 @@ mod tests {
         assert!(
             registry.zones[0].contains(DVec3::new(pos[0], pos[1], pos[2])),
             "螺旋扫描回退必须落在出生 zone AABB 内（pos={pos:?}）"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_finds_free_tile_at_exact_zone_max_radius() {
+        // review finding：emergency 扫描的最大扫描圈（zone AABB 推导的最远角 Chebyshev
+        // 距离）是**闭区间**边界 —— 唯一空闲 tile 恰好落在最后一圈时必须命中；
+        // `0..max_radius` 式 off-by-one 会漏掉它、误判成全 blocked 而 panic。本 zone
+        // tile 范围 [-128,128]²、start=(0,0)，最远圈半径=128，唯一空闲 tile 恰在
+        // (128,0)（右边缘最后一圈）。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-128.0, -64.0, -128.0),
+                DVec3::new(128.0, 320.0, 128.0),
+            ),
+            Vec::new(),
+        );
+        let free = (128, 0);
+        let blocked = |pos: DVec3| {
+            let tx = pos.x.floor() as i32;
+            let tz = pos.z.floor() as i32;
+            tx != free.0 || tz != free.1
+        };
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked);
+        assert_eq!(
+            found,
+            Some(free),
+            "唯一空闲 tile 恰在最大扫描圈（Chebyshev 半径 128）上时必须被闭区间扫描命中"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_finds_free_tile_beyond_old_fixed_cap() {
+        // review finding：旧实现把扫描半径硬编码为 128，zone AABB 更大时圈外空闲
+        // tile 永远够不到 → 返回 None → select 在仍有合法出生 tile 时 panic。修复后
+        // 扫描半径由 AABB 推导：本 zone tile 范围 [-200,200]²、唯一空闲 tile 在
+        // (200,0)（Chebyshev 半径 200 > 128）也必须命中。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-200.0, -64.0, -200.0),
+                DVec3::new(200.0, 320.0, 200.0),
+            ),
+            Vec::new(),
+        );
+        let free = (200, 0);
+        let blocked = |pos: DVec3| {
+            let tx = pos.x.floor() as i32;
+            let tz = pos.z.floor() as i32;
+            tx != free.0 || tz != free.1
+        };
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked);
+        assert_eq!(
+            found,
+            Some(free),
+            "zone AABB 内、但超出旧固定半径 128 的空闲 tile 必须被 AABB 推导半径命中"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_returns_none_when_whole_zone_blocked() {
+        // fail-closed：整个 zone 全部被 blocked 排除时扫描返回 None —— select 对其
+        // panic 是正确语义（此时确实不存在任何合法出生 tile）。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-128.0, -64.0, -128.0),
+                DVec3::new(128.0, 320.0, 128.0),
+            ),
+            Vec::new(),
+        );
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &|_pos: DVec3| true);
+        assert_eq!(
+            found,
+            None,
+            "zone 全部 tile 均被 blocked 排除时，扫描必须 fail-closed 返回 None"
         );
     }
 

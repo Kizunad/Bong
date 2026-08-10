@@ -1115,6 +1115,54 @@ mod tests {
             "单个巨大合法矩形必须在分配 BTreeSet 前 fail closed，并报告精确候选工作量"
         );
 
+        // 大量不相交零半径锚点：每个锚点经视距展开成一个候选矩形（bounding box =
+        // ±(视距 + EXTRA_VIEW_RADIUS)，零半径下 45×45 = 2,025）。review finding：
+        // 旧 fixture 假设每锚点只插入 1 个唯一 chunk，未对账候选工作量预算 —— 必须
+        // 显式算单锚点工作量并证明撞的是唯一 chunk 分支（而非先撞工作量分支）。
+        let per_anchor_work = {
+            let disjoint_anchor =
+                crate::player::spawn_selector::spawn_distribution_anchor_for_test(
+                    DVec3::new(0.0, 65.0, 0.0),
+                    0.0,
+                );
+            let (disjoint_center, disjoint_radius) = disjoint_anchor.cluster();
+            let disjoint_min_view = ChunkView::new(
+                ChunkPos::new(
+                    block_coord_to_chunk(disjoint_center.x - disjoint_radius),
+                    block_coord_to_chunk(disjoint_center.z - disjoint_radius),
+                ),
+                FALLBACK_VIEW_DISTANCE_CHUNKS,
+            );
+            let disjoint_max_view = ChunkView::new(
+                ChunkPos::new(
+                    block_coord_to_chunk(disjoint_center.x + disjoint_radius),
+                    block_coord_to_chunk(disjoint_center.z + disjoint_radius),
+                ),
+                FALLBACK_VIEW_DISTANCE_CHUNKS,
+            );
+            let (disjoint_min_chunk, _) = disjoint_min_view.bounding_box();
+            let (_, disjoint_max_chunk) = disjoint_max_view.bounding_box();
+            usize::try_from(
+                (i128::from(disjoint_max_chunk.x) - i128::from(disjoint_min_chunk.x) + 1)
+                    * (i128::from(disjoint_max_chunk.z) - i128::from(disjoint_min_chunk.z) + 1),
+            )
+            .expect("single disjoint view rectangle should fit usize")
+        };
+        assert!(
+            per_anchor_work < FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            "单锚点 view 矩形必须远低于候选工作量预算，累积才可能先撞唯一上限"
+        );
+        // 不相交矩形下唯一计数与候选工作量同速增长，而唯一上限（8,192）只有候选
+        // 工作量预算（16,384）的一半 —— 去重计数必然先撞线。撞线发生在第
+        // (MAX_CHUNKS / per_anchor_work + 1) 个矩形插入中途；此刻该矩形工作量已入账，
+        // 累计必须仍 ≤ 预算（否则撞的是工作量分支，唯一分支未被覆盖）。
+        let overflow_rectangles = FALLBACK_FLAT_MAX_CHUNKS / per_anchor_work + 1;
+        let work_at_unique_overflow = overflow_rectangles * per_anchor_work;
+        assert!(
+            work_at_unique_overflow <= FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            "唯一撞线时累计候选工作量 {work_at_unique_overflow} 必须仍在预算 \
+             {FALLBACK_FLAT_MAX_ANCHOR_WORK} 内（先撞唯一 chunk 分支而非工作量分支）"
+        );
         let disjoint_anchors = (0..=FALLBACK_FLAT_MAX_CHUNKS)
             .map(|index| {
                 crate::player::spawn_selector::spawn_distribution_anchor_for_test(

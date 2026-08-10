@@ -360,6 +360,32 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "above safety limit"):
                 make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
 
+    def test_spawn_fixture_tiles_rejects_huge_json_integers_as_valueerror(self):
+        # review finding：JSON 解析可产生任意大整数，`float(10**1000)` 在 isfinite 看到
+        # 之前就抛 OverflowError —— 修复前巨大 anchor/radius 以意外异常类型中止 fixture
+        # 生成，破坏"非法分布以 ValueError 干净拒绝、绝无文件写出"的契约。修复后巨大整数
+        # 必须一律判非法并抛 ValueError，不得泄漏 OverflowError。
+        for field in ("radius", "anchor"):
+            with self.subTest(field=field):
+                cluster = {
+                    "anchor": [0.0, make_novice_raster_fixture.SURFACE_Y, 0.0],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+                if field == "radius":
+                    cluster["radius"] = 10**1000
+                else:
+                    cluster["anchor"][0] = 10**1000
+                config = {
+                    "zones": [{"name": "spawn", "spawn_distribution": [cluster]}]
+                }
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    zones_path = pathlib.Path(temp_dir) / "zones.json"
+                    zones_path.write_text(json.dumps(config), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
     def test_spawn_fixture_tiles_rejects_union_over_limit_during_construction(self):
         clusters = []
         for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES + 1):
@@ -1320,16 +1346,18 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         )
 
     def test_fallback_readiness_pattern_matches_production_tracing_line(self):
-        pattern_match = re.search(
+        pattern_matches = re.findall(
             r"^BOT_FALLBACK_READY_PATTERN='([^']+)'$",
             self.source,
             re.MULTILINE,
         )
-        self.assertIsNotNone(
-            pattern_match,
-            "bot-e2e.sh 必须声明唯一 canonical fallback readiness pattern",
+        self.assertEqual(
+            len(pattern_matches),
+            1,
+            "bot-e2e.sh 必须恰好声明一个 canonical fallback readiness pattern："
+            "重复声明会留下歧义的真实来源，grep 匹配到哪一条不可预期",
         )
-        pattern = pattern_match.group(1)
+        pattern = pattern_matches[0]
         production_line = (
             "2026-08-07T10:25:04.830194Z  INFO "
             "[bong][world] BOT_FALLBACK_FLAT_READY "
