@@ -40,6 +40,10 @@ MODULES = ["mineral", "network"]
 
 PROBE_REQUEST = {"type": "mineral_probe", "v": 1}
 SILENT_WINDOW = 4.0
+# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
+# cultivation_detail 需 MeridianSystem+Cultivation，本场景只 realm set（不加
+# 经脉系统），不应出现——若出现即判红（这正是契约要求的「无 S2C 响应」）。
+AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
 # 权威 Position 的 y 带：实测 spawn 后周期性 +10（72→82→92…），单点探针必超 6m。
 # 列盲扫覆盖 [-6, +30]（步长 4），覆盖整条提升带；列外则重读位置换列。
 Y_LO = -6
@@ -161,9 +165,13 @@ def _assert_no_probe_result(bot, sent_at: float, description: str) -> None:
     deadline = time.monotonic() + SILENT_WINDOW
     while True:
         for e in bot.events_of("server_data"):
-            if e.t > sent_at and e.data["payload_type"] == "mineral_probe_result":
+            # 出界探针契约是「无 S2C 响应」：白名单外的 payload 一律判红。只盯
+            # mineral_probe_result 会放走拒收却发 event_alert / 库存更新的坏实现
+            # （review finding 5）。
+            if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
                 raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际收到 mineral_probe_result（t={e.t:.3f}）"
+                    f"[{bot.username}] {description}，"
+                    f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
                 )
         for e in bot.events_of("chat"):
             if e.t > sent_at:

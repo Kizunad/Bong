@@ -10,6 +10,10 @@ fixture 运行不可达——happy path 无法黑盒构造，本场景锁拒绝�
    debug log + continue（无 S2C、无聊天、无连接变化）。
 
 断言：两路均窗口内无任何新 server_data（含 remains_sync）、无聊天、连接保持。
+fresh bot 无 cultivation/meridian 等系统，周期环境 payload 仅 `carrier_state`
+（每 1s 无条件推给所有 client，carrier_state_emit.rs）——断言以它为唯一白名单，
+其余任何 server_data 一律判失败；否则「拒收却发 event_alert / 库存更新」的坏
+实现会漏网（review finding 4）。
 """
 
 import time
@@ -23,6 +27,10 @@ MODULES = ["inventory", "network"]
 
 LOOT_REQUEST = {"type": "remains_loot", "v": 1}
 SILENT_WINDOW = 4.0
+# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client。
+# cultivation_detail 需 MeridianSystem+Cultivation，本场景未开经脉，不应出现——
+# 若出现即判红（这正是契约要求的「无任何新 server_data」）。
+AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
 
 
 def run(env) -> None:
@@ -50,9 +58,12 @@ def _assert_quiet_rejection(bot, sent_at: float, description: str) -> None:
     deadline = time.monotonic() + SILENT_WINDOW
     while True:
         for e in bot.events_of("server_data"):
-            if e.t > sent_at and e.data["payload_type"] == "remains_sync":
+            # 模块契约是「无任何新 server_data」：白名单外的 payload 一律判红。
+            # 只盯 remains_sync 会放走拒收却发 event_alert / 库存更新的坏实现。
+            if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
                 raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际收到 remains_sync（t={e.t:.3f}）"
+                    f"[{bot.username}] {description}，"
+                    f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
                 )
         for e in bot.events_of("chat"):
             if e.t > sent_at:

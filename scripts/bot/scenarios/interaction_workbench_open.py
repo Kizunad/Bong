@@ -87,9 +87,22 @@ def run(env) -> None:
 
         # happy path：打开制作台，断言 S2C WorkbenchOpen 回推放置坐标。
         # 权威坐标周期性 +10 上移（~8s 一档），/top 落点后立即 open 的窗口远小于
-        # 该周期；若 open 恰逢移档被静默丢弃，对同一实体重试一次。
+        # 该周期；若 open 恰逢移档被静默丢弃，重试前必须先恢复位置前提——直接对
+        # 同一实体重试只会被同样丢弃（review finding 6）。重试先 /top 把权威坐标
+        # 搬回该列地表顶（x/z 不变，故回到同一落点），等确认聊天锚定在重试发起
+        # 之后，避免误匹配首轮 confirm 造成「未真正恢复就开始重试」。
         payload = None
-        for _ in range(2):
+        for attempt in range(2):
+            if attempt > 0:
+                retry_anchor = bot.events[-1].t if bot.events else 0.0
+                bot.cmd("top")
+                bot.wait_for(
+                    lambda e: e.kind == "chat"
+                    and e.t > retry_anchor
+                    and TOP_CHAT_RE.search(e.data["text"]),
+                    timeout=TOP_TIMEOUT,
+                    description="重试前 `/top` 恢复权威坐标确认",
+                )
             bot.intent({**OPEN_REQUEST, "entity_id": spawn.data["entity_id"]})
             try:
                 opened = bot.expect_server_data("workbench_open", timeout=3.0)
@@ -121,6 +134,18 @@ def run(env) -> None:
         # 拒绝 1：实体 id 不存在 → 聊天「目标不存在。」（dispatch 层 get_by_id 失败）。
         bot.intent({**OPEN_REQUEST, "entity_id": 987654321})
         bot.expect_chat("目标不存在。", timeout=10.0)
+        # 拒绝 1 契约：被拒的 open 不得同时产出成功 payload——「照发 WorkbenchOpen
+        # 又回拒收文案」的坏实现必须撞红（review finding 2）。拒收聊天已在此前被
+        # expect_chat 消费，锚定到当前水位后，_assert_silent_window 对 payload 与
+        # 新聊天都判红；后续 tpzone 命令在此窗口结束后才发。
+        sent_at = bot.events[-1].t if bot.events else 0.0
+        _assert_silent_window(
+            bot,
+            sent_at,
+            "workbench_open",
+            "不存在实体的 workbench_open 应只回「目标不存在。」，不得同时回推 WorkbenchOpen payload",
+            window=SILENT_WINDOW,
+        )
 
         # 拒绝 2：权威坐标离开制作台 >3m 后 open → 静默（interact 出界 continue）。
         # C2S 移动不更新权威 Position，用 /tpzone 拉到远端 zone 中心（fixture

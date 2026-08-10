@@ -166,14 +166,35 @@ def run(env) -> None:
             _assert_full_payload(host, payload, victim.username)
             host.assert_alive("跨境界 qi_color_inspect 后")
 
-            # 2. host 降回引气（同境界）→ realm_diff=0 静默
+            # 2. host 降为凝实（rank 3）、victim 仍引气（rank 2）→ diff=1 脱敏 payload：
+            #    main 保留、secondary/is_chaotic/is_hunyuan 一律隐藏（qi_color_observed_
+            #    emit.rs:52-60）。这是「全量披露 ↔ 静默」之间唯一可见的脱敏边界，必须
+            #    演练——只测 diff 2/0 会放走「对一切正境界差都套脱敏」或「diff=1 全量
+            #    透出」的坏实现（review finding 1）。
+            host.cmd("realm set condense")
+            host.expect_chat("[dev] realm set ", timeout=10.0)
+            condense_anchor = host.events[-1].t if host.events else 0.0
+            host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
+            # 不能复用 expect_server_data：diff=2 的全量 payload 已在历史中，它只匹配
+            # 第一条历史事件会拿错 payload（review round 4 自身的一个坑）；按水位锚定。
+            redacted = host.wait_for(
+                lambda e: e.kind == "server_data"
+                and e.data["payload_type"] == "qi_color_observed"
+                and e.t > condense_anchor,
+                timeout=10.0,
+                description="condense host 探引气 victim 的 qi_color_observed（diff=1 脱敏）",
+            )
+            _assert_redacted_payload(host, redacted.data["payload"], victim.username)
+            host.assert_alive("单重境界差 qi_color_inspect 后")
+
+            # 3. host 降回引气（同境界）→ realm_diff=0 静默
             host.cmd("realm set induce")
             host.expect_chat("[dev] realm set ", timeout=10.0)
             sent_at = host.events[-1].t if host.events else 0.0
             host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
             _assert_silent(host, sent_at, "同境界 qi_color_inspect 应静默（realm_diff=0 continue）")
 
-            # 3. 不存在的协议 id → dispatch 静默丢弃
+            # 4. 不存在的协议 id → dispatch 静默丢弃
             sent_at = host.events[-1].t if host.events else 0.0
             host.intent({**INSPECT_REQUEST, "observed": "entity:999999999"})
             _assert_silent(host, sent_at, "坏 observed 协议 id 应被 dispatch 静默丢弃")
@@ -213,6 +234,41 @@ def _assert_full_payload(host, payload: dict, victim_username: str) -> None:
     if payload.get("observer") != f"offline:{host.username}":
         raise BotAssertionError(
             f"[{host.username}] 期望 observer=offline:{host.username}（全等 canonical id），"
+            f"实际 {payload.get('observer')}"
+        )
+
+
+def _assert_redacted_payload(host, payload: dict, victim_username: str) -> None:
+    """diff=1 脱敏契约：只保留 main 主色，副色与混沌/混元旗标一律隐藏。
+
+    server 端把脱敏后的 `secondary` 序列化为缺失键（None Option 省略，单测断言
+    get("secondary").is_none()），故 `payload.get("secondary") is None` 对「键
+    缺失」与「显式 null」两种坏实现都判红。"""
+    if payload.get("main") != "Heavy":
+        raise BotAssertionError(
+            f"[{host.username}] 期望脱敏 payload.main=Heavy 保留（victim 崩拳修行演化），"
+            f"实际 {payload.get('main')}"
+        )
+    if payload.get("realm_diff") != 1:
+        raise BotAssertionError(
+            f"[{host.username}] 期望 realm_diff=1（凝实-引气），实际 {payload.get('realm_diff')}"
+        )
+    if payload.get("secondary") is not None:
+        raise BotAssertionError(
+            f"[{host.username}] 期望脱敏 payload 隐藏 secondary，实际 {payload.get('secondary')!r}"
+        )
+    if payload.get("is_chaotic") is not False or payload.get("is_hunyuan") is not False:
+        raise BotAssertionError(
+            f"[{host.username}] 期望脱敏 payload is_chaotic/is_hunyuan=false，实际 {payload}"
+        )
+    if payload.get("observed") != f"offline:{victim_username}":
+        raise BotAssertionError(
+            f"[{host.username}] 期望脱敏 payload observed=offline:{victim_username}，"
+            f"实际 {payload.get('observed')}"
+        )
+    if payload.get("observer") != f"offline:{host.username}":
+        raise BotAssertionError(
+            f"[{host.username}] 期望脱敏 payload observer=offline:{host.username}（全等 canonical id），"
             f"实际 {payload.get('observer')}"
         )
 

@@ -18,6 +18,8 @@ SPAWN_INTERVAL_TICKS = 30 * 24000 ≈ 10h 实墙钟），fixture 运行不可达
 顺序断言同时锁定检查顺序：先背包后模板、模板先于目标实体。
 """
 
+from bot.bot import BotAssertionError
+
 from ._inventory_helpers import (
     require_item,
     wait_inventory_contains,

@@ -63,6 +63,15 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"[{bot.username}] 期望 EventAlert 含「神识未及」，实际 {message!r}"
             )
+        # Denied(RealmTooLow) 契约：同请求不得同时产出精确保鲜结果——只等拒信、只查
+        # 连接存活会放走「发拒信又发精确保鲜」的坏实现。以拒信已到达为锚，断言窗口
+        # 内无 freshness_update（review finding 7）。
+        sent_at = bot.events[-1].t if bot.events else 0.0
+        _assert_no_freshness_update(
+            bot,
+            sent_at,
+            "Awaken 保鲜探针被拒（RealmTooLow）后，同请求不得再产出 freshness_update",
+        )
         bot.assert_alive("Awaken 保鲜探针后")
 
         # 2. 凝脉 → FreshnessUpdate 精确结果
