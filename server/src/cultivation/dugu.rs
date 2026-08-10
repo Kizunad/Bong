@@ -1213,6 +1213,7 @@ mod tests {
     /// This validates the system degrades gracefully rather than panicking.
     #[test]
     fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
         let mut app = test_app();
@@ -1245,6 +1246,10 @@ mod tests {
                 },
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity）。无 CurrentDimension 的
+                // 溢出路由场景仍需身份成立——补上与生产一致的 canonical 身份。
+                LifeRecord::new(canonical_player_id("dugu-infuse-nodim")),
                 // No CurrentDimension intentionally.
             ))
             .id();
