@@ -4091,6 +4091,31 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["current_index"], 0)
 
 
+class _FakeSocket:
+    """把 socketpair 一端包成可控制 recv 的代理。
+
+    Python 3.13 下 C socket 方法（recv/sendall）不可 mock.patch.object（只读
+    属性）。测试要确定性制造 EOF / OSError 时，把 `_mode` 切成 eof / raise：
+    - real：委托真 socket（正常读）；
+    - eof：recv 返回 b""（对端关闭）；
+    - raise：recv 抛 OSError（连接重置）。
+    """
+
+    def __init__(self, real: socket.socket):
+        object.__setattr__(self, "_real", real)
+        self._mode = "real"
+
+    def recv(self, *args, **kwargs):
+        if self._mode == "eof":
+            return b""
+        if self._mode == "raise":
+            raise OSError("reset")
+        return object.__getattribute__(self, "_real").recv(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_real"), name)
+
+
 class RedisPubSubTest(unittest.TestCase):
     """_redis_helpers：RESP2 帧编解码 + SUBSCRIBE ack 等待 + 消息泵（纯 stdlib，无需 redis 服务）。"""
 
@@ -4223,6 +4248,126 @@ class RedisPubSubTest(unittest.TestCase):
             pubsub.stop()
             server.close()
             client.close()
+
+    def test_resp_negative_length_below_null_rejected(self):
+        # 回归：review finding [minor]——RESP2 只允许 -1 表示 null；$-2/-3 等
+        # 负长度与 *-2 负计数若当空值放行，结束偏移会倒退、后续流错位。
+        for bad in (b"$-2\r\n", b"*-2\r\n", b"$-3\r\n"):
+            frames = _redis_helpers.RespFrames()
+            frames.feed(bad)
+            with self.assertRaises(ValueError):
+                frames.next_frame()
+
+    def test_resp_bulk_missing_crlf_terminator_rejected(self):
+        # 回归：review finding [minor]——bulk 载荷末尾必须跟 CRLF；只按声明长度
+        # 跳两字节会吞掉畸形流并从错误边界继续解析。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            frames.next_frame()
+
+    def test_resp_array_nesting_depth_bounded(self):
+        # 回归：review finding [major]——*1 深嵌套链会触发 Python 递归爆栈；
+        # 嵌套深度必须封顶，超限即致命协议错误。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*1\r\n" * (_redis_helpers.MAX_RESP_DEPTH + 1))
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_RESP_DEPTH", str(ctx.exception))
+
+    def test_resp_array_element_count_bounded(self):
+        # 回归：review finding [major]——对端可自报海量小元素，在 16MiB 字节
+        # 上限内膨胀出大得多的 Python list，且不完整数组每次 recv 重解析全部
+        # 前驱元素（二次方 CPU）。元素总数封顶后超限即致命协议错误。
+        count = _redis_helpers.MAX_RESP_ARRAY_ITEMS + 1
+        body = b"*%d\r\n" % count + b":1\r\n" * count
+        frames = _redis_helpers.RespFrames()
+        frames.feed(body)
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_RESP_ARRAY_ITEMS", str(ctx.exception))
+
+    def test_resp_array_within_bounds_still_parses(self):
+        # 上限不得误伤合法帧：订阅消息是长度 3 的浅数组，边界内照常解码。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n:1\r\n")
+        self.assertEqual(frames.next_frame(), [b"message", b"my_chan", 1])
+
+    def test_pump_eof_is_fatal(self):
+        # 回归：review finding [major]——订阅连接被对端关闭（EOF）时，若泵线程
+        # 只是静默退出，events_for/wait_event 会继续返回冻结事件列表，负向断言
+        # （无事件）在死订阅上照常通过。EOF 必须记录为致命错误。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            # 泵此刻阻塞在真 recv 上。先切 eof 再发一条无害 PONG 解阻塞：泵读到
+            # PONG（_handle_frame 忽略非 message 帧）后循环，下一次 recv 走 fake
+            # → EOF。切换先于解阻塞字节，故泵的第二次 recv 必然命中 eof。
+            fake._mode = "eof"
+            server.sendall(b"+PONG\r\n")
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(fatal_msg, "EOF 应使 events_for 上报致命错误而非静默")
+            self.assertIn("EOF", fatal_msg)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_socket_error_is_fatal(self):
+        # 回归：review finding [major]——recv 抛 OSError（连接重置/断线）同样
+        # 不能静默退出泵线程，否则负向断言在死订阅上照常通过。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            # 同 EOF 测试：先切 raise 再发 PONG 解阻塞泵的第一次真 recv。
+            fake._mode = "raise"
+            server.sendall(b"+PONG\r\n")
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(fatal_msg, "socket 错误应使 events_for 上报致命错误")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_auth_peer_close_is_immediate_error(self):
+        # 回归：review finding [minor]——握手阶段对端关闭（EOF）时，旧代码会空读
+        # 空转烧 CPU 直到 5s 超时；现在应立即抛错而非空转。recv 注入 EOF 使路径
+        # 确定性落在 AUTH→EOF（AUTH 命令本身由真 socket sendall 发出）。
+        server, client = socket.socketpair()
+        fake = _FakeSocket(client)
+        fake._mode = "eof"
+        with mock.patch("bot._redis_helpers.socket.create_connection", return_value=fake):
+            with self.assertRaises(RuntimeError) as ctx:
+                _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="hunter2")
+        self.assertIn("EOF", str(ctx.exception))
+        server.close()
+        client.close()
 
     def test_subscribe_ack_wait_and_message_pump(self):
         pubsub, server, client = self._pubsub_with_pair()

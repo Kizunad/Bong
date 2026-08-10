@@ -40,6 +40,13 @@ MAX_BULK_LEN = 1 << 20  # 1 MiB
 # 接收缓冲区总量上限：整帧到齐前所有分片都会留在 _buf；即使单 bulk 未超
 # MAX_BULK_LEN，海量小帧同样能撑爆进程，这里做第二道兜底。
 MAX_BUF_LEN = 16 << 20  # 16 MiB
+# RESP 数组结构性上限：订阅消息帧是长度 3 的浅数组，正常载荷远达不到这些界。
+# 对端自报的 count/嵌套不可信——深嵌套（*1 链）会触发 Python 递归爆栈、海量
+# 小元素会在 _buf 封顶内膨胀出大得多的 Python list、不完整数组每次 recv 还会
+# 重解析全部前驱元素（二次方 CPU）。深度/元素总数硬上限把这三条路全部封死
+# （review finding [major]：unbounded RESP array complexity）。
+MAX_RESP_DEPTH = 8
+MAX_RESP_ARRAY_ITEMS = 4096
 
 
 def _frame_command(args: list[str]) -> bytes:
@@ -61,6 +68,10 @@ class RespFrames:
 
     def __init__(self) -> None:
         self._buf = b""
+        # 当前 next_frame 单帧解析已解码的数组元素总数；每次取帧重置。只在
+        # 泵线程/握手循环串行调用 next_frame，无并发（见 _parse_frame 的元素
+        # 计数预算，review finding [major]：unbounded RESP array complexity）。
+        self._parse_items = 0
 
     def feed(self, data: bytes) -> None:
         if not data:
@@ -73,6 +84,7 @@ class RespFrames:
         self._buf += data
 
     def next_frame(self) -> Any:
+        self._parse_items = 0
         frame, consumed = self._parse_frame(0)
         if consumed == 0:
             return None
@@ -85,7 +97,7 @@ class RespFrames:
             return None, 0
         return self._buf[pos:idx], idx
 
-    def _parse_frame(self, pos: int) -> tuple[Any, int]:
+    def _parse_frame(self, pos: int, depth: int = 0) -> tuple[Any, int]:
         if pos >= len(self._buf):
             return None, 0
         marker = self._buf[pos : pos + 1]
@@ -104,6 +116,11 @@ class RespFrames:
             if line is None:
                 return None, 0
             length = int(line)
+            if length < -1:
+                # RESP2 只允许 -1 表示 null bulk，-2 及更小的负长度是畸形帧，
+                # 不能当空串/空数组放行——否则结束偏移倒退、后续流错位
+                # （review finding [minor]：negative RESP lengths decoded）。
+                raise ValueError(f"RESP bulk string 负长度越界: {length}")
             if length == -1:
                 return None, idx + 2
             if length > MAX_BULK_LEN:
@@ -113,18 +130,35 @@ class RespFrames:
             end = idx + 2 + length + 2
             if len(self._buf) < end:
                 return None, 0
+            if self._buf[idx + 2 + length : end] != b"\r\n":
+                # bulk 载荷末尾必须跟 CRLF；只按声明长度跳两字节会吞掉畸形
+                # 流并从错误边界继续解析（review finding [minor]：CRLF 未校验）。
+                raise ValueError(
+                    f"RESP bulk string 缺少 CRLF 终止符: {self._buf[idx + 2 : end]!r}"
+                )
             return self._buf[idx + 2 : idx + 2 + length], end
         if marker == b"*":
             line, idx = self._line(pos + 1)
             if line is None:
                 return None, 0
             count = int(line)
+            if count < -1:
+                raise ValueError(f"RESP array 负计数越界: {count}")
             if count == -1:
                 return None, idx + 2
+            if depth + 1 > MAX_RESP_DEPTH:
+                raise ValueError(
+                    f"RESP array 嵌套过深: depth={depth + 1} > MAX_RESP_DEPTH={MAX_RESP_DEPTH}"
+                )
             items: list[Any] = []
             cursor = idx + 2
             for _ in range(count):
-                item, consumed = self._parse_frame(cursor)
+                self._parse_items += 1
+                if self._parse_items > MAX_RESP_ARRAY_ITEMS:
+                    raise ValueError(
+                        f"RESP array 元素总数超限: > MAX_RESP_ARRAY_ITEMS={MAX_RESP_ARRAY_ITEMS}"
+                    )
+                item, consumed = self._parse_frame(cursor, depth + 1)
                 if consumed == 0:
                     return None, 0
                 items.append(item)
@@ -213,11 +247,16 @@ class RedisPubSub:
                 raise RuntimeError(f"redis AUTH 失败: {frame!r}")
             self._sock.settimeout(0.5)
             try:
-                self._frames.feed(self._sock.recv(4096))
+                data = self._sock.recv(4096)
             except socket.timeout:
                 continue
             finally:
                 self._sock.settimeout(5.0)
+            if not data:
+                # 空读 = 对端永久关闭；继续循环只会立刻再拿到 EOF 空转烧 CPU
+                # 直到超时（review finding [minor]：握手 EOF 空转）。
+                raise RuntimeError("redis 连接被对端关闭（AUTH 阶段 EOF）")
+            self._frames.feed(data)
         raise RuntimeError("redis AUTH 超时")
 
     def subscribe(self, *channels: str) -> None:
@@ -230,11 +269,14 @@ class RedisPubSub:
             if frame is None:
                 self._sock.settimeout(0.5)
                 try:
-                    self._frames.feed(self._sock.recv(4096))
+                    data = self._sock.recv(4096)
                 except socket.timeout:
                     continue
                 finally:
                     self._sock.settimeout(5.0)
+                if not data:
+                    raise RuntimeError("redis 连接被对端关闭（SUBSCRIBE 阶段 EOF）")
+                self._frames.feed(data)
                 continue
             if isinstance(frame, list) and len(frame) == 3 and frame[0] == b"subscribe":
                 remaining.discard(frame[1].decode("utf-8", "replace"))
@@ -268,9 +310,19 @@ class RedisPubSub:
             except socket.timeout:
                 # 空闲超时不是连接终止：继续等待下一条订阅消息。
                 continue
-            except OSError:
+            except OSError as exc:
+                if not self._closed:
+                    self._set_fatal(
+                        RuntimeError(f"redis 连接读失败（socket 错误）: {exc!r}")
+                    )
                 break
             if not data:
+                # 空读 = 对端关闭订阅连接。若不标记致命，events_for/wait_event 会
+                # 继续返回冻结事件列表，负向断言（无事件）在死订阅上照常通过——
+                # 必须让「已无订阅者在观察」升级为失败（review finding [major]：
+                # 断连静默满足负向断言）。
+                if not self._closed:
+                    self._set_fatal(RuntimeError("redis 连接被对端关闭（EOF）"))
                 break
             try:
                 self._frames.feed(data)
@@ -366,6 +418,23 @@ class RedisPubSub:
                 if predicate(evt):
                     return evt
             if time.monotonic() >= deadline:
+                # 快照与截止判定之间可能插入 pump 的入队：匹配事件在快照之后、
+                # 截止之前到达时，上面的循环已不再扫它。抛超时前必须做一次加锁
+                # 的最终全量扫描，把窗口内最后入队的事件捞回（review finding
+                # [minor]：wait_event 在匹配事件已到达的情况下仍可能超时）。
+                with self._lock:
+                    if self._fatal_error is not None:
+                        raise AssertionError(
+                            f"redis 连接已因协议异常终止: {self._fatal_error}"
+                        )
+                    fresh = [
+                        e
+                        for seq, c, e in self._events
+                        if seq >= start_seq and c == channel
+                    ]
+                for evt in fresh:
+                    if predicate(evt):
+                        return evt
                 raise AssertionError(
                     f"等待 {description} 超时（{timeout:.0f}s）: channel={channel}, "
                     f"已收 {len(self.events_for(channel))} 条"

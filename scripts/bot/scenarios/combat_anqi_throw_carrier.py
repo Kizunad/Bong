@@ -92,15 +92,19 @@ def _server_log_guard_markers(path: str, carrier: str) -> list[str]:
     return reasons
 
 
-def _server_log_deserialize_failed(path: str) -> int:
-    """`client_request deserialize failed` 是 warn 日志，payload 与 ClientRequestV1
-    schema 不匹配时出现。guard 标记只在反序列化成功后才可能发出，故此计数在 guard
-    断言通过后提供 schema 漂移的精确诊断（同窗口内其他请求的失败也计入，属全局
-    噪音兜底）。"""
+def _server_log_deserialize_failed(path: str, username: str) -> int:
+    """统计归属本 bot 的 `client_request deserialize failed` warn 日志条数。
+
+    该日志现含 `user=<username>`（server/src/network/client_request_handler.rs，
+    review finding [minor] 修复后补的关联键），据此把计数钉在本 bot 身份上。
+    全局计数会因同窗其他 vanilla/bot/ambient 客户端的畸形请求误伤本场景
+    （review finding [minor]：全局反序列化失败计数使场景跨客户端误红）。guard
+    标记只在反序列化成功后才可能发出，故本计数在 guard 断言通过后提供 schema
+    漂移的精确诊断。"""
     failed = 0
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
-            if _DESERIALIZE_FAILED_RE.search(line):
+            if _DESERIALIZE_FAILED_RE.search(line) and username in line:
                 failed += 1
     return failed
 
@@ -141,7 +145,7 @@ def run(env) -> None:
                 f"（bot-e2e.sh 已导出；实际 log_path={log_path!r}）"
             )
             before_guard = _server_log_guard_markers(log_path, carrier)
-            before_failed = _server_log_deserialize_failed(log_path)
+            before_failed = _server_log_deserialize_failed(log_path, bot.username)
 
             # 手持非暗器（默认武器）发出投掷 intent —— 无载体投掷应被静默忽略。
             bot.intent(request)
@@ -177,7 +181,7 @@ def run(env) -> None:
             # 辅助诊断：guard 标记只在反序列化成功后才会出现，故此计数在 guard
             # 断言通过后提供 schema 漂移的精确定位（若 schema 失配，guard 断言
             # 先行失败，这里不会掩盖）。
-            after_failed = _server_log_deserialize_failed(log_path)
+            after_failed = _server_log_deserialize_failed(log_path, bot.username)
             new_failed = after_failed - before_failed
             assert new_failed == 0, (
                 f"窗口内出现 client_request deserialize failed（新增 {new_failed} 条）"
@@ -185,13 +189,26 @@ def run(env) -> None:
                 f"链条在反序列化处断裂"
             )
 
-            # 无本 bot 事件：窗口内不应冒出归属本 bot 的 projectile_despawned。
-            # 该频道全局共享，订阅又先于 bot 建立，其他玩家的抛射也会发布进来；
-            # 必须按 owner 过滤到本 bot，才证明空手抛射被静默忽略。
-            fired = [
-                e for e in pubsub.events_for(DESPAWN_CH) if e.get("owner") == carrier
-            ]
-            assert not fired, f"空手抛射不应产生本 bot 的 despawn 事件，实际 {fired!r}"
+            # 无本 bot 事件：观察窗必须覆盖 intent 后的完整 GUARD_TIMEOUT 窗口，
+            # 而不是在 guard 标记一出现就拍照——错误生成的弹道若在 guard 之后
+            # 几个 tick 才创建并发布 despawn，快照会把它放走（review finding
+            # [major]：no-despawn 断言可早于错误生成的弹道 despawn）。guard_
+            # deadline 自 intent 发出起算，轮询到该截止为止，窗口内任何时刻到达
+            # 的本 bot despawn 都算数。该频道全局共享，订阅又先于 bot 建立，
+            # 其他玩家的抛射也会发布进来；必须按 owner 过滤到本 bot，才证明
+            # 空手抛射被静默忽略。
+            while True:
+                fired = [
+                    e
+                    for e in pubsub.events_for(DESPAWN_CH)
+                    if e.get("owner") == carrier
+                ]
+                assert not fired, (
+                    f"空手抛射不应产生本 bot 的 despawn 事件，实际 {fired!r}"
+                )
+                if time.monotonic() >= guard_deadline:
+                    break
+                time.sleep(0.2)
 
             # 无库存改动：revision 不变，且手持项仍为同一非暗器武器（未被清空/替换）。
             after = latest_inventory_snapshot(bot)

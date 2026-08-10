@@ -61,13 +61,27 @@ def run(env) -> None:
             f"实际 reason={payload['reason']!r}"
         )
 
-        # 拒绝不应改动库存：胚材仍在原格，未进 main_hand。
+        # 拒绝不应改动库存：与 move 前快照逐字段比对——revision 不变、同实例
+        # 同格、stack 一致。只查「模板仍在且不在 equip」会放走「同模板换实例/
+        # 移位/改堆叠」的坏实现（review finding [major]：拒收未验证不变库存
+        # 契约）。
         bot.assert_alive("装弹护栏拒绝后")
         post = wait_inventory_contains(bot, CARRIER_ID, timeout=10.0)
-        still = find_item(post, CARRIER_ID)
-        assert still is not None, "拒绝后载体不应消失"
-        assert still["location"]["kind"] != "equip", (
-            f"拒绝后载体不应进入 equip 槽，实际 {still['location']!r}"
+        assert int(post["revision"]) == int(snapshot["revision"]), (
+            f"拒绝不应 bump inventory revision: {snapshot['revision']} -> {post['revision']}"
+        )
+        post_item = find_item(post, CARRIER_ID)
+        assert post_item is not None, "拒绝后载体不应消失"
+        assert post_item["item"]["instance_id"] == bone["item"]["instance_id"], (
+            f"拒绝后应是同一实例仍在原格，实际 instance "
+            f"{bone['item']['instance_id']} -> {post_item['item']['instance_id']}"
+        )
+        assert post_item["location"] == bone["location"], (
+            f"拒绝后载体应仍在原格 {bone['location']!r}，实际 {post_item['location']!r}"
+        )
+        assert post_item["item"]["stack_count"] == bone["item"]["stack_count"], (
+            f"拒绝后堆叠不应变化，实际 {bone['item']['stack_count']} -> "
+            f"{post_item['item']['stack_count']}"
         )
         hand_held = (post.get("equipped", {}).get("main_hand_held") or {}).get("item_id")
         assert hand_held != CARRIER_ID, f"main_hand 不应持有裸载体，实际 {hand_held!r}"

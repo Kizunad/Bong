@@ -552,8 +552,18 @@ pub fn handle_client_request_payloads(
         let request: ClientRequestV1 = match serde_json::from_str(payload) {
             Ok(r) => r,
             Err(err) => {
+                // 带 user= 关联键：deserialize-failed 是全局频道共有的 warn，bot
+                // 场景要按本 bot 归属计数（否则同窗其他客户端的畸形请求会让
+                // 载体作用域断言跨客户端误红，review finding [minor]：全局
+                // 反序列化失败计数）。登录中/断连瞬间拿不到 Username 时用
+                // <unknown> 占位，不影响正常归属。
+                let client_user = clients
+                    .get(ev.client)
+                    .ok()
+                    .map(|(username, _)| username.0.as_str())
+                    .unwrap_or("<unknown>");
                 tracing::warn!(
-                    "[bong][network] client_request deserialize failed from {:?}: {err}; payload_bytes={}",
+                    "[bong][network] client_request deserialize failed from {:?} (user={client_user}): {err}; payload_bytes={}",
                     ev.client,
                     ev.data.len()
                 );

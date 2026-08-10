@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use valence::entity::Look;
 use valence::prelude::{
     bevy_ecs, App, Commands, DVec3, Entity, Event, EventReader, EventWriter, GameMode,
-    IntoSystemConfigs, Position, Query, Res, ResMut, UniqueId, Update, With, Without,
+    IntoSystemConfigs, Local, Position, Query, Res, ResMut, UniqueId, Update, With, Without,
 };
 
 use crate::body_plan::{
@@ -835,6 +835,12 @@ fn throw_carrier_intents(
         Option<&mut Stamina>,
         Option<&UniqueId>,
     )>,
+    // 护栏 guard info! 按 (carrier, reason) 去重：e2e 场景只需一条关联标记，
+    // 而任意连接可反复发 throw_carrier 空手请求——若每条都写 info 日志，
+    // 无操作请求就被转换成无界日志输出。去重后每个 carrier×reason 至多一条，
+    // 总输出上界 = O(玩家数 × 2)，不随请求量增长（review finding [major]：
+    // 客户端可控抛射请求制造无界 info 日志路径）。
+    mut guard_emitted: Local<HashMap<(String, &'static str), ()>>,
 ) {
     for intent in intents.read() {
         let Ok((position, mut inventory, mut store, stamina, unique_id)) =
@@ -853,21 +859,33 @@ fn throw_carrier_intents(
             // 用它把这条日志归属到自己的请求——不再依赖不唯一的 payload 字节数
             // （review findings [major]：throw 场景缺消费者信号 / 日志相关性）。
             // 系统未注册时此日志不出现，场景据此区分「护栏走了」与「消费者断线」。
-            tracing::info!(
-                "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_carrier_item",
-                wire_id,
-                intent.slot
-            );
+            // 每个 (carrier, no_carrier_item) 只发一次：场景只需一条，恶意客户端
+            // 反复请求不能把 info 日志喂成无界输出（review finding [major]）。
+            if guard_emitted
+                .insert((wire_id.clone(), "no_carrier_item"), ())
+                .is_none()
+            {
+                tracing::info!(
+                    "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_carrier_item",
+                    wire_id,
+                    intent.slot
+                );
+            }
             continue;
         };
         let Some(imprint) = store.imprints_by_instance.remove(&item.instance_id) else {
             // 与上同构：手槽有非暗器物品（新手村 fixture 主手通常是 iron_sword）
-            // 但无 anqi 印记——空手护栏的另一条实测路径。
-            tracing::info!(
-                "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_anqi_imprint",
-                wire_id,
-                intent.slot
-            );
+            // 但无 anqi 印记——空手护栏的另一条实测路径。去重语义同上。
+            if guard_emitted
+                .insert((wire_id.clone(), "no_anqi_imprint"), ())
+                .is_none()
+            {
+                tracing::info!(
+                    "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_anqi_imprint",
+                    wire_id,
+                    intent.slot
+                );
+            }
             continue;
         };
         let dir = normalized_dir(intent.dir_unit);
