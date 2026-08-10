@@ -2644,6 +2644,12 @@ class ProtoMinTest(unittest.TestCase):
         self.assertEqual(proto_min.server_data_payload_field(envelope), 7)
         self.assertEqual(proto_min.server_data_payload_name(envelope), "skill_xp_gain")
 
+    def test_server_data_payload_name_falls_back_to_decoded_type(self):
+        # decoder 认识但注册表未登记的 oneof 字段（field 34=cast_sync）：name 桥
+        # 由 decoded payload 的 type 回退，与 decoder 保持一致，而不是退回 field_34。
+        envelope = _pb_len_field(34, b"")
+        self.assertEqual(proto_min.server_data_payload_name(envelope), "cast_sync")
+
     def test_inventory_snapshot_extracts_placed_item_location(self):
         item = (
             _pb_varint_field(1, 4242)

@@ -1191,7 +1191,15 @@ def server_data_payload_name(data: bytes) -> str | None:
     field = server_data_payload_field(data)
     if field is None:
         return None
-    return SERVER_DATA_PAYLOAD_NAMES.get(field, f"field_{field}")
+    known = SERVER_DATA_PAYLOAD_NAMES.get(field)
+    if known is not None:
+        return known
+    # dispatch 分支与 name 注册表独立：注册表漏登记但 decoder 认识的 oneof 字段，
+    # 由 decoded payload 的 type 回退，保证 bridge 与 decoder 一致（防注册表漂移）。
+    decoded = decode_server_data_envelope(data)
+    if isinstance(decoded, dict) and isinstance(decoded.get("type"), str):
+        return decoded["type"]
+    return f"field_{field}"
 
 
 def inventory_item_refs(data: bytes) -> list[InventoryItemRef]:
