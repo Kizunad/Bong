@@ -49,7 +49,13 @@ AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
 # food_spoil_mundane_meat_v1：Linear 衰减 decay_per_tick = 1/(GAME_DAY_TICKS×3)，
 # GAME_DAY_TICKS=24000、TICKS_PER_SECOND=20 → 2.78e-4/s（server/src/shelflife/registry.rs）。
 MEAT_DECAY_PER_SECOND = 1.0 / (24000 * 3) * 20.0
-FRESHNESS_MARGIN = 0.005
+# 探针路径 multiplier = container_storage_multiplier(Normal) × season_decay_modifier
+# （shelflife/probe.rs）。fixture 恒为 Summer（×1.3，YEAR_TICKS 前 40%），但服务器慢
+# tick / 季节变更时取宽括号 [0.7, 1.3]（Winter=0.7，过渡期 0.8..1.2）避免误报——
+# 只要 elapsed 足够大，最小倍率下界也能把 1.0 压出上界之外。
+SEASON_DECAY_MIN = 0.7
+SEASON_DECAY_MAX = 1.3
+FRESHNESS_TOLERANCE = 0.0005
 
 
 def run(env) -> None:
@@ -105,17 +111,23 @@ def run(env) -> None:
                 f"实际 {payload.get('profile_name')}"
             )
         freshness = payload.get("freshness")
-        # 保鲜是线性衰减（decay_per_tick=1/(24000×3)/tick，20 ticks/s → 2.78e-4/s）。
-        # give→probe 窗口由墙钟实测，下限 = 1 - 窗口×衰减率 - 浮点余量。原断言
-        # 放宽到 0.5 会把硬编码 0.5 / 立即 50% 衰减的坏实现放过去——下限必须由
-        # canonical 衰减计算界定。
+        # 保鲜是线性衰减（decay_per_tick=1/(24000×3)/tick，20 ticks/s → 2.78e-4/s），
+        # 且必须随正 elapsed 真的下降——原断言上限 1.001 + 余量 0.005 覆盖了 ~18s 的
+        # canonical 衰减，恒发 freshness=1.0（永不应用衰减）的坏实现任何窗口都通过
+        # （central-review 2029 #7）。give→probe 窗口必然 ≥ ~4s：give 后先走 Awaken
+        # RealmTooLow 的 4s 静默窗（SILENT_WINDOW）再 realm set 凝脉才探，故
+        # elapsed≥SILENT_WINDOW 时上界 = 1 - 最小倍率×衰减×elapsed + tol 严格 < 1.0，
+        # 1.0 必被拒；下限 = 1 - 最大倍率×衰减×elapsed - tol 同时防过度衰减/双倍扣减。
         elapsed = time.monotonic() - give_anchor
-        max_decay = MEAT_DECAY_PER_SECOND * elapsed
-        lower = 1.0 - max_decay - FRESHNESS_MARGIN
-        if freshness is None or not (lower <= float(freshness) <= 1.001):
+        max_decay = MEAT_DECAY_PER_SECOND * SEASON_DECAY_MAX * elapsed
+        min_decay = MEAT_DECAY_PER_SECOND * SEASON_DECAY_MIN * elapsed
+        lower = 1.0 - max_decay - FRESHNESS_TOLERANCE
+        upper = 1.0 - min_decay + FRESHNESS_TOLERANCE
+        if freshness is None or not (lower <= float(freshness) <= upper):
             raise BotAssertionError(
-                f"[{bot.username}] 期望新物品 freshness≈1.0（give→probe "
-                f"{elapsed:.1f}s，canonical 衰减下限 {lower:.4f}），实际 {freshness}"
+                f"[{bot.username}] 期望新物品 freshness 随正 elapsed 按 canonical 衰减"
+                f"（give→probe {elapsed:.1f}s，季节×[{SEASON_DECAY_MIN},"
+                f"{SEASON_DECAY_MAX}] → [{lower:.4f}, {upper:.4f}]），实际 {freshness}"
             )
         bot.assert_alive("凝脉保鲜探针后")
 

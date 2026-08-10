@@ -43,6 +43,14 @@ OPEN_REQUEST = {"type": "workbench_open", "v": 1}
 SILENT_WINDOW = 5.0
 TOP_CHAT_RE = re.compile(r"Teleported to top at Y=(\d+)\.")
 TOP_TIMEOUT = 10.0
+# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
+# （network/carrier_state_emit.rs）。本场景 bot 为 Awaken 无经脉，cultivation_detail
+# 不出现；player_state/inventory_snapshot 只随 Changed 组件发射，/tpzone 改位置不在
+# PlayerStateEmitQueryFilter 的 Changed 名单内（network/mod.rs），不触发 flush。
+# 静默契约 = 白名单外任何 server_data 一律判红（central-review 2029 #8：未知实体与
+# 出界 open 都被文档化为不产 S2C，只盯 workbench_open 会放走拒收却发 event_alert /
+# 库存更新等副作用的坏实现）。
+AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
 
 
 def run(env) -> None:
@@ -143,7 +151,6 @@ def run(env) -> None:
         _assert_silent_window(
             bot,
             reject_sent_at,
-            "workbench_open",
             "不存在实体的 workbench_open 应只回「目标不存在。」，不得同时回推 WorkbenchOpen payload",
             window=SILENT_WINDOW,
             allowed_chat_ts=(reject_chat.t,),
@@ -163,7 +170,6 @@ def run(env) -> None:
         _assert_silent_window(
             bot,
             sent_at,
-            "workbench_open",
             "出界 workbench_open 应被静默丢弃（interact 出界 continue，无 S2C 无聊天）",
             window=SILENT_WINDOW,
         )
@@ -172,25 +178,25 @@ def run(env) -> None:
 def _assert_silent_window(
     bot,
     sent_at: float,
-    payload_type: str,
     description: str,
     window: float,
     allowed_chat_ts: tuple = (),
 ) -> None:
-    """断言窗口内未出现指定 payload_type 的 server_data 与任何新聊天。
+    """断言窗口内无任何非周期 server_data 与任何新聊天（静默契约）。
 
-    服务器有周期 payload（如 cultivation_detail ~1s 一次），所以静默只能按
-    payload_type 细粒度断言，不能断言"无任何 server_data"。allowed_chat_ts 用于豁免
-    已被 expect_chat 消费掉的预期拒信（水位前移后拒信 t > sent_at，按 t 放行该条）。
+    服务器有周期 payload（carrier_state ~1s 一次），静默按白名单豁免周期流、白名单
+    外一律判红——不能断言"无任何 server_data"（central-review 2029 #8）。
+    allowed_chat_ts 用于豁免已被 expect_chat 消费掉的预期拒信（水位前移后拒信
+    t > sent_at，按 t 放行该条）。
     """
     deadline = time.monotonic() + window
     while True:
-        _scan_silent_window(bot, sent_at, payload_type, description, allowed_chat_ts)
+        _scan_silent_window(bot, sent_at, description, allowed_chat_ts)
         if time.monotonic() >= deadline:
             # 终末复扫：事件扫描与 deadline 判定非原子（central-review 2029 #3），
             # deadline 判定成立后、返回前再扫一次，收口最后一段未观测窗口——否则
             # 该段内到达的目标 payload/聊天会被漏掉。
-            _scan_silent_window(bot, sent_at, payload_type, description, allowed_chat_ts)
+            _scan_silent_window(bot, sent_at, description, allowed_chat_ts)
             return
         bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
@@ -199,15 +205,18 @@ def _assert_silent_window(
 def _scan_silent_window(
     bot,
     sent_at: float,
-    payload_type: str,
     description: str,
     allowed_chat_ts: tuple,
 ) -> None:
     for e in bot.events_of("server_data"):
-        if e.t > sent_at and e.data["payload_type"] == payload_type:
+        # 静默契约 = 「无任何非周期 S2C 响应 + 无聊天」。只盯 workbench_open 会放走
+        # 拒收却发 event_alert / inventory_update / 其他 payload 的坏实现——未知实体
+        # 与出界 open 都被文档化为不产 S2C，白名单外一律判红，与 mineral/freshness
+        # 场景共用同一 observable 契约（central-review 2029 #8）。
+        if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
             raise BotAssertionError(
                 f"[{bot.username}] {description}，"
-                f"实际窗口内收到 payload_type={payload_type}"
+                f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
             )
     for e in bot.events_of("chat"):
         if e.t > sent_at and e.t not in allowed_chat_ts:

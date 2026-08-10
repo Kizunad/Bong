@@ -90,18 +90,25 @@ def _drain_probe_results(bot, quiet: float = 2.0, max_wait: float = 20.0) -> Non
     样本后再做一次确认扫描——重新锚定事件水位再等一个静默样本，两样本连续为空才
     返回。静默窗口必须显著长于服务端实际响应延迟（同 tick 处理，亚秒~1s）；**到上限
     时若仍有响应在途就报错**——静默放行一个还在来响应的批次，会把污染交给下一批/
-    下一 realm 阶段，等于没有屏障（central-review 2029 #6）。
+    下一 realm 阶段，等于没有屏障（central-review 2029 #6）。死线同时约束确认分支：
+    确认窗口内继续到响应时回到主循环顶重查死线，不会绕过上限无限重试
+    （central-review 2029 #7——旧实现只在主分支有新结果时查死线，确认分支
+    `continue` 直接回主循环，延迟/重复产出的响应每轮确认都命中该分支，循环永不
+    收敛）。
     """
     deadline = time.monotonic() + max_wait
     while True:
+        # 死线检查放在循环顶，让**所有**路径（主分支与确认分支）都受 max_wait
+        # 约束：确认分支发现新结果 `continue` 回主循环时同样先过死线，不可能无限
+        # 排空。central-review 2029 #7：max_wait 不约束所有路径 = 无约束。
+        if time.monotonic() > deadline:
+            raise BotAssertionError(
+                f"[{bot.username}] mineral_probe_result 在 {max_wait:.0f}s 内持续到达，"
+                f"批次屏障无法收敛——拒绝静默放行可能污染下一批"
+            )
         anchor = bot.events[-1].t if bot.events else 0.0
         time.sleep(quiet)
         if _has_results_newer_than(bot, anchor):
-            if time.monotonic() > deadline:
-                raise BotAssertionError(
-                    f"[{bot.username}] mineral_probe_result 在 {max_wait:.0f}s 内持续到达，"
-                    f"批次屏障无法收敛——拒绝静默放行可能污染下一批"
-                )
             continue
         # 末次空样本后、返回前再确认一次：前一扫迟到响应可能恰在空扫描之后到达，
         # 单一空样本把「此刻恰好无新事件」误当「管线已排空」。确认样本同样必须为
@@ -166,23 +173,77 @@ def _collect_probe_results(
             return collected
 
 
+def _wait_fresh_pos_look(bot, timeout: float = 8.0) -> None:
+    """尽力等一个全新 pos_look，让 bot.position 拿到权威位置的最近一档（best-effort）。
+
+    wait_for 每次从 cursor 0 重扫含历史事件（bot.py:497「含历史事件」），裸
+    predicate 会命中 join 的旧 pos_look；必须用时间锚限定「锚后新到达」。bot.py 的
+    pos_look handler 同步把 self.position 更新为事件坐标（bot.py:145），返回后读
+    bot.position 即得服务端最近一次推送的权威位置。
+
+    timeout 内无新 pos_look **不是错误**：权威位置每 ~8s 一步（步进即 position
+    变更 → valence 自动向 client 同步 PlayerPosLook），停止移档后稳定玩家不再收
+    pos_look，此时 bot.position 就是当前权威档，直接沿用即可。移档期间必有 pos_look，
+    timeout 取一档余量（8s）足以拿到最近档；若仍错过，后续的基数校验 + 换列重试会
+    收敛（下一 attempt 的 drain 窗口又给 pos_look 落地时间）。"""
+    anchor = bot.events[-1].t if bot.events else 0.0
+    try:
+        bot.wait_for(
+            lambda e: e.kind == "pos_look" and e.t > anchor,
+            timeout=timeout,
+            description="等待新 pos_look 刷新权威位置",
+        )
+    except BotAssertionError:
+        pass  # 稳定档：bot.position 即权威位置，无需刷新
+
+
+def _expected_in_range_count(player_pos, x: int, z: int, base_y: int) -> int:
+    """按 dispatch 前置过滤的同一几何判定，算本列在范围内的目标数。
+
+    client_request_handler.rs:2030 用 is_probe_target_in_range（mineral/probe.rs:79）：
+    目标中心 (x+0.5, y+0.5, z+0.5) 到权威 Position 的欧氏距离平方 ≤ 36.0
+    （MINERAL_PROBE_MAX_DISTANCE=6.0）。超距目标被前置过滤静默 continue（无 S2C），
+    故本列实际响应数应恰好等于在范围内目标数——这是批响应完整性的基数断言
+    （central-review 2029 #8：MineralProbeResultV1 payload 不带坐标，响应无法按目标
+    回映，非空子集与完整批不可区分）。"""
+    return sum(
+        1
+        for y in range(base_y + Y_LO, base_y + Y_HI + 1, Y_STEP)
+        if math.dist(player_pos, (x + 0.5, y + 0.5, z + 0.5)) ** 2 <= 36.0
+    )
+
+
 def _column_probe_and_expect(bot, reason: str, label: str) -> None:
-    """竖直列盲扫并校验 denial_reason；超时则重读位置换列，最多重试多次。
+    """竖直列盲扫并校验 denial_reason 与批响应基数；超时/基数不符则重读位置换列。
 
     docstring 记载的修法（central-review 2029 #2）：权威 y 周期性 +10 会让单点探针
     必超 6m 被 dispatch 前置过滤静默丢弃，因此以 bot.position 为中心的列盲扫 + 超时
     后重读位置换列重试，`COLUMN_MAX_ATTEMPTS` 真正被使用；全部超时才报错。
+
+    central-review 2029 #8：只做非空子集校验会放走「在范围内请求被静默丢弃」的坏
+    实现。修法：先等全新 pos_look 拿到权威位置最近一档，按同一几何判定算本列期望
+    在范围内目标数，收集后断言 len(results)==expected；基数不符（权威位置批间移档
+    或实现丢响应）重读位置换列复核，不能把非空子集当完整批放行。
     """
     for attempt in range(1, COLUMN_MAX_ATTEMPTS + 1):
         # 批次屏障：先排空上一扫在途响应，本批 sent_at 之后只可能是本批结果——
         # 迟到响应不得跨 realm 阶段被误认成另一批（central-review 2029 #3）。
         _drain_probe_results(bot)
+        # 期望基数必须对权威位置计算：bot.position 可能仍是陈旧档（join 值只是缓冲位，
+        # 权威 Position 周期性 +10），用陈旧位置算期望基数会与实际不符，基数断言形同
+        # 虚设（central-review 2029 #8）。先尽力等一个全新 pos_look 刷新到最近档
+        # （best-effort：移档期间必有 pos_look，稳定档则 bot.position 已是权威值）。
+        _wait_fresh_pos_look(bot)
         c = bot.position
         if c is None:
             raise BotAssertionError("mineral_probe 场景需要 pos_look 后的位置，实际 position=None")
         x = math.floor(c[0]) + 1
         z = math.floor(c[2])
         base_y = math.floor(c[1])
+        expected = _expected_in_range_count(c, x, z, base_y)
+        if expected == 0:
+            # 权威 y 带与整列无重叠（异常 fixture 行为）：重读位置换列。
+            continue
         sent_at = bot.events[-1].t if bot.events else 0.0
         for y in range(base_y + Y_LO, base_y + Y_HI + 1, Y_STEP):
             bot.intent({**PROBE_REQUEST, "x": x, "y": y, "z": z})
@@ -190,9 +251,11 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
         # denial_reason 匹配、其余结果静默丢弃，会放走批内额外发出的 denied/其他理由
         # 或 found 响应——realm 优先边界契约就没锁住。
         results = _collect_probe_results(bot, sent_at)
-        if not results:
-            # 整列都落在权威位置 6m 外（y 带已移动）：排空本批可能迟到的结果后
-            # 重读位置换一列重试。
+        if len(results) != expected:
+            # 基数不符（central-review 2029 #8）：既可能是权威位置在批间 +10 移档
+            # （y 带整体平移，期望数随之改变），也可能是实现在范围内请求被静默丢弃。
+            # 两者都不可判红——移档是合法行为——但都必须重读位置换列复核，不能把
+            # 非空子集当完整批放行。
             continue
         for e in results:
             payload = e.data["payload"]
@@ -204,7 +267,7 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
         bot.assert_alive(f"{label} 后")
         return
     raise BotAssertionError(
-        f"[{bot.username}] {label}：{COLUMN_MAX_ATTEMPTS} 次列盲扫均超时"
+        f"[{bot.username}] {label}：{COLUMN_MAX_ATTEMPTS} 次列盲扫均超时或基数不符"
         f"（权威位置持续移出 y 带，需人工确认 fixture 行为）"
     )
 
