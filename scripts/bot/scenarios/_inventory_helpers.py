@@ -132,6 +132,50 @@ def require_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     return found
 
 
+def find_instance(snapshot: dict[str, Any], instance_id: int) -> dict[str, Any] | None:
+    """按 instance_id 定位物品，返回与 `find_item` 同构的 {location, item}。
+
+    模板级 `find_item` 在「同一模板同时有装备位 + 随身实例」时会命中先扫到的那个，
+    无法区分具体实例；需要 pin 到被拒绝/被丢弃的特定实例时用本函数。"""
+    for placed in snapshot.get("placed_items", []):
+        if int(placed["item"]["instance_id"]) == instance_id:
+            return {
+                "location": {
+                    "kind": "container",
+                    "container_id": placed["container_id"],
+                    "row": placed["row"],
+                    "col": placed["col"],
+                },
+                "item": placed["item"],
+            }
+    for slot, values in snapshot.get("equipped", {}).items():
+        if slot.endswith("_worn"):
+            for item in values:
+                if int(item["instance_id"]) == instance_id:
+                    return {
+                        "location": {
+                            "kind": "equip",
+                            "slot": slot[: -len("_worn")],
+                            "state": "worn",
+                        },
+                        "item": item,
+                    }
+        elif slot.endswith("_held"):
+            if values and int(values["instance_id"]) == instance_id:
+                return {
+                    "location": {
+                        "kind": "equip",
+                        "slot": slot[: -len("_held")],
+                        "state": "held",
+                    },
+                    "item": values,
+                }
+    for index, item in enumerate(snapshot.get("hotbar", [])):
+        if item and int(item["instance_id"]) == instance_id:
+            return {"location": {"kind": "hotbar", "index": index}, "item": item}
+    return None
+
+
 def require_container(snapshot: dict[str, Any], container_id: str) -> dict[str, Any]:
     for container in snapshot.get("containers", []):
         if container["id"] == container_id:

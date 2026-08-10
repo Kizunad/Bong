@@ -10559,7 +10559,12 @@ mod tests {
                 },
                 Cultivation {
                     realm: Realm::Induce,
-                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    // central-review 2012 #9：`non_humanoid_race_fixture("test_whale")`
+                    // 以 "test_whale" 为键注册了非人形构型——玩家 race 必须指向该真实
+                    // race id，生产 `resolve_body_plan` 才选到 is_humanoid=false 本体；
+                    // 若停在 HUMAN_RACE_ID（指向同一非人形构型）则人形 gate 通过、不会
+                    // 触发 race_mismatch，断言虽过但测的不是 reviewer 描述的路径。
+                    race: crate::body_plan::RaceId::new("test_whale"),
                     ..Default::default()
                 },
                 MeridianSystem::default(),
@@ -13559,17 +13564,26 @@ mod tests {
         let plan_id = plan.id.clone();
         let body_plans = BodyPlanRegistry::from_plans(vec![plan]).expect("plan must validate");
         // `RaceRegistry::from_file_contents` 要求表内必须有一条 id=HUMAN_RACE_ID 的
-        // 默认条目——复用 `combat::resolve` 同款手法：让这条 "human" 条目指向本
-        // fixture 的 is_humanoid=false 构型，caster 的 `Cultivation.race` 同样设为
-        // HUMAN_RACE_ID 即可解析出非人形本体（是否人形只看 body plan，不看 race id
-        // 字面意义）。
+        // 默认条目（是否人形只看 body plan，不看 race id 字面意义）。fixture 注册
+        // 两条 race：① id=race_id 指向 is_humanoid=false 构型——被测方（如
+        // central-review 2012 #9 的 sword.infuse）把 `Cultivation.race` 设为该真实
+        // race id，生产 `resolve_body_plan` 路径即按此 id 解析出非人形本体；② 必需的
+        // HUMAN_RACE_ID 占位条目指向同一非人形构型，满足表加载校验。
         let races = RaceRegistry::from_parts_for_test(
-            vec![RaceEntry {
-                id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
-                display_name: format!("测试非人形种族({race_id})"),
-                body_plan_id: plan_id,
-                beast_kinds: vec![],
-            }],
+            vec![
+                RaceEntry {
+                    id: RaceId::new(race_id),
+                    display_name: format!("测试非人形种族({race_id})"),
+                    body_plan_id: plan_id.clone(),
+                    beast_kinds: vec![],
+                },
+                RaceEntry {
+                    id: RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    display_name: "默认人形占位".to_string(),
+                    body_plan_id: plan_id,
+                    beast_kinds: vec![],
+                },
+            ],
             vec![],
             &body_plans,
         )
@@ -13600,15 +13614,18 @@ mod tests {
             },
         );
         let entity = app.world_mut().spawn(client_bundle).id();
-        // race 恒为 HUMAN_RACE_ID：`non_humanoid_race_fixture` 复用该 id 指向
-        // is_humanoid=false 构型（`RaceRegistry` 校验要求默认 human 条目必须存在，
-        // 见该 fn 注释）；未插入 fixture 时同一 id 退化到 humanoid 单例。是否人形
-        // 完全由「是否插入非人形 fixture」决定，不看 race 字符串字面意义。
+        // `Some(race_id)` 时 `Cultivation.race` 设为该真实 race id（fixture 以它为
+        // 键注册了 is_humanoid=false 构型，生产 `resolve_body_plan` 即解析出非人形
+        // 本体）；`None` 时不插 fixture，退化到 humanoid 单例（HUMAN_RACE_ID）。
+        // 是否人形由「race 是否落在非人形 fixture」决定，不看 id 字符串字面意义。
         let cultivation = crate::cultivation::components::Cultivation {
             realm: Realm::Induce,
             qi_current: 42.0,
             qi_max: 100.0,
-            race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            race: match race {
+                Some(race_id) => crate::body_plan::RaceId::new(race_id),
+                None => crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+            },
             ..Default::default()
         };
         app.world_mut().entity_mut(entity).insert((

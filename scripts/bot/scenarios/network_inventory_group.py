@@ -18,11 +18,20 @@
 import time
 
 from bot.bot import BotAssertionError
-from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
+from bot.scenarios._combat_helpers import (
+    last_event_time,
+    move_to_melee_range,
+    queue_fight_target,
+    queue_npc_scenario,
+    wait_for_ready,
+)
 from bot.scenarios._inventory_helpers import (
+    equip_location,
+    find_instance,
     find_item,
     latest_inventory_snapshot,
     require_item,
+    send_move,
     wait_inventory_contains,
     wait_inventory_revision_after,
     wait_inventory_snapshot_after,
@@ -85,6 +94,77 @@ def _assert_no_snapshot_change(
         )
 
 
+def _move_to_melee_range_live(bot, target_pos, distance: float = 1.0) -> None:
+    """每刀前重新追到 NPC 当前坐标旁——NPC 会走位（wander/接战），拿 spawn 坐标当
+    靶在 CI 时序下必 whiff（与 combat_weapon_equip_damage 同一套路）。"""
+    tx, ty, tz = target_pos
+    bx, by, bz = bot.position
+    dx, dz = bx - tx, bz - tz
+    length = max((dx * dx + dz * dz) ** 0.5, 0.001)
+    if length <= distance + 0.3:
+        return
+    bot.move_to(tx + dx / length * distance, ty, tz + dz / length * distance, speed=5.5)
+
+
+def _swing_until_durability_below(
+    bot, target_id: int, sword_instance: int, timeout: float = 30.0
+) -> dict:
+    """反复追击出刀，直到快照里 sword 实例 durability < 1.0（打坏前置）。
+
+    武器耐久经 combat resolve 每命中扣减（weapon.tick_durability）并写回
+    ItemInstance（set_item_instance_durability → revision bump → 快照推送）。
+    返回第一条含 damaged 状态的 inventory_snapshot；超时抛 BotAssertionError。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pos = bot.entity_pos(target_id)
+        if pos is None:
+            break  # 目标已 despawn
+        _move_to_melee_range_live(bot, pos)
+        swing_anchor = last_event_time(bot)
+        bot.attack_entity(target_id)
+        time.sleep(1.2)
+        for e in bot.events_of("server_data"):
+            if (
+                e.data.get("payload_type") != "inventory_snapshot"
+                or e.t <= swing_anchor
+            ):
+                continue
+            found = find_instance(e.data["payload"], sword_instance)
+            if found is not None and float(found["item"]["durability"]) < 1.0:
+                return e.data["payload"]
+    raise BotAssertionError(
+        f"[{bot.username}] 打刀 {timeout:.0f}s 内未在 inventory_snapshot 观测到"
+        f" sword 实例 {sword_instance} durability < 1.0（打坏前置失败）"
+    )
+
+
+def _wait_dropped_loot_for(
+    bot, anchor_t: float, instance_id: int, item_id: str, timeout: float = 10.0
+) -> dict:
+    """discard/drop 成功后的跨系统后果：等待含该实例的 dropped_loot_sync 广播。
+
+    契约面（dropped_loot_sync_emit + discard_inventory_item_to_dropped_loot）：
+    discard/drop 把物品移入 DroppedLootRegistry（保留原 instance_id）并在内容
+    变化当 tick 广播 dropped_loot_sync。只断言「物品离包 + revision bump」会让
+    「删包但不落世界」的实现（永久物品丢失）也通过——必须看到世界层广播出现
+    该实例才算成功。"""
+    event = bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.data.get("payload_type") == "dropped_loot_sync"
+            and e.t > anchor_t
+            and any(
+                d.get("instance_id") == instance_id
+                and (d.get("item") or {}).get("item_id") == item_id
+                for d in e.data["payload"].get("drops", [])
+            )
+        ),
+        timeout=timeout,
+        description=f"含实例 {instance_id}（{item_id}）的 dropped_loot_sync 广播",
+    )
+    return event.data["payload"]
+
+
 def run(env) -> None:
     with env.new_bot("InvGroup") as bot:
         wait_for_ready(bot)
@@ -96,11 +176,46 @@ def run(env) -> None:
         bot.expect_chat("[dev] clearinv", timeout=10.0)
         time.sleep(1.0)  # 命令通道冷却：清包后 0.6s 内 give 仍会被静默丢弃（实测坑，1.0s 稳）
 
-        # ── 1. repair_weapon_intent 正路径：修武器 → durability=1.0 + revision bump ──
+        # ── 1. repair_weapon_intent 正路径：先打坏武器（durability<1.0 前置）→
+        #    修复 → durability=1.0 + revision bump ──
         sword_snapshot = _give_and_wait(bot, IRON_SWORD)
         sword = require_item(sword_snapshot, IRON_SWORD)
         sword_instance = int(sword["item"]["instance_id"])
-        sword_revision = int(sword_snapshot["revision"])
+        assert abs(float(sword["item"]["durability"]) - 1.0) < 1e-6, (
+            f"give 出的新剑耐久应为 1.0，实际 {sword['item']['durability']}"
+        )
+        # central-review 2012 #4：give 出的新剑满耐久，直接 repair 会让「bump revision
+        # 但不动耐久」的错误实现也通过（修后 1.0 == 修前 1.0）。必须建立打坏前置：
+        # 装备 main_hand → 攻击战斗 NPC 直至快照可见 durability < 1.0。
+        equip_anchor = last_event_time(bot)
+        send_move(
+            bot, sword_instance, sword["location"], equip_location("main_hand", "held")
+        )
+        bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "inventory_snapshot"
+                and e.t > equip_anchor
+                and (e.data["payload"].get("equipped", {}).get("main_hand_held") or {}).get(
+                    "instance_id"
+                )
+                == sword_instance
+            ),
+            timeout=10.0,
+            description=f"sword 实例 {sword_instance} 已装备到 main_hand_held",
+        )
+        queue_npc_scenario(bot, "clear")
+        spawn = queue_fight_target(bot)
+        target_id = spawn.data["entity_id"]
+        move_to_melee_range(bot, spawn, 1.2)
+        bot.cmd("health set 100")
+        damaged = _swing_until_durability_below(bot, target_id, sword_instance)
+        damaged_sword = find_instance(damaged, sword_instance)
+        assert damaged_sword is not None and float(damaged_sword["item"]["durability"]) < 1.0, (
+            f"打坏前置失败：repair 前 durability 必须 < 1.0，实际 {damaged_sword!r}"
+        )
+        queue_npc_scenario(bot, "clear")  # 收掉战斗 NPC，避免干扰后续 discard/drop
+        sword_revision = int(latest_inventory_snapshot(bot)["revision"])
         bot.intent(
             {
                 "type": "repair_weapon_intent",
@@ -110,9 +225,11 @@ def run(env) -> None:
             }
         )
         repaired = wait_inventory_revision_after(bot, sword_revision, timeout=10.0)
-        repaired_sword = require_item(repaired, IRON_SWORD)
-        assert float(repaired_sword["item"]["durability"]) == 1.0, (
-            f"修复后 durability 应为 1.0，实际 {repaired_sword['item']['durability']!r}"
+        repaired_sword = find_instance(repaired, sword_instance)
+        assert repaired_sword is not None and abs(
+            float(repaired_sword["item"]["durability"]) - 1.0
+        ) < 1e-6, (
+            f"修复后 durability 应为 1.0，实际 {repaired_sword['item']['durability'] if repaired_sword else None!r}"
         )
 
         # ── 2. repair 拒绝路径：非武器模板 → 回推快照 revision 不变、物品保留 ──
@@ -132,8 +249,9 @@ def run(env) -> None:
         rejected = _wait_snapshot_same_revision(bot, anchor, talisman_revision)
         require_item(rejected, STARTER_TALISMAN)
 
-        # ── 3. inventory_discard_item 正路径：物品离包 + revision bump ──
+        # ── 3. inventory_discard_item 正路径：物品离包 + revision bump + 落地广播 ──
         discard_revision = int(latest_inventory_snapshot(bot)["revision"])
+        discard_anchor = last_event_time(bot)  # dropped-loot 因果锚：必须在 intent 前
         bot.intent(
             {
                 "type": "inventory_discard_item",
@@ -148,6 +266,7 @@ def run(env) -> None:
         assert find_item(after_discard, STARTER_TALISMAN) is None, (
             f"discard 后 {STARTER_TALISMAN} 应离包，实际仍在快照中"
         )
+        _wait_dropped_loot_for(bot, discard_anchor, talisman_instance, STARTER_TALISMAN)
 
         # ── 4. discard 拒绝路径：不存在的实例 → 回推快照 revision 不变 ──
         anchor = last_event_time(bot)
@@ -209,30 +328,34 @@ def run(env) -> None:
         rejected = _wait_snapshot_same_revision(bot, anchor, reject_revision)
         require_item(rejected, IRON_SWORD)
 
-        # ── 8. drop_weapon_intent 正路径：武器离包 + revision bump ──
+        # ── 8. drop_weapon_intent 正路径：武器离包 + revision bump + 落地广播 ──
+        #    第 1 步后剑仍装备在 main_hand_held，drop 的 from 必须是当前实际位置。
         drop_revision = int(latest_inventory_snapshot(bot)["revision"])
+        drop_anchor = last_event_time(bot)  # dropped-loot 因果锚：必须在 intent 前
         bot.intent(
             {
                 "type": "drop_weapon_intent",
                 "v": 1,
                 "instance_id": sword_instance,
-                "from": sword["location"],
+                "from": equip_location("main_hand", "held"),
             }
         )
         after_drop = wait_inventory_revision_after(bot, drop_revision, timeout=10.0)
         assert find_item(after_drop, IRON_SWORD) is None, (
             f"drop 后 {IRON_SWORD} 应离包，实际仍在快照中"
         )
+        _wait_dropped_loot_for(bot, drop_anchor, sword_instance, IRON_SWORD)
 
         # ── 9. drop_weapon_intent 拒绝路径：from 位置与实例不符 → 回推快照 revision 不变 ──
         anchor = last_event_time(bot)
         stale_revision = int(after_drop["revision"])
+        # stone 在第 7 步后仍在背包容器（非装备位），用 main_hand_held 作 from 恒不匹配。
         bot.intent(
             {
                 "type": "drop_weapon_intent",
                 "v": 1,
                 "instance_id": stone_instance,
-                "from": sword["location"],
+                "from": equip_location("main_hand", "held"),
             }
         )
         _wait_snapshot_same_revision(bot, anchor, stale_revision)

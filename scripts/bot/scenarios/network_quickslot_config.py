@@ -60,20 +60,25 @@ def _expect_bind_response(
     return payload
 
 
-def _assert_no_cast_sync(bot, anchor_t: float, slot: int) -> None:
-    """按 slot 过滤：第 6 步已启动的 cast 会在此窗口内完成并推 phase=complete，不算噪音。"""
+def _assert_no_cast_sync(bot, anchor_t: float) -> None:
+    """窗口内不得出现任何新启动的 cast_sync（phase=casting，任意 slot）。
+
+    第 6 步已启动的 cast 在本窗口内只推 phase=complete，phase=casting 过滤天然排除
+    它；按 slot 过滤会放过「请求非法槽却回落到已绑定槽 1 开火」的错误实现
+    （central-review 2012 #7）——新 cast 的 phase=casting + slot=1 会被漏掉。"""
     time.sleep(NEGATIVE_WINDOW)
     stray = [
         e
         for e in bot.events_of("server_data")
         if e.data.get("payload_type") == "cast_sync"
-        and e.data["payload"].get("slot") == slot
+        and e.data["payload"].get("phase") == "casting"
         and e.t > anchor_t
     ]
     if stray:
         raise BotAssertionError(
-            f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无 slot={slot} 的 cast_sync，"
+            f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无新启动 cast_sync，"
             f"实际收到 {len(stray)} 条"
+            f"（slots={[e.data['payload'].get('slot') for e in stray]}）"
         )
 
 
@@ -205,14 +210,14 @@ def run(env) -> None:
             f"guyuan_pill cast_duration_ms 应为 1500，实际 {cast.get('duration_ms')!r}"
         )
 
-        # ── 7. use_quick_slot 静默：未绑定槽 → 无该槽 cast_sync ──
+        # ── 7. use_quick_slot 静默：未绑定槽 → 无新 cast_sync ──
         anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 5})
-        _assert_no_cast_sync(bot, anchor, slot=5)
+        _assert_no_cast_sync(bot, anchor)
 
-        # ── 8. use_quick_slot 静默：slot>=9 越界 → 无该槽 cast_sync ──
+        # ── 8. use_quick_slot 静默：slot>=9 越界 → 无新 cast_sync ──
         anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": 9})
-        _assert_no_cast_sync(bot, anchor, slot=9)
+        _assert_no_cast_sync(bot, anchor)
 
         bot.assert_alive("技能栏 8 步正负路径后")

@@ -21,6 +21,8 @@ import time
 from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
+    equip_location,
+    find_instance,
     find_item,
     latest_inventory_snapshot,
     require_item,
@@ -170,16 +172,18 @@ def run(env) -> None:
             f"forge 后材料 {SILK} 应被消耗，实际仍在快照中"
         )
         # 真元走 zone ledger 扣除：forge intent 之后下发的 player_state.spirit_qi
-        # 应低于 forge 前的 5.0（e.t > forge_anchor 排除历史 qi=0 快照）。
+        # 必须恰好等于 5.0 − qi_cost(5.0) = 0.0（守恒敏感契约，central-review 2012
+        # #10）——只断言「< 5.0」会让扣 0.1、双扣成负等错误实现也通过。e.t >
+        # forge_anchor 排除历史 qi=0 快照；浮点容差 1e-6 吸收序列化抖动。
         bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "player_state"
                 and e.t > forge_anchor
-                and float(e.data["payload"].get("spirit_qi", 9.9)) < 5.0
+                and abs(float(e.data["payload"].get("spirit_qi", 9.9)) - 0.0) < 1e-6
             ),
             timeout=10.0,
-            description="forge 扣真元后（intent 之后）spirit_qi < 5.0",
+            description="forge 扣真元后（intent 之后）spirit_qi == 0.0（5.0 − 5.0）",
         )
 
         # ── 4. equip 正路径：伪皮进 equipped.chest_worn + revision bump ──
@@ -196,8 +200,12 @@ def run(env) -> None:
         )
         equipped = wait_inventory_revision_after(bot, equip_revision, timeout=10.0)
         worn = find_item(equipped, FALSE_SKIN)
-        assert worn is not None and worn["location"]["kind"] == "equip", (
-            f"equip 后 {FALSE_SKIN} 应在 equipped 层，实际 {worn!r}"
+        # central-review 2012 #6：equip_false_skin 必须忽略请求里的 slot、恒落
+        # Equip{Chest, Worn}——只断言 kind=="equip" 会让错误实现把伪皮塞进手/饰品等
+        # 别的装备层也通过。精确 pin 槽位 chest + 状态 worn。
+        assert worn is not None and worn["location"] == equip_location("chest", "worn"), (
+            f"equip 后 {FALSE_SKIN} 应落 equipped.chest_worn（Chest/Worn），"
+            f"实际 {worn!r}"
         )
 
         # ── 5. equip 拒绝-境界：降回 Awaken 再穿 → RealmTooLow + 回推 revision 不变 ──
@@ -248,7 +256,18 @@ def run(env) -> None:
         assert int(kept["revision"]) == reject_revision, (
             f"境界拒绝不得移动物品：revision 应保持 {reject_revision}，实际 {kept['revision']}"
         )
-        require_item(kept, FALSE_SKIN)
+        # central-review 2012 #2：第 4 步已装备一件同模板伪皮，模板级 require_item
+        # 会被旧装备件满足——错误的拒绝实现「丢失新给 spare_instance 却不动旧件」
+        # 也能过。必须 pin 到被拒实例本身 + 非 equipped 原位。
+        kept_spare = find_instance(kept, spare_instance)
+        assert kept_spare is not None, (
+            f"境界拒绝后被拒伪皮实例 {spare_instance} 应仍在背包"
+            f"（原位 {spare['location']!r}），实际快照中未找到该实例"
+        )
+        assert kept_spare["location"] == spare["location"], (
+            f"境界拒绝不得移动被拒实例：位置应保持 {spare['location']!r}，"
+            f"实际 {kept_spare['location']!r}"
+        )
 
         # ── 6. equip 静默：instance 不存在 → warn + revision 无变更 ──
         anchor = last_event_time(bot)
