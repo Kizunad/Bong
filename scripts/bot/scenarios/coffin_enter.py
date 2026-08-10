@@ -470,9 +470,16 @@ def run(env) -> None:
             )
             # occupied 拒绝契约是**全静默**（server occupied_by 分支直接 continue）：
             # 无 coffin_state（任何值）、无 metadata、无 §c[棺] 回执、位置不变——与距离
-            # 路径同用综合静默窗口，而不是只滤 in_coffin:true。
+            # 路径同用综合静默窗口，而不是只滤 in_coffin:true。check_pos 钉死「把占用
+            # 请求者瞬移又窗口内还原」的实现（review finding：旧调用只查窗末位置快照，
+            # 窗口内 pos_look 中间瞬移被放过去，坏实现还原坐标后全过）。
             _assert_silent_window(
-                bystander, b_anchor, "occupied CoffinEnter", check_chat=True
+                bystander,
+                b_anchor,
+                "occupied CoffinEnter",
+                check_chat=True,
+                before_pos=before_pos,
+                check_pos=True,
             )
             if before_pos is not None and not all(
                 _approx(a, b) for a, b in zip(before_pos, bystander.position)
