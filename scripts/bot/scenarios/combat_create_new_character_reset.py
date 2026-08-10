@@ -44,7 +44,9 @@ def run(env) -> None:
         )
 
         # ── 复活并推进决策阶梯到 Tribulation ──────────────────────────
-        reincarnate(bot, anchor)
+        # 收屏锚点紧贴 intent 现场取（reincarnate 缺省 after），不复用负向观察之前的
+        # 陈旧锚点（review finding 2）。
+        reincarnate(bot)
         tribulation = escalate_to_tribulation_death(bot)
         if tribulation.get("can_terminate") is not True:
             raise AssertionError(

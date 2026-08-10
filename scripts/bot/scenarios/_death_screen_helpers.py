@@ -27,32 +27,14 @@ def kill_self(bot: Bot, timeout: float = 15.0) -> None:
     bot.expect_chat("[dev] kill self", timeout=timeout)
 
 
-def death_screens_after(bot: Bot, after: float) -> list[dict]:
-    with bot._lock:
-        events = list(bot.events)
-    return [
-        e.data["payload"]
-        for e in events
-        if e.kind == "server_data"
-        and e.t > after
-        and e.data["payload_type"] == "death_screen"
-    ]
+def wait_death_screen_event(
+    bot: Bot, after: float = 0.0, timeout: float = 240.0
+) -> tuple[float, dict]:
+    """等待 visible=true 的死亡屏，返回 ``(event.t, payload)``。
 
-
-def terminate_screens_after(bot: Bot, after: float) -> list[dict]:
-    with bot._lock:
-        events = list(bot.events)
-    return [
-        e.data["payload"]
-        for e in events
-        if e.kind == "server_data"
-        and e.t > after
-        and e.data["payload_type"] == "terminate_screen"
-    ]
-
-
-def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 240.0) -> dict:
-    """等待 visible=true 的死亡屏（濒死决策已出，AwaitingRevival 决策窗口开启）。
+    ``event.t`` 与场景时钟（``time.monotonic() - bot.t0``）同一刻度，供调用方把屏事件
+    钉到具体时刻（如"距 kill 超过濒死宽限窗"的时序断言，见
+    ``combat_reincarnate_fortune_revives``）。
 
     timeout 必须覆盖生产侧的濒死宽限窗：death_arbiter 只把角色推入 NearDeath，
     决策（并附死亡屏）要等 near_death_deadline_tick（NEAR_DEATH_WINDOW_TICKS=600 ticks）
@@ -70,7 +52,12 @@ def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 240.0) -> d
         timeout,
         "death_screen(visible=true) payload（濒死决策已出、决策窗口开启）",
     )
-    return event.data["payload"]
+    return event.t, event.data["payload"]
+
+
+def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 240.0) -> dict:
+    """等待 visible=true 的死亡屏 payload（濒死决策已出，AwaitingRevival 决策窗口开启）。"""
+    return wait_death_screen_event(bot, after, timeout)[1]
 
 
 def wait_death_screen_hidden(bot: Bot, after: float, timeout: float = 15.0) -> dict:
@@ -101,8 +88,17 @@ def wait_terminate_screen(
     return event.data["payload"]
 
 
-def reincarnate(bot: Bot, after: float, timeout: float = 15.0) -> dict:
-    """发送 combat_reincarnate 并等待死亡屏收屏（Fortune 决策必复活）。"""
+def reincarnate(bot: Bot, after: float | None = None, timeout: float = 15.0) -> dict:
+    """发送 combat_reincarnate 并等待死亡屏收屏（Fortune 决策必复活）。
+
+    收屏锚点在**发送 intent 的同一时刻**（``last_event_time`` 紧贴 ``bot.intent``，
+    均在负向观察之后）取得：调用方若传更早的锚点（如负向门禁观察**之前**捕获的），
+    负向窗口内到达的屏事件会被算进收屏等待、提前放行或漏掉断言（review finding 2）。
+    缺省 ``after`` 时现场取新锚点，杜绝陈旧锚点脚枪；显式 ``after`` 仍接受（escalate
+    循环用它逐轮推进，调用方自己负责在紧贴动作处取锚）。
+    """
+    if after is None:
+        after = last_event_time(bot)
     bot.intent({"type": "combat_reincarnate", "v": 1})
     return wait_death_screen_hidden(bot, after, timeout)
 
@@ -110,9 +106,24 @@ def reincarnate(bot: Bot, after: float, timeout: float = 15.0) -> dict:
 def assert_no_screen_events(
     bot: Bot, after: float, window_secs: float, label: str
 ) -> None:
-    """断言窗口期内没有新死亡屏/终结屏事件（负向门禁：intent 应为 noop）。"""
+    """断言窗口期内没有新死亡屏/终结屏事件（负向门禁：intent 应为 noop）。
+
+    观测必须是原子的：``bot.events`` 由接收线程异步 append，两次独立加锁读取会得到
+    两个先后快照，夹缝中新到达的屏事件会被漏过负向断言（review finding 2 原实现
+    ``death_screens_after`` / ``terminate_screens_after`` 各读一份快照再并集）。这里
+    只在一次 ``bot._lock`` 内复制事件集合，再从同一份拷贝同时分类两种屏 payload，
+    覆盖完整窗口。
+    """
     time.sleep(window_secs)
-    new_screens = death_screens_after(bot, after) + terminate_screens_after(bot, after)
+    with bot._lock:
+        events = list(bot.events)
+    new_screens = [
+        e.data["payload"]
+        for e in events
+        if e.kind == "server_data"
+        and e.t > after
+        and e.data["payload_type"] in ("death_screen", "terminate_screen")
+    ]
     if new_screens:
         raise BotAssertionError(
             f"{label} 应无任何屏事件（noop），实际收到 {len(new_screens)} 条：{new_screens}"
