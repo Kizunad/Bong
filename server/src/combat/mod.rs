@@ -16,6 +16,7 @@ pub mod decay;
 pub mod dugu_v2;
 pub mod events;
 pub mod foreign_qi_resistance;
+pub mod guard_log;
 pub mod jiemai;
 pub mod knockback;
 pub mod lifecycle;

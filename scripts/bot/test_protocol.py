@@ -33,6 +33,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import _redis_helpers  # noqa: E402
+from bot import _server_log  # noqa: E402
 from bot import mc_protocol as mc  # noqa: E402
 from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
@@ -4711,6 +4712,109 @@ class RedisPubSubTest(unittest.TestCase):
             server.close()
             client.close()
 
+    def test_feed_appends_in_place_no_quadratic_rebuild(self):
+        # 回归：review finding [minor]——_buf 若是不可变 bytes，feed 每次 `+=` 都
+        # 复制整段累计缓冲，分片到达时呈二次方拷贝。改为 bytearray 后原地追加。
+        frames = _redis_helpers.RespFrames()
+        buf_ref = frames._buf
+        for _ in range(50):
+            frames.feed(b"x" * 4096)
+        self.assertIs(
+            frames._buf,
+            buf_ref,
+            "feed 必须原地追加，不得重建缓冲对象（bytearray 而非 bytes）",
+        )
+        self.assertEqual(len(frames._buf), 50 * 4096)
+
+    def test_wait_event_excludes_events_enqueued_after_deadline(self):
+        # 回归：review finding [minor]——最终扫描只用 seq 边界，无法区分「截止前
+        # 到达」与「截止后入队」；事件入队时间戳 <= deadline 才被接受。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        # 匹配事件在 deadline（≈now+0.01s）之后才入队：ts 在未来，必须被排除。
+        pubsub._events = [(0, "my_chan", {"ok": True}, time.monotonic() + 1000.0)]
+        with self.assertRaises(AssertionError):
+            pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=0.01)
+
+    def test_wait_event_accepts_events_within_deadline(self):
+        # 同一 seq 窗口内的匹配事件，入队时刻 <= deadline 时仍应被接受（过滤
+        # 只排除截止后入队，不误伤截止前到达）。
+        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
+        pubsub._lock = threading.Lock()
+        pubsub._fatal_error = None
+        pubsub._event_seq = 0
+        pubsub._max_events = 5000
+        pubsub._events = [(0, "my_chan", {"ok": True}, time.monotonic() - 1.0)]
+        evt = pubsub.wait_event("my_chan", lambda e: e.get("ok") is True, timeout=5.0)
+        self.assertEqual(evt["ok"], True)
+
+    def test_pump_deep_json_recursion_error_is_fatal(self):
+        # 回归：review finding [major]——json.loads 对超深嵌套列表抛 RecursionError，
+        # 不在 _handle_frame 的 ValueError/TypeError 捕获之列，此前会让泵线程静默
+        # 退出、负向断言在死订阅上照常通过。泵线程兜底失败边界必须把它记为 fatal。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            deep = b"[" * 100000 + b"]" * 100000
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(deep),
+                deep,
+            )
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    # str(RecursionError) 是消息文本而非类型名；RecursionError 不是
+                    # ValueError/TypeError 子类，必须落到泵线程的兜底 except Exception。
+                    self.assertIn("maximum recursion depth", str(exc))
+                    return
+                time.sleep(0.05)
+            self.fail("超深 JSON 载荷未让泵线程把 RecursionError 记为 fatal")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_pump_catch_all_marks_fatal_on_unexpected_frame_exception(self):
+        # 兜底失败边界（review finding [major]）：泵线程捕获不到协议/socket 例外
+        # 以外的任何异常时，必须 _set_fatal 而不是静默退出守护线程。用子类让
+        # _handle_frame 抛非 ValueError/TypeError/OSError 的意外异常验证该边界。
+        class Boom(_redis_helpers.RedisPubSub):
+            def _handle_frame(self, frame):
+                raise RuntimeError("boom")
+
+        server, client = socket.socketpair()
+        with mock.patch(
+            "bot._redis_helpers.socket.create_connection", return_value=client
+        ):
+            pubsub = Boom("127.0.0.1", 6379)
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$2\r\n{}\r\n"
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    self.assertIn("boom", str(exc))
+                    return
+                time.sleep(0.05)
+            self.fail("泵线程未把意外帧处理异常记为 fatal")
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
 
 class ThrowCarrierGuardMarkerTest(unittest.TestCase):
     """combat_anqi_throw_carrier：消费者 guard 日志按 carrier 线缆 id 归属解析。
@@ -4732,6 +4836,11 @@ class ThrowCarrierGuardMarkerTest(unittest.TestCase):
         self.addCleanup(os.remove, path)
         return path
 
+    def _scan(self, path: str, mod) -> "_server_log.ServerLogScanner":
+        scanner = _server_log.ServerLogScanner(path, mod._GUARD_RE)
+        scanner.scan()
+        return scanner
+
     def test_guard_markers_filtered_to_own_carrier(self):
         mod = self._scenario_module()
         own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
@@ -4743,16 +4852,17 @@ class ThrowCarrierGuardMarkerTest(unittest.TestCase):
                 "[bong][network] client_request received entity=5v1 payload_bytes=77",
             ]
         )
+        scanner = self._scan(path, mod)
         self.assertEqual(
-            mod._server_log_guard_markers(path, own),
+            scanner.guard_markers(own),
             ["no_anqi_imprint"],
             "只应解析出归属本 bot 的 guard 标记",
         )
         self.assertEqual(
-            mod._server_log_guard_markers(path, other),
+            scanner.guard_markers(other),
             ["no_carrier_item"],
         )
-        self.assertEqual(mod._server_log_guard_markers(path, "player:missing"), [])
+        self.assertEqual(scanner.guard_markers("player:missing"), [])
 
     def test_guard_reasons_whitelist_accepts_both_guards(self):
         mod = self._scenario_module()
@@ -4763,13 +4873,79 @@ class ThrowCarrierGuardMarkerTest(unittest.TestCase):
                 f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
             ]
         )
-        reasons = mod._server_log_guard_markers(path, own)
+        reasons = self._scan(path, mod).guard_markers(own)
         for reason in reasons:
             self.assertIn(
                 reason,
                 mod._GUARD_REASONS,
                 f"reason {reason!r} 不在空手护栏白名单 {mod._GUARD_REASONS!r} 内",
             )
+
+
+class ServerLogScannerTest(unittest.TestCase):
+    """_server_log.ServerLogScanner：增量扫描 + user= 精确归属。"""
+
+    def _write_log(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_incremental_scan_does_not_reprocess_old_lines(self):
+        # 回归：review finding [minor]——guard 轮询若每次从头全扫整个无界 server
+        # 日志，窗口内几十次全量读产生几十 GB I/O。按偏移增量扫描不得重复解析
+        # 旧行，且追加段须在下一次 scan() 里被读到。
+        path = self._write_log(
+            [
+                "[bong][combat] throw_carrier guard carrier=player:aaa "
+                "slot=MainHand reason=no_carrier_item",
+            ]
+        )
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(
+                r"throw_carrier guard carrier=(?P<carrier>\S+) "
+                r".*reason=(?P<reason>\S+)"
+            ),
+        )
+        scanner.scan()
+        self.assertEqual(scanner.guard_markers("player:aaa"), ["no_carrier_item"])
+        scanner.scan()  # 无新增：不得重复累计旧行
+        self.assertEqual(
+            scanner.guard_markers("player:aaa"),
+            ["no_carrier_item"],
+            "重复 scan 不得重新解析旧行",
+        )
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(
+                "[bong][combat] throw_carrier guard carrier=player:bbb "
+                "slot=MainHand reason=no_anqi_imprint\n"
+            )
+        scanner.scan()
+        self.assertEqual(scanner.guard_markers("player:aaa"), ["no_carrier_item"])
+        self.assertEqual(scanner.guard_markers("player:bbb"), ["no_anqi_imprint"])
+
+    def test_deserialize_failed_attribution_is_exact_not_substring(self):
+        # 回归：review finding [minor]——`username in line` 子串匹配会让 Throw
+        # 被 Throw2 的失败误归因。按结构化 user=<name> 字段精确匹配。
+        path = self._write_log(
+            [
+                "[bong][network] client_request deserialize failed from 2v1 "
+                "(user=Throw2): bad; payload_bytes=10",
+            ]
+        )
+        scanner = _server_log.ServerLogScanner(
+            path,
+            re.compile(r"throw_carrier guard carrier=(\S+)"),
+        )
+        scanner.scan()
+        self.assertEqual(
+            scanner.deserialize_failed("Throw"),
+            0,
+            "Throw 不得被 Throw2 的 user= 字段子串命中",
+        )
+        self.assertEqual(scanner.deserialize_failed("Throw2"), 1)
 class NewServerDataDecoderContractTest(unittest.TestCase):
     """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
 

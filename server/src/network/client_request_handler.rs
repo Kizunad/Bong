@@ -2217,6 +2217,28 @@ pub fn handle_client_request_payloads(
                         cycle_container_slot(world, entity, tick)
                     };
                     if switched.is_none() {
+                        // e2e fenglinghe 拒收护栏的正向证据：switch_container_slot 的
+                        // 拒收早退（!allows_combat_swap，仅 fenglinghe）处发
+                        // carrier 线缆 id 归属的 guard 标记。场景据此区分「拒收分支
+                        // 被走」与「请求在 schema/反序列化/派发环节被丢」——单靠
+                        // 无 container_swap 事件无法证明到达了 switch 系统（review
+                        // finding [major]：fenglinghe 静默在请求未达 switch 系统时
+                        // 照样通过）。经 GuardLogDedup 按 tick 窗口去重：恶意客户端
+                        // 反复发同一拒收请求不制造无界日志，且窗口外自动剪除。
+                        let wire_id = crate::combat::woliu::entity_wire_id(
+                            world.get::<UniqueId>(entity),
+                            entity,
+                        );
+                        let emit = world
+                            .get_resource_mut::<crate::combat::guard_log::GuardLogDedup>()
+                            .map(|mut g| g.should_emit(&wire_id, "rejected", tick))
+                            .unwrap_or(true);
+                        if emit {
+                            tracing::info!(
+                                "[bong][combat] container_switch guard carrier={} reason=rejected",
+                                wire_id
+                            );
+                        }
                         tracing::warn!(
                             ?entity,
                             ?target_container,

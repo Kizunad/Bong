@@ -35,6 +35,7 @@ from bot.scenarios._inventory_helpers import (
     wait_join_and_inventory,
 )
 from bot._redis_helpers import RedisPubSub
+from bot._server_log import ServerLogScanner
 
 DESCRIPTION = "抛射护栏：无持载体发出 throw_carrier → 静默 no-op（无 despawn 事件 / 无库存改动 / 存活）"
 MODULES = ["anqi", "combat", "inventory"]
@@ -65,48 +66,14 @@ def _self_carrier(bot) -> str:
     return evt.data["payload"]["carrier"]
 
 
-_GUARD_RE = re.compile(r"throw_carrier guard carrier=(\S+) .*reason=(\S+)")
-_DESERIALIZE_FAILED_RE = re.compile(r"client_request deserialize failed")
+_GUARD_RE = re.compile(
+    r"throw_carrier guard carrier=(?P<carrier>\S+) .*reason=(?P<reason>\S+)"
+)
 
 # 空手护栏 reason 白名单：no_carrier_item（手槽无载体）/ no_anqi_imprint（持非暗器
 # 物品，新手村 fixture 主手通常是 iron_sword）。若 fixture 换主手武器，两分支任一
 # 出现都算护栏执行，但不接受其他 reason 蒙混。
 _GUARD_REASONS = ("no_carrier_item", "no_anqi_imprint")
-
-
-def _server_log_guard_markers(path: str, carrier: str) -> list[str]:
-    """扫描 server 日志，返回 carrier= 等于本 bot 线缆 id 的 guard 标记 reason 序列。
-
-    `throw_carrier guard carrier=player:{uuid} ... reason=<guard>` 由消费者系统
-    `throw_carrier_intents` 在空手 no-op 早退处发出（server/src/combat/carrier.rs），
-    证明意图已完成「生产→线上→反序列化→派发→消费者执行」，且由 carrier 线缆 id
-    归属到本 bot——不再依赖不唯一的 payload 字节数（review findings [major]：
-    throw 场景缺消费者信号 / client_request received 日志相关性）。
-    """
-    reasons: list[str] = []
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            match = _GUARD_RE.search(line)
-            if match and match.group(1) == carrier:
-                reasons.append(match.group(2))
-    return reasons
-
-
-def _server_log_deserialize_failed(path: str, username: str) -> int:
-    """统计归属本 bot 的 `client_request deserialize failed` warn 日志条数。
-
-    该日志现含 `user=<username>`（server/src/network/client_request_handler.rs，
-    review finding [minor] 修复后补的关联键），据此把计数钉在本 bot 身份上。
-    全局计数会因同窗其他 vanilla/bot/ambient 客户端的畸形请求误伤本场景
-    （review finding [minor]：全局反序列化失败计数使场景跨客户端误红）。guard
-    标记只在反序列化成功后才可能发出，故本计数在 guard 断言通过后提供 schema
-    漂移的精确诊断。"""
-    failed = 0
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            if _DESERIALIZE_FAILED_RE.search(line) and username in line:
-                failed += 1
-    return failed
 
 
 def run(env) -> None:
@@ -144,8 +111,14 @@ def run(env) -> None:
                 "正向派发证据需要 server 日志：export BONG_SERVER_LOG=<server log>"
                 f"（bot-e2e.sh 已导出；实际 log_path={log_path!r}）"
             )
-            before_guard = _server_log_guard_markers(log_path, carrier)
-            before_failed = _server_log_deserialize_failed(log_path, bot.username)
+            # 按文件偏移增量扫描：全 run 共享的 server 日志随前面所有场景持续
+            # 增长，若每 200ms 从头全扫会产生几十 GB I/O 且单次扫描时长不受
+            # 截止时间约束（review finding [minor]：guard 轮询反复全量重扫无界
+            # 日志）。ServerLogScanner 只读上次偏移之后的追加段。
+            scanner = ServerLogScanner(log_path, _GUARD_RE)
+            scanner.scan()
+            before_guard = scanner.guard_markers(carrier)
+            before_failed = scanner.deserialize_failed(bot.username)
 
             # 手持非暗器（默认武器）发出投掷 intent —— 无载体投掷应被静默忽略。
             bot.intent(request)
@@ -157,7 +130,8 @@ def run(env) -> None:
             # payload 字节数相关性不成立）。轮询窗口兼作 despawn 观察窗。
             guard_deadline = time.monotonic() + GUARD_TIMEOUT
             while True:
-                after_guard = _server_log_guard_markers(log_path, carrier)
+                scanner.scan()
+                after_guard = scanner.guard_markers(carrier)
                 if len(after_guard) > len(before_guard):
                     break
                 if time.monotonic() >= guard_deadline:
@@ -180,8 +154,10 @@ def run(env) -> None:
 
             # 辅助诊断：guard 标记只在反序列化成功后才会出现，故此计数在 guard
             # 断言通过后提供 schema 漂移的精确定位（若 schema 失配，guard 断言
-            # 先行失败，这里不会掩盖）。
-            after_failed = _server_log_deserialize_failed(log_path, bot.username)
+            # 先行失败，这里不会掩盖）。归属按 user=<name> 字段精确匹配，避免
+            # 重叠用户名子串误归因（review finding [minor]）。
+            scanner.scan()
+            after_failed = scanner.deserialize_failed(bot.username)
             new_failed = after_failed - before_failed
             assert new_failed == 0, (
                 f"窗口内出现 client_request deserialize failed（新增 {new_failed} 条）"

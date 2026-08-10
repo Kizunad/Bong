@@ -15,12 +15,15 @@ pocket_pouch→hand_slot）→ 同目标再次静默。
   HandSlot→Quiver→PocketPouch→HandSlot。
 """
 
+import os
+import re
 import time
 from typing import Optional
 
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import wait_join_and_inventory
 from bot._redis_helpers import RedisPubSub
+from bot._server_log import ServerLogScanner
 
 DESCRIPTION = "暗器战斗容器切换：显式切换/轮换/拒收 fenglinghe/同目标静默"
 MODULES = ["anqi", "combat"]
@@ -29,6 +32,16 @@ REQUIRED_ENV = "BOT_E2E_ANQI_REDIS"
 RUN_IN_ALL_WHEN_ENV = REQUIRED_ENV
 
 CH_SWAP = "bong:anqi/container_swap"
+# fenglinghe 拒收护栏的正向证据：switch_container_slot 拒收早退
+# （!allows_combat_swap，仅 fenglinghe）发 `container_switch guard
+# carrier=player:{uuid} reason=rejected` info 日志（client_request_handler.rs）。
+# 场景据此区分「拒收分支被走」与「请求在 wire 边界被丢」——单靠无 container_swap
+# 事件无法证明请求到达了 switch 系统（review finding [major]）。
+_GUARD_RE = re.compile(
+    r"container_switch guard carrier=(?P<carrier>\S+) .*reason=(?P<reason>\S+)"
+)
+_GUARD_REASON = "rejected"
+GUARD_TIMEOUT = 8.0
 
 
 def _switch(bot, to) -> None:
@@ -129,8 +142,54 @@ def run(env) -> None:
                 after=anchor,
             )
 
-            # 4) fenglinghe：拒收，静默
+            # 4) fenglinghe：拒收，静默。负向（无 container_swap 事件）+ 正向
+            #    （switch 消费者系统的拒收 guard 标记）双证据。后者证明请求完成
+            #    反序列化→派发→switch_container_slot 拒收分支——若 fenglinghe 不在
+            #    client-request schema、被误编码、反序列化失败或在派发前被丢弃，
+            #    同样的"无事件"结果会出现，负向断言无法区分（review finding
+            #    [major]：fenglinghe 静默在请求未达 switch 系统时照样通过）。
+            log_path = os.environ.get("BONG_SERVER_LOG")
+            assert log_path and os.path.isfile(log_path), (
+                "fenglinghe 拒收正向证据需要 server 日志：export "
+                f"BONG_SERVER_LOG=<server log>（bot-e2e.sh 已导出；实际 "
+                f"log_path={log_path!r}）"
+            )
+            scanner = ServerLogScanner(log_path, _GUARD_RE)
+            scanner.scan()
+            before_guard = scanner.guard_markers(carrier)
+            before_failed = scanner.deserialize_failed(bot.username)
             _switch(bot, "fenglinghe")
+            guard_deadline = time.monotonic() + GUARD_TIMEOUT
+            while True:
+                scanner.scan()
+                after_guard = scanner.guard_markers(carrier)
+                if len(after_guard) > len(before_guard):
+                    break
+                if time.monotonic() >= guard_deadline:
+                    break
+                time.sleep(0.2)
+            new_guard = after_guard[len(before_guard):]
+            assert new_guard, (
+                f"fenglinghe 拒收正向证据缺失：发出切换后 {GUARD_TIMEOUT:.0f}s 内 "
+                f"server 未为 carrier={carrier!r} 新增 container_switch guard 标记"
+                f"，实际新增 {new_guard!r}——请求可能在 schema/序列化/派发环节被丢"
+                f"，负向静默断言无法区分"
+            )
+            for reason in new_guard:
+                assert reason == _GUARD_REASON, (
+                    f"fenglinghe 拒收 guard reason 应为 {_GUARD_REASON!r}，实际 "
+                    f"{new_guard!r}"
+                )
+            # 辅助诊断：guard 标记只在反序列化成功后才会出现，此计数在 guard 断言
+            # 通过后提供 schema 漂移的精确定位（若 schema 失配，guard 断言先行
+            # 失败，这里不会掩盖）。
+            scanner.scan()
+            new_failed = scanner.deserialize_failed(bot.username) - before_failed
+            assert new_failed == 0, (
+                f"fenglinghe 切换窗口内出现归属本 bot 的 client_request "
+                f"deserialize failed（新增 {new_failed} 条）——请求在反序列化处"
+                f"断裂，未达 switch 系统"
+            )
             _expect_silent(pubsub, carrier, 2, 3.0, "fenglinghe 拒收")
 
             # 5) 切回 hand_slot：pocket_pouch -> hand_slot

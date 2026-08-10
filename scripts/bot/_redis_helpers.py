@@ -67,7 +67,12 @@ class RespFrames:
     """RESP2 帧解析器：feed() 喂字节，next_frame() 取一帧；数据不足返回 None。"""
 
     def __init__(self) -> None:
-        self._buf = b""
+        # bytearray：feed 原地追加，不复制整段缓冲。不可变 bytes 每次 `+=`
+        # 都会重建整个累计缓冲——分片到达时呈二次方拷贝（4096 字节一帧、16MiB
+        # 上限内约 4096 次逐步变大的复制 ≈ 几十 GiB 内存搬运），恶意对端在
+        # 缓冲封顶前就能把 bot runner 拖垮（review finding [minor]：分片 RESP
+        # 在尺寸上限拒绝前先制造二次方缓冲拷贝）。
+        self._buf = bytearray()
         # 当前 next_frame 单帧解析已解码的数组元素总数；每次取帧重置。只在
         # 泵线程/握手循环串行调用 next_frame，无并发（见 _parse_frame 的元素
         # 计数预算，review finding [major]：unbounded RESP array complexity）。
@@ -81,6 +86,7 @@ class RespFrames:
                 f"RESP 接收缓冲区超限: {len(self._buf) + len(data)} bytes > "
                 f"MAX_BUF_LEN={MAX_BUF_LEN}"
             )
+        # bytearray 的 `+=` 走 __iadd__ 原地 extend，摊销 O(1)；bytes 会整段重建。
         self._buf += data
 
     def next_frame(self) -> Any:
@@ -95,12 +101,14 @@ class RespFrames:
         idx = self._buf.find(b"\r\n", pos)
         if idx == -1:
             return None, 0
-        return self._buf[pos:idx], idx
+        # 返回 bytes（调用方 decode/int/比较都按 bytes 契约）；bytearray 切片
+        # 会返回 bytearray，与 bytes 不相等。
+        return bytes(self._buf[pos:idx]), idx
 
     def _parse_frame(self, pos: int, depth: int = 0) -> tuple[Any, int]:
         if pos >= len(self._buf):
             return None, 0
-        marker = self._buf[pos : pos + 1]
+        marker = bytes(self._buf[pos : pos + 1])
         if marker in (b"+", b"-"):
             line, idx = self._line(pos + 1)
             if line is None:
@@ -130,13 +138,13 @@ class RespFrames:
             end = idx + 2 + length + 2
             if len(self._buf) < end:
                 return None, 0
-            if self._buf[idx + 2 + length : end] != b"\r\n":
+            if bytes(self._buf[idx + 2 + length : end]) != b"\r\n":
                 # bulk 载荷末尾必须跟 CRLF；只按声明长度跳两字节会吞掉畸形
                 # 流并从错误边界继续解析（review finding [minor]：CRLF 未校验）。
                 raise ValueError(
-                    f"RESP bulk string 缺少 CRLF 终止符: {self._buf[idx + 2 : end]!r}"
+                    f"RESP bulk string 缺少 CRLF 终止符: {bytes(self._buf[idx + 2 : end])!r}"
                 )
-            return self._buf[idx + 2 : idx + 2 + length], end
+            return bytes(self._buf[idx + 2 : idx + 2 + length]), end
         if marker == b"*":
             line, idx = self._line(pos + 1)
             if line is None:
@@ -210,9 +218,11 @@ class RedisPubSub:
                 except OSError:
                     pass
                 raise
-        # (seq, channel, payload)：seq 单调递增，供 wait_event 只扫本次等待期间
-        # 新增的事件；max_events 兜底裁剪最旧条目，防止共享频道累积撑爆内存。
-        self._events: list[tuple[int, str, dict[str, Any]]] = []
+        # (seq, channel, payload, enqueued_at)：seq 单调递增，供 wait_event 只扫
+        # 本次等待期间新增的事件；enqueued_at（time.monotonic）让 wait_event 能
+        # 区分「截止前到达」与「截止后入队」（review finding [minor]）；max_events
+        # 兜底裁剪最旧条目，防止共享频道累积撑爆内存。
+        self._events: list[tuple[int, str, dict[str, Any], float]] = []
         self._event_seq = 0
         self._max_events = max_events
         self._lock = threading.Lock()
@@ -316,6 +326,16 @@ class RedisPubSub:
                         RuntimeError(f"redis 连接读失败（socket 错误）: {exc!r}")
                     )
                 break
+            except Exception as exc:
+                # 泵线程兜底失败边界：_drain_frames/_handle_frame 内的任何意外
+                # 异常（如超深 JSON 载荷让 json.loads 抛 RecursionError，不在
+                # _handle_frame 的 ValueError/TypeError 捕获之列）若逃逸，守护
+                # 线程会静默退出且 _fatal_error 永不置位——负向断言在死订阅上
+                # 照常通过、wait_event 报误导性超时（review finding [major]：
+                # 未捕获的载荷异常静默终止观察线程）。BaseException
+                # （KeyboardInterrupt/SystemExit）故意不吞。
+                self._set_fatal(exc)
+                break
             if not data:
                 # 空读 = 对端关闭订阅连接。若不标记致命，events_for/wait_event 会
                 # 继续返回冻结事件列表，负向断言（无事件）在死订阅上照常通过——
@@ -327,6 +347,10 @@ class RedisPubSub:
             try:
                 self._frames.feed(data)
             except ValueError as exc:
+                self._set_fatal(exc)
+                break
+            except Exception as exc:
+                # 与主 try 的兜底同语义：feed 解析异常也不得静默终止泵线程。
                 self._set_fatal(exc)
                 break
 
@@ -362,7 +386,9 @@ class RedisPubSub:
         if not isinstance(decoded, dict):
             return
         with self._lock:
-            self._events.append((self._event_seq, channel, decoded))
+            # 记录入队时刻（time.monotonic，与 wait_event 的 deadline 同钟）：
+            # wait_event 的最终扫描按 ts <= deadline 排除截止后入队的事件。
+            self._events.append((self._event_seq, channel, decoded, time.monotonic()))
             self._event_seq += 1
             if len(self._events) > self._max_events:
                 del self._events[: len(self._events) - self._max_events]
@@ -373,7 +399,32 @@ class RedisPubSub:
                 raise AssertionError(
                     f"redis 连接已因协议异常终止，事件流不可信: {self._fatal_error}"
                 )
-            return [e for _, c, e in self._events if c == channel]
+            return [e for _, c, e, _ in self._events if c == channel]
+
+    def _fresh_events(
+        self,
+        start_seq: int,
+        channel: str,
+        max_ts: Optional[float] = None,
+    ) -> list[dict[str, Any]]:
+        """加锁扫描 [start_seq, +∞) 且（可选）入队时刻 <= max_ts 的事件。
+
+        max_ts 用于把「截止后入队」的事件排除出 wait_event 窗口——序列号边界
+        无法区分「截止前到达」与「截止后入队」，必须靠入队时间戳（review
+        finding [minor]：wait_event 接受截止后事件）。
+        """
+        with self._lock:
+            if self._fatal_error is not None:
+                raise AssertionError(
+                    f"redis 连接已因协议异常终止: {self._fatal_error}"
+                )
+            return [
+                e
+                for seq, c, e, ts in self._events
+                if seq >= start_seq
+                and c == channel
+                and (max_ts is None or ts <= max_ts)
+            ]
 
     def anchor(self) -> int:
         """捕获当前事件序列锚点，供「先锚定、再触发、后等待」使用。
@@ -406,32 +457,19 @@ class RedisPubSub:
                 )
             start_seq = self._event_seq if after is None else after
         while True:
-            with self._lock:
-                if self._fatal_error is not None:
-                    raise AssertionError(
-                        f"redis 连接已因协议异常终止: {self._fatal_error}"
-                    )
-                fresh = [
-                    e for seq, c, e in self._events if seq >= start_seq and c == channel
-                ]
+            # 两次扫描都按 max_ts=deadline 过滤：序列号边界无法区分「截止前
+            # 到达」与「截止后入队」，必须用入队时间戳把后者排除（review
+            # finding [minor]：wait_event 接受截止后事件）。
+            fresh = self._fresh_events(start_seq, channel, max_ts=deadline)
             for evt in fresh:
                 if predicate(evt):
                     return evt
             if time.monotonic() >= deadline:
                 # 快照与截止判定之间可能插入 pump 的入队：匹配事件在快照之后、
                 # 截止之前到达时，上面的循环已不再扫它。抛超时前必须做一次加锁
-                # 的最终全量扫描，把窗口内最后入队的事件捞回（review finding
+                # 的最终扫描，把窗口内最后入队的事件捞回（review finding
                 # [minor]：wait_event 在匹配事件已到达的情况下仍可能超时）。
-                with self._lock:
-                    if self._fatal_error is not None:
-                        raise AssertionError(
-                            f"redis 连接已因协议异常终止: {self._fatal_error}"
-                        )
-                    fresh = [
-                        e
-                        for seq, c, e in self._events
-                        if seq >= start_seq and c == channel
-                    ]
+                fresh = self._fresh_events(start_seq, channel, max_ts=deadline)
                 for evt in fresh:
                     if predicate(evt):
                         return evt
