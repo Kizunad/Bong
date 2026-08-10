@@ -31,9 +31,21 @@ def run(env) -> None:
         bot.expect_event("game_join", timeout=20.0)
         bot.expect_event("pos_look", timeout=20.0)
 
-        # ── 死亡：首次死亡必 Fortune ────────────────────────────────
+        # ── 死亡：首次死亡必 Fortune，且死亡屏受濒死宽限窗延迟 ──────
+        anchor = last_event_time(bot)
         kill_self(bot)
-        screen = wait_death_screen(bot)
+        # 负向观察：死亡屏必须在濒死宽限窗（NEAR_DEATH_WINDOW_TICKS=600 combat ticks）
+        # 走完后才下发（server::combat::near_death_tick 只在 clock.tick >=
+        # near_death_deadline_tick 时给决策）。宽限窗以 tick 计量，任何现实 TPS 下都
+        # ≥ 数秒 wall：设计 20 TPS≈30s，本盒低负载下实测更久。3s 负窗在正确实现下
+        # 必空；kill 后立即下发死亡屏的回归实现会命中并红。
+        assert_no_screen_events(
+            bot,
+            anchor,
+            window_secs=3.0,
+            label="濒死宽限窗内（kill 后 3s）death_screen 不应下发",
+        )
+        screen = wait_death_screen(bot, after=anchor)
         if screen.get("stage") != DEATH_SCREEN_STAGE_FORTUNE:
             raise AssertionError(
                 f"期望首次死亡决策 stage=FORTUNE({DEATH_SCREEN_STAGE_FORTUNE})，"

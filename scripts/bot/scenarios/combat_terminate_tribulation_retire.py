@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from bot.scenarios._death_screen_helpers import (
+    DEATH_SCREEN_STAGE_TRIBULATION,
     escalate_to_tribulation_death,
     last_event_time,
     wait_death_screen_hidden,
@@ -28,9 +29,10 @@ def run(env) -> None:
         bot.expect_event("pos_look", timeout=20.0)
 
         tribulation = escalate_to_tribulation_death(bot)
-        if tribulation.get("stage") is None:
+        if tribulation.get("stage") != DEATH_SCREEN_STAGE_TRIBULATION:
             raise AssertionError(
-                f"Tribulation 死亡屏应带 stage 字段，实际 payload={tribulation}"
+                f"期望 Tribulation 决策 stage=TRIBULATION({DEATH_SCREEN_STAGE_TRIBULATION})，"
+                f"实际 stage={tribulation.get('stage')}，payload={tribulation}"
             )
 
         # ── 主动归隐：combat_terminate → 终结屏 + 收屏 ────────────────

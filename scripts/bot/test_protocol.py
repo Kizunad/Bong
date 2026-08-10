@@ -549,10 +549,16 @@ class ServerDataDecodeTest(unittest.TestCase):
 
     def test_proto_death_screen_visible_payload_decodes(self):
         # field 72 DeathScreen：濒死决策已出（Fortune，stage=1），决策窗口开启。
+        # 字段 3/4/5 一并钉死：luck_remaining(double)/final_words(repeated string)/
+        # countdown_until_ms(uint64 varint)——与 server 侧 fixture（proto_gen.rs）对齐。
         payload = _pb_message(
             72,
             _pb_varint(1, 1)  # visible=true
             + _pb_string(2, "voluntary_retire")
+            + _pb_fixed64(3, 0.3)  # luck_remaining=0.3
+            + _pb_string(4, "你的修为到此为止")
+            + _pb_string(4, "但愿来生...")  # final_words（repeated）
+            + _pb_varint(5, 1700000030000)  # countdown_until_ms
             + _pb_varint(6, 1)  # can_reincarnate=true
             # can_terminate=false（Fortune 决策不可主动终结）
             + _pb_varint(8, 1)  # stage=FORTUNE
@@ -563,6 +569,12 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "death_screen")
         self.assertTrue(decoded["visible"])
         self.assertEqual(decoded["cause"], "voluntary_retire")
+        self.assertAlmostEqual(decoded["luck_remaining"], 0.3)
+        self.assertEqual(
+            decoded["final_words"], ["你的修为到此为止", "但愿来生..."],
+            "repeated string 字段 4 应按序解出列表",
+        )
+        self.assertEqual(decoded["countdown_until_ms"], 1700000030000)
         self.assertTrue(decoded["can_reincarnate"])
         self.assertFalse(decoded["can_terminate"])
         self.assertEqual(decoded["stage"], 1)
@@ -574,6 +586,9 @@ class ServerDataDecodeTest(unittest.TestCase):
         payload = _pb_message(
             72,
             _pb_varint(1, 1)
+            + _pb_fixed64(3, 0.85)  # luck_remaining
+            + _pb_string(4, "大限将至")  # final_words（repeated，单条）
+            + _pb_varint(5, 1700000050000)  # countdown_until_ms
             + _pb_varint(6, 1)
             + _pb_varint(7, 1)
             + _pb_varint(8, 2)
@@ -582,6 +597,9 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "death_screen")
         self.assertTrue(decoded["visible"])
+        self.assertAlmostEqual(decoded["luck_remaining"], 0.85)
+        self.assertEqual(decoded["final_words"], ["大限将至"])
+        self.assertEqual(decoded["countdown_until_ms"], 1700000050000)
         self.assertTrue(decoded["can_terminate"])
         self.assertEqual(decoded["stage"], 2)
         self.assertEqual(decoded["death_number"], 4)
