@@ -48,9 +48,13 @@ int main(void) {
 EOF
 # Compile a native executable so /proc/<pid>/exe matches the selected artifact.
 gcc "$TMP_ROOT/fake-src/server.c" -o "$TMP_ROOT/target/release/bong-server"
-cat >"$TMP_ROOT/bin/cargo" <<'EOF'
+cat >"$TMP_ROOT/bin/cargo" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# review finding [3]：把 build 调用参数记录到日志，供断言「release/debug profile
+# 下 build 命令必须随之变化」——旧 harness 的 cargo stub 无条件 exit 0，跳过
+# build / 用错 profile 的实现照常绿。
+printf '%s\n' "\$*" >>"$TMP_ROOT/cargo-invocations.log"
 exit 0
 EOF
 chmod 700 "$TMP_ROOT/bin/cargo"
@@ -63,7 +67,9 @@ export BONG_PREVIEW_PID_FILE="$TMP_ROOT/runtime/server.pid"
 export BONG_SKIP_SKIN_PREFETCH=1
 
 run_preview() {
-  bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout "$1"
+  local timeout="$1"
+  shift
+  bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout "$timeout" "$@"
 }
 
 # 0 = 25565 上有 listener；1 = 无。供启动门禁用例断言「拒绝后不得拉新 server」。
@@ -80,8 +86,16 @@ sys.exit(0)
 PY
 }
 
+: >"$TMP_ROOT/cargo-invocations.log"
 run_preview 5 >/dev/null
 [ -f "$BONG_PREVIEW_PID_FILE" ]
+# review finding [3]：默认 release profile 的 build 必须是 'build --locked --release'。
+# 旧 harness 不观测 build 调用，跳过 build / 用错 profile（如省略 --locked、忽略
+# --release）的实现照常绿。
+grep -qx 'build --locked --release' "$TMP_ROOT/cargo-invocations.log" || {
+  echo "release launch did not run 'build-token.sh cargo build --locked --release'" >&2
+  exit 1
+}
 # review finding [major]：run-server-headless.sh 从未在「任何既有权限记录」存在时被
 # 调用（合法运行中 / stale / malformed / mismatched / unconfirmable 五形态的启动门禁
 # 都没测过）——省略 bong_server_refuse_existing_preview_record_locked、覆盖既有记录
@@ -111,6 +125,28 @@ listener_on_25565 || {
 bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
+# review finding [3]：--debug 必须改用 debug profile——build 命令不带 --release
+# （'build --locked'），且解析/启动的产物必须是 target/debug/bong-server。忽略
+# --debug（仍用 release 产物与 release build 命令）的实现在此红。debug fake 同样
+# 编译为原生可执行文件，/proc/<pid>/exe 才能匹配上钉扎的 debug artifact。
+mkdir -p "$TMP_ROOT/target/debug"
+gcc "$TMP_ROOT/fake-src/server.c" -o "$TMP_ROOT/target/debug/bong-server"
+: >"$TMP_ROOT/cargo-invocations.log"
+run_preview 5 --debug >/dev/null
+[ -f "$BONG_PREVIEW_PID_FILE" ]
+debug_pid="$(sed -n 's/^pid=//p' "$BONG_PREVIEW_PID_FILE")"
+debug_exe="$(readlink -f -- "/proc/$debug_pid/exe" 2>/dev/null || true)"
+[ "$debug_exe" = "$TMP_ROOT/target/debug/bong-server" ] || {
+  echo "--debug launch did not start the debug artifact (ignored --debug or wrong profile)" >&2
+  exit 1
+}
+grep -qx 'build --locked' "$TMP_ROOT/cargo-invocations.log" || {
+  echo "--debug launch did not run 'build-token.sh cargo build --locked'" >&2
+  exit 1
+}
+bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
+
 export FAKE_SERVER_MODE=early
 if run_preview 2 >"$TMP_ROOT/early.log" 2>&1; then
   echo "early-exit preview unexpectedly succeeded" >&2
@@ -120,21 +156,38 @@ fi
 unset FAKE_SERVER_MODE
 
 export FAKE_SERVER_MODE=no_listener
-if run_preview 1 >"$TMP_ROOT/timeout.log" 2>&1; then
+timeout_out="$(run_preview 1 2>&1)" && timeout_rc=0 || timeout_rc=$?
+if [ "$timeout_rc" -eq 0 ]; then
   echo "timeout preview unexpectedly succeeded" >&2
   exit 1
 fi
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
+# review finding [1]：超时回滚只断言「记录被清」放过了「删记录却把 server 进程裸留
+# 成 untracked 孤儿」的错误实现（进程仍占着 25565，只是不再被记录跟踪）。回滚后
+# 必须验证被 spawn 的 server 进程已真实终止。PID 从启动器 stdout 的 'PID=$SERVER_PID'
+# 行取（write_record/disown 后、readiness 前打印），再核对 /proc/<pid>/exe 不再指向
+# fake binary——若 PID 已被复用为无关进程，exe 路径也必然不是 fake binary。
+timeout_pid="$(sed -n 's/.*PID=\([0-9][0-9]*\).*/\1/p' <<<"$timeout_out" | head -1)"
+[ -n "$timeout_pid" ] || {
+  echo "timeout preview did not report the spawned server PID" >&2
+  exit 1
+}
+timeout_exe="$(readlink -f -- "/proc/$timeout_pid/exe" 2>/dev/null || true)"
+[ "$timeout_exe" != "$TMP_ROOT/target/release/bong-server" ] || {
+  echo "timeout rollback left the untracked server process alive (PID $timeout_pid)" >&2
+  exit 1
+}
 unset FAKE_SERVER_MODE
 
 REAL_STAT="$(command -v stat)"
 cat >"$TMP_ROOT/bin/stat" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-# 三种注入模式，按测试分场景单独启用：
+# 四种注入模式，按测试分场景单独启用：
 #   1. FAKE_STAT_IDENTITY_FAILURE=1       —— 对 /proc/<pid>/exe 持续失败
 #   2. FAKE_STAT_FAIL_AFTER_RECORD=1      —— 记录发布后失败一次（标志文件保证只一次）
 #   3. FAKE_STAT_FAIL_FROM_CALL=<n>       —— 第 n 次起对 /proc/<pid>/exe 持续失败
+#   4. FAKE_STAT_SLOW_EXE_SLEEP=<s>       —— 每次 /proc/<pid>/exe 读取先睡 s 秒
 # 仅拦截 /proc/*/exe 的 shell stat；readlink（executable）、/proc/<pid>/stat
 # 重定向读（starttime）、Python os.stat（pidfd-signal / listener-owner）均不受影响。
 if [[ "\${*: -1}" != /proc/*/exe ]]; then
@@ -166,6 +219,12 @@ if [ "\${FAKE_STAT_FAIL_FROM_CALL:-0}" -gt 0 ]; then
     exit 1
   fi
 fi
+# 模式 4：FAKE_STAT_SLOW_EXE_SLEEP=<seconds> —— 每次 /proc/*/exe 的 stat 读取先睡
+# N 秒，拉宽「spawn → 记录发布」窗口（身份钉扎与 write_record 都经 stat 读
+# executable_identity），让取消保护用例能在记录发布前发 SIGTERM（review finding [2]）。
+if [ -n "\${FAKE_STAT_SLOW_EXE_SLEEP:-}" ]; then
+  sleep "\$FAKE_STAT_SLOW_EXE_SLEEP"
+fi
 exec "$REAL_STAT" "\$@"
 EOF
 chmod 700 "$TMP_ROOT/bin/stat"
@@ -192,6 +251,77 @@ print("identity-failure preview left the untracked server holding 25565", file=s
 sys.exit(1)
 PY
 then
+  exit 1
+fi
+
+# 扫描 /proc 找所有 exe 指向 release fake binary 的存活进程（取消用例断言泄漏用）。
+fake_server_pids() {
+  local pd exe
+  for pd in /proc/[0-9]*; do
+    exe="$(readlink -f -- "$pd/exe" 2>/dev/null || true)"
+    [ "$exe" = "$TMP_ROOT/target/release/bong-server" ] && printf '%s\n' "${pd#/proc/}"
+  done
+  return 0  # 无匹配时循环末命令 [ ] 返回非零；set -euo pipefail 下独立赋值
+           # `x="$(fake_server_pids | head -1)"` 会继承该非零直接 abort（实测坑）。
+}
+
+# review finding [2]：spawn 之后、记录发布之前取消启动器，不得留下 untracked
+# server。旧实现无此窗口的清理——server 子 shell trap '' HUP 忽略挂断信号，启动器
+# 被杀后它作为孤儿继续持有 25565。注入 stat 延迟（FAKE_STAT_SLOW_EXE_SLEEP）拉宽
+# 窗口，后台启动后在记录发布前 SIGTERM 启动器，断言：launcher 退出、fake server
+# 进程消失、无记录残留、25565 已释放。
+if [ -n "$(fake_server_pids)" ]; then
+  echo "precondition failed: fake server already alive before cancellation test" >&2
+  exit 1
+fi
+FAKE_STAT_SLOW_EXE_SLEEP=2 \
+  bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 30 \
+  >"$TMP_ROOT/cancel.log" 2>&1 &
+cancel_launch_pid=$!
+# 等 fake server 出现（= spawn 完成、进入身份钉扎循环，即记录发布前窗口）。
+cancel_server_pid=""
+for _ in $(seq 1 200); do
+  cancel_server_pid="$(fake_server_pids | head -1)"
+  [ -n "$cancel_server_pid" ] && break
+  sleep 0.05
+done
+[ -n "$cancel_server_pid" ] || {
+  echo "cancellation test: fake server did not appear before deadline" >&2
+  kill "$cancel_launch_pid" 2>/dev/null || true
+  exit 1
+}
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "cancellation test: record was already published before cancellation (window missed)" >&2
+  kill "$cancel_launch_pid" 2>/dev/null || true
+  exit 1
+}
+kill -TERM "$cancel_launch_pid" 2>/dev/null || true
+# 等启动器退出（trap 回收 server 后 exit 1）。
+launcher_gone=0
+for _ in $(seq 1 200); do
+  if ! kill -0 "$cancel_launch_pid" 2>/dev/null; then
+    launcher_gone=1
+    break
+  fi
+  sleep 0.05
+done
+if [ "$launcher_gone" -eq 0 ]; then
+  echo "launcher did not exit after SIGTERM (pre-publication cancellation)" >&2
+  kill -KILL "$cancel_launch_pid" 2>/dev/null || true
+  exit 1
+fi
+cancel_remaining="$(fake_server_pids)"
+[ -z "$cancel_remaining" ] || {
+  echo "pre-publication cancellation left untracked server(s) alive: $cancel_remaining" >&2
+  kill -KILL $cancel_remaining 2>/dev/null || true
+  exit 1
+}
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "pre-publication cancellation left an authority record" >&2
+  exit 1
+}
+if listener_on_25565; then
+  echo "pre-publication cancellation left an untracked server holding 25565" >&2
   exit 1
 fi
 

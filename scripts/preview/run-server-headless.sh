@@ -110,10 +110,38 @@ bounded_cleanup_unconfirmed_launch() {
   return 1
 }
 
+# 取消窗口保护（review finding [2]）：spawn 之后、身份记录发布之前，若启动器被外部
+# 信号终止（INT/TERM/HUP）或流程失败（EXIT），被 spawn 的 server 尚未被任何记录
+# 跟踪——裸留即为 untracked 孤儿持续持有 25565。两个 trap 处理器只在该窗口生效：
+# EXIT 保留原退出码（正常成功/失败都不改写），INT/TERM/HUP 强制非零（被取消的
+# 启动不是成功）；二者都只在「SERVER_PID 已设且记录未发布」时回收，记录发布后即
+# no-op。disown 成功后 trap 会被清除，readiness 阶段的失败由显式 rollback 处理。
+bong_server_pre_publication_maybe_cleanup() {
+  if [ -n "${SERVER_PID:-}" ] \
+      && [ ! -e "$PID_FILE" ] && [ ! -L "$PID_FILE" ]; then
+    bounded_cleanup_unconfirmed_launch "preview pre-publication cancellation" || true
+  fi
+}
+bong_server_pre_publication_on_exit() {
+  local rc=$?
+  bong_server_pre_publication_maybe_cleanup
+  trap - EXIT INT TERM HUP
+  exit "$rc"
+}
+bong_server_pre_publication_on_signal() {
+  bong_server_pre_publication_maybe_cleanup
+  trap - EXIT INT TERM HUP
+  exit 1
+}
+
 bong_server_launch_preview_locked() {
   local status
 
   bong_server_refuse_existing_preview_record || return 1
+  # 取消窗口 trap：覆盖 spawn → 记录发布区间（见函数定义）。server 子 shell 忽略
+  # HUP（trap '' HUP），清理必须走 TERM/KILL 的进程树回收，bounded_cleanup 正是。
+  trap bong_server_pre_publication_on_exit EXIT
+  trap bong_server_pre_publication_on_signal INT TERM HUP
   : > "$LOG_FILE"
   echo "[run-server-headless] 启动 server (binary=$SERVER_BINARY)..."
   (
@@ -177,6 +205,8 @@ bong_server_launch_preview_locked() {
     rollback_preview_server "preview startup rollback" || true
     return 1
   fi
+  # 记录已发布且进程已分离：取消窗口结束。readiness 阶段的失败走显式 rollback。
+  trap - EXIT INT TERM HUP
 }
 
 bong_server_refuse_existing_preview_record_locked || exit 1
