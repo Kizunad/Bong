@@ -21,7 +21,14 @@ S2C PlayerSpawn 包（game_join 的 entity_id 恒为 0，只能经 player_spawn 
    is_chaotic/is_hunyuan=false、realm_diff=2、observer/observed 为
    offline:<username> canonical id（observer **全等**，不是前缀）；
 2. host 降回引气（同境界）→ 静默（realm_diff=0 continue，无 S2C）；
-3. 不存在协议 id 的 observed → dispatch 静默丢弃（无 S2C、无聊天）。
+3. 不存在协议 id 的 observed → dispatch 静默丢弃（无 S2C、无聊天）；
+4. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 凝实再探真实 victim
+   → 静默（same_dimension 失败，唯一失败的空间前提是维度）；
+5. victim 回 overworld 后 tpzone 到远端 zone（同维、距 host >6m）→ host 凝实
+   再探真实 victim → 静默（distance 失败，唯一失败的空间前提是距离）。
+   4/5 都以**真实可见实体**（victim 的 protocol entity id）放在空间门另一侧——
+   只发不存在 id 会放走「resolve 正常但漏掉距离/维度检查」的坏实现
+   （central-review 2029 #5）。
 """
 
 import time
@@ -140,10 +147,20 @@ def run(env) -> None:
         host.expect_chat("[dev] realm set ", timeout=10.0)
 
         with env.new_bot("QiV") as victim:
+            # 事件水位必须取在 victim join **之前**：PlayerSpawn 可在 join 期间的
+            # 任意时刻到达 host。只匹配 e.kind=="player_spawn" 会选中历史或并发
+            # PlayerSpawn（central-review 2029 #4）——水位 + canonical username 双
+            # 锚定到 victim 本人。username 来自 host 的 player_names（S2C_PLAYER_LIST
+            # 在 PlayerSpawn 同包之前推送，Valence 标准顺序）。
+            spawn_watermark = host.events[-1].t if host.events else 0.0
             wait_join_and_inventory(victim)
 
             spawn = host.wait_for(
-                lambda e: e.kind == "player_spawn",
+                lambda e: (
+                    e.kind == "player_spawn"
+                    and e.t > spawn_watermark
+                    and e.data.get("username") == victim.username
+                ),
                 timeout=15.0,
                 description="host 收到 victim 的 PlayerSpawn（protocol entity id）",
             )
@@ -198,6 +215,39 @@ def run(env) -> None:
             sent_at = host.events[-1].t if host.events else 0.0
             host.intent({**INSPECT_REQUEST, "observed": "entity:999999999"})
             _assert_silent(host, sent_at, "坏 observed 协议 id 应被 dispatch 静默丢弃")
+
+            # 5. victim tpdim 到 TSY（同裸 XYZ，距离前提仍满足）→ host 凝实再探真实
+            #    victim → 静默（same_dimension 失败，唯一失败的空间前提是维度）。
+            #    空间门必须**可隔离**：把双 bot 精确共位到同一 zone 中心（tpzone 定点
+            #    落位，distance=0）再 tpdim 只移 victim（X+0.25）→ distance=0.25 ≤ 6m。
+            #    若直接依赖出生点相对距离，tpdim 的 +0.25 位移可能把近 6m 的一对推过
+            #    6m，distance 与 dimension 同时失败——漏 dimension 检查的坏实现照样
+            #    静默，隔离性破（central-review 2029 #5）。跨维 transfer 只改
+            #    EntityLayerId/Position，ECS Entity 与 protocol entity id 保持不变
+            #    （dimension_transfer.rs），step 0 捕获的旧 id 仍解析到 victim。
+            host.cmd("tpzone jiuzong_taichu_ruin")
+            host.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
+            victim.cmd("tpzone jiuzong_taichu_ruin")
+            victim.expect_chat("Teleported to zone `jiuzong_taichu_ruin`.", timeout=10.0)
+            host.cmd("realm set condense")
+            host.expect_chat("[dev] realm set ", timeout=10.0)
+            _transfer_dimension(victim, "tsy", victim.events[-1].t if victim.events else 0.0)
+            sent_at = host.events[-1].t if host.events else 0.0
+            host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
+            _assert_silent(host, sent_at, "跨维度 qi_color_inspect 应静默（same_dimension 失败）")
+
+            # 6. victim 回 overworld 后 tpzone 到远端 zone（同维、距 host >6m）→ host
+            #    凝实再探真实 victim → 静默（distance 失败，唯一失败的空间前提是距离）。
+            #    tpdim overworld 把 victim 的 X+0.25 精确还原，与 host 再次同坐标共位；
+            #    tpzone wangyintai 再到 (4000,144,-1650)——同 overworld 维、距 host
+            #    （jiuzong 中心 (0,109,-10000)）~9257m。若距离前提不满足（victim 仍近），
+            #    漏 distance 检查的坏实现也能静默，隔离性破。
+            _transfer_dimension(victim, "overworld", victim.events[-1].t if victim.events else 0.0)
+            victim.cmd("tpzone wangyintai")
+            victim.expect_chat("Teleported to zone `wangyintai`.", timeout=10.0)
+            sent_at = host.events[-1].t if host.events else 0.0
+            host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
+            _assert_silent(host, sent_at, "远端 zone 的 qi_color_inspect 应静默（distance 失败）")
 
             victim.assert_alive("qi_color_inspect 全程 victim")
             host.assert_alive("qi_color_inspect 拒绝面全程")
@@ -273,25 +323,67 @@ def _assert_redacted_payload(host, payload: dict, victim_username: str) -> None:
         )
 
 
+def _transfer_dimension(bot, target: str, after: float) -> None:
+    """把 bot 经正式 transfer consumer 切到 target 维度（保持同 XYZ 邻域）。
+
+    等 server 权威 transfer 排队的聊天确认 + 真实跨维 Respawn，并断言 Respawn 携带
+    目标维度（dimension_type_name/dimension_name 双键任一命中即可）。维度未完成切换
+    前不 dispatch 探针——否则正确实现会因同维发 payload，静默断言在 setup 阶段就
+    假红。跨维 transfer 不换 ECS Entity，protocol entity id 保持有效。"""
+    bot.cmd(f"tpdim {target}")
+    bot.wait_for(
+        lambda e: (
+            e.kind == "chat"
+            and e.t > after
+            and f"Queued /tpdim {target} within current XYZ gate." in e.data.get("text", "")
+        ),
+        timeout=10.0,
+        description=f"/tpdim {target} 应收到 server 权威 transfer 排队确认",
+    )
+    respawn = bot.wait_for(
+        lambda e: e.kind == "respawn" and e.t > after,
+        timeout=10.0,
+        description=f"/tpdim {target} 应触发真实跨维 Respawn",
+    )
+    expected = {"tsy": "bong:tsy", "overworld": "minecraft:overworld"}[target]
+    actual = {
+        key: respawn.data.get(key)
+        for key in ("dimension_type_name", "dimension_name")
+    }
+    if any(value != expected for value in actual.values()):
+        raise BotAssertionError(
+            f"[{bot.username}] /tpdim {target} 的 Respawn 必须携带目标维度 {expected}，"
+            f"实际 {actual}"
+        )
+
+
 def _assert_silent(bot, sent_at: float, description: str) -> None:
     # 截止时刻用单调钟（time.monotonic），不用事件时间戳 bot.events[-1].t：
     # 静默断言正是"之后无事件到达"，事件时间不会推进，以事件时间做 deadline 会
     # 永远等不到 now >= end_at 而死循环（review finding 1/5）。
     deadline = time.monotonic() + SILENT_WINDOW
     while True:
-        for e in bot.events_of("server_data"):
-            if e.t > sent_at and e.data["payload_type"] == "qi_color_observed":
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际收到 qi_color_observed（t={e.t:.3f}）"
-                )
-        for e in bot.events_of("chat"):
-            # dev 修为切换的确认回显可能晚于 sent_at 到达（实测出现在窗口内），
-            # 属场景 setup 噪音；静默断言只看 qi_color_observed 与真实新聊天。
-            if e.t > sent_at and "realm set" not in e.data.get("text", ""):
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
-                )
+        _scan_silent_violations(bot, sent_at, description)
         if time.monotonic() >= deadline:
+            # 终末复扫：事件扫描与 deadline 判定非原子（central-review 2029 #3），
+            # deadline 判定成立后、返回前再扫一次，收口最后一段未观测窗口——否则
+            # 该段内到达的 qi_color_observed/聊天会被漏掉。
+            _scan_silent_violations(bot, sent_at, description)
             return
         bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
+
+
+def _scan_silent_violations(bot, sent_at: float, description: str) -> None:
+    for e in bot.events_of("server_data"):
+        if e.t > sent_at and e.data["payload_type"] == "qi_color_observed":
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际收到 qi_color_observed（t={e.t:.3f}）"
+            )
+    for e in bot.events_of("chat"):
+        # dev 修为切换的确认回显可能晚于 sent_at 到达（实测出现在窗口内），
+        # 属场景 setup 噪音；静默断言只看 qi_color_observed 与真实新聊天。
+        if e.t > sent_at and "realm set" not in e.data.get("text", ""):
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
+            )

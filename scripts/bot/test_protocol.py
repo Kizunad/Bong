@@ -4620,6 +4620,37 @@ class ProbePayloadDecodeTest(unittest.TestCase):
             self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
             self.assertEqual(decoded["realm_diff"], 2)
 
+    def test_qi_color_observed_field_74_decodes_unspecified_default(self):
+        # central-review 2029 #1：ColorKind 是 protobuf enum，field3 合法地可以缺省
+        # （默认值 0）或显式编码为 0。`_varint(fields, 3)` 缺省时返回 0，
+        # COLOR_KIND_PASCAL_NAMES 无 0 键 → 一律映射 "unspecified"。穷举 1..=10
+        # 只 pin 非默认 gameplay 色，会放走「0 也映射成某种玩法色 / 大小写错误 /
+        # 直接 raise」的坏解码器——合法 default-valued 载荷会产出错误的
+        # qi_color_observed.main。两个子形都要 pin：显式 0 与字段缺省。
+        for label, field3_bytes in (
+            ("field3=0（protobuf enum 默认值）", _pb_varint_field(3, 0)),
+            ("field3 缺省", b""),
+        ):
+            inner = (
+                _pb_string(1, "offline:BGD9QiH")
+                + _pb_string(2, "offline:BGD9QiV")
+                + field3_bytes
+                + _pb_varint_field(5, 0)
+                + _pb_varint_field(6, 0)
+                + _pb_varint_field(7, 2)
+            )
+            decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+            self.assertEqual(decoded["type"], "qi_color_observed")
+            self.assertEqual(
+                decoded["main"],
+                "unspecified",
+                f"{label} 应解码为 main=unspecified（默认/兜底映射），实际 {decoded['main']}",
+            )
+            self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+            self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
+            self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
+            self.assertEqual(decoded["realm_diff"], 2)
+
     def test_qi_color_observed_field_74_decodes_present_secondary(self):
         # central-review 2029 #4：secondary 是可选字段，缺省路径之上还须 pin 携带
         # 路径——恒返回 None 的错误实现（present 也丢）会在此撞红。

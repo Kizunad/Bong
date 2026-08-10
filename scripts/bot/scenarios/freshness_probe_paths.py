@@ -15,7 +15,9 @@ belongs_to_player 检查）。本场景用 `[dev] give` 构造合法背包 item�
    food_spoil_mundane_meat_v1）→ event_alert 神识未及；
 2. 凝脉后再探 → freshness_update（item_uuid=instance_id、freshness=1.0、
    profile_name=food_spoil_mundane_meat_v1）；
-3. 凝脉探无保鲜 item（trade_crate）→ NoFreshness 静默（无 S2C、无聊天）。
+3. 凝脉探无保鲜 item（trade_crate）→ NoFreshness 静默（无 S2C、无聊天）；
+4. 凝脉探不存在的 instance_id（不在背包）→ dispatch belongs_to_player 前置
+   静默丢弃（无 S2C、无聊天）。
 """
 
 import time
@@ -29,7 +31,7 @@ from ._inventory_helpers import (
     wait_join_and_inventory,
 )
 
-DESCRIPTION = "freshness_probe：Awaken→神识未及告警、凝脉→FreshnessUpdate、无保鲜→静默"
+DESCRIPTION = "freshness_probe：Awaken→神识未及告警、凝脉→FreshnessUpdate、无保鲜/坏实例→静默"
 MODULES = ["shelflife", "network"]
 
 PROBE_REQUEST = {"type": "freshness_probe", "v": 1}
@@ -37,6 +39,13 @@ MEAT_ITEM = "food.mundane.cooked_meat"
 MEAT_PROFILE = "food_spoil_mundane_meat_v1"
 PLAIN_ITEM = "trade_crate"
 SILENT_WINDOW = 4.0
+# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
+# （network/carrier_state_emit.rs，ticks % TICKS_PER_SECOND==0 周期）。
+# player_state / inventory_snapshot 在本场景只随 Changed 组件发射（gap9 无
+# 周期性无变化 flush），窗口内无合法非白名单 payload——白名单外一律判红
+# （central-review 2029 #2）。carrier_state 不在 proto_min 白名单，通常不
+# 解码成 server_data 事件；保留它只为显式豁免未来 proto_min 收录后的周期流。
+AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
 # food_spoil_mundane_meat_v1：Linear 衰减 decay_per_tick = 1/(GAME_DAY_TICKS×3)，
 # GAME_DAY_TICKS=24000、TICKS_PER_SECOND=20 → 2.78e-4/s（server/src/shelflife/registry.rs）。
 MEAT_DECAY_PER_SECOND = 1.0 / (24000 * 3) * 20.0
@@ -68,10 +77,14 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"[{bot.username}] 期望 EventAlert 含「神识未及」，实际 {message!r}"
             )
+        # 该请求的契约 = 唯一响应是这条 event_alert；水位须在 intent 前（否则
+        # 「先发 freshness_update、再发神识未及」的坏实现被排除）。已消费的 alert
+        # 按 t 豁免，其余任何 server_data 一律判红（central-review 2029 #2）。
         _assert_no_freshness_update(
             bot,
             sent_at,
             "Awaken 保鲜探针被拒（RealmTooLow）后，同请求不得再产出 freshness_update",
+            allowed_payload_ts=(alert.t,),
         )
         bot.assert_alive("Awaken 保鲜探针后")
 
@@ -120,26 +133,57 @@ def run(env) -> None:
         sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**PROBE_REQUEST, "instance_id": plain["item"]["instance_id"]})
         _assert_no_freshness_update(bot, sent_at, "无保鲜 item 的探针应静默（NoFreshness 不发 S2C）")
+        bot.assert_alive("无保鲜 freshness_probe 后")
+
+        # 4. 不存在的 instance_id → dispatch belongs_to_player 前置静默丢弃
+        #    （client_request_handler.rs belongs_to_player 检查；warn log 无 S2C）。
+        #    此前全部请求都用当前背包快照拿到的实例，从不在生产路径送非法实例——
+        #    跳过 belongs_to_player、去探他人/任意 item 的坏实现能通过全部旧断言
+        #    （central-review 2029 #6）。999999 是合法 wire 值但不在任何背包。
+        sent_at = bot.events[-1].t if bot.events else 0.0
+        bot.intent({**PROBE_REQUEST, "instance_id": 999999})
+        _assert_no_freshness_update(
+            bot,
+            sent_at,
+            "不存在的 instance_id 探针应被 dispatch 静默丢弃（belongs_to_player 拒绝）",
+        )
         bot.assert_alive("freshness_probe 拒绝面全程")
 
 
-def _assert_no_freshness_update(bot, sent_at: float, description: str) -> None:
+def _assert_no_freshness_update(
+    bot, sent_at: float, description: str, allowed_payload_ts: tuple = ()
+) -> None:
     # 截止时刻用单调钟（time.monotonic），不用事件时间戳 bot.events[-1].t：
     # 静默断言正是"之后无事件到达"，事件时间不会推进，以事件时间做 deadline 会
     # 永远等不到 now >= end_at 而死循环（review finding 1/5）。
     deadline = time.monotonic() + SILENT_WINDOW
     while True:
-        for e in bot.events_of("server_data"):
-            if e.t > sent_at and e.data["payload_type"] == "freshness_update":
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际收到 freshness_update（t={e.t:.3f}）"
-                )
-        for e in bot.events_of("chat"):
-            if e.t > sent_at:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
-                )
+        _scan_silent_violations(bot, sent_at, description, allowed_payload_ts)
         if time.monotonic() >= deadline:
+            # 终末复扫：事件扫描与 deadline 判定非原子（review finding 3），deadline
+            # 判定成立后、返回前再扫一次，收口最后一段未观测窗口。
+            _scan_silent_violations(bot, sent_at, description, allowed_payload_ts)
             return
         bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
+
+
+def _scan_silent_violations(bot, sent_at: float, description: str, allowed_payload_ts: tuple) -> None:
+    # central-review 2029 #2：静默契约 = 「无任何非周期 S2C 响应 + 无聊天」。只盯
+    # freshness_update 会放走拒收却发 event_alert / mineral_probe_result / 库存
+    # 更新等任何其他 payload 的坏实现；白名单外 payload 一律判红。
+    for e in bot.events_of("server_data"):
+        if (
+            e.t > sent_at
+            and e.t not in allowed_payload_ts
+            and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES
+        ):
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，"
+                f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
+            )
+    for e in bot.events_of("chat"):
+        if e.t > sent_at:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
+            )

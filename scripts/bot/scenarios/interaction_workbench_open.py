@@ -185,21 +185,35 @@ def _assert_silent_window(
     """
     deadline = time.monotonic() + window
     while True:
-        for e in bot.events_of("server_data"):
-            if e.t > sent_at and e.data["payload_type"] == payload_type:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，"
-                    f"实际窗口内收到 payload_type={payload_type}"
-                )
-        for e in bot.events_of("chat"):
-            if e.t > sent_at and e.t not in allowed_chat_ts:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际窗口内出现聊天 {e.data['text']!r}"
-                )
+        _scan_silent_window(bot, sent_at, payload_type, description, allowed_chat_ts)
         if time.monotonic() >= deadline:
+            # 终末复扫：事件扫描与 deadline 判定非原子（central-review 2029 #3），
+            # deadline 判定成立后、返回前再扫一次，收口最后一段未观测窗口——否则
+            # 该段内到达的目标 payload/聊天会被漏掉。
+            _scan_silent_window(bot, sent_at, payload_type, description, allowed_chat_ts)
             return
         bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
+
+
+def _scan_silent_window(
+    bot,
+    sent_at: float,
+    payload_type: str,
+    description: str,
+    allowed_chat_ts: tuple,
+) -> None:
+    for e in bot.events_of("server_data"):
+        if e.t > sent_at and e.data["payload_type"] == payload_type:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，"
+                f"实际窗口内收到 payload_type={payload_type}"
+            )
+    for e in bot.events_of("chat"):
+        if e.t > sent_at and e.t not in allowed_chat_ts:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际窗口内出现聊天 {e.data['text']!r}"
+            )
 
 
 def _has_any_chunk(bot) -> bool:
