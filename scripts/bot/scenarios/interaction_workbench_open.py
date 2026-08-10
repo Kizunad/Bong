@@ -62,9 +62,13 @@ def run(env) -> None:
         y0 = int(TOP_CHAT_RE.search(top_ev.data["text"]).group(1))
 
         if not _has_any_chunk(bot):
-            print("    [warn] 出生点仍无 ChunkData，跳过制作台放置/open leg")
-            bot.assert_alive("workbench 场景因无 chunk 跳过前")
-            return
+            # 无 ChunkData 属于 fixture 前置失败而非合法跳过：直接 return 会让场景
+            # 以成功通过、却未执行任何 workbench_open 断言，丧失回归保护（review
+            # finding 2/5）。
+            raise BotAssertionError(
+                f"[{bot.username}] 期望出生点收到 ChunkData，实际窗口内无任何 chunk——"
+                "制作台放置/open 链无法构造，场景契约未被执行"
+            )
 
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv PackAndHotbar revision=", timeout=10.0)
@@ -72,12 +76,13 @@ def run(env) -> None:
 
         placed = _place_until_marker(bot, y0, snapshot["revision"])
         if placed is None:
-            print(
-                "    [warn] 未观察到 workbench Marker；/top 落点无可放置目标，"
-                "跳过 workbench_open leg"
+            # 放置失败（含 block_place 损坏 / Marker 不再产出）不是可选跳过：
+            # 场景声明的放置→open 生产链恰恰要防这种回归，直接 return 会把
+            # 失败报告成成功（review finding 2/5）。
+            raise BotAssertionError(
+                f"[{bot.username}] 期望 block_place 在 /top 落点附近产出 workbench Marker，"
+                "实际竖直扫描全部落空——放置链路或 Marker 产出已断，场景契约未被执行"
             )
-            bot.assert_alive("workbench 放置未观察到 marker 后")
-            return
         x, y, z, spawn = placed
 
         # happy path：打开制作台，断言 S2C WorkbenchOpen 回推放置坐标。
@@ -102,9 +107,14 @@ def run(env) -> None:
                 f"[{bot.username}] 期望 WorkbenchOpen.position={[x, y, z]}，"
                 f"实际 {payload.get('position')}"
             )
-        if not payload.get("entity_id"):
+        # 必须与请求的实体 id 相等（request→lookup→emit→consumer 一条事务闭环），
+        # 只断言非空会让"恒返回 1 或别的制作台 id"的坏生产者照样通过（review
+        # finding 3/5）。
+        expected_entity_id = spawn.data["entity_id"]
+        if payload.get("entity_id") != expected_entity_id:
             raise BotAssertionError(
-                f"[{bot.username}] 期望 WorkbenchOpen.entity_id 非空，实际 {payload.get('entity_id')}"
+                f"[{bot.username}] 期望 WorkbenchOpen.entity_id={expected_entity_id}"
+                f"（回推所打开的实体），实际 {payload.get('entity_id')}"
             )
         bot.assert_alive("workbench_open happy path 后")
 
@@ -138,9 +148,8 @@ def _assert_silent_window(bot, sent_at: float, payload_type: str, description: s
     服务器有周期 payload（如 cultivation_detail ~1s 一次），所以静默只能按
     payload_type 细粒度断言，不能断言"无任何 server_data"。
     """
-    end_at = sent_at + window
+    deadline = time.monotonic() + window
     while True:
-        now = bot.events[-1].t if bot.events else 0.0
         for e in bot.events_of("server_data"):
             if e.t > sent_at and e.data["payload_type"] == payload_type:
                 raise BotAssertionError(
@@ -152,8 +161,9 @@ def _assert_silent_window(bot, sent_at: float, payload_type: str, description: s
                 raise BotAssertionError(
                     f"[{bot.username}] {description}，实际窗口内出现聊天 {e.data['text']!r}"
                 )
-        if now >= end_at:
+        if time.monotonic() >= deadline:
             return
+        bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
 
 

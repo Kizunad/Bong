@@ -4575,8 +4575,24 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         )
         decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
         self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(decoded["event"], 0)
         self.assertIn("神识未及", decoded["message"])
+        self.assertIsNone(decoded["zone"], "未携带 zone 时保持 None")
         self.assertEqual(decoded["duration_ticks"], 70)
+
+    def test_event_alert_field_77_decodes_event_kind_and_zone(self):
+        inner = (
+            _pb_varint_field(1, 1)  # EVENT_KIND_THUNDER_TRIBULATION
+            + _pb_string(2, "雷劫将至")
+            + _pb_string(3, "jiuzong_taichu_ruin")
+            + _pb_varint_field(4, 120)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertEqual(decoded["event"], 1, "event kind 应从 field 1 非零值还原")
+        self.assertIn("雷劫将至", decoded["message"])
+        self.assertEqual(decoded["zone"], "jiuzong_taichu_ruin", "present-zone 应还原 field 3")
+        self.assertEqual(decoded["duration_ticks"], 120)
 
     def test_mineral_probe_result_field_129_decodes_denial_reason(self):
         inner = _pb_string(1, "denied") + _pb_string(5, "not_mineral_ore")
@@ -4584,6 +4600,24 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "mineral_probe_result")
         self.assertEqual(decoded["kind"], "denied")
         self.assertEqual(decoded["denial_reason"], "not_mineral_ore")
+        self.assertIsNone(decoded["mineral_id"])
+        self.assertIsNone(decoded["remaining_units"])
+        self.assertIsNone(decoded["display_name_zh"])
+
+    def test_mineral_probe_result_field_129_decodes_found_variant(self):
+        inner = (
+            _pb_string(1, "found")
+            + _pb_string(2, "mineral.ore.lingshi")
+            + _pb_varint_field(3, 42)
+            + _pb_string(4, "灵石矿")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "found")
+        self.assertEqual(decoded["mineral_id"], "mineral.ore.lingshi")
+        self.assertEqual(decoded["remaining_units"], 42)
+        self.assertEqual(decoded["display_name_zh"], "灵石矿")
+        self.assertIsNone(decoded["denial_reason"])
 
     def test_freshness_update_field_130_decodes_float_profile(self):
         inner = (

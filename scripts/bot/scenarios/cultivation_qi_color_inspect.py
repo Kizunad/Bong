@@ -108,9 +108,11 @@ def _assert_full_payload(host, payload: dict, victim_username: str) -> None:
 
 
 def _assert_silent(bot, sent_at: float, description: str) -> None:
-    end_at = sent_at + SILENT_WINDOW
+    # 截止时刻用单调钟（time.monotonic），不用事件时间戳 bot.events[-1].t：
+    # 静默断言正是"之后无事件到达"，事件时间不会推进，以事件时间做 deadline 会
+    # 永远等不到 now >= end_at 而死循环（review finding 1/5）。
+    deadline = time.monotonic() + SILENT_WINDOW
     while True:
-        now = bot.events[-1].t if bot.events else 0.0
         for e in bot.events_of("server_data"):
             if e.t > sent_at and e.data["payload_type"] == "qi_color_observed":
                 raise BotAssertionError(
@@ -123,6 +125,7 @@ def _assert_silent(bot, sent_at: float, description: str) -> None:
                 raise BotAssertionError(
                     f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
                 )
-        if now >= end_at:
+        if time.monotonic() >= deadline:
             return
+        bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
