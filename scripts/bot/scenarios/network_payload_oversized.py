@@ -59,6 +59,7 @@ def _valid_payload_padded_to(size: int) -> bytes:
 def run(env) -> None:
     from ._inventory_helpers import latest_inventory_snapshot, wait_join_and_inventory
     from ._rejection_helpers import (
+        _relative_now,
         assert_valid_request_still_works,
         fire_probes_and_keep_connection,
         inventory_fingerprint,
@@ -97,7 +98,11 @@ def run(env) -> None:
         # 照常解出 → handler 回推「已收到经脉目标」聊天确认（t > sent_at 保证确系
         # 本次请求的响应）。若解码器把上限误降到 32767 或更低，该请求被整包丢弃、
         # 确认不出现 —— 补上 review finding 1 指出的缺测正向边界。
-        boundary_sent_at = bot.events[-1].t if bot.events else 0.0
+        # 锚点必须取**发送时刻**（与 event.t 同一相对时钟），不能取 bot.events[-1].t：
+        # 事件流安静时最后一条事件的 t 会停留在旧值，窗口起点早于发送时刻，探针阶段
+        # 被错误接受产生的「已收到经脉目标」广播若恰在此刻到达，会冒充本请求的确认
+        # （review finding：正向边界接受契约未被严格对应到本次请求）。
+        boundary_sent_at = _relative_now(bot)
         bot.send_payload(
             "bong:client_request", _valid_payload_padded_to(MAX_PAYLOAD_SIZE)
         )

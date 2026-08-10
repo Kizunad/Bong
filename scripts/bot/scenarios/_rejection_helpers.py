@@ -238,9 +238,12 @@ def fire_probes_and_keep_connection(
       排除，不误判）；
     - settle 窗口内 ``assert_alive``（"踢人/panic/断流"这类坏响应在此窗口显形）；
     - 探针之后的新 keepalive 到达（server 仍主动维护这条连接）；
-    - **心跳观察期结束后再扫一次副作用**——settle 窗口后、keepalive 等待期间到达的
-      响应式 server_data / chat / vfx 也属探针窗口，必须覆盖进拒绝判定（否则
-      keepalive 等待期内的迟到副作用会假通过）。
+    - keepalive 之后、最终扫描前强制**事件流安静**（``drain_event_stream``）——
+      keepalive 由独立路径产生，不是探针副作用的排序屏障；排空期让迟到的探针
+      副作用落进 ``bot.events``，最终扫描才能把它们计入拒绝判定；
+    - **心跳观察期 + 排空期结束后再扫一次副作用**——settle 窗口后、keepalive 等待
+      与排空期间到达的响应式 server_data / chat / vfx 也属探针窗口，必须覆盖进
+      拒绝判定（否则迟到副作用会假通过）。
 
     ``baseline_snapshot`` 传探针前最新背包快照（见 ``is_gameplay_side_effect``）：
     inventory_snapshot 借此区分周期重发与请求引发的 resync。
@@ -265,11 +268,21 @@ def fire_probes_and_keep_connection(
         bot, sent_at, f"{label} 探针窗口", baseline_snapshot
     )
     wait_keepalive_after(bot, probe_done_at)
-    # 心跳观察期（wait_keepalive_after 最多再消费 ~25s 事件）内到达的玩法副作用也
-    # 必须计入拒绝判定：settle 窗口后、keepalive 等待期间产生的响应式 server_data /
-    # chat / vfx 会被 wait_keepalive_after 累积但不会被上面那次扫描看到 —— 返回前
-    # 必须再扫一次，否则拒绝判定假通过（review finding：side-effect oracle 要覆盖
-    # 完整异步观察期）。
+    # 心跳只是连接活性信号，不是探针副作用的**排序屏障**（review finding：keepalive
+    # 由独立于 client_request 处理的路径产生，先到达既不证明所有探针已处理完、也不
+    # 证明副作用事件已全部落进 bot.events —— 被错误接受的探针可能在 settle 窗口后
+    # 仍把玩法响应排队到其它 ECS/system 路径，心跳先到、这次扫描看到空即假通过，
+    # 迟到副作用在后续合法请求确认等待期间才到达、无人再扫坏请求窗口）。最终扫描
+    # 前必须强制**事件流安静**（连续 quiet_s 秒无新事件，周期流量到不了安静则 max_s
+    # 兜底）：任何迟到的探针副作用都要在排空期落进 bot.events，最终扫描才能把它们
+    # 计入拒绝判定 —— 这是"处理屏障 / 屏障后 quiescence"缺口（review finding 4）。
+    drain_event_stream(bot, quiet_s=settle_s)
+    # 心跳观察期（wait_keepalive_after 最多再消费 ~25s 事件）+ 排空期（drain_event_stream
+    # 保证 quiet_s 连续无新事件，或 max_s 兜底）内到达的玩法副作用也须计入拒绝判定：
+    # settle 窗口后、keepalive 等待与排空期间产生的响应式 server_data / chat / vfx
+    # 会被 wait_keepalive_after / drain_event_stream 累积但不会被上面那次扫描看到 ——
+    # 返回前必须再扫一次，否则拒绝判定假通过（review finding：side-effect oracle 要
+    # 覆盖完整异步观察期）。
     assert_no_gameplay_side_effect_since(
         bot, sent_at, f"{label} 探针窗口(心跳观察期后)", baseline_snapshot
     )

@@ -2241,6 +2241,49 @@ class RejectionHelperTest(unittest.TestCase):
             inventory_fingerprint(base), inventory_fingerprint(dict(base, revision=8))
         )
 
+    def test_inventory_fingerprint_covers_each_content_mutation_field(self):
+        # 拒绝 oracles 用 fingerprint 判零 mutation：若它只对 revision 敏感，一个「内容
+        # 变了但 revision 没 bump」的实现（如只哈希 revision 的坏 fingerprint）会让
+        # 零 mutation 断言假通过。逐字段独立变异，钉住 fingerprint 覆盖全部内容字段
+        # （review finding：只测 revision 变化会漏掉其余五个 mutation 字段）。
+        base = {
+            "revision": 7,
+            "containers": [],
+            "placed_items": [],
+            "equipped": {},
+            "hotbar": [],
+            "bone_coins": 0,
+        }
+        one_item = {"instance_id": 1, "template_id": "trade_crate", "count": 1}
+        mutations = {
+            # 每个字段换成非默认的「有内容」形态 —— 仅该字段与 base 不同。
+            "containers": [{"container_id": "pack", "slots": [one_item]}],
+            "placed_items": [{"entity_id": 5, "item": one_item}],
+            "equipped": {"chest": one_item},
+            "hotbar": [one_item],
+            "bone_coins": 1,
+        }
+        for key, value in mutations.items():
+            with self.subTest(mutation_field=key):
+                mutated = dict(base)
+                mutated[key] = value
+                self.assertNotEqual(
+                    inventory_fingerprint(base),
+                    inventory_fingerprint(mutated),
+                    f"fingerprint 必须对 {key} 内容变化敏感（即使 revision 未变）",
+                )
+        # 反向保证：指纹唯一性成立 —— 各字段单独变异得到的指纹互不相同，避免两个
+        # 字段互相抵消（如坏实现把 containers 与 hotbar 拼进同一位）。
+        fingerprints = {
+            key: inventory_fingerprint(dict(base, **{key: value}))
+            for key, value in mutations.items()
+        }
+        self.assertEqual(
+            len(set(fingerprints.values())),
+            len(mutations),
+            f"各字段变异产生的指纹必须互异：{fingerprints}",
+        )
+
 
 def _snapshot_event(t: float, revision: int, marker: str) -> _FakeEvent:
     return _FakeEvent(
