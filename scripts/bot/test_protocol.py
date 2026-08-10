@@ -195,6 +195,67 @@ class DiggingActionTest(unittest.TestCase):
         self.assertEqual(event.data, {"sequence": 17})
 
 
+def _spawn_distribution_tiles(
+    zones_path=make_novice_raster_fixture.DEFAULT_ZONES_PATH,
+) -> set[tuple[int, int]]:
+    """独立 tile 期望枚举：直接从 zones.json 读 spawn 分布，按每个簇锚点±半径的
+    完整笛卡尔跨度算出全部 tile。绝不调用生产 make_novice_raster_fixture.spawn_fixture_tiles
+    —— review finding：用生产 helper 做期望（圆形 oracle）会让只覆盖边界点的残缺
+    实现自证其绿。"""
+    config = json.loads(zones_path.read_text(encoding="utf-8"))
+    spawn_zone = next(
+        zone for zone in config["zones"] if zone.get("name") == "spawn"
+    )
+    tiles = set()
+    for cluster in spawn_zone.get("spawn_distribution", []):
+        x, _, z = cluster["anchor"]
+        radius = cluster["radius"]
+        min_tile_x = math.floor(
+            (x - radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        max_tile_x = math.floor(
+            (x + radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        min_tile_z = math.floor(
+            (z - radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        max_tile_z = math.floor(
+            (z + radius) / make_novice_raster_fixture.TILE_SIZE
+        )
+        for tile_z in range(min_tile_z, max_tile_z + 1):
+            for tile_x in range(min_tile_x, max_tile_x + 1):
+                tiles.add((tile_x, tile_z))
+    return tiles
+
+
+def _boundary_point_only_spawn_tiles(
+    zones_path=make_novice_raster_fixture.DEFAULT_ZONES_PATH,
+) -> set[tuple[int, int]]:
+    """review finding 假设的残缺实现：每个簇只返回四个边界点所在 tile，而非完整
+    笛卡尔跨度。独立 oracle 必须能抓住这种实现（旧圆形 oracle 会放过）。"""
+    config = json.loads(zones_path.read_text(encoding="utf-8"))
+    spawn_zone = next(
+        zone for zone in config["zones"] if zone.get("name") == "spawn"
+    )
+    tiles = set()
+    for cluster in spawn_zone.get("spawn_distribution", []):
+        x, _, z = cluster["anchor"]
+        radius = cluster["radius"]
+        for point_x, point_z in (
+            (x - radius, z),
+            (x + radius, z),
+            (x, z - radius),
+            (x, z + radius),
+        ):
+            tiles.add(
+                (
+                    math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
+                    math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
+                )
+            )
+    return tiles
+
+
 class NoviceRasterFixtureTest(unittest.TestCase):
     TOKEN = "unit-test-ambient-fixture-token"
 
@@ -218,8 +279,10 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             manifest_path = self._generate(root)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+            # review finding：期望 tile 集不得由生产 spawn_fixture_tiles 算出（圆形
+            # oracle）—— 用独立枚举覆盖完整笛卡尔跨度，残缺实现才可能暴露。
             expected_tiles = (
-                make_novice_raster_fixture.spawn_fixture_tiles()
+                _spawn_distribution_tiles()
                 | make_novice_raster_fixture.SPIRITWOOD_TILES
             )
             self.assertEqual(
@@ -252,7 +315,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertEqual(len(biome_ids), make_novice_raster_fixture.TILE_SIZE**2)
                 self.assertLess(max(biome_ids), len(palette))
 
-            for tile_x, tile_z in make_novice_raster_fixture.spawn_fixture_tiles():
+            for tile_x, tile_z in _spawn_distribution_tiles():
                 self.assertEqual(
                     set((root / f"tile_{tile_x}_{tile_z}" / "biome_id.bin").read_bytes()),
                     {0},
@@ -350,43 +413,26 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
             }
 
-            zones = json.loads(
-                make_novice_raster_fixture.DEFAULT_ZONES_PATH.read_text(
-                    encoding="utf-8"
+            # review finding：只抽样每簇四个边界点，残缺实现仍可漏掉跨度内部的 tile。
+            # 用独立枚举的完整笛卡尔跨度做覆盖断言，内部 tile 缺失才会暴露。
+            expected_spawn_tiles = _spawn_distribution_tiles()
+            self.assertLessEqual(
+                expected_spawn_tiles,
+                generated_tiles,
+                "每个生产 spawn 簇的完整笛卡尔跨度都必须落在生成的 fixture tile 集内",
+            )
+            for tile in expected_spawn_tiles:
+                self.assertEqual(
+                    set(
+                        (
+                            root
+                            / f"tile_{tile[0]}_{tile[1]}"
+                            / "surface_id.bin"
+                        ).read_bytes()
+                    ),
+                    {0},
+                    f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
                 )
-            )
-            spawn_zone = next(
-                zone for zone in zones["zones"] if zone["name"] == "spawn"
-            )
-            for cluster in spawn_zone["spawn_distribution"]:
-                x, _, z = cluster["anchor"]
-                radius = cluster["radius"]
-                for point_x, point_z in (
-                    (x - radius, z),
-                    (x + radius, z),
-                    (x, z - radius),
-                    (x, z + radius),
-                ):
-                    tile = (
-                        math.floor(point_x / make_novice_raster_fixture.TILE_SIZE),
-                        math.floor(point_z / make_novice_raster_fixture.TILE_SIZE),
-                    )
-                    self.assertIn(
-                        tile,
-                        generated_tiles,
-                        f"production spawn cluster boundary {point_x, point_z} 缺 fixture tile",
-                    )
-                    self.assertEqual(
-                        set(
-                            (
-                                root
-                                / f"tile_{tile[0]}_{tile[1]}"
-                                / "surface_id.bin"
-                            ).read_bytes()
-                        ),
-                        {0},
-                        f"production spawn tile={tile} 必须以 surface palette 0=grass_block 覆盖",
-                    )
 
             bounds = manifest["world_bounds"]
             for tile_x, tile_z in generated_tiles:
@@ -394,6 +440,42 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 self.assertGreaterEqual(bounds["max_x"], (tile_x + 1) * 256 - 1)
                 self.assertLessEqual(bounds["min_z"], tile_z * 256)
                 self.assertGreaterEqual(bounds["max_z"], (tile_z + 1) * 256 - 1)
+
+    def test_spawn_tile_oracle_detects_boundary_point_only_enumeration(self):
+        # review finding：圆形 oracle（期望 tile 集由生产 spawn_fixture_tiles 算出）
+        # 下，残缺实现只返回每簇四边界点 tile 生成的 manifest 会与期望一致而假通过。
+        # 独立 oracle 直接从配置枚举完整跨度，必须与这种残缺 manifest 分歧（更大），
+        # 证明 oracle 不依赖生产枚举。
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.object(
+            make_novice_raster_fixture,
+            "spawn_fixture_tiles",
+            return_value=_boundary_point_only_spawn_tiles(),
+        ):
+            root = pathlib.Path(temp_dir)
+            manifest_path = self._generate(root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            generated_tiles = {
+                (tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]
+            }
+            oracle_tiles = (
+                _spawn_distribution_tiles()
+                | make_novice_raster_fixture.SPIRITWOOD_TILES
+            )
+            self.assertNotEqual(
+                generated_tiles,
+                oracle_tiles,
+                "边界四点式残缺实现的 manifest 必须与独立 oracle 分歧",
+            )
+            self.assertLess(
+                len(generated_tiles),
+                len(oracle_tiles),
+                "残缺实现漏掉每簇内部 tile，manifest 应小于独立 oracle",
+            )
+            interior = oracle_tiles - generated_tiles
+            self.assertTrue(
+                interior,
+                "独立 oracle 必须枚举完整笛卡尔跨度，而非只覆盖边界点",
+            )
 
     def test_spawn_fixture_tiles_rejects_missing_empty_or_invalid_distribution(self):
         cases = [

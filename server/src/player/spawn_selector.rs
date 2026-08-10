@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use valence::prelude::DVec3;
 
-use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
+use crate::world::zone::{Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
 pub const EMERGENCY_SPAWN_POSITION: [f64; 3] = [8.0, 150.0, 8.0];
 
@@ -176,19 +176,81 @@ impl<'a> PlayerSpawnSelector<'a> {
             // clamp_position 只保证 AABB 内、不清除 blocked 状态，中心本身撞上 blocked
             // tile 时回退到已知有效 emergency 位置，绝不把玩家生到 zone 显式排除的坐标。
             if blocked_at(fallback) {
+                // review finding：emergency 位置本身也可能被 blocked_tiles 显式排除 ——
+                // 必须先过同一 clamp_position 与 blocked_at 谓词，否则会把玩家生到 zone
+                // 禁止的坐标上。clamp_position 只保证 AABB 内、不清除 blocked 状态。
+                let emergency = zone.clamp_position(DVec3::from_array(EMERGENCY_SPAWN_POSITION));
+                if !blocked_at(emergency) {
+                    tracing::warn!(
+                        "[bong][player] blocked-tile fallback 的簇中心 ({}, {}) 本身也在 \
+                         blocked_tiles 上；emergency tile ({}, {}) 空闲，回退到 emergency \
+                         spawn（钳制后）",
+                        fallback.x.floor() as i32,
+                        fallback.z.floor() as i32,
+                        emergency.x.floor() as i32,
+                        emergency.z.floor() as i32,
+                    );
+                    return [emergency.x, emergency.y, emergency.z];
+                }
+                // emergency tile 也被排除：在 zone AABB 内螺旋扫描最近空闲 tile。
                 tracing::warn!(
-                    "[bong][player] blocked-tile fallback 的簇中心 ({}, {}) 本身也在 \
-                     blocked_tiles 上；回退到 emergency spawn",
-                    fallback.x.floor() as i32,
-                    fallback.z.floor() as i32,
+                    "[bong][player] 候选、簇中心与 emergency tile ({}, {}) 均在 \
+                     blocked_tiles 上；扫描 zone 内最近空闲 tile 作为最后回退",
+                    emergency.x.floor() as i32,
+                    emergency.z.floor() as i32,
                 );
-                return EMERGENCY_SPAWN_POSITION;
+                let start = (emergency.x.floor() as i32, emergency.z.floor() as i32);
+                let (free_x, free_z) =
+                    nearest_unblocked_tile(zone, start, &blocked_at).unwrap_or_else(|| {
+                        panic!(
+                            "[bong][player] spawn zone `{}` 的全部 tile 均被 blocked_tiles \
+                             排除，无法生成出生点",
+                            zone.name
+                        )
+                    });
+                return [free_x as f64, fallback.y, free_z as f64];
             }
             return [fallback.x, fallback.y, fallback.z];
         }
 
         [clamped.x, clamped.y, clamped.z]
     }
+}
+
+/// 在 zone AABB 的 floor-tile 范围内从 `start` 螺旋向外扫描，返回最近未被
+/// `blocked` 排除的 tile。圈半径超过 [`MAX_EMERGENCY_SCAN_RADIUS`] 仍无空闲 tile
+/// 时返回 `None`，由调用方 fail-closed。扫描结果严格限制在 zone 内，绝不越界。
+const MAX_EMERGENCY_SCAN_RADIUS: i32 = 128;
+
+fn nearest_unblocked_tile(
+    zone: &Zone,
+    start: (i32, i32),
+    blocked: &impl Fn(DVec3) -> bool,
+) -> Option<(i32, i32)> {
+    let (min, max) = zone.bounds;
+    let (min_tx, max_tx) = (min.x.floor() as i32, max.x.floor() as i32);
+    let (min_tz, max_tz) = (min.z.floor() as i32, max.z.floor() as i32);
+    let in_zone_tile = |tx: i32, tz: i32| {
+        tx >= min_tx && tx <= max_tx && tz >= min_tz && tz <= max_tz
+    };
+    for radius in 0..=MAX_EMERGENCY_SCAN_RADIUS {
+        for dz in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx.abs() != radius && dz.abs() != radius {
+                    continue;
+                }
+                let (tx, tz) = (start.0 + dx, start.1 + dz);
+                if !in_zone_tile(tx, tz) {
+                    continue;
+                }
+                let pos = DVec3::new(tx as f64 + 0.5, 0.0, tz as f64 + 0.5);
+                if !blocked(pos) {
+                    return Some((tx, tz));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn stable_hash(seed: &str, purpose: SpawnPurpose) -> u64 {
@@ -559,6 +621,48 @@ mod tests {
                 pos[2].floor() as i32
             )),
             "回退位置不得仍是 blocked tile"
+        );
+    }
+
+    #[test]
+    fn blocked_emergency_tile_scans_for_nearest_free_tile() {
+        // review finding：emergency 位置 (8,150,8) 的 floor tile (8,8) 也在 blocked_tiles
+        // 时，旧实现直接返回该坐标 —— 玩家被生到 zone 显式排除的 tile 上。修复后必须先
+        // 钳制 + 过同一 blocked_at 谓词，再在 zone AABB 内扫描最近空闲 tile，绝不返回
+        // blocked 坐标。本 zone 同时阻塞候选 (750,0) 与 emergency (8,8)，且 (8,8) 附近
+        // 有空闲 tile，应命中螺旋扫描分支。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-750.0, -64.0, -750.0),
+                DVec3::new(750.0, 320.0, 750.0),
+            ),
+            vec![(750, 0), (8, 8)],
+        );
+        let selector = PlayerSpawnSelector::with_distribution(
+            &registry,
+            vec![SpawnDistributionAnchor {
+                anchor: DVec3::new(10_000.0, 72.0, 0.0),
+                radius: 0.0,
+                weight: 1,
+                safe_y: 72.0,
+            }],
+        );
+
+        let pos = selector.select("blocked-edge", SpawnPurpose::InitialLogin);
+        let tile = (pos[0].floor() as i32, pos[2].floor() as i32);
+
+        assert_ne!(
+            tile,
+            (8, 8),
+            "不得返回被排除的 emergency tile 本身（pos={pos:?}）"
+        );
+        assert!(
+            !registry.zones[0].blocked_tiles.contains(&tile),
+            "候选、簇中心与 emergency 全 blocked 时，回退位置不得仍是 blocked tile（pos={pos:?}）"
+        );
+        assert!(
+            registry.zones[0].contains(DVec3::new(pos[0], pos[1], pos[2])),
+            "螺旋扫描回退必须落在出生 zone AABB 内（pos={pos:?}）"
         );
     }
 

@@ -1321,7 +1321,11 @@ run_north_rift_preview() {
   fi
 
   NORTH_RIFT_RUN_TAG="nr$(( $$ % 1000 ))"
+  # review finding：run tag 在父 shell 产生后必须进入子进程环境 —— 仅作普通 shell
+  # 变量时子进程看不到。放进环境赋值前缀（并保留 --run-tag CLI 直传），run_scenarios.py
+  # 无论走 CLI 还是环境默认都能拿到本次 run 的隔离段。
   if BOT_E2E_NORTH_RIFT_PREVIEW=1 \
+    NORTH_RIFT_RUN_TAG="$NORTH_RIFT_RUN_TAG" \
     python3 "$ROOT/scripts/bot/run_scenarios.py" \
       --host 127.0.0.1 \
       --port 25565 \

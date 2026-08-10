@@ -127,7 +127,10 @@ def main() -> int:
     parser.add_argument("--all", action="store_true", help="跑全部场景（默认行为，显式起见）")
     parser.add_argument(
         "--run-tag",
-        default=os.environ.get("BOT_E2E_RUN_TAG", str(os.getpid() % 100000)),
+        default=(
+            os.environ.get("NORTH_RIFT_RUN_TAG")
+            or os.environ.get("BOT_E2E_RUN_TAG", str(os.getpid() % 100000))
+        ),
         help="用户名区分段（同一 server 反复跑时避免脏状态叠加），≤5 字符",
     )
     args = parser.parse_args()

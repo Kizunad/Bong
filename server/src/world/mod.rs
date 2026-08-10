@@ -557,15 +557,26 @@ fn spawn_fallback_flat_world(
     let anchors = &snapshot.distribution;
     let chunks = match fallback_spawn_chunk_union(registry, anchors) {
         Ok(chunks) => chunks,
-        Err(chunk_count) => {
-            tracing::error!(
-                chunks = chunk_count,
-                limit = FALLBACK_FLAT_MAX_CHUNKS,
-                "[bong][world] fallback spawn chunk union exceeded safety limit during construction; refusing eager world allocation"
-            );
-            panic!(
-                "fallback spawn chunk union has at least {chunk_count} chunks, above safety limit {FALLBACK_FLAT_MAX_CHUNKS}"
-            );
+        Err(error) => {
+            match error {
+                FallbackChunkUnionError::UniqueChunkOverflow { chunk_count, limit } => {
+                    tracing::error!(
+                        chunks = chunk_count,
+                        limit = limit,
+                        "[bong][world] fallback spawn chunk union exceeded unique-chunk safety limit during construction; refusing eager world allocation"
+                    );
+                }
+                FallbackChunkUnionError::CandidateWorkOverflow { candidate_work, limit } => {
+                    tracing::error!(
+                        candidate_work = candidate_work,
+                        limit = limit,
+                        "[bong][world] fallback spawn chunk union exceeded candidate-work budget during construction; refusing eager world allocation"
+                    );
+                }
+            }
+            // Display 精确按实际越界的 limit 措辞（review finding：不得再把候选工作量
+            // 越界当 chunk 数上报）。
+            panic!("{error}");
         }
     };
 
@@ -601,10 +612,36 @@ fn spawn_fallback_flat_world(
     layer_entity
 }
 
+/// fallback union 构造失败的两种独立边界。review finding：旧实现把两者折叠进一个
+/// 裸 `usize`，调用方一律当唯一 chunk 数、一律报 FALLBACK_FLAT_MAX_CHUNKS 上限，
+/// 候选工作量越界时诊断误导。带种类的错误让调用方按实际越界的 limit 报告。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackChunkUnionError {
+    /// 去重后的唯一 chunk 数超过 FALLBACK_FLAT_MAX_CHUNKS。
+    UniqueChunkOverflow { chunk_count: usize, limit: usize },
+    /// 全部锚点 view 矩形的累计候选工作量超过 FALLBACK_FLAT_MAX_ANCHOR_WORK。
+    CandidateWorkOverflow { candidate_work: usize, limit: usize },
+}
+
+impl std::fmt::Display for FallbackChunkUnionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UniqueChunkOverflow { chunk_count, limit } => write!(
+                f,
+                "fallback spawn chunk union has at least {chunk_count} chunks, above safety limit {limit}"
+            ),
+            Self::CandidateWorkOverflow { candidate_work, limit } => write!(
+                f,
+                "fallback spawn chunk union candidate work reached {candidate_work} units, above budget {limit}"
+            ),
+        }
+    }
+}
+
 fn fallback_spawn_chunk_union(
     registry: &zone::ZoneRegistry,
     anchors: &[crate::player::spawn_selector::SpawnDistributionAnchor],
-) -> Result<BTreeSet<ChunkPos>, usize> {
+) -> Result<BTreeSet<ChunkPos>, FallbackChunkUnionError> {
     let (zone_min, zone_max) = match registry.find_zone_by_name(zone::DEFAULT_SPAWN_ZONE_NAME) {
         Some(spawn_zone) => spawn_zone.bounds,
         None => {
@@ -647,14 +684,20 @@ fn fallback_spawn_chunk_union(
         let rectangle_height = i128::from(max_chunk.z) - i128::from(min_chunk.z) + 1;
         candidate_work += rectangle_width * rectangle_height;
         if candidate_work > FALLBACK_FLAT_MAX_ANCHOR_WORK as i128 {
-            return Err(usize::try_from(candidate_work).unwrap_or(usize::MAX));
+            return Err(FallbackChunkUnionError::CandidateWorkOverflow {
+                candidate_work: usize::try_from(candidate_work).unwrap_or(usize::MAX),
+                limit: FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            });
         }
 
         for chunk_z in min_chunk.z..=max_chunk.z {
             for chunk_x in min_chunk.x..=max_chunk.x {
                 chunks.insert(ChunkPos::new(chunk_x, chunk_z));
                 if chunks.len() > FALLBACK_FLAT_MAX_CHUNKS {
-                    return Err(chunks.len());
+                    return Err(FallbackChunkUnionError::UniqueChunkOverflow {
+                        chunk_count: chunks.len(),
+                        limit: FALLBACK_FLAT_MAX_CHUNKS,
+                    });
                 }
             }
         }
@@ -779,7 +822,8 @@ mod tests {
     use super::zone::{default_spawn_bounds, Zone, ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use super::{
         block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
-        select_world_bootstrap_from_configured_paths, terrain::RasterBootstrapConfig,
+        select_world_bootstrap_from_configured_paths, FallbackChunkUnionError,
+        terrain::RasterBootstrapConfig,
         AnvilBootstrapConfig, DimensionLayers, FallbackFlatBootstrap, FallbackFlatReason,
         WorldBootstrap, ANVIL_REGION_DIR_NAME, BEDROCK_Y,
         FALLBACK_FLAT_MAX_ANCHOR_WORK, FALLBACK_FLAT_MAX_CHUNKS,
@@ -1064,8 +1108,11 @@ mod tests {
         let oversized_anchors = [oversized_anchor];
         assert_eq!(
             fallback_spawn_chunk_union(&oversized_registry, &oversized_anchors),
-            Err(oversized_count),
-            "单个巨大合法矩形必须在分配 BTreeSet 前 fail closed，并报告精确候选 chunk 数"
+            Err(FallbackChunkUnionError::CandidateWorkOverflow {
+                candidate_work: oversized_count,
+                limit: FALLBACK_FLAT_MAX_ANCHOR_WORK,
+            }),
+            "单个巨大合法矩形必须在分配 BTreeSet 前 fail closed，并报告精确候选工作量"
         );
 
         let disjoint_anchors = (0..=FALLBACK_FLAT_MAX_CHUNKS)
@@ -1080,16 +1127,54 @@ mod tests {
             DVec3::new(-1.0, 0.0, -1.0),
             DVec3::new(FALLBACK_FLAT_MAX_CHUNKS as f64 * 16_000.0 + 1.0, 100.0, 1.0),
         ));
-        // 大量锚点无论先撞上唯一 chunk 上限（FALLBACK_FLAT_MAX_CHUNKS）还是累计
-        // 候选工作量预算（FALLBACK_FLAT_MAX_ANCHOR_WORK），都必须 fail closed 并
-        // 报告超过上限的工作量；完全重叠场景的候选工作量守卫由
+        // 大量不相交锚点各自插入唯一 chunk，去重计数先于候选工作量撞线，必须 fail
+        // closed 并报告唯一 chunk 上限；完全重叠场景的候选工作量守卫由
         // overlapping_spawn_anchors_cannot_bypass_candidate_work_limit 单独覆盖。
+        assert_eq!(
+            fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
+            Err(FallbackChunkUnionError::UniqueChunkOverflow {
+                chunk_count: FALLBACK_FLAT_MAX_CHUNKS + 1,
+                limit: FALLBACK_FLAT_MAX_CHUNKS,
+            }),
+            "大量不相交锚点必须撞唯一 chunk 上限 fail closed，并报告精确 chunk 数与上限"
+        );
+    }
+
+    #[test]
+    fn chunk_union_overflow_diagnostics_name_the_right_limit() {
+        // review finding：两种越界折叠成裸 usize 时，调用方把候选工作量越界也当
+        // chunk 数、报 FALLBACK_FLAT_MAX_CHUNKS 上限上报。修复后 Display（=panic
+        // 消息）必须按各自种类点名正确的 limit，不得混淆。
+        let work_msg = FallbackChunkUnionError::CandidateWorkOverflow {
+            candidate_work: FALLBACK_FLAT_MAX_ANCHOR_WORK + 1,
+            limit: FALLBACK_FLAT_MAX_ANCHOR_WORK,
+        }
+        .to_string();
         assert!(
-            matches!(
-                fallback_spawn_chunk_union(&disjoint_registry, &disjoint_anchors),
-                Err(work) if work > FALLBACK_FLAT_MAX_CHUNKS
-            ),
-            "大量锚点的累积工作量/唯一 chunk 越界必须 fail closed，不得无限插入"
+            work_msg.contains("candidate work")
+                && work_msg.contains(&format!("above budget {FALLBACK_FLAT_MAX_ANCHOR_WORK}")),
+            "候选工作量越界必须点名 candidate-work 预算：{work_msg}"
+        );
+        assert!(
+            !work_msg.contains("safety limit"),
+            "候选工作量越界不得借用唯一 chunk 上限措辞：{work_msg}"
+        );
+
+        let chunk_msg = FallbackChunkUnionError::UniqueChunkOverflow {
+            chunk_count: FALLBACK_FLAT_MAX_CHUNKS + 1,
+            limit: FALLBACK_FLAT_MAX_CHUNKS,
+        }
+        .to_string();
+        assert!(
+            chunk_msg.contains(&format!(
+                "at least {} chunks",
+                FALLBACK_FLAT_MAX_CHUNKS + 1
+            )) && chunk_msg.contains(&format!("above safety limit {FALLBACK_FLAT_MAX_CHUNKS}")),
+            "唯一 chunk 越界必须点名精确 chunk 数与上限：{chunk_msg}"
+        );
+        assert!(
+            !chunk_msg.contains("above budget"),
+            "唯一 chunk 越界不得借用候选工作量预算措辞：{chunk_msg}"
         );
     }
 
@@ -1138,8 +1223,14 @@ mod tests {
         let anchors = vec![duplicate_anchor; duplicates_needed];
         let result = fallback_spawn_chunk_union(&registry, &anchors);
         assert!(
-            matches!(result, Err(work) if work > FALLBACK_FLAT_MAX_ANCHOR_WORK),
-            "{} 个完全重复零半径锚点的候选工作量（{} × {per_anchor_work}）必须 fail closed，而不是无限插入",
+            matches!(
+                result,
+                Err(FallbackChunkUnionError::CandidateWorkOverflow { candidate_work, limit })
+                    if candidate_work > FALLBACK_FLAT_MAX_ANCHOR_WORK
+                        && limit == FALLBACK_FLAT_MAX_ANCHOR_WORK
+            ),
+            "{} 个完全重复零半径锚点的候选工作量（{} × {per_anchor_work}）必须撞 \
+             candidate-work 预算 fail closed，而不是无限插入",
             duplicates_needed,
             duplicates_needed,
         );
