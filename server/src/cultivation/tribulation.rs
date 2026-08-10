@@ -4191,7 +4191,7 @@ mod tests {
     use crate::network::vfx_event_emit::VfxEventRequest;
     use crate::network::RedisBridgeResource;
     use crate::persistence::{bootstrap_sqlite, load_active_tribulation};
-    use crate::qi_physics::{QiAccountId, QiTransfer, QiTransferReason};
+    use crate::qi_physics::{qi_flow_overflow_account, QiAccountId, QiTransfer, QiTransferReason};
     use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
     use std::fs;
     use std::path::PathBuf;
@@ -4256,6 +4256,7 @@ mod tests {
     }
 
     fn spawn_tribulation_spectator(app: &mut App, name: &str, pos: [f64; 3]) -> Entity {
+        let character_id = format!("offline:{name}");
         app.world_mut()
             .spawn((
                 Position::new(pos),
@@ -4272,9 +4273,10 @@ mod tests {
                     entries: Vec::new(),
                 },
                 Lifecycle {
-                    character_id: format!("offline:{name}"),
+                    character_id: character_id.clone(),
                     ..Default::default()
                 },
+                LifeRecord::new(character_id),
             ))
             .id()
     }
@@ -5597,8 +5599,10 @@ mod tests {
 
     #[test]
     fn heart_demon_steadfast_choice_records_and_restores_qi() {
-        // Pitfall (a): empty zone first so there is room for the full 20 qi grant without
-        // hitting the zone capacity limit and splitting the debit.
+        // Pitfall (a): give the zone positive headroom under the qi_flow 0.0-floor model
+        // (gain_from_zone available = max(spirit_qi, 0.0) × QI_ZONE_UNIT_CAPACITY, #1911/#1931
+        // 契约：负/零灵域不产出）。spirit_qi = 0.5 → 25 qi 可用 ≥ 20 qi 全额授予，
+        // 不触发容量封顶、不拆账。
         let mut app = qi_test_app();
         app.add_event::<HeartDemonChoiceSubmitted>();
         app.add_systems(Update, heart_demon_choice_system);
@@ -5606,7 +5610,7 @@ mod tests {
         zones
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone should exist")
-            .spirit_qi = 0.0;
+            .spirit_qi = 0.5;
         app.insert_resource(zones);
 
         // Pitfall (b): entity needs CurrentDimension for zone lookup to succeed.
@@ -5647,13 +5651,14 @@ mod tests {
 
         // effective_qi_max = (210.0 - 10.0).max(0.0) = 200.0
         // desired_grant    = (200.0 * 0.10).min((200.0 - 120.0).max(0.0)) = 20.0
-        // available        = (0.0 + 1.0) * 50.0 = 50.0 >= 20.0 → actual_grant = 20.0
+        // available        = max(0.5, 0.0) * 50.0 = 25.0 >= 20.0 → actual_grant = 20.0
         // Pitfall (c): use computed grant, not a hardcoded integer.
         let effective_qi_max = 200.0_f64;
         let expected_grant = (effective_qi_max * 0.10).min((effective_qi_max - 120.0).max(0.0));
         let expected_qi_current = 120.0 + expected_grant;
-        // Zone spirit_qi starts at 0.0; debit = 20.0 / 50.0 = 0.4 → zone goes to -0.4.
-        let expected_zone_spirit_qi = 0.0 - expected_grant / 50.0;
+        // Zone spirit_qi starts at 0.5; debit = 20.0 / 50.0 = 0.4 → zone ends at 0.1.
+        // (qi_flow 0.0-floor model：授予永不把 zone 拉进负灵域，与 #1911/#1931 契约一致。)
+        let expected_zone_spirit_qi = 0.5 - expected_grant / 50.0;
 
         let cultivation = app
             .world()
@@ -5772,7 +5777,7 @@ mod tests {
 
     #[test]
     fn heart_demon_steadfast_capped_by_zone_headroom() {
-        // Zone is near-depleted (spirit_qi = -0.9 → only 5 qi available above -1.0 floor).
+        // Zone is near-depleted (spirit_qi = 0.1 → only 5 qi available above the 0.0 floor).
         // Player wants 10% of 300 = 30 qi but zone can only provide 5.
         // actual_grant must equal the zone debit (no qi created from thin air).
         let mut app = qi_test_app();
@@ -5782,7 +5787,7 @@ mod tests {
         zones
             .find_zone_mut(DEFAULT_SPAWN_ZONE_NAME)
             .expect("fallback zone should exist")
-            .spirit_qi = -0.9; // only (−0.9 + 1.0) × 50 = 5 qi available
+            .spirit_qi = 0.1; // only max(0.1, 0.0) × 50 = 5 qi available
         app.insert_resource(zones);
 
         let entity = app
@@ -5819,11 +5824,11 @@ mod tests {
         });
         app.update();
 
-        // Zone had spirit_qi = -0.9; available = (-0.9 + 1.0) * 50.0 = 5.0 qi.
+        // Zone had spirit_qi = 0.1; available = max(0.1, 0.0) * 50.0 = 5.0 qi.
         // desired_grant = (300.0 * 0.10).min((300.0 - 0.0).max(0.0)) = 30.0.
         // actual_grant  = 30.0.min(5.0) = 5.0 (capped by zone headroom).
-        let zone_spirit_qi_before = -0.9_f64;
-        let zone_available = (zone_spirit_qi_before + 1.0) * 50.0; // 5.0
+        let zone_spirit_qi_before = 0.1_f64;
+        let zone_available = zone_spirit_qi_before.max(0.0) * 50.0; // 5.0
         let desired_grant = (300.0_f64 * 0.10).min((300.0_f64 - 0.0_f64).max(0.0));
         let expected_grant = desired_grant.min(zone_available);
         let expected_qi_current = 0.0 + expected_grant;
@@ -6232,6 +6237,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
                 TribulationState {
                     kind: TribulationKind::DuXu,
                     phase: TribulationPhase::Wave(5),
@@ -6735,6 +6741,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6875,6 +6882,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -6933,6 +6941,7 @@ mod tests {
                     character_id: "offline:Spectator".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Spectator"),
             ))
             .id();
 
@@ -7099,6 +7108,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
                 TribulationState {
                     kind: TribulationKind::DuXu,
                     phase: TribulationPhase::Wave(5),
@@ -7317,6 +7327,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
         let _ = tribulator;
@@ -7681,7 +7692,7 @@ mod tests {
             .spawn((
                 Cultivation {
                     realm: Realm::Spirit,
-                    qi_current: 880.0,
+                    qi_current: 210.0,
                     qi_max: 210.0,
                     last_qi_zero_at: Some(77),
                     pending_material_bonus: 0.3,
@@ -7797,13 +7808,10 @@ mod tests {
             "tribulation failure should release cleared qi back to the current zone"
         );
         assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].to, qi_flow_overflow_account());
         assert_eq!(transfers[0].reason, QiTransferReason::ReleaseToZone);
-        assert_eq!(transfers[0].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
-        assert_eq!(
-            transfers[1].to,
-            QiAccountId::overflow(format!("tribulation_failure:{entity:?}"))
-        );
         assert_eq!(transfers[1].reason, QiTransferReason::ReleaseToZone);
+        assert_eq!(transfers[1].to, QiAccountId::zone(DEFAULT_SPAWN_ZONE_NAME));
         assert!(
             load_active_tribulation(&settings, char_id)
                 .expect("active tribulation query should succeed")
@@ -8351,6 +8359,7 @@ mod tests {
                 character_id: "offline:Victim".to_string(),
                 ..Default::default()
             },
+            LifeRecord::new("offline:Victim"),
             TribulationState {
                 kind: TribulationKind::DuXu,
                 phase: TribulationPhase::Wave(1),
@@ -8383,6 +8392,7 @@ mod tests {
                     character_id: "offline:Killer".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Killer"),
             ))
             .id();
 
@@ -10481,6 +10491,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10657,6 +10668,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 
@@ -10754,6 +10766,7 @@ mod tests {
                     character_id: "offline:Azure".to_string(),
                     ..Default::default()
                 },
+                LifeRecord::new("offline:Azure"),
             ))
             .id();
 

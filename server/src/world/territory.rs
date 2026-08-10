@@ -1247,7 +1247,10 @@ mod territory_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock {
             tick: TERRITORY_EVAL_INTERVAL_TICKS,
         });
@@ -1354,7 +1357,10 @@ mod territory_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
 
         // 构造修炼累积器，记录玩家最近修炼
         let mut accumulator = CultivationSessionPracticeAccumulator::default();
@@ -1435,7 +1441,10 @@ mod territory_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: eval_tick });
         app.add_systems(Update, territory_tick);
 
@@ -1514,7 +1523,10 @@ mod territory_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         let eval_tick = TERRITORY_EVAL_INTERVAL_TICKS;
         app.insert_resource(CultivationClock { tick: eval_tick });
         app.add_systems(Update, territory_tick);
@@ -1620,7 +1632,10 @@ mod territory_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock {
             tick: TERRITORY_EVAL_INTERVAL_TICKS,
         });
@@ -1707,7 +1722,10 @@ mod territory_tests {
             qi_equilibrium: 0.0,
             qi_inflow_per_min: 0.0,
         };
-        app.insert_resource(ZoneRegistry { zones: vec![zone] });
+        app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
+            zones: vec![zone],
+        });
         app.insert_resource(CultivationClock { tick: 100 });
         app.add_systems(valence::prelude::Update, territory_pvp_influence_system);
         app
@@ -1770,6 +1788,7 @@ mod territory_tests {
         app.init_resource::<ZoneQiWatermark>();
         app.insert_resource(CultivationClock { tick: 42 });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![Zone {
                 name: "dead_zone".to_string(),
                 dimension: DimensionKind::Overworld,
@@ -3110,6 +3129,7 @@ mod territory_tests {
         );
         app.insert_resource(map);
         app.insert_resource(crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: "test_zone".to_string(),
                 dimension: DimensionKind::Overworld,

@@ -873,7 +873,10 @@ fn setup_zone_credit_app(zone_spirit_qi_before: f64) -> App {
         qi_equilibrium: 0.0,
         qi_inflow_per_min: 0.0,
     };
-    app.insert_resource(ZoneRegistry { zones: vec![zone] });
+    app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone],
+    });
     app
 }
 
@@ -2027,7 +2030,10 @@ fn setup_cast_cost_zone_app() -> App {
         qi_equilibrium: 0.0,
         qi_inflow_per_min: 0.0,
     };
-    app.insert_resource(ZoneRegistry { zones: vec![zone] });
+    app.insert_resource(ZoneRegistry {
+        spatial_revision: 0,
+        zones: vec![zone],
+    });
     app
 }
 

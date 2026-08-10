@@ -392,6 +392,7 @@ fn home_zone_qi(patrol: &NpcPatrol, zone_registry: Option<&ZoneRegistry>) -> f32
 
 fn till_action_system(
     mut npcs: Query<(&Position, &mut ScatteredCultivator), With<NpcMarker>>,
+    plots: Query<&LingtianPlot>,
     mut sessions: Option<ResMut<ActiveLingtianSessions>>,
     mut actions: Query<(&Actor, &mut ActionState), With<TillAction>>,
 ) {
@@ -413,15 +414,17 @@ fn till_action_system(
                     continue;
                 };
                 let pos = plot_pos_from_world(position.get());
-                let inserted = sessions.try_insert(
+                let plot_exists = plots.iter().any(|plot| plot.pos == pos);
+                let inserted = sessions.try_insert_till(
                     *actor,
-                    ActiveSession::Till(TillSession::new(
+                    TillSession::new(
                         pos,
                         HoeKind::Iron,
                         0,
                         SessionMode::Auto,
                         PlotEnvironment::base(),
-                    )),
+                    ),
+                    plot_exists,
                 );
                 if inserted {
                     cultivator.home_plot = Some(pos);
@@ -818,7 +821,7 @@ pub fn tool_possession_score(has_tool: bool) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use valence::prelude::Update;
+    use valence::prelude::{Client, Update};
 
     #[test]
     fn qi_density_respects_temperament_weight() {
@@ -859,6 +862,157 @@ mod tests {
         assert_eq!(nearby_threat_score(4.0), 1.0);
         assert_eq!(nearby_threat_score(12.0), 0.5);
         assert_eq!(nearby_threat_score(40.0), 0.0);
+    }
+
+    #[test]
+    fn npc_farming_actions_create_direct_sessions_without_client_component() {
+        let pos = BlockPos::new(3, 63, 4);
+
+        let mut till_app = App::new();
+        till_app
+            .insert_resource(ActiveLingtianSessions::new())
+            .add_systems(Update, till_action_system);
+        let till_actor = till_app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(3.2, 64.0, 4.8)),
+                ScatteredCultivator::new(FarmingTemperament::Patient),
+            ))
+            .id();
+        till_app
+            .world_mut()
+            .spawn((Actor(till_actor), ActionState::Requested, TillAction));
+        till_app.update();
+        assert!(matches!(
+            till_app
+                .world()
+                .resource::<ActiveLingtianSessions>()
+                .get(till_actor),
+            Some(ActiveSession::Till(session)) if session.pos == pos
+        ));
+        assert!(till_app.world().get::<Client>(till_actor).is_none());
+
+        let mut plant_app = App::new();
+        plant_app
+            .insert_resource(ActiveLingtianSessions::new())
+            .insert_resource(crate::botany::load_plant_kind_registry().expect("plant registry"))
+            .add_systems(Update, plant_action_system);
+        let mut cultivator = ScatteredCultivator::new(FarmingTemperament::Patient);
+        cultivator.home_plot = Some(pos);
+        let plant_actor = plant_app.world_mut().spawn((NpcMarker, cultivator)).id();
+        plant_app
+            .world_mut()
+            .spawn((Actor(plant_actor), ActionState::Requested, PlantAction));
+        plant_app.update();
+        assert!(matches!(
+            plant_app
+                .world()
+                .resource::<ActiveLingtianSessions>()
+                .get(plant_actor),
+            Some(ActiveSession::Planting(session)) if session.pos == pos
+        ));
+        assert!(plant_app.world().get::<Client>(plant_actor).is_none());
+
+        let mut harvest_app = App::new();
+        harvest_app
+            .insert_resource(ActiveLingtianSessions::new())
+            .add_systems(Update, harvest_action_system);
+        let mut cultivator = ScatteredCultivator::new(FarmingTemperament::Patient);
+        cultivator.home_plot = Some(pos);
+        let harvest_actor = harvest_app.world_mut().spawn((NpcMarker, cultivator)).id();
+        let mut plot = LingtianPlot::new(pos, Some(harvest_actor));
+        let mut crop = crate::lingtian::plot::CropInstance::new("ci_she_hao".into());
+        crop.growth = 1.0;
+        plot.crop = Some(crop);
+        harvest_app.world_mut().spawn(plot);
+        harvest_app.world_mut().spawn((
+            Actor(harvest_actor),
+            ActionState::Requested,
+            HarvestAction,
+        ));
+        harvest_app.update();
+        assert!(matches!(
+            harvest_app
+                .world()
+                .resource::<ActiveLingtianSessions>()
+                .get(harvest_actor),
+            Some(ActiveSession::Harvest(session)) if session.pos == pos
+        ));
+        assert!(harvest_app.world().get::<Client>(harvest_actor).is_none());
+
+        let mut replenish_app = App::new();
+        replenish_app
+            .insert_resource(ActiveLingtianSessions::new())
+            .add_systems(Update, replenish_action_system);
+        let mut cultivator = ScatteredCultivator::new(FarmingTemperament::Patient);
+        cultivator.home_plot = Some(pos);
+        let replenish_actor = replenish_app
+            .world_mut()
+            .spawn((NpcMarker, cultivator))
+            .id();
+        replenish_app.world_mut().spawn((
+            Actor(replenish_actor),
+            ActionState::Requested,
+            ReplenishAction,
+        ));
+        replenish_app.update();
+        assert!(matches!(
+            replenish_app
+                .world()
+                .resource::<ActiveLingtianSessions>()
+                .get(replenish_actor),
+            Some(ActiveSession::Replenish(session))
+                if session.pos == pos && session.source == ReplenishSource::Zone
+        ));
+        assert!(replenish_app
+            .world()
+            .get::<Client>(replenish_actor)
+            .is_none());
+    }
+
+    #[test]
+    fn npc_till_rejects_existing_plot_without_claiming_home_or_session() {
+        let pos = BlockPos::new(3, 63, 4);
+        let mut app = App::new();
+        app.insert_resource(ActiveLingtianSessions::new())
+            .add_systems(Update, till_action_system);
+        app.world_mut().spawn(LingtianPlot::new(pos, None));
+        let npc = app
+            .world_mut()
+            .spawn((
+                NpcMarker,
+                Position(DVec3::new(3.2, 64.0, 4.8)),
+                ScatteredCultivator::new(FarmingTemperament::Patient),
+            ))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((Actor(npc), ActionState::Requested, TillAction))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<ActionState>(action),
+            Some(&ActionState::Failure),
+            "NPC Till on an existing plot must fail rather than create a duplicate session"
+        );
+        assert!(
+            app.world()
+                .resource::<ActiveLingtianSessions>()
+                .get(npc)
+                .is_none(),
+            "existing-plot rejection must not leave a Till session behind"
+        );
+        assert_eq!(
+            app.world()
+                .get::<ScatteredCultivator>(npc)
+                .unwrap()
+                .home_plot,
+            None,
+            "rejected Till must not claim the existing plot as the NPC home plot"
+        );
     }
 
     #[test]

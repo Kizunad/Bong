@@ -13,12 +13,13 @@
 //! 而非真正的 valence BlockEntity（后者依 plan-persistence-v1）。Renew 通过
 //! `Query<&mut LingtianPlot>` 按 BlockPos 反查匹配 plot。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use valence::prelude::bevy_ecs::system::SystemParam;
 use valence::prelude::{
-    bevy_ecs, BlockState, ChunkLayer, Client, Commands, DVec3, Entity, EventReader, EventWriter,
-    Events, Query, Res, ResMut, Resource, Username, With,
+    bevy_ecs, Added, BlockState, ChunkLayer, Client, Commands, DVec3, Despawned, Entity,
+    EventReader, EventWriter, Events, ParamSet, Position, Query, Res, ResMut, Resource, Username,
+    With, Without,
 };
 
 use crate::alchemy::residue::{consume_one_residue, inventory_has_usable_residue};
@@ -32,6 +33,7 @@ use crate::inventory::{
 use crate::network::inventory_snapshot_emit::send_inventory_snapshot_to_client;
 use crate::network::{gameplay_vfx, vfx_event_emit::VfxEventRequest};
 use crate::npc::lifecycle::NpcTerminalSettlementSucceeded;
+use crate::npc::spawn::NpcMarker;
 use crate::player::state::{canonical_player_id, PlayerState};
 use crate::qi_physics::{
     constants::QI_NPC_ABSORB_FLOOR, QiAccountId, QiTransfer, QiTransferReason,
@@ -43,7 +45,8 @@ use crate::skill::events::{SkillXpGain, XpGainSource};
 use crate::world::events::ActiveEventsResource;
 
 use super::contamination::{apply_dye_contamination_on_replenish, dye_contamination_decay_tick};
-use super::environment::compute_plot_qi_cap;
+use super::environment::read_environment_at;
+use super::environment::{compute_plot_qi_cap, PlotEnvironment};
 use super::events::{
     DrainQiCompleted, DyeContaminationWarning, HarvestCompleted, PlantingCompleted, RenewCompleted,
     ReplenishCompleted, StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest,
@@ -59,13 +62,16 @@ use super::pressure::{
 use super::qi_account::{
     LingtianTickAccumulator, ZoneQiAccount, BEVY_TICKS_PER_LINGTIAN_TICK, DEFAULT_ZONE,
 };
+use super::range_gate::{log_lingtian_interaction_denial, validate_lingtian_interaction};
+use super::requests::{LingtianDispatchWriters, PendingLingtianRequest, PendingLingtianRequests};
 use super::seed::{seed_id_for, SeedRegistry};
 use super::session::{
     DrainQiSession, HarvestSession, PlantingSession, RenewSession, ReplenishSession,
     ReplenishSource, SessionMode, TillSession, DRAIN_QI_TO_PLAYER_RATIO, DRAIN_QI_TO_ZONE_RATIO,
     REPLENISH_COOLDOWN_LINGTIAN_TICKS,
 };
-use super::terrain::classify_for_till;
+use super::terrain::{classify_for_till, terrain_from_block_kind, TerrainKind};
+use crate::world::dimension::CurrentDimension;
 use crate::world::events::EVENT_REALM_COLLAPSE;
 use crate::world::zone::ZoneRegistry;
 
@@ -123,12 +129,157 @@ impl ActiveSession {
             ActiveSession::DrainQi(s) => s.is_finished(),
         }
     }
+
+    fn position(&self) -> valence::prelude::BlockPos {
+        match self {
+            ActiveSession::Till(s) => s.pos,
+            ActiveSession::Renew(s) => s.pos,
+            ActiveSession::Planting(s) => s.pos,
+            ActiveSession::Harvest(s) => s.pos,
+            ActiveSession::Replenish(s) => s.pos,
+            ActiveSession::DrainQi(s) => s.pos,
+        }
+    }
 }
 
 /// 累计的 lingtian-tick（lingtian_growth_tick 触发时 ++）。用于补灵冷却比对。
 #[derive(Debug, Default, Resource)]
 pub struct LingtianClock {
     pub lingtian_tick: u64,
+}
+
+// ============================================================================
+// fix-spec-1901-v2 §4.3 — 唯一的 post-transfer validator
+// ============================================================================
+
+/// 唯一生产 emit site：把 `PendingLingtianRequests` 批次（FIFO）逐条过
+/// post-transfer gate 后转为六类 `Start*Request`。
+///
+/// 调度合同（mod.rs）：本系统位于 `LingtianPostTransferValidationSet`，
+/// 排在 `AuthoritativePositionCommitSet` 之后、`LingtianStartSet` 之前——
+/// 读到的 `Position` / `CurrentDimension` 是本 tick 的最终权威状态。
+///
+/// 对 batch 中每个请求：
+/// 1. 非 live client（断线 / despawn）直接丢弃；
+/// 2. `validate_lingtian_interaction` gate 失败只 log 并继续（不读 plot /
+///    inventory / terrain，不建 session，不发完成事件）；
+/// 3. Till 只有在 gate 成功后才读 `OverworldLayer.block(pos)` 派生真实
+///    `TerrainKind` / `PlotEnvironment`；layer 缺失走既有 `Unknown` fallback，
+///    由 Till business handler 拒绝；
+/// 4. gate 成功后才发对应的 `Start*Request` event。
+///
+/// 同 actor 同批多个 gate-valid 请求严格按 ingress sequence 处理：本 tick 只 dispatch
+/// 第一条，其余保序放回下一批队首。这样六类 typed event handler 的内部调度顺序不会
+/// 反转跨 action FIFO；首条业务 handler 本 tick 失败时，下一条仍会在下 tick 获得机会。
+#[allow(clippy::too_many_arguments)]
+pub fn validate_and_dispatch_lingtian_requests(
+    mut pending: ResMut<PendingLingtianRequests>,
+    positions: Query<&Position>,
+    dimensions: Query<&CurrentDimension>,
+    clients: Query<(), (With<Client>, Without<Despawned>)>,
+    layers: Query<&ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
+    mut writers: LingtianDispatchWriters,
+) {
+    let batch = pending.take_batch();
+    let mut dispatched_actors = HashSet::new();
+    let mut deferred = std::collections::VecDeque::new();
+    for request in batch {
+        let (actor, pos) = request.actor_and_pos();
+        if clients.get(actor).is_err() {
+            // 客户端已断线或 entity 已 despawn：不产生 start event。
+            tracing::debug!(
+                "[bong][lingtian] pending request dropped: actor={actor:?} is not a live client"
+            );
+            continue;
+        }
+        if let Err(reason) = validate_lingtian_interaction(actor, pos, &positions, &dimensions) {
+            log_lingtian_interaction_denial("post-transfer", actor, pos, reason);
+            continue;
+        }
+        if dispatched_actors.contains(&actor) {
+            deferred.push_back(request);
+            continue;
+        }
+        dispatched_actors.insert(actor);
+        match request {
+            PendingLingtianRequest::Till {
+                actor,
+                pos,
+                hoe_instance_id,
+                mode,
+                ..
+            } => {
+                // gate 成功后才读 chunk 派生真实地形（避免 layer lookup 回到
+                // gate 之前；layer 缺失走 Unknown fallback 让业务 handler 拒）。
+                let (terrain, environment) = match layers.get_single() {
+                    Ok(layer) => {
+                        let terrain = layer
+                            .block(pos)
+                            .map(|b| terrain_from_block_kind(b.state.to_kind()))
+                            .unwrap_or(TerrainKind::Unknown);
+                        (terrain, read_environment_at(layer, pos))
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "[bong][lingtian] validate_and_dispatch: chunk layer unavailable ({err:?}); \
+                             falling back to Unknown terrain — session will reject."
+                        );
+                        (TerrainKind::Unknown, PlotEnvironment::base())
+                    }
+                };
+                writers.till.send(StartTillRequest {
+                    player: actor,
+                    pos,
+                    hoe_instance_id,
+                    mode,
+                    terrain,
+                    environment,
+                });
+            }
+            PendingLingtianRequest::Renew {
+                actor,
+                pos,
+                hoe_instance_id,
+            } => {
+                writers.renew.send(StartRenewRequest {
+                    player: actor,
+                    pos,
+                    hoe_instance_id,
+                });
+            }
+            PendingLingtianRequest::Planting {
+                actor,
+                pos,
+                plant_id,
+            } => {
+                writers.planting.send(StartPlantingRequest {
+                    player: actor,
+                    pos,
+                    plant_id,
+                });
+            }
+            PendingLingtianRequest::Harvest { actor, pos, mode } => {
+                writers.harvest.send(StartHarvestRequest {
+                    player: actor,
+                    pos,
+                    mode,
+                });
+            }
+            PendingLingtianRequest::Replenish { actor, pos, source } => {
+                writers.replenish.send(StartReplenishRequest {
+                    player: actor,
+                    pos,
+                    source,
+                });
+            }
+            PendingLingtianRequest::DrainQi { actor, pos } => {
+                writers
+                    .drain_qi
+                    .send(StartDrainQiRequest { player: actor, pos });
+            }
+        }
+    }
+    pending.prepend_batch(deferred);
 }
 
 /// session 完成事件写出 — 6 类合一以避开 Bevy 16 system-param 限制。
@@ -143,6 +294,15 @@ pub struct CompletionEventWriters<'w> {
     pub dye_warning: EventWriter<'w, DyeContaminationWarning>,
     pub qi_transfer: EventWriter<'w, QiTransfer>,
     pub vfx_events: Option<ResMut<'w, Events<VfxEventRequest>>>,
+}
+
+/// Actor components used to revalidate player sessions before completion.
+#[derive(SystemParam)]
+pub struct CompletionActorQueries<'w, 's> {
+    pub positions: Query<'w, 's, &'static Position>,
+    pub dimensions: Query<'w, 's, &'static CurrentDimension>,
+    pub clients: Query<'w, 's, (), (With<Client>, Without<Despawned>)>,
+    pub npcs: Query<'w, 's, (), (With<NpcMarker>, Without<Despawned>)>,
 }
 
 /// 灵田逻辑时间：冷却仍用 lingtian-tick，残料保鲜用真实 server tick。
@@ -160,6 +320,13 @@ impl LingtianTime<'_> {
     fn residue_tick(&self) -> u64 {
         residue_now_tick(self.combat_clock.as_deref(), &self.clock)
     }
+}
+
+/// Completion context shared by time-dependent settlement and actor revalidation.
+#[derive(SystemParam)]
+pub struct CompletionContext<'w, 's> {
+    pub time: LingtianTime<'w>,
+    pub actor_queries: CompletionActorQueries<'w, 's>,
 }
 
 /// xorshift64 — 确定性 RNG，用于种子掉落决策。测试可注入种子。
@@ -194,6 +361,17 @@ impl Default for LingtianHarvestRng {
 #[derive(Debug, Default, Resource)]
 pub struct ActiveLingtianSessions {
     by_actor: HashMap<Entity, ActiveSession>,
+    /// fix-spec-1901-v2 §6.2 — target-level Till reservation。
+    ///
+    /// 只覆盖会创建新 plot 的 Till：同一个 `BlockPos` 在同一时刻只允许一个
+    /// 起 session 的 agent（player 与 NPC 共用，不允许跨入口绕过）。
+    ///
+    /// 生命周期：session 从插入到完成结算（含 deferred `commands.spawn(plot)`
+    /// 未应用的窗口）都占用 reservation。`drain_finished` 把 session 移出
+    /// `by_actor` 后，reservation 仍保留到该 block 已实际存在 `LingtianPlot`；
+    /// 取消 / 超时（`clear`）立即释放，失败完成（如 completion gate 拒绝、
+    /// 目标已有 plot）同步释放，避免永久锁死。
+    reserved_targets: HashMap<valence::prelude::BlockPos, Entity>,
 }
 
 impl ActiveLingtianSessions {
@@ -217,8 +395,20 @@ impl ActiveLingtianSessions {
         self.by_actor.is_empty()
     }
 
-    /// 插入新 session。若该 actor 已有则返回 false，调用方丢弃请求。
+    /// 已保留但尚无 plot 的 block 数量（只用于诊断/测试）。
+    pub fn pending_reservations(&self) -> usize {
+        self.reserved_targets.len()
+    }
+
+    /// 插入非 Till session。Till 必须走 [`Self::try_insert_till`]，避免调用方
+    /// 绕过已有 plot 与 target reservation 的统一门禁。
     pub fn try_insert(&mut self, actor: Entity, session: ActiveSession) -> bool {
+        if matches!(session, ActiveSession::Till(_)) {
+            tracing::warn!(
+                "[bong][lingtian] try_insert rejected Till for actor={actor:?}; use try_insert_till"
+            );
+            return false;
+        }
         if self.by_actor.contains_key(&actor) {
             return false;
         }
@@ -226,9 +416,52 @@ impl ActiveLingtianSessions {
         true
     }
 
-    /// 清掉某 actor 的 session（cancel / 完成结算后）。
+    /// 原子插入 Till session：actor 空闲、目标尚无 plot 且未被其他 actor 保留
+    /// 时才同时写入 session 与 reservation。玩家和 NPC producer 共用此入口。
+    pub fn try_insert_till(
+        &mut self,
+        actor: Entity,
+        session: TillSession,
+        plot_exists: bool,
+    ) -> bool {
+        if self.by_actor.contains_key(&actor) {
+            tracing::debug!(
+                "[bong][lingtian] try_insert_till rejected: actor={actor:?} already active"
+            );
+            return false;
+        }
+        if plot_exists {
+            tracing::debug!(
+                "[bong][lingtian] try_insert_till rejected: plot already exists at {:?}",
+                session.pos
+            );
+            return false;
+        }
+        if self.reserved_targets.contains_key(&session.pos) {
+            tracing::debug!(
+                "[bong][lingtian] try_insert_till rejected: target {:?} already reserved",
+                session.pos
+            );
+            return false;
+        }
+
+        self.reserved_targets.insert(session.pos, actor);
+        self.by_actor.insert(actor, ActiveSession::Till(session));
+        true
+    }
+
+    /// 清掉某 actor 的 session（cancel / 超时 / 外部取消）。
+    ///
+    /// fix-spec-1901-v2 §6.2 — 取消立即释放 target reservation（不等待
+    /// 结算），让该 block 可被重新使用。
     pub fn clear(&mut self, actor: Entity) -> Option<ActiveSession> {
-        self.by_actor.remove(&actor)
+        let removed = self.by_actor.remove(&actor);
+        if let Some(session) = &removed {
+            if matches!(session, ActiveSession::Till(_)) {
+                self.reserved_targets.remove(&session.position());
+            }
+        }
+        removed
     }
 
     /// 返回所有当前已 Finished 的 (actor, session) 对，并从表中移除。
@@ -243,6 +476,16 @@ impl ActiveLingtianSessions {
             .into_iter()
             .map(|e| (e, self.by_actor.remove(&e).expect("just iterated")))
             .collect()
+    }
+
+    /// fix-spec-1901-v2 §6.2 — 结算完成后释放 Till reservation。
+    ///
+    /// `drain_finished` 已把完成 session 从 `by_actor` 移出；完成处理结束后，
+    /// 这里是 deferred plot command 已应用的下一 reconciliation point。所有
+    /// 不再属于活跃 session 的 reservation 都可释放。
+    pub fn settle_reservations(&mut self) {
+        self.reserved_targets
+            .retain(|_, actor| self.by_actor.contains_key(actor));
     }
 
     fn tick_all(&mut self) {
@@ -274,8 +517,12 @@ pub fn handle_start_till(
     mut events: EventReader<StartTillRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
     inventories: Query<&PlayerInventory>,
+    plots: Query<&LingtianPlot>,
 ) {
     for req in events.read() {
+        // fix-spec-1901-v2 §4.4 — 距离/维度 gate 已由唯一 post-transfer validator
+        // 完成；本 handler 只做业务前置。直接注入本 event 的测试只能算
+        // "validated event business test"，不能当作 C2S 安全测试。
         if sessions.has_session(req.player) {
             tracing::warn!(
                 "[bong][lingtian] StartTillRequest rejected: player={:?} already has active session",
@@ -283,6 +530,7 @@ pub fn handle_start_till(
             );
             continue;
         }
+        let plot_exists = plots.iter().any(|plot| plot.pos == req.pos);
         let Ok(inv) = inventories.get(req.player) else {
             tracing::warn!(
                 "[bong][lingtian] StartTillRequest rejected: player={:?} has no PlayerInventory",
@@ -315,7 +563,7 @@ pub fn handle_start_till(
             continue;
         }
         let session = TillSession::new(req.pos, kind, instance_id, req.mode, req.environment);
-        sessions.try_insert(req.player, ActiveSession::Till(session));
+        sessions.try_insert_till(req.player, session, plot_exists);
     }
 }
 
@@ -497,6 +745,7 @@ pub fn handle_start_harvest(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_start_replenish(
     mut events: EventReader<StartReplenishRequest>,
     mut sessions: ResMut<ActiveLingtianSessions>,
@@ -650,14 +899,55 @@ pub fn apply_completed_sessions(
     mut allocator: ResMut<InventoryInstanceIdAllocator>,
     mut harvest_rng: ResMut<LingtianHarvestRng>,
     mut zone_qi: ResMut<ZoneQiAccount>,
-    time: LingtianTime,
     mut writers: CompletionEventWriters,
     mut layers: Query<&mut ChunkLayer, With<crate::world::dimension::OverworldLayer>>,
     mut skill_xp_events: Option<ResMut<Events<SkillXpGain>>>,
+    context: CompletionContext,
 ) {
-    for (player, finished) in sessions.drain_finished() {
+    let drained = sessions.drain_finished();
+    if drained.is_empty() {
+        return;
+    }
+    let needs_existing_plot_snapshot = drained
+        .iter()
+        .any(|(_, session)| matches!(session, ActiveSession::Till(_)));
+    let existing_plot_positions: HashSet<_> = if needs_existing_plot_snapshot {
+        plots.iter().map(|(_, plot)| plot.pos).collect()
+    } else {
+        HashSet::new()
+    };
+    let mut completion_till_positions = HashSet::new();
+    for (player, finished) in drained {
+        let target = finished.position();
+        if context.actor_queries.clients.get(player).is_ok() {
+            if let Err(reason) = validate_lingtian_interaction(
+                player,
+                target,
+                &context.actor_queries.positions,
+                &context.actor_queries.dimensions,
+            ) {
+                log_lingtian_interaction_denial("completion", player, target, reason);
+                continue;
+            }
+        } else if context.actor_queries.npcs.get(player).is_err() {
+            tracing::debug!(
+                "[bong][lingtian] completed session discarded for unknown actor={:?}",
+                player,
+            );
+            continue;
+        }
+
         match finished {
             ActiveSession::Till(s) => {
+                if existing_plot_positions.contains(&s.pos)
+                    || !completion_till_positions.insert(s.pos)
+                {
+                    tracing::warn!(
+                        "[bong][lingtian] duplicate Till completion suppressed at {:?}",
+                        s.pos
+                    );
+                    continue;
+                }
                 if let Ok(mut inv) = inventories.get_mut(player) {
                     wear_main_hand_hoe(&mut inv, s.hoe, s.hoe_instance_id);
                 }
@@ -753,7 +1043,7 @@ pub fn apply_completed_sessions(
                     &item_registry,
                     &mut allocator,
                     &mut harvest_rng,
-                    time.lingtian_tick(),
+                    context.time.lingtian_tick(),
                     &mut writers.harvest,
                     &mut skill_xp_events,
                     s.mode,
@@ -766,7 +1056,7 @@ pub fn apply_completed_sessions(
                 }
             }
             ActiveSession::Replenish(s) => {
-                let residue_tick = time.residue_tick();
+                let residue_tick = context.time.residue_tick();
                 let replenished = apply_replenish_completion(
                     player,
                     &s.pos,
@@ -774,7 +1064,7 @@ pub fn apply_completed_sessions(
                     &mut inventories,
                     &mut plots,
                     &mut zone_qi,
-                    time.lingtian_tick(),
+                    context.time.lingtian_tick(),
                     residue_tick,
                     &mut harvest_rng,
                     &mut writers.replenish,
@@ -801,7 +1091,7 @@ pub fn apply_completed_sessions(
                     &mut cultivations,
                     &mut life_records,
                     &mut zone_qi,
-                    time.lingtian_tick(),
+                    context.time.lingtian_tick(),
                     &mut writers.drain_qi,
                     &mut writers.qi_transfer,
                 );
@@ -883,29 +1173,65 @@ pub fn release_lingtian_plot_owner_on_npc_death(
     }
 }
 
-/// Backfill empty `LingtianPlot::zone` from `ZoneRegistry`. Runs every tick
-/// over plots whose zone is still empty (typically only newly-spawned plots,
-/// since the predicate is self-clearing on success). We do NOT use
-/// `Added<LingtianPlot>` because the registry may not be available on the
-/// frame the plot is spawned — Added fires once and is gone, leaving zone
-/// permanently empty. Iterating + `is_empty()` filter is naturally idempotent
-/// and self-retrying.
+#[derive(Debug, Default, Resource)]
+pub struct PendingPlotZones {
+    entities: HashSet<Entity>,
+    /// fix-spec-1901-v2 §7.1 — 上次处理的 `ZoneRegistry::spatial_revision`。
+    /// 只有 revision 真正变化（zone membership / bounds 变化）才重试 unresolved
+    /// set；heartbeat qi 的每 tick mutable borrow 不再触发全量扫描。
+    last_seen_spatial_revision: u64,
+}
+
+/// Resolve newly-added plots once and retry unresolved plots only when the zone
+/// registry's spatial revision changes.
+#[allow(clippy::type_complexity)]
 pub fn auto_set_plot_zone(
-    mut plots: Query<&mut LingtianPlot>,
+    mut plot_queries: ParamSet<(Query<Entity, Added<LingtianPlot>>, Query<&mut LingtianPlot>)>,
     zone_registry: Option<Res<ZoneRegistry>>,
+    mut pending: ResMut<PendingPlotZones>,
 ) {
+    let new_entities: Vec<Entity> = plot_queries.p0().iter().collect();
     let Some(zr) = zone_registry.as_deref() else {
+        pending.entities.extend(new_entities);
         return;
     };
-    for mut plot in &mut plots {
+
+    let revision_changed = zr.spatial_revision != pending.last_seen_spatial_revision;
+    let candidates = if revision_changed {
+        pending.last_seen_spatial_revision = zr.spatial_revision;
+        pending.entities.extend(new_entities);
+        pending.entities.drain().collect::<Vec<_>>()
+    } else {
+        new_entities
+    };
+
+    let mut plots = plot_queries.p1();
+    for entity in candidates {
+        let Ok(mut plot) = plots.get_mut(entity) else {
+            continue;
+        };
         if !plot.zone.is_empty() {
             continue;
         }
-        let pos = DVec3::new(plot.pos.x as f64, plot.pos.y as f64, plot.pos.z as f64);
-        if let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos) {
-            plot.zone = zone.name.clone();
-        }
+        // fix-spec-1901-v2 §7.2 — zone backfill 与 collapse lookup 共用方块坐标合同：
+        // 水平取中心，Y 取方块整数底面，确保 inclusive upper-Y boundary 身份一致。
+        let pos = plot_zone_center(&plot);
+        let Some(zone) = zr.find_zone(crate::world::dimension::DimensionKind::Overworld, pos)
+        else {
+            pending.entities.insert(entity);
+            continue;
+        };
+        plot.zone = zone.name.clone();
     }
+}
+
+/// fix-spec-1901-v2 §6.2 — 每 tick 结算 Till target reservation。
+///
+/// 在 `apply_completed_sessions` 之后运行（deferred `commands.spawn(plot)`
+/// 已应用）：已落地 plot 的 reservation 释放，被 gate 拒绝 / spawn 跳过的
+/// 悬空 reservation 也一并清理。
+pub fn settle_lingtian_plot_reservations(mut sessions: ResMut<ActiveLingtianSessions>) {
+    sessions.settle_reservations();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1707,17 +2033,23 @@ fn advance_plot_one_lingtian_tick_in_zone(
     advance_one_lingtian_tick(plot, kind, zone_qi_ref);
 }
 
+fn plot_zone_center(plot: &LingtianPlot) -> DVec3 {
+    DVec3::new(
+        plot.pos.x as f64 + 0.5,
+        plot.pos.y as f64,
+        plot.pos.z as f64 + 0.5,
+    )
+}
+
 fn plot_zone_is_collapsed(plot: &LingtianPlot, zone_registry: Option<&ZoneRegistry>) -> bool {
     let Some(zone_registry) = zone_registry else {
         return false;
     };
-    let plot_pos = DVec3::new(
-        plot.pos.x as f64 + 0.5,
-        plot.pos.y as f64,
-        plot.pos.z as f64 + 0.5,
-    );
     zone_registry
-        .find_zone(crate::world::dimension::DimensionKind::Overworld, plot_pos)
+        .find_zone(
+            crate::world::dimension::DimensionKind::Overworld,
+            plot_zone_center(plot),
+        )
         .is_some_and(|zone| {
             zone.active_events
                 .iter()
@@ -1737,14 +2069,26 @@ mod tests {
         MAIN_PACK_CONTAINER_ID,
     };
     use crate::npc::spawn::NpcMarker;
+    use crate::world::dimension::{DimensionKind, DimensionLayers, OverworldLayer, TsyLayer};
+    use crate::world::dimension_transfer::{
+        apply_dimension_transfers, DimensionTransferRequest, DimensionTransferSet,
+    };
     use std::collections::HashMap;
-    use valence::prelude::{App, BlockPos, DVec3, IntoSystemConfigs, Update};
+    use valence::prelude::{
+        App, BlockPos, DVec3, EntityLayerId, IntoSystemConfigs, Update, VisibleChunkLayer,
+        VisibleEntityLayers,
+    };
 
     use super::super::events::{
-        RenewCompleted, StartRenewRequest, StartTillRequest, TillCompleted,
+        DrainQiCompleted, DyeContaminationWarning, HarvestCompleted, PlantingCompleted,
+        RenewCompleted, ReplenishCompleted, StartDrainQiRequest, StartHarvestRequest,
+        StartPlantingRequest, StartRenewRequest, StartReplenishRequest, StartTillRequest,
+        TillCompleted,
     };
-    use super::super::hoe::HoeKind;
-    use super::super::session::{SessionMode, RENEW_TICKS, TILL_MANUAL_TICKS};
+    use super::super::session::{
+        ReplenishSource, SessionMode, DRAIN_QI_TICKS, HARVEST_MANUAL_TICKS, PLANTING_TICKS,
+        RENEW_TICKS, REPLENISH_COOLDOWN_LINGTIAN_TICKS, TILL_MANUAL_TICKS,
+    };
     use super::super::terrain::TerrainKind;
     use crate::skill::events::XpGainSource;
 
@@ -1790,6 +2134,37 @@ mod tests {
         }
     }
 
+    fn spawn_test_player<T: bevy_ecs::bundle::Bundle>(app: &mut App, components: T) -> Entity {
+        let (client_bundle, _helper) = valence::testing::create_mock_client("LingtianTest");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut().entity_mut(player).insert((
+            components,
+            Position(DVec3::new(0.5, 64.5, 0.5)),
+            CurrentDimension(crate::world::dimension::DimensionKind::Overworld),
+        ));
+        player
+    }
+
+    fn set_test_player_position(app: &mut App, player: Entity, target: BlockPos) {
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position(DVec3::new(
+                f64::from(target.x) + 0.5,
+                f64::from(target.y) + 0.5,
+                f64::from(target.z) + 0.5,
+            )));
+    }
+
+    fn valid_test_player<T: bevy_ecs::bundle::Bundle>(
+        app: &mut App,
+        components: T,
+        target: BlockPos,
+    ) -> Entity {
+        let player = spawn_test_player(app, components);
+        set_test_player_position(app, player, target);
+        player
+    }
+
     fn build_app() -> App {
         let mut app = App::new();
         app.insert_resource(ActiveLingtianSessions::new())
@@ -1802,6 +2177,8 @@ mod tests {
             .insert_resource(LingtianClock::default())
             .insert_resource(CombatClock::default())
             .insert_resource(ActiveEventsResource::default())
+            // fix-spec-1901-v2 §4.1 — C2S 请求持久队列（测试 app 也要 init）。
+            .init_resource::<crate::lingtian::requests::PendingLingtianRequests>()
             .add_event::<StartTillRequest>()
             .add_event::<TillCompleted>()
             .add_event::<StartRenewRequest>()
@@ -1820,6 +2197,7 @@ mod tests {
             .add_systems(
                 Update,
                 (
+                    validate_and_dispatch_lingtian_requests,
                     handle_start_till,
                     handle_start_renew,
                     handle_start_harvest,
@@ -1829,7 +2207,8 @@ mod tests {
                     apply_completed_sessions,
                     record_dye_contamination_warning_recent_events,
                 )
-                    .chain(),
+                    .chain()
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
     }
@@ -1837,11 +2216,9 @@ mod tests {
     #[test]
     fn till_e2e_spawns_plot_and_decrements_durability() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
         let pos = BlockPos::new(10, 64, 10);
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
+        set_test_player_position(&mut app, player, pos);
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
@@ -1888,11 +2265,9 @@ mod tests {
     fn till_emits_vfx() {
         let mut app = build_app();
         app.add_event::<VfxEventRequest>();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
         let pos = BlockPos::new(10, 64, 10);
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
+        set_test_player_position(&mut app, player, pos);
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
@@ -1922,9 +2297,9 @@ mod tests {
     fn till_rejected_when_not_holding_hoe() {
         let mut app = build_app();
         // 玩家手里啥都没有
-        let player = app
-            .world_mut()
-            .spawn(PlayerInventory {
+        let player = spawn_test_player(
+            &mut app,
+            PlayerInventory {
                 triggered_treasures: Vec::new(),
                 revision: InventoryRevision(0),
                 containers: vec![],
@@ -1932,8 +2307,8 @@ mod tests {
                 hotbar: Default::default(),
                 bone_coins: 0,
                 max_weight: 45.0,
-            })
-            .id();
+            },
+        );
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -1949,10 +2324,7 @@ mod tests {
     #[test]
     fn till_rejected_on_blocked_terrain() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -2076,10 +2448,7 @@ mod tests {
     #[test]
     fn till_rejected_when_request_instance_id_mismatches_main_hand() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         // 主手 instance_id=1，但请求声 instance_id=2 → 应被拒
         app.world_mut().send_event(StartTillRequest {
             player,
@@ -2096,10 +2465,7 @@ mod tests {
     #[test]
     fn second_till_during_active_session_is_rejected() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -2130,11 +2496,12 @@ mod tests {
     #[test]
     fn renew_e2e_resets_barren_plot() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Xuantie, 1.0))
-            .id();
         let pos = BlockPos::new(5, 64, 5);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_hoe(HoeKind::Xuantie, 1.0),
+            pos,
+        );
         // 直接 spawn 一个贫瘠 plot
         let mut plot = LingtianPlot::new(pos, Some(player));
         plot.harvest_count = super::super::plot::N_RENEW;
@@ -2173,10 +2540,7 @@ mod tests {
     #[test]
     fn renew_rejected_when_plot_not_barren() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         let pos = BlockPos::new(0, 64, 0);
         // 新 plot，未贫瘠
         app.world_mut().spawn(LingtianPlot::new(pos, None));
@@ -2193,11 +2557,8 @@ mod tests {
     fn hoe_breaks_at_zero_durability() {
         let mut app = build_app();
         // Iron 锄剩 0.05 → 一次操作就归零（uses_max=20，cost=0.05）
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 0.05))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 0.05));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos,
@@ -2271,6 +2632,7 @@ mod tests {
                 qi_equilibrium: 0.0,
                 qi_inflow_per_min: 0.0,
             }],
+            spatial_revision: 0,
         });
         app
     }
@@ -2425,7 +2787,6 @@ mod tests {
     // ------------------------------------------------------------------------
 
     use crate::inventory::{ContainerState, PlacedItemState};
-    use crate::lingtian::session::PLANTING_TICKS;
 
     fn registry_with_three_test_plants() -> PlantKindRegistry {
         let mut r = PlantKindRegistry::new();
@@ -2522,9 +2883,12 @@ mod tests {
             .add_event::<DrainQiCompleted>()
             .add_event::<QiTransfer>()
             .add_event::<SkillXpGain>()
+            // fix-spec-1901-v2 §4.1 — C2S 请求持久队列。
+            .init_resource::<crate::lingtian::requests::PendingLingtianRequests>()
             .add_systems(
                 Update,
                 (
+                    validate_and_dispatch_lingtian_requests,
                     handle_start_till,
                     handle_start_renew,
                     handle_start_planting,
@@ -2534,7 +2898,8 @@ mod tests {
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
-                    .chain(),
+                    .chain()
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
     }
@@ -2542,11 +2907,12 @@ mod tests {
     #[test]
     fn planting_e2e_spawns_crop_and_consumes_seed() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         // 已开垦的空 plot
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         app.world_mut().send_event(StartPlantingRequest {
@@ -2579,11 +2945,12 @@ mod tests {
     #[test]
     fn planting_consumes_last_seed_then_removes_stack() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ning_mai_cao_seed", 1))
-            .id();
         let pos = BlockPos::new(1, 64, 1);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ning_mai_cao_seed", 1),
+            pos,
+        );
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         app.world_mut().send_event(StartPlantingRequest {
             player,
@@ -2600,11 +2967,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_no_seed_in_inventory() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 1))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 1),
+            pos,
+        );
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         // 请求种 ling_mu_miao（没种子）
         app.world_mut().send_event(StartPlantingRequest {
@@ -2619,11 +2987,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_plot_already_has_crop() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         let mut plot = LingtianPlot::new(pos, Some(player));
         plot.crop = Some(CropInstance::new("ning_mai_cao".into()));
         app.world_mut().spawn(plot);
@@ -2639,11 +3008,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_plot_barren() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         let mut plot = LingtianPlot::new(pos, Some(player));
         plot.harvest_count = crate::lingtian::plot::N_RENEW; // 贫瘠
         app.world_mut().spawn(plot);
@@ -2659,11 +3029,12 @@ mod tests {
     #[test]
     fn planting_rejected_when_plant_id_unknown_to_seed_registry() {
         let mut app = build_planting_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_seed("ci_she_hao_seed", 5))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_seed("ci_she_hao_seed", 5),
+            pos,
+        );
         app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
         // shi_mai_gen 非 cultivable，SeedRegistry 不应有它
         app.world_mut().send_event(StartPlantingRequest {
@@ -2680,7 +3051,6 @@ mod tests {
     // ------------------------------------------------------------------------
 
     use crate::inventory::{ItemCategory, ItemEffect};
-    use crate::lingtian::session::HARVEST_MANUAL_TICKS;
 
     fn herb_template(id: &str, display: &str) -> ItemTemplate {
         ItemTemplate {
@@ -2782,9 +3152,12 @@ mod tests {
             .add_event::<DrainQiCompleted>()
             .add_event::<QiTransfer>()
             .add_event::<SkillXpGain>()
+            // fix-spec-1901-v2 §4.1 — C2S 请求持久队列。
+            .init_resource::<crate::lingtian::requests::PendingLingtianRequests>()
             .add_systems(
                 Update,
                 (
+                    validate_and_dispatch_lingtian_requests,
                     handle_start_till,
                     handle_start_renew,
                     handle_start_planting,
@@ -2794,7 +3167,8 @@ mod tests {
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
-                    .chain(),
+                    .chain()
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
         app
     }
@@ -2858,8 +3232,8 @@ mod tests {
     #[test]
     fn harvest_e2e_drops_plant_and_clears_plot() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(2, 64, 2);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -2914,8 +3288,8 @@ mod tests {
         );
 
         let mut app = build_harvest_app_with_item_registry(item_registry);
-        let player = app.world_mut().spawn(inventory).id();
         let pos = BlockPos::new(4, 64, 4);
+        let player = valid_test_player(&mut app, inventory, pos);
         let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -2954,8 +3328,8 @@ mod tests {
     #[test]
     fn harvest_rejected_when_crop_not_ripe() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let mut p = LingtianPlot::new(pos, None);
         let mut crop = CropInstance::new("ci_she_hao".into());
         crop.growth = 0.5;
@@ -2973,8 +3347,8 @@ mod tests {
     #[test]
     fn harvest_rejected_when_no_crop() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         app.world_mut().spawn(LingtianPlot::new(pos, None));
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3005,12 +3379,12 @@ mod tests {
     #[test]
     fn harvest_auto_rejected_when_herbalism_below_unlock_level() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         // auto_unlock_level 默认 3；lv=2 明确不足。
         app.world_mut()
             .entity_mut(player)
             .insert(skill_set_with_herbalism_lv(2));
-        let pos = BlockPos::new(0, 64, 0);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3030,8 +3404,8 @@ mod tests {
     fn harvest_auto_rejected_when_herbalism_missing_entirely() {
         // 完全没有 SkillSet/Cultivation 组件 —— 等价 herbalism lv=0，同样必须被拒。
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3049,12 +3423,12 @@ mod tests {
     #[test]
     fn harvest_auto_allowed_when_herbalism_meets_unlock_level() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         // 刚好等于 auto_unlock_level=3 —— 边界值必须放行（>= 不是 >）。
         app.world_mut()
             .entity_mut(player)
             .insert(skill_set_with_herbalism_lv(3));
-        let pos = BlockPos::new(0, 64, 0);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3072,11 +3446,11 @@ mod tests {
     #[test]
     fn harvest_auto_allowed_when_herbalism_well_above_unlock_level() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         app.world_mut()
             .entity_mut(player)
             .insert(skill_set_with_herbalism_lv(10));
-        let pos = BlockPos::new(0, 64, 0);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3095,8 +3469,8 @@ mod tests {
     fn harvest_manual_mode_is_unaffected_by_herbalism_level() {
         // Manual 模式完全不该受门禁影响，即使玩家一点采集技艺都没有。
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3114,8 +3488,8 @@ mod tests {
     #[test]
     fn five_harvests_make_plot_barren() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(3, 64, 3);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         // 收 N_RENEW 次：每次都重新种熟（手动设 growth=1）
         let plot = spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         for i in 0..crate::lingtian::plot::N_RENEW {
@@ -3173,8 +3547,8 @@ mod tests {
                     lingering_owner_qi: None,
                 },
             });
-        let player = app.world_mut().spawn(inv).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, inv, pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3199,8 +3573,8 @@ mod tests {
     #[test]
     fn harvest_completion_emits_herbalism_skill_xp() {
         let mut app = build_harvest_app();
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3269,11 +3643,12 @@ mod tests {
                     tick_lingtian_sessions,
                     apply_completed_sessions,
                 )
-                    .chain(),
+                    .chain()
+                    .after(crate::world::movement_commit::AuthoritativePositionCommitSet),
             );
 
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_ripe_plot(&mut app, "ci_she_hao", pos);
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -3366,8 +3741,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set(DEFAULT_ZONE, 5.0);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3393,8 +3768,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set("blood_valley", 5.0);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(8, 64, 8);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_empty_plot_in_zone(&mut app, pos, "blood_valley");
 
         app.world_mut().send_event(StartReplenishRequest {
@@ -3430,8 +3805,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set(DEFAULT_ZONE, 0.79);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3456,8 +3831,8 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set(DEFAULT_ZONE, 0.8);
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3483,11 +3858,8 @@ mod tests {
     #[test]
     fn replenish_bone_coin_consumes_one_coin_and_adds_0_8() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_bone_coins(3))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_bone_coins(3), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3506,11 +3878,12 @@ mod tests {
     #[test]
     fn replenish_beast_core_overflows_to_zone_when_full() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_misc_stack("mutant_beast_core", 1))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_misc_stack("mutant_beast_core", 1),
+            pos,
+        );
         let plot = spawn_empty_plot(&mut app, pos);
         // plot_qi 已经在 0.5/1.0 → 注 2.0 → +0.5 满，溢出 1.5 回 zone
         app.world_mut()
@@ -3547,11 +3920,12 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set("north_wastes", 1.0);
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_misc_stack("mutant_beast_core", 1))
-            .id();
         let pos = BlockPos::new(9, 64, 9);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_misc_stack("mutant_beast_core", 1),
+            pos,
+        );
         let plot = spawn_empty_plot_in_zone(&mut app, pos, "north_wastes");
         app.world_mut()
             .get_mut::<LingtianPlot>(plot)
@@ -3583,11 +3957,12 @@ mod tests {
     #[test]
     fn replenish_ling_shui_consumes_one_bottle() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_misc_stack("ling_shui", 2))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            make_inventory_with_misc_stack("ling_shui", 2),
+            pos,
+        );
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3614,11 +3989,8 @@ mod tests {
             let mut app = build_app();
             app.world_mut()
                 .insert_resource(LingtianHarvestRng::new(343));
-            let player = app
-                .world_mut()
-                .spawn(make_inventory_with_residue(kind, 0, 1))
-                .id();
             let pos = BlockPos::new(0, 64, 0);
+            let player = valid_test_player(&mut app, make_inventory_with_residue(kind, 0, 1), pos);
             let plot = spawn_empty_plot(&mut app, pos);
             app.world_mut().send_event(StartReplenishRequest {
                 player,
@@ -3651,14 +4023,15 @@ mod tests {
         app.world_mut().insert_resource(LingtianHarvestRng::new(2));
         app.world_mut().resource_mut::<CombatClock>().tick = 987;
         let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
-        let player = app
-            .world_mut()
-            .spawn((
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(
+            &mut app,
+            (
                 Username("Azure".to_string()),
                 make_inventory_with_residue(kind, 0, 1),
-            ))
-            .id();
-        let pos = BlockPos::new(0, 64, 0);
+            ),
+            pos,
+        );
         let plot = spawn_empty_plot_in_zone(&mut app, pos, "lingquan_marsh");
         app.world_mut()
             .get_mut::<LingtianPlot>(plot)
@@ -3701,13 +4074,10 @@ mod tests {
     fn replenish_rejects_expired_residue() {
         let mut app = build_app();
         let kind = crate::alchemy::residue::PillResidueKind::FailedPill;
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_residue(kind, 10, 1))
-            .id();
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_residue(kind, 10, 1), pos);
         app.world_mut().resource_mut::<CombatClock>().tick =
             10 + crate::alchemy::residue::PILL_RESIDUE_TTL_TICKS;
-        let pos = BlockPos::new(0, 64, 0);
         spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3735,8 +4105,8 @@ mod tests {
     fn replenish_rejected_when_no_material() {
         let mut app = build_app();
         // bone_coins=0，请求 BoneCoin → 拒
-        let player = app.world_mut().spawn(empty_inventory_8x8()).id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, empty_inventory_8x8(), pos);
         spawn_empty_plot(&mut app, pos);
         app.world_mut().send_event(StartReplenishRequest {
             player,
@@ -3750,11 +4120,8 @@ mod tests {
     #[test]
     fn replenish_rejected_when_in_cooldown() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_bone_coins(2))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_bone_coins(2), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         // 模拟"刚补过" — last_replenish_at 设到当前 clock
         app.world_mut()
@@ -3780,11 +4147,8 @@ mod tests {
     #[test]
     fn replenish_allowed_after_cooldown_expires() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_bone_coins(2))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_bone_coins(2), pos);
         let plot = spawn_empty_plot(&mut app, pos);
         app.world_mut()
             .resource_mut::<LingtianClock>()
@@ -3814,10 +4178,7 @@ mod tests {
     #[test]
     fn till_with_combined_environment_yields_cap_2_8() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -3853,10 +4214,7 @@ mod tests {
         // plan-lingtian-weather-v1 §2 — `PlotEnvironment::base()` 默认 Summer
         // (-0.2 modifier)，所以裸开垦的 plot_qi_cap = 1.0 - 0.2 = 0.8。
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -3885,10 +4243,7 @@ mod tests {
     fn till_xizhuan_environment_keeps_cap_at_1_0() {
         // 汐转期 modifier=0，plot_qi_cap 锁回 plan-lingtian-v1 的 1.0 基线。
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn(make_inventory_with_hoe(HoeKind::Iron, 1.0))
-            .id();
+        let player = spawn_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0));
         app.world_mut().send_event(StartTillRequest {
             player,
             pos: BlockPos::new(0, 64, 0),
@@ -4343,10 +4698,10 @@ mod tests {
     }
 
     /// build_harvest_app 已有；本 helper 在它基础上同时挂 LifeRecord 给 owner / operator
-    fn spawn_player_with_lifelog(app: &mut App, character_id: &str) -> Entity {
+    fn spawn_player_with_lifelog(app: &mut App, character_id: &str, target: BlockPos) -> Entity {
         let inv = empty_inventory_8x8();
         let lr = LifeRecord::new(character_id);
-        app.world_mut().spawn((inv, lr)).id()
+        valid_test_player(app, (inv, lr), target)
     }
 
     fn spawn_owned_ripe_plot(
@@ -4365,8 +4720,8 @@ mod tests {
     #[test]
     fn self_harvest_records_no_steal_entries() {
         let mut app = build_harvest_app();
-        let player = spawn_player_with_lifelog(&mut app, "alice");
         let pos = BlockPos::new(0, 64, 0);
+        let player = spawn_player_with_lifelog(&mut app, "alice", pos);
         spawn_owned_ripe_plot(&mut app, "ci_she_hao", pos, Some(player));
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -4390,9 +4745,9 @@ mod tests {
     #[test]
     fn stolen_harvest_records_both_sides() {
         let mut app = build_harvest_app();
-        let owner = spawn_player_with_lifelog(&mut app, "alice");
-        let thief = spawn_player_with_lifelog(&mut app, "bob");
         let pos = BlockPos::new(3, 64, 7);
+        let owner = spawn_player_with_lifelog(&mut app, "alice", pos);
+        let thief = spawn_player_with_lifelog(&mut app, "bob", pos);
         spawn_owned_ripe_plot(&mut app, "ning_mai_cao", pos, Some(owner));
         app.world_mut().send_event(StartHarvestRequest {
             player: thief,
@@ -4441,11 +4796,12 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         };
-        let thief = app
-            .world_mut()
-            .spawn((empty_inventory_8x8(), LifeRecord::new("bob"), thief_cult))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let thief = valid_test_player(
+            &mut app,
+            (empty_inventory_8x8(), LifeRecord::new("bob"), thief_cult),
+            pos,
+        );
         let mut p = LingtianPlot::new(pos, Some(owner));
         p.plot_qi = 0.5;
         let plot = app.world_mut().spawn(p).id();
@@ -4517,9 +4873,10 @@ mod tests {
         app.world_mut()
             .resource_mut::<ZoneQiAccount>()
             .set("north_wastes", 3.0);
-        let thief = app
-            .world_mut()
-            .spawn((
+        let pos = BlockPos::new(4, 64, 4);
+        let thief = valid_test_player(
+            &mut app,
+            (
                 empty_inventory_8x8(),
                 LifeRecord::new("bob"),
                 Cultivation {
@@ -4527,9 +4884,9 @@ mod tests {
                     qi_max: 100.0,
                     ..Default::default()
                 },
-            ))
-            .id();
-        let pos = BlockPos::new(4, 64, 4);
+            ),
+            pos,
+        );
         let mut plot = LingtianPlot::new(pos, None).with_zone("north_wastes");
         plot.plot_qi = 0.5;
         app.world_mut().spawn(plot);
@@ -4581,10 +4938,11 @@ mod tests {
             qi_max: 100.0,
             ..Default::default()
         };
-        let player = app
-            .world_mut()
-            .spawn((empty_inventory_8x8(), LifeRecord::new("p"), cult))
-            .id();
+        let player = valid_test_player(
+            &mut app,
+            (empty_inventory_8x8(), LifeRecord::new("p"), cult),
+            pos,
+        );
         app.world_mut()
             .send_event(StartDrainQiRequest { player, pos });
         for _ in 0..DRAIN_QI_TICKS {
@@ -4629,17 +4987,18 @@ mod tests {
         let mut plot = LingtianPlot::new(pos, None);
         plot.plot_qi = 0.5;
         app.world_mut().spawn(plot);
-        let player = app
-            .world_mut()
-            .spawn((
+        let player = valid_test_player(
+            &mut app,
+            (
                 empty_inventory_8x8(),
                 Cultivation {
                     qi_current: 0.0,
                     qi_max: 100.0,
                     ..Default::default()
                 },
-            ))
-            .id();
+            ),
+            pos,
+        );
 
         app.world_mut()
             .send_event(StartDrainQiRequest { player, pos });
@@ -4670,11 +5029,9 @@ mod tests {
     #[test]
     fn drain_qi_rejected_on_empty_plot() {
         let mut app = build_app();
-        let player = app
-            .world_mut()
-            .spawn((empty_inventory_8x8(), LifeRecord::new("p")))
-            .id();
         let pos = BlockPos::new(0, 64, 0);
+        let player =
+            valid_test_player(&mut app, (empty_inventory_8x8(), LifeRecord::new("p")), pos);
         let mut p = LingtianPlot::new(pos, None);
         p.plot_qi = 0.0;
         app.world_mut().spawn(p);
@@ -4687,8 +5044,8 @@ mod tests {
     #[test]
     fn ownerless_harvest_records_neither_side() {
         let mut app = build_harvest_app();
-        let player = spawn_player_with_lifelog(&mut app, "wanderer");
         let pos = BlockPos::new(0, 64, 0);
+        let player = spawn_player_with_lifelog(&mut app, "wanderer", pos);
         spawn_owned_ripe_plot(&mut app, "ci_she_hao", pos, None); // 无主田
         app.world_mut().send_event(StartHarvestRequest {
             player,
@@ -4708,7 +5065,1050 @@ mod tests {
         );
     }
 
-    // -- M1: auto_set_plot_zone retries when ZoneRegistry arrives late ------
+    fn queue_test_request(app: &mut App, action: &str, player: Entity, pos: BlockPos) {
+        let request = match action {
+            "till" => PendingLingtianRequest::Till {
+                actor: player,
+                pos,
+                hoe_instance_id: 1,
+                mode: SessionMode::Manual,
+            },
+            "renew" => PendingLingtianRequest::Renew {
+                actor: player,
+                pos,
+                hoe_instance_id: 1,
+            },
+            "planting" => PendingLingtianRequest::Planting {
+                actor: player,
+                pos,
+                plant_id: "ci_she_hao".into(),
+            },
+            "harvest" => PendingLingtianRequest::Harvest {
+                actor: player,
+                pos,
+                mode: SessionMode::Manual,
+            },
+            "replenish" => PendingLingtianRequest::Replenish {
+                actor: player,
+                pos,
+                source: ReplenishSource::BoneCoin,
+            },
+            "drain_qi" => PendingLingtianRequest::DrainQi { actor: player, pos },
+            _ => unreachable!(),
+        };
+        app.world_mut()
+            .resource_mut::<PendingLingtianRequests>()
+            .push(request);
+    }
+
+    #[test]
+    fn validator_preserves_cross_action_fifo_per_actor() {
+        let mut app = App::new();
+        app.init_resource::<PendingLingtianRequests>()
+            .add_event::<StartTillRequest>()
+            .add_event::<StartRenewRequest>()
+            .add_event::<StartPlantingRequest>()
+            .add_event::<StartHarvestRequest>()
+            .add_event::<StartReplenishRequest>()
+            .add_event::<StartDrainQiRequest>();
+        app.add_systems(Update, validate_and_dispatch_lingtian_requests);
+        // spawn bundle 与 Position 分开插入：bundle 自带 Position，同 tuple spawn 会
+        // 撞重复组件 panic（insert 语义是替换所以分开插安全）
+        let actor = spawn_test_player(&mut app, ());
+        let pos = BlockPos::new(0, 64, 0);
+        queue_test_request(&mut app, "till", actor, pos);
+        queue_test_request(&mut app, "renew", actor, pos);
+        queue_test_request(&mut app, "planting", actor, pos);
+        queue_test_request(&mut app, "harvest", actor, pos);
+        queue_test_request(&mut app, "replenish", actor, pos);
+        queue_test_request(&mut app, "drain_qi", actor, pos);
+
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<StartTillRequest>>()
+                .drain()
+                .count(),
+            1,
+            "first ingress action must be Till"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<StartRenewRequest>>()
+                .drain()
+                .count(),
+            0,
+            "later same-actor action must remain deferred"
+        );
+        assert_eq!(app.world().resource::<PendingLingtianRequests>().len(), 5);
+
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<StartRenewRequest>>()
+                .drain()
+                .count(),
+            1,
+            "second ingress action must be Renew after Till gets its turn"
+        );
+        assert_eq!(app.world().resource::<PendingLingtianRequests>().len(), 4);
+    }
+    #[test]
+    fn every_start_handler_fails_closed_for_wrong_or_missing_authority_components() {
+        for (action_index, action) in [
+            "till",
+            "renew",
+            "planting",
+            "harvest",
+            "replenish",
+            "drain_qi",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (denial_index, denial) in
+                ["wrong_dimension", "missing_position", "missing_dimension"]
+                    .into_iter()
+                    .enumerate()
+            {
+                let pos = BlockPos::new(
+                    10_000 + action_index as i32 * 10 + denial_index as i32,
+                    64,
+                    0,
+                );
+                let mut app = build_planting_app();
+                let inventory = match action {
+                    "till" | "renew" => make_inventory_with_hoe(HoeKind::Iron, 1.0),
+                    "planting" => make_inventory_with_seed("ci_she_hao_seed", 2),
+                    "replenish" => {
+                        let mut inventory = empty_inventory_8x8();
+                        inventory.bone_coins = 2;
+                        inventory
+                    }
+                    _ => empty_inventory_8x8(),
+                };
+                let player = valid_test_player(
+                    &mut app,
+                    (
+                        inventory,
+                        Cultivation::default(),
+                        LifeRecord::new("authority"),
+                    ),
+                    pos,
+                );
+                match action {
+                    "renew" => {
+                        let mut plot = LingtianPlot::new(pos, Some(player));
+                        plot.harvest_count = crate::lingtian::plot::N_RENEW;
+                        app.world_mut().spawn(plot);
+                    }
+                    "planting" => {
+                        app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
+                    }
+                    "harvest" => {
+                        spawn_ripe_plot(&mut app, "ci_she_hao", pos);
+                    }
+                    "replenish" => {
+                        app.world_mut().spawn(LingtianPlot::new(pos, Some(player)));
+                    }
+                    "drain_qi" => {
+                        let mut plot = LingtianPlot::new(pos, None);
+                        plot.plot_qi = 0.5;
+                        app.world_mut().spawn(plot);
+                    }
+                    _ => {}
+                }
+                let expected_reason = match denial {
+                    "wrong_dimension" => {
+                        app.world_mut().entity_mut(player).insert(CurrentDimension(
+                            crate::world::dimension::DimensionKind::Tsy,
+                        ));
+                        crate::lingtian::range_gate::LingtianInteractionDenial::WrongDimension
+                    }
+                    "missing_position" => {
+                        app.world_mut().entity_mut(player).remove::<Position>();
+                        crate::lingtian::range_gate::LingtianInteractionDenial::MissingPosition
+                    }
+                    "missing_dimension" => {
+                        app.world_mut()
+                            .entity_mut(player)
+                            .remove::<CurrentDimension>();
+                        crate::lingtian::range_gate::LingtianInteractionDenial::MissingDimension
+                    }
+                    _ => unreachable!(),
+                };
+                queue_test_request(&mut app, action, player, pos);
+                app.update();
+                assert!(
+                    crate::lingtian::range_gate::denial_was_logged(player, pos, expected_reason,),
+                    "{action} {denial} must execute the interaction gate denial path"
+                );
+                assert!(
+                    app.world().resource::<ActiveLingtianSessions>().is_empty(),
+                    "{action} must fail closed for {denial} even when all action prerequisites are valid"
+                );
+            }
+        }
+    }
+
+    fn move_test_player_out_of_range(app: &mut App, player: Entity, target: BlockPos) {
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position(DVec3::new(
+                f64::from(target.x) + 20.5,
+                f64::from(target.y) + 0.5,
+                f64::from(target.z) + 0.5,
+            )));
+    }
+
+    fn run_until_session_finishes(app: &mut App, ticks: u32) {
+        for _ in 0..ticks {
+            app.update();
+        }
+        assert!(
+            app.world().resource::<ActiveLingtianSessions>().is_empty(),
+            "finished session must leave the active-session table even when completion is denied"
+        );
+    }
+
+    #[test]
+    fn all_start_handlers_reject_out_of_range_without_mutating_targets_or_inventory() {
+        let far = Position(DVec3::new(20.5, 64.5, 0.5));
+        let overworld = CurrentDimension(crate::world::dimension::DimensionKind::Overworld);
+
+        let mut till = build_app();
+        let till_player = spawn_test_player(&mut till, make_inventory_with_hoe(HoeKind::Iron, 1.0));
+        till.world_mut().entity_mut(till_player).insert(far);
+        queue_test_request(&mut till, "till", till_player, BlockPos::new(0, 64, 0));
+        till.update();
+        assert!(till.world().resource::<ActiveLingtianSessions>().is_empty());
+        assert_eq!(
+            till.world()
+                .get::<PlayerInventory>(till_player)
+                .unwrap()
+                .equipped[MAIN_HAND_SLOT]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            1.0,
+            "remote till must not wear the hoe"
+        );
+        assert_eq!(
+            till.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(till.world())
+                .count(),
+            0,
+            "remote till must not create a plot"
+        );
+
+        let mut renew = build_app();
+        let renew_pos = BlockPos::new(0, 64, 0);
+        let renew_player = valid_test_player(
+            &mut renew,
+            make_inventory_with_hoe(HoeKind::Iron, 1.0),
+            renew_pos,
+        );
+        renew.world_mut().entity_mut(renew_player).insert(far);
+        let mut barren = LingtianPlot::new(renew_pos, Some(renew_player));
+        barren.harvest_count = crate::lingtian::plot::N_RENEW;
+        let renew_plot = renew.world_mut().spawn(barren).id();
+        queue_test_request(&mut renew, "renew", renew_player, renew_pos);
+        renew.update();
+        assert!(renew
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert!(renew
+            .world()
+            .get::<LingtianPlot>(renew_plot)
+            .unwrap()
+            .is_barren());
+
+        let mut planting = build_planting_app();
+        let planting_pos = BlockPos::new(0, 64, 0);
+        let planting_player = valid_test_player(
+            &mut planting,
+            make_inventory_with_seed("ci_she_hao_seed", 2),
+            planting_pos,
+        );
+        planting.world_mut().entity_mut(planting_player).insert(far);
+        let planting_plot = planting
+            .world_mut()
+            .spawn(LingtianPlot::new(planting_pos, Some(planting_player)))
+            .id();
+        queue_test_request(&mut planting, "planting", planting_player, planting_pos);
+        planting.update();
+        assert!(planting
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert!(planting
+            .world()
+            .get::<LingtianPlot>(planting_plot)
+            .unwrap()
+            .crop
+            .is_none());
+        assert_eq!(
+            planting
+                .world()
+                .get::<PlayerInventory>(planting_player)
+                .unwrap()
+                .containers[0]
+                .items[0]
+                .instance
+                .stack_count,
+            2,
+            "remote planting must not consume seed"
+        );
+
+        let mut harvest = build_harvest_app();
+        let harvest_pos = BlockPos::new(0, 64, 0);
+        let harvest_player = valid_test_player(&mut harvest, empty_inventory_8x8(), harvest_pos);
+        harvest.world_mut().entity_mut(harvest_player).insert(far);
+        let harvest_plot = spawn_ripe_plot(&mut harvest, "ci_she_hao", harvest_pos);
+        queue_test_request(&mut harvest, "harvest", harvest_player, harvest_pos);
+        harvest.update();
+        assert!(harvest
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert!(harvest
+            .world()
+            .get::<LingtianPlot>(harvest_plot)
+            .unwrap()
+            .crop
+            .as_ref()
+            .is_some_and(|crop| crop.is_ripe()));
+
+        let mut replenish = build_app();
+        let replenish_pos = BlockPos::new(0, 64, 0);
+        let mut replenish_inventory = empty_inventory_8x8();
+        replenish_inventory.bone_coins = 2;
+        let replenish_player =
+            valid_test_player(&mut replenish, replenish_inventory, replenish_pos);
+        replenish
+            .world_mut()
+            .entity_mut(replenish_player)
+            .insert(far);
+        let replenish_plot = replenish
+            .world_mut()
+            .spawn(LingtianPlot::new(replenish_pos, Some(replenish_player)))
+            .id();
+        queue_test_request(&mut replenish, "replenish", replenish_player, replenish_pos);
+        replenish.update();
+        assert!(replenish
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert_eq!(
+            replenish
+                .world()
+                .get::<PlayerInventory>(replenish_player)
+                .unwrap()
+                .bone_coins,
+            2,
+            "remote replenish must not consume material"
+        );
+        assert_eq!(
+            replenish
+                .world()
+                .get::<LingtianPlot>(replenish_plot)
+                .unwrap()
+                .plot_qi,
+            0.0
+        );
+
+        let mut drain = build_app();
+        let drain_pos = BlockPos::new(0, 64, 0);
+        let drain_player = valid_test_player(
+            &mut drain,
+            (
+                empty_inventory_8x8(),
+                Cultivation::default(),
+                LifeRecord::new("remote"),
+            ),
+            drain_pos,
+        );
+        drain.world_mut().entity_mut(drain_player).insert(far);
+        drain.world_mut().entity_mut(drain_player).insert(overworld);
+        let mut qi_plot = LingtianPlot::new(drain_pos, None);
+        qi_plot.plot_qi = 0.5;
+        let drain_plot = drain.world_mut().spawn(qi_plot).id();
+        queue_test_request(&mut drain, "drain_qi", drain_player, drain_pos);
+        drain.update();
+        assert!(drain
+            .world()
+            .resource::<ActiveLingtianSessions>()
+            .is_empty());
+        assert_eq!(
+            drain
+                .world()
+                .get::<LingtianPlot>(drain_plot)
+                .unwrap()
+                .plot_qi,
+            0.5
+        );
+        assert_eq!(
+            drain
+                .world()
+                .get::<Cultivation>(drain_player)
+                .unwrap()
+                .qi_current,
+            0.0
+        );
+    }
+
+    #[test]
+    fn all_player_completion_paths_revalidate_range_before_side_effects() {
+        let pos = BlockPos::new(0, 64, 0);
+
+        let mut till = build_app();
+        let till_player =
+            valid_test_player(&mut till, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        till.world_mut().send_event(StartTillRequest {
+            player: till_player,
+            pos,
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+        till.update();
+        move_test_player_out_of_range(&mut till, till_player, pos);
+        run_until_session_finishes(&mut till, TILL_MANUAL_TICKS - 1);
+        assert_eq!(
+            till.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(till.world())
+                .count(),
+            0
+        );
+        assert_eq!(
+            till.world()
+                .get::<PlayerInventory>(till_player)
+                .unwrap()
+                .equipped[MAIN_HAND_SLOT]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            1.0
+        );
+        assert_eq!(
+            till.world_mut()
+                .resource_mut::<Events<TillCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut renew = build_app();
+        let renew_player =
+            valid_test_player(&mut renew, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        let mut barren = LingtianPlot::new(pos, Some(renew_player));
+        barren.harvest_count = crate::lingtian::plot::N_RENEW;
+        let renew_plot = renew.world_mut().spawn(barren).id();
+        renew.world_mut().send_event(StartRenewRequest {
+            player: renew_player,
+            pos,
+            hoe_instance_id: 1,
+        });
+        renew.update();
+        move_test_player_out_of_range(&mut renew, renew_player, pos);
+        run_until_session_finishes(&mut renew, RENEW_TICKS - 1);
+        assert!(renew
+            .world()
+            .get::<LingtianPlot>(renew_plot)
+            .unwrap()
+            .is_barren());
+        assert_eq!(
+            renew
+                .world_mut()
+                .resource_mut::<Events<RenewCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut planting = build_planting_app();
+        let planting_player = valid_test_player(
+            &mut planting,
+            make_inventory_with_seed("ci_she_hao_seed", 2),
+            pos,
+        );
+        let planting_plot = planting
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, Some(planting_player)))
+            .id();
+        planting.world_mut().send_event(StartPlantingRequest {
+            player: planting_player,
+            pos,
+            plant_id: "ci_she_hao".into(),
+        });
+        planting.update();
+        move_test_player_out_of_range(&mut planting, planting_player, pos);
+        run_until_session_finishes(&mut planting, PLANTING_TICKS - 1);
+        assert!(planting
+            .world()
+            .get::<LingtianPlot>(planting_plot)
+            .unwrap()
+            .crop
+            .is_none());
+        assert_eq!(
+            planting
+                .world()
+                .get::<PlayerInventory>(planting_player)
+                .unwrap()
+                .containers[0]
+                .items[0]
+                .instance
+                .stack_count,
+            2
+        );
+        assert_eq!(
+            planting
+                .world_mut()
+                .resource_mut::<Events<PlantingCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut harvest = build_harvest_app();
+        let harvest_player = valid_test_player(&mut harvest, empty_inventory_8x8(), pos);
+        let harvest_plot = spawn_ripe_plot(&mut harvest, "ci_she_hao", pos);
+        harvest.world_mut().send_event(StartHarvestRequest {
+            player: harvest_player,
+            pos,
+            mode: SessionMode::Manual,
+        });
+        harvest.update();
+        move_test_player_out_of_range(&mut harvest, harvest_player, pos);
+        run_until_session_finishes(&mut harvest, HARVEST_MANUAL_TICKS - 1);
+        let plot = harvest.world().get::<LingtianPlot>(harvest_plot).unwrap();
+        assert!(plot.crop.as_ref().is_some_and(|crop| crop.is_ripe()));
+        assert_eq!(plot.harvest_count, 0);
+        assert_eq!(
+            count_in_main_pack(
+                harvest
+                    .world()
+                    .get::<PlayerInventory>(harvest_player)
+                    .unwrap(),
+                "ci_she_hao"
+            ),
+            0
+        );
+        assert_eq!(
+            harvest
+                .world_mut()
+                .resource_mut::<Events<HarvestCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut replenish = build_app();
+        let mut inventory = empty_inventory_8x8();
+        inventory.bone_coins = 2;
+        let replenish_player = valid_test_player(&mut replenish, inventory, pos);
+        let replenish_plot = replenish
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, Some(replenish_player)))
+            .id();
+        replenish.world_mut().send_event(StartReplenishRequest {
+            player: replenish_player,
+            pos,
+            source: ReplenishSource::BoneCoin,
+        });
+        replenish.update();
+        move_test_player_out_of_range(&mut replenish, replenish_player, pos);
+        run_until_session_finishes(
+            &mut replenish,
+            ReplenishSource::BoneCoin.duration_ticks() - 1,
+        );
+        assert_eq!(
+            replenish
+                .world()
+                .get::<PlayerInventory>(replenish_player)
+                .unwrap()
+                .bone_coins,
+            2
+        );
+        assert_eq!(
+            replenish
+                .world()
+                .get::<LingtianPlot>(replenish_plot)
+                .unwrap()
+                .plot_qi,
+            0.0
+        );
+        assert_eq!(
+            replenish
+                .world_mut()
+                .resource_mut::<Events<ReplenishCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+
+        let mut drain = build_app();
+        let drain_player = valid_test_player(
+            &mut drain,
+            (
+                empty_inventory_8x8(),
+                Cultivation::default(),
+                LifeRecord::new("completion"),
+            ),
+            pos,
+        );
+        let mut qi_plot = LingtianPlot::new(pos, None);
+        qi_plot.plot_qi = 0.5;
+        let drain_plot = drain.world_mut().spawn(qi_plot).id();
+        drain.world_mut().send_event(StartDrainQiRequest {
+            player: drain_player,
+            pos,
+        });
+        drain.update();
+        move_test_player_out_of_range(&mut drain, drain_player, pos);
+        run_until_session_finishes(&mut drain, DRAIN_QI_TICKS - 1);
+        assert_eq!(
+            drain
+                .world()
+                .get::<LingtianPlot>(drain_plot)
+                .unwrap()
+                .plot_qi,
+            0.5
+        );
+        assert_eq!(
+            drain
+                .world()
+                .get::<Cultivation>(drain_player)
+                .unwrap()
+                .qi_current,
+            0.0
+        );
+        assert_eq!(
+            drain
+                .world_mut()
+                .resource_mut::<Events<QiTransfer>>()
+                .drain()
+                .count(),
+            0
+        );
+        assert_eq!(
+            drain
+                .world_mut()
+                .resource_mut::<Events<DrainQiCompleted>>()
+                .drain()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn completion_gate_rejects_wrong_or_missing_player_authority_components() {
+        let pos = BlockPos::new(0, 64, 0);
+        for denial in ["wrong_dimension", "missing_position", "missing_dimension"] {
+            let mut app = build_app();
+            let player =
+                valid_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+            app.world_mut().send_event(StartTillRequest {
+                player,
+                pos,
+                hoe_instance_id: 1,
+                mode: SessionMode::Manual,
+                terrain: TerrainKind::Grass,
+                environment: PlotEnvironment::base(),
+            });
+            app.update();
+            match denial {
+                "wrong_dimension" => {
+                    app.world_mut().entity_mut(player).insert(CurrentDimension(
+                        crate::world::dimension::DimensionKind::Tsy,
+                    ));
+                }
+                "missing_position" => {
+                    app.world_mut().entity_mut(player).remove::<Position>();
+                }
+                "missing_dimension" => {
+                    app.world_mut()
+                        .entity_mut(player)
+                        .remove::<CurrentDimension>();
+                }
+                _ => unreachable!(),
+            }
+            run_until_session_finishes(&mut app, TILL_MANUAL_TICKS - 1);
+            assert_eq!(
+                app.world_mut()
+                    .query::<&LingtianPlot>()
+                    .iter(app.world())
+                    .count(),
+                0,
+                "{denial} must reject before till creates a plot"
+            );
+            assert_eq!(
+                app.world_mut()
+                    .resource_mut::<Events<TillCompleted>>()
+                    .drain()
+                    .count(),
+                0,
+                "{denial} must not emit TillCompleted"
+            );
+        }
+    }
+
+    #[test]
+    fn same_tick_dimension_transfer_precedes_start_validation() {
+        let mut app = build_app();
+        let overworld = app.world_mut().spawn(OverworldLayer).id();
+        let tsy = app.world_mut().spawn(TsyLayer).id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.add_event::<DimensionTransferRequest>();
+        app.add_systems(
+            Update,
+            apply_dimension_transfers
+                .in_set(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        );
+
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        let mut visible_layers = VisibleEntityLayers::default();
+        visible_layers.0.insert(tsy);
+        app.world_mut().entity_mut(player).insert((
+            CurrentDimension(DimensionKind::Tsy),
+            Position(DVec3::new(100.5, 80.5, 100.5)),
+            EntityLayerId(tsy),
+            VisibleChunkLayer(tsy),
+            visible_layers,
+        ));
+        app.world_mut().send_event(DimensionTransferRequest {
+            entity: player,
+            target: DimensionKind::Overworld,
+            target_pos: DVec3::new(0.5, 64.5, 0.5),
+        });
+        app.world_mut()
+            .resource_mut::<crate::lingtian::requests::PendingLingtianRequests>()
+            .push(PendingLingtianRequest::Till {
+                actor: player,
+                pos,
+                hoe_instance_id: 1,
+                mode: SessionMode::Manual,
+            });
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CurrentDimension>(player),
+            Some(&CurrentDimension(DimensionKind::Overworld)),
+            "same-tick transfer must be applied before start authority is read"
+        );
+        let start_events = app.world().resource::<Events<StartTillRequest>>();
+        assert_eq!(
+            start_events.get_reader().read(start_events).count(),
+            1,
+            "post-transfer gate must dispatch the real pending request on the first update"
+        );
+        assert!(
+            app.world()
+                .resource::<crate::lingtian::requests::PendingLingtianRequests>()
+                .is_empty(),
+            "accepted request must leave the persistent ingress queue"
+        );
+    }
+
+    #[test]
+    fn same_tick_dimension_transfer_precedes_completion_revalidation() {
+        let mut app = build_app();
+        let overworld = app.world_mut().spawn(OverworldLayer).id();
+        let tsy = app.world_mut().spawn(TsyLayer).id();
+        app.insert_resource(DimensionLayers { overworld, tsy });
+        app.add_event::<DimensionTransferRequest>();
+        app.add_systems(
+            Update,
+            apply_dimension_transfers
+                .in_set(DimensionTransferSet)
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
+        );
+
+        let pos = BlockPos::new(0, 64, 0);
+        let player = valid_test_player(&mut app, make_inventory_with_hoe(HoeKind::Iron, 1.0), pos);
+        let mut visible_layers = VisibleEntityLayers::default();
+        visible_layers.0.insert(overworld);
+        app.world_mut().entity_mut(player).insert((
+            EntityLayerId(overworld),
+            VisibleChunkLayer(overworld),
+            visible_layers,
+        ));
+        app.world_mut().send_event(StartTillRequest {
+            player,
+            pos,
+            hoe_instance_id: 1,
+            mode: SessionMode::Manual,
+            terrain: TerrainKind::Grass,
+            environment: PlotEnvironment::base(),
+        });
+        app.update();
+        for _ in 0..TILL_MANUAL_TICKS - 2 {
+            app.update();
+        }
+
+        app.world_mut().send_event(DimensionTransferRequest {
+            entity: player,
+            target: DimensionKind::Tsy,
+            target_pos: DVec3::new(0.5, 80.5, 0.5),
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CurrentDimension>(player),
+            Some(&CurrentDimension(DimensionKind::Tsy)),
+            "same-tick transfer must be applied before completion authority is read"
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(app.world())
+                .count(),
+            0,
+            "transferred player must not create a plot on the finishing tick"
+        );
+        assert_eq!(
+            app.world().get::<PlayerInventory>(player).unwrap().equipped[MAIN_HAND_SLOT]
+                .held
+                .as_ref()
+                .unwrap()
+                .durability,
+            1.0,
+            "transferred player must not wear the hoe on denied completion"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<TillCompleted>>()
+                .drain()
+                .count(),
+            0,
+            "transferred player must not emit TillCompleted"
+        );
+    }
+
+    fn finished_session(mut session: ActiveSession) -> ActiveSession {
+        while !session.is_finished() {
+            session.tick();
+        }
+        session
+    }
+
+    #[test]
+    fn till_reservation_is_shared_exclusive_and_released_on_cancel_and_settlement() {
+        let actor_a = Entity::from_raw(1);
+        let actor_b = Entity::from_raw(2);
+        let pos = BlockPos::new(5, 64, 5);
+        let session = TillSession::new(
+            pos,
+            HoeKind::Iron,
+            11,
+            SessionMode::Manual,
+            PlotEnvironment::base(),
+        );
+        let mut sessions = ActiveLingtianSessions::new();
+
+        assert!(sessions.try_insert_till(actor_a, session.clone(), false));
+        assert!(!sessions.try_insert_till(actor_b, session.clone(), false));
+        assert!(!sessions.try_insert_till(actor_b, session.clone(), true));
+        assert_eq!(sessions.pending_reservations(), 1);
+
+        sessions.clear(actor_a);
+        assert_eq!(sessions.pending_reservations(), 0);
+        let finished = finished_session(ActiveSession::Till(session));
+        let ActiveSession::Till(finished) = finished else {
+            unreachable!();
+        };
+        assert!(sessions.try_insert_till(actor_b, finished, false));
+
+        let drained = sessions.drain_finished();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(sessions.pending_reservations(), 1);
+        sessions.settle_reservations();
+        assert_eq!(sessions.pending_reservations(), 0);
+    }
+
+    #[test]
+    fn npc_finished_sessions_settle_all_direct_farming_variants() {
+        let pos = BlockPos::new(0, 64, 0);
+
+        let mut till_app = build_app();
+        let till_npc = till_app.world_mut().spawn(NpcMarker).id();
+        let ActiveSession::Till(finished_till) =
+            finished_session(ActiveSession::Till(TillSession::new(
+                pos,
+                HoeKind::Iron,
+                1,
+                SessionMode::Manual,
+                PlotEnvironment::base(),
+            )))
+        else {
+            unreachable!();
+        };
+        till_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert_till(till_npc, finished_till, false);
+        till_app.update();
+        assert_eq!(
+            till_app
+                .world_mut()
+                .query::<&LingtianPlot>()
+                .iter(till_app.world())
+                .filter(|plot| plot.pos == pos)
+                .count(),
+            1,
+            "live NPC Till completion must create the plot"
+        );
+
+        let plant_id: PlantId = "ci_she_hao".into();
+        let mut planting_app = build_app();
+        let plant_registry = registry_with_three_test_plants();
+        planting_app.insert_resource(SeedRegistry::from_plant_registry(&plant_registry));
+        planting_app.insert_resource(plant_registry);
+        let planting_npc = planting_app.world_mut().spawn(NpcMarker).id();
+        let planting_plot = planting_app
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, None))
+            .id();
+        planting_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                planting_npc,
+                finished_session(ActiveSession::Planting(PlantingSession::new(
+                    pos,
+                    plant_id.clone(),
+                ))),
+            );
+        planting_app.update();
+        assert_eq!(
+            planting_app
+                .world()
+                .get::<LingtianPlot>(planting_plot)
+                .unwrap()
+                .crop
+                .as_ref()
+                .map(|crop| &crop.kind),
+            Some(&plant_id),
+            "live NPC Planting completion must populate the crop"
+        );
+
+        let mut harvest_app = build_app();
+        harvest_app.insert_resource(registry_with_three_test_plants());
+        harvest_app.insert_resource(registry_with_herb_and_seed_templates());
+        let harvest_npc = harvest_app.world_mut().spawn(NpcMarker).id();
+        let mut harvest_plot_value = LingtianPlot::new(pos, None);
+        let mut crop = CropInstance::new(plant_id.clone());
+        crop.growth = 1.0;
+        harvest_plot_value.crop = Some(crop);
+        let harvest_plot = harvest_app.world_mut().spawn(harvest_plot_value).id();
+        harvest_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                harvest_npc,
+                finished_session(ActiveSession::Harvest(HarvestSession::new(
+                    pos,
+                    plant_id.clone(),
+                    SessionMode::Auto,
+                ))),
+            );
+        harvest_app.update();
+        assert!(
+            harvest_app
+                .world()
+                .get::<LingtianPlot>(harvest_plot)
+                .unwrap()
+                .crop
+                .is_none(),
+            "live NPC Harvest completion must clear the ripe crop"
+        );
+
+        let mut replenish_app = build_app();
+        replenish_app
+            .world_mut()
+            .resource_mut::<ZoneQiAccount>()
+            .set(DEFAULT_ZONE, 1.0);
+        let replenish_npc = replenish_app.world_mut().spawn(NpcMarker).id();
+        let replenish_plot = replenish_app
+            .world_mut()
+            .spawn(LingtianPlot::new(pos, None))
+            .id();
+        replenish_app
+            .world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert(
+                replenish_npc,
+                finished_session(ActiveSession::Replenish(ReplenishSession::new(
+                    pos,
+                    ReplenishSource::Zone,
+                ))),
+            );
+        replenish_app.update();
+        assert_eq!(
+            replenish_app
+                .world()
+                .get::<LingtianPlot>(replenish_plot)
+                .unwrap()
+                .plot_qi,
+            ReplenishSource::Zone.plot_qi_amount(),
+            "live NPC Replenish completion must deposit plot qi"
+        );
+
+        // fix-spec-1901-v2 §6.3 / OPEN-1 — NPC DrainQi 生产链不存在（farming
+        // brain 只注册 Till/Plant/Harvest/Replenish/Migrate），不保留"测试
+        // 手塞可达、生产永远不可达"的假链路；NPC 抽灵由未来独立 NPC plan
+        // 定义 scorer/action/producer/qi ownership 合同。这里不再有
+        // DrainQi 的 NPC completion fixture。
+    }
+
+    #[test]
+    fn despawned_npc_finished_session_is_discarded() {
+        let mut app = build_app();
+        let pos = BlockPos::new(0, 64, 0);
+        let npc = app.world_mut().spawn((NpcMarker, Despawned)).id();
+        let ActiveSession::Till(finished_till) =
+            finished_session(ActiveSession::Till(TillSession::new(
+                pos,
+                HoeKind::Iron,
+                1,
+                SessionMode::Manual,
+                PlotEnvironment::base(),
+            )))
+        else {
+            unreachable!();
+        };
+        app.world_mut()
+            .resource_mut::<ActiveLingtianSessions>()
+            .try_insert_till(npc, finished_till, false);
+
+        app.update();
+
+        assert_eq!(
+            app.world_mut()
+                .query::<&LingtianPlot>()
+                .iter(app.world())
+                .count(),
+            0,
+            "Despawned NPC must not settle a finished farming session"
+        );
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<Events<TillCompleted>>()
+                .drain()
+                .count(),
+            0,
+            "Despawned NPC must not emit completion events"
+        );
+    }
     //
     // Regression: the previous implementation used `Added<LingtianPlot>` and
     // returned early when ZoneRegistry was missing. If a plot spawned on a
@@ -4737,6 +6137,7 @@ mod tests {
         use crate::world::zone::ZoneRegistry;
 
         let mut app = App::new();
+        app.init_resource::<PendingPlotZones>();
         app.add_systems(Update, auto_set_plot_zone);
 
         // Spawn a plot WITHOUT a ZoneRegistry resource (simulates registry
@@ -4755,15 +6156,19 @@ mod tests {
             plot.zone
         );
 
-        // Now insert the registry. With the old `Added`-only impl, the system
-        // would never re-fire for this plot. The fixed impl iterates every
-        // tick and back-fills.
+        // Now insert the registry. The pending-entity cache is retried when the
+        // registry changes, without rescanning historical plots every frame.
         app.insert_resource(ZoneRegistry {
             zones: vec![zone_named(
                 "spawn_zone",
                 DVec3::new(0.0, 0.0, 0.0),
                 DVec3::new(100.0, 100.0, 100.0),
             )],
+            // fix-spec-1901-v2 §7.1 — 注册表刚插入视为 revision 0 基线；
+            // `PendingPlotZones::default()` 的 last_seen 也是 0，首个 update
+            // 会因 `revision_changed` 为 false 而不会重试 pending。
+            // 为了让"插入即重试"语义保持，插入时递增到 1。
+            spatial_revision: 1,
         });
 
         app.update();
@@ -4773,6 +6178,95 @@ mod tests {
             plot.zone, "spawn_zone",
             "tick 2: registry present → zone must be back-filled (got {:?})",
             plot.zone
+        );
+    }
+
+    #[test]
+    fn auto_set_plot_zone_retries_when_existing_registry_changes() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: Vec::new(),
+            spatial_revision: 0,
+        });
+        app.init_resource::<PendingPlotZones>();
+        app.add_systems(Update, auto_set_plot_zone);
+
+        let plot_entity = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(50, 64, 50), None))
+            .id();
+        app.update();
+        assert!(
+            app.world()
+                .get::<LingtianPlot>(plot_entity)
+                .unwrap()
+                .zone
+                .is_empty(),
+            "empty existing registry must leave the plot pending"
+        );
+
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .zones
+            .push(zone_named(
+                "added_zone",
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(100.0, 100.0, 100.0),
+            ));
+        app.world_mut()
+            .resource_mut::<ZoneRegistry>()
+            .spatial_revision = 1;
+        app.update();
+
+        assert_eq!(
+            app.world().get::<LingtianPlot>(plot_entity).unwrap().zone,
+            "added_zone",
+            "in-place ZoneRegistry mutation must retry unresolved plots"
+        );
+    }
+
+    #[test]
+    fn auto_set_plot_zone_does_not_retry_history_for_each_new_plot() {
+        let mut app = App::new();
+        app.insert_resource(ZoneRegistry {
+            zones: vec![zone_named(
+                "registry_zone",
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(100.0, 100.0, 100.0),
+            )],
+            spatial_revision: 0,
+        });
+        app.init_resource::<PendingPlotZones>();
+        app.add_systems(Update, auto_set_plot_zone);
+
+        let unresolved = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(500, 64, 500), None))
+            .id();
+        app.update();
+        app.world_mut()
+            .get_mut::<LingtianPlot>(unresolved)
+            .unwrap()
+            .pos = BlockPos::new(50, 64, 50);
+
+        let new_plot = app
+            .world_mut()
+            .spawn(LingtianPlot::new(BlockPos::new(60, 64, 60), None))
+            .id();
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<LingtianPlot>(unresolved)
+                .unwrap()
+                .zone
+                .is_empty(),
+            "a new plot must not trigger a rescan of historical unresolved entries"
+        );
+        assert_eq!(
+            app.world().get::<LingtianPlot>(new_plot).unwrap().zone,
+            "registry_zone",
+            "the newly added plot must still resolve immediately"
         );
     }
 
@@ -4788,7 +6282,9 @@ mod tests {
                 DVec3::new(0.0, 0.0, 0.0),
                 DVec3::new(100.0, 100.0, 100.0),
             )],
+            spatial_revision: 0,
         });
+        app.init_resource::<PendingPlotZones>();
         app.add_systems(Update, auto_set_plot_zone);
 
         // Pre-set plot zone — system must NOT overwrite it (idempotent).

@@ -547,7 +547,6 @@ pub(crate) fn settle_ephemeral_pseudo_vein_zone_to_target(
         returned_absolute,
         QiTransferReason::PseudoVeinSettle,
     )
-    .map(|transfer| transfer)
 }
 
 /// plan-zone-qi-economy-v1 P3 §8.1 决议 #3 — 灵潮借款归还：能还多少还多少
@@ -898,6 +897,7 @@ mod tests {
     #[test]
     fn fallback_auto_spawn_on_high_drain() {
         let registry = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("slow", 0.4, 0.0), zone("fast", 0.2, 64.0)],
         };
         let drain = HashMap::from([("slow".to_string(), 0.01), ("fast".to_string(), 0.03)]);
@@ -1017,6 +1017,7 @@ mod tests {
             tick: PSEUDO_VEIN_DISSIPATING_TICKS,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("lingquan_marsh", PSEUDO_VEIN_MAX_QI, 0.0)],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -1076,6 +1077,7 @@ mod tests {
         // zone only holds 0.2 fraction (10.0 absolute) worth of qi at settlement time, far less
         // than the 42.5 absolute that was originally borrowed.
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("lingquan_marsh", 0.2, 0.0)],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -1126,6 +1128,7 @@ mod tests {
             tick: PSEUDO_VEIN_AFTERMATH_TICKS,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("lingquan_marsh", 0.42, 0.0)],
         });
         app.add_event::<VfxEventRequest>();
@@ -1172,6 +1175,7 @@ mod tests {
             tick: PSEUDO_VEIN_RISING_TICKS,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("lingquan_marsh", 0.1, 0.0)],
         });
         app.insert_resource(WorldQiAccount::default());
@@ -1211,6 +1215,7 @@ mod tests {
             tick: PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("fast", 0.1, 0.0)],
         });
         app.insert_resource(PseudoVeinFallbackState {
@@ -1264,6 +1269,7 @@ mod tests {
             tick: PSEUDO_VEIN_FALLBACK_EVAL_PERIOD_TICKS,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![zone("fast", 0.1, 0.0)],
         });
         app.insert_resource(PseudoVeinFallbackState {

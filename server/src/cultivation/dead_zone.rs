@@ -227,6 +227,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(DeadZoneTickHandler::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![dead_zone("ash"), normal_zone("normal")],
         });
         app.add_event::<QiTransfer>();
@@ -288,6 +289,7 @@ mod tests {
         app.insert_resource(DeadZoneTickHandler::default());
         // ash zone: spirit_qi=0.0 (dead zone), empty so has room to receive qi
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
@@ -354,6 +356,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(DeadZoneTickHandler::default());
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
@@ -403,6 +406,7 @@ mod tests {
         app.insert_resource(DeadZoneTickHandler::default());
         // ash zone starts at spirit_qi=0.0: dead zone with ample headroom to receive drain
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();
@@ -483,6 +487,7 @@ mod tests {
             shelflife_zone_multiplier: 3.0,
         });
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![dead_zone("ash")],
         });
         app.add_event::<QiTransfer>();

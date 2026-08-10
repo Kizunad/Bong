@@ -812,6 +812,14 @@ mod tests {
 
     use valence::prelude::{App, Events, Position, Update};
 
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(WorldQiAccount::default());
+        app
+    }
+
+    use crate::player::state::canonical_player_id;
+
     use crate::inventory::{
         ContainerState, InventoryRevision, ItemInstance, ItemRarity, PlacedItemState,
         MAIN_PACK_CONTAINER_ID,
@@ -895,7 +903,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -967,7 +975,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 100 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -991,6 +999,8 @@ mod tests {
             .spirit_qi;
 
         // Pitfall-b: entity must have CurrentDimension so find_zone succeeds.
+        // LifeRecord 是 R5 P0b qi_flow 契约的身份前提（#1931/#1941）：无 canonical 身份的
+        // release 会被 fail-closed 拒绝（InvalidActorIdentity），与 zone credit 无关。
         let infuser = app
             .world_mut()
             .spawn((
@@ -1006,6 +1016,7 @@ mod tests {
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
+                LifeRecord::new(canonical_player_id("dugu-infuse-zone-credit")),
             ))
             .id();
 
@@ -1058,7 +1069,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 200 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1085,6 +1096,9 @@ mod tests {
                     dugu_practice_level: 1,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，infusion 在扣除 qi 前被中止。
+                LifeRecord::new(canonical_player_id("dugu-infuse-exact")),
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
             ))
@@ -1118,7 +1132,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 300 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1199,9 +1213,10 @@ mod tests {
     /// This validates the system degrades gracefully rather than panicking.
     #[test]
     fn infuse_poison_without_dimension_deducts_qi_no_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 400 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<InfuseDuguPoisonIntent>();
@@ -1231,6 +1246,10 @@ mod tests {
                 },
                 Lifecycle::default(),
                 Position::new([8.0, 66.0, 8.0]),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity）。无 CurrentDimension 的
+                // 溢出路由场景仍需身份成立——补上与生产一致的 canonical 身份。
+                LifeRecord::new(canonical_player_id("dugu-infuse-nodim")),
                 // No CurrentDimension intentionally.
             ))
             .id();
@@ -1747,7 +1766,7 @@ mod tests {
 
     #[test]
     fn antidote_success_removes_poison_without_restoring_capacity() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 30 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1773,6 +1792,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 扣减在事务内被中止。
+                LifeRecord::new(canonical_player_id("dugu-antidote-success")),
                 inventory,
             ))
             .id();
@@ -1796,7 +1818,7 @@ mod tests {
 
     #[test]
     fn antidote_failure_severs_meridian_without_near_death() {
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 31 });
         app.add_event::<SelfAntidoteIntent>();
         app.add_event::<AntidoteResultEvent>();
@@ -1822,6 +1844,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 在断脉前被中止。
+                LifeRecord::new(canonical_player_id("dugu-failure-sever")),
                 inventory,
             ))
             .id();
@@ -1851,7 +1876,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 50 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1897,6 +1922,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 契约（#1931）：release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失即 fail closed（InvalidActorIdentity），扣减与 zone 入账均不产生。
+                LifeRecord::new(canonical_player_id("dugu-antidote-zone")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -1952,10 +1980,11 @@ mod tests {
     /// QS-003 boundary: antidote with qi_current exactly at cost (boundary, should succeed).
     #[test]
     fn antidote_qi_exactly_at_cost_deducts_correctly_with_zone_credit() {
+        use crate::player::state::canonical_player_id;
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 60 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();
@@ -1989,6 +2018,9 @@ mod tests {
                     loss_per_tick: 0.5,
                 },
                 Lifecycle::default(),
+                // R5 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，缺省会
+                // fail closed 于 InvalidActorIdentity，antidote 永远不会扣费生效。
+                LifeRecord::new(canonical_player_id("dugu-qi-exact-cost-boundary")),
                 inventory,
                 Position::new([8.0, 66.0, 8.0]),
                 CurrentDimension(DimensionKind::Overworld),
@@ -2024,7 +2056,7 @@ mod tests {
         use crate::world::dimension::DimensionKind;
         use crate::world::zone::{ZoneRegistry, DEFAULT_SPAWN_ZONE_NAME};
 
-        let mut app = App::new();
+        let mut app = test_app();
         app.insert_resource(CombatClock { tick: 70 });
         app.insert_resource(ZoneRegistry::fallback());
         app.add_event::<SelfAntidoteIntent>();

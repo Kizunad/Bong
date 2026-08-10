@@ -93,7 +93,15 @@ def load_bbmodel(path, xform=None):
             M = xform.get(e.get("uuid")) if xform else None
             if M is not None:
                 cs = [M[:3, :3] @ c + M[:3, 3] for c in cs]
-                n = M[:3, :3] @ n
+                # 法线走**逆转置**，不是同一个矩阵。纯旋转时两者相同（历史上只喂过旋转，
+                # 所以一直没暴露），一旦 xform 带非均匀缩放就完全不同：法线被转歪、长度也
+                # 跟着缩放变，而下面的着色用的是未归一化的 n·ld —— 被压扁那一轴上的面会
+                # 亮成纯白。羽层的收展动画给羽做轴向缩放（9.5 / 1.6 / 0.17），第一次踩到。
+                A = M[:3, :3]
+                n = np.linalg.inv(A).T @ n if abs(np.linalg.det(A)) > 1e-9 else A @ n
+            ln = float(np.linalg.norm(n))
+            if ln > 1e-9:
+                n = n / ln
             # 四角 → 两三角 (0,1,2),(0,2,3)
             for a, b in ((1, 2), (2, 3)):
                 tris.append((np.array([cs[0], cs[a], cs[b]]),
@@ -101,9 +109,25 @@ def load_bbmodel(path, xform=None):
     return tris, tex, (rw, rh), d.get("name", Path(path).stem)
 
 
+# MC 原版的面亮度是按**朝向查表**的，不是 lambert：上 1.0 / 下 0.5 / 南北(±z) 0.8 /
+# 东西(±x) 0.6。相邻朝向最多差 1.33 倍。而本模块默认的 lambert 光会把 +x 夹到 0.32、
+# +z 给到 0.80 —— 差 2.5 倍。判"体素球够不够圆滑"这类问题时，默认光会把阶梯面的
+# 明暗差放大一倍，看起来一身条纹，进游戏其实没那么糟。要贴近游戏观感就用 shading="mc"。
+MC_FACE_SHADE = ((0.60, 0.60), (1.00, 0.50), (0.80, 0.80))  # 每轴 (正向, 负向)
+
+
+def _mc_shade(n):
+    axis = int(max(range(3), key=lambda i: abs(n[i])))
+    return MC_FACE_SHADE[axis][0 if n[axis] >= 0 else 1]
+
+
 def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35, 0.6, 0.72),
-           xform=None, focus=None):
-    """focus: (center3, span) 固定取景——逐帧自动取景会让动画整体抖动（每帧包围盒不同）。"""
+           xform=None, focus=None, shading="lambert"):
+    """focus: (center3, span) 固定取景——逐帧自动取景会让动画整体抖动（每帧包围盒不同）。
+
+    shading: "lambert"（默认，保持既有行为）或 "mc"（按 MC 原版面亮度表，
+    预览更贴近进游戏后的实际观感）。
+    """
     tris, tex, (rw, rh), name = load_bbmodel(path, xform=xform)
     th, tw = tex.shape[:2]
     R = _rotmat(pitch, 0) @ _rotmat(yaw, 1)
@@ -139,7 +163,7 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
     for vs, uvs, n in view:
         if n[2] <= 0.02:          # 背面剔除（朝向相机 +z 才画）
             continue
-        shade = 0.32 + 0.68 * max(0.0, float(n @ ld))
+        shade = _mc_shade(n) if shading == "mc" else 0.32 + 0.68 * max(0.0, float(n @ ld))
         p = to_screen(vs)
         xs, ys = p[:, 0], p[:, 1]
         x0, x1 = int(max(0, math.floor(xs.min()))), int(min(size - 1, math.ceil(xs.max())))
@@ -182,12 +206,12 @@ def render(path, yaw=-35.0, pitch=22.0, size=600, bg=(22, 23, 26), light=(-0.35,
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)), name
 
 
-def render_three_view(path, size=360, bg=(22, 23, 26)):
+def render_three_view(path, size=360, bg=(22, 23, 26), shading="lambert"):
     """真实纹理三视图：正面、侧面、前侧 3/4；供模型资产每轮自评。"""
     tiles = []
     name = Path(path).stem
     for label, yaw, pitch in THREE_VIEW_ANGLES:
-        rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg)
+        rendered, name = render(path, yaw=yaw, pitch=pitch, size=size, bg=bg, shading=shading)
         tiles.append((label, rendered))
 
     gap = 12

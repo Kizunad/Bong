@@ -517,6 +517,9 @@ public final class InventoryEventHandler implements ServerDataHandler {
     /** {@code EquipSlot} proto enum values print with this prefix (e.g. {@code EQUIP_SLOT_HEAD}). */
     private static final String PROTO_EQUIP_SLOT_PREFIX = "EQUIP_SLOT_";
 
+    /** {@code EquipState} proto enum values print with this prefix (e.g. {@code EQUIP_STATE_WORN}). */
+    private static final String PROTO_EQUIP_STATE_PREFIX = "EQUIP_STATE_";
+
     private static Location parseLocation(JsonObject obj) {
         if (obj == null) return null;
         String kind = readRequiredString(obj, "kind");
@@ -546,15 +549,23 @@ public final class InventoryEventHandler implements ServerDataHandler {
             }
             case "equip" -> {
                 String slotName = readRequiredString(fields, "slot");
-                if (slotName == null) yield null;
+                String stateName = readRequiredString(fields, "state");
+                if (slotName == null || stateName == null) yield null;
                 if (slotName.startsWith(PROTO_EQUIP_SLOT_PREFIX)) {
                     // Proto wire shape: full EquipSlot enum value name (e.g. "EQUIP_SLOT_HEAD"),
                     // not the legacy lowercase wire name ("head") EQUIP_SLOT_BY_WIRE_NAME expects.
                     slotName = slotName.substring(PROTO_EQUIP_SLOT_PREFIX.length())
                         .toLowerCase(java.util.Locale.ROOT);
                 }
+                if (stateName.startsWith(PROTO_EQUIP_STATE_PREFIX)) {
+                    stateName = stateName.substring(PROTO_EQUIP_STATE_PREFIX.length())
+                        .toLowerCase(java.util.Locale.ROOT);
+                }
                 EquipSlotType slot = EQUIP_SLOT_BY_WIRE_NAME.get(slotName);
-                yield slot == null ? null : new EquipLoc(slot);
+                if (slot == null || !(slot.isHand() ? "held" : "worn").equals(stateName)) {
+                    yield null;
+                }
+                yield new EquipLoc(slot);
             }
             case "hotbar" -> {
                 Long index = readRequiredLong(fields, "index");

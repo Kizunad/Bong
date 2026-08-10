@@ -9,7 +9,7 @@ run_server_test() {
   (
     cd "$ROOT_DIR/server"
     CARGO_PROFILE_TEST_DEBUG="${CARGO_PROFILE_TEST_DEBUG:-0}" \
-      cargo test -j1 "$filter" -- --test-threads=1
+      "$ROOT_DIR/scripts/build-token.sh" cargo test -j1 "$filter" -- --test-threads=1
   )
 }
 
@@ -46,7 +46,7 @@ run_server_test "npc::tsy_hostile::tests::obsession_high_value_lure_opens_short_
 echo "=== client: NPC/TSY interaction HUD matrix ==="
 (
   cd "$ROOT_DIR/client"
-  ./gradlew --no-daemon test \
+  "$ROOT_DIR/scripts/build-token.sh" gradle --no-daemon test \
     --tests "com.bong.client.npc.*" \
     --tests "com.bong.client.tsy.*" \
     --tests "com.bong.client.hud.TargetInfoHudPlannerTest" \

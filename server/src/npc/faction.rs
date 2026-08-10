@@ -2793,6 +2793,7 @@ mod tests {
 
     fn p2_zone_registry() -> ZoneRegistry {
         ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 test_zone("qingyun_peaks", 0.0, 0.0, 100.0, 100.0),
                 test_zone("blood_valley", 200.0, 0.0, 320.0, 120.0),

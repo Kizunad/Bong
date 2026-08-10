@@ -179,6 +179,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<TribulationSettled>();
         app.insert_resource(ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![scorch_zone()],
         });
         app.insert_resource(CombatClock { tick: 77 });

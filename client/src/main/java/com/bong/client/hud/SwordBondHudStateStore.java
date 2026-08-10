@@ -19,4 +19,9 @@ public final class SwordBondHudStateStore {
     public static void clear() {
         STATE.set(SwordBondHudState.INACTIVE);
     }
+
+
+    public static void clearOnDisconnect() {
+        clear();
+    }
 }

@@ -2,14 +2,14 @@
 # Bot e2e 编排：起 server（headless offline）→ 跑 scripts/bot/ 协议级黑盒场景 → 收尾。
 #
 # CI（.github/workflows/e2e.yml「Bot e2e stage」）在 release 二进制已构建、redis 已起的
-# job 里调用本脚本，cargo run --release 直接复用缓存。
+# job 里调用本脚本，经构建令牌 wrapper cargo run --release 复用缓存。
 #
 # 本地用法：
 #   bash scripts/bot-e2e.sh                          # 自动起 server（release）
 #   BOT_E2E_PROFILE=debug bash scripts/bot-e2e.sh    # 用 debug 构建（快）
 #   BOT_E2E_REUSE=1 bash scripts/bot-e2e.sh          # 复用已在 25565 跑着的 server
 #
-# 注意：必须经 cargo run 从**当前 checkout** 构建运行，不要直接跑共享 target 里的旧
+# 注意：必须经构建令牌 wrapper 从**当前 checkout**构建运行，不要直接跑共享 target 里的旧
 # 二进制——CARGO_MANIFEST_DIR 是编译期烙死的，旧二进制可能指向已删 worktree 的资产路径
 # 启动即 panic（loot_pools.json not found 实证）。
 
@@ -26,6 +26,7 @@ export BOT_E2E_RUN_TAG
 BOT_E2E_OPERATOR_TAGS=(
   RGA RGB Clr Fog Give Atk RespawnSfx Cast SwordAV Sword Break Pill Cult Box Herbal Eqp ScDim
   MCA MCB CE1 CE2 Req Scope Tol AmbSur Brew ProdAF Refund Resume Forge Craft ProdLG WoodDrop J1 Poi
+  Zlb Zre Alc Bob
 )
 BOT_E2E_OPERATORS=""
 for bot_tag in "${BOT_E2E_OPERATOR_TAGS[@]}"; do
@@ -323,7 +324,7 @@ else
       # The owned server is the harness capability boundary; REUSE never enters this branch.
       export BONG_DEV_MODE=1
     fi
-    exec cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
+    exec "$ROOT/scripts/build-token.sh" cargo run --locked --manifest-path "$ROOT/server/Cargo.toml" $PROFILE_FLAG
   ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
 

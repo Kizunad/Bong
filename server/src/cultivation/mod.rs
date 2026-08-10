@@ -527,7 +527,10 @@ pub fn register(app: &mut App) {
             sync_frailty_status_effects.after(process_lifespan_extension_intents),
             process_duo_she_requests
                 .after(lifespan_aging_tick)
-                .after(DuoSheIntentForwardSet),
+                .after(DuoSheIntentForwardSet)
+                // fix-spec-1901-v2 §4.2 — 夺舍会直接写玩家 `Position` /
+                // `CurrentDimension`，纳入统一移动 commit set。
+                .in_set(crate::world::movement_commit::AuthoritativePositionCommitSet),
             process_life_core_requests.after(process_duo_she_requests),
         ),
     );

@@ -1308,6 +1308,7 @@ mod tests {
             }
         }
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 mk("tsy_a_shallow"),
                 mk("tsy_a_mid"),
@@ -1336,6 +1337,7 @@ mod tests {
             }
         }
         let zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 mk("tsy_lingxu_01_shallow", DVec3::ZERO, DVec3::splat(10.0)),
                 mk(
@@ -1421,6 +1423,7 @@ mod tests {
             }
         }
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
                 mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
@@ -1469,6 +1472,7 @@ mod tests {
             }
         }
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
                 mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
@@ -1518,6 +1522,7 @@ mod tests {
             }
         }
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 mk("tsy_a_shallow", DimensionKind::Tsy, -0.3),
                 mk("tsy_a_mid", DimensionKind::Tsy, -0.6),
@@ -1569,6 +1574,7 @@ mod tests {
             }
         }
         let mut zones = ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![
                 mk("tsy_a_shallow", DimensionKind::Tsy, -0.6),
                 mk("tsy_a_mid", DimensionKind::Tsy, -0.8),

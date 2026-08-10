@@ -12,6 +12,11 @@ import org.slf4j.LoggerFactory;
 public interface InsightChoiceDispatcher {
     void dispatch(InsightDecision decision);
 
+    /** Dispatch after the store has claimed the offer; the claimed snapshot preserves choice-index resolution. */
+    default void dispatch(InsightDecision decision, InsightOfferViewModel offer) {
+        dispatch(decision);
+    }
+
     /** 没接入网络时使用，仅打印日志。 */
     InsightChoiceDispatcher LOGGING = new InsightChoiceDispatcher() {
         private final Logger log = LoggerFactory.getLogger("bong-client.insight");

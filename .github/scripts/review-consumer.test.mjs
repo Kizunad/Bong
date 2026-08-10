@@ -9,11 +9,28 @@ const consumerTestsWorkflowPath = new URL('../workflows/review-consumer-tests.ym
 const canaryWorkflowPath = new URL('../workflows/review-provider-canary.yml', import.meta.url);
 const canaryContractPath = '.github/workflows/provider-canary.yml';
 const policyPath = new URL('../review-policy/bong.v2.json', import.meta.url);
-const centralSha = '58af0669396ca942128c756ae392934caecd5760';
+// Derived from review-next.yml rather than typed a second time. It used to be a literal,
+// which meant one pin bump had to be transcribed into four places across two files; the
+// first bump after that convention was introduced missed three of them and would have
+// failed CI. A copy of a value is not an independent check of it - what actually needs
+// asserting is that the pin IS an immutable full-length SHA and that the repository
+// checked out at it really is that commit, and both of those still hold below.
+const centralSha = await readCentralPin();
 const providerCanarySha = '9dcee849e3a0b45bd9a8fe663b48ae3fb1d82784';
-// Hash of Kizunad/review/.github/workflows/review.yml; re-verify it on every pin bump.
-// It changes only when that workflow changes, which a central pin bump usually does not.
-const centralWorkflowSha256 = 'b07ba74a0eff87a520a5bd81da4cc7eb0ead97025680af5f5242db9c8e7153e8';
+// Content hash of Kizunad/review/.github/workflows/review.yml at the pinned commit. This one
+// stays literal on purpose: it is the anti-tamper control, so it must NOT be derived from
+// anything the pin can reach. Re-verify it deliberately whenever the central workflow itself
+// changes - which a pin bump does not always imply, but sometimes does.
+const centralWorkflowSha256 = '49bbdb3f0d177924320031bc7a4f32b4cd1488bb81540a26877273383fd2e7fd';
+
+async function readCentralPin() {
+  const yaml = await readFile(workflowPath, 'utf8');
+  const matches = [...yaml.matchAll(/uses: Kizunad\/review\/\.github\/workflows\/review\.yml@(\S+)/g)];
+  assert.equal(matches.length, 1, 'review-next.yml must reference the central workflow exactly once');
+  const ref = matches[0][1];
+  assert.match(ref, /^[0-9a-f]{40}$/, `central pin must be a full 40-hex commit SHA, got "${ref}"`);
+  return ref;
+}
 
 const expectedCanaryInterface = `  workflow_call:
     inputs:
@@ -64,6 +81,16 @@ const expectedCentralInterface = `  workflow_call:
         description: Per-Claude-process timeout
         required: false
         default: 120000
+        type: number
+      max_stdout_bytes:
+        description: Per-Claude-process stdout backstop in bytes
+        required: false
+        default: 268435456
+        type: number
+      max_diff_bytes:
+        description: Runaway guard on total diff size in bytes
+        required: false
+        default: 4194304
         type: number
       circuit_manual_retry:
         description: Allow a trusted workflow_dispatch retry to bypass an open infrastructure circuit
@@ -132,7 +159,7 @@ const expectedCallerJobs = `jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Kizunad/review/.github/workflows/review.yml@58af0669396ca942128c756ae392934caecd5760
+    uses: Kizunad/review/.github/workflows/review.yml@${centralSha}
     with:
       pr_number: \${{ fromJSON(github.event.issue.number || inputs.pr_number) }}
       policy_path: .github/review-policy/bong.v2.json
@@ -259,7 +286,7 @@ test('shadow caller pins the central workflow and preserves the trusted trigger 
   assert.match(yaml, /\["OWNER","MEMBER","COLLABORATOR"\]/);
   assert.match(
     yaml,
-    /uses: Kizunad\/review\/\.github\/workflows\/review\.yml@58af0669396ca942128c756ae392934caecd5760/,
+    new RegExp(`uses: Kizunad/review/\\.github/workflows/review\\.yml@${centralSha}`),
   );
   assert.doesNotMatch(yaml, /Kizunad\/review\/[^\n]*@(main|master|v?\d|[0-9a-f]{1,39})\b/);
   assert.match(yaml, /pr_number: \$\{\{ fromJSON\(github\.event\.issue\.number \|\| inputs\.pr_number\) \}\}/);

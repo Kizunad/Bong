@@ -1,5 +1,6 @@
 package com.bong.client.social;
 
+import com.bong.client.combat.CombatHudStateStore;
 import com.bong.client.hud.BongToast;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,20 @@ class SparringInviteScreenBootstrapTest {
     void reset() {
         SparringInviteScreenBootstrap.resetForTests();
         BongToast.resetForTests();
+        CombatHudStateStore.resetForTests();
+    }
+
+    private static SparringInviteScreenBootstrap.CombatState combatStateOf() {
+        return SparringInviteScreenBootstrap.combatStateOf();
+    }
+
+    private static SparringInviteScreenBootstrap.Decision decide(
+        SocialStateStore.SparringInvite invite,
+        SparringInviteScreenBootstrap.ScreenKind kind,
+        long nowMs,
+        SparringInviteScreenBootstrap.CombatState combat
+    ) {
+        return SparringInviteScreenBootstrap.decide(invite, kind, nowMs, combat);
     }
 
     private static SocialStateStore.SparringInvite invite(String id, long expiresAtMs) {
@@ -90,7 +105,7 @@ class SparringInviteScreenBootstrapTest {
             SparringInviteScreenBootstrap.decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L)
         );
         assertEquals(
-            SparringInviteScreenBootstrap.Decision.BLOCKED_TOAST,
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
             SparringInviteScreenBootstrap.decide(
                 active,
                 SparringInviteScreenBootstrap.ScreenKind.OTHER_SPARRING_INVITE,
@@ -111,7 +126,7 @@ class SparringInviteScreenBootstrapTest {
     @Test
     void activeInviteBlockedByOtherScreenNeverOpensScreen() {
         assertEquals(
-            SparringInviteScreenBootstrap.Decision.BLOCKED_TOAST,
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
             SparringInviteScreenBootstrap.decide(
                 invite("active", 5_000L),
                 SparringInviteScreenBootstrap.ScreenKind.OTHER,
@@ -132,7 +147,7 @@ class SparringInviteScreenBootstrapTest {
             "真实 screen identity 匹配时必须保持当前邀请屏"
         );
         assertEquals(
-            SparringInviteScreenBootstrap.Decision.BLOCKED_TOAST,
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
             SparringInviteScreenBootstrap.decide(second, new SparringInviteScreen(first), 1_000L),
             "真实 screen identity 不同时只能阻塞提示，不能替换当前邀请屏"
         );
@@ -184,6 +199,178 @@ class SparringInviteScreenBootstrapTest {
         assertTrue(
             BongToast.current(System.currentTimeMillis()).text().getString().contains("过期"),
             "过期提示必须明确说明邀请已过期"
+        );
+    }
+
+    // ─── R7 P4 combat-aware deferral（server-authoritative combat snapshot）───
+
+    @Test
+    void combatStateReadsAuthoritativeCombatHudSnapshot() {
+        assertEquals(
+            SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT,
+            combatStateOf(),
+            "无 combat snapshot 时默认脱战"
+        );
+
+        CombatHudStateStore.replace(com.bong.client.combat.CombatHudState.create(0.8f, 0.7f, 0.9f,
+            com.bong.client.combat.DerivedAttrFlags.none()));
+        assertEquals(
+            SparringInviteScreenBootstrap.CombatState.IN_COMBAT,
+            combatStateOf(),
+            "server-authoritative combat_hud_state active 时必须进入战斗态"
+        );
+
+        CombatHudStateStore.clear();
+        assertEquals(
+            SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT,
+            combatStateOf(),
+            "combat_hud_state 清空后必须回到脱战态"
+        );
+    }
+
+    @Test
+    void combatFirstObservationDefersAndNotifies() {
+        SocialStateStore.SparringInvite active = invite("combat-first", 5_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+
+        SparringInviteScreenBootstrap.Decision first =
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.IN_COMBAT);
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
+            first,
+            "战斗中首次观察到邀请必须 DEFER_NOTIFY（toast 一次）"
+        );
+        assertFalse(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "DEFER_NOTIFY 必须产生一次可见提示"
+        );
+    }
+
+    @Test
+    void combatRepeatedObservationDefersSilently() {
+        SocialStateStore.SparringInvite active = invite("combat-repeat", 5_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+        SparringInviteScreenBootstrap.decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE,
+            1_000L, SparringInviteScreenBootstrap.CombatState.IN_COMBAT);
+        BongToast.resetForTests();
+
+        SparringInviteScreenBootstrap.Decision repeat =
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 2_000L,
+                SparringInviteScreenBootstrap.CombatState.IN_COMBAT);
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.DEFER_SILENT,
+            repeat,
+            "同一 identity 的重复战斗观察必须 DEFER_SILENT"
+        );
+        assertTrue(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "DEFER_SILENT 不得产生第二次 toast"
+        );
+    }
+
+    @Test
+    void newIdentityRestoresNotificationEligibility() {
+        SocialStateStore.SparringInvite firstInvite = invite("combat-first-id", 5_000L);
+        SocialStateStore.SparringInvite secondInvite = invite("combat-second-id", 6_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+        SparringInviteScreenBootstrap.decide(firstInvite, SparringInviteScreenBootstrap.ScreenKind.NONE,
+            1_000L, SparringInviteScreenBootstrap.CombatState.IN_COMBAT);
+        BongToast.resetForTests();
+
+        SparringInviteScreenBootstrap.Decision newIdentity =
+            decide(secondInvite, SparringInviteScreenBootstrap.ScreenKind.NONE, 2_000L,
+                SparringInviteScreenBootstrap.CombatState.IN_COMBAT);
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
+            newIdentity,
+            "新 identity 必须重新取得通知资格"
+        );
+        assertFalse(
+            BongToast.current(System.currentTimeMillis()).isEmpty(),
+            "新 identity 的首次观察必须再次 toast"
+        );
+    }
+
+    @Test
+    void combatNeverOpensScreen() {
+        SocialStateStore.SparringInvite active = invite("combat-no-open", 5_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.IN_COMBAT),
+            "战斗中即使空屏也不得 OPEN_SCREEN"
+        );
+    }
+
+    @Test
+    void notInCombatEmptyScreenOpensWhenNotExpired() {
+        SocialStateStore.SparringInvite active = invite("combat-clear", 5_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.OPEN_SCREEN,
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.NOT_IN_COMBAT),
+            "脱战 + 空屏 + 未过期必须 OPEN_SCREEN"
+        );
+    }
+
+    @Test
+    void expiredDeclinesBeforeAnyCombatConsideration() {
+        SocialStateStore.SparringInvite expired = invite("combat-expired", 1_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+
+        for (SparringInviteScreenBootstrap.CombatState combat : SparringInviteScreenBootstrap.CombatState.values()) {
+            SparringInviteScreenBootstrap.Decision decision =
+                decide(expired, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L, combat);
+            assertEquals(
+                SparringInviteScreenBootstrap.Decision.DECLINE_EXPIRED,
+                decision,
+                "过期检查必须先于战斗/屏幕占用判定，combat=" + combat
+            );
+        }
+    }
+
+    @Test
+    void combatDoesNotAffectMatchingScreenOrOtherScreens() {
+        SocialStateStore.SparringInvite active = invite("combat-matching", 5_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.NOOP,
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.MATCHING_SPARRING_INVITE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.IN_COMBAT),
+            "战斗不改变已匹配邀请屏的保持语义"
+        );
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.OTHER_SPARRING_INVITE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.IN_COMBAT),
+            "不同 invite 屏仍按既有占用规则处理"
+        );
+    }
+
+    @Test
+    void missingCombatProducerFailsClosedWithoutOpening() {
+        // CombatHudStateStore 从初始 empty() 态模拟"producer 尚未发送任何快照"
+        SocialStateStore.SparringInvite active = invite("combat-unknown", 5_000L);
+        SparringInviteScreenBootstrap.resetForTests();
+        CombatHudStateStore.resetForTests();
+
+        SparringInviteScreenBootstrap.Decision decision =
+            decide(active, SparringInviteScreenBootstrap.ScreenKind.NONE, 1_000L,
+                SparringInviteScreenBootstrap.CombatState.UNKNOWN);
+
+        assertEquals(
+            SparringInviteScreenBootstrap.Decision.DEFER_NOTIFY,
+            decision,
+            "缺少 authoritative combat producer 时 P4 fail closed：不得 OPEN_SCREEN"
         );
     }
 }

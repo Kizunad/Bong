@@ -6119,41 +6119,54 @@ fn validate_zone_runtime_record(record: &ZoneRuntimeRecord) -> io::Result<()> {
     Ok(())
 }
 
+fn upsert_runtime_qi_account_balance(
+    transaction: &rusqlite::Transaction<'_>,
+    qi_ledger: &WorldQiAccount,
+    account: &QiAccountId,
+    wall_clock: i64,
+) -> io::Result<()> {
+    let balance = qi_ledger.balance(account);
+    if !balance.is_finite() || balance < 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid runtime qi balance account={account} balance={balance}"),
+        ));
+    }
+    transaction
+        .execute(
+            "
+        INSERT INTO qi_runtime_accounts (
+            account_id,
+            balance,
+            schema_version,
+            last_updated_wall
+        ) VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT(account_id) DO UPDATE SET
+            balance = excluded.balance,
+            schema_version = excluded.schema_version,
+            last_updated_wall = excluded.last_updated_wall
+        ",
+            params![
+                account.id.as_str(),
+                balance,
+                CURRENT_SCHEMA_VERSION,
+                wall_clock,
+            ],
+        )
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 pub(crate) fn upsert_runtime_qi_account_balances(
     transaction: &rusqlite::Transaction<'_>,
     qi_ledger: &WorldQiAccount,
     wall_clock: i64,
 ) -> io::Result<()> {
+    // Main credits TSY drain into the fixed `rift_drain_account()`, which is already in this
+    // whitelist. Sync every durable account through one path; do not recreate the PR's obsolete
+    // zone-specific `rift:*` row scan.
     for account in persistent_runtime_qi_accounts() {
-        let balance = qi_ledger.balance(&account);
-        if !balance.is_finite() || balance < 0.0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid runtime qi balance account={account} balance={balance}"),
-            ));
-        }
-        transaction
-            .execute(
-                "
-            INSERT INTO qi_runtime_accounts (
-                account_id,
-                balance,
-                schema_version,
-                last_updated_wall
-            ) VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(account_id) DO UPDATE SET
-                balance = excluded.balance,
-                schema_version = excluded.schema_version,
-                last_updated_wall = excluded.last_updated_wall
-            ",
-                params![
-                    account.id.as_str(),
-                    balance,
-                    CURRENT_SCHEMA_VERSION,
-                    wall_clock,
-                ],
-            )
-            .map_err(io::Error::other)?;
+        upsert_runtime_qi_account_balance(transaction, qi_ledger, &account, wall_clock)?;
     }
     Ok(())
 }
@@ -11384,6 +11397,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let zones = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -11813,6 +11827,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let zones = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -11862,6 +11877,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let existing_zones = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -12070,6 +12086,7 @@ mod persistence_tests {
             .expect("bootstrap should succeed");
 
         let persisted = crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -12349,6 +12366,7 @@ mod persistence_tests {
         app.insert_resource(CultivationClock::default());
         app.insert_resource(WorldQiAccount::default());
         app.insert_resource(crate::world::zone::ZoneRegistry {
+            spatial_revision: 0,
             zones: vec![crate::world::zone::Zone {
                 name: DEFAULT_SPAWN_ZONE_NAME.to_string(),
                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -13970,6 +13988,7 @@ mod persistence_tests {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     let registry = crate::world::zone::ZoneRegistry {
+                        spatial_revision: 0,
                         zones: vec![crate::world::zone::Zone {
                             name: format!("mixed_zone_{index}"),
                             dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -14218,6 +14237,7 @@ mod persistence_tests {
                     let barrier = Arc::clone(&barrier);
                     std::thread::spawn(move || {
                         let registry = crate::world::zone::ZoneRegistry {
+                            spatial_revision: 0,
                             zones: vec![crate::world::zone::Zone {
                                 name: format!("mixed_zone_{batch}_{index}"),
                                 dimension: crate::world::dimension::DimensionKind::Overworld,
@@ -16595,6 +16615,160 @@ mod persistence_tests {
     }
 
     #[test]
+    fn v41_migration_initializes_absent_rift_drain_at_known_zero() {
+        let db_path = database_path("v41-rift-drain-account-absent");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v41-absent-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                DELETE FROM qi_runtime_accounts WHERE account_id = 'rift_drain';
+                UPDATE qi_runtime_accounts
+                SET balance = 12.5
+                WHERE account_id = 'pending_inflow';
+                DROP TABLE dormant_terminal_commits;
+                PRAGMA user_version = 40;
+                ",
+            )
+            .expect("fixture should emulate a v40 database without the v41-only row");
+
+        let absent_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("pre-v41 rift row count should query");
+        assert_eq!(
+            absent_rows, 0,
+            "the pre-v41 fixture must genuinely omit rift_drain before migration"
+        );
+
+        apply_migrations(&mut connection)
+            .expect("v41 rift migration and current v42 migration should succeed");
+
+        let rift_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("v41 must create the missing rift_drain row");
+        assert_eq!(
+            rift_balance, 0.0,
+            "a v40 database without rift history must initialize the new account at known zero"
+        );
+        let pending_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("existing pending balance should remain readable");
+        assert_eq!(
+            pending_balance, 12.5,
+            "v41 must preserve existing stable runtime balances while adding rift_drain"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "the v41 fixture must continue through the current v42 schema"
+        );
+        let terminal_table_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dormant_terminal_commits'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("current terminal table existence should query");
+        assert_eq!(
+            terminal_table_rows, 1,
+            "the migration chain must retain the v42 dormant terminal schema"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v41_migration_initializes_rift_drain_without_mutating_existing_runtime_balances() {
+        let db_path = database_path("v41-rift-drain-account");
+        let root = db_path
+            .parent()
+            .expect("db path should have parent")
+            .to_path_buf();
+        bootstrap_sqlite(&db_path, "v41-fixture").expect("fresh fixture should bootstrap");
+        let mut connection = Connection::open(&db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "
+                UPDATE qi_runtime_accounts
+                SET balance = 55.5
+                WHERE account_id = 'rift_drain';
+                UPDATE qi_runtime_accounts
+                SET balance = 12.5
+                WHERE account_id = 'pending_inflow';
+                DROP TABLE dormant_terminal_commits;
+                PRAGMA user_version = 40;
+                ",
+            )
+            .expect("fixture should emulate a v40 database with existing runtime balances");
+
+        apply_migrations(&mut connection)
+            .expect("v41 rift migration and current v42 migration should succeed");
+
+        let rift_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![RIFT_DRAIN_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("v41 must preserve the existing rift_drain row");
+        assert_eq!(
+            rift_balance, 55.5,
+            "v41 must preserve an existing rift-drain balance instead of resetting it"
+        );
+        let pending_balance: f64 = connection
+            .query_row(
+                "SELECT balance FROM qi_runtime_accounts WHERE account_id = ?1",
+                params![PENDING_INFLOW_ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .expect("existing pending balance should remain readable");
+        assert_eq!(
+            pending_balance, 12.5,
+            "v41 must not overwrite existing stable runtime balances while adding rift_drain"
+        );
+        let user_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version should query");
+        assert_eq!(
+            user_version, CURRENT_USER_VERSION,
+            "the v41 fixture must continue through the current v42 schema"
+        );
+        let terminal_table_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dormant_terminal_commits'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("current terminal table existence should query");
+        assert_eq!(
+            terminal_table_rows, 1,
+            "the migration chain must retain the v42 dormant terminal schema"
+        );
+
+        drop(connection);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn v42_migration_creates_guarded_dormant_terminal_commits_schema() {
         let db_path = database_path("v42-dormant-terminal-schema");
         let root = db_path
@@ -17723,9 +17897,10 @@ mod persistence_tests {
 
         let old_values = [
             (PENDING_INFLOW_ACCOUNT_ID, 11.0),
-            (QI_FLOW_OVERFLOW_ACCOUNT_ID, 17.0),
             (DYING_ELDER_DAN_EXCESS_ACCOUNT_ID, 22.0),
             (DYING_ELDER_RELEASE_OVERFLOW_ACCOUNT_ID, 33.0),
+            // 唯一的旧值：seed 循环后 SQLite 中 qi_flow_overflow 以最后一次写入为准（44.0），
+            // 若这里重复列出 17.0 会让回滚断言拿旧账对拍新账而误红。
             (QI_FLOW_OVERFLOW_ACCOUNT_ID, 44.0),
         ];
         let mut connection = open_persistence_connection(&settings).expect("db should open");

@@ -99,10 +99,16 @@ public final class ScreenTransitionController {
         if (active == null) {
             return;
         }
-        active.handle().cancel();
-        if (activeTransition == active) {
-            activeTransition = null;
-        }
+        activeTransition = null;
+        cancelTransition(active);
+    }
+
+    private static void cancelTransition(ActiveTransition active) {
+        transitionHandle(active).cancel();
+    }
+
+    private static ScreenTransition.TransitionHandle transitionHandle(ActiveTransition active) {
+        return active.handle();
     }
 
     public static boolean inputLocked() {
