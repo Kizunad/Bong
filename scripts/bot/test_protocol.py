@@ -3092,6 +3092,13 @@ def _pb_int32_field(number: int, value: int) -> bytes:
     return mc.write_varint(number << 3) + _pb_raw_varint(value & 0xFFFFFFFFFFFFFFFF)
 
 
+def _pb_sint32_field(number: int, value: int) -> bytes:
+    """protobuf `sint32`（zigzag）字段 wire 编码——WorkbenchOpen 坐标可为负。"""
+    return mc.write_varint(number << 3) + _pb_raw_varint(
+        (value << 1) ^ (value >> 63)
+    )
+
+
 def _proto_message_body(source: str, message_name: str) -> str:
     match = re.search(rf"\bmessage\s+{re.escape(message_name)}\s*\{{", source)
     if match is None:
@@ -4522,6 +4529,73 @@ class PlayerPacketContractTest(unittest.TestCase):
         bot._dispatch(teleport)
         event = bot.events_of("entity_move")[-1]
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
+
+
+class ProbePayloadDecodeTest(unittest.TestCase):
+    """实体/空间探知流 S2C 解码 pin（field 74/77/129/130/132）。
+
+    这些 payload_type 此前不在 proto_min 白名单里，bot 即使收到包也解不出
+    `server_data` 事件，`expect_server_data("event_alert" / "qi_color_observed" /
+    "mineral_probe_result" / "freshness_update" / "workbench_open")` 会静默超时。
+    本类锁定字段号与字段映射，防 wire/label 失配。
+    """
+
+    def test_workbench_open_field_132_decodes_position_zigzag(self):
+        inner = (
+            _pb_varint_field(1, 999)
+            + _pb_sint32_field(2, -3)
+            + _pb_sint32_field(3, 71)
+            + _pb_sint32_field(4, -8)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(132, inner))
+        self.assertEqual(decoded["type"], "workbench_open")
+        self.assertEqual(decoded["entity_id"], 999)
+        self.assertEqual(decoded["position"], [-3, 71, -8], "sint32 负坐标应 zigzag 还原")
+
+    def test_qi_color_observed_field_74_decodes_color_kind_names(self):
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # COLOR_KIND_MELLOW
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+        self.assertEqual(decoded["realm_diff"], 2)
+
+    def test_event_alert_field_77_decodes_message(self):
+        inner = (
+            _pb_varint_field(1, 0)
+            + _pb_string(2, "神识未及，凝脉方可感知保鲜")
+            + _pb_varint_field(4, 70)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(77, inner))
+        self.assertEqual(decoded["type"], "event_alert")
+        self.assertIn("神识未及", decoded["message"])
+        self.assertEqual(decoded["duration_ticks"], 70)
+
+    def test_mineral_probe_result_field_129_decodes_denial_reason(self):
+        inner = _pb_string(1, "denied") + _pb_string(5, "not_mineral_ore")
+        decoded = proto_min.decode_server_data_envelope(_pb_message(129, inner))
+        self.assertEqual(decoded["type"], "mineral_probe_result")
+        self.assertEqual(decoded["kind"], "denied")
+        self.assertEqual(decoded["denial_reason"], "not_mineral_ore")
+
+    def test_freshness_update_field_130_decodes_float_profile(self):
+        inner = (
+            _pb_string(1, "59")
+            + _pb_float32_field(2, 0.75)
+            + _pb_string(3, "food_spoil_mundane_meat_v1")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(130, inner))
+        self.assertEqual(decoded["type"], "freshness_update")
+        self.assertEqual(decoded["item_uuid"], "59")
+        self.assertAlmostEqual(decoded["freshness"], 0.75, places=4)
+        self.assertEqual(decoded["profile_name"], "food_spoil_mundane_meat_v1")
 
 
 if __name__ == "__main__":

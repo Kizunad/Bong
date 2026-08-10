@@ -83,6 +83,11 @@ SERVER_DATA_PAYLOAD_NAMES = {
     121: "loot_container_close",
     131: "insight_offer",
     137: "inventory_move_rejected",
+    74: "qi_color_observed",
+    77: "event_alert",
+    129: "mineral_probe_result",
+    130: "freshness_update",
+    132: "workbench_open",
     142: "morph_state",
 }
 
@@ -832,6 +837,102 @@ def _inventory_move_rejected(data: bytes) -> dict[str, Any]:
     }
 
 
+COLOR_KIND_PASCAL_NAMES = {
+    1: "Sharp",
+    2: "Heavy",
+    3: "Mellow",
+    4: "Solid",
+    5: "Light",
+    6: "Intricate",
+    7: "Gentle",
+    8: "Insidious",
+    9: "Violent",
+    10: "Turbid",
+}
+
+
+def _sint32(fields: list[tuple[int, int, Any]], field: int, default: int = 0) -> int:
+    """protobuf `sint32`（zigzag varint）。WorkbenchOpen 的坐标可为负。"""
+    if not _has(fields, field):
+        return default
+    raw = _varint(fields, field)
+    return (raw >> 1) ^ -(raw & 1)
+
+
+def _qi_color_observed(data: bytes) -> dict[str, Any]:
+    """plan-exploration-probe-return-v1 —— 神识观色 S2C（field 74）。
+
+    与 Rust ServerDataPayloadV1::QiColorObserved 精确对应；`main`/`secondary`
+    是 ColorKind 枚举（varint），映射为 PascalCase 名（与 Rust 变体一致）；secondary
+    缺省时保持 None（同境界掩码路径不携带）。
+    """
+    fields = _fields(data)
+    secondary_raw = _optional_varint(fields, 4)
+    return {
+        "v": 1,
+        "type": "qi_color_observed",
+        "observer": _string(fields, 1),
+        "observed": _string(fields, 2),
+        "main": COLOR_KIND_PASCAL_NAMES.get(_varint(fields, 3), "unspecified"),
+        "secondary": (
+            COLOR_KIND_PASCAL_NAMES.get(secondary_raw) if secondary_raw is not None else None
+        ),
+        "is_chaotic": bool(_varint(fields, 5)),
+        "is_hunyuan": bool(_varint(fields, 6)),
+        "realm_diff": _int32(fields, 7),
+    }
+
+
+def _event_alert(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "event_alert",
+        "event": _varint(fields, 1),
+        "message": _string(fields, 2),
+        "zone": _string(fields, 3) if _has(fields, 3) else None,
+        "duration_ticks": _optional_varint(fields, 4),
+    }
+
+
+def _mineral_probe_result(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "mineral_probe_result",
+        "kind": _string(fields, 1),
+        "mineral_id": _string(fields, 2) if _has(fields, 2) else None,
+        "remaining_units": _optional_varint(fields, 3),
+        "display_name_zh": _string(fields, 4) if _has(fields, 4) else None,
+        "denial_reason": _string(fields, 5) if _has(fields, 5) else None,
+    }
+
+
+def _freshness_update(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "freshness_update",
+        "item_uuid": _string(fields, 1),
+        "freshness": _float32(fields, 2),
+        "profile_name": _string(fields, 3),
+    }
+
+
+def _workbench_open(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "workbench_open",
+        "entity_id": _varint(fields, 1),
+        "position": [
+            _sint32(fields, 2),
+            _sint32(fields, 3),
+            _sint32(fields, 4),
+        ],
+    }
+
+
 def _cast_sync(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     return {
@@ -1154,6 +1255,11 @@ SERVER_DATA_PAYLOAD_DECODERS = {
     121: _loot_container_close,
     131: _insight_offer,
     137: _inventory_move_rejected,
+    74: _qi_color_observed,
+    77: _event_alert,
+    129: _mineral_probe_result,
+    130: _freshness_update,
+    132: _workbench_open,
     142: _morph_state,
 }
 
