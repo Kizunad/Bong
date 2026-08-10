@@ -2017,11 +2017,7 @@ mod tests {
             // installs its own hook at App build, clobbering any set earlier).
             eprintln!("[chk] before tick 2");
             let prev_hook = std::panic::take_hook();
-            let chained = prev_hook.clone();
-            std::panic::set_hook(Box::new(move |info| {
-                eprintln!("[HOOK] {info}");
-                chained(info);
-            }));
+            std::panic::set_hook(Box::new(|info| eprintln!("[HOOK] {info}")));
             if let Some(p) = report_tick(
                 "tick 2",
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update())),
