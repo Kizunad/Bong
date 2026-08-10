@@ -6,15 +6,19 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   按 id 校验）。放置成功消费**恰好一个实例**（consume_item_instance_once）；失败路径分文不动。
 - 重复放置（already registered）在 registry 双键（lower/upper）碰撞处拒绝，**先于消费**——
   第二实例必须保留在背包（防双注册双扣料 / double-grant，本家族最重的重复/双发检查）。
+  双键碰撞的两条分支都被演练：新 lower==既有 lower 的精确重复、以及新 lower==既有
+  upper（=lower+1x）的 overlap 探针——只查 lower 键、漏查 upper 键的错误实现（接受
+  overlap 放置并吞掉实例）在第二探针处红（review finding [major]）。
 - 非空气目标（not empty）、距离 > 6.0（coffin_target_is_close 36.0 平方）均**静默拒绝**
   （warn 无回执）——只能靠实例计数不变断言。
 - 异维（coffin_requires_overworld fail-closed，先于近距/实例校验）拒绝并逐字 chat：
   `§c[棺] 你不在主世界，无法操作延寿棺。`——对**完整文本**（含 §c 色码、[棺] 前缀、
   句末句号）整体相等断言，不接受任意前缀/后缀（review finding [major]：子串匹配
   放行「错误的前缀：你不在主世界…（错误后缀）」式的错误回复）。
-- 拒绝路径（重复/非空/过远/异维/无效实例 id）**不得 spawn 或注册任何 coffin marker**——
-  正向放行的 spawn 之外，窗口内再出现 kind=160 实体即红（世界侧不变量，
-  review finding [major]：拒绝路径缺世界侧断言，只断库存不变）。
+- 拒绝路径（重复/非空气/过远/异维/无效实例 id）**不得 spawn 或注册任何 coffin marker**——
+  有界窗口内**任何**新建 kind=160 实体即红，**不按位置过滤**——拒绝请求却把 marker
+  错放到偏移/默认坐标的错误实现同样红（review finding [major]：旧实现按目标位置过滤，
+  「目标附近无 spawn」≠「拒绝即无 spawn」；位置匹配只用于正向放置断言）。
 - `coffin_place` 必须用真实 instance_id（inventory_item_by_instance 按 id 校验）；
   已消费的 stale id 同样拒绝、分文不动（review finding [major]：全场景只用合法 id，
   无视 item_instance_id 吞掉可用棺材的实现能全绿）。
@@ -69,6 +73,9 @@ _STEP_TIMEOUT = 45.0
 # spawn/destroy 走不同时序路径（reader 线程后台 append），「先发快照、后排队实体
 # 事件」的实现会让晚到事件在持锁扫完当前前缀后漏检（review finding [major]）。
 # 等待必须**有界**——负向断言不无限等，deadline = after_t + window 是确定性终点。
+# 异维段必须**等满整窗仍在异维**（返回主世界后既有 marker 会重流，故返回锚点取在
+# 观察结束之后）——以 sleep 提前闭合观察窗会让晚发（>0.5s）的错误 marker 漏检
+# （review finding [major]）。
 _REJECT_OBS_WINDOW = 2.0
 
 
@@ -343,24 +350,26 @@ def _wait_coffin_marker_destroy(bot, entity_id, after_t, timeout=_STEP_TIMEOUT) 
 
 def _assert_no_coffin_marker_spawn(
     bot,
-    place_positions,
     after_t,
     description,
-    until_t=None,
     window=_REJECT_OBS_WINDOW,
 ) -> None:
-    """拒绝路径不变量：窗口内不得出现 kind=160 marker spawn（指定放置位附近）。
+    """拒绝路径不变量：有界窗口内不得出现**任何**新建的 kind=160 marker spawn。
 
-    review finding [major]：拒绝路径只断库存不变，从不钉「拒绝即不得 spawn/注册
-    世界 marker」的世界侧不变量。正向放行的 spawn 之外出现第二个 kind=160 实体即红。
-    until_t 用于异维窗口上界：返回主世界后实体重流会重新 spawn 既有 marker，必须
-    把窗口限制在异维侧才不误报。
+    review finding [major]：旧实现先按放置目标坐标过滤（_near(...) 只收集目标附近
+    的 spawn），把「没有在目标附近 spawn」误当成「拒绝即不得 spawn 世界 marker」——
+    一个拒绝请求但把 marker 错放到偏移/默认坐标的错误实现能全绿。位置匹配只适用于
+    **正向**放置断言；拒绝断言必须拒绝窗口内任何新建 kind=160 实体。本场景每个拒绝
+    段的 anchor 都取在首放 marker spawn **之后**（且观察期内 bot 不移动、不跨维，
+    无重流来源），因此 e.t > after_t 天然排除既有的首放 marker，窗口内出现的任何
+    kind=160 spawn 都只能是拒绝路径错误留下的孤儿实体，无需位置过滤。
 
-    review finding [major]（观察窗）：旧实现持锁扫完**当前**事件前缀就返回——reader
-    线程后台 append，inventory_snapshot 与实体 spawn 走不同时序路径，拒绝实现先发
-    快照、后排队 marker spawn 时晚到的 spawn 从未被检查。因此必须等满一个有界窗口
-    （deadline = after_t + window，事件时间单调可比较）再下结论：窗口内逐帧重扫，
-    出现匹配即红，窗口结束仍无才通过。扫描持 bot._lock（last_event_time 同款约定）。
+    review finding [major]（观察窗）：同 _assert_no_coffin_marker_destroy——旧实现持锁
+    扫完**当前**事件前缀就返回——reader 线程后台 append，inventory_snapshot 与实体
+    spawn 走不同时序路径，拒绝实现先发快照、后排队 marker spawn 时晚到的 spawn
+    从未被检查。因此必须等满一个有界窗口（deadline = after_t + window，事件时间
+    单调可比较）再下结论：窗口内逐帧重扫，出现匹配即红，窗口结束仍无才通过。
+    扫描持 bot._lock（last_event_time 同款约定）。
     """
     deadline = after_t + window
     spawned = []
@@ -371,12 +380,7 @@ def _assert_no_coffin_marker_spawn(
                 for e in bot.events
                 if e.kind == "entity_spawn"
                 and e.t > after_t
-                and (until_t is None or e.t < until_t)
                 and e.data["type"] == COFFIN_MARKER_ENTITY_KIND
-                and any(
-                    _near((e.data["x"], e.data["y"], e.data["z"]), *_coffin_marker_pos(p))
-                    for p in place_positions
-                )
             ]
         if spawned:
             break
@@ -472,12 +476,37 @@ def run(env) -> None:
         )
         # 世界侧（review finding [major]）：重复放置被拒不得 spawn 第二个 marker。
         # 首放的 marker 在 anchor 之前已 spawn（被时间锚定排除），窗口内再出现
-        # 同位置 kind=160 即重复路径错误地留下世界孤儿实体。
+        # **任何** kind=160 spawn（不按位置过滤）即重复路径错误地留下世界孤儿实体。
         _assert_no_coffin_marker_spawn(
             bot,
-            [place_pos],
             anchor,
             description="重复放置拒绝路径不得 spawn 第二个 coffin marker",
+        )
+
+        # ── 负向：registry 双键 upper-key 碰撞（review finding [major]）──
+        # 已注册棺占 (lower.x, y, z)..(lower.x+1, y, z) 两格，registry 同时以 lower 与
+        # upper(=lower+1x) 为键登记、insert 同时查两键（coffin/mod.rs:133-134）。
+        # 上面精确重复只把新 lower 打在既有 lower 键上；若实现只查新 lower 对已登记
+        # **lower** 键的碰撞、漏查已登记 upper 键，把新放置打在 first 棺的 upper 坐标
+        # （upper_pos = place_pos + 1x）会被**接受**并吞掉一个实例（且 spawn 错误 marker）。
+        # 正确实现必须以 already-registered 拒绝、实例保留、不得 spawn。
+        upper_pos = (place_pos[0] + 1, place_pos[1], place_pos[2])
+        upper_give_anchor = last_event_time(bot)
+        upper_instance = _give_coffin_instance(bot, upper_give_anchor)
+        upper_anchor = last_event_time(bot)
+        _send_coffin_place(bot, upper_pos, upper_instance)
+        _give_barrier(
+            bot,
+            4,
+            description=(
+                "upper-key 重叠放置被拒后 +1 give 应恰好 count==4（原保留 3 + 新增 1）——"
+                "若 count==3 说明实现吞掉了 upper-key 碰撞路径的实例"
+            ),
+        )
+        _assert_no_coffin_marker_spawn(
+            bot,
+            upper_anchor,
+            description="upper-key 重叠拒绝路径不得 spawn coffin marker",
         )
 
         # ── 负向：非空气目标（脚下方块）+ 过远目标，各静默拒绝 ──────────
@@ -491,14 +520,13 @@ def run(env) -> None:
         )
         _give_barrier(
             bot,
-            3,
-            description="非空气+过远双拒后 +1 give 应恰好 count==3，实例分文未扣",
+            5,
+            description="非空气+过远双拒后 +1 give 应恰好 count==5，实例分文未扣",
         )
         # 世界侧（review finding [major]）：非空气 / 过远拒绝不得 spawn marker——
-        # 两个 probe 目标在窗口内都不应出现 kind=160 实体。
+        # 窗口内任何新建 kind=160 实体都不应出现。
         _assert_no_coffin_marker_spawn(
             bot,
-            [(px, py - 1, pz), (px, py + 1, pz + DISTANCE_REJECT_Z_OFFSET)],
             anchor,
             description="非空气/过远拒绝路径不得 spawn coffin marker",
         )
@@ -514,15 +542,14 @@ def run(env) -> None:
         _send_coffin_place(bot, stale_pos, first_instance)
         _give_barrier(
             bot,
-            4,
+            6,
             description=(
-                "stale（已消费）instance id 拒绝后 +1 give 应恰好 count==4——"
+                "stale（已消费）instance id 拒绝后 +1 give 应恰好 count==6——"
                 "实现不得无视 item_instance_id 吞掉可用棺材"
             ),
         )
         _assert_no_coffin_marker_spawn(
             bot,
-            [stale_pos],
             stale_anchor,
             description="stale instance id 拒绝路径不得 spawn coffin marker",
         )
@@ -558,20 +585,18 @@ def run(env) -> None:
             timeout=_STEP_TIMEOUT,
             description=f"异维放置必须逐字拒绝（整体相等）：{DIMENSION_REJECT_TEXT}",
         )
-        # 处理完成（chat 在拒绝处理期间发出）后给线上/泵线程留一点空窗，锚定异维
-        # 窗口上界：返回主世界后实体重流会重新 spawn 既有 marker，窗口必须停在异维侧。
-        time.sleep(0.5)
-        ret_anchor = last_event_time(bot)
-        # 世界侧（review finding [major]）：异维拒绝不得 spawn marker。place_pos 的
-        # 主世界 marker 早已 spawn（cross_anchor 前），窗口 (cross_anchor, ret_anchor)
-        # 内再出现同位置 kind=160 即异维路径错误地在异维侧留下孤儿实体。
+        # 世界侧（review finding [major]）：异维拒绝不得 spawn marker。主世界 marker
+        # 早已 spawn（cross_anchor 前）；bot 此刻仍在 tsy，主世界实体不可见、不会重流，
+        # 因此整窗 (cross_anchor, cross_anchor+window) 内出现的任何 kind=160 spawn 都
+        # 必然是拒绝路径错误留下的孤儿实体——旧实现以 0.5s sleep 提前闭合观察窗
+        # （until_t=ret_anchor），拒绝 0.6s 后才发出的错误 marker 会被滤掉而漏检；
+        # 必须**先等满整个有界观察窗（仍在异维）再返回**，返回锚点取在观察结束之后。
         _assert_no_coffin_marker_spawn(
             bot,
-            [place_pos],
             cross_anchor,
-            until_t=ret_anchor,
             description="异维拒绝路径不得 spawn coffin marker",
         )
+        ret_anchor = last_event_time(bot)
         bot.cmd("tpdim overworld")
         bot.wait_for(
             lambda e: e.kind == "chat"
@@ -587,8 +612,8 @@ def run(env) -> None:
         )
         _give_barrier(
             bot,
-            5,
-            description="异维拒后 +1 give 应恰好 count==5，实例未被异维请求偷扣",
+            7,
+            description="异维拒后 +1 give 应恰好 count==7，实例未被异维请求偷扣",
         )
 
         # ── 破坏：CoffinBreak 单发清场，同一坐标可重放 ──────────────────
@@ -610,11 +635,11 @@ def run(env) -> None:
         # review finding [major]：单发清场声称的 empty→empty 重复破坏从未被演练。
         # 第二次对同一坐标 coffin_break：server 端 remove_by_pos → None 后静默 continue
         # （coffin/mod.rs:811-813），不得 panic / 断连 / 再 despawn / 扣料 / 加料。
-        # 先以 +1 give 快照（count==6）作全量库存基线——含首次破坏的回收料。
+        # 先以 +1 give 快照（count==8）作全量库存基线——含首次破坏的回收料。
         pre_second = _give_barrier(
             bot,
-            6,
-            description="首次破坏后 +1 give 应恰好 count==6（破坏只清世界实体，不碰背包实例）",
+            8,
+            description="首次破坏后 +1 give 应恰好 count==8（破坏只清世界实体，不碰背包实例）",
         )
         total_baseline = _total_items(pre_second)
         noop_anchor = last_event_time(bot)
@@ -627,13 +652,13 @@ def run(env) -> None:
                 "z": place_pos[2],
             }
         )
-        # 第二次 break 处理完毕的水位线：+1 give 后 count 仍==7（无消费）——
+        # 第二次 break 处理完毕的水位线：+1 give 后 count 仍==9（无消费）——
         # 若重复破坏再 grant 回收料，_total_items 会超过基线+1（double-grant 红）。
         post_second = _give_barrier(
             bot,
-            7,
+            9,
             description=(
-                "重复破坏（空→空）后 +1 give 应恰好 count==7——"
+                "重复破坏（空→空）后 +1 give 应恰好 count==9——"
                 "第二次 break 不得消费任何实例"
             ),
         )
@@ -654,14 +679,14 @@ def run(env) -> None:
         )
         replaced = _wait_coffin_count(
             bot,
-            6,
+            8,
             replace_anchor,
             description=(
-                "破坏清场后同一坐标重放必须成功（7→6）——"
+                "破坏清场后同一坐标重放必须成功（9→8）——"
                 "证明 destroy path 未在 registry 留 residue"
             ),
         )
-        assert _coffin_count(replaced) == 6, "破坏后重放应恰好消费 1 个实例"
+        assert _coffin_count(replaced) == 8, "破坏后重放应恰好消费 1 个实例"
         # 世界侧：重放同样必须在世界重新 spawn marker 实体——旧实体已被 despawn、
         # registry 已清空后，新放置能产生新的世界实体（destroy path 无残留的完整闭环）。
         _wait_coffin_marker_spawn(
