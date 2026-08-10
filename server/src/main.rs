@@ -83,6 +83,24 @@ fn run_server() {
     app.run();
 }
 
+/// `BONG_SERVER_PORT` 覆盖监听端口，默认 25565（与 valence NetworkSettings 默认一致）。
+/// headless 起服走 `cargo run` 没有 CLI 传参，scripts/bot-e2e.sh 并发跑多套 e2e 时
+/// 各自分配空闲端口、通过该 env 传入，否则全部争抢 25565（连开三次端口战败）。
+fn server_listen_address() -> std::net::SocketAddr {
+    let port = std::env::var("BONG_SERVER_PORT")
+        .map(|raw| parse_server_port(&raw))
+        .unwrap_or(25565);
+    std::net::SocketAddr::from(([0, 0, 0, 0], port))
+}
+
+fn parse_server_port(raw: &str) -> u16 {
+    raw.trim().parse().unwrap_or_else(|error| {
+        // 值非法直接 panic 而非静默回退：回退会让调用方（bot-e2e.sh）继续等一个
+        // server 从未绑定的端口，退化为修复前的 600s 假超时。
+        panic!("BONG_SERVER_PORT 必须是 0-65535 的整数，实际 {raw:?}: {error}")
+    })
+}
+
 fn build_server_app() -> App {
     let (tx_to_game, rx_from_agent) = unbounded::<AgentCommand>();
     let (tx_to_agent, rx_from_game) = unbounded::<GameEvent>();
@@ -92,6 +110,7 @@ fn build_server_app() -> App {
     let mut app = App::new();
     app.insert_resource(NetworkSettings {
         connection_mode: ConnectionMode::Offline,
+        address: server_listen_address(),
         ..Default::default()
     })
     .insert_resource(NetworkBridgeResource::new(tx_to_agent, rx_from_agent))
@@ -553,7 +572,10 @@ mod cli_tests {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 
-    use super::{cmd, full_app_startup_smoke_enabled, is_truthy_env_value, run_cli};
+    use super::{
+        cmd, full_app_startup_smoke_enabled, is_truthy_env_value, parse_server_port, run_cli,
+        server_listen_address,
+    };
 
     static CLI_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -732,6 +754,44 @@ mod cli_tests {
         assert!(
             !full_app_startup_smoke_enabled(),
             "BONG_FULL_APP_STARTUP_SMOKE=0 should not route production startup into smoke mode"
+        );
+    }
+
+    #[test]
+    fn parse_server_port_accepts_trimmed_valid_values() {
+        assert_eq!(parse_server_port("25565"), 25565);
+        assert_eq!(parse_server_port(" 34567 "), 34567);
+        assert_eq!(parse_server_port("0"), 0);
+        assert_eq!(parse_server_port("65535"), 65535);
+    }
+
+    #[test]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 0-65535 的整数")]
+    fn parse_server_port_panics_on_garbage() {
+        parse_server_port("not-a-port");
+    }
+
+    #[test]
+    #[should_panic(expected = "BONG_SERVER_PORT 必须是 0-65535 的整数")]
+    fn parse_server_port_panics_on_out_of_range() {
+        parse_server_port("65536");
+    }
+
+    #[test]
+    fn server_listen_address_defaults_to_25565() {
+        let _guard = ScopedEnvVar::set("BONG_SERVER_PORT", None);
+        assert_eq!(
+            server_listen_address(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 25565))
+        );
+    }
+
+    #[test]
+    fn server_listen_address_honors_bong_server_port() {
+        let _guard = ScopedEnvVar::set("BONG_SERVER_PORT", Some("34567"));
+        assert_eq!(
+            server_listen_address(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 34567))
         );
     }
 }

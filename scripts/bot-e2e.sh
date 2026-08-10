@@ -5,9 +5,11 @@
 # job 里调用本脚本，经构建令牌 wrapper cargo run --release 复用缓存。
 #
 # 本地用法：
-#   bash scripts/bot-e2e.sh                          # 自动起 server（release）
+#   bash scripts/bot-e2e.sh                          # 自动起 server（release），端口自动分配
 #   BOT_E2E_PROFILE=debug bash scripts/bot-e2e.sh    # 用 debug 构建（快）
+#   BOT_E2E_PORT=34567 bash scripts/bot-e2e.sh       # 显式端口（自起模式传给 server）
 #   BOT_E2E_REUSE=1 bash scripts/bot-e2e.sh          # 复用已在 25565 跑着的 server
+# 自起模式不指定 BOT_E2E_PORT 时分配空闲端口，本机可并发跑多套 e2e（各占一个端口）。
 #
 # 注意：必须经构建令牌 wrapper 从**当前 checkout**构建运行，不要直接跑共享 target 里的旧
 # 二进制——CARGO_MANIFEST_DIR 是编译期烙死的，旧二进制可能指向已删 worktree 的资产路径
@@ -16,10 +18,34 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HOST="${BOT_E2E_HOST:-127.0.0.1}"
-PORT="${BOT_E2E_PORT:-25565}"
+
+# 自起模式并发安全：BOT_E2E_PORT 未指定时 bind :0 由内核在临时端口段原子分配——
+# 两个 worker 同一瞬间各自 probe 会像 connect 探测一样都看到「空闲」，而 bind 分配
+# 拿到即独占；close 到 server bind 之间若有第三方抢入，走既有的
+# "failed to start TCP listener" 快速失败路径，不会退化成 600s 假超时。
+allocate_free_port() {
+  python3 - <<'EOF'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+EOF
+}
+
 PROFILE="${BOT_E2E_PROFILE:-release}"
 REUSE="${BOT_E2E_REUSE:-0}"
+HOST="${BOT_E2E_HOST:-127.0.0.1}"
+if [ "$REUSE" = "1" ]; then
+  # REUSE：显式端口或默认 25565——只连接既有 server，不分配、不起服。
+  PORT="${BOT_E2E_PORT:-25565}"
+else
+  # 自起模式：未指定端口就分配空闲端口，而不是默认争抢 25565。
+  PORT="${BOT_E2E_PORT:-$(allocate_free_port)}"
+fi
+if [ "$REUSE" != "1" ] && [ -z "${BOT_E2E_PORT:-}" ]; then
+  echo "[bot-e2e] BOT_E2E_PORT 未设置，自起模式分配空闲端口 $PORT（并发运行互不争抢 25565）"
+fi
 AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"
 BOT_E2E_RUN_TAG="${BOT_E2E_RUN_TAG:-$(( $$ % 100000 ))}"
 export BOT_E2E_RUN_TAG
@@ -316,6 +342,9 @@ else
     export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
     export BONG_OPERATORS="$BOT_E2E_OPERATORS"
     export BONG_OPERATORS_ALLOW_OFFLINE=1
+    # 自起模式必须把本轮选定的端口传给 server（BONG_SERVER_PORT），否则 server
+    # 永远绑 valence 默认 25565，分配的端口将无人监听、readiness 假超时。
+    export BONG_SERVER_PORT="$PORT"
     if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
       export BONG_DORMANT_ROGUE_SEED_COUNT="${BONG_DORMANT_ROGUE_SEED_COUNT:-0}"
       export BONG_ASSETS_DIR="$ROOT/server"
