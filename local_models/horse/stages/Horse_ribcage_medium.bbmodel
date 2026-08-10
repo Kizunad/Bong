@@ -26698,18 +26698,18 @@
             "30ad46d5-ce26-5de6-ab4e-d3de6445e239",
             "6eec9ba3-5f1d-5cf5-a31b-c3b21d35c007",
             {
-             "name": "neck_base",
+             "name": "neck_1",
              "origin": [
               0.0,
-              21.229,
-              -9.92
+              20.928,
+              -10.282
              ],
              "rotation": [
               0.0,
               0.0,
               0.0
              ],
-             "uuid": "bdd8702f-9950-53ba-ba73-84e6f2dc65a3",
+             "uuid": "d496035f-0799-513c-8548-8fa97f864663",
              "export": true,
              "mirror_uv": false,
              "isOpen": false,
@@ -26721,27 +26721,19 @@
               "7262599a-e8e0-583b-860c-d26aa0c4cef6",
               "8c5d5667-0f5e-5730-8947-59d5c5ae618c",
               "9c1e0709-95c5-5962-bae8-739f89697bcb",
-              "f661734f-f082-5f1e-aec4-1ffdea45ed52",
-              "e5eedce0-2ec9-588d-b4b0-57ce34e030a9",
-              "45803e02-b30e-5586-8646-b5876ee82824",
-              "9950cd4a-7109-59ee-9101-c881a8ec7aee",
-              "b443285a-0d2d-58bc-a1ea-f1f8d05cf126",
-              "28abeeef-5af4-5a9e-b206-f10a92acab66",
-              "e986a3fa-5c3d-5787-8dca-4e0de7a7a490",
-              "76477b78-a38e-548d-a747-0b3d5522b033",
               {
-               "name": "neck_mid",
+               "name": "neck_2",
                "origin": [
                 0.0,
-                23.231,
-                -15.353
+                20.782,
+                -11.549
                ],
                "rotation": [
                 0.0,
                 0.0,
                 0.0
                ],
-               "uuid": "7ca71bfa-bdf8-5d7c-b426-467649bee6c6",
+               "uuid": "b3cc4320-f07a-5f02-8f50-f8e30807bb34",
                "export": true,
                "mirror_uv": false,
                "isOpen": false,
@@ -26749,27 +26741,23 @@
                "visibility": true,
                "autouv": 0,
                "children": [
-                "5d9b2524-96c7-5852-8436-a0ac0ea3633c",
-                "ec25d870-439e-5feb-bf70-9b597f6ed44d",
-                "3a2ab0ee-151f-5ffb-a1ce-51a508b02198",
-                "b9aedda2-a0f5-5349-a1c0-aa9cce2907fe",
-                "e7ba5071-3eaa-538e-b5c3-e53b3a76eda9",
-                "fb2cef96-443f-548f-981f-5137350ec7b2",
-                "b0dccea7-0152-5143-93d0-4939e106ae0e",
-                "e7d47a75-0700-5a5f-b7c7-04f1af3a6a1a",
+                "f661734f-f082-5f1e-aec4-1ffdea45ed52",
+                "e5eedce0-2ec9-588d-b4b0-57ce34e030a9",
+                "45803e02-b30e-5586-8646-b5876ee82824",
+                "9950cd4a-7109-59ee-9101-c881a8ec7aee",
                 {
-                 "name": "neck_top",
+                 "name": "neck_3",
                  "origin": [
                   0.0,
-                  26.877,
-                  -19.578
+                  21.553,
+                  -13.357
                  ],
                  "rotation": [
                   0.0,
                   0.0,
                   0.0
                  ],
-                 "uuid": "a4110550-de61-5834-8176-31b1e8cd8162",
+                 "uuid": "784eb048-761d-5525-bab1-f7c77dae2fec",
                  "export": true,
                  "mirror_uv": false,
                  "isOpen": false,
@@ -26777,13 +26765,113 @@
                  "visibility": true,
                  "autouv": 0,
                  "children": [
-                  "6bcdd3e5-a708-509e-a718-2b6504a262be",
-                  "578544f2-ee49-5f40-8c76-dadb528efab7",
-                  "61b77791-1ec7-5100-9eac-dcead9c1047a",
-                  "0bd2056b-b460-5e43-9469-f1f288deffdd",
-                  "e466a2e2-a602-5f28-a6c2-9397a2e76e34",
-                  "82a4e7d0-b112-5e6b-8186-18cb27616746",
-                  "aa9a54da-88b7-5683-8398-41c845b619dd"
+                  "b443285a-0d2d-58bc-a1ea-f1f8d05cf126",
+                  "28abeeef-5af4-5a9e-b206-f10a92acab66",
+                  "e986a3fa-5c3d-5787-8dca-4e0de7a7a490",
+                  "76477b78-a38e-548d-a747-0b3d5522b033",
+                  {
+                   "name": "neck_4",
+                   "origin": [
+                    0.0,
+                    23.07,
+                    -15.166
+                   ],
+                   "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                   ],
+                   "uuid": "c6314eb9-ccc8-5933-a611-0883f7432225",
+                   "export": true,
+                   "mirror_uv": false,
+                   "isOpen": false,
+                   "locked": false,
+                   "visibility": true,
+                   "autouv": 0,
+                   "children": [
+                    "5d9b2524-96c7-5852-8436-a0ac0ea3633c",
+                    "ec25d870-439e-5feb-bf70-9b597f6ed44d",
+                    "3a2ab0ee-151f-5ffb-a1ce-51a508b02198",
+                    "b9aedda2-a0f5-5349-a1c0-aa9cce2907fe",
+                    {
+                     "name": "neck_5",
+                     "origin": [
+                      0.0,
+                      24.832,
+                      -16.975
+                     ],
+                     "rotation": [
+                      0.0,
+                      0.0,
+                      0.0
+                     ],
+                     "uuid": "d472f8e1-677b-581f-b560-76129f35a830",
+                     "export": true,
+                     "mirror_uv": false,
+                     "isOpen": false,
+                     "locked": false,
+                     "visibility": true,
+                     "autouv": 0,
+                     "children": [
+                      "e7ba5071-3eaa-538e-b5c3-e53b3a76eda9",
+                      "fb2cef96-443f-548f-981f-5137350ec7b2",
+                      "b0dccea7-0152-5143-93d0-4939e106ae0e",
+                      "e7d47a75-0700-5a5f-b7c7-04f1af3a6a1a",
+                      {
+                       "name": "neck_6",
+                       "origin": [
+                        0.0,
+                        26.313,
+                        -18.783
+                       ],
+                       "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                       ],
+                       "uuid": "bfa3636c-b900-59d3-9a14-b07cc49ce632",
+                       "export": true,
+                       "mirror_uv": false,
+                       "isOpen": false,
+                       "locked": false,
+                       "visibility": true,
+                       "autouv": 0,
+                       "children": [
+                        "6bcdd3e5-a708-509e-a718-2b6504a262be",
+                        "578544f2-ee49-5f40-8c76-dadb528efab7",
+                        "61b77791-1ec7-5100-9eac-dcead9c1047a",
+                        "aa9a54da-88b7-5683-8398-41c845b619dd",
+                        {
+                         "name": "neck_7",
+                         "origin": [
+                          0.0,
+                          27.239,
+                          -20.592
+                         ],
+                         "rotation": [
+                          0.0,
+                          0.0,
+                          0.0
+                         ],
+                         "uuid": "0db62a4c-e3d9-5d1f-8dae-be344b0cdf6c",
+                         "export": true,
+                         "mirror_uv": false,
+                         "isOpen": false,
+                         "locked": false,
+                         "visibility": true,
+                         "autouv": 0,
+                         "children": [
+                          "0bd2056b-b460-5e43-9469-f1f288deffdd",
+                          "e466a2e2-a602-5f28-a6c2-9397a2e76e34",
+                          "82a4e7d0-b112-5e6b-8186-18cb27616746"
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
                  ]
                 }
                ]

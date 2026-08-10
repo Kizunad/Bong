@@ -40,6 +40,7 @@ from gen_skeleton import (
     connected_components,
     NECK,
     NECK_JOINTS,
+    NECK_ROM,
     PROFILES,
     HeadSpace,
     Profile,
@@ -193,6 +194,39 @@ SEAM_MARGIN = 1.35
 # 以关节为心的方块（腕 / 跗 / 球节）比"它要罩住的那节筒的截面角点"再大百分之几。
 # 恰好相切等于把封缝的责任交给浮点数，留一点余量，别贴着边过。
 JOINT_BALL_MARGIN = 1.04
+
+# ---- 关节套 ----------------------------------------------------------------
+# **沿骨轴的交叠封不住颈这种"截面很高、一节又短"的接缝**，而且不是"给得不够"，是
+# 方向就不对：交叠越长，父段的端头越过转心伸得越远，子段一转，那截伸出去的端头就从
+# 子段的轮廓里漏出来。实测把 SEAM_MARGIN 从 0.30 扫到 2.20（padsweep），最宽裂口在
+# 0.84–1.38 之间来回跳，**没有单调变好的方向**，最好的一档也还有 0.84 —— 光调交叠
+# 到不了 0.30。
+#
+# 真正封住的是**套**：子骨上挂一圈比父段截面略胖的短箍，把父段伸过来的那一截罩住。
+# 胖出来的量有推导：父段端头离转心 d，子段转 θ 之后那一圈在垂直方向让开了 d·sinθ，
+# 所以只要 m ≥ d·sinθ，父段端头就始终落在套的轮廓里。逐轴给——偏航吃 x、俯仰吃 y，
+# 按各自那一轴的 ROM 算，免得为了一个不存在的自由度把脖子撑粗。
+COLLAR_CLEAR = 0.10  # 套罩过父段端头之后再多留一点，别贴着边过
+COLLAR_BACK = 0.34  # 套往子段自己那一侧探出多少（按罩住长度的比例）
+# m = d·sinθ 是下界，乘这一档余量——θ 是逐轴给的，复合转角略大于单轴。**别往大了给**：
+# 2.0 时套胖到顶进鬃里，mane_fall ↮ neck_collar 反倒裂 1.68。
+COLLAR_SAFE = 1.20
+# 套**不许够到隔壁那个转心**：够到了它就在隔壁也成了一道要封的缝，而它两头都胖，
+# 隔壁的父段反而罩不住它（首版没这条，颈缝从 5 对变成 6 对，只是换了个地方裂）。
+# 0.48 是量出来的：0.42/0.45 罩不到常马 neck_1 的端头（还剩 0.64），0.50 就够到隔壁了。
+COLLAR_MAX_FRAC = 0.48
+
+# 臀（股上部）的尺寸，按股筒半径 qr 的倍数给。同一套道理：尻盖越过髋转心伸下来那一截
+# 得由股这一侧罩住。
+#
+# **UP 往上探过转心是有害的**（和腿上那几个箍同一条教训）：臀挂在会转的股上，探到转心
+# 以上那一截一屈髋就从尻盖里甩出来，自己变成新的一道缝。实测 UP 0.55→1.1→1.7，裂口
+# 0.84→2.63→4.14，单调恶化；压到 0.35 才全闭合。**决定成败的是 UP，不是块头**——
+# UP 一旦压住，X/Z 给到 1.15/1.10 就够了（跟 1.80/1.90 一个结果），而 1.80/1.90 渲出来
+# 是屁股上钉了口箱子、连尾巴都埋了。DOWN 反过来要够到尻盖底缘：1.0 塌回 8 对、1.4 还剩
+# 0.67，1.8 起全闭合，取 2.30 留一档余量。
+QUARTER_X, QUARTER_Z = 1.15, 1.10
+QUARTER_UP, QUARTER_DOWN = 0.35, 2.30
 
 
 def seam_pad(r: float, rom_deg: float) -> float:
@@ -600,6 +634,9 @@ def part_neck(p: Pelt, env: Envelope, P) -> None:
         seg.append((hw, y_lo, y_hi))
     pad = seam_pads(seams, seg, [rom(b) for b in NECK] + [rom("skull")])
     pad[0] *= 2.0  # 鬐甲那道缝是单边的：躯干壳不朝颈里伸，交叠得由颈这边全出
+    # 交叠**不能**照"套罩得到多远"往回砍：砍短了父段的头端，楔形口子（转心正前方那道，
+    # 深到 h·tanθ）就直接张开——实测按 COLLAR_MAX_FRAC 反向夹一次，三档合计从 3 对涨到
+    # 31 对。交叠管楔形、套管端头，两件事各归各的，别互相让步。
 
     for i in range(NECK_JOINTS):
         a, b = seams[i], seams[i + 1]
@@ -613,6 +650,23 @@ def part_neck(p: Pelt, env: Envelope, P) -> None:
             (-hw * 0.82, y_lo - 0.02, b[2] - pad_b),
             (hw * 0.82, y_lo + Pr.u(0.040), a[2] + pad_a),
             mat="belly",
+        )
+
+    # 关节套：罩住父段越过转心伸过来的那一截（推导见文件顶上 COLLAR_*）。挂在**子骨**
+    # 上，截面照**父段**给——要罩的是父段的端头，照自己的截面给就差了两段的收细量。
+    # 鬐甲那道缝（k=0）不用：躯干壳不朝颈里伸，没有端头需要罩。
+    for k in range(1, NECK_JOINTS):
+        hw_p, lo_p, hi_p = seg[k - 1]
+        z_c, z_head, z_root = seams[k][2], seams[k + 1][2], seams[k - 1][2]
+        fwd = min(pad[k] + COLLAR_CLEAR, abs(z_c - z_head) * COLLAR_MAX_FRAC)
+        back = min(COLLAR_BACK * fwd, abs(z_c - z_root) * COLLAR_MAX_FRAC)
+        mx = fwd * math.sin(math.radians(NECK_ROM[1])) * COLLAR_SAFE
+        my = fwd * math.sin(math.radians(NECK_ROM[0])) * COLLAR_SAFE
+        p.box(
+            NECK[k],
+            f"neck_collar_{k + 1}",
+            (-hw_p - mx, lo_p - my, z_c - fwd),
+            (hw_p + mx, hi_p + my, z_c + back),
         )
 
     # 肩章（枯原）：肩上一道横斑。x 要推到躯干半宽**之外**才贴在体表上——
@@ -1003,11 +1057,20 @@ def part_legs(p: Pelt, env: Envelope, P) -> None:
         qr = Pr.u(0.108) * Pr.bone_gauge
         p.limb(f"femur_{side}", f"thigh_{side}", _off(P(f"femur_{side}"), 0, -Pr.u(0.020)), _off(st, 0, Pr.u(0.030)), qr, mat="coat", flat=0.76,
                 joint_rom=rom(f"tibia_{side}"), slack=Pr.u(0.030))
-        # 尻盖与大腿之间那道缝（髋屈过 30° 就张开，挽马 0.86）**本轮没修**：试过照腿上
-        # 那几块的办法在 hips 上补臀肌，量下来只把侧摆那一路从 0.64 收到 0.41，屈伸那一路
-        # 纹丝不动——半开的缝不值得多挂两件几何。要真封住得动尻与股那一段的造型（露在
-        # 外面的"大腿"上半本来就该是躯干的一部分），那是另一件事。同类还有颈的偏航。
-        # 清单跑 `python3 scripts/models/horse/shell_check.py --rom` 看。
+        # 臀（股上部的肌肉团）：尻盖一路盖到髋转心以下三个多单位，髋一屈，那截伸出去的
+        # 尻就从细细的股筒外头露出来。补料必须补在**会转的那一侧**（股），补在尻上试过，
+        # 只把侧摆那一路从 0.64 收到 0.41，屈伸那一路纹丝不动。块头不必大，关键是够到
+        # 尻盖底缘（DOWN）且不往转心以上探（UP）——两个方向的实测拐点见 QUARTER_*。
+        hip = P(f"femur_{side}")
+        p.box(
+            f"femur_{side}",
+            f"quarter_{side}",
+            (hip[0] - qr * QUARTER_X, hip[1] - qr * QUARTER_DOWN, hip[2] - qr * QUARTER_Z),
+            (hip[0] + qr * QUARTER_X, hip[1] + qr * QUARTER_UP, hip[2] + qr * QUARTER_Z),
+        )
+        # 尻盖与大腿那道缝已由上面的臀封住（三档全闭合）。上一轮在 `hips` 上补臀肌只把
+        # 侧摆那一路从 0.64 收到 0.41、屈伸纹丝不动，就是因为补错了边——料要补在**会转
+        # 的那一侧**。剩下的清单跑 `python3 scripts/models/horse/shell_check.py --rom`。
 
 
 GROUPS = {

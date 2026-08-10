@@ -135,6 +135,9 @@ def one_kind(kind: str, pk: str, cell: int = 300) -> None:
             print(f"→ {(OUT / 'bard_suit.png').relative_to(REPO)}")
 
     # 动画连拍：静止姿贴合不代表跑起来还贴合。取用料最全的那一档，袭步 + 倒毙各一条。
+    # 这里只出空载那一档：这几张看的是**马具贴不贴身**，负载改的是步态，逐档叠上来
+    # 反而把要看的东西挤小了（负载的对拍另有 anim/anim_*_side_loads.png）。
+    import gen_anim as GA
     import render_anim as RA
     from rig import Rig
 
@@ -142,8 +145,8 @@ def one_kind(kind: str, pk: str, cell: int = 300) -> None:
     for name in ("gallop", "death"):
         p = on_horse(top)
         rig = Rig(p)
-        RA.contact_sheet(rig, PROFILES[pk], p, name, "side", 8, 300, RA.focus_box(rig)).save(
-            OUT / f"{kind}_anim_{name}.png")
+        RA.contact_sheet(rig, PROFILES[pk], p, name, "side", 8, 300, RA.focus_box(rig),
+                         [GA.BARE]).save(OUT / f"{kind}_anim_{name}.png")
 
     for f in (f"{kind}_alone.png", f"{kind}_rows.png", f"{kind}_on_horse.png",
               f"{kind}_anim_gallop.png", f"{kind}_anim_death.png"):

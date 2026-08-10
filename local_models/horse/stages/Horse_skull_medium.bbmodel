@@ -2930,18 +2930,18 @@
            "autouv": 0,
            "children": [
             {
-             "name": "neck_base",
+             "name": "neck_1",
              "origin": [
               0.0,
-              21.229,
-              -9.92
+              20.928,
+              -10.282
              ],
              "rotation": [
               0.0,
               0.0,
               0.0
              ],
-             "uuid": "bdd8702f-9950-53ba-ba73-84e6f2dc65a3",
+             "uuid": "d496035f-0799-513c-8548-8fa97f864663",
              "export": true,
              "mirror_uv": false,
              "isOpen": false,
@@ -2950,18 +2950,18 @@
              "autouv": 0,
              "children": [
               {
-               "name": "neck_mid",
+               "name": "neck_2",
                "origin": [
                 0.0,
-                23.231,
-                -15.353
+                20.782,
+                -11.549
                ],
                "rotation": [
                 0.0,
                 0.0,
                 0.0
                ],
-               "uuid": "7ca71bfa-bdf8-5d7c-b426-467649bee6c6",
+               "uuid": "b3cc4320-f07a-5f02-8f50-f8e30807bb34",
                "export": true,
                "mirror_uv": false,
                "isOpen": false,
@@ -2970,18 +2970,18 @@
                "autouv": 0,
                "children": [
                 {
-                 "name": "neck_top",
+                 "name": "neck_3",
                  "origin": [
                   0.0,
-                  26.877,
-                  -19.578
+                  21.553,
+                  -13.357
                  ],
                  "rotation": [
                   0.0,
                   0.0,
                   0.0
                  ],
-                 "uuid": "a4110550-de61-5834-8176-31b1e8cd8162",
+                 "uuid": "784eb048-761d-5525-bab1-f7c77dae2fec",
                  "export": true,
                  "mirror_uv": false,
                  "isOpen": false,
@@ -2990,18 +2990,18 @@
                  "autouv": 0,
                  "children": [
                   {
-                   "name": "skull",
+                   "name": "neck_4",
                    "origin": [
                     0.0,
-                    27.578,
-                    -21.992
+                    23.07,
+                    -15.166
                    ],
                    "rotation": [
                     0.0,
                     0.0,
                     0.0
                    ],
-                   "uuid": "de36e8b9-5098-52a7-af25-e18508b4dff0",
+                   "uuid": "c6314eb9-ccc8-5933-a611-0883f7432225",
                    "export": true,
                    "mirror_uv": false,
                    "isOpen": false,
@@ -3009,38 +3009,126 @@
                    "visibility": true,
                    "autouv": 0,
                    "children": [
-                    "62b5bbec-a192-58e6-bd99-39c599be4064",
-                    "c5cae666-99bf-5bdb-882f-02f1a531c50b",
-                    "358518de-8b36-5879-b718-6f53072ce003",
-                    "0a2a8dec-b0c0-5260-8293-01ab803923cb",
-                    "ac506288-dc2a-5acb-9dee-c03dd7a22d94",
-                    "02124d46-0c58-5e4b-8139-1a4711bb9da7",
-                    "d9782d27-af31-5b0b-81fe-906c2c5a8303",
-                    "5355f3c4-f429-5556-9202-0d2172fe452c",
-                    "2e9ff8d6-a521-5aeb-bb0b-9d4cf6ad82d9",
-                    "e074df5c-c580-53de-882d-6242c81568e7",
-                    "ab06fe9d-acec-5daa-b50e-9dae7219ba6c",
-                    "a8c2d135-aa61-5327-a70a-09f9a5d629a3",
-                    "3dbcb4e8-775f-5397-bdb0-44568af98322",
-                    "2b312438-94c9-576d-acd8-d75a0c93ef98",
-                    "d4000c1d-6c86-52ae-87d9-3412522795fd",
-                    "953b18d5-704d-5452-885c-10fb62c57e98",
-                    "6c23295a-40c2-5a6e-997f-e2d66223a88b",
-                    "b60457ad-ff0f-587b-809f-f59b45963e16",
-                    "77b8d47a-291d-5f34-8622-87e33678eaf3",
-                    "1ed953d7-24ff-5ea1-98a6-936ef569d8de",
-                    "17b403f8-c9de-5967-bc24-89ab9cf712d8",
-                    "e01c2964-8ab8-59ac-8145-27c27256fe76",
-                    "a053aaaa-f12a-5681-b72e-9e108557191a",
-                    "3f37733c-9f98-584b-8597-4131fc30e37f",
-                    "ea5ee9e7-4df4-531a-889e-4eef57ed72f7",
-                    "5aa1a74b-346f-54ac-8bc7-9622f1e34a59",
-                    "b06655e8-1500-5365-aa12-bdebfab7eb8e",
-                    "608dcd58-eab0-5442-aa01-c2268e902647",
-                    "1dc85194-aa93-570c-9633-b0cff86d6d45",
-                    "6def7671-c6ed-56db-947d-3c7492672593",
-                    "6a57c16e-2921-5823-abcb-5b70a01865bb",
-                    "23dfb58c-f75a-5397-ae90-cd47c9170066"
+                    {
+                     "name": "neck_5",
+                     "origin": [
+                      0.0,
+                      24.832,
+                      -16.975
+                     ],
+                     "rotation": [
+                      0.0,
+                      0.0,
+                      0.0
+                     ],
+                     "uuid": "d472f8e1-677b-581f-b560-76129f35a830",
+                     "export": true,
+                     "mirror_uv": false,
+                     "isOpen": false,
+                     "locked": false,
+                     "visibility": true,
+                     "autouv": 0,
+                     "children": [
+                      {
+                       "name": "neck_6",
+                       "origin": [
+                        0.0,
+                        26.313,
+                        -18.783
+                       ],
+                       "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                       ],
+                       "uuid": "bfa3636c-b900-59d3-9a14-b07cc49ce632",
+                       "export": true,
+                       "mirror_uv": false,
+                       "isOpen": false,
+                       "locked": false,
+                       "visibility": true,
+                       "autouv": 0,
+                       "children": [
+                        {
+                         "name": "neck_7",
+                         "origin": [
+                          0.0,
+                          27.239,
+                          -20.592
+                         ],
+                         "rotation": [
+                          0.0,
+                          0.0,
+                          0.0
+                         ],
+                         "uuid": "0db62a4c-e3d9-5d1f-8dae-be344b0cdf6c",
+                         "export": true,
+                         "mirror_uv": false,
+                         "isOpen": false,
+                         "locked": false,
+                         "visibility": true,
+                         "autouv": 0,
+                         "children": [
+                          {
+                           "name": "skull",
+                           "origin": [
+                            0.0,
+                            27.578,
+                            -21.992
+                           ],
+                           "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                           ],
+                           "uuid": "de36e8b9-5098-52a7-af25-e18508b4dff0",
+                           "export": true,
+                           "mirror_uv": false,
+                           "isOpen": false,
+                           "locked": false,
+                           "visibility": true,
+                           "autouv": 0,
+                           "children": [
+                            "62b5bbec-a192-58e6-bd99-39c599be4064",
+                            "c5cae666-99bf-5bdb-882f-02f1a531c50b",
+                            "358518de-8b36-5879-b718-6f53072ce003",
+                            "0a2a8dec-b0c0-5260-8293-01ab803923cb",
+                            "ac506288-dc2a-5acb-9dee-c03dd7a22d94",
+                            "02124d46-0c58-5e4b-8139-1a4711bb9da7",
+                            "d9782d27-af31-5b0b-81fe-906c2c5a8303",
+                            "5355f3c4-f429-5556-9202-0d2172fe452c",
+                            "2e9ff8d6-a521-5aeb-bb0b-9d4cf6ad82d9",
+                            "e074df5c-c580-53de-882d-6242c81568e7",
+                            "ab06fe9d-acec-5daa-b50e-9dae7219ba6c",
+                            "a8c2d135-aa61-5327-a70a-09f9a5d629a3",
+                            "3dbcb4e8-775f-5397-bdb0-44568af98322",
+                            "2b312438-94c9-576d-acd8-d75a0c93ef98",
+                            "d4000c1d-6c86-52ae-87d9-3412522795fd",
+                            "953b18d5-704d-5452-885c-10fb62c57e98",
+                            "6c23295a-40c2-5a6e-997f-e2d66223a88b",
+                            "b60457ad-ff0f-587b-809f-f59b45963e16",
+                            "77b8d47a-291d-5f34-8622-87e33678eaf3",
+                            "1ed953d7-24ff-5ea1-98a6-936ef569d8de",
+                            "17b403f8-c9de-5967-bc24-89ab9cf712d8",
+                            "e01c2964-8ab8-59ac-8145-27c27256fe76",
+                            "a053aaaa-f12a-5681-b72e-9e108557191a",
+                            "3f37733c-9f98-584b-8597-4131fc30e37f",
+                            "ea5ee9e7-4df4-531a-889e-4eef57ed72f7",
+                            "5aa1a74b-346f-54ac-8bc7-9622f1e34a59",
+                            "b06655e8-1500-5365-aa12-bdebfab7eb8e",
+                            "608dcd58-eab0-5442-aa01-c2268e902647",
+                            "1dc85194-aa93-570c-9633-b0cff86d6d45",
+                            "6def7671-c6ed-56db-947d-3c7492672593",
+                            "6a57c16e-2921-5823-abcb-5b70a01865bb",
+                            "23dfb58c-f75a-5397-ae90-cd47c9170066"
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
                    ]
                   }
                  ]

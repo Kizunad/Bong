@@ -43717,18 +43717,18 @@
             "30ad46d5-ce26-5de6-ab4e-d3de6445e239",
             "6eec9ba3-5f1d-5cf5-a31b-c3b21d35c007",
             {
-             "name": "neck_base",
+             "name": "neck_1",
              "origin": [
               0.0,
-              21.229,
-              -9.92
+              20.928,
+              -10.282
              ],
              "rotation": [
               0.0,
               0.0,
               0.0
              ],
-             "uuid": "bdd8702f-9950-53ba-ba73-84e6f2dc65a3",
+             "uuid": "d496035f-0799-513c-8548-8fa97f864663",
              "export": true,
              "mirror_uv": false,
              "isOpen": false,
@@ -43740,27 +43740,19 @@
               "7262599a-e8e0-583b-860c-d26aa0c4cef6",
               "8c5d5667-0f5e-5730-8947-59d5c5ae618c",
               "9c1e0709-95c5-5962-bae8-739f89697bcb",
-              "f661734f-f082-5f1e-aec4-1ffdea45ed52",
-              "e5eedce0-2ec9-588d-b4b0-57ce34e030a9",
-              "45803e02-b30e-5586-8646-b5876ee82824",
-              "9950cd4a-7109-59ee-9101-c881a8ec7aee",
-              "b443285a-0d2d-58bc-a1ea-f1f8d05cf126",
-              "28abeeef-5af4-5a9e-b206-f10a92acab66",
-              "e986a3fa-5c3d-5787-8dca-4e0de7a7a490",
-              "76477b78-a38e-548d-a747-0b3d5522b033",
               {
-               "name": "neck_mid",
+               "name": "neck_2",
                "origin": [
                 0.0,
-                23.231,
-                -15.353
+                20.782,
+                -11.549
                ],
                "rotation": [
                 0.0,
                 0.0,
                 0.0
                ],
-               "uuid": "7ca71bfa-bdf8-5d7c-b426-467649bee6c6",
+               "uuid": "b3cc4320-f07a-5f02-8f50-f8e30807bb34",
                "export": true,
                "mirror_uv": false,
                "isOpen": false,
@@ -43768,27 +43760,23 @@
                "visibility": true,
                "autouv": 0,
                "children": [
-                "5d9b2524-96c7-5852-8436-a0ac0ea3633c",
-                "ec25d870-439e-5feb-bf70-9b597f6ed44d",
-                "3a2ab0ee-151f-5ffb-a1ce-51a508b02198",
-                "b9aedda2-a0f5-5349-a1c0-aa9cce2907fe",
-                "e7ba5071-3eaa-538e-b5c3-e53b3a76eda9",
-                "fb2cef96-443f-548f-981f-5137350ec7b2",
-                "b0dccea7-0152-5143-93d0-4939e106ae0e",
-                "e7d47a75-0700-5a5f-b7c7-04f1af3a6a1a",
+                "f661734f-f082-5f1e-aec4-1ffdea45ed52",
+                "e5eedce0-2ec9-588d-b4b0-57ce34e030a9",
+                "45803e02-b30e-5586-8646-b5876ee82824",
+                "9950cd4a-7109-59ee-9101-c881a8ec7aee",
                 {
-                 "name": "neck_top",
+                 "name": "neck_3",
                  "origin": [
                   0.0,
-                  26.877,
-                  -19.578
+                  21.553,
+                  -13.357
                  ],
                  "rotation": [
                   0.0,
                   0.0,
                   0.0
                  ],
-                 "uuid": "a4110550-de61-5834-8176-31b1e8cd8162",
+                 "uuid": "784eb048-761d-5525-bab1-f7c77dae2fec",
                  "export": true,
                  "mirror_uv": false,
                  "isOpen": false,
@@ -43796,26 +43784,23 @@
                  "visibility": true,
                  "autouv": 0,
                  "children": [
-                  "6bcdd3e5-a708-509e-a718-2b6504a262be",
-                  "578544f2-ee49-5f40-8c76-dadb528efab7",
-                  "61b77791-1ec7-5100-9eac-dcead9c1047a",
-                  "0bd2056b-b460-5e43-9469-f1f288deffdd",
-                  "e466a2e2-a602-5f28-a6c2-9397a2e76e34",
-                  "82a4e7d0-b112-5e6b-8186-18cb27616746",
-                  "aa9a54da-88b7-5683-8398-41c845b619dd",
+                  "b443285a-0d2d-58bc-a1ea-f1f8d05cf126",
+                  "28abeeef-5af4-5a9e-b206-f10a92acab66",
+                  "e986a3fa-5c3d-5787-8dca-4e0de7a7a490",
+                  "76477b78-a38e-548d-a747-0b3d5522b033",
                   {
-                   "name": "skull",
+                   "name": "neck_4",
                    "origin": [
                     0.0,
-                    27.578,
-                    -21.992
+                    23.07,
+                    -15.166
                    ],
                    "rotation": [
                     0.0,
                     0.0,
                     0.0
                    ],
-                   "uuid": "de36e8b9-5098-52a7-af25-e18508b4dff0",
+                   "uuid": "c6314eb9-ccc8-5933-a611-0883f7432225",
                    "export": true,
                    "mirror_uv": false,
                    "isOpen": false,
@@ -43823,51 +43808,23 @@
                    "visibility": true,
                    "autouv": 0,
                    "children": [
-                    "62b5bbec-a192-58e6-bd99-39c599be4064",
-                    "c5cae666-99bf-5bdb-882f-02f1a531c50b",
-                    "358518de-8b36-5879-b718-6f53072ce003",
-                    "0a2a8dec-b0c0-5260-8293-01ab803923cb",
-                    "ac506288-dc2a-5acb-9dee-c03dd7a22d94",
-                    "02124d46-0c58-5e4b-8139-1a4711bb9da7",
-                    "d9782d27-af31-5b0b-81fe-906c2c5a8303",
-                    "5355f3c4-f429-5556-9202-0d2172fe452c",
-                    "2e9ff8d6-a521-5aeb-bb0b-9d4cf6ad82d9",
-                    "e074df5c-c580-53de-882d-6242c81568e7",
-                    "ab06fe9d-acec-5daa-b50e-9dae7219ba6c",
-                    "a8c2d135-aa61-5327-a70a-09f9a5d629a3",
-                    "3dbcb4e8-775f-5397-bdb0-44568af98322",
-                    "2b312438-94c9-576d-acd8-d75a0c93ef98",
-                    "d4000c1d-6c86-52ae-87d9-3412522795fd",
-                    "953b18d5-704d-5452-885c-10fb62c57e98",
-                    "6c23295a-40c2-5a6e-997f-e2d66223a88b",
-                    "b60457ad-ff0f-587b-809f-f59b45963e16",
-                    "77b8d47a-291d-5f34-8622-87e33678eaf3",
-                    "1ed953d7-24ff-5ea1-98a6-936ef569d8de",
-                    "17b403f8-c9de-5967-bc24-89ab9cf712d8",
-                    "e01c2964-8ab8-59ac-8145-27c27256fe76",
-                    "a053aaaa-f12a-5681-b72e-9e108557191a",
-                    "3f37733c-9f98-584b-8597-4131fc30e37f",
-                    "ea5ee9e7-4df4-531a-889e-4eef57ed72f7",
-                    "5aa1a74b-346f-54ac-8bc7-9622f1e34a59",
-                    "b06655e8-1500-5365-aa12-bdebfab7eb8e",
-                    "608dcd58-eab0-5442-aa01-c2268e902647",
-                    "1dc85194-aa93-570c-9633-b0cff86d6d45",
-                    "6def7671-c6ed-56db-947d-3c7492672593",
-                    "6a57c16e-2921-5823-abcb-5b70a01865bb",
-                    "23dfb58c-f75a-5397-ae90-cd47c9170066",
+                    "5d9b2524-96c7-5852-8436-a0ac0ea3633c",
+                    "ec25d870-439e-5feb-bf70-9b597f6ed44d",
+                    "3a2ab0ee-151f-5ffb-a1ce-51a508b02198",
+                    "b9aedda2-a0f5-5349-a1c0-aa9cce2907fe",
                     {
-                     "name": "jaw",
+                     "name": "neck_5",
                      "origin": [
                       0.0,
-                      26.169,
-                      -23.261
+                      24.832,
+                      -16.975
                      ],
                      "rotation": [
                       0.0,
                       0.0,
                       0.0
                      ],
-                     "uuid": "68ca109f-68cd-5d16-8ff3-4b7b0f74a104",
+                     "uuid": "d472f8e1-677b-581f-b560-76129f35a830",
                      "export": true,
                      "mirror_uv": false,
                      "isOpen": false,
@@ -43875,26 +43832,157 @@
                      "visibility": true,
                      "autouv": 0,
                      "children": [
-                      "d4ea80c8-73b9-50c8-a32c-478b67a85422",
-                      "9dfa33cf-0374-5013-8933-d9cba1e0ecf1",
-                      "47c05752-72fd-50e2-bb03-24bdf94dcbf1",
-                      "b7758c19-2cad-590d-b97a-1a71bb5a178f",
-                      "140229b2-2f6b-51a0-8651-cf3501bed173",
-                      "7658e91c-754a-5b95-8bc4-b3772411708e",
-                      "98a57548-893f-5a06-b01c-0123fb2bfa71",
-                      "cdb12adf-4b2e-532e-8814-433d0364c51a",
-                      "04bf91a2-fea4-57ce-8b9f-3a3a8e660ea7",
-                      "9413647b-499e-584e-879e-c34ed1fe127f",
-                      "e1b7989b-7ca5-5fa3-9826-40d663ee085b",
-                      "7b45a5f1-cfb6-5c91-b150-b116d9aef515",
-                      "9bdd10e3-e348-5da4-bbc6-6722e948bd6e",
-                      "bce78431-846c-5d5d-bbdc-150f073ad55f",
-                      "581e1281-22d2-589d-8997-90a289a08ae4",
-                      "3e2abf05-ddf0-56e5-9c3f-8390ee990a4e",
-                      "b0f7c9f3-b66c-50ab-87a3-533c46348852",
-                      "cbfa6490-73af-5ff7-9c2d-e98fd919e3e7",
-                      "aacbb153-88f0-52de-ba46-9e8a94747453",
-                      "194acc70-632f-568a-aef7-3e6931082a61"
+                      "e7ba5071-3eaa-538e-b5c3-e53b3a76eda9",
+                      "fb2cef96-443f-548f-981f-5137350ec7b2",
+                      "b0dccea7-0152-5143-93d0-4939e106ae0e",
+                      "e7d47a75-0700-5a5f-b7c7-04f1af3a6a1a",
+                      {
+                       "name": "neck_6",
+                       "origin": [
+                        0.0,
+                        26.313,
+                        -18.783
+                       ],
+                       "rotation": [
+                        0.0,
+                        0.0,
+                        0.0
+                       ],
+                       "uuid": "bfa3636c-b900-59d3-9a14-b07cc49ce632",
+                       "export": true,
+                       "mirror_uv": false,
+                       "isOpen": false,
+                       "locked": false,
+                       "visibility": true,
+                       "autouv": 0,
+                       "children": [
+                        "6bcdd3e5-a708-509e-a718-2b6504a262be",
+                        "578544f2-ee49-5f40-8c76-dadb528efab7",
+                        "61b77791-1ec7-5100-9eac-dcead9c1047a",
+                        "aa9a54da-88b7-5683-8398-41c845b619dd",
+                        {
+                         "name": "neck_7",
+                         "origin": [
+                          0.0,
+                          27.239,
+                          -20.592
+                         ],
+                         "rotation": [
+                          0.0,
+                          0.0,
+                          0.0
+                         ],
+                         "uuid": "0db62a4c-e3d9-5d1f-8dae-be344b0cdf6c",
+                         "export": true,
+                         "mirror_uv": false,
+                         "isOpen": false,
+                         "locked": false,
+                         "visibility": true,
+                         "autouv": 0,
+                         "children": [
+                          "0bd2056b-b460-5e43-9469-f1f288deffdd",
+                          "e466a2e2-a602-5f28-a6c2-9397a2e76e34",
+                          "82a4e7d0-b112-5e6b-8186-18cb27616746",
+                          {
+                           "name": "skull",
+                           "origin": [
+                            0.0,
+                            27.578,
+                            -21.992
+                           ],
+                           "rotation": [
+                            0.0,
+                            0.0,
+                            0.0
+                           ],
+                           "uuid": "de36e8b9-5098-52a7-af25-e18508b4dff0",
+                           "export": true,
+                           "mirror_uv": false,
+                           "isOpen": false,
+                           "locked": false,
+                           "visibility": true,
+                           "autouv": 0,
+                           "children": [
+                            "62b5bbec-a192-58e6-bd99-39c599be4064",
+                            "c5cae666-99bf-5bdb-882f-02f1a531c50b",
+                            "358518de-8b36-5879-b718-6f53072ce003",
+                            "0a2a8dec-b0c0-5260-8293-01ab803923cb",
+                            "ac506288-dc2a-5acb-9dee-c03dd7a22d94",
+                            "02124d46-0c58-5e4b-8139-1a4711bb9da7",
+                            "d9782d27-af31-5b0b-81fe-906c2c5a8303",
+                            "5355f3c4-f429-5556-9202-0d2172fe452c",
+                            "2e9ff8d6-a521-5aeb-bb0b-9d4cf6ad82d9",
+                            "e074df5c-c580-53de-882d-6242c81568e7",
+                            "ab06fe9d-acec-5daa-b50e-9dae7219ba6c",
+                            "a8c2d135-aa61-5327-a70a-09f9a5d629a3",
+                            "3dbcb4e8-775f-5397-bdb0-44568af98322",
+                            "2b312438-94c9-576d-acd8-d75a0c93ef98",
+                            "d4000c1d-6c86-52ae-87d9-3412522795fd",
+                            "953b18d5-704d-5452-885c-10fb62c57e98",
+                            "6c23295a-40c2-5a6e-997f-e2d66223a88b",
+                            "b60457ad-ff0f-587b-809f-f59b45963e16",
+                            "77b8d47a-291d-5f34-8622-87e33678eaf3",
+                            "1ed953d7-24ff-5ea1-98a6-936ef569d8de",
+                            "17b403f8-c9de-5967-bc24-89ab9cf712d8",
+                            "e01c2964-8ab8-59ac-8145-27c27256fe76",
+                            "a053aaaa-f12a-5681-b72e-9e108557191a",
+                            "3f37733c-9f98-584b-8597-4131fc30e37f",
+                            "ea5ee9e7-4df4-531a-889e-4eef57ed72f7",
+                            "5aa1a74b-346f-54ac-8bc7-9622f1e34a59",
+                            "b06655e8-1500-5365-aa12-bdebfab7eb8e",
+                            "608dcd58-eab0-5442-aa01-c2268e902647",
+                            "1dc85194-aa93-570c-9633-b0cff86d6d45",
+                            "6def7671-c6ed-56db-947d-3c7492672593",
+                            "6a57c16e-2921-5823-abcb-5b70a01865bb",
+                            "23dfb58c-f75a-5397-ae90-cd47c9170066",
+                            {
+                             "name": "jaw",
+                             "origin": [
+                              0.0,
+                              26.169,
+                              -23.261
+                             ],
+                             "rotation": [
+                              0.0,
+                              0.0,
+                              0.0
+                             ],
+                             "uuid": "68ca109f-68cd-5d16-8ff3-4b7b0f74a104",
+                             "export": true,
+                             "mirror_uv": false,
+                             "isOpen": false,
+                             "locked": false,
+                             "visibility": true,
+                             "autouv": 0,
+                             "children": [
+                              "d4ea80c8-73b9-50c8-a32c-478b67a85422",
+                              "9dfa33cf-0374-5013-8933-d9cba1e0ecf1",
+                              "47c05752-72fd-50e2-bb03-24bdf94dcbf1",
+                              "b7758c19-2cad-590d-b97a-1a71bb5a178f",
+                              "140229b2-2f6b-51a0-8651-cf3501bed173",
+                              "7658e91c-754a-5b95-8bc4-b3772411708e",
+                              "98a57548-893f-5a06-b01c-0123fb2bfa71",
+                              "cdb12adf-4b2e-532e-8814-433d0364c51a",
+                              "04bf91a2-fea4-57ce-8b9f-3a3a8e660ea7",
+                              "9413647b-499e-584e-879e-c34ed1fe127f",
+                              "e1b7989b-7ca5-5fa3-9826-40d663ee085b",
+                              "7b45a5f1-cfb6-5c91-b150-b116d9aef515",
+                              "9bdd10e3-e348-5da4-bbc6-6722e948bd6e",
+                              "bce78431-846c-5d5d-bbdc-150f073ad55f",
+                              "581e1281-22d2-589d-8997-90a289a08ae4",
+                              "3e2abf05-ddf0-56e5-9c3f-8390ee990a4e",
+                              "b0f7c9f3-b66c-50ab-87a3-533c46348852",
+                              "cbfa6490-73af-5ff7-9c2d-e98fd919e3e7",
+                              "aacbb153-88f0-52de-ba46-9e8a94747453",
+                              "194acc70-632f-568a-aef7-3e6931082a61"
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
                      ]
                     }
                    ]
