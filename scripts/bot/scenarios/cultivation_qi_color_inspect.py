@@ -45,6 +45,14 @@ MODULES = ["cultivation", "network", "combat", "skill", "cmd"]
 
 INSPECT_REQUEST = {"type": "qi_color_inspect", "v": 1}
 SILENT_WINDOW = 4.0
+# 与请求无关的周期环境 payload：carrier_state 每 1s 无条件推给所有 client
+# （network/carrier_state_emit.rs，ticks % TICKS_PER_SECOND==0 周期）。
+# player_state / zone_info 等只随 Changed 组件 / 区间迁移发射——静默窗口前已把
+# realm set 的 player_state 回推排空（_realm_set_and_settle），窗口内除 carrier_state
+# 无合法非白名单 payload；白名单外一律判红（central-review 2029 #4）。carrier_state
+# 不在 proto_min 白名单，通常不解码成 server_data 事件；保留它只为显式豁免未来
+# proto_min 收录后的周期流。
+AMBIENT_PERIODIC_PAYLOAD_TYPES = frozenset({"carrier_state"})
 
 BENG_QUAN = "burst_meridian.beng_quan"
 WOLIU_MOUTH = "woliu.mouth"
@@ -204,10 +212,10 @@ def run(env) -> None:
             _assert_redacted_payload(host, redacted.data["payload"], victim.username)
             host.assert_alive("单重境界差 qi_color_inspect 后")
 
-            # 3. host 降回引气（同境界）→ realm_diff=0 静默
-            host.cmd("realm set induce")
-            host.expect_chat("[dev] realm set ", timeout=10.0)
-            sent_at = host.events[-1].t if host.events else 0.0
+            # 3. host 降回引气（同境界）→ realm_diff=0 静默。realm set 的 player_state
+            #    回推必须排空在 sent_at 之前（_realm_set_and_settle），否则 setup 期
+            #    回推会落入窗口，被白名单外的判红误伤。
+            sent_at = _realm_set_and_settle(host, "induce")
             host.intent({**INSPECT_REQUEST, "observed": f"entity:{victim_protocol_id}"})
             _assert_silent(host, sent_at, "同境界 qi_color_inspect 应静默（realm_diff=0 continue）")
 
@@ -323,6 +331,28 @@ def _assert_redacted_payload(host, payload: dict, victim_username: str) -> None:
         )
 
 
+def _realm_set_and_settle(bot, realm: str) -> float:
+    """realm set 后排空本 bot 的 player_state 回推，返回可作静默水位的时刻。
+
+    realm set 恒触发 Changed<Cultivation> → player_state 无条件推给自己（realm.rs
+    同值写仍触发 Changed）。若不等它落定就锚定 sent_at，setup 期 player_state 会落入
+    静默窗口，被白名单外的判红误伤（它并非 qi_color_inspect 的响应，central-review
+    2029 #4）。以拒信 chat 时刻为锚：player_state 随同批或紧随其后到达，wait_for
+    立即命中或等它到。"""
+    bot.cmd(f"realm set {realm}")
+    confirm = bot.expect_chat("[dev] realm set ", timeout=10.0)
+    bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.data["payload_type"] == "player_state"
+            and e.t >= confirm.t
+        ),
+        timeout=5.0,
+        description=f"realm set {realm} 的 player_state 回推应已到达",
+    )
+    return bot.events[-1].t if bot.events else 0.0
+
+
 def _transfer_dimension(bot, target: str, after: float) -> None:
     """把 bot 经正式 transfer consumer 切到 target 维度（保持同 XYZ 邻域）。
 
@@ -350,7 +380,11 @@ def _transfer_dimension(bot, target: str, after: float) -> None:
         key: respawn.data.get(key)
         for key in ("dimension_type_name", "dimension_name")
     }
-    if any(value != expected for value in actual.values()):
+    # 契约是「任一字段命中目标即可」：两字段含义不同（dimension_type 是类型注册表
+    # 键、dimension_name 是命名空间名），合法 Respawn 可能只带其一。用 any(... != ...)
+    # 会要求两字段都等于 target，一个字段缺失/异名即误红——必须在任一字段匹配时才
+    # 通过，即失败条件是「无任何字段匹配」（central-review 2029 #1）。
+    if expected not in actual.values():
         raise BotAssertionError(
             f"[{bot.username}] /tpdim {target} 的 Respawn 必须携带目标维度 {expected}，"
             f"实际 {actual}"
@@ -375,14 +409,23 @@ def _assert_silent(bot, sent_at: float, description: str) -> None:
 
 
 def _scan_silent_violations(bot, sent_at: float, description: str) -> None:
+    # 静默契约 = 「无任何非周期 S2C 响应 + 无聊天」。只盯 qi_color_observed 会放走
+    # 拒收却发 event_alert / 库存更新等任何其他 payload 的坏实现（central-review
+    # 2029 #4）；白名单外一律判红。realm set 的 player_state 回推已由调用方排空
+    # （_realm_set_and_settle），tpzone/tpdim 的 zone_info 在 setup 阶段（sent_at 前）
+    # 落定——窗口内除 carrier_state 无合法非白名单 payload。
     for e in bot.events_of("server_data"):
-        if e.t > sent_at and e.data["payload_type"] == "qi_color_observed":
+        if (
+            e.t > sent_at
+            and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES
+        ):
             raise BotAssertionError(
-                f"[{bot.username}] {description}，实际收到 qi_color_observed（t={e.t:.3f}）"
+                f"[{bot.username}] {description}，"
+                f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
             )
     for e in bot.events_of("chat"):
         # dev 修为切换的确认回显可能晚于 sent_at 到达（实测出现在窗口内），
-        # 属场景 setup 噪音；静默断言只看 qi_color_observed 与真实新聊天。
+        # 属场景 setup 噪音；其余真实新聊天一律判红。
         if e.t > sent_at and "realm set" not in e.data.get("text", ""):
             raise BotAssertionError(
                 f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"

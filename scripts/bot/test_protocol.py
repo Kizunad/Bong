@@ -4651,6 +4651,48 @@ class ProbePayloadDecodeTest(unittest.TestCase):
             self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
             self.assertEqual(decoded["realm_diff"], 2)
 
+    def test_qi_color_observed_field_74_decodes_unknown_enum_values(self):
+        # central-review 2029 #2：ColorKind 是 protobuf enum，未来/未知的非零 wire 值
+        # （如 11）是合法载荷。只 pin 1..=10 与 0/缺省，会放走「特殊处理 0 但对非零
+        # 未知值用 COLOR_KIND_PASCAL_NAMES[raw] 直取/raise」的坏解码器——它 decode 到
+        # 未知枚举值时崩溃，qi_color_observed 事件根本送不到。main/secondary 两个槽位
+        # 的未知值兜底都要 pin；secondary 携带未知值应映射 "unspecified" 而非 None
+        # （None 只留给字段缺省，proto_min.py 同款兜底）。
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 11)  # 未知 main
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(
+            decoded["main"],
+            "unspecified",
+            "未知 main ColorKind 应兜底为 unspecified",
+        )
+        self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+
+        inner = (
+            _pb_string(1, "offline:BGD9QiH")
+            + _pb_string(2, "offline:BGD9QiV")
+            + _pb_varint_field(3, 3)  # main=MELLOW
+            + _pb_varint_field(4, 11)  # 未知 secondary
+            + _pb_varint_field(5, 0)
+            + _pb_varint_field(6, 0)
+            + _pb_varint_field(7, 2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(74, inner))
+        self.assertEqual(decoded["type"], "qi_color_observed")
+        self.assertEqual(decoded["main"], "Mellow")
+        self.assertEqual(
+            decoded["secondary"],
+            "unspecified",
+            "未知 secondary ColorKind 应兜底为 unspecified（None 只留给缺省）",
+        )
+
     def test_qi_color_observed_field_74_decodes_present_secondary(self):
         # central-review 2029 #4：secondary 是可选字段，缺省路径之上还须 pin 携带
         # 路径——恒返回 None 的错误实现（present 也丢）会在此撞红。
@@ -4725,6 +4767,32 @@ class ProbePayloadDecodeTest(unittest.TestCase):
         self.assertIn("神识未及", decoded["message"])
         self.assertIsNone(decoded["zone"], "未携带 zone 时保持 None")
         self.assertEqual(decoded["duration_ticks"], 70)
+
+    def test_event_alert_field_77_absent_duration_stays_none(self):
+        # central-review 2029 #7：duration_ticks 是可选字段（_optional_varint 缺省
+        # 返回 None）。现有 fixtures 都携带 field4，用普通 defaulting varint 访问器
+        # 的坏解码器（缺省返回 0）能通过全部旧断言——合法无 duration 的告警会被
+        # 解码成 duration_ticks=0 的错误形状。缺省分支必须 pin：absent→None；另 pin
+        # 携带但值为 0 → 0（与缺省可区分，ordinary defaulting 访问器两者都出 0）。
+        absent = proto_min.decode_server_data_envelope(
+            _pb_message(77, _pb_string(2, "神识未及，凝脉方可感知保鲜"))
+        )
+        self.assertEqual(absent["type"], "event_alert")
+        self.assertIn("神识未及", absent["message"])
+        self.assertIsNone(absent["duration_ticks"], "缺省 duration_ticks 必须为 None")
+
+        present_zero = proto_min.decode_server_data_envelope(
+            _pb_message(
+                77,
+                _pb_string(2, "神识未及，凝脉方可感知保鲜") + _pb_varint_field(4, 0),
+            )
+        )
+        self.assertEqual(present_zero["type"], "event_alert")
+        self.assertEqual(
+            present_zero["duration_ticks"],
+            0,
+            "携带 field4=0 时应解码为 duration_ticks=0（区别于缺省 None）",
+        )
 
     def test_event_alert_field_77_decodes_event_kind_and_zone(self):
         inner = (

@@ -864,7 +864,8 @@ def _qi_color_observed(data: bytes) -> dict[str, Any]:
 
     与 Rust ServerDataPayloadV1::QiColorObserved 精确对应；`main`/`secondary`
     是 ColorKind 枚举（varint），映射为 PascalCase 名（与 Rust 变体一致）；secondary
-    缺省时保持 None（同境界掩码路径不携带）。
+    缺省时保持 None（同境界掩码路径不携带），携带但值未映射（0/未知 wire 值）时与
+    main 同款兜底 "unspecified"。
     """
     fields = _fields(data)
     secondary_raw = _optional_varint(fields, 4)
@@ -875,7 +876,9 @@ def _qi_color_observed(data: bytes) -> dict[str, Any]:
         "observed": _string(fields, 2),
         "main": COLOR_KIND_PASCAL_NAMES.get(_varint(fields, 3), "unspecified"),
         "secondary": (
-            COLOR_KIND_PASCAL_NAMES.get(secondary_raw) if secondary_raw is not None else None
+            COLOR_KIND_PASCAL_NAMES.get(secondary_raw, "unspecified")
+            if secondary_raw is not None
+            else None
         ),
         "is_chaotic": bool(_varint(fields, 5)),
         "is_hunyuan": bool(_varint(fields, 6)),

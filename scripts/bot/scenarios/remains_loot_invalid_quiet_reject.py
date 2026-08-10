@@ -57,20 +57,28 @@ def _assert_quiet_rejection(bot, sent_at: float, description: str) -> None:
     # 永远等不到 now >= end_at 而死循环（review finding 1/5）。
     deadline = time.monotonic() + SILENT_WINDOW
     while True:
-        for e in bot.events_of("server_data"):
-            # 模块契约是「无任何新 server_data」：白名单外的 payload 一律判红。
-            # 只盯 remains_sync 会放走拒收却发 event_alert / 库存更新的坏实现。
-            if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，"
-                    f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
-                )
-        for e in bot.events_of("chat"):
-            if e.t > sent_at:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
-                )
+        _scan_quiet_violations(bot, sent_at, description)
         if time.monotonic() >= deadline:
+            # 终末复扫：事件扫描与 deadline 判定非原子（central-review 2029 #3），
+            # deadline 判定成立后、返回前再扫一次，收口最后一段未观测窗口——否则
+            # 该段内到达的 server_data/聊天会被漏掉。
+            _scan_quiet_violations(bot, sent_at, description)
             return
         bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
+
+
+def _scan_quiet_violations(bot, sent_at: float, description: str) -> None:
+    for e in bot.events_of("server_data"):
+        # 模块契约是「无任何新 server_data」：白名单外的 payload 一律判红。
+        # 只盯 remains_sync 会放走拒收却发 event_alert / 库存更新的坏实现。
+        if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，"
+                f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
+            )
+    for e in bot.events_of("chat"):
+        if e.t > sent_at:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
+            )

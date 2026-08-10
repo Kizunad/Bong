@@ -80,30 +80,45 @@ def run(env) -> None:
 
 
 def _drain_probe_results(bot, quiet: float = 2.0, max_wait: float = 20.0) -> None:
-    """批次间屏障：排空在途 mineral_probe_result，直到静默窗口内无新结果。
+    """批次间屏障：排空在途 mineral_probe_result，直到连续两个静默样本都无新结果。
 
     探针结果异步到达，批间必须排空在途响应——否则上一扫的迟到响应会落入下一批次
-    sent_at 之后的窗口，被当成当前批次结果（central-review 2029 #3）。静默窗口
-    必须显著长于服务端实际响应延迟（同 tick 处理，亚秒~1s）；**到上限时若仍有响应
-    在途就报错**——静默放行一个还在来响应的批次，会把污染交给下一批/下一 realm
-    阶段，等于没有屏障（central-review 2029 #6）。
+    sent_at 之后的窗口，被当成当前批次结果（central-review 2029 #3）。单一静默样本
+    不能当作「管线已排空」的原子证据：前一扫的迟到响应可能恰在空扫描之后、下一批
+    请求之前到达，只睡一个 quiet 窗口就返回会放走它，被 _collect_probe_results 误记
+    入新批（realm 迁移错误正是这样被污染的，central-review 2029 #6）。修法：末次空
+    样本后再做一次确认扫描——重新锚定事件水位再等一个静默样本，两样本连续为空才
+    返回。静默窗口必须显著长于服务端实际响应延迟（同 tick 处理，亚秒~1s）；**到上限
+    时若仍有响应在途就报错**——静默放行一个还在来响应的批次，会把污染交给下一批/
+    下一 realm 阶段，等于没有屏障（central-review 2029 #6）。
     """
     deadline = time.monotonic() + max_wait
     while True:
         anchor = bot.events[-1].t if bot.events else 0.0
         time.sleep(quiet)
-        stray = [
-            e
-            for e in bot.events_of("server_data")
-            if e.data["payload_type"] == "mineral_probe_result" and e.t > anchor
-        ]
-        if not stray:
-            return
-        if time.monotonic() > deadline:
-            raise BotAssertionError(
-                f"[{bot.username}] mineral_probe_result 在 {max_wait:.0f}s 内持续到达，"
-                f"批次屏障无法收敛——拒绝静默放行可能污染下一批"
-            )
+        if _has_results_newer_than(bot, anchor):
+            if time.monotonic() > deadline:
+                raise BotAssertionError(
+                    f"[{bot.username}] mineral_probe_result 在 {max_wait:.0f}s 内持续到达，"
+                    f"批次屏障无法收敛——拒绝静默放行可能污染下一批"
+                )
+            continue
+        # 末次空样本后、返回前再确认一次：前一扫迟到响应可能恰在空扫描之后到达，
+        # 单一空样本把「此刻恰好无新事件」误当「管线已排空」。确认样本同样必须为
+        # 空，否则回到主循环继续排空（两个连续静默样本才构成屏障）。
+        confirm_anchor = bot.events[-1].t if bot.events else 0.0
+        time.sleep(quiet)
+        if _has_results_newer_than(bot, confirm_anchor):
+            continue
+        return
+
+
+def _has_results_newer_than(bot, anchor: float) -> bool:
+    return any(
+        e.t > anchor
+        for e in bot.events_of("server_data")
+        if e.data["payload_type"] == "mineral_probe_result"
+    )
 
 
 def _collect_probe_results(
@@ -200,21 +215,29 @@ def _assert_no_probe_result(bot, sent_at: float, description: str) -> None:
     # 永远等不到 now >= end_at 而死循环（review finding 1/5）。
     deadline = time.monotonic() + SILENT_WINDOW
     while True:
-        for e in bot.events_of("server_data"):
-            # 出界探针契约是「无 S2C 响应」：白名单外的 payload 一律判红。只盯
-            # mineral_probe_result 会放走拒收却发 event_alert / 库存更新的坏实现
-            # （review finding 5）。
-            if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，"
-                    f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
-                )
-        for e in bot.events_of("chat"):
-            if e.t > sent_at:
-                raise BotAssertionError(
-                    f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
-                )
+        _scan_silent_violations(bot, sent_at, description)
         if time.monotonic() >= deadline:
+            # 终末复扫：事件扫描与 deadline 判定非原子（central-review 2029 #3），
+            # deadline 判定成立后、返回前再扫一次，收口最后一段未观测窗口——否则
+            # 该段内到达的 server_data/聊天会被漏掉。
+            _scan_silent_violations(bot, sent_at, description)
             return
         bot.assert_alive(f"{description} 窗口内连接保持")
         time.sleep(0.1)
+
+
+def _scan_silent_violations(bot, sent_at: float, description: str) -> None:
+    for e in bot.events_of("server_data"):
+        # 出界探针契约是「无 S2C 响应」：白名单外的 payload 一律判红。只盯
+        # mineral_probe_result 会放走拒收却发 event_alert / 库存更新的坏实现
+        # （review finding 5）。
+        if e.t > sent_at and e.data["payload_type"] not in AMBIENT_PERIODIC_PAYLOAD_TYPES:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，"
+                f"实际窗口内收到 server_data/{e.data['payload_type']}（t={e.t:.3f}）"
+            )
+    for e in bot.events_of("chat"):
+        if e.t > sent_at:
+            raise BotAssertionError(
+                f"[{bot.username}] {description}，实际出现聊天 {e.data['text']!r}"
+            )
