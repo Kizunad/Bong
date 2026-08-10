@@ -1521,8 +1521,8 @@ def part_reins(t: Tack, fit: Fit, spec: ReinSpec, anchor: tuple[float, float, fl
             # 每一段的交叠按**这一节自己的**半径给：缰离 pivot 的距离随颈高变
             r_a = math.hypot(xr + rw, ya - (P.y_occiput if k == len(NECK) - 1 else seams[k + 1][1]))
             r_b = math.hypot(xr + rw, yb - seams[k][1])
-            pad_a = pad_poll if k == len(NECK) - 1 else seam_pad(r_a, NECK_ROM)
-            pad_b = 0.0 if k == 0 else seam_pad(r_b, NECK_ROM)
+            pad_a = pad_poll if k == len(NECK) - 1 else seam_pad(r_a, max(NECK_ROM))
+            pad_b = 0.0 if k == 0 else seam_pad(r_b, max(NECK_ROM))
             # 厚度逐段错开 3%：相邻两段在交叠区里同宽同斜时上下面近共面，会闪。
             # 差这一点点谁也看不出来，但把共面消掉了。
             th = rw * (1.0 + 0.03 * (k % 2))
@@ -2925,7 +2925,7 @@ def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
         # 比一节颈还长**（颈一节约两个单位，而 1.35·5.6·tan14° 就要 1.9），试着卡短
         # 一半立刻裂 0.63。颈段短、鸡颈又骑得高，就是这个数。
         r = max(math.hypot(x_out + th, y - s[1]) for y, s in ((ya, seams[k]), (yb, seams[k + 1])))
-        pad = seam_pad(r, NECK_ROM)
+        pad = seam_pad(r, max(NECK_ROM))
         ext = (0.0 if k == 0 else pad, 0.0 if k == len(NECK) - 1 else pad)  # 两个自由端不外扩
         # 逐节错开 4% 厚度：交叠这么长，同宽同高的相邻两节外侧面近共面会闪（同缰）
         d = th * (1.0 + 0.04 * (k % 2))
@@ -2975,7 +2975,7 @@ def part_bard_crinet(t: Tack, fit: Fit, spec: BardSpec) -> None:
                 yt_a, yt_b = ya - dep[k] + h_t / 2 - d * 0.1, yb - dep[k] + h_t / 2 - d * 0.1
                 rt = max(math.hypot(x_low * 0.72, y - sm[1])
                          for y, sm in ((yt_a, seams[k]), (yt_b, seams[k + 1])))
-                pt = seam_pad(rt, NECK_ROM)
+                pt = seam_pad(rt, max(NECK_ROM))
                 et = (0.0 if k == 0 else pt, 0.0 if k == len(NECK) - 1 else pt)
                 _strap_world(t, bone, f"bard_crinet_throat_{k + 1}",
                              -(x_low * 0.72), x_low * 0.72,

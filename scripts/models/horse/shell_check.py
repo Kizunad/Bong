@@ -41,7 +41,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
-from gen_skeleton import rom  # noqa: E402
+from gen_skeleton import rom_axes  # noqa: E402
 from rig import Pose, Rig, euler  # noqa: E402
 
 # 判"贴合"时给的余量。**必须含"恰好贴面"这一档**——颈皮是一段接一段拼上去的，相邻
@@ -246,12 +246,12 @@ def rom_sweep(rig: Rig, span: dict[str, list[list[float]]] | None = None,
         own.setdefault(child, []).append(k)
     worst: dict[tuple[str, str], tuple[float, str, float]] = {}
     for bone, ks in own.items():
-        r = rom(bone)
-        lims = [[-r, r]] * 3 if span is None else span.get(bone, [[0.0, 0.0]] * 3)
+        r3 = rom_axes(bone)
+        lims = [[-a, a] for a in r3] if span is None else span.get(bone, [[0.0, 0.0]] * 3)
         sel = np.array(ks, int)
         for ax in range(3):
             # 动画超 ROM 由 sanity 单独管，这儿夹一下不重复报
-            lo, hi = max(lims[ax][0], -r), min(lims[ax][1], r)
+            lo, hi = max(lims[ax][0], -r3[ax]), min(lims[ax][1], r3[ax])
             if hi - lo < step:
                 continue
             for i in range(int(math.floor(lo / step)), int(math.ceil(hi / step)) + 1):
@@ -294,9 +294,12 @@ def main() -> int:
     ap.add_argument("--profile", default=None)
     ap.add_argument("--coat", default="rust")
     ap.add_argument("--rom", action="store_true",
-                    help="改扫**登记的整个活动范围**（`JOINT_ROM`）而不是十条动画。"
-                         "这是壳与骨的完整契约，比动画用到的范围严得多——现在还过不了，"
-                         "剩下的都是颈的偏航、尻盖对大腿这类老缝，见下面列出的清单")
+                    help="改扫**登记的整个活动范围**（`JOINT_ROM` 逐轴）而不是十条动画。"
+                         "这是壳与骨的完整契约，比动画用到的范围严得多，现在还没清零——"
+                         "剩下的根因是颈皮那几块是斜段的**正交包围盒**（常马实测截面半高 "
+                         "5.56，而颈真正的半深只有两个多单位），交叠、楔形、关节套全按这个"
+                         "虚高的半径放大，算出来的交叠比一节颈还长（2.24 > 段长 1.81）。"
+                         "要清零得把颈段改成沿颈轴摆放的斜盒，那是另一件事。清单见下")
     args = ap.parse_args()
 
     rc = 0

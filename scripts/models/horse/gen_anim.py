@@ -41,7 +41,7 @@ import numpy as np
 
 import shell_check
 from gen_pelt import COATS
-from gen_skeleton import NECK, NECK_JOINTS, NECK_ROM, PROFILES, rom
+from gen_skeleton import NECK, NECK_JOINTS, NECK_ROM, PROFILES, rom, rom_axes
 from rig import FINAL, LIMITS, Pose, Rig, bb_pos, bb_rot, contact_report, rotmat
 
 STAGES = FINAL / "stages"
@@ -644,7 +644,7 @@ def graze_bend(rig: Rig, P) -> tuple[float, float]:
     # 搜索范围由**登记的关节活动范围**定死，不是拍脑袋给个大区间：皮层按 JOINT_ROM
     # 留接缝交叠，动画一旦解出超范围的姿势，壳就在那一帧裂开（挽马首版颅骨解到 114°，
     # 超出登记的 84° 整整 30°）。够不够得着地面由几何说了算，超范围换低头不算解。
-    bend_max = 2.0 * math.floor(NECK_ROM / max(NECK_SHARE_LOW) / 2.0)
+    bend_max = 2.0 * math.floor(NECK_ROM[0] / max(NECK_SHARE_LOW) / 2.0)  # 低头是俯仰那一轴
     # 留 4° 给动画在解出的姿势之上再叠的小动作（吃草时头还在左右微摆 3°）——
     # 合成转角是三轴一起算的，只按俯仰卡到边界，一叠偏航就超出去。
     skull_max = rom("skull") - 4.0
@@ -1183,7 +1183,16 @@ def sanity(rig: Rig, P, name: str, n: int = 48, L: Load = BARE) -> tuple[float, 
                 worst_ik, worst_ik_leg = r, f"{leg}@t={t:.2f}"
         W = rig.world(pose)
         for bone in rig.order:
-            over = joint_angle(pose[bone].rot) - rom(bone) if bone in pose else 0.0
+            if bone in pose:
+                # 两道都要：**逐轴**不许超各自登记的范围（壳的连续性扫描按逐轴扫，
+                # 动画走到表外的轴上去，扫描就白扫了）；**合成转角**不许超三轴里最大
+                # 的那个（接缝的交叠是沿骨轴的一段长度，按最坏那一轴留，所以复合转角
+                # 也得压在同一个数以内——只卡逐轴的话，(28,14,8) 合成 32° 会把缝顶开）。
+                lim = rom_axes(bone)
+                over = max([joint_angle(pose[bone].rot) - rom(bone)]
+                           + [abs(pose[bone].rot[ax]) - lim[ax] for ax in range(3)])
+            else:
+                over = 0.0
             if over > worst_rom:
                 worst_rom, rom_who = over, f"{bone}@t={t:.2f}"
             if bone in pose:
