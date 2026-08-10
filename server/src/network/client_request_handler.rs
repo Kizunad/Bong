@@ -10536,6 +10536,57 @@ mod tests {
     }
 
     #[test]
+    fn technique_scroll_race_mismatch_emits_structured_rejection() {
+        // central-review 2012 #3 回归：RaceMismatch 拒绝必须同样下发结构化
+        // InventoryMoveRejectedV1 {reason:"race_mismatch"}——非人形本体
+        // （is_humanoid=false）用 sword.infuse（RaceGate::Humanoid）时 realm 已到
+        // Induce 满足境界门（否则被 RealmTooLow 掩盖），race gate 是唯一拒因。
+        let mut app = production_scroll_request_app();
+        let (body_plans, races) = non_humanoid_race_fixture("test_whale");
+        app.insert_resource(body_plans);
+        app.insert_resource(races);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((
+                client_bundle,
+                inventory_with_skill_scroll(skill_scroll_item(
+                    42,
+                    "scroll_technique_sword_infuse",
+                )),
+                KnownTechniques {
+                    entries: Vec::new(),
+                },
+                Cultivation {
+                    realm: Realm::Induce,
+                    race: crate::body_plan::RaceId::new(crate::body_plan::HUMAN_RACE_ID),
+                    ..Default::default()
+                },
+                MeridianSystem::default(),
+                PlayerState::default(),
+                QuickSlotBindings::default(),
+                UnlockedStyles::default(),
+            ))
+            .id();
+
+        send_technique_scroll_use(&mut app, entity, 42);
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let rejected = collect_inventory_move_rejected(&mut helper);
+        assert_eq!(
+            rejected,
+            vec![crate::schema::server_data::InventoryMoveRejectedV1 {
+                reason: "race_mismatch".to_string(),
+                required_realm: None,
+                slot: None,
+                cap: None,
+            }],
+            "非人形本体用 sword.infuse 应下发恰好一条 race_mismatch 拒绝回执"
+        );
+    }
+
+    #[test]
     fn production_skill_scroll_falls_through_craft_routing() {
         let mut app = production_scroll_request_app();
         let (client_bundle, _helper) = create_mock_client("Azure");
