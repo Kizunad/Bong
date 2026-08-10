@@ -32,6 +32,15 @@ from urllib.parse import unquote, urlsplit
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379"
 
+# RESP bulk string 长度上限：订阅消息的 JSON 载荷通常只有几 KB，超限即视为恶意
+# 或异常发布者。resp2 解码器若信任对端自报的长度，会为任意大 bulk 无限累积
+# `_buf` 直到 `length + 2` 字节到齐，单个大载荷就能耗尽 bot runner 内存
+# （review finding [major]：unbounded RESP buffering）。
+MAX_BULK_LEN = 1 << 20  # 1 MiB
+# 接收缓冲区总量上限：整帧到齐前所有分片都会留在 _buf；即使单 bulk 未超
+# MAX_BULK_LEN，海量小帧同样能撑爆进程，这里做第二道兜底。
+MAX_BUF_LEN = 16 << 20  # 16 MiB
+
 
 def _frame_command(args: list[str]) -> bytes:
     """把命令参数编码为 RESP2 数组 + 批量字符串（redis 客户端标准参数框架）。
@@ -54,8 +63,14 @@ class RespFrames:
         self._buf = b""
 
     def feed(self, data: bytes) -> None:
-        if data:
-            self._buf += data
+        if not data:
+            return
+        if len(self._buf) + len(data) > MAX_BUF_LEN:
+            raise ValueError(
+                f"RESP 接收缓冲区超限: {len(self._buf) + len(data)} bytes > "
+                f"MAX_BUF_LEN={MAX_BUF_LEN}"
+            )
+        self._buf += data
 
     def next_frame(self) -> Any:
         frame, consumed = self._parse_frame(0)
@@ -91,6 +106,10 @@ class RespFrames:
             length = int(line)
             if length == -1:
                 return None, idx + 2
+            if length > MAX_BULK_LEN:
+                raise ValueError(
+                    f"RESP bulk string 超限: {length} bytes > MAX_BULK_LEN={MAX_BULK_LEN}"
+                )
             end = idx + 2 + length + 2
             if len(self._buf) < end:
                 return None, 0
@@ -164,6 +183,7 @@ class RedisPubSub:
         self._max_events = max_events
         self._lock = threading.Lock()
         self._closed = False
+        self._fatal_error: Optional[BaseException] = None
         self._thread: Optional[threading.Thread] = None
 
     @classmethod
@@ -226,11 +246,25 @@ class RedisPubSub:
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
+    def _set_fatal(self, exc: BaseException) -> None:
+        with self._lock:
+            self._fatal_error = exc
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
     def _pump(self) -> None:
         while not self._closed:
-            self._drain_frames()
             try:
+                self._drain_frames()
                 data = self._sock.recv(4096)
+            except ValueError as exc:
+                # 恶意/异常发布者的超大或畸形 RESP 帧：内存上限已封顶，但连接
+                # 已经不可信，终止泵线程并记录致命错误，由 wait_event/events_for
+                # 上报给场景（review finding [major]：unbounded RESP buffering）。
+                self._set_fatal(exc)
+                break
             except socket.timeout:
                 # 空闲超时不是连接终止：继续等待下一条订阅消息。
                 continue
@@ -238,7 +272,11 @@ class RedisPubSub:
                 break
             if not data:
                 break
-            self._frames.feed(data)
+            try:
+                self._frames.feed(data)
+            except ValueError as exc:
+                self._set_fatal(exc)
+                break
 
     def _drain_frames(self) -> None:
         """把已缓冲的 RESP 帧全部消费掉，再阻塞等下一次 recv。
@@ -264,6 +302,13 @@ class RedisPubSub:
             decoded = json.loads(payload)
         except (ValueError, TypeError):
             return
+        # 订阅的频道是全局共享的，任何发布者都可能投递合法 JSON 的非对象值
+        # （`null` / `[]` / `"x"` / 数字）。事件契约要求对象：非 dict 一律忽略，
+        # 否则 wait_event 谓词与 events_for 推导里的 `e.get(...)` 会对标量/列表
+        # 抛 AttributeError，让场景在共享频道收到垃圾时崩溃而非跳过
+        # （review finding [minor]：valid non-object JSON crashes predicates）。
+        if not isinstance(decoded, dict):
+            return
         with self._lock:
             self._events.append((self._event_seq, channel, decoded))
             self._event_seq += 1
@@ -272,6 +317,10 @@ class RedisPubSub:
 
     def events_for(self, channel: str) -> list[dict[str, Any]]:
         with self._lock:
+            if self._fatal_error is not None:
+                raise AssertionError(
+                    f"redis 连接已因协议异常终止，事件流不可信: {self._fatal_error}"
+                )
             return [e for _, c, e in self._events if c == channel]
 
     def anchor(self) -> int:
@@ -299,9 +348,17 @@ class RedisPubSub:
         # 调用方把窗口锚定在发送触发 intent 之前（见 anchor()），服务端响应即使
         # 抢先于 wait_event 被泵线程入队也不会落出窗口（review finding [1]/[4]）。
         with self._lock:
+            if self._fatal_error is not None:
+                raise AssertionError(
+                    f"redis 连接已因协议异常终止: {self._fatal_error}"
+                )
             start_seq = self._event_seq if after is None else after
         while True:
             with self._lock:
+                if self._fatal_error is not None:
+                    raise AssertionError(
+                        f"redis 连接已因协议异常终止: {self._fatal_error}"
+                    )
                 fresh = [
                     e for seq, c, e in self._events if seq >= start_seq and c == channel
                 ]

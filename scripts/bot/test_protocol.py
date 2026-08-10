@@ -680,6 +680,14 @@ class ServerDataDecodeTest(unittest.TestCase):
                 )
                 self.assertEqual(decoded["type"], "carrier_state")
                 self.assertEqual(decoded["phase"], expected)
+                # 构造边界本来就是 item_instance_id=None（field 7 缺省）；缺省的可选
+                # protobuf 字段必须解成 None，而不是 0 / 残留旧值（review finding
+                # [major]：absent item_instance_id is encoded but never asserted——
+                # 错把缺省当 0 会让消费者把无实例快照误读为 instance 0）。
+                self.assertIsNone(
+                    decoded["item_instance_id"],
+                    f"phase={phase} 时 field 7 缺省应解出 None，实际 {decoded['item_instance_id']!r}",
+                )
 
 
 class InventoryHelperTest(unittest.TestCase):
@@ -4135,6 +4143,87 @@ class RedisPubSubTest(unittest.TestCase):
         frames.feed(b"lo\r\n")
         self.assertEqual(frames.next_frame(), b"hello")
 
+    def test_oversized_bulk_frame_rejected_at_length(self):
+        # 回归：review finding [major]——解码器信任对端自报的 bulk 长度，为
+        # `length + 2` 字节无限累积 _buf。封顶后，仅长度头（不送本体）就必须
+        # 在长度阶段抛错，不得进入等待更多分片的缓冲路径。
+        frames = _redis_helpers.RespFrames()
+        frames.feed(b"$%d\r\n" % (_redis_helpers.MAX_BULK_LEN + 1))
+        with self.assertRaises(ValueError) as ctx:
+            frames.next_frame()
+        self.assertIn("MAX_BULK_LEN", str(ctx.exception))
+
+    def test_resp_buffer_cap_rejects_runaway_feed(self):
+        # 回归：review finding [major] 的第二道兜底——即使没有单个超大 bulk，
+        # 海量小分片同样不能无限撑大 _buf。
+        frames = _redis_helpers.RespFrames()
+        with self.assertRaises(ValueError) as ctx:
+            frames.feed(b"x" * (_redis_helpers.MAX_BUF_LEN + 1))
+        self.assertIn("MAX_BUF_LEN", str(ctx.exception))
+
+    def test_non_object_json_payloads_are_ignored(self):
+        # 回归：review finding [minor]——订阅的全局频道上任意发布者可投递合法
+        # JSON 的非对象值（null/[]/"x"/数字）。事件契约要求对象：非 dict 必须
+        # 被忽略，否则 wait_event 谓词与 events_for 推导里的 e.get() 会抛
+        # AttributeError 让场景崩溃。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            for raw in (b"null", b"[]", b'"x"', b"42"):
+                msg = (
+                    b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                    % (len(raw), raw)
+                )
+                server.sendall(msg)
+            good = json.dumps({"tick": 7}).encode()
+            msg = (
+                b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                % (len(good), good)
+            )
+            server.sendall(msg)
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 7)
+            self.assertEqual(
+                len(pubsub.events_for("my_chan")),
+                1,
+                "非 dict JSON 应被忽略，只留合法对象事件",
+            )
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_oversized_bulk_on_subscribed_channel_is_fatal(self):
+        # 回归：review finding [major]——超大 bulk 到达订阅连接时，泵线程不得
+        # 静默死掉（那样 wait_event 只会一直超时）；必须封顶并记录致命错误，
+        # 由 events_for/wait_event 上报为明确失败。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            huge = _redis_helpers.MAX_BULK_LEN + 1
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n" % huge
+            server.sendall(msg)
+            deadline = time.monotonic() + 5.0
+            fatal_msg = None
+            while time.monotonic() < deadline:
+                try:
+                    pubsub.events_for("my_chan")
+                except AssertionError as exc:
+                    fatal_msg = str(exc)
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(
+                fatal_msg, "超大 bulk 帧应使 events_for 上报致命错误而非静默"
+            )
+            self.assertIn("MAX_BULK_LEN", fatal_msg)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
     def test_subscribe_ack_wait_and_message_pump(self):
         pubsub, server, client = self._pubsub_with_pair()
         try:
@@ -4476,6 +4565,66 @@ class RedisPubSubTest(unittest.TestCase):
             pubsub.stop()
             server.close()
             client.close()
+
+
+class ThrowCarrierGuardMarkerTest(unittest.TestCase):
+    """combat_anqi_throw_carrier：消费者 guard 日志按 carrier 线缆 id 归属解析。
+
+    回归 review findings [major]：正向派发证据不得依赖不唯一的 payload 字节数，
+    必须由 throw_carrier_intents 在空手早退处发出的 guard 日志按本 bot 线缆 id
+    归属。此测试钉住解析逻辑（按 carrier 过滤 + reason 提取）。
+    """
+
+    def _scenario_module(self):
+        from bot.scenarios import combat_anqi_throw_carrier as mod
+
+        return mod
+
+    def _write_log(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".log")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_guard_markers_filtered_to_own_carrier(self):
+        mod = self._scenario_module()
+        own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
+        other = "player:11111111-2222-3333-4444-555555555555"
+        path = self._write_log(
+            [
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
+                f"[bong][combat] throw_carrier guard carrier={other} slot=MainHand reason=no_carrier_item",
+                "[bong][network] client_request received entity=5v1 payload_bytes=77",
+            ]
+        )
+        self.assertEqual(
+            mod._server_log_guard_markers(path, own),
+            ["no_anqi_imprint"],
+            "只应解析出归属本 bot 的 guard 标记",
+        )
+        self.assertEqual(
+            mod._server_log_guard_markers(path, other),
+            ["no_carrier_item"],
+        )
+        self.assertEqual(mod._server_log_guard_markers(path, "player:missing"), [])
+
+    def test_guard_reasons_whitelist_accepts_both_guards(self):
+        mod = self._scenario_module()
+        own = "player:3f9a2c8e-4a1e-4b1f-9c2d-0a1b2c3d4e5f"
+        path = self._write_log(
+            [
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_carrier_item",
+                f"[bong][combat] throw_carrier guard carrier={own} slot=MainHand reason=no_anqi_imprint",
+            ]
+        )
+        reasons = mod._server_log_guard_markers(path, own)
+        for reason in reasons:
+            self.assertIn(
+                reason,
+                mod._GUARD_REASONS,
+                f"reason {reason!r} 不在空手护栏白名单 {mod._GUARD_REASONS!r} 内",
+            )
 class NewServerDataDecoderContractTest(unittest.TestCase):
     """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
 

@@ -833,21 +833,41 @@ fn throw_carrier_intents(
         &mut PlayerInventory,
         &mut CarrierStore,
         Option<&mut Stamina>,
+        Option<&UniqueId>,
     )>,
 ) {
     for intent in intents.read() {
-        let Ok((position, mut inventory, mut store, stamina)) = actors.get_mut(intent.thrower)
+        let Ok((position, mut inventory, mut store, stamina, unique_id)) =
+            actors.get_mut(intent.thrower)
         else {
             continue;
         };
+        let wire_id = entity_wire_id(unique_id, intent.thrower);
         let Some(item) = inventory
             .equipped
             .get(intent.slot.equip_key())
             .and_then(|s| s.held.as_ref())
         else {
+            // e2e 空手护栏的正向证据：消费者系统（throw_carrier_intents）在「手槽
+            // 无载体」早退处发信号。carrier=player:{uuid} 是该 bot 的线缆 id，场景
+            // 用它把这条日志归属到自己的请求——不再依赖不唯一的 payload 字节数
+            // （review findings [major]：throw 场景缺消费者信号 / 日志相关性）。
+            // 系统未注册时此日志不出现，场景据此区分「护栏走了」与「消费者断线」。
+            tracing::info!(
+                "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_carrier_item",
+                wire_id,
+                intent.slot
+            );
             continue;
         };
         let Some(imprint) = store.imprints_by_instance.remove(&item.instance_id) else {
+            // 与上同构：手槽有非暗器物品（新手村 fixture 主手通常是 iron_sword）
+            // 但无 anqi 印记——空手护栏的另一条实测路径。
+            tracing::info!(
+                "[bong][combat] throw_carrier guard carrier={} slot={:?} reason=no_anqi_imprint",
+                wire_id,
+                intent.slot
+            );
             continue;
         };
         let dir = normalized_dir(intent.dir_unit);

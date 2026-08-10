@@ -12,20 +12,20 @@
 
 空手 no-op 对 server→client 无可观测副作用，所以纯负向断言（无 despawn / 无
 库存改动 / 存活）无法区分「护栏真的走了」和「意图在序列化/传输/反序列化环节被
-丢弃的空转」。本场景因此追加**正向派发证据**：读 server 日志（需 `BONG_SERVER_LOG`
-指向 server 日志，bot-e2e.sh 已导出），断言发出的 throw_carrier intent（精确
-payload 字节数）确实产生了一条 `client_request received` 且没有 `deserialize
-failed`——证明生产→线上→反序列化链条被实际遍历。
+丢弃的空转」。本场景因此追加**消费者信号**：`throw_carrier_intents` 在空手
+no-op 早退处发 `[bong][combat] throw_carrier guard carrier=player:{uuid}
+reason=<guard>` 日志（carrier.rs，review 要求补的 instrumentation）。场景读
+server 日志（需 `BONG_SERVER_LOG`，bot-e2e.sh 已导出），断言发出 intent 后新增
+了**归属本 bot 线缆 id** 的 guard 标记——既证明生产→线上→反序列化→派发→消费者
+链条被实际遍历，又把证据相关性钉在本 bot 身份上（review finding [major]：
+payload 字节数不唯一，无法把 `client_request received` 归属到本请求）。
 
 **已知缺口（记录不隐瞒）**：合法抛射（清空手部 + 弹道耗竭事件）的成功分支同样只在
 server 单测里用直接写槽的 `inventory_with_main_hand()` helper 覆盖；真"装弹→抛射"
-链路请在物品目录把载体档位回填为 anqi/hidden_weapon 后再补该场景。`client_request
-received` 只能证明意图被反序列化成 ThrowCarrier 并派发；`throw_carrier_intents`
-系统自身未被注册时（server 接线断裂）仍无可观测信号，属 server 侧 instrumentation
-盲区。
+链路请在物品目录把载体档位回填为 anqi/hidden_weapon 后再补该场景。guard 日志
+只能证明空手护栏分支被执行，不覆盖弹道生成/命中/耗竭的成功路径。
 """
 
-import json
 import os
 import re
 import time
@@ -43,6 +43,9 @@ REQUIRED_ENV = "BOT_E2E_ANQI_REDIS"
 RUN_IN_ALL_WHEN_ENV = REQUIRED_ENV
 
 DESPAWN_CH = "bong:combat/projectile_despawned"
+# 消费者 guard 标记轮询上限：意图经线上→反序列化→派发→系统执行，tick 内完成，
+# 8s 远超所需，同时给 despawn 观察留足窗口。
+GUARD_TIMEOUT = 8.0
 
 
 def _self_carrier(bot) -> str:
@@ -62,31 +65,44 @@ def _self_carrier(bot) -> str:
     return evt.data["payload"]["carrier"]
 
 
-_RECEIVED_RE = re.compile(r"client_request received .*payload_bytes=(\d+)")
+_GUARD_RE = re.compile(r"throw_carrier guard carrier=(\S+) .*reason=(\S+)")
 _DESERIALIZE_FAILED_RE = re.compile(r"client_request deserialize failed")
 
+# 空手护栏 reason 白名单：no_carrier_item（手槽无载体）/ no_anqi_imprint（持非暗器
+# 物品，新手村 fixture 主手通常是 iron_sword）。若 fixture 换主手武器，两分支任一
+# 出现都算护栏执行，但不接受其他 reason 蒙混。
+_GUARD_REASONS = ("no_carrier_item", "no_anqi_imprint")
 
-def _server_log_markers(path: str) -> tuple[list[int], int]:
-    """扫描 server 日志，返回 (payload_bytes 序列, deserialize-failed 条数)。
 
-    `client_request received ... payload_bytes=N` 是 handle_client_request_payloads
-    在 JSON 反序列化成功后的 info 日志（N = 请求载荷字节数）；`client_request
-    deserialize failed` 是 warn 日志，payload 与 ClientRequestV1 schema 不匹配时
-    出现。两者构成 throw 意图「生产→线上→反序列化」的正向证据：空手 no-op 对
-    server→client 无可观测副作用，只有这段日志能证明链条真的被遍历（review
-    finding：无正向证据时，意图被序列化丢弃 / type 改名 / schema 失配都会
-    静默空转却照样通过负向断言）。
+def _server_log_guard_markers(path: str, carrier: str) -> list[str]:
+    """扫描 server 日志，返回 carrier= 等于本 bot 线缆 id 的 guard 标记 reason 序列。
+
+    `throw_carrier guard carrier=player:{uuid} ... reason=<guard>` 由消费者系统
+    `throw_carrier_intents` 在空手 no-op 早退处发出（server/src/combat/carrier.rs），
+    证明意图已完成「生产→线上→反序列化→派发→消费者执行」，且由 carrier 线缆 id
+    归属到本 bot——不再依赖不唯一的 payload 字节数（review findings [major]：
+    throw 场景缺消费者信号 / client_request received 日志相关性）。
     """
-    received: list[int] = []
+    reasons: list[str] = []
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            match = _GUARD_RE.search(line)
+            if match and match.group(1) == carrier:
+                reasons.append(match.group(2))
+    return reasons
+
+
+def _server_log_deserialize_failed(path: str) -> int:
+    """`client_request deserialize failed` 是 warn 日志，payload 与 ClientRequestV1
+    schema 不匹配时出现。guard 标记只在反序列化成功后才可能发出，故此计数在 guard
+    断言通过后提供 schema 漂移的精确诊断（同窗口内其他请求的失败也计入，属全局
+    噪音兜底）。"""
     failed = 0
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
-            match = _RECEIVED_RE.search(line)
-            if match:
-                received.append(int(match.group(1)))
             if _DESERIALIZE_FAILED_RE.search(line):
                 failed += 1
-    return received, failed
+    return failed
 
 
 def run(env) -> None:
@@ -110,8 +126,7 @@ def run(env) -> None:
             # （slot/dir_unit/power；字段名写错会被 deny_unknown_fields 整包拒收，
             # throw_carrier_intents 根本不会执行）。main_hand 持默认武器（无 anqi
             # imprint），走 throw_carrier_intents 的 imprint 查找 miss 分支静默
-            # no-op。request 对象即 bot.intent 实际发送的 JSON（同序同值），其
-            # 字节长度必须与 server 日志 payload_bytes 严格一致。
+            # no-op。request 对象即 bot.intent 实际发送的 JSON（同序同值）。
             request = {
                 "type": "throw_carrier",
                 "v": 1,
@@ -119,36 +134,55 @@ def run(env) -> None:
                 "dir_unit": [0.0, 0.0, 1.0],
                 "power": 0.5,
             }
-            payload_bytes = len(json.dumps(request).encode("utf-8"))
 
             log_path = os.environ.get("BONG_SERVER_LOG")
             assert log_path and os.path.isfile(log_path), (
                 "正向派发证据需要 server 日志：export BONG_SERVER_LOG=<server log>"
                 f"（bot-e2e.sh 已导出；实际 log_path={log_path!r}）"
             )
-            before_received, before_failed = _server_log_markers(log_path)
+            before_guard = _server_log_guard_markers(log_path, carrier)
+            before_failed = _server_log_deserialize_failed(log_path)
 
             # 手持非暗器（默认武器）发出投掷 intent —— 无载体投掷应被静默忽略。
             bot.intent(request)
 
-            # 正向派发证据（3s 兼作 despawn 观察窗口）：空手 no-op 对 server→client
-            # 无可观测副作用，只有 server 日志的 `client_request received` 能证明这次
-            # 生产→线上→反序列化路径被实际遍历。若 intent 被客户端序列化丢弃 / type
-            # 改名 / schema 字段失配，负向断言依旧通过，正由此处拦下（review finding）。
-            time.sleep(3.0)
-            after_received, after_failed = _server_log_markers(log_path)
-            new_received = after_received[len(before_received):]
-            new_failed = after_failed - before_failed
-            assert payload_bytes in new_received, (
-                f"正向派发证据缺失：发送 throw_carrier intent（payload_bytes="
-                f"{payload_bytes}）后 server 日志应新增同字节数 client_request "
-                f"received，实际新增 {new_received!r}——意图可能在客户端序列化/"
-                f"线上传输/服务端反序列化环节被丢弃，空手护栏断言无法证明链条走了"
+            # 正向派发证据（主）：轮询等待消费者系统为本 bot 的 carrier 新增 guard
+            # 标记。空手 no-op 对 server→client 无可观测副作用，唯有 throw_carrier_
+            # intents 在空手早退处发出的这条消费者信号能证明链条被实际遍历，且由
+            # carrier 线缆 id 归属到本 bot（review findings [major]：缺消费者信号 +
+            # payload 字节数相关性不成立）。轮询窗口兼作 despawn 观察窗。
+            guard_deadline = time.monotonic() + GUARD_TIMEOUT
+            while True:
+                after_guard = _server_log_guard_markers(log_path, carrier)
+                if len(after_guard) > len(before_guard):
+                    break
+                if time.monotonic() >= guard_deadline:
+                    break
+                time.sleep(0.2)
+
+            new_guard = after_guard[len(before_guard):]
+            assert new_guard, (
+                f"throw_carrier 空手护栏正向证据缺失：发出 intent 后 "
+                f"{GUARD_TIMEOUT:.0f}s 内 server 未为 carrier={carrier!r} 新增 "
+                f"guard 标记，实际新增 {new_guard!r}——throw_carrier_intents "
+                f"消费者可能未注册、意图未抵达派发、或在序列化/传输环节被丢弃，"
+                f"负向断言无法区分这些空转"
             )
+            for reason in new_guard:
+                assert reason in _GUARD_REASONS, (
+                    f"guard 标记 reason 不在空手护栏白名单 {_GUARD_REASONS!r} 内："
+                    f"{new_guard!r}"
+                )
+
+            # 辅助诊断：guard 标记只在反序列化成功后才会出现，故此计数在 guard
+            # 断言通过后提供 schema 漂移的精确定位（若 schema 失配，guard 断言
+            # 先行失败，这里不会掩盖）。
+            after_failed = _server_log_deserialize_failed(log_path)
+            new_failed = after_failed - before_failed
             assert new_failed == 0, (
-                f"throw_carrier 请求不应触发 client_request deserialize failed，"
-                f"实际新增 {new_failed} 条——payload 字段与 server 端 "
-                f"ClientRequestV1::ThrowCarrier 不一致，链条在反序列化处断裂"
+                f"窗口内出现 client_request deserialize failed（新增 {new_failed} 条）"
+                f"——有请求的 payload 与 server 端 ClientRequestV1 schema 不一致，"
+                f"链条在反序列化处断裂"
             )
 
             # 无本 bot 事件：窗口内不应冒出归属本 bot 的 projectile_despawned。
