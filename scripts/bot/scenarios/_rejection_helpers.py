@@ -31,6 +31,25 @@ from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场�
 # 同类型的类型也可能由请求处理器发出（如 inventory_snapshot 既是 join 同步也是
 # 容器请求的 resync 响应），按"窗口前见过"自校准会把请求引发的响应误判成连接同步。
 # 其余 server_data / vfx / chat 一律视为响应式反馈。
+#
+# morph_state / cultivation_detail（origin/main #1202 后合入）同样是**周期驱动**的
+# 全量重发：join 首帧 + 每 20 tick 无条件向全部在线 client 重发完整快照
+# （morph_state_emit.rs MORPH_STATE_SYNC_INTERVAL_TICKS /
+# cultivation_detail_emit.rs EMIT_INTERVAL_TICKS，~1s @ 20TPS）。探针窗口只含被拒
+# 请求（拒绝发生在副作用之前），窗口内出现它们只能是周期连接同步，绝非请求响应；
+# 正向断言（合法请求仍可用 / 边界接受）各自用显式 wait 认自己的响应，不受影响。
+#
+# inventory_snapshot 也在其列：shelflife sweep（shelflife/sweep.rs，每 200 tick）
+# 等周期系统会变更 PlayerInventory → Changed 驱动 emit_changed_inventory_snapshots
+# 重发快照，与 client 请求无关（实跑实证在 join 后 1.6-9s 落在探针窗口内，内容与
+# 前序快照逐字段一致、revision 不变）。把它列为 ambient 不会削弱零 mutation oracle：
+# 所有需要证明「探针零 mutation」的场景（out_of_range / unknown_type / oversized
+# 的探针前后指纹、stale-move 的请求前/resync 指纹）都用 **inventory_fingerprint
+# （revision + 全部内容字段）** 断言 —— 真被坏请求改动的 mutation 必然 bump
+# revision、改变内容，指纹检查仍失败；成功路径响应（loot_container_update /
+# loot_container_close / quickslot_config ack）是独立 payload 类型，仍非 ambient，
+# 且各场景用 assert_no_server_data_payload_since 单独锁「无成功响应」。这里只消掉
+# 内容不变的重发误报，不放过任何真实的玩法副作用。
 _AMBIENT_SERVER_DATA_TYPES = frozenset(
     {
         "status_snapshot",    # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
@@ -38,6 +57,10 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
         "player_state",       # 玩家灵气等状态变化时重发（连接同步，非请求响应）
         "derived_attrs_sync",  # Changed<DerivedAttrs>/Changed<TribulationState> 驱动
         # （derived_attrs_emit.rs，含 join 首次 attach）
+        "morph_state",        # join 首帧 + 每 20 tick 周期全量重发 + 易形增删 delta
+        "cultivation_detail",  # 每 20 tick 周期全量重发（cultivation_detail_emit.rs）
+        "inventory_snapshot",  # shelflife sweep 等周期变更 PlayerInventory 驱动的重发，
+        # 内容与 revision 不变；零 mutation 由各场景 fingerprint 相等断言守护
     }
 )
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
@@ -189,13 +212,17 @@ def fire_probes_and_keep_connection(
     分模块的"合法请求仍可用"强断言由各场景在调用本函数后自己做（需要不同请求）。
     """
     drain_event_stream(bot)
-    sent_at = bot.events[-1].t if bot.events else 0.0
+    # 探针窗口锚点取自与 event.t 同一时钟（time.monotonic() - bot.t0）的**发送时刻**，
+    # 而不是 events[-1].t：事件流安静时最后一条事件的 t 会停留在旧值，把窗口起点推到
+    # 早于探针发送的时刻，连接同步/旧事件会被误划进探针窗口。
+    sent_at = time.monotonic() - bot.t0
     for probe_name, send in probes:
         send()
-    # 心跳断言锚定在**全部探针发出之后**的时刻，而不是窗口起点 sent_at：异步 reader
-    # 可能在 sent_at 之后、首个探针发出之前追加一条周期性 keepalive —— 若以 sent_at
-    # 为锚，那条 keepalive 会冒充"拒绝后的心跳"，掩盖 server 在拒绝后不再心跳的事实。
-    probe_done_at = bot.events[-1].t if bot.events else 0.0
+    # 心跳断言锚定在**全部探针发出之后**的发送时刻：事件流安静时 events[-1].t 会停留
+    # 在探针前的旧值，把 probe 处理前就已生成/在途的 keepalive 放进「拒绝后心跳」窗口
+    # （review finding 3）。time.monotonic() - bot.t0 与 event.t 同一相对时钟，严格在
+    # 全部发送完成后读取，排除所有在探针发送时刻前已到达的事件。
+    probe_done_at = time.monotonic() - bot.t0
     time.sleep(settle_s)
     bot.assert_alive(f"{label} 探针发出后 {settle_s:.1f}s 窗口内无断连")
     assert_no_gameplay_side_effect_since(bot, sent_at, f"{label} 探针窗口")
@@ -218,11 +245,12 @@ def assert_valid_request_still_works(bot, *, meridian: str = "lung") -> None:
     聊天确认，只有请求真正走完 handler 才会出现。先坏后好同一个连接，
     好请求成功 = 拒绝没有毒化连接（server 没崩、没卡死、没把连接标记为可疑）。
 
-    **时序锚定**：先记录发送时刻 ``sent_at``，再要求响应 ``t > sent_at`` 到达。
-    一个更早的匹配广播（例如来自之前被错误接受的坏请求探针）t ≤ sent_at，
-    不能冒充本请求的响应 —— 成功断言与所发的合法请求严格对应。
+    **时序锚定**：先记录发送时刻 ``sent_at``（``time.monotonic() - bot.t0``，与
+    ``event.t`` 同一相对时钟，在发请求**之前**读取），再要求响应 ``t > sent_at``。
+    一个更早的匹配广播（例如来自之前被错误接受的坏请求探针）在发送时刻前已到达、
+    ``t ≤ sent_at``，不能冒充本请求的响应 —— 成功断言与所发的合法请求严格对应。
     """
-    sent_at = bot.events[-1].t if bot.events else 0.0
+    sent_at = time.monotonic() - bot.t0
     bot.intent({"v": 1, "type": "set_meridian_target", "meridian": meridian})
     bot.wait_for(
         lambda e: e.kind == "chat" and "已收到经脉目标" in e.data["text"] and e.t > sent_at,

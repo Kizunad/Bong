@@ -3379,7 +3379,24 @@ class CustomPayloadBoundaryTest(unittest.TestCase):
     custom payload 帧（data 段字节数精确等于 32767，不丢不裁）；(2) 用 JSON 空白
     填充到恰好 32767 字节的合法 set_meridian_target 仍是同一语义请求（serde_json
     忽略 token 间空白，meridian="lung" 原样解出）—— 场景用它证明解码层放行。
+
+    review finding 4（wire contract 自证陷阱）：两个边界测试都从场景导入
+    ``MAX_PAYLOAD_SIZE`` 并把它当期望值 —— 若常量被错误改成 32768，测试会跟着
+    送/收 32768 字节并通过，真正 32767 的协议边界契约不再被保护。
+    ``test_max_payload_size_pins_valence_wire_contract`` 用字面量 32767 独立 pin 住
+    常量：契约锚定在外部 wire 值上，而不是被测常量自证。
     """
+
+    def test_max_payload_size_pins_valence_wire_contract(self):
+        from bot.scenarios.network_payload_oversized import MAX_PAYLOAD_SIZE
+
+        self.assertEqual(
+            MAX_PAYLOAD_SIZE,
+            32767,
+            "Valence 协议 custom payload data 上限是 32767 字节"
+            "（Bounded<RawBytes, 32767>）；常量必须 pin 在外部 wire 契约值上，"
+            "否则边界测试借常量当 oracle 会自证",
+        )
 
     def test_custom_payload_carries_exactly_max_payload_size_data(self):
         from bot.scenarios.network_payload_oversized import MAX_PAYLOAD_SIZE
