@@ -8,7 +8,9 @@ set -euo pipefail
 #   2. HGETALL bong:npc/dormant 里 seeded dormant 的 faction 字段非 None。
 #
 # 不测 spawn roundtrip / 精确守恒数值（那些归 e2e-offscreen-war.sh）。
-# fork 自 scripts/e2e-redis.sh 的 redis fallback + cargo run + cleanup trap。
+# fork 自 scripts/e2e-redis.sh 的 redis fallback + build-install-exec + cleanup trap：
+# 经 build-token.sh cargo build --release，install 到 $RUN_DIR/bong-server，
+# exec "$SERVER_BINARY" 启动（不是 cargo run）。
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EVIDENCE_DIR="$ROOT/.sisyphus/evidence"

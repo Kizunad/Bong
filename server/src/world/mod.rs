@@ -766,6 +766,7 @@ fn scatter_spawn_resources(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
@@ -1658,6 +1659,41 @@ mod tests {
         assert!(
             anchors > 0 && chunks > 0 && view_distance_chunks > 0,
             "readiness 计数必须全部为正：anchors={anchors} chunks={chunks} view_distance_chunks={view_distance_chunks}"
+        );
+    }
+
+    #[test]
+    fn fallback_bootstrap_materializes_exactly_the_union_chunk_set() {
+        let (app, _captured) = run_fallback_setup_world_capture();
+
+        let overworld = app
+            .world()
+            .get_resource::<DimensionLayers>()
+            .expect("setup_world must insert DimensionLayers")
+            .overworld;
+        let layer = app
+            .world()
+            .get::<ChunkLayer>(overworld)
+            .expect("overworld layer entity must carry ChunkLayer");
+
+        let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected =
+            fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+                .expect("configured fallback union should fit within eager-allocation limit");
+
+        // producer→consumer 契约端到端钉死（review finding）：bootstrap 必须把 union 返回
+        // 的 chunk 集**精确**物化进 ChunkLayer。count 断言 + emergency 抽检都会放走
+        // 「只物化 emergency 一块、把其余 union chunk 丢进黑洞」的错误 consumer —— 该
+        // 实现 readiness 计数照报完整 union、emergency 地形照常可查，但远处出生簇没有
+        // 任何预分配的可用地形/视野。这里直接比较物化集与 union 集，错误 consumer 必红。
+        let materialized: BTreeSet<ChunkPos> = layer.chunks().map(|(pos, _)| pos).collect();
+
+        assert_eq!(
+            materialized,
+            expected,
+            "fallback bootstrap 必须物化恰好 union 返回的 chunk 集 \
+             （materialized={materialized:?} expected={expected:?}）：\
+             只物化 emergency 块、或把 union chunk 丢进黑洞的 consumer 都在此失败"
         );
     }
 

@@ -226,9 +226,22 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 {(tile["tile_x"], tile["tile_z"]) for tile in manifest["tiles"]},
                 expected_tiles,
             )
+            # review finding：world_bounds 必须精确等于所有生成 tile 的外包盒 ——
+            # 期望值**独立**从 tile 集算出，不得调用生产 _world_bounds helper（实现若
+            # 加了多余一格 margin / 返回旧固定边界 / 过度放宽，委托 helper 算期望会
+            # 跟着同病而假通过；包含性断言也测不出过宽边界）。
+            min_tile_x = min(tile_x for tile_x, _ in expected_tiles)
+            max_tile_x = max(tile_x for tile_x, _ in expected_tiles)
+            min_tile_z = min(tile_z for _, tile_z in expected_tiles)
+            max_tile_z = max(tile_z for _, tile_z in expected_tiles)
             self.assertEqual(
                 manifest["world_bounds"],
-                make_novice_raster_fixture._world_bounds(expected_tiles),
+                {
+                    "min_x": min_tile_x * make_novice_raster_fixture.TILE_SIZE,
+                    "max_x": (max_tile_x + 1) * make_novice_raster_fixture.TILE_SIZE - 1,
+                    "min_z": min_tile_z * make_novice_raster_fixture.TILE_SIZE,
+                    "max_z": (max_tile_z + 1) * make_novice_raster_fixture.TILE_SIZE - 1,
+                },
             )
             palette = manifest["biome_palette"]
             self.assertEqual(palette[4], "minecraft:meadow")
@@ -580,6 +593,7 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                     {(-1, -1), (-1, 0), (0, -1), (0, 0)},
                 )
 
+    def test_fixture_pins_ambient_support_air_and_no_water_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
             manifest_path = self._generate(root)

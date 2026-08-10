@@ -159,17 +159,31 @@ impl<'a> PlayerSpawnSelector<'a> {
             selected.anchor.z + radius * angle.sin(),
         );
 
+        let blocked_at = |pos: DVec3| {
+            zone.blocked_tiles
+                .iter()
+                .any(|(x, z)| *x == pos.x.floor() as i32 && *z == pos.z.floor() as i32)
+        };
+
         let clamped = zone.clamp_position(candidate);
-        if zone
-            .blocked_tiles
-            .iter()
-            .any(|(x, z)| *x == clamped.x.floor() as i32 && *z == clamped.z.floor() as i32)
-        {
+        if blocked_at(clamped) {
             let fallback = zone.clamp_position(DVec3::new(
                 selected.anchor.x,
                 selected.safe_y,
                 selected.anchor.z,
             ));
+            // review finding：钳制后的簇中心必须再过一遍同一 blocked_tiles 谓词 ——
+            // clamp_position 只保证 AABB 内、不清除 blocked 状态，中心本身撞上 blocked
+            // tile 时回退到已知有效 emergency 位置，绝不把玩家生到 zone 显式排除的坐标。
+            if blocked_at(fallback) {
+                tracing::warn!(
+                    "[bong][player] blocked-tile fallback 的簇中心 ({}, {}) 本身也在 \
+                     blocked_tiles 上；回退到 emergency spawn",
+                    fallback.x.floor() as i32,
+                    fallback.z.floor() as i32,
+                );
+                return EMERGENCY_SPAWN_POSITION;
+            }
             return [fallback.x, fallback.y, fallback.z];
         }
 
@@ -506,7 +520,11 @@ mod tests {
     }
 
     #[test]
-    fn blocked_tile_fallback_returns_clamped_cluster_center() {
+    fn blocked_tile_fallback_uses_emergency_when_cluster_center_also_blocked() {
+        // review finding：候选点 (10000,72,0) 钳制到 (750,72,0) 后撞上 blocked tile
+        // (750,0)，而簇中心钳制后仍在同一 (750,0) 上 —— 旧实现直接返回这块被 zone 显式
+        // 排除的坐标。修复后必须回退到已知有效 emergency 位置，绝不把玩家生到 blocked
+        // tile 上（clamp_position 只保证 AABB 内，不清除 blocked 状态）。
         let registry = synthetic_registry(
             (
                 DVec3::new(-750.0, -64.0, -750.0),
@@ -528,13 +546,57 @@ mod tests {
 
         assert_eq!(
             pos,
-            [750.0, 72.0, 0.0],
-            "候选点 (10000,72,0) 钳制到 (750,72,0) 后撞上 blocked tile (750,0)，回退必须返回再钳制的簇中心"
+            EMERGENCY_SPAWN_POSITION,
+            "候选与簇中心都在 blocked tile (750,0) 上时，回退必须落到 emergency spawn"
         );
         assert!(
             registry.zones[0].contains(DVec3::new(pos[0], pos[1], pos[2])),
             "blocked-tile 回退必须落在出生 zone 内，绝不返回界外原始锚点"
         );
+        assert!(
+            !registry.zones[0].blocked_tiles.contains(&(
+                pos[0].floor() as i32,
+                pos[2].floor() as i32
+            )),
+            "回退位置不得仍是 blocked tile"
+        );
+    }
+
+    #[test]
+    fn blocked_tile_fallback_never_returns_a_blocked_tile_across_seeds() {
+        // review finding：blocked-tile 回退必须对 fallback 位置应用同一谓词 —— 扫一组
+        // 确定性 seed，断言 select 永不返回被 zone 显式排除的坐标（无论走 clamp 直返、
+        // 簇中心回退还是 emergency 回退）。radius>250 使候选常钳制到 AABB 边界，边界
+        // blocked tile 大量触发 fallback 分支（中心 (0,0) 空闲 → 走簇中心回退子分支）。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-200.0, -64.0, -200.0),
+                DVec3::new(200.0, 320.0, 200.0),
+            ),
+            vec![(200, 0), (-200, 0), (0, 200), (0, -200)],
+        );
+        let selector = PlayerSpawnSelector::with_distribution(
+            &registry,
+            vec![SpawnDistributionAnchor {
+                anchor: DVec3::new(0.0, 72.0, 0.0),
+                radius: 250.0,
+                weight: 1,
+                safe_y: 72.0,
+            }],
+        );
+
+        for i in 0..64 {
+            let pos = selector.select(&format!("blocked-sweep-{i}"), SpawnPurpose::InitialLogin);
+            let tile = (pos[0].floor() as i32, pos[2].floor() as i32);
+            assert!(
+                !registry.zones[0].blocked_tiles.contains(&tile),
+                "blocked-sweep-{i} 返回了 blocked tile {tile:?}（pos={pos:?}）"
+            );
+            assert!(
+                registry.zones[0].contains(DVec3::new(pos[0], pos[1], pos[2])),
+                "blocked-sweep-{i} 必须落在出生 zone 内（pos={pos:?}）"
+            );
+        }
     }
 
     #[test]
