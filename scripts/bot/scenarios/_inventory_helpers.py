@@ -141,6 +141,44 @@ def require_container(snapshot: dict[str, Any], container_id: str) -> dict[str, 
     )
 
 
+def inventory_item_instances(bot, item_id: str) -> set[int]:
+    """当前已知快照流中 item_id 的全部实例 id（含恢复/存档物品）。
+
+    give 前调用：恢复的旧存档物品（如上次运行遗留）会在 clearinv 处理前仍出现在快照
+    流里，其 instance_id 对 place/consume 已失效，必须从「新实例」候选中排除。
+    """
+    instances: set[int] = set()
+    for event in _inventory_snapshot_events(bot):
+        found = find_item(event.data["payload"], item_id)
+        if found is not None:
+            instances.add(found["item"]["instance_id"])
+    return instances
+
+
+def wait_inventory_contains_new_instance(
+    bot,
+    item_id: str,
+    exclude_instances: set[int],
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """等待一个含 item_id 且其实例 id ∉ exclude_instances 的 inventory_snapshot。
+
+    wait_inventory_contains 无时间锚点，give 后可能命中恢复/存档的陈旧快照而返回旧实例
+    id；本函数保证拿到的实例是新 give 产生的（实例 id 全局不复用）。
+    """
+    event = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and (found := find_item(e.data["payload"], item_id)) is not None
+        and found["item"]["instance_id"] not in exclude_instances,
+        timeout=timeout,
+        description=(
+            f"含 item_id={item_id} 新实例（∉ {sorted(exclude_instances)}）的 inventory_snapshot"
+        ),
+    )
+    return event.data["payload"]
+
+
 def require_pack_container(snapshot: dict[str, Any], owner_instance_id: int) -> dict[str, Any]:
     expected_id = f"pack_{owner_instance_id}"
     for container in snapshot.get("containers", []):

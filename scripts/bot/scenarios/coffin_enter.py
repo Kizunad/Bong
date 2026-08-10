@@ -6,28 +6,32 @@
   multiplier:0.9}`（mundane 0.9 见 `coffin_lifespan_multiplier` 单测）。
 - 拒绝全静默（无回执）：无 registry 记录、occupied_by 已占、current_coffin 已在内、
   距离 >6m；维度门例外——回 `§c[棺]` chat 逐字。
+- 维度门在 occupied_by（mod.rs:625）与 current_coffin（mod.rs:651）之间：要打到
+  维度 chat，bot 必须先 leave 清 occupied_by，否则命中 occupied 静默拒绝。
 
 断言面（state 读回而非响应 OK）：
 1. 距离 >6m 拒绝——静默窗口无 CoffinState（移动走 8m 再 enter）。
 2. 正向 enter——CoffinState 三字段 + **entity_metadata invisible 位（bit 5）置位**
-   （valence Flags → TrackedData → EntityTrackerUpdateS2c entity_id=0 读回，字符状态
-   实际切换）+ **pos_look 瞬移到棺内坐标**（服务端权威位置读回）。
+   （valence Flags → TrackedData → EntityTrackerUpdateS2c 读回，字符状态实际切换）+
+   **pos_look 瞬移到棺内坐标**（服务端权威位置读回）。
 3. repeat enter 拒绝——静默窗口无二次 CoffinState/无新 metadata/位置不变（状态机幂等）。
 4. occupied 拒绝——第二 bot（CoEnB）enter 同坐标静默，收不到 in_coffin:true。
-5. 异维拒绝——tpdim tsy 后 enter 同坐标 → `§c[棺]` chat 逐字（维度门在
-   current_coffin 之前）。
-6. leave 收尾——invisible 位清除 + 位置回 `coffin_exit_position`（场景不留脏状态；
-   断连会走 persist 清理,但 leave 才是显式还原）。
+5. leave 腾棺——invisible 位清除 + 位置回 `coffin_exit_position`（也即场景显式收尾）。
+6. 异维拒绝——leave 后 tpdim tsy 再 enter 同坐标 → `§c[棺]` chat 逐字（此时
+   occupied_by=None 才命中维度门）。
+7. tpdim overworld 回主世界——场景不留脏状态。
 """
 
 import math
 import time
 
+from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
+    inventory_item_instances,
     require_item,
-    wait_inventory_contains,
+    wait_inventory_contains_new_instance,
 )
 
 DESCRIPTION = (
@@ -100,48 +104,90 @@ def _assert_silent_window(bot, anchor, label, what="coffin_state"):
         )
 
 
-def run(env) -> None:
-    with env.new_bot("CoEn") as bot:
-        wait_for_ready(bot)
-        bot.cmd("clearinv all")
-        bot.expect_chat("[dev] clearinv", timeout=30.0)
-        bot.cmd(f"give {MUNDANE_COFFIN} 1")
-        snapshot = wait_inventory_contains(bot, MUNDANE_COFFIN)
-        coffin = require_item(snapshot, MUNDANE_COFFIN)
+def _wait_settled(bot, timeout=20.0, tol=0.02):
+    """等 pos_look 连续两次采样位置不变（传送/坠落结束），避免在瞬移过程中采样 py，
+    导致放棺位落在实心方块（服务器 `not empty` 静默拒绝，物品不消费）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        prev = bot.position
+        time.sleep(0.6)
+        cur = bot.position
+        if prev is not None and cur is not None and all(
+            _approx(a, b, tol) for a, b in zip(prev, cur)
+        ):
+            return cur
+    raise BotAssertionError(
+        f"[{bot.username}] 位置在 {timeout:.0f}s 内未稳定，最后 position={bot.position}"
+    )
 
-        assert bot.position is not None, "需要 pos_look 后的 bot.position 定放棺位"
-        px, py, pz = (int(v) for v in bot.position)
-        lower = (px - PLACE_OFFSET, py, pz)
-        in_coffin_pos = (lower[0] + 0.5, lower[1] + 0.05, lower[2] + 0.5)
-        exit_pos = (lower[0] - 0.5, lower[1] + 0.05, lower[2] + 0.5)
 
-        # ── setup：CoffinPlace 消耗背包实例并注册 ──────────────────────────
+def _place_coffin(bot, coffin, px, py, pz):
+    """放棺到附近空位：服务器对非空气坐标静默拒绝（不消费物品），逐个候选位置重试直到
+    mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
+    leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。"""
+    candidates = [
+        (px - PLACE_OFFSET, py, pz),
+        (px + PLACE_OFFSET, py, pz),
+        (px, py, pz - PLACE_OFFSET),
+        (px, py, pz + PLACE_OFFSET),
+        (px - PLACE_OFFSET, py + 1, pz),
+        (px + PLACE_OFFSET, py + 1, pz),
+        (px, py + 1, pz - PLACE_OFFSET),
+        (px, py + 1, pz + PLACE_OFFSET),
+    ]
+    for x, y, z in candidates:
         anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "coffin_place",
                 "v": 1,
-                "x": lower[0],
-                "y": lower[1],
-                "z": lower[2],
+                "x": x,
+                "y": y,
+                "z": z,
                 "item_instance_id": int(coffin["item"]["instance_id"]),
             }
         )
-        bot.wait_for(
-            lambda e: e.kind == "server_data"
-            and e.data["payload_type"] == "inventory_snapshot"
-            and e.t > anchor
-            and find_item(e.data["payload"], MUNDANE_COFFIN) is None,
-            timeout=30.0,
-            description="真实 instance_id 放棺后 mundane_coffin 应从背包消耗",
-        )
+        try:
+            bot.wait_for(
+                lambda e, anchor=anchor: e.kind == "server_data"
+                and e.data["payload_type"] == "inventory_snapshot"
+                and e.t > anchor
+                and find_item(e.data["payload"], MUNDANE_COFFIN) is None,
+                timeout=3.0,
+                description=f"候选放棺位 ({x},{y},{z}) 消耗 mundane_coffin",
+            )
+            return (x, y, z)
+        except BotAssertionError:
+            continue
+    raise AssertionError(
+        f"[{bot.username}] 附近 {len(candidates)} 个候选放棺位均被服务器静默拒绝"
+        f"（position floor=({px},{py},{pz})）"
+    )
+
+
+def run(env) -> None:
+    with env.new_bot("CoEn") as bot:
+        wait_for_ready(bot)
+        bot.cmd("clearinv all")
+        bot.expect_chat("[dev] clearinv", timeout=30.0)
+        pre_instances = inventory_item_instances(bot, MUNDANE_COFFIN)
+        bot.cmd(f"give {MUNDANE_COFFIN} 1")
+        snapshot = wait_inventory_contains_new_instance(bot, MUNDANE_COFFIN, pre_instances)
+        coffin = require_item(snapshot, MUNDANE_COFFIN)
+
+        _wait_settled(bot)
+        assert bot.position is not None, "需要 pos_look 后的 bot.position 定放棺位"
+        px, py, pz = (int(v) for v in bot.position)
+        lower = _place_coffin(bot, coffin, px, py, pz)
+        in_coffin_pos = (lower[0] + 0.5, lower[1] + 0.05, lower[2] + 0.5)
+        exit_pos = (lower[0] - 0.5, lower[1] + 0.05, lower[2] + 0.5)
 
         # ── 距离 >6m 拒绝（静默窗口，未在棺内时先测） ──────────────────────
-        bot.move_to(px + FAR_OFFSET, py, pz, speed=5.5)
+        bot.move_to(lower[0] + FAR_OFFSET, lower[1], lower[2], speed=5.5)
         time.sleep(1.5)  # 等 server 逐包消化移动上报
         anchor = last_event_time(bot)
         bot.intent({"type": "coffin_enter", "v": 1, "x": lower[0], "y": lower[1], "z": lower[2]})
-        _assert_silent_window(bot, anchor, "距离 10m 的 CoffinEnter")
+        _assert_silent_window(bot, anchor, f"距离 {FAR_OFFSET}m 的 CoffinEnter")
 
         # ── 正向 enter：三路状态读回 ───────────────────────────────────────
         bot.move_to(px, py, pz, speed=5.5)
@@ -227,7 +273,37 @@ def run(env) -> None:
                     f"实际 {len(b_states)} 条"
                 )
 
-        # ── 异维拒绝：维度门在 current_coffin 之前，chat 逐字 ─────────────
+        # ── leave 腾棺：清 occupied_by + current_coffin，为维度门测试铺路 ──
+        #    维度门在 occupied_by 检查之后：不 leave 则 bot 自己占着棺，enter 命中
+        #    occupied 静默拒绝，维度 chat 永远打不到。leave 同时是场景显式收尾
+        #    （invisible 清除 + 位置回 coffin_exit_position）。
+        anchor = last_event_time(bot)
+        bot.intent({"type": "coffin_leave", "v": 1})
+        _coffin_state_after(
+            bot,
+            anchor,
+            lambda p: p["in_coffin"] is False,
+            timeout=10.0,
+            description="异维测试前 leave 应推 in_coffin:false",
+        )
+        bot.wait_for(
+            lambda e: e.kind == "entity_metadata"
+            and e.t > anchor
+            and e.data["entity_id"] == bot.entity_id
+            and e.data["flags"] is not None
+            and not e.data["flags"] & 0x20,
+            timeout=10.0,
+            description="leave 后 invisible 位应清除（维度测试前的显式收尾）",
+        )
+        _pos_look_after(
+            bot,
+            anchor,
+            exit_pos,
+            timeout=10.0,
+            description=f"leave 后位置应回 coffin_exit_position {exit_pos}",
+        )
+
+        # ── 异维拒绝：leave 后 occupied_by=None，维度门才生效，chat 逐字 ──
         anchor = last_event_time(bot)
         bot.cmd("tpdim tsy")
         bot.wait_for(
@@ -279,31 +355,4 @@ def run(env) -> None:
             lambda e: e.kind == "pos_look" and e.t >= respawn.t,
             timeout=10.0,
             description="回主世界后的坐标确认脉冲",
-        )
-
-        # ── leave 收尾：还原 invisible 与位置（GAP15 详断 leave 全链路） ───
-        anchor = last_event_time(bot)
-        bot.intent({"type": "coffin_leave", "v": 1})
-        _coffin_state_after(
-            bot,
-            anchor,
-            lambda p: p["in_coffin"] is False,
-            timeout=10.0,
-            description="leave 收尾应推 in_coffin:false 的 CoffinState",
-        )
-        bot.wait_for(
-            lambda e: e.kind == "entity_metadata"
-            and e.t > anchor
-            and e.data["entity_id"] == bot.entity_id
-            and e.data["flags"] is not None
-            and not e.data["flags"] & 0x20,
-            timeout=10.0,
-            description="leave 收尾后 invisible 位应清除",
-        )
-        _pos_look_after(
-            bot,
-            anchor,
-            exit_pos,
-            timeout=10.0,
-            description=f"leave 收尾后位置应回 coffin_exit_position {exit_pos}",
         )

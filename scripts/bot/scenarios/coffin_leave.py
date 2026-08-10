@@ -20,11 +20,13 @@
 
 import math
 
+from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
+    inventory_item_instances,
     require_item,
-    wait_inventory_contains,
+    wait_inventory_contains_new_instance,
 )
 
 DESCRIPTION = (
@@ -55,7 +57,9 @@ def _coffin_state_after(bot, anchor, predicate, timeout, description):
 
 
 def _assert_silent_window(bot, anchor, label):
-    """anchor 后 2s 内不得出现新 CoffinState 或实体 metadata 更新。"""
+    """anchor 后 2s 内不得出现新 CoffinState 或 bot 自身实体带 flags 的 metadata 更新。
+
+    entity_id=0 是周期性世界实体心跳（flags=None），与棺状态无关，不得计入命中。"""
     import time
 
     time.sleep(2.0)
@@ -66,7 +70,11 @@ def _assert_silent_window(bot, anchor, label):
             if e.t > anchor
             and (
                 (e.kind == "server_data" and e.data["payload_type"] == "coffin_state")
-                or e.kind == "entity_metadata"
+                or (
+                    e.kind == "entity_metadata"
+                    and e.data["entity_id"] == bot.entity_id
+                    and e.data["flags"] is not None
+                )
             )
         ]
     if hits:
@@ -90,41 +98,89 @@ def _enter_coffin(bot, lower, anchor=None, expect_success=True):
         )
 
 
-def run(env) -> None:
-    with env.new_bot("CoLv") as bot:
-        wait_for_ready(bot)
-        bot.cmd("clearinv all")
-        bot.expect_chat("[dev] clearinv", timeout=30.0)
-        bot.cmd(f"give {MUNDANE_COFFIN} 1")
-        snapshot = wait_inventory_contains(bot, MUNDANE_COFFIN)
-        coffin = require_item(snapshot, MUNDANE_COFFIN)
+def _wait_settled(bot, timeout=20.0, tol=0.02):
+    """等 pos_look 连续两次采样位置不变（传送/坠落结束），避免在瞬移过程中采样 py，
+    导致放棺位落在实心方块（服务器 `not empty` 静默拒绝，物品不消费）。"""
+    import time
 
-        assert bot.position is not None, "需要 pos_look 后的 bot.position 定放棺位"
-        px, py, pz = (int(v) for v in bot.position)
-        lower = (px - PLACE_OFFSET, py, pz)
-        in_coffin_pos = (lower[0] + 0.5, lower[1] + 0.05, lower[2] + 0.5)
-        exit_pos = (lower[0] - 0.5, lower[1] + 0.05, lower[2] + 0.5)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        prev = bot.position
+        time.sleep(0.6)
+        cur = bot.position
+        if prev is not None and cur is not None and all(
+            _approx(a, b, tol) for a, b in zip(prev, cur)
+        ):
+            return cur
+    raise BotAssertionError(
+        f"[{bot.username}] 位置在 {timeout:.0f}s 内未稳定，最后 position={bot.position}"
+    )
 
-        # ── setup：放棺 + 进棺，建立 in-coffin 状态 ────────────────────────
+
+def _place_coffin(bot, coffin, px, py, pz):
+    """放棺到附近空位：服务器对非空气坐标静默拒绝（不消费物品），逐个候选位置重试直到
+    mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
+    leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。"""
+    import time
+
+    candidates = [
+        (px - PLACE_OFFSET, py, pz),
+        (px + PLACE_OFFSET, py, pz),
+        (px, py, pz - PLACE_OFFSET),
+        (px, py, pz + PLACE_OFFSET),
+        (px - PLACE_OFFSET, py + 1, pz),
+        (px + PLACE_OFFSET, py + 1, pz),
+        (px, py + 1, pz - PLACE_OFFSET),
+        (px, py + 1, pz + PLACE_OFFSET),
+    ]
+    for x, y, z in candidates:
         anchor = last_event_time(bot)
         bot.intent(
             {
                 "type": "coffin_place",
                 "v": 1,
-                "x": lower[0],
-                "y": lower[1],
-                "z": lower[2],
+                "x": x,
+                "y": y,
+                "z": z,
                 "item_instance_id": int(coffin["item"]["instance_id"]),
             }
         )
-        bot.wait_for(
-            lambda e: e.kind == "server_data"
-            and e.data["payload_type"] == "inventory_snapshot"
-            and e.t > anchor
-            and find_item(e.data["payload"], MUNDANE_COFFIN) is None,
-            timeout=30.0,
-            description="真实 instance_id 放棺后 mundane_coffin 应从背包消耗",
-        )
+        try:
+            bot.wait_for(
+                lambda e, anchor=anchor: e.kind == "server_data"
+                and e.data["payload_type"] == "inventory_snapshot"
+                and e.t > anchor
+                and find_item(e.data["payload"], MUNDANE_COFFIN) is None,
+                timeout=3.0,
+                description=f"候选放棺位 ({x},{y},{z}) 消耗 mundane_coffin",
+            )
+            return (x, y, z)
+        except BotAssertionError:
+            continue
+    raise AssertionError(
+        f"[{bot.username}] 附近 {len(candidates)} 个候选放棺位均被服务器静默拒绝"
+        f"（position floor=({px},{py},{pz})）"
+    )
+
+
+def run(env) -> None:
+    with env.new_bot("CoLv") as bot:
+        wait_for_ready(bot)
+        bot.cmd("clearinv all")
+        bot.expect_chat("[dev] clearinv", timeout=30.0)
+        pre_instances = inventory_item_instances(bot, MUNDANE_COFFIN)
+        bot.cmd(f"give {MUNDANE_COFFIN} 1")
+        snapshot = wait_inventory_contains_new_instance(bot, MUNDANE_COFFIN, pre_instances)
+        coffin = require_item(snapshot, MUNDANE_COFFIN)
+
+        _wait_settled(bot)
+        assert bot.position is not None, "需要 pos_look 后的 bot.position 定放棺位"
+        px, py, pz = (int(v) for v in bot.position)
+        lower = _place_coffin(bot, coffin, px, py, pz)
+        in_coffin_pos = (lower[0] + 0.5, lower[1] + 0.05, lower[2] + 0.5)
+        exit_pos = (lower[0] - 0.5, lower[1] + 0.05, lower[2] + 0.5)
+
+        # ── setup：放棺 + 进棺，建立 in-coffin 状态 ────────────────────────
         _enter_coffin(bot, lower)
 
         with env.new_bot("CoLvB") as bystander:
