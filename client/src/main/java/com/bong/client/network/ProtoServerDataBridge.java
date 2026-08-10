@@ -358,8 +358,7 @@ public final class ProtoServerDataBridge {
                     new String[] {"skill", "SKILL_ID_"});
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_OUTCOME_RESOLVED) {
-            return bridgeStripEnums(envelope.getAlchemyOutcomeResolved(), typeString,
-                    new String[] {"bucket", "ALCHEMY_OUTCOME_BUCKET_"});
+            return bridgeAlchemyOutcomeResolved(envelope.getAlchemyOutcomeResolved(), typeString);
         }
         if (payloadCase == Envelope.ServerDataEnvelope.PayloadCase.ALCHEMY_CONTAMINATION) {
             return bridgeAlchemyContamination(envelope.getAlchemyContamination(), typeString);
@@ -1290,6 +1289,20 @@ public final class ProtoServerDataBridge {
             normalizeRealmField(root, "realm");
             if (root.has("season_state") && root.get("season_state").isJsonObject()) {
                 stripEnumPrefix(root.getAsJsonObject("season_state"), "season", "SEASON_");
+            }
+            return wrapLegacy(root, typeString);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+            return BridgeResult.error("proto→JSON conversion failed for " + typeString + ": " + e.getMessage());
+        }
+    }
+
+    private static BridgeResult bridgeAlchemyOutcomeResolved(MessageOrBuilder msg, String typeString) {
+        try {
+            String raw = printAndNormalize(msg);
+            JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+            stripEnumPrefix(root, "bucket", "ALCHEMY_OUTCOME_BUCKET_");
+            if (!removeUnspecifiedEnum(root, "toxin_color", "COLOR_KIND_")) {
+                stripEnumPrefixCapitalized(root, "toxin_color", "COLOR_KIND_");
             }
             return wrapLegacy(root, typeString);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {

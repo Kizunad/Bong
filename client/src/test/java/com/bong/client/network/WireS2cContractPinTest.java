@@ -420,17 +420,17 @@ final class WireS2cContractPinTest {
         assertEquals(43, BRIDGE_NORMALIZATIONS.keySet().stream()
             .map(NormalizationSite::prefix)
             .collect(java.util.stream.Collectors.toSet()).size());
-        assertEquals(58, bridgeReferences,
+        assertEquals(59, bridgeReferences,
             "P0 semantic bridge normalization ledger must cover every reachable field operation");
         assertEquals(
             BRIDGE_PREFIX_LITERAL_COUNTS,
             sourceModel.bridgePrefixLiteralCounts(),
-            "P0 bridge source must retain the exact 43-prefix/57-literal lexical multiset"
+            "P0 bridge source must retain the exact 43-prefix/59-literal lexical multiset"
         );
         assertEquals(
-            57,
+            59,
             BRIDGE_PREFIX_LITERAL_COUNTS.values().stream().mapToInt(Integer::intValue).sum(),
-            "P0 bridge lexical baseline remains 57 prefix literals"
+            "P0 bridge lexical baseline remains 59 prefix literals"
         );
 
         assertEquals(
@@ -445,7 +445,7 @@ final class WireS2cContractPinTest {
         sourceModel.assertProductionPrefixLiteralInventory();
         assertEquals(45, sourceModel.productionPrefixLiteralCount(),
             "完整 production receive path 基线为 45 个 enum 前缀 literal");
-        assertEquals(60, bridgeReferences + sourceModel.inventoryNormalizations().size(),
+        assertEquals(61, bridgeReferences + sourceModel.inventoryNormalizations().size(),
             "semantic normalization ledger includes reachable helper reuse, array-element normalization, and inventory exceptions");
     }
 
@@ -507,7 +507,7 @@ final class WireS2cContractPinTest {
         }
         for (String prefix : counts.keySet()) {
             counts.put(prefix, switch (prefix) {
-                case "COLOR_KIND_" -> 10;
+                case "COLOR_KIND_" -> 12;
                 case "SKILL_ID_" -> 4;
                 case "GUARDIAN_KIND_", "RIFT_PORTAL_KIND_" -> 2;
                 default -> 1;
@@ -569,7 +569,8 @@ final class WireS2cContractPinTest {
                 {"forge_color", "COLOR_KIND_"},
                 {"realm", "REALM_"}, {"realm", "REALM_"},
                 {"realm_min", "REALM_"},
-                {"color", "COLOR_KIND_"}
+                {"color", "COLOR_KIND_"},
+                {"toxin_color", "COLOR_KIND_"}
             }
         );
         addNormalizations(normalizations, NormalizationMode.PASCAL_CASE,
@@ -611,7 +612,6 @@ final class WireS2cContractPinTest {
         normalizations.put("getSkillLvUp", Set.of(site("skill", "SKILL_ID_")));
         normalizations.put("getSkillCapChanged", Set.of(site("skill", "SKILL_ID_")));
         normalizations.put("getSkillScrollUsed", Set.of(site("skill", "SKILL_ID_")));
-        normalizations.put("getAlchemyOutcomeResolved", Set.of(site("bucket", "ALCHEMY_OUTCOME_BUCKET_")));
         normalizations.put("getGatheringSession", Set.of(
             site("target_type", "GATHERING_TARGET_TYPE_"),
             site("quality_hint", "GATHERING_QUALITY_HINT_")
