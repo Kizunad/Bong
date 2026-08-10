@@ -44,7 +44,12 @@ from bot._agent_ui_helpers import (  # noqa: E402
     expect_agent_ui_request,
     response_matches,
 )
-from bot._redis_client_helpers import RedisClient, RespFrames, _encode_command  # noqa: E402
+from bot._redis_client_helpers import (  # noqa: E402
+    RedisClient,
+    RespFrames,
+    _INCOMPLETE_FRAME,
+    _encode_command,
+)
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
@@ -4632,7 +4637,11 @@ class RespFramesTest(unittest.TestCase):
         parser = RespFrames()
         parser.feed(b":1\r\n")
         self.assertEqual(parser.next_frame(), 1)
-        self.assertIsNone(parser.next_frame(), "帧取完后应返回 None")
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "帧取完后应返回 _INCOMPLETE_FRAME",
+        )
 
     def test_simple_string(self):
         parser = RespFrames()
@@ -4657,12 +4666,51 @@ class RespFramesTest(unittest.TestCase):
     def test_nil_bulk_string(self):
         parser = RespFrames()
         parser.feed(b"$-1\r\n:42\r\n")
-        self.assertIsNone(parser.next_frame(), "nil bulk 应解析为 None")
+        frame = parser.next_frame()
+        self.assertIsNone(frame, "nil bulk 应解析为 None")
+        self.assertIsNot(
+            frame,
+            _INCOMPLETE_FRAME,
+            "完整 nil 帧是已解析的值，不是数据不足哨兵",
+        )
         self.assertEqual(
             parser.next_frame(),
             42,
             "nil bulk 帧必须被消费，后续帧才能继续解析",
         )
+
+    def test_nil_bulk_distinct_from_incomplete(self):
+        # finding：完整 nil 帧（$-1）返回 None 但已消费，与「还需更多字节」
+        # 必须可区分。旧实现两者都返回 None，调用方无法判断收全了一条 nil。
+        parser = RespFrames()
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "空缓冲 = 数据不足，不应出帧",
+        )
+        parser.feed(b"$-1\r\n")
+        self.assertIsNone(parser.next_frame(), "完整 nil 帧应解析为 None")
+        self.assertIs(
+            parser.next_frame(),
+            _INCOMPLETE_FRAME,
+            "nil 帧消费后回到数据不足",
+        )
+
+    def test_malformed_bulk_terminator_rejected(self):
+        # finding：$3\r\nabcXX 的 body 后两字节不是 \r\n，是协议违例，必须拒绝；
+        # 旧实现只确认有 2 字节就消费，把 b"abc" 当合法帧返回。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
+
+    def test_malformed_bulk_terminator_desync_rejected(self):
+        # finding：body 后两字节非 \r\n 会让帧边界错位；拼接输入也必须整体拒绝，
+        # 不得把后面的 :1 当作独立整数帧吞掉。
+        parser = RespFrames()
+        parser.feed(b"$3\r\nabcXX:1\r\n")
+        with self.assertRaises(ValueError):
+            parser.next_frame()
 
     def test_array_frame(self):
         parser = RespFrames()
@@ -4678,7 +4726,11 @@ class RespFramesTest(unittest.TestCase):
         parser = RespFrames()
         raw = b"*3\r\n$7\r\nmessage\r\n$6\r\nbong:x\r\n$5\r\nhello\r\n"
         for i in range(0, len(raw), 3):
-            self.assertIsNone(parser.next_frame(), "字节未喂全时不应出帧")
+            self.assertIs(
+                parser.next_frame(),
+                _INCOMPLETE_FRAME,
+                "字节未喂全时不应出帧",
+            )
             parser.feed(raw[i : i + 3])
         self.assertEqual(parser.next_frame(), [b"message", b"bong:x", b"hello"])
 
@@ -5206,7 +5258,10 @@ class AgentUiHelperTest(unittest.TestCase):
         expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
 
     def test_expect_agent_ui_close_requires_reason_field(self):
-        close = _FakeEvent(
+        # 两条缺 reason 的 close 事件，让两次断言都真正检查到 malformed payload。
+        # 旧版只喂一条：第二次调用 start>=事件 t，wait_for 直接超时抛错，等于在测
+        # 超时行为而非缺字段契约（finding：reason 值分支没检查到 payload）。
+        close_1 = _FakeEvent(
             1.0,
             "payload",
             {
@@ -5214,11 +5269,22 @@ class AgentUiHelperTest(unittest.TestCase):
                 "data": b'{"request_id":"req_1"}',
             },
         )
-        bot = _AgentUiFakeBot([close])
+        close_2 = _FakeEvent(
+            2.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_2"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close_1, close_2])
         with self.assertRaises(BotAssertionError):
             expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
         with self.assertRaises(BotAssertionError):
-            expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
+            expect_agent_ui_close(bot, "req_2", reason="invalid_button_id", timeout=5.0)
+        # 两条断言都真正看到了各自的事件（_now 前移到 close_2.t=2.0）；
+        # 若第二条只是"事件耗尽超时"凑绿，_now 会被 wait_for 推到 deadline=6.0。
+        self.assertEqual(bot._now, close_2.t, "第二条断言必须检查到 close_2 事件")
 
 
 if __name__ == "__main__":

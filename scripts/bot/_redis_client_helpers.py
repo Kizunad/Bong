@@ -23,8 +23,24 @@ import socket
 import time
 
 
+class _IncompleteFrame:
+    """数据不足哨兵：``next_frame`` 以它表示「还需更多字节」。
+
+    RESP nil（``$-1``）解析值为 ``None``；若数据不足也返回 ``None``，调用方就
+    无法区分「收全了一条 nil 帧」与「字节还没喂够」，会误再等一次 socket read。
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<incomplete RESP frame>"
+
+
+_INCOMPLETE_FRAME = _IncompleteFrame()
+
+
 class RespFrames:
-    """RESP2 帧解析器：``feed()`` 喂字节，``next_frame()`` 取帧；数据不足返回 None。
+    """RESP2 帧解析器：``feed()`` 喂字节，``next_frame()`` 取帧；数据不足返回 ``_INCOMPLETE_FRAME``。
 
     防滥用：缓冲用 ``bytearray.extend``（摊还 O(1)/块，避免 ``bytes += `` 每次把整个
     已积压缓冲再拷一遍的二次拷贝），并设协议级上限——单条 bulk 帧声明长度超
@@ -54,7 +70,7 @@ class RespFrames:
     def next_frame(self):
         frame, consumed = self._parse_frame(0)
         if consumed == 0:
-            return None
+            return _INCOMPLETE_FRAME
         del self._buf[:consumed]
         return frame
 
@@ -91,12 +107,14 @@ class RespFrames:
                     f"RESP bulk 帧声明长度 {length} 超过上限 {self._max_bulk_size}"
                 )
             body_start = idx + 2
-            if len(self._buf) < body_start + length + 2:
+            end = body_start + length
+            if len(self._buf) < end + 2:
                 return None, 0
-            return (
-                bytes(self._buf[body_start : body_start + length]),
-                body_start + length + 2,
-            )
+            if self._buf[end : end + 2] != b"\r\n":
+                raise ValueError(
+                    f"RESP bulk 帧 body 后缺 \\r\\n 分隔符，实际 {self._buf[end:end+2]!r}"
+                )
+            return bytes(self._buf[body_start:end]), end + 2
         if marker == b"*":
             line, idx = self._line(pos + 1)
             if line is None:
@@ -169,7 +187,7 @@ class RedisClient:
                     )
                 parser.feed(data)
                 reply = parser.next_frame()
-                if reply is not None:
+                if reply is not _INCOMPLETE_FRAME:
                     if not isinstance(reply, int):
                         raise OSError(f"redis PUBLISH 意外回复 {reply!r}")
                     return reply
@@ -187,7 +205,7 @@ class RedisClient:
     def _next_frame(self):
         while True:
             frame = self._frames.next_frame()
-            if frame is not None:
+            if frame is not _INCOMPLETE_FRAME:
                 return frame
             data = self._sub_sock.recv(4096)
             if not data:

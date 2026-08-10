@@ -7,6 +7,8 @@
   （随后对旧 session 合法点击仍成功）；Redis 无 stale 回执
 - realm_gate 门控（化虚+，bot 醒灵）→ Redis error 回执 {reason: realm_gate_rejected,
   player_realm, required_realm}；**不向 client 下发** request payload
+- realm_gate 相等边界（gate=1 == bot 醒灵 realm）→ 放行建 session、下发 request
+  （>= 而非 >，防 off-by-one）
 - 目标玩家离线 → Redis error 回执 {reason: player_offline}
 - cmd 校验失败（timeout_ticks 越界）→ Redis error 回执 {reason: invalid_command}
 - cmd serde 拒绝（缺必填字段）→ redis_bridge 直接丢弃，**无任何回执**
@@ -130,6 +132,31 @@ def _realm_gate_rejected(bot, redis, target_player, run_tag) -> None:
     expect_agent_ui_request(bot, request_id, after=mark, timeout=2.0, expect=False)
 
 
+def _realm_gate_equal_allowed(bot, redis, target_player, run_tag) -> None:
+    # 相等边界：bot 醒灵 realm=1，gate=1 必须放行（>= 而非 >）。旧覆盖只测
+    # realm-1 vs gate-6（下方）与默认 gate-0，把条件误写成 > 也照样绿；
+    # gate=1 钉死 1>=1 的最小放行面，区分 >= 与 > 的 off-by-one。
+    request_id = f"gap3_{run_tag}_gateeq"
+    mark = _mark(bot)
+    publish_cmd(
+        redis,
+        request_id=request_id,
+        target_player=target_player,
+        realm_gate=1,
+    )
+    expect_agent_ui_request(bot, request_id, after=mark, timeout=15.0)
+    # 立即关闭该 session（dismissed），避免残留拖住后续探针。
+    bot.intent(
+        {
+            "type": "agent_ui_response",
+            "v": 1,
+            "request_id": request_id,
+            "action": "dismissed",
+        }
+    )
+    expect_redis_response(redis, request_id, action="dismissed", params_subset={})
+
+
 def _player_offline(bot, redis, run_tag) -> None:
     request_id = f"gap3_{run_tag}_offline"
     ghost = f"offline:B{run_tag}GHOST"
@@ -209,6 +236,7 @@ def run(env) -> None:
             _invalid_button_id(bot, redis, target_player, env.run_tag)
             _stale_request_id(bot, redis, target_player, env.run_tag)
             _realm_gate_rejected(bot, redis, target_player, env.run_tag)
+            _realm_gate_equal_allowed(bot, redis, target_player, env.run_tag)
             _player_offline(bot, redis, env.run_tag)
             _invalid_command(bot, redis, target_player, env.run_tag)
             _serde_dropped(bot, redis, target_player, env.run_tag)
