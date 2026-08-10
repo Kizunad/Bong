@@ -36,16 +36,6 @@ EOF
 PROFILE="${BOT_E2E_PROFILE:-release}"
 REUSE="${BOT_E2E_REUSE:-0}"
 HOST="${BOT_E2E_HOST:-127.0.0.1}"
-if [ "$REUSE" = "1" ]; then
-  # REUSE：显式端口或默认 25565——只连接既有 server，不分配、不起服。
-  PORT="${BOT_E2E_PORT:-25565}"
-else
-  # 自起模式：未指定端口就分配空闲端口，而不是默认争抢 25565。
-  PORT="${BOT_E2E_PORT:-$(allocate_free_port)}"
-fi
-if [ "$REUSE" != "1" ] && [ -z "${BOT_E2E_PORT:-}" ]; then
-  echo "[bot-e2e] BOT_E2E_PORT 未设置，自起模式分配空闲端口 $PORT（并发运行互不争抢 25565）"
-fi
 AMBIENT_FIXTURE_MODE="${BOT_E2E_AMBIENT_FIXTURE_MODE:-0}"
 BOT_E2E_RUN_TAG="${BOT_E2E_RUN_TAG:-$(( $$ % 100000 ))}"
 export BOT_E2E_RUN_TAG
@@ -67,6 +57,19 @@ if [ "$REUSE" = "1" ] && [ "$AMBIENT_FIXTURE_MODE" != "1" ] && {
 }; then
   echo "[bot-e2e] existing server operator roster does not match this run; disabling BOT_E2E_REUSE=1" >&2
   REUSE=0
+fi
+
+# 端口决策必须在 REUSE 可能被上方 roster 守卫降级之后做，否则 REUSE=1 被降级为
+# 自起时仍会拿 25565 去抢。
+if [ "$REUSE" = "1" ]; then
+  # REUSE：显式端口或默认 25565——只连接既有 server，不分配、不起服。
+  PORT="${BOT_E2E_PORT:-25565}"
+else
+  # 自起模式：未指定端口就分配空闲端口，而不是默认争抢 25565。
+  PORT="${BOT_E2E_PORT:-$(allocate_free_port)}"
+fi
+if [ "$REUSE" != "1" ] && [ -z "${BOT_E2E_PORT:-}" ]; then
+  echo "[bot-e2e] BOT_E2E_PORT 未设置，自起模式分配空闲端口 $PORT（并发运行互不争抢 25565）"
 fi
 
 # Ambient fixture ownership has three intentionally closed values: unset/default, generic 0,
