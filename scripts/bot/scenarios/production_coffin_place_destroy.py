@@ -10,7 +10,13 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   upper（=lower+1x）的 overlap 探针——只查 lower 键、漏查 upper 键的错误实现（接受
   overlap 放置并吞掉实例）在第二探针处红（review finding [major]）。
 - 非空气目标（not empty）、距离 > 6.0（coffin_target_is_close 36.0 平方）均**静默拒绝**
-  （warn 无回执）——只能靠实例计数不变断言。
+  （warn 无回执）——只能靠实例计数不变断言。距离边界用 `_distance_boundary_pair` 的
+  (pass, fail) 目标对夹紧：pass=空气层中 d2≤36.0 的**最大**值（正确实现必须接受，
+  距离半径过小 / 比较方向写反在此红），fail=d2>36.0 的**最小**值（正确实现必须拒绝，
+  半径过大在此红）——exact-36.0 因 y 分量（bot 脚面 vs 目标块中心恒差 ≈1.2-1.5m）
+  无法用整块目标构造，pass/fail 是网格可构造的最窄边界带
+  （review finding [major] round 6：旧场景只测固定 offset=10 的过远拒绝，比较方向无
+  「恰内侧 + 恰外侧」配对保护）。
 - 异维（coffin_requires_overworld fail-closed，先于近距/实例校验）拒绝并逐字 chat：
   `§c[棺] 你不在主世界，无法操作延寿棺。`——对**完整文本**（含 §c 色码、[棺] 前缀、
   句末句号）整体相等断言，不接受任意前缀/后缀（review finding [major]：子串匹配
@@ -20,10 +26,12 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   错放到偏移/默认坐标的错误实现同样红（review finding [major]：旧实现按目标位置过滤，
   「目标附近无 spawn」≠「拒绝即无 spawn」；位置匹配只用于正向放置断言）。
   负向断言只见证「无 client-visible spawn」：先插入 registry 双键再早退（不消费、不
-  spawn）的错误实现能全过——故 stale 拒绝段后必须对**被拒坐标 stale_pos** 做
-  state-applying 复查（合法实例成功放置 + marker spawn）：拒绝时错误登记双键会使复查
-  以 already-registered 拒绝而超时红，暴露 registry-only 残留（review finding [major]：
-  场景此前只在原 place_pos 做 destroy/re-place 复查，被拒坐标从未被重新放置/破坏）。
+  spawn）的错误实现能全过——故**每个拒绝段**后都对**被拒坐标**做 state-applying 复查
+  （合法实例成功放置 + marker spawn + teardown break）：拒绝时错误登记双键会使复查以
+  already-registered 拒绝而超时红，暴露 registry-only 残留（review finding [major]
+  round 6：复查此前只覆盖 stale_pos）。过远拒绝的 fail_t 靠近后必须能合法放置（最直接
+  的残留探针）；非空气拒绝坐标（py-1，永久实心）无法放置，取同列最近空气格做最佳可
+  构造复查；stale 复查仍覆盖 stale_pos。
 - `coffin_place` 必须用真实 instance_id（inventory_item_by_instance 按 id 校验）；
   已消费的 stale id 同样拒绝、分文不动（review finding [major]：全场景只用合法 id，
   无视 item_instance_id 吞掉可用棺材的实现能全绿）。
@@ -45,6 +53,12 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
 - 破坏后同一坐标重放必须再次 spawn 新 marker 实体——旧实体已 despawn + registry 清空的
   完整闭环。
 
+**场景零残留（review finding [major] round 6）**：本场景自建的一切 coffin（stale 复查、
+距离边界复查、最终重放）都以 `coffin_break` 收尾——旧场景把两个注册棺（stale_pos 复查
++ place_pos 重放）+ 两个 marker 实体永久留在 server，同一长活 E2E server 重跑时这些
+坐标已注册 → 首次放置以 already-registered 拒绝、count 断言超时红，且污染同 fixture 区
+的后续场景。场景结束时零注册棺、零世界 marker 残留。
+
 所有断言走实例计数（stack_count 求和，跨容器/装备/快捷栏），不是 presence——count 才是
 复制增殖的暴露面。拒绝路径服务端静默（无回执快照），用「give 一棺 + 等其
 inventory_snapshot 计数达到期望值」作 server-authoritative 水位线：give 快照落在同 tick
@@ -62,7 +76,7 @@ from bot.bot import BotAssertionError
 from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import latest_inventory_snapshot
 
-DESCRIPTION = "CoffinPlace 生命周期：放置消费→重复/非空/过远/异维/stale实例拒绝（计数不变+无实体spawn）→单发破坏+空→空重破no-op→清场重放"
+DESCRIPTION = "CoffinPlace 生命周期：放置消费→重复/非空/过远（6m边界成对）/异维/stale实例拒绝（计数不变+无实体spawn）→单发破坏+空→空重破no-op→清场重放→全量teardown"
 MODULES = ["coffin", "inventory", "dimension"]
 
 COFFIN_ID = "mundane_coffin"
@@ -70,7 +84,15 @@ PLACE_OFFSET = -2  # 横向偏移，与 forge 放砧一致
 # 放置目标必须在 y+1（fixture 全平面 surface_y=72，y=72 是实心地面、y=73+ 才是空气）：
 # bot.position 的 y 是玩家脚下方块的顶（≈72.x，int 后=72），直接用它当 target 会命中
 # 实心地表 → not empty 拒。所有「应为空气」的 target 统一用 py+1。
-DISTANCE_REJECT_Z_OFFSET = 10  # > 6.0 的过远目标（coffin_target_is_close 36.0 平方）
+DISTANCE_SEARCH_RANGE = 8  # _distance_boundary_pair 的扫描半径：夹紧 6.0m 距离边界两侧的空气块
+# server 放置距离契约（coffin/mod.rs coffin_target_is_close）：bot 位置到 target 块中心
+# 平方距离 <= 36.0（6.0m 含边界）视为可放置，> 36.0 拒绝。
+COFFIN_INTERACT_MAX_DISTANCE_SQ = 36.0
+# pass 侧安全阈：client bot.position 与 server 权威位置有亚格残差 δ，d2 会抖动；
+# pass_t 取 d2 <= 35.0（≈5.92m）留 1.0 平方余量——仍是「恰在边界内侧」，能捕获把半径
+# 缩到 <5.92m 的错误实现，又不至于被位置抖动推过 36.0 造成假红。fail 侧取 min d2 > 36.0
+# （fail 拒绝发生在 bot 静止段，位置抖动≈0，无需放宽）。
+_DISTANCE_PASS_SQ = 35.0
 # 完整、逐字的异维拒绝文本（服务端 COFFIN_DIMENSION_REJECTION_MESSAGE，coffin/mod.rs:1313）。
 # 断言用整体相等（e.data["text"] == DIMENSION_REJECT_TEXT），含 §c 色码、[棺] 前缀与句号——
 # 子串匹配会让「任意前缀/后缀包裹同一核心句」的错误回复漏网（review finding [major]）。
@@ -292,6 +314,68 @@ def _send_coffin_place(bot, pos, instance_id) -> None:
     )
 
 
+def _send_coffin_break(bot, pos) -> None:
+    bot.intent(
+        {
+            "type": "coffin_break",
+            "v": 1,
+            "x": pos[0],
+            "y": pos[1],
+            "z": pos[2],
+        }
+    )
+
+
+def _distance_boundary_pair(bot, air_y, exclude=()):
+    """在 bot 附近空气层把 6.0m 放置距离边界夹得最紧的 (pass, fail) 目标对。
+
+    server 契约（coffin/mod.rs coffin_target_is_close）：bot 位置到 target 块中心
+    （x+0.5, y+0.5, z+0.5）的平方距离 <= 36.0 视为可放置，> 36.0 拒绝。本函数在
+    bot 周围 ±DISTANCE_SEARCH_RANGE 的空气块里扫（exclude 里的块跳过——已注册/被占
+    的块不参与，否则 pass/fail 可能落在 not_empty 拒处造成假红）：
+    - pass = d2 <= _DISTANCE_PASS_SQ 中**最大**者——恰在边界内侧，正确实现必须接受；
+      距离半径缩到 <5.92m 的错误实现会在此误拒而红（review finding [3]：旧场景只测
+      固定 offset=10 的过远拒绝，比较方向/半径大小无配对保护）；
+    - fail = d2 > 36.0 中**最小**者——恰过边界，正确实现必须拒绝；过松 bound
+      （如 <= 49）会在此接受而红。
+    pass/fail 把比较方向钉在网格可构造的最窄区间 [d2_pass, d2_fail]。
+    exact-36.0 无法用整块目标构造（bot 脚面 y vs 目标中心 y 恒差 ≈1.2-1.5m，dy² 总
+    是拉偏），pass/fail 是网格能给出的最紧近似；pass 侧额外留 1.0 平方的
+    client/server 位置残差余量防假红。
+
+    返回 ((pass_x, air_y, pass_z), (fail_x, air_y, fail_z))。pass 距 bot ≤ 6.0（当前
+    位置即可放），fail 距 bot > 6.0（原位置必拒，靠近后合法放置必成——被拒坐标的
+    state-applying 复查用）。"""
+    bx, by, bz = bot.position
+    ix, iz = int(bx), int(bz)
+    pass_t = None
+    pass_d2 = -1.0
+    fail_t = None
+    fail_d2 = float("inf")
+    for kx in range(-DISTANCE_SEARCH_RANGE, DISTANCE_SEARCH_RANGE + 1):
+        for kz in range(-DISTANCE_SEARCH_RANGE, DISTANCE_SEARCH_RANGE + 1):
+            tx, tz = ix + kx, iz + kz
+            cell = (tx, air_y, tz)
+            if cell in exclude:
+                continue
+            dx = bx - (tx + 0.5)
+            dy = by - (air_y + 0.5)
+            dz = bz - (tz + 0.5)
+            d2 = dx * dx + dy * dy + dz * dz
+            if d2 <= _DISTANCE_PASS_SQ:
+                if d2 > pass_d2:
+                    pass_d2 = d2
+                    pass_t = cell
+            elif d2 > COFFIN_INTERACT_MAX_DISTANCE_SQ and d2 < fail_d2:
+                fail_d2 = d2
+                fail_t = cell
+    assert pass_t is not None and fail_t is not None, (
+        f"距离边界配对失败：pass={pass_t} d2={pass_d2:.3f} fail={fail_t} d2={fail_d2:.3f} "
+        f"(bot={bx:.2f},{by:.2f},{bz:.2f}, air_y={air_y})"
+    )
+    return pass_t, fail_t
+
+
 # server 侧 mundane coffin marker 实体的 entity kind（entity_model.rs COFFIN_MUNDANE_ENTITY_KIND）
 # 与放置位置映射（coffin/mod.rs coffin_marker_position）：marker = (lower.x+1, lower.y, lower.z+0.5)。
 COFFIN_MARKER_ENTITY_KIND = 160
@@ -375,11 +459,19 @@ def _assert_no_coffin_marker_spawn(
     review finding [major]（观察窗）：同 _assert_no_coffin_marker_destroy——旧实现持锁
     扫完**当前**事件前缀就返回——reader 线程后台 append，inventory_snapshot 与实体
     spawn 走不同时序路径，拒绝实现先发快照、后排队 marker spawn 时晚到的 spawn
-    从未被检查。因此必须等满一个有界窗口（deadline = after_t + window，事件时间
-    单调可比较）再下结论：窗口内逐帧重扫，出现匹配即红，窗口结束仍无才通过。
-    扫描持 bot._lock（last_event_time 同款约定）。
+    从未被检查。因此必须等满一个有界窗口再下结论：窗口内逐帧重扫，出现匹配即红，
+    窗口结束仍无才通过。扫描持 bot._lock（last_event_time 同款约定）。
+
+    review finding [major]（round 6，观察窗锚点）：deadline 必须锚在**观察开始**——
+    旧代码 deadline = after_t + window（after_t 是 intent 前的事件时间），而调用方在
+    intent 之后先跑 _give_barrier（无条件 sleep 1s + 独立等 give 快照）再进本 helper；
+    若 request 处理或 barrier 耗尽 2s 窗口，helper 扫一遍就因
+    time.monotonic()-bot.t0 >= deadline 立即退出——错误实现先发期望快照、deadline 之后
+    才排队 marker spawn 时晚到事件漏检。改在 helper 入口取
+    time.monotonic() - bot.t0 + window：无论 barrier 耗时多长，观察期都是完整的
+    window 秒（事件过滤仍用 e.t > after_t，intent 后的一切 spawn 都纳入）。
     """
-    deadline = after_t + window
+    deadline = time.monotonic() - bot.t0 + window
     spawned = []
     while True:
         with bot._lock:
@@ -417,9 +509,14 @@ def _assert_no_coffin_marker_destroy(
 
     review finding [major]（观察窗）：同 spawn 侧——entities_destroy 与
     inventory_snapshot 走不同时序路径，重复 despawn 可能晚于 give 水位线快照到达。
-    先等满有界窗口（deadline = after_t + window）再断言，晚到的重复 despawn 不漏检。
+    先等满有界窗口再断言，晚到的重复 despawn 不漏检。
+
+    review finding [major]（round 6，观察窗锚点）：deadline 锚在 helper 入口
+    （time.monotonic() - bot.t0 + window）而非 after_t + window——调用方在 intent 之后
+    先跑 _give_barrier（sleep 1s + 等快照）才进来，旧锚点会被 barrier 耗尽、扫一遍即退，
+    晚到的重复 despawn 漏检（同 _assert_no_coffin_marker_spawn 同款缺陷）。
     """
-    deadline = after_t + window
+    deadline = time.monotonic() - bot.t0 + window
     redestroyed = []
     while True:
         with bot._lock:
@@ -521,11 +618,20 @@ def run(env) -> None:
         anchor = last_event_time(bot)
         probe_instance = _first_coffin_instance_id(latest_inventory_snapshot(bot))
         # 非空气 probe 用 py-1（脚下实心地表，fixture 全平面 y=71/72 均为实心）；
-        # 过远 probe 用 py+1（空气层），保证唯一拒绝理由是距离而非 not empty
+        # 过远 probe 用 fail_t（空气层、恰过 6.0m 边界），保证唯一拒绝理由是距离
+        # 而非 not empty。pass_t/fail_t 把距离比较方向夹在网格可构造的最窄带
+        # （review finding [3]，round 6：旧 offset=10 只测「过远必拒」，比较方向
+        # 无「恰内侧 + 恰外侧」配对保护——`< 36.0` 或过松 bound 都能全绿）。
+        air_y = py + 1
+        # 首放棺占 (place_pos)..(place_pos+1x) 两格，从边界扫描中排除——pass_t 若落
+        # 在被占格会以 not_empty 拒，造成与距离无关的假红。
+        coffin_cells = {
+            (place_pos[0], place_pos[1], place_pos[2]),
+            (place_pos[0] + 1, place_pos[1], place_pos[2]),
+        }
+        pass_t, fail_t = _distance_boundary_pair(bot, air_y, exclude=coffin_cells)
         _send_coffin_place(bot, (px, py - 1, pz), probe_instance)
-        _send_coffin_place(
-            bot, (px, py + 1, pz + DISTANCE_REJECT_Z_OFFSET), probe_instance
-        )
+        _send_coffin_place(bot, fail_t, probe_instance)
         _give_barrier(
             bot,
             5,
@@ -538,6 +644,93 @@ def run(env) -> None:
             anchor,
             description="非空气/过远拒绝路径不得 spawn coffin marker",
         )
+
+        # review finding [2]（round 6）：registry 残留复查此前只覆盖 stale 拒绝段——
+        # 非空气/过远拒绝段的「无 spawn + 计数不变」会被「先插 registry 双键再早退
+        # （不消费、不 spawn）」的错误实现全过。对**每个被拒坐标**做 state-applying
+        # 复查 + teardown break（review finding [4] 零残留）：
+        #   (a) 非空气坐标 (px,py-1,pz) 是永久实心地面、无法放置——取同列最近空气格
+        #       (px,py+1,pz+2) 做最佳可构造复查：放置必须成功（拒绝未在列上留残留、
+        #       未偷扣实例）；
+        #   (b) 边界 pass_t（d2≤35.0 的最大值，含 client/server 位置余量）合法放置
+        #       必须成功——距离半径缩到 <5.92m 在此红（review finding [3] 的 pass 侧）；
+        #   (c) 过远 fail_t（d2>36.0 最小值）靠近后合法放置必须成功——最直接的残留
+        #       探针：若过远拒绝时错误登记了 fail_t 双键，此处 already-registered 拒
+        #       绝、marker 不 spawn → 超时红。
+        # 每次复查先给一棺：_give_barrier(bot, 6) 同时断言上一复查放置恰好消费 1 个
+        # 实例（消费 0 或 2 个都让 barrier 计数对不上而红）。
+
+        # (a) 非空气列复查 + teardown
+        na_give = _give_barrier(
+            bot, 6, description="非空气拒绝段后 +1 give 应恰好 count==6（5→6）"
+        )
+        na_instance = _first_coffin_instance_id(na_give)
+        na_pos = (px, py + 1, pz + 2)
+        na_anchor = last_event_time(bot)
+        _send_coffin_place(bot, na_pos, na_instance)
+        na_marker = _wait_coffin_marker_spawn(
+            bot,
+            na_pos,
+            na_anchor,
+            description=(
+                "非空气拒绝段后同列空气格合法放置必须成功并 spawn marker"
+                "（拒绝未在列上留 registry 残留 / 未偷扣实例）"
+            ),
+        )
+        na_break_anchor = last_event_time(bot)
+        _send_coffin_break(bot, na_pos)
+        _wait_coffin_marker_destroy(bot, na_marker, na_break_anchor)
+
+        # (b) 边界 pass_t 复查 + teardown
+        bp_give = _give_barrier(
+            bot,
+            6,
+            description="非空气列复查恰好消费 1 个实例后再 give 应恰好 count==6",
+        )
+        bp_instance = _first_coffin_instance_id(bp_give)
+        bp_anchor = last_event_time(bot)
+        _send_coffin_place(bot, pass_t, bp_instance)
+        bp_marker = _wait_coffin_marker_spawn(
+            bot,
+            pass_t,
+            bp_anchor,
+            description=(
+                "边界 pass_t（d2≤35.0 最大值）合法放置必须成功并 spawn marker——"
+                "距离半径缩到 <5.92m 的错误实现在此红"
+            ),
+        )
+        bp_break_anchor = last_event_time(bot)
+        _send_coffin_break(bot, pass_t)
+        _wait_coffin_marker_destroy(bot, bp_marker, bp_break_anchor)
+
+        # (c) 过远 fail_t 复查 + teardown（需靠近后放置才有效，故 bot 先走到
+        # fail_t 正下方地面块、放完 break 再走回原位——stale 段按原站位几何判定）
+        tf_give = _give_barrier(
+            bot,
+            6,
+            description="边界 pass_t 复查恰好消费 1 个实例后再 give 应恰好 count==6",
+        )
+        tf_instance = _first_coffin_instance_id(tf_give)
+        tf_origin = bot.position
+        assert tf_origin is not None, "需要 bot.position 定 fail_t 复查站位"
+        bot.move_to(fail_t[0], tf_origin[1], fail_t[2], speed=5.5)
+        time.sleep(1.0)
+        tf_anchor = last_event_time(bot)
+        _send_coffin_place(bot, fail_t, tf_instance)
+        tf_marker = _wait_coffin_marker_spawn(
+            bot,
+            fail_t,
+            tf_anchor,
+            description=(
+                "过远 fail_t（d2>36.0 最小值）靠近后合法放置必须成功并 spawn marker"
+                "——若过远拒绝时错误登记了 fail_t 双键，此处 already-registered 超时红"
+            ),
+        )
+        tf_break_anchor = last_event_time(bot)
+        _send_coffin_break(bot, fail_t)
+        _wait_coffin_marker_destroy(bot, tf_marker, tf_break_anchor)
+        bot.move_to(tf_origin[0], tf_origin[1], tf_origin[2], speed=5.5)
+        time.sleep(1.0)
 
         # ── 负向（review finding [major]）：无效（已消费 stale）item_instance_id ──
         # first_instance 已被首放消费（consume_item_instance_once 移除实例行，
@@ -573,7 +766,7 @@ def run(env) -> None:
         stale_recheck_instance = _give_coffin_instance(bot, stale_recheck_give)
         stale_recheck_anchor = last_event_time(bot)
         _send_coffin_place(bot, stale_pos, stale_recheck_instance)
-        _wait_coffin_marker_spawn(
+        stale_recheck_marker = _wait_coffin_marker_spawn(
             bot,
             stale_pos,
             stale_recheck_anchor,
@@ -582,6 +775,12 @@ def run(env) -> None:
                 "（证明拒绝未在 registry 留残留，否则此处 already-registered 超时红）"
             ),
         )
+        # review finding [4]（round 6）：stale 复查的棺没有 teardown——marker 与
+        # registry 条目永久残留，同一长活 E2E server 重跑时 stale_pos 已注册 → 超时
+        # 红（且污染同 fixture 区的后续场景）。立即 break 清场。
+        stale_teardown_anchor = last_event_time(bot)
+        _send_coffin_break(bot, stale_pos)
+        _wait_coffin_marker_destroy(bot, stale_recheck_marker, stale_teardown_anchor)
 
         # ── 负向：异维 → 逐字 chat 拒绝，实例保留 ───────────────────────
         tp_anchor = last_event_time(bot)
@@ -733,11 +932,17 @@ def run(env) -> None:
         assert _coffin_count(replaced) == 8, "破坏后重放应恰好消费 1 个实例"
         # 世界侧：重放同样必须在世界重新 spawn marker 实体——旧实体已被 despawn、
         # registry 已清空后，新放置能产生新的世界实体（destroy path 无残留的完整闭环）。
-        _wait_coffin_marker_spawn(
+        replace_marker = _wait_coffin_marker_spawn(
             bot,
             place_pos,
             replace_anchor,
             description="破坏清场后重放应再次 spawn mundane_coffin marker 实体（kind=160 @ 放置位）",
         )
+        # review finding [4]（round 6）：最终重放的 marker 与 registry 条目同样无
+        # teardown——break 清场，场景结束时零注册棺、零世界 marker 残留（同一长活
+        # E2E server 可原样重跑本场景，也把 place_pos 交还给同 fixture 区的后续场景）。
+        replace_teardown_anchor = last_event_time(bot)
+        _send_coffin_break(bot, place_pos)
+        _wait_coffin_marker_destroy(bot, replace_marker, replace_teardown_anchor)
 
         bot.assert_alive("CoffinPlace 全生命周期场景完成后")
