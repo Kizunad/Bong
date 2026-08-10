@@ -30,8 +30,12 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   （合法实例成功放置 + marker spawn + teardown break）：拒绝时错误登记双键会使复查以
   already-registered 拒绝而超时红，暴露 registry-only 残留（review finding [major]
   round 6：复查此前只覆盖 stale_pos）。过远拒绝的 fail_t 靠近后必须能合法放置（最直接
-  的残留探针）；非空气拒绝坐标（py-1，永久实心）无法放置，取同列最近空气格做最佳可
-  构造复查；stale 复查仍覆盖 stale_pos。
+  的残留探针）；非空气拒绝坐标（py-1，永久实心）无法放置——不能取无关空气格凑数
+  （review finding [major] round 7：旧复查把 (px,py+1,pz+2) 当替代坐标，y/z 双偏，
+  完全不碰被拒坐标的 registry 键，残留永不暴露）——改用 coffin_enter 探针直接对
+  (px,py-1,pz) 施加状态：正确实现对该实心坐标无 registry 条目 → lookup 静默 no-op；
+  错误登记的残留被命中 → 进棺状态转变（in_coffin:true / invisible / 瞬移）红。
+  stale 复查仍覆盖 stale_pos。
 - `coffin_place` 必须用真实 instance_id（inventory_item_by_instance 按 id 校验）；
   已消费的 stale id 同样拒绝、分文不动（review finding [major]：全场景只用合法 id，
   无视 item_instance_id 吞掉可用棺材的实现能全绿）。
@@ -326,6 +330,18 @@ def _send_coffin_break(bot, pos) -> None:
     )
 
 
+def _send_coffin_enter(bot, pos) -> None:
+    bot.intent(
+        {
+            "type": "coffin_enter",
+            "v": 1,
+            "x": pos[0],
+            "y": pos[1],
+            "z": pos[2],
+        }
+    )
+
+
 def _distance_boundary_pair(bot, air_y, exclude=()):
     """在 bot 附近空气层把 6.0m 放置距离边界夹得最紧的 (pass, fail) 目标对。
 
@@ -537,6 +553,73 @@ def _assert_no_coffin_marker_destroy(
     )
 
 
+def _assert_no_enter_transition_after(
+    bot, after_t, enter_pos, description, window=_REJECT_OBS_WINDOW
+) -> None:
+    """非空气拒绝坐标的残留探针不变量：enter 探针后窗口内不得出现任何进棺状态转变。
+
+    非空气拒绝坐标 (px, py-1, pz) 是永久实心地面，无法用合法放置复查 registry 残留
+    （放置必被 not empty 拒，与 already-registered 拒同为静默、无法区分）。改用
+    coffin_enter 探针直接对该坐标施加状态：正确实现对被拒坐标无 registry 条目 →
+    registry.lookup 返回 None 静默 continue（coffin/mod.rs:618-624），零状态变化；
+    而「拒绝时先插 registry 双键再早退（不消费、不 spawn）」的错误实现会在该坐标留
+    下残留条目 → enter 的 lookup 命中、set_occupied 成功 → 进棺状态转变
+    （CoffinState{in_coffin:true} + bot 自身 invisible 位置位 + 瞬移到
+    coffin_player_position）。三路信号任一出现即红——enter 对坐标无空气门
+    （coffin/mod.rs:651 只查已进棺 + 距离），是唯一能对永久实心坐标的 registry 键
+    施加状态并留下可观测信号的探针（review finding [major] round 7）。
+
+    同 _assert_no_coffin_marker_spawn 的观察窗约定：deadline 锚在 helper 入口
+    （time.monotonic() - bot.t0 + window），调用方在 enter intent 之后立即进入，
+    窗口完整覆盖 server 对 enter 请求的处理；事件过滤用 e.t > after_t（intent 前的
+    一切事件排除）。entered 位置用 _near 容差匹配 coffin_player_position 浮点。
+    """
+    enter_inside = (
+        float(enter_pos[0]) + 0.5,
+        float(enter_pos[1]) + 0.05,
+        float(enter_pos[2]) + 0.5,
+    )
+    deadline = time.monotonic() - bot.t0 + window
+    hits = []
+    while True:
+        with bot._lock:
+            hits = []
+            for e in bot.events:
+                if e.t <= after_t:
+                    continue
+                if (
+                    e.kind == "server_data"
+                    and e.data["payload_type"] == "coffin_state"
+                    and e.data["payload"].get("in_coffin") is True
+                ):
+                    hits.append(f"coffin_state(in_coffin:true)@{e.t:.2f}")
+                elif (
+                    e.kind == "entity_metadata"
+                    and e.data["entity_id"] == bot.entity_id
+                    and e.data["flags"] is not None
+                    and e.data["flags"] & 0x20
+                ):
+                    hits.append(f"invisible 位置位@{e.t:.2f}")
+                elif e.kind == "pos_look" and _near(
+                    (e.data["x"], e.data["y"], e.data["z"]),
+                    enter_inside[0],
+                    enter_inside[1],
+                    enter_inside[2],
+                ):
+                    hits.append(f"瞬移到棺内坐标 {enter_inside}@{e.t:.2f}")
+        if hits:
+            break
+        if time.monotonic() - bot.t0 >= deadline:
+            break
+        time.sleep(0.1)
+    assert not hits, (
+        f"{description}：enter 残留探针后 {window:.1f}s 内不得出现进棺状态转变"
+        f"（正确实现对实心被拒坐标 {enter_pos} 无 registry 条目 → 静默），"
+        f"实际 {len(hits)} 条: "
+        + "; ".join(hits[:3])
+    )
+
+
 def run(env) -> None:
     with env.new_bot("CoPl") as bot:
         wait_for_ready(bot)
@@ -649,43 +732,35 @@ def run(env) -> None:
         # 非空气/过远拒绝段的「无 spawn + 计数不变」会被「先插 registry 双键再早退
         # （不消费、不 spawn）」的错误实现全过。对**每个被拒坐标**做 state-applying
         # 复查 + teardown break（review finding [4] 零残留）：
-        #   (a) 非空气坐标 (px,py-1,pz) 是永久实心地面、无法放置——取同列最近空气格
-        #       (px,py+1,pz+2) 做最佳可构造复查：放置必须成功（拒绝未在列上留残留、
-        #       未偷扣实例）；
+        #   (a) 非空气坐标 (px,py-1,pz) 是永久实心地面、无法放置——coffin_enter
+        #       探针直接对该坐标施加状态：正确实现无 registry 条目 → 静默 no-op；
+        #       错误登记的残留被 lookup 命中 → 进棺状态转变红（review finding
+        #       [major] round 7：旧替代坐标 (px,py+1,pz+2) y/z 双偏、不碰被拒键，
+        #       残留永不暴露）；
         #   (b) 边界 pass_t（d2≤35.0 的最大值，含 client/server 位置余量）合法放置
         #       必须成功——距离半径缩到 <5.92m 在此红（review finding [3] 的 pass 侧）；
         #   (c) 过远 fail_t（d2>36.0 最小值）靠近后合法放置必须成功——最直接的残留
         #       探针：若过远拒绝时错误登记了 fail_t 双键，此处 already-registered 拒
         #       绝、marker 不 spawn → 超时红。
         # 每次复查先给一棺：_give_barrier(bot, 6) 同时断言上一复查放置恰好消费 1 个
-        # 实例（消费 0 或 2 个都让 barrier 计数对不上而红）。
+        # 实例（消费 0 或 2 个都让 barrier 计数对不上而红）。(a) 的 enter 探针不消费
+        # 实例，其「未偷扣」由 (b) 的 count==6 兜底断言。
 
-        # (a) 非空气列复查 + teardown
-        na_give = _give_barrier(
-            bot, 6, description="非空气拒绝段后 +1 give 应恰好 count==6（5→6）"
-        )
-        na_instance = _first_coffin_instance_id(na_give)
-        na_pos = (px, py + 1, pz + 2)
+        # (a) 非空气坐标 enter 残留探针（对被拒坐标本身施加状态）
         na_anchor = last_event_time(bot)
-        _send_coffin_place(bot, na_pos, na_instance)
-        na_marker = _wait_coffin_marker_spawn(
+        _send_coffin_enter(bot, (px, py - 1, pz))
+        _assert_no_enter_transition_after(
             bot,
-            na_pos,
             na_anchor,
-            description=(
-                "非空气拒绝段后同列空气格合法放置必须成功并 spawn marker"
-                "（拒绝未在列上留 registry 残留 / 未偷扣实例）"
-            ),
+            (px, py - 1, pz),
+            description="非空气拒绝坐标的 enter 残留探针：正确实现应无进棺状态转变",
         )
-        na_break_anchor = last_event_time(bot)
-        _send_coffin_break(bot, na_pos)
-        _wait_coffin_marker_destroy(bot, na_marker, na_break_anchor)
 
         # (b) 边界 pass_t 复查 + teardown
         bp_give = _give_barrier(
             bot,
             6,
-            description="非空气列复查恰好消费 1 个实例后再 give 应恰好 count==6",
+            description="非空气 enter 探针（不消费）后再 give 应恰好 count==6（5→6）",
         )
         bp_instance = _first_coffin_instance_id(bp_give)
         bp_anchor = last_event_time(bot)
