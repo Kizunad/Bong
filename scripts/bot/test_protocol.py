@@ -43,7 +43,7 @@ from bot._agent_ui_helpers import (  # noqa: E402
     expect_agent_ui_request,
     response_matches,
 )
-from bot._redis_helpers import RedisPubSub, RespFrames, _encode_command  # noqa: E402
+from bot._redis_client_helpers import RedisClient, RespFrames, _encode_command  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
@@ -4621,7 +4621,7 @@ class PlayerPacketContractTest(unittest.TestCase):
         self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
 
 
-# ── agent_ui 场景底座（_redis_helpers / _agent_ui_helpers）单测 ──────────────
+# ── agent_ui 场景底座（_redis_client_helpers / _agent_ui_helpers）单测 ──────────────
 
 
 class RespFramesTest(unittest.TestCase):
@@ -4729,15 +4729,15 @@ class _FakeTimeoutSocket:
         raise TimeoutError("timed out")
 
 
-class RedisPubSubWaitDeadlineTest(unittest.TestCase):
+class RedisClientWaitDeadlineTest(unittest.TestCase):
     """wait_message 的 recv 窗口必须受调用方 deadline 约束。
 
     回归：io_timeout(10s) 大于负向断言窗口(2s)时，固定 10s 阻塞 recv 会直接抛
     TimeoutError 崩掉场景，而不是按 deadline 返回 None / 抛 AssertionError。
     """
 
-    def _redis_with_timeout_socket(self, timeout: float = 2.0) -> RedisPubSub:
-        redis = RedisPubSub(io_timeout=timeout)
+    def _redis_with_timeout_socket(self, timeout: float = 2.0) -> RedisClient:
+        redis = RedisClient(io_timeout=timeout)
         redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
         return redis
 

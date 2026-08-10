@@ -10,14 +10,14 @@
   action ∈ button_click/dismissed/timeout/replaced/error/parse_error）。
 
 纯逻辑部分（cmd 构造、payload 形状断言、消息匹配）独立成函数，供 test_protocol.py
-单测；wait 循环依赖 bot.wait_for / RedisPubSub，由场景集成覆盖。
+单测；wait 循环依赖 bot.wait_for / RedisClient，由场景集成覆盖。
 """
 
 from __future__ import annotations
 
 import json
 
-from bot._redis_helpers import RedisPubSub
+from bot._redis_client_helpers import RedisClient
 from bot.bot import BotAssertionError
 
 DEFAULT_UI_XML = (
@@ -53,7 +53,7 @@ def build_cmd(
     }
 
 
-def publish_cmd(redis: RedisPubSub, **cmd_fields) -> dict:
+def publish_cmd(redis: RedisClient, **cmd_fields) -> dict:
     """构造并注入一条 agent_ui_cmd；返回构造好的 cmd dict（供断言复用）。"""
     cmd = build_cmd(**cmd_fields)
     redis.publish("bong:agent_ui_cmd", json.dumps(cmd))
@@ -203,7 +203,7 @@ def expect_agent_ui_close(
 
 
 def expect_redis_response(
-    redis: RedisPubSub,
+    redis: RedisClient,
     request_id: str,
     timeout: float = 15.0,
     expect: bool = True,
@@ -223,7 +223,7 @@ def expect_redis_response(
 
 
 def expect_no_redis_response(
-    redis: RedisPubSub, request_id: str, timeout: float = 2.0
+    redis: RedisClient, request_id: str, timeout: float = 2.0
 ) -> None:
     """负向断言：request_id 匹配的 bong:agent_ui_response 在窗口内不应出现。"""
     got = expect_redis_response(redis, request_id, timeout=timeout, expect=False)

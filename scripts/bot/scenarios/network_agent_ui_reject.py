@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from bot._agent_ui_helpers import (
     RESP_CHANNEL,
-    RedisPubSub,
+    RedisClient,
     expect_agent_ui_close,
     expect_agent_ui_request,
     expect_no_redis_response,
@@ -175,7 +175,7 @@ def run(env) -> None:
         bot.expect_event("pos_look", timeout=15.0)
         target_player = f"offline:{bot.username}"
 
-        redis = RedisPubSub()
+        redis = RedisClient()
         try:
             redis.subscribe(RESP_CHANNEL)
             _invalid_button_id(bot, redis, target_player, env.run_tag)

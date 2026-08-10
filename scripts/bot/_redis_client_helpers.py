@@ -4,9 +4,13 @@
 PUBLISH（注入 bong:agent_ui_cmd 等）与 SUBSCRIBE（观察 bong:agent_ui_response 等）
 两个命令，不值得引入 redis-py。
 
+与 scripts/bot/_redis_helpers.py（anqi 订阅者，后台线程泵帧）刻意分文件：
+本模块是同步请求/响应客户端（调用线程内阻塞 recv），类名 RedisClient
+与对方的 RedisPubSub 在文件与符号两级都不同名，两个分支可无冲突共存。
+
 设计：
 - ``RespFrames`` —— 纯编解码器（feed bytes → 拉帧），与 socket 解耦，可单测。
-- ``RedisPubSub`` —— PUBLISH 走短连接（发完即关），SUBSCRIBE 走常驻连接，
+- ``RedisClient`` —— PUBLISH 走短连接（发完即关），SUBSCRIBE 走常驻连接，
   只有 ``message`` 帧会暴露给调用方，subscribe ack / pong 等被内部吞掉。
 
 只实现 RESP2 子集：+simple / -error / :integer / $bulk（含 $-1 nil）/ *array。
@@ -95,7 +99,7 @@ def _encode_command(*parts: str) -> bytes:
     return out
 
 
-class RedisPubSub:
+class RedisClient:
     """最小 Redis 客户端：PUBLISH（短连接）+ SUBSCRIBE（常驻连接）+ 消息等待。
 
     场景用法：先 ``subscribe("bong:agent_ui_response")`` 再触发 server 行为，
