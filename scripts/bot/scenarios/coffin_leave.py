@@ -4,14 +4,15 @@
 - 成功：`set_invisible(false)` + 位置回 `coffin_exit_position`（lower-0.5, +0.05,
   +0.5）+ 移除 CoffinComponent + `occupied_by` 清 + 推
   `CoffinState{in_coffin:false, grade:缺席, multiplier:1.0}`。
-- 拒绝全静默（无回执）：从未进棺（无 CoffinComponent）直接 continue。
+- 拒绝全静默（无回执、不瞬移）：从未进棺（无 CoffinComponent）直接 continue。
 
 断言面（state 读回而非响应 OK）：
-1. 未进过 leave——静默窗口无任何 CoffinState 变化（CoLvB 只收过 join 初始快照）。
+1. 未进过 leave——静默窗口无任何 CoffinState 变化、无 chat 回执、无瞬移（pos_look/
+   窗末位置漂移双路，review finding [2]）（CoLvB 只收过 join 初始快照）。
 2. 正向 leave——CoffinState 三字段（grade 缺席、multiplier 回 1.0）+
    **entity_metadata invisible 位清除**（隐藏标记恢复）+ **pos_look 回
    coffin_exit_position**（服务端权威位置读回）。
-3. 幂等 leave——第二次静默（组件已移除，无二次状态突变）。
+3. 幂等 leave——第二次静默（组件已移除，无二次状态突变、无回执、无瞬移）。
 4. **occupied_by 清的行为级读回**——CoLvB 随即对同一棺 CoffinEnter **成功**
    （in_coffin:true + invisible + 位置棺内）；这是比字段断言更强的状态证据：
    只有 `registry.clear_player` 真的清了 occupied_by，B 才能进得去。
@@ -57,10 +58,18 @@ def _coffin_state_after(bot, anchor, predicate, timeout, description):
     )
 
 
-def _assert_silent_window(bot, anchor, label):
-    """anchor 后 2s 内不得出现新 CoffinState 或 bot 自身实体带 flags 的 metadata 更新。
+def _assert_silent_window(bot, anchor, label, check_chat=True, before_pos=None, check_pos=True):
+    """anchor 后 2s 内不得出现新 CoffinState / bot 自身实体带 flags 的 metadata 更新 /
+    chat 回执 /（check_pos）把 bot 移出 before_pos 的 pos_look 瞬移，且窗末 final
+    position 不得漂移。
 
+    review finding [2]：leave 的 no-op（未进过 / 幂等二次）契约是**完全静默**——旧
+    helper 只滤 coffin_state + metadata，把「发错误回执（chat）或瞬移玩家而不发
+    coffin_state/metadata」的错误 leave 实现放过去。任何 chat 回执、任何落新坐标的
+    pos_look、以及窗末位置漂移都是契约违反（两者共拒：chat 是回执通道，pos_look/位置
+    是权威状态通道）。
     entity_id=0 是周期性世界实体心跳（flags=None），与棺状态无关，不得计入命中。"""
+    before_pos = before_pos if before_pos is not None else bot.position
     time.sleep(2.0)
     with bot._lock:
         hits = [
@@ -74,11 +83,30 @@ def _assert_silent_window(bot, anchor, label):
                     and e.data["entity_id"] == bot.entity_id
                     and e.data["flags"] is not None
                 )
+                or (check_chat and e.kind == "chat")
+                or (
+                    check_pos
+                    and before_pos is not None
+                    and e.kind == "pos_look"
+                    and not (
+                        _approx(e.data["x"], before_pos[0])
+                        and _approx(e.data["y"], before_pos[1])
+                        and _approx(e.data["z"], before_pos[2])
+                    )
+                )
             )
         ]
     if hits:
         raise AssertionError(
-            f"[{bot.username}] {label} 应静默（无状态变化），实际窗口内 {len(hits)} 条: {hits[:3]}"
+            f"[{bot.username}] {label} 应静默（无状态变化/回执/瞬移），"
+            f"实际窗口内 {len(hits)} 条: {hits[:3]}"
+        )
+    after_pos = bot.position
+    if check_pos and before_pos is not None and after_pos is not None and not all(
+        _approx(a, b) for a, b in zip(before_pos, after_pos)
+    ):
+        raise AssertionError(
+            f"[{bot.username}] {label} 应静默（位置不得变化），期望 {before_pos}，实际 {after_pos}"
         )
 
 
@@ -137,7 +165,12 @@ def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
                 description="结算上一候选的 inventory_snapshot（t>上次锚）",
             )
         except BotAssertionError:
-            return None  # quiet 秒无新快照 → 上一候选被静默拒绝，可放行下一候选
+            # review finding [3]：quiet 秒内无新快照只说明「这 1s 没等到」，不证明
+            # 上一候选被拒——旧实现在这里立即 return None，settle_timeout 死线从未
+            # 生效，延迟快照（>1s 才到）被当成拒收，导致 _place_coffin 发下一候选并把
+            # 上一候选的迟到成功记到错误坐标（后续 enter/leave 全超时）。wait_for 每次
+            # 全量重扫事件列表，迟到快照在下一次 wait 立即命中，continue 保持完整结算窗口。
+            continue
         if find_item(event.data["payload"], MUNDANE_COFFIN) is None:
             return candidate  # 上一候选实际放置成功：快照迟到但消耗真实
         settle_anchor = event.t  # 棺仍在，继续等更新的快照确认稳定性
@@ -193,6 +226,13 @@ def _place_coffin(bot, coffin, px, py, pz):
             return (x, y, z)
         except BotAssertionError:
             continue
+    # review finding [3]：末候选同样必须原子结算——它的 3s 等待超时不代表被拒，延迟
+    # 消耗快照可能在完整 settle 窗口内到达。旧实现直接 raise，把末候选实际放置成功
+    # 误判为全部候选被拒（且 raise 前连结算都没有，迟到的快照无归属）。
+    if last_tried is not None:
+        settled = _settle_previous_candidate(bot, last_tried)
+        if settled is not None:
+            return settled
     raise AssertionError(
         f"[{bot.username}] 附近 {len(candidates)} 个候选放棺位均被服务器静默拒绝"
         f"（position floor=({px},{py},{pz})）"

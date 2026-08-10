@@ -4,13 +4,15 @@
 - 成功：`set_invisible(true)` + 瞬移到 `coffin_player_position`（lower+0.5, +0.05,
   +0.5）+ CoffinComponent + 推 `CoffinState{in_coffin:true, grade:"mundane",
   multiplier:0.9}`（mundane 0.9 见 `coffin_lifespan_multiplier` 单测）。
-- 拒绝全静默（无回执）：无 registry 记录、occupied_by 已占、current_coffin 已在内、
-  距离 >6m；维度门例外——回 `§c[棺]` chat 逐字。
+- 拒绝全静默（无回执、不瞬移）：无 registry 记录、occupied_by 已占、current_coffin
+  已在内、距离 >6m；维度门例外——回 `§c[棺]` chat **逐字**（`==` 全串相等，子串包含
+  会把追加前后缀的错误实现放过去）。
 - 维度门在 occupied_by（mod.rs:625）与 current_coffin（mod.rs:651）之间：要打到
   维度 chat，bot 必须先 leave 清 occupied_by，否则命中 occupied 静默拒绝。
 
 断言面（state 读回而非响应 OK）：
-1. 距离 >6m 拒绝——静默窗口无 CoffinState（移动走 8m 再 enter）。
+1. 距离 >6m 拒绝——静默窗口无 CoffinState、无 §c[棺] 回执、无瞬移（pos_look/窗末
+  位置漂移双路，review finding [4]）（移动走 8m 再 enter）。
 2. 正向 enter——CoffinState 三字段 + **entity_metadata invisible 位（bit 5）置位**
    （valence Flags → TrackedData → EntityTrackerUpdateS2c 读回，字符状态实际切换）+
    **pos_look 瞬移到棺内坐标**（服务端权威位置读回）。
@@ -88,12 +90,16 @@ def _pos_look_after(bot, anchor, xyz, timeout, description):
     )
 
 
-def _assert_silent_window(bot, anchor, label, check_chat=False):
+def _assert_silent_window(bot, anchor, label, check_chat=False, before_pos=None, check_pos=False):
     """静默窗口：anchor 后 2s 内不得出现 coffin_state（**任何值**，含 in_coffin:false）、
-    bot 自身实体带 flags 的 metadata 更新、或（check_chat）§c[棺] 前缀 chat 回执。
+    bot 自身实体带 flags 的 metadata 更新、（check_chat）§c[棺] 前缀 chat 回执、
+    （check_pos 且给定 before_pos）任何把 bot 移出 before_pos 的 pos_look 瞬移。
 
     拒绝路径的无回执契约是「什么都不该来」，不是「没收到成功回执」——只滤
-    in_coffin:true 会把「拒发 in_coffin:false / 错误 chat / 状态更新」的坏实现放过去。"""
+    in_coffin:true 会把「拒发 in_coffin:false / 错误 chat / 状态更新」的坏实现放过去。
+    check_pos 同时做窗末 final position 比对：窗口内 pos_look 落新坐标即红，迟到的
+    teleport 落位也被窗末位置漂移暴露（review finding [4]：旧距离测试只滤前两类，
+    「拒建状态却发回执 / 把远距玩家瞬移进棺」的实现全过）。"""
     time.sleep(2.0)
     with bot._lock:
         hits = [
@@ -108,13 +114,32 @@ def _assert_silent_window(bot, anchor, label, check_chat=False):
                     and e.data["flags"] is not None
                 )
                 or (check_chat and e.kind == "chat" and "§c[棺]" in e.data.get("text", ""))
+                or (
+                    check_pos
+                    and before_pos is not None
+                    and e.kind == "pos_look"
+                    and not (
+                        _approx(e.data["x"], before_pos[0])
+                        and _approx(e.data["y"], before_pos[1])
+                        and _approx(e.data["z"], before_pos[2])
+                    )
+                )
             )
         ]
     if hits:
         raise AssertionError(
-            f"[{bot.username}] {label} 应静默拒绝（无 coffin_state/metadata/回执），"
+            f"[{bot.username}] {label} 应静默拒绝（无 coffin_state/metadata/回执/瞬移），"
             f"实际窗口内出现 {len(hits)} 条: {hits[:3]}"
         )
+    if check_pos and before_pos is not None:
+        after_pos = bot.position
+        if after_pos is not None and not all(
+            _approx(a, b) for a, b in zip(before_pos, after_pos)
+        ):
+            raise AssertionError(
+                f"[{bot.username}] {label} 应静默（位置不得变化），"
+                f"期望 {before_pos}，实际 {after_pos}"
+            )
 
 
 def _assert_no_entry_transition_after(bot, anchor, in_coffin_pos, label, window=2.0):
@@ -199,7 +224,12 @@ def _settle_previous_candidate(bot, candidate, settle_timeout=6.0, quiet=1.0):
                 description="结算上一候选的 inventory_snapshot（t>上次锚）",
             )
         except BotAssertionError:
-            return None  # quiet 秒无新快照 → 上一候选被静默拒绝，可放行下一候选
+            # review finding [3]：quiet 秒内无新快照只说明「这 1s 没等到」，不证明
+            # 上一候选被拒——旧实现在这里立即 return None，settle_timeout 死线从未
+            # 生效，延迟快照（>1s 才到）被当成拒收，导致 _place_coffin 发下一候选并把
+            # 上一候选的迟到成功记到错误坐标（后续 enter/leave 全超时）。wait_for 每次
+            # 全量重扫事件列表，迟到快照在下一次 wait 立即命中，continue 保持完整结算窗口。
+            continue
         if find_item(event.data["payload"], MUNDANE_COFFIN) is None:
             return candidate  # 上一候选实际放置成功：快照迟到但消耗真实
         settle_anchor = event.t  # 棺仍在，继续等更新的快照确认稳定性
@@ -255,6 +285,13 @@ def _place_coffin(bot, coffin, px, py, pz):
             return (x, y, z)
         except BotAssertionError:
             continue
+    # review finding [3]：末候选同样必须原子结算——它的 3s 等待超时不代表被拒，延迟
+    # 消耗快照可能在完整 settle 窗口内到达。旧实现直接 raise，把末候选实际放置成功
+    # 误判为全部候选被拒（且 raise 前连结算都没有，迟到的快照无归属）。
+    if last_tried is not None:
+        settled = _settle_previous_candidate(bot, last_tried)
+        if settled is not None:
+            return settled
     raise AssertionError(
         f"[{bot.username}] 附近 {len(candidates)} 个候选放棺位均被服务器静默拒绝"
         f"（position floor=({px},{py},{pz})）"
@@ -281,9 +318,24 @@ def run(env) -> None:
         # ── 距离 >6m 拒绝（静默窗口，未在棺内时先测） ──────────────────────
         bot.move_to(lower[0] + FAR_OFFSET, lower[1], lower[2], speed=5.5)
         time.sleep(1.5)  # 等 server 逐包消化移动上报
+        _wait_settled(bot)  # 位置稳定后再取 before_pos：移动收尾的迟到 pos_look 若落
+        # 在静默窗口内，会被 check_pos 当成瞬移红（review finding [4] 误报）
+        before_pos = bot.position
         anchor = last_event_time(bot)
         bot.intent({"type": "coffin_enter", "v": 1, "x": lower[0], "y": lower[1], "z": lower[2]})
-        _assert_silent_window(bot, anchor, f"距离 {FAR_OFFSET}m 的 CoffinEnter")
+        # review finding [4]：距离拒绝契约是**全静默 + 不瞬移**——check_chat 钉死错误
+        # chat 回执（server 距离分支 line 651 是 silent continue，不该有 §c[棺]），
+        # check_pos 钉死「把远距玩家瞬移进棺」的 teleport（pos_look 落新坐标 / 窗末
+        # 位置漂移双路）。旧调用默认 check_chat=False 且无任何位置断言，只滤 coffin_state
+        # + metadata 会让「拒建状态却发回执/瞬移」的实现通过。
+        _assert_silent_window(
+            bot,
+            anchor,
+            f"距离 {FAR_OFFSET}m 的 CoffinEnter",
+            check_chat=True,
+            before_pos=before_pos,
+            check_pos=True,
+        )
 
         # ── 正向 enter：三路状态读回 ───────────────────────────────────────
         bot.move_to(px, py, pz, speed=5.5)
@@ -417,8 +469,14 @@ def run(env) -> None:
         )
         anchor = last_event_time(bot)
         bot.intent({"type": "coffin_enter", "v": 1, "x": lower[0], "y": lower[1], "z": lower[2]})
+        # review finding [1]：维度门契约是**逐字** chat（server send_chat_message 原样发出
+        # COFFIN_DIMENSION_REJECTION_MESSAGE）——子串包含判定会把「前缀/后缀追加额外文本」
+        # 的错误实现放过去，必须全串相等。chat 事件本身不含 §c[棺] 前缀之外的拼接，整串
+        # 相等才满足「用户可见回执逐字一致」的契约。
         bot.wait_for(
-            lambda e: e.kind == "chat" and e.t > anchor and DIMENSION_REJECTION in e.data["text"],
+            lambda e: e.kind == "chat"
+            and e.t > anchor
+            and e.data["text"] == DIMENSION_REJECTION,
             timeout=10.0,
             description=f"异维进棺应逐字回执「{DIMENSION_REJECTION}」",
         )
