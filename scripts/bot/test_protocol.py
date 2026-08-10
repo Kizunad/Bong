@@ -4760,12 +4760,16 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
         )
         elapsed = time.monotonic() - started
         self.assertIsNone(got, "负向窗口超时应返回 None，而不是抛 TimeoutError")
+        self.assertGreaterEqual(
+            elapsed, 0.2, "负向窗口必须等满 deadline 才返回，不能提前返回"
+        )
         self.assertLess(
             elapsed, 1.5, "负向窗口应约在 deadline 处返回，不拖满 io_timeout"
         )
 
     def test_positive_window_raises_assertion_after_deadline(self):
         redis = self._redis_with_timeout_socket(timeout=2.0)
+        started = time.monotonic()
         with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
             redis.wait_message(
                 "bong:agent_ui_response",
@@ -4773,6 +4777,10 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
                 timeout=0.2,
                 expect=True,
             )
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(
+            elapsed, 0.2, "正窗口断言必须等满 deadline 才抛，不能提前抛"
+        )
 
 
 class _AgentUiFakeBot(_FakeBot):
