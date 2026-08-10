@@ -1900,54 +1900,78 @@ mod tests {
         /// 从未 inc 过的 chunk」必须是无害跳过——而不是 debug 下 panic（release 下
         /// fetch_sub 回绕成 u32::MAX 让 chunk 永久滞留、无法被保留 GC 回收）。
         ///
-        /// 机制：join tick 的 `init_entities`（valence_entity）把 OldPosition 拍成
-        /// Position → 初始 view diff 恒空 → 客户端加入前已存在于 layer 的 chunk
-        /// 对它从不 inc；该客户端 despawn 时 `cleanup_chunks_after_client_despawn`
-        /// （valence_server client.rs，PostUpdate）无条件 dec 整个计算 view 方形 →
-        /// 在计数 0 上 dec → underflow。这里用 Position == OldPosition 显式写死
-        /// 复现该 join-snap 状态（mock client bundle 无 EntityKind，init_entities
-        /// 的 snap 必须由显式 OldPosition 模拟——与 join_resync 测试同法）。
+        /// 构造原理：`OldVisibleChunkLayer(Entity)` 与 `OldViewDistance(u8)` 的字段
+        /// 是 crate 私有的、无 pub 构造器，Bong 无法从外部构造「old layer == layer」
+        /// 来绕开 join layer-change 的全量 inc。改用同效的**反向构造**：给 late-joiner
+        /// 移除 `Client` 组件。
+        ///   - `handle_layer_messages` 与 `update_view_and_layers` 的查询都要求
+        ///     `&mut Client` → 移除后实体被两者跳过：LOAD 消息不投递、layer-change /
+        ///     view diff 两条 inc 路径全部短路；
+        ///   - `cleanup_chunks_after_client_despawn` 只要求 `With<ClientMarker> +
+        ///     With<Despawned>`（再加 View + VisibleChunkLayer），不需要 `Client` →
+        ///     仍然对 view 内的每个 chunk 执行 dec。
+        /// 于是「chunk 已在层内、viewer_count 恒为 0、despawn 客户端 view 覆盖它」
+        /// 的 underflow 状态被确定性构造出来，全程无 mid-tick 时序依赖。
         ///
-        /// 确定性论证：全流程无任何时序依赖——chunk 预先插入保证 tick 1 计数必为
-        /// 0；cleanup 固定注册在 PostUpdate；insert(Despawned) 后下一次 update 必然
-        /// 触发 cleanup（实体在 tick 末才被 despawn_entities 移除，cleanup 在其
-        /// 之前执行）。未修复代码每次运行必然 panic，修复后必然通过。
+        /// 消息丢弃：chunk 先入层，其 LOAD 消息在「无任何客户端」的 tick 里被
+        /// staged→ready→unready 清空（unready 丢弃整条消息队列）→ 永不投递、计数 0。
+        ///
+        /// 种子客户端（ScenarioSingleClient 自带，仍带 `Client` 且 join 后 old layer
+        /// 同步为 layer）必须先移出舞台，否则它会投递 chunk 的 LOAD 消息、破坏计数
+        /// 0 的前提。
+        ///
+        /// 确定性论证：late-joiner 出生即带 Despawned，其第一次 update 必然触发
+        /// cleanup（`despawn_marked_entities` 在 `Last` 调度、cleanup 在 PostUpdate，
+        /// 实体在 cleanup 之后才被移除）。未修复代码每次运行必然 panic，修复后必然通过。
         #[test]
         fn despawn_cleanup_skips_chunks_client_never_incd() {
             let scenario = ScenarioSingleClient::new();
             let mut app = scenario.app;
-            let client = scenario.client;
             let layer = scenario.layer;
 
-            // join-snap 姿态：OldPosition == Position → join tick view diff 恒空。
-            app.world_mut().entity_mut(client).insert((
-                Position::new([190.0, 64.0, 111.0]),
-                OldPosition::new([190.0, 64.0, 111.0]),
-                ViewDistance::new(4),
-            ));
-            // 客户端加入前 chunk 已存在于 layer（由他人生成/残留）→ 从不对其计数。
+            // 种子客户端从 bundle 起 old_visible_chunk_layer 就是 PLACEHOLDER → 它的
+            // join layer-change 会把任何已存在的 view chunk 全量 inc。直接移出舞台，
+            // 保证 tick 1 的消息丢弃阶段没有任何客户端把 layer 当 old layer。
+            app.world_mut().despawn(scenario.client);
+
+            // chunk 先于所有客户端存在：LOAD 消息 staged → tick 1 ready → 无人消费
+            // → unready 丢弃。viewer_count 从始至终是 0。
             app.world_mut()
                 .get_mut::<ChunkLayer>(layer)
                 .expect("scenario layer should carry a ChunkLayer")
-                .insert_chunk(ChunkPos::new(11, 6), UnloadedChunk::new());
+                .insert_chunk(ChunkPos::new(0, 0), UnloadedChunk::new());
 
-            // tick 1：join。diff 恒空 → 该 chunk 计数保持 0（未发生 inc）。
+            // tick 1：LOAD 消息被 readied 后无人投递、被 unready 清空。
             app.update();
-            let count = app
-                .world()
-                .get::<ChunkLayer>(layer)
-                .expect("scenario layer should still carry a ChunkLayer")
-                .chunk(ChunkPos::new(11, 6))
-                .expect("pre-inserted chunk should still be in the layer")
-                .viewer_count();
             assert_eq!(
-                count, 0,
-                "前置断言：join tick 后预存 chunk 的 viewer_count 必须为 0，\
-                 否则本测试构造的 underflow 场景不成立（说明该客户端已 inc 过）"
+                app.world()
+                    .get::<ChunkLayer>(layer)
+                    .expect("scenario layer should still carry a ChunkLayer")
+                    .chunk(ChunkPos::new(0, 0))
+                    .expect("pre-inserted chunk should still be in the layer")
+                    .viewer_count(),
+                0,
+                "前置断言：chunk 的 LOAD 消息必须已被丢弃、计数保持 0；\
+                 否则说明某条 inc 路径在消息丢弃阶段把该 chunk 计入了"
             );
 
-            // 断连 → despawn cleanup（PostUpdate 无条件 dec 整个计算 view 方形）。
-            app.world_mut().entity_mut(client).insert(Despawned);
+            // 后加入客户端：出生即带 Despawned、view 覆盖 chunk，但移除 `Client` 组件
+            // ——`handle_layer_messages` / `update_view_and_layers` 查询都要求
+            // `&mut Client`，两条 inc 路径全部跳过；`cleanup_chunks_after_client_despawn`
+            // 只要求 ClientMarker + Despawned，仍会对 view 内 chunk 执行 dec → 精确落在
+            // 「chunk 已存在但从未被该客户端计数」的 cleanup underflow 状态。
+            let (mut bundle, _helper) = valence::testing::create_mock_client("late-joiner");
+            bundle.visible_chunk_layer.0 = layer;
+            let client = app.world_mut().spawn(bundle).id();
+            app.world_mut().entity_mut(client).insert((
+                Position::new([8.5, 64.0, 8.5]),
+                OldPosition::new([8.5, 64.0, 8.5]),
+                ViewDistance::new(2),
+                Despawned,
+            ));
+            app.world_mut()
+                .entity_mut(client)
+                .remove::<valence::prelude::Client>();
 
             // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过（不 panic、不改变计数）。
             app.update();
@@ -1955,7 +1979,7 @@ mod tests {
                 .world()
                 .get::<ChunkLayer>(layer)
                 .expect("scenario layer should still carry a ChunkLayer")
-                .chunk(ChunkPos::new(11, 6))
+                .chunk(ChunkPos::new(0, 0))
                 .expect("cleanup must not remove the chunk (it never had viewers)")
                 .viewer_count();
             assert_eq!(
