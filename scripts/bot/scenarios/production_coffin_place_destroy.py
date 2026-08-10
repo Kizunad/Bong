@@ -13,6 +13,16 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
 - `coffin_break` 破坏单发（remove_by_pos → None 后静默 continue），破坏后 registry 清空——
   同一坐标再放置必须成功（"destroy path leaves nothing behind"）。
 
+**世界侧观察（本场景对实体生命周期的直接断言，非代理）**：
+- 放置成功必须在世界 spawn mundane_coffin marker 渲染实体（entity kind=160，
+  `coffin_marker_position(lower)=(x+1, y, z+0.5)`）——「世界确实获得棺实体」；
+  只消费实例而无实体 spawn 在此红。
+- `coffin_break` 必须把该 marker 实体 despawn（`entities_destroy` 含首放 entity_id）——
+  marker 无方块无 block update，entity 层移除（valence `Despawned` → S2C_ENTITIES_DESTROY）
+  是唯一清场信号；只移 registry 条目而留 stale 实体在此红。
+- 破坏后同一坐标重放必须再次 spawn 新 marker 实体——旧实体已 despawn + registry 清空的
+  完整闭环。
+
 所有断言走实例计数（stack_count 求和，跨容器/装备/快捷栏），不是 presence——count 才是
 复制增殖的暴露面。拒绝路径服务端静默（无回执快照），用「give 一棺 + 等其
 inventory_snapshot 计数达到期望值」作 server-authoritative 水位线：give 快照落在同 tick
@@ -221,6 +231,70 @@ def _send_coffin_place(bot, pos, instance_id) -> None:
     )
 
 
+# server 侧 mundane coffin marker 实体的 entity kind（entity_model.rs COFFIN_MUNDANE_ENTITY_KIND）
+# 与放置位置映射（coffin/mod.rs coffin_marker_position）：marker = (lower.x+1, lower.y, lower.z+0.5)。
+COFFIN_MARKER_ENTITY_KIND = 160
+
+
+def _coffin_marker_pos(place_pos) -> tuple[float, float, float]:
+    return (place_pos[0] + 1.0, float(place_pos[1]), place_pos[2] + 0.5)
+
+
+def _near(pos, x, y, z, tol: float = 0.01) -> bool:
+    return (
+        abs(pos[0] - x) < tol and abs(pos[1] - y) < tol and abs(pos[2] - z) < tol
+    )
+
+
+def _wait_coffin_marker_spawn(
+    bot, place_pos, after_t, timeout=_STEP_TIMEOUT, description=None
+) -> int:
+    """等 mundane coffin 的 marker 渲染实体 spawn（kind==160 @ coffin_marker_position）。
+
+    证明「世界确实获得了棺实体」：若实现只消费实例却不 spawn 世界实体（或类型/位置不符），
+    此处超时红。返回 entity_id 供破坏清场断言复用。
+    """
+    marker_pos = _coffin_marker_pos(place_pos)
+
+    def matches(event) -> bool:
+        return (
+            event.kind == "entity_spawn"
+            and event.t > after_t
+            and event.data["type"] == COFFIN_MARKER_ENTITY_KIND
+            and _near(
+                (event.data["x"], event.data["y"], event.data["z"]),
+                marker_pos[0],
+                marker_pos[1],
+                marker_pos[2],
+            )
+        )
+
+    event = bot.wait_for(
+        matches,
+        timeout,
+        description
+        or f"mundane_coffin marker 实体 spawn（kind={COFFIN_MARKER_ENTITY_KIND}）于 {marker_pos}",
+    )
+    return event.data["entity_id"]
+
+
+def _wait_coffin_marker_destroy(bot, entity_id, after_t, timeout=_STEP_TIMEOUT) -> None:
+    """等 coffin_break 后 marker 实体被 despawn（entities_destroy 含 entity_id）。
+
+    证明 destroy path 清掉了世界实体：若实现只移 registry 条目却留下 stale 的
+    client-visible 实体（review finding 的 concrete broken implementation），
+    此处超时红。coffin 用左键破坏，marker 无方块无 block update，entity 层移除
+    （valence Despawned → S2C_ENTITIES_DESTROY）是唯一的清场信号。
+    """
+    bot.wait_for(
+        lambda e: e.kind == "entities_destroy"
+        and e.t > after_t
+        and entity_id in e.data["entity_ids"],
+        timeout=timeout,
+        description=f"coffin_break 后 marker 实体 #{entity_id} 应被 despawn（entities_destroy）",
+    )
+
+
 def run(env) -> None:
     with env.new_bot("CoPl") as bot:
         wait_for_ready(bot)
@@ -241,6 +315,14 @@ def run(env) -> None:
             bot, 0, anchor, description="首放成功后 coffin 应彻底消费（1→0），且不产生复本"
         )
         assert _coffin_count(consumed) == 0, "首放必须恰好消费 1 个实例"
+        # 世界侧：等 mundane coffin 的 marker 渲染实体 spawn——证明世界确实获得了棺实体，
+        # 而不只是背包实例被消费。
+        marker_entity_id = _wait_coffin_marker_spawn(
+            bot,
+            place_pos,
+            anchor,
+            description="首放成功后应出现 mundane_coffin marker 实体（kind=160 @ 放置位）",
+        )
 
         # ── 负向：重复放置 → already registered，第二实例保留 ───────────
         give_anchor = last_event_time(bot)
@@ -336,6 +418,10 @@ def run(env) -> None:
                 "z": place_pos[2],
             }
         )
+        # 世界侧：coffin_break 必须把首放的 marker 实体 despawn（entities_destroy 含其 id）。
+        # 若实现只移 registry 条目却留下 stale client-visible 实体，此断言超时红——
+        # 这是本场景对「destroy path 清掉世界实体」的直接观察，不是 registry 重用的代理。
+        _wait_coffin_marker_destroy(bot, marker_entity_id, break_anchor)
         pre_replace = _give_barrier(
             bot,
             break_anchor,
@@ -356,5 +442,13 @@ def run(env) -> None:
             ),
         )
         assert _coffin_count(replaced) == 4, "破坏后重放应恰好消费 1 个实例"
+        # 世界侧：重放同样必须在世界重新 spawn marker 实体——旧实体已被 despawn、
+        # registry 已清空后，新放置能产生新的世界实体（destroy path 无残留的完整闭环）。
+        _wait_coffin_marker_spawn(
+            bot,
+            place_pos,
+            replace_anchor,
+            description="破坏清场后重放应再次 spawn mundane_coffin marker 实体（kind=160 @ 放置位）",
+        )
 
         bot.assert_alive("CoffinPlace 全生命周期场景完成后")
