@@ -16,6 +16,7 @@ pocket_pouch→hand_slot）→ 同目标再次静默。
 """
 
 import time
+from typing import Optional
 
 from bot.scenarios._combat_helpers import last_event_time
 from bot.scenarios._inventory_helpers import wait_join_and_inventory
@@ -57,7 +58,13 @@ def _self_carrier(bot) -> str:
 
 
 def _wait_swap(
-    pubsub, carrier: str, from_kind: str, to_kind: str, after_tick: int, context: str
+    pubsub,
+    carrier: str,
+    from_kind: str,
+    to_kind: str,
+    after_tick: int,
+    context: str,
+    after: Optional[int] = None,
 ) -> dict:
     evt = pubsub.wait_event(
         CH_SWAP,
@@ -67,6 +74,7 @@ def _wait_swap(
         and int(e.get("tick", 0)) > after_tick,
         timeout=20.0,
         description=f"{context}（carrier={carrier}）：{from_kind} -> {to_kind}",
+        after=after,
     )
     assert int(evt.get("switching_until_tick", 0)) == int(evt["tick"]) + 10, (
         f"{context}：暴露窗口应为 tick+10，实际 {evt!r}"
@@ -94,9 +102,14 @@ def run(env) -> None:
             bot.assert_alive("连接后")
             carrier = _self_carrier(bot)
 
-            # 1) 显式切 quiver：hand_slot -> quiver
+            # 1) 显式切 quiver：hand_slot -> quiver。先锚定序列再发 intent——
+            # 服务端响应即使抢先于 wait_event 被泵线程入队也不得落出等待窗口
+            # （review finding [1]：_switch 后才进 wait_event 会漏掉已入队事件）。
+            anchor = pubsub.anchor()
             _switch(bot, "quiver")
-            first = _wait_swap(pubsub, carrier, "hand_slot", "quiver", 0, "首次切换")
+            first = _wait_swap(
+                pubsub, carrier, "hand_slot", "quiver", 0, "首次切换", after=anchor
+            )
             first_tick = int(first["tick"])
 
             # 2) 同目标重复：静默（不发事件）
@@ -104,16 +117,34 @@ def run(env) -> None:
             _expect_silent(pubsub, carrier, 1, 3.0, "同目标重复切换")
 
             # 3) to=None 轮换：quiver -> pocket_pouch
+            anchor = pubsub.anchor()
             _switch(bot, None)
-            _wait_swap(pubsub, carrier, "quiver", "pocket_pouch", first_tick, "轮换切换")
+            _wait_swap(
+                pubsub,
+                carrier,
+                "quiver",
+                "pocket_pouch",
+                first_tick,
+                "轮换切换",
+                after=anchor,
+            )
 
             # 4) fenglinghe：拒收，静默
             _switch(bot, "fenglinghe")
             _expect_silent(pubsub, carrier, 2, 3.0, "fenglinghe 拒收")
 
             # 5) 切回 hand_slot：pocket_pouch -> hand_slot
+            anchor = pubsub.anchor()
             _switch(bot, "hand_slot")
-            _wait_swap(pubsub, carrier, "pocket_pouch", "hand_slot", first_tick, "切回手部")
+            _wait_swap(
+                pubsub,
+                carrier,
+                "pocket_pouch",
+                "hand_slot",
+                first_tick,
+                "切回手部",
+                after=anchor,
+            )
 
             # 6) 同目标 hand_slot：静默
             _switch(bot, "hand_slot")

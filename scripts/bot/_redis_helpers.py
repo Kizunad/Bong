@@ -99,20 +99,36 @@ class RespFrames:
         raise ValueError(f"unsupported RESP2 frame marker {marker!r}")
 
 
-def _parse_redis_url(url: str) -> tuple[str, int]:
+def _parse_redis_url(url: str) -> tuple[str, int, Optional[str], Optional[str]]:
+    """解析 redis:// URL 为 (host, port, username, password)。
+
+    SUBSCRIBE 不需要选库，db 路径 / query / fragment 在转端口前全部剥离
+    （否则 port='6379/0' 或 '6379?x=1' 会 int() ValueError）；userinfo
+    （user:pass@）保留返回，供 RedisPubSub 连接后 AUTH，不再静默丢弃
+    （review finding [2]/[3]）。
+    """
     if not url:
-        return "127.0.0.1", 6379
+        return "127.0.0.1", 6379, None, None
     if not url.startswith("redis://"):
         raise ValueError(f"unsupported redis url: {url!r}")
     rest = url[len("redis://") :]
+    username: Optional[str] = None
+    password: Optional[str] = None
     if "@" in rest:
-        rest = rest.rsplit("@", 1)[1]
-    # redis://host:port/db 的 db 路径/query 只对数据命令选库有效，SUBSCRIBE 不
-    # 需要；转端口前必须先剥离，否则 port='6379/0' 会 int() ValueError。
-    authority, _, _ = rest.partition("/")
-    host, _, port = authority.partition(":")
+        userinfo, rest = rest.rsplit("@", 1)
+        if ":" in userinfo:
+            username, password = userinfo.split(":", 1)
+        else:
+            username = userinfo
+    # authority 在第一个 '/' / '?' / '#' 处结束（RFC 3986）。
+    for sep in ("/", "?", "#"):
+        idx = rest.find(sep)
+        if idx != -1:
+            rest = rest[:idx]
+            break
+    host, _, port = rest.partition(":")
     port = int(port or "6379")
-    return host, port
+    return host, port, username, password
 
 
 class RedisPubSub:
@@ -124,9 +140,20 @@ class RedisPubSub:
         port: int = 6379,
         timeout: float = 5.0,
         max_events: int = 5000,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._frames = RespFrames()
+        if password is not None:
+            try:
+                self._auth(username, password)
+            except BaseException:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                raise
         # (seq, channel, payload)：seq 单调递增，供 wait_event 只扫本次等待期间
         # 新增的事件；max_events 兜底裁剪最旧条目，防止共享频道累积撑爆内存。
         self._events: list[tuple[int, str, dict[str, Any]]] = []
@@ -138,8 +165,35 @@ class RedisPubSub:
 
     @classmethod
     def from_env(cls) -> "RedisPubSub":
-        host, port = _parse_redis_url(os.environ.get("REDIS_URL") or DEFAULT_REDIS_URL)
-        return cls(host, port)
+        host, port, username, password = _parse_redis_url(
+            os.environ.get("REDIS_URL") or DEFAULT_REDIS_URL
+        )
+        return cls(host, port, username=username, password=password)
+
+    def _auth(self, username: Optional[str], password: str) -> None:
+        """连接后先 AUTH 再 SUBSCRIBE，凭据不得静默丢弃（review finding [3]）。
+
+        Redis 6+ 支持 ``AUTH <user> <pass>``；无用户名退化为 ``AUTH <pass>``
+        （默认用户）。+OK 即通过；-NOAUTH/-WRONGPASS 等错误帧立即抛错，让
+        配错凭据在连接阶段暴露，而不是场景跑起来才莫名失败。
+        """
+        cmd = f"AUTH {username} {password}" if username else f"AUTH {password}"
+        self._sock.sendall(cmd.encode() + b"\r\n")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            frame = self._frames.next_frame()
+            if frame is not None:
+                if frame == "OK":
+                    return
+                raise RuntimeError(f"redis AUTH 失败: {frame!r}")
+            self._sock.settimeout(0.5)
+            try:
+                self._frames.feed(self._sock.recv(4096))
+            except socket.timeout:
+                continue
+            finally:
+                self._sock.settimeout(5.0)
+        raise RuntimeError("redis AUTH 超时")
 
     def subscribe(self, *channels: str) -> None:
         for channel in channels:
@@ -201,18 +255,32 @@ class RedisPubSub:
         with self._lock:
             return [e for _, c, e in self._events if c == channel]
 
+    def anchor(self) -> int:
+        """捕获当前事件序列锚点，供「先锚定、再触发、后等待」使用。
+
+        配合 wait_event(after=anchor)：调用方在发送触发 intent **之前**调用本
+        方法，服务端响应即使先于 wait_event 被泵线程入队，序列号也 >= 锚点，
+        不会被排除（review finding [1]/[4] 的竞态窗口）。锚点与等待之间入队的
+        事件会被窗口包含——场景谓词需按 carrier/实体等过滤出本 bot 的响应。
+        """
+        with self._lock:
+            return self._event_seq
+
     def wait_event(
         self,
         channel: str,
         predicate: Callable[[dict[str, Any]], bool],
         timeout: float = 20.0,
         description: str = "redis 事件",
+        after: Optional[int] = None,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
         # 记录等待起点的 event_seq：只扫本等待期间新增的事件，不重复扫全频道历史
-        # （全局频道的历史在长跑场景里会无限累积，反复全扫越来越贵）。
+        # （全局频道的历史在长跑场景里会无限累积，反复全扫越来越贵）。after= 允许
+        # 调用方把窗口锚定在发送触发 intent 之前（见 anchor()），服务端响应即使
+        # 抢先于 wait_event 被泵线程入队也不会落出窗口（review finding [1]/[4]）。
         with self._lock:
-            start_seq = self._event_seq
+            start_seq = self._event_seq if after is None else after
         while True:
             with self._lock:
                 fresh = [
