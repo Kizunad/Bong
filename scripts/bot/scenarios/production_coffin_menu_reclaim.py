@@ -35,6 +35,20 @@ GAP11 排第一的判据（处理不当复制/双授道具腐坏账本）。
 语义下任何额外的同 id 堆叠都会让总数偏离 6/2 而被捕获（review run 31409926323
 复核点）。
 
+**负面校验面（review run 31424073123 [major] 复核点）**：黑盒契约声明的三项校验
+必须被负面用例实打实按压，否则「忽略 instance_id / 只看 item id / 删掉近距校验」
+的错误实现能通过全部正向断言：
+1. 伪造/陈旧的 `item_instance_id` 放棺必须被拒（`inventory_item_by_instance` 落空）——
+   被拒不消耗任何实例，随后快照中 mundane_coffin 仍在背包；
+2. 真实实例但非棺模板（fan_tie 的 instance_id）放棺必须被拒（`CoffinGrade::from_item_id`
+   落空）——fan_tie 与棺材都不得被消耗；
+3. 距棺 >6 格（`COFFIN_INTERACT_MAX_DISTANCE_SQ=36`，max 交互距离 6 格）的远程
+   回收必须被拒（`coffin_target_is_close` 落空）——不得授予任何返料，且后续近距离
+   回收仍能命中同一 registered 棺。
+服务端对放棺/回收被拒不推任何快照，故负面断言一律以「状态不变」为判据：被拒放棺
+不得消耗实例、被拒回收不得授予返料。第 3 项用 probe give 把一张排在回收请求之后
+的库存快照钉在窗口里断言返料恒为 0。
+
 **位置稳定性**：bot 在出生点高空初始化（[8,150,8]），spawn_selector 按
 （seed, InitialLogin）稳定哈希到 safe_y 高度的出生点，随后**下落**到平坦地表
 （novice raster 地表 y≈73-74）。因此 `wait_for_ready` 后 bot.position 仍在下落中；
@@ -51,6 +65,7 @@ from bot.scenarios._inventory_helpers import (
     find_item,
     require_item,
     wait_inventory_contains,
+    wait_inventory_snapshot_after,
 )
 
 DESCRIPTION = "放凡物棺→G菜单回收→精确返料 ling_mu_ban×6+ling_mu_gun×2 且二次回收被拒无双授"
@@ -66,8 +81,13 @@ PROBE_ITEM_ID = "fan_tie"
 
 # 全套件长跑后 server TPS 退化（forge 场景 45s 先例），stage 等待统一 45s。
 STAGE_TIMEOUT = 45.0
-# 单次放棺尝试窗口：放棺被拒（如目标格被占）时服务端不推任何快照，短窗即可判负并换位。
-PLACE_ATTEMPT_TIMEOUT = 8.0
+# 单次放棺尝试窗口与 STAGE_TIMEOUT 对齐：review 31424073123 [minor] 指出 8s 短窗与
+# 文档化的全套件退化（45s）矛盾——一个在 8s 后才被服务端处理的合法放置会被误判为
+# 超时，循环随后带同一 instance 换位试下一候选，上一候选「延迟成功」的消耗快照会被
+# 下一候选的 wait 误认而张冠李戴（placed_at 记错、回收打空位）。放棺成功必推
+# coffin_place_consumed（mundane_coffin 消失）快照、被拒不推任何快照，成功快照是
+# 唯一判据，故窗口必须覆盖退化下的处理延迟才能把成功归属到正确候选格。
+PLACE_ATTEMPT_TIMEOUT = STAGE_TIMEOUT
 # 等待服务器位置稳定（出生下落完成）的判稳窗口。
 STABLE_POSITION_WINDOW = 2.0
 
@@ -189,6 +209,50 @@ def _wait_position_stable(bot, window: float = STABLE_POSITION_WINDOW, timeout: 
     )
 
 
+def _assert_place_rejected(bot, request, probe_item_id, still_present, label):
+    """发送放棺请求并确证被拒：用 probe give 把一张排在请求之后的库存快照钉在
+    窗口里，断言 `still_present`（(item_id, 期望总数) 列表）未被消耗。
+
+    服务端对被拒放棺不推任何快照（只 warn）；probe give 在请求之后按包序处理，
+    其快照反映「请求被处理之后」的库存。被拒放棺不得消耗任何实例，故各物品总数
+    必须保持原值——伪造 instance / 非棺模板的错误实现若真去消耗，总数必然偏离。
+    """
+    anchor = last_event_time(bot)
+    bot.intent(request)
+    bot.cmd(f"give {probe_item_id} 1")
+    post = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and e.t > anchor
+        and find_item(e.data["payload"], probe_item_id) is not None,
+        timeout=STAGE_TIMEOUT,
+        description=f"probe give {probe_item_id} 后快照（{label} 被拒验证）",
+    )
+    snapshot = post.data["payload"]
+    for item_id, expected in still_present:
+        total = _total_stack_count(snapshot, item_id)
+        assert total == expected, (
+            f"{label}：{item_id} 总数应保持 {expected}（被拒放棺不得消耗任何实例），"
+            f"实际={total}"
+        )
+
+
+def _coffin_consumed_after(bot, anchor, timeout: float = STAGE_TIMEOUT) -> bool:
+    """anchor 之后棺材是否已被消耗（不在背包）——放棺判负前确证上一候选是被拒还是延迟成功。
+
+    服务端对放棺被拒不推任何快照、成功才推 coffin_place_consumed（mundane_coffin
+    消失）。因此「棺材是否仍在背包」是区分「被拒（可安全换下一候选）」与「延迟成功
+    （必须归功于当前候选、不得换位）」的唯一可观测信号：被判负的候选若其实已消耗掉
+    棺材，换位后下一候选必被「missing item instance」拒掉，且延迟的消耗快照会被
+    下一候选的 wait 误认。
+    """
+    try:
+        snapshot = wait_inventory_snapshot_after(bot, anchor, timeout=timeout)
+    except BotAssertionError:
+        return False
+    return find_item(snapshot, COFFIN_ITEM_ID) is None
+
+
 def run(env) -> None:
     with env.new_bot("Coffin") as bot:
         wait_for_ready(bot)
@@ -203,15 +267,89 @@ def run(env) -> None:
         px, py, pz = (int(v) for v in bot.position)
 
         # ── 放棺：真实 instance_id + 消耗恰好一次 ────────────────────────
+        # wait_inventory_contains 无时间锚点、每次 wait_for 从事件历史起点扫描；若
+        # 服务器已持久化过含棺材的 PlayerState（重连快照带棺材），`give` 后它会命中
+        # 连接时（clearinv 前）的旧快照——instance_id 陈旧会让后续所有 coffin_place 被
+        # 「missing item instance」拒掉、放置循环空转 45s/候选（fixture 实测）。锚定到
+        # give 之后并要求快照含棺材，确保拿到 give 真正回推的新实例。
+        coffin_anchor = last_event_time(bot)
         bot.cmd(f"give {COFFIN_ITEM_ID} 1")
-        snapshot = wait_inventory_contains(bot, COFFIN_ITEM_ID)
+        coffin_ev = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > coffin_anchor
+            and find_item(e.data["payload"], COFFIN_ITEM_ID) is not None,
+            timeout=STAGE_TIMEOUT,
+            description=f"give {COFFIN_ITEM_ID} 后含棺材的 inventory_snapshot",
+        )
+        snapshot = coffin_ev.data["payload"]
         coffin_item = require_item(snapshot, COFFIN_ITEM_ID)
+
+        # ── 负面校验：黑盒契约的 instance 校验面必须被真负面用例按压 ──────
+        # 服务端对被拒的放棺不推任何快照（只 warn），故负面断言以「状态不变」为
+        # 判据：被拒不消耗任何实例。用 (px,py,pz)（玩家脚下）作目标，确保走到的是
+        # instance 校验分支而不是近距校验分支。
+
+        # (a) 伪造/陈旧的 item_instance_id：不存在的实例必须被拒
+        #     （inventory_item_by_instance 落空）——棺材不得被消耗。
+        _assert_place_rejected(
+            bot,
+            {
+                "type": "coffin_place",
+                "v": 1,
+                "x": px,
+                "y": py,
+                "z": pz,
+                "item_instance_id": int(coffin_item["item"]["instance_id"]) + 100000,
+            },
+            probe_item_id=PROBE_ITEM_ID,
+            still_present=[(COFFIN_ITEM_ID, 1)],
+            label="伪造 instance_id 放棺",
+        )
+
+        # (b) 真实实例但非棺模板：fan_tie 的 instance_id 不得被放棺
+        #     （CoffinGrade::from_item_id 落空）——fan_tie 与棺材都不得被消耗。
+        # 记录当前 fan_tie 总数（(a) 的 probe give 已引入 1），被拒后必须保持。
+        # wait_inventory_contains 无时间锚点、每次 wait_for 都从事件历史起点扫描
+        # （cursor=0 含历史），fan_tie 已存在时可能命中 (a) 的旧 probe 快照；用
+        # 锚点 + 「总数 >= 2」谓词确保采样到 give 生效后的快照（只有该快照满足
+        # >= 2），instance_id 与 fan_before 才可信。
+        fan_anchor = last_event_time(bot)
+        bot.cmd(f"give {PROBE_ITEM_ID} 1")
+        fan_ev = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > fan_anchor
+            and _total_stack_count(e.data["payload"], PROBE_ITEM_ID) >= 2,
+            timeout=STAGE_TIMEOUT,
+            description=(
+                f"give {PROBE_ITEM_ID} 后 fan_tie 总数 >= 2（负样本 instance 源）"
+            ),
+        )
+        fan_snapshot = fan_ev.data["payload"]
+        fan_item = require_item(fan_snapshot, PROBE_ITEM_ID)
+        fan_before = _total_stack_count(fan_snapshot, PROBE_ITEM_ID)
+        _assert_place_rejected(
+            bot,
+            {
+                "type": "coffin_place",
+                "v": 1,
+                "x": px,
+                "y": py,
+                "z": pz,
+                "item_instance_id": int(fan_item["item"]["instance_id"]),
+            },
+            probe_item_id="wood_handle",
+            still_present=[(COFFIN_ITEM_ID, 1), (PROBE_ITEM_ID, fan_before)],
+            label="非棺物品实例放棺",
+        )
 
         # 放棺位置扫描：coffin 占据 (x,y,z)+(x+1,y,z) 两格，二者都必须为空气。
         # 地表 y≈73-74 平坦，但出生点附近仍有 POI 结构/树（实测东侧 px+2 被占、
         # 「not empty」被拒），故逐候选尝试、以服务端 coffin_place_consumed 快照
         # （mundane_coffin 消失）为准判成功，并记录实际落点供后续回收寻址。被拒的
-        # 放棺服务端不推任何快照，短窗判负后换下一候选。
+        # 放棺服务端不推任何快照。窗口已与 STAGE_TIMEOUT 对齐（覆盖全套件退化下
+        # 的延迟处理），超时后先确证上一候选是被拒还是延迟成功再决定是否换位。
         placed_at = None
         for cpos in (
             (px - 2, py, pz),  # 西 2（forge 砧位实测可放，先试）
@@ -249,10 +387,86 @@ def run(env) -> None:
                 placed_at = cpos
                 break
             except BotAssertionError:
+                # review 31424073123 [minor]：超时后不得盲目换位——先确证上一候选
+                # 到底是「被拒」还是「延迟成功」。被拒不消耗任何实例（棺材仍在）；
+                # 若棺材已消失则上一候选其实延迟成功，必须归功于 cpos（否则带着已
+                # 消耗的 instance 换位，下一候选必被 missing item instance 拒掉，
+                # 且延迟的成功快照会被下一候选的 wait 误认而张冠李戴）。
+                if _coffin_consumed_after(bot, anchor):
+                    placed_at = cpos
+                    break
                 continue
         assert placed_at is not None, (
             "coffin_place 在所有候选格均被拒（出生点地形全占/异常），无法完成放置 leg"
         )
+
+        # ── 负面校验：远程回收必须被拒（近距校验 coffin_target_is_close） ──
+        # 先垂直升到棺上方 >6 格（头顶天空由候选兜底确认开阔；move_to 走 20Hz 小步，
+        # server 无移动 anticheat，按包序提交 Position——craft-refund 同款同步模式，
+        # 等 0.8s 让最后一步移动落地）。目标取 py+12：距所有候选格（x∈±3,y∈[py,py+3],
+        # z∈±2）都 ≥9 格，即使最后一步移动提交滞后一格（py+11.275）仍 >6，不会因
+        # 中间位置恰在交互范围内而误通过近距校验。随后对 placed_at 发回收，近距校验
+        # （player Position vs coffin.lower，max 6 格）必须落空——不得授予任何返料。
+        # 被拒后服务端不推快照，用 probe give 把一张排在回收请求之后的库存快照钉在
+        # 窗口里断言返料恒为 0（回收若被误处理会先推 coffin_menu_reclaimed 并在
+        # 当条快照翻倍返料，probe 快照一并暴露）。
+        far_pos = (px, py + 12, pz)
+        bot.move_to(*far_pos, speed=5.5)
+        time.sleep(0.8)
+        far_anchor = last_event_time(bot)
+        bot.intent(
+            {
+                "type": "coffin_menu_reclaim",
+                "v": 1,
+                "x": placed_at[0],
+                "y": placed_at[1],
+                "z": placed_at[2],
+            }
+        )
+        bot.cmd(f"give {PROBE_ITEM_ID} 1")
+        far_post = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > far_anchor
+            and find_item(e.data["payload"], PROBE_ITEM_ID) is not None,
+            timeout=STAGE_TIMEOUT,
+            description=(
+                f"远程回收被拒后 probe give {PROBE_ITEM_ID} 应回推 inventory_snapshot"
+            ),
+        )
+        far_snapshot = far_post.data["payload"]
+
+        # 回扫 (far_anchor, far_post.t] 窗口内每一个 inventory_snapshot：任何一条带
+        # 返料（ling_mu_ban>0 或 ling_mu_gun>0）即违规。远程回收若被误处理会先推
+        # coffin_menu_reclaimed 并在当条快照授予返料，probe 快照一并暴露。
+        material_snapshots = [
+            e.data["payload"]
+            for e in bot.events
+            if e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and far_anchor < e.t <= far_post.t
+            and (
+                _total_stack_count(e.data["payload"], "ling_mu_ban") > 0
+                or _total_stack_count(e.data["payload"], "ling_mu_gun") > 0
+            )
+        ]
+        assert not material_snapshots, (
+            f"远程回收必须被拒（近距校验，max 6 格）：(far_anchor, probe] 窗口内出现 "
+            f"{len(material_snapshots)} 条带返料的快照，首条={material_snapshots[0]}"
+            "——远程回收被误处理会推 coffin_menu_reclaimed 并授予返料"
+        )
+        assert _total_stack_count(far_snapshot, "ling_mu_ban") == 0, (
+            f"远程回收必须被拒（近距校验，max 6 格）：不得授予 ling_mu_ban，"
+            f"实际={_total_stack_count(far_snapshot, 'ling_mu_ban')}"
+        )
+        assert _total_stack_count(far_snapshot, "ling_mu_gun") == 0, (
+            f"远程回收必须被拒（近距校验，max 6 格）：不得授予 ling_mu_gun，"
+            f"实际={_total_stack_count(far_snapshot, 'ling_mu_gun')}"
+        )
+
+        # 走回棺旁（后续真实回收仍须命中同一 registered 棺，证明远程回收未被误摘）。
+        bot.move_to(px, py, pz, speed=5.5)
+        time.sleep(0.8)
 
         # ── 回收：精确返料（Reclaim 模式确定性全量） ─────────────────────
         anchor = last_event_time(bot)
