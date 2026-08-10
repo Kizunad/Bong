@@ -4615,7 +4615,11 @@ class ProbePayloadDecodeTest(unittest.TestCase):
                 expected,
                 f"field3={raw} 应解码为 {expected}",
             )
-            self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
             self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
             self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
             self.assertEqual(decoded["realm_diff"], 2)
@@ -4646,7 +4650,11 @@ class ProbePayloadDecodeTest(unittest.TestCase):
                 "unspecified",
                 f"{label} 应解码为 main=unspecified（默认/兜底映射），实际 {decoded['main']}",
             )
-            self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+            self.assertNotIn(
+                "secondary",
+                decoded,
+                "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+            )
             self.assertEqual(decoded["is_chaotic"], False, "field5=0 应解码为 is_chaotic=false")
             self.assertEqual(decoded["is_hunyuan"], False, "field6=0 应解码为 is_hunyuan=false")
             self.assertEqual(decoded["realm_diff"], 2)
@@ -4673,7 +4681,11 @@ class ProbePayloadDecodeTest(unittest.TestCase):
             "unspecified",
             "未知 main ColorKind 应兜底为 unspecified",
         )
-        self.assertIsNone(decoded["secondary"], "未携带 secondary 时保持 None")
+        self.assertNotIn(
+            "secondary",
+            decoded,
+            "未携带 secondary（field4 缺省）时必须省略键，而非显式 None（presence 契约）",
+        )
 
         inner = (
             _pb_string(1, "offline:BGD9QiH")

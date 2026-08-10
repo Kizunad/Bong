@@ -6,15 +6,17 @@ resolve_one_probe（shelflife/probe.rs:101）检查顺序：
 2. item 无 freshness → Denied(NoFreshness) → 静默（freshness_probe_emit 对
    NoFreshness 一律 continue 不发 S2C）；
 3. 通过 → Precise → `FreshnessUpdateV1 { item_uuid, freshness, profile_name }`
-   （freshness = current_qi/initial_qi，新物品 = 1.0）。
+   （freshness = current_qi/initial_qi；**创建瞬间**为 1.0，但探针响应反映的是
+   give→probe 已衰减后的比值，本场景断言其严格 < 1.0）。
 
 dispatch 前置：instance_id 不在玩家背包 → 静默丢弃（client_request_handler
 belongs_to_player 检查）。本场景用 `[dev] give` 构造合法背包 item：
 
 1. Awaken 探煮熟肉（food.mundane.cooked_meat，shelflife_profile=
    food_spoil_mundane_meat_v1）→ event_alert 神识未及；
-2. 凝脉后再探 → freshness_update（item_uuid=instance_id、freshness=1.0、
-   profile_name=food_spoil_mundane_meat_v1）；
+2. 凝脉后再探 → freshness_update（item_uuid=instance_id、freshness=当前
+   current_qi/initial_qi——give→probe 已过 Awaken 拒绝的 4s 静默窗 + realm set，
+   canonical 线性衰减下恒 **< 1.0**，profile_name=food_spoil_mundane_meat_v1）；
 3. 凝脉探无保鲜 item（trade_crate）→ NoFreshness 静默（无 S2C、无聊天）；
 4. 凝脉探不存在的 instance_id（不在背包）→ dispatch belongs_to_player 前置
    静默丢弃（无 S2C、无聊天）。
@@ -95,8 +97,22 @@ def run(env) -> None:
         bot.assert_alive("Awaken 保鲜探针后")
 
         # 2. 凝脉 → FreshnessUpdate 精确结果
+        #    realm set 恒触发 Changed<Cultivation> → player_state 回推给自己（gap10
+        #    _realm_set_and_settle 同款）；必须先等它落定再取水位，否则回推会落入
+        #    成功路径的响应基数窗口、被判额外 payload 假红（central-review
+        #    31437496353 #5）。
         bot.cmd("realm set condense")
-        bot.expect_chat("[dev] realm set ", timeout=10.0)
+        confirm = bot.expect_chat("[dev] realm set ", timeout=10.0)
+        bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data["payload_type"] == "player_state"
+                and e.t >= confirm.t
+            ),
+            timeout=5.0,
+            description="realm set condense 的 player_state 回推应已到达",
+        )
+        sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         update = bot.expect_server_data("freshness_update", timeout=10.0)
         payload = update.data["payload"]
@@ -130,6 +146,16 @@ def run(env) -> None:
                 f"{SEASON_DECAY_MAX}] → [{lower:.4f}, {upper:.4f}]），实际 {freshness}"
             )
         bot.assert_alive("凝脉保鲜探针后")
+        # central-review 31437496353 #5：成功路径也必须断言响应基数——拒绝路径都有
+        # 静默窗口，唯独成功路径只等一条 freshness_update，放走「正确结果之外再发
+        # event_alert / 库存更新 / 重复 freshness_update / 聊天」的坏实现。水位在
+        # intent 前，已消费的 update 按 t 豁免，窗口内其余 server_data/聊天一律判红。
+        _assert_no_freshness_update(
+            bot,
+            sent_at,
+            "凝脉保鲜探针成功后，同请求不得再产出额外 server_data 或聊天",
+            allowed_payload_ts=(update.t,),
+        )
 
         # 3. 凝脉探无保鲜 item（trade_crate）→ NoFreshness 静默
         #    先清空背包：此前 give 的 meat + 出生物品已占满包，trade_crate 直接
