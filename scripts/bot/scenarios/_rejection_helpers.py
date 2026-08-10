@@ -181,7 +181,10 @@ def fire_probes_and_keep_connection(
       的证据；连接同步流量由 ``drain_event_stream`` 排干、由 ``is_gameplay_side_effect``
       排除，不误判）；
     - settle 窗口内 ``assert_alive``（"踢人/panic/断流"这类坏响应在此窗口显形）；
-    - 探针之后的新 keepalive 到达（server 仍主动维护这条连接）。
+    - 探针之后的新 keepalive 到达（server 仍主动维护这条连接）；
+    - **心跳观察期结束后再扫一次副作用**——settle 窗口后、keepalive 等待期间到达的
+      响应式 server_data / chat / vfx 也属探针窗口，必须覆盖进拒绝判定（否则
+      keepalive 等待期内的迟到副作用会假通过）。
 
     分模块的"合法请求仍可用"强断言由各场景在调用本函数后自己做（需要不同请求）。
     """
@@ -197,6 +200,14 @@ def fire_probes_and_keep_connection(
     bot.assert_alive(f"{label} 探针发出后 {settle_s:.1f}s 窗口内无断连")
     assert_no_gameplay_side_effect_since(bot, sent_at, f"{label} 探针窗口")
     wait_keepalive_after(bot, probe_done_at)
+    # 心跳观察期（wait_keepalive_after 最多再消费 ~25s 事件）内到达的玩法副作用也
+    # 必须计入拒绝判定：settle 窗口后、keepalive 等待期间产生的响应式 server_data /
+    # chat / vfx 会被 wait_keepalive_after 累积但不会被上面那次扫描看到 —— 返回前
+    # 必须再扫一次，否则拒绝判定假通过（review finding：side-effect oracle 要覆盖
+    # 完整异步观察期）。
+    assert_no_gameplay_side_effect_since(
+        bot, sent_at, f"{label} 探针窗口(心跳观察期后)"
+    )
     bot.assert_alive(f"{label} 心跳往返后仍存活")
 
 

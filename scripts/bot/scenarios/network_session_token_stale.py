@@ -186,8 +186,9 @@ def _assert_stale_move_rejected_zero_mutation(
     + 无成功路径响应。
 
     ``real_move`` 是 ``_open_real_session`` 返回的真实 move 模板 —— 唯一无效前提是
-    session token（已关闭 / 从未发放）。若 server 错误接受坏 token 并走到物品校验，
-    物品是真实存在（ext_{session}@(0,0)）且 to 是真实空闲背包格，move 会成功并回推
+    session token（已关闭 / 从未发放）。探针复用 ``real_move["from"]``（真实源容器
+    ext_{real_session}@(0,0)，物品真实在其中）只换 token：若 server 错误接受坏 token
+    并走到物品校验，物品真实存在且 to 是真实空闲背包格，move 会成功并回推
     loot_container_update + bump revision —— 本断言的零 mutation 指纹与
     ``assert_no_server_data_payload_since(loot_container_update)`` 就会失败，恰好
     暴露授权缺陷（review finding 2 / 6）。
@@ -197,7 +198,6 @@ def _assert_stale_move_rejected_zero_mutation(
     没有造成任何背包 mutation。
     """
     from ._inventory_helpers import (
-        container_location,
         latest_inventory_snapshot,
         wait_inventory_snapshot_after,
     )
@@ -212,7 +212,7 @@ def _assert_stale_move_rejected_zero_mutation(
         _move_request(
             session_id,
             real_move["instance_id"],
-            container_location(f"ext_{session_id}", 0, 0),
+            real_move["from"],
             real_move["to"],
         )
     )

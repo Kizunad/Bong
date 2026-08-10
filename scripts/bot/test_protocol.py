@@ -1984,6 +1984,23 @@ class RejectionHelperTest(unittest.TestCase):
                 bot, "测试", [("探针副作用", bad_probe)], settle_s=0.0
             )
 
+    def test_fire_probes_fails_when_side_effect_arrives_during_keepalive_wait(self):
+        # 拒绝后的心跳观察期（wait_keepalive_after，最多 ~25s）内到达的玩法副作用
+        # 也必须计入拒绝判定：pending 依次出「玩法反馈 → 合法 keepalive」，若 helper
+        # 只扫 settle 窗口就放行，这个 feedback 会被 keepalive 等待掩盖而假通过
+        # （review finding：side-effect oracle 必须覆盖完整异步观察期）。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[
+                _FakeEvent(3.0, "server_data", {"payload_type": "inventory_snapshot"}),
+                _FakeEvent(4.0, "keepalive", {"id": 9}),
+            ],
+        )
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
+
     def test_no_gameplay_side_effect_since_ignores_idle_traffic_but_flags_feedback(self):
         # 基础维护流量（keepalive/pos_look）不算副作用，只有玩法反馈通道才算。
         idle = _RejectionFakeBot(
