@@ -31,7 +31,7 @@ from bot.scenarios._inventory_helpers import (
 )
 
 DESCRIPTION = (
-    "伪皮肤：forge 境界/灵气拒绝、forge 产出、equip 正路径/境界拒绝/静默"
+    "伪皮肤：forge 境界/灵气/材料拒绝、forge 产出、equip 正路径/境界拒绝/静默"
 )
 MODULES = ["inventory", "cultivation", "combat"]
 
@@ -214,6 +214,26 @@ def run(env) -> None:
         # 当前境界为 Induce（本步开头 realm set induce）；探针同值写不改变境界。
         _assert_qi_unchanged_after_rejection(bot, 1.0, "induce")
 
+        # ── 2b. forge 拒绝-材料：境界够 + qi 够但缺 ash_spider_silk → MissingMaterial ──
+        # review finding [1]（round 9）：拒收步 Awaken qi=1 / Induce qi=1 都停在更靠前
+        # 的 realm/qi 检查；唯一 qi 够（5）的请求先 give silk 后成功——没有任何请求
+        # 到达 realm=Induce、qi>=5、无 ash_spider_silk 的状态，服务端 forge 顺序
+        # RealmTooLow→NotEnoughQi→MissingMaterial（tuike.rs forge_false_skin）的
+        # 最后分支从未被触达。错误实现若在 MissingMaterial 分支创建伪皮、先扣 qi
+        # 再返回 MissingMaterial、选错结果或变异库存，会全过六步。必须把请求推到
+        # 该分支并验证文档化契约：qi 不变 + 库存占用不变 + revision 不变（无回推）。
+        bot.cmd("qi set 5")
+        bot.expect_chat("[dev] qi set", timeout=10.0)
+        anchor = last_event_time(bot)
+        baseline = latest_inventory_snapshot(bot)
+        bot.intent({"type": "forge_false_skin", "v": 1, "kind": "spider_silk"})
+        _expect_no_inventory_change(bot, anchor, baseline)
+        # 当前境界为 Induce（step 2 开头 realm set induce）；qi 已抬到 5——qi>=qi_cost
+        # 才能越过 NotEnoughQi 到达材料检查。MissingMaterial 是 warn-only 拒绝，
+        # 探针（realm-set 同值写，不碰 qi）读回 spirit_qi 必须仍是 5.0；错误实现
+        # 若在材料检查前扣真元，探针读回 != 5.0，wait_for 超时即红。
+        _assert_qi_unchanged_after_rejection(bot, 5.0, "induce")
+
         # ── 3. forge 正路径：补灵气后产出 + 扣材料 + revision bump ──
         bot.cmd("qi set 5")
         bot.expect_chat("[dev] qi set", timeout=10.0)
@@ -355,4 +375,4 @@ def run(env) -> None:
         )
         _expect_no_inventory_change(bot, anchor, baseline)
 
-        bot.assert_alive("伪皮肤 6 步正负路径后")
+        bot.assert_alive("伪皮肤 7 步正负路径后")

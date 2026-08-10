@@ -335,6 +335,26 @@ def run(env) -> None:
         assert int(cast8.get("duration_ms", 0)) == 1500, (
             f"guyuan_pill cast_duration_ms 应为 1500，实际 {cast8.get('duration_ms')!r}"
         )
+        # ── 7a. 等 slot 8 cast 完成（review finding [2]）──
+        # 生产 quick-slot 路径以玩家 Casting 态为闸门：cast 进行中再 use（异槽）会
+        # 触发 UserCancel + 重启而非干净的新 cast，同槽则静默忽略
+        # （client_request_handler.rs handle_use_quick_slot）。cast_sync(casting)
+        # 只证明 cast 已启动（duration 1500ms），不等 complete 就发 slot 0 use，
+        # slot 0 请求会在 slot 8 仍在 cast 时被 Cancel/Casting 逻辑吞掉，后续
+        # cast_sync{phase=casting, slot=0} 超时。6b 的 slot 1 路径已先等 complete
+        # 再发下一条 use；7b 必须同样同步 Casting→Idle 状态转换，两条成功 use 之间
+        # 缺这道完成同步（review 根因：把收到前一个 cast 的 casting 事件当成玩家
+        # 已可再施放）。
+        bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "cast_sync"
+                and e.data["payload"].get("phase") == "complete"
+                and e.data["payload"].get("slot") == 8
+            ),
+            timeout=10.0,
+            description="slot=8 第一次 cast 的 cast_sync(complete)",
+        )
 
         # ── 7b. 最小合法槽 0 的绑定 + 使用（review finding [4]）──
         #    契约定义 0..=8 合法；旧场景只 bind slot 1、slot 8、拒 slot 9，下边界 0
