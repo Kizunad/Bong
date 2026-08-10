@@ -9078,6 +9078,203 @@ mod tests {
     }
 
     #[test]
+    fn use_quick_slot_on_cooldown_slot_preserves_active_cross_slot_cast() {
+        // central-review 2012 #4 回归：handler 把「冷却未到期」早返回移到 cast 闸门
+        // 之前——旧顺序下用冷却中的异槽会先 cancel_previous_cast（发
+        // cast_sync{Interrupt, UserCancel} 并 remove Casting）再返回，活动 cast 被
+        // 无谓打断。此前只有未绑定分支有测试，冷却分支完全没保护。本测试在 slot 0
+        // 进行 cast 时 use 冷却中的 slot 5，断言 slot 0 cast 原样保留、无 interrupt。
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "guyuan_pill".to_string(),
+            ItemTemplate {
+                id: "guyuan_pill".to_string(),
+                display_name: "guyuan_pill".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 64,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+            },
+        )])));
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+        // slot 5 绑定同实例但处于冷却中（until_tick 设到远离默认 tick 0 的 u64::MAX）。
+        assert!(quick_slots.set(5, Some(77)));
+        quick_slots.set_cooldown(5, u64::MAX);
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+
+        // 请求 1：启动 slot 0 cast。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "前置：slot 0 应处于 casting 状态"
+        );
+
+        // 请求 2：slot 0 仍在 cast 时使用冷却中的 slot 5。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("冷却中的异槽 use 不得取消进行中的 slot 0 cast");
+        assert_eq!(casting.slot, 0);
+        let syncs = collect_cast_syncs(&mut helper);
+        assert!(
+            !syncs.iter().any(|s| s.phase == CastPhaseV1::Interrupt),
+            "冷却中的异槽 use 不得产生任何 interrupt cast_sync，实际 {syncs:?}"
+        );
+    }
+
+    #[test]
+    fn use_quick_slot_stale_binding_missing_instance_preserves_active_cross_slot_cast() {
+        // central-review 2012 #4 回归：绑定实例已不在背包（player 拖出去了）时 use
+        // 必须静默忽略且不得打断进行中的异槽 cast。此前没有任何测试构造陈旧绑定
+        // 覆盖 missing-instance 早返回分支——旧顺序把它放回 cast 闸门之后，用失效
+        // 绑定的异槽会在活动 cast 期间先 cancel_previous_cast 再返回。本测试在
+        // slot 0 进行 cast 时 use 绑定已失效实例（999，不在背包）的 slot 5，断言
+        // slot 0 cast 原样保留、无 interrupt。
+        let mut app = App::new();
+        app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();
+        register_request_app(&mut app);
+        app.insert_resource(ItemRegistry::from_map(HashMap::from([(
+            "guyuan_pill".to_string(),
+            ItemTemplate {
+                id: "guyuan_pill".to_string(),
+                display_name: "guyuan_pill".to_string(),
+                category: ItemCategory::Misc,
+                placeable: None,
+                max_stack_count: 64,
+                grid_w: 1,
+                grid_h: 1,
+                base_weight: 0.1,
+                rarity: ItemRarity::Common,
+                spirit_quality_initial: 1.0,
+                description: String::new(),
+                effect: None,
+                cast_duration_ms: 1500,
+                cooldown_ms: 1500,
+                weapon_spec: None,
+                forge_station_spec: None,
+                blueprint_scroll_spec: None,
+                inscription_scroll_spec: None,
+                technique_scroll_spec: None,
+                readable_scroll_spec: None,
+                recipe_fragment_spec: None,
+                container_spec: None,
+                shelflife_profile: None,
+                shield_spec: None,
+                shelflife_track: None,
+                wearer_race: crate::body_plan::types::RaceGateOwned::default(),
+            },
+        )])));
+        let mut inventory = empty_inventory();
+        inventory.equipped.insert(
+            crate::inventory::EQUIP_SLOT_MAIN_HAND.to_string(),
+            crate::inventory::SlotContents::held_single(inventory_test_item(77, "guyuan_pill", 1)),
+        );
+        let mut quick_slots = QuickSlotBindings::default();
+        assert!(quick_slots.set(0, Some(77)));
+        // slot 5 绑定陈旧实例 999（不在背包），且不在冷却——恰好命中 missing-instance
+        // 早返回分支（越过 cooldown 与 unbound 两个更靠前的检查）。
+        assert!(quick_slots.set(5, Some(999)));
+        let (client_bundle, mut helper) = create_mock_client("Azure");
+        let entity = app
+            .world_mut()
+            .spawn((client_bundle, quick_slots, inventory))
+            .id();
+
+        // 请求 1：启动 slot 0 cast。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":0}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        assert!(
+            app.world().get::<Casting>(entity).is_some(),
+            "前置：slot 0 应处于 casting 状态"
+        );
+
+        // 请求 2：slot 0 仍在 cast 时使用绑定失效实例的 slot 5。
+        app.world_mut()
+            .resource_mut::<valence::prelude::Events<CustomPayloadEvent>>()
+            .send(CustomPayloadEvent {
+                client: entity,
+                channel: ident!("bong:client_request").into(),
+                data: br#"{"type":"use_quick_slot","v":1,"slot":5}"#
+                    .to_vec()
+                    .into_boxed_slice(),
+            });
+        app.update();
+        flush_all_client_packets(&mut app);
+
+        let casting = app
+            .world()
+            .get::<Casting>(entity)
+            .expect("陈旧绑定（实例不在背包）use 不得取消进行中的 slot 0 cast");
+        assert_eq!(casting.slot, 0);
+        let syncs = collect_cast_syncs(&mut helper);
+        assert!(
+            !syncs.iter().any(|s| s.phase == CastPhaseV1::Interrupt),
+            "陈旧绑定 use 不得产生任何 interrupt cast_sync，实际 {syncs:?}"
+        );
+    }
+
+    #[test]
     fn quick_slot_bind_resolves_equipped_template_instance() {
         let mut app = App::new();
         app.init_resource::<crate::lingtian::requests::PendingLingtianRequests>();

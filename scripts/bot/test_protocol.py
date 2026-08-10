@@ -649,6 +649,18 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         self.assertEqual(entry["required_meridians"], [{"channel": "Lung", "min_health": 0.5}])
         self.assertEqual(entry["cast_ticks"], 16)
         self.assertEqual(entry["cooldown_ticks"], 30)
+        # central-review 2012 #6 回归：fixture 供应了 grade/proficiency/
+        # proficiency_label/active/description/qi_cost/stamina_cost/range 全部分解码
+        # 字段，但旧测试只断言其中一部分——解码器对这些字段返回零值/丢弃也能通过。
+        # 这些是新支持快照载荷的可观测字段，逐个 pin 完整解码契约。
+        self.assertEqual(entry["grade"], "common")
+        self.assertEqual(entry["proficiency"], 0.0)
+        self.assertEqual(entry["proficiency_label"], "生疏")
+        self.assertIs(entry["active"], True)
+        self.assertEqual(entry["description"], "基础劈砍。举剑过顶，顺势劈下。")
+        self.assertEqual(entry["qi_cost"], 0.0)
+        self.assertEqual(entry["stamina_cost"], 8.0)
+        self.assertEqual(entry["range"], 3.0)
 
     def test_proto_skill_config_snapshot_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_skill_config_snapshot_bytes())

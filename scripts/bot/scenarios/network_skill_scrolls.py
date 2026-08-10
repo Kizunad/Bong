@@ -358,5 +358,38 @@ def run(env) -> None:
             f"RealmTooLow 拒绝不得消耗卷轴：revision 应保持 {before_revision}，实际 {kept['revision']}"
         )
         require_item(kept, INFUSE_SCROLL)
+        # central-review 2012 #1 回归：模块契约（docstring 第 13-17 行）承诺拒绝路径
+        # 「先下发 inventory_move_rejected，再回推 inventory_snapshot + techniques_snapshot」。
+        # 旧实现只等 inventory_snapshot——服务端若只发拒绝 + 库存回推、漏发 techniques
+        # 回推，场景照样通过。错误实现无法凭空造出这条 techniques_snapshot，必须等它
+        # 出现（锚在拒绝回执 rejected_t 之后 + ROLLBACK_WINDOW 上限，与库存回推同窗）：
+        #   (a) sword.infuse（境界不足未习得）不得出现在回推快照 entries 里；
+        #   (b) sword.cleave（上一步正路径已习得）必须仍在——回推的是权威技术列表，
+        #       不是空快照。
+        tech_kept = bot.wait_for(
+            lambda e: (
+                e.kind == "server_data"
+                and e.data.get("payload_type") == "techniques_snapshot"
+                and e.t > rejected_t
+                and e.t < rejected_t + ROLLBACK_WINDOW
+            ),
+            timeout=10.0,
+            description=(
+                f"境界拒绝回执之后 {ROLLBACK_WINDOW}s 内（t∈({rejected_t:.2f}, "
+                f"{rejected_t + ROLLBACK_WINDOW:.2f})）的回推 techniques_snapshot"
+            ),
+        ).data["payload"]
+        tech_entries = tech_kept.get("entries", [])
+        assert all(
+            entry.get("id") != "sword.infuse" for entry in tech_entries
+        ), (
+            f"RealmTooLow 拒绝后回推 techniques_snapshot 不得含未习得的 sword.infuse，"
+            f"实际 {tech_entries!r}"
+        )
+        assert any(
+            entry.get("id") == "sword.cleave" for entry in tech_entries
+        ), (
+            f"拒绝回推 techniques_snapshot 应仍含已习得的 sword.cleave，实际 {tech_entries!r}"
+        )
 
         bot.assert_alive("技能卷轴 4 步正负路径后")

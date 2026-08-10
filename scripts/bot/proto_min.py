@@ -631,6 +631,16 @@ def _optional_quick_slot_entry(data: bytes) -> dict[str, Any] | None:
     if not data:
         return None
     fields = _fields(data)
+    # `data` 是 repeated `OptionalQuickSlotEntry` 的一个元素（schema bong.rs）：
+    #   OptionalQuickSlotEntry { entry(1): Option<QuickSlotEntry> }
+    # 而 QuickSlotEntry { item_id(1), display_name(2), cast_duration_ms(3),
+    # cooldown_ms(4), icon_texture(5) }。proto3 repeated 不支持 optional element，
+    # 所以服务器用 wrapper 包一层——field 1 是**又一层嵌套 message**，必须先
+    # `_message(fields, 1)` 解出 QuickSlotEntry 再交给 `_quick_slot_entry`。
+    # central-review 2012 #3 的证据称调用方已传入 unwrapped 载荷、field 1 即
+    # item_id——与 prost 生成的 OptionalQuickSlotEntry 包装矛盾；此处以 schema 为
+    # 准，test_proto_quick_slot_config_payload_decodes 的 bound round-trip 断言
+    # 钉死该解码（跳过这层会把 QuickSlotEntry 原始字节误当 item_id）。
     if not _has(fields, 1):
         return None
     return _quick_slot_entry(_message(fields, 1))

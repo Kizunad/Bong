@@ -3,13 +3,17 @@ use valence::command::handler::CommandResultEvent;
 use valence::command::parsers::CommandArg;
 use valence::command::{AddCommand, Command};
 use valence::message::SendMessage;
-use valence::prelude::{App, Client, EventReader, Query, ResMut, Update};
+use valence::prelude::{App, Client, EventReader, Position, Query, ResMut, Update};
 
+use crate::qi_physics::constants::QI_ZONE_UNIT_CAPACITY;
+use crate::world::dimension::CurrentDimension;
 use crate::world::zone::ZoneRegistry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ZoneQiCmd {
     Set { name: String, value: f64 },
+    /// 回显执行者当前所在 zone 的权威 spirit_qi（只读探针）。
+    GetCurrent,
 }
 
 impl Command for ZoneQiCmd {
@@ -26,6 +30,11 @@ impl Command for ZoneQiCmd {
                 name: String::parse_arg(input).unwrap(),
                 value: f64::parse_arg(input).unwrap(),
             });
+        graph
+            .root()
+            .literal("zone_qi")
+            .literal("get")
+            .with_executable(|_| ZoneQiCmd::GetCurrent);
     }
 }
 
@@ -38,6 +47,7 @@ pub fn handle_zone_qi(
     mut events: EventReader<CommandResultEvent<ZoneQiCmd>>,
     zones: Option<ResMut<ZoneRegistry>>,
     mut clients: Query<&mut Client>,
+    locations: Query<(Option<&Position>, Option<&CurrentDimension>)>,
 ) {
     let Some(mut zones) = zones else {
         for event in events.read() {
@@ -49,36 +59,70 @@ pub fn handle_zone_qi(
     };
 
     for event in events.read() {
-        let ZoneQiCmd::Set { name, value } = &event.result;
-        let Ok(mut client) = clients.get_mut(event.executor) else {
-            continue;
-        };
-        if !value.is_finite() {
-            client.send_chat_message("[dev] zone_qi rejected: value must be finite");
-            continue;
-        }
-        if let Some(zone) = zones.find_zone_mut(name) {
-            let before = zone.spirit_qi;
-            zone.spirit_qi = *value;
-            tracing::warn!(
-                "[dev-cmd] bypass ledger and zone qi tick: zone `{}` {:.3} -> {:.3}",
-                name,
-                before,
-                value
-            );
-            client.send_chat_message(format!(
-                "[dev] zone_qi `{name}` {:.2} -> {:.2}",
-                before, value
-            ));
-        } else {
-            let hints = zones
-                .zones
-                .iter()
-                .take(10)
-                .map(|zone| zone.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            client.send_chat_message(format!("[dev] unknown zone `{name}`; known: {hints}"));
+        match &event.result {
+            ZoneQiCmd::Set { name, value } => {
+                let Ok(mut client) = clients.get_mut(event.executor) else {
+                    continue;
+                };
+                if !value.is_finite() {
+                    client.send_chat_message("[dev] zone_qi rejected: value must be finite");
+                    continue;
+                }
+                if let Some(zone) = zones.find_zone_mut(name) {
+                    let before = zone.spirit_qi;
+                    zone.spirit_qi = *value;
+                    tracing::warn!(
+                        "[dev-cmd] bypass ledger and zone qi tick: zone `{}` {:.3} -> {:.3}",
+                        name,
+                        before,
+                        value
+                    );
+                    client.send_chat_message(format!(
+                        "[dev] zone_qi `{name}` {:.2} -> {:.2}",
+                        before, value
+                    ));
+                } else {
+                    let hints = zones
+                        .zones
+                        .iter()
+                        .take(10)
+                        .map(|zone| zone.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    client.send_chat_message(format!("[dev] unknown zone `{name}`; known: {hints}"));
+                }
+            }
+            ZoneQiCmd::GetCurrent => {
+                let Ok((position, dimension)) = locations.get(event.executor) else {
+                    continue;
+                };
+                let Some(position) = position else {
+                    tracing::warn!(
+                        "[bong][cmd] zone_qi get rejected: executor {:?} has no Position",
+                        event.executor
+                    );
+                    continue;
+                };
+                // 无 CurrentDimension 时退化为 Overworld（spawn/常规世界默认）。
+                let dimension = dimension
+                    .map(|d| d.0)
+                    .unwrap_or(crate::world::dimension::DimensionKind::Overworld);
+                let Some(zone) = zones.find_zone(dimension, position.0) else {
+                    if let Ok(mut client) = clients.get_mut(event.executor) {
+                        client.send_chat_message(
+                            "[dev] zone_qi get: no zone at executor position",
+                        );
+                    }
+                    continue;
+                };
+                let zone_total = zone.spirit_qi * QI_ZONE_UNIT_CAPACITY;
+                if let Ok(mut client) = clients.get_mut(event.executor) {
+                    client.send_chat_message(format!(
+                        "[dev] zone_qi {} spirit_qi={:.6} zone_total={:.6}",
+                        zone.name, zone.spirit_qi, zone_total
+                    ));
+                }
+            }
         }
     }
 }
@@ -88,7 +132,31 @@ mod tests {
     use super::*;
     use crate::cmd::dev::test_support::{run_update, spawn_test_client};
     use crate::qi_physics::QiTransfer;
+    use crate::world::dimension::DimensionKind;
     use valence::prelude::Events;
+    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::testing::{create_mock_client, MockClientHelper};
+
+    fn collected_chat(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
+        let world = app.world_mut();
+        let mut clients = world.query::<&mut Client>();
+        for mut client in clients.iter_mut(world) {
+            client
+                .flush_packets()
+                .expect("mock client packets should flush successfully");
+        }
+        helper
+            .collect_received()
+            .0
+            .into_iter()
+            .filter_map(|frame| {
+                frame
+                    .decode::<GameMessageS2c>()
+                    .ok()
+                    .map(|packet| packet.chat.to_legacy_lossy())
+            })
+            .collect()
+    }
 
     fn setup_app() -> App {
         let mut app = App::new();
@@ -167,5 +235,72 @@ mod tests {
         run_update(&mut app);
 
         assert_eq!(app.world().resource::<Events<QiTransfer>>().len(), 0);
+    }
+
+    #[test]
+    fn zone_qi_get_echoes_executor_current_zone_spirit_qi() {
+        // central-review 2012 #2 回归：forge 正路径的「扣真元走 zone ledger」契约
+        // 需要可观测的 zone 目的地读数。`zone_qi get` 是只读探针——解析执行者
+        // 当前所在 zone（Position + CurrentDimension），回显其权威 spirit_qi 与
+        // 换算后的 zone_total（spirit_qi × QI_ZONE_UNIT_CAPACITY）。场景用它在
+        // forge 前后各读一次、断言增量 == qi_cost / QI_ZONE_UNIT_CAPACITY。
+        let mut app = setup_app();
+        let (client_bundle, mut helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new([8.0, 64.0, 8.0]));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<ZoneQiCmd>>>()
+            .send(CommandResultEvent {
+                result: ZoneQiCmd::GetCurrent,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        run_update(&mut app);
+
+        let chats = collected_chat(&mut app, &mut helper);
+        assert!(
+            chats.iter().any(|chat| {
+                chat.contains("zone_qi spawn")
+                    && chat.contains("spirit_qi=0.900000")
+                    && chat.contains("zone_total=45.000000")
+            }),
+            "zone_qi get 应回显 spawn zone 的权威 spirit_qi（fallback 0.9 → zone_total 45），实际 {chats:?}"
+        );
+    }
+
+    #[test]
+    fn zone_qi_get_resolves_position_inside_spawn_bounds() {
+        // fallback spawn zone bounds 是 [-128.., 64..80, -128..]；站在其内时
+        // GetCurrent 必须解析到 spawn，而不是「no zone at executor position」。
+        let mut app = setup_app();
+        let (client_bundle, mut helper) = create_mock_client("Bob");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new([0.0, 64.0, 0.0]));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<ZoneQiCmd>>>()
+            .send(CommandResultEvent {
+                result: ZoneQiCmd::GetCurrent,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        run_update(&mut app);
+
+        let chats = collected_chat(&mut app, &mut helper);
+        assert!(
+            chats.iter().any(|chat| chat.contains("zone_qi spawn")),
+            "zone_qi get 应解析到 spawn zone，实际 {chats:?}"
+        );
     }
 }
