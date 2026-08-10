@@ -12,7 +12,10 @@
   非 Treasure 类物品拒绝（物品保留 + revision 不变）。
 
 任一变体都要求拒绝路径不踢线不 panic；负断言用「revision 相同的回推快照」区分于
-「revision 变化的成功快照」。
+「revision 变化的成功快照」。周期 flush（~5s 一条，revision 不变）与拒绝回推观测
+不可分，每条拒绝路径锚定前先 drain_inventory_quiet 排干到 quiet 秒静默，并把回推
+快照的接受限定在请求后 window 秒内（window < quiet）——周期 flush 无法落进窗口冒充，
+「省略回推」的错误实现窗口内无快照确定性红。
 """
 
 import time
@@ -26,15 +29,14 @@ from bot.scenarios._combat_helpers import (
     wait_for_ready,
 )
 from bot.scenarios._inventory_helpers import (
+    drain_inventory_quiet,
     equip_location,
     find_instance,
     find_item,
     latest_inventory_snapshot,
     require_item,
     send_move,
-    wait_inventory_contains,
     wait_inventory_revision_after,
-    wait_inventory_snapshot_after,
 )
 
 DESCRIPTION = (
@@ -66,16 +68,38 @@ def _give_and_wait(bot, item_id: str, count: int = 1) -> dict:
 
 
 def _wait_snapshot_same_revision(
-    bot, anchor_t: float, revision: int, timeout: float = 10.0
+    bot, anchor_t: float, revision: int, window: float = 1.5, timeout: float = 10.0
 ) -> dict:
-    """拒绝路径的回推快照：revision 必须与请求前一致（server 未采纳任何变更）。"""
-    snapshot = wait_inventory_snapshot_after(bot, anchor_t, timeout=timeout)
-    got = int(snapshot["revision"])
+    """拒绝路径的权威回推：revision 不变 + 请求后 window 秒内到达。
+
+    调用方必须先 drain_inventory_quiet（连续 quiet 秒无快照）再发意图——排干后
+    下一次周期 flush 至少 quiet 秒后才可能到，而拒绝回推与请求同 tick 同步下发
+    （毫秒级）。把接受限定在 (anchor_t, anchor_t+window]，周期 flush（实测 ~5s
+    一条）无法落进窗口冒充；「省略回推」的错误实现窗口内无快照，确定性红
+    （review finding [2]：旧实现只查 revision 不变，任何周期 flush 都能冒充）。"""
+    event = bot.wait_for(
+        lambda e: (
+            e.kind == "server_data"
+            and e.data.get("payload_type") == "inventory_snapshot"
+            and e.t > anchor_t
+        ),
+        timeout=timeout,
+        description=(
+            f"拒绝回推 inventory_snapshot（t∈({anchor_t:.2f}, "
+            f"{anchor_t + window:.2f}]）"
+        ),
+    )
+    if event.t > anchor_t + window:
+        raise BotAssertionError(
+            f"[{bot.username}] 拒绝回推快照应在请求后 {window}s 内到达，"
+            f"实际 {event.t - anchor_t:.2f}s 后才到（疑似周期 flush 而非回推）"
+        )
+    got = int(event.data["payload"]["revision"])
     if got != revision:
         raise BotAssertionError(
             f"[{bot.username}] 拒绝路径回推快照 revision 应保持 {revision}，实际 {got}"
         )
-    return snapshot
+    return event.data["payload"]
 
 
 def _assert_no_snapshot_change(
@@ -237,6 +261,9 @@ def run(env) -> None:
         talisman = require_item(talisman_snapshot, STARTER_TALISMAN)
         talisman_instance = int(talisman["item"]["instance_id"])
         talisman_revision = int(talisman_snapshot["revision"])
+        # 拒绝路径锚定前必须排干：周期 flush（revision 不变）与拒绝回推观测不可分，
+        # 排干到 quiet 秒静默后下一次 flush 至少 quiet 秒才可能到，窗口内不可能冒充。
+        drain_inventory_quiet(bot)
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -269,6 +296,7 @@ def run(env) -> None:
         _wait_dropped_loot_for(bot, discard_anchor, talisman_instance, STARTER_TALISMAN)
 
         # ── 4. discard 拒绝路径：不存在的实例 → 回推快照 revision 不变 ──
+        drain_inventory_quiet(bot)
         anchor = last_event_time(bot)
         before_reject = int(latest_inventory_snapshot(bot)["revision"])
         bot.intent(
@@ -315,6 +343,7 @@ def run(env) -> None:
         require_item(deactivated, TREASURE_STONE)
 
         # ── 7. treasure_activate 拒绝路径：非 Treasure 类物品 → 回推快照 revision 不变 ──
+        drain_inventory_quiet(bot)
         anchor = last_event_time(bot)
         reject_revision = int(latest_inventory_snapshot(bot)["revision"])
         bot.intent(
@@ -347,6 +376,7 @@ def run(env) -> None:
         _wait_dropped_loot_for(bot, drop_anchor, sword_instance, IRON_SWORD)
 
         # ── 9. drop_weapon_intent 拒绝路径：from 位置与实例不符 → 回推快照 revision 不变 ──
+        drain_inventory_quiet(bot)
         anchor = last_event_time(bot)
         stale_revision = int(after_drop["revision"])
         # stone 在第 7 步后仍在背包容器（非装备位），用 main_hand_held 作 from 恒不匹配。

@@ -39,7 +39,9 @@ FALSE_SKIN = "tuike_false_skin_silk"
 NEGATIVE_WINDOW = 2.0
 # 拒绝回执之后的因果窗口：拒绝处理在**同一 tick** 同步 emit rejection + resync
 # 回推（毫秒级到达），而 revision 不变的周期 flush 约 5s 一条。把回推快照限定在
-# rejected_t 之后 1.0s 内，周期性 flush（无法恰好落入该窗口）即不能冒充权威回推。
+# rejected_t 之后 1.0s 内。单靠 5s 周期假设不能排除 flush 恰好落在窗口里
+# （review finding [2]），所以拒绝意图锚定前必须排干到 quiet=2.0s 静默
+# （window 1.0 < quiet 2.0）——排干后下一次 flush 至少 2.0s 才可能到，窗口内不可能。
 ROLLBACK_WINDOW = 1.0
 
 
@@ -214,6 +216,10 @@ def run(env) -> None:
         spare_snapshot = _give_and_wait(bot, FALSE_SKIN)
         spare = require_item(spare_snapshot, FALSE_SKIN)
         spare_instance = int(spare["item"]["instance_id"])
+        # review finding [2]：周期 flush（~5s 一条，revision 不变）可落进
+        # ROLLBACK_WINDOW 冒充拒绝回推。锚定前排干到 quiet=2.0s 静默——下一次
+        # flush 至少 2.0s 后才可能到，而回推窗口只有 1.0s（window < quiet）。
+        _drain_inventory_snapshots(bot, quiet=2.0)
         reject_anchor = last_event_time(bot)
         reject_revision = int(latest_inventory_snapshot(bot)["revision"])
         bot.intent(

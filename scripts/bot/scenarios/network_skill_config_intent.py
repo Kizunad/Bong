@@ -95,9 +95,11 @@ def run(env) -> None:
         # 这两个值、生产拒掉其余合法 enum 成员/经脉」的错误校验也通过。schema 允许
         # MeridianId::ALL(20) × backfire_kind[4]，全部 80 组合必须逐个写入成功且
         # 回读精确一致（json_config 是 BTreeMap 序列化，dict 等值不受键序影响）。
+        last_config: dict = {}
         for meridian in MERIDIANS:
             for kind in BACKFIRE_KINDS:
                 config = {"meridian_id": meridian, "backfire_kind": kind}
+                last_config = config
                 written = _write_config(bot, config)
                 configs = _configs_of(written)
                 assert SKILL in configs, (
@@ -108,7 +110,7 @@ def run(env) -> None:
                     f"写入后 json_config 应精确等于 {config}，实际 {parsed!r}"
                 )
 
-        # ── 2. 未知 skill → 拒绝：回推快照不含该 skill ──
+        # ── 2. 未知 skill → 拒绝：回推快照不含该 skill + 既有配置守恒 ──
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -122,6 +124,19 @@ def run(env) -> None:
         configs = _configs_of(rejected)
         assert "no_such_skill_xyz" not in configs, (
             f"未知 skill 拒绝后 snapshot 不应含 no_such_skill_xyz，实际 {sorted(configs)}"
+        )
+        # review finding [3]：旧断言只查「未知 skill 不在」，拒绝路径若把整个配置仓
+        # 清掉（或抹掉既有 zhenmai.sever_chain），第 2 步也照过——而第 3 步立刻重写
+        # 该条目，把清仓错误掩盖掉。必须守恒：拒绝后既有配置保持第 1 步最后一次
+        # 写入的精确值（未知 skill 拒绝回推的是权威当前 store，server
+        # client_request_handler.rs handle_config_intent Err 分支 snapshot_for_player）。
+        assert SKILL in configs, (
+            f"未知 skill 拒绝后既有 {SKILL} 配置应保持，实际 {sorted(configs)}"
+        )
+        parsed = json.loads(configs[SKILL])
+        assert parsed == last_config, (
+            f"未知 skill 拒绝后 {SKILL} 应保持第 1 步最后写入 {last_config}，"
+            f"实际 {parsed!r}"
         )
 
         # ── 3. 非法 backfire_kind（enum 白名单外，meridian_id 有效）→ 拒绝：完整配置保持 ──

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from bot.bot import BotAssertionError
+from bot.scenarios._combat_helpers import last_event_time
 
 
 def wait_join_and_inventory(bot, timeout: float = 15.0) -> dict[str, Any]:
@@ -246,3 +248,30 @@ def send_move(bot, instance_id: int, from_location: dict[str, Any], to_location:
             "rotated": False,
         }
     )
+
+
+def drain_inventory_quiet(bot, quiet: float = 2.0, max_wait: float = 12.0) -> None:
+    """请求前排干：静置到连续 quiet 秒无新 inventory_snapshot 再放行。
+
+    服务端每 100 tick 会周期 flush 一次「revision 不变的当前状态快照」（实测 ~5s
+    一条），与拒绝回推（同 tick 同步下发、revision 也不变）观测上不可分
+    （review finding [2]）。排干结束即保证：下一次周期 flush 至少 quiet 秒后才
+    可能到达。配合把拒绝回推的接受窗口设成 < quiet，周期 flush 便无法落进窗口
+    冒充权威回推；「省略回推」的错误实现窗口内拿不到任何快照，确定性红。
+    """
+    deadline = time.monotonic() + max_wait
+    while True:
+        anchor = last_event_time(bot)
+        time.sleep(quiet)
+        stray = [
+            e
+            for e in bot.events_of("server_data")
+            if e.data.get("payload_type") == "inventory_snapshot" and e.t > anchor
+        ]
+        if not stray:
+            return
+        if time.monotonic() > deadline:
+            raise BotAssertionError(
+                f"背包快照过于密集，{max_wait:.0f}s 内未排干到 {quiet:.0f}s 静默"
+                f"（周期 flush 无法满足测试前提）"
+            )
