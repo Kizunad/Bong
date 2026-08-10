@@ -89,7 +89,10 @@ def assert_request_shape(payload: dict, request_id: str) -> None:
 def response_matches(
     payload: dict, action: str | None = None, params_subset: dict | None = None
 ) -> bool:
-    """bong:agent_ui_response 消息匹配：action 精确 + params 子集。"""
+    """bong:agent_ui_response 消息匹配：action 精确 + params 子集。
+
+    子集匹配要求 key 存在且值相等——缺失的 key 不等于显式 null，不能放行。
+    """
     if action is not None and payload.get("action") != action:
         return False
     if params_subset is not None:
@@ -98,7 +101,9 @@ def response_matches(
             return False
         if params_subset == {}:
             return got == {}
-        if not all(got.get(key) == value for key, value in params_subset.items()):
+        if not all(
+            key in got and got[key] == value for key, value in params_subset.items()
+        ):
             return False
     return True
 

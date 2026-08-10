@@ -4728,15 +4728,28 @@ class RedisCommandEncodeTest(unittest.TestCase):
 
 
 class _FakeTimeoutSocket:
-    """recv 恒抛 TimeoutError 的假 socket：模拟空窗口内无数据到达。"""
+    """recv 先按 settimeout 配置真实阻塞再抛 TimeoutError 的假 socket。
+
+    若 recv 恒立即抛错，wait_message 把 socket 超时设成整个 io_timeout（或漏调
+    settimeout）也无法被测出——墙钟只由循环里的 deadline 检查决定。这里 recv
+    实际睡 self.timeout 秒再抛，超时值超界会把等待拉长到可断言；同时记录每次
+    settimeout 值，供测试校验其受剩余 deadline 约束。
+    """
 
     def __init__(self) -> None:
         self.timeout: float | None = None
+        self._settimeouts: list[float] = []
 
     def settimeout(self, timeout: float) -> None:
         self.timeout = timeout
+        self._settimeouts.append(timeout)
 
     def recv(self, _size: int) -> bytes:
+        if self.timeout is None:
+            raise AssertionError(
+                "recv 被调用但未先 settimeout（wait_message 漏设 socket 超时）"
+            )
+        time.sleep(self.timeout)
         raise TimeoutError("timed out")
 
 
@@ -4752,8 +4765,21 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
         redis._sub_sock = _FakeTimeoutSocket()  # type: ignore[assignment]
         return redis
 
+    def _assert_timeouts_bounded(self, sock: _FakeTimeoutSocket, window: float) -> None:
+        """socket 超时值必须受调用方 deadline（window）约束，不能退化成 io_timeout。"""
+        self.assertTrue(
+            sock._settimeouts,
+            "wait_message 必须按剩余 deadline 调用 settimeout，不能漏设",
+        )
+        self.assertLessEqual(
+            max(sock._settimeouts),
+            window + 0.05,
+            "socket 超时绝不能超过调用方 deadline，不能设成整个 io_timeout",
+        )
+
     def test_negative_window_returns_none_after_deadline(self):
         redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
         started = time.monotonic()
         got = redis.wait_message(
             "bong:agent_ui_response", lambda payload: False, timeout=0.2, expect=False
@@ -4766,9 +4792,11 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
         self.assertLess(
             elapsed, 1.5, "负向窗口应约在 deadline 处返回，不拖满 io_timeout"
         )
+        self._assert_timeouts_bounded(sock, 0.2)
 
     def test_positive_window_raises_assertion_after_deadline(self):
         redis = self._redis_with_timeout_socket(timeout=2.0)
+        sock = redis._sub_sock
         started = time.monotonic()
         with self.assertRaisesRegex(AssertionError, "期望 0.2s 内收到"):
             redis.wait_message(
@@ -4781,6 +4809,7 @@ class RedisClientWaitDeadlineTest(unittest.TestCase):
         self.assertGreaterEqual(
             elapsed, 0.2, "正窗口断言必须等满 deadline 才抛，不能提前抛"
         )
+        self._assert_timeouts_bounded(sock, 0.2)
 
 
 class _AgentUiFakeBot(_FakeBot):
@@ -4975,6 +5004,20 @@ class AgentUiHelperTest(unittest.TestCase):
         self.assertFalse(
             response_matches({"action": "error"}, params_subset={"reason": "x"}),
             "声明 params 子集时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "error", "params": {}},
+                params_subset={"reason": None},
+            ),
+            "子集匹配要求 key 存在：缺 reason 不能把缺失当显式 null 放行",
+        )
+        self.assertTrue(
+            response_matches(
+                {"action": "error", "params": {"reason": None}},
+                params_subset={"reason": None},
+            ),
+            "显式 null 的 reason 应匹配（key 存在且值为 None）",
         )
 
     def test_expect_agent_ui_request_positive(self):
