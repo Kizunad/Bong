@@ -126,7 +126,9 @@ def _parse_redis_url(url: str) -> tuple[str, int, Optional[str], Optional[str]]:
         return "127.0.0.1", 6379, None, None
     parts = urlsplit(url)
     if parts.scheme != "redis":
-        raise ValueError(f"unsupported redis url: {url!r}")
+        # 只报 scheme，绝不回填完整 URL：REDIS_URL 可能带 userinfo 凭据，
+        # 把原始 url 内插进异常会让密码出现在 CI/运维日志（review finding）。
+        raise ValueError(f"unsupported redis url scheme: {parts.scheme!r}")
     username = unquote(parts.username) if parts.username is not None else None
     password = unquote(parts.password) if parts.password is not None else None
     return parts.hostname or "127.0.0.1", parts.port or 6379, username, password
@@ -226,6 +228,7 @@ class RedisPubSub:
 
     def _pump(self) -> None:
         while not self._closed:
+            self._drain_frames()
             try:
                 data = self._sock.recv(4096)
             except socket.timeout:
@@ -236,23 +239,36 @@ class RedisPubSub:
             if not data:
                 break
             self._frames.feed(data)
-            while True:
-                frame = self._frames.next_frame()
-                if frame is None:
-                    break
-                if not isinstance(frame, list) or len(frame) != 3 or frame[0] != b"message":
-                    continue
-                channel = frame[1].decode("utf-8", "replace")
-                payload = frame[2]
-                try:
-                    decoded = json.loads(payload)
-                except (ValueError, TypeError):
-                    continue
-                with self._lock:
-                    self._events.append((self._event_seq, channel, decoded))
-                    self._event_seq += 1
-                    if len(self._events) > self._max_events:
-                        del self._events[: len(self._events) - self._max_events]
+
+    def _drain_frames(self) -> None:
+        """把已缓冲的 RESP 帧全部消费掉，再阻塞等下一次 recv。
+
+        SUBSCRIBE 的 ack 循环可能在一次 recv(4096) 里同时读到「最终订阅确认 +
+        首条已发布消息」，但它只解析确认就退出（remaining 空）。若 _pump 先阻塞
+        recv 再解析缓冲，这条已入缓冲的消息要等下一次网络流量才会被处理——唯一
+        一次发布时 wait_event 会一直超时（review finding：ack+message 合包搁置）。
+        所以每轮循环先 drain 缓冲里的帧，再收新数据。
+        """
+        while True:
+            frame = self._frames.next_frame()
+            if frame is None:
+                return
+            self._handle_frame(frame)
+
+    def _handle_frame(self, frame: Any) -> None:
+        if not isinstance(frame, list) or len(frame) != 3 or frame[0] != b"message":
+            return
+        channel = frame[1].decode("utf-8", "replace")
+        payload = frame[2]
+        try:
+            decoded = json.loads(payload)
+        except (ValueError, TypeError):
+            return
+        with self._lock:
+            self._events.append((self._event_seq, channel, decoded))
+            self._event_seq += 1
+            if len(self._events) > self._max_events:
+                del self._events[: len(self._events) - self._max_events]
 
     def events_for(self, channel: str) -> list[dict[str, Any]]:
         with self._lock:

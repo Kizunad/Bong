@@ -414,7 +414,10 @@ if [ "$AMBIENT_FIXTURE_MODE" = "1" ]; then
 fi
 
 set +e
-BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \
+# BONG_SERVER_LOG 交给场景做正向派发证据：combat_anqi_throw_carrier 的空手
+# no-op 契约对 server→client 无可观测副作用，只能用 server 日志的
+# `client_request received` 证明意图确实抵达并反序列化成功。
+BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" BONG_SERVER_LOG="$SERVER_LOG" \
   python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1 | tee "$SCENARIOS_LOG"
 pipeline_status=("${PIPESTATUS[@]}")
 if [ "${pipeline_status[0]}" -ne 0 ]; then

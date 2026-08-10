@@ -1139,7 +1139,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         scenario_start = self.source.index("set +e\n", self.source.index("# ---- 场景 ----"))
         scenario_end = self.source.index("\nset -e", scenario_start) + len("\nset -e")
         pipeline = self.source[scenario_start:scenario_end]
-        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" \\
+        runner = '''BOT_E2E_HOST="$HOST" BOT_E2E_PORT="$PORT" BONG_SERVER_LOG="$SERVER_LOG" \\
   python3 "$ROOT/scripts/bot/run_scenarios.py" --all 2>&1'''
         sink = 'tee "$SCENARIOS_LOG"'
         self.assertEqual(
@@ -4200,6 +4200,30 @@ class RedisPubSubTest(unittest.TestCase):
             server.close()
             client.close()
 
+    def test_message_coalesced_with_final_subscribe_ack_is_delivered(self):
+        # 回归：review finding [major]——ack 循环的一次 recv(4096) 可能同时读到
+        # 「最终订阅确认 + 首条已发布消息」，但它只解析 ack 就退出（remaining 空）。
+        # 若 _pump 先阻塞 recv 再解析缓冲，这条已入缓冲的消息要等下一次网络流量
+        # 才会被处理；这是唯一一次发布时 wait_event 会一直超时。修复：_pump 先
+        # 消费缓冲帧再收新数据。这里 ack 与消息同一次 sendall，且之后不再有
+        # 任何网络流量——消息必须被泵线程立即解析入队。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            payload = json.dumps({"tick": 99}).encode()
+            msg = b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n" % (
+                len(payload),
+                payload,
+            )
+            server.sendall(ack + msg)
+            pubsub.subscribe("my_chan")
+            self._wait_for(pubsub, "my_chan", lambda e: e.get("tick") == 99, timeout=2.0)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
     def test_parse_redis_url_strips_components_and_keeps_credentials(self):
         # 回归：review finding [2]/[3]——(a) REDIS_URL 带 db 路径/query 时转端口
         # 会 int('6379/0') ValueError；query-only（无路径）URL 的 '?x=1' 会残留
@@ -4225,10 +4249,36 @@ class RedisPubSubTest(unittest.TestCase):
         for url, expected in cases.items():
             self.assertEqual(_redis_helpers._parse_redis_url(url), expected)
 
+    def test_unsupported_redis_scheme_error_redacts_credentials(self):
+        # 回归：review finding [major]——不支持的 scheme 报错若回填完整 URL，
+        # `rediss://alice:s3cret@...` 会把密码打印进 CI/运维日志。修复后只报
+        # scheme，不得泄漏 userinfo（用户名 / 密码）。
+        with self.assertRaises(ValueError) as ctx:
+            _redis_helpers._parse_redis_url("rediss://alice:s3cret@redis.example:6380")
+        message = str(ctx.exception)
+        self.assertIn(
+            "rediss", message,
+            "异常应点明不支持的 scheme，便于运维定位；实际={message!r}",
+        )
+        self.assertNotIn(
+            "s3cret", message,
+            "异常不得包含密码；实际={message!r}",
+        )
+        self.assertNotIn(
+            "alice", message,
+            "异常不得包含用户名；实际={message!r}",
+        )
+        self.assertNotIn(
+            "redis.example", message,
+            "异常不得包含完整 host（无关凭据也一并避免）；实际={message!r}",
+        )
+
     def test_auth_issued_on_connect_with_credentials(self):
         # 回归：review finding [3]——带凭据的 REDIS_URL 之前静默丢弃 userinfo，
         # 连上后直接 SUBSCRIBE，认证服务器回 -NOAUTH 使场景全废；修复后连接即
         # AUTH（有用户名用 `AUTH <user> <pass>`，Redis 6+ ACL）。+OK 才继续。
+        # 断言对齐 _frame_command 的 RESP2 数组框架（review finding [major]：
+        # 旧 inline 文本 `AUTH alice s3cret` 会被空格拆参/注入，框架已改）。
         server, client = socket.socketpair()
         server.sendall(b"+OK\r\n")
         with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
@@ -4236,10 +4286,11 @@ class RedisPubSubTest(unittest.TestCase):
                 "127.0.0.1", 6379, username="alice", password="s3cret"
             )
         try:
+            expected = _redis_helpers._frame_command(["AUTH", "alice", "s3cret"])
             cmd = b""
-            while not cmd.endswith(b"\r\n"):
+            while len(cmd) < len(expected):
                 cmd += server.recv(1024)
-            self.assertEqual(cmd, b"AUTH alice s3cret\r\n", "连接后应先发 AUTH 而非 SUBSCRIBE")
+            self.assertEqual(cmd, expected, "连接后应先发 RESP2 数组框架的 AUTH 而非 SUBSCRIBE")
             # AUTH 确认后仍能正常订阅并收到消息。
             ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
             server.sendall(ack)
@@ -4257,16 +4308,17 @@ class RedisPubSubTest(unittest.TestCase):
             client.close()
 
     def test_auth_password_only_uses_default_user(self):
-        # 无用户名时退化为 `AUTH <pass>`（默认用户）。
+        # 无用户名时退化为 `AUTH <pass>`（默认用户），同样走 RESP2 数组框架。
         server, client = socket.socketpair()
         server.sendall(b"+OK\r\n")
         with mock.patch("bot._redis_helpers.socket.create_connection", return_value=client):
             pubsub = _redis_helpers.RedisPubSub("127.0.0.1", 6379, password="hunter2")
         try:
+            expected = _redis_helpers._frame_command(["AUTH", "hunter2"])
             cmd = b""
-            while not cmd.endswith(b"\r\n"):
+            while len(cmd) < len(expected):
                 cmd += server.recv(1024)
-            self.assertEqual(cmd, b"AUTH hunter2\r\n")
+            self.assertEqual(cmd, expected)
         finally:
             pubsub.stop()
             server.close()
