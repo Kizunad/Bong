@@ -1933,7 +1933,7 @@ mod tests {
             // Location + force-captured backtrace.
             let hook_fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let mut captured: Option<Box<dyn std::any::Any + Send>> = None;
-            for attempt in 0..30 {
+            for attempt in 0..60 {
                 hook_fired.store(false, std::sync::atomic::Ordering::SeqCst);
 
                 let scenario = ScenarioSingleClient::new();
@@ -1974,10 +1974,25 @@ mod tests {
 
                 // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过。带本地安装的 hook，
                 // 抓住一次 hook 竞争获胜的机会打出 overflow 的真实 Location。
+                // hook 的 stderr 会在 cargo 并行 capture 下丢失，故同时写文件，catch 后由
+                // 测试线程读回打印——文件路径是固定的，CI/本地通用。
                 let prev_hook = std::panic::take_hook();
                 let flag = hook_fired.clone();
+                let diag_path = std::path::PathBuf::from("/tmp/bong-ovf-diag.txt");
+                let _ = std::fs::remove_file(&diag_path);
                 std::panic::set_hook(Box::new(move |info| {
                     flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    use std::io::Write;
+                    if let Ok(mut f) =
+                        std::fs::OpenOptions::new().create(true).append(true).open(&diag_path)
+                    {
+                        let _ = writeln!(f, "[HOOK] {info}");
+                        let _ = writeln!(
+                            f,
+                            "[HOOK-BT] {:?}",
+                            std::backtrace::Backtrace::force_capture()
+                        );
+                    }
                     eprintln!("[HOOK] {info}");
                     eprintln!("[HOOK-BT] {:?}", std::backtrace::Backtrace::force_capture());
                 }));
@@ -1998,6 +2013,9 @@ mod tests {
                         captured = Some(payload);
                         if hook_fired.load(std::sync::atomic::Ordering::SeqCst) {
                             eprintln!("[chk] hook fired on attempt {attempt}; location above");
+                            if let Ok(contents) = std::fs::read_to_string(&diag_path) {
+                                eprintln!("[DIAG-FILE]<<\n{contents}>>[DIAG-FILE]");
+                            }
                             break;
                         }
                         eprintln!("[chk] hook lost race on attempt {attempt}; retrying");
