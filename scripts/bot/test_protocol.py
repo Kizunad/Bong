@@ -388,6 +388,24 @@ class ServerDataDecodeTest(unittest.TestCase):
             "leave 后 CoffinState 应解出 in_coffin=false、grade 缺席与 1.0 倍率",
         )
 
+    def test_proto_coffin_state_omitted_multiplier_defaults_to_one(self):
+        # 只有 field 1（in_coffin）的 payload：field 2 省略时必须解出声明默认 1.0，
+        # 而不是 0.0 / None / 抛错。此前两个测试总是编码 field 2（_server_data_
+        # coffin_state_bytes 恒发 _pb_fixed64(2, ...)），钉不住省略字段的解码契约。
+        decoded = decode_server_data_payload(_pb_message(78, _pb_varint(1, 1)))
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "coffin_state",
+                "in_coffin": True,
+                "lifespan_rate_multiplier": 1.0,
+                "coffin_grade": None,
+            },
+            "省略 field 2 的 CoffinState 应解出 lifespan_rate_multiplier 默认 1.0",
+        )
+
     def test_bot_dispatch_emits_entity_metadata_invisible_flag(self):
         bot = _bare_bot()
         body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + bytes(

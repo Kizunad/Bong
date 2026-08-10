@@ -30,8 +30,10 @@ from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     find_item,
     inventory_item_instances,
+    latest_inventory_snapshot,
     require_item,
     wait_inventory_contains_new_instance,
+    wait_inventory_snapshot_after,
 )
 
 DESCRIPTION = (
@@ -134,10 +136,25 @@ def _wait_settled(bot, timeout=20.0, tol=0.02):
     )
 
 
+def _coffin_still_in_inventory(bot) -> bool:
+    """mundane_coffin 是否仍在背包。等一张**新**快照判定（latest_inventory_snapshot
+    可能仍是放置前的旧事件流，会把「已消耗」误读成「未消耗」）；新快照超时 = 服务器静默
+    （放置被拒，物品未消耗，无消费快照可收），读 latest 兜底。"""
+    try:
+        snapshot = wait_inventory_snapshot_after(bot, last_event_time(bot), timeout=2.0)
+    except BotAssertionError:
+        snapshot = latest_inventory_snapshot(bot, timeout=1.0)
+    return find_item(snapshot, MUNDANE_COFFIN) is not None
+
+
 def _place_coffin(bot, coffin, px, py, pz):
     """放棺到附近空位：服务器对非空气坐标静默拒绝（不消费物品），逐个候选位置重试直到
     mundane_coffin 从背包消耗的 inventory_snapshot 出现，返回实际放置坐标（后续 enter/
-    leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。"""
+    leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。
+
+    成功判定必须绑定到本次请求：每次候选超时后先**结算**上一候选——若 mundane_coffin 已
+    不在背包（上一候选实际放置成功、消费快照迟到于 3s 等待），返回上一候选坐标，绝不让
+    上一候选的成功被误记到当前候选（否则 enter/leave 会指向 registry 中不存在的坐标）。"""
     candidates = [
         (px - PLACE_OFFSET, py, pz),
         (px + PLACE_OFFSET, py, pz),
@@ -148,7 +165,11 @@ def _place_coffin(bot, coffin, px, py, pz):
         (px, py + 1, pz - PLACE_OFFSET),
         (px, py + 1, pz + PLACE_OFFSET),
     ]
+    last_tried = None
     for x, y, z in candidates:
+        if last_tried is not None and not _coffin_still_in_inventory(bot):
+            return last_tried
+        last_tried = (x, y, z)
         anchor = last_event_time(bot)
         bot.intent(
             {
@@ -236,25 +257,10 @@ def run(env) -> None:
         # ── repeat enter 拒绝：无二次状态突变、位置不动 ────────────────────
         anchor = last_event_time(bot)
         bot.intent({"type": "coffin_enter", "v": 1, "x": lower[0], "y": lower[1], "z": lower[2]})
-        time.sleep(2.0)
-        with bot._lock:
-            extra_states = [
-                e
-                for e in bot.events
-                if e.kind == "server_data"
-                and e.data["payload_type"] == "coffin_state"
-                and e.t > anchor
-            ]
-            extra_metadata = [
-                e
-                for e in bot.events
-                if e.kind == "entity_metadata" and e.t > anchor
-            ]
-        if extra_states or extra_metadata:
-            raise AssertionError(
-                f"repeat enter 应被 current_coffin 静默拒绝，实际窗口内出现 "
-                f"{len(extra_states)} 条 CoffinState / {len(extra_metadata)} 条 metadata"
-            )
+        # 静默窗口滤到 bot 自身实体且 flags 非 None 的 metadata（与 _assert_silent_window
+        # 同口径）：全局 entity_metadata 流里其他 tracked 实体的元数据包（flags=None）
+        # 与棺状态无关，不得当作重复 enter 被拒的状态转变证据。
+        _assert_silent_window(bot, anchor, "repeat CoffinEnter")
         if not _approx(bot.position[0], in_coffin_pos[0]) or not _approx(
             bot.position[1], in_coffin_pos[1]
         ) or not _approx(bot.position[2], in_coffin_pos[2]):
