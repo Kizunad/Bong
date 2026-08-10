@@ -10,6 +10,12 @@ payload 在**解码层整包丢弃**（warn log），根本不会进 `handle_cli
 探针窗口内无任何玩法副作用（server_data / chat / vfx 均未出现，且探针后背包
 快照指纹不变）—— 超长包在解码层被丢弃，未产生任何玩法副作用；之后一个合法
 请求仍被正常处理（拒绝没有毒化连接）。
+
+反向锁定**正向边界**：恰好 `MAX_PAYLOAD_SIZE`（32767）字节的结构合法请求必须被
+**接受** —— 用 JSON 空白（词法允许 token 间任意空白，serde_json 忽略）把合法
+`set_meridian_target`（meridian="lung"）填充到恰好 32767 字节，照常解出并被
+handler 处理，回推「已收到经脉目标」聊天确认。若解码器把上限误降到 32767 或更低，
+该请求会被整包丢弃、确认不出现 —— 覆盖 review finding 1 指出的缺测边界。
 """
 
 import json
@@ -26,6 +32,20 @@ PROBES = [
     ("恰好超 1 字节（32768B）", MAX_PAYLOAD_SIZE + 1),
     ("远超上限（200_000B）", 200_000),
 ]
+
+
+def _valid_payload_padded_to(size: int) -> bytes:
+    """恰好 ``size`` 字节的结构合法 ClientRequestV1（set_meridian_target）。
+
+    JSON 词法允许 token 间任意空白（空格/TAB/LF/CR），serde_json 忽略之 —— 在合法
+    请求最后一个值后填充空格到恰好 ``size`` 字节，语义不变：meridian="lung" 被
+    handler 接受并回推「已收到经脉目标」聊天确认。32768 字节即被 valence 解码层
+    整包丢弃，故 32767 是「解码通过 + 被处理」能同时成立的最大尺寸 —— 正向锁定
+    边界（review finding 1）。
+    """
+    base = json.dumps({"v": 1, "type": "set_meridian_target", "meridian": "lung"})
+    assert len(base) < size
+    return (base[:-1] + " " * (size - len(base)) + base[-1:]).encode("utf-8")
 
 
 def run(env) -> None:
@@ -72,5 +92,23 @@ def run(env) -> None:
                 "超长 payload 探针后背包快照指纹变化：某个超长包被部分处理了，"
                 f"探针前={pre_fingerprint} 探针后={post_fingerprint}"
             )
+
+        # ---- 正向边界：恰好 MAX_PAYLOAD_SIZE(32767) 字节的结构合法请求必须被接受。
+        # JSON 空白填充到恰好 32767 字节（serde_json 忽略空白），meridian="lung"
+        # 照常解出 → handler 回推「已收到经脉目标」聊天确认（t > sent_at 保证确系
+        # 本次请求的响应）。若解码器把上限误降到 32767 或更低，该请求被整包丢弃、
+        # 确认不出现 —— 补上 review finding 1 指出的缺测正向边界。
+        boundary_sent_at = bot.events[-1].t if bot.events else 0.0
+        bot.send_payload(
+            "bong:client_request", _valid_payload_padded_to(MAX_PAYLOAD_SIZE)
+        )
+        bot.wait_for(
+            lambda e: e.kind == "chat"
+            and "已收到经脉目标" in e.data["text"]
+            and e.t > boundary_sent_at,
+            timeout=10.0,
+            description=f"恰好 {MAX_PAYLOAD_SIZE}B 的合法请求被接受（收到经脉目标聊天确认）",
+        )
+        bot.assert_alive("恰好 32767B 边界合法请求被接受后")
 
         assert_valid_request_still_works(bot)

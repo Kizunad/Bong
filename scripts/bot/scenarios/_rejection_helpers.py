@@ -24,16 +24,20 @@ import time
 
 from bot.bot import BotAssertionError  # noqa: F401  # 断言失败类型由场景抛出
 
-# 连接同步类 server_data payload type 与 vfx event_id 的显式兜底集合：这些签名由
+# 连接同步类 server_data payload type 与 vfx event_id 的**显式**集合：这些签名由
 # Changed/周期驱动的系统推送（无论 client 发什么都会出现），首次出现可能晚于窗口
 # 起点、落在探针窗口内（实跑观察到 zone_info / cultivation_absorb vfx 在 join 后
-# 6-10s 才触发）。完整的连接同步集合由 ``_ambient_signatures_in_window`` 从窗口
-# 起点前的已有事件里自校准得出；其余 server_data / vfx / chat 均视为响应式反馈。
+# 6-10s 才触发）。**只认这份显式集合** —— 窗口起点前"见过某类型"不自证它 ambient：
+# 同类型的类型也可能由请求处理器发出（如 inventory_snapshot 既是 join 同步也是
+# 容器请求的 resync 响应），按"窗口前见过"自校准会把请求引发的响应误判成连接同步。
+# 其余 server_data / vfx / chat 一律视为响应式反馈。
 _AMBIENT_SERVER_DATA_TYPES = frozenset(
     {
-        "status_snapshot",  # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
-        "zone_info",        # 区域内 spirit_qi 等状态波动时重发（连接同步，非请求响应）
-        "player_state",     # 玩家灵气等状态变化时重发（连接同步，非请求响应）
+        "status_snapshot",    # Changed<StatusEffects> 驱动的 HUD 同步（status_snapshot_emit.rs）
+        "zone_info",          # 区域内 spirit_qi 等状态波动时重发（连接同步，非请求响应）
+        "player_state",       # 玩家灵气等状态变化时重发（连接同步，非请求响应）
+        "derived_attrs_sync",  # Changed<DerivedAttrs>/Changed<TribulationState> 驱动
+        # （derived_attrs_emit.rs，含 join 首次 attach）
     }
 )
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
@@ -65,44 +69,24 @@ def is_gameplay_side_effect(
     return False
 
 
-def _ambient_signatures_in_window(bot, since_t: float) -> tuple[frozenset, frozenset]:
-    """探针窗口的连接同步签名集合：``t <= since_t`` 已出现过的 server_data payload
-    type 与 vfx event_id，并上显式兜底集合。
-
-    窗口起点之前的事件与探针无关（探针还没发出），其签名属于连接同步 —— 这是自校准
-    基线：任何在探针发出前就出现过的签名，之后再次出现都不算探针副作用。显式兜底
-    覆盖 Changed/周期驱动、可能首次出现晚于窗口起点、落在窗口内的签名。
-    """
-    observed_data = {
-        event.data.get("payload_type")
-        for event in bot.events
-        if event.kind == "server_data" and event.t <= since_t
-    }
-    observed_vfx = {
-        event.data.get("event_id")
-        for event in bot.events
-        if event.kind == "vfx_event" and event.t <= since_t and event.data.get("event_id")
-    }
-    return (
-        frozenset(observed_data | _AMBIENT_SERVER_DATA_TYPES),
-        frozenset(observed_vfx | _AMBIENT_VFX_EVENT_IDS),
-    )
-
-
 def assert_no_gameplay_side_effect_since(bot, since_t: float, label: str) -> None:
     """断言 t > since_t 的已有事件中没有玩法副作用（server_data / chat / vfx）。
 
     干净拒绝契约第 3 条：坏请求在产生任何玩法副作用**之前**被拦截。若探针窗口内
     出现了任意副作用事件，说明某个坏请求被成功/部分处理了，直接抛带修复线索的
     BotAssertionError。调用时机是探针全部发出并 settle 之后 —— 该窗口内的副作用
-    此时必然已在 events 里，扫存量即可，不需要再等。连接同步流量由
-    ``_ambient_signatures_in_window`` 排除（窗口起点前已出现的签名 + 显式兜底集合）。
+    此时必然已在 events 里，扫存量即可，不需要再等。连接同步流量仅按显式集合
+    ``_AMBIENT_SERVER_DATA_TYPES`` / ``_AMBIENT_VFX_EVENT_IDS`` 排除 —— 类型是否
+    ambient 由"该系统是否独立于请求周期/Changed 驱动"判定，而不是由"窗口前是否
+    见过该类型"自校准（那会把请求触发的同类型响应误判成连接同步）。
     """
-    ambient_data, ambient_vfx = _ambient_signatures_in_window(bot, since_t)
     offenders = [
         event
         for event in bot.events
-        if event.t > since_t and is_gameplay_side_effect(event, ambient_data, ambient_vfx)
+        if event.t > since_t
+        and is_gameplay_side_effect(
+            event, _AMBIENT_SERVER_DATA_TYPES, _AMBIENT_VFX_EVENT_IDS
+        )
     ]
     if offenders:
         raise BotAssertionError(
@@ -205,10 +189,14 @@ def fire_probes_and_keep_connection(
     sent_at = bot.events[-1].t if bot.events else 0.0
     for probe_name, send in probes:
         send()
+    # 心跳断言锚定在**全部探针发出之后**的时刻，而不是窗口起点 sent_at：异步 reader
+    # 可能在 sent_at 之后、首个探针发出之前追加一条周期性 keepalive —— 若以 sent_at
+    # 为锚，那条 keepalive 会冒充"拒绝后的心跳"，掩盖 server 在拒绝后不再心跳的事实。
+    probe_done_at = bot.events[-1].t if bot.events else 0.0
     time.sleep(settle_s)
     bot.assert_alive(f"{label} 探针发出后 {settle_s:.1f}s 窗口内无断连")
     assert_no_gameplay_side_effect_since(bot, sent_at, f"{label} 探针窗口")
-    wait_keepalive_after(bot, sent_at)
+    wait_keepalive_after(bot, probe_done_at)
     bot.assert_alive(f"{label} 心跳往返后仍存活")
 
 

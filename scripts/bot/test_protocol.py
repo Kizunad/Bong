@@ -1947,6 +1947,22 @@ class RejectionHelperTest(unittest.TestCase):
                 bot, "测试", [("p1", lambda: None)], settle_s=0.0
             )
 
+    def test_fire_probes_fails_when_keepalive_predates_probe_completion(self):
+        # 异步 reader 在 sent_at（探针前锚）之后、探针全部发出之前追加了一条周期性
+        # keepalive：心跳断言必须以探针发出完成为锚，这条探针前 keepalive 不能冒充
+        # 拒绝后的心跳 —— 若探针导致 server 遗忘连接且不再心跳，断言必须失败。
+        bot = _RejectionFakeBot([_FakeEvent(2.0, "game_join", {})])
+
+        def keepalive_during_probes():
+            # 模拟 reader 在探针发送期间收到 keepalive（t=2.5 > sent_at=2.0，但
+            # 早于探针发出完成时刻 probe_done_at）。
+            bot.events.append(_FakeEvent(2.5, "keepalive", {"id": 7}))
+
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", keepalive_during_probes)], settle_s=0.0
+            )
+
     def test_fire_probes_fails_when_probe_produces_gameplay_side_effect(self):
         # 探针触发了玩法反馈（server 在探针后回推 inventory_snapshot）→ 断言必须失败：
         # 说明坏请求被成功/部分处理了，而不是在副作用产生前被拒绝。
@@ -2022,39 +2038,46 @@ class RejectionHelperTest(unittest.TestCase):
         )
         self.assertEqual(fired, ["p1"])
 
-    def test_passive_vfx_and_seen_vfx_are_not_side_effect(self):
-        # 被动/周期 vfx（灵气回充粒子 bong:cultivation_absorb）不算副作用；探针窗口
-        # 起点前已出现过的 vfx event_id（自校准基线）也不算。未出现过的响应式 vfx
-        #（如 combat_hit）必须被标记。
+    def test_passive_vfx_ambient_and_any_responsive_vfx_in_window_flagged(self):
+        # 被动/周期 vfx（灵气回充粒子 bong:cultivation_absorb，显式集合）不算副作用；
+        # 响应式 vfx（如 combat_hit）只要落在探针窗口内就必须被标记 —— 窗口起点前
+        # 见过同类型**不自证**它 ambient（同一 event_id 既可由 join 期间被动触发，
+        # 也可由请求处理触发，不能按"见过"放行）。
         ambient = _RejectionFakeBot([_FakeEvent(6.5, "vfx_event", {"event_id": "bong:cultivation_absorb"})])
         assert_no_gameplay_side_effect_since(ambient, since_t=1.0, label="测试")
-        seen = _RejectionFakeBot(
+        seen_before_window = _RejectionFakeBot(
             [
                 _FakeEvent(0.5, "vfx_event", {"event_id": "bong:combat_hit"}),
                 _FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"}),
             ]
         )
-        assert_no_gameplay_side_effect_since(seen, since_t=1.0, label="测试")
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(seen_before_window, since_t=1.0, label="测试")
         fresh = _RejectionFakeBot([_FakeEvent(3.0, "vfx_event", {"event_id": "bong:combat_hit"})])
         with self.assertRaises(BotAssertionError):
             assert_no_gameplay_side_effect_since(fresh, since_t=1.0, label="测试")
 
-    def test_payload_type_seen_before_window_is_ambient(self):
-        # 自校准基线：探针窗口起点前已出现过某 payload type → 它是连接同步（探针还没
-        # 发出，不可能是探针导致的），窗口内再次出现不算副作用；从未出现过的类型
-        # 才算响应式反馈，必须被标记。
+    def test_payload_type_seen_before_window_is_not_automatically_ambient(self):
+        # 窗口起点前见过某 payload type **不自证**它是连接同步：inventory_snapshot
+        # 既是 join 同步也是容器请求的 resync 响应 —— 若探针窗口内再次出现，说明某个
+        # 坏请求被成功/部分处理并产生了响应，必须标记为副作用（拒绝路径断言点）。
         bot = _RejectionFakeBot(
             [
-                _FakeEvent(0.5, "server_data", {"payload_type": "derived_attrs_sync"}),
-                _FakeEvent(3.0, "server_data", {"payload_type": "derived_attrs_sync"}),
+                _FakeEvent(0.5, "server_data", {"payload_type": "inventory_snapshot"}),
+                _FakeEvent(3.0, "server_data", {"payload_type": "inventory_snapshot"}),
             ]
         )
-        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
-        fresh = _RejectionFakeBot(
+        with self.assertRaises(BotAssertionError):
+            assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
+
+    def test_explicit_ambient_payload_type_in_window_is_not_side_effect(self):
+        # 显式集合里的连接同步类型（derived_attrs_sync 为 Changed 驱动，见
+        # derived_attrs_emit.rs）即使首次出现在窗口内也不算副作用 —— 只有显式集合
+        # 才是 ambient 的依据，不是"窗口前见过"。
+        bot = _RejectionFakeBot(
             [_FakeEvent(3.0, "server_data", {"payload_type": "derived_attrs_sync"})]
         )
-        with self.assertRaises(BotAssertionError):
-            assert_no_gameplay_side_effect_since(fresh, since_t=1.0, label="测试")
+        assert_no_gameplay_side_effect_since(bot, since_t=1.0, label="测试")
 
     def test_valid_request_ignores_earlier_chat_and_accepts_response_after_send(self):
         # 更早的同文广播（坏请求探针被错误接受时留下的副作用）已在 events 里，
@@ -3329,6 +3352,54 @@ class BotChatPacketTest(unittest.TestCase):
                     [],
                     f"越界 timestamp 不得发送任何包，timestamp={timestamp_millis}, sent={sent!r}",
                 )
+
+
+class CustomPayloadBoundaryTest(unittest.TestCase):
+    """valence `CustomPayloadC2s.data` 的 `Bounded<RawBytes, 32767>` 正向边界。
+
+    review finding 1：网络场景只测了 32767 以上的拒绝侧，缺少"恰好 32767 字节的
+    结构合法请求"的正向测试。这里 pin 两点：(1) Bot 能完整编码 32767 字节 data 的
+    custom payload 帧（data 段字节数精确等于 32767，不丢不裁）；(2) 用 JSON 空白
+    填充到恰好 32767 字节的合法 set_meridian_target 仍是同一语义请求（serde_json
+    忽略 token 间空白，meridian="lung" 原样解出）—— 场景用它证明解码层放行。
+    """
+
+    def test_custom_payload_carries_exactly_max_payload_size_data(self):
+        from bot.scenarios.network_payload_oversized import MAX_PAYLOAD_SIZE
+
+        bot = _bare_bot()
+        sent: list[tuple[int, bytes]] = []
+        bot._send = lambda packet_id, body, _sent=sent: _sent.append((packet_id, body))
+
+        bot.send_payload("bong:client_request", b"A" * MAX_PAYLOAD_SIZE)
+
+        self.assertEqual(len(sent), 1, "恰好 32767B 的 custom payload 必须恰好一帧")
+        packet_id, body = sent[0]
+        self.assertEqual(packet_id, mc.C2S_CUSTOM_PAYLOAD)
+        reader = mc.Reader(body)
+        self.assertEqual(reader.string(), "bong:client_request")
+        self.assertEqual(
+            len(reader.rest()),
+            MAX_PAYLOAD_SIZE,
+            "data 段字节数必须精确等于 MAX_PAYLOAD_SIZE，不丢不裁",
+        )
+
+    def test_valid_meridian_request_padded_to_exactly_max_payload_size(self):
+        from bot.scenarios.network_payload_oversized import (
+            MAX_PAYLOAD_SIZE,
+            _valid_payload_padded_to,
+        )
+
+        data = _valid_payload_padded_to(MAX_PAYLOAD_SIZE)
+        self.assertEqual(
+            len(data),
+            MAX_PAYLOAD_SIZE,
+            "填充后的合法请求必须恰好 MAX_PAYLOAD_SIZE 字节",
+        )
+        # JSON 空白被 serde_json 忽略 → 语义不变：仍是合法 set_meridian_target。
+        request = json.loads(data)
+        self.assertEqual(request["type"], "set_meridian_target")
+        self.assertEqual(request["meridian"], "lung")
 
 
 class RespawnDecodeTest(unittest.TestCase):
