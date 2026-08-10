@@ -19,6 +19,11 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   有界窗口内**任何**新建 kind=160 实体即红，**不按位置过滤**——拒绝请求却把 marker
   错放到偏移/默认坐标的错误实现同样红（review finding [major]：旧实现按目标位置过滤，
   「目标附近无 spawn」≠「拒绝即无 spawn」；位置匹配只用于正向放置断言）。
+  负向断言只见证「无 client-visible spawn」：先插入 registry 双键再早退（不消费、不
+  spawn）的错误实现能全过——故 stale 拒绝段后必须对**被拒坐标 stale_pos** 做
+  state-applying 复查（合法实例成功放置 + marker spawn）：拒绝时错误登记双键会使复查
+  以 already-registered 拒绝而超时红，暴露 registry-only 残留（review finding [major]：
+  场景此前只在原 place_pos 做 destroy/re-place 复查，被拒坐标从未被重新放置/破坏）。
 - `coffin_place` 必须用真实 instance_id（inventory_item_by_instance 按 id 校验）；
   已消费的 stale id 同样拒绝、分文不动（review finding [major]：全场景只用合法 id，
   无视 item_instance_id 吞掉可用棺材的实现能全绿）。
@@ -26,6 +31,9 @@ plan-coffin-v1 放置链路（client_request_handler.rs → handle_coffin_place_
   同一坐标再放置必须成功（"destroy path leaves nothing behind"）；且**空→空重复破坏**
   必须是无副作用 no-op：不 panic / 不断连 / 不再 despawn / 不扣料 / 不加料
   （review finding [major]：只演练了 populated→empty 一次，empty→empty 从未被断言）。
+  首次 break 的全量库存基线必须锚在 break **之前**（review finding [major]：旧基线取在
+  break 完成之后，despawn 时 grant 非棺回收料的错误实现把料并入基线、重复 break 的
+  total_baseline+1 断言照过）——break 后 +1 give 快照的全量必须恰好 = break 前全量 + 1。
 
 **世界侧观察（本场景对实体生命周期的直接断言，非代理）**：
 - 放置成功必须在世界 spawn mundane_coffin marker 渲染实体（entity kind=160，
@@ -554,6 +562,27 @@ def run(env) -> None:
             description="stale instance id 拒绝路径不得 spawn coffin marker",
         )
 
+        # review finding [2]（round 5）：拒绝路径只断言「无 spawn + 计数不变」——一个
+        # 在 stale_pos 拒绝时先插入 registry 双键（lower/upper）再早退（不消费实例、
+        # 不 spawn marker）的错误实现两个负向断言全过；场景此后从未在 stale_pos 放置
+        # /破坏，最终 destroy/re-place 只复查原 place_pos，invisible registry 残留
+        # 永不暴露。拒绝段后必须对**被拒坐标**做 state-applying 复查：用合法实例在
+        # stale_pos 成功放置——若拒绝时错误登记了双键，此放置会以 already-registered
+        # 拒绝、marker 不 spawn、实例不消费 → _wait_coffin_marker_spawn 超时红。
+        stale_recheck_give = last_event_time(bot)
+        stale_recheck_instance = _give_coffin_instance(bot, stale_recheck_give)
+        stale_recheck_anchor = last_event_time(bot)
+        _send_coffin_place(bot, stale_pos, stale_recheck_instance)
+        _wait_coffin_marker_spawn(
+            bot,
+            stale_pos,
+            stale_recheck_anchor,
+            description=(
+                "stale 拒绝段后在被拒坐标 stale_pos 成功放置并 spawn marker"
+                "（证明拒绝未在 registry 留残留，否则此处 already-registered 超时红）"
+            ),
+        )
+
         # ── 负向：异维 → 逐字 chat 拒绝，实例保留 ───────────────────────
         tp_anchor = last_event_time(bot)
         bot.cmd("tpdim tsy")
@@ -610,11 +639,17 @@ def run(env) -> None:
             timeout=_STEP_TIMEOUT,
             description="返回主世界 Respawn",
         )
-        _give_barrier(
+        pre_break_snapshot = _give_barrier(
             bot,
             7,
             description="异维拒后 +1 give 应恰好 count==7，实例未被异维请求偷扣",
         )
+        # review finding [1]（round 5）：首次成功 break 的库存副作用基线必须锚在
+        # break **之前**。旧代码 total_baseline 取在 break 完成之后——错误实现
+        # despawn marker 时 grant 非棺回收料，该料被并入基线，重复 break 的
+        # total_baseline+1 断言照样过。此 count==7 快照（异维拒后权威状态、break
+        # intent 之前）即 break 前全量基线，供 break 后 +1 give 快照与之比对。
+        total_pre_break = _total_items(pre_break_snapshot)
 
         # ── 破坏：CoffinBreak 单发清场，同一坐标可重放 ──────────────────
         break_anchor = last_event_time(bot)
@@ -640,6 +675,15 @@ def run(env) -> None:
             bot,
             8,
             description="首次破坏后 +1 give 应恰好 count==8（破坏只清世界实体，不碰背包实例）",
+        )
+        # review finding [1]（round 5）：break 后 +1 give 的 pre_second 全量必须恰好
+        # = break 前基线 + 1（仅 give 的这口棺）。错误实现若在首次 break despawn
+        # marker 时 grant 非棺回收料，_total_items 会多出 1 → 红——这就是「break 前
+        # vs break 后立即比较」缺口补上的直接断言，且不被任何后续 give 掩盖。
+        assert _total_items(pre_second) == total_pre_break + 1, (
+            f"首次 coffin_break 不得产生库存副作用：break 前全量 {total_pre_break}，"
+            f"break 后 +1 give 应恰好 {total_pre_break + 1}（仅 give 的这口棺），"
+            f"实际 {_total_items(pre_second)}——despawn 时 grant 回收料的错误实现在此红"
         )
         total_baseline = _total_items(pre_second)
         noop_anchor = last_event_time(bot)
