@@ -1932,7 +1932,27 @@ mod tests {
             // 种子客户端从 bundle 起 old_visible_chunk_layer 就是 PLACEHOLDER → 它的
             // join layer-change 会把任何已存在的 view chunk 全量 inc。直接移出舞台，
             // 保证 tick 1 的消息丢弃阶段没有任何客户端把 layer 当 old layer。
+            // DIAGNOSTIC: bevy catches system panics and resume_unwind's an opaque
+            // payload (hook never fires for the inner panic), so surface the real
+            // message/location here. Removed before the PR.
+            let hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let payload = info.payload();
+                let msg = payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| format!("{payload:?}"));
+                eprintln!(
+                    "[PANIC-HOOK] loc={:?} msg={msg}",
+                    info.location()
+                );
+                hook(info);
+            }));
+
+            eprintln!("[chk] despawn scenario client");
             app.world_mut().despawn(scenario.client);
+            eprintln!("[chk] despawned; insert chunk");
 
             // chunk 先于所有客户端存在：LOAD 消息 staged → tick 1 ready → 无人消费
             // → unready 丢弃。viewer_count 从始至终是 0。
@@ -1942,7 +1962,9 @@ mod tests {
                 .insert_chunk(ChunkPos::new(0, 0), UnloadedChunk::new());
 
             // tick 1：LOAD 消息被 readied 后无人投递、被 unready 清空。
+            eprintln!("[chk] before tick 1");
             app.update();
+            eprintln!("[chk] after tick 1");
             assert_eq!(
                 app.world()
                     .get::<ChunkLayer>(layer)
@@ -1960,6 +1982,7 @@ mod tests {
             // `&mut Client`，两条 inc 路径全部跳过；`cleanup_chunks_after_client_despawn`
             // 只要求 ClientMarker + Despawned，仍会对 view 内 chunk 执行 dec → 精确落在
             // 「chunk 已存在但从未被该客户端计数」的 cleanup underflow 状态。
+            eprintln!("[chk] spawn late-joiner (no Client, Despawned)");
             let (mut bundle, _helper) = valence::testing::create_mock_client("late-joiner");
             bundle.visible_chunk_layer.0 = layer;
             let client = app.world_mut().spawn(bundle).id();
@@ -1972,9 +1995,12 @@ mod tests {
             app.world_mut()
                 .entity_mut(client)
                 .remove::<valence::prelude::Client>();
+            eprintln!("[chk] late-joiner ready");
 
             // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过（不 panic、不改变计数）。
+            eprintln!("[chk] before tick 2");
             app.update();
+            eprintln!("[chk] after tick 2");
             let count_after = app
                 .world()
                 .get::<ChunkLayer>(layer)
