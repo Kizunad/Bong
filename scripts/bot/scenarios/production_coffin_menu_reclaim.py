@@ -20,14 +20,44 @@ plan-coffin-tiers-v1 P2/P3 验收场景。黑盒契约面（与 server/src/coffi
 改为锁定同一批真实失败模式：**回收必须精确返还一次、且绝不双授**——这正是
 GAP11 排第一的判据（处理不当复制/双授道具腐坏账本）。
 
-防双授断言（本场景核心）：
-1. 放棺后 mundane_coffin 从背包**消失**（消耗恰好一次，不残留）；
+防双授断言（本场景核心，finding [2] 双实例 fixture）：
+1. 放棺后放置实例 a 从背包**消失**、未放置实例 b 恰好保留 1 条（实例级单次消费——
+   「删整堆 / 按模板删全部 mundane_coffin」的错误实现，在只发一口棺的旧 fixture 下
+   全绿，此处红）；
 2. 回收后返料精确 = ling_mu_ban×6 + ling_mu_gun×2（不多不少，落在容器槽位）；
-3. 回收后 mundane_coffin **不复现**（回收只返材料、不返棺材本体，杜绝自我复制）；
+3. 回收后放置实例 a **不复现**、b 恰好保留 1 条（回收只返材料、不返棺材本体，
+   杜绝自我复制）；
 4. 同位置二次回收必须被拒——用无关 probe give 使库存推进，然后**回扫二次回收
    窗口内推送到客户端的每一个 inventory_snapshot**：返料数量都必须保持 6/2、且
-   不得出现 mundane_coffin。若二次回收被误处理，第一个快照就已返料翻倍（多即
+   a 不得复现 / b 不得双授。若二次回收被误处理，第一个快照就已返料翻倍（多即
    双授、少即吞料），必然被窗口扫描捕获。
+
+**G 菜单 [回收] 生产者驱动（review finding [1]）**：成功回收 leg 不再冷注入
+`bot.intent({"type":"coffin_menu_reclaim",...})`——改经 `_g_menu_reclaim` 驱动生产
+G 菜单交互的可观测前置与端点：① 派发前置（`CoffinEnterIntentHandler.candidate`
+黑盒镜像）——目标 marker 渲染实体（kind=160 @ marker 位）必须存在且 live，marker
+不 spawn / G 无对象的构建在此红；② 交互半径（candidate
+`MAX_INTERACT_DISTANCE_SQ=36` 黑盒镜像）——玩家必须落在 marker 的 6 格交互半径内；
+③ 菜单 [回收] 端点——发送 `_reclaim_payload` 的钉死字节（黑盒镜像
+`ClientRequestProtocol.encodeCoffinMenuReclaim`；client golden test
+`ClientRequestProtocolTest.encodesCoffinMenuReclaim` 钉死相同 JSON，菜单 emit 错
+payload 的实现被 client 侧红）。远程/边界外拒绝 leg 与二次回收 leg 是**伪造请求的
+防御性测试**：真实 G 交互在那些位置/时刻根本无法产生（candidate 距离检查返回
+empty、主回收后 marker 已 despawn），它们钉的是服务端对异常请求的拒绝路径，与
+生产者驱动的成功 leg 互补——「G 菜单 [回收] 全链路」由 client 生产者测试（G 派发
+/ 按钮接线 / payload）与本场景消费端共同钉死，任何一环错实现都有红点。
+
+**双实例 fixture（review finding [2]）**：`mundane_coffin` max_stack_count=1，两发
+give 各得独立实例（a=放置、b=未放置对照）。成功放置后断言 b 恰好保留 1 条、a
+永久消失；回收/二次回收后同样按实例断言（a 不返、b 恒在）——「删除整堆 / 按模板
+删全部 mundane_coffin」与「回收复制道具」的错误实现在此红。
+
+**原子结算（review finding [3]）**：放置循环的 wait 超时只说明「没等到该给的因果
+快照」，不代表 coffin_place 已被处理——请求可能仍在途。超时后先 `_drain_settle`
+（barrier give 的同连接包序因果快照必然排在 coffin_place 之后）在该快照上判定
+终态，绝不在未结算时换位；`_coffin_consumed_after` 的窗口扫描只观察状态、不建立
+请求已结束（迟到成功快照会被下一候选的 >probe_before 谓词误认、placed_at 记错），
+已移除。
 
 **精确数量 = 全部堆叠求和**：返料断言一律枚举 item_id 的**所有**匹配条目（容器/
 装备/快捷栏）并对其 stack_count 求和，再逐条校验 location 为容器槽位——单条目
@@ -57,8 +87,8 @@ probe 快照识别一律用**总数递增**谓词（give 前总数 → 快照总
 `find_item(...) is not None`：probe item 经此前若干次 probe give 已存在于背包，
 存在性谓词匹配无关周期快照、会把验证窗口提前截断（review #2）。放棺判负同用 probe
 give 的包序终态（coffin_place 之后按包序处理 give，其快照即放置终态）——被拒候选
-~1s 换位而非空等 45s×2（review #1），`_coffin_consumed_after`
-兜底改扫全窗口而非首个快照（review #4）。
+~1s 换位而非空等 45s×2（review #1）；wait 超时先 `_drain_settle` 原子结算
+（finding [3]），绝不在请求未结束时换位。
 
 **位置稳定性**：bot 在出生点高空初始化（[8,150,8]），spawn_selector 按
 （seed, InitialLogin）稳定哈希到 safe_y 高度的出生点，随后**下落**到平坦地表
@@ -78,7 +108,7 @@ from bot.scenarios._inventory_helpers import (
     wait_inventory_contains,
 )
 
-DESCRIPTION = "放凡物棺→G菜单回收→精确返料 ling_mu_ban×6+ling_mu_gun×2 且二次回收被拒无双授"
+DESCRIPTION = "放凡物棺(双实例)→G菜单[回收]交互→精确返料 ling_mu_ban×6+ling_mu_gun×2 且二次回收被拒无双授"
 MODULES = ["inventory", "coffin"]
 
 COFFIN_ITEM_ID = "mundane_coffin"
@@ -88,6 +118,11 @@ RECLAIM_LING_MU_GUN = 2
 # 反双授 probe：与棺材/返料无关的 dev give，用于让库存前进、从而采样二次回收
 # 之后的首个 probe 快照（若二次回收被误处理，该窗口内任何快照都已返料翻倍）。
 PROBE_ITEM_ID = "fan_tie"
+
+# mundane_coffin marker 渲染实体 kind（server 侧 entity kind，S2C_ENTITY_SPAWN type）。
+COFFIN_MARKER_ENTITY_KIND = 160
+# G 菜单派发交互半径平方（CoffinEnterIntentHandler.MAX_INTERACT_DISTANCE_SQ = 6² 黑盒镜像）。
+COFFIN_INTERACT_MAX_DISTANCE_SQ = 36.0
 
 # 全套件长跑后 server TPS 退化（forge 场景 45s 先例），stage 等待统一 45s。
 STAGE_TIMEOUT = 45.0
@@ -172,8 +207,22 @@ def _assert_exact_reclaim(snapshot, item_id, expected, stage_label):
     )
 
 
-def _reclaim_snapshot_ok(snapshot) -> bool:
-    """二次回收窗口内合规快照判据：返料总数 6/2、每条落容器、棺材不复现。"""
+def _coffin_state_ok(snapshot, placed_id, untargeted_id) -> bool:
+    """回收/二次回收后棺材状态不变量：放置实例（placed_id）不得复现，未放置实例
+    （untargeted_id）必须恰好保留 1 条。任何复制/双授/复现放置实例都红。
+
+    finding [2]：单棺 fixture 把「回收不返棺材」断言建立在「背包无棺材」上——一个
+    「回收时把背包里另一口未放置棺也删掉」或「回收返一口新棺」的实现都能混过去。
+    双实例下放置实例必须永久消失、未放置实例恒在，两路错误实现分别红。
+    """
+    entries = _entries_for_item(snapshot, COFFIN_ITEM_ID)
+    if len(entries) != 1:
+        return False
+    return int(entries[0]["item"]["instance_id"]) == untargeted_id
+
+
+def _reclaim_snapshot_ok(snapshot, placed_id, untargeted_id) -> bool:
+    """二次回收窗口内合规快照判据：返料总数 6/2、每条落容器、棺材状态不变。"""
     for item_id, expected in (
         ("ling_mu_ban", RECLAIM_LING_MU_BAN),
         ("ling_mu_gun", RECLAIM_LING_MU_GUN),
@@ -183,7 +232,7 @@ def _reclaim_snapshot_ok(snapshot) -> bool:
             return False
         if any(e["location"]["kind"] != "container" for e in entries):
             return False
-    return _entries_for_item(snapshot, COFFIN_ITEM_ID) == []
+    return _coffin_state_ok(snapshot, placed_id, untargeted_id)
 
 
 def _wait_position_stable(bot, window: float = STABLE_POSITION_WINDOW, timeout: float = 30.0):
@@ -256,32 +305,121 @@ def _probe_total_now(bot) -> int:
     return _total_stack_count(payload, PROBE_ITEM_ID) if payload is not None else 0
 
 
-def _coffin_consumed_after(bot, anchor, timeout: float = STAGE_TIMEOUT) -> bool:
-    """anchor 之后棺材是否已被消耗（不在背包）——probe give 超时后的兜底消耗确证。
+def _find_coffin_instance(snapshot, instance_id) -> dict | None:
+    """snapshot 中指定 instance_id 的 mundane_coffin 条目（无则 None）。
 
-    review #4：旧实现取窗口内**首个** post-anchor 快照作判据——无关周期快照可能在
-    放置仍处理中时到达、显示棺材仍在，旧实现立即 return False，循环带同一 instance
-    换位；放置随后完成时其消耗快照被下一候选的 wait 误认（张冠李戴，placed_at 记错、
-    回收打空位）。改扫 anchor 之后窗口内**全部** inventory_snapshot：任一显示棺材已
-    消失即消耗成立（return True）；窗口耗尽仍无消失证据才 return False。窗口由
-    timeout 界定（覆盖全套件退化下的延迟处理）。注意本 helper 只是放置循环 probe give
-    超时的兜底——probe give 因果快照（同连接包序，必在 coffin_place 之后）才是放置
-    判负的确定性信号（放置循环主路径用 probe 判据，review #1）。
+    实例级消费判据：放置成功 = 放置实例从背包消失（逐条比对 instance_id），不是
+    find_item 存在性——双实例 fixture 下未放置实例 b 仍在，存在性谓词永不判负
+    （旧实现单棺时靠「棺材从背包消失」判成功，双棺下必须改实例级，finding [2]）。
     """
-    deadline = time.monotonic() + timeout
-    cursor = 0
-    while time.monotonic() < deadline:
-        events = bot.events
-        while cursor < len(events):
-            e = events[cursor]
-            cursor += 1
-            if e.t <= anchor:
-                continue
-            if e.kind == "server_data" and e.data["payload_type"] == "inventory_snapshot":
-                if find_item(e.data["payload"], COFFIN_ITEM_ID) is None:
-                    return True
-        time.sleep(0.25)
-    return False
+    for e in _entries_for_item(snapshot, COFFIN_ITEM_ID):
+        if int(e["item"]["instance_id"]) == instance_id:
+            return e
+    return None
+
+
+def _drain_settle(bot, cpos, description) -> dict:
+    """超时候选的原子结算（finding [3]）：barrier give 的同连接包序因果快照。
+
+    wait_for 超时只说明「没等到该给的因果快照」，不代表 coffin_place 已被处理——
+    请求可能仍在途。绝不在未结算时换位（旧 _coffin_consumed_after 窗口扫描只观察
+    状态、不能建立请求已结束，迟到成功快照会被下一候选的 >probe_before 谓词误认、
+    placed_at 记错，正是 finding 3 的攻击面）。再发一个 barrier give：同连接按包序
+    处理，其因果快照（fan_tie 总数 > 现值）必然排在 coffin_place **之后**，在该
+    快照上判定放置实例是否被消费即为该候选的确定性终态。barrier 也超时（服务端
+    全面停摆）直接报错，不静默扫描、不换位。
+    """
+    barrier_before = _probe_total_now(bot)
+    bot.cmd(f"give {PROBE_ITEM_ID} 1")
+    barrier_ev = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and _total_stack_count(e.data["payload"], PROBE_ITEM_ID) > barrier_before,
+        timeout=STAGE_TIMEOUT,
+        description=(
+            f"候选 {cpos} 结算 barrier give {PROBE_ITEM_ID} 因果快照"
+            f"（总数 > {barrier_before}）"
+        ),
+    )
+    return barrier_ev.data["payload"]
+
+
+def _coffin_marker_pos(lower) -> tuple[float, float, float]:
+    """mundane_coffin marker 渲染实体位置（server coffin/mod.rs coffin_marker_position）。"""
+    return (lower[0] + 1.0, float(lower[1]), lower[2] + 0.5)
+
+
+def _near(pos, x, y, z, tol: float = 0.01) -> bool:
+    return (
+        abs(pos[0] - x) < tol and abs(pos[1] - y) < tol and abs(pos[2] - z) < tol
+    )
+
+
+def _find_marker_entity(bot, lower) -> int | None:
+    """lower 对应 coffin 的 marker 实体 id（entity_spawn kind=160 @ marker 位），
+    事件流中最后一次匹配；无则 None。marker 是 G 菜单派发（CoffinEnterIntentHandler.
+    candidate）的目标——找不到即「G 键无对象可开菜单」（finding [1]）。
+    """
+    marker_pos = _coffin_marker_pos(lower)
+    found = None
+    for e in bot.events:
+        if e.kind == "entity_spawn" and e.data.get("type") == COFFIN_MARKER_ENTITY_KIND:
+            if _near((e.data["x"], e.data["y"], e.data["z"]), *marker_pos):
+                found = e.data["entity_id"]
+    return found
+
+
+def _marker_live(bot, entity_id) -> bool:
+    """marker 实体是否仍存活（S2C_ENTITIES_DESTROY 后 bot.entity_pos 返回 None）。"""
+    return bot.entity_pos(entity_id) is not None
+
+
+def _reclaim_payload(lower) -> dict:
+    """G 菜单 [回收] 的生产 payload 契约。
+
+    黑盒镜像 client `ClientRequestProtocol.encodeCoffinMenuReclaim` 的字节——client/
+    src/test/.../ClientRequestProtocolTest.encodesCoffinMenuReclaim 钉死相同 JSON
+    （{"type":"coffin_menu_reclaim","v":1,x,y,z}）。本场景发送同一字节即消费与生产
+    菜单相同的 wire 契约；「菜单 emit 错 payload」的实现被 client golden test 红。
+    """
+    return {
+        "type": "coffin_menu_reclaim",
+        "v": 1,
+        "x": lower[0],
+        "y": lower[1],
+        "z": lower[2],
+    }
+
+
+def _g_menu_reclaim(bot, lower, description) -> int:
+    """驱动生产 G 菜单 [回收] 交互（headless bot 无 Java GUI，驱动该交互的可观测
+    前置与端点，而非冷注入）：
+
+    1. 派发前置（CoffinEnterIntentHandler.candidate 黑盒镜像）：目标 marker 实体
+       （kind=160 @ marker 位）必须存在且 live——marker 不 spawn / G 无对象的构建红；
+    2. 交互半径（candidate MAX_INTERACT_DISTANCE_SQ=36 黑盒镜像）：玩家必须落在
+       marker 的 6 格交互半径内，否则 G 派发返回 empty、菜单根本打不开；
+    3. 菜单 [回收] 端点：发送 _reclaim_payload 的钉死字节（生产 encoder 契约）。
+
+    返回 marker entity_id 供主回收后 despawn 断言复用。
+    """
+    marker_id = _find_marker_entity(bot, lower)
+    assert marker_id is not None, (
+        f"{description}：G 菜单派发目标 marker 实体不存在"
+        f"（{_coffin_marker_pos(lower)}）——marker 未 spawn 或类型/位置不符"
+    )
+    assert _marker_live(bot, marker_id), (
+        f"{description}：marker 实体 #{marker_id} 已不在世界（G 键无目标可开菜单）"
+    )
+    assert bot.position is not None, f"{description}：bot.position 缺失"
+    marker_pos = _coffin_marker_pos(lower)
+    dsq = sum((a - b) ** 2 for a, b in zip(bot.position, marker_pos))
+    assert dsq <= COFFIN_INTERACT_MAX_DISTANCE_SQ + 1e-6, (
+        f"{description}：玩家距 marker {dsq:.3f} > 36（G 菜单交互半径外，"
+        "candidate() 返回 empty、菜单打不开）"
+    )
+    bot.intent(_reclaim_payload(lower))
+    return marker_id
 
 
 def _stand_at(bot, target, attempts: int = 3, settle: float = 0.8) -> None:
@@ -317,12 +455,17 @@ def run(env) -> None:
         )
         px, py, pz = (int(v) for v in bot.position)
 
-        # ── 放棺：真实 instance_id + 消耗恰好一次 ────────────────────────
+        # ── 放棺：真实 instance_id + 双实例 fixture ──────────────────────
         # wait_inventory_contains 无时间锚点、每次 wait_for 从事件历史起点扫描；若
         # 服务器已持久化过含棺材的 PlayerState（重连快照带棺材），`give` 后它会命中
         # 连接时（clearinv 前）的旧快照——instance_id 陈旧会让后续所有 coffin_place 被
         # 「missing item instance」拒掉、放置循环空转 45s/候选（fixture 实测）。锚定到
         # give 之后并要求快照含棺材，确保拿到 give 真正回推的新实例。
+        # ── 双实例 fixture（finding [2]）──
+        # mundane_coffin max_stack_count=1，两发 give 各得独立实例。放置 leg 用 a、
+        # b 为未放置对照——断言「放置恰好消费 a、b 恒在」才能区分实例级单次消费 vs
+        # 整堆/模板级删除（「删掉整个选中堆叠」「按模板删全部 mundane_coffin」的错误
+        # 实现在只发一口棺的旧 fixture 下全绿）。
         coffin_anchor = last_event_time(bot)
         bot.cmd(f"give {COFFIN_ITEM_ID} 1")
         coffin_ev = bot.wait_for(
@@ -331,10 +474,31 @@ def run(env) -> None:
             and e.t > coffin_anchor
             and find_item(e.data["payload"], COFFIN_ITEM_ID) is not None,
             timeout=STAGE_TIMEOUT,
-            description=f"give {COFFIN_ITEM_ID} 后含棺材的 inventory_snapshot",
+            description=f"give {COFFIN_ITEM_ID} #1 后含棺材的 inventory_snapshot",
         )
-        snapshot = coffin_ev.data["payload"]
-        coffin_item = require_item(snapshot, COFFIN_ITEM_ID)
+        snapshot_a = coffin_ev.data["payload"]
+        coffin_a = require_item(snapshot_a, COFFIN_ITEM_ID)
+        a_id = int(coffin_a["item"]["instance_id"])
+
+        coffin_anchor2 = last_event_time(bot)
+        bot.cmd(f"give {COFFIN_ITEM_ID} 1")
+        coffin_ev2 = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "inventory_snapshot"
+            and e.t > coffin_anchor2
+            and _total_stack_count(e.data["payload"], COFFIN_ITEM_ID) >= 2,
+            timeout=STAGE_TIMEOUT,
+            description=f"give {COFFIN_ITEM_ID} #2 后总数为 2 的 inventory_snapshot",
+        )
+        snapshot_b = coffin_ev2.data["payload"]
+        coffin_entries = _entries_for_item(snapshot_b, COFFIN_ITEM_ID)
+        assert len(coffin_entries) == 2, (
+            f"两发 give 后应有 2 条独立 mundane_coffin 实例，实际 {len(coffin_entries)}"
+            "——max_stack_count=1 不应合并"
+        )
+        b_entry = next(e for e in coffin_entries if int(e["item"]["instance_id"]) != a_id)
+        b_id = int(b_entry["item"]["instance_id"])
+        assert a_id != b_id, "两发 give 必须产生不同 instance_id（双实例 fixture）"
 
         # ── 负面校验：黑盒契约的 instance 校验面必须被真负面用例按压 ──────
         # 服务端对被拒的放棺不推任何快照（只 warn），故负面断言以「状态不变」为
@@ -351,10 +515,10 @@ def run(env) -> None:
                 "x": px,
                 "y": py,
                 "z": pz,
-                "item_instance_id": int(coffin_item["item"]["instance_id"]) + 100000,
+                "item_instance_id": a_id + 100000,
             },
             probe_item_id=PROBE_ITEM_ID,
-            still_present=[(COFFIN_ITEM_ID, 1)],
+            still_present=[(COFFIN_ITEM_ID, 2)],
             label="伪造 instance_id 放棺",
         )
 
@@ -391,16 +555,24 @@ def run(env) -> None:
                 "item_instance_id": int(fan_item["item"]["instance_id"]),
             },
             probe_item_id="wood_handle",
-            still_present=[(COFFIN_ITEM_ID, 1), (PROBE_ITEM_ID, fan_before)],
+            still_present=[(COFFIN_ITEM_ID, 2), (PROBE_ITEM_ID, fan_before)],
             label="非棺物品实例放棺",
         )
 
         # 放棺位置扫描：coffin 占据 (x,y,z)+(x+1,y,z) 两格，二者都必须为空气。
         # 地表 y≈73-74 平坦，但出生点附近仍有 POI 结构/树（实测东侧 px+2 被占、
-        # 「not empty」被拒），故逐候选尝试、以 probe give 的包序终态（coffin_place
-        # 之后按包序处理 give，其因果快照即放置终态）判成功，并记录实际落点供后续
-        # 回收寻址。被拒的放棺服务端不推任何快照。
+        # 「not empty」被拒），故逐候选尝试。成功判定绑定到**放置实例 a**：放置成功
+        # = a 从背包消失（_find_coffin_instance is None），未放置实例 b 恒在
+        # （finding [2]）。probe give 的同连接包序因果快照（fan_tie 总数 > 放置前）
+        # 即放置终态；wait 超时先 _drain_settle 原子结算（finding [3]），绝不在请求
+        # 未结束时换位。被拒的放棺服务端不推任何快照。
+        # review #1：被拒候选不再空等 45s 的「成功快照」——服务端对被拒放棺不推任何
+        # 快照，旧实现每个被拒候选等满 45s、再经 _coffin_consumed_after 又 45s（八个
+        # 候选全被拒约 12min）。probe give 判终态：give 与 coffin_place 同连接按包序
+        # 处理，give 的因果快照反映「coffin_place 处理之后」的库存——a 消失 = 放置成功
+        # （消耗恰好一次），a 仍在 = 放置被拒（立即换位，~1s/候选）。
         placed_at = None
+        placed_snapshot = None
         for cpos in (
             (px - 2, py, pz),  # 西 2（forge 砧位实测可放，先试）
             (px + 2, py, pz),  # 东 2（本次全量跑实测被占，兜底顺序靠后）
@@ -420,17 +592,9 @@ def run(env) -> None:
                     "x": cpos[0],
                     "y": cpos[1],
                     "z": cpos[2],
-                    "item_instance_id": int(coffin_item["item"]["instance_id"]),
+                    "item_instance_id": a_id,
                 }
             )
-            # review #1：被拒候选不再空等 45s 的「成功快照」——服务端
-            # 对被拒放棺不推任何快照，旧实现每个被拒候选等满 45s、再经
-            # _coffin_consumed_after 又 45s（八个候选全被拒约 12min）。改 probe give 判
-            # 终态：give 与 coffin_place 同连接按包序处理，give 的因果快照（fan_tie 总数
-            # > probe_before）反映「coffin_place 处理之后」的库存——棺材消失 = 放置成功
-            # （消耗恰好一次、不残留，成功快照判定未削弱），棺材仍在 = 放置被拒（立即换
-            # 位，~1s/候选）。probe give 自身在 STAGE_TIMEOUT 内无因果快照（服务端连 give
-            # 都不回推，极端退化）才退回到 _coffin_consumed_after 的扫描式消耗确证。
             bot.cmd(f"give {PROBE_ITEM_ID} 1")
             try:
                 probe_ev = bot.wait_for(
@@ -442,16 +606,32 @@ def run(env) -> None:
                     description=f"coffin_place@{cpos} 后 probe give 因果快照（放置终态）",
                 )
             except BotAssertionError:
-                if _coffin_consumed_after(bot, anchor):
+                # finding [3]：等待超时 ≠ 请求已处理——原子结算该候选（barrier give
+                # 因果快照排在 coffin_place 之后），按该快照判定终态；barrier 也超时
+                # 直接报错，绝不在未结算时换位（旧 _coffin_consumed_after 窗口扫描
+                # 不建立请求已结束，迟到成功快照会被下一候选误认）。
+                settle_snapshot = _drain_settle(
+                    bot, cpos, description=f"coffin_place@{cpos} 等待超时"
+                )
+                if _find_coffin_instance(settle_snapshot, a_id) is None:
                     placed_at = cpos
+                    placed_snapshot = settle_snapshot
                     break
                 continue
-            if find_item(probe_ev.data["payload"], COFFIN_ITEM_ID) is None:
+            if _find_coffin_instance(probe_ev.data["payload"], a_id) is None:
                 placed_at = cpos
+                placed_snapshot = probe_ev.data["payload"]
                 break
             continue
         assert placed_at is not None, (
             "coffin_place 在所有候选格均被拒（出生点地形全占/异常），无法完成放置 leg"
+        )
+        # finding [2]：实例级单次消费——放置后必须恰好剩 1 口棺且是未放置的 b 实例。
+        remaining = _entries_for_item(placed_snapshot, COFFIN_ITEM_ID)
+        assert len(remaining) == 1 and int(remaining[0]["item"]["instance_id"]) == b_id, (
+            f"放置后应恰好剩 1 口 mundane_coffin 且为未放置的 b 实例（#{b_id}），"
+            f"实际 {len(remaining)} 条——整堆/模板级删除（a 连带 b 消失）或复制"
+            "（多余实例）的实现在此红"
         )
 
         # ── 负面校验：远程回收必须被拒（近距校验 coffin_target_is_close） ──
@@ -590,15 +770,13 @@ def run(env) -> None:
         _stand_at(bot, boundary_in)
 
         # ── 回收：精确返料（Reclaim 模式确定性全量） ─────────────────────
+        # finding [1]：成功回收 leg 经 _g_menu_reclaim 驱动生产 G 菜单 [回收] 交互
+        # （marker 目标存在 + 6 格交互半径 + 钉死 payload），不再冷注入请求字节。
         anchor = last_event_time(bot)
-        bot.intent(
-            {
-                "type": "coffin_menu_reclaim",
-                "v": 1,
-                "x": placed_at[0],
-                "y": placed_at[1],
-                "z": placed_at[2],
-            }
+        marker_id = _g_menu_reclaim(
+            bot,
+            placed_at,
+            description="主回收 leg（G 菜单 [回收] 交互驱动）",
         )
         reclaim_event = bot.wait_for(
             lambda e: e.kind == "server_data"
@@ -618,22 +796,22 @@ def run(env) -> None:
 
         _assert_exact_reclaim(reclaim_snapshot, "ling_mu_ban", RECLAIM_LING_MU_BAN, "回收返料")
         _assert_exact_reclaim(reclaim_snapshot, "ling_mu_gun", RECLAIM_LING_MU_GUN, "回收返料")
-        assert find_item(reclaim_snapshot, COFFIN_ITEM_ID) is None, (
-            f"回收后 {COFFIN_ITEM_ID} 不应复现——回收只返配方材料、不返棺材本体，"
-            "若出现说明回收路径在复制道具"
+        # finding [2]：回收不返棺材本体、放置实例 a 不复现、未放置实例 b 恰好保留 1 条。
+        assert _coffin_state_ok(reclaim_snapshot, a_id, b_id), (
+            f"回收后放置实例 #{a_id} 不得复现、未放置实例 #{b_id} 必须恰好保留 1 条"
+            "——回收复制/返棺材本体的实现在此红"
         )
 
         # ── 反双授：二次回收必须被拒，二次回收窗口内任何快照都不得翻倍 ───
-        anchor = last_event_time(bot)
-        bot.intent(
-            {
-                "type": "coffin_menu_reclaim",
-                "v": 1,
-                "x": placed_at[0],
-                "y": placed_at[1],
-                "z": placed_at[2],
-            }
+        # finding [1]：主回收已 despawn marker → G 菜单无目标可开，二次回收只能由
+        # 伪造/陈旧请求产生（真实玩家此刻无法再发起 G 交互）。先断言 marker 已清场
+        # （世界侧证据），再注入伪造重复请求验证服务端对 registry 已摘除坐标静默
+        # no-op（不双授）——「回收不返棺材本体」的实例级断言（_coffin_state_ok）兜底。
+        assert not _marker_live(bot, marker_id), (
+            f"主回收后 marker #{marker_id} 必须已 despawn（G 菜单无目标可开二次回收）"
         )
+        anchor = last_event_time(bot)
+        bot.intent(_reclaim_payload(placed_at))
         # probe give 是二次回收后唯一应由我们自己引发的库存事件；若二次回收被误处理，
         # 会先推 coffin_menu_reclaimed 快照（此时返料已翻倍），probe give 再推一个。
         # review #2：probe 快照谓词用「总数 > give 前」——fan_tie 已存在于背包，存在性
@@ -654,28 +832,28 @@ def run(env) -> None:
         post_snapshot = post_event.data["payload"]
 
         # 回扫 (anchor, post_event.t] 窗口内的每一个 inventory_snapshot：返料总数
-        # （按全部堆叠求和）必须始终 6/2、每条返料都落容器槽位、mundane_coffin 必须
-        # 始终不出现。窗口内还有周期性 inventory_changed（教程灵鼠扣 qi 等），故不能
-        # 只查 probe 快照；逐条扫描才能证明二次回收没有在任何一条快照里推过翻倍返料
-        # 或棺材本体。
+        # （按全部堆叠求和）必须始终 6/2、每条返料都落容器槽位、放置实例 a 不得复现、
+        # 未放置实例 b 必须恰好 1 条（_reclaim_snapshot_ok 实例级判据）。窗口内还有
+        # 周期性 inventory_changed（教程灵鼠扣 qi 等），故不能只查 probe 快照；逐条
+        # 扫描才能证明二次回收没有在任何一条快照里推过翻倍返料或棺材本体。
         bad_snapshots = [
             e.data["payload"]
             for e in bot.events
             if e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and anchor < e.t <= post_event.t
-            and not _reclaim_snapshot_ok(e.data["payload"])
+            and not _reclaim_snapshot_ok(e.data["payload"], a_id, b_id)
         ]
         assert not bad_snapshots, (
             f"二次回收必须被拒（registry 已摘除）：(anchor, probe] 窗口内出现 "
-            f"{len(bad_snapshots)} 条违规快照（返料总数非 6/2、返料落非容器槽位或"
-            f"棺材复现），首条={bad_snapshots[0]}——二次回收被误处理会先推 "
-            "coffin_menu_reclaimed 并在当条快照翻倍返料"
+            f"{len(bad_snapshots)} 条违规快照（返料总数非 6/2、返料落非容器槽位、"
+            f"放置实例复现或 b 非恰好 1 条），首条={bad_snapshots[0]}——二次回收被"
+            "误处理会先推 coffin_menu_reclaimed 并在当条快照翻倍返料"
         )
         _assert_exact_reclaim(post_snapshot, "ling_mu_ban", RECLAIM_LING_MU_BAN, "二次回收后")
         _assert_exact_reclaim(post_snapshot, "ling_mu_gun", RECLAIM_LING_MU_GUN, "二次回收后")
-        assert find_item(post_snapshot, COFFIN_ITEM_ID) is None, (
-            f"二次回收后 {COFFIN_ITEM_ID} 不应出现（放置时已消耗一次，回收不返棺材）"
+        assert _coffin_state_ok(post_snapshot, a_id, b_id), (
+            f"二次回收后放置实例 #{a_id} 不得复现、未放置实例 #{b_id} 必须恰好保留 1 条"
         )
 
         bot.assert_alive("coffin_menu_reclaim 全链路后")
