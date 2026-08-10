@@ -430,6 +430,43 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 "总 tile union 越界必须在创建 tile 目录和大文件前 fail closed",
             )
 
+    def test_spawn_fixture_tiles_accepts_union_at_exact_maximum_tile_count(self):
+        # review finding：cap 契约只有「超上限拒绝」的覆盖，缺「恰好等于
+        # MAX_FIXTURE_TILES 也接受」的边界 pin —— 用 `>=` 的 off-by-one 实现会误拒合法
+        # 分布。本测试构造恰好 64 个 tile 的 union（64 个 radius=0 簇，每簇占一格，
+        # 间距 10 格互不重叠），断言成功返回且返回集就是这 64 格。
+        clusters = []
+        for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES):
+            clusters.append(
+                {
+                    "anchor": [
+                        float(index * make_novice_raster_fixture.TILE_SIZE * 10),
+                        70.0,
+                        0.0,
+                    ],
+                    "radius": 0.0,
+                    "weight": 1,
+                    "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                }
+            )
+        config = {
+            "zones": [{"name": "spawn", "spawn_distribution": clusters}]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            tiles = make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+        expected = {
+            (index * 10, 0)
+            for index in range(make_novice_raster_fixture.MAX_FIXTURE_TILES)
+        }
+        self.assertEqual(tiles, expected)
+        self.assertEqual(
+            len(tiles),
+            make_novice_raster_fixture.MAX_FIXTURE_TILES,
+            "恰好在 cap 上的 union 必须被接受，`>=` 的 off-by-one 实现在此必红",
+        )
+
     def test_fixture_covers_every_production_spawn_cluster_with_grass(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = pathlib.Path(temp_dir)
@@ -543,6 +580,81 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 },
                 "invalid spawn_distribution[0]",
             ),
+            # review finding：safe_y 契约只覆盖 SURFACE_Y+1 一个非法值，实现若错误接受
+            # safe_y <= SURFACE_Y、缺失 safe_y、布尔或非有限 safe_y 会全绿。生产实现
+            # `cluster.get("safe_y") != SURFACE_Y` 对下面每个方向都必须拒绝。
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": make_novice_raster_fixture.SURFACE_Y - 1,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    # 缺省 safe_y：get 返回 None，必须拒绝
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": True,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
+            (
+                {
+                    "zones": [
+                        {
+                            "name": "spawn",
+                            "spawn_distribution": [
+                                {
+                                    "anchor": [0.0, 70.0, 0.0],
+                                    "radius": 1.0,
+                                    "weight": 1,
+                                    "safe_y": float("nan"),
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "invalid spawn_distribution[0]",
+            ),
         ]
 
         # 非有限数值边界：json.loads 默认接受 NaN/Infinity，必须同样以
@@ -600,6 +712,36 @@ class NoviceRasterFixtureTest(unittest.TestCase):
                 zones_path.write_text(json.dumps(config), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, re.escape(expected_error)):
                     make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_accepts_exact_surface_y(self):
+        # review finding 保留的正向对照：safe_y 恰等于 SURFACE_Y（整数与相等浮点）是
+        # 合法分布，必须被接受并返回期望 tile —— 拒绝合法值同样违反契约。
+        for safe_y in (
+            make_novice_raster_fixture.SURFACE_Y,
+            float(make_novice_raster_fixture.SURFACE_Y),
+        ):
+            config = {
+                "zones": [
+                    {
+                        "name": "spawn",
+                        "spawn_distribution": [
+                            {
+                                "anchor": [0.0, 70.0, 0.0],
+                                "radius": 1.0,
+                                "weight": 1,
+                                "safe_y": safe_y,
+                            }
+                        ],
+                    }
+                ]
+            }
+            with self.subTest(safe_y=safe_y), tempfile.TemporaryDirectory() as temp_dir:
+                zones_path = pathlib.Path(temp_dir) / "zones.json"
+                zones_path.write_text(json.dumps(config), encoding="utf-8")
+                self.assertEqual(
+                    make_novice_raster_fixture.spawn_fixture_tiles(zones_path),
+                    {(-1, -1), (-1, 0), (0, -1), (0, 0)},
+                )
 
     def test_spawn_fixture_tiles_rejects_boolean_anchor_components(self):
         for index in range(3):

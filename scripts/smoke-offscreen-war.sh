@@ -170,10 +170,13 @@ pass "cleared bong:npc/dormant (server default-seeds factioned rogues)"
 CURRENT_STAGE="server"
 if ! (
   export PATH="/opt/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/bong-target}"
+  # review finding：build-token 只锁 cargo 子进程，机器共享 /tmp/bong-target 的
+  # release 产物会在 build 返回与 install 之间被另一 job 替换（stale-read TOCTOU）。
+  # 改用 run-private target（RUN_DIR 每轮唯一），源产物不可能被并发替换。
+  export CARGO_TARGET_DIR="$RUN_DIR/bong-target"
   cd "$ROOT/server"
   "$ROOT/scripts/build-token.sh" cargo build --release
-  install -m 700 "${CARGO_TARGET_DIR:-/tmp/bong-target}/release/bong-server" "$SERVER_BINARY"
+  install -m 700 "$CARGO_TARGET_DIR/release/bong-server" "$SERVER_BINARY"
 ) >>"$SERVER_LOG" 2>&1; then
   finalize_failure "server" "server build failed; see $SERVER_LOG"
 fi

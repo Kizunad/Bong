@@ -824,8 +824,8 @@ mod tests {
         block_coord_to_chunk, fallback_spawn_chunk_union, select_world_bootstrap,
         select_world_bootstrap_from_configured_paths, FallbackChunkUnionError,
         terrain::RasterBootstrapConfig,
-        AnvilBootstrapConfig, DimensionLayers, FallbackFlatBootstrap, FallbackFlatReason,
-        WorldBootstrap, ANVIL_REGION_DIR_NAME, BEDROCK_Y,
+        AnvilBootstrapConfig, CHUNK_WIDTH, DimensionLayers, FallbackFlatBootstrap,
+        FallbackFlatReason, WorldBootstrap, ANVIL_REGION_DIR_NAME, BEDROCK_Y,
         FALLBACK_FLAT_MAX_ANCHOR_WORK, FALLBACK_FLAT_MAX_CHUNKS,
         FALLBACK_VIEW_DISTANCE_CHUNKS, GRASS_Y, TERRAIN_RASTER_PATH_ENV_VAR,
         WORLD_PATH_ENV_VAR,
@@ -1759,8 +1759,36 @@ mod tests {
             Some(BlockState::GRASS_BLOCK)
         );
 
-        // 资源散布必须随真实出生簇落位，而不是只建空 chunk。
+        // review finding：只抽检 emergency 出生点所在 chunk 放过了「只 terraform
+        // emergency 一块、其余 union chunk 只建空壳」的错误实现——它仍会照发完整
+        // readiness 计数、仍能把锚点资源坐标 set_block 上去（不填满整块）。这里验证
+        // union 的每一个 chunk 都真实物化 bedrock + grass，只填 emergency 一块必红。
         let snapshot = crate::player::spawn_selector::fallback_spawn_snapshot();
+        let expected_chunks =
+            fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
+                .expect("configured fallback union should fit within eager-allocation limit");
+        let chunk_center = CHUNK_WIDTH / 2;
+        for chunk_pos in &expected_chunks {
+            let center_x = chunk_pos.x * CHUNK_WIDTH + chunk_center;
+            let center_z = chunk_pos.z * CHUNK_WIDTH + chunk_center;
+            assert_eq!(
+                block_state(&layer, center_x, BEDROCK_Y, center_z),
+                Some(BlockState::BEDROCK),
+                "union chunk ({},{}) 中心必须真实物化 bedrock：只 terraform emergency \
+                 一块的错误实现在此必红",
+                chunk_pos.x,
+                chunk_pos.z,
+            );
+            assert_eq!(
+                block_state(&layer, center_x, GRASS_Y, center_z),
+                Some(BlockState::GRASS_BLOCK),
+                "union chunk ({},{}) 中心必须真实物化 grass",
+                chunk_pos.x,
+                chunk_pos.z,
+            );
+        }
+
+        // 资源散布必须随真实出生簇落位，而不是只建空 chunk。
         for anchor in &snapshot.distribution {
             let base = anchor.anchor();
             let x = base.x.floor() as i32;

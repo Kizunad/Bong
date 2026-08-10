@@ -348,10 +348,11 @@ else
   echo "[bot-e2e] 构建并启动本轮 immutable server（profile=$PROFILE，log: $SERVER_LOG）"
   export BONG_SKIP_SKIN_PREFETCH="${BONG_SKIP_SKIN_PREFETCH:-1}"
   export BONG_ROGUE_SEED_COUNT="${BONG_ROGUE_SEED_COUNT:-0}"
-  CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT/server/target}"
-  if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
-    CARGO_TARGET_ROOT="$ROOT/server/$CARGO_TARGET_ROOT"
-  fi
+  # review finding：build-token 只锁 cargo 子进程；从共享 target 读产物时，build
+  # 返回后、install 前的 bong-server 会被并发 job 替换（stale-read TOCTOU）。build
+  # 到 run-private target（EVIDENCE_DIR 每轮唯一），源产物不可能被并发替换。
+  CARGO_TARGET_ROOT="$EVIDENCE_DIR/bong-target"
+  export CARGO_TARGET_DIR="$CARGO_TARGET_ROOT"
   if ! (
     cd "$ROOT/server"
     "$ROOT/scripts/build-token.sh" cargo build --locked "${PROFILE_FLAG[@]}"

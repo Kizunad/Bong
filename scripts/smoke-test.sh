@@ -27,9 +27,14 @@ if "$ROOT/scripts/build-token.sh" cargo test 2>&1 | tee /tmp/bong-test.log | tai
 
 echo ""
 echo "=== [3/4] Server smoke run (30s) ==="
-if "$ROOT/scripts/build-token.sh" cargo build 2>/dev/null; then
+# review finding：build-token 只锁 cargo 子进程，build 返回后从共享 target 直接执行
+# debug/bong-server 会被并发 job 替换（stale-read TOCTOU）。build 到 run-private
+# target 再执行，执行的就是本轮刚 build 的二进制。
+SMOKE_TARGET_DIR="$(mktemp -d /tmp/bong-smoke-target.XXXXXX)"
+trap 'rm -rf -- "$SMOKE_TARGET_DIR"' EXIT
+if "$ROOT/scripts/build-token.sh" cargo build --target-dir "$SMOKE_TARGET_DIR" 2>/dev/null; then
     pass "cargo build"
-    timeout 30s "$CARGO_TARGET_DIR/debug/bong-server" 2>&1 | tee /tmp/bong-smoke.log || true
+    timeout 30s "$SMOKE_TARGET_DIR/debug/bong-server" 2>&1 | tee /tmp/bong-smoke.log || true
 else
     fail "cargo build"
     : >/tmp/bong-smoke.log

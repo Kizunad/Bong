@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -159,10 +160,14 @@ impl<'a> PlayerSpawnSelector<'a> {
             selected.anchor.z + radius * angle.sin(),
         );
 
+        // review finding：blocked_at 对 zone.blocked_tiles 线性扫描，螺旋回退每次访问
+        // 都是 O(blocked_count)——最坏 zone（~65k blocked tile）下每次 spawn 选择退化
+        // 到 O(zone tile 数 × blocked tile 数)。先建成 HashSet 索引，每次访问 O(1)。
+        let blocked_tile_index: HashSet<(i32, i32)> = zone.blocked_tiles.iter().copied().collect();
         let blocked_at = |pos: DVec3| {
-            zone.blocked_tiles
-                .iter()
-                .any(|(x, z)| *x == pos.x.floor() as i32 && *z == pos.z.floor() as i32)
+            let tx = pos.x.floor() as i32;
+            let tz = pos.z.floor() as i32;
+            blocked_tile_index.contains(&(tx, tz))
         };
 
         let clamped = zone.clamp_position(candidate);
@@ -201,13 +206,14 @@ impl<'a> PlayerSpawnSelector<'a> {
                 );
                 let start = (emergency.x.floor() as i32, emergency.z.floor() as i32);
                 let (free_x, free_z) =
-                    nearest_unblocked_tile(zone, start, &blocked_at).unwrap_or_else(|| {
-                        panic!(
-                            "[bong][player] spawn zone `{}` 的全部 tile 均被 blocked_tiles \
-                             排除，无法生成出生点",
-                            zone.name
-                        )
-                    });
+                    nearest_unblocked_tile(zone, start, &blocked_at, EMERGENCY_SCAN_WORK_BUDGET)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "[bong][player] spawn zone `{}` 在扫描预算内没有可用空闲 \
+                                 tile （全部被 blocked_tiles 排除或预算耗尽），无法生成出生点",
+                                zone.name
+                            )
+                        });
                 return [free_x as f64, fallback.y, free_z as f64];
             }
             return [fallback.x, fallback.y, fallback.z];
@@ -223,10 +229,18 @@ impl<'a> PlayerSpawnSelector<'a> {
 /// 固定圈之外」的 zone 误判成全 blocked 而 panic（review finding）。zone 内全部 tile
 /// 均被 `blocked` 排除时返回 `None`，由调用方 fail-closed。扫描结果严格限制在 zone
 /// 内，绝不越界。
+///
+/// `work_budget` 是本次扫描允许的 tile 谓词求值次数上限（review finding：大 zone +
+/// 稀疏空闲 tile 时扫描工作量随 AABB 面积增长，无界扫描会同步卡住每次受影响的登录）。
+/// 预算耗尽且尚未找到空闲 tile 时同样返回 `None`（fail-closed，调用方 panic），绝不
+/// 无界扫完整个 zone。
+const EMERGENCY_SCAN_WORK_BUDGET: usize = 1 << 18; // 262,144 次谓词求值
+
 fn nearest_unblocked_tile(
     zone: &Zone,
     start: (i32, i32),
     blocked: &impl Fn(DVec3) -> bool,
+    work_budget: usize,
 ) -> Option<(i32, i32)> {
     let (min, max) = zone.bounds;
     let (min_tx, max_tx) = (min.x.floor() as i32, max.x.floor() as i32);
@@ -245,7 +259,13 @@ fn nearest_unblocked_tile(
         .max((start_x - max_tx_i).abs())
         .max((start_z - min_tz_i).abs())
         .max((start_z - max_tz_i).abs());
-    let visit = |tx: i64, tz: i64| -> Option<(i32, i32)> {
+    let mut work_left = work_budget;
+    let mut visit = |tx: i64, tz: i64| -> Option<(i32, i32)> {
+        if work_left == 0 {
+            // 预算耗尽：不再求值谓词，fail-closed。外圈循环继续但每次立即返回 None。
+            return None;
+        }
+        work_left -= 1;
         if tx < min_tx_i || tx > max_tx_i || tz < min_tz_i || tz > max_tz_i {
             return None;
         }
@@ -718,11 +738,76 @@ mod tests {
             let tz = pos.z.floor() as i32;
             tx != free.0 || tz != free.1
         };
-        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked);
+        let found = nearest_unblocked_tile(
+            &registry.zones[0],
+            (0, 0),
+            &blocked,
+            EMERGENCY_SCAN_WORK_BUDGET,
+        );
         assert_eq!(
             found,
             Some(free),
             "唯一空闲 tile 恰在最大扫描圈（Chebyshev 半径 128）上时必须被闭区间扫描命中"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_selects_the_nearest_free_tile_when_several_are_free() {
+        // review finding：blocked_emergency_tile_scans_for_nearest_free_tile 只断言
+        // 「非 blocked + 在 zone 内」，放过了「有多个空闲 tile 时返回远处角落」的错误
+        // 实现。本测试提供两个不同 Chebyshev 距离的空闲 tile（(1,0) 距离 1、(40,40)
+        // 距离 40），断言最近者胜出 —— 返回远处 tile 的实现必红。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-64.0, -64.0, -64.0),
+                DVec3::new(64.0, 320.0, 64.0),
+            ),
+            Vec::new(),
+        );
+        let near = (1, 0);
+        let far = (40, 40);
+        let blocked = |pos: DVec3| {
+            let tx = pos.x.floor() as i32;
+            let tz = pos.z.floor() as i32;
+            (tx != near.0 || tz != near.1) && (tx != far.0 || tz != far.1)
+        };
+        let found = nearest_unblocked_tile(
+            &registry.zones[0],
+            (0, 0),
+            &blocked,
+            EMERGENCY_SCAN_WORK_BUDGET,
+        );
+        assert_eq!(
+            found,
+            Some(near),
+            "多个空闲 tile 时最近者（Chebyshev 距离 1）必须胜出，不得返回远处 (40,40)"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_fails_closed_when_work_budget_exhausted() {
+        // review finding：大 zone + 稀疏空闲 tile 时扫描工作量随 AABB 面积增长、每次
+        // 受影响的 spawn 选择都重扫一遍。修复后扫描受 EMERGENCY_SCAN_WORK_BUDGET 显式
+        // 资源约束：唯一空闲 tile 在预算之外时必须 fail-closed 返回 None（调用方 panic），
+        // 绝不无界扫完整个 zone。本 zone 唯一空闲 tile 在半径 128，预算只够约 15 圈。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-128.0, -64.0, -128.0),
+                DVec3::new(128.0, 320.0, 128.0),
+            ),
+            Vec::new(),
+        );
+        let free = (128, 0);
+        let blocked = |pos: DVec3| {
+            let tx = pos.x.floor() as i32;
+            let tz = pos.z.floor() as i32;
+            tx != free.0 || tz != free.1
+        };
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 1_000);
+        assert_eq!(
+            found,
+            None,
+            "空闲 tile 在扫描预算之外时必须 fail-closed 返回 None，不得无界扫完整个 zone"
         );
     }
 
@@ -745,7 +830,12 @@ mod tests {
             let tz = pos.z.floor() as i32;
             tx != free.0 || tz != free.1
         };
-        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked);
+        let found = nearest_unblocked_tile(
+            &registry.zones[0],
+            (0, 0),
+            &blocked,
+            EMERGENCY_SCAN_WORK_BUDGET,
+        );
         assert_eq!(
             found,
             Some(free),
@@ -764,7 +854,12 @@ mod tests {
             ),
             Vec::new(),
         );
-        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &|_pos: DVec3| true);
+        let found = nearest_unblocked_tile(
+            &registry.zones[0],
+            (0, 0),
+            &|_pos: DVec3| true,
+            EMERGENCY_SCAN_WORK_BUDGET,
+        );
         assert_eq!(
             found,
             None,
@@ -811,6 +906,8 @@ mod tests {
 
     #[test]
     fn snapshot_clamps_out_of_bounds_anchors_into_spawn_zone() {
+        // review finding：旧测试只覆盖 +X 一侧与 safe_y 下界。只钳部分轴/单侧边界的
+        // 残缺实现会漏检。本矩阵覆盖 x/y/z 三轴两侧 + safe_y 上下边界 + 界内正对照。
         let registry = synthetic_registry(
             (
                 DVec3::new(-750.0, -64.0, -750.0),
@@ -818,29 +915,49 @@ mod tests {
             ),
             Vec::new(),
         );
-        let distribution = vec![
-            SpawnDistributionAnchor {
-                anchor: DVec3::new(10_000.0, 72.0, 0.0),
-                radius: 0.0,
-                weight: 1,
-                safe_y: 72.0,
-            },
-            SpawnDistributionAnchor {
-                anchor: DVec3::new(-100.0, 5.0, 200.0),
+        // (输入 anchor, 输入 safe_y, 期望 anchor, 期望 safe_y)
+        let cases: [([f64; 3], f64, [f64; 3], f64); 9] = [
+            ([10_000.0, 72.0, 0.0], 72.0, [750.0, 72.0, 0.0], 72.0),   // +X 越界
+            ([-10_000.0, 72.0, 0.0], 72.0, [-750.0, 72.0, 0.0], 72.0), // -X 越界
+            ([0.0, 72.0, 10_000.0], 72.0, [0.0, 72.0, 750.0], 72.0),   // +Z 越界
+            ([0.0, 72.0, -10_000.0], 72.0, [0.0, 72.0, -750.0], 72.0), // -Z 越界
+            ([0.0, 1_000.0, 0.0], 72.0, [0.0, 320.0, 0.0], 72.0),      // +Y 越界
+            ([0.0, -500.0, 0.0], 72.0, [0.0, -64.0, 0.0], 72.0),       // -Y 越界
+            ([0.0, 72.0, 0.0], 1_000.0, [0.0, 72.0, 0.0], 320.0),      // safe_y 上界
+            ([0.0, 72.0, 0.0], -1_000.0, [0.0, 72.0, 0.0], -64.0),     // safe_y 下界
+            ([100.0, 72.0, 200.0], 72.0, [100.0, 72.0, 200.0], 72.0),  // 界内 no-op
+        ];
+        let distribution: Vec<SpawnDistributionAnchor> = cases
+            .iter()
+            .map(|(anchor, safe_y, _, _)| SpawnDistributionAnchor {
+                anchor: DVec3::new(anchor[0], anchor[1], anchor[2]),
                 radius: 30.0,
                 weight: 1,
-                safe_y: -999.0,
-            },
-        ];
+                safe_y: *safe_y,
+            })
+            .collect();
 
         let clamped = clamp_distribution_to_spawn_zone(&registry, distribution);
 
-        assert_eq!(clamped[0].anchor, DVec3::new(750.0, 72.0, 0.0));
-        assert_eq!(clamped[0].safe_y, 72.0);
-        assert_eq!(clamped[1].anchor, DVec3::new(-100.0, 5.0, 200.0));
-        assert_eq!(clamped[1].safe_y, -64.0);
-        assert_eq!(clamped[1].radius, 30.0);
-        assert_eq!(clamped[1].weight, 1);
+        for (index, (_, _, expected_anchor, expected_safe_y)) in cases.iter().enumerate() {
+            assert_eq!(
+                clamped[index].anchor,
+                DVec3::new(expected_anchor[0], expected_anchor[1], expected_anchor[2]),
+                "case[{index}] anchor 必须钳制到出生 zone AABB 内"
+            );
+            assert_eq!(
+                clamped[index].safe_y, *expected_safe_y,
+                "case[{index}] safe_y 必须钳制到出生 zone Y 范围内"
+            );
+            assert_eq!(
+                clamped[index].radius, 30.0,
+                "case[{index}] radius 必须原样保留"
+            );
+            assert_eq!(
+                clamped[index].weight, 1,
+                "case[{index}] weight 必须原样保留"
+            );
+        }
     }
 
     #[test]

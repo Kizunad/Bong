@@ -128,12 +128,13 @@ run_or_fail "schema" "npm run build" bash -lc "cd '$ROOT/agent/packages/schema' 
 run_or_fail "schema" "npm test -- tests/schema.test.ts" bash -lc "cd '$ROOT/agent/packages/schema' && npm test -- tests/schema.test.ts"
 
 stage "4/10" "Server entrypoint startup"
-run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build"
-server_target_root="${CARGO_TARGET_DIR:-$ROOT/server/target}"
-if [[ "$server_target_root" != /* ]]; then
-  server_target_root="$ROOT/server/$server_target_root"
-fi
-server_binary="$server_target_root/debug/bong-server"
+# review finding：build-token 只锁 cargo 子进程，build 返回后从共享 target 直接执行
+# debug/bong-server 会被并发 job 替换（stale-read TOCTOU）。build 到 run-private
+# target 再执行，执行的就是本轮刚 build 的二进制。
+SERVER_START_TARGET="$(mktemp -d /tmp/bong-lawengine-target.XXXXXX)"
+trap 'rm -rf -- "$SERVER_START_TARGET"' EXIT
+run_or_fail "server-start" "cargo build" bash -lc "cd '$ROOT/server' && '$ROOT/scripts/build-token.sh' cargo build --target-dir '$SERVER_START_TARGET'"
+server_binary="$SERVER_START_TARGET/debug/bong-server"
 [[ -x "$server_binary" ]] || fail_stage "server-start" "successful cargo build did not produce $server_binary"
 server_start_exit=0
 echo "[run][server-start] timeout 20s built bong-server"
