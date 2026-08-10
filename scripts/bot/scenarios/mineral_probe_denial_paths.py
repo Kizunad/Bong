@@ -106,6 +106,51 @@ def _drain_probe_results(bot, quiet: float = 2.0, max_wait: float = 20.0) -> Non
             )
 
 
+def _collect_probe_results(
+    bot,
+    after_t: float,
+    quiet: float = 2.0,
+    first_result_timeout: float = COLUMN_TIMEOUT,
+    convergence_cap: float = 20.0,
+) -> list:
+    """收集 after_t 之后到批静默的全部 mineral_probe_result（本批全部响应）。
+
+    探针结果异步到达，批内全部响应必须被收集后再逐条校验——只取第一个匹配响应、
+    把其余静默丢弃，会放走「一条正确 denied/<reason> + 额外 denied/其他理由 或
+    found」的坏实现（central-review 2029 #2）。静默窗口必须显著长于服务端实际响应
+    延迟（同 tick 处理，亚秒~1s）。返回空列表 = 整批无响应（全部被前置范围过滤），
+    调用方据此重读位置换列重试。first_result_timeout 约束「等首个结果」的耗时；
+    convergence_cap 内始终有新结果（无法出现完整静默窗）则报错——静默放行一个还在
+    来响应的批次，会把污染交给下一批/下一 realm 阶段（central-review 2029 #6）。
+    """
+    first_deadline = time.monotonic() + first_result_timeout
+    converge_deadline = time.monotonic() + convergence_cap
+    collected: list = []
+    last_seen = after_t
+    while True:
+        time.sleep(quiet)
+        fresh = [
+            e
+            for e in bot.events_of("server_data")
+            if e.data["payload_type"] == "mineral_probe_result"
+            and e.t > after_t
+            and e.t > last_seen
+        ]
+        if fresh:
+            collected.extend(fresh)
+            last_seen = max(e.t for e in fresh)
+            if time.monotonic() >= converge_deadline:
+                raise BotAssertionError(
+                    f"[{bot.username}] mineral_probe_result 在 {convergence_cap:.0f}s 内持续到达，"
+                    f"批次收集无法收敛——拒绝静默放行可能污染下一批"
+                )
+            continue
+        if collected:
+            return collected
+        if time.monotonic() >= first_deadline:
+            return collected
+
+
 def _column_probe_and_expect(bot, reason: str, label: str) -> None:
     """竖直列盲扫并校验 denial_reason；超时则重读位置换列，最多重试多次。
 
@@ -126,30 +171,21 @@ def _column_probe_and_expect(bot, reason: str, label: str) -> None:
         sent_at = bot.events[-1].t if bot.events else 0.0
         for y in range(base_y + Y_LO, base_y + Y_HI + 1, Y_STEP):
             bot.intent({**PROBE_REQUEST, "x": x, "y": y, "z": z})
-        try:
-            # 结果必须**同时**满足期望的 denial_reason，而非只按到达时间归属批次：
-            # 若上一 realm 阶段的迟到响应（realm_too_low）跨屏障落入本批窗口，它会被
-            # 谓词跳过，本批的权威结果（not_mineral_ore）仍会被等到——按到达时间认领
-            # 会把这个迟到响应误判成本批结果而误报（central-review 2029 #6）。
-            result = bot.wait_for(
-                lambda e: e.kind == "server_data"
-                and e.data["payload_type"] == "mineral_probe_result"
-                and e.t > sent_at
-                and e.data["payload"].get("denial_reason") == reason,
-                timeout=COLUMN_TIMEOUT,
-                description=f"{label}: 竖直列 mineral_probe_result/{reason} (t>{sent_at:.3f})",
-            )
-        except BotAssertionError:
+        # 收集本批**全部**响应并逐条校验（central-review 2029 #2）：只等第一个
+        # denial_reason 匹配、其余结果静默丢弃，会放走批内额外发出的 denied/其他理由
+        # 或 found 响应——realm 优先边界契约就没锁住。
+        results = _collect_probe_results(bot, sent_at)
+        if not results:
             # 整列都落在权威位置 6m 外（y 带已移动）：排空本批可能迟到的结果后
             # 重读位置换一列重试。
-            _drain_probe_results(bot)
             continue
-        payload = result.data["payload"]
-        if payload.get("kind") != "denied" or payload.get("denial_reason") != reason:
-            raise BotAssertionError(
-                f"[{bot.username}] {label}：期望 denied/{reason}，实际 {payload}"
-            )
-        _drain_probe_results(bot)  # 本批其余候选的迟到响应排空，防落入下一批次窗口
+        for e in results:
+            payload = e.data["payload"]
+            if payload.get("kind") != "denied" or payload.get("denial_reason") != reason:
+                raise BotAssertionError(
+                    f"[{bot.username}] {label}：期望批内全部响应为 denied/{reason}，"
+                    f"实际 {payload}（t={e.t:.3f}）"
+                )
         bot.assert_alive(f"{label} 后")
         return
     raise BotAssertionError(

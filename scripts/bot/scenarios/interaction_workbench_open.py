@@ -132,19 +132,21 @@ def run(env) -> None:
         bot.assert_alive("workbench_open happy path 后")
 
         # 拒绝 1：实体 id 不存在 → 聊天「目标不存在。」（dispatch 层 get_by_id 失败）。
+        # 拒收契约 = 该请求只产拒信、不得同时产出 WorkbenchOpen payload。水位必须在
+        # intent 之前截取——若在拒信消费后才锚定，先于拒信到达的成功 payload 会被
+        # 排除在静默窗口外，「照发 WorkbenchOpen 又回拒收文案」的坏实现就撞不红
+        # （review finding 1/5）。拒信 chat 本身已被 expect_chat 消费，静默窗口按 t
+        # 豁免该条 chat；其余 workbench_open payload 与新聊天仍判红。
+        reject_sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**OPEN_REQUEST, "entity_id": 987654321})
-        bot.expect_chat("目标不存在。", timeout=10.0)
-        # 拒绝 1 契约：被拒的 open 不得同时产出成功 payload——「照发 WorkbenchOpen
-        # 又回拒收文案」的坏实现必须撞红（review finding 2）。拒收聊天已在此前被
-        # expect_chat 消费，锚定到当前水位后，_assert_silent_window 对 payload 与
-        # 新聊天都判红；后续 tpzone 命令在此窗口结束后才发。
-        sent_at = bot.events[-1].t if bot.events else 0.0
+        reject_chat = bot.expect_chat("目标不存在。", timeout=10.0)
         _assert_silent_window(
             bot,
-            sent_at,
+            reject_sent_at,
             "workbench_open",
             "不存在实体的 workbench_open 应只回「目标不存在。」，不得同时回推 WorkbenchOpen payload",
             window=SILENT_WINDOW,
+            allowed_chat_ts=(reject_chat.t,),
         )
 
         # 拒绝 2：权威坐标离开制作台 >3m 后 open → 静默（interact 出界 continue）。
@@ -167,11 +169,19 @@ def run(env) -> None:
         )
 
 
-def _assert_silent_window(bot, sent_at: float, payload_type: str, description: str, window: float) -> None:
+def _assert_silent_window(
+    bot,
+    sent_at: float,
+    payload_type: str,
+    description: str,
+    window: float,
+    allowed_chat_ts: tuple = (),
+) -> None:
     """断言窗口内未出现指定 payload_type 的 server_data 与任何新聊天。
 
     服务器有周期 payload（如 cultivation_detail ~1s 一次），所以静默只能按
-    payload_type 细粒度断言，不能断言"无任何 server_data"。
+    payload_type 细粒度断言，不能断言"无任何 server_data"。allowed_chat_ts 用于豁免
+    已被 expect_chat 消费掉的预期拒信（水位前移后拒信 t > sent_at，按 t 放行该条）。
     """
     deadline = time.monotonic() + window
     while True:
@@ -182,7 +192,7 @@ def _assert_silent_window(bot, sent_at: float, payload_type: str, description: s
                     f"实际窗口内收到 payload_type={payload_type}"
                 )
         for e in bot.events_of("chat"):
-            if e.t > sent_at:
+            if e.t > sent_at and e.t not in allowed_chat_ts:
                 raise BotAssertionError(
                     f"[{bot.username}] {description}，实际窗口内出现聊天 {e.data['text']!r}"
                 )

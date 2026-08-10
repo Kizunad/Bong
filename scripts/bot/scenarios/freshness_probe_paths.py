@@ -56,6 +56,11 @@ def run(env) -> None:
         meat_instance = meat["item"]["instance_id"]
 
         # 1. Awaken → RealmTooLow → EventAlert 神识未及
+        # Denied(RealmTooLow) 契约：同请求不得同时产出精确保鲜结果。水位必须在 intent
+        # 之前截取——若在拒信（event_alert）消费后才锚定，先于拒信到达的
+        # freshness_update 会被排除在静默窗口外，「先发精确保鲜、再发神识未及」的坏
+        # 实现就撞不红（review finding 3/5）。
+        sent_at = bot.events[-1].t if bot.events else 0.0
         bot.intent({**PROBE_REQUEST, "instance_id": meat_instance})
         alert = bot.expect_server_data("event_alert", timeout=10.0)
         message = alert.data["payload"].get("message", "")
@@ -63,10 +68,6 @@ def run(env) -> None:
             raise BotAssertionError(
                 f"[{bot.username}] 期望 EventAlert 含「神识未及」，实际 {message!r}"
             )
-        # Denied(RealmTooLow) 契约：同请求不得同时产出精确保鲜结果——只等拒信、只查
-        # 连接存活会放走「发拒信又发精确保鲜」的坏实现。以拒信已到达为锚，断言窗口
-        # 内无 freshness_update（review finding 7）。
-        sent_at = bot.events[-1].t if bot.events else 0.0
         _assert_no_freshness_update(
             bot,
             sent_at,
