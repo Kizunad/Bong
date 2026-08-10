@@ -60,8 +60,13 @@ _AMBIENT_SERVER_DATA_TYPES = frozenset(
     }
 )
 # 被动/周期性 vfx（无请求也持续产生）：灵气回充 tick 粒子（cultivation/tick.rs
-# qi_regen 系统）。其余 vfx（combat/forge/alchemy/breakthrough 等）均为请求驱动。
-_AMBIENT_VFX_EVENT_IDS = frozenset({"bong:cultivation_absorb"})
+# qi_regen 系统）；凡兽出生/凋亡粒子（fauna/experience.rs emit_fauna_spawn_vfx_system
+# 在 Added<FaunaVisualKind> 上触发、fauna/mundane.rs mundane_fauna_negative_zone_wither_system
+# 在世界 qi 驱动下触发——均为 ambient 调度器/世界状态驱动，与任何 client_request
+# 无关）。其余 vfx（combat/forge/alchemy/breakthrough 等）均为请求驱动。
+_AMBIENT_VFX_EVENT_IDS = frozenset(
+    {"bong:cultivation_absorb", "bong:fauna_spawn_dust"}
+)
 
 
 def is_gameplay_side_effect(
@@ -289,7 +294,7 @@ def fire_probes_and_keep_connection(
     bot.assert_alive(f"{label} 心跳往返后仍存活")
 
 
-def assert_valid_request_still_works(bot, *, meridian: str = "lung") -> None:
+def assert_valid_request_still_works(bot, *, meridian: str = "lung") -> float:
     """合法请求必须仍被正常处理 —— 连接在拒绝后处于完好可用状态。
 
     用 `set_meridian_target` 当探针：其预期响应是 server 广播「已收到经脉目标：」
@@ -300,11 +305,17 @@ def assert_valid_request_still_works(bot, *, meridian: str = "lung") -> None:
     ``event.t`` 同一相对时钟，在发请求**之前**读取），再要求响应 ``t > sent_at``。
     一个更早的匹配广播（例如来自之前被错误接受的坏请求探针）在发送时刻前已到达、
     ``t ≤ sent_at``，不能冒充本请求的响应 —— 成功断言与所发的合法请求严格对应。
+
+    返回确认聊天事件的时间戳（与 ``event.t`` 同一时钟）：server 按连接串行处理请求，
+    确认到达即证明**此前**全部请求已处理完毕 —— 前一坏请求的 resync 响应（若有）
+    必然先于该时间戳入队。调用方把它当快照窗口上界，即可把 resync 断言收窄到
+    「与坏请求处理有因果关系」的区间（见 network_session_token_stale 的 resync 契约）。
     """
     sent_at = _relative_now(bot)
     bot.intent({"v": 1, "type": "set_meridian_target", "meridian": meridian})
-    bot.wait_for(
+    event = bot.wait_for(
         lambda e: e.kind == "chat" and "已收到经脉目标" in e.data["text"] and e.t > sent_at,
         timeout=10.0,
         description=f"t>{sent_at:.3f}s 后（合法请求发出后）的「已收到经脉目标」聊天确认",
     )
+    return event.t

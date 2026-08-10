@@ -17,12 +17,13 @@
    未正确使 session 失效，重放 move 会成功并产生 loot_container_update / 指纹
    变化，断言立即失败。
 2. **forged token（从未发放）**：高位全 1 的 session_id 不可能被分配过 —— 复用
-   real move 模板只换 token，且 **from 位置由 session_id 派生**（`ext_{FORGED}@(0,0)`，
-   与顶层 token 同契约面，review finding 3）：请求形状完全合法，唯一无效前提是
-   token 从未发放。若沿用 pack→ext_{forged} 或复用 ext_{real_session} 位置，会分别
-   引入「目标容器不存在」/「位置编码与顶层 session 矛盾」这类**第二无效前提**，
-   探针就测不到 session 权威门禁了（review finding 5/7）。同样干净拒绝：
-   move resync + 零 mutation + 无 loot_container_update，close no-op。
+   real move 模板只换 token，**from 仍是 ext_{real_session}@(0,0)（物品真实在其中）**：
+   请求形状完全合法，唯一无效前提是 token 从未发放，server 只能在权威 session 注册表
+   门禁上拒绝它。若把 from 派生为 ext_{FORGED}@(0,0)，那个容器从未存在（container_id
+   由 session 派生、伪造 session 无实体），「声称的来源容器不含物品」成为第二无效
+   前提，跳过注册表查询、按声称容器/物品存在性拒绝的回归实现会假通过（本轮 review
+   finding 2）。同样干净拒绝：move resync + 零 mutation + 无 loot_container_update，
+   close no-op。
 
 拒绝响应的可观测契约：resync 快照的指纹（revision + 内容）与请求前**完全一致**
 （server 只在背包内容突变时 bump revision，单纯重发快照不改 revision；故指纹
@@ -67,16 +68,19 @@ def _placement_candidates(bot) -> list[tuple[int, int, int]]:
 
     TSY 蓝图区地形非平坦：东侧固定偏移可能整面落进实体墙（实跑实证
     `rejected target block stone is not replaceable` 连升 7 格，且每次 run 的
-    spawn 坐标/地面高度不同）。候选铺满玩家脚下层与上一层、水平偏移 1-3 的整圈，
-    全部落在 open 射程内（marker 落在 (cx+0.5, cy, cz+0.5)，距离按 marker 到玩家
-    计），按距离升序 —— 就近候选最可能是空气格，少试几次即中。
+    spawn 坐标/地面高度不同，seed 选点可落在石质结构顶部/沟槽内）。候选铺满
+    玩家脚下层起连续 4 层（fy..fy+4）、水平偏移 1-3 的整圈，全部落在 open 射程内
+    （marker 落在 (cx+0.5, cy, cz+0.5)，距离按 marker 到玩家计），按距离升序 ——
+    就近候选最可能是空气格，少试几次即中。只搜 fy/fy+1 会把「立在结构顶、周围是
+    1-2 格高石墙」的 spawn 判成无可放置格（实跑：86/86 全 stone 拒，fy+2/fy+3 的
+    空气格从未尝试）；高格 marker 距玩家仍 ≤4.0，open 射程（4.5）内可开。
     """
     if bot.position is None:
         raise BotAssertionError("stale session 场景需要 pos_look 后的位置，实际 position=None")
     px, py, pz = bot.position
     fx, fy, fz = math.floor(px), math.floor(py), math.floor(pz)
     candidates: list[tuple[int, int, int]] = []
-    for cy in (fy, fy + 1):
+    for cy in range(fy, fy + 5):
         for dx in range(-3, 4):
             for dz in range(-3, 4):
                 if dx == 0 and dz == 0:
@@ -141,13 +145,23 @@ def _open_real_session(bot) -> dict:
 
     # spawn 地形非平坦（TSY 蓝图区），东侧 2 格可能是整面实体墙（实跑实证连升 7 格
     # 全被 stone 拒）。改为在玩家射程内（container_open 上限 4.5 格）逐候选格放置：
-    # marker 精确落在 (cx+0.5, cy, cz+0.5)，用**紧** predicate 唯一锁定本格 marker
-    # —— 宽松 box（±1.5/±2.0）会匹配到候选格附近的其它实体，把 container_open 送
-    # 到错误 entity 上（实跑观察：循环被候选格旁的既有实体提前 break）。失败放置是
-    # no-op（trade_crate 不消耗，可复用同一 item），全部候选失败才抛错（fail-closed，
-    # issued-to-closed 重放是核心覆盖，环境缺口不得静默跳过，review finding 3）。
+    # marker 精确落在 (cx+0.5, cy, cz+0.5)，用**紧** predicate（±0.25 只认本格中心）
+    # 唯一锁定 marker —— 宽松 box（±1.5/±2.0）会匹配到候选格附近的其它实体，把
+    # container_open 送到错误 entity 上（实跑观察：循环被候选格旁的既有实体提前
+    # break）。失败放置是 no-op（trade_crate 不消耗，可复用同一 item），全部候选失败
+    # 才抛错（fail-closed，issued-to-closed 重放是核心覆盖，环境缺口不得静默跳过，
+    # review finding 3）。
+    #
+    # **迟到 spawn 调和（review finding 1）**：等待超时只证明「0.8s 内该候选格没出现
+    # marker」，不证明放置失败 —— server 正常吞掉 crate、但 entity_spawn 事件因调度/
+    # 网络延迟晚于 0.8s 到达，且后序候选复用了已被消费的 instance_id 被拒，旧实现把
+    # 已成功的放置判成整体失败。predicate 改为匹配**任意已尝试候选格**（attempted 快照
+    # 每轮追加）：每轮 wait_for 都从事件历史头部重扫（cursor=0），前一候选格迟到的
+    # spawn 在后一轮扫描里命中，成功放置不再被丢弃。候选格间距 ≥1，±0.25 的紧 box
+    # 只命中本格 marker，attempted 的 any() 不会把邻近格的既有实体误收。
     spawn = None
     sent_at = time.monotonic() - bot.t0
+    attempted: list[tuple[int, int, int]] = []
     for cx, cy, cz in _placement_candidates(bot):
         bot.intent(
             {
@@ -160,13 +174,21 @@ def _open_real_session(bot) -> dict:
                 "target_face": "north",
             }
         )
+        attempted.append((cx, cy, cz))
+
+        def _spawn_at_attempted(e, attempted=tuple(attempted)) -> bool:
+            if e.kind != "entity_spawn" or e.t <= sent_at:
+                return False
+            return any(
+                abs(e.data["x"] - (p[0] + 0.5)) <= 0.25
+                and abs(e.data["y"] - p[1]) <= 0.25
+                and abs(e.data["z"] - (p[2] + 0.5)) <= 0.25
+                for p in attempted
+            )
+
         try:
             spawn = bot.wait_for(
-                lambda e, p=(cx, cy, cz): e.kind == "entity_spawn"
-                and e.t > sent_at
-                and abs(e.data["x"] - (p[0] + 0.5)) <= 0.25
-                and abs(e.data["y"] - p[1]) <= 0.25
-                and abs(e.data["z"] - (p[2] + 0.5)) <= 0.25,
+                _spawn_at_attempted,
                 timeout=0.8,
                 description="trade_crate 放置后在该候选格出现容器 Marker entity_spawn",
             )
@@ -257,37 +279,46 @@ def _assert_stale_move_rejected_zero_mutation(
 ) -> None:
     """stale / 重放 external_container_move 必须被干净拒绝：零 mutation + 无成功路径响应。
 
-    ``real_move`` 是 move 模板（instance_id / from / to）—— 探针只换 session token。
-    from 位置由传入的 ``session_id`` 派生为 ``ext_{session_id}@(0,0)``，使**顶层
-    session_id 与位置编码的 session 恒一致**（wire 契约：``ext_<session_id>`` 是顶层
-    token 的同一契约面，review finding 3）。由此探针只以「token 无效」为唯一前提：
+    ``real_move`` 是 move 模板（instance_id / from / to）—— 探针只换 session token，
+    **from 复用模板里的真实容器位置**（``ext_{real_session}@(0,0)``，物品真实在其中）：
     - **closed token（重放）**：session_id=真实 session，from=ext_{real}@(0,0)（物品
       真实在其中）、to=真实空闲背包格。token 已关闭，唯一无效前提是「token 已关闭」。
-    - **forged token（从未发放）**：session_id=FORGED，from=ext_{FORGED}@(0,0)。
-      位置与 token 一致，请求形状完全合法，唯一无效前提是「token 从未发放」——
-      server 只能在**权威 session 注册表门禁**（``ext_reg.sessions.get``）上拒绝它。
-      旧设计复用 ext_{real} 位置 + 伪造顶层 token，制造第二个无效前提（位置编码与
-      顶层 session 矛盾），跳过注册表查询、只做「位置属于本 session」检查的回归
-      实现会因 `ext_{real} != ext_{FORGED}` 而非授权检查拒绝它，探针假通过。
+    - **forged token（从未发放）**：session_id=FORGED，from 仍用 ext_{real}@(0,0)
+      （物品真实在其中）。请求形状完全合法：物品在声称的来源容器里、to 是空闲背包格，
+      唯一无效前提是「token 从未发放」—— 普通容器/物品校验无从拒绝，server 只能在
+      **权威 session 注册表门禁**（``ext_reg.sessions.get``，client_request_handler.rs
+      入口首查）上拒绝它。旧设计把 from 派生为 ext_{FORGED}@(0,0) 使位置与顶层 token
+      一致，但该容器**从未存在**（container_id 由 session 派生、伪造 session 无实体），
+      「声称的来源容器不含物品」成了第二个无效前提：跳过注册表查询、按声称容器/物品
+      存在性校验拒绝的回归实现会干净拒绝、探针假通过（本轮 review finding 2）。
 
-    若 server 错误接受坏 token 并走到物品校验：closed 的源物品真实在 ext_{real}，
-    move 会成功回推 loot_container_update + bump revision —— 本断言的零 mutation
-    指纹与 ``assert_no_server_data_payload_since(loot_container_update)`` 立即失败，
-    暴露授权缺陷。
+    若 server 错误接受坏 token：
+    - closed 的源物品真实在 ext_{real}，move 会成功回推 loot_container_update +
+      bump revision —— 本断言的零 mutation 指纹与
+      ``assert_no_server_data_payload_since(loot_container_update)`` 立即失败；
+    - forged 的请求形状完全合法，跳过注册表门禁的实现只有两条出路：(a) 继续执行 move
+      成功 → loot_container_update + mutation → 失败；(b) 在 is_from_ext 端点一致性
+      检查（``ext_{real} != ext_{FORGED}``，client_request_handler.rs 19288）被拒 →
+      该分支回推 ``resync_ext_and_inventory``，**同样发出 loot_container_update** →
+      断言失败。任何跳过门禁的实现都逃不出这两种可观测结果；「位置与顶层 token 矛盾」
+      不再能当掩盖点（旧 review finding 3 的顾虑正是该拒绝分支，其可观测签名已被
+      无 loot_container_update 断言覆盖）。
 
-    **同步点 + resync 契约（review finding 1/3/4）**：不靠「等任意 resync 快照」判定
-    拒绝 —— 周期 shelflife / Changed 驱动的无变更重发与拒绝 resync 同类型同时钟，会
-    提前满足等待，把「请求尚未处理」误判成「已干净拒绝」。server 按连接**串行**处理
-    请求，故本函数发完 move 后调 ``assert_valid_request_still_works``（发一个合法请求
-    并等它的聊天确认）：确认到达即证明本 move 已处理完毕，任何迟到的成功响应 / 副作用
-    已全部入队。此后必须要求一张 **t > before 的新背包快照**（被拒 move 的
-    ``resync_inventory_only`` 回推，client_request_handler.rs 各拒绝分支均如此）且内容
-    零变化 —— 只比对 latest 缓存快照会放走「直接把 move 丢进黑洞、一张 resync 都不发」
-    的实现（latest 仍是请求前旧快照，指纹相等照样通过，review finding 4）。pre 指纹
-    在发请求**之前**读取；锚点同样在发请求前取发送时刻（与 ``event.t`` 同一相对时钟）。
+    **同步点 + resync 契约（本轮 review finding 1/3）**：不靠「等任意 resync 快照」
+    判定拒绝 —— 周期 shelflife / Changed 驱动的无变更重发与拒绝 resync 同类型同时钟，
+    会提前满足等待，把「请求尚未处理」误判成「已干净拒绝」。server 按连接**串行**
+    处理请求，故本函数发完 move 后调 ``assert_valid_request_still_works``（发一个合法
+    请求并等它的聊天确认）：确认到达即证明本 move 已处理完毕，任何迟到的成功响应 /
+    副作用已全部入队。被拒 move 的 resync（``resync_inventory_only``，各拒绝分支均
+    如此）在 move 处理时同步回推、**先于**同步点确认到达 —— 故 resync 快照必须落在
+    **t ∈ (before, 同步点确认时刻]** 区间（把同步屏障收进快照谓词），而不是 10s 窗口
+    里任意一张快照：同步点确认之后才到达的快照与 move 处理无因果关系，属周期重发，
+    不能冒充拒绝 resync（本轮 review finding 3）。且 resync 内容必须零变化 —— 只比对
+    latest 缓存快照会放走「直接把 move 丢进黑洞、一张 resync 都不发」的实现（latest
+    仍是请求前旧快照，指纹相等照样通过，旧 review finding 4）。pre 指纹在发请求
+    **之前**读取；锚点同样在发请求前取发送时刻（与 ``event.t`` 同一相对时钟）。
     """
     from ._inventory_helpers import (
-        container_location,
         latest_inventory_snapshot,
         wait_inventory_snapshot_after,
     )
@@ -303,19 +334,22 @@ def _assert_stale_move_rejected_zero_mutation(
         _move_request(
             session_id,
             real_move["instance_id"],
-            container_location(f"ext_{session_id}", 0, 0),
+            real_move["from"],
             real_move["to"],
         )
     )
     # review finding 1/3：同步点证明本 move 已处理完毕（server 串行处理请求，之后合法
     # 请求的聊天确认到达 ⇒ 本 move 的全部响应已入队），迟到的 loot_container_update
-    # 必然落入扫描窗口。
-    assert_valid_request_still_works(bot)
+    # 必然落入扫描窗口。确认事件的时间戳同时是 resync 快照窗口的上界（resync 先于它）。
+    confirm_t = assert_valid_request_still_works(bot)
     assert_no_server_data_payload_since(bot, before, "loot_container_update", label)
-    # resync 契约（review finding 4）：被拒 move 必须回推一张 t > before 的新快照且
-    # 内容零变化。同步点已证明 resync（若有）入队，故等待必然命中；server 若直接把
-    # move 丢进黑洞（连 resync 都不发），latest 仍是请求前旧快照、指纹相等假通过。
-    resync = wait_inventory_snapshot_after(bot, before, timeout=10.0)
+    # resync 契约：被拒 move 必须回推一张 **t ∈ (before, confirm_t]** 的新背包快照且
+    # 内容零变化 —— 同步屏障收进快照谓词（review finding 3：同步点确认前的快照才与
+    # move 处理有因果关系；确认后才到的属周期重发，不能冒充 resync）。server 若直接把
+    # move 丢进黑洞（连 resync 都不发），等待必然超时，不会因周期快照假通过。
+    resync = wait_inventory_snapshot_after(
+        bot, before, until_t=confirm_t, timeout=10.0
+    )
     if inventory_fingerprint(resync) != inventory_fingerprint(pre):
         raise BotAssertionError(
             f"{label}：期望拒绝后 resync 背包零 mutation，"
@@ -405,12 +439,13 @@ def run(env) -> None:
         _assert_stale_close_rejected(bot, session_id, "replay 已关闭 session 的 close")
 
         # ---- 2. forged（从未发放的 token）—— 复用真实 session 的 move 模板，只换
-        # token（review finding 5/7）。helper 把 from 派生为 ext_{FORGED}@(0,0)，
-        # 与顶层 session_id 一致（wire 契约：位置编码与 token 同契约面，review
-        # finding 3），to=真实空闲背包格 —— 请求形状完全合法，唯一无效前提是 token
-        # 从未发放。server 只能在权威 session 注册表门禁上拒绝它：漏做注册表查询的
-        # 实现（旧设计只校验「目标容器存在/可写」或「位置属于 session」）都不会因
-        # `ext_{real} != ext_{FORGED}` 这类第二无效前提而假拒绝。
+        # token（本轮 review finding 2）。helper 复用 real_move 的 from
+        # （ext_{real}@(0,0)，物品真实在其中）、to=真实空闲背包格 —— 请求形状完全
+        # 合法，唯一无效前提是 token 从未发放。server 只能在权威 session 注册表门禁
+        # 上拒绝它：跳过注册表查询的实现只有两条出路 —— 继续执行 move 成功（
+        # loot_container_update + mutation → 断言失败），或在 is_from_ext 端点一致性
+        # 检查上拒绝（该分支回推 resync_ext_and_inventory，同样发 loot_container_update
+        # → 断言失败），均不会被「声称容器不含物品」/「位置与 token 矛盾」掩盖。
         _assert_stale_move_rejected_zero_mutation(
             bot, FORGED_SESSION_ID, "stale move #1（forged token）", real_move
         )

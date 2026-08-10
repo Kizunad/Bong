@@ -12,6 +12,13 @@
 背包快照指纹（revision + 内容）完全一致 —— 证明越界请求在产生任何玩法副作用
 之前就被拦截，没有被 clamp 后继续执行；之后合法请求仍被正常处理。
 
+**botany_harvest mode 非法变体探针**（review finding 4）单独在 run() 里探：它需要
+**真实活跃的 botany session** 才能把「schema 拒绝」和「无 session 的下游 no-op」
+区分开 —— 若打在 session_id="x" 这种不存在 session 上，serde 错误接受 garbage 后
+请求进 handler 也会被 "missing harvest session" 拒绝，探针假通过。run() 先
+`/bong gather` 建真实 session，正向对照每个合法 mode（manual/auto）都有可观测响应
+（progress 回推 mode 切换），再对 garbage 断言 mode 不变 + 进度未被重置。
+
 **合法边界也要证明被接受**（review finding 1）：只探坏值不探好值，一个 off-by-one
 实现（只接受 slot 0..7 / count 1..63）会拒绝掉全部坏探针、通过全部干净拒绝断言，
 却错误拒绝了上边界合法请求。故反向补两组**恰好落在契约边界内**的正向探针：
@@ -49,10 +56,9 @@ OUT_OF_RANGE_PROBES = [
     ("版本 v=0 低于支持版本", {"type": "breakthrough_request", "v": 0}),
     ("版本 v=255 高于支持版本", {"type": "breakthrough_request", "v": 255}),
     ("v 超出 u8 范围", {"type": "breakthrough_request", "v": 999999999}),
-    (
-        "botany_harvest mode 非法变体",
-        {"type": "botany_harvest_request", "v": 1, "session_id": "x", "mode": "garbage"},
-    ),
+    # botany_harvest mode 非法变体探针**不**在批量里：它需要真实活跃 botany session
+    # 才不被「无匹配 session」的 handler 拒绝掩盖（见 _assert_invalid_harvest_mode_rejected），
+    # 单独在 run() 里建 session 后探。
 ]
 
 # 契约边界内**合法** slot 值（deserialize_slot_index 契约 0..=8）。用 quick_slot_bind
@@ -167,6 +173,112 @@ def _assert_count_boundary_accepted(bot, count: int, label: str) -> None:
     )
 
 
+def _open_botany_harvest_session(bot) -> str:
+    """建立真实活跃 botany harvest session（/bong gather），返回其 session_id。
+
+    ``botany_harvest_request`` 只在 session 已存在时才有可观测成功路径（
+    ``request_harvest_mode`` 更新 session → 下个 sync 节拍回推 botany_harvest_progress）。
+    探针若打在 ``session_id="x"`` 这种不存在 session 上，serde 错误接受未知 mode 变体
+    后请求进 handler 也会被 "missing harvest session" 拒绝，探针假通过（本轮 review
+    finding 4）。先用 ``/bong gather spirit_grass`` 建立真实 session，再读回推的
+    botany_harvest_progress 拿 session_id（server 以 canonical_player_id 为 session_id，
+    client 无法凭空构造）。
+    """
+    bot.cmd("bong gather spirit_grass")
+    bot.expect_chat("Gameplay action queued.", timeout=10.0)
+    progress = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "botany_harvest_progress",
+        timeout=15.0,
+        description="botany 采集 session 建立后的 botany_harvest_progress 回推",
+    )
+    return progress.data["payload"]["session_id"]
+
+
+def _assert_harvest_mode_flip(bot, session_id: str, mode: str, label: str) -> None:
+    """正向对照：合法 mode 请求必须产生可观测响应（botany_harvest_progress mode 切换）。
+
+    ``botany_harvest_request`` 走通 handler（``request_harvest_mode``）会把 session 的
+    mode 切成请求值，server 在 sync 节拍（10 tick ≈ 0.5s）回推 botany_harvest_progress
+    mode 即新值 —— 这是「合法 mode 被 schema 接受」的黑盒证据。只探坏值不探好值，
+    默认化/off-by-one 实现会通过全部坏值断言却错误处理合法值（review finding 1 同款
+    论证）；覆盖两个合法变体 manual/auto，保证「每个合法 mode 都有可观测响应」。
+    """
+    sent_at = time.monotonic() - bot.t0
+    bot.intent(
+        {"v": 1, "type": "botany_harvest_request", "session_id": session_id, "mode": mode}
+    )
+    bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "botany_harvest_progress"
+        and e.t > sent_at
+        and e.data["payload"].get("mode") == mode,
+        timeout=10.0,
+        description=(
+            f"{label}：botany_harvest_request mode={mode} 被接受"
+            f"（progress 回推 mode={mode}，session 状态被合法请求推进）"
+        ),
+    )
+
+
+def _assert_invalid_harvest_mode_rejected(bot, session_id: str, resting_mode: str) -> None:
+    """坏 mode 探针：打在真实 session 上，且不翻转 mode / 不重置进度。
+
+    mode="garbage" 若被 serde 错误接受并默认成某个合法变体，``request_harvest_mode``
+    会：(a) 把 session.mode 切到默认值 → 下一次回推的 progress 显示 mode != resting_mode；
+    或 (b) 默认成 resting_mode 本身 → mode 字段不变，但 started_at_tick 被重置 →
+    progress 回落到 ~0 再续增。正确 serde 在反序列化期整包丢弃该请求，session 状态
+    不变 → progress 仍显示 resting_mode、进度单调续增。两种可观测差异任一出现即判定
+    serde 接受了 garbage，坏实现不再被「session 不存在」掩盖（本轮 review finding 4）。
+    """
+    pre = bot.wait_for(
+        lambda e: e.kind == "server_data"
+        and e.data["payload_type"] == "botany_harvest_progress"
+        and e.data["payload"].get("mode") == resting_mode,
+        timeout=10.0,
+        description=f"garbage 前 resting_mode={resting_mode} 的进度基线",
+    )
+    pre_progress = pre.data["payload"].get("progress", 0.0)
+    sent_at = time.monotonic() - bot.t0
+    bot.intent(
+        {
+            "v": 1,
+            "type": "botany_harvest_request",
+            "session_id": session_id,
+            "mode": "garbage",
+        }
+    )
+    # 给 server ≥2 个 sync 节拍（PROGRESS_SYNC_INTERVAL_TICKS=10 ≈ 0.5s/拍）处理并回推，
+    # 再一次性扫垃圾请求后到达的全部 progress —— 迟到的成功响应也计入拒绝判定。
+    time.sleep(1.5)
+    offenders = [
+        e
+        for e in bot.events
+        if e.kind == "server_data"
+        and e.data["payload_type"] == "botany_harvest_progress"
+        and e.t > sent_at
+    ]
+    if not offenders:
+        raise BotAssertionError(
+            "garbage 探针后没有 botany_harvest_progress 回推，"
+            "无法判定 session 状态（progress 应每 ~0.5s 回推一次）"
+        )
+    for e in offenders:
+        payload = e.data["payload"]
+        if payload.get("mode") != resting_mode:
+            raise BotAssertionError(
+                "botany_harvest mode 非法变体探针：期望 mode 保持"
+                f" {resting_mode}，实际 progress 回推 mode={payload.get('mode')}"
+                " —— serde 把 garbage 默认成了别的合法变体"
+            )
+        if payload.get("progress", 0.0) < pre_progress - 1e-9:
+            raise BotAssertionError(
+                "botany_harvest mode 非法变体探针：期望进度单调续增（未被请求重置），"
+                f"实际 progress {pre_progress:.3f} → {payload.get('progress', 0.0):.3f}"
+                " —— serde 接受了 garbage 并重置了 session"
+            )
+
+
 def run(env) -> None:
     from ._inventory_helpers import latest_inventory_snapshot, wait_join_and_inventory
     from ._rejection_helpers import (
@@ -203,6 +315,21 @@ def run(env) -> None:
                 "越界字段值探针后背包快照指纹变化：某个越界请求被 clamp/部分处理了，"
                 f"探针前={pre_fingerprint} 探针后={post_fingerprint}"
             )
+
+        # ---- botany_harvest mode 非法变体探针（review finding 4）：必须打在**真实活跃
+        # botany session** 上 —— 否则 serde 错误接受 garbage 后请求进 handler 也会被
+        # "missing harvest session" 拒绝，探针假通过。先用 /bong gather 建 session，
+        # 正向对照证明每个合法 mode（manual/auto）都有可观测响应（progress 回推 mode
+        # 切换），再对 garbage 断言 mode 不变 + 进度未被重置（默认化实现两种可观测差异
+        # 之一必现）。botany session 的周期回推与背包/聊天断言互不干扰。
+        session_id = _open_botany_harvest_session(bot)
+        _assert_harvest_mode_flip(bot, session_id, "auto", "合法 mode=auto 正向对照")
+        _assert_harvest_mode_flip(bot, session_id, "manual", "合法 mode=manual 正向对照")
+        _assert_harvest_mode_flip(
+            bot, session_id, "auto", "合法 mode=auto 再翻转(resting)"
+        )
+        _assert_invalid_harvest_mode_rejected(bot, session_id, resting_mode="auto")
+        bot.assert_alive("botany mode 非法变体探针后连接仍存活")
 
         # ---- 合法边界正向探针：slot 0/8、count 1/64 必须被 schema 接受（review
         # finding 1）。坏探针全被拒不足以证明好边界被接受 —— off-by-one 实现会拒掉

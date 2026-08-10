@@ -21,13 +21,24 @@ def latest_inventory_snapshot(bot, timeout: float = 10.0) -> dict[str, Any]:
     return event.data["payload"]
 
 
-def wait_inventory_snapshot_after(bot, after_t: float, timeout: float = 10.0) -> dict[str, Any]:
+def wait_inventory_snapshot_after(
+    bot, after_t: float, timeout: float = 10.0, until_t: float | None = None
+) -> dict[str, Any]:
+    """等一张 ``after_t < e.t <= until_t`` 的 inventory_snapshot。
+
+    ``until_t`` 给调用方一个上界：把快照断言收窄到「与某个请求处理有因果关系」的
+    区间（如同步点确认时刻）。无 ``until_t`` 时行为同旧版（只要求 t > after_t）。
+    """
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
-        and e.t > after_t,
+        and e.t > after_t
+        and (until_t is None or e.t <= until_t),
         timeout=timeout,
-        description=f"t > {after_t:.3f}s 的 inventory_snapshot",
+        description=(
+            f"{after_t:.3f}s < t <= {until_t if until_t is not None else '∞'} 的 "
+            f"inventory_snapshot"
+        ),
     )
     return event.data["payload"]
 

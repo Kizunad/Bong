@@ -4371,6 +4371,30 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertTrue(decoded["completed"])
         self.assertIn("背包已满", decoded["detail"])
 
+    def test_botany_harvest_progress_tag25_decodes_mode_and_progress(self):
+        progress = (
+            _pb_string(1, "Rng")
+            + _pb_string(2, "plant-1")
+            + _pb_string(3, "开脉草")
+            + _pb_string(4, "ning_mai_cao")
+            + _pb_string(5, "auto")
+            + _pb_fixed64(6, 0.42)
+            + _pb_varint(7, 1)
+            + _pb_varint(8, 0)
+            + _pb_varint(9, 0)
+            + _pb_varint(10, 0)
+            + _pb_string(11, "晨露未散")
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(25, progress))
+        self.assertEqual(decoded["type"], "botany_harvest_progress")
+        self.assertEqual(decoded["session_id"], "Rng")
+        self.assertEqual(decoded["target_name"], "开脉草")
+        self.assertEqual(decoded["plant_kind"], "ning_mai_cao")
+        self.assertEqual(decoded["mode"], "auto")
+        self.assertAlmostEqual(decoded["progress"], 0.42)
+        self.assertFalse(decoded["interrupted"])
+        self.assertFalse(decoded["completed"])
+
     def test_craft_outcome_unknown_fallback(self):
         # 空 CraftOutcome（无 oneof 分支）→ 解码器兜底 unknown，不 crash
         decoded = proto_min.decode_server_data_envelope(_pb_len_field(23, b""))
