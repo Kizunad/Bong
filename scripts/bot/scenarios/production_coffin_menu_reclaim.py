@@ -29,6 +29,12 @@ GAP11 排第一的判据（处理不当复制/双授道具腐坏账本）。
    不得出现 mundane_coffin。若二次回收被误处理，第一个快照就已返料翻倍（多即
    双授、少即吞料），必然被窗口扫描捕获。
 
+**精确数量 = 全部堆叠求和**：返料断言一律枚举 item_id 的**所有**匹配条目（容器/
+装备/快捷栏）并对其 stack_count 求和，再逐条校验 location 为容器槽位——单条目
+`find_item` 只看第一个堆叠，会让「合法 6/2 之外再各多一叠」的复制实现通过；求和
+语义下任何额外的同 id 堆叠都会让总数偏离 6/2 而被捕获（review run 31409926323
+复核点）。
+
 **位置稳定性**：bot 在出生点高空初始化（[8,150,8]），spawn_selector 按
 （seed, InitialLogin）稳定哈希到 safe_y 高度的出生点，随后**下落**到平坦地表
 （novice raster 地表 y≈73-74）。因此 `wait_for_ready` 后 bot.position 仍在下落中；
@@ -64,6 +70,97 @@ STAGE_TIMEOUT = 45.0
 PLACE_ATTEMPT_TIMEOUT = 8.0
 # 等待服务器位置稳定（出生下落完成）的判稳窗口。
 STABLE_POSITION_WINDOW = 2.0
+
+
+def _entries_for_item(snapshot, item_id):
+    """枚举 inventory_snapshot 中 item_id 的**全部**匹配条目（容器/装备/快捷栏）。
+
+    与 _inventory_helpers.find_item 返回结构一致（location+item），但返回所有
+    匹配项而非第一个——多堆叠才可能被总数断言看见。条目各自携带
+    container_id/row/col/instance_id，多个同 id 堆叠是可表示的；只查第一个
+    会让额外的堆叠对每条回归断言不可见（复核：该疏漏允许「合法 6/2 之外再
+    各多一叠」的复制实现通过全部断言）。
+    """
+    entries = []
+    for placed in snapshot.get("placed_items", []):
+        if placed["item"]["item_id"] == item_id:
+            entries.append(
+                {
+                    "location": {
+                        "kind": "container",
+                        "container_id": placed["container_id"],
+                        "row": placed["row"],
+                        "col": placed["col"],
+                    },
+                    "item": placed["item"],
+                }
+            )
+    for slot, values in snapshot.get("equipped", {}).items():
+        if slot.endswith("_worn"):
+            equip_slot = slot[: -len("_worn")]
+            for item in values:
+                if item["item_id"] == item_id:
+                    entries.append(
+                        {
+                            "location": {"kind": "equip", "slot": equip_slot, "state": "worn"},
+                            "item": item,
+                        }
+                    )
+        elif slot.endswith("_held"):
+            item = values
+            if item and item["item_id"] == item_id:
+                entries.append(
+                    {
+                        "location": {
+                            "kind": "equip",
+                            "slot": slot[: -len("_held")],
+                            "state": "held",
+                        },
+                        "item": item,
+                    }
+                )
+    for index, item in enumerate(snapshot.get("hotbar", [])):
+        if item and item["item_id"] == item_id:
+            entries.append({"location": {"kind": "hotbar", "index": index}, "item": item})
+    return entries
+
+
+def _total_stack_count(snapshot, item_id) -> int:
+    """item_id 在所有堆叠上的总数（全部条目 stack_count 求和）。"""
+    return sum(int(e["item"]["stack_count"]) for e in _entries_for_item(snapshot, item_id))
+
+
+def _assert_exact_reclaim(snapshot, item_id, expected, stage_label):
+    """断言 item_id 的总数恰好 == expected 且每条返料都落在容器槽位。
+
+    总数按全部堆叠求和：任何额外的同 id 堆叠（多即双授）或缺失（少即吞料）
+    都会让总数偏离 expected 而被捕获。location 逐条校验，杜绝返料落到错误
+    槽位（装备/快捷栏）的绕过。
+    """
+    entries = _entries_for_item(snapshot, item_id)
+    total = sum(int(e["item"]["stack_count"]) for e in entries)
+    assert total == expected, (
+        f"{stage_label} {item_id} 应恰好 ×{expected}，实际总数={total}"
+        f"（{len(entries)} 条堆叠；多即双授、少即吞料）"
+    )
+    off_container = [e["location"] for e in entries if e["location"]["kind"] != "container"]
+    assert not off_container, (
+        f"{stage_label} {item_id} 每条返料都应落入背包容器槽位，实际 {off_container}"
+    )
+
+
+def _reclaim_snapshot_ok(snapshot) -> bool:
+    """二次回收窗口内合规快照判据：返料总数 6/2、每条落容器、棺材不复现。"""
+    for item_id, expected in (
+        ("ling_mu_ban", RECLAIM_LING_MU_BAN),
+        ("ling_mu_gun", RECLAIM_LING_MU_GUN),
+    ):
+        entries = _entries_for_item(snapshot, item_id)
+        if sum(int(e["item"]["stack_count"]) for e in entries) != expected:
+            return False
+        if any(e["location"]["kind"] != "container" for e in entries):
+            return False
+    return _entries_for_item(snapshot, COFFIN_ITEM_ID) == []
 
 
 def _wait_position_stable(bot, window: float = STABLE_POSITION_WINDOW, timeout: float = 30.0):
@@ -172,40 +269,20 @@ def run(env) -> None:
             lambda e: e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and e.t > anchor
-            and (
-                (find_item(e.data["payload"], "ling_mu_ban") or {}).get("item", {}).get(
-                    "stack_count"
-                )
-                == RECLAIM_LING_MU_BAN
-            )
-            and (
-                (find_item(e.data["payload"], "ling_mu_gun") or {}).get("item", {}).get(
-                    "stack_count"
-                )
-                == RECLAIM_LING_MU_GUN
-            ),
+            and _total_stack_count(e.data["payload"], "ling_mu_ban") == RECLAIM_LING_MU_BAN
+            and _total_stack_count(e.data["payload"], "ling_mu_gun") == RECLAIM_LING_MU_GUN,
             timeout=STAGE_TIMEOUT,
             description=(
                 f"回收应精确返还 ling_mu_ban×{RECLAIM_LING_MU_BAN} + "
                 f"ling_mu_gun×{RECLAIM_LING_MU_GUN}（coffin.mundane_coffin Reclaim "
-                "全量返还，coffin_menu_reclaimed 快照）"
+                "全量返还，coffin_menu_reclaimed 快照；总数按全部堆叠求和，"
+                "额外同 id 堆叠会令总数偏离而不满足）"
             ),
         )
         reclaim_snapshot = reclaim_event.data["payload"]
 
-        ban = require_item(reclaim_snapshot, "ling_mu_ban")
-        gun = require_item(reclaim_snapshot, "ling_mu_gun")
-        assert int(ban["item"]["stack_count"]) == RECLAIM_LING_MU_BAN, (
-            f"回收返料 ling_mu_ban 应恰好 ×{RECLAIM_LING_MU_BAN}，"
-            f"实际 stack_count={ban['item']['stack_count']}（多即双授、少即吞料）"
-        )
-        assert int(gun["item"]["stack_count"]) == RECLAIM_LING_MU_GUN, (
-            f"回收返料 ling_mu_gun 应恰好 ×{RECLAIM_LING_MU_GUN}，"
-            f"实际 stack_count={gun['item']['stack_count']}"
-        )
-        assert ban["location"]["kind"] == "container", (
-            f"返料应落入背包容器槽位，实际 location={ban['location']}"
-        )
+        _assert_exact_reclaim(reclaim_snapshot, "ling_mu_ban", RECLAIM_LING_MU_BAN, "回收返料")
+        _assert_exact_reclaim(reclaim_snapshot, "ling_mu_gun", RECLAIM_LING_MU_GUN, "回收返料")
         assert find_item(reclaim_snapshot, COFFIN_ITEM_ID) is None, (
             f"回收后 {COFFIN_ITEM_ID} 不应复现——回收只返配方材料、不返棺材本体，"
             "若出现说明回收路径在复制道具"
@@ -238,44 +315,27 @@ def run(env) -> None:
         )
         post_snapshot = post_event.data["payload"]
 
-        # 回扫 (anchor, post_event.t] 窗口内的每一个 inventory_snapshot：返料必须
-        # 始终 6/2、mundane_coffin 必须始终不出现。窗口内还有周期性 inventory_changed
-        # （教程灵鼠扣 qi 等），故不能只查 probe 快照；逐条扫描才能证明二次回收没有
-        # 在任何一条快照里推过翻倍返料或棺材本体。
+        # 回扫 (anchor, post_event.t] 窗口内的每一个 inventory_snapshot：返料总数
+        # （按全部堆叠求和）必须始终 6/2、每条返料都落容器槽位、mundane_coffin 必须
+        # 始终不出现。窗口内还有周期性 inventory_changed（教程灵鼠扣 qi 等），故不能
+        # 只查 probe 快照；逐条扫描才能证明二次回收没有在任何一条快照里推过翻倍返料
+        # 或棺材本体。
         bad_snapshots = [
             e.data["payload"]
             for e in bot.events
             if e.kind == "server_data"
             and e.data["payload_type"] == "inventory_snapshot"
             and anchor < e.t <= post_event.t
-            and (
-                ((find_item(e.data["payload"], "ling_mu_ban") or {}).get("item", {}).get(
-                    "stack_count"
-                ))
-                != RECLAIM_LING_MU_BAN
-                or ((find_item(e.data["payload"], "ling_mu_gun") or {}).get("item", {}).get(
-                    "stack_count"
-                ))
-                != RECLAIM_LING_MU_GUN
-                or find_item(e.data["payload"], COFFIN_ITEM_ID) is not None
-            )
+            and not _reclaim_snapshot_ok(e.data["payload"])
         ]
         assert not bad_snapshots, (
             f"二次回收必须被拒（registry 已摘除）：(anchor, probe] 窗口内出现 "
-            f"{len(bad_snapshots)} 条违规快照（返料非 6/2 或棺材复现），"
-            f"首条={bad_snapshots[0]}——二次回收被误处理会先推 coffin_menu_reclaimed"
-            "并在当条快照翻倍返料"
+            f"{len(bad_snapshots)} 条违规快照（返料总数非 6/2、返料落非容器槽位或"
+            f"棺材复现），首条={bad_snapshots[0]}——二次回收被误处理会先推 "
+            "coffin_menu_reclaimed 并在当条快照翻倍返料"
         )
-        post_ban = require_item(post_snapshot, "ling_mu_ban")
-        post_gun = require_item(post_snapshot, "ling_mu_gun")
-        assert int(post_ban["item"]["stack_count"]) == RECLAIM_LING_MU_BAN, (
-            f"二次回收后 ling_mu_ban 应仍为 ×{RECLAIM_LING_MU_BAN}（未被双授），"
-            f"实际={post_ban['item']['stack_count']}"
-        )
-        assert int(post_gun["item"]["stack_count"]) == RECLAIM_LING_MU_GUN, (
-            f"二次回收后 ling_mu_gun 应仍为 ×{RECLAIM_LING_MU_GUN}（未被双授），"
-            f"实际={post_gun['item']['stack_count']}"
-        )
+        _assert_exact_reclaim(post_snapshot, "ling_mu_ban", RECLAIM_LING_MU_BAN, "二次回收后")
+        _assert_exact_reclaim(post_snapshot, "ling_mu_gun", RECLAIM_LING_MU_GUN, "二次回收后")
         assert find_item(post_snapshot, COFFIN_ITEM_ID) is None, (
             f"二次回收后 {COFFIN_ITEM_ID} 不应出现（放置时已消耗一次，回收不返棺材）"
         )
