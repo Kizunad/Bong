@@ -1787,6 +1787,9 @@ mod tests {
                     loss_per_tick: 0.7,
                 },
                 Lifecycle::default(),
+                // R5 P0 之后 release_qi_amount_to_zone 要求 canonical LifeRecord，
+                // 缺失会 fail closed 于 InvalidActorIdentity，antidote 扣减在事务内被中止。
+                LifeRecord::new(canonical_player_id("dugu-antidote-success")),
                 inventory,
             ))
             .id();
