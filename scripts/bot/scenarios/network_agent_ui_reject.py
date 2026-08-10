@@ -143,19 +143,41 @@ def _player_offline(bot, redis, run_tag) -> None:
 
 
 def _invalid_command(bot, redis, target_player, run_tag) -> None:
-    request_id = f"gap3_{run_tag}_badcmd"
+    # 钉死文档化范围 20..=2400 的边界：5/19/2401 必须拒（invalid_command），
+    # 2400（上界合法值）必须收（建 session 下发 request）——防 off-by-one / 上界漏检。
+    for bad_ticks in (5, 19, 2401):
+        request_id = f"gap3_{run_tag}_badcmd{bad_ticks}"
+        publish_cmd(
+            redis,
+            request_id=request_id,
+            target_player=target_player,
+            timeout_ticks=bad_ticks,  # 低于 20 或高于 2400 → cmd.validate() 失败
+        )
+        expect_redis_response(
+            redis,
+            request_id,
+            action="error",
+            params_subset={"reason": "invalid_command"},
+        )
+    ok_id = f"gap3_{run_tag}_cmd2400"
+    mark = _mark(bot)
     publish_cmd(
         redis,
-        request_id=request_id,
+        request_id=ok_id,
         target_player=target_player,
-        timeout_ticks=5,  # 低于 20..=2400 下限 → cmd.validate() 失败
+        timeout_ticks=2400,  # 文档化上界：应通过 validate()，建 session 并下发
     )
-    expect_redis_response(
-        redis,
-        request_id,
-        action="error",
-        params_subset={"reason": "invalid_command"},
+    expect_agent_ui_request(bot, ok_id, after=mark, timeout=15.0)
+    # 立即关闭该 session（dismissed），避免 2400 ticks 长会话残留拖住后续探针。
+    bot.intent(
+        {
+            "type": "agent_ui_response",
+            "v": 1,
+            "request_id": ok_id,
+            "action": "dismissed",
+        }
     )
+    expect_redis_response(redis, ok_id, action="dismissed", params_subset={})
 
 
 def _serde_dropped(bot, redis, target_player, run_tag) -> None:

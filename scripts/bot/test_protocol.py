@@ -4655,8 +4655,13 @@ class RespFramesTest(unittest.TestCase):
 
     def test_nil_bulk_string(self):
         parser = RespFrames()
-        parser.feed(b"$-1\r\n")
-        self.assertIsNone(parser.next_frame())
+        parser.feed(b"$-1\r\n:42\r\n")
+        self.assertIsNone(parser.next_frame(), "nil bulk 应解析为 None")
+        self.assertEqual(
+            parser.next_frame(),
+            42,
+            "nil bulk 帧必须被消费，后续帧才能继续解析",
+        )
 
     def test_array_frame(self):
         parser = RespFrames()
@@ -4774,13 +4779,14 @@ class _AgentUiFakeBot(_FakeBot):
         raise BotAssertionError(f"未找到 {description}; events={self.events}")
 
 
-def _req_event(t: float, request_id: str) -> _FakeEvent:
+def _req_event(t: float, request_id: str, **payload_overrides) -> _FakeEvent:
     payload = json.dumps(
         {
             "request_id": request_id,
             "target_player": "offline:Fake",
             "xml": "<owo-ui/>",
             "timeout_ticks": 600,
+            **payload_overrides,
         }
     ).encode("utf-8")
     return _FakeEvent(
@@ -4837,18 +4843,18 @@ class AgentUiHelperTest(unittest.TestCase):
         assert_request_shape(payload, "req_1")
 
     def test_assert_request_shape_rejects_security_field_leak(self):
-        payload = {
+        base = {
             "request_id": "req_1",
             "target_player": "offline:Fake",
             "xml": "<owo-ui/>",
             "timeout_ticks": 600,
-            "realm_gate": 3,
         }
         with self.assertRaises(BotAssertionError):
-            assert_request_shape(payload, "req_1")
-        payload["allowed_button_ids"] = ["enter_realm"]
+            assert_request_shape({**base, "realm_gate": 3}, "req_1")
         with self.assertRaises(BotAssertionError):
-            assert_request_shape(payload, "req_1")
+            assert_request_shape(
+                {**base, "allowed_button_ids": ["enter_realm"]}, "req_1"
+            )
 
     def test_assert_request_shape_rejects_wrong_request_id(self):
         payload = {
@@ -4923,9 +4929,25 @@ class AgentUiHelperTest(unittest.TestCase):
             expect_agent_ui_request(bot, "req_1", timeout=5.0, expect=False)
 
     def test_expect_agent_ui_request_after_mark(self):
-        bot = _AgentUiFakeBot([_req_event(1.0, "req_1"), _req_event(5.0, "req_2")])
-        payload = expect_agent_ui_request(bot, "req_2", after=2.0, timeout=5.0)
-        self.assertEqual(payload["request_id"], "req_2")
+        # 同一 request_id 在 marker 前后各一：request-id 过滤无法区分二者，
+        # 只有 after 语义能选中 marker 之后那条——忽略 after 的实现会错拿 marker 前的事件。
+        bot = _AgentUiFakeBot(
+            [
+                _req_event(1.0, "req_same", timeout_ticks=100),
+                _req_event(5.0, "req_same", timeout_ticks=900),
+            ]
+        )
+        payload = expect_agent_ui_request(bot, "req_same", after=2.0, timeout=5.0)
+        self.assertEqual(payload["request_id"], "req_same")
+        self.assertEqual(payload["timeout_ticks"], 900, "必须取 marker 之后的同 request_id 事件")
+
+    def test_expect_agent_ui_request_after_mark_ignores_predating_only_match(self):
+        # 唯一匹配发生在 marker 之前：after 语义应拒绝它，返回 None。
+        bot = _AgentUiFakeBot([_req_event(1.0, "req_predates")])
+        self.assertIsNone(
+            expect_agent_ui_request(bot, "req_predates", after=2.0, timeout=5.0, expect=False),
+            "marker 之前唯一匹配应被 after 拒绝",
+        )
 
     def test_expect_agent_ui_close_reason_assert(self):
         close = _FakeEvent(
