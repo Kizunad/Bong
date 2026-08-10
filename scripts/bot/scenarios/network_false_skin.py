@@ -139,6 +139,22 @@ def _expect_no_inventory_change(bot, anchor_t: float, baseline: dict) -> None:
             f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无 revision 变更"
             f"（>{baseline_revision}），实际收到 {len(stray)} 条"
         )
+    # central-review 31438252846 finding [3]：warn-only 拒绝路径（forge 境界/灵气/材料
+    # 拒绝 + equip instance 不存在）不得下发任何**用户可见拒绝回执**。旧实现只断
+    # 库存/qi 守恒，一个「保留库存与灵气、却在每步误发 inventory_move_rejected」的
+    # 服务端实现也能全过，违背场景声明的 wire 契约。inventory_move_rejected 是本组
+    # 唯一的拒绝 payload 类型（realm-gated equip 正路径同管线下发，见
+    # _wait_move_rejected——那一步走正向断言、不经本 helper），窗口内出现即红。
+    stray_rejected = [
+        e
+        for e in bot.events_of("server_data")
+        if e.data.get("payload_type") == "inventory_move_rejected" and e.t > anchor_t
+    ]
+    if stray_rejected:
+        raise BotAssertionError(
+            f"[{bot.username}] 期望 warn-only 拒绝路径不发送 inventory_move_rejected"
+            f"（无用户可见回执），实际收到 {len(stray_rejected)} 条"
+        )
     # review finding [5]：签名比对必须拿 **e.t > anchor_t** 的权威快照。拒绝路径
     # （RealmTooLow/NotEnoughQi/MissingMaterial/instance 不存在）从不主动回推，唯一
     # > anchor_t 的快照来源是周期 flush（~5s 一条，revision 不变）——等到下一条

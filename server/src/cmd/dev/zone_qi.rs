@@ -303,4 +303,38 @@ mod tests {
             "zone_qi get 应解析到 spawn zone，实际 {chats:?}"
         );
     }
+
+    #[test]
+    fn zone_qi_get_falls_back_to_overworld_without_current_dimension() {
+        // GetCurrent 文档化契约：执行者缺 CurrentDimension 时退化为 Overworld
+        // （spawn/常规世界默认，zone_qi.rs:107-109 的 unwrap_or）。旧测试全部显式
+        // insert CurrentDimension(Overworld)，从未触达缺失组件状态——错误实现
+        // 「无 CurrentDimension 就 skip/拒绝读取」也能全过。必须覆盖：仅 Position
+        // 无 CurrentDimension 的执行者仍解析到 spawn zone（fallback Overworld）。
+        let mut app = setup_app();
+        let (client_bundle, mut helper) = create_mock_client("Bob");
+        let player = app.world_mut().spawn(client_bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new([8.0, 64.0, 8.0]));
+        // 注意：故意**不** insert CurrentDimension——验证 Overworld 退化路径。
+
+        app.world_mut()
+            .resource_mut::<Events<CommandResultEvent<ZoneQiCmd>>>()
+            .send(CommandResultEvent {
+                result: ZoneQiCmd::GetCurrent,
+                executor: player,
+                modifiers: Default::default(),
+            });
+        run_update(&mut app);
+
+        let chats = collected_chat(&mut app, &mut helper);
+        assert!(
+            chats.iter().any(|chat| {
+                chat.contains("zone_qi spawn")
+                    && chat.contains("spirit_qi=0.900000")
+            }),
+            "无 CurrentDimension 的执行者应退化为 Overworld 并解析到 spawn zone（spirit_qi=0.9），实际 {chats:?}"
+        );
+    }
 }

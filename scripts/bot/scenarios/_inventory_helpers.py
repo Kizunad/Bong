@@ -75,6 +75,25 @@ def _inventory_snapshot_events(bot) -> list[Any]:
     ]
 
 
+def _periodic_flush_events(bot) -> list[Any]:
+    """只保留与服务器固定周期 flush 网格对齐的快照（revision 与前一快照相同）。
+
+    服务端每 100 tick 发一条「revision 不变的当前状态快照」；mutation 快照
+    （give/move/forge 等）revision 单调递增且**不重置**周期定时器。payload 无
+    reason 字段，bot 无法从单条快照区分周期 flush 与拒绝回推（两者 revision 都不
+    变），但至少能排除 mutation——周期网格不随 mutation 平移，锚必须落在真周期
+    flush 上（central-review 31438252846 finding [1]）。"""
+    snapshots = _inventory_snapshot_events(bot)
+    periodic: list[Any] = []
+    previous_revision: int | None = None
+    for event in snapshots:
+        revision = int(event.data["payload"].get("revision", -1))
+        if previous_revision is not None and revision == previous_revision:
+            periodic.append(event)
+        previous_revision = revision
+    return periodic
+
+
 def wait_inventory_contains(bot, item_id: str, timeout: float = 10.0) -> dict[str, Any]:
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
@@ -259,9 +278,12 @@ def drain_inventory_quiet(bot, quiet: float = 2.0, max_wait: float = 12.0) -> No
     连续 quiet 秒无快照」——连续静默只能证明上一快照的年龄 ≥ quiet，无法排除下一
     flush 已在 quiet 秒内逼近（review finding [1]：旧实现从 helper 起跑时刻计静默，
     可在上一 flush 后 2.5s 起跑、静默 2s、4.5s 处返回，下一 flush 0.5s 后就到）。
-    本实现锚在**最近一次已观测快照**上，且返回点必须落在
-        quiet ≤ (now − last_snap) ≤ PERIOD − quiet
-    的窗口内：太早（距上一快照 < quiet）说明残余回推可能仍在滴入；太晚（距下一
+    本实现锚在**最近一次周期 flush**上（`_periodic_flush_events` 按 revision 与前
+    一快照相同过滤掉 mutation 快照——mutation 会 bump revision 但不重置服务器的
+    周期定时器，central-review 31438252846 finding [1] 根因；give/move 后紧跟的
+    drain 若锚在 mutation 上会误判剩余时间），且返回点必须落在
+        quiet ≤ (now − last_periodic_flush) ≤ PERIOD − quiet
+    的窗口内：太早（距上一 flush < quiet）说明残余回推可能仍在滴入；太晚（距下一
     周期 flush 不足 quiet 秒）则 flush 可能落进接受窗口。窗口外则等到下一 flush
     重新锚定后再判。排干结束即保证下一次周期 flush 至少 quiet 秒后才可能到达；
     配合把拒绝回推的接受窗口设成 < quiet，周期 flush 便无法落进窗口冒充权威回推；
@@ -271,14 +293,15 @@ def drain_inventory_quiet(bot, quiet: float = 2.0, max_wait: float = 12.0) -> No
     deadline = time.monotonic() + max_wait
     while True:
         now = time.monotonic()
-        snapshots = _inventory_snapshot_events(bot)
-        if snapshots:
-            age = now - (bot.t0 + snapshots[-1].t)
+        periodic = _periodic_flush_events(bot)
+        if periodic:
+            age = now - (bot.t0 + periodic[-1].t)
             if quiet <= age <= period - quiet:
                 return
         if now >= deadline:
             raise BotAssertionError(
                 f"背包快照过于密集，{max_wait:.0f}s 内未排干到距下一周期 flush "
-                f"≥ {quiet:.0f}s（周期 flush 无法满足测试前提）"
+                f"≥ {quiet:.0f}s（mutation 快照不重置周期定时器，只能锚在真周期 "
+                f"flush 上，周期 flush 无法满足测试前提）"
             )
         time.sleep(0.25)

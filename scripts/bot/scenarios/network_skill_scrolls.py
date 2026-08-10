@@ -92,8 +92,16 @@ def _wait_scroll_used(
 def _wait_skill_snapshot_skill(
     bot, skill_name: str, anchor_t: float, min_xp: int, timeout: float = 10.0
 ) -> dict:
-    """锚定到 intent 之后、且该技能 xp>=min_xp 的 skill_snapshot。
-    join 时会推一次全量 skill_snapshot（xp=0 基线），无锚会命中它。"""
+    """锚定到 intent 之后、且该技能累计 XP>=min_xp 的 skill_snapshot。
+    join 时会推一次全量 skill_snapshot（累计 XP=0 基线），无锚会命中它。
+
+    读 `total_xp` 而非当前级 `xp`（central-review 31438252846 finding [6] 的契约
+    澄清）：bot 解码器每条 skill entry 的字段是 lv/xp/xp_to_next/total_xp/cap/
+    recent_gain_xp（proto field 4 = total_xp，见 test_proto_skill_snapshot_payload_
+    decodes 对全字段的 pin）。习得证据必须落在 **total_xp**（终身累计）上——首次习
+    得授 500 XP 时 add_xp 从 lv=0 起按曲线连跳（xp_to_next(0)=100、xp_to_next(1)
+    =400），落地后 lv=2、当前级 `xp`=0 而 total_xp=500；读 `xp` 会把落地证据误判
+    为 0。"""
     event = bot.wait_for(
         lambda e: (
             e.kind == "server_data"
@@ -106,7 +114,7 @@ def _wait_skill_snapshot_skill(
             )
         ),
         timeout=timeout,
-        description=f"skill_snapshot 含 {skill_name} 且 xp>={min_xp}（intent 之后）",
+        description=f"skill_snapshot 含 {skill_name} 且 total_xp>={min_xp}（intent 之后）",
     )
     return event.data["payload"]
 
@@ -199,9 +207,11 @@ def run(env) -> None:
             if entry["skill_name"] == "herbalism"
         )
         # handler 同步发的快照是 xp 落地前的（异步 consume_skill_xp_gain 下一 tick
-        # 才应用），此处只断言条目存在；xp 数额断言已在上面的 gain/used 上做过。
-        assert isinstance(herb_entry, dict) and "xp" in herb_entry, (
-            f"skill_snapshot herbalism entry 应携带 xp 字段，实际 {herb_entry!r}"
+        # 才应用），此处只断言条目存在；数额断言已在上面的 gain/used 上做过。按
+        # total_xp 契约（见 _wait_skill_snapshot_skill docstring）同时 pin 两个字段
+        # 键——解码器对字段的命名/存在即契约（central-review 31438252846 finding [6]）。
+        assert isinstance(herb_entry, dict) and {"xp", "total_xp"} <= herb_entry.keys(), (
+            f"skill_snapshot herbalism entry 应携带 xp/total_xp 字段，实际 {herb_entry!r}"
         )
         bot.wait_for(
             lambda e: (
@@ -269,7 +279,9 @@ def run(env) -> None:
         # 重复路径的 resync 快照反映的是 xp 异步落地后的状态：herbalism.total_xp 应
         # **恰好**等于首次习得的 500（review finding [3] (c)：旧 >= 断言让「重复又授
         # 500、total_xp=1000」的错误实现通过；首次习得恰授 SCROLL_XP、场景内无其他
-        # XP 来源，故 ==SCROLL_XP 才是守恒证据）。
+        # XP 来源，故 ==SCROLL_XP 才是守恒证据）。字段取 total_xp（终身累计，跨级不
+        # 清零）而非当前级 xp——首次习得授 500 会让 lv 0→2、xp=0、total_xp=500，
+        # 见 _wait_skill_snapshot_skill docstring（central-review 31438252846 [6]）。
         dup_snap = _wait_skill_snapshot_skill(bot, "herbalism", anchor, SCROLL_XP)
         dup_entry = next(
             entry["entry"]

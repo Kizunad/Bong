@@ -38,6 +38,8 @@ from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot.bot import Bot, BotAssertionError, _signed_12, _signed_26  # noqa: E402
 from bot.server_data import decode_server_data_payload  # noqa: E402
 from bot.scenarios._inventory_helpers import (  # noqa: E402
+    _periodic_flush_events,
+    drain_inventory_quiet,
     latest_inventory_snapshot,
     wait_inventory_revision_after,
     wait_inventory_revision_after_matching,
@@ -550,17 +552,20 @@ def _server_data_quickslot_config_bytes() -> bytes:
 
 def _server_data_techniques_snapshot_bytes() -> bytes:
     meridian = _pb_string(1, "Lung") + _pb_fixed32(2, 0.5)
+    # central-review 31438252846 finding [5]：proficiency(field 4) 与 qi_cost(field 10)
+    # 取**非零互异**值——旧 fixture 两者都是 0.0，解码器完全忽略这两个 wire 字段、
+    # 返回默认 0.0 也能通过断言。非零值 + 精确断言才能区分「正确解码」与「丢弃字段」。
     entry = (
         _pb_string(1, "sword.cleave")
         + _pb_string(2, "劈")
         + _pb_string(3, "common")
-        + _pb_fixed32(4, 0.0)
+        + _pb_fixed32(4, 0.5)  # proficiency
         + _pb_string(5, "生疏")
         + _pb_varint(6, 1)
         + _pb_string(7, "基础劈砍。举剑过顶，顺势劈下。")
         + _pb_string(8, "Awaken")
         + _pb_message(9, meridian)
-        + _pb_fixed32(10, 0.0)
+        + _pb_fixed32(10, 2.5)  # qi_cost
         + _pb_fixed32(11, 8.0)
         + _pb_varint(12, 16)
         + _pb_varint(13, 30)
@@ -588,13 +593,16 @@ def _server_data_skill_scroll_used_bytes() -> bytes:
 
 
 def _server_data_skill_snapshot_bytes() -> bytes:
+    # central-review 31438252846 finding [4]：六个嵌套字段全部取**互异**非默认值——
+    # 旧 fixture 用 500 同时填 xp/total_xp/recent_gain_xp，解码器丢弃或交换这些字段
+    # 在断言下仍观测相同；互异值才能暴露 field swap 与 drop。
     entry_snap = (
-        _pb_varint(1, 1)
-        + _pb_varint(2, 500)
-        + _pb_varint(3, 1500)
-        + _pb_varint(4, 500)
-        + _pb_varint(5, 30)
-        + _pb_varint(6, 500)
+        _pb_varint(1, 3)      # lv
+        + _pb_varint(2, 500)  # xp
+        + _pb_varint(3, 1600) # xp_to_next
+        + _pb_varint(4, 1440) # total_xp
+        + _pb_varint(5, 30)   # cap
+        + _pb_varint(6, 500)  # recent_gain_xp
     )
     snap_entry = _pb_string(1, "herbalism") + _pb_message(2, entry_snap)
     payload = (
@@ -654,11 +662,14 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         # 字段，但旧测试只断言其中一部分——解码器对这些字段返回零值/丢弃也能通过。
         # 这些是新支持快照载荷的可观测字段，逐个 pin 完整解码契约。
         self.assertEqual(entry["grade"], "common")
-        self.assertEqual(entry["proficiency"], 0.0)
+        # central-review 31438252846 finding [5]：fixture 现以非零互异值编码
+        # proficiency(0.5) 与 qi_cost(2.5)，精确断言其解码值——忽略任一 wire 字段的
+        # 解码器会返回 0.0 并被此处抓红。
+        self.assertEqual(entry["proficiency"], 0.5)
         self.assertEqual(entry["proficiency_label"], "生疏")
         self.assertIs(entry["active"], True)
         self.assertEqual(entry["description"], "基础劈砍。举剑过顶，顺势劈下。")
-        self.assertEqual(entry["qi_cost"], 0.0)
+        self.assertEqual(entry["qi_cost"], 2.5)
         self.assertEqual(entry["stamina_cost"], 8.0)
         self.assertEqual(entry["range"], 3.0)
 
@@ -689,7 +700,14 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
         self.assertEqual(len(decoded["skills"]), 1)
         entry = decoded["skills"][0]
         self.assertEqual(entry["skill_name"], "herbalism")
+        # central-review 31438252846 finding [4]：fixture 供应全部六个嵌套字段，旧测试
+        # 只断言 xp/recent_gain_xp——解码器丢弃或错置 lv/xp_to_next/total_xp/cap 也
+        # 能通过。逐字段 pin 完整解码契约（fixture 互异值暴露 field swap）。
+        self.assertEqual(entry["entry"]["lv"], 3)
         self.assertEqual(entry["entry"]["xp"], 500)
+        self.assertEqual(entry["entry"]["xp_to_next"], 1600)
+        self.assertEqual(entry["entry"]["total_xp"], 1440)
+        self.assertEqual(entry["entry"]["cap"], 30)
         self.assertEqual(entry["entry"]["recent_gain_xp"], 500)
         self.assertEqual(decoded["consumed_scrolls"], ["skill_scroll_herbalism_baicao_can"])
 
@@ -714,6 +732,58 @@ class ServerDataSkillScrollDecodeTest(unittest.TestCase):
 
 
 class InventoryHelperTest(unittest.TestCase):
+    def test_periodic_flush_events_excludes_revision_bumping_snapshots(self):
+        # central-review 31438252846 finding [1]：周期 flush 是 revision 与前一快照
+        # 相同的快照；mutation（give/move/forge）revision 单调递增且不重置服务器的
+        # 周期定时器，必须从 drain 的相位锚定中排除。
+        bot = _FakeBot(
+            [
+                _snapshot_event(0.0, 5, "join"),
+                _snapshot_event(1.0, 5, "periodic"),
+                _snapshot_event(2.5, 6, "mutation"),
+                _snapshot_event(5.0, 6, "periodic"),
+                _snapshot_event(7.0, 7, "mutation"),
+            ]
+        )
+
+        periodic = _periodic_flush_events(bot)
+
+        self.assertEqual(
+            [e.t for e in periodic],
+            [1.0, 5.0],
+            "只有 revision 与前一快照相同的快照（周期 flush）才能作为相位锚；"
+            "首条 join（无前驱可判）与两条 mutation 必须排除",
+        )
+
+    def test_drain_inventory_quiet_waits_for_periodic_flush_after_mutation(self):
+        # central-review 31438252846 finding [1] 的精确序列：周期 flush t=0 → give
+        # mutation t=2.5。旧实现锚 mutation，在 t=4.5 处 age=2.0∈[2,3] 直接返回，
+        # 而真周期 flush 5.0s 才到（0.5s 后就到，静默前提被破坏）。修复后锚只落在
+        # 周期 flush 上：t=4.5 时 age(0)=4.5>3.0 不返回；t=5.0 周期 flush 重新锚定后
+        # 到 age∈[2,3]（now=7.0）才返回，下一 flush 10.0 到，≥quiet 保障成立。
+        bot = _FakeBot(
+            [
+                _snapshot_event(0.0, 5, "periodic"),
+                _snapshot_event(2.5, 6, "mutation"),
+                _snapshot_event(5.0, 6, "periodic"),
+            ]
+        )
+        bot.t0 = 0.0
+        # monotonic 序列：call1=deadline(4.5)，之后每次循环取一个 now；走到 now=7.0
+        # （age=7.0−5.0=2.0，恰落在 [2,3]）返回。
+        nows = iter([4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.25, 6.5, 7.0])
+
+        def fake_monotonic() -> float:
+            return next(nows)
+
+        with mock.patch.object(time, "monotonic", side_effect=fake_monotonic), mock.patch.object(
+            time, "sleep"
+        ) as fake_sleep:
+            drain_inventory_quiet(bot, quiet=2.0, max_wait=12.0)
+
+        # 在 now=7.0 返回意味着从未在 t=4.5 处误返；返回后最后一次检查的 age=2.0。
+        self.assertGreater(fake_sleep.call_count, 0, "drain 应经过多次轮询后才返回")
+
     def test_latest_inventory_snapshot_uses_newest_history(self):
         bot = _FakeBot(
             [

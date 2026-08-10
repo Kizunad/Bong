@@ -32,6 +32,10 @@ MODULES = ["inventory", "combat"]
 PILL = "guyuan_pill"
 BIND_SLOT = 1
 NEGATIVE_WINDOW = 2.0
+# use_quick_slot 的冷却契约（server DEFAULT_COOLDOWN_MS=1500，guyuan_pill 未覆写）。
+# 边界探针在 claimed 值两侧各 ±COOLDOWN_TOLERANCE_MS 处打点（见 6b 注释）。
+COOLDOWN_MS = 1500
+COOLDOWN_TOLERANCE_MS = 400
 
 
 def _expect_bind_response(
@@ -80,6 +84,34 @@ def _assert_no_cast_sync(bot, anchor_t: float) -> None:
     if stray:
         raise BotAssertionError(
             f"[{bot.username}] 期望 {NEGATIVE_WINDOW}s 内无新启动 cast_sync，"
+            f"实际收到 {len(stray)} 条"
+            f"（slots={[e.data['payload'].get('slot') for e in stray]}）"
+        )
+
+
+def _sleep_until_event_time(bot, target_t: float) -> None:
+    """睡到事件时间轴上的 target_t（bot.t0 + e.t 与 time.monotonic 对齐）。"""
+    delay = (bot.t0 + target_t) - time.monotonic()
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _assert_no_cast_sync_until(bot, anchor_t: float, until_t: float) -> None:
+    """(anchor_t, until_t] 内不得出现任何新启动的 cast_sync（phase=casting）。
+
+    与 `_assert_no_cast_sync`（固定 NEGATIVE_WINDOW 窗口）同语义，但窗口终点由调用
+    方给出——冷却边界探针要观察 1500ms 边界两侧的**小段**窗口，而不是一次盖满 2s。"""
+    _sleep_until_event_time(bot, until_t)
+    stray = [
+        e
+        for e in bot.events_of("server_data")
+        if e.data.get("payload_type") == "cast_sync"
+        and e.data["payload"].get("phase") == "casting"
+        and anchor_t < e.t <= until_t
+    ]
+    if stray:
+        raise BotAssertionError(
+            f"[{bot.username}] 期望 ({anchor_t:.2f}, {until_t:.2f}] 内无新启动 cast_sync，"
             f"实际收到 {len(stray)} 条"
             f"（slots={[e.data['payload'].get('slot') for e in stray]}）"
         )
@@ -298,8 +330,9 @@ def run(env) -> None:
         _assert_no_cast_sync(bot, active_anchor)
         # 等本条 cast 走完 complete：6a 的 2s 负窗口已覆盖 1500ms cast 全程，
         # complete 已缓冲，wait_for 立即返回；同步 Casting→Idle 让 6b 的冷却拒绝
-        # 落在干净起点。
-        bot.wait_for(
+        # 落在干净起点。complete_t 是冷却起点的 bot 侧观测（cast_emit 先
+        # set_cast_cooldown 再 push_cast_sync(Complete)，同一 tick）。
+        complete_event = bot.wait_for(
             lambda e: (
                 e.kind == "server_data"
                 and e.data.get("payload_type") == "cast_sync"
@@ -310,22 +343,41 @@ def run(env) -> None:
             timeout=10.0,
             description=f"slot={BIND_SLOT} 第一次 cast 的 cast_sync(complete)",
         )
+        complete_t = complete_event.t
 
-        # ── 6b. use 冷却分支（review finding [5]）：cast 完成后槽 1 进入 1500ms
-        #     冷却（DEFAULT_COOLDOWN_MS，cast 完成 tick 起算），期间再次 use 必须
-        #     静默。旧场景只在解绑槽 5 / 越界槽 9 上测静默，从未在冷却中的已绑定
-        #     槽上测——忽略冷却、命中即再开 cast 的错误实现会通过。收到 complete
-        #     时冷却已随同 tick 写入（cast_emit set_cast_cooldown 先于 push_cast_
-        #     sync(Complete)），立刻重按必落在冷却窗口内。──
+        # ── 6b. use 冷却分支 + 1500ms 边界钉死（review finding [5] + central-review
+        #     31438252846 finding [7]）。冷却从 cast 完成 tick 起算
+        #     （set_cast_cooldown 先于 push_cast_sync(Complete)，is_on_cooldown 判定
+        #     cooldown_until_tick > now_tick，DEFAULT_COOLDOWN_MS=1500 → 30 tick），
+        #     bot 观测的 complete_t 即冷却起点。旧测试只在 complete 后立刻按一次 +
+        #     固定 2s 负窗口 + 窗口后按一次，等价断言「0 < 冷却 ≤ 2s」——把 1500ms
+        #     误写成 1000ms 的错误实现也全过。现在把观察点移到 claimed 边界两侧
+        #     （±COOLDOWN_TOLERANCE_MS=400ms）：
+        #       (b) complete_t+1100ms 处 use → 必须仍静默（冷却 ≤1100ms 的实现此时
+        #           已过期、开火即被抓）；
+        #       (c) complete_t+1900ms 处 use → 必须新开 cast（冷却 >1900ms 的实现
+        #           仍冷却、无 casting 即被抓）。
+        #     两探针把冷却钉在 (1100, 1900]ms，而不是旧实现的 (0, 2000]ms。
+        #     transport 容差：本地 e2e bot 观测 complete_t 与 server 冷却起点差
+        #     <100ms，±400ms 裕量充足；20tps 下 30 tick 冷却恰好 1500ms。
         cooldown_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
-        _assert_no_cast_sync(bot, cooldown_anchor)
-
-        # ── 6c. 冷却恢复（review finding [2]）：冷却窗口结束后同槽必须可再次施放。
-        #     6b 的 2s 负窗口自 cooldown_anchor（>= complete 时刻）起算，覆盖了
-        #     1500ms 冷却全程——返回时冷却必已过期，此时再按同槽必须启动一条**新**
-        #     cast。错误实现「槽一用即永久不可用 / 冷却永不结束」在此红（wait_for
-        #     超时）。──
+        # (a) 立刻重按必须静默（无冷却的实现会立即开火）。
+        _assert_no_cast_sync_until(
+            bot, cooldown_anchor, complete_t + COOLDOWN_TOLERANCE_MS / 1000.0
+        )
+        # (b) 边界前探针：仍须静默（冷却尚未过期）。
+        before_probe_t = complete_t + (COOLDOWN_MS - COOLDOWN_TOLERANCE_MS) / 1000.0
+        _sleep_until_event_time(bot, before_probe_t)
+        before_anchor = last_event_time(bot)
+        bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
+        _assert_no_cast_sync_until(
+            bot, before_anchor, before_probe_t + COOLDOWN_TOLERANCE_MS / 1000.0
+        )
+        # (c) 边界后探针：必须新开 cast（冷却已过期）。
+        after_probe_t = complete_t + (COOLDOWN_MS + COOLDOWN_TOLERANCE_MS) / 1000.0
+        _sleep_until_event_time(bot, after_probe_t)
+        after_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
         recovered = bot.wait_for(
             lambda e: (
@@ -333,13 +385,17 @@ def run(env) -> None:
                 and e.data.get("payload_type") == "cast_sync"
                 and e.data["payload"].get("phase") == "casting"
                 and e.data["payload"].get("slot") == BIND_SLOT
-                and e.t > cooldown_anchor
+                and e.t > after_anchor
             ),
             timeout=10.0,
-            description=f"冷却恢复后 slot={BIND_SLOT} 重新施放的 cast_sync(casting)",
+            description=(
+                f"冷却边界（complete_t+{COOLDOWN_MS + COOLDOWN_TOLERANCE_MS}ms）后 "
+                f"slot={BIND_SLOT} 重新施放的 cast_sync(casting)"
+            ),
         ).data["payload"]
-        assert int(recovered.get("duration_ms", 0)) == 1500, (
-            f"冷却恢复 cast 的 duration_ms 应为 1500，实际 {recovered.get('duration_ms')!r}"
+        assert int(recovered.get("duration_ms", 0)) == COOLDOWN_MS, (
+            f"冷却恢复 cast 的 duration_ms 应为 {COOLDOWN_MS}，"
+            f"实际 {recovered.get('duration_ms')!r}"
         )
         # 恢复 cast 同样要等 complete 收尾：后续 step 7 在异槽 use，玩家 Casting 态
         # 未清会触发 UserCancel+重启而非干净新 cast（见 7a 注释），必须同步回 Idle。
