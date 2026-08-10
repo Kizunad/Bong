@@ -51,12 +51,16 @@ def terminate_screens_after(bot: Bot, after: float) -> list[dict]:
     ]
 
 
-def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 45.0) -> dict:
+def wait_death_screen(bot: Bot, after: float = 0.0, timeout: float = 240.0) -> dict:
     """等待 visible=true 的死亡屏（濒死决策已出，AwaitingRevival 决策窗口开启）。
 
     timeout 必须覆盖生产侧的濒死宽限窗：death_arbiter 只把角色推入 NearDeath，
-    决策（并附死亡屏）要等 near_death_deadline_tick（NEAR_DEATH_WINDOW_TICKS=30s）
-    走完才由 near_death_tick 给出——过早断言会稳定超时（实测 15s 全灭）。
+    决策（并附死亡屏）要等 near_death_deadline_tick（NEAR_DEATH_WINDOW_TICKS=600 ticks）
+    走完才由 near_death_tick 给出——过早断言会稳定超时（实测 15s 全灭）。宽限窗以
+    combat tick 计量，wall 时长随服务端实际 TPS 伸缩：20 TPS 下约 30s，而本盒在
+    高负载（NPC sim 超预算）下实测坍缩到 3.4-5.5 TPS（600 ticks ≈ 110-176s，观测于
+    L10/L12 两次运行）——因此默认 240s（覆盖 2.5 TPS 留余量），健康路径在决策到达
+    即提前返回，不受上限拖慢。
     """
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
@@ -121,14 +125,20 @@ def escalate_to_tribulation_death(bot: Bot) -> dict:
     死亡次数驱动决策：前几次死亡必为 Fortune（can_terminate=false），death_count
     越过保底线后进入 Tribulation（can_terminate=true）。循环-直到-观察到目标决策，
     对运势/业力初值不敏感，因此是确定性的。
+
+    关键：`wait_for` 扫历史事件不消费，`wait_death_screen` 必须以 `after` 锚定，否则会
+    命中更早的旧决策屏（visible=true）提前放行——下一轮 combat_reincarnate 在 Alive 态
+    被服务端静默拒绝，收屏永远不来（实测三连超时）。初始锚点用进入时的最新事件时间：
+    调用方可能已有前置死亡（如负向门禁），锚到 0.0 会重匹配那屏。
     """
+    after = last_event_time(bot)
     for cycle in range(1, MAX_ESCALATION_DEATHS + 1):
         kill_self(bot)
-        screen = wait_death_screen(bot)
+        screen = wait_death_screen(bot, after=after)
         if screen.get("can_terminate"):
             return screen
-        anchor = last_event_time(bot)
-        reincarnate(bot, anchor)
+        after = last_event_time(bot)
+        reincarnate(bot, after)
     raise BotAssertionError(
         f"循环 {MAX_ESCALATION_DEATHS} 次 kill→reincarnate 仍未观察到 can_terminate=true "
         "的死亡屏——决策阶梯没有按死亡次数推进，死亡屏链路可能断了"
