@@ -1980,11 +1980,14 @@ mod tests {
                 let flag = hook_fired.clone();
                 let diag_path = std::path::PathBuf::from("/tmp/bong-ovf-diag.txt");
                 let _ = std::fs::remove_file(&diag_path);
+                let diag_path_hook = diag_path.clone();
                 std::panic::set_hook(Box::new(move |info| {
                     flag.store(true, std::sync::atomic::Ordering::SeqCst);
                     use std::io::Write;
-                    if let Ok(mut f) =
-                        std::fs::OpenOptions::new().create(true).append(true).open(&diag_path)
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&diag_path_hook)
                     {
                         let _ = writeln!(f, "[HOOK] {info}");
                         let _ = writeln!(
