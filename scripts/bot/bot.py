@@ -329,6 +329,21 @@ class Bot:
                 self.entities.pop(eid, None)
                 self.player_entity_uuids.pop(eid, None)
             self._emit("entities_destroy", {"entity_ids": ids})
+        elif packet_id == mc.S2C_ENTITY_METADATA:
+            # EntityTrackerUpdateS2c：entity_id 0 = 本客户端自己（valence 预留 ID 0）。
+            # 只解析 flags（index 0, BYTE, 位 5 = invisible）；其他条目跳过不解析，
+            # 场景只消费 flags 位变化（set_invisible 触发的 update 包仅含该条目）。
+            entity_id = reader.varint()
+            flags = None
+            index = reader.u8()
+            if index != 0xFF:
+                mtype = reader.u8()
+                if index == 0 and mtype == 0:
+                    flags = struct.unpack_from(">b", reader.data, reader.pos)[0]
+            self._emit(
+                "entity_metadata",
+                {"entity_id": entity_id, "flags": flags},
+            )
         elif packet_id == mc.S2C_BLOCK_UPDATE:
             packed = struct.unpack_from(">Q", reader.data, reader.pos)[0]
             reader.pos += 8

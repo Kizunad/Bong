@@ -354,6 +354,80 @@ class ServerDataDecodeTest(unittest.TestCase):
             "真实 Bot reader 必须把 production protobuf narration 暴露为可断言事件",
         )
 
+    def test_proto_coffin_state_enter_payload_decodes(self):
+        decoded = decode_server_data_payload(
+            _server_data_coffin_state_bytes(True, 0.9, "mundane")
+        )
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "coffin_state",
+                "in_coffin": True,
+                "lifespan_rate_multiplier": 0.9,
+                "coffin_grade": "mundane",
+            },
+            "enter 后 CoffinState 应解出 in_coffin=true、mundane grade 与 0.9 倍率",
+        )
+
+    def test_proto_coffin_state_leave_payload_decodes(self):
+        decoded = decode_server_data_payload(
+            _server_data_coffin_state_bytes(False, 1.0, None)
+        )
+
+        self.assertEqual(
+            decoded,
+            {
+                "v": 1,
+                "type": "coffin_state",
+                "in_coffin": False,
+                "lifespan_rate_multiplier": 1.0,
+                "coffin_grade": None,
+            },
+            "leave 后 CoffinState 应解出 in_coffin=false、grade 缺席与 1.0 倍率",
+        )
+
+    def test_bot_dispatch_emits_entity_metadata_invisible_flag(self):
+        bot = _bare_bot()
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + bytes(
+            [0, 0, 0x20, 0xFF]
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertEqual(metadata_events[0].data["flags"], 0x20)
+        self.assertTrue(metadata_events[0].data["flags"] & 0x20, "bit 5 = invisible")
+
+    def test_bot_dispatch_entity_metadata_skips_non_flags_entry(self):
+        bot = _bare_bot()
+        # 首条目不是 flags（index 5 = custom name visible, BOOLEAN）：flags 应为 None，
+        # 不得因未知条目崩掉 dispatch。
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(7) + bytes(
+            [5, 7, 1, 0xFF]
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 7)
+        self.assertIsNone(metadata_events[0].data["flags"])
+
+    def test_bot_dispatch_entity_metadata_empty_entries(self):
+        bot = _bare_bot()
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + b"\xFF"
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertIsNone(metadata_events[0].data["flags"])
+
     def test_proto_zone_info_payload_decodes(self):
         decoded = decode_server_data_payload(_server_data_zone_info_bytes())
 
@@ -2490,6 +2564,15 @@ def _server_data_loot_container_open_bytes() -> bytes:
         + _pb_varint(4, 4)
     )
     return _pb_message(119, open_payload)
+
+
+def _server_data_coffin_state_bytes(
+    in_coffin: bool, multiplier: float, grade: str | None
+) -> bytes:
+    state = _pb_varint(1, 1 if in_coffin else 0) + _pb_fixed64(2, multiplier)
+    if grade is not None:
+        state += _pb_string(3, grade)
+    return _pb_message(78, state)
 
 
 def _server_data_loot_container_update_bytes() -> bytes:
