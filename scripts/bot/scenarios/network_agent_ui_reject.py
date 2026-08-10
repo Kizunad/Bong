@@ -147,6 +147,7 @@ def _invalid_command(bot, redis, target_player, run_tag) -> None:
     # 2400（上界合法值）必须收（建 session 下发 request）——防 off-by-one / 上界漏检。
     for bad_ticks in (5, 19, 2401):
         request_id = f"gap3_{run_tag}_badcmd{bad_ticks}"
+        mark = _mark(bot)
         publish_cmd(
             redis,
             request_id=request_id,
@@ -159,6 +160,8 @@ def _invalid_command(bot, redis, target_player, run_tag) -> None:
             action="error",
             params_subset={"reason": "invalid_command"},
         )
+        # validate 拒绝 → 不建 session，panel 绝不下发到 client
+        expect_agent_ui_request(bot, request_id, after=mark, timeout=2.0, expect=False)
     ok_id = f"gap3_{run_tag}_cmd2400"
     mark = _mark(bot)
     publish_cmd(
@@ -182,6 +185,7 @@ def _invalid_command(bot, redis, target_player, run_tag) -> None:
 
 def _serde_dropped(bot, redis, target_player, run_tag) -> None:
     request_id = f"gap3_{run_tag}_serde"
+    mark = _mark(bot)
     # 缺必填字段 allowed_button_ids → redis_bridge serde 拒绝，整包丢弃（无回执）
     redis.publish(
         "bong:agent_ui_cmd",
@@ -189,6 +193,8 @@ def _serde_dropped(bot, redis, target_player, run_tag) -> None:
         '"timeout_ticks":600,"realm_gate":0}' % (request_id, target_player),
     )
     expect_no_redis_response(redis, request_id, timeout=2.0)
+    # serde 丢弃 → 不建 session，panel 绝不下发到 client
+    expect_agent_ui_request(bot, request_id, after=mark, timeout=2.0, expect=False)
 
 
 def run(env) -> None:

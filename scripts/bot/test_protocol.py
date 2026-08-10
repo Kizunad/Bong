@@ -37,6 +37,7 @@ from bot import make_novice_raster_fixture  # noqa: E402
 from bot import proto_min  # noqa: E402
 from bot import run_scenarios as scenario_runner  # noqa: E402
 from bot._agent_ui_helpers import (  # noqa: E402
+    DEFAULT_UI_XML,
     assert_request_shape,
     build_cmd,
     expect_agent_ui_close,
@@ -4694,9 +4695,14 @@ class RespFramesTest(unittest.TestCase):
             parser.next_frame()
 
     def test_json_payload_in_message_frame(self):
+        payload = b'{"request_id":"req_1","action":"button_click","params":{}}'
         raw = (
             b"*3\r\n$7\r\nmessage\r\n$22\r\nbong:agent_ui_response\r\n"
-            b'$58\r\n{"request_id":"req_1","action":"button_click","params":{}}\r\n'
+            + b"$"
+            + str(len(payload)).encode("ascii")
+            + b"\r\n"
+            + payload
+            + b"\r\n"
         )
         parser = RespFrames()
         parser.feed(raw)
@@ -4814,6 +4820,8 @@ class AgentUiHelperTest(unittest.TestCase):
         self.assertEqual(cmd["request_id"], "req_1")
         self.assertEqual(cmd["allowed_button_ids"], ["enter_realm", "cancel"])
         self.assertEqual(cmd["realm_gate"], 0)
+        self.assertEqual(cmd["timeout_ticks"], 600, "默认 timeout_ticks 钉死 600")
+        self.assertEqual(cmd["xml"], DEFAULT_UI_XML, "默认 xml 钉死 DEFAULT_UI_XML")
 
     def test_build_cmd_overrides(self):
         cmd = build_cmd(
@@ -4866,6 +4874,42 @@ class AgentUiHelperTest(unittest.TestCase):
         with self.assertRaises(BotAssertionError):
             assert_request_shape(payload, "req_1")
 
+    def test_assert_request_shape_rejects_empty_or_nonstr_target_player(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "target_player": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_empty_or_nonstr_xml(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": ""}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "xml": 7}, "req_1")
+
+    def test_assert_request_shape_rejects_non_int_timeout_ticks(self):
+        base = {
+            "request_id": "req_1",
+            "target_player": "offline:Fake",
+            "xml": "<owo-ui/>",
+            "timeout_ticks": 600,
+        }
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": "600"}, "req_1")
+        with self.assertRaises(BotAssertionError):
+            assert_request_shape({**base, "timeout_ticks": True}, "req_1")
+
     def test_response_matches_action_and_params(self):
         self.assertTrue(
             response_matches(
@@ -4907,7 +4951,22 @@ class AgentUiHelperTest(unittest.TestCase):
         )
         self.assertTrue(
             response_matches({"action": "timeout", "params": {}}, params_subset={}),
-            "空子集恒匹配",
+            "空子集要求 params 恰好为空",
+        )
+        self.assertFalse(
+            response_matches(
+                {"action": "timeout", "params": {"unexpected": "value"}},
+                params_subset={},
+            ),
+            "声明空 params 时，额外参数必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "timeout"}, params_subset={}),
+            "声明空 params 时，缺 params 字段必须拒绝",
+        )
+        self.assertFalse(
+            response_matches({"action": "error"}, params_subset={"reason": "x"}),
+            "声明 params 子集时，缺 params 字段必须拒绝",
         )
 
     def test_expect_agent_ui_request_positive(self):
@@ -4974,6 +5033,21 @@ class AgentUiHelperTest(unittest.TestCase):
         )
         bot = _AgentUiFakeBot([close])
         expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+
+    def test_expect_agent_ui_close_requires_reason_field(self):
+        close = _FakeEvent(
+            1.0,
+            "payload",
+            {
+                "channel": "bong:agent_ui_close",
+                "data": b'{"request_id":"req_1"}',
+            },
+        )
+        bot = _AgentUiFakeBot([close])
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+        with self.assertRaises(BotAssertionError):
+            expect_agent_ui_close(bot, "req_1", reason="invalid_button_id", timeout=5.0)
 
 
 if __name__ == "__main__":

@@ -73,7 +73,8 @@ def assert_request_shape(payload: dict, request_id: str) -> None:
         raise BotAssertionError(f"bong:agent_ui_request 缺 target_player：{payload!r}")
     if not isinstance(payload.get("xml"), str) or not payload["xml"]:
         raise BotAssertionError(f"bong:agent_ui_request 缺 xml：{payload!r}")
-    if not isinstance(payload.get("timeout_ticks"), int):
+    timeout_ticks = payload.get("timeout_ticks")
+    if not isinstance(timeout_ticks, int) or isinstance(timeout_ticks, bool):
         raise BotAssertionError(f"bong:agent_ui_request 缺 timeout_ticks：{payload!r}")
     if "realm_gate" in payload:
         raise BotAssertionError(
@@ -91,10 +92,12 @@ def response_matches(
     """bong:agent_ui_response 消息匹配：action 精确 + params 子集。"""
     if action is not None and payload.get("action") != action:
         return False
-    if params_subset:
-        got = payload.get("params") or {}
+    if params_subset is not None:
+        got = payload.get("params")
         if not isinstance(got, dict):
             return False
+        if params_subset == {}:
+            return got == {}
         if not all(got.get(key) == value for key, value in params_subset.items()):
             return False
     return True
@@ -194,6 +197,8 @@ def expect_agent_ui_close(
         raise BotAssertionError(
             f"{CLOSE_CHANNEL} request_id 应为 {request_id!r}，实际 {payload.get('request_id')!r}"
         )
+    if "reason" not in payload:
+        raise BotAssertionError(f"{CLOSE_CHANNEL} 缺必填 reason 字段：{payload!r}")
     if payload.get("reason") != reason:
         raise BotAssertionError(
             f"{CLOSE_CHANNEL} reason 应为 {reason!r}（None=Replaced 静默），"
