@@ -1896,7 +1896,7 @@ mod tests {
             );
         }
 
-        /// 回归（Kizunad/valence pin 39a4add0，Fix A）：despawn cleanup 对「客户端
+        /// 回归（Kizunad/valence pin 8eff652，Fix A）：despawn cleanup 对「客户端
         /// 从未 inc 过的 chunk」必须是无害跳过——而不是 debug 下 panic（release 下
         /// fetch_sub 回绕成 u32::MAX 让 chunk 永久滞留、无法被保留 GC 回收）。
         ///
@@ -1922,118 +1922,79 @@ mod tests {
         ///
         /// 确定性论证：late-joiner 出生即带 Despawned，其第一次 update 必然触发
         /// cleanup（`despawn_marked_entities` 在 `Last` 调度、cleanup 在 PostUpdate，
-        /// 实体在 cleanup 之后才被移除）。未修复代码每次运行必然 panic，修复后必然通过。
+        /// 实体在 cleanup 之后才被移除）。断言锚到 cleanup 之后仍可观察的结果契约上
+        /// ——viewer_count 必须仍为 0（对未计数 chunk 的 dec 是无害 no-op），chunk
+        /// 不再被任何假想 viewer 钉住、可被移出 layer 回收。未修复实现：debug 直接
+        /// panic，release 回绕成 u32::MAX → viewer_count 断言失败，两种 profile 都被拦。
         #[test]
         fn despawn_cleanup_skips_chunks_client_never_incd() {
-            // DIAGNOSTIC (removed before the PR): bevy swallows the overflow's
-            // Location via catch_unwind + resume_unwind, and a globally-installed
-            // panic hook races against parallel tests' bevy_log set_hook. Capture
-            // the message with test-level catch_unwind; retry the construction
-            // until a locally-installed hook wins the race and prints the overflow
-            // Location + force-captured backtrace.
-            let hook_fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let mut captured: Option<Box<dyn std::any::Any + Send>> = None;
-            for attempt in 0..60 {
-                hook_fired.store(false, std::sync::atomic::Ordering::SeqCst);
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let layer = scenario.layer;
 
-                let scenario = ScenarioSingleClient::new();
-                let mut app = scenario.app;
-                let layer = scenario.layer;
+            // 种子客户端从 bundle 起 old_visible_chunk_layer 就是 PLACEHOLDER → 它的
+            // join layer-change 会把任何已存在的 view chunk 全量 inc。直接移出舞台，
+            // 保证 tick 1 的消息丢弃阶段没有任何客户端把 layer 当 old layer。
+            app.world_mut().despawn(scenario.client);
 
-                // 种子客户端从 bundle 起 old_visible_chunk_layer 就是 PLACEHOLDER → 它的
-                // join layer-change 会把任何已存在的 view chunk 全量 inc。直接移出舞台，
-                // 保证 tick 1 的消息丢弃阶段没有任何客户端把 layer 当 old layer。
-                app.world_mut().despawn(scenario.client);
+            // chunk 先于所有客户端存在：LOAD 消息 staged → tick 1 ready → 无人消费
+            // → unready 丢弃。viewer_count 从始至终是 0。
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(0, 0), UnloadedChunk::new());
 
-                // chunk 先于所有客户端存在：LOAD 消息 staged → tick 1 ready → 无人消费
-                // → unready 丢弃。viewer_count 从始至终是 0。
+            // tick 1：LOAD 消息被 readied 后无人投递、被 unready 清空。
+            app.update();
+
+            // 后加入客户端：出生即带 Despawned、view 覆盖 chunk，但移除 `Client` 组件
+            // ——`handle_layer_messages` / `update_view_and_layers` 查询都要求
+            // `&mut Client`，两条 inc 路径全部跳过；`cleanup_chunks_after_client_despawn`
+            // 只要求 ClientMarker + Despawned，仍会对 view 内 chunk 执行 dec。
+            let (mut bundle, _helper) = valence::testing::create_mock_client("late-joiner");
+            bundle.visible_chunk_layer.0 = layer;
+            let client = app.world_mut().spawn(bundle).id();
+            app.world_mut().entity_mut(client).insert((
+                Position::new([8.5, 64.0, 8.5]),
+                OldPosition::new([8.5, 64.0, 8.5]),
+                ViewDistance::new(2),
+                Despawned,
+            ));
+            app.world_mut()
+                .entity_mut(client)
+                .remove::<valence::prelude::Client>();
+
+            // tick 2：cleanup 对计数 0 的 chunk 执行 dec。契约断言锚到 dec 的结果
+            // 本身，而不是"update 是否 panic"：release 下未修复的 fetch_sub 只是
+            // 回绕成 u32::MAX、并不 panic，只看 panic 会让坏实现在 release 测试里
+            // 溜过。viewer_count 断言在 debug（panic）与 release（回绕）下都拦得住。
+            app.update();
+            let viewer_count = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .chunk(ChunkPos::new(0, 0))
+                .expect("chunk (0,0) should still be loaded after cleanup")
+                .viewer_count();
+            assert_eq!(
+                viewer_count,
+                0,
+                "despawn cleanup 对从未 inc 过的 chunk 执行 dec 必须是无害 no-op：\
+                 viewer_count 应为 0，实际是 {viewer_count}（未修复的 release 实现会把\
+                 未计数 chunk 回绕到 u32::MAX，使其永久滞留、无法被保留 GC 回收）"
+            );
+
+            // 计数归零后，孤儿 chunk 不再被任何假想 viewer 钉住：它必须能被移出 layer、
+            // 正常回收，而不是永久滞留。
+            assert!(
                 app.world_mut()
                     .get_mut::<ChunkLayer>(layer)
                     .expect("scenario layer should carry a ChunkLayer")
-                    .insert_chunk(ChunkPos::new(0, 0), UnloadedChunk::new());
-
-                // tick 1：LOAD 消息被 readied 后无人投递、被 unready 清空。
-                app.update();
-
-                // 后加入客户端：出生即带 Despawned、view 覆盖 chunk，但移除 `Client` 组件
-                // ——`handle_layer_messages` / `update_view_and_layers` 查询都要求
-                // `&mut Client`，两条 inc 路径全部跳过；`cleanup_chunks_after_client_despawn`
-                // 只要求 ClientMarker + Despawned，仍会对 view 内 chunk 执行 dec。
-                let (mut bundle, _helper) = valence::testing::create_mock_client("late-joiner");
-                bundle.visible_chunk_layer.0 = layer;
-                let client = app.world_mut().spawn(bundle).id();
-                app.world_mut().entity_mut(client).insert((
-                    Position::new([8.5, 64.0, 8.5]),
-                    OldPosition::new([8.5, 64.0, 8.5]),
-                    ViewDistance::new(2),
-                    Despawned,
-                ));
-                app.world_mut()
-                    .entity_mut(client)
-                    .remove::<valence::prelude::Client>();
-
-                // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过。带本地安装的 hook，
-                // 抓住一次 hook 竞争获胜的机会打出 overflow 的真实 Location。
-                // hook 的 stderr 会在 cargo 并行 capture 下丢失，故同时写文件，catch 后由
-                // 测试线程读回打印——文件路径是固定的，CI/本地通用。
-                let prev_hook = std::panic::take_hook();
-                let flag = hook_fired.clone();
-                let diag_path = std::path::PathBuf::from("/tmp/bong-ovf-diag.txt");
-                let _ = std::fs::remove_file(&diag_path);
-                let diag_path_hook = diag_path.clone();
-                std::panic::set_hook(Box::new(move |info| {
-                    flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&diag_path_hook)
-                    {
-                        let _ = writeln!(f, "[HOOK] {info}");
-                        let _ = writeln!(
-                            f,
-                            "[HOOK-BT] {:?}",
-                            std::backtrace::Backtrace::force_capture()
-                        );
-                    }
-                    eprintln!("[HOOK] {info}");
-                    eprintln!("[HOOK-BT] {:?}", std::backtrace::Backtrace::force_capture());
-                }));
-                let tick2 =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.update()));
-                std::panic::set_hook(prev_hook);
-
-                match tick2 {
-                    Err(payload) => {
-                        let msg = payload
-                            .downcast_ref::<&str>()
-                            .map(|s| s.to_string())
-                            .or_else(|| payload.downcast_ref::<String>().cloned())
-                            .unwrap_or_else(|| {
-                                format!("opaque (type={})", std::any::type_name_of_val(&*payload))
-                            });
-                        eprintln!("[chk] attempt {attempt} PANICKED: {msg}");
-                        captured = Some(payload);
-                        if hook_fired.load(std::sync::atomic::Ordering::SeqCst) {
-                            eprintln!("[chk] hook fired on attempt {attempt}; location above");
-                            if let Ok(contents) = std::fs::read_to_string(&diag_path) {
-                                eprintln!("[DIAG-FILE]<<\n{contents}>>[DIAG-FILE]");
-                            }
-                            break;
-                        }
-                        eprintln!("[chk] hook lost race on attempt {attempt}; retrying");
-                    }
-                    Ok(()) => {
-                        eprintln!("[chk] attempt {attempt}: no panic (unexpected)");
-                    }
-                }
-            }
-
-            // DIAGNOSTIC: re-raise so the test stays red and the message + any
-            // [HOOK] output surfaces in the harness. Removed before the PR.
-            if let Some(p) = captured {
-                std::panic::resume_unwind(p);
-            }
+                    .remove_chunk(ChunkPos::new(0, 0))
+                    .is_some(),
+                "viewer_count 为 0 的孤儿 chunk 必须可回收（能从 layer 移出）；\
+                 u32::MAX 回绕会让它永久滞留"
+            );
         }
     }
 
