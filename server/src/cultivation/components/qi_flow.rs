@@ -313,6 +313,15 @@ impl Cultivation {
         }
         let actor_after =
             checked_add_progress(self.qi_current, credited, "cultivation.qi_current")?;
+        if actor_after > self.effective_qi_max() {
+            // room = effective_max - current 在浮点里取整，current + room 可能圆到
+            // cap 上方 1 ULP；此时宁可整体失败，也不让 qi_current 越过有效上限。
+            return Err(QiFlowError::UnrepresentableFlow {
+                field: "cultivation.qi_current",
+                before: self.qi_current,
+                amount: credited,
+            });
+        }
         let zone_after = if credited == available {
             0.0
         } else {

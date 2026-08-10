@@ -23,68 +23,68 @@ ZONE_INFO_ACTIVE_EVENTS_FIELD = 5
 ZONE_INFO_PERCEPTION_TEXT_FIELD = 6
 
 SERVER_DATA_PLAYER_STATE_FIELD = 5
+PLAYER_STATE_REALM_FIELD = 2
 PLAYER_STATE_SPIRIT_QI_FIELD = 3
 PLAYER_STATE_SPIRIT_QI_MAX_FIELD = 11
+
+PLAYER_STATE_REALM_NAMES = {
+    0: "Unspecified",
+    1: "Awaken",
+    2: "Induce",
+    3: "Condense",
+    4: "Solidify",
+    5: "Spirit",
+    6: "Void",
+}
+
+SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD = 71
 
 
 class ProtoDecodeError(ValueError):
     pass
 
 
-def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
-    fields = _fields(data)
-    for field, wire, value in fields:
-        if wire != 2:
-            continue
-        if field == 3:
-            return _narration_batch(value)
-        if field == SERVER_DATA_ZONE_INFO_FIELD:
-            return _zone_info(value)
-        if field == SERVER_DATA_PLAYER_STATE_FIELD:
-            return _player_state(value)
-        if field == 8:
-            return _inventory_snapshot(value)
-        if field == 11:
-            return _alchemy_furnace(value)
-        if field == 12:
-            return _alchemy_session(value)
-        if field == 14:
-            return _alchemy_outcome_resolved(value)
-        if field == 17:
-            return _forge_station(value)
-        if field == 18:
-            return _forge_session(value)
-        if field == 19:
-            return _forge_outcome(value)
-        if field == 20:
-            return _forge_blueprint_book(value)
-        if field == 22:
-            return _craft_session_state(value)
-        if field == 23:
-            return _craft_outcome(value)
-        if field == 29:
-            return _lumber_progress(value)
-        if field == 34:
-            return _cast_sync(value)
-        if field == 137:
-            return _inventory_move_rejected(value)
-        if field == 51:
-            return _combat_event_floater(value)
-        if field == 80:
-            return _inventory_event(value)
-        if field == 81:
-            return _dropped_loot_sync(value)
-        if field == 90:
-            return _container_state(value)
-        if field == 119:
-            return _loot_container_open(value)
-        if field == 120:
-            return _loot_container_update(value)
-        if field == 121:
-            return _loot_container_close(value)
-        if field == 142:
-            return _morph_state(value)
-    return None
+# Authoritative oneof names live in proto/bong/envelope.proto. This table is the
+# Bot harness's supported shallow observation surface; deep decoders below are a
+# strict subset keyed by the same field numbers.
+SERVER_DATA_PAYLOAD_NAMES = {
+    1: "welcome",
+    2: "heartbeat",
+    3: "narration",
+    4: "zone_info",
+    5: "player_state",
+    6: "cultivation_detail",
+    7: "skill_xp_gain",
+    8: "inventory_snapshot",
+    11: "alchemy_furnace",
+    12: "alchemy_session",
+    14: "alchemy_outcome_resolved",
+    15: "alchemy_recipe_book",
+    17: "forge_station",
+    18: "forge_session",
+    19: "forge_outcome",
+    20: "forge_blueprint_book",
+    22: "craft_session_state",
+    23: "craft_outcome",
+    25: "botany_harvest_progress",
+    29: "lumber_progress",
+    30: "gathering_session",
+    31: "lingtian_session",
+    34: "cast_sync",
+    36: "skillbar_config",
+    51: "combat_event",
+    66: "tribulation_state",
+    71: "breakthrough_cinematic",
+    80: "inventory_event",
+    81: "dropped_loot_sync",
+    90: "container_state",
+    119: "loot_container_open",
+    120: "loot_container_update",
+    121: "loot_container_close",
+    131: "insight_offer",
+    137: "inventory_move_rejected",
+    142: "morph_state",
+}
 
 
 def _narration_batch(data: bytes) -> dict[str, Any]:
@@ -128,9 +128,11 @@ def _zone_info(data: bytes) -> dict[str, Any]:
 
 def _player_state(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
+    realm = _varint(fields, PLAYER_STATE_REALM_FIELD)
     return {
         "v": 1,
         "type": "player_state",
+        "realm": PLAYER_STATE_REALM_NAMES.get(realm, f"unknown_{realm}"),
         "spirit_qi": _double(fields, PLAYER_STATE_SPIRIT_QI_FIELD),
         "spirit_qi_max": _double(fields, PLAYER_STATE_SPIRIT_QI_MAX_FIELD),
     }
@@ -474,7 +476,10 @@ def _varint(fields: list[tuple[int, int, Any]], field: int, default: int = 0) ->
 
 
 def _optional_varint(fields: list[tuple[int, int, Any]], field: int) -> int | None:
-    return _varint(fields, field) if _has(fields, field) else None
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == WIRE_VARINT:
+            return int(value)
+    return None
 
 
 def _string(fields: list[tuple[int, int, Any]], field: int, default: str = "") -> str:
@@ -506,6 +511,13 @@ def _double(fields: list[tuple[int, int, Any]], field: int, default: float = 0.0
     return default
 
 
+def _optional_double(fields: list[tuple[int, int, Any]], field: int) -> float | None:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 1:
+            return struct.unpack("<d", value)[0]
+    return None
+
+
 def _message(fields: list[tuple[int, int, Any]], field: int) -> list[tuple[int, int, Any]]:
     for existing, wire, value in reversed(fields):
         if existing == field and wire == 2:
@@ -524,7 +536,105 @@ def _float32(fields: list[tuple[int, int, Any]], field: int, default: float = 0.
     return default
 
 
+def _optional_float32(fields: list[tuple[int, int, Any]], field: int) -> float | None:
+    for existing, wire, value in reversed(fields):
+        if existing == field and wire == 5:
+            return struct.unpack("<f", value)[0]
+    return None
+
+
 # ── 生产 / 消费玩法 payload（envelope.proto oneof tag 见 proto/bong/envelope.proto）──
+
+
+def _botany_harvest_progress(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "botany_harvest_progress",
+        "session_id": _string(fields, 1),
+        "target_id": _string(fields, 2),
+        "target_name": _string(fields, 3),
+        "plant_kind": _string(fields, 4),
+        "mode": _string(fields, 5),
+        "progress": _double(fields, 6),
+        "auto_selectable": bool(_varint(fields, 7)),
+        "request_pending": bool(_varint(fields, 8)),
+        "interrupted": bool(_varint(fields, 9)),
+        "completed": bool(_varint(fields, 10)),
+        "detail": _string(fields, 11),
+        "hazard_hints": _strings(fields, 12),
+        "target_pos": [
+            _optional_double(fields, 13),
+            _optional_double(fields, 14),
+            _optional_double(fields, 15),
+        ],
+    }
+
+
+def _enum_name(names: dict[int, str], value: int) -> str:
+    return names.get(value, f"unknown_{value}")
+
+
+GATHERING_TARGET_TYPE_NAMES = {
+    0: "unspecified",
+    1: "herb",
+    2: "ore",
+    3: "wood",
+}
+
+GATHERING_QUALITY_HINT_NAMES = {
+    0: "unspecified",
+    1: "normal",
+    2: "fine_likely",
+    3: "perfect_possible",
+    4: "fine",
+    5: "perfect",
+}
+
+
+def _gathering_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "gathering_session",
+        "session_id": _string(fields, 1),
+        "progress_ticks": _varint(fields, 2),
+        "total_ticks": _varint(fields, 3),
+        "target_name": _string(fields, 4),
+        "target_type": _enum_name(GATHERING_TARGET_TYPE_NAMES, _varint(fields, 5)),
+        "quality_hint": _enum_name(GATHERING_QUALITY_HINT_NAMES, _varint(fields, 6)),
+        "tool_used": _optional_string(fields, 7),
+        "interrupted": bool(_varint(fields, 8)),
+        "completed": bool(_varint(fields, 9)),
+    }
+
+
+LINGTIAN_SESSION_KIND_NAMES = {
+    0: "unspecified",
+    1: "till",
+    2: "renew",
+    3: "planting",
+    4: "harvest",
+    5: "replenish",
+    6: "drain_qi",
+}
+
+
+def _lingtian_session(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "lingtian_session",
+        "active": bool(_varint(fields, 1)),
+        "kind": _enum_name(LINGTIAN_SESSION_KIND_NAMES, _varint(fields, 2)),
+        "pos": [_int32(fields, 3), _int32(fields, 4), _int32(fields, 5)],
+        "elapsed_ticks": _varint(fields, 6),
+        "target_ticks": _varint(fields, 7),
+        "plant_id": _optional_string(fields, 8),
+        "source": _optional_string(fields, 9),
+        "dye_contamination": _optional_float32(fields, 10),
+        "dye_contamination_warning": bool(_varint(fields, 11)),
+    }
 
 
 def _lumber_progress(data: bytes) -> dict[str, Any]:
@@ -557,6 +667,7 @@ CAST_OUTCOME_NAMES = {
     13: "reject_realm_too_low",
     14: "reject_no_weapon",
     15: "reject_technique_inactive",
+    16: "reject_race_mismatch",
 }
 
 CAST_PHASE_NAMES = {0: "unspecified", 1: "idle", 2: "casting", 3: "complete", 4: "interrupt"}
@@ -654,15 +765,51 @@ def _alchemy_session(data: bytes) -> dict[str, Any]:
     }
 
 
+ALCHEMY_OUTCOME_BUCKET_NAMES = {
+    0: "unspecified",
+    1: "perfect",
+    2: "good",
+    3: "flawed",
+    4: "waste",
+    5: "explode",
+}
+
+COLOR_KIND_NAMES = {
+    0: "unspecified",
+    1: "sharp",
+    2: "heavy",
+    3: "mellow",
+    4: "solid",
+    5: "light",
+    6: "intricate",
+    7: "gentle",
+    8: "insidious",
+    9: "violent",
+    10: "turbid",
+}
+
+
 def _alchemy_outcome_resolved(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
+    toxin_color = _optional_varint(fields, 6)
     return {
         "v": 1,
         "type": "alchemy_outcome_resolved",
-        "bucket": _varint(fields, 1),
-        "recipe_id": _string(fields, 2),
-        "pill": _string(fields, 3),
-        "quality": _double(fields, 4),
+        "bucket": _enum_name(ALCHEMY_OUTCOME_BUCKET_NAMES, _varint(fields, 1)),
+        "recipe_id": _optional_string(fields, 2),
+        "pill": _optional_string(fields, 3),
+        "quality": _optional_double(fields, 4),
+        "toxin_amount": _optional_double(fields, 5),
+        "toxin_color": (
+            _enum_name(COLOR_KIND_NAMES, toxin_color)
+            if toxin_color is not None
+            else None
+        ),
+        "qi_gain": _optional_double(fields, 7),
+        "side_effect_tag": _optional_string(fields, 8),
+        "flawed_path": bool(_varint(fields, 9)),
+        "damage": _optional_double(fields, 10),
+        "meridian_crack": _optional_double(fields, 11),
     }
 
 
@@ -697,6 +844,64 @@ def _cast_sync(data: bytes) -> dict[str, Any]:
     }
 
 
+def _skill_bar_config(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "skillbar_config",
+        "slots": [_optional_skill_bar_entry(raw) for raw in _messages(fields, 1)],
+        "cooldown_until_ms": _repeated_uint64(fields, 2),
+    }
+
+
+def _optional_skill_bar_entry(data: bytes) -> dict[str, Any] | None:
+    # OptionalSkillBarEntry.entry → SkillBarEntry → item/skill.
+    fields = _fields(data)
+    entries = _messages(fields, 1)
+    if not entries:
+        return None
+    entry = _fields(entries[-1])
+    items = _messages(entry, 1)
+    if items:
+        item = _fields(items[-1])
+        return {
+            "kind": "item",
+            "template_id": _string(item, 1),
+            "display_name": _string(item, 2),
+            "cast_duration_ms": _varint(item, 3),
+            "cooldown_ms": _varint(item, 4),
+            "icon_texture": _string(item, 5),
+        }
+    skills = _messages(entry, 2)
+    if skills:
+        skill = _fields(skills[-1])
+        return {
+            "kind": "skill",
+            "skill_id": _string(skill, 1),
+            "display_name": _string(skill, 2),
+            "cast_duration_ms": _varint(skill, 3),
+            "cooldown_ms": _varint(skill, 4),
+            "icon_texture": _string(skill, 5),
+        }
+    return None
+
+
+def _repeated_uint64(fields: list[tuple[int, int, Any]], field: int) -> list[int]:
+    values: list[int] = []
+    for number, wire, value in fields:
+        if number != field:
+            continue
+        if wire == 0:
+            values.append(int(value))
+            continue
+        if wire == 2:
+            pos = 0
+            while pos < len(value):
+                decoded, pos = _read_varint(value, pos)
+                values.append(decoded)
+    return values
+
+
 def _combat_event_floater(data: bytes) -> dict[str, Any]:
     fields = _fields(data)
     events = []
@@ -711,6 +916,35 @@ def _combat_event_floater(data: bytes) -> dict[str, Any]:
             }
         )
     return {"v": 1, "type": "combat_event", "events": events}
+
+
+def _breakthrough_cinematic(data: bytes) -> dict[str, Any]:
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "breakthrough_cinematic",
+        "actor_id": _string(fields, 1),
+        "phase": _string(fields, 2),
+        "phase_tick": _varint(fields, 3),
+        "phase_duration_ticks": _varint(fields, 4),
+        "realm_from": _string(fields, 5),
+        "realm_to": _string(fields, 6),
+        "result": _string(fields, 7),
+        "interrupted": bool(_varint(fields, 8)),
+        "world_pos": [
+            _double(fields, 9),
+            _double(fields, 10),
+            _double(fields, 11),
+        ],
+        "visible_radius_blocks": _double(fields, 12),
+        "global": bool(_varint(fields, 13)),
+        "distant_billboard": bool(_varint(fields, 14)),
+        "particle_density": _float32(fields, 15),
+        "intensity": _float32(fields, 16),
+        "season_overlay": _string(fields, 17),
+        "style": _string(fields, 18),
+        "at_tick": _varint(fields, 19),
+    }
 
 
 FORGE_STEP_NAMES = {
@@ -848,6 +1082,96 @@ def _forge_blueprint_book(data: bytes) -> dict[str, Any]:
     }
 
 
+def _tribulation_state(data: bytes) -> dict[str, Any]:
+    """DONE-W6-HEADLESSAUDIT §5 P0-4：渡虚劫状态（envelope.proto:66）。
+
+    kind/phase 在 wire 上是 **string** 字段，不是 varint enum（envelope.proto:2374-2375：
+    `string kind = 4; // du_xu / zone_collapse / targeted / jue_bi / ascension_quota_open`、
+    `string phase = 5; // omen / lock / wave / heart_demon / settle`），用 `_string` 解。
+    场景断言字面值（cultivation_start_du_xu.py 校验 kind=du_xu phase=omen）。
+
+    只解场景要断言的字段（active/char/kind/phase/waves）；started_tick 等遥测字段
+    留待需要时再扩。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "tribulation_state",
+        "active": bool(_varint(fields, 1)),
+        "char_id": _string(fields, 2),
+        "actor_name": _string(fields, 3),
+        "kind": _string(fields, 4),
+        "phase": _string(fields, 5),
+        "wave_current": _varint(fields, 8),
+        "wave_total": _varint(fields, 9),
+    }
+
+
+def _insight_offer(data: bytes) -> dict[str, Any]:
+    """DONE-W6-HEADLESSAUDIT §5 P0-4：顿悟邀约（envelope.proto:131）。
+
+    只解 offer 标识字段；choices 保持原始 message 字节（场景按需浅扫描）。
+    """
+    fields = _fields(data)
+    return {
+        "v": 1,
+        "type": "insight_offer",
+        "offer_id": _string(fields, 1),
+        "trigger_id": _string(fields, 2),
+        "character_id": _string(fields, 3),
+        "choices": _messages(fields, 4),
+    }
+
+
+SERVER_DATA_PAYLOAD_DECODERS = {
+    3: _narration_batch,
+    SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
+    SERVER_DATA_PLAYER_STATE_FIELD: _player_state,
+    8: _inventory_snapshot,
+    11: _alchemy_furnace,
+    12: _alchemy_session,
+    14: _alchemy_outcome_resolved,
+    17: _forge_station,
+    18: _forge_session,
+    19: _forge_outcome,
+    20: _forge_blueprint_book,
+    22: _craft_session_state,
+    23: _craft_outcome,
+    25: _botany_harvest_progress,
+    29: _lumber_progress,
+    30: _gathering_session,
+    31: _lingtian_session,
+    34: _cast_sync,
+    36: _skill_bar_config,
+    51: _combat_event_floater,
+    66: _tribulation_state,
+    SERVER_DATA_BREAKTHROUGH_CINEMATIC_FIELD: _breakthrough_cinematic,
+    80: _inventory_event,
+    81: _dropped_loot_sync,
+    90: _container_state,
+    119: _loot_container_open,
+    120: _loot_container_update,
+    121: _loot_container_close,
+    131: _insight_offer,
+    137: _inventory_move_rejected,
+    142: _morph_state,
+}
+
+
+if not set(SERVER_DATA_PAYLOAD_DECODERS) <= set(SERVER_DATA_PAYLOAD_NAMES):
+    raise RuntimeError("deep server_data decoders must use named oneof fields")
+
+
+def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
+    for field, wire, value in _fields(data):
+        if wire != 2:
+            continue
+        decoder = SERVER_DATA_PAYLOAD_DECODERS.get(field)
+        if decoder is not None:
+            return decoder(value)
+    return None
+
+
 def _equip_slot(value: int) -> str:
     return {
         1: "head",
@@ -869,35 +1193,6 @@ WIRE_VARINT = 0
 WIRE_64BIT = 1
 WIRE_LEN = 2
 WIRE_32BIT = 5
-
-SERVER_DATA_PAYLOAD_NAMES = {
-    1: "welcome",
-    2: "heartbeat",
-    3: "narration",
-    4: "zone_info",
-    5: "player_state",
-    6: "cultivation_detail",
-    7: "skill_xp_gain",
-    8: "inventory_snapshot",
-    11: "alchemy_furnace",
-    12: "alchemy_session",
-    15: "alchemy_recipe_book",
-    17: "forge_station",
-    18: "forge_session",
-    19: "forge_outcome",
-    20: "forge_blueprint_book",
-    22: "craft_session_state",
-    23: "craft_outcome",
-    25: "botany_harvest_progress",
-    29: "lumber_progress",
-    30: "gathering_session",
-    31: "lingtian_session",
-    81: "dropped_loot_sync",
-    119: "loot_container_open",
-    120: "loot_container_update",
-    121: "loot_container_close",
-    137: "inventory_move_rejected",
-}
 
 EQUIPPED_ITEM_FIELDS = {
     1: ("head", "worn"),
