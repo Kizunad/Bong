@@ -18,7 +18,14 @@ path = "src/main.rs"
 dev-techniques = []
 
 [dependencies]
-valence = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+# Fork pin (Kizunad/valence @ 39a4add0): Fix A for the viewer-count underflow in
+# cleanup_chunks_after_client_despawn — join-tick OldPosition snap (valence_entity
+# init_entities) leaves the first view diff empty, so a new client never incs
+# pre-existing chunks; despawn cleanup then decs to 0 → debug panic / release
+# u32::MAX wrap leak (loaded.rs dec_viewer_count). Guarded decrement makes the
+# orphan dec a no-op. Upstream report filed; once merged upstream, rev flips back
+# to valence-rs/valence.
+valence = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0" }
 # Direct dep purely to opt the shared valence_nbt instance into `preserve_order`
 # (IndexMap-backed Compound, insertion order). plan-worldgen-v4 P5 nbt_io.rs needs
 # byte-stable round-trips against scripts/nbt/nbt_builder.py, which writes fields
@@ -26,11 +33,11 @@ valence = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
 # byte-identity. Cargo feature unification turns this on for the single shared
 # valence_nbt 0.8.0 (same git rev), so valence's own usage benefits too. Key order
 # is invisible to MC clients, so this is behaviour-neutral elsewhere.
-valence_nbt = { git = "https://github.com/valence-rs/valence", rev = "2b705351", features = [
+valence_nbt = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0", features = [
     "preserve_order",
 ] }
-valence_command = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
-valence_command_macros = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+valence_command = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0" }
+valence_command_macros = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0" }
 big-brain = "0.21"
 bevy_transform = "0.14.2"
 pathfinding = "4"
@@ -74,5 +81,5 @@ harness = false
 name = "nbt_stamp"
 harness = false
 
-[patch."https://github.com/valence-rs/valence"]
+[patch."https://github.com/Kizunad/valence"]
 valence_generated = { path = "crates/valence_generated_bong" }

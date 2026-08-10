@@ -1642,7 +1642,7 @@ mod tests {
     mod join_view_resync {
         use super::*;
         use std::collections::BTreeSet;
-        use valence::prelude::OldPosition;
+        use valence::prelude::{Despawned, OldPosition};
         use valence::protocol::Packet;
         use valence::testing::ScenarioSingleClient;
 
@@ -1893,6 +1893,76 @@ mod tests {
                 centers_tick3.is_empty(),
                 "期望第 3 次 update 不再发 center 包，因为 marker 已在 fire 时移除、\
                  Added<Client> 也早已消费；实际收到 {centers_tick3:?}"
+            );
+        }
+
+        /// 回归（Kizunad/valence pin 39a4add0，Fix A）：despawn cleanup 对「客户端
+        /// 从未 inc 过的 chunk」必须是无害跳过——而不是 debug 下 panic（release 下
+        /// fetch_sub 回绕成 u32::MAX 让 chunk 永久滞留、无法被保留 GC 回收）。
+        ///
+        /// 机制：join tick 的 `init_entities`（valence_entity）把 OldPosition 拍成
+        /// Position → 初始 view diff 恒空 → 客户端加入前已存在于 layer 的 chunk
+        /// 对它从不 inc；该客户端 despawn 时 `cleanup_chunks_after_client_despawn`
+        /// （valence_server client.rs，PostUpdate）无条件 dec 整个计算 view 方形 →
+        /// 在计数 0 上 dec → underflow。这里用 Position == OldPosition 显式写死
+        /// 复现该 join-snap 状态（mock client bundle 无 EntityKind，init_entities
+        /// 的 snap 必须由显式 OldPosition 模拟——与 join_resync 测试同法）。
+        ///
+        /// 确定性论证：全流程无任何时序依赖——chunk 预先插入保证 tick 1 计数必为
+        /// 0；cleanup 固定注册在 PostUpdate；insert(Despawned) 后下一次 update 必然
+        /// 触发 cleanup（实体在 tick 末才被 despawn_entities 移除，cleanup 在其
+        /// 之前执行）。未修复代码每次运行必然 panic，修复后必然通过。
+        #[test]
+        fn despawn_cleanup_skips_chunks_client_never_incd() {
+            let scenario = ScenarioSingleClient::new();
+            let mut app = scenario.app;
+            let client = scenario.client;
+            let layer = scenario.layer;
+
+            // join-snap 姿态：OldPosition == Position → join tick view diff 恒空。
+            app.world_mut().entity_mut(client).insert((
+                Position::new([190.0, 64.0, 111.0]),
+                OldPosition::new([190.0, 64.0, 111.0]),
+                ViewDistance::new(4),
+            ));
+            // 客户端加入前 chunk 已存在于 layer（由他人生成/残留）→ 从不对其计数。
+            app.world_mut()
+                .get_mut::<ChunkLayer>(layer)
+                .expect("scenario layer should carry a ChunkLayer")
+                .insert_chunk(ChunkPos::new(11, 6), UnloadedChunk::new());
+
+            // tick 1：join。diff 恒空 → 该 chunk 计数保持 0（未发生 inc）。
+            app.update();
+            let count = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should still carry a ChunkLayer")
+                .chunk(ChunkPos::new(11, 6))
+                .expect("pre-inserted chunk should still be in the layer")
+                .viewer_count();
+            assert_eq!(
+                count, 0,
+                "前置断言：join tick 后预存 chunk 的 viewer_count 必须为 0，\
+                 否则本测试构造的 underflow 场景不成立（说明该客户端已 inc 过）"
+            );
+
+            // 断连 → despawn cleanup（PostUpdate 无条件 dec 整个计算 view 方形）。
+            app.world_mut().entity_mut(client).insert(Despawned);
+
+            // tick 2：cleanup 对计数 0 的 chunk 必须无害跳过（不 panic、不改变计数）。
+            app.update();
+            let count_after = app
+                .world()
+                .get::<ChunkLayer>(layer)
+                .expect("scenario layer should still carry a ChunkLayer")
+                .chunk(ChunkPos::new(11, 6))
+                .expect("cleanup must not remove the chunk (it never had viewers)")
+                .viewer_count();
+            assert_eq!(
+                count_after, 0,
+                "期望 despawn cleanup 对从未 inc 过的 chunk 是 no-op（计数保持 0、\
+                 不 panic、不回绕）；实际变为 {count_after}。未修复代码在本行之前\
+                 必然已 panic（debug_assert viewer count underflow）"
             );
         }
     }

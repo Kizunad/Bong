@@ -10,8 +10,8 @@ license = "MIT"
 build = "build/main.rs"
 
 [dependencies]
-valence_math = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
-valence_ident = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+valence_math = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0" }
+valence_ident = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0" }
 uuid = "1.10.0"
 
 [build-dependencies]
@@ -21,4 +21,4 @@ proc-macro2 = "1.0.86"
 quote = "1.0.37"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
-valence_build_utils = { git = "https://github.com/valence-rs/valence", rev = "2b705351" }
+valence_build_utils = { git = "https://github.com/Kizunad/valence", rev = "39a4add0fc1fc899c490969f6e667c208a00b1c0" }
