@@ -46,6 +46,7 @@ MAT_PATCH = 2                               # 材质斑块边长（体素数）�
 JITTER_BASE = 0.55                          # 表面抖动基准幅度，见 slab_box
 JITTER_PER_SPAN = 0.22                      # 每多跨一格加的抖动
 JITTER_MAX = JITTER_BASE + 4 * JITTER_PER_SPAN   # 抖动最大外扩；癒合脊必须抬得比它高
+MAX_RUN = 3                                 # 单个 slab 最多跨几格，见 merge_slabs
 
 
 # ---------------------------------------------------------------- 场定义
@@ -213,9 +214,12 @@ def _material(bone: str, normal: np.ndarray, ix: int, iy: int, iz: int) -> str:
     色带（round 1 实测：渲出来像站在一滩藻里）。黏液是顺着重力挂在下垂面上的，
     该出现在每一处朝下的凸缘，不该出现在同高度的侧壁。
     """
-    if bone in ("lump_l", "lump_dorsal", "nodule_r"):
-        return "scar"
     px, py, pz = ix // MAT_PATCH, iy // MAT_PATCH, iz // MAT_PATCH
+    if bone in ("lump_l", "lump_dorsal", "nodule_r"):
+        # 赘生物**不能整块刷同一个色**：round 2 三处赘生物全是均匀 tan，从后方看
+        # lump_dorsal 就是个平顶木箱。混进本体的肉色/暗色才读成肉，而不是贴的板。
+        s = _noise(px, py, pz, "s")
+        return "scar" if s < 0.58 else ("flesh_deep" if s < 0.78 else "flesh_pale")
     # 门槛压在 0.55 而不是 0.30：椭球的整个下半面法向 y 都 < -0.3，用 0.30 等于把
     # 下半身整个刷绿（round 2 实测像半只兽泡在藻里）。黏液只挂在**明显朝下**的凸缘。
     down = float(-normal[1])                       # +1 = 完全朝下
@@ -273,6 +277,10 @@ def merge_slabs(voxels: list[Voxel]) -> list[Slab]:
 
     先沿 x 拉最长的一条 run，再把这条 run 往 +z 推到不能再推为止。不追求最优分解
     （那是 NP-hard），追求可复现。
+
+    跨度硬上限 MAX_RUN：不限的话大面积同材质区会合并成一整张平板，抖动幅度相对
+    跨度太小压不住，渲出来是梯田和平顶木箱（round 2 顶视图/后视图实测）。限制跨度
+    等于从源头上不产生大平面，代价是块数上升——这个代价值得付。
     """
     grid = {(v.ix, v.iy, v.iz): v for v in voxels}
     used: set[tuple[int, int, int]] = set()
@@ -289,10 +297,10 @@ def merge_slabs(voxels: list[Voxel]) -> list[Slab]:
             return u is not None and (u.bone, u.mat) == tag and (a, b, c) not in used
 
         x1 = ix
-        while ok(x1 + 1, iy, iz):
+        while x1 - ix + 1 < MAX_RUN and ok(x1 + 1, iy, iz):
             x1 += 1
         z1 = iz
-        while all(ok(a, iy, z1 + 1) for a in range(ix, x1 + 1)):
+        while z1 - iz + 1 < MAX_RUN and all(ok(a, iy, z1 + 1) for a in range(ix, x1 + 1)):
             z1 += 1
         for a in range(ix, x1 + 1):
             for c in range(iz, z1 + 1):
