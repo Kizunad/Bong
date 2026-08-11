@@ -19,8 +19,10 @@ PUBLISH（注入 bong:agent_ui_cmd 等）与 SUBSCRIBE（观察 bong:agent_ui_re
 from __future__ import annotations
 
 import json
+import os
 import socket
 import time
+from urllib.parse import urlparse
 
 
 class _IncompleteFrame:
@@ -160,11 +162,22 @@ class RedisClient:
 
     def __init__(
         self,
-        host: str = "127.0.0.1",
-        port: int = 6379,
+        host: str | None = None,
+        port: int | None = None,
         connect_timeout: float = 5.0,
         io_timeout: float = 10.0,
     ) -> None:
+        # bot-e2e.sh 在 ambient fixture 模式下把 server 起在私有 Redis 上（随机端口）
+        # 并 export REDIS_URL；场景必须跟着这个端点走，硬编码 6379 会把 cmd 发到
+        # 无人订阅的共享 Redis（本地非 ambient 模式 REDIS_URL 未设，回落默认值）。
+        if host is None or port is None:
+            parsed = urlparse(
+                os.environ.get("REDIS_URL", "redis://127.0.0.1:6379")
+            )
+            if host is None:
+                host = parsed.hostname or "127.0.0.1"
+            if port is None:
+                port = parsed.port or 6379
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
