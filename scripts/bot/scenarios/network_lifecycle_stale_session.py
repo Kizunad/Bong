@@ -3,7 +3,8 @@
 流程：开一份 active craft session（材料已预扣）→ 异常断线 → 重连验证 session
 恢复且**冻结**（不推进、不重建、不重复）→ 不取消再断线 → 再次重连，验证仍是
 同一份陈旧 session（elapsed 不倒退也不凭空增长、completed 不推进、recipe/qty
-一致）→ 取消 → 恰好一次退款。
+一致）→ 取消 → 恰好一次退款（材料 70% 向下取整：quantity=2 每种退
+floor(2×0.7)=1 份，material_returned==2 是两种材料合计 1+1，不是每种 2 份）。
 
 与 production_craft_disconnect_resume 的区别：那一条只做一次重连；本条把陈旧
 session 再断线再重连一次，锁住「多次重连不把 session 复制/重置/推进」的幂等性。
@@ -216,8 +217,12 @@ def run(env) -> None:
         ).data["payload"]
         assert outcome.get("outcome") == "failed", f"取消应 failed，实际 {outcome!r}"
         assert outcome.get("reason") == 1, f"取消 reason 应=1，实际 {outcome!r}"
+        # material_returned 是 refund_manifest 的**跨材料合计**（session.rs cancel_craft：
+        # 每材料 floor(reserved × CANCEL_REFUND_RATIO=0.7)，quantity=2 每材料 1 份，
+        # 合计 1+1=2）——不是「每种 2 份」。
         assert outcome.get("material_returned") == 2, (
-            f"取消应恰好返还两份材料（陈旧 session 只退一次），实际 {outcome!r}"
+            f"取消 material_returned 应=2（每种 70% 向下取整=1 份，合计 1+1；"
+            f"陈旧 session 只退一次），实际 {outcome!r}"
         )
         wait_inventory_contains(bot, "stone_chunk")
         wait_inventory_contains(bot, "wood_handle")
@@ -233,10 +238,16 @@ def run(env) -> None:
         assert find_item(final_inventory, "wood_handle") is not None, (
             f"最终应持有 wood_handle，实际 {final_inventory!r}"
         )
-        assert find_item(final_inventory, "stone_chunk")["item"]["stack_count"] == 2, (
-            f"stone_chunk 退款必须恰好一次（quantity=2 退还 2 份，stack_count=2），实际 {final_inventory!r}"
+        # 取消退款契约 = 材料 70% 向下取整（session.rs CANCEL_REFUND_RATIO=0.7）：
+        # quantity=2 每种材料退 floor(2×0.7)=1 份。stack_count==1 既钉住退款量（每种
+        # 恰好 1 份，多退成 2 / 少退成 0 均红），又是「恰好一次」的检测面——退款若跨
+        # 重连被重复执行，第二份会叠加成 stack_count=2。
+        assert find_item(final_inventory, "stone_chunk")["item"]["stack_count"] == 1, (
+            f"stone_chunk 退款必须恰好一次（quantity=2 材料 70% 向下取整退 1 份，"
+            f"stack_count=1；重复退款会叠加成 2），实际 {final_inventory!r}"
         )
-        assert find_item(final_inventory, "wood_handle")["item"]["stack_count"] == 2, (
-            f"wood_handle 退款必须恰好一次（quantity=2 退还 2 份，stack_count=2），实际 {final_inventory!r}"
+        assert find_item(final_inventory, "wood_handle")["item"]["stack_count"] == 1, (
+            f"wood_handle 退款必须恰好一次（quantity=2 材料 70% 向下取整退 1 份，"
+            f"stack_count=1；重复退款会叠加成 2），实际 {final_inventory!r}"
         )
         bot.assert_alive("陈旧 session 退款后再次重连")
