@@ -1768,6 +1768,29 @@ mod tests {
             fallback_spawn_chunk_union(&snapshot.registry, &snapshot.distribution)
                 .expect("configured fallback union should fit within eager-allocation limit");
         let chunk_center = CHUNK_WIDTH / 2;
+        // 露头坐标 → 期望面块：与 scatter_spawn_resources 的 deposits 表同步
+        // （dx, dz, count, block），树型 deposit 不碰 GRASS_Y 面层，无需列入。
+        const OUTCROPS: [(i32, i32, i32, BlockState); 5] = [
+            (30, 10, 3, BlockState::IRON_ORE),
+            (35, 18, 2, BlockState::IRON_ORE),
+            (28, 26, 2, BlockState::IRON_ORE),
+            (18, 30, 4, BlockState::STONE),
+            (40, 6, 3, BlockState::STONE),
+        ];
+        let mut outcrop_surface: std::collections::HashMap<(i32, i32), BlockState> =
+            std::collections::HashMap::new();
+        for anchor in &snapshot.distribution {
+            let base = anchor.anchor();
+            let base_x = base.x.floor() as i32;
+            let base_z = base.z.floor() as i32;
+            for (dx, dz, count, block) in OUTCROPS {
+                for i in 0..count {
+                    let ox = i % 2;
+                    let oz = i / 2;
+                    outcrop_surface.insert((base_x + dx + ox, base_z + dz + oz), block);
+                }
+            }
+        }
         for chunk_pos in &expected_chunks {
             let block_min_x = chunk_pos.x * CHUNK_WIDTH;
             let block_min_z = chunk_pos.z * CHUNK_WIDTH;
@@ -1777,6 +1800,11 @@ mod tests {
             // 资源坐标」的残缺实现——它仍会让玩家在簇内其它坐标踩进虚空。fallback
             // 契约是整块平坦地形：四角 + 中心都必须真实物化 bedrock + grass，
             // 只填中心列的实现在四角断言上必红。
+            //
+            // scatter_spawn_resources 会把 stone/iron 露头埋进 GRASS_Y 面块（树只
+            // 立在 GRASS_Y+1，不碰面层），所以探针落在露头坐标上时面块是露头类型
+            // 属于合法物化结果；除此之外的任何坐标都必须仍是 grass——空壳 chunk 的
+            // stone 回退不能冒充。露头坐标表与生产实现逐项同步。
             let probes = [
                 (block_min_x, block_min_z),
                 (block_max_x, block_min_z),
@@ -1795,16 +1823,28 @@ mod tests {
                     probe_x,
                     probe_z
                 );
-                assert_eq!(
-                    block_state(&layer, probe_x, GRASS_Y, probe_z),
-                    Some(BlockState::GRASS_BLOCK),
-                    "union chunk ({0},{1}) 坐标 ({2},{3}) \
-                     必须真实物化 grass",
-                    chunk_pos.x,
-                    chunk_pos.z,
-                    probe_x,
-                    probe_z
-                );
+                match outcrop_surface.get(&(probe_x, probe_z)).cloned() {
+                    Some(expected) => assert_eq!(
+                        block_state(&layer, probe_x, GRASS_Y, probe_z),
+                        Some(expected),
+                        "union chunk ({0},{1}) 坐标 ({2},{3}) 是散布露头坐标，\
+                         必须物化出露头类型",
+                        chunk_pos.x,
+                        chunk_pos.z,
+                        probe_x,
+                        probe_z
+                    ),
+                    None => assert_eq!(
+                        block_state(&layer, probe_x, GRASS_Y, probe_z),
+                        Some(BlockState::GRASS_BLOCK),
+                        "union chunk ({0},{1}) 坐标 ({2},{3}) 非露头坐标，必须仍是 grass：\
+                         空壳 chunk 的 stone 回退在非露头坐标上必红",
+                        chunk_pos.x,
+                        chunk_pos.z,
+                        probe_x,
+                        probe_z
+                    ),
+                }
             }
         }
 
