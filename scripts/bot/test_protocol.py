@@ -5488,10 +5488,11 @@ class AgentUiHelperTest(unittest.TestCase):
         bot = _AgentUiFakeBot([close])
         expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
 
-    def test_expect_agent_ui_close_requires_reason_field(self):
-        # 两条缺 reason 的 close 事件，让两次断言都真正检查到 malformed payload。
-        # 旧版只喂一条：第二次调用 start>=事件 t，wait_for 直接超时抛错，等于在测
-        # 超时行为而非缺字段契约（finding：reason 值分支没检查到 payload）。
+    def test_expect_agent_ui_close_reason_absent_means_replaced(self):
+        # 契约（schema AgentUiClosePayloadV1 的 reason=Type.Optional；shared wire
+        # fixture agent-ui-close.channel-wire.sample.json 的 replaced case）：reason
+        # 缺省 = Replaced，期望 None 时必须放行。期望具体 reason 时必须失败，且值
+        # 分支真正检查到 payload（_now 前移到 close_2.t=2.0），而非事件耗尽超时凑绿。
         close_1 = _FakeEvent(
             1.0,
             "payload",
@@ -5509,12 +5510,9 @@ class AgentUiHelperTest(unittest.TestCase):
             },
         )
         bot = _AgentUiFakeBot([close_1, close_2])
-        with self.assertRaises(BotAssertionError):
-            expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
+        expect_agent_ui_close(bot, "req_1", reason=None, timeout=5.0)
         with self.assertRaises(BotAssertionError):
             expect_agent_ui_close(bot, "req_2", reason="invalid_button_id", timeout=5.0)
-        # 两条断言都真正看到了各自的事件（_now 前移到 close_2.t=2.0）；
-        # 若第二条只是"事件耗尽超时"凑绿，_now 会被 wait_for 推到 deadline=6.0。
         self.assertEqual(bot._now, close_2.t, "第二条断言必须检查到 close_2 事件")
 
 

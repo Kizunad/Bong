@@ -235,8 +235,9 @@ def expect_agent_ui_close(
         raise BotAssertionError(
             f"{CLOSE_CHANNEL} request_id 应为 {request_id!r}，实际 {payload.get('request_id')!r}"
         )
-    if "reason" not in payload:
-        raise BotAssertionError(f"{CLOSE_CHANNEL} 缺必填 reason 字段：{payload!r}")
+    # 契约（schema AgentUiClosePayloadV1 的 reason=Type.Optional；shared wire fixture
+    # agent-ui-close.channel-wire.sample.json 的 replaced case）reason 缺省/为 null 均 =
+    # Replaced；get() 把两者统一成 None 再比对。
     if payload.get("reason") != reason:
         raise BotAssertionError(
             f"{CLOSE_CHANNEL} reason 应为 {reason!r}（None=Replaced 静默），"
