@@ -5167,6 +5167,12 @@ mod tests {
         // 重排（如 DrainQi 抢在 Planting 前）仍会通过。这里把六种 action 全部推进
         // 到底，每 tick 必须恰好 dispatch 入队顺序对应的那一种类型，且队列每 tick
         // 精确收缩 1 条（6→0）。任何乱序 dispatch 都会在它应出队的那一轮返回 0。
+        // central review 1984-31447628937 finding [1]：每轮把**全部六种**事件资源
+        // 排空计数——不只断言本轮应 dispatch 的那种恰好 1 条，还断言其余五种为 0。
+        // 只检查应 dispatch 资源会把「正确弹出队列请求、但每 tick 额外多发一种
+        // 事件」的坏实现放行（发错类型的多余事件从不落在被检查的资源上，或落在
+        // 上一轮已被排空、此后不再检查的资源上）；排空全部资源使跨类型重复/多发
+        // 在发生的当轮立刻暴露。
         let expected_order = [
             "till",
             "renew",
@@ -5177,44 +5183,66 @@ mod tests {
         ];
         for (turn, action) in expected_order.into_iter().enumerate() {
             app.update();
-            let dispatched = match action {
-                "till" => app
-                    .world_mut()
-                    .resource_mut::<Events<StartTillRequest>>()
-                    .drain()
-                    .count(),
-                "renew" => app
-                    .world_mut()
-                    .resource_mut::<Events<StartRenewRequest>>()
-                    .drain()
-                    .count(),
-                "planting" => app
-                    .world_mut()
-                    .resource_mut::<Events<StartPlantingRequest>>()
-                    .drain()
-                    .count(),
-                "harvest" => app
-                    .world_mut()
-                    .resource_mut::<Events<StartHarvestRequest>>()
-                    .drain()
-                    .count(),
-                "replenish" => app
-                    .world_mut()
-                    .resource_mut::<Events<StartReplenishRequest>>()
-                    .drain()
-                    .count(),
-                "drain_qi" => app
-                    .world_mut()
-                    .resource_mut::<Events<StartDrainQiRequest>>()
-                    .drain()
-                    .count(),
-                _ => unreachable!(),
-            };
-            assert_eq!(
-                dispatched, 1,
-                "update {}: exactly one `{action}` must dispatch (per-actor FIFO), got {dispatched}",
-                turn + 1
-            );
+            let dispatched_counts = [
+                (
+                    "till",
+                    app.world_mut()
+                        .resource_mut::<Events<StartTillRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "renew",
+                    app.world_mut()
+                        .resource_mut::<Events<StartRenewRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "planting",
+                    app.world_mut()
+                        .resource_mut::<Events<StartPlantingRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "harvest",
+                    app.world_mut()
+                        .resource_mut::<Events<StartHarvestRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "replenish",
+                    app.world_mut()
+                        .resource_mut::<Events<StartReplenishRequest>>()
+                        .drain()
+                        .count(),
+                ),
+                (
+                    "drain_qi",
+                    app.world_mut()
+                        .resource_mut::<Events<StartDrainQiRequest>>()
+                        .drain()
+                        .count(),
+                ),
+            ];
+            for (name, count) in dispatched_counts {
+                if name == action {
+                    assert_eq!(
+                        count, 1,
+                        "update {}: exactly one `{action}` must dispatch (per-actor FIFO), got {count}",
+                        turn + 1
+                    );
+                } else {
+                    assert_eq!(
+                        count, 0,
+                        "update {}: `{name}` must NOT dispatch on the `{action}` tick \
+                         (exactly one action per tick), got {count}",
+                        turn + 1
+                    );
+                }
+            }
             assert_eq!(
                 app.world().resource::<PendingLingtianRequests>().len(),
                 6 - turn - 1,

@@ -2274,10 +2274,10 @@ mod tests {
     fn reconnecting_restored_position_commits_before_lingtian_post_transfer_validation() {
         // fix-spec-1901-v2 #10：生产注册把 attach_player_state_to_joined_clients 放进
         // AuthoritativePositionCommitSet，灵田 post-transfer validator 排在 set 之后。
-        // 本测试通过生产注册路径 register_authoritative_position_commit_systems 获得
-        // attach 的 set 会员，不在此地重建；validator 先注册、attach 后注册且不写
-        // .after(attach) —— 顺序只能由 set 边提供。生产注册一旦丢失 membership，
-        // validator 先读到远处位置 → 拒绝 → 本测试即红。
+        // 本测试通过生产注册入口 player::register 获得 attach 的 set 会员，不在此地
+        // 重建；validator 先注册、attach 后注册且不写 .after(attach) —— 顺序只能由
+        // set 边提供。生产 register 一旦丢失 membership，validator 先读到远处位置 →
+        // 拒绝 → 本测试即红（central review 1984-31447628937 finding [2]）。
         use crate::lingtian::events::{
             StartDrainQiRequest, StartHarvestRequest, StartPlantingRequest, StartRenewRequest,
             StartReplenishRequest, StartTillRequest,
@@ -2306,6 +2306,33 @@ mod tests {
         .expect("seeding nearby-resident player should persist");
 
         let mut app = App::new();
+        // 走生产注册入口 player::register（central review 1984-31447628937
+        // finding [2]）：attach 的 AuthoritativePositionCommitSet 会员与
+        // PlayerStatePersistence 资源都由生产 register 提供，测试不在本地重建。
+        // 直接调 register_authoritative_position_commit_systems 会让「生产 register
+        // 丢失 membership」假绿（删掉 register 里的 helper 调用后测试仍因手动注入
+        // 而通过）。register 先跑，随后用测试自己的 sqlite persistence 覆盖
+        // register 插入的 default 资源，保证位置恢复读到的是测试存档。
+        crate::player::register(&mut app);
+        // player::register 注册的整套系统在裸 App 里需要以下资源/事件（生产由 main
+        // 的 inventory/persistence/combat 注册提供）：bevy 0.14 对缺失的硬 Res /
+        // 事件资源在系统运行时报 panic，缺一个 app.update() 即崩。只补存活前提
+        // （空 registry/空 loadout/默认 allocator/settings），不重建 set 会员——
+        // 顺序契约仍完全由生产 register 的 set 边提供。
+        app.insert_resource(crate::inventory::ItemRegistry::default());
+        app.insert_resource(crate::inventory::DefaultLoadout(
+            crate::inventory::LoadoutSpec {
+                containers: Vec::new(),
+                equipped: HashMap::new(),
+                hotbar: Default::default(),
+                bone_coins: 0,
+                max_weight: 0.0,
+            },
+        ));
+        app.insert_resource(crate::inventory::InventoryInstanceIdAllocator::default());
+        app.insert_resource(crate::persistence::PersistenceSettings::default());
+        app.add_event::<crate::combat::events::AttackIntent>();
+        app.add_event::<crate::cultivation::breakthrough::BreakthroughRequest>();
         app.insert_resource(persistence)
             .init_resource::<PendingLingtianRequests>()
             .add_event::<StartTillRequest>()
@@ -2314,9 +2341,6 @@ mod tests {
             .add_event::<StartHarvestRequest>()
             .add_event::<StartReplenishRequest>()
             .add_event::<StartDrainQiRequest>();
-        // 走生产注册路径：attach 的 AuthoritativePositionCommitSet 会员由
-        // register_authoritative_position_commit_systems 提供，测试不在本地重建。
-        register_authoritative_position_commit_systems(&mut app);
         app.add_systems(
             Update,
             validate_and_dispatch_lingtian_requests.after(AuthoritativePositionCommitSet),
