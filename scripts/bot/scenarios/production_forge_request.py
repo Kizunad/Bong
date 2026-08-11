@@ -12,9 +12,14 @@
   少数通道），必须直接订阅 Redis；bot-e2e.sh 自起模式导出 REDIS_URL（私有 Compose
   Redis 动态端口），本场景从 env 解析。
 - 断言：正向字段 + 状态读回（第二次 forge 的 from_tier==1 → tier 恰好 +1）+ 成本
-  （`/qi set 0` 回读 96.0 / 84.0 → tier1 cost=4 / tier3 cost=16，tier_cost 二次曲线）
+  （`/qi set 0` 回读 96.0 / 64.0 → tier1 cost=4 / tier3 cost=36，tier_cost 二次曲线）
   + 负向四分支（UnknownChannel 窗口内无事件 / MeridianClosed / NotEnoughQi /
   AtMaxTier 各 success:false）+ 双发无跳档（连锻到 cap 后仍 AtMaxTier，无超 cap 溢出）。
+
+> ⚠ 成本曲线以代码为准：`tier_cost(n) = 4.0 * n²`（forging.rs:59）→ 实际消耗
+> **4 / 16 / 36**（0→1 / 1→2 / 2→3）。函数体上方注释写的 "1:4, 2:9, 3:16" 与公式不符
+> （对应 (n+1)²，从未被公式实现过；服务端测试也只断言单调不减）。黑盒按可执行行为
+> 钉 4/16/36，注释与公式的出入留给 server 侧单独核实。
 
 负向分支的 payload 不携带 error kind（success:false 事件只有 meridian/axis/0/0），按请求
 顺序逐条消费；UnknownChannel 例外——`ForgeEventV1::validate` 拒绝 snake_case 非 humanoid
@@ -269,19 +274,20 @@ def run(env) -> None:
         )
         _expect_no_forge_event(subscriber)
 
-        # 负向 NotEnoughQi：qi=3 < tier3 cost(16) → success:false。
+        # 负向 NotEnoughQi：qi=3 < tier3 cost(36) → success:false。
+        # 回读 "84.0 -> 3.0" 顺带钉 tier2 cost=16（100-16=84）。
         bot.cmd("qi set 3")
-        bot.expect_chat("[dev] qi set 3.0", timeout=10.0)
+        bot.expect_chat("[dev] qi set 84.0 -> 3.0", timeout=10.0)
         ev = _forge(bot, subscriber, "lung", "Rate")
         _assert_failure_event(ev, meridian="Lung")
         bot.cmd("qi set 100")
         bot.expect_chat("[dev] qi set 100.0", timeout=10.0)
 
-        # 冲 cap：2→3（cost 16，qi 100→84），再读回 84.0 证明 tier3 cost。
+        # 冲 cap：2→3（cost 36，qi 100→64），再读回 64.0 证明 tier3 cost。
         ev = _forge(bot, subscriber, "lung", "Rate")
         _assert_success_event(ev, meridian="Lung", axis="Rate", from_tier=2, to_tier=3)
         bot.cmd("qi set 0")
-        bot.expect_chat("[dev] qi set 84.0 -> 0.0", timeout=10.0)
+        bot.expect_chat("[dev] qi set 64.0 -> 0.0", timeout=10.0)
 
         # 负向 AtMaxTier：P1 上限 tier3，连发两次均 success:false → 无超 cap 溢出（双发检查）。
         ev = _forge(bot, subscriber, "lung", "Rate")
