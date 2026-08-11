@@ -40,6 +40,107 @@ class Event:
         return f"Event({self.t:.3f}s {self.kind} {self.data})"
 
 
+def _skip_nbt_value(reader, tag):
+    """按 NBT tag 类型跳过值（tag 字节已读出），使 reader 对齐到下一 tag/name。"""
+    if tag == 0:  # TAG_End
+        return
+    if tag == 1:  # byte
+        reader.u8()
+    elif tag == 2:  # short
+        reader.pos += 2
+    elif tag == 3:  # int
+        reader.pos += 4
+    elif tag == 4:  # long
+        reader.pos += 8
+    elif tag == 5:  # float
+        reader.pos += 4
+    elif tag == 6:  # double
+        reader.pos += 8
+    elif tag == 7:  # byte array
+        reader.pos += reader.i32()
+    elif tag == 8:  # string
+        reader.string()
+    elif tag == 9:  # list：元素 tag 在前，然后 count 个元素
+        elem_tag = reader.u8()
+        for _ in range(reader.i32()):
+            _skip_nbt_value(reader, elem_tag)
+    elif tag == 10:  # compound：循环 (tag, name, value) 直到 TAG_End
+        while True:
+            inner = reader.u8()
+            if inner == 0:
+                return
+            reader.string()
+            _skip_nbt_value(reader, inner)
+    elif tag == 11:  # int array
+        reader.pos += 4 * reader.i32()
+    elif tag == 12:  # long array
+        reader.pos += 8 * reader.i32()
+    else:
+        raise ValueError(f"无法跳过未知 NBT tag {tag}")
+
+
+def _skip_metadata_value(reader, mtype):
+    """按 vanilla 1.20.1 metadata 类型跳过条目值，使 reader 对齐到下一 index/type。
+
+    元数据条目 (index, type_id, value) 的 value 编码随 type_id 变化；跳错大小会让
+    后续条目错位、flags 与 0xFF 终止符都读不回来。PARTICLE（15）无任何 vanilla 实体
+    使用，遇到即包畸形——亮错误（decode_error 事件）而不是静默错位。"""
+    if mtype == 0:  # BYTE
+        reader.u8()
+    elif mtype == 1:  # VARINT
+        reader.varint()
+    elif mtype == 2:  # FLOAT
+        reader.pos += 4
+    elif mtype in (3, 4):  # STRING / CHAT
+        reader.string()
+    elif mtype == 5:  # OPT_CHAT
+        if reader.boolean():
+            reader.string()
+    elif mtype == 6:  # SLOT：present + item id + count + NBT compound
+        if reader.boolean():
+            reader.varint()
+            reader.u8()
+            _skip_nbt_value(reader, reader.u8())
+    elif mtype == 7:  # BOOLEAN
+        reader.u8()
+    elif mtype == 8:  # ROTATION
+        reader.pos += 12
+    elif mtype == 9:  # POSITION
+        reader.pos += 8
+    elif mtype == 10:  # OPT_POSITION
+        if reader.boolean():
+            reader.pos += 8
+    elif mtype == 11:  # DIRECTION
+        reader.varint()
+    elif mtype == 12:  # OPT_UUID
+        if reader.boolean():
+            reader.pos += 16
+    elif mtype == 13:  # OPT_BLOCK_ID
+        reader.varint()
+    elif mtype == 14:  # NBT
+        _skip_nbt_value(reader, reader.u8())
+    elif mtype == 15:  # PARTICLE
+        raise ValueError("metadata type 15 (PARTICLE) 无法安全跳过，包畸形")
+    elif mtype == 16:  # VILLAGER_DATA
+        reader.varint()
+        reader.varint()
+        reader.varint()
+    elif mtype in (17, 18, 19, 20, 22, 23):  # OPT_VARINT / POSE / CAT / FROG / PAINTING / SNIFFER
+        reader.varint()
+    elif mtype == 21:  # OPT_GLOBAL_POS
+        if reader.boolean():
+            reader.pos += 8
+    elif mtype == 24:  # VECTOR3F
+        reader.pos += 12
+    elif mtype == 25:  # BLOCK_POS
+        reader.pos += 8
+    elif mtype == 26:  # OPT_BLOCK_POS
+        if reader.boolean():
+            reader.pos += 8
+    else:
+        raise ValueError(f"未知 metadata type {mtype}")
+
+
 class Bot:
     """一条独立连接 = 一个玩家。用完必须 close()（或用 with 语句）。"""
 
@@ -331,15 +432,23 @@ class Bot:
             self._emit("entities_destroy", {"entity_ids": ids})
         elif packet_id == mc.S2C_ENTITY_METADATA:
             # EntityTrackerUpdateS2c：entity_id 0 = 本客户端自己（valence 预留 ID 0）。
-            # 只解析 flags（index 0, BYTE, 位 5 = invisible）；其他条目跳过不解析，
-            # 场景只消费 flags 位变化（set_invisible 触发的 update 包仅含该条目）。
+            # 条目序列 (index, type_id, value)…0xFF 终止；场景只消费 flags（index 0,
+            # BYTE, 位 5 = invisible），但其他条目可先于 flags 出现（同帧多个 tracked
+            # 字段变化时 valence 按字段声明序 append）——必须逐条解码/跳过直到 0xFF，
+            # flags 在任意位置都能被读到（review finding, run 31442491424：旧实现只读
+            # 首条目，flags 非首条目即静默丢失，invisible 状态切换读不回来）。
             entity_id = reader.varint()
             flags = None
-            index = reader.u8()
-            if index != 0xFF:
+            while True:
+                index = reader.u8()
+                if index == 0xFF:
+                    break
                 mtype = reader.u8()
                 if index == 0 and mtype == 0:
                     flags = struct.unpack_from(">b", reader.data, reader.pos)[0]
+                    reader.pos += 1
+                else:
+                    _skip_metadata_value(reader, mtype)
             self._emit(
                 "entity_metadata",
                 {"entity_id": entity_id, "flags": flags},

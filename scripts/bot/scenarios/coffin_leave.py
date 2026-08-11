@@ -147,46 +147,33 @@ def _wait_settled(bot, timeout=20.0, tol=0.02):
     )
 
 
-def _settle_instance(bot, instance_id, anchor, coords, settle_timeout=6.0, quiet=1.0):
-    """结算单个候选的最终结果：等新快照，任一快照显示**该实例**已消耗 → 候选实际放置
-    成功（返回坐标）；连续 quiet 秒无新快照且该实例仍在 → 候选确定被拒（返回 None）。
+def _settle_by_barrier(bot, instance_id, coords, barrier_timeout=20.0):
+    """give-barrier 权威结算单个候选（review finding [3], run 31442491424）。
 
-    候选的 3s wait 超时只说明「没等到消耗快照」，不代表它被拒——服务端对成功放置是
-    **同 tick 同步发**消耗快照（coffin/mod.rs send_inventory_snapshot_to_client
-    reason=coffin_place_consumed），慢处理下快照可迟到。本函数把该候选**原子结算**。
+    本地观察死线不能区分「被拒」与「已接受但快照迟到」——静默拒绝本身就是协议，死线
+    过期后带着未决请求发下一个放置（新实例 id、新坐标）会让两个非幂等请求先后都生效：
+    双扣料、双棺、场景只记一个坐标，留持久脏状态。give 命令与放置请求共享同一条 TCP
+    流，服务端按流序处理（FIFO）：**give 的 inventory_snapshot 到达即证明其前的放置
+    请求已被服务端处理完毕**，快照内容即对该请求的权威裁决——
 
-    review finding 3 (run 31434608946)：**实例 id 即候选标识**——快照不带请求标识，
-    但 `_place_coffin` 给每个候选独立 fresh 实例，结算只按**本候选自己的实例 id**
-    （find_instance）判定消耗，同一实例永远只对应一个候选请求。旧实现多候选复用同一
-    实例，settle 窗口超时后上一候选的迟到成功快照会被下一候选的 wait 误认，返回的坐标
-    在 registry 无记录，后续 enter/leave 全超时。
+    - 该实例已不在快照 → 放置实际成功（消耗快照迟到而已）→ 返回坐标；
+    - 该实例仍在快照 → 该候选被权威拒绝（未消费）→ 返回 None，放行下一候选。
 
-    review finding [2]（R5）：下界初值必须是候选自身的原始锚（candidate_anchor，即该
-    候选 intent 前取的 last_event_time），不是函数入口现取的 last_event_time——候选
-    3s 等待超时与结算初始化之间没有事件屏障，若成功消耗快照在这段间隔落到事件流，入口
-    现取锚会把 ≤ 锚的快照永久排除。保留原锚覆盖 intent→结算整个无覆盖区间；锚只在对某
-    快照**做过消耗判定后**才推进。review finding [3]（R5）：消耗判定按**具体实例 id**
-    （find_instance），同模板旧实例残留不会让首匹配掩盖新实例已消费。"""
-    settle_anchor = anchor
-    deadline = time.monotonic() + settle_timeout
-    while time.monotonic() < deadline:
-        try:
-            event = bot.wait_for(
-                lambda e, a=settle_anchor: e.kind == "server_data"
-                and e.data["payload_type"] == "inventory_snapshot"
-                and e.t > a,
-                timeout=quiet,
-                description=f"结算候选坐标 {coords} 的 inventory_snapshot（t>{settle_anchor:.3f}）",
-            )
-        except BotAssertionError:
-            # quiet 秒内无新快照只说明「这 1s 没等到」，不证明该候选被拒——旧实现在这里
-            # 立即 return None，settle_timeout 死线从未生效，延迟快照（>1s 才到）被当成
-            # 拒收。wait_for 每次全量重扫事件列表，迟到快照在下一次 wait 立即命中，
-            # continue 保持完整结算窗口。
-            continue
-        if find_instance(event.data["payload"], MUNDANE_COFFIN, instance_id) is None:
-            return coords  # 候选实际放置成功：快照迟到但消耗真实
-        settle_anchor = event.t  # 该实例仍在，推进观察点等更新的快照确认稳定性
+    消耗判定按**具体实例 id**（find_instance）：barrier 的 give 本身也新增一个同模板
+    实例，首匹配会选中它而漏判前一候选（同 GAP13 review finding round 5）。barrier
+    快照在 barrier_timeout 内未到（服务端长时间停摆）→ 抛错红掉，绝不带未决请求
+    进入下一候选。"""
+    give_anchor = last_event_time(bot)
+    bot.cmd(f"give {MUNDANE_COFFIN} 1")
+    event = bot.wait_for(
+        lambda e, a=give_anchor: e.kind == "server_data"
+        and e.data["payload_type"] == "inventory_snapshot"
+        and e.t > a,
+        timeout=barrier_timeout,
+        description=f"give-barrier 结算候选 {coords}（FIFO 证明其前放置已处理）",
+    )
+    if find_instance(event.data["payload"], MUNDANE_COFFIN, instance_id) is None:
+        return coords
     return None
 
 
@@ -196,9 +183,11 @@ def _place_coffin(bot, px, py, pz):
     leave 一律以实际坐标为准，保证 read-back 与 reject 几何一致）。
 
     成功判定必须绑定到本次请求：**每个候选 give 一个独立 fresh mundane_coffin 实例**，
-    消耗判定与结算全部按各自实例 id（find_instance）。候选 3s 等待超时后先**原子结算**
-    该候选（_settle_instance）——若其实际放置成功（消耗快照迟到于 3s 等待），返回其坐标，
-    绝不让成功被误记到后续候选（否则 enter/leave 会指向 registry 中不存在的坐标）。
+    消耗判定与结算全部按各自实例 id（find_instance）。候选 3s 等待超时后走
+    **give-barrier 权威结算**（_settle_by_barrier）——若其实际放置成功（消耗快照迟到
+    于 3s 等待），返回其坐标，绝不让成功被误记到后续候选（否则 enter/leave 会指向
+    registry 中不存在的坐标）；且**先结算再放行下一候选**，绝不带着未决请求发第二个
+    放置（review finding [3]）。
 
     review finding 3 (run 31434608946)：实例 id 即候选标识——旧实现多候选复用同一实例，
     快照不带请求标识，settle 窗口超时后上一候选的迟到成功快照会被下一候选的 wait 误认，
@@ -249,9 +238,12 @@ def _place_coffin(bot, px, py, pz):
             return (x, y, z)
         except BotAssertionError:
             # 3s 等待超时不代表该候选被拒——服务端对成功放置同 tick 同步发消耗快照，慢
-            # 处理下快照可迟到。结算该**实例**：迟到快照显示该实例被消费 → 此候选实际
-            # 放置成功（返回其坐标）；该实例仍在 → 此候选确定被拒，放行下一候选。
-            settled = _settle_instance(bot, instance_id, anchor, (x, y, z))
+            # 处理下快照可迟到。**绝不带着未决请求重试下一候选**（review finding [3],
+            # run 31442491424：两个不同实例 id 的放置请求可先后都生效 → 双棺双扣料、
+            # 只记一个坐标）。give-barrier 权威结算本候选：give 快照到达即证明其前的
+            # 放置已被处理，实例消失 = 放置成功（返回坐标）；仍在 = 权威拒绝，放行
+            # 下一候选。
+            settled = _settle_by_barrier(bot, instance_id, (x, y, z))
             if settled is not None:
                 return settled
             continue

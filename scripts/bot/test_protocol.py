@@ -435,6 +435,43 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(metadata_events[0].data["entity_id"], 7)
         self.assertIsNone(metadata_events[0].data["flags"])
 
+    def test_bot_dispatch_entity_metadata_flags_after_non_flags_entry(self):
+        bot = _bare_bot()
+        # 首条目不是 flags（index 5, BOOLEAN），flags 条目在其后：必须扫描完整条目
+        # 序列直到 0xFF，flags 在任意位置都能读到（review finding, run 31442491424：
+        # 旧实现只读首条目，flags 非首条目即静默丢 None，invisible 状态切换读不回）。
+        body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + bytes(
+            [5, 7, 1, 0, 0, 0x20, 0xFF]
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertEqual(metadata_events[0].data["flags"], 0x20)
+
+    def test_bot_dispatch_entity_metadata_flags_after_varint_and_string_entries(self):
+        bot = _bare_bot()
+        # VARINT（index 1 = air）与 STRING（index 2 = custom name）条目先于 flags：
+        # 按类型跳过（varint / 长度前缀字符串）不得错位，否则 flags 与 0xFF 终止符
+        # 都读不回来。
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_METADATA)
+            + mc.write_varint(0)
+            + bytes([1, 1, 5])  # index 1, type VARINT, 值 5
+            + bytes([2, 3])
+            + mc.mc_string("abc")  # index 2, type STRING, 值 "abc"
+            + bytes([0, 0, 0x20, 0xFF])  # index 0, type BYTE, flags=0x20
+        )
+
+        bot._dispatch(body)
+
+        metadata_events = bot.events_of("entity_metadata")
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0].data["entity_id"], 0)
+        self.assertEqual(metadata_events[0].data["flags"], 0x20)
+
     def test_bot_dispatch_entity_metadata_empty_entries(self):
         bot = _bare_bot()
         body = mc.write_varint(mc.S2C_ENTITY_METADATA) + mc.write_varint(0) + b"\xFF"
