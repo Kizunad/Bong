@@ -188,18 +188,23 @@ mod tests {
         let mut app = setup_app();
         let player = spawn_test_client(&mut app, "Alice", [0.0, 0.0, 0.0]);
         app.world_mut().entity_mut(player).insert(Cultivation {
-            qi_current: 300.0,
+            qi_current: 900.0,
             qi_max: 500.0,
             qi_max_frozen: Some(200.0),
             ..Default::default()
         });
 
-        send(&mut app, player, QiCmd::Max { value: 500.0 });
+        // 请求值必须与初始上限不同（500->800）：一个"只在 value==qi_max 时清冻结"的
+        // 错误实现恰好能骗过旧用例（初值 500、请求 500），这里 800 != 500 会立刻暴露它。
+        send(&mut app, player, QiCmd::Max { value: 800.0 });
         run_update(&mut app);
 
         let cultivation = app.world().get::<Cultivation>(player).unwrap();
-        assert_eq!(cultivation.qi_max, 500.0);
-        assert_eq!(cultivation.qi_current, 300.0);
+        assert_eq!(cultivation.qi_max, 800.0);
+        assert_eq!(
+            cultivation.qi_current, 800.0,
+            "新上限 800 应把当前真元 900 钳到 800（Set 分支不钳，Max 分支才钳）"
+        );
         assert_eq!(
             cultivation.qi_max_frozen,
             None,

@@ -636,12 +636,16 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["type"], "terminate_screen")
         self.assertFalse(decoded["visible"])
     def test_proto_tribulation_state_payload_decodes(self):
+        # 全部新增字段都用非默认值编码（failed=true、half_step_on_success=true、
+        # world_x/z、三个 tick），逐个断言 wire 号：解码器缺席/串号/恒 false 都会被抓。
         decoded = decode_server_data_payload(
             _server_data_tribulation_state_bytes(
                 phase="wave",
                 wave_current=3,
                 wave_total=5,
                 result=None,
+                failed=True,
+                half_step_on_success=True,
             )
         )
 
@@ -651,8 +655,14 @@ class ServerDataDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["wave_total"], 5)
         self.assertEqual(decoded["kind"], "du_xu")
         self.assertEqual(decoded["actor_name"], "BHDE6Cult")
+        self.assertEqual(decoded["world_x"], 12.5)
+        self.assertEqual(decoded["world_z"], -34.25)
+        self.assertEqual(decoded["started_tick"], 1000)
+        self.assertEqual(decoded["phase_started_tick"], 5000)
+        self.assertEqual(decoded["next_wave_tick"], 5300)
         self.assertIn("du_xu:char-1", decoded["participants"])
-        self.assertFalse(decoded["failed"])
+        self.assertTrue(decoded["failed"])
+        self.assertTrue(decoded["half_step_on_success"])
         self.assertIsNone(decoded["result"])
 
     def test_proto_tribulation_state_settle_payload_decodes(self):
@@ -2603,8 +2613,14 @@ def _server_data_tribulation_state_bytes(
     wave_total: int,
     result: str | None,
     active: bool = True,
+    failed: bool = False,
+    half_step_on_success: bool = False,
 ) -> bytes:
-    """field 66 `tribulation_state`（见 proto/bong/envelope.proto `TribulationState`）。"""
+    """field 66 `tribulation_state`（见 proto/bong/envelope.proto `TribulationState`）。
+
+    failed=field 13、half_step_on_success=field 14 都是独立 bool 字段，必须可设非默认值：
+    解码测试要 pin 每一个新增字段的 wire 号，缺席/串号/恒 false 的解码器才会被抓住。
+    """
     body = (
         _pb_varint(1, 1 if active else 0)
         + _pb_string(2, "du_xu:char-1")
@@ -2618,7 +2634,8 @@ def _server_data_tribulation_state_bytes(
         + _pb_varint(10, 1000)
         + _pb_varint(11, 5000)
         + _pb_varint(12, 5300)
-        + _pb_varint(13, 0)
+        + _pb_varint(13, 1 if failed else 0)
+        + _pb_varint(14, 1 if half_step_on_success else 0)
         + _pb_string(15, "du_xu:char-1")
     )
     if result is not None:

@@ -1181,6 +1181,41 @@ def _insight_offer(data: bytes) -> dict[str, Any]:
     }
 
 
+def _heart_demon_offer(data: bytes) -> dict[str, Any]:
+    """生产 ``HeartDemonOffer``（server_data oneof field 69，心魔劫抉择面板）。
+
+    heart_demon_decision e2e 断言 offer 形状（choice_id/category/title 三元组），
+    并据 choice 面板给出对应的 decision 输入。
+    """
+    fields = _fields(data)
+    choices = []
+    for raw in _messages(fields, 9):
+        entry = _fields(raw)
+        choices.append(
+            {
+                "choice_id": _string(entry, 1),
+                "category": _string(entry, 2),
+                "title": _string(entry, 3),
+                "effect_summary": _string(entry, 4),
+                "flavor": _string(entry, 5),
+                "style_hint": _string(entry, 6),
+            }
+        )
+    return {
+        "v": 1,
+        "type": "heart_demon_offer",
+        "offer_id": _string(fields, 1),
+        "trigger_id": _string(fields, 2),
+        "trigger_label": _string(fields, 3),
+        "realm_label": _string(fields, 4),
+        "composure": _double(fields, 5),
+        "quota_remaining": _varint(fields, 6),
+        "quota_total": _varint(fields, 7),
+        "expires_at_ms": _varint(fields, 8),
+        "choices": choices,
+    }
+
+
 SERVER_DATA_PAYLOAD_DECODERS = {
     3: _narration_batch,
     SERVER_DATA_ZONE_INFO_FIELD: _zone_info,
@@ -1231,41 +1266,6 @@ def decode_server_data_envelope(data: bytes) -> dict[str, Any] | None:
         if decoder is not None:
             return decoder(value)
     return None
-
-
-def _heart_demon_offer(data: bytes) -> dict[str, Any]:
-    """生产 ``HeartDemonOffer``（server_data oneof field 69，心魔劫抉择面板）。
-
-    heart_demon_decision e2e 断言 offer 形状（choice_id/category/title 三元组），
-    并据 choice 面板给出对应的 decision 输入。
-    """
-    fields = _fields(data)
-    choices = []
-    for raw in _messages(fields, 9):
-        entry = _fields(raw)
-        choices.append(
-            {
-                "choice_id": _string(entry, 1),
-                "category": _string(entry, 2),
-                "title": _string(entry, 3),
-                "effect_summary": _string(entry, 4),
-                "flavor": _string(entry, 5),
-                "style_hint": _string(entry, 6),
-            }
-        )
-    return {
-        "v": 1,
-        "type": "heart_demon_offer",
-        "offer_id": _string(fields, 1),
-        "trigger_id": _string(fields, 2),
-        "trigger_label": _string(fields, 3),
-        "realm_label": _string(fields, 4),
-        "composure": _double(fields, 5),
-        "quota_remaining": _varint(fields, 6),
-        "quota_total": _varint(fields, 7),
-        "expires_at_ms": _varint(fields, 8),
-        "choices": choices,
-    }
 
 
 def _equip_slot(value: int) -> str:

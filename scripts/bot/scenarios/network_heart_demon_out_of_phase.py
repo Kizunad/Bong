@@ -23,9 +23,17 @@ HEART_DEMON_DECISION = {"type": "heart_demon_decision", "v": 1}
 
 
 def _no_tribulation_payloads_arrive(bot: Bot, within: float = 3.0) -> None:
+    """断言在 within 秒静默窗内不出现 tribulation_state / heart_demon_offer payload。
+
+    负向异步断言必须做窗末原子观测：循环先**完成一次扫描**再判 deadline，deadline 到达的
+    那一轮也要扫过（否则恰好落在窗尾的 payload 会被漏掉）；扫描在 _lock 下做快照，
+    reader 线程异步追加，不加锁迭代可能读到半更新列表。
+    """
     deadline = time.monotonic() + within
-    while time.monotonic() < deadline:
-        for event in bot.events:
+    while True:
+        with bot._lock:
+            snapshot = list(bot.events)
+        for event in snapshot:
             if event.kind != "server_data":
                 continue
             payload_type = event.data.get("payload_type")
@@ -34,6 +42,8 @@ def _no_tribulation_payloads_arrive(bot: Bot, within: float = 3.0) -> None:
                     f"[{bot.username}] 非心魔相下发 decision 后不应出现 {payload_type} payload："
                     f"{event.data.get('payload')!r}"
                 )
+        if time.monotonic() >= deadline:
+            return
         time.sleep(0.2)
 
 
