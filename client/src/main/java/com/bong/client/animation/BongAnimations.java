@@ -127,6 +127,12 @@ public final class BongAnimations {
     public static final Identifier SWORD_MANIFEST_CAST = new Identifier(MOD_ID, "sword_manifest_cast");
     public static final Identifier SWORD_HEAVEN_GATE_CHARGE = new Identifier(MOD_ID, "sword_heaven_gate_charge");
     public static final Identifier SWORD_HEAVEN_GATE_RELEASE = new Identifier(MOD_ID, "sword_heaven_gate_release");
+    // 骑马坐姿。**三档鞍两副坐姿**——量下来粗革鞍与灵铁鞍把人放在同一个位置
+    // （座→镫落差同是 10.11、鞍翼同宽，差别在鞍桥的配件上），对照表在生成器
+    // client/tools/gen_horse_ride.py 的 SADDLE_SEAT 里，接线时查它。
+    public static final Identifier HORSE_RIDE_BAREBACK = new Identifier(MOD_ID, "horse_ride_bareback");
+    public static final Identifier HORSE_RIDE_STIRRUP = new Identifier(MOD_ID, "horse_ride_stirrup");
+
     public static final Identifier HEIWUSHI_IDLE = new Identifier(MOD_ID, "heiwushi_idle");
     public static final Identifier HEIWUSHI_WALK = new Identifier(MOD_ID, "heiwushi_walk");
     public static final Identifier HEIWUSHI_DEATH = new Identifier(MOD_ID, "heiwushi_death");

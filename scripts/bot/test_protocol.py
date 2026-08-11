@@ -25,6 +25,7 @@ import time
 import tomllib
 import types
 import unittest
+import uuid
 import zlib
 from contextlib import redirect_stdout
 from unittest import mock
@@ -501,6 +502,141 @@ class ServerDataDecodeTest(unittest.TestCase):
         decoded = decode_server_data_payload(payload)
         self.assertEqual(decoded["type"], "morph_state")
         self.assertEqual(decoded["entries"], [])
+
+    def test_proto_tribulation_state_payload_name_decodes(self):
+        # DONE-W6-HEADLESSAUDIT §5 P0-4 gap：渡虚劫状态 payload（envelope.proto:66）。
+        # kind/phase 在 wire 上是 string 字段（envelope.proto:2374-2375），断言解出字面值。
+        payload = _pb_message(
+            66,
+            _pb_varint(1, 1)
+            + _pb_string(2, "offline:Alice")
+            + _pb_string(3, "Alice")
+            + _pb_string(4, "du_xu")
+            + _pb_string(5, "omen")
+            + _pb_varint(8, 2)
+            + _pb_varint(9, 3),
+        )
+        self.assertEqual(proto_min.server_data_payload_name(payload), "tribulation_state")
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "tribulation_state")
+        self.assertTrue(decoded["active"])
+        self.assertEqual(decoded["char_id"], "offline:Alice")
+        self.assertEqual(decoded["actor_name"], "Alice")
+        self.assertEqual(decoded["kind"], "du_xu")
+        self.assertEqual(decoded["phase"], "omen")
+        self.assertEqual(decoded["wave_current"], 2)
+        self.assertEqual(decoded["wave_total"], 3)
+
+    def test_proto_insight_offer_payload_name_decodes(self):
+        # DONE-W6-HEADLESSAUDIT §5 P0-4 gap：顿悟邀约 payload（envelope.proto:131）。
+        # 断言 offer_id/trigger_id/character_id 字段号→输出键映射 + choices 计数。
+        choice = _pb_string(2, "qi_regen_factor") + _pb_string(6, "converge")
+        payload = _pb_message(
+            131,
+            _pb_string(1, "insight:5:first_breakthrough_to_Induce")
+            + _pb_string(2, "first_breakthrough_to_Induce")
+            + _pb_string(3, "offline:Alice")
+            + _pb_message(4, choice)
+            + _pb_message(4, choice)
+            + _pb_message(4, choice),
+        )
+        self.assertEqual(proto_min.server_data_payload_name(payload), "insight_offer")
+        self.assertIn(b"first_breakthrough_to_Induce", payload)
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "insight_offer")
+        self.assertEqual(decoded["offer_id"], "insight:5:first_breakthrough_to_Induce")
+        self.assertEqual(decoded["trigger_id"], "first_breakthrough_to_Induce")
+        self.assertEqual(decoded["character_id"], "offline:Alice")
+        self.assertEqual(len(decoded["choices"]), 3)
+
+    def test_proto_death_screen_visible_payload_decodes(self):
+        # field 72 DeathScreen：濒死决策已出（Fortune，stage=1），决策窗口开启。
+        # 字段 3/4/5 一并钉死：luck_remaining(double)/final_words(repeated string)/
+        # countdown_until_ms(uint64 varint)——与 server 侧 fixture（proto_gen.rs）对齐。
+        payload = _pb_message(
+            72,
+            _pb_varint(1, 1)  # visible=true
+            + _pb_string(2, "voluntary_retire")
+            + _pb_fixed64(3, 0.3)  # luck_remaining=0.3
+            + _pb_string(4, "你的修为到此为止")
+            + _pb_string(4, "但愿来生...")  # final_words（repeated）
+            + _pb_varint(5, 1700000030000)  # countdown_until_ms
+            + _pb_varint(6, 1)  # can_reincarnate=true
+            # can_terminate=false（Fortune 决策不可主动终结）
+            + _pb_varint(8, 1)  # stage=FORTUNE
+            + _pb_varint(9, 1)  # death_number=1
+            + _pb_varint(10, 1),  # zone_kind=ORDINARY
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "death_screen")
+        self.assertTrue(decoded["visible"])
+        self.assertEqual(decoded["cause"], "voluntary_retire")
+        self.assertAlmostEqual(decoded["luck_remaining"], 0.3)
+        self.assertEqual(
+            decoded["final_words"], ["你的修为到此为止", "但愿来生..."],
+            "repeated string 字段 4 应按序解出列表",
+        )
+        self.assertEqual(decoded["countdown_until_ms"], 1700000030000)
+        self.assertTrue(decoded["can_reincarnate"])
+        self.assertFalse(decoded["can_terminate"])
+        self.assertEqual(decoded["stage"], 1)
+        self.assertEqual(decoded["death_number"], 1)
+        self.assertEqual(decoded["zone_kind"], 1)
+
+    def test_proto_death_screen_tribulation_payload_decodes(self):
+        # Tribulation（stage=2）决策：can_terminate=true。
+        payload = _pb_message(
+            72,
+            _pb_varint(1, 1)
+            + _pb_fixed64(3, 0.85)  # luck_remaining
+            + _pb_string(4, "大限将至")  # final_words（repeated，单条）
+            + _pb_varint(5, 1700000050000)  # countdown_until_ms
+            + _pb_varint(6, 1)
+            + _pb_varint(7, 1)
+            + _pb_varint(8, 2)
+            + _pb_varint(9, 4),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "death_screen")
+        self.assertTrue(decoded["visible"])
+        self.assertAlmostEqual(decoded["luck_remaining"], 0.85)
+        self.assertEqual(decoded["final_words"], ["大限将至"])
+        self.assertEqual(decoded["countdown_until_ms"], 1700000050000)
+        self.assertTrue(decoded["can_terminate"])
+        self.assertEqual(decoded["stage"], 2)
+        self.assertEqual(decoded["death_number"], 4)
+
+    def test_proto_death_screen_hidden_payload_decodes(self):
+        # 复活/终结后的收屏：visible=false，无 stage/death_number（optional 未填）。
+        payload = _pb_message(72, _pb_varint(1, 0))
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "death_screen")
+        self.assertFalse(decoded["visible"])
+        self.assertNotIn("stage", decoded)
+        self.assertNotIn("death_number", decoded)
+
+    def test_proto_terminate_screen_visible_payload_decodes(self):
+        # field 73 TerminateScreen：主动归隐终结后的终结屏。
+        payload = _pb_message(
+            73,
+            _pb_varint(1, 1)  # visible=true
+            + _pb_string(2, "此身止于此。")
+            + _pb_string(3, "你选择了归隐与终结。")
+            + _pb_string(4, "凡人"),
+        )
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "terminate_screen")
+        self.assertTrue(decoded["visible"])
+        self.assertEqual(decoded["final_words"], "此身止于此。")
+        self.assertEqual(decoded["epilogue"], "你选择了归隐与终结。")
+        self.assertEqual(decoded["archetype_suggestion"], "凡人")
+
+    def test_proto_terminate_screen_hidden_payload_decodes(self):
+        # 新建角色后的收屏：visible=false。
+        payload = _pb_message(73, _pb_varint(1, 0))
+        decoded = decode_server_data_payload(payload)
+        self.assertEqual(decoded["type"], "terminate_screen")
+        self.assertFalse(decoded["visible"])
 
 
 def _server_data_skill_xp_gain_bytes() -> bytes:
@@ -3219,6 +3355,8 @@ def _bare_bot() -> Bot:
     bot.t0 = 0.0
     bot.events = []
     bot.entities = {}
+    bot.player_names = {}
+    bot.player_entity_uuids = {}
     bot._lock = _threading.RLock()
     bot._new_event = _threading.Condition(bot._lock)
     bot._send_lock = _threading.Lock()
@@ -4295,6 +4433,605 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertEqual(decoded["learned"][0]["id"], "qing_feng_v0")
         self.assertEqual(decoded["learned"][0]["step_count"], 2)
         self.assertEqual(decoded["current_index"], 0)
+
+
+class NewServerDataDecoderContractTest(unittest.TestCase):
+    """S1 拆分新增的深度解码器契约 pin（central-review finding 1 的补测）。
+
+    S1 在 decode_server_data_envelope 注册了 botany_harvest_progress(25) /
+    gathering_session(30) / lingtian_session(31) / skill_bar_config(36) /
+    breakthrough_cinematic(71)，并改写了 player_state(5)（新增 realm）与
+    alchemy_outcome_resolved(14)（bucket 转枚举名、可空字段、toxin_color）。
+    这些解码器此前只在 test_protocol.py 初始化了 fixture，没有任何 field→值
+    的 wire 契约断言——字段号/枚举映射/packed 解码错了场景照样静默观察错误数据。
+    本类用与 authoritative proto 对齐的字段号逐项钉死解码输出。
+    """
+
+    def test_botany_harvest_progress_tag25_decodes_full_contract(self):
+        msg = (
+            _pb_string(1, "botany:session_7")
+            + _pb_string(2, "spirit_grass_001")
+            + _pb_string(3, "灵草")
+            + _pb_string(4, "spirit_grass")
+            + _pb_string(5, "manual")
+            + _pb_fixed64(6, 0.42)
+            + _pb_varint(7, 1)
+            + _pb_varint(8, 1)
+            + _pb_varint(9, 0)
+            + _pb_varint(10, 0)
+            + _pb_string(11, "正在采集")
+            + _pb_string(12, "hint_a")
+            + _pb_string(12, "hint_b")
+            + _pb_fixed64(13, 10.0)
+            + _pb_fixed64(14, 64.0)
+            + _pb_fixed64(15, -3.0)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(25, msg))
+        self.assertEqual(decoded["type"], "botany_harvest_progress")
+        self.assertEqual(decoded["session_id"], "botany:session_7")
+        self.assertEqual(decoded["target_id"], "spirit_grass_001")
+        self.assertEqual(decoded["target_name"], "灵草")
+        self.assertEqual(decoded["plant_kind"], "spirit_grass")
+        self.assertEqual(decoded["mode"], "manual")
+        self.assertEqual(decoded["progress"], 0.42)
+        self.assertTrue(decoded["auto_selectable"])
+        self.assertTrue(decoded["request_pending"])
+        self.assertFalse(decoded["interrupted"])
+        self.assertFalse(decoded["completed"])
+        self.assertEqual(decoded["detail"], "正在采集")
+        self.assertEqual(decoded["hazard_hints"], ["hint_a", "hint_b"])
+        self.assertEqual(
+            decoded["target_pos"],
+            [10.0, 64.0, -3.0],
+            "target_pos_x/y/z 是 field 13/14/15，三个 optional double 拆成平铺坐标",
+        )
+
+    def test_botany_harvest_progress_absent_target_pos_is_none_triple(self):
+        msg = _pb_string(1, "botany:session_8") + _pb_fixed64(6, 0.5)
+        decoded = proto_min.decode_server_data_envelope(_pb_message(25, msg))
+        self.assertEqual(
+            decoded["target_pos"],
+            [None, None, None],
+            "缺 field 13/14/15 时 target_pos 必须是 [None, None, None]，不得用 0 冒充",
+        )
+        self.assertEqual(decoded["hazard_hints"], [])
+        self.assertEqual(decoded["progress"], 0.5)
+
+    def test_gathering_session_tag30_decodes_enum_and_optional(self):
+        msg = (
+            _pb_string(1, "gather:42")
+            + _pb_varint(2, 5)
+            + _pb_varint(3, 20)
+            + _pb_string(4, "精铁矿")
+            + _pb_varint(5, 2)  # GATHERING_TARGET_TYPE_ORE
+            + _pb_varint(6, 5)  # GATHERING_QUALITY_HINT_PERFECT
+            + _pb_string(7, "iron_pickaxe")
+            + _pb_varint(8, 0)
+            + _pb_varint(9, 1)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(30, msg))
+        self.assertEqual(decoded["type"], "gathering_session")
+        self.assertEqual(decoded["session_id"], "gather:42")
+        self.assertEqual(decoded["progress_ticks"], 5)
+        self.assertEqual(decoded["total_ticks"], 20)
+        self.assertEqual(decoded["target_name"], "精铁矿")
+        self.assertEqual(decoded["target_type"], "ore")
+        self.assertEqual(decoded["quality_hint"], "perfect")
+        self.assertEqual(decoded["tool_used"], "iron_pickaxe")
+        self.assertFalse(decoded["interrupted"])
+        self.assertTrue(decoded["completed"])
+
+    def test_gathering_session_absent_tool_used_is_none(self):
+        msg = _pb_string(1, "gather:43") + _pb_varint(5, 1)
+        decoded = proto_min.decode_server_data_envelope(_pb_message(30, msg))
+        self.assertIsNone(decoded["tool_used"], "缺 field 7 时 tool_used 应为 None")
+        self.assertEqual(decoded["target_type"], "herb")
+
+    def test_lingtian_session_tag31_decodes_kind_pos_and_optional(self):
+        msg = (
+            _pb_varint(1, 1)
+            + _pb_varint(2, 3)  # LINGTIAN_SESSION_KIND_PLANTING
+            + _pb_int32_field(3, 100)
+            + _pb_int32_field(4, 72)
+            + _pb_int32_field(5, -50)
+            + _pb_varint(6, 12)
+            + _pb_varint(7, 60)
+            + _pb_string(8, "spirit_rice")
+            + _pb_string(9, "player:Alice")
+            + _pb_float32_field(10, 0.15)
+            + _pb_varint(11, 1)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(31, msg))
+        self.assertEqual(decoded["type"], "lingtian_session")
+        self.assertTrue(decoded["active"])
+        self.assertEqual(decoded["kind"], "planting")
+        self.assertEqual(
+            decoded["pos"],
+            [100, 72, -50],
+            "pos_x/y/z 是 field 3/4/5（int32，含负坐标补码），平铺成 pos",
+        )
+        self.assertEqual(decoded["elapsed_ticks"], 12)
+        self.assertEqual(decoded["target_ticks"], 60)
+        self.assertEqual(decoded["plant_id"], "spirit_rice")
+        self.assertEqual(decoded["source"], "player:Alice")
+        self.assertAlmostEqual(decoded["dye_contamination"], 0.15, places=4)
+        self.assertTrue(decoded["dye_contamination_warning"])
+
+    def test_lingtian_session_empty_message_defaults(self):
+        decoded = proto_min.decode_server_data_envelope(_pb_message(31, b""))
+        self.assertFalse(decoded["active"])
+        self.assertEqual(decoded["kind"], "unspecified")
+        self.assertEqual(decoded["pos"], [0, 0, 0])
+        self.assertIsNone(decoded["plant_id"])
+        self.assertIsNone(decoded["source"])
+        self.assertIsNone(decoded["dye_contamination"])
+        self.assertFalse(decoded["dye_contamination_warning"])
+
+    def test_skill_bar_config_tag36_decodes_item_skill_and_empty_slots(self):
+        item = (
+            _pb_string(1, "spirit_grass")
+            + _pb_string(2, "灵草")
+            + _pb_varint(3, 100)
+            + _pb_varint(4, 200)
+            + _pb_string(5, "bong:icons/spirit_grass")
+        )
+        skill = (
+            _pb_string(1, "meditate")
+            + _pb_string(2, "静心")
+            + _pb_varint(3, 500)
+            + _pb_varint(4, 3000)
+            + _pb_string(5, "bong:icons/meditate")
+        )
+        slot_item = _pb_message(1, _pb_message(1, item))  # entry.item = field 1
+        slot_skill = _pb_message(1, _pb_message(2, skill))  # entry.skill = field 2
+        packed = _pb_bytes(2, _pb_raw_varint(123) + _pb_raw_varint(456))
+        msg = (
+            _pb_message(1, slot_item)
+            + _pb_message(1, slot_skill)
+            + _pb_message(1, b"")  # 空 OptionalSkillBarEntry → None
+            + packed
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(36, msg))
+        self.assertEqual(decoded["type"], "skillbar_config")
+        self.assertEqual(
+            decoded["slots"][0],
+            {
+                "kind": "item",
+                "template_id": "spirit_grass",
+                "display_name": "灵草",
+                "cast_duration_ms": 100,
+                "cooldown_ms": 200,
+                "icon_texture": "bong:icons/spirit_grass",
+            },
+        )
+        self.assertEqual(
+            decoded["slots"][1],
+            {
+                "kind": "skill",
+                "skill_id": "meditate",
+                "display_name": "静心",
+                "cast_duration_ms": 500,
+                "cooldown_ms": 3000,
+                "icon_texture": "bong:icons/meditate",
+            },
+        )
+        self.assertIsNone(decoded["slots"][2])
+        self.assertEqual(
+            decoded["cooldown_until_ms"],
+            [123, 456],
+            "field 2 的 packed uint64（length-delimited 内连 varint）必须解包",
+        )
+
+    def test_skill_bar_config_cooldowns_accept_unpacked_wire(self):
+        msg = _pb_varint(2, 1000) + _pb_varint(2, 2000)
+        decoded = proto_min.decode_server_data_envelope(_pb_message(36, msg))
+        self.assertEqual(decoded["type"], "skillbar_config")
+        self.assertEqual(decoded["cooldown_until_ms"], [1000, 2000])
+
+    def test_breakthrough_cinematic_tag71_decodes_full_contract(self):
+        msg = (
+            _pb_string(1, "player:Alice")
+            + _pb_string(2, "lightning")
+            + _pb_varint(3, 30)
+            + _pb_varint(4, 120)
+            + _pb_string(5, "spirit")
+            + _pb_string(6, "void")
+            + _pb_string(7, "success")
+            + _pb_varint(8, 0)
+            + _pb_fixed64(9, 100.0)
+            + _pb_fixed64(10, 72.0)
+            + _pb_fixed64(11, -200.0)
+            + _pb_fixed64(12, 64.0)
+            + _pb_varint(13, 1)
+            + _pb_varint(14, 1)
+            + _pb_float32_field(15, 0.8)
+            + _pb_float32_field(16, 0.5)
+            + _pb_string(17, "autumn")
+            + _pb_string(18, "cinematic")
+            + _pb_varint(19, 4242)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(71, msg))
+        self.assertEqual(decoded["type"], "breakthrough_cinematic")
+        self.assertEqual(decoded["actor_id"], "player:Alice")
+        self.assertEqual(decoded["phase"], "lightning")
+        self.assertEqual(decoded["phase_tick"], 30)
+        self.assertEqual(decoded["phase_duration_ticks"], 120)
+        self.assertEqual(decoded["realm_from"], "spirit")
+        self.assertEqual(decoded["realm_to"], "void")
+        self.assertEqual(decoded["result"], "success")
+        self.assertFalse(decoded["interrupted"])
+        self.assertEqual(
+            decoded["world_pos"],
+            [100.0, 72.0, -200.0],
+            "world_pos_x/y/z 是 field 9/10/11，拆成平铺坐标",
+        )
+        self.assertEqual(decoded["visible_radius_blocks"], 64.0)
+        self.assertTrue(decoded["global"])
+        self.assertTrue(decoded["distant_billboard"])
+        self.assertAlmostEqual(decoded["particle_density"], 0.8, places=4)
+        self.assertAlmostEqual(decoded["intensity"], 0.5, places=4)
+        self.assertEqual(decoded["season_overlay"], "autumn")
+        self.assertEqual(decoded["style"], "cinematic")
+        self.assertEqual(decoded["at_tick"], 4242)
+
+    def test_player_state_tag5_decodes_realm_enum(self):
+        msg = _pb_varint(2, 5) + _pb_fixed64(3, 65.0) + _pb_fixed64(11, 100.0)
+        decoded = proto_min.decode_server_data_envelope(_pb_message(5, msg))
+        self.assertEqual(decoded["type"], "player_state")
+        self.assertEqual(decoded["realm"], "Spirit", "PlayerState.realm=5 应解为 Spirit")
+        self.assertEqual(decoded["spirit_qi"], 65.0)
+
+    def test_player_state_absent_realm_uses_unspecified(self):
+        decoded = proto_min.decode_server_data_envelope(_pb_message(5, b""))
+        self.assertEqual(decoded["realm"], "Unspecified", "缺 field 2 应解为 Unspecified")
+
+    def test_alchemy_outcome_resolved_tag14_full_contract(self):
+        msg = (
+            _pb_varint(1, 1)  # ALCHEMY_OUTCOME_BUCKET_PERFECT
+            + _pb_string(2, "ling_xi_wan_v1")
+            + _pb_string(3, "灵犀丹")
+            + _pb_fixed64(4, 0.95)
+            + _pb_fixed64(5, 0.05)
+            + _pb_varint(6, 10)  # COLOR_KIND_TURBID
+            + _pb_fixed64(7, 2.0)
+            + _pb_string(8, "meridian_sore")
+            + _pb_varint(9, 1)
+            + _pb_fixed64(10, 1.5)
+            + _pb_fixed64(11, 0.2)
+        )
+        decoded = proto_min.decode_server_data_envelope(_pb_message(14, msg))
+        self.assertEqual(decoded["type"], "alchemy_outcome_resolved")
+        self.assertEqual(decoded["bucket"], "perfect")
+        self.assertEqual(decoded["recipe_id"], "ling_xi_wan_v1")
+        self.assertEqual(decoded["pill"], "灵犀丹")
+        self.assertEqual(decoded["quality"], 0.95)
+        self.assertEqual(decoded["toxin_amount"], 0.05)
+        self.assertEqual(decoded["toxin_color"], "turbid")
+        self.assertEqual(decoded["qi_gain"], 2.0)
+        self.assertEqual(decoded["side_effect_tag"], "meridian_sore")
+        self.assertTrue(decoded["flawed_path"])
+        self.assertEqual(decoded["damage"], 1.5)
+        self.assertEqual(decoded["meridian_crack"], 0.2)
+
+    def test_alchemy_outcome_resolved_empty_message_defaults(self):
+        decoded = proto_min.decode_server_data_envelope(_pb_message(14, b""))
+        self.assertEqual(decoded["bucket"], "unspecified")
+        self.assertIsNone(decoded["recipe_id"])
+        self.assertIsNone(decoded["pill"])
+        self.assertIsNone(decoded["quality"])
+        self.assertIsNone(decoded["toxin_amount"])
+        self.assertIsNone(decoded["toxin_color"])
+        self.assertIsNone(decoded["qi_gain"])
+        self.assertIsNone(decoded["side_effect_tag"])
+        self.assertFalse(decoded["flawed_path"])
+        self.assertIsNone(decoded["damage"])
+        self.assertIsNone(decoded["meridian_crack"])
+
+    def test_out_of_range_enum_values_fall_back_to_unknown(self):
+        decoded = proto_min.decode_server_data_envelope(
+            _pb_message(14, _pb_varint(1, 99))
+        )
+        self.assertEqual(decoded["bucket"], "unknown_99")
+        gathering = proto_min.decode_server_data_envelope(
+            _pb_message(30, _pb_varint(5, 7))
+        )
+        self.assertEqual(gathering["target_type"], "unknown_7")
+
+    def test_new_registry_tags_dispatch_to_named_decoders(self):
+        for field, expected_type in (
+            (5, "player_state"),
+            (14, "alchemy_outcome_resolved"),
+            (25, "botany_harvest_progress"),
+            (30, "gathering_session"),
+            (31, "lingtian_session"),
+            (36, "skillbar_config"),
+            (71, "breakthrough_cinematic"),
+        ):
+            with self.subTest(field=field):
+                decoded = proto_min.decode_server_data_envelope(
+                    _pb_message(field, b"")
+                )
+                self.assertIsNotNone(
+                    decoded,
+                    f"envelope tag {field} 必须有深度解码器，实际返回 None",
+                )
+                self.assertEqual(decoded["type"], expected_type)
+        self.assertIsNone(
+            proto_min.decode_server_data_envelope(_pb_message(6, b"")),
+            "无深度解码器的 known oneof tag（cultivation_detail）应返回 None，不得误分发",
+        )
+
+
+class PlayerPacketContractTest(unittest.TestCase):
+    """S1 新增玩家身份包（Player List/Remove/Spawn）与两张身份表的契约 pin。
+
+    central-review finding 2：bot.py 新增的 PlayerList/PlayerRemove/PlayerSpawn
+    解析与 entity→player 身份映射没有任何 packet-level 断言——忽略 action mask、
+    给 spawn 配错 UUID、destroy 不删身份映射，场景都会照样绿。本类逐项钉死
+    这些正/负半面。
+    """
+
+    def _player_list(self, bot, actions: int, raw_entries: list[bytes]):
+        body = (
+            mc.write_varint(mc.S2C_PLAYER_LIST)
+            + bytes([actions])
+            + mc.write_varint(len(raw_entries))
+            + b"".join(raw_entries)
+        )
+        bot._dispatch(body)
+
+    def test_player_list_add_updates_names_and_emits_entries(self):
+        bot = _bare_bot()
+        alice = uuid.UUID(int=1)
+        bob = uuid.UUID(int=2)
+        self._player_list(
+            bot,
+            0x11,  # add_player | update_latency
+            [
+                alice.bytes + mc.mc_string("Alice") + mc.write_varint(0) + mc.write_varint(42),
+                bob.bytes + mc.mc_string("Bob") + mc.write_varint(0) + mc.write_varint(7),
+            ],
+        )
+        self.assertEqual(bot.player_names, {str(alice): "Alice", str(bob): "Bob"})
+        event = bot.events_of("player_list")[-1]
+        self.assertEqual(event.data["actions"], 0x11)
+        self.assertEqual(len(event.data["entries"]), 2)
+        self.assertEqual(event.data["entries"][0]["uuid"], str(alice))
+        self.assertEqual(event.data["entries"][0]["username"], "Alice")
+        self.assertEqual(event.data["entries"][1]["username"], "Bob")
+
+    def test_player_list_non_add_entry_does_not_fabricate_username(self):
+        bot = _bare_bot()
+        alice = uuid.UUID(int=1)
+        self._player_list(bot, 0x10, [alice.bytes + mc.write_varint(99)])
+        self.assertEqual(
+            bot.player_names,
+            {},
+            "仅 update_latency 的 entry 不得登记用户名——实现若忽略 action mask 就会误读 99 当 username",
+        )
+        event = bot.events_of("player_list")[-1]
+        self.assertEqual(event.data["entries"][0]["uuid"], str(alice))
+        self.assertNotIn("username", event.data["entries"][0])
+
+    def test_player_list_full_action_mask_parses_all_action_payloads(self):
+        bot = _bare_bot()
+        alice = uuid.UUID(int=1)
+        bob = uuid.UUID(int=2)
+        entry_alice = (
+            alice.bytes
+            + mc.mc_string("Alice") + mc.write_varint(1)  # add_player + 1 property
+            + mc.mc_string("textures") + mc.mc_string("http://skin") + b"\x01" + mc.mc_string("sig")
+            + b"\x01" + alice.bytes + struct.pack(">q", 1234)  # initialize_chat signed session
+            + mc.write_varint(2) + b"\xab\xcd" + mc.write_varint(1) + b"\xef"  # chat key/signature
+            + mc.write_varint(4)  # update_game_mode
+            + b"\x01"  # update_listed
+            + mc.write_varint(15)  # update_latency
+            + b"\x01" + mc.mc_string("§aAlice")  # update_display_name
+        )
+        # 第二条 entry 用不同的值，任何一条变长 payload 错位都会让本条的
+        # 字段对不上号，从而暴露第一条 entry 的解析越界。
+        entry_bob = (
+            bob.bytes
+            + mc.mc_string("Bob") + mc.write_varint(0)  # add_player + 0 properties
+            + b"\x00"  # initialize_chat: no chat session
+            + mc.write_varint(3)  # update_game_mode
+            + b"\x00"  # update_listed: false
+            + mc.write_varint(7)  # update_latency
+            + b"\x00"  # update_display_name: absent
+        )
+        self._player_list(bot, 0x3F, [entry_alice, entry_bob])
+        self.assertEqual(
+            bot.player_names,
+            {str(alice): "Alice", str(bob): "Bob"},
+            "两条 entry 都要登记 username",
+        )
+        event = bot.events_of("player_list")[-1]
+        self.assertEqual(event.data["actions"], 0x3F)
+        parsed = event.data["entries"][0]
+        # 六个 action 的 payload 全部要解码出来并被断言，跳过任意一个都会让
+        # 后面的字段读错（尤其变长 payload：properties / chat key/sig / display_name）
+        self.assertEqual(parsed["uuid"], str(alice))
+        self.assertEqual(
+            parsed["username"],
+            "Alice",
+            "0x01 add_player 必须解出 username",
+        )
+        self.assertEqual(
+            parsed["properties"],
+            [{"name": "textures", "value": "http://skin", "signature": "sig"}],
+            "0x01 add_player 的 property 三元组（name/value/可选 signature）必须逐项解出",
+        )
+        self.assertEqual(
+            parsed["initialize_chat"],
+            {
+                "has_chat_session": True,
+                "session_id": str(alice),
+                "public_key_expiry": 1234,
+                "public_key": b"\xab\xcd",
+                "signature": b"\xef",
+            },
+            "0x02 initialize_chat 的 signed session（has/会话 id/过期时间/公钥/signature）必须逐项解出",
+        )
+        self.assertEqual(
+            parsed["game_mode"],
+            4,
+            "0x04 update_game_mode 必须解出 varint 值",
+        )
+        self.assertEqual(
+            parsed["listed"],
+            True,
+            "0x08 update_listed 必须解出 boolean 值",
+        )
+        self.assertEqual(
+            parsed["latency"],
+            15,
+            "0x10 update_latency 必须解出 varint 值",
+        )
+        self.assertEqual(
+            parsed["display_name"],
+            "§aAlice",
+            "0x20 update_display_name 必须解出变长 string",
+        )
+        bob_entry = event.data["entries"][1]
+        self.assertEqual(
+            bob_entry,
+            {
+                "uuid": str(bob),
+                "username": "Bob",
+                "properties": [],
+                "initialize_chat": {"has_chat_session": False},
+                "game_mode": 3,
+                "listed": False,
+                "latency": 7,
+            },
+            "第二条 entry 六字段齐全且各为独立值——第一条的任何变长 payload 错位都会在此暴露",
+        )
+
+    def test_player_remove_pops_names(self):
+        bot = _bare_bot()
+        alice = uuid.UUID(int=1)
+        bob = uuid.UUID(int=2)
+        self._player_list(
+            bot,
+            0x01,
+            [
+                alice.bytes + mc.mc_string("Alice") + mc.write_varint(0),
+                bob.bytes + mc.mc_string("Bob") + mc.write_varint(0),
+            ],
+        )
+        remove = (
+            mc.write_varint(mc.S2C_PLAYER_REMOVE)
+            + mc.write_varint(1)
+            + alice.bytes
+        )
+        bot._dispatch(remove)
+        self.assertEqual(bot.player_names, {str(bob): "Bob"})
+        event = bot.events_of("player_remove")[-1]
+        self.assertEqual(event.data["uuids"], [str(alice)])
+
+    def test_player_spawn_associates_entity_with_uuid_and_username(self):
+        bot = _bare_bot()
+        alice = uuid.UUID(int=1)
+        self._player_list(bot, 0x01, [alice.bytes + mc.mc_string("Alice") + mc.write_varint(0)])
+        spawn = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(900)
+            + alice.bytes
+            + struct.pack(">ddd", 12.0, 64.0, -5.0)
+            + b"\x00\x00"
+        )
+        bot._dispatch(spawn)
+        self.assertEqual(bot.entity_pos(900), (12.0, 64.0, -5.0))
+        self.assertEqual(
+            bot.player_entity_uuids[900],
+            str(alice),
+            "player_spawn 必须把 entity_id 关联到正确的玩家 UUID",
+        )
+        event = bot.events_of("player_spawn")[-1]
+        self.assertEqual(event.data["entity_id"], 900)
+        self.assertEqual(event.data["uuid"], str(alice))
+        self.assertEqual(event.data["username"], "Alice")
+        self.assertEqual(event.data["yaw"], 0)
+        self.assertEqual(event.data["pitch"], 0)
+
+    def test_destroy_removes_entity_to_player_mapping(self):
+        bot = _bare_bot()
+        alice = uuid.UUID(int=1)
+        spawn = (
+            mc.write_varint(mc.S2C_PLAYER_SPAWN)
+            + mc.write_varint(900)
+            + alice.bytes
+            + struct.pack(">ddd", 1.0, 2.0, 3.0)
+            + b"\x00\x00"
+        )
+        bot._dispatch(spawn)
+        self.assertIn(900, bot.player_entity_uuids)
+        destroy = (
+            mc.write_varint(mc.S2C_ENTITIES_DESTROY)
+            + mc.write_varint(1)
+            + mc.write_varint(900)
+        )
+        bot._dispatch(destroy)
+        self.assertIsNone(bot.entity_pos(900))
+        self.assertNotIn(
+            900,
+            bot.player_entity_uuids,
+            "destroy 必须同时删除 entity→player 身份映射",
+        )
+
+    def test_entity_spawn_exposes_uuid(self):
+        bot = _bare_bot()
+        uid = uuid.UUID(int=77)
+        body = (
+            mc.write_varint(mc.S2C_ENTITY_SPAWN)
+            + mc.write_varint(10)
+            + uid.bytes
+            + mc.write_varint(3)
+            + struct.pack(">ddd", 5.0, 6.0, 7.0)
+        )
+        bot._dispatch(body)
+        self.assertEqual(bot.entity_pos(10), (5.0, 6.0, 7.0))
+        event = bot.events_of("entity_spawn")[-1]
+        self.assertEqual(event.data["uuid"], str(uid))
+
+    def test_rel_move_emits_entity_move_event(self):
+        bot = _bare_bot()
+        spawn = (
+            mc.write_varint(mc.S2C_ENTITY_SPAWN)
+            + mc.write_varint(7) + b"\x00" * 16 + mc.write_varint(1)
+            + struct.pack(">ddd", 10.0, 64.0, -3.0)
+        )
+        bot._dispatch(spawn)
+        move = (
+            mc.write_varint(mc.S2C_ENTITY_POSITION)
+            + mc.write_varint(7)
+            + struct.pack(">hhh", 4096, -2048, 0)
+            + b"\x01"
+        )
+        bot._dispatch(move)
+        event = bot.events_of("entity_move")[-1]
+        self.assertEqual(event.data["entity_id"], 7)
+        self.assertAlmostEqual(event.data["x"], 11.0)
+        self.assertAlmostEqual(event.data["y"], 63.5)
+        self.assertAlmostEqual(event.data["z"], -3.0)
+
+    def test_teleport_emits_entity_move_event(self):
+        bot = _bare_bot()
+        spawn = (
+            mc.write_varint(mc.S2C_ENTITY_SPAWN)
+            + mc.write_varint(7) + b"\x00" * 16 + mc.write_varint(1)
+            + struct.pack(">ddd", 10.0, 64.0, -3.0)
+        )
+        bot._dispatch(spawn)
+        teleport = (
+            mc.write_varint(mc.S2C_ENTITY_TELEPORT)
+            + mc.write_varint(7)
+            + struct.pack(">ddd", -100.0, 70.0, 200.0)
+            + b"\x00\x00\x01"
+        )
+        bot._dispatch(teleport)
+        event = bot.events_of("entity_move")[-1]
+        self.assertEqual(event.data, {"entity_id": 7, "x": -100.0, "y": 70.0, "z": 200.0})
 
 
 if __name__ == "__main__":
