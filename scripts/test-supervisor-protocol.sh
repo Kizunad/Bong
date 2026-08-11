@@ -78,19 +78,34 @@ cleanup_active_owner() {
         unset -f bong_server_port_is_open
     fi
     case "$stop_status" in
-        0|"$BONG_SERVER_STOP_FORCED") wait "$ACTIVE_OWNER_PID" 2>/dev/null || true ;;
-        *) printf 'WARN: pinned fixture cleanup failed closed (status=%s)\n' "$stop_status" >&2 ;;
+        0|"$BONG_SERVER_STOP_FORCED")
+            wait "$ACTIVE_OWNER_PID" 2>/dev/null || true
+            clear_active_owner
+            return 0
+            ;;
+        *)
+            # A fail-closed stop result does not release ownership: the group may
+            # still be running, and this pin is the only record with which a later
+            # attempt can terminate it. Retain the authority and report the
+            # incomplete teardown instead of pretending it completed.
+            printf 'WARN: pinned fixture cleanup failed closed (status=%s, pid=%s); retaining owner authority\n' \
+                "$stop_status" "$ACTIVE_OWNER_PID" >&2
+            return 1
+            ;;
     esac
-    clear_active_owner
 }
 
 cleanup() {
+    local teardown_complete=1
     close_fd_if_open "${DIRECT_CONTROL_FD:-}" write
     close_fd_if_open "${DIRECT_READY_FD:-}" read
     close_fd_if_open "${SERVER_STARTUP_CONTROL_FD:-}" write
     close_fd_if_open "${SERVER_STARTUP_READY_FD:-}" read
-    cleanup_active_owner
-    if bong_server_validate_signal_id "${BONG_SERVER_SUPERVISOR_PID:-}"; then
+    cleanup_active_owner || teardown_complete=0
+    # Fallback authority is adopted only when the primary pin is empty: a
+    # retained pin from an incomplete teardown must never be overwritten, since
+    # it is the only record left to terminate the still-running group.
+    if [ -z "$ACTIVE_OWNER_PID" ] && bong_server_validate_signal_id "${BONG_SERVER_SUPERVISOR_PID:-}"; then
         local fallback_pid="$BONG_SERVER_SUPERVISOR_PID" fallback_snapshot fallback_starttime fallback_pgid fallback_identity
         fallback_snapshot="$(bong_server_process_starttime_and_group "$fallback_pid" 2>/dev/null || true)"
         read -r fallback_starttime fallback_pgid <<< "$fallback_snapshot"
@@ -102,12 +117,17 @@ cleanup() {
             ACTIVE_OWNER_STARTTIME="$fallback_starttime"
             ACTIVE_OWNER_IDENTITY="$fallback_identity"
             ACTIVE_OWNER_PGID="$fallback_pgid"
-            cleanup_active_owner
+            cleanup_active_owner || teardown_complete=0
         else
             printf 'WARN: refusing fallback cleanup without complete private-group authority\n' >&2
         fi
     fi
-    rm -rf -- "$TEST_ROOT"
+    if [ "$teardown_complete" = "1" ]; then
+        rm -rf -- "$TEST_ROOT"
+        return 0
+    fi
+    printf 'WARN: fixture teardown incomplete; keeping %s and the retained owner pin for retry/diagnosis\n' "$TEST_ROOT" >&2
+    return 1
 }
 trap cleanup EXIT
 

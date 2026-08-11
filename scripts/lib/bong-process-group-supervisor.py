@@ -163,6 +163,16 @@ def remove_artifact(artifact: Path | None) -> None:
         print(f"failed to remove immutable server artifact: {error}", file=sys.stderr)
 
 
+def abort_startup(artifact: Path | None, server: subprocess.Popen[bytes] | None) -> int:
+    # Remove the temporary artifact before rollback: a stubborn server makes
+    # rollback escalate to SIGKILL of this entire private group, including the
+    # supervisor itself, so nothing after the rollback call is guaranteed to run.
+    # Once the server has been spawned, the copied binary has no further use.
+    remove_artifact(artifact)
+    rolled_back = rollback_server(server)
+    return 2 if rolled_back else 3
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(
@@ -201,9 +211,7 @@ def main() -> int:
         sys.stdout.buffer.flush()
     except (OSError, RuntimeError, subprocess.CalledProcessError, BrokenPipeError) as error:
         print(f"failed to build, launch, or publish release server readiness: {error}", file=sys.stderr)
-        rolled_back = rollback_server(server)
-        remove_artifact(artifact)
-        return 2 if rolled_back else 3
+        return abort_startup(artifact, server)
 
     # Authority is not committed until the parent has pinned this PID, starttime,
     # executable identity, and PGID. EOF, read failure, or any byte other than C
@@ -212,13 +220,9 @@ def main() -> int:
         command = sys.stdin.buffer.read(1)
     except OSError as error:
         print(f"failed to read startup commit command: {error}", file=sys.stderr)
-        rolled_back = rollback_server(server)
-        remove_artifact(artifact)
-        return 2 if rolled_back else 3
+        return abort_startup(artifact, server)
     if command != b"C":
-        rolled_back = rollback_server(server)
-        remove_artifact(artifact)
-        return 2 if rolled_back else 3
+        return abort_startup(artifact, server)
 
     # Publishing authority requires a second, post-consumption boundary: the
     # parent only trusts this exact flushed acknowledgement.
@@ -227,9 +231,7 @@ def main() -> int:
         sys.stdout.buffer.flush()
     except (OSError, BrokenPipeError) as error:
         print(f"failed to publish startup commit acknowledgement: {error}", file=sys.stderr)
-        rolled_back = rollback_server(server)
-        remove_artifact(artifact)
-        return 2 if rolled_back else 3
+        return abort_startup(artifact, server)
 
     server.wait()
     remove_artifact(artifact)
