@@ -495,6 +495,32 @@ def core_bounds() -> tuple[np.ndarray, np.ndarray]:
     return lo, hi
 
 
+def centroid() -> np.ndarray:
+    """核心本体的**体积质心**（世界坐标）。
+
+    步态稳定性算的是"质心投影在不在支撑多边形里"，所以这个点必须是真的、不对称的。
+    直接拿 CORE_CENTER 顶替会把稳定性问题做成假的——核心本身就是偏的（左肋一个瘤、
+    右后一个结节），质心不在中轴上，这正是随机肢体配置站不站得住的关键。
+
+    体素按等值面表层取，但质心要算**实心**体积——表层壳的质心会被薄壁处的面积权重
+    带偏。这里用体素占据集直接算，不走 merge_slabs。
+    """
+    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
+    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
+    acc = np.zeros(3)
+    n = 0
+    for ix in range(lo[0], hi[0]):
+        for iy in range(lo[1], hi[1]):
+            for iz in range(lo[2], hi[2]):
+                p = _voxel_center(ix, iy, iz)
+                if fld(p) >= ISO:
+                    acc += p
+                    n += 1
+    if n == 0:
+        raise ValueError("等值面内没有体素——场参数坏了")
+    return acc / n + CORE_CENTER
+
+
 def asymmetry() -> float:
     """左右不对称度：镜像后仍在体外的表层体素占比。
 
