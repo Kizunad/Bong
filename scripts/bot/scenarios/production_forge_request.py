@@ -260,7 +260,8 @@ def run(env) -> None:
         bot.cmd("qi max 100")
         bot.expect_chat("[dev] qi max", timeout=10.0)
         bot.cmd("qi set 100")
-        bot.expect_chat("[dev] qi set 100.0", timeout=10.0)
+        # echo 是 "[dev] qi set 0.0 -> 100.0"（before=0），"qi set 100.0" 不是它的子串。
+        bot.expect_chat("[dev] qi set 0.0 -> 100.0", timeout=10.0)
 
         # 正向：forge lung.Rate 0→1，命名字段全断言。
         ev = _forge(bot, subscriber, "lung", "Rate")
@@ -270,7 +271,9 @@ def run(env) -> None:
         bot.cmd("qi set 0")
         bot.expect_chat("[dev] qi set 96.0 -> 0.0", timeout=10.0)
         bot.cmd("qi set 100")
-        bot.expect_chat("[dev] qi set 100.0", timeout=10.0)
+        # 与 setup 的回显同串（before 都是 0.0），wait_for 历史匹配即过——refill 是否生效
+        # 由紧随的 forge 断言兜底（qi 不足会以 NotEnoughQi success:false 暴露）。
+        bot.expect_chat("[dev] qi set 0.0 -> 100.0", timeout=10.0)
 
         # 状态读回：第二次 forge from_tier==1 → tier 前进恰好 1，无跳档。
         ev = _forge(bot, subscriber, "lung", "Rate")
@@ -293,7 +296,8 @@ def run(env) -> None:
         ev = _forge(bot, subscriber, "lung", "Rate")
         _assert_failure_event(ev, meridian="Lung")
         bot.cmd("qi set 100")
-        bot.expect_chat("[dev] qi set 100.0", timeout=10.0)
+        # before=3.0 → echo "[dev] qi set 3.0 -> 100.0"，全史唯一，真等待。
+        bot.expect_chat("[dev] qi set 3.0 -> 100.0", timeout=10.0)
 
         # 冲 cap：2→3（cost 36，qi 100→64），再读回 64.0 证明 tier3 cost。
         ev = _forge(bot, subscriber, "lung", "Rate")
