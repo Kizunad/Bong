@@ -188,6 +188,12 @@ def run(env) -> None:
             timeout=45.0,
             description=f"forge_learn_blueprint({BLUEPRINT_ID}) 后残卷应从背包消耗",
         )
+        # 学后即起炉有同帧竞态：fresh bot 无 LearnedBlueprints 组件，handler 走
+        # commands 延迟插入，同帧到达的 start_session 在权威系统读到的仍是「未学」
+        # → debug 级静默拒绝 + 仅 chat 回执「尚未习得图谱」（release 日志不可见，
+        # e2e run 31448705964 实证：dispatch 后权威零日志、零快照）。跨 1 帧即可，
+        # 睡 0.15s（≈3 tick）留足余量；同文件淬炼连发已有 0.05s 先例。
+        time.sleep(0.15)
 
         # ── 起炉受理：sui_tie×3 原子扣料 → billet ────────────────────────
         anchor = last_event_time(bot)
