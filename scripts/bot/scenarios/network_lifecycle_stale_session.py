@@ -2,8 +2,8 @@
 
 流程：开一份 active craft session（材料已预扣）→ 异常断线 → 重连验证 session
 恢复且**冻结**（不推进、不重建、不重复）→ 不取消再断线 → 再次重连，验证仍是
-同一份陈旧 session（elapsed 不倒退、completed 不推进、recipe/qty 一致）→
-取消 → 恰好一次退款。
+同一份陈旧 session（elapsed 不倒退也不凭空增长、completed 不推进、recipe/qty
+一致）→ 取消 → 恰好一次退款。
 
 与 production_craft_disconnect_resume 的区别：那一条只做一次重连；本条把陈旧
 session 再断线再重连一次，锁住「多次重连不把 session 复制/重置/推进」的幂等性。
@@ -22,6 +22,14 @@ DESCRIPTION = "陈旧 craft session 跨两次重连幂等恢复：不复制/不�
 MODULES = ["network", "craft", "inventory", "persistence"]
 
 RECIPE_ID = "workbench.weapon.stone_knife"
+# 第二次重连 join 帧 elapsed 的上界容差（相对「断连前最新可见 push」）：craft_emit
+# 每 SESSION_STATE_PUSH_INTERVAL_TICKS=20 tick 才推一次进度，断连前捕获的最新 push
+# 最多陈旧 19 tick；加上断连检测/落盘容差（首次重连的 +5 同量级）与 1 tick 余量。
+# 断线期间 session 不推进（tick_craft_sessions 只对 With<Client> 推进），join 帧
+# 反映的只是断连瞬间的持久化值，故上界即「20 tick push 间隔 + 落盘容差」——
+# 恢复实现每次重连凭空加 elapsed（如 +100）的坏路径在此必红
+# （central review 31444073731 #2）。
+RESTORED_SESSION_ELAPSED_BOUND = 25
 
 
 def _wait_active_session(bot, timeout: float = 10.0) -> dict:
@@ -47,6 +55,25 @@ def _wait_active_session(bot, timeout: float = 10.0) -> dict:
         description="active craft session",
     )
     return event.data["payload"]
+
+
+def _latest_session_state(bot) -> dict:
+    """取当前事件历史中**最新**的 active craft_session_state（断连前最后可见进度）。
+
+    与 _wait_active_session 相对：那一个取 join 帧（持久化冻结值，最早的 active
+    payload），本函数取断连前的最后推进值——两次重连断言必须锚定「断连前最新可见
+    状态」，否则连接期间的合法推进（join 帧后 session 正常恢复运行）会被误判成
+    跨重连的推进（central review 31444073731 #1）。
+    """
+    latest = None
+    for e in bot.events_of("server_data"):
+        if (
+            e.data["payload_type"] == "craft_session_state"
+            and e.data["payload"].get("active") is True
+        ):
+            latest = e.data["payload"]
+    assert latest is not None, "连接期间应有 active craft_session_state（join 帧必推）"
+    return latest
 
 
 def _assert_session_identity(restored: dict, context: str) -> None:
@@ -79,23 +106,31 @@ def _expect_restored_session_frozen(
 def _expect_restored_session_idempotent(
     bot, elapsed_floor: int, completed_before: int, context: str
 ) -> dict:
-    """第二次重连：会话不得被复制/重置/回退。
+    """第二次重连：会话不得被复制/重置/回退，断线期间不得推进。
 
-    注意：连接期间 active session 会正常推进 elapsed（20 tick 推一次进度），
-    所以这里不断言严格冻结，只锁住「没有重建/回退」这一幂等不变量——elapsed 不会
-    低于上一次重连观察到的冻结值、recipe/qty/completed 保持一致。session 若被复制
-    或重置，取消时退款计数会露馅（见后段 refund 恰好一次断言）。
+    两个边界都锚定「第二次断连前最新可见状态」（elapsed_floor/completed_before 由
+    调用方在断连前捕获）：
+    - elapsed 不得回退（>= elapsed_floor）也不得在断线期间凭空增长
+      （<= elapsed_floor + RESTORED_SESSION_ELAPSED_BOUND，见该常量注释）——
+      旧实现只有下界，恢复路径每次重连凭空 +100 elapsed 的坏实现全过
+      （central review 31444073731 #2）；
+    - completed_count 与断连前捕获一致：连接期间 session 会正常推进（join 帧后
+      恢复运行，跨过完成边界时 completed_count 合法增长），所以不能拿首次断连的
+      冻结值来比（central review 31444073731 #1）；断线期间无 Client 不推进，
+      join 帧反映的正是断连瞬间的持久化值，故与断连前捕获相等是契约保证的。
+    session 若被复制或重置，取消时退款计数会露馅（见后段 refund 恰好一次断言）。
     """
     restored = _wait_active_session(bot)
     _assert_session_identity(restored, context)
     elapsed = restored.get("elapsed_ticks", -1)
-    assert elapsed >= elapsed_floor, (
-        f"{context}：陈旧 session 不得被重置回退（多次重连仍应是同一份进度）；"
-        f"上一次重连冻结 elapsed={elapsed_floor}，恢复={restored!r}"
+    assert elapsed_floor <= elapsed <= elapsed_floor + RESTORED_SESSION_ELAPSED_BOUND, (
+        f"{context}：陈旧 session 断线期间不得回退也不得推进（冻结契约），"
+        f"断连前 elapsed={elapsed_floor}（上界 +{RESTORED_SESSION_ELAPSED_BOUND} "
+        f"覆盖 push 间隔陈旧），恢复={restored!r}"
     )
     assert restored.get("completed_count") == completed_before, (
-        f"{context}：陈旧 session 跨重连 completed_count 不得推进或回退；"
-        f"首次断连={completed_before}，恢复={restored!r}"
+        f"{context}：陈旧 session 断线期间 completed_count 不得推进或回退；"
+        f"断连前={completed_before}，恢复={restored!r}"
     )
     return restored
 
@@ -146,20 +181,27 @@ def run(env) -> None:
     # ---- 第二段连接：验证 session 恢复且冻结，不取消再断线 ----
     with env.new_bot("Stale") as bot:
         wait_join_and_inventory(bot)
-        first_restored = _expect_restored_session_frozen(
-            bot, elapsed, completed, "第一次重连"
-        )
+        _expect_restored_session_frozen(bot, elapsed, completed, "第一次重连")
+        # 断连前捕获最新可见进度：恢复的 session 在 join 帧后会正常推进（elapsed
+        # 越过 join 帧，跨过完成边界时 completed_count 合法增长），第三次连接的
+        # 幂等断言必须锚定「断连前最新状态」——对 join 帧比较会把连接期间的合法
+        # 推进误判成跨重连推进（central review 31444073731 #1）。
+        pre_disconnect = _latest_session_state(bot)
 
     time.sleep(1.5)
 
     # ---- 第三段连接：验证陈旧 session 第二次重连后仍幂等（不复制/不重置/不回退）----
-    # 以第一次重连观察到的冻结值为下界（而非原始断连值）：第二次重连不得把它回退。
-    # 这比只用断连值更严——否则「首连恢复 elapsed+5、二连回退到 elapsed」的伪持久化
-    # 路径仍能通过 elapsed >= elapsed_before，掩盖跨重连回退。
+    # 下界与上界都锚定「第二次断连前最新可见状态」：第二次重连不得回退到更早进度
+    # （>= pre_disconnect），也不得在断线期间凭空推进（<= pre_disconnect +
+    # RESTORED_SESSION_ELAPSED_BOUND）——「每次重连 +100 elapsed」的伪持久化路径
+    # 在此必红（central review 31444073731 #2）。
     with env.new_bot("Stale") as bot:
         restored_inventory = wait_join_and_inventory(bot)
         _expect_restored_session_idempotent(
-            bot, first_restored.get("elapsed_ticks"), completed, "第二次重连"
+            bot,
+            pre_disconnect.get("elapsed_ticks"),
+            pre_disconnect.get("completed_count"),
+            "第二次重连",
         )
 
         anchor = last_event_time(bot)
