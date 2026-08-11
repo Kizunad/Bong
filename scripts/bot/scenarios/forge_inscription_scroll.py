@@ -47,8 +47,10 @@ from bot.scenarios._inventory_helpers import (
 DESCRIPTION = "刻铭：sharp_v0 残卷入炉 filled_slots 0→1→2 + 负例（不存在id/步骤错配）不消耗 + 双发不重复 grant + 会话照常结算"
 MODULES = ["forge", "inventory"]
 
-ANVIL_ID = "ling_iron_anvil"
-ANVIL_TIER = 2
+# sui_tie（Xi 稀铁）forge_tier_min=3 → 必须玄铁砧（tier 3）；灵铁砧 tier 2 会被
+# bp.validate_with 静默 TierMismatch（仅 feedback chat，无 server log）。
+ANVIL_ID = "xuan_iron_anvil"
+ANVIL_TIER = 3
 SCROLL_ID = "blueprint_scroll_ling_feng"
 BLUEPRINT_ID = "ling_feng_v0"
 INSCRIPTION_SCROLL_ID = "inscription_scroll_sharp_v0"
