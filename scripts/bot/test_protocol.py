@@ -1897,6 +1897,7 @@ class _RejectionFakeBot(_FakeBot):
     ):
         super().__init__([])
         self._now = 0.0
+        self._clock_base = time.monotonic() - self._now
         self.events = _ClockAdvancingList(self)
         self.events.extend(events)
         self.pending = list(pending or [])
@@ -1906,12 +1907,34 @@ class _RejectionFakeBot(_FakeBot):
 
     @property
     def t0(self) -> float:
-        """模拟相对时钟基座：让 ``time.monotonic() - t0 == self._now``。"""
-        return time.monotonic() - self._now
+        """模拟相对时钟基座：让 ``time.monotonic() - t0 == self._now``。
+
+        central-review 1993 #3：基座是**稳定存储值**（``_clock_base``），随事件推进
+        由 ``_advance_clock_to`` 一次性重基，而不是每次读取都现场
+        ``time.monotonic() - self._now``。旧实现按 property 每次读都取一次新
+        monotonic：``time.monotonic() - bot.t0`` 先算左边再读 t0，第二次读比第一次
+        晚 ~µs，``sent_at`` 被推到比当前 ``_now`` 略小，同一时刻（t==_now）的诱饵事件
+        ``e.t > sent_at`` 成立被误收 —— 时序锚定失效、回归测试报出与因果窗口契约相反
+        的结果。稳定基座下两种求值顺序都得到 ``sent_at == _now + 流逝``（≥_now），
+        "t > 锚"语义与真实 bot（t0 创建时定死）一致。
+        """
+        return self._clock_base
 
     def _advance_clock_to(self, t: float) -> None:
         if t > self._now:
             self._now = t
+            self._clock_base = time.monotonic() - self._now
+
+    def rebase_clock_base(self) -> None:
+        """把稳定基座重基到当前真实时刻，抵消自上次推进以来累积的真实流逝。
+
+        模拟时钟只在事件 append 时推进（``_advance_clock_to``），真实时钟在场景的
+        drain/sleep 期间照常流逝 —— 若不重基，``time.monotonic() - t0`` 会把真实流逝
+        一起计入锚点，把「当前模拟时刻」抬到未来事件时刻之上（实跑：2s drain 后锚点
+        ≈ 4.0，pending keepalive@3.0 反而不满足 ``t > 锚``）。锚点计算前重基一次，
+        基座稳定（t0 在两次读取间不变）与「锚点 ≈ 当前模拟时刻 + 微抖动」两者兼得。
+        """
+        self._clock_base = time.monotonic() - self._now
 
     def intent(self, request: dict) -> None:
         self.intents.append(request)
@@ -1955,9 +1978,14 @@ class RejectionHelperTest(unittest.TestCase):
             wait_keepalive_after(bot, after=2.0, timeout=0.1)
 
     def test_fire_probes_keeps_connection_when_heartbeat_continues(self):
+        # central-review 1993 #6：helper 现在要求**连续两个新 id** keepalive（第二个
+        # 才是探针后生成的证据）—— 单条心跳的版本在此语义下必须失败。
         bot = _RejectionFakeBot(
             [_FakeEvent(2.0, "game_join", {})],
-            pending=[_FakeEvent(3.0, "keepalive", {"id": 8})],
+            pending=[
+                _FakeEvent(3.0, "keepalive", {"id": 8}),
+                _FakeEvent(4.0, "keepalive", {"id": 9}),
+            ],
         )
         fired: list[str] = []
         fire_probes_and_keep_connection(
@@ -1965,6 +1993,20 @@ class RejectionHelperTest(unittest.TestCase):
         )
         self.assertEqual(fired, ["p1"])
         self.assertEqual(bot.events[-1].kind, "keepalive")
+
+    def test_fire_probes_fails_when_only_one_post_probe_keepalive(self):
+        # central-review 1993 #6：单条「解码时刻晚于探针完成」的 keepalive 不构成
+        # 「拒绝后持续心跳」证据 —— 它可能是探针前已生成、探针后才解码的在途心跳
+        # （event.t 是客户端解码时刻，不是 server 生成边界）。helper 要求第二个新 id
+        # 心跳（valence 只在收到对上一心跳的响应后才发下一个），没有则必须失败。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "game_join", {})],
+            pending=[_FakeEvent(4.0, "keepalive", {"id": 9})],
+        )
+        with self.assertRaises(BotAssertionError):
+            fire_probes_and_keep_connection(
+                bot, "测试", [("p1", lambda: None)], settle_s=0.0
+            )
 
     def test_fire_probes_fails_when_kicked(self):
         bot = _RejectionFakeBot(
@@ -2025,11 +2067,15 @@ class RejectionHelperTest(unittest.TestCase):
         # 也必须计入拒绝判定：pending 依次出「玩法反馈 → 合法 keepalive」，若 helper
         # 只扫 settle 窗口就放行，这个 feedback 会被 keepalive 等待掩盖而假通过
         # （review finding：side-effect oracle 必须覆盖完整异步观察期）。
+        # central-review 1993 #6：需要第三个 pending 事件（第二条新 id keepalive）让
+        # helper 走完两个心跳等待 —— 否则失败发生在缺第二个心跳（测试语义漂移），
+        # 而不是目标断言（心跳观察期内的玩法副作用被计入拒绝判定）。
         bot = _RejectionFakeBot(
             [_FakeEvent(2.0, "game_join", {})],
             pending=[
                 _FakeEvent(3.0, "server_data", {"payload_type": "inventory_snapshot"}),
                 _FakeEvent(4.0, "keepalive", {"id": 9}),
+                _FakeEvent(5.0, "keepalive", {"id": 11}),
             ],
         )
         with self.assertRaises(BotAssertionError):
@@ -2083,7 +2129,10 @@ class RejectionHelperTest(unittest.TestCase):
                 _FakeEvent(2.0, "game_join", {}),
                 _FakeEvent(3.0, "server_data", {"payload_type": "status_snapshot"}),
             ],
-            pending=[_FakeEvent(4.0, "keepalive", {"id": 9})],
+            pending=[
+                _FakeEvent(4.0, "keepalive", {"id": 9}),
+                _FakeEvent(5.0, "keepalive", {"id": 12}),
+            ],
         )
         fired: list[str] = []
         fire_probes_and_keep_connection(
@@ -2226,6 +2275,31 @@ class RejectionHelperTest(unittest.TestCase):
         bot = _RejectionFakeBot([])
         with self.assertRaises(BotAssertionError):
             assert_valid_request_still_works(bot)
+
+    def test_fake_clock_anchor_stable_across_read_orderings(self):
+        # central-review 1993 #3：t0 是稳定存储基座。旧实现按 property 每次读都取新
+        # monotonic，``time.monotonic() - bot.t0`` 先算左边再读 t0 时 sent_at 被推到
+        # 比当前模拟时刻 _now 略小，同刻（t==_now）诱饵事件被 ``e.t > sent_at`` 误收。
+        # 稳定基座下无论先求值哪边，锚点都必须 ≥ _now（"t > 锚"才不会被诱饵满足）。
+        bot = _RejectionFakeBot(
+            [_FakeEvent(2.0, "chat", {"text": "decoy"})],
+        )
+        self.assertEqual(bot.t0, bot.t0)  # 基座稳定：两次读取同值
+        # monotonic 先求值（review 指出的求值顺序）：
+        sent_at_left_first = time.monotonic() - bot.t0
+        self.assertGreaterEqual(
+            sent_at_left_first,
+            2.0,
+            "monotonic 先求值：锚点必须 ≥ 当前模拟时刻 _now=2.0",
+        )
+        # t0 先求值：
+        t0_first = bot.t0
+        sent_at_t0_first = time.monotonic() - t0_first
+        self.assertGreaterEqual(
+            sent_at_t0_first,
+            2.0,
+            "t0 先求值：锚点必须 ≥ 当前模拟时刻 _now=2.0",
+        )
 
     def test_inventory_fingerprint_equal_when_zero_mutation_and_differs_on_revision(self):
         base = {
@@ -4485,6 +4559,11 @@ class ProdConsumeDecodeTest(unittest.TestCase):
         self.assertAlmostEqual(decoded["progress"], 0.42)
         self.assertFalse(decoded["interrupted"])
         self.assertFalse(decoded["completed"])
+        # central-review 1993 #4：detail 是 field 11 的 string，是 authoritative wire
+        # 契约的一部分 —— 只 pin 其他字段会放走「丢 detail / 从别的字段误读 detail」的
+        # 解码器。值与 target_name（"开脉草"）/ plant_kind（"ning_mai_cao"）刻意不同，
+        # 读错字段号的实现必红；两个合法消息仅 detail 不同也必须解出不同 payload。
+        self.assertEqual(decoded["detail"], "晨露未散")
 
     def test_botany_harvest_progress_tag25_distinguishes_terminal_flags(self):
         # central-review 1993 #5：interrupted / completed 是两个独立的 lifecycle 布尔

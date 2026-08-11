@@ -177,27 +177,45 @@ def inventory_fingerprint(snapshot: dict) -> str:
     return json.dumps({key: snapshot.get(key) for key in keys}, sort_keys=True)
 
 
-def wait_keepalive_after(bot, after: float, timeout: float = 25.0):
-    """等 t > after 的新 keepalive（server 拒绝坏请求后仍主动维持连接）。
+def wait_keepalive_after(
+    bot, after: float, timeout: float = 25.0, seen_ids: set | None = None
+):
+    """等 t > after、id 不在 ``seen_ids`` 里的新 keepalive（server 拒绝坏请求后仍
+    主动维持连接）。
 
-    拿不到就抛带修复线索的 BotAssertionError —— 那意味着 server 要么把这条连接
-    遗忘（不再心跳）、要么已经断掉，两者都不是"干净拒绝"。
+    ``seen_ids`` 是探针前已解码的 keepalive id 集合：排除「探针前已生成、之后才解码」
+    的在途心跳 —— ``event.t`` 是客户端解码时刻，不是 server 生成边界（central-review
+    1993 #6）。传 None（或空集）时退化为只按时刻筛选（向后兼容）。拿不到就抛带修复
+    线索的 BotAssertionError —— 那意味着 server 要么把这条连接遗忘（不再心跳）、要么
+    已经断掉，两者都不是"干净拒绝"。
     """
+    seen = frozenset(seen_ids or ())
     return bot.wait_for(
-        lambda e: e.kind == "keepalive" and e.t > after,
+        lambda e: e.kind == "keepalive"
+        and e.t > after
+        and e.data.get("id") not in seen,
         timeout=timeout,
-        description="server 在拒绝坏请求后仍继续心跳（连接没被踢、也没被单方面遗忘）",
+        description=(
+            f"server 在拒绝坏请求后仍继续心跳（t>{after:.3f}s、新 id 的 keepalive，"
+            f"连接没被踢、也没被单方面遗忘）"
+        ),
     )
 
 
 def _relative_now(bot) -> float:
     """读取与 ``event.t`` 同一帧的相对时钟（``time.monotonic() - bot.t0``）。
 
-    先取 ``t0`` 再取 ``monotonic``：测试 fake 的 ``t0`` 是 property，按求值顺序
-    （``time.monotonic() - bot.t0`` 先算左边）会引入 ~µs 抖动，把锚点推到比当前
-    ``_now`` 略小、吞掉同一时刻的事件。固定顺序后锚点严格为「当前事件时刻 + 抖动」，
-    "t > 锚"的时序语义对真实 bot（t0 是创建时定死的 float，无抖动）与 fake 一致。
+    central-review 1993 #3：fake（``_RejectionFakeBot``）的 ``t0`` 是**稳定存储基座**
+    （``_clock_base``，随事件推进 / 锚点计算前重基，见 ``rebase_clock_base``），t0 在
+    一次锚点计算内不变 —— 旧实现按 property 每次读都取新 monotonic，``time.monotonic()
+    - bot.t0`` 先算左边再读 t0，``sent_at`` 被推到比当前 ``_now`` 略小，同刻诱饵事件
+    被误收。锚点计算前先重基抵消真实流逝（drain/sleep 期间模拟时钟不推进），再取
+    ``t0`` 后取 ``monotonic``，锚点严格为「当前模拟时刻 + 微抖动」。"t > 锚"的时序
+    语义对真实 bot（t0 是创建时定死的 float）与 fake 一致。
     """
+    rebase = getattr(bot, "rebase_clock_base", None)
+    if rebase is not None:
+        rebase()
     t0 = bot.t0
     return time.monotonic() - t0
 
@@ -242,7 +260,10 @@ def fire_probes_and_keep_connection(
       的证据；连接同步流量由 ``drain_event_stream`` 排干、由 ``is_gameplay_side_effect``
       排除，不误判）；
     - settle 窗口内 ``assert_alive``（"踢人/panic/断流"这类坏响应在此窗口显形）；
-    - 探针之后的新 keepalive 到达（server 仍主动维护这条连接）；
+    - 探针之后**连续两个新 id** keepalive 到达（server 在拒绝后仍主动生成心跳 ——
+      valence 只在收到客户端对上一心跳的响应后才发下一个（keepalive.rs），故第二个
+      新 id 心跳必然是探针后生成，探针前已生成、探针后才解码的在途心跳冒充不了，
+      central-review 1993 #6）；
     - keepalive 之后、最终扫描前强制**事件流安静**（``drain_event_stream``）——
       keepalive 由独立路径产生，不是探针副作用的排序屏障；排空期让迟到的探针
       副作用落进 ``bot.events``，最终扫描才能把它们计入拒绝判定；
@@ -260,6 +281,14 @@ def fire_probes_and_keep_connection(
     # 而不是 events[-1].t：事件流安静时最后一条事件的 t 会停留在旧值，把窗口起点推到
     # 早于探针发送的时刻，连接同步/旧事件会被误划进探针窗口。
     sent_at = _relative_now(bot)
+    # central-review 1993 #6：探针前已解码的 keepalive id 集合 —— 之后要求的新心跳必须
+    # 带集合外的新 id。单条「解码时刻晚于探针完成」的 keepalive 不构成证据：它可能是
+    # 探针前已生成、探针后才解码的在途心跳（event.t 是解码时刻，不是 server 生成边界）。
+    # valence 只在收到客户端对上一心跳的响应后才发下一个，故连续两个新 id 心跳中的
+    # 第二个必然是探针后生成 —— server 若在拒绝后停止生成心跳，第二个等待必超时。
+    seen_keepalive_ids = {
+        e.data["id"] for e in bot.events if e.kind == "keepalive"
+    }
     for probe_name, send in probes:
         send()
     # 心跳断言锚定在**全部探针发出之后**的发送时刻：事件流安静时 events[-1].t 会停留
@@ -272,7 +301,14 @@ def fire_probes_and_keep_connection(
     assert_no_gameplay_side_effect_since(
         bot, sent_at, f"{label} 探针窗口", baseline_snapshot
     )
-    wait_keepalive_after(bot, probe_done_at)
+    first_keepalive = wait_keepalive_after(
+        bot, probe_done_at, seen_ids=seen_keepalive_ids
+    )
+    wait_keepalive_after(
+        bot,
+        probe_done_at,
+        seen_ids=seen_keepalive_ids | {first_keepalive.data.get("id")},
+    )
     # 心跳只是连接活性信号，不是探针副作用的**排序屏障**（review finding：keepalive
     # 由独立于 client_request 处理的路径产生，先到达既不证明所有探针已处理完、也不
     # 证明副作用事件已全部落进 bot.events —— 被错误接受的探针可能在 settle 窗口后

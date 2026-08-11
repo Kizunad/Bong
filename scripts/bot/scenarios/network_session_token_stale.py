@@ -342,7 +342,9 @@ def _open_real_session(bot) -> dict:
     }
 
 
-def _teardown_placed_crate(bot, placed_pos: tuple[int, int, int]) -> None:
+def _teardown_placed_crate(
+    bot, placed_pos: tuple[int, int, int], fiber_instance_id: int
+) -> None:
     """best-effort 回收 run 放置的 trade_crate 及其容器物品（central-review 1993 #6）。
 
     场景每次 run 都在共享世界放置一个 trade_crate 并把 grass_fiber 移入其 ext 容器，
@@ -350,22 +352,43 @@ def _teardown_placed_crate(bot, placed_pos: tuple[int, int, int]) -> None:
     实体选择。这里挖掉容器（gm c 后 start_digging：Creative 下 DiggingState::Start 即触发
     block break，见 block_break.rs should_apply_default_break）—— 容器 despawn、
     `drain_container_items_to_drops` 把 fiber 按原 instance_id 落在容器世界坐标（
-    container_block.rs），另有模板掉落；再把 (px+0.5, py, pz+0.5) 附近全部掉落拾回
-    （pickup_dropped_item 距离 ≤2.5）。整段放 run() 的 finally 且 any 失败只留日志，
-    不得掩盖场景判负。
+    container_block.rs），另有模板掉落；再把身份已知的两个掉落拾回（pickup_dropped_item
+    距离 ≤2.5）。整段放 run() 的 finally 且 any 失败只留日志，不得掩盖场景判负。
+
+    **身份锚定（central-review 1993 #5）**：旧实现从一次全局 dropped_loot_sync 里按
+    空间邻近（≤3.0 格）捡走全部掉落 —— 共享世界范围内任何既有/并发掉落都会被收进 Stl
+    背包（污染其持久 inventory）；且 expect_server_data 可能返回 break 前缓冲的旧 sync，
+    新建掉落不在其中、遗留世界。改为 start_digging 前取锚点、等 **break 之后**的新
+    dropped_loot_sync（``e.t > 锚点``），只捡两个身份已知的掉落：
+    - fiber 按**实例 id**（drain_container_items_to_drops 保留原 instance_id，
+      dropped_entry_from_placed）；
+    - crate 按**模板 id** ``trade_crate``（spawn_template_dropped_loot 为模板掉落分配
+      全新实例 id，container_block.rs 5318，不能按原实例匹配）；
+    再叠加 ≤3.0 格空间过滤收窄到本容器。
     """
     try:
         px, py, pz = placed_pos
         bot.cmd("gm c")
         bot.expect_chat("Gamemode set to Creative.", timeout=10.0)
+        break_at = time.monotonic() - bot.t0
         bot.start_digging(px, py, pz)
-        loot = bot.expect_server_data("dropped_loot_sync", timeout=10.0)
+        loot = bot.wait_for(
+            lambda e: e.kind == "server_data"
+            and e.data["payload_type"] == "dropped_loot_sync"
+            and e.t > break_at,
+            timeout=10.0,
+            description="block break 之后的新 dropped_loot_sync（teardown 身份锚定窗口）",
+        )
         drops = loot.data["payload"]["drops"]
         center = (px + 0.5, py, pz + 0.5)
         near = [
             drop
             for drop in drops
             if math.dist(tuple(drop["world_pos"]), center) <= 3.0
+            and (
+                (drop.get("item") or {}).get("instance_id") == fiber_instance_id
+                or (drop.get("item") or {}).get("item_id") == "trade_crate"
+            )
         ]
         if near:
             bot.move_to(px + 0.5, py, pz + 0.5)
@@ -461,8 +484,21 @@ def _assert_stale_move_rejected_zero_mutation(
     # 内容零变化 —— 同步屏障收进快照谓词（review finding 3：同步点确认前的快照才与
     # move 处理有因果关系；确认后才到的属周期重发，不能冒充 resync）。server 若直接把
     # move 丢进黑洞（连 resync 都不发），等待必然超时，不会因周期快照假通过。
+    #
+    # **生产者识别（central-review 1993 #1）**：快照还必须 ``revision == pre`` —— 任何
+    # 背包 mutation 都 bump revision，故排除全部 Changed 驱动的更高 revision 重发
+    # （周期重发若含 mutation 则 revision 必然更高），只认零 mutation 快照。同 revision
+    # 的周期无变更重发（shelflife sweep 每 200 tick 迭代 &mut 即触发 Changed，内容与
+    # revision 不变）与拒绝 resync 在 wire 上不可区分，无法靠单张快照排除 —— 由**请求
+    # 计数关联**闭合：本函数在 run() 对三个连续被拒 move 各调用一次，每次都要在各自
+    # 窗口内等到一张新快照；10s 节拍的周期重发最多落入其中一个窗口，被丢进黑洞（无
+    # resync）的实现过不了全部三轮。
     resync = wait_inventory_snapshot_after(
-        bot, before, until_t=confirm_t, timeout=10.0
+        bot,
+        before,
+        until_t=confirm_t,
+        timeout=10.0,
+        revision_equals=pre["revision"],
     )
     if inventory_fingerprint(resync) != inventory_fingerprint(pre):
         raise BotAssertionError(
@@ -520,11 +556,21 @@ def _assert_stale_close_rejected(bot, session_id: int, label: str) -> None:
         timeout=10.0,
     )
 
-    # 两侧同化：剥掉探针物品 + revision 复位到请求前 —— 指纹差异只归属 close 处理本身。
+    # **revision 精确过渡（central-review 1993 #2）**：give 的因果快照 revision 必须是
+    # pre+1 —— add_item_to_player_inventory_inner 每次 give 恰好 bump 一次 revision，
+    # 干净的 close no-op 不 bump。旧实现把两侧 revision 复位到请求前再比指纹，删掉了
+    # 唯一可观测差异：只改 revision 不改内容、随即发快照的坏 close handler 会被后续
+    # give 的快照 + 内容同化掩盖（revision 归一化抹掉 +1），假通过。断言精确 +1 后：
+    # 坏 close 若 spurious bump，give 后为 pre+2 ≠ pre+1，必红。
     pre_clean = _without_probe_item(pre, PROBE_ITEM_ID)
     probe_clean = _without_probe_item(probe, PROBE_ITEM_ID)
-    pre_clean["revision"] = pre["revision"]
-    probe_clean["revision"] = pre["revision"]
+    if probe["revision"] != pre["revision"] + 1:
+        raise BotAssertionError(
+            f"{label}：期望探针 give 的因果快照 revision 恰好 +1（close 零 mutation、"
+            f"give 恰好 bump 一次），实际 pre_rev={pre['revision']} "
+            f"probe_rev={probe['revision']}"
+        )
+    # 剥掉探针物品后指纹必须相等 —— 指纹差异只归属 close 处理本身（内容级 mutation）。
     if inventory_fingerprint(probe_clean) != inventory_fingerprint(pre_clean):
         raise BotAssertionError(
             f"{label}：期望 close 干净 no-op 且背包零 mutation，"
@@ -552,6 +598,7 @@ def run(env) -> None:
         # 容器实体 + 物品，无界增长、干扰后续场景。teardown 放 finally，场景断言抛错也
         # 回收；teardown 自身失败只留日志不掩盖判负。
         placed_pos = None
+        fiber_instance_id = None
         try:
             bot.expect_event("game_join", timeout=15.0)
             bot.expect_event("pos_look", timeout=15.0)
@@ -562,6 +609,9 @@ def run(env) -> None:
             real_move = _open_real_session(bot)
             session_id = real_move["session_id"]
             placed_pos = real_move["placed_pos"]
+            # teardown 身份锚定（central-review 1993 #5）：fiber 实例 id 供 break 后只捡
+            # 本 run 的掉落（与 placed_pos 同步赋值 —— 二者都来自 real_move）。
+            fiber_instance_id = real_move["instance_id"]
 
             # 证明 token 曾有效：close 被接受，server 回推 loot_container_close。
             # 同时断言 close 后的 resync 快照零 mutation（指纹与 close 前一致）。
@@ -572,8 +622,18 @@ def run(env) -> None:
             pre_close = latest_inventory_snapshot(bot)
             close_before = time.monotonic() - bot.t0
             bot.intent(_close_request(session_id))
-            bot.expect_server_data("loot_container_close", timeout=10.0)
-            resync = wait_inventory_snapshot_after(bot, close_before, timeout=10.0)
+            close_evt = bot.expect_server_data("loot_container_close", timeout=10.0)
+            # central-review 1993 #1：close 的 resync 由同一 handler 在 loot_container_close
+            # **之后**回推 —— 快照必须落在 close 事件之后（``after_event_t=close_evt.t``）
+            # 且 revision == 请求前（零 mutation，排除 Changed 驱动的更高 revision 重发）；
+            # 早于 close 事件的周期快照不能冒充本 close 的 resync。
+            resync = wait_inventory_snapshot_after(
+                bot,
+                close_before,
+                timeout=10.0,
+                after_event_t=close_evt.t,
+                revision_equals=pre_close["revision"],
+            )
             if inventory_fingerprint(resync) != inventory_fingerprint(pre_close):
                 raise BotAssertionError(
                     "真实 session close：期望 close 后 resync 背包零 mutation，"
@@ -625,4 +685,4 @@ def run(env) -> None:
             assert_valid_request_still_works(bot)
         finally:
             if placed_pos is not None:
-                _teardown_placed_crate(bot, placed_pos)
+                _teardown_placed_crate(bot, placed_pos, fiber_instance_id)

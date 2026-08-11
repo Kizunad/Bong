@@ -53,21 +53,37 @@ def latest_inventory_snapshot(bot, timeout: float = 10.0) -> dict[str, Any]:
 
 
 def wait_inventory_snapshot_after(
-    bot, after_t: float, timeout: float = 10.0, until_t: float | None = None
+    bot,
+    after_t: float,
+    timeout: float = 10.0,
+    until_t: float | None = None,
+    after_event_t: float | None = None,
+    revision_equals: int | None = None,
 ) -> dict[str, Any]:
-    """等一张 ``after_t < e.t <= until_t`` 的 inventory_snapshot。
+    """等一张 ``after_t < e.t <= until_t`` 且满足附加谓词的 inventory_snapshot。
 
-    ``until_t`` 给调用方一个上界：把快照断言收窄到「与某个请求处理有因果关系」的
-    区间（如同步点确认时刻）。无 ``until_t`` 时行为同旧版（只要求 t > after_t）。
+    ``until_t`` / ``after_event_t`` 给调用方上下界：把快照断言收窄到「与某个请求
+    处理有因果关系」的区间（同步点确认时刻 / 同一 handler 前置响应事件时刻）。
+    ``revision_equals`` 要求快照 revision 精确等于给定值 —— 任何背包 mutation 都
+    bump revision（inventory/mod.rs add_item_to_player_inventory_inner 恰好一次），
+    故排除全部 Changed 驱动的更高 revision 重发，把候选取收敛到「零 mutation 快照」
+    （central-review 1993 #1：拒绝 resync 是零 mutation，周期/Changed 重发若含
+    mutation 则 revision 必然更高）。不传这些约束时行为同旧版（只要求 t > after_t）。
     """
     event = bot.wait_for(
         lambda e: e.kind == "server_data"
         and e.data["payload_type"] == "inventory_snapshot"
         and e.t > after_t
-        and (until_t is None or e.t <= until_t),
+        and (until_t is None or e.t <= until_t)
+        and (after_event_t is None or e.t > after_event_t)
+        and (
+            revision_equals is None
+            or e.data["payload"].get("revision") == revision_equals
+        ),
         timeout=timeout,
         description=(
-            f"{after_t:.3f}s < t <= {until_t if until_t is not None else '∞'} 的 "
+            f"{after_t:.3f}s < t <= {until_t if until_t is not None else '∞'}，"
+            f"revision={revision_equals if revision_equals is not None else '任意'} 的 "
             f"inventory_snapshot"
         ),
     )
