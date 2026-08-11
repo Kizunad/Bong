@@ -41,23 +41,23 @@ MODEL = F.OUT_DIR / "MimicSpiderFrame.bbmodel"
 BLOCK = 16.0  # 拟态目标：一个方块
 
 # 折叠参数（右侧约定；左侧经 sx 镜像自动成立）。
-# az 用 gen_frame 约定：0 = 正侧向，正 = 朝前。形态是"蹲伏"：身体离地 ~2 单位，
-# 八腿后掠收在体侧下方（膝上折、胫节向前对折、跗节斜收），腹部下扣、螯肢触肢后收。
-# 仰角逐对递陡：后腿附着点靠后，z 向预算小，折得越紧。
+# az 用 gen_frame 约定：0 = 正侧向，正 = 朝前。形态是"蹲伏死蜷"：身体离地 ~2 单位，
+# 前三对腿后掠收在体侧（膝上折、胫节向前对折），第 4 对反向——腿节向前折过头顶、
+# 胫节向后对折（真实死蜷方向；也是唯一能同时躲开腹部(z)/顶(y)/壁(x)的折法）。
+# 逐节给 (方位角, 仰角)：coxa / femur / tibia / tarsus。
 FOLD_ROOT_POS = (0.0, -3.2, 0.2)
-# 第 4 对后掠角改浅：z 后界被腹部占着，膝再抬高又顶 y 上界，只能往侧面让
-FOLD_AZ_LEG = {1: -80.0, 2: -80.0, 3: -80.0, 4: -65.0}
-FOLD_AZ_BACK = 85.0
-#            e_coxa e_femur e_tibia e_tarsus
-FOLD_ELEV = {
-    1: (15.0, 40.0, -60.0, 45.0),
-    2: (15.0, 45.0, -63.0, 45.0),
-    3: (15.0, 56.0, -68.0, 45.0),
-    4: (15.0, 64.0, -80.0, 45.0),
+FOLD_LEGS = {
+    1: ((-84.0, 15.0), (-84.0, 40.0), (85.0, -60.0), (85.0, 45.0)),
+    2: ((-84.0, 15.0), (-84.0, 45.0), (85.0, -63.0), (85.0, 45.0)),
+    3: ((-84.0, 15.0), (-84.0, 58.0), (85.0, -68.0), (85.0, 45.0)),
+    4: ((-65.0, 15.0), (80.0, 60.0), (-85.0, -78.0), (-85.0, 40.0)),
 }
 FOLD_ABDOMEN_PITCH = 25.0    # 腹部下扣
-FOLD_ABDOMEN_SHIFT = -1.6    # 腹部沿腹柄前挤（膜质，可压缩）
-FOLD_CHELICERA_PITCH = -45.0  # 螯肢连牙后收贴胸
+FOLD_ABDOMEN_SHIFT = -1.9    # 腹部沿腹柄前挤（膜质，可压缩）
+# 螯肢下折近水平贴颌（fang 平指向后）。注意不能用小角度+内旋凑：paturon 是宽>深的
+# 扁盒，绕 y 内旋必有一只前角向外甩，唯有大 pitch 把整件转出 z 前界
+FOLD_CHELICERA_ROT = (-80.0, 0.0)
+SHELL_RESERVE = 0.5  # 甲壳层加厚预留：框架折叠包围盒必须比方块再小一圈
 
 
 def dir_of(az_deg: float, elev_deg: float, sx: float) -> np.ndarray:
@@ -98,14 +98,7 @@ def fold_pose() -> Pose:
             key = f"{pair}_{side}"
             joints = [np.array(p) for p in F.leg_joints(pair, side)]
             rest = [joints[i + 1] - joints[i] for i in range(4)]
-            ec, ef, et, ets = FOLD_ELEV[pair]
-            az = FOLD_AZ_LEG[pair]
-            tgt = [
-                dir_of(az, ec, sx),
-                dir_of(az, ef, sx),
-                dir_of(FOLD_AZ_BACK, et, sx),
-                dir_of(FOLD_AZ_BACK, ets, sx),
-            ]
+            tgt = [dir_of(az, elev, sx) for az, elev in FOLD_LEGS[pair]]
             W_parent = np.eye(3)
             for bone_prefix, r, t in zip(("coxa", "femur", "tibia", "tarsus"), rest, tgt):
                 W = retarget(r, t)
@@ -125,7 +118,7 @@ def fold_pose() -> Pose:
         W2 = retarget(rest2, np.array([sx * -0.2, -0.25, 0.9]))
         pose[f"palp1_{side}"].rot = to_euler(W1)
         pose[f"palp2_{side}"].rot = to_euler(np.linalg.inv(W1) @ W2)
-        pose[f"chelicera_{side}"].rot = [FOLD_CHELICERA_PITCH, 0.0, 0.0]
+        pose[f"chelicera_{side}"].rot = [FOLD_CHELICERA_ROT[0], -sx * FOLD_CHELICERA_ROT[1], 0.0]
     return pose
 
 
@@ -159,10 +152,11 @@ def check_fold(rig: Rig, pose: Pose) -> int:
           f"  y {lo[1]:+6.2f}..{hi[1]:+6.2f} ({ext[1]:5.2f})"
           f"  z {lo[2]:+6.2f}..{hi[2]:+6.2f} ({ext[2]:5.2f})")
     problems = []
+    half = BLOCK / 2 - SHELL_RESERVE
     for axis, name, lim_lo, lim_hi in (
-        (0, "x", -BLOCK / 2, BLOCK / 2),
-        (1, "y", -0.35, BLOCK),
-        (2, "z", -BLOCK / 2, BLOCK / 2),
+        (0, "x", -half, half),
+        (1, "y", -0.35, BLOCK - SHELL_RESERVE),
+        (2, "z", -half, half),
     ):
         if lo[axis] < lim_lo - 1e-6:
             problems.append(f"{name} 下界超出方块 {lim_lo - lo[axis]:.2f}")
