@@ -121,6 +121,12 @@ class _ForgeEventSubscriber:
             if idx == -1:
                 return None, 0
             return int(self._buf[pos + 1 : idx]), idx + 2
+        if marker == b"-":
+            # RESP2 error（订阅态下误发非订阅命令会得到 -ERR；解析为字符串不崩溃）
+            idx = self._buf.find(b"\r\n", pos + 1)
+            if idx == -1:
+                return None, 0
+            return self._buf[pos + 1 : idx].decode("utf-8", "replace"), idx + 2
         if marker == b"*":
             idx = self._buf.find(b"\r\n", pos + 1)
             if idx == -1:
