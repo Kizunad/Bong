@@ -196,7 +196,7 @@ def main() -> int:
 
     rig = Rig(MODEL)
     if args.stance:
-        render_pose(rig, Pose(), "stance", ("side", "front", "34"))
+        render_pose(rig, Pose(), "stance", ("side", "front", "34", "top"))
         return 0
 
     pose = fold_pose()

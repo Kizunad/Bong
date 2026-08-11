@@ -483,8 +483,9 @@ def check(rig: Rig) -> int:
     zs = [v for e in rig.elements for v in (e["from"][2], e["to"][2])]
     span = max(xs) - min(xs)
     print(f"骨骼 {len(rig.bones)} 根 · cube {len(rig.elements)} 个")
+    body_len = ABDOMEN_BACK_Z - (-8.3)  # 螯肢前缘 → 腹尾
     print(f"足展 {span:.1f} 单位 = {span / 16:.2f} 格 · 膝峰 y {knee_top:.1f}"
-          f"（背甲 {CARAPACE_TOP_Y}） · 体长(含螯) {max(zs) - min(zs):.1f}")
+          f"（背甲 {CARAPACE_TOP_Y}） · 体长(含螯) {body_len:.1f} · 总长(含腿) {max(zs) - min(zs):.1f}")
     if problems:
         print(f"\n✗ {len(problems)} 处违例：")
         for x in problems[:20]:
