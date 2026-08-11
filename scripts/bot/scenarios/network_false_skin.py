@@ -24,7 +24,7 @@ from bot.scenarios._combat_helpers import last_event_time, wait_for_ready
 from bot.scenarios._inventory_helpers import (
     drain_inventory_quiet,
     equip_location,
-    find_instance,
+    find_instance_by_id,
     find_item,
     latest_inventory_snapshot,
     require_item,
@@ -471,7 +471,7 @@ def run(env) -> None:
         # central-review 2012 #2：第 4 步已装备一件同模板伪皮，模板级 require_item
         # 会被旧装备件满足——错误的拒绝实现「丢失新给 spare_instance 却不动旧件」
         # 也能过。必须 pin 到被拒实例本身 + 非 equipped 原位。
-        kept_spare = find_instance(kept, spare_instance)
+        kept_spare = find_instance_by_id(kept, spare_instance)
         assert kept_spare is not None, (
             f"境界拒绝后被拒伪皮实例 {spare_instance} 应仍在背包"
             f"（原位 {spare['location']!r}），实际快照中未找到该实例"

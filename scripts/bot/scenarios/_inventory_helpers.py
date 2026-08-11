@@ -181,7 +181,7 @@ def require_item(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     return found
 
 
-def find_instance(snapshot: dict[str, Any], instance_id: int) -> dict[str, Any] | None:
+def find_instance_by_id(snapshot: dict[str, Any], instance_id: int) -> dict[str, Any] | None:
     """按 instance_id 定位物品，返回与 `find_item` 同构的 {location, item}。
 
     模板级 `find_item` 在「同一模板同时有装备位 + 随身实例」时会命中先扫到的那个，

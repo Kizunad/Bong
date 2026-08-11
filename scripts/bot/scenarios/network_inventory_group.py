@@ -33,7 +33,7 @@ from bot.scenarios._combat_helpers import (
 from bot.scenarios._inventory_helpers import (
     drain_inventory_quiet,
     equip_location,
-    find_instance,
+    find_instance_by_id,
     find_item,
     latest_inventory_snapshot,
     require_item,
@@ -159,7 +159,7 @@ def _swing_until_durability_below(
                 or e.t <= swing_anchor
             ):
                 continue
-            found = find_instance(e.data["payload"], sword_instance)
+            found = find_instance_by_id(e.data["payload"], sword_instance)
             if found is not None and float(found["item"]["durability"]) < 1.0:
                 return e.data["payload"]
     raise BotAssertionError(
@@ -240,7 +240,7 @@ def run(env) -> None:
         move_to_melee_range(bot, spawn, 1.2)
         bot.cmd("health set 100")
         damaged = _swing_until_durability_below(bot, target_id, sword_instance)
-        damaged_sword = find_instance(damaged, sword_instance)
+        damaged_sword = find_instance_by_id(damaged, sword_instance)
         assert damaged_sword is not None and float(damaged_sword["item"]["durability"]) < 1.0, (
             f"打坏前置失败：repair 前 durability 必须 < 1.0，实际 {damaged_sword!r}"
         )
@@ -255,7 +255,7 @@ def run(env) -> None:
             }
         )
         repaired = wait_inventory_revision_after(bot, sword_revision, timeout=10.0)
-        repaired_sword = find_instance(repaired, sword_instance)
+        repaired_sword = find_instance_by_id(repaired, sword_instance)
         assert repaired_sword is not None and abs(
             float(repaired_sword["item"]["durability"]) - 1.0
         ) < 1e-6, (
@@ -398,7 +398,7 @@ def run(env) -> None:
         # 权威**完整内容**（drain 后最新快照即权威状态：flush 不改变内容），回推后
         # pin 实例仍在**原位**且 item 逐字段相同。
         pre_reject = latest_inventory_snapshot(bot)
-        stone_spot = find_instance(pre_reject, stone_instance)
+        stone_spot = find_instance_by_id(pre_reject, stone_instance)
         assert stone_spot is not None, (
             f"前置：drop 拒绝前 stone 实例 {stone_instance} 应在包中，实际未找到"
         )
@@ -413,7 +413,7 @@ def run(env) -> None:
             }
         )
         rejected = _wait_snapshot_same_revision(bot, anchor, stale_revision)
-        kept_stone = find_instance(rejected, stone_instance)
+        kept_stone = find_instance_by_id(rejected, stone_instance)
         assert kept_stone is not None, (
             f"from 不匹配拒绝不得移除 stone 实例 {stone_instance}，实际快照中未找到"
         )
