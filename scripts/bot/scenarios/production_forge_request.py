@@ -21,6 +21,12 @@
 > （对应 (n+1)²，从未被公式实现过；服务端测试也只断言单调不减）。黑盒按可执行行为
 > 钉 4/16/36，注释与公式的出入留给 server 侧单独核实。
 
+> ⚠ 场景契约：dev 铺垫与 tier 读回假设**新鲜玩家**（qi=0/10、经脉全关、tier0）。
+> 服务端 bong.db 持久化在 worktree，固定 run tag 的重跑会复用旧玩家——`meridian open`
+> 对已开经脉回显的是「already open」（meridian.rs dev-cmd Open 分支），forge 也会直接
+> 撞 AtMaxTier。bot-e2e.sh 自起模式的 run tag 是 `$$ % 100000`（每次调用唯一），
+> fixture 单跑必须每次换新 tag。
+
 负向分支的 payload 不携带 error kind（success:false 事件只有 meridian/axis/0/0），按请求
 顺序逐条消费；UnknownChannel 例外——`ForgeEventV1::validate` 拒绝 snake_case 非 humanoid
 meridian，事件根本不发布（redis_bridge.rs:804），只能断言「窗口内无事件」。
