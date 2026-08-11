@@ -36,8 +36,11 @@ impl Command for SparringCmd {
 }
 
 pub fn register(app: &mut App) {
-    // SparringInviteRequest 事件已由 social 插件注册，这里只加命令与处理系统。
-    app.add_command::<SparringCmd>()
+    // SparringInviteRequest 属 social 插件；cmd-only 测试 App 不装 social，dev 命令
+    // 的事件必须自注册才能让 handle_sparring_invite 在 test_command_app 里跑起来
+    // （bevy 0.14 add_event 幂等，生产侧 social 已注册时为 no-op）。
+    app.add_event::<SparringInviteRequest>()
+        .add_command::<SparringCmd>()
         .add_systems(Update, handle_sparring_invite);
 }
 
