@@ -91,6 +91,17 @@ sys.exit(0)
 PY
 }
 
+# review finding 31447830772 [major]：stop 的「无记录 → 成功 no-op」契约从未被断言
+# （cleanup trap 里的无记录 stop 调用以 || true 丢弃失败）——回归成「无记录时返回
+# 错误」的实现能通过全部既有用例。先测冷态：从未发布过任何记录时 stop 必须返回 0，
+# 且不产生记录。
+if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
+    >"$TMP_ROOT/stop-cold-norecord.log" 2>&1; then
+  echo "stop on a cold no-record state failed (no-op contract broken)" >&2
+  exit 1
+fi
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
+
 : >"$TMP_ROOT/cargo-invocations.log"
 run_preview 5 >/dev/null
 [ -f "$BONG_PREVIEW_PID_FILE" ]
@@ -128,6 +139,14 @@ listener_on_25565 || {
   exit 1
 }
 bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh"
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
+# 同一契约的稳定态：一次成功停服后记录已清，再调 stop 必须仍返回 0（幂等 no-op）——
+# 回归成「无记录时返回错误」的实现此断言必红（review finding 31447830772 [major]）。
+if ! bash "$REPO_ROOT/scripts/preview/stop-server-headless.sh" \
+    >"$TMP_ROOT/stop-stable-norecord.log" 2>&1; then
+  echo "stop on the stable no-record state failed (idempotent no-op contract broken)" >&2
+  exit 1
+fi
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
 # review finding [3]：--debug 必须改用 debug profile——build 命令不带 --release
@@ -226,6 +245,15 @@ if [ "\${FAKE_STAT_FAIL_AFTER_RECORD:-0}" = "1" ] \
     && [ -e "$TMP_ROOT/runtime/server.pid" ] \
     && [ ! -e "$TMP_ROOT/stat-post-record-fired" ]; then
   : > "$TMP_ROOT/stat-post-record-fired"
+  exit 1
+fi
+# 模式 5：记录发布后**持续**失败——readiness 的 process_status 永久返回 2，回滚
+# 重查同样拿不到 identity（review finding 31447830772 [major]：单次失败模式 2
+# 让回滚重查恢复，覆盖不到「回滚未确认、进程裸留」的路径）。配合
+# FAKE_PIDFD_SIGNAL_FAIL=1（pidfd 停服也返回 2），锁定「回滚未确认后必须走有界
+# 直接子进程回收」的兜底。
+if [ "\${FAKE_STAT_FAIL_AFTER_RECORD_PERSISTENT:-0}" = "1" ] \
+    && [ -e "$TMP_ROOT/runtime/server.pid" ]; then
   exit 1
 fi
 # 模式 3：write_record 自身的 identity 读取失败，但 launch 循环的钉扎成功——
@@ -353,21 +381,28 @@ fi
 cat >"$TMP_ROOT/bin/python3" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-# 模式 2 用真 python3 做端口检查与回滚（os.stat 不受 stat shim 影响）。
-# FAKE_PIDFD_SIGNAL_FAIL=1 时让 pidfd-signal 返回 2（identity 无法确认），
-# 触发「记录发布失败恢复路径」里 stop 未确认、进程仍存活的分支（review
-# finding [1]：旧实现这时无限 wait）。
+# 两条故障注入都按 flag 门控、只在其专属用例里启用（review finding 31447830772
+# [major]：listener-owner 分支无条件 exit 2 曾泄漏到后续的并发 stop 竞速用例——start
+# 的 readiness 端口检查命中注入自毁回滚，把「stop 假成功」的回归证据擦掉）。
+# FAKE_PIDFD_SIGNAL_FAIL=1 时让 pidfd-signal 返回 2（identity 无法确认），触发
+# 「记录发布失败恢复路径」里 stop 未确认、进程仍存活的分支（review finding [1]：
+# 旧实现这时无限 wait）。
 if [ "\${FAKE_PIDFD_SIGNAL_FAIL:-0}" = "1" ] && [[ "\$*" == *"bong-pidfd-signal.py"* ]]; then
   exit 2
 fi
-if [[ "\$*" == *"bong-listener-owner.py"* ]]; then exit 2; fi
+if [ "\${FAKE_LISTENER_OWNER_FAIL:-0}" = "1" ] && [[ "\$*" == *"bong-listener-owner.py"* ]]; then
+  exit 2
+fi
 exec "$REAL_PYTHON" "\$@"
 EOF
 chmod 700 "$TMP_ROOT/bin/python3"
+export FAKE_LISTENER_OWNER_FAIL=1
 if run_preview 2 >"$TMP_ROOT/owner.log" 2>&1; then
+  unset FAKE_LISTENER_OWNER_FAIL
   echo "listener-owner inspection failure unexpectedly succeeded" >&2
   exit 1
 fi
+unset FAKE_LISTENER_OWNER_FAIL
 [ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ]
 
 # review finding：readiness 循环 process_status 返回 2（进程存活但身份不可确认）
@@ -396,6 +431,73 @@ print("readiness status-2 preview left the server holding 25565", file=sys.stder
 sys.exit(1)
 PY
 then
+  exit 1
+fi
+
+# review finding 31447830772 [major]：记录发布后 identity **持续**不可确认（非单次）
+# 时，readiness 的 process_status 永久返回 2；回滚重查同样拿不到 identity，pidfd
+# 停服也返回 2（FAKE_PIDFD_SIGNAL_FAIL=1）——旧实现把回滚失败 || true 吞掉直接
+# 退出，被 disown 的 server 无限持有 25565，后续启动被保留的记录拒绝。修复后走
+# 有界直接子进程回收：停进程树 + 释放端口 + 按相同身份清记录，命令有界非零返回。
+rm -f "$TMP_ROOT/stat-post-record-fired"
+export FAKE_STAT_FAIL_AFTER_RECORD_PERSISTENT=1
+export FAKE_PIDFD_SIGNAL_FAIL=1
+if timeout 20 bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 2 \
+    >"$TMP_ROOT/status2persist.log" 2>&1; then
+  echo "persistent post-publication identity-failure preview unexpectedly succeeded" >&2
+  exit 1
+else
+  rc=$?
+fi
+unset FAKE_STAT_FAIL_AFTER_RECORD_PERSISTENT FAKE_PIDFD_SIGNAL_FAIL
+[ "$rc" -ne 124 ] || {
+  echo "persistent status-2 preview hung (bounded cleanup missed)" >&2
+  exit 1
+}
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "persistent status-2 preview left an authority record (server leak)" >&2
+  exit 1
+}
+status2_persist_pids="$(fake_server_pids)"
+[ -z "$status2_persist_pids" ] || {
+  echo "persistent status-2 preview left server(s) alive: $status2_persist_pids" >&2
+  kill -KILL $status2_persist_pids 2>/dev/null || true
+  exit 1
+}
+if listener_on_25565; then
+  echo "persistent status-2 preview left a server holding 25565" >&2
+  exit 1
+fi
+
+# 同一兜底在 listener-owner 不可确认路径上的覆盖：readiness 的端口 owner 检查持续
+# 返回 2（FAKE_LISTENER_OWNER_FAIL=1），回滚的 pidfd 停服也返回 2——同样必须走
+# 有界直接子进程回收，不能带着存活进程直接退出。
+export FAKE_LISTENER_OWNER_FAIL=1
+export FAKE_PIDFD_SIGNAL_FAIL=1
+if timeout 20 bash "$REPO_ROOT/scripts/preview/run-server-headless.sh" --timeout 2 \
+    >"$TMP_ROOT/owner2persist.log" 2>&1; then
+  echo "persistent listener-owner failure preview unexpectedly succeeded" >&2
+  exit 1
+else
+  rc=$?
+fi
+unset FAKE_LISTENER_OWNER_FAIL FAKE_PIDFD_SIGNAL_FAIL
+[ "$rc" -ne 124 ] || {
+  echo "persistent listener-owner failure preview hung (bounded cleanup missed)" >&2
+  exit 1
+}
+[ ! -e "$BONG_PREVIEW_PID_FILE" ] && [ ! -L "$BONG_PREVIEW_PID_FILE" ] || {
+  echo "persistent listener-owner failure preview left an authority record (server leak)" >&2
+  exit 1
+}
+owner2_persist_pids="$(fake_server_pids)"
+[ -z "$owner2_persist_pids" ] || {
+  echo "persistent listener-owner failure preview left server(s) alive: $owner2_persist_pids" >&2
+  kill -KILL $owner2_persist_pids 2>/dev/null || true
+  exit 1
+}
+if listener_on_25565; then
+  echo "persistent listener-owner failure preview left a server holding 25565" >&2
   exit 1
 fi
 

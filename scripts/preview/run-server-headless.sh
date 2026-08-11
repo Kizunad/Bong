@@ -110,6 +110,27 @@ bounded_cleanup_unconfirmed_launch() {
   return 1
 }
 
+# 发布后回滚未确认的兜底（review finding 31447830772 [major]）：记录已发布、进程已
+# disown 后，identity 持续不可读时 rollback 既不能停服也不能清记录（返回非零并保留
+# 记录）。原实现 `rollback ... || true` 把失败当诊断信息吞掉后直接退出——被 spawn 的
+# server 作为孤儿无限持有 25565，后续启动还被保留的记录拒绝。进程仍是本启动器直接
+# spawn 的子进程（PPid == $$，disown 不改变父子关系），应走有界直接子进程回收停树 +
+# 释放端口；回收确认成功后按相同身份安全清除记录（并发 stop 已清/记录被替换则保留）。
+bong_server_post_publication_rollback() {
+  local operation="$1"
+
+  if rollback_preview_server "$operation"; then
+    return 0
+  fi
+  echo "❌ identity-safe 回滚未确认；改走有界直接子进程回收" >&2
+  if bounded_cleanup_unconfirmed_launch "$operation (direct-child fallback)"; then
+    bong_server_clear_record_if_matches \
+      "$SERVER_PID" "$SERVER_STARTTIME" "$SERVER_BINARY" "$SERVER_EXECUTABLE_IDENTITY" \
+      || echo "⚠ 回收后权限记录未能安全移除，交由 stop-server-headless.sh 处理" >&2
+  fi
+  return 1
+}
+
 # 取消窗口保护（review finding [2]）：spawn 之后、身份记录发布之前，若启动器被外部
 # 信号终止（INT/TERM/HUP）或流程失败（EXIT），被 spawn 的 server 尚未被任何记录
 # 跟踪——裸留即为 untracked 孤儿持续持有 25565。两个 trap 处理器只在该窗口生效：
@@ -279,9 +300,11 @@ while [ "$elapsed" -lt "$TIMEOUT_SECONDS" ]; do
       # 身份无法确认（非「已消失」）：进程可能仍存活。同样必须走 identity-safe
       # 回滚——它重查 pinned identity，能确认则停服并清记录，不能则保留记录供
       # stop-server-headless.sh 事后清理，不能带着存活进程 + 记录直接退出
-      # （review finding [2]：原实现跳过回滚，把进程和 PID 记录都留下）。
+      # （review finding [2]：原实现跳过回滚，把进程和 PID 记录都留下）。回滚
+      # 本身未确认（identity 持续不可读）时绝不能忽略失败退出——走有界直接
+      # 子进程回收（review finding 31447830772 [major]）。
       echo "❌ Server identity 无法确认（status 2）；尝试 identity-safe 回滚" >&2
-      rollback_preview_server "preview identity-unconfirmed cleanup" || true
+      bong_server_post_publication_rollback "preview identity-unconfirmed cleanup"
     fi
     exit 1
   fi
@@ -296,7 +319,8 @@ while [ "$elapsed" -lt "$TIMEOUT_SECONDS" ]; do
   if [ "$status" -eq 2 ]; then
     echo "❌ 无法确认端口 $PORT 的 owner；执行 identity-safe 回滚" >&2
     tail -n 30 "$LOG_FILE" >&2
-    rollback_preview_server "preview listener-owner rollback" || true
+    # 回滚未确认时同样走有界直接子进程回收（见 bong_server_post_publication_rollback）。
+    bong_server_post_publication_rollback "preview listener-owner rollback"
     exit 1
   fi
   sleep 1
