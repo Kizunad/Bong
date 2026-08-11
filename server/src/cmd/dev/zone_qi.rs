@@ -134,7 +134,8 @@ mod tests {
     use crate::qi_physics::QiTransfer;
     use crate::world::dimension::DimensionKind;
     use valence::prelude::Events;
-    use valence::protocol::packets::play::GameMessageS2c;
+    use valence::protocol::packets::play::{CommandExecutionC2s, GameMessageS2c};
+    use valence::protocol::{Bounded, FixedBitSet, VarInt};
     use valence::testing::{create_mock_client, MockClientHelper};
 
     fn collected_chat(app: &mut App, helper: &mut MockClientHelper) -> Vec<String> {
@@ -165,6 +166,36 @@ mod tests {
         app.add_event::<QiTransfer>();
         app.add_systems(Update, handle_zone_qi);
         app
+    }
+
+    fn setup_command_app() -> App {
+        // 生产注册路径：CommandPlugin 解析 CommandExecutionC2s → CommandResultEvent
+        // → register 挂的 handle_zone_qi。与 realm.rs 的 command_integration_* 测试
+        // 同一套路（central-review 31442475206 finding [7]：直接 send 事件只覆盖
+        // handler，command graph 注册被删/拼错也全过）。
+        let mut app = App::new();
+        app.add_plugins((
+            valence::event_loop::EventLoopPlugin,
+            valence::command::manager::CommandPlugin,
+        ));
+        app.insert_resource(ZoneRegistry::fallback());
+        register(&mut app);
+        app.finish();
+        app.cleanup();
+        app.update();
+        app
+    }
+
+    fn execute_command(app: &mut App, helper: &mut MockClientHelper, command: &str) {
+        helper.send(&CommandExecutionC2s {
+            command: Bounded(command),
+            timestamp: 0,
+            salt: 0,
+            argument_signatures: Vec::new(),
+            message_count: VarInt(0),
+            acknowledgement: FixedBitSet::default(),
+        });
+        app.update();
     }
 
     fn send(app: &mut App, player: valence::prelude::Entity, name: &str, value: f64) {
@@ -335,6 +366,69 @@ mod tests {
                     && chat.contains("spirit_qi=0.900000")
             }),
             "无 CurrentDimension 的执行者应退化为 Overworld 并解析到 spawn zone（spirit_qi=0.9），实际 {chats:?}"
+        );
+    }
+
+    #[test]
+    fn zone_qi_get_dispatch_via_command_graph_reaches_handler() {
+        // central-review 31442475206 finding [7]：既有三个 get 测试都直接构造并
+        // 发送 CommandResultEvent{GetCurrent}，只覆盖 handle_zone_qi——删除
+        // assemble_graph 的 .literal("zone_qi").literal("get") 注册（zone_qi.rs:33-37）
+        // 或拼错 literal，真实客户端永远打不到 handler，所有测试仍全绿。本测试走
+        // 生产通道：CommandExecutionC2s("zone_qi get") → CommandPlugin 解析 →
+        // CommandResultEvent → handle_zone_qi → chat 回显。删除注册即红。
+        let mut app = setup_command_app();
+        let (bundle, mut helper) = create_mock_client("Alice");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new([8.0, 64.0, 8.0]));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        execute_command(&mut app, &mut helper, "zone_qi get");
+
+        let chats = collected_chat(&mut app, &mut helper);
+        assert!(
+            chats.iter().any(|chat| {
+                chat.contains("zone_qi spawn") && chat.contains("spirit_qi=0.900000")
+            }),
+            "`zone_qi get` 必须经生产 command graph 解析并回显 spawn zone 读数，实际 {chats:?}"
+        );
+    }
+
+    #[test]
+    fn zone_qi_get_outside_all_zones_returns_no_zone_response() {
+        // central-review 31442475206 finding [10]：no-zone 分支（zone_qi.rs:110-117，
+        // `[dev] zone_qi get: no zone at executor position`）零覆盖——所有测试都站在
+        // fallback spawn zone（y ∈ [64, 80]）内，find_zone 返回 None 的路径从未被
+        // 触达。执行者站在所有 zone 之外（y=100 > 80）时，经生产 command graph 提交
+        // `zone_qi get`，必须回显精确的 no-zone 消息且不得出现成功读数。
+        let mut app = setup_command_app();
+        let (bundle, mut helper) = create_mock_client("Bob");
+        let player = app.world_mut().spawn(bundle).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(Position::new([0.0, 100.0, 0.0]));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(CurrentDimension(DimensionKind::Overworld));
+
+        execute_command(&mut app, &mut helper, "zone_qi get");
+
+        let chats = collected_chat(&mut app, &mut helper);
+        assert!(
+            chats.iter().any(|chat| {
+                chat.contains("[dev] zone_qi get: no zone at executor position")
+            }),
+            "zone 外执行者的 `zone_qi get` 必须回显 no-zone 消息，实际 {chats:?}"
+        );
+        assert!(
+            !chats
+                .iter()
+                .any(|chat| chat.contains("zone_qi") && chat.contains("spirit_qi=")),
+            "zone 外执行者不得回显成功读数，实际 {chats:?}"
         );
     }
 }

@@ -285,7 +285,11 @@ def run(env) -> None:
         bot.cmd("reset")
         bot.expect_chat("[dev] reset self", timeout=10.0)
         time.sleep(1.0)  # 命令通道冷却：reset 后 0.6s 内 give 仍会被静默丢弃（实测坑，1.0s 稳）
-        drain_inventory_quiet(bot, quiet=1.2, max_wait=8.0)
+        # 首个 drain 在会话早期（reset mutation 不落 5.0s 网格、其与 flush@5 不成对），
+        # 网格确认需等第二条真 flush（flush@5 + flush@10，~11.25s 处 age=1.25 返回）；
+        # max_wait 8.0（deadline ≈9.5s）会在确认前误超时，放 14.0（review finding
+        # [1][2]：回推不可锚，确认前只能等）。
+        drain_inventory_quiet(bot, quiet=1.2, max_wait=14.0)
 
         # ── 1. forge 拒绝-境界：fresh Awaken → RealmTooLow，无回推 ──
         # central-review 2012 #3：qi=0 时扣 qi 不可观测（0−5 被 clamp 回 0），先抬到

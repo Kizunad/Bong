@@ -33,9 +33,16 @@ PILL = "guyuan_pill"
 BIND_SLOT = 1
 NEGATIVE_WINDOW = 2.0
 # use_quick_slot 的冷却契约（server DEFAULT_COOLDOWN_MS=1500，guyuan_pill 未覆写）。
-# 边界探针在 claimed 值两侧各 ±COOLDOWN_TOLERANCE_MS 处打点（见 6b 注释）。
+# 冷却从 cast 完成 tick 起算，bot 观测的 complete_t 比 server 冷却起点晚 transport
+# 延迟 δ<100ms（本地 e2e 实测）——bot 视角的冷却时长 ∈ (1500−100, 1500]ms，因此
+# 边界探针钉在 complete_t+1400ms（必须仍静默）与 complete_t+1500ms（必须新开 cast）
+# 两侧（见 6b 注释）：取代旧的 ±400ms 宽带——1101..1400ms 的错误实现会在 1400ms
+# 探针处开火被抓，1501..1600ms 的实现会在 1500ms 探针处静默被抓（central-review
+# 31442475206 finding [6]：旧 (1100, 1900]ms 带让 1200ms 实现也全过）。
 COOLDOWN_MS = 1500
-COOLDOWN_TOLERANCE_MS = 400
+COOLDOWN_TRANSPORT_SKEW_MS = 100
+COOLDOWN_TOLERANCE_MS = 400  # (a) 立刻重按探针的负窗口长度
+PROBE_TRAILING_WINDOW_MS = 75  # (b) 探针意图处理延迟的尾部覆盖
 
 
 def _expect_bind_response(
@@ -346,36 +353,40 @@ def run(env) -> None:
         complete_t = complete_event.t
 
         # ── 6b. use 冷却分支 + 1500ms 边界钉死（review finding [5] + central-review
-        #     31438252846 finding [7]）。冷却从 cast 完成 tick 起算
-        #     （set_cast_cooldown 先于 push_cast_sync(Complete)，is_on_cooldown 判定
-        #     cooldown_until_tick > now_tick，DEFAULT_COOLDOWN_MS=1500 → 30 tick），
-        #     bot 观测的 complete_t 即冷却起点。旧测试只在 complete 后立刻按一次 +
-        #     固定 2s 负窗口 + 窗口后按一次，等价断言「0 < 冷却 ≤ 2s」——把 1500ms
-        #     误写成 1000ms 的错误实现也全过。现在把观察点移到 claimed 边界两侧
-        #     （±COOLDOWN_TOLERANCE_MS=400ms）：
-        #       (b) complete_t+1100ms 处 use → 必须仍静默（冷却 ≤1100ms 的实现此时
-        #           已过期、开火即被抓）；
-        #       (c) complete_t+1900ms 处 use → 必须新开 cast（冷却 >1900ms 的实现
-        #           仍冷却、无 casting 即被抓）。
-        #     两探针把冷却钉在 (1100, 1900]ms，而不是旧实现的 (0, 2000]ms。
-        #     transport 容差：本地 e2e bot 观测 complete_t 与 server 冷却起点差
-        #     <100ms，±400ms 裕量充足；20tps 下 30 tick 冷却恰好 1500ms。
+        #     31438252846 finding [7] + 31442475206 finding [6]）。冷却从 cast 完成
+        #     tick 起算（set_cast_cooldown 先于 push_cast_sync(Complete)，
+        #     is_on_cooldown 判定 cooldown_until_tick > now_tick，
+        #     DEFAULT_COOLDOWN_MS=1500 → 30 tick），bot 观测的 complete_t 比 server
+        #     冷却起点晚 transport 延迟 δ<100ms（本地 e2e 实测）——bot 视角冷却时长
+        #     ∈ (1500−100, 1500]ms。旧测试（complete 后立刻按一次 + 2s 负窗口 +
+        #     窗口后按一次）等价断言「0 < 冷却 ≤ 2s」；上一版把探针移到 ±400ms 处
+        #     （(1100, 1900]ms 带），把 1500 误写成 1200ms 的实现仍全过。现在把两
+        #     探针钉到 claimed 边界本身（δ<100ms 是唯一剩余裕量）：
+        #       (b) complete_t+1400ms 处 use → 必须仍静默（server 冷却要到
+        #           complete_t+1500−δ ≥ 1400+100−δ > 1400 才过期；冷却 ≤1400ms 的
+        #           实现此时已过期、开火即被抓）；
+        #       (c) complete_t+1500ms 处 use → 必须新开 cast（server 冷却
+        #           complete_t+1500−δ ≤ 1500 已过期；冷却 >1500ms 的实现仍冷却、
+        #           无 casting 即被抓）。
+        #     两探针把冷却钉在 (1400, 1500]ms 观测值上（= 契约 1500ms ± 已文档化的
+        #     transport 偏差 <100ms），取代旧 (1100, 1900]ms 带。
         cooldown_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
         # (a) 立刻重按必须静默（无冷却的实现会立即开火）。
         _assert_no_cast_sync_until(
             bot, cooldown_anchor, complete_t + COOLDOWN_TOLERANCE_MS / 1000.0
         )
-        # (b) 边界前探针：仍须静默（冷却尚未过期）。
-        before_probe_t = complete_t + (COOLDOWN_MS - COOLDOWN_TOLERANCE_MS) / 1000.0
+        # (b) 边界前探针：仍须静默（冷却尚未过期）。窗口尾部只留探针意图的处理延迟
+        #     （PROBE_TRAILING_WINDOW_MS），必须在 (c) 的 +1500ms 探针之前收口。
+        before_probe_t = complete_t + (COOLDOWN_MS - COOLDOWN_TRANSPORT_SKEW_MS) / 1000.0
         _sleep_until_event_time(bot, before_probe_t)
         before_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})
         _assert_no_cast_sync_until(
-            bot, before_anchor, before_probe_t + COOLDOWN_TOLERANCE_MS / 1000.0
+            bot, before_anchor, before_probe_t + PROBE_TRAILING_WINDOW_MS / 1000.0
         )
         # (c) 边界后探针：必须新开 cast（冷却已过期）。
-        after_probe_t = complete_t + (COOLDOWN_MS + COOLDOWN_TOLERANCE_MS) / 1000.0
+        after_probe_t = complete_t + COOLDOWN_MS / 1000.0
         _sleep_until_event_time(bot, after_probe_t)
         after_anchor = last_event_time(bot)
         bot.intent({"type": "use_quick_slot", "v": 1, "slot": BIND_SLOT})

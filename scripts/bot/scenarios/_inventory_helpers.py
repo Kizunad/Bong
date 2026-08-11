@@ -75,23 +75,51 @@ def _inventory_snapshot_events(bot) -> list[Any]:
     ]
 
 
-def _periodic_flush_events(bot) -> list[Any]:
-    """只保留与服务器固定周期 flush 网格对齐的快照（revision 与前一快照相同）。
+PERIODIC_FLUSH_PERIOD = 5.0  # 服务端严格 100 tick @ 20tps
+PERIODIC_FLUSH_GRID_TOL = 0.4
 
-    服务端每 100 tick 发一条「revision 不变的当前状态快照」；mutation 快照
-    （give/move/forge 等）revision 单调递增且**不重置**周期定时器。payload 无
-    reason 字段，bot 无法从单条快照区分周期 flush 与拒绝回推（两者 revision 都不
-    变），但至少能排除 mutation——周期网格不随 mutation 平移，锚必须落在真周期
-    flush 上（central-review 31438252846 finding [1]）。"""
+
+def _periodic_flush_events(bot) -> list[Any]:
+    """只保留与服务器固定周期 flush 网格对齐的快照。
+
+    服务端每 100 tick（严格 5.0s）发一条「revision 不变的当前状态快照」，固定
+    相位网格不随任何事件平移；mutation（give/move/forge）bump revision 且不重置
+    定时器，拒绝回推与请求同 tick 下发（revision 也不变）。payload 无 reason
+    字段，单条快照无法区分周期 flush 与拒绝回推——但时间戳暴露了网格：真 flush
+    严格落在 5.0s 算术网格上，拒绝回推落在请求时刻（任意相位）。本函数取覆盖
+    同 revision 事件数最多的网格相位，且必须 ≥2 条事件确认（单条或两两歧义时
+    无法判定，保守返回空——误锚回推会把「距下一 flush 的剩余时间」高估到 ≥
+    quiet，central-review 31442475206 finding [1] 的精确攻击面）。"""
     snapshots = _inventory_snapshot_events(bot)
-    periodic: list[Any] = []
+    same_rev: list[Any] = []
     previous_revision: int | None = None
     for event in snapshots:
         revision = int(event.data["payload"].get("revision", -1))
         if previous_revision is not None and revision == previous_revision:
-            periodic.append(event)
+            same_rev.append(event)
         previous_revision = revision
-    return periodic
+    if not same_rev:
+        return []
+
+    def phase_dist(t: float, offset: float) -> float:
+        d = (t - offset) % PERIODIC_FLUSH_PERIOD
+        return min(d, PERIODIC_FLUSH_PERIOD - d)
+
+    best_offset: float | None = None
+    best_count = 0
+    for candidate in same_rev:
+        offset = candidate.t % PERIODIC_FLUSH_PERIOD
+        count = sum(
+            1 for e in same_rev if phase_dist(e.t, offset) <= PERIODIC_FLUSH_GRID_TOL
+        )
+        if count > best_count:
+            best_count = count
+            best_offset = offset
+    if best_offset is None or best_count < 2:
+        return []
+    return [
+        e for e in same_rev if phase_dist(e.t, best_offset) <= PERIODIC_FLUSH_GRID_TOL
+    ]
 
 
 def wait_inventory_contains(bot, item_id: str, timeout: float = 10.0) -> dict[str, Any]:
@@ -278,10 +306,11 @@ def drain_inventory_quiet(bot, quiet: float = 2.0, max_wait: float = 12.0) -> No
     连续 quiet 秒无快照」——连续静默只能证明上一快照的年龄 ≥ quiet，无法排除下一
     flush 已在 quiet 秒内逼近（review finding [1]：旧实现从 helper 起跑时刻计静默，
     可在上一 flush 后 2.5s 起跑、静默 2s、4.5s 处返回，下一 flush 0.5s 后就到）。
-    本实现锚在**最近一次周期 flush**上（`_periodic_flush_events` 按 revision 与前
-    一快照相同过滤掉 mutation 快照——mutation 会 bump revision 但不重置服务器的
-    周期定时器，central-review 31438252846 finding [1] 根因；give/move 后紧跟的
-    drain 若锚在 mutation 上会误判剩余时间），且返回点必须落在
+    本实现锚在**最近一次网格确认的周期 flush**上（`_periodic_flush_events` 先按
+    revision 与前一条快照相同排除 bump revision 的 mutation，再按 5.0s 固定网格
+    相位排除拒绝回推——回推 revision 也不变、只落在请求时刻，central-review
+    31438252846 finding [1] + 31442475206 finding [1] 根因；锚在 mutation 或回推
+    上都会误判剩余时间），且返回点必须落在
         quiet ≤ (now − last_periodic_flush) ≤ PERIOD − quiet
     的窗口内：太早（距上一 flush < quiet）说明残余回推可能仍在滴入；太晚（距下一
     周期 flush 不足 quiet 秒）则 flush 可能落进接受窗口。窗口外则等到下一 flush
@@ -289,7 +318,7 @@ def drain_inventory_quiet(bot, quiet: float = 2.0, max_wait: float = 12.0) -> No
     配合把拒绝回推的接受窗口设成 < quiet，周期 flush 便无法落进窗口冒充权威回推；
     「省略回推」的错误实现窗口内拿不到任何快照，确定性红。
     """
-    period = 5.0  # 周期 flush 严格 100 tick @ 20tps
+    period = PERIODIC_FLUSH_PERIOD
     deadline = time.monotonic() + max_wait
     while True:
         now = time.monotonic()
