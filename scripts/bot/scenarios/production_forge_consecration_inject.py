@@ -35,8 +35,16 @@ MODULES = ["forge", "inventory"]
 # inscription slots 2、required_scroll_count 2（fail_chance 只在步末结算 roll，
 # 且 deterministic_step_roll 由 session_id 种子——结构上必然推进到 Consecration）；
 # consecration qi_cost 80.0、min_realm "Spirit"。
-ANVIL_ID = "ling_iron_anvil"
-ANVIL_TIER = 2
+#
+# 砧档位修正（CI run 31448705964 / 31451142220 两次实证）：ling_feng_v0 的
+# required 材料 sui_tie 是 MineralRarity::Xi（mineral/types.rs:135-137）→
+# forge_tier_min()==3（Metal → rarity().tier().min(3)，types.rs:188-192）→
+# 灵铁砧（tier 2）炼不动：handle_start_forge_requests 的 bp.validate_with 走
+# TierMismatch → 只发 MineralFeedbackEvent 聊天回执「炼不动」（events.rs，
+# 无任何日志行）→ 静默拒绝。必须用玄铁砧（tier 3，station.tier>=station_tier_min
+# 仍满足 ling_feng_v0 的 station_tier_min=2）。
+ANVIL_ID = "xuan_iron_anvil"
+ANVIL_TIER = 3
 BLUEPRINT_SCROLL_ID = "blueprint_scroll_ling_feng"
 BLUEPRINT_ID = "ling_feng_v0"
 SUI_TIE_ID = "sui_tie"
@@ -118,7 +126,7 @@ def run(env) -> None:
         bot.cmd("clearinv all")
         bot.expect_chat("[dev] clearinv", timeout=30.0)
 
-        # ── 备料：灵铁砧×1 + sui_tie×3 + 铭文残卷×2 + 图谱残卷×1 ──────────
+        # ── 备料：玄铁砧×1 + sui_tie×3 + 铭文残卷×2 + 图谱残卷×1 ──────────
         bot.cmd(f"give {ANVIL_ID} 1")
         wait_inventory_contains(bot, ANVIL_ID)
         bot.cmd(f"give {SUI_TIE_ID} 3")
@@ -142,7 +150,8 @@ def run(env) -> None:
         px, py, pz = (int(v) for v in bot.position)
         station_pos = (px - 2, py, pz)
 
-        # ── 放砧（真实 instance_id + tier 2，灵铁砧才炼得动 min_tier 2 材料） ──
+        # ── 放砧（真实 instance_id + tier 3：sui_tie 是 Xi 稀有度，forge_tier_min==3，
+        #    灵铁砧 tier 2 会被 validate_with 静默拒绝——见文件头砧档位修正） ──
         anchor = last_event_time(bot)
         bot.intent(
             {
