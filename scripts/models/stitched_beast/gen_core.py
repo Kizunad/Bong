@@ -32,20 +32,24 @@ OUT_DIR = HERE.parent / "local_models"
 OUT = OUT_DIR / "StitchedBeastCore.bbmodel"
 
 # 末法调色：没有一个鲜亮色。唯一的暖色是黏液那点病态黄绿，且它是"淌出来的"不是"长出来的"。
+# round 2 拉开了明度跨度：round 1 全部挤在中灰棕，渲出来像块石头，读不出"由几块
+# 不同来源的肉拼起来"。膜要够亮、静脉要够暗、赘生物的 scar 要偏黄——差异本身就是叙事。
 MATS: dict[str, tuple[int, int, int]] = {
-    "flesh_pale": (150, 132, 130),
-    "flesh_deep": (108, 84, 88),
-    "membrane": (182, 168, 156),
-    "vein": (84, 52, 56),
-    "bile": (134, 132, 92),
-    "scar": (126, 104, 100),
-    "stitch": (52, 44, 42),
+    "flesh_pale": (162, 142, 138),
+    "flesh_deep": (92, 68, 74),
+    "membrane": (198, 186, 168),
+    "vein": (76, 40, 46),
+    "bile": (140, 140, 88),
+    "scar": (148, 122, 108),
+    "weld": (96, 58, 58),
+    "weld_dark": (66, 38, 42),
     "drip": (118, 116, 80),
 }
 
 # 垂滴：挂在下腹最低处的黏液柱。数量少而长短不一——等长的一排会读成"流苏"，
 # 那是装饰；长短乱的才读成"正在滴"。
 DRIP_COUNT = 7
+DRIP_FLOOR = 8.5   # 垂滴最低不得低于此高度——再低就垂进腿层，读成触手而非黏液
 
 
 def _bone_tree(rig: Rig) -> None:
@@ -87,18 +91,56 @@ def part_drips(rig: Rig) -> int:
         if len(chosen) >= DRIP_COUNT:
             break
     for i, (cx, cz, (y0, s, _frm, _to)) in enumerate(chosen):
-        # 长度上限压在 5.5：更长的垂滴会垂到腿层里去，读成"触手"而不是"正在滴的黏液"。
-        drop = 1.8 + C._noise(s.iy, s.x0, s.z0, "drip") * 3.7
+        # 长度直接由**离地下限**反推，不靠"猜一个够短的长度"：腹底会随抖动幅度和场
+        # 参数上下浮动，写死长度的话调一次抖动就撞破 DRIP_FLOOR（round 2 实测撞了）。
+        want = 1.8 + C._noise(s.iy, s.x0, s.z0, "drip") * 3.7
+        drop = max(1.2, min(want, y0 - DRIP_FLOOR))
         r = 0.7 + C._noise(s.iy, s.x0, s.z0, "dr") * 0.6
         rig.cube(s.bone, f"drip_{i}", (cx - r, y0 - drop, cz - r), (cx + r, y0 + 0.6, cz + r),
                  mat="drip")
     return len(chosen)
 
 
+def part_welds(rig: Rig) -> int:
+    """癒合痕：两团组织自己长到一起留下的隆起脊。
+
+    这是缝合兽读得出来的**唯一**标志。没有它，核心只是一团肉；有了它，玩家才看得出
+    这团肉是几块分别长进来的。位置不是画上去的——见 core.welds，痕即 lobe 边界。
+
+    **不是外科缝合**：没有线、没有针、没有等距横扣。自体融合（正典称"塑性再生"）留下
+    的是不规则隆起——粗细逐段变、局部堆成肉瘤、融合彻底处直接没有痕。等粗等距的脊
+    会立刻读成人造缝合口。
+
+    脊用**暗色**而非亮色：先试过偏亮的新生组织色（176,150,138），与 flesh_pale
+    只差 14 级明度，渲出来完全看不见。在 MC 的像素尺度上，暗线压在中明度肉上才
+    读得出走向。两侧组织颜色的不匹配由 lobe 材质自己承担，不用在这里再涂一遍。
+
+    抬出量取抖动上限的六成：抬满（>JITTER_MAX）脊会整条浮在皮外像根虫，抬太少又会
+    被鼓出来的肉块埋掉（round 2 两头都撞过）。六成处大部分段贴着皮、少数被肉半埋——
+    半埋恰好是癒合痕该有的样子，它本来就长在皮里。
+    """
+    n = 0
+    for i, w in enumerate(C.welds()):
+        base = w.pos + w.normal * (C.JITTER_MAX * 0.6 + w.radius * 0.3)
+        # 段长必须大于体素间距（VOX=2）的一半，相邻段才重叠成连续的脊
+        a = base - w.tangent * 1.55
+        b = base + w.tangent * 1.55
+        rig.shaft(w.bone, f"weld_{i}", tuple(a), tuple(b), w.radius, mat="weld")
+        n += 1
+        if w.bulge:
+            # 融合失控处堆出的肉瘤：更外、更粗、压一层暗色，读成"这里长坏了"
+            tip = w.pos + w.normal * (C.JITTER_MAX * 0.6 + 0.35 + w.radius * 0.6)
+            r = w.radius * 0.85
+            rig.cube(w.bone, f"wart_{i}", tuple(tip - r), tuple(tip + r), mat="weld_dark")
+            n += 1
+    return n
+
+
 def build() -> Rig:
     rig = Rig(Palette(MATS, swatch=8, size=64))
     _bone_tree(rig)
     part_mass(rig)
+    part_welds(rig)
     part_drips(rig)
     return rig
 
@@ -176,9 +218,26 @@ def check(rig: Rig) -> list[str]:
             if d < 4.0:
                 bad.append(f"socket {a} 与 {b} 相距仅 {d:.1f}，部件会互穿")
 
-    # ⑦ 块数预算：189 上下。翻倍说明 merge 或材质斑块化退化了。
-    if len(rig.elements) > 320:
-        bad.append(f"块数 {len(rig.elements)} 超预算 320——检查 MAT_PATCH / merge_slabs")
+    # ⑦ 癒合痕必须存在、覆盖每一处 lobe 交界、且**粗细不齐**。
+    #    痕是缝合兽唯一读得出来的标志，这条断言防的是"顺手把接缝抹平"；
+    #    粗细方差那条防的是把它做成等粗等距的人造缝合口（正典是自体塑性再生）。
+    wl = C.welds()
+    if len(wl) < 20:
+        bad.append(f"癒合痕只有 {len(wl)} 段——核心必须看得出是几块长到一起的")
+    weld_bones = {w.bone for w in wl}
+    for lb in C.LOBES:
+        if lb.parent and lb.name not in weld_bones:
+            bad.append(f"lobe {lb.name} 没有任何癒合痕——它是怎么接上去的？")
+    rs = [w.radius for w in wl]
+    spread = max(rs) - min(rs)
+    if spread < 0.35:
+        bad.append(f"癒合痕粗细跨度仅 {spread:.2f}，等粗会读成人造缝合口而非自体融合")
+    if not any(w.bulge for w in wl):
+        bad.append("没有一处融合肉瘤——通篇均匀的痕不像自己长的")
+
+    # ⑧ 块数预算。翻倍说明 merge 或材质斑块化退化了。
+    if len(rig.elements) > 400:
+        bad.append(f"块数 {len(rig.elements)} 超预算 400——检查 MAT_PATCH / merge_slabs")
     return bad
 
 

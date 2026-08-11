@@ -10,14 +10,20 @@
 
     f(p) = Σ wᵢ · exp(-|(p - cᵢ) / sᵢ|²)        ∇f = Σ wᵢ·exp(-rᵢ²)·(-2)(p-cᵢ)/sᵢ²
 
-三件东西全部从同一个场里掉出来，不另外手摆：
+四件东西全部从同一个场里掉出来，不另外手摆：
 
   几何   等值面体素化 → 逐层贪心矩形合并 → **只留表层**（内部方块永远看不见）
-  骨骼   每个体素归属于对它 f 贡献最大的 lobe —— lobe 就是骨，分段自动
-  挂载点 从核心中心朝候选方位射线，撞 f=1 处即表面点，法向取 -∇f 归一化
+  骨骼   每个体素归属于对它 f 贡献最大的正权 lobe —— lobe 就是骨，分段自动
+  癒合痕 两个 lobe 在表面交界处即为痕（见 `welds`）—— 与骨骼分段共用同一划分
+  挂载点 从核心内部朝候选方位射线，撞 f=1 处即表面点，法向取 -∇f 归一化
 
 「不对称」是硬约束不是风格：`lump_l` 长在左肋、`lump_dorsal` 偏右背、`nodule_r`
 在右后——三处刻意破对称。gen_core 的自检**断言核心左右不镜像**，防后来者好心"修正"。
+
+**融合痕不是缝合口**（决策，别改回去）：正典《异兽三形考》§兽·噬 写的是「不是物理
+接合——是一层层组织的重新编织……一种余不知名的**塑性再生**」。所以这里没有线、没有
+针、没有等距横扣，只有不规则的隆起脊、粗细随机、局部堆成肉瘤、融合彻底处无痕。
+"缝合兽"是它的名字，不是它的做法。
 
 单位与朝向沿用体素生物流水线：MC 像素，16 = 1 格，地面 y=0，头朝 -Z，`_l` = 负 x。
 """
@@ -37,6 +43,9 @@ CORE_CENTER = np.array([0.0, 24.0, 0.0])   # 核心质心（站立姿；腿在�
 VOX = 2.0                                   # 体素边长
 ISO = 1.0                                   # 等值面阈值
 MAT_PATCH = 2                               # 材质斑块边长（体素数），见 _material
+JITTER_BASE = 0.55                          # 表面抖动基准幅度，见 slab_box
+JITTER_PER_SPAN = 0.22                      # 每多跨一格加的抖动
+JITTER_MAX = JITTER_BASE + 4 * JITTER_PER_SPAN   # 抖动最大外扩；癒合脊必须抬得比它高
 
 
 # ---------------------------------------------------------------- 场定义
@@ -68,14 +77,31 @@ LOBES: tuple[Lobe, ...] = (
     Lobe("nodule_r", (10.0, -1.5, 9.5), (4.5, 4.2, 4.6), 0.95, "core_hind"),
 )
 
-_LC = np.array([lb.center for lb in LOBES])
-_LR = np.array([lb.radii for lb in LOBES])
-_LW = np.array([lb.weight for lb in LOBES])
-_LN = [lb.name for lb in LOBES]
+# 负权凹槽：在两团肉的交界处**刻**一圈沟。
+#
+# 高斯和永远是凸的——只加正权 lobe，等值面必然鼓成一只圆面包（round 2 实测正视图
+# 就是个穹顶）。而自体融合的交界处一定有沟：两团肉挤到一起，接缝处组织下陷，沟上
+# 再长出癒合脊。有沟才读得出"这是几团东西挤在一张皮里"，没沟就是一个球。
+#
+# 形状取压扁的盘（沿交界法向薄、另两轴宽），等于沿该方向切一圈腰。
+# 负权 lobe **不参与 owner()**（argmax 只在正权段里取），所以不会抢骨骼归属。
+GROOVES: tuple[Lobe, ...] = (
+    Lobe("groove_neck", (0.0, 1.5, -6.0), (14.0, 8.0, 2.6), -0.42),
+    Lobe("groove_waist", (-0.5, 1.0, 6.5), (14.0, 9.0, 2.8), -0.38),
+    Lobe("groove_lump_l", (-9.5, 2.5, -2.5), (2.4, 7.5, 8.5), -0.34),
+    Lobe("groove_dorsal", (3.5, 7.5, 4.0), (7.5, 2.4, 8.5), -0.30),
+)
+
+_ALL: tuple[Lobe, ...] = LOBES + GROOVES
+_LC = np.array([lb.center for lb in _ALL])
+_LR = np.array([lb.radii for lb in _ALL])
+_LW = np.array([lb.weight for lb in _ALL])
+_LN = [lb.name for lb in _ALL]
+_NPOS = len(LOBES)
 
 
 def contributions(p: np.ndarray) -> np.ndarray:
-    """每个 lobe 在 p 处的贡献（相对 CORE_CENTER 的局部坐标）。"""
+    """每个 lobe（含负权凹槽）在 p 处的贡献（相对 CORE_CENTER 的局部坐标）。"""
     d = (np.asarray(p, float) - _LC) / _LR
     return _LW * np.exp(-np.einsum("ij,ij->i", d, d))
 
@@ -94,8 +120,11 @@ def grad(p: np.ndarray, eps: float = 1e-3) -> np.ndarray:
 
 
 def owner(p: np.ndarray) -> str:
-    """p 处贡献最大的 lobe —— 骨骼归属由此派生，不手工划分段。"""
-    return _LN[int(np.argmax(contributions(p)))]
+    """p 处贡献最大的**正权** lobe —— 骨骼归属由此派生，不手工划分段。
+
+    argmax 只在正权段里取：负权凹槽是"刻掉的地方"，没有肉，不该拥有几何。
+    """
+    return _LN[int(np.argmax(contributions(p)[:_NPOS]))]
 
 
 def surface_hit(direction, *, origin=None, lo: float = 0.5, hi: float = 34.0,
@@ -145,6 +174,8 @@ class Voxel:
     iz: int
     bone: str
     mat: str
+    normal: np.ndarray = field(default_factory=lambda: np.array([0.0, 1.0, 0.0]))
+    seam: tuple[str, ...] = ()      # 邻域里出现的其它 lobe；非空 = 这格在缝上
 
 
 @dataclass
@@ -170,23 +201,30 @@ def _voxel_center(ix: int, iy: int, iz: int) -> np.ndarray:
     return np.array([(ix + 0.5) * VOX, (iy + 0.5) * VOX, (iz + 0.5) * VOX])
 
 
-def _material(p: np.ndarray, bone: str, ix: int, iy: int, iz: int) -> str:
+def _material(bone: str, normal: np.ndarray, ix: int, iy: int, iz: int) -> str:
     """表层材质。核心没有"设计过的配色"——只有三件事看得出来：
-    肉、被撑薄到透光的膜、以及积在下腹淌不掉的黏液。
+    肉、被撑薄到透光的膜、以及淌不掉的黏液。
 
     噪声按 MAT_PATCH 大小的**斑块**取，不逐体素取：逐体素等于给每格掷一次骰子，
     相邻格几乎不同材质，既渲成一身彩色噪点，又让 merge_slabs 完全合并不动
     （实测合并率从 1.66:1 掉不下去）。斑块化同时解决观感和块数两件事。
+
+    黏液按**朝下的面**判，不按高度判：`p[1] < 阈值` 会在肚子上切出一条笔直的水平
+    色带（round 1 实测：渲出来像站在一滩藻里）。黏液是顺着重力挂在下垂面上的，
+    该出现在每一处朝下的凸缘，不该出现在同高度的侧壁。
     """
     if bone in ("lump_l", "lump_dorsal", "nodule_r"):
         return "scar"
     px, py, pz = ix // MAT_PATCH, iy // MAT_PATCH, iz // MAT_PATCH
-    if p[1] < -5.5:                      # 下腹：黏液顺着往下积
-        return "bile" if _noise(px, py, pz, "b") < 0.75 else "flesh_deep"
+    # 门槛压在 0.55 而不是 0.30：椭球的整个下半面法向 y 都 < -0.3，用 0.30 等于把
+    # 下半身整个刷绿（round 2 实测像半只兽泡在藻里）。黏液只挂在**明显朝下**的凸缘。
+    down = float(-normal[1])                       # +1 = 完全朝下
+    if down > 0.55 and _noise(px, py, pz, "b") < (down - 0.55) * 1.3:
+        return "bile"
     n = _noise(px, py, pz, "m")
     if n < 0.20:                         # 撑薄处透出底下的暗色
         return "membrane"
-    if n < 0.28:
+    if n < 0.30:
         return "vein"
     return "flesh_pale"
 
@@ -205,14 +243,27 @@ def voxelize() -> list[Voxel]:
             for iz in range(lo[2], hi[2]):
                 if fld(_voxel_center(ix, iy, iz)) >= ISO:
                     inside.add((ix, iy, iz))
-    out: list[Voxel] = []
+    nb = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
+    surf: list[tuple[int, int, int]] = []
     for (ix, iy, iz) in sorted(inside):
-        nb = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
         if all((ix + a, iy + b, iz + c) in inside for a, b, c in nb):
             continue
+        surf.append((ix, iy, iz))
+
+    own = {k: owner(_voxel_center(*k)) for k in surf}
+    sset = set(surf)
+    out: list[Voxel] = []
+    for (ix, iy, iz) in surf:
         p = _voxel_center(ix, iy, iz)
-        bone = owner(p)
-        out.append(Voxel(ix, iy, iz, bone, _material(p, bone, ix, iy, iz)))
+        bone = own[(ix, iy, iz)]
+        n = -grad(p)
+        n = n / np.linalg.norm(n)
+        # 缝：邻域里出现别的 lobe = 这里是两团肉接上的地方。缝的位置不是画上去的，
+        # 它和骨骼分段共用同一个 owner() 划分——「哪两块是分别缝进来的」这件事
+        # 在场里只有一个答案。
+        others = sorted({own[k] for a, b, c in nb
+                         if (k := (ix + a, iy + b, iz + c)) in sset and own[k] != bone})
+        out.append(Voxel(ix, iy, iz, bone, _material(bone, n, ix, iy, iz), n, tuple(others)))
     return out
 
 
@@ -254,13 +305,80 @@ def slab_box(s: Slab) -> tuple[np.ndarray, np.ndarray]:
     """slab → 世界坐标 (from, to)，带确定性表面抖动。
 
     抖动是必要的而不是装饰：等值面体素化后每一面都是完美平面，渲出来是一堆瓷砖。
-    ±0.35 的随机胀缩让轮廓有毛刺，才读得出"这是一团肉"而不是"这是个体素球"。
-    抖动只外扩不内缩到负体积，且相邻 slab 各自抖各自的 —— 缝隙由重叠掩盖。
+    随机胀缩让轮廓有毛刺，才读得出"这是一团肉"而不是"这是个体素球"。抖动只外扩
+    不内缩到负体积，且相邻 slab 各自抖各自的 —— 缝隙由重叠掩盖。
+
+    幅度对大 slab 加码：round 1 用统一 ±0.35，大片平坦区域仍渲成整齐的梯田
+    （3/4 视图上右侧一整面阶梯状台地）。面积越大越需要打断，所以按跨度线性加权。
     """
-    j = [(_noise(s.iy, s.x0, s.z0, s.bone, k) - 0.35) * 0.7 for k in range(6)]
+    span = max(s.x1 - s.x0, s.z1 - s.z0)
+    amp = JITTER_BASE + min(span - 1, 4) * JITTER_PER_SPAN
+    j = [(_noise(s.iy, s.x0, s.z0, s.bone, k) - 0.3) * amp for k in range(6)]
     frm = np.array([s.x0 * VOX - j[0], s.iy * VOX - j[1], s.z0 * VOX - j[2]])
     to = np.array([s.x1 * VOX + j[3], (s.iy + 1) * VOX + j[4], s.z1 * VOX + j[5]])
     return frm + CORE_CENTER, to + CORE_CENTER
+
+
+@dataclass
+class Weld:
+    """一段**癒合痕**：两团组织自己长到一起留下的隆起。
+
+    不是外科缝合。正典写得很明白（《异兽三形考》§兽·噬）：「不是物理接合——是一层层
+    组织的重新编织……这是一种余不知名的**塑性再生**」。所以这里没有线、没有针、没有
+    等距的横扣——那是人造缝合口的读法。自体融合留下的是：不规则的隆起脊、粗细随机、
+    局部堆成瘤、以及两侧本来就不同的组织颜色。
+
+    pos 表皮点，normal 外法向，tangent 沿癒合痕走向；radius 该段的隆起粗细；
+    bulge 表示这一段融合失控堆成了肉瘤。
+    """
+
+    pos: np.ndarray
+    normal: np.ndarray
+    tangent: np.ndarray
+    radius: float
+    bulge: bool
+    bone: str = "core_mid"
+
+
+def welds(voxels: list[Voxel] | None = None, *, step: int = 1) -> list[Weld]:
+    """癒合痕：两个 lobe 在表面交界处的那一圈。
+
+    位置不是画上去的——缝即 lobe 边界，和骨骼分段共用同一个 owner() 划分：「哪两块
+    是分别长进来的」这件事在场里只有一个答案。
+
+    走向由邻格连线估计：把同为交界格的 6 邻域方向平均后投影到切平面即局部切向。
+    孤立格退化为法向的任一正交方向，不影响观感。
+
+    粗细逐段随机、且有一成几率**断开**（融合彻底的地方看不出痕）、一成几率堆成瘤。
+    等粗等距的脊会立刻读成人造缝合口——不规则本身就是"自己长的"的证据。
+
+    step 必须是 1：先试过隔格取（step=2）+ 粗段，相邻段接不上，渲出来是一堆散落的
+    暗红方块而不是一条脊。要读成"线"，段就得细、且与邻段重叠——细而密胜过粗而疏。
+    """
+    vs = voxels if voxels is not None else voxelize()
+    seam = [v for v in vs if v.seam]
+    sset = {(v.ix, v.iy, v.iz) for v in seam}
+    nb = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
+    out: list[Weld] = []
+    for i, v in enumerate(sorted(seam, key=lambda u: (u.iy, u.iz, u.ix))):
+        if i % step:
+            continue
+        key = (v.ix, v.iy, v.iz)
+        if _noise(*key, "gap") < 0.12:          # 融合彻底处：无痕
+            continue
+        acc = np.zeros(3)
+        for a, b, c in nb:
+            if (v.ix + a, v.iy + b, v.iz + c) in sset:
+                acc += np.array([a, b, c], float)
+        t = acc - v.normal * float(np.dot(acc, v.normal))    # 投影到切平面
+        if np.linalg.norm(t) < 1e-6:
+            ref = np.array([0.0, 1.0, 0.0]) if abs(v.normal[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
+            t = np.cross(v.normal, ref)
+        t = t / np.linalg.norm(t)
+        bulge = _noise(*key, "bulge") < 0.14
+        r = 0.30 + _noise(*key, "r") * 0.32 + (0.38 if bulge else 0.0)
+        out.append(Weld(_voxel_center(*key) + CORE_CENTER, v.normal, t, r, bulge, v.bone))
+    return out
 
 
 # ---------------------------------------------------------------- 挂载点
