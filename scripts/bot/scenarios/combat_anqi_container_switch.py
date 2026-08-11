@@ -95,14 +95,23 @@ def _wait_swap(
     return evt
 
 
-def _expect_silent(pubsub, carrier: str, anchor_count: int, window_s: float, context: str) -> None:
+def _expect_silent(pubsub, carrier: str, anchor: int, window_s: float, context: str) -> None:
     # 只统计本 bot（carrier 归属）的事件：CH_SWAP 是全局频道，别的玩家切换也会
-    # 发布到这里，计数全量会让外来切换把静默窗口误判为"本 bot 发事件"。
+    # 发布到这里，全量计数会让外来切换把静默窗口误判为"本 bot 发事件"。
+    # 窗口化扫描（review finding [minor]）：sleep 只是窗口截止判定，投递完成由
+    # settle 的 PING/PONG 屏障证明；max_ts 取屏障返回时刻而非窗口截止——后者
+    # 会把窗口内发布、迟到入队的事件排除出扫描，负向断言照样 miss（保留原缺陷）。
     time.sleep(window_s)
-    ours = [e for e in pubsub.events_for(CH_SWAP) if e.get("carrier") == carrier]
-    assert len(ours) == anchor_count, (
-        f"{context}：本 bot（carrier={carrier}）不应发布 container_swap 事件，"
-        f"期望 {anchor_count} 条，实际 {len(ours)}"
+    pubsub.settle(grace=2.0)
+    scan_ts = time.monotonic()
+    ours = [
+        e
+        for e in pubsub.window_events(CH_SWAP, after=anchor, max_ts=scan_ts)
+        if e.get("carrier") == carrier
+    ]
+    assert not ours, (
+        f"{context}：本 bot（carrier={carrier}）在锚点后不应发布 container_swap "
+        f"事件，实际 {len(ours)} 条，首条 {ours[0]!r}"
     )
 
 
@@ -125,9 +134,11 @@ def run(env) -> None:
             )
             first_tick = int(first["tick"])
 
-            # 2) 同目标重复：静默（不发事件）
+            # 2) 同目标重复：静默（不发事件）。先锚定再发 intent——窗口从本
+            #    intent 起算，把首次切换的事件排除在外（review finding [minor]）。
+            anchor = pubsub.anchor()
             _switch(bot, "quiver")
-            _expect_silent(pubsub, carrier, 1, 3.0, "同目标重复切换")
+            _expect_silent(pubsub, carrier, anchor, 3.0, "同目标重复切换")
 
             # 3) to=None 轮换：quiver -> pocket_pouch
             anchor = pubsub.anchor()
@@ -158,6 +169,7 @@ def run(env) -> None:
             scanner.scan()
             before_guard = scanner.guard_markers(carrier)
             before_failed = scanner.deserialize_failed(bot.username)
+            anchor = pubsub.anchor()
             _switch(bot, "fenglinghe")
             guard_deadline = time.monotonic() + GUARD_TIMEOUT
             while True:
@@ -190,7 +202,7 @@ def run(env) -> None:
                 f"deserialize failed（新增 {new_failed} 条）——请求在反序列化处"
                 f"断裂，未达 switch 系统"
             )
-            _expect_silent(pubsub, carrier, 2, 3.0, "fenglinghe 拒收")
+            _expect_silent(pubsub, carrier, anchor, 3.0, "fenglinghe 拒收")
 
             # 5) 切回 hand_slot：pocket_pouch -> hand_slot
             anchor = pubsub.anchor()
@@ -206,8 +218,9 @@ def run(env) -> None:
             )
 
             # 6) 同目标 hand_slot：静默
+            anchor = pubsub.anchor()
             _switch(bot, "hand_slot")
-            _expect_silent(pubsub, carrier, 3, 3.0, "同目标 hand_slot")
+            _expect_silent(pubsub, carrier, anchor, 3.0, "同目标 hand_slot")
 
             bot.assert_alive("容器切换全链后")
     finally:

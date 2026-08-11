@@ -242,6 +242,12 @@ class RedisPubSub:
         self._frame_lock = threading.Lock()
         self._closed = False
         self._fatal_error: Optional[BaseException] = None
+        # PING/PONG 投递屏障（settle 用）：pump 消费到 settle 发出的 PING 的
+        # 应答 PONG 时置位。Redis 按入站命令顺序处理发布者连接——截止前已处理的
+        # PUBLISH 会把 message 帧字节先写进订阅连接（严格先于 PONG 字节），
+        # 因此 pump 消费到 PONG 即证明截止前发布的事件已全部入队可见
+        # （round-11 review finding [major]：settle 缺正同步、负向断言漏事件）。
+        self._pong_seen = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @classmethod
@@ -394,6 +400,9 @@ class RedisPubSub:
             self._handle_frame(frame)
 
     def _handle_frame(self, frame: Any) -> None:
+        if frame == "PONG":
+            self._pong_seen.set()
+            return
         if not isinstance(frame, list) or len(frame) != 3 or frame[0] != b"message":
             return
         channel = frame[1].decode("utf-8", "replace")
@@ -470,22 +479,40 @@ class RedisPubSub:
             ]
 
     def settle(self, grace: float = 0.5) -> None:
-        """投递屏障：观察窗截止后，等待 pump 把已发布事件全部消费入队。
+        """投递屏障：PING/PONG 正同步，证明截止前发布的事件已全部可见。
 
         pump 线程的 recv/入队与调用方（场景）的截止判定异步：server 在截止前
         发布的 despawn 可能仍滞留在 socket 接收缓冲或 _frames 缓冲里，截止判定
         通过后 pump 才把它入队——若在截止后直接做最终扫描，负向断言会 miss 窗口
-        内事件（review finding [major]）。宽限期内反复消费已缓冲帧并让 pump 完成
-        收尾 recv；屏障返回后调用方做最终窗口化扫描（window_events + max_ts），
-        截止前已发布的事件已全部可见。本方法不直接读 socket——与 pump 并发 recv
-        同一流会把先后到达的块错序拼进 _buf（帧损坏），故只靠 pump 收尾 + 自身
-        加锁 drain。
+        内事件（review finding [major]）。旧实现靠「固定睡眠 + drain」无法证明
+        投递完成：它与 pump 的消费进度没有任何同步，缓冲里残帧未消费完照样返回。
+
+        机制：向订阅连接写入一条 PING。Redis 按入站命令顺序处理发布者连接上的
+        命令——在 PING 之前处理的 PUBLISH 会把 message 帧字节严格先于 PONG 字节
+        写进订阅连接；帧解析按序进行，pump 消费到 PONG 时，前面所有完整 message
+        帧必已解析并入队。因此「PONG 被消费」即证明「截止前发布的事件已全部
+        可见」，负向断言基于此才成立。
+
+        fail-closed：PONG 未在 grace 内被消费（pump 被饿死/连接坏死）则抛
+        AssertionError——未证明的投递完成不允许支撑负向断言；连接已 fatal 同样
+        直接抛错。返回后做一次保守 drain，清掉 PONG 帧自身之前入队的残留帧。
+        本方法不直接 recv——与 pump 并发读同一流会把先后到达的块错序拼进
+        _buf（帧损坏），屏障只靠 pump 消费 + 自身加锁 drain。
         """
-        end = time.monotonic() + grace
-        while time.monotonic() < end:
-            with self._frame_lock:
-                self._drain_frames()
-            time.sleep(0.05)
+        with self._lock:
+            if self._fatal_error is not None:
+                raise AssertionError(
+                    "redis 连接已因协议异常终止，投递屏障不可信: "
+                    f"{self._fatal_error}"
+                )
+        self._pong_seen.clear()
+        self._sock.sendall(b"PING\r\n")
+        if not self._pong_seen.wait(timeout=grace):
+            raise AssertionError(
+                f"投递屏障未成立：{grace:.1f}s 内 pump 未消费到 PING 应答 "
+                "PONG——截止前发布的事件是否已全部可见未被证明，负向断言不得"
+                "基于此通过"
+            )
         with self._frame_lock:
             self._drain_frames()
 

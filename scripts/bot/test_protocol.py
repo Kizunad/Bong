@@ -4836,27 +4836,84 @@ class RedisPubSubTest(unittest.TestCase):
 
     def test_settle_drains_buffered_frames_as_delivery_barrier(self):
         # 回归：review finding [major]——负向断言的最终扫描若缺投递屏障，截止判定
-        # 与 pump 入队之间的帧会被漏掉。settle 应在宽限期内把已缓冲的帧消费入队，
-        # 随后 window_events 的最终扫描能看到全部已发布事件。
-        pubsub = _redis_helpers.RedisPubSub.__new__(_redis_helpers.RedisPubSub)
-        pubsub._lock = threading.Lock()
-        pubsub._frame_lock = threading.Lock()
-        pubsub._fatal_error = None
-        pubsub._closed = True  # 无 pump 线程，settle 是唯一消费者
-        pubsub._event_seq = 0
-        pubsub._max_events = 5000
-        pubsub._max_event_bytes = _redis_helpers.MAX_EVENT_BYTES
-        pubsub._event_bytes = 0
-        pubsub._events = []
-        frames = _redis_helpers.RespFrames()
-        payload = json.dumps({"owner": "player:x", "tick": 1}).encode()
-        frames.feed(
-            b"*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$%d\r\n%s\r\n" % (len(payload), payload)
-        )
-        pubsub._frames = frames
-        pubsub.settle(0.05)
-        self.assertEqual(len(pubsub.events_for("ch")), 1)
-        self.assertEqual(pubsub.events_for("ch")[0]["tick"], 1)
+        # 与 pump 入队之间的帧会被漏掉。settle 现在以 PING/PONG 正同步证明投递
+        # 完成：PING 写入订阅连接后，pump 必须消费到应答 PONG（Redis 按入站命令
+        # 顺序处理，PONG 之前的 message 帧字节必已先于 PONG 到达），屏障返回即
+        # 已缓冲帧全部消费入队。此测试验证完整通路：真实 pump 线程 + 对端回 PONG。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+
+            def server_loop():
+                # 对客户端每次读取回一条 PONG（真 redis-server 按入站命令顺序
+                # 应答，这里只模拟"读到命令必有应答"的应答面）。
+                try:
+                    while True:
+                        data = server.recv(4096)
+                        if not data:
+                            return
+                        server.sendall(b"+PONG\r\n")
+                except OSError:
+                    return
+
+            thread = threading.Thread(target=server_loop, daemon=True)
+            thread.start()
+
+            # 模拟"截止前发布、字节已入订阅连接但 pump 尚未消费"的帧：直接推入
+            # _frames（等价于 pump 已 recv 未 drain 的状态），settle 的 PONG 屏障
+            # 返回后必须已被消费入队。
+            frames = _redis_helpers.RespFrames()
+            payload = json.dumps({"owner": "player:x", "tick": 1}).encode()
+            frames.feed(
+                b"*3\r\n$7\r\nmessage\r\n$7\r\nmy_chan\r\n$%d\r\n%s\r\n"
+                % (len(payload), payload)
+            )
+            with pubsub._frame_lock:
+                pubsub._frames = frames
+
+            pubsub.settle(0.5)
+            self.assertEqual(len(pubsub.events_for("my_chan")), 1)
+            self.assertEqual(pubsub.events_for("my_chan")[0]["tick"], 1)
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_settle_fails_closed_when_pong_not_consumed(self):
+        # 回归：review finding [major]——settle 的投递屏障未成立（PONG 未被 pump
+        # 消费）时必须抛错而非静默返回：负向断言不得建立在未证明的投递完成上。
+        # 对端不读不回，PING 的 PONG 应答永不出现，屏障必然超时。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            with self.assertRaises(AssertionError) as cm:
+                pubsub.settle(0.05)
+            self.assertIn("投递屏障未成立", str(cm.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
+
+    def test_settle_fails_closed_on_fatal_connection(self):
+        # 回归：review finding [major]——连接已 fatal（泵线程记录协议异常）时
+        # settle 不得静默返回：负向断言不可信，必须抛错。
+        pubsub, server, client = self._pubsub_with_pair()
+        try:
+            ack = b"*3\r\n$9\r\nsubscribe\r\n$7\r\nmy_chan\r\n:1\r\n"
+            server.sendall(ack)
+            pubsub.subscribe("my_chan")
+            pubsub._fatal_error = RuntimeError("protocol exploded")
+            with self.assertRaises(AssertionError) as cm:
+                pubsub.settle(0.05)
+            self.assertIn("protocol exploded", str(cm.exception))
+        finally:
+            pubsub.stop()
+            server.close()
+            client.close()
 
     def test_pump_deep_json_recursion_error_is_fatal(self):
         # 回归：review finding [major]——json.loads 对超深嵌套列表抛 RecursionError，
