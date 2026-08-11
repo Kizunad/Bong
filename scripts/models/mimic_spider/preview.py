@@ -37,7 +37,11 @@ import gen_frame as F  # noqa: E402
 from render_bbmodel import render  # noqa: E402
 from rig import Pose, Rig, rotmat  # noqa: E402
 
-MODEL = F.OUT_DIR / "MimicSpiderFrame.bbmodel"
+MODELS = {
+    "frame": F.OUT_DIR / "MimicSpiderFrame.bbmodel",
+    "shell": F.OUT_DIR / "MimicSpiderShell.bbmodel",
+}
+MODEL = MODELS["frame"]  # render_pose 读取；main 按 --model 覆写
 BLOCK = 16.0  # 拟态目标：一个方块
 
 # 折叠参数（右侧约定；左侧经 sx 镜像自动成立）。
@@ -190,18 +194,27 @@ def render_pose(rig: Rig, pose: Pose, stem: str, views: tuple[str, ...]) -> None
 
 
 def main() -> int:
+    global MODEL
     ap = argparse.ArgumentParser()
     ap.add_argument("--stance", action="store_true", help="展开姿（静止 FK，验证与生成器一致）")
+    ap.add_argument("--model", choices=sorted(MODELS), default="frame")
     args = ap.parse_args()
+
+    MODEL = MODELS[args.model]
+    stem_suffix = "" if args.model == "frame" else f"_{args.model}"
+    # 甲壳模型的折叠断言不吃预留——甲壳就是最终尺寸，直接对 16³ 校验
+    global SHELL_RESERVE
+    if args.model == "shell":
+        SHELL_RESERVE = 0.0
 
     rig = Rig(MODEL)
     if args.stance:
-        render_pose(rig, Pose(), "stance", ("side", "front", "34", "top"))
+        render_pose(rig, Pose(), f"stance{stem_suffix}", ("side", "front", "34", "top"))
         return 0
 
     pose = fold_pose()
     bad = check_fold(rig, pose)
-    render_pose(rig, pose, "fold", ("side", "front", "34", "top"))
+    render_pose(rig, pose, f"fold{stem_suffix}", ("side", "front", "34", "top"))
     return 1 if bad else 0
 
 
