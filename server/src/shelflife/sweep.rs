@@ -9,7 +9,7 @@
 //!
 //! 本系统仅在 sweep 时修改 item — 不对 snapshot emit / probe / consume 读路径产生副作用。
 
-use valence::prelude::{Position, Query, Res, ResMut, Update};
+use valence::prelude::{DetectChangesMut, Position, Query, Res, ResMut, Update};
 
 use crate::inventory::{bump_revision, ItemRegistry, PlayerInventory};
 use crate::spiritwood::item_freshness_behavior;
@@ -41,10 +41,11 @@ pub fn sweep_shelflife_variants(
 
     for (position, current_dim, mut inventory) in inventories.iter_mut() {
         let mut any_switched = false;
+        let inventory_data = inventory.bypass_change_detection();
         let zone_multiplier = zone_multiplier_for_position(zones.as_deref(), position, current_dim);
         let season = query_season("", tick_counter.0).season;
 
-        for container in &mut inventory.containers {
+        for container in &mut inventory_data.containers {
             // plan-food-v1 MAJOR1: 扫描容器内是否存在行为修改器物品（ice_cellar / ling_xia）。
             // 找到第一个非 Normal behavior 的容器物品，用其行为修改本容器内所有 item 的腐败速率。
             let container_behavior: ContainerFreshnessBehavior = container
@@ -77,7 +78,7 @@ pub fn sweep_shelflife_variants(
             }
         }
 
-        for item in inventory
+        for item in inventory_data
             .equipped
             .values_mut()
             .flat_map(|s| s.iter_all_mut())
@@ -96,7 +97,7 @@ pub fn sweep_shelflife_variants(
             }
         }
 
-        for item in inventory.hotbar.iter_mut().flatten() {
+        for item in inventory_data.hotbar.iter_mut().flatten() {
             let entropy_seed = item.instance_id;
             if apply_variant_switch_with_season(
                 item,
@@ -112,7 +113,8 @@ pub fn sweep_shelflife_variants(
         }
 
         if any_switched {
-            bump_revision(&mut inventory);
+            bump_revision(inventory_data);
+            inventory.set_changed();
         }
     }
 }

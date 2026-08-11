@@ -768,12 +768,13 @@ fn transform_equipped_item(
 fn carry_decay_tick(
     clock: Res<CombatClock>,
     registry: Res<ItemRegistry>,
-    mut actors: Query<(&mut PlayerInventory, &mut CarrierStore)>,
+    mut stores: Query<(Entity, &mut CarrierStore)>,
+    mut inventories: Query<&mut PlayerInventory>,
 ) {
     if !clock.tick.is_multiple_of(TICKS_PER_SECOND) {
         return;
     }
-    for (mut inventory, mut store) in &mut actors {
+    for (entity, mut store) in &mut stores {
         let mut expired = Vec::new();
         for (instance_id, imprint) in &mut store.imprints_by_instance {
             if imprint.bond_kind != BondKind::HandheldCarrier {
@@ -790,9 +791,16 @@ fn carry_decay_tick(
                 expired.push(*instance_id);
             }
         }
-        for instance_id in expired {
-            store.imprints_by_instance.remove(&instance_id);
-            degrade_equipped_instance(&mut inventory, &registry, instance_id);
+        if expired.is_empty() {
+            continue;
+        }
+        for instance_id in &expired {
+            store.imprints_by_instance.remove(instance_id);
+        }
+        if let Ok(mut inventory) = inventories.get_mut(entity) {
+            for instance_id in expired {
+                degrade_equipped_instance(&mut inventory, &registry, instance_id);
+            }
         }
     }
 }
