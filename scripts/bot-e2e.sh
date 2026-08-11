@@ -86,6 +86,11 @@ SERVER_LOG=""
 SERVER_RUNTIME_DIR=""
 BOT_NOVICE_RASTER_DIR=""
 BOT_RASTER_READY_PAYLOAD=""
+# 这两个变量必须在安装 cleanup trap 之前初始化为空：SERVER_BINARY/CARGO_TARGET_ROOT
+# 若由调用方环境带入，cleanup 会把它当成本轮 harness 拥有的路径处理（review finding：
+# 中途失败时 rm 掉调用方任意可写文件 / 无界累积 target 树）。先赋空值切断继承。
+SERVER_BINARY=""
+CARGO_TARGET_ROOT=""
 BOT_FALLBACK_READY_PATTERN='^([[:cntrl:]]\[[0-9;]*m)*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[^[:space:][:cntrl:]]+([[:cntrl:]]\[[0-9;]*m)*[[:space:]]+([[:cntrl:]]\[[0-9;]*m)*[[:space:]]*INFO([[:cntrl:]]\[[0-9;]*m)*[[:space:]]+\[bong\]\[world\] BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*$'
 
 # ownership 只能由本轮 self-start server 的 exact ready marker 授予；拒绝继承调用方
@@ -285,8 +290,19 @@ cleanup() {
   fi
   # 每次自起都会向 evidence 目录 install 一份完整 server 可执行文件；server 已终止后
   # 在这里移除，避免每个本地 run 都永久保留一份整二进制（evidence 目录只留 log/场景证据）。
-  if [ -n "${SERVER_BINARY:-}" ] && [ -f "$SERVER_BINARY" ]; then
+  # 删除前必须做证据目录包含性校验：SERVER_BINARY 只允许是本轮
+  # "$EVIDENCE_DIR/bong-server-*" install 路径（review finding：继承自调用方环境的
+  # SERVER_BINARY 若直接 rm，中途失败会删掉调用方任意可写文件）。
+  if [ -n "$SERVER_BINARY" ] \
+    && [[ "$SERVER_BINARY" == "$EVIDENCE_DIR/bong-server-"* ]] \
+    && [ -f "$SERVER_BINARY" ]; then
     rm -f "$SERVER_BINARY"
+  fi
+  # run-private Cargo target（$EVIDENCE_DIR/bong-target）每轮自起都会留下整棵依赖/
+  # 增量产物树；evidence 目录有意保留 log/场景证据，但这棵树只服务于本轮构建，server
+  # 已终止后必须整棵移除（review finding：不删则每次本地 run 无界累积 target 树）。
+  if [ -n "$CARGO_TARGET_ROOT" ] && [ -d "$CARGO_TARGET_ROOT" ]; then
+    rm -rf "$CARGO_TARGET_ROOT"
   fi
   if [ "$OWNED_WORLD_MODE" != "1" ] && [ -n "$SPIRITWOOD_STATE_DIR" ]; then
     rm -f "$SPIRITWOOD_STATE_DIR/harvested.json" "$SPIRITWOOD_STATE_DIR/harvested.tmp"

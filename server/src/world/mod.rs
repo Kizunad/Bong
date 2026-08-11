@@ -1769,23 +1769,43 @@ mod tests {
                 .expect("configured fallback union should fit within eager-allocation limit");
         let chunk_center = CHUNK_WIDTH / 2;
         for chunk_pos in &expected_chunks {
-            let center_x = chunk_pos.x * CHUNK_WIDTH + chunk_center;
-            let center_z = chunk_pos.z * CHUNK_WIDTH + chunk_center;
-            assert_eq!(
-                block_state(&layer, center_x, BEDROCK_Y, center_z),
-                Some(BlockState::BEDROCK),
-                "union chunk ({},{}) 中心必须真实物化 bedrock：只 terraform emergency \
-                 一块的错误实现在此必红",
-                chunk_pos.x,
-                chunk_pos.z,
-            );
-            assert_eq!(
-                block_state(&layer, center_x, GRASS_Y, center_z),
-                Some(BlockState::GRASS_BLOCK),
-                "union chunk ({},{}) 中心必须真实物化 grass",
-                chunk_pos.x,
-                chunk_pos.z,
-            );
+            let block_min_x = chunk_pos.x * CHUNK_WIDTH;
+            let block_min_z = chunk_pos.z * CHUNK_WIDTH;
+            let block_max_x = block_min_x + CHUNK_WIDTH - 1;
+            let block_max_z = block_min_z + CHUNK_WIDTH - 1;
+            // review finding：只断言每 chunk 中心列放过了「每 chunk 只填中心坐标 +
+            // 资源坐标」的残缺实现——它仍会让玩家在簇内其它坐标踩进虚空。fallback
+            // 契约是整块平坦地形：四角 + 中心都必须真实物化 bedrock + grass，
+            // 只填中心列的实现在四角断言上必红。
+            let probes = [
+                (block_min_x, block_min_z),
+                (block_max_x, block_min_z),
+                (block_min_x, block_max_z),
+                (block_max_x, block_max_z),
+                (block_min_x + chunk_center, block_min_z + chunk_center),
+            ];
+            for (probe_x, probe_z) in probes {
+                assert_eq!(
+                    block_state(&layer, probe_x, BEDROCK_Y, probe_z),
+                    Some(BlockState::BEDROCK),
+                    "union chunk ({0},{1}) 坐标 ({2},{3}) \
+                     必须真实物化 bedrock：只填中心列/角落的残缺实现在此必红",
+                    chunk_pos.x,
+                    chunk_pos.z,
+                    probe_x,
+                    probe_z
+                );
+                assert_eq!(
+                    block_state(&layer, probe_x, GRASS_Y, probe_z),
+                    Some(BlockState::GRASS_BLOCK),
+                    "union chunk ({0},{1}) 坐标 ({2},{3}) \
+                     必须真实物化 grass",
+                    chunk_pos.x,
+                    chunk_pos.z,
+                    probe_x,
+                    probe_z
+                );
+            }
         }
 
         // 资源散布必须随真实出生簇落位，而不是只建空 chunk。

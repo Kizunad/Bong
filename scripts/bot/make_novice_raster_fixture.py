@@ -132,6 +132,20 @@ def spawn_fixture_tiles(zones_path: Path = DEFAULT_ZONES_PATH) -> set[tuple[int,
             or cluster.get("safe_y") != SURFACE_Y
         ):
             raise ValueError(f"invalid spawn_distribution[{index}] in {zones_path}")
+        # review finding：逐字段有限性证明不了派生边界有限——anchor=1e308、radius=1e308
+        # 各自有限，但 anchor+radius 求值为 inf，math.floor(inf) 抛 OverflowError，非法
+        # 分布以意外异常类型中止 fixture 生成。派生边界 (anchor ± radius) 必须先证明
+        # 有限，否则一律 ValueError 干净拒绝。
+        if not all(
+            _is_finite_float(value)
+            for value in (
+                anchor[0] - radius,
+                anchor[0] + radius,
+                anchor[2] - radius,
+                anchor[2] + radius,
+            )
+        ):
+            raise ValueError(f"invalid spawn_distribution[{index}] in {zones_path}")
         min_tile_x = math.floor((anchor[0] - radius) / TILE_SIZE)
         max_tile_x = math.floor((anchor[0] + radius) / TILE_SIZE)
         min_tile_z = math.floor((anchor[2] - radius) / TILE_SIZE)

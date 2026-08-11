@@ -260,9 +260,15 @@ fn nearest_unblocked_tile(
         .max((start_z - min_tz_i).abs())
         .max((start_z - max_tz_i).abs());
     let mut work_left = work_budget;
+    // Cell：visit 闭包独占 work_left 的可变借用，环循环需要共享读取"预算是否已耗尽"
+    // —— Cell 让闭包写、循环读互不冲突。
+    let exhausted = std::cell::Cell::new(false);
     let mut visit = |tx: i64, tz: i64| -> Option<(i32, i32)> {
         if work_left == 0 {
-            // 预算耗尽：不再求值谓词，fail-closed。外圈循环继续但每次立即返回 None。
+            // 预算耗尽：不再求值谓词，fail-closed。置 exhausted 标志让外层环循环立即
+            // 终止（review finding：只返回 None 不终止循环的话，CPU 迭代数仍随 zone
+            // 面积无界——预算只约束谓词调用，约束不住环枚举本身）。
+            exhausted.set(true);
             return None;
         }
         work_left -= 1;
@@ -276,6 +282,9 @@ fn nearest_unblocked_tile(
         None
     };
     for radius in 0..=max_radius {
+        if exhausted.get() {
+            break;
+        }
         // Chebyshev 环边界 = max(|dx|,|dz|) == radius。半径 0 的圆盘只有起点本身；
         // radius>0 由四条边组成。逐边枚举 O(8R) 个边界 tile，避免对 (2R+1)² 全盘
         // 逐个跳过（O(R³)，大 zone 的 emergency 回退会退化到秒级）。
@@ -286,6 +295,9 @@ fn nearest_unblocked_tile(
             continue;
         }
         for dx in -radius..=radius {
+            if exhausted.get() {
+                break;
+            }
             if let Some(found) = visit(start_x + dx, start_z - radius) {
                 return Some(found);
             }
@@ -294,6 +306,9 @@ fn nearest_unblocked_tile(
             }
         }
         for dz in -radius..radius {
+            if exhausted.get() {
+                break;
+            }
             if let Some(found) = visit(start_x - radius, start_z + dz) {
                 return Some(found);
             }
@@ -615,6 +630,67 @@ mod tests {
         assert_eq!(distribution[0].radius, 64.0);
     }
 
+    #[test]
+    fn effective_distribution_falls_back_to_patrol_anchors_for_malformed_file() {
+        // review finding：effective_spawn_distribution_from_path 声称每个 load 错误都
+        // 回退 patrol anchor，但既有测试只覆盖「文件缺失」（I/O 错误）与「合法空分布」
+        // 两个分支——present 但解析失败的 malformed 文件走的是 generic Err 分支，返回
+        // 空分布/panic 的错误实现照样绿。本测试写入坏 JSON，断言必须回退到 patrol
+        // anchor。
+        let registry = ZoneRegistry::fallback();
+        let path = std::env::temp_dir().join(format!(
+            "bong-malformed-spawn-distribution-{}-{}.json",
+            std::process::id(),
+            stable_hash("malformed", SpawnPurpose::DevSpawnCommand),
+        ));
+        fs::write(&path, r#"{ "zones": [ "not-an-object" ] }"#)
+            .expect("malformed spawn distribution fixture should be written");
+
+        let distribution = effective_spawn_distribution_from_path(&registry, &path);
+        fs::remove_file(path).expect("malformed spawn distribution fixture should be removed");
+        let patrol_anchor = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .and_then(|zone| zone.patrol_anchors.first())
+            .expect("fallback spawn zone should declare a patrol anchor");
+
+        assert_eq!(distribution.len(), 1);
+        assert_eq!(distribution[0].anchor, *patrol_anchor);
+        assert_eq!(distribution[0].radius, 64.0);
+        assert_eq!(distribution[0].weight, 1);
+        assert_eq!(distribution[0].safe_y, patrol_anchor.y + 2.0);
+    }
+
+    #[test]
+    fn effective_distribution_falls_back_to_patrol_anchors_for_invalid_distribution_entry() {
+        // review finding：与 malformed JSON 同属 generic Err 分支的还有「JSON 合法但
+        // 校验拒绝的分布条目」（本用例 weight=0 触发 load 的合法性校验错误）——错误
+        // 实现若只对 I/O 错误回退、对校验错误 panic/返回空，fallback-world 启动会崩。
+        // 断言校验错误同样必须回退 patrol anchor。
+        let registry = ZoneRegistry::fallback();
+        let path = std::env::temp_dir().join(format!(
+            "bong-invalid-entry-spawn-distribution-{}-{}.json",
+            std::process::id(),
+            stable_hash("invalid-entry", SpawnPurpose::DevSpawnCommand),
+        ));
+        fs::write(
+            &path,
+            r#"{"zones":[{"name":"spawn","spawn_distribution":[{"anchor":[0.0,70.0,0.0],"radius":0.0,"weight":0,"safe_y":72.0}]}]}"#,
+        )
+        .expect("invalid-entry spawn distribution fixture should be written");
+
+        let distribution = effective_spawn_distribution_from_path(&registry, &path);
+        fs::remove_file(path).expect("invalid-entry fixture should be removed");
+        let patrol_anchor = registry
+            .find_zone_by_name(DEFAULT_SPAWN_ZONE_NAME)
+            .and_then(|zone| zone.patrol_anchors.first())
+            .expect("fallback spawn zone should declare a patrol anchor");
+
+        assert_eq!(distribution.len(), 1);
+        assert_eq!(distribution[0].anchor, *patrol_anchor);
+        assert_eq!(distribution[0].radius, 64.0);
+        assert_eq!(distribution[0].weight, 1);
+    }
+
     fn synthetic_registry(bounds: (DVec3, DVec3), blocked_tiles: Vec<(i32, i32)>) -> ZoneRegistry {
         ZoneRegistry {
             spatial_revision: 0,
@@ -812,6 +888,97 @@ mod tests {
     }
 
     #[test]
+    fn emergency_scan_budget_caps_predicate_evaluations_on_pathological_zone() {
+        // review finding：预算耗尽测试只用半径 128 的 zone，暴露不了「预算耗尽后环循环
+        // 仍在继续枚举」的病态工作量。本 zone 半径 16384（全 blocked、唯一空闲 tile 在
+        // 预算之外），谓词求值次数必须被预算精确封顶——预算语义是「最多 work_budget 次
+        // blocked 谓词求值」，与 zone 面积无关。本测试能瞬时完成本身就依赖环循环在预算
+        // 耗尽后立即终止（否则要跑完 ~10 亿次枚举）。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-16_384.0, -64.0, -16_384.0),
+                DVec3::new(16_384.0, 320.0, 16_384.0),
+            ),
+            Vec::new(),
+        );
+        let evaluations = std::cell::Cell::new(0usize);
+        let blocked = |_pos: DVec3| {
+            evaluations.set(evaluations.get() + 1);
+            true
+        };
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 1_000);
+        assert_eq!(
+            found,
+            None,
+            "病态 zone 下预算耗尽必须 fail-closed 返回 None"
+        );
+        assert_eq!(
+            evaluations.get(),
+            1_000,
+            "谓词求值次数必须被预算精确封顶（=1000），随 zone 面积增长的实现在此必红"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_with_zero_budget_performs_no_predicate_evaluations() {
+        // review finding：work_budget=0 的边界没有 pin——「预算=0 仍求值一次」的
+        // off-by-one 实现在粗粒度测试下不红。契约是谓词求值次数上限：预算 0 必须
+        // 一次都不求值、直接 fail-closed 返回 None。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-64.0, -64.0, -64.0),
+                DVec3::new(64.0, 320.0, 64.0),
+            ),
+            Vec::new(),
+        );
+        let evaluations = std::cell::Cell::new(0usize);
+        let blocked = |_pos: DVec3| {
+            evaluations.set(evaluations.get() + 1);
+            false
+        };
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 0);
+        assert_eq!(
+            found,
+            None,
+            "work_budget=0 必须直接 fail-closed 返回 None"
+        );
+        assert_eq!(
+            evaluations.get(),
+            0,
+            "work_budget=0 不得执行任何谓词求值（多求值一次的 off-by-one 实现在此必红）"
+        );
+    }
+
+    #[test]
+    fn emergency_scan_accepts_free_tile_on_the_final_permitted_evaluation() {
+        // review finding：预算边界只有「空闲 tile 远在预算外」的粗粒度测试，区分不了
+        // 「预算=N 只允许 N-1 次求值」的 off-by-one 实现。本测试把唯一空闲 tile 精确
+        // 放在第 5 次（=预算上限）求值的枚举位置：预算 5 下 ring0 消耗 1 次、(0,0)
+        // blocked，ring1 前 4 个枚举点 (-1,-1)(0,-1)(1,-1)(-1,1) 中第 4 个 (-1,1)
+        // 恰好是第 5 次求值——恰在最后一次允许的求值上命中的空闲 tile 必须被接受。
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-64.0, -64.0, -64.0),
+                DVec3::new(64.0, 320.0, 64.0),
+            ),
+            Vec::new(),
+        );
+        let free = (-1, 1);
+        let blocked = |pos: DVec3| {
+            let tx = pos.x.floor() as i32;
+            let tz = pos.z.floor() as i32;
+            tx != free.0 || tz != free.1
+        };
+        let found = nearest_unblocked_tile(&registry.zones[0], (0, 0), &blocked, 5);
+        assert_eq!(
+            found,
+            Some(free),
+            "唯一空闲 tile 恰在第 5 次（=预算上限）求值时命中，必须被接受：预算耗尽检查 \
+             发生在 decrement 前/后的 off-by-one 实现在此必红"
+        );
+    }
+
+    #[test]
     fn emergency_scan_finds_free_tile_beyond_old_fixed_cap() {
         // review finding：旧实现把扫描半径硬编码为 128，zone AABB 更大时圈外空闲
         // tile 永远够不到 → 返回 None → select 在仍有合法出生 tile 时 panic。修复后
@@ -902,6 +1069,120 @@ mod tests {
                 "blocked-sweep-{i} 必须落在出生 zone 内（pos={pos:?}）"
             );
         }
+    }
+
+    /// 测试侧独立重算某个 seed 的原始候选 tile（select 的 hash→半径→角度→候选
+    /// 计算），用于证明「候选确实落在 blocked tile 上」——即 blocked-tile 分支真的
+    /// 被到达，而不是测试矩阵偶然避开。与 select 内联逻辑逐行对应，两者漂移即红。
+    fn raw_candidate_tile_for_test(seed: &str, anchor: DVec3, radius: f64) -> (i32, i32) {
+        let hash = stable_hash(seed, SpawnPurpose::InitialLogin);
+        let radius_bits = hash.rotate_left(17);
+        let angle_bits = hash.rotate_left(41);
+        let radius_fraction = (radius_bits & 0xffff) as f64 / 65_535.0;
+        let angle_fraction = (angle_bits & 0xffff) as f64 / 65_535.0;
+        let r = radius * radius_fraction.sqrt();
+        let angle = angle_fraction * std::f64::consts::TAU;
+        let candidate = DVec3::new(
+            anchor.x + r * angle.cos(),
+            anchor.y,
+            anchor.z + r * angle.sin(),
+        );
+        (candidate.x.floor() as i32, candidate.z.floor() as i32)
+    }
+
+    #[test]
+    fn blocked_candidate_with_free_cluster_center_returns_the_center() {
+        // review finding：select 有三条 blocked-tile 转移——候选被 block→返回钳制簇
+        // 中心、中心被 block→返回 emergency、emergency 被 block→螺旋扫描。既有确定性
+        // 测试只覆盖后两条，「候选被 block 而簇中心空闲→返回簇中心」只靠抽样 seed
+        // 偶然覆盖，返回 blocked 候选的错误实现照样绿。本测试把 zone 内除中心 (0,0)
+        // 外**全部** tile 标为 blocked：任何 seed 的候选（锚点半径 8 的圆盘内）都必然
+        // 落在 blocked tile 上、簇中心必然空闲 → 该分支对每个 seed 确定性到达。断言
+        // 一律返回簇中心，并用独立 oracle 证明至少一个 seed 的候选真实落在 blocked
+        // tile 上（分支确实被走到，不是空转断言）。
+        let mut blocked: Vec<(i32, i32)> = Vec::new();
+        for tx in -16..=16 {
+            for tz in -16..=16 {
+                if (tx, tz) != (0, 0) {
+                    blocked.push((tx, tz));
+                }
+            }
+        }
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-16.0, -64.0, -16.0),
+                DVec3::new(16.0, 320.0, 16.0),
+            ),
+            blocked,
+        );
+        let anchor = DVec3::new(0.0, 72.0, 0.0);
+        let selector = PlayerSpawnSelector::with_distribution(
+            &registry,
+            vec![SpawnDistributionAnchor {
+                anchor,
+                radius: 8.0,
+                weight: 1,
+                safe_y: 72.0,
+            }],
+        );
+
+        let mut saw_blocked_candidate = false;
+        for i in 0..64 {
+            let seed = format!("center-free-{i}");
+            if raw_candidate_tile_for_test(&seed, anchor, 8.0) != (0, 0) {
+                saw_blocked_candidate = true;
+            }
+            let pos = selector.select(&seed, SpawnPurpose::InitialLogin);
+            let tile = (pos[0].floor() as i32, pos[2].floor() as i32);
+            assert_eq!(
+                tile,
+                (0, 0),
+                "{seed}：候选被 blocked 时 select 必须返回空闲簇中心，不得返回 blocked 候选（pos={pos:?}）"
+            );
+            assert!(
+                !registry.zones[0].blocked_tiles.contains(&tile),
+                "{seed} 返回位置不得仍是 blocked tile"
+            );
+        }
+        assert!(
+            saw_blocked_candidate,
+            "测试矩阵中必须至少有一个 seed 的候选真实落在 blocked tile 上——否则本测试 \
+             没有走到「候选被 block、簇中心空闲」分支，断言无效"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "在扫描预算内没有可用空闲 tile")]
+    fn select_fails_closed_when_emergency_scan_finds_no_free_tile() {
+        // review finding：既有测试只直接调 nearest_unblocked_tile 断言 None，没有任何
+        // 测试把该结果经 PlayerSpawnSelector::select 传播到调用方——「捕获/替换 None
+        // 直接返回 blocked emergency 坐标」的错误 caller 实现会全部通过 helper 层测试。
+        // 本测试把 select 推进到 emergency 扫描返回 None 的真实路径（整个 zone 全
+        // blocked：候选、钳制簇中心、钳制 emergency 全部被排除），断言 fail-closed panic。
+        let mut blocked = Vec::new();
+        for tx in -16..=16 {
+            for tz in -16..=16 {
+                blocked.push((tx, tz));
+            }
+        }
+        let registry = synthetic_registry(
+            (
+                DVec3::new(-16.0, -64.0, -16.0),
+                DVec3::new(16.0, 320.0, 16.0),
+            ),
+            blocked,
+        );
+        let selector = PlayerSpawnSelector::with_distribution(
+            &registry,
+            vec![SpawnDistributionAnchor {
+                anchor: DVec3::new(0.0, 72.0, 0.0),
+                radius: 0.0,
+                weight: 1,
+                safe_y: 72.0,
+            }],
+        );
+
+        selector.select("fully-blocked", SpawnPurpose::InitialLogin);
     }
 
     #[test]

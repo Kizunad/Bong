@@ -195,21 +195,55 @@ class DiggingActionTest(unittest.TestCase):
         self.assertEqual(event.data, {"sequence": 17})
 
 
+def _finite_float(value: object) -> bool:
+    """oracle 自带的有限性判定（不调用生产 helper，保持 oracle 独立）：值可转成
+    有限 float 才算合法；超界大整数 float() 抛 OverflowError，视作非有限。"""
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
+
 def _spawn_distribution_tiles(
     zones_path=make_novice_raster_fixture.DEFAULT_ZONES_PATH,
 ) -> set[tuple[int, int]]:
     """独立 tile 期望枚举：直接从 zones.json 读 spawn 分布，按每个簇锚点±半径的
     完整笛卡尔跨度算出全部 tile。绝不调用生产 make_novice_raster_fixture.spawn_fixture_tiles
     —— review finding：用生产 helper 做期望（圆形 oracle）会让只覆盖边界点的残缺
-    实现自证其绿。"""
+    实现自证其绿。
+
+    review finding：oracle 展开前必须先做与生产契约一致的数值校验 + MAX_FIXTURE_TILES
+    工作量封顶——被 mock 掉生产 helper 的测试会直接调本 oracle，巨大半径（如 1e9）
+    的簇若直接进 range() 会跑万亿次迭代挂死 CI，而不是产生有界的校验失败。"""
     config = json.loads(zones_path.read_text(encoding="utf-8"))
     spawn_zone = next(
         zone for zone in config["zones"] if zone.get("name") == "spawn"
     )
     tiles = set()
-    for cluster in spawn_zone.get("spawn_distribution", []):
+    for index, cluster in enumerate(spawn_zone.get("spawn_distribution", [])):
         x, _, z = cluster["anchor"]
         radius = cluster["radius"]
+        for value in (x, z, radius):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"invalid spawn_distribution[{index}] in {zones_path}"
+                )
+        if not all(_finite_float(value) for value in (x, z, radius)) or radius < 0:
+            raise ValueError(
+                f"invalid spawn_distribution[{index}] in {zones_path}"
+            )
+        if not all(
+            _finite_float(value)
+            for value in (
+                x - radius,
+                x + radius,
+                z - radius,
+                z + radius,
+            )
+        ):
+            raise ValueError(
+                f"invalid spawn_distribution[{index}] in {zones_path}"
+            )
         min_tile_x = math.floor(
             (x - radius) / make_novice_raster_fixture.TILE_SIZE
         )
@@ -222,9 +256,24 @@ def _spawn_distribution_tiles(
         max_tile_z = math.floor(
             (z + radius) / make_novice_raster_fixture.TILE_SIZE
         )
+        cluster_tile_count = (max_tile_x - min_tile_x + 1) * (
+            max_tile_z - min_tile_z + 1
+        )
+        if cluster_tile_count > make_novice_raster_fixture.MAX_FIXTURE_TILES:
+            raise ValueError(
+                f"spawn_distribution[{index}] covers {cluster_tile_count} fixture "
+                f"tiles, above safety limit "
+                f"{make_novice_raster_fixture.MAX_FIXTURE_TILES}"
+            )
         for tile_z in range(min_tile_z, max_tile_z + 1):
             for tile_x in range(min_tile_x, max_tile_x + 1):
                 tiles.add((tile_x, tile_z))
+                if len(tiles) > make_novice_raster_fixture.MAX_FIXTURE_TILES:
+                    raise ValueError(
+                        f"spawn_distribution union covers at least {len(tiles)} "
+                        f"fixture tiles, above safety limit "
+                        f"{make_novice_raster_fixture.MAX_FIXTURE_TILES}"
+                    )
     return tiles
 
 
@@ -359,6 +408,66 @@ class NoviceRasterFixtureTest(unittest.TestCase):
             zones_path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "above safety limit"):
                 make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_fixture_tiles_rejects_finite_values_overflowing_derived_bounds(self):
+        # review finding：anchor=1e308、radius=1e308 都是**有限**值，通过逐字段有限性
+        # 校验，但 anchor+radius 求值为 inf，math.floor(inf) 抛 OverflowError——非法分布
+        # 以意外异常类型中止 fixture 生成。修复后派生边界 (anchor ± radius) 必须先证明
+        # 有限，否则一律 ValueError 干净拒绝，绝不泄漏 OverflowError。
+        cluster = {
+            "anchor": [1e308, make_novice_raster_fixture.SURFACE_Y, 0.0],
+            "radius": 1e308,
+            "weight": 1,
+            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+        }
+        config = {"zones": [{"name": "spawn", "spawn_distribution": [cluster]}]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"invalid spawn_distribution\[0\]"):
+                make_novice_raster_fixture.spawn_fixture_tiles(zones_path)
+
+    def test_spawn_tile_oracle_rejects_oversized_cluster_before_expansion(self):
+        # review finding：独立 oracle 未加 MAX_FIXTURE_TILES 预检查——被测测试 mock 掉
+        # 生产 spawn_fixture_tiles（生产 cap 被旁路）后直接调本 oracle，巨大半径的簇
+        # 会在 range() 里跑万亿次迭代挂死 CI。oracle 必须在展开前与生产契约一致地
+        # fail-fast；本测试能在真实时间约束下完成本身即证明有界。
+        config = {
+            "zones": [
+                {
+                    "name": "spawn",
+                    "spawn_distribution": [
+                        {
+                            "anchor": [0.0, 70.0, 0.0],
+                            "radius": 1_000_000_000.0,
+                            "weight": 1,
+                            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+                        }
+                    ],
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "above safety limit"):
+                _spawn_distribution_tiles(zones_path)
+
+    def test_spawn_tile_oracle_rejects_finite_values_overflowing_derived_bounds(self):
+        # review finding：oracle 与生产契约对齐——派生边界 (anchor ± radius) 非有限时
+        # 必须以 ValueError 拒绝，不得让 math.floor(inf) 泄漏 OverflowError。
+        cluster = {
+            "anchor": [1e308, make_novice_raster_fixture.SURFACE_Y, 0.0],
+            "radius": 1e308,
+            "weight": 1,
+            "safe_y": make_novice_raster_fixture.SURFACE_Y,
+        }
+        config = {"zones": [{"name": "spawn", "spawn_distribution": [cluster]}]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zones_path = pathlib.Path(temp_dir) / "zones.json"
+            zones_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"invalid spawn_distribution\[0\]"):
+                _spawn_distribution_tiles(zones_path)
 
     def test_spawn_fixture_tiles_rejects_huge_json_integers_as_valueerror(self):
         # review finding：JSON 解析可产生任意大整数，`float(10**1000)` 在 isfinite 看到
