@@ -285,25 +285,36 @@ def run(env) -> None:
         ev = _forge(bot, subscriber, "lung", "Rate")
         _assert_success_event(ev, meridian="Lung", axis="Rate", from_tier=1, to_tier=2)
 
+        # 成本读回：tier2 cost = tier_cost(2) = 16，qi 100→84。
+        # 读回必须紧随 forge：服务端 qi 缓慢回复（实测 ≈0.04/s），隔了负向分支的
+        # ~8s 后 before 会漂到 84.3，精确钉 cost 的读回就废了。
+        bot.cmd("qi set 3")
+        bot.expect_chat("[dev] qi set 84.0 -> 3.0", timeout=10.0)
+        bot.cmd("qi set 100")
+        # before=3.0 → echo "[dev] qi set 3.0 -> 100.0"，全史唯一，真等待。
+        bot.expect_chat("[dev] qi set 3.0 -> 100.0", timeout=10.0)
+
         # 负向 MeridianClosed：heart 从未 open → success:false（meridian 仍映射 Heart）。
         ev = _forge(bot, subscriber, "heart", "Rate")
         _assert_failure_event(ev, meridian="Heart")
 
+        # 负向 NotEnoughQi：qi=3 < tier3 cost(36) → success:false。
+        # 回显 "100.0 -> 3.0" 顺带钉 refill 顶满（回复封顶 qi_max=100，heart 拒锻不耗 qi）。
+        bot.cmd("qi set 3")
+        bot.expect_chat("[dev] qi set 100.0 -> 3.0", timeout=10.0)
+        ev = _forge(bot, subscriber, "lung", "Rate")
+        _assert_failure_event(ev, meridian="Lung")
+        bot.cmd("qi set 100")
+        # 与上一条 refill 同串，wait_for 历史匹配即过——refill 是否生效由紧随的
+        # 冲 cap forge 兜底（qi 不足会以 NotEnoughQi success:false 暴露）。
+        bot.expect_chat("[dev] qi set 3.0 -> 100.0", timeout=10.0)
+
         # 负向 UnknownChannel：未知 channel → validate 拒绝，窗口内无事件。
+        # 放在最后：8s 窗口内 qi 停在 100（回复封顶 qi_max），不影响后续断言。
         bot.intent(
             {"type": "forge_request", "v": 1, "meridian": "nonexistent_channel", "axis": "Rate"}
         )
         _expect_no_forge_event(subscriber)
-
-        # 负向 NotEnoughQi：qi=3 < tier3 cost(36) → success:false。
-        # 回读 "84.0 -> 3.0" 顺带钉 tier2 cost=16（100-16=84）。
-        bot.cmd("qi set 3")
-        bot.expect_chat("[dev] qi set 84.0 -> 3.0", timeout=10.0)
-        ev = _forge(bot, subscriber, "lung", "Rate")
-        _assert_failure_event(ev, meridian="Lung")
-        bot.cmd("qi set 100")
-        # before=3.0 → echo "[dev] qi set 3.0 -> 100.0"，全史唯一，真等待。
-        bot.expect_chat("[dev] qi set 3.0 -> 100.0", timeout=10.0)
 
         # 冲 cap：2→3（cost 36，qi 100→64），再读回 64.0 证明 tier3 cost。
         ev = _forge(bot, subscriber, "lung", "Rate")
