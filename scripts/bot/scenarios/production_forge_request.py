@@ -115,6 +115,12 @@ class _ForgeEventSubscriber:
             if len(self._buf) < end + 2:
                 return None, 0
             return bytes(self._buf[start:end]), end + 2
+        if marker == b":":
+            # RESP2 integer（SUBSCRIBE ack 的订阅计数 `:1` 就是这种帧）
+            idx = self._buf.find(b"\r\n", pos + 1)
+            if idx == -1:
+                return None, 0
+            return int(self._buf[pos + 1 : idx]), idx + 2
         if marker == b"*":
             idx = self._buf.find(b"\r\n", pos + 1)
             if idx == -1:
