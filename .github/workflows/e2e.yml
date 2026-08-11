@@ -102,7 +102,7 @@ jobs:
 
       - name: Client stage (gradlew test)
         working-directory: client
-        run: ../scripts/build-token.sh gradle test
+        run: ../scripts/retry-gradle.sh ../scripts/build-token.sh gradle test
 
       - name: Pre-pull Redis image with retry
         run: |
