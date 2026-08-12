@@ -138,6 +138,29 @@ def main() -> int:
         bad.append(f"死亡时赘生物没有先瘪（t=0.25 赘 {lump:.2f} vs 主体 {body:.2f}）——"
                    f"接得最勉强的部分该最先散")
 
+    # ---- ⑦b 扑击：爆发必须快过蓄力。速度比是恐惧的唯一来源，不是观感偏好。
+    def zrate(t0: float, t1: float, n: int = 24) -> float:
+        vs = [A.sample(rig, "core_lunge", t0 + (t1 - t0) * i / n)["root"].pos[2]
+              for i in range(n + 1)]
+        dur = (t1 - t0) * A.ANIMS["core_lunge"][0]
+        return max(abs(b - a) for a, b in zip(vs, vs[1:])) / (dur / n)
+
+    wind = zrate(0.04, A.LUNGE_WINDUP - 0.02)
+    strike = zrate(A.LUNGE_WINDUP + 0.01, 0.99)
+    print(f"[扑击] 蓄力 {wind:.0f} px/s · 爆发 {strike:.0f} px/s（×{strike / max(wind, 1e-6):.1f}）")
+    if strike < wind * 2.5:
+        bad.append(f"扑击爆发不够快：{strike:.0f} < 蓄力 {wind:.0f}×2.5——"
+                   f"蓄放速度比是恐惧的唯一来源")
+
+    # ---- ⑦c 包裹：必须真的张开再合上，且咽下后主体变大（吃进去的得有去处）
+    fore = [A.sample(rig, "core_engulf", k / 60)["core_fore"].scale[0] for k in range(61)]
+    if max(fore) - min(fore) < 0.5:
+        bad.append(f"包裹张合幅度仅 {max(fore) - min(fore):.2f}——读成喘气不是吞噬")
+    mid0 = A.sample(rig, "core_engulf", 0.0)["core_mid"].scale[0]
+    mid1 = A.sample(rig, "core_engulf", 1.0)["core_mid"].scale[0]
+    if mid1 <= mid0 + 0.10:
+        bad.append(f"包裹结束时主体未变大（{mid0:.2f}→{mid1:.2f}）——吃进去的东西凭空消失了")
+
     # ---- ⑧ 受击：必须衰减回近似静止
     h = pose_delta(rig, A.sample(rig, "core_hurt", 1.0), A.sample(rig, "core_hurt", 0.0))
     print(f"[受击] 终帧与静止姿差 {h:.3f}")

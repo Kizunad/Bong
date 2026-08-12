@@ -158,17 +158,36 @@ def anim_idle(rig: Rig, t: float, length: float) -> Pose:
     return p
 
 
+LUNGE_WINDUP = 0.72       # 蓄力占整条动画的比例；剩下的是爆发段
+
+
 def anim_lunge(rig: Rig, t: float, length: float) -> Pose:
-    """扑向尸体：缓慢积蓄 → 一瞬弹出。蓄与放的时间比是恐惧的来源（同蛛的伏击）。"""
+    """扑向尸体：缓慢积蓄 → 一瞬弹出。
+
+    蓄与放的**速度比**是恐惧的唯一来源（拟态灰烬蛛同则：突刺必须快过蓄力 2.5 倍以上）。
+    初版蓄 0.62 / 放 0.38、位移又小，速度比只有 1.7×，渲出来八帧几乎看不出在干什么。
+    这版把时间压成 0.72/0.28 并把位移拉大，自检直接断言速度比。
+
+    蓄力不只是后退，更是**整体压缩**：前段往回缩、后段往前挤、横向鼓出去——一团肉
+    没有骨头可绷，蓄力只能靠把自己挤成一坨。放出去时反过来抻长抻细。
+    """
     p = Pose()
-    if t < 0.62:
-        s = smooth(t / 0.62)
-        p["root"].pos = [0.0, -1.6 * s, 3.2 * s]              # 后缩、压低
-        p["core_fore"].scale = [1.0 + 0.10 * s, 1.0 - 0.06 * s, 1.0 - 0.12 * s]
+    if t < LUNGE_WINDUP:
+        s = smooth(t / LUNGE_WINDUP)
+        p["root"].pos = [0.0, -3.5 * s, 5.0 * s]                 # 压低 + 后缩
+        p["core_fore"].pos = [0.0, 0.0, 4.2 * s]                 # 前段缩回来
+        p["core_hind"].pos = [0.0, 0.0, -2.4 * s]                # 后段挤上来
+        b = 1.0 + 0.22 * s                                       # 横向鼓出
+        p["core_fore"].scale = [b, b, 1.0 - 0.26 * s]
+        p["core_mid"].scale = [1.0 + 0.16 * s, 1.0 + 0.12 * s, 1.0 - 0.14 * s]
     else:
-        s = smooth((t - 0.62) / 0.38)
-        p["root"].pos = [0.0, -1.6 + 2.4 * s, 3.2 - 13.0 * s]  # 弹出
-        p["core_fore"].scale = [1.10 - 0.22 * s, 0.94 + 0.20 * s, 0.88 + 0.34 * s]
+        s = smooth((t - LUNGE_WINDUP) / (1.0 - LUNGE_WINDUP))
+        p["root"].pos = [0.0, -3.5 + 6.0 * s, 5.0 - 21.0 * s]    # 弹出
+        p["core_fore"].pos = [0.0, 0.0, 4.2 - 11.4 * s]          # 前段甩到最前
+        p["core_hind"].pos = [0.0, 0.0, -2.4 + 3.6 * s]
+        b = 1.22 - 0.40 * s                                      # 抻长则变细
+        p["core_fore"].scale = [b, b, 0.74 + 0.62 * s]
+        p["core_mid"].scale = [1.16 - 0.26 * s, 1.12 - 0.20 * s, 0.86 + 0.30 * s]
     dormant_buds(p)
     return p
 
@@ -180,14 +199,21 @@ def anim_engulf(rig: Rig, t: float, length: float) -> Pose:
     这比长一张嘴更难看，也更对。
     """
     p = Pose()
-    open_ = math.sin(math.pi * min(1.0, t / 0.55)) if t < 0.55 else 0.0
-    close = smooth(max(0.0, (t - 0.5) / 0.5))
-    p["core_fore"].scale = [1.0 + 0.34 * open_ - 0.16 * close,
-                            1.0 + 0.30 * open_ - 0.20 * close,
-                            1.0 - 0.10 * open_ + 0.22 * close]
-    p["core_fore"].pos = [0.0, 0.0, -2.6 * open_ + 1.4 * close]
-    p["core_mid"].scale = [1.0 + 0.10 * close, 1.0 + 0.08 * close, 1.0 + 0.06 * close]
-    p["root"].pos = [0.0, -1.0 * open_, 0.0]
+    # 三段：张开罩住 → 猛然合拢 → 把东西挤进主体。初版三段全叠在一起、幅度又小，
+    # 渲出来只是前段轻微鼓胀，读成"在喘气"而不是"裂开吞下去"。
+    op = smooth(np.clip(t / 0.40, 0.0, 1.0))                     # 张开
+    cl = smooth(np.clip((t - 0.42) / 0.28, 0.0, 1.0))            # 合拢
+    sw = smooth(np.clip((t - 0.68) / 0.32, 0.0, 1.0))            # 咽下（质量迁回主体）
+    p["core_fore"].scale = [1.0 + 0.58 * op - 0.74 * cl + 0.14 * sw,
+                            1.0 + 0.48 * op - 0.66 * cl + 0.16 * sw,
+                            1.0 - 0.30 * op + 0.62 * cl - 0.30 * sw]
+    p["core_fore"].pos = [0.0, -3.2 * op + 3.6 * cl - 0.4 * sw,
+                          -5.0 * op + 6.2 * cl + 1.4 * sw]
+    # 咽下时主体鼓起来：吃进去的东西得有个去处，凭空消失是吞质量
+    p["core_mid"].scale = [1.0 + 0.06 * cl + 0.20 * sw,
+                           1.0 + 0.05 * cl + 0.17 * sw,
+                           1.0 + 0.04 * cl + 0.12 * sw]
+    p["root"].pos = [0.0, -2.0 * op + 1.4 * cl, -1.6 * op + 1.0 * cl]
     dormant_buds(p)
     return p
 
