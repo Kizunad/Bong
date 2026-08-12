@@ -112,31 +112,45 @@ def anim_crawl(rig: Rig, t: float, length: float) -> Pose:
     drift = CRAWL_D * wrap(t)         # 减掉每周期净位移，动画才循环得上
     zf, zh = wf + drift, wh + drift
 
-    # root 跟随体中点；前后段相对它反向偏移
     mid = 0.5 * (zf + zh)
-    p["root"].pos = [0.0, 0.0, mid]
-    p["core_fore"].pos = [0.0, 0.0, zf - mid]
-    p["core_hind"].pos = [0.0, 0.0, zh - mid]
-
-    # 体积近似守恒：拉长则变细
     body = LOBE_SPAN + (zh - zf)
-    r = math.sqrt(LOBE_SPAN / max(body, 1e-6))
-    for name, grip in (("core_fore", gf), ("core_hind", gh)):
-        s = r * (1.0 + 0.10 * grip)   # 抓地的那段再鼓一点，才抓得住
-        p[name].scale = [s, s, 1.0]
-    p["core_mid"].scale = [r, r, 1.0]
+    k = body / LOBE_SPAN                       # 纵向拉伸比 ≥1
+    r = 1.0 / math.sqrt(k)                     # 横向收细，体积守恒（r²·k = 1）
 
-    # 抓地 = 压下去摊开，自由段抬起来。这一层是"看得出在抓地"的主要来源：
-    # 只做前后伸缩的话，侧视图上八帧几乎一模一样（实测）。
+    # **中段必须跟着沿 z 伸长**去桥接前后两团。round 2 把 core_mid 的 z 缩放留在 1.0，
+    # 前后段一分开，原本刻出来的凹槽就被拉宽成可见裂缝（3/4 视角实测）。
+    p["core_mid"].scale = [r, r, k]
+
+    # core_mid 是前后段与赘生物的父骨，它的缩放会连**子骨枢轴**一起推开：子骨枢轴
+    # 相对父枢轴的距离被乘上 k。只补 pos 不补枢轴那一项是不够的——core_fore 枢轴离
+    # core_mid 枢轴 10.5px，k=1.4 时凭空多出 4.2px，自检实测锚段位移 4.19px（蹭地）。
+    #
+    # 逐骨解：设 Δ = 子枢轴 − 父枢轴，父缩放 S，要让子枢轴的世界位置落在 o_child+off，
+    # 需 S·(Δ + pos) = Δ + off ⇒ **pos = S⁻¹·(Δ + off) − Δ**。
+    # 子骨自身缩放同理取 S⁻¹·目标世界缩放。
+    S = np.array([r, r, k])
+    o_mid = rig.bones["core_mid"].origin
+
+    def child(name: str, off, own_xy: float = 1.0, own_z: float = 1.0) -> None:
+        delta = rig.bones[name].origin - o_mid
+        p[name].pos = list((delta + np.array(off, float)) / S - delta)
+        p[name].scale = [own_xy / r, own_xy / r, own_z / k]
+
     grip = 0.5 * (gf + gh)
-    p["core_sag"].scale = [1.0 + 0.16 * grip, 1.0 - 0.14 * grip, 1.0]
-    p["core_sag"].pos = [0.0, -1.6 * grip, 0.0]
-    p["core_fore"].pos = [0.0, 1.7 * (1.0 - gf), zf - mid]
-    p["core_hind"].pos = [0.0, 1.7 * (1.0 - gh), zh - mid]
+    # 抓地 = 压下去摊开、自由段抬起来。这一层是"看得出在抓地"的主要来源：
+    # 只做前后伸缩的话侧视图上八帧几乎一模一样（实测）。
+    child("core_fore", (0.0, 1.7 * (1.0 - gf), zf - mid), r * (1.0 + 0.10 * gf), 1.0)
+    child("core_hind", (0.0, 1.7 * (1.0 - gh), zh - mid), r * (1.0 + 0.10 * gh), 1.0)
+    child("core_sag", (0.0, -1.6 * grip, 0.0), 1.0, 1.0)
+    p["core_sag"].scale[0] *= 1.0 + 0.16 * grip
+    p["core_sag"].scale[1] *= 1.0 - 0.14 * grip
 
-    # 赘生物被整体拖着晃，各自滞后
+    # root 跟随体中点
+    p["root"].pos = [0.0, 0.0, mid]
+
+    # 赘生物被整体拖着晃，各自滞后；同样补偿父缩放，免得跟着抻变形
     for i, n in enumerate(LOBES_LUMP):
-        p[n].pos = [0.0, 0.0, 1.1 * breathe(wrap(t), 1.0, 0.13 * i + 0.5, length)]
+        child(n, (0.0, 0.0, 1.1 * breathe(wrap(t), 1.0, 0.13 * i + 0.5, length)))
     dormant_buds(p)
     return p
 
