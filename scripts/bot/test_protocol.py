@@ -5261,7 +5261,7 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
         self.assertEqual(event.kind, "player_list")
         self.assertEqual(
             event.data["entries"],
-            [{"uuid": self.PLAYER_UUID, "username": "Alice"}],
+            [{"uuid": self.PLAYER_UUID, "username": "Alice", "properties": []}],
         )
 
     def test_player_spawn_joins_entity_id_uuid_username_and_position(self):
@@ -5489,7 +5489,30 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
         self.assertEqual(bot.events[-1].data["actions"], actions)
         self.assertEqual(
             bot.events[-1].data["entries"],
-            [{"uuid": self.PLAYER_UUID, "username": "Alice"}],
+            [
+                {
+                    "uuid": self.PLAYER_UUID,
+                    "username": "Alice",
+                    "properties": [
+                        {
+                            "name": "textures",
+                            "value": "base64",
+                            "signature": "signed",
+                        }
+                    ],
+                    "initialize_chat": {
+                        "has_chat_session": True,
+                        "session_id": self.PLAYER_UUID,
+                        "public_key_expiry": 1234,
+                        "public_key": b"key",
+                        "signature": b"sig",
+                    },
+                    "game_mode": 1,
+                    "listed": True,
+                    "latency": 37,
+                    "display_name": '{"text":"Alias"}',
+                }
+            ],
         )
 
     def _initialize_chat_body(
@@ -5577,7 +5600,18 @@ class PlayerIdentityTrackingTest(unittest.TestCase):
         self.assertEqual(bot.events[-1].data["actions"], 0x02)
         self.assertEqual(
             bot.events[-1].data["entries"],
-            [{"uuid": self.PLAYER_UUID}],
+            [
+                {
+                    "uuid": self.PLAYER_UUID,
+                    "initialize_chat": {
+                        "has_chat_session": True,
+                        "session_id": self.PLAYER_UUID,
+                        "public_key_expiry": 1234,
+                        "public_key": b"key",
+                        "signature": b"sig",
+                    },
+                }
+            ],
         )
 
 
