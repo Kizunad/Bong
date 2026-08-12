@@ -9,7 +9,8 @@
   · 碎片质量必须**摊得开** —— 一团独大时只有主体活得下来，「各部位分头逃窜」不成立
   · 逃窜速度必须**互不相同** —— 全等速就只剩方向不同了
   · 分裂两半都能活，且割面是最小割
-  · 繁殖闭合 —— 碎片基因组是亲代的真子集，不许凭空长出亲代没有的部件
+  · 繁殖闭合 —— 碎片基因组是亲代的真子集，不许凭空长出亲代没有的部件；
+    掉肢只允许掉在被裂面毁掉的槽上（撕开自己有代价，但代价必须说得出在哪）
 
 用法: python3 scripts/models/stitched_beast/check_fission.py
 """
@@ -28,6 +29,7 @@ sys.path.insert(0, str(HERE))
 import core as C  # noqa: E402
 import core_anim as A  # noqa: E402
 import fission as F  # noqa: E402
+import fragment as FR  # noqa: E402
 import genome as GN  # noqa: E402
 import locomotion as L  # noqa: E402
 
@@ -119,9 +121,19 @@ def main() -> int:
             seen.append(x)
     if len(seen) != len(set(seen)):
         bad.append("同一条肢被两块碎片同时带走——挂载点归属必须唯一")
+    # 掉肢是**允许**的，但只允许掉在裂面上的那几条：槽是皮上的一处结构，裂面从它中间
+    # 过去时那片皮一半跟着另一半走，两边谁也用不了（fragment.viable_sockets）。
+    # 掉在别处 = 真的漏了。
+    destroyed = set(FR.lost_sockets(tuple(f.lobes for f in frags)))
     missing = [x.socket for x in g.limbs if x not in seen]
-    if missing:
-        bad.append(f"亲代的肢 {missing} 没跟任何碎片走——掉了")
+    wrongly = [s for s in missing if s not in destroyed]
+    print(f"[繁殖] 裂面毁掉 {len(destroyed)} 个槽 {sorted(destroyed)}；"
+          f"随之失去 {len(missing)} 条肢")
+    if wrongly:
+        bad.append(f"亲代的肢 {wrongly} 没跟任何碎片走、其槽也没被裂面毁掉——掉了")
+    if not destroyed:
+        bad.append("裂面一个槽都没毁掉——撕开自己不该是免费的，"
+                   "检查 fragment.viable_sockets 是否真的按创面判")
 
     # ---- ⑦ 爆体动画：末帧碎片确实分开了，且不穿地太深
     from anim_rig import Rig

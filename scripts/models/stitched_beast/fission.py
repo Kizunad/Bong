@@ -117,8 +117,15 @@ def fracture(threshold: int) -> list[tuple[str, ...]]:
 
 
 def sockets_of(lobes: tuple[str, ...]) -> tuple[str, ...]:
-    """这组 lobe 带走哪些挂载点——挂载点骑在哪根骨上，就跟哪块碎片走。"""
-    return tuple(sorted(s.name for s in C.sockets().values() if s.bone in lobes))
+    """这组 lobe 带走哪些挂载点。
+
+    "骑在哪根骨上就跟哪块走"只对了一半：**骑在裂面上的槽会被撕坏**，两半谁也带不走。
+    存活判据要问几何（`fragment.viable_sockets`），不能只查骨归属——只查骨归属的话，
+    分出来的碎片会在自己的创面上长芽，芽悬在被扯走的那片皮原来的位置。
+    """
+    import fragment as FR       # 反向依赖：碎片几何要用 fission 定切面，只在用时导入
+
+    return FR.viable_sockets(lobes)
 
 
 def build_fragments(threshold: int = BURST_THRESHOLD,

@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 
@@ -47,6 +48,7 @@ JITTER_BASE = 0.55                          # 表面抖动基准幅度，见 sla
 JITTER_PER_SPAN = 0.22                      # 每多跨一格加的抖动
 JITTER_MAX = JITTER_BASE + 4 * JITTER_PER_SPAN   # 抖动最大外扩；癒合脊必须抬得比它高
 MAX_RUN = 3                                 # 单个 slab 最多跨几格，见 merge_slabs
+TEAR_ROUGH = 1.9                            # 断口相对表皮的抖动倍率，见 slab_box
 
 
 # ---------------------------------------------------------------- 场定义
@@ -132,6 +134,29 @@ def owner(p: np.ndarray) -> str:
     return _LN[int(np.argmax(contributions(p)[:_NPOS]))]
 
 
+@lru_cache(maxsize=1)
+def solid_grid() -> dict[tuple[int, int, int], str]:
+    """**实心**体素 → 所属 lobe。整条流水线的单一真相源。
+
+    质量、质心、表层、接合面积、碎片几何全部从这一张表派生。以前每个量测函数各扫一遍
+    网格（`fld` 逐点调用），碎片层要按任意 lobe 子集反复取几何，那种扫法直接不可用。
+
+    向量化一次算完：把整格网的中心堆成 (N,3)，对 11 个 lobe 同时求高斯贡献。归属仍取
+    正权段的 argmax，与 `owner()` 同一口径——两处若不一致，骨骼和质量就会各说各话。
+    """
+    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
+    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
+    ax = [np.arange(lo[i], hi[i]) for i in range(3)]
+    idx = np.stack(np.meshgrid(*ax, indexing="ij"), axis=-1).reshape(-1, 3)
+    pts = (idx + 0.5) * VOX
+    d = (pts[:, None, :] - _LC[None, :, :]) / _LR[None, :, :]
+    contrib = _LW[None, :] * np.exp(-np.einsum("ijk,ijk->ij", d, d))
+    keep = contrib.sum(axis=1) >= ISO
+    own = contrib[:, :_NPOS].argmax(axis=1)
+    return {tuple(int(v) for v in k): _LN[int(o)]
+            for k, o in zip(idx[keep], own[keep])}
+
+
 def surface_hit(direction, *, origin=None, lo: float = 0.5, hi: float = 34.0,
                 iters: int = 48) -> tuple[np.ndarray, np.ndarray]:
     """从 origin 沿 direction 射线求表面点，返回（局部坐标点, 单位外法向）。
@@ -181,6 +206,7 @@ class Voxel:
     mat: str
     normal: np.ndarray = field(default_factory=lambda: np.array([0.0, 1.0, 0.0]))
     seam: tuple[str, ...] = ()      # 邻域里出现的其它 lobe；非空 = 这格在缝上
+    torn: bool = False              # 这一面是撕开的创面，不是原本的皮（见 surface_of）
 
 
 @dataclass
@@ -237,42 +263,74 @@ def _material(bone: str, normal: np.ndarray, ix: int, iy: int, iz: int) -> str:
     return "flesh_pale"
 
 
-def voxelize() -> list[Voxel]:
-    """等值面内的**表层**体素。内部体素直接丢——永远看不见，留着只是拖慢渲染。
+NB = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
 
-    表层判据是 6 邻域有一个在体外。用 6 邻域而不是 26 邻域：26 邻域会把仅在对角
+
+def surface_of(lobes: tuple[str, ...] | None = None) -> list[Voxel]:
+    """给定 lobe 子集的**表层**体素；`lobes=None` 即整只兽。
+
+    表层判据是 6 邻域有一个不在集合里。用 6 邻域而不是 26 邻域：26 邻域会把仅在对角
     相邻的薄壁也判成实心内部，等值面细颈处会破洞。
-    """
-    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
-    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
-    inside: set[tuple[int, int, int]] = set()
-    for ix in range(lo[0], hi[0]):
-        for iy in range(lo[1], hi[1]):
-            for iz in range(lo[2], hi[2]):
-                if fld(_voxel_center(ix, iy, iz)) >= ISO:
-                    inside.add((ix, iy, iz))
-    nb = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
-    surf: list[tuple[int, int, int]] = []
-    for (ix, iy, iz) in sorted(inside):
-        if all((ix + a, iy + b, iz + c) in inside for a, b, c in nb):
-            continue
-        surf.append((ix, iy, iz))
 
-    own = {k: owner(_voxel_center(*k)) for k in surf}
-    sset = set(surf)
+    **撕裂面是从这里掉出来的**，不用另外画：整只兽身上被埋在内部的体素，在子集里
+    就成了表面。`v.torn` 记录"缺失的那个邻居在整只兽里是实心的"——是则这一面是撕开的
+    创面。少了另一半，创面就自动出现，这是推论不是美术。
+
+    创面的法向也不能用场梯度：场在体内是连续的，撕裂处的 -∇f 指向随便哪个方向。创面
+    的外法向就是**缺失邻居的方向**——肉原来在那边，现在没了。
+    """
+    solid = solid_grid()
+    keep = solid if lobes is None else {k: v for k, v in solid.items() if v in lobes}
+    shell: dict[tuple[int, int, int], list] = {}
+    for k in sorted(keep):
+        miss = [(k[0] + a, k[1] + b, k[2] + c) for a, b, c in NB
+                if (k[0] + a, k[1] + b, k[2] + c) not in keep]
+        if miss:
+            shell[k] = miss
+
     out: list[Voxel] = []
-    for (ix, iy, iz) in surf:
-        p = _voxel_center(ix, iy, iz)
-        bone = own[(ix, iy, iz)]
-        n = -grad(p)
-        n = n / np.linalg.norm(n)
+    for k, miss in shell.items():
+        ix, iy, iz = k
+        bone = keep[k]
+        torn = any(m in solid for m in miss)
+        if torn:
+            n = np.array([sum(m[i] for m in miss) - len(miss) * k[i] for i in range(3)], float)
+        else:
+            n = -grad(_voxel_center(ix, iy, iz))
+        n = n / max(float(np.linalg.norm(n)), 1e-9)
         # 缝：邻域里出现别的 lobe = 这里是两团肉接上的地方。缝的位置不是画上去的，
         # 它和骨骼分段共用同一个 owner() 划分——「哪两块是分别缝进来的」这件事
-        # 在场里只有一个答案。
-        others = sorted({own[k] for a, b, c in nb
-                         if (k := (ix + a, iy + b, iz + c)) in sset and own[k] != bone})
-        out.append(Voxel(ix, iy, iz, bone, _material(bone, n, ix, iy, iz), n, tuple(others)))
+        # 在场里只有一个答案。撕走的那半的缝自动消失：邻居不在集合里就不算缝，
+        # 那里现在是创面。
+        #
+        # 邻域**只查表层**（shell）不查实心：癒合痕是两块肉的皮在表面相接的那一圈，
+        # 而埋在皮下的 A/B 界面既看不见、也不该记进痕。查实心会把皮下界面一并算上，
+        # 实测痕从 58 段涨到 95 段，`weld_areas` 的接合强度表跟着变——碎裂图谱和
+        # 最小割全部改口径。这条别改回去。
+        others = sorted({keep[j] for a, b, c in NB
+                         if (j := (ix + a, iy + b, iz + c)) in shell and keep[j] != bone})
+        mat = _torn_material(ix, iy, iz) if torn else _material(bone, n, ix, iy, iz)
+        out.append(Voxel(ix, iy, iz, bone, mat, n, tuple(others), torn))
     return out
+
+
+@lru_cache(maxsize=1)
+def _voxelize_cached() -> tuple[Voxel, ...]:
+    return tuple(surface_of(None))
+
+
+def voxelize() -> list[Voxel]:
+    """整只兽的表层体素。"""
+    return list(_voxelize_cached())
+
+
+def _torn_material(ix: int, iy: int, iz: int) -> str:
+    """创面材质。撕开的断口露的是**内部**组织，和被环境糟蹋过的外皮不是一回事：
+    没有黏液（黏液是挂在外面的）、没有膜（膜是被撑薄的表皮），只有湿的深色肉，
+    偶尔一段扯断的血管。所以它单独一张材质表，不复用 `_material`。
+    """
+    n = _noise(ix // MAT_PATCH, iy // MAT_PATCH, iz // MAT_PATCH, "t")
+    return "torn_vein" if n < 0.22 else ("torn_deep" if n < 0.62 else "torn")
 
 
 def merge_slabs(voxels: list[Voxel]) -> list[Slab]:
@@ -313,7 +371,7 @@ def merge_slabs(voxels: list[Voxel]) -> list[Slab]:
     return out
 
 
-def slab_box(s: Slab) -> tuple[np.ndarray, np.ndarray]:
+def slab_box(s: Slab, rough: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
     """slab → 世界坐标 (from, to)，带确定性表面抖动。
 
     抖动是必要的而不是装饰：等值面体素化后每一面都是完美平面，渲出来是一堆瓷砖。
@@ -322,9 +380,18 @@ def slab_box(s: Slab) -> tuple[np.ndarray, np.ndarray]:
 
     幅度对大 slab 加码：round 1 用统一 ±0.35，大片平坦区域仍渲成整齐的梯田
     （3/4 视图上右侧一整面阶梯状台地）。面积越大越需要打断，所以按跨度线性加权。
+
+    `rough` 给**小个体**用。抖动是相对尺度的表面扰动：同一个绝对幅度，在 31px 长的
+    母体上是肉的纹理，在 15px 长的碎片上就是把它砸成一堆碎石（round 2 出图实测，
+    整只读成叠起来的方块而不是一团肉）。所以调用方按"自己有多大"缩这个幅度。
     """
     span = max(s.x1 - s.x0, s.z1 - s.z0)
-    amp = JITTER_BASE + min(span - 1, 4) * JITTER_PER_SPAN
+    amp = (JITTER_BASE + min(span - 1, 4) * JITTER_PER_SPAN) * rough
+    if s.mat.startswith("torn"):
+        # 断口比皮**毛糙**。皮是长出来的，长的过程会把表面抹平；断口是扯出来的，
+        # 裂纹走的是组织里最弱的那条路，本来就参差。用同一套抖动幅度渲出来是一堵
+        # 平整的红墙，读成"被刀切过"而不是"被撕开"。
+        amp *= TEAR_ROUGH
     j = [(_noise(s.iy, s.x0, s.z0, s.bone, k) - 0.3) * amp for k in range(6)]
     frm = np.array([s.x0 * VOX - j[0], s.iy * VOX - j[1], s.z0 * VOX - j[2]])
     to = np.array([s.x1 * VOX + j[3], (s.iy + 1) * VOX + j[4], s.z1 * VOX + j[5]])
@@ -508,7 +575,7 @@ def weld_areas(voxels: tuple[Voxel, ...] | None = None) -> dict[tuple[str, str],
 
     键统一排序，(a,b) 与 (b,a) 归并成一条。
     """
-    vs = voxels if voxels is not None else voxelize()
+    vs = voxels if voxels is not None else _voxelize_cached()
     out: dict[tuple[str, str], int] = {}
     for v in vs:
         for other in v.seam:
@@ -517,36 +584,39 @@ def weld_areas(voxels: tuple[Voxel, ...] | None = None) -> dict[tuple[str, str],
     return out
 
 
+@lru_cache(maxsize=1)
 def lobe_mass() -> dict[str, int]:
     """每个 lobe 的**实心**体素数——碎片能不能活下去看的是这个，不是表层面积。"""
-    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
-    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
     out: dict[str, int] = {}
-    for ix in range(lo[0], hi[0]):
-        for iy in range(lo[1], hi[1]):
-            for iz in range(lo[2], hi[2]):
-                p = _voxel_center(ix, iy, iz)
-                if fld(p) >= ISO:
-                    n = owner(p)
-                    out[n] = out.get(n, 0) + 1
+    for n in solid_grid().values():
+        out[n] = out.get(n, 0) + 1
     return out
 
 
+@lru_cache(maxsize=1)
 def lobe_centroid() -> dict[str, np.ndarray]:
     """每个 lobe 的实心质心（世界坐标）。爆开时碎片的飞出方向由此定。"""
-    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
-    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
     acc: dict[str, list] = {}
-    for ix in range(lo[0], hi[0]):
-        for iy in range(lo[1], hi[1]):
-            for iz in range(lo[2], hi[2]):
-                p = _voxel_center(ix, iy, iz)
-                if fld(p) >= ISO:
-                    n = owner(p)
-                    a = acc.setdefault(n, [np.zeros(3), 0])
-                    a[0] += p
-                    a[1] += 1
+    for k, n in solid_grid().items():
+        a = acc.setdefault(n, [np.zeros(3), 0])
+        a[0] += _voxel_center(*k)
+        a[1] += 1
     return {n: a[0] / a[1] + CORE_CENTER for n, a in acc.items()}
+
+
+def group_mass(lobes: tuple[str, ...]) -> int:
+    """一组 lobe 的实心体素数。"""
+    m = lobe_mass()
+    return sum(m.get(n, 0) for n in lobes)
+
+
+def group_centroid(lobes: tuple[str, ...]) -> np.ndarray:
+    """一组 lobe 的实心质心（世界坐标）。"""
+    m, c = lobe_mass(), lobe_centroid()
+    tot = group_mass(lobes)
+    if tot <= 0:
+        raise ValueError(f"lobe 组 {lobes} 没有实心体素")
+    return sum(c[n] * m[n] for n in lobes if n in m) / tot
 
 
 # ---------------------------------------------------------------- 芽（嫁接前体）
@@ -576,6 +646,70 @@ def bud_shape(sock: Socket, growth: float) -> list[tuple[np.ndarray, float, str]
     return out
 
 
+_TISSUE_STEP = 0.35        # 芽体积数值积分的采样步长（px）
+
+
+def bud_tissue(sock: Socket, growth: float) -> float:
+    """一条芽在给定生长度下的**新增组织体积**（px³）。
+
+    不能拿三个节点的包围盒体积相加：三节沿法向排开是**互相重叠**的，而且根节大半
+    埋在体内——那部分是本来就有的肉，不是新长出来的。两项误差同向叠加，按包围盒
+    算会把用料高估到两倍以上。
+
+    这个数字有实际后果：芽的组织不是凭空出现的，得有来源。见 `graft_budget`。
+    """
+    nodes = bud_shape(sock, growth)
+    if not nodes:
+        return 0.0
+    lo = np.min([c - r for c, r, _ in nodes], axis=0)
+    hi = np.max([c + r for c, r, _ in nodes], axis=0)
+    ax = [np.arange(lo[i], hi[i] + _TISSUE_STEP, _TISSUE_STEP) for i in range(3)]
+    pts = np.stack(np.meshgrid(*ax, indexing="ij"), axis=-1).reshape(-1, 3)
+    inside = np.zeros(len(pts), bool)
+    for c, r, _m in nodes:
+        inside |= np.all(np.abs(pts - c) <= r, axis=1)
+    pts = pts[inside]
+    if not len(pts):
+        return 0.0
+    d = (pts[:, None, :] - CORE_CENTER - _LC[None, :, :]) / _LR[None, :, :]
+    f = (_LW[None, :] * np.exp(-np.einsum("ijk,ijk->ij", d, d))).sum(axis=1)
+    return float((f < ISO).sum()) * _TISSUE_STEP ** 3
+
+
+@lru_cache(maxsize=1)
+def graft_budget() -> float:
+    """一次能摊出去的未分化组织总量（px³）= **一条芽长满所需的料**。
+
+    正典里嫁接是**一次一条**、每条要七日（《异兽三形考》§兽·噬）。把这句话当成
+    对组织存量的量测：它同时能持有的未分化组织，就是一条部件的量。这不是拍出来的
+    比例，是从"一次一条"反推的——若存量足够两条，正典就不会写一次一条。
+
+    推论：想让每个挂载点同时冒芽（见 core_anim 的乱抽），同一份料得摊到 17 个槽上，
+    于是每个都只能是**短茬**。全身长满触手这件事，它负担不起。
+    """
+    return max(bud_tissue(s, 1.0) for s in sockets().values())
+
+
+def spread_growth(socks: tuple[Socket, ...], budget: float) -> float:
+    """把 budget 的组织**均摊**到这些槽上时，每条芽能长到的生长度。
+
+    总用料对 growth 单调递增，直接二分。解不出（预算比最小形态还少）时返回 0。
+    """
+    if not socks:
+        return 0.0
+    lo, hi = 0.0, 1.0
+    if sum(bud_tissue(s, 1.0) for s in socks) <= budget:
+        return 1.0
+    for _ in range(28):
+        mid = 0.5 * (lo + hi)
+        if sum(bud_tissue(s, mid) for s in socks) < budget:
+            lo = mid
+        else:
+            hi = mid
+    return lo        # 取下界而非中点：中点可能落在预算之上，超支 3% 也是超支
+
+
+@lru_cache(maxsize=1)
 def centroid() -> np.ndarray:
     """核心本体的**体积质心**（世界坐标）。
 
@@ -586,20 +720,10 @@ def centroid() -> np.ndarray:
     体素按等值面表层取，但质心要算**实心**体积——表层壳的质心会被薄壁处的面积权重
     带偏。这里用体素占据集直接算，不走 merge_slabs。
     """
-    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
-    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
-    acc = np.zeros(3)
-    n = 0
-    for ix in range(lo[0], hi[0]):
-        for iy in range(lo[1], hi[1]):
-            for iz in range(lo[2], hi[2]):
-                p = _voxel_center(ix, iy, iz)
-                if fld(p) >= ISO:
-                    acc += p
-                    n += 1
-    if n == 0:
+    grid = solid_grid()
+    if not grid:
         raise ValueError("等值面内没有体素——场参数坏了")
-    return acc / n + CORE_CENTER
+    return np.mean([_voxel_center(*k) for k in grid], axis=0) + CORE_CENTER
 
 
 def asymmetry() -> float:

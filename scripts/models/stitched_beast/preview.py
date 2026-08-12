@@ -66,6 +66,8 @@ def socket_report() -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sockets", action="store_true", help="叠加挂载点针")
+    ap.add_argument("--shard", nargs="?", const="", default=None,
+                    help="改渲碎片模型；可跟 lobe 列表，缺省取健康分裂那半")
     ap.add_argument("--three-view", action="store_true")
     ap.add_argument("--yaw", type=float, default=-35.0)
     ap.add_argument("--pitch", type=float, default=22.0)
@@ -73,11 +75,19 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    rig = build_with_pins() if args.sockets else G.build()
-    tmp = G.OUT_DIR / ("_preview_pins.bbmodel" if args.sockets else "_preview_core.bbmodel")
+    if args.shard is not None:
+        import fragment as FR
+        import gen_fragment as GF
+        lobes = tuple(filter(None, args.shard.split(","))) or FR.default_lobes()
+        # 按碎片真实能长到的生长度出图：按满长出图看到的是它到不了的形态
+        rig, _g, _s = GF.build(lobes, growth=FR.geom(lobes).growth())
+        tag, sub = ("shard_" + "_".join(lobes), "4_shard")
+    else:
+        rig = build_with_pins() if args.sockets else G.build()
+        tag, sub = ("sockets", "2_sockets") if args.sockets else ("core", "1_core")
+    tmp = G.OUT_DIR / f"_preview_{sub}.bbmodel"
     rig.save(tmp, "StitchedBeastCorePreview")
 
-    tag, sub = ("sockets", "2_sockets") if args.sockets else ("core", "1_core")
     dst = HERE / "renders" / sub
     dst.mkdir(parents=True, exist_ok=True)
     # render / render_three_view 都返回 (image, name)，别直接 .save
@@ -88,7 +98,8 @@ def main() -> int:
         out = args.out or dst / f"{tag}_34.png"
         img, _ = render(tmp, yaw=args.yaw, pitch=args.pitch, size=args.size)
     img.save(out)
-    print(socket_report())
+    if args.shard is None:
+        print(socket_report())
     print(f"→ {out}")
     return 0
 
