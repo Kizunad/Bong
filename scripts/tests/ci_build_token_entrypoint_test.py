@@ -66,19 +66,31 @@ SPECS = {
             'build_token="${BONG_E2E_BUILD_TOKEN:-$build_token}"',
             'server_directory="${BONG_E2E_SERVER_DIRECTORY:-$server_directory}"',
             "e2e supervisor test overrides require an explicit harness mode",
-            'python3 "$supervisor" "$server_directory" "$build_token"',
+            'python3 "$build_helper"',
+            '"$server_directory" "$cargo_target" "$build_token" "$build_timeout"',
+            'python3 "$supervisor" "$server_directory" "$built_binary"',
+            '2>>"$log_file"',
         ],
         "forbid": [
             r'build_token="\$\{BONG_E2E_BUILD_TOKEN:-\$ROOT/scripts/build-token\.sh\}"'
         ],
     },
-    "scripts/lib/bong-process-group-supervisor.py": {
+    "scripts/lib/bong-pre-handshake-build.py": {
         "required": [
             '[str(build_token), "cargo", "build", "--release"]',
+            "stdin=subprocess.DEVNULL",
+            "close_fds=True",
+            "start_new_session=True",
+            "os.killpg(process.pid, signal.SIGKILL)",
+        ],
+        "forbid": [r"subprocess\.run"],
+    },
+    "scripts/lib/bong-process-group-supervisor.py": {
+        "required": [
             "shutil.copy2(built_binary, artifact)",
             "[str(artifact)]",
         ],
-        "forbid": [r'subprocess\.Popen\(\s*\["cargo"', r'cargo.*run'],
+        "forbid": [r"\bcargo\b", r"build_token", r"subprocess\.run"],
     },
     "scripts/start.sh": {
         "required": ['"$ROOT/scripts/build-token.sh" cargo build --release'],
@@ -205,11 +217,13 @@ def test_e2e_supervisor_overrides_are_test_only() -> None:
         "e2e supervisor overrides require BONG_E2E_SUPERVISOR_TEST_MODE=1",
         override_assignment,
     )
-    supervisor_launch = function.index(
-        'python3 "$supervisor" "$server_directory" "$build_token"',
-        production_rejection,
+    build = function.index(
+        'python3 "$build_helper"', production_rejection
     )
-    if not harness_mode < gate < github_rejection < override_assignment < production_rejection < supervisor_launch:
+    supervisor_launch = function.index(
+        'python3 "$supervisor" "$server_directory" "$built_binary"', build
+    )
+    if not harness_mode < gate < github_rejection < override_assignment < production_rejection < build < supervisor_launch:
         raise AssertionError(
             "e2e supervisor override gate must reject CI and production bypasses before launch"
         )

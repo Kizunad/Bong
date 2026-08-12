@@ -119,26 +119,9 @@ def rollback_server(server: subprocess.Popen[bytes] | None) -> bool:
     return True
 
 
-def build_server_binary(server_directory: Path, build_token: Path) -> Path:
-    environment = os.environ.copy()
-    target_root = Path(
-        environment.get("CARGO_TARGET_DIR", str(server_directory / "target"))
-    )
-    if not target_root.is_absolute():
-        target_root = server_directory / target_root
-    subprocess.run(
-        [str(build_token), "cargo", "build", "--release"],
-        cwd=server_directory,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-        check=True,
-        close_fds=True,
-    )
-    built_binary = target_root / "release" / "bong-server"
+def pin_server_binary(built_binary: Path) -> Path:
     if not built_binary.is_file():
-        raise RuntimeError(f"successful cargo build did not produce {built_binary}")
+        raise RuntimeError(f"prebuilt server binary does not exist: {built_binary}")
     artifact_dir = Path(tempfile.mkdtemp(prefix="bong-e2e-server-"))
     artifact = artifact_dir / "bong-server"
     shutil.copy2(built_binary, artifact)
@@ -159,7 +142,7 @@ def remove_artifact(artifact: Path | None) -> None:
 def main() -> int:
     if len(sys.argv) != 3:
         print(
-            "usage: bong-process-group-supervisor.py SERVER_DIRECTORY BUILD_TOKEN",
+            "usage: bong-process-group-supervisor.py SERVER_DIRECTORY BUILT_BINARY",
             file=sys.stderr,
         )
         return 2
@@ -180,8 +163,8 @@ def main() -> int:
     artifact: Path | None = None
     try:
         server_directory = Path(sys.argv[1]).resolve(strict=True)
-        build_token = Path(sys.argv[2]).resolve(strict=True)
-        artifact = build_server_binary(server_directory, build_token)
+        built_binary = Path(sys.argv[2]).resolve(strict=True)
+        artifact = pin_server_binary(built_binary)
         server = subprocess.Popen(
             [str(artifact)],
             cwd=server_directory,
@@ -192,8 +175,8 @@ def main() -> int:
         )
         sys.stdout.buffer.write(f"READY pid={os.getpid()}\n".encode())
         sys.stdout.buffer.flush()
-    except (OSError, RuntimeError, subprocess.CalledProcessError, BrokenPipeError) as error:
-        print(f"failed to build, launch, or publish release server readiness: {error}", file=sys.stderr)
+    except (OSError, RuntimeError, BrokenPipeError) as error:
+        print(f"failed to launch or publish release server readiness: {error}", file=sys.stderr)
         rolled_back = rollback_server(server)
         remove_artifact(artifact)
         return 2 if rolled_back else 3

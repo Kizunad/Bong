@@ -16,6 +16,7 @@ import pathlib
 import re
 import shutil
 import shlex
+import signal
 import socket
 import struct
 import subprocess
@@ -2308,7 +2309,12 @@ class BotE2eDevModeContractTest(unittest.TestCase):
         self.assertIn("name: ${BONG_TEST_COMPOSE_PROJECT:-bong-test}", self.compose_source)
 
     def _run_owned_fixture_runtime_case(
-        self, runner_mode: str, *, runner_exit: int = 0, tee_exit: int | None = None
+        self,
+        runner_mode: str,
+        *,
+        runner_exit: int = 0,
+        tee_exit: int | None = None,
+        fallback_mode: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
         """Run the real bot-e2e shell path against only test-owned fake processes."""
         root = pathlib.Path(__file__).parents[2]
@@ -2326,6 +2332,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             replacement_pid_file = temp / "replacement.pid"
             replacement_ready_file = temp / "replacement-ready"
             watcher_status_file = temp / "watcher-status"
+            runner_args_file = temp / "runner-args"
             redis_port = 39999
             port = self._unused_local_port()
             fake_python = fake_bin / "python3"
@@ -2342,6 +2349,7 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "fi\n"
                 "if [[ \"${1:-}\" == *run_scenarios.py ]]; then\n"
                 f"  printf '%s\\n' \"$FAKE_RUNNER_MODE\" >> {shlex.quote(str(runner_log))}\n"
+                f"  printf '%s\\n' \"$*\" > {shlex.quote(str(runner_args_file))}\n"
                 "  wait_watcher_lost() {\n"
                 "    local status\n"
                 "    for _ in $(seq 1 200); do\n"
@@ -2444,7 +2452,11 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 "PY\n"
                 "  sleep 0.01\n"
                 "done\n"
-                "printf '%s\\n' \"[bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
+                "if [ \"${BOT_E2E_FALLBACK_MODE:-0}\" = 1 ]; then\n"
+                "  printf '%s\\n' '2026-08-11T23:25:37.123456Z  INFO [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4'\n"
+                "else\n"
+                "  printf '%s\\n' \"2026-08-11T23:25:37.123456Z  INFO [bong][world] BOT_RASTER_FIXTURE_READY manifest=$BONG_TERRAIN_RASTER_PATH token=$BOT_E2E_AMBIENT_FIXTURE_TOKEN\"\n"
+                "fi\n"
                 "while true; do sleep 1; done\n",
                 encoding="utf-8",
             )
@@ -2460,6 +2472,39 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (fake_bin / "cargo").chmod(0o755)
+            listener_lookup = (
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "pid=''\n"
+                "for candidate_file in \"$FAKE_REPLACEMENT_READY_FILE\" \"$FAKE_LISTENER_PID_FILE\"; do\n"
+                "  if test -s \"$candidate_file\"; then\n"
+                "    candidate=$(cat \"$candidate_file\")\n"
+                "    if kill -0 \"$candidate\" 2>/dev/null; then pid=$candidate; break; fi\n"
+                "  fi\n"
+                "done\n"
+                "test -n \"$pid\" || exit 1\n"
+            )
+            (fake_bin / "ss").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "[ \"$#\" -eq 4 ] && [ \"$1\" = -4 ] && [ \"$2\" = -H ] "
+                "&& [ \"$3\" = -ltnp ] && [ \"$4\" = \"sport = :$BOT_E2E_PORT\" ] || exit 64\n"
+                + "\n".join(listener_lookup.splitlines()[2:])
+                + "\nprintf 'LISTEN 0 128 127.0.0.1:%s 0.0.0.0:* users:((\\\"python3\\\",pid=%s,fd=3))\\n' \"$BOT_E2E_PORT\" \"$pid\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "ss").chmod(0o755)
+            (fake_bin / "lsof").write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "[ \"$#\" -eq 4 ] && [ \"$1\" = -nP ] "
+                "&& [ \"$2\" = \"-iTCP:$BOT_E2E_PORT\" ] "
+                "&& [ \"$3\" = -sTCP:LISTEN ] && [ \"$4\" = -Fp ] || exit 64\n"
+                + "\n".join(listener_lookup.splitlines()[2:])
+                + "\nprintf 'p%s\\n' \"$pid\"\n",
+                encoding="utf-8",
+            )
+            (fake_bin / "lsof").chmod(0o755)
             if tee_exit is not None:
                 (fake_bin / "tee").write_text(
                     f"#!/usr/bin/env bash\nexit {tee_exit}\n", encoding="utf-8"
@@ -2468,16 +2513,25 @@ class BotE2eDevModeContractTest(unittest.TestCase):
 
             evidence_root = root / ".sisyphus/evidence/bot-e2e"
             env = os.environ.copy()
+            # Exercise isolation against a hostile ambient world override. The
+            # fixture must remove it before entering dedicated fallback mode.
+            env["BONG_WORLD_PATH"] = str(temp / "ambient-world-must-not-leak")
             for name in (
-                "BOT_E2E_REUSE", "BOT_E2E_HOST", "BOT_E2E_PORT",
-                "BOT_E2E_FALLBACK_MODE",
-                "BONG_TERRAIN_RASTER_PATH", "BONG_SPIRITWOOD_HARVESTED_PATH",
+                "BOT_E2E_AMBIENT_FIXTURE_MODE", "BOT_E2E_REUSE", "BOT_E2E_HOST",
+                "BOT_E2E_PORT", "BOT_E2E_FALLBACK_MODE",
+                "BONG_TERRAIN_RASTER_PATH", "BONG_WORLD_PATH",
+                "BONG_SPIRITWOOD_HARVESTED_PATH",
                 "REDIS_URL", "BOT_E2E_AMBIENT_FIXTURE_OWNED",
+                "BOT_E2E_FALLBACK_OWNED",
             ):
                 env.pop(name, None)
             env.update(
                 {
-                    "BOT_E2E_AMBIENT_FIXTURE_MODE": "1",
+                    (
+                        "BOT_E2E_FALLBACK_MODE"
+                        if fallback_mode
+                        else "BOT_E2E_AMBIENT_FIXTURE_MODE"
+                    ): "1",
                     "BOT_E2E_PORT": str(port),
                     "FAKE_RUNNER_MODE": runner_mode,
                     "FAKE_RUNNER_EXIT": str(runner_exit),
@@ -2497,15 +2551,44 @@ class BotE2eDevModeContractTest(unittest.TestCase):
             runner_output = ""
             runner_result = ""
             watcher_status = ""
+            process: subprocess.Popen[str] | None = None
             try:
-                result = subprocess.run(
+                process = subprocess.Popen(
                     ["bash", "scripts/bot-e2e.sh"],
                     cwd=root,
                     env=env,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    check=False,
-                    timeout=30,
+                    start_new_session=True,
+                )
+                try:
+                    stdout, stderr = process.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        stdout, stderr = process.communicate(timeout=5)
+                    evidence_after = (
+                        set(evidence_root.glob("run.*")) if evidence_root.exists() else set()
+                    )
+                    server_logs = []
+                    for evidence_dir in sorted(evidence_after - evidence_before):
+                        server_log = evidence_dir / "server.log"
+                        if server_log.exists():
+                            server_logs.append(server_log.read_text(encoding="utf-8"))
+                    self.fail(
+                        "bot-e2e fixture exceeded 30s and its process group was stopped; "
+                        f"stdout={stdout!r}; stderr={stderr!r}; "
+                        f"runner_args={runner_args_file.read_text(encoding='utf-8') if runner_args_file.exists() else 'missing'!r}; "
+                        f"server_pid={server_pid_file.read_text(encoding='utf-8') if server_pid_file.exists() else 'missing'!r}; "
+                        f"listener_pid={listener_pid_file.read_text(encoding='utf-8') if listener_pid_file.exists() else 'missing'!r}; "
+                        f"server_logs={server_logs!r}"
+                    )
+                result = subprocess.CompletedProcess(
+                    process.args, process.returncode, stdout, stderr
                 )
                 runner_output = (
                     runner_log.read_text(encoding="utf-8") if runner_log.exists() else ""
@@ -2520,11 +2603,37 @@ class BotE2eDevModeContractTest(unittest.TestCase):
                     if watcher_status_file.exists()
                     else ""
                 )
+                if fallback_mode:
+                    self.assertEqual(
+                        runner_args_file.read_text(encoding="utf-8").strip(),
+                        f"{root / 'scripts/bot/run_scenarios.py'} --scenario terrain_join_chunk_delivery",
+                    )
             finally:
+                if process is not None and process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
                 for pid_file in (server_pid_file, listener_pid_file, replacement_pid_file):
-                    if pid_file.exists():
+                    if not pid_file.exists():
+                        continue
+                    pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        continue
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
                         try:
-                            os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 15)
+                            os.kill(pid, 0)
+                        except ProcessLookupError:
+                            break
+                        time.sleep(0.01)
+                    else:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
                         except ProcessLookupError:
                             pass
                 if evidence_root.exists():
@@ -2541,6 +2650,15 @@ class BotE2eDevModeContractTest(unittest.TestCase):
     def test_owned_fixture_runtime_watcher_accepts_successful_owned_runner(self):
         result, runner_output, runner_result, watcher_status = (
             self._run_owned_fixture_runtime_case("success")
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(runner_output.strip(), "success")
+        self.assertEqual(runner_result.strip(), "runner-complete")
+        self.assertEqual(watcher_status.strip(), "complete")
+
+    def test_fallback_runtime_accepts_realistic_tracing_readiness_everywhere(self):
+        result, runner_output, runner_result, watcher_status = (
+            self._run_owned_fixture_runtime_case("success", fallback_mode=True)
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(runner_output.strip(), "success")

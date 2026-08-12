@@ -12,9 +12,13 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 READY_PREFIX = r"\[bong\]\[world\] BOT_FALLBACK_FLAT_READY"
+TRACING_INFO_PREFIX = (
+    r"(?:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?Z\s+INFO\s+)?"
+)
 READY_PATTERN = re.compile(
-    rf"^{READY_PREFIX} anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
-    r"view_distance_chunks=[1-9][0-9]*$"
+    rf"^{TRACING_INFO_PREFIX}{READY_PREFIX} anchors=[1-9][0-9]* "
+    r"chunks=[1-9][0-9]* view_distance_chunks=[1-9][0-9]*$"
 )
 STALE_MARKER = "creating overworld test area"
 HARNESS_PATHS = (
@@ -30,6 +34,8 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
         for line in (
             "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=5002 "
             "view_distance_chunks=20",
+            "2026-08-11T23:25:37.123456Z  INFO [bong][world] "
+            "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4",
             "[bong][world] BOT_FALLBACK_FLAT_READY anchors=4294967295 "
             "chunks=8192 view_distance_chunks=18446744073709551615",
         ):
@@ -56,23 +62,48 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
             "view_distance_chunks=4",
             "[bong][world] BOT_FALLBACK_FLAT_READYISH anchors=3 chunks=1530 "
             "view_distance_chunks=4",
+            "2026-08-11T23:25:37.123456Z  INFO [bong][world] "
+            "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+            "view_distance_chunks=4 trailing-garbage",
             "prefix [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
             "view_distance_chunks=4",
+            "2026-08-11T23:25:37.123456Z  WARN [bong][world] "
+            "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4",
+            "2026-08-11 23:25:37 INFO [bong][world] "
+            "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 view_distance_chunks=4",
         ):
             with self.subTest(line=line):
                 self.assertNotRegex(line, READY_PATTERN)
 
     def test_shell_ere_matches_the_same_contract(self) -> None:
-        shell_pattern = (
-            r"^\[bong\]\[world\] BOT_FALLBACK_FLAT_READY "
-            r"anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
-            r"view_distance_chunks=[1-9][0-9]*$"
+        source = (ROOT / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
+        assignment = re.search(
+            r"^BOT_FALLBACK_READY_PATTERN='([^']+)'$", source, re.MULTILINE
         )
+        self.assertIsNotNone(assignment)
+        shell_pattern = assignment.group(1)
         cases = (
             (
                 "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
                 "view_distance_chunks=4\n",
                 0,
+            ),
+            (
+                "2026-08-11T23:25:37.123456Z  INFO [bong][world] "
+                "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "view_distance_chunks=4\n",
+                0,
+            ),
+            (
+                "2026-08-11T23:25:37.123456Z  WARN [bong][world] "
+                "BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "view_distance_chunks=4\n",
+                1,
+            ),
+            (
+                "prefix [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 "
+                "chunks=1530 view_distance_chunks=4\n",
+                1,
             ),
             (
                 "[bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
@@ -85,7 +116,8 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
                 1,
             ),
             (
-                "prefix [bong][world] BOT_FALLBACK_FLAT_READY anchors=3 chunks=1530 "
+                "2026-08-11T23:25:37.123456Z  INFO [bong][world] "
+                "BOT_FALLBACK_FLAT_READYISH anchors=3 chunks=1530 "
                 "view_distance_chunks=4\n",
                 1,
             ),
@@ -139,12 +171,14 @@ class FallbackWorldReadinessContractTest(unittest.TestCase):
         )
     def test_bot_e2e_uses_structured_readiness_for_every_ownership_check(self) -> None:
         source = (ROOT / "scripts/bot-e2e.sh").read_text(encoding="utf-8")
-        assignment = (
-            "BOT_FALLBACK_READY_PATTERN='^\\[bong\\]\\[world\\] "
-            "BOT_FALLBACK_FLAT_READY anchors=[1-9][0-9]* chunks=[1-9][0-9]* "
-            "view_distance_chunks=[1-9][0-9]*$'"
+        assignment = re.search(
+            r"^BOT_FALLBACK_READY_PATTERN='([^']+)'$", source, re.MULTILINE
         )
-        self.assertIn(assignment, source)
+        self.assertIsNotNone(assignment)
+        pattern = assignment.group(1)
+        self.assertTrue(pattern.startswith("^(") and pattern.endswith("$"))
+        self.assertIn("INFO[[:space:]]+", pattern)
+        self.assertNotIn("WARN", pattern)
         self.assertNotIn("BOT_FALLBACK_READY_PAYLOAD", source)
         self.assertEqual(
             source.count('grep -Eq -- "$BOT_FALLBACK_READY_PATTERN" "$SERVER_LOG"'),
