@@ -377,11 +377,18 @@ wait_for_file "$timeout_build_descendant_file" \
 for stopped_pid_file in "$timeout_build_pid_file" "$timeout_build_descendant_file"; do
     stopped_pid="$(<"$stopped_pid_file")"
     for _ in $(seq 1 100); do
-        kill -0 "$stopped_pid" 2>/dev/null || break
+        if ! kill -0 "$stopped_pid" 2>/dev/null; then
+            break
+        fi
+        stopped_state="$(ps -o stat= -p "$stopped_pid" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$stopped_state" = Z* ]] && break
         sleep 0.01
     done
-    kill -0 "$stopped_pid" 2>/dev/null \
-        && fail "timed-out build process $stopped_pid survived bounded group cleanup"
+    if kill -0 "$stopped_pid" 2>/dev/null; then
+        stopped_state="$(ps -o stat= -p "$stopped_pid" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$stopped_state" = Z* ]] \
+            || fail "timed-out build process $stopped_pid survived bounded group cleanup"
+    fi
 done
 
 # A build slower than the five-second READY budget completes first into a target
