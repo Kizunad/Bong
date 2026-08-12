@@ -67,15 +67,19 @@ class Lobe:
 # 赘生物的 weight 必须 ≈1.0：低权重（试过 0.4-0.6）的团块撑不出自己的等值面，会被
 # 主体吞掉——几何上只鼓一点点，且 owner() 判归 core_mid，等于既看不见也没有独立骨，
 # 动画里无法单独搏动。要它是个"东西"，它就得自己够得着 f=1。
+# **各团质量必须相当**，不能一团独大。core_mid 曾占全身 45%（390/866），后果有两条：
+# ① "几只野兽融成一只"读不出来，只读成"一坨肉带几个疣"；② 爆体时只有主体够格活下去，
+# 「不同部位各自逃窜」根本发生不了，健康分裂也找不到可行切面（怎么切都有一半活不下去）。
+# 见 fission.py —— 碎片存活线是质量，摊平质量才有多块可存活的碎片。
 LOBES: tuple[Lobe, ...] = (
-    Lobe("core_mid", (0.0, 0.0, 0.0), (13.0, 10.0, 14.0), 1.00),
-    Lobe("core_fore", (0.5, 1.5, -10.5), (10.5, 8.5, 9.5), 0.85, "core_mid"),
-    Lobe("core_hind", (-1.2, -0.5, 10.5), (11.5, 9.5, 10.5), 0.90, "core_mid"),
-    Lobe("core_sag", (0.5, -7.5, 1.0), (10.5, 5.5, 13.0), 0.75, "core_mid"),
+    Lobe("core_mid", (0.0, 0.5, 0.0), (10.0, 8.6, 9.5), 0.94),
+    Lobe("core_fore", (0.5, 1.5, -11.5), (11.0, 8.8, 11.0), 0.94, "core_mid"),
+    Lobe("core_hind", (-1.2, -0.5, 11.5), (11.5, 9.4, 11.5), 0.94, "core_mid"),
+    Lobe("core_sag", (0.5, -7.5, 0.5), (10.5, 6.2, 13.5), 0.82, "core_mid"),
     # —— 以下三处刻意不对称，别"修正" ——
-    Lobe("lump_l", (-11.5, 2.5, -2.5), (6.0, 6.0, 7.5), 1.05, "core_mid"),
-    Lobe("lump_dorsal", (4.0, 9.5, 4.0), (6.5, 5.5, 7.5), 1.00, "core_mid"),
-    Lobe("nodule_r", (10.0, -1.5, 9.5), (4.5, 4.2, 4.6), 0.95, "core_hind"),
+    Lobe("lump_l", (-11.5, 2.5, -2.5), (6.6, 6.6, 8.0), 1.05, "core_mid"),
+    Lobe("lump_dorsal", (4.0, 9.5, 4.0), (7.0, 6.0, 8.0), 1.00, "core_mid"),
+    Lobe("nodule_r", (10.5, -1.5, 10.0), (5.2, 4.8, 5.2), 0.95, "core_hind"),
 )
 
 # 负权凹槽：在两团肉的交界处**刻**一圈沟。
@@ -493,6 +497,56 @@ def core_bounds() -> tuple[np.ndarray, np.ndarray]:
         lo = np.minimum(lo, a)
         hi = np.maximum(hi, b)
     return lo, hi
+
+
+def weld_areas(voxels: tuple[Voxel, ...] | None = None) -> dict[tuple[str, str], int]:
+    """每对 lobe 之间的**接合面积**（交界体素数）。
+
+    这就是那道癒合痕的强度：两团肉长在一起的接触面越大，扯开它需要的力越大。裂开时
+    从哪儿裂**不需要画**——面积最小的那道接合先断。分裂 / 爆体 / 掉块全部由这张表推出
+    （见 fission.py）。
+
+    键统一排序，(a,b) 与 (b,a) 归并成一条。
+    """
+    vs = voxels if voxels is not None else voxelize()
+    out: dict[tuple[str, str], int] = {}
+    for v in vs:
+        for other in v.seam:
+            key = (v.bone, other) if v.bone < other else (other, v.bone)
+            out[key] = out.get(key, 0) + 1
+    return out
+
+
+def lobe_mass() -> dict[str, int]:
+    """每个 lobe 的**实心**体素数——碎片能不能活下去看的是这个，不是表层面积。"""
+    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
+    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
+    out: dict[str, int] = {}
+    for ix in range(lo[0], hi[0]):
+        for iy in range(lo[1], hi[1]):
+            for iz in range(lo[2], hi[2]):
+                p = _voxel_center(ix, iy, iz)
+                if fld(p) >= ISO:
+                    n = owner(p)
+                    out[n] = out.get(n, 0) + 1
+    return out
+
+
+def lobe_centroid() -> dict[str, np.ndarray]:
+    """每个 lobe 的实心质心（世界坐标）。爆开时碎片的飞出方向由此定。"""
+    lo = ((_LC - _LR * 2.2).min(axis=0) / VOX).astype(int) - 1
+    hi = ((_LC + _LR * 2.2).max(axis=0) / VOX).astype(int) + 2
+    acc: dict[str, list] = {}
+    for ix in range(lo[0], hi[0]):
+        for iy in range(lo[1], hi[1]):
+            for iz in range(lo[2], hi[2]):
+                p = _voxel_center(ix, iy, iz)
+                if fld(p) >= ISO:
+                    n = owner(p)
+                    a = acc.setdefault(n, [np.zeros(3), 0])
+                    a[0] += p
+                    a[1] += 1
+    return {n: a[0] / a[1] + CORE_CENTER for n, a in acc.items()}
 
 
 # ---------------------------------------------------------------- 芽（嫁接前体）

@@ -49,6 +49,8 @@ sys.path.insert(0, str(HERE))
 
 import core as C  # noqa: E402
 import gen_core as G  # noqa: E402
+from functools import lru_cache  # noqa: E402
+
 from anim_rig import Pose, Rig, build_tracks, smooth, wrap, write_bbmodel, write_geckolib  # noqa: E402
 
 MODEL = G.OUT
@@ -59,15 +61,49 @@ OUT_GECKO = HERE / "stitched_beast_core.animation.json"
 LOBE_SPAN = 21.0          # core_fore 与 core_hind 的 z 间距，即"体长"基准
 STRETCH = 0.40            # 组织可拉伸比例。无骨软组织的保守值——水蛭能伸到两倍体长，
                           # 25% 试过：渲出来八帧几乎一模一样，读不出它在蠕动
-CONTRACT_RATE = 6.0       # 组织收缩速率上限（px/s），决定一个相位要多久
+# 尺寸无关的量是**应变率**（每秒收缩掉体长的几分之几），不是绝对收缩速度。
+# 绝对速度 rate = STRAIN_RATE × 体长，于是爬行速度 v = rate/2 ∝ **体长**：
+# 大块爬得快、小碎片爬得慢。写成固定 px/s 的话每块碎片都以同一速度逃窜，
+# 「不同部位不同逃法」就只剩方向不同了（见 fission）。
+STRAIN_RATE = 0.286       # 1/s；对整只兽 = 6.0 px/s ÷ 21 px 体长
+CONTRACT_RATE = STRAIN_RATE * LOBE_SPAN     # 整只兽的绝对收缩速度（px/s）
 CRAWL_D = LOBE_SPAN * STRETCH               # 每周期净前进量
 CRAWL_HZ = CONTRACT_RATE / (2.0 * CRAWL_D)  # 两个相位各走 d/rate 秒
+
+
+def crawl_speed(span: float) -> float:
+    """给定体长的蠕动速度（px/s）。v = 应变率 × 体长 / 2。"""
+    return STRAIN_RATE * span / 2.0
 
 LOBES_MAIN = ("core_fore", "core_mid", "core_hind", "core_sag")
 LOBES_LUMP = ("lump_l", "lump_dorsal", "nodule_r")
 BUDS = tuple(f"bud_{n}" for n in C.sockets())
 BUD_DORMANT = 0.10        # 未嫁接时芽的缩放。几何按满尺寸建，休眠态靠 scale 压下去
 GRAFT_SOCKET = "limb_fl"  # core_graft 演示用的槽；运行时由服务端直接驱动任意 bud_<槽>
+
+
+def place_world(rig: Rig, pose: Pose, name: str, offset) -> None:
+    """把 name 的枢轴放到「静止位置 + offset」的**世界**位置，自动补偿父链。
+
+    骨骼是树，而父骨的局部变换里既有平移也有**旋转和缩放**——子骨写的 `pos` 会被父骨
+    的 R·S 一起作用。所以「子骨位移 = 目标 − 父骨位移」这种加法补偿是错的：只在父骨
+    纯平移时成立。缝合兽的爆体里父骨同时在鼓胀（scale 1.2）和翻滚，实测 nodule_r 被
+    父链放大到 −32px，钳制怎么调都拦不住。
+
+    正解不做近似，直接用父骨**完整的世界矩阵**反解：
+
+        W_parent · (o + pos) = o_world_rest + offset   ⇒   pos = W_parent⁻¹·目标 − o
+
+    调用前必须已经设好本骨的 rot（旋转绕自身枢轴，不影响枢轴位置）与所有祖先的通道——
+    所以要按父先于子的顺序调。同一坑在蠕动的中段桥接里也踩过一次（见 anim_crawl）。
+    """
+    b = rig.bones[name]
+    rest = rig.joint(name, rig.world(Pose()))
+    W = rig.world(pose)
+    parent = b.parent
+    P = W[parent] if parent else np.eye(4)
+    target = np.append(rest + np.asarray(offset, float), 1.0)
+    pose[name].pos = list((np.linalg.inv(P) @ target)[:3] - b.origin)
 
 
 def dormant_buds(p: Pose, active: str | None = None) -> None:
@@ -253,6 +289,125 @@ def anim_graft(rig: Rig, t: float, length: float) -> Pose:
     return p
 
 
+BURST_SWELL = 0.14        # 爆体前的鼓胀段占比：内压把表皮撑到极限
+BURST_G = 90.0            # 碎片下落加速度（px/s²）。比真实重力小——碎片是黏的，带阻尼
+BURST_DRAG = 0.55         # 水平速度的指数衰减系数（1/s）：黏肉飞不远
+BURST_REST = 0.5          # 碎片落地后**最低点**离地高度（px）：黏肉摊在地上，不是悬着
+BURST_SPIN_MAX = 30.0     # 翻滚角上限（度）。黏肉是瘫倒不是翻筋斗——不封顶时位移大的
+                          # 碎片转到 120°，绕枢轴一甩就把几何插进地里 48px（实测）
+
+
+@lru_cache(maxsize=1)
+def _bone_reach() -> dict[str, tuple[float, float]]:
+    """每根骨的（静止几何最低点 y, 枢轴到几何的最大距离）。
+
+    落地钳制要按**几何最低点**而不是质心：质心离地还有富余时，底下的肉早已扎进地里。
+    还要按最大半径算翻滚甩幅——绕枢轴转 θ 会让远端再下沉 extent·sinθ，不算这一项
+    钳完仍会穿地（实测从 -48 只降到 -29）。
+    """
+    rig = Rig(MODEL)
+    out: dict[str, tuple[float, float]] = {}
+    for n in rig.order:
+        pts = rig.bone_points(n)
+        if len(pts):
+            o = rig.bones[n].origin
+            out[n] = (float(pts[:, 1].min()),
+                      float(np.linalg.norm(pts - o, axis=1).max()))
+    return out
+
+
+def anim_burst(rig: Rig, t: float, length: float) -> Pose:
+    """爆体：癒合痕同时崩开，各团肉沿自己的方向飞散。
+
+    这是 core_death 的另一条路——不是泄气塌成一滩，是**撑破**。哪几块、朝哪飞、飞多快
+    全部来自 fission（接合面积定裂法，动量守恒定速度），这里只负责把它演出来。
+
+    弹道用最朴素的抛体 + 水平阻尼：黏肉不是弹片，飞不远。**不额外加"炸飞"的整体位移**
+    ——净动量为零是 fission 的硬约束，整团往一边飞就读成被外力炸了，而不是自己崩开。
+
+    骨骼是树，父骨的位移会传给子骨，所以子骨只写**相对父骨的增量**。
+    """
+    import fission as F                        # 循环依赖：只在用到时导入
+
+    p = Pose()
+    swell = smooth(np.clip(t / BURST_SWELL, 0.0, 1.0))
+    for n in LOBES_MAIN + LOBES_LUMP:
+        s = 1.0 + 0.20 * swell
+        p[n].scale = [s, s, s]
+    dormant_buds(p)
+    if t <= BURST_SWELL:
+        return p
+
+    tau = (t - BURST_SWELL) * length           # 崩开后经过的真实秒数
+    reach = _bone_reach()
+    swing_max = math.sin(math.radians(BURST_SPIN_MAX))
+    disp: dict[str, np.ndarray] = {}
+    for frag in F.build_fragments():
+        v = frag.launch
+        damp = (1.0 - math.exp(-BURST_DRAG * tau)) / BURST_DRAG
+        dy = v[1] * tau - 0.5 * BURST_G * tau * tau
+        for n in frag.lobes:
+            # **落地即停**：抛体到地面为止，黏肉不弹也不继续下沉。不钳的话 1.6 秒的
+            # 自由落体有 115px，碎片直接穿地掉出画面（实测末两帧全在地平线以下）。
+            low, ext = reach.get(n, (12.0, 8.0))
+            floor = BURST_REST - low + ext * swing_max     # 含翻滚甩幅
+            disp[n] = np.array([v[0] * damp, max(dy, floor), v[2] * damp])
+
+    spins = {n: min(float(np.linalg.norm(d)) * 3.0, BURST_SPIN_MAX) for n, d in disp.items()}
+    par = {lb.name: (lb.parent or "root") for lb in C.LOBES}
+    for n in (lb.name for lb in C.LOBES):        # 父先于子（C.LOBES 已按此序）
+        s = spins[n] - spins.get(par[n], 0.0)
+        p[n].rot = [s * 0.6, s * 0.3, -s * 0.45]
+        place_world(rig, p, n, disp[n])
+    return p
+
+
+SPLIT_GAP = 26.0          # 分裂终了两半的间距（px）
+
+
+def anim_split(rig: Rig, t: float, length: float) -> Pose:
+    """健康分裂：沿最小割把自己扯成两半，各自走开。这是它的繁殖。
+
+    和爆体的区别不在快慢，在**主动**：爆体是被撑破，各团被动飞散；分裂是自己拽，
+    所以有一段明显的「僵持」——两半各自往反方向使劲，癒合痕先绷紧、变细，撑到极限
+    才断。断之后两半都完好，各自带着自己那份挂载点离开。
+
+    切面来自 fission.split_seam（最小割 + 两半都能活），不是画的。
+    """
+    import fission as F
+
+    p = Pose()
+    sp = F.split_seam()
+    if sp is None:                              # 没有可行切面就只是憋着
+        return anim_idle(rig, t, length)
+    side_a, side_b, _cut = sp
+
+    strain = smooth(np.clip(t / 0.62, 0.0, 1.0))     # 僵持：绷紧、变细
+    tear = smooth(np.clip((t - 0.62) / 0.38, 0.0, 1.0))  # 断开：各自退走
+    # 绷紧时整体被拉细（组织被扯薄），断开后各自回弹
+    thin = 1.0 - 0.16 * strain + 0.10 * tear
+    for n in LOBES_MAIN + LOBES_LUMP:
+        p[n].scale = [thin, thin, 1.0 + 0.10 * strain]
+    dormant_buds(p)
+
+    mass = C.lobe_mass()
+    cen = C.lobe_centroid()
+    ca = sum(cen[n] * mass[n] for n in side_a) / sum(mass[n] for n in side_a)
+    cb = sum(cen[n] * mass[n] for n in side_b) / sum(mass[n] for n in side_b)
+    axis = ca - cb
+    axis[1] = 0.0                                # 水平掰开，不是上下扯
+    axis /= max(float(np.linalg.norm(axis)), 1e-6)
+    # 僵持段只挪一点点（绷着），断开后才真正拉开——距离曲线的拐点就是"啪"的那一下
+    reach = SPLIT_GAP * (0.18 * strain + 0.82 * tear)
+    ma, mb = sum(mass[n] for n in side_a), sum(mass[n] for n in side_b)
+    # 反冲按质量分配：轻的那半退得远（动量守恒，同 fission 的爆体）
+    da, db = axis * reach * mb / (ma + mb), -axis * reach * ma / (ma + mb)
+
+    for n in (lb.name for lb in C.LOBES):        # 父先于子
+        place_world(rig, p, n, da if n in side_a else db)
+    return p
+
+
 def anim_hurt(rig: Rig, t: float, length: float) -> Pose:
     """受击：整体一震 + 被打的那侧塌陷回弹。软组织没有骨架撑着，凹得比硬壳生物深。"""
     p = Pose()
@@ -295,6 +450,8 @@ ANIMS: dict[str, tuple[float, bool, int, object]] = {
     "core_lunge": (0.75, False, 24, anim_lunge),
     "core_engulf": (1.40, False, 30, anim_engulf),
     "core_graft": (3.00, False, 44, anim_graft),
+    "core_burst": (1.60, False, 34, anim_burst),
+    "core_split": (2.60, False, 36, anim_split),
     "core_hurt": (0.45, False, 20, anim_hurt),
     "core_death": (2.20, False, 36, anim_death),
 }

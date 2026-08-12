@@ -84,7 +84,8 @@ MIN_SUPPORT = 3           # 任一时刻最少着地脚数
 COMFORT = 0.72            # 舒适伸展度：髋高 / 有效肢长的目标值（0=完全折起，1=绷直）
 MAX_STEPS = 6             # 单肢每身体周期最多迈几步；再多也跟不上就判拖行
 RUN_TEMPO = 2.2           # 奔跑相对自然摆频的倍率（肌肉强驱，越界即耗真元）
-RIDE_RANGE = (-14.0, 6.0) # 骑乘高度搜索区间（相对核心设计高度）
+RIDE_CLEAR = 3.0          # 骑乘高度下限留给髋的离地余量；上限见 RIDE_UP
+RIDE_UP = 6.0             # 骑乘高度上限（相对核心设计高度）
 SAMPLES = 48              # 稳定性采样点数
 PHASE_GRID = 16           # 相位候选格点数；SAMPLES 必须是它的整数倍（相位平移 = 数组滚动）
 
@@ -200,8 +201,14 @@ def solve_ride_height(genes, socks) -> float:
     评分优先级是**先数量后舒适**——多一条能承重的腿对稳定性的价值远大于剩下几条站得
     舒服一点。同分时取更靠近 COMFORT 的，避免解出"所有腿都绷直勉强够到"这种姿势。
     """
+    # 搜索区间由几何推出，不写常数：下限是"把最低的髋压到离地 RIDE_CLEAR"，再低髋就
+    # 钻到地里了。写死区间的话小碎片压不下去——碎片本来就该比整只兽蹲得低得多，
+    # 固定 -14 的下限让每块碎片的短肢都够不着地，全部退化成蠕动（实测）。
+    hips = [float(socks[g.socket].pos[1]) for g in genes if g.load_bearing]
+    if not hips:
+        return 0.0
+    lo, hi = -(min(hips) - RIDE_CLEAR), RIDE_UP
     best, best_dy = (-1, -1e9), 0.0
-    lo, hi = RIDE_RANGE
     for k in range(int((hi - lo) / 0.5) + 1):
         dy = lo + k * 0.5
         n, comfort = 0, 0.0
@@ -391,9 +398,16 @@ def optimize_phases(limbs: list[LimbGait], com2: np.ndarray, *, seed: int,
 
 
 # ---------------------------------------------------------------- 求解
-def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None) -> Gait:
+def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None,
+          com: np.ndarray | None = None) -> Gait:
+    """求这具身体的步态。
+
+    `com` 是**这具身体自己的质心**。碎片必须传自己的（见 fission.Fragment.centroid）——
+    沿用整只兽的质心会让碎片的支撑多边形去包一个远在体外的点，每块碎片都判"站不住"
+    而退化成蠕动（实测四块全退化）。
+    """
     socks = socks or C.sockets()
-    com = C.centroid()
+    com = C.centroid() if com is None else np.asarray(com, float)
     com2 = np.array([com[0], com[2]])
     ride = solve_ride_height(g.limbs, socks)
 
@@ -406,7 +420,7 @@ def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None) -> Gait:
         limbs.append(LimbGait(gene, hip, out, reach, natural_hz(gene.segments),
                               1, 0.6, 0.0))
     if len(limbs) < MIN_SUPPORT:
-        raise ValueError(f"seed={g.seed} 只有 {len(limbs)} 条肢够得着地，站不住")
+        raise ValueError(f"只有 {len(limbs)} 条肢够得着地（需 {MIN_SUPPORT}）")
 
     # 身体周期 = 最慢承重肢的自然频率：最慢那条只能一周期一步，其余按整数倍跟上。
     body_hz = min(lg.hz for lg in limbs)
@@ -429,7 +443,7 @@ def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None) -> Gait:
             lg.duty = float(np.clip(0.80 - 0.06 * (lg.steps - 1), 0.45, 0.85))
         keep = [lg for lg in limbs if not lg.dragged]
         if len(keep) < MIN_SUPPORT:
-            raise ValueError(f"seed={g.seed} 只剩 {len(keep)} 条肢跟得上，其余全在拖行")
+            raise ValueError(f"只剩 {len(keep)} 条肢跟得上，其余全在拖行")
         speed = min(lg.steps * body_hz * lg.max_stride for lg in keep)
     for lg in limbs:
         lg.stride = speed / (lg.steps * body_hz)
@@ -437,7 +451,7 @@ def solve(g: GN.Genome, socks: dict[str, C.Socket] | None = None) -> Gait:
     # 拖行的肢不提供支撑：它没在踩地，是被拽着蹭过去的
     limbs = [lg for lg in limbs if not lg.dragged]
     if feasible(limbs, com2) <= 0.0:
-        raise ValueError(f"seed={g.seed} 全脚着地都包不住质心，任何相位都站不住")
+        raise ValueError("全脚着地都包不住质心，任何相位都站不住")
 
     margin, fewest = optimize_phases(limbs, com2, seed=g.seed)
     return Gait(g, tuple(limbs), com, ride, body_hz, speed, margin, fewest)
